@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use bytes::Bytes;
 use ethereum_types::{H256, U256};
 
-use crate::rlp::encode::RLPEncode;
+use crate::rlp::{encode::RLPEncode, structs::Encoder};
 
 use super::GenesisAccount;
 
@@ -42,9 +42,11 @@ fn code_hash(code: &Bytes) -> H256 {
 
 impl RLPEncode for AccountInfo {
     fn encode(&self, buf: &mut dyn bytes::BufMut) {
-        self.code_hash.encode(buf);
-        self.balance.encode(buf);
-        self.nonce.encode(buf);
+        Encoder::new(buf)
+            .encode_field(&self.code_hash)
+            .encode_field(&self.balance)
+            .encode_field(&self.nonce)
+            .finish();
     }
 }
 

@@ -1,4 +1,4 @@
-use crate::rlp::encode::RLPEncode;
+use crate::rlp::{encode::RLPEncode, structs::Encoder};
 use crate::types::Bloom;
 use bytes::Bytes;
 use ethereum_types::{Address, H256};
@@ -15,10 +15,12 @@ pub struct Receipt {
 
 impl RLPEncode for Receipt {
     fn encode(&self, buf: &mut dyn bytes::BufMut) {
-        self.succeeded.encode(buf);
-        self.cumulative_gas_used.encode(buf);
-        self.bloom.encode(buf);
-        self.logs.encode(buf);
+        Encoder::new(buf)
+            .encode_field(&self.succeeded)
+            .encode_field(&self.cumulative_gas_used)
+            .encode_field(&self.bloom)
+            .encode_field(&self.logs)
+            .finish();
     }
 }
 
@@ -32,8 +34,10 @@ pub struct Log {
 
 impl RLPEncode for Log {
     fn encode(&self, buf: &mut dyn bytes::BufMut) {
-        self.address.encode(buf);
-        self.topics.encode(buf);
-        self.data.encode(buf);
+        Encoder::new(buf)
+            .encode_field(&self.address)
+            .encode_field(&self.topics)
+            .encode_field(&self.data)
+            .finish();
     }
 }
