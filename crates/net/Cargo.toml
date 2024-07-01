@@ -6,6 +6,9 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
+ethrex-core.workspace = true
 tracing.workspace = true
 tokio.workspace = true
-ethrex-core.workspace = true
+bytes.workspace = true
+k256 = "0.13.3"
+keccak-hash = "0.10.0"

@@ -229,12 +229,48 @@ pub(crate) fn encode_length(total_len: usize, buf: &mut dyn BufMut) {
     }
 }
 
-impl<T: RLPEncode, S: RLPEncode> RLPEncode for (T, S) {
+impl<S: RLPEncode, T: RLPEncode> RLPEncode for (S, T) {
     fn encode(&self, buf: &mut dyn BufMut) {
         let total_len = self.0.length() + self.1.length();
         encode_length(total_len, buf);
         self.0.encode(buf);
         self.1.encode(buf);
+    }
+}
+
+impl<S: RLPEncode, T: RLPEncode, U: RLPEncode> RLPEncode for (S, T, U) {
+    fn encode(&self, buf: &mut dyn BufMut) {
+        let total_len = self.0.length() + self.1.length() + self.2.length();
+        encode_length(total_len, buf);
+        self.0.encode(buf);
+        self.1.encode(buf);
+        self.2.encode(buf);
+    }
+}
+
+impl<S: RLPEncode, T: RLPEncode, U: RLPEncode, V: RLPEncode> RLPEncode for (S, T, U, V) {
+    fn encode(&self, buf: &mut dyn BufMut) {
+        let total_len = self.0.length() + self.1.length() + self.2.length() + self.3.length();
+        encode_length(total_len, buf);
+        self.0.encode(buf);
+        self.1.encode(buf);
+        self.2.encode(buf);
+        self.3.encode(buf);
+    }
+}
+
+impl<S: RLPEncode, T: RLPEncode, U: RLPEncode, V: RLPEncode, W: RLPEncode> RLPEncode
+    for (S, T, U, V, W)
+{
+    fn encode(&self, buf: &mut dyn BufMut) {
+        let total_len =
+            self.0.length() + self.1.length() + self.2.length() + self.3.length() + self.4.length();
+        encode_length(total_len, buf);
+        self.0.encode(buf);
+        self.1.encode(buf);
+        self.2.encode(buf);
+        self.3.encode(buf);
+        self.4.encode(buf);
     }
 }
 
