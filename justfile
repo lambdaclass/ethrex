@@ -1,6 +1,9 @@
 build:
     cargo build --workspace
 
+lint:
+    cargo clippy --all-targets --all-features --workspace -- -D warnings
+
 test-all:
     cargo test --workspace
 
