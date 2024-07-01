@@ -238,6 +238,61 @@ impl<T: RLPEncode, S: RLPEncode> RLPEncode for (T, S) {
     }
 }
 
+impl<A: RLPEncode, B: RLPEncode, C: RLPEncode, D: RLPEncode, E: RLPEncode, F: RLPEncode> RLPEncode
+    for (A, B, C, D, E, F)
+{
+    fn encode(&self, buf: &mut dyn BufMut) {
+        let total_len = self.0.length()
+            + self.1.length()
+            + self.2.length()
+            + self.3.length()
+            + self.4.length()
+            + self.5.length();
+        encode_length(total_len, buf);
+        self.0.encode(buf);
+        self.1.encode(buf);
+        self.2.encode(buf);
+        self.3.encode(buf);
+        self.4.encode(buf);
+        self.5.encode(buf);
+    }
+}
+
+impl<
+        A: RLPEncode,
+        B: RLPEncode,
+        C: RLPEncode,
+        D: RLPEncode,
+        E: RLPEncode,
+        F: RLPEncode,
+        G: RLPEncode,
+        H: RLPEncode,
+        I: RLPEncode,
+    > RLPEncode for (A, B, C, D, E, F, G, H, I)
+{
+    fn encode(&self, buf: &mut dyn BufMut) {
+        let total_len = self.0.length()
+            + self.1.length()
+            + self.2.length()
+            + self.3.length()
+            + self.4.length()
+            + self.5.length()
+            + self.6.length()
+            + self.7.length()
+            + self.8.length();
+        encode_length(total_len, buf);
+        self.0.encode(buf);
+        self.1.encode(buf);
+        self.2.encode(buf);
+        self.3.encode(buf);
+        self.4.encode(buf);
+        self.5.encode(buf);
+        self.6.encode(buf);
+        self.7.encode(buf);
+        self.8.encode(buf);
+    }
+}
+
 impl RLPEncode for Ipv4Addr {
     fn encode(&self, buf: &mut dyn BufMut) {
         self.octets().encode(buf)

@@ -36,7 +36,7 @@ impl From<GenesisAccount> for Account {
     }
 }
 
-fn code_hash(code: &Bytes) -> H256 {
+pub fn code_hash(code: &Bytes) -> H256 {
     keccak_hash::keccak(code.as_ref())
 }
 

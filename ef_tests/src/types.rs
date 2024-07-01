@@ -1,7 +1,10 @@
-use ethrex_core::{Address, Bloom, H256, U256, U64};
-
-use revm::primitives::Bytes;
-use serde::{Deserialize, Serialize};
+use bytes::Bytes;
+use ethrex_core::types::{
+    code_hash, Account as EthrexAccount, AccountInfo, EIP1559Transaction, LegacyTransaction,
+    Transaction as EthrexTransacion,
+};
+use ethrex_core::{types::BlockHeader, Address, Bloom, H256, U256, U64};
+use serde::{Deserialize, Deserializer, Serialize};
 use std::collections::HashMap;
 
 #[derive(Debug, Deserialize)]
@@ -23,6 +26,7 @@ pub struct TestUnit {
 #[derive(Debug, PartialEq, Eq, Serialize, Deserialize, Clone)]
 pub struct Account {
     pub balance: U256,
+    #[serde(deserialize_with = "deser_hex_str")]
     pub code: Bytes,
     pub nonce: U256,
     pub storage: HashMap<U256, U256>,
@@ -96,6 +100,7 @@ pub struct Block {
 pub struct Transaction {
     #[serde(rename = "type")]
     pub transaction_type: Option<U256>,
+    #[serde(deserialize_with = "deser_hex_str")]
     pub data: Bytes,
     pub gas_limit: U256,
     pub gas_price: Option<U256>,
@@ -111,4 +116,127 @@ pub struct Transaction {
     pub hash: Option<H256>,
     pub sender: Address,
     pub to: Address,
+}
+
+// Conversions between EFtests & Ethrex types
+
+impl From<Header> for BlockHeader {
+    fn from(val: Header) -> Self {
+        BlockHeader {
+            parent_hash: val.parent_hash,
+            ommers_hash: val.uncle_hash,
+            coinbase: val.coinbase,
+            state_root: val.state_root,
+            transactions_root: val.transactions_trie,
+            receipt_root: val.receipt_trie,
+            logs_bloom: val.bloom.into(),
+            difficulty: val.difficulty,
+            number: val.number.as_u64(),
+            gas_limit: val.gas_limit.as_u64(),
+            gas_used: val.gas_used.as_u64(),
+            timestamp: val.timestamp.as_u64(),
+            extra_data: val.extra_data,
+            prev_randao: val.mix_hash,
+            nonce: val.nonce.as_u64(),
+            base_fee_per_gas: val.base_fee_per_gas.unwrap().as_u64(),
+            withdrawals_root: val.withdrawals_root.unwrap(),
+            blob_gas_used: val.blob_gas_used.unwrap().as_u64(),
+            excess_blob_gas: val.excess_blob_gas.unwrap().as_u64(),
+            parent_beacon_block_root: val.parent_beacon_block_root.unwrap(),
+        }
+    }
+}
+
+impl From<Transaction> for EthrexTransacion {
+    fn from(val: Transaction) -> Self {
+        dbg!(&val);
+        match val.transaction_type {
+            Some(tx_type) => match tx_type.as_u64() {
+                2 => EthrexTransacion::EIP1559Transaction(val.into()),
+                _ => unimplemented!(),
+            },
+            None => EthrexTransacion::LegacyTransaction(val.into()),
+        }
+    }
+}
+
+impl From<Transaction> for EIP1559Transaction {
+    fn from(val: Transaction) -> Self {
+        EIP1559Transaction {
+            // Note: gas_price is not used in this conversion as it is not part of EIP1559Transaction, this could be a problem
+            chain_id: val.chain_id.map(|id| id.as_u64()).unwrap_or(1 /*mainnet*/), // TODO: Consider converting this into Option
+            signer_nonce: val.nonce.as_u64(),
+            max_priority_fee_per_gas: val.max_priority_fee_per_gas.unwrap_or_default().as_u64(), // TODO: Consider converting this into Option
+            max_fee_per_gas: val
+                .max_fee_per_gas
+                .unwrap_or(val.gas_price.unwrap_or_default())
+                .as_u64(), // TODO: Consider converting this into Option
+            gas_limit: val.gas_limit.as_u64(),
+            destination: val.to,
+            amount: val.value,
+            payload: val.data,
+            access_list: val
+                .access_list
+                .unwrap_or_default()
+                .into_iter()
+                .map(|item| (item.address, item.storage_keys))
+                .collect(),
+            signature_y_parity: val.v.as_u64().saturating_sub(27) != 0,
+            signature_r: val.r,
+            signature_s: val.s,
+        }
+    }
+}
+
+impl From<Transaction> for LegacyTransaction {
+    fn from(val: Transaction) -> Self {
+        LegacyTransaction {
+            nonce: val.nonce.as_u64(),
+            gas_price: val.gas_price.unwrap_or_default().as_u64(), // TODO: Consider converting this into Option
+            gas: val.gas_limit.as_u64(),
+            to: val.to,
+            value: val.value,
+            data: val.data,
+            v: val.v,
+            r: val.r,
+            s: val.s,
+        }
+    }
+}
+
+impl From<Account> for EthrexAccount {
+    fn from(val: Account) -> Self {
+        EthrexAccount {
+            info: AccountInfo {
+                code_hash: code_hash(&val.code),
+                balance: val.balance,
+                nonce: val.nonce.as_u64(),
+            },
+            code: val.code,
+            storage: val
+                .storage
+                .into_iter()
+                .map(|(k, v)| {
+                    let mut k_bytes = [0; 32];
+                    let mut v_bytes = [0; 32];
+                    k.to_big_endian(&mut k_bytes);
+                    v.to_big_endian(&mut v_bytes);
+                    (H256(k_bytes), H256(v_bytes))
+                })
+                .collect(),
+        }
+    }
+}
+
+// Serde utils
+use serde::de::Error;
+
+pub fn deser_hex_str<'de, D>(d: D) -> Result<Bytes, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let value = String::deserialize(d)?;
+    let bytes =
+        hex::decode(value.trim_start_matches("0x")).map_err(|e| D::Error::custom(e.to_string()))?;
+    Ok(Bytes::from(bytes))
 }

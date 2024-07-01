@@ -3,7 +3,6 @@ members = [
     "ethrex",
     "crates/consensus",
     "crates/core",
-    "crates/evm",
     "crates/net",
     "crates/rpc",
     "crates/storage",
@@ -18,7 +17,6 @@ edition = "2021"
 [workspace.dependencies]
 ethrex-consensus = { path = "./crates/consensus" }
 ethrex-core = { path = "./crates/core" }
-ethrex-evm = { path = "./crates/evm" }
 ethrex-net = { path = "./crates/net" }
 ethrex-rpc = { path = "./crates/rpc" }
 ethrex-storage = { path = "./crates/storage" }
@@ -29,5 +27,6 @@ tracing-subscriber = "0.3.0"
 serde = { version = "1.0.203", features = ["derive"] }
 serde_json = "1.0.117"
 libmdbx = { version = "0.5.0", features = ["orm"] }
+bytes = "1.6.0"
 tokio = { version = "1.38.0", features = ["full"] }
 thiserror = "1.0.61"

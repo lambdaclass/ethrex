@@ -4,7 +4,8 @@ version.workspace = true
 edition.workspace = true
 
 [dependencies]
-revm = { version = "9.0.0", features = ["serde", "std", "serde-json"] }
 ethrex-core.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+bytes.workspace = true
+hex = "0.4.3"
