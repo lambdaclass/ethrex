@@ -5,8 +5,8 @@ use std::{
     net::{SocketAddr, ToSocketAddrs},
     str::FromStr,
 };
+use tokio::try_join;
 
-use tokio::join;
 use tracing::Level;
 use tracing_subscriber::FmtSubscriber;
 mod cli;
@@ -76,7 +76,7 @@ async fn main() {
     let rpc_api = ethrex_rpc::start_api(http_socket_addr, authrpc_socket_addr);
     let networking = ethrex_net::start_network(udp_socket_addr, tcp_socket_addr);
 
-    join!(rpc_api, networking);
+    try_join!(tokio::spawn(rpc_api), tokio::spawn(networking)).unwrap();
 }
 
 fn read_genesis_file(genesis_file_path: &str) -> Genesis {

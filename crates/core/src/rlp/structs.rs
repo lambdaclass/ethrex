@@ -65,6 +65,20 @@ impl<'a> Decoder<'a> {
         Ok((field, updated_self))
     }
 
+    /// Returns Some(field) if there's some field to decode, otherwise returns None
+    pub fn decode_optional_field<T: RLPDecode>(self) -> (Option<T>, Self) {
+        match <T as RLPDecode>::decode_unfinished(self.payload) {
+            Ok((field, rest)) => {
+                let updated_self = Self {
+                    payload: rest,
+                    ..self
+                };
+                (Some(field), updated_self)
+            }
+            Err(_) => (None, self),
+        }
+    }
+
     pub fn finish(self) -> Result<&'a [u8], RLPDecodeError> {
         if self.payload.is_empty() {
             Ok(self.remaining)
