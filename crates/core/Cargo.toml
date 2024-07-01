@@ -12,6 +12,8 @@ serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
 keccak-hash = "0.10.0"
+patricia-merkle-tree = { git = "https://github.com/lambdaclass/merkle_patricia_tree.git" }
+sha3 = "0.10.8"
 bytes.workspace = true
 
 [dev-dependencies]
