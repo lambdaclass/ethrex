@@ -21,18 +21,23 @@ use crate::{
 pub struct ForkChoiceUpdatedV3 {
     pub fork_choice_state: ForkChoiceState,
     #[allow(unused)]
-    pub payload_attributes: Option<PayloadAttributesV3>,
+    pub payload_attributes: Result<Option<PayloadAttributesV3>, String>,
 }
 
-impl From<ForkChoiceUpdatedV3> for RpcRequest {
-    fn from(val: ForkChoiceUpdatedV3) -> Self {
-        RpcRequest {
-            method: "engine_forkchoiceUpdatedV3".to_string(),
-            params: Some(vec![
-                serde_json::json!(val.fork_choice_state),
-                serde_json::json!(val.payload_attributes),
-            ]),
-            ..Default::default()
+impl TryFrom<ForkChoiceUpdatedV3> for RpcRequest {
+    type Error = String;
+
+    fn try_from(val: ForkChoiceUpdatedV3) -> Result<Self, Self::Error> {
+        match val.payload_attributes {
+            Ok(attrs) => Ok(RpcRequest {
+                method: "engine_forkchoiceUpdatedV3".to_string(),
+                params: Some(vec![
+                    serde_json::json!(val.fork_choice_state),
+                    serde_json::json!(attrs),
+                ]),
+                ..Default::default()
+            }),
+            Err(err) => Err(err),
         }
     }
 }
@@ -49,7 +54,7 @@ impl RpcHandler for ForkChoiceUpdatedV3 {
         Ok(ForkChoiceUpdatedV3 {
             fork_choice_state: serde_json::from_value(params[0].clone())?,
             payload_attributes: serde_json::from_value(params[1].clone())
-                .map_err(|e| RpcErr::InvalidPayloadAttributes(e.to_string()))?,
+                .map_err(|e| e.to_string()),
         })
     }
 
@@ -92,38 +97,43 @@ impl RpcHandler for ForkChoiceUpdatedV3 {
             self.fork_choice_state.head_block_hash,
         ));
 
-        if let Some(attributes) = &self.payload_attributes {
-            info!("Fork choice updated includes payload attributes. Creating a new payload.");
-            let chain_config = storage.get_chain_config()?;
-            if !chain_config.is_cancun_activated(attributes.timestamp) {
-                return Err(RpcErr::UnsuportedFork(
-                    "forkChoiceV3 used to build pre-Cancun payload".to_string(),
-                ));
+        match &self.payload_attributes {
+            // Payload may be invalid but we had to apply fork choice state nevertheless.
+            Err(e) => return Err(RpcErr::InvalidPayloadAttributes(e.into())),
+            Ok(None) => (),
+            Ok(Some(attributes)) => {
+                info!("Fork choice updated includes payload attributes. Creating a new payload.");
+                let chain_config = storage.get_chain_config()?;
+                if !chain_config.is_cancun_activated(attributes.timestamp) {
+                    return Err(RpcErr::UnsuportedFork(
+                        "forkChoiceV3 used to build pre-Cancun payload".to_string(),
+                    ));
+                }
+                if attributes.timestamp <= head_block.timestamp {
+                    return Err(RpcErr::InvalidPayloadAttributes(
+                        "invalid timestamp".to_string(),
+                    ));
+                }
+                let args = BuildPayloadArgs {
+                    parent: self.fork_choice_state.head_block_hash,
+                    timestamp: attributes.timestamp,
+                    fee_recipient: attributes.suggested_fee_recipient,
+                    random: attributes.prev_randao,
+                    withdrawals: attributes.withdrawals.clone(),
+                    beacon_root: Some(attributes.parent_beacon_block_root),
+                    version: 3,
+                };
+                let payload_id = args.id();
+                response.set_id(payload_id);
+                let payload = match create_payload(&args, &storage) {
+                    Ok(payload) => payload,
+                    Err(ChainError::EvmError(error)) => return Err(error.into()),
+                    // Parent block is guaranteed to be present at this point,
+                    // so the only errors that may be returned are internal storage errors
+                    Err(error) => return Err(RpcErr::Internal(error.to_string())),
+                };
+                storage.add_payload(payload_id, payload)?;
             }
-            if attributes.timestamp <= head_block.timestamp {
-                return Err(RpcErr::InvalidPayloadAttributes(
-                    "invalid timestamp".to_string(),
-                ));
-            }
-            let args = BuildPayloadArgs {
-                parent: self.fork_choice_state.head_block_hash,
-                timestamp: attributes.timestamp,
-                fee_recipient: attributes.suggested_fee_recipient,
-                random: attributes.prev_randao,
-                withdrawals: attributes.withdrawals.clone(),
-                beacon_root: Some(attributes.parent_beacon_block_root),
-                version: 3,
-            };
-            let payload_id = args.id();
-            response.set_id(payload_id);
-            let payload = match create_payload(&args, &storage) {
-                Ok(payload) => payload,
-                Err(ChainError::EvmError(error)) => return Err(error.into()),
-                // Parent block is guaranteed to be present at this point,
-                // so the only errors that may be returned are internal storage errors
-                Err(error) => return Err(RpcErr::Internal(error.to_string())),
-            };
-            storage.add_payload(payload_id, payload)?;
         }
 
         serde_json::to_value(response).map_err(|error| RpcErr::Internal(error.to_string()))

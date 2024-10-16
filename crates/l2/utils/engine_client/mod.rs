@@ -85,9 +85,12 @@ impl EngineClient {
     ) -> Result<ForkChoiceResponse, EngineClientError> {
         let request = ForkChoiceUpdatedV3 {
             fork_choice_state: state,
-            payload_attributes: Some(payload_attributes),
+            payload_attributes: Ok(Some(payload_attributes)),
         }
-        .into();
+        // This try_into should always succeed, as we put an Ok before, but we handle
+        // the error as a serialization error to avoid unwraps.
+        .try_into()
+        .map_err(EngineClientError::FailedToSerializeRequestBody)?;
 
         match self.send_request(request).await {
             Ok(RpcResponse::Success(result)) => serde_json::from_value(result.result)
