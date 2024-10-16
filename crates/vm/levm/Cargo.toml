@@ -1,0 +1,25 @@
+[package]
+name = "ethereum_rust-levm"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+ethereum-types.workspace = true
+bytes.workspace = true
+sha3 = "0.10.8"
+datatest-stable = "0.2.9"
+serde = { version = "1.0.203", features = ["derive", "rc"] }
+serde_json = { version = "1.0.117" }
+walkdir = "2.5.0"
+ethereum_rust-rlp.workspace = true
+keccak-hash = "0.10.0"
+
+[dev-dependencies]
+hex = "0.4.3"
+
+[features]
+ethereum_foundation_tests = []
+
+[profile.test]
+opt-level = 3
+debug-assertions = true

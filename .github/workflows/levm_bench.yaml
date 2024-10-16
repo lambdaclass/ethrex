@@ -1,0 +1,47 @@
+name: LEVM benchmarks
+
+on:
+  merge_group:
+  push:
+    paths:
+      - 'crates/vm/levm/**'
+    branches: [ main ]
+  pull_request:
+    paths:
+      - 'crates/vm/levm/**'
+    branches: [ '*' ]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_VERSION: 1.79.0
+
+jobs:
+  bench-hyperfine:
+    name: Hyperfine
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v4
+
+      - name: Rustup toolchain install
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: ${{ env.RUST_VERSION }}
+
+      - name: Set up cargo cache
+        uses: Swatinem/rust-cache@v2
+
+      - name: Install hyperfine
+        uses: taiki-e/install-action@v2
+        with:
+          tool: hyperfine@1.16
+
+      - name: Run benchmarks
+        run: |
+          cd crates/vm/levm
+          make revm-comparison
