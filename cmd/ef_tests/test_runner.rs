@@ -1,7 +1,7 @@
 use std::{collections::HashMap, path::Path};
 
 use crate::types::{BlockWithRLP, TestUnit};
-use ethereum_rust_blockchain::add_block;
+use ethereum_rust_blockchain::{add_block, fork_choice::apply_fork_choice};
 use ethereum_rust_core::types::{
     Account as CoreAccount, Block as CoreBlock, BlockHeader as CoreBlockHeader,
 };
@@ -30,6 +30,7 @@ pub fn run_ef_test(test_key: &str, test: &TestUnit) {
 
         // Won't panic because test has been validated
         let block: &CoreBlock = &block_fixture.block().unwrap().clone().into();
+        let hash = block.header.compute_block_hash();
 
         // Attempt to add the block as the head of the chain
         let chain_result = add_block(block, &store);
@@ -49,10 +50,7 @@ pub fn run_ef_test(test_key: &str, test: &TestUnit) {
                     test_key,
                     block_fixture.expect_exception.clone().unwrap()
                 );
-                // NOTE: this is added in place of fork choice updates.
-                store
-                    .set_canonical_block(block.header.number, block.header.compute_block_hash())
-                    .unwrap();
+                apply_fork_choice(&store, hash, hash, hash).unwrap();
             }
         }
     }
