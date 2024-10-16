@@ -14,8 +14,8 @@ use super::{message::RLPxMessage, utils::pubkey2id};
 
 #[derive(Debug)]
 pub(crate) struct HelloMessage {
-    capabilities: Vec<(String, u8)>,
-    node_id: PublicKey,
+    pub(crate) capabilities: Vec<(String, u8)>,
+    pub(crate) node_id: PublicKey,
 }
 
 impl HelloMessage {

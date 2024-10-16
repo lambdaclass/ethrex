@@ -788,15 +788,19 @@ async fn handle_peer_as_initiator(signer: SigningKey, msg: &[u8], node: &Node) {
 }
 
 async fn handle_peer(mut conn: RLPxConnection<TcpStream>) {
-    conn.handshake().await;
-    // TODO react on handshake or capabilities exchange result
-    // https://github.com/lambdaclass/lambda_ethereum_rust/issues/841
-
-    // TODO Properly build listen loop
-    // https://github.com/lambdaclass/lambda_ethereum_rust/issues/840
-    // loop {
-    //     conn.await_messages();
-    // }
+    match conn.handshake().await {
+        Ok(_) => {
+            // TODO Properly build listen loop
+            // https://github.com/lambdaclass/lambda_ethereum_rust/issues/840
+            // loop {
+            //     conn.await_messages();
+            // }
+        }
+        Err(e) => {
+            // TODO propagate error to eventually discard peer from kademlia table
+            info!("Handshake failed, discarding peer: ({e})");
+        }
+    }
 }
 
 pub fn node_id_from_signing_key(signer: &SigningKey) -> H512 {

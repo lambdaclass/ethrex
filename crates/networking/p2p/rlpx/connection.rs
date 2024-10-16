@@ -4,6 +4,7 @@ use crate::{
 };
 
 use super::{
+    error::RLPxError,
     frame,
     handshake::{decode_ack_message, decode_auth_message, encode_auth_message},
     message as rlpx,
@@ -20,7 +21,6 @@ use k256::{
 use sha3::{Digest, Keccak256};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tracing::{error, info};
-// pub const SUPPORTED_CAPABILITIES: [(&str, u8); 1] = [("p2p", 5)];
 pub const SUPPORTED_CAPABILITIES: [(&str, u8); 2] = [("p2p", 5), ("eth", 68)];
 // pub const SUPPORTED_CAPABILITIES: [(&str, u8); 3] = [("p2p", 5), ("eth", 68), ("snap", 1)];
 
@@ -31,7 +31,7 @@ pub(crate) struct RLPxConnection<S> {
     signer: SigningKey,
     state: RLPxConnectionState,
     stream: S,
-    // ...capabilities information
+    capabilities: Vec<(String, u8)>,
 }
 
 impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
@@ -40,6 +40,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
             signer,
             state,
             stream,
+            capabilities: vec![],
         }
     }
 
@@ -69,7 +70,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
         RLPxConnection::new(signer, stream, state)
     }
 
-    pub async fn handshake(&mut self) {
+    pub async fn handshake(&mut self) -> Result<(), RLPxError> {
         match &self.state {
             RLPxConnectionState::Initiator(_) => {
                 self.send_auth().await;
@@ -79,12 +80,17 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
                 self.receive_auth().await;
                 self.send_ack().await;
             }
-            _ => panic!("Invalid state for handshake"),
-        }
+            _ => {
+                return Err(RLPxError::HandshakeError(
+                    "Invalid connection state for handshake".to_string(),
+                ))
+            }
+        };
         info!("Completed handshake!");
 
-        self.exchange_hello_messages().await;
+        self.exchange_hello_messages().await?;
         info!("Completed Hello roundtrip!");
+        Ok(())
     }
 
     pub async fn send_auth(&mut self) {
@@ -214,12 +220,13 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
         };
     }
 
-    pub async fn exchange_hello_messages(&mut self) {
+    pub async fn exchange_hello_messages(&mut self) -> Result<(), RLPxError> {
+        let supported_capabilities: Vec<(String, u8)> = SUPPORTED_CAPABILITIES
+            .into_iter()
+            .map(|(name, version)| (name.to_string(), version))
+            .collect();
         let hello_msg = Message::Hello(p2p::HelloMessage::new(
-            SUPPORTED_CAPABILITIES
-                .into_iter()
-                .map(|(name, version)| (name.to_string(), version))
-                .collect(),
+            supported_capabilities.clone(),
             PublicKey::from(self.signer.verifying_key()),
         ));
 
@@ -229,13 +236,25 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
         // Receive Hello message
         match self.receive().await {
             Message::Hello(hello_message) => {
-                // TODO, register shared capabilities
-                // https://github.com/lambdaclass/lambda_ethereum_rust/issues/841
                 info!("Hello message received {hello_message:?}");
+                self.capabilities = hello_message.capabilities;
+
+                // Check if we have any capability in common
+                for cap in self.capabilities.clone() {
+                    if supported_capabilities.contains(&cap) {
+                        return Ok(());
+                    }
+                }
+                // Return error if not
+                Err(RLPxError::HandshakeError(
+                    "No matching capabilities".to_string(),
+                ))
             }
             _ => {
-                // if it is not a hello message panic
-                panic!("Expected Hello message")
+                // Fail if it is not a hello message
+                Err(RLPxError::HandshakeError(
+                    "Expected Hello message".to_string(),
+                ))
             }
         }
     }
