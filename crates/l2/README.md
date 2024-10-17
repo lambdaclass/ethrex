@@ -8,7 +8,8 @@
     - [Milestone 2 (State diffs + blobs + base token)](#milestone-2-state-diffs--blobs--custom-native-token)
     - [Milestone 3 (Validium + Account Abstraction)](#milestone-3-validium--account-abstraction)
 - [Prerequisites](#prerequisites)
-    - [Rust](#rust)
+    - [Rust](#prerequisites)
+    - [Docker](#prerequisites)
     - [Foundry](#foundry)
 - [How to run](#how-to-run)
     - [Install the CLI](#install-ethereum_rust_l2-cli)
@@ -140,6 +141,7 @@ TODO: Expand on account abstraction tasks.
 ## Prerequisites
 
 - [Rust (explained in the repo's main README)](../../README.md)
+- [Docker](https://docs.docker.com/engine/install/) (with [Docker Compose](https://docs.docker.com/compose/install/))
 - [Foundry](#foundry)
 
 ### Foundry
@@ -178,6 +180,9 @@ ethereum_rust_l2 config create <config_name>
 ![](../../cmd/ethereum_rust_l2/assets/config_create.cast.gif)
 
 ### Initialize the network
+
+> [!IMPORTANT]
+> Before this step, make sure the Docker daemon is running.
 
 > [!IMPORTANT]
 > Add the SPI_PROVER=mock env variable to the command (to run the prover you need ).
