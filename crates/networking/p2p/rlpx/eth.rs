@@ -10,23 +10,12 @@ use ethereum_rust_rlp::{
     structs::{Decoder, Encoder},
 };
 use ethereum_rust_storage::{error::StoreError, Store};
-use snap::raw::{max_compress_len, Decoder as SnappyDecoder, Encoder as SnappyEncoder};
+use snap::raw::Decoder as SnappyDecoder;
 
 pub const ETH_VERSION: u32 = 68;
 pub const HASH_FIRST_BYTE_DECODER: u8 = 160;
 
-use super::message::RLPxMessage;
-
-fn snappy_encode(encoded_data: Vec<u8>) -> Result<Vec<u8>, RLPEncodeError> {
-    let mut snappy_encoder = SnappyEncoder::new();
-    let mut msg_data = vec![0; max_compress_len(encoded_data.len()) + 1];
-    let compressed_size = snappy_encoder
-        .compress(&encoded_data, &mut msg_data)
-        .map_err(|_| RLPEncodeError::InvalidCompression)?;
-
-    msg_data.truncate(compressed_size);
-    Ok(msg_data)
-}
+use super::{message::RLPxMessage, utils::snappy_encode};
 
 #[derive(Debug)]
 pub(crate) struct StatusMessage {
