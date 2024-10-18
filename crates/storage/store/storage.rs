@@ -1,4 +1,3 @@
-#[cfg(feature = "in_memory")]
 use self::engines::in_memory::Store as InMemoryStore;
 #[cfg(feature = "libmdbx")]
 use self::engines::libmdbx::Store as LibmdbxStore;
@@ -33,7 +32,6 @@ pub struct Store {
 #[allow(dead_code)]
 #[derive(Debug, Clone, Copy)]
 pub enum EngineType {
-    #[cfg(feature = "in_memory")]
     InMemory,
     #[cfg(feature = "libmdbx")]
     Libmdbx,
@@ -77,7 +75,6 @@ impl Store {
             EngineType::Libmdbx => Self {
                 engine: Arc::new(LibmdbxStore::new(path)?),
             },
-            #[cfg(feature = "in_memory")]
             EngineType::InMemory => Self {
                 engine: Arc::new(InMemoryStore::new()),
             },
@@ -715,7 +712,6 @@ mod tests {
 
     use super::*;
 
-    #[cfg(feature = "in_memory")]
     #[test]
     fn test_in_memory_store() {
         test_store_suite(EngineType::InMemory);
@@ -730,7 +726,7 @@ mod tests {
     // Creates an empty store, runs the test and then removes the store (if needed)
     fn run_test(test_func: &dyn Fn(Store), engine_type: EngineType) {
         // Remove preexistent DBs in case of a failed previous test
-        if matches!(engine_type, EngineType::Libmdbx) {
+        if !matches!(engine_type, EngineType::InMemory) {
             remove_test_dbs("store-test-db");
         };
         // Build a new store
@@ -738,7 +734,7 @@ mod tests {
         // Run the test
         test_func(store);
         // Remove store (if needed)
-        if matches!(engine_type, EngineType::Libmdbx) {
+        if !matches!(engine_type, EngineType::InMemory) {
             remove_test_dbs("store-test-db");
         };
     }

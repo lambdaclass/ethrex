@@ -15,10 +15,11 @@ use node::Node;
 use node_hash::NodeHash;
 use sha3::{Digest, Keccak256};
 
-pub use self::db::{
-    in_memory::InMemoryTrieDB, libmdbx::LibmdbxTrieDB, libmdbx_dupsort::LibmdbxDupsortTrieDB,
-    TrieDB,
-};
+#[cfg(feature = "libmdbx")]
+pub use self::db::{libmdbx::LibmdbxTrieDB, libmdbx_dupsort::LibmdbxDupsortTrieDB};
+
+pub use self::db::{in_memory::InMemoryTrieDB, TrieDB};
+
 pub use self::error::TrieError;
 use self::{nibble::NibbleSlice, node::LeafNode, state::TrieState};
 
@@ -182,25 +183,43 @@ impl Trie {
             .unwrap_or(*EMPTY_TRIE_HASH)
     }
 
-    #[cfg(test)]
+    #[cfg(all(test, feature = "libmdbx"))]
     /// Creates a new Trie based on a temporary Libmdbx DB
     fn new_temp() -> Self {
-        let db = test_utils::new_db::<test_utils::TestNodes>();
-        Trie::new(Box::new(LibmdbxTrieDB::<test_utils::TestNodes>::new(db)))
+        let db = test_utils::libmdbx::new_db::<test_utils::libmdbx::TestNodes>();
+        Trie::new(Box::new(
+            LibmdbxTrieDB::<test_utils::libmdbx::TestNodes>::new(db),
+        ))
+    }
+
+    #[cfg(all(test, not(feature = "libmdbx")))]
+    /// Creates a new Trie based on a temporary InMemory DB
+    fn new_temp() -> Self {
+        use std::collections::HashMap;
+        use std::sync::Arc;
+        use std::sync::Mutex;
+
+        let hmap: HashMap<Vec<u8>, Vec<u8>> = HashMap::new();
+        let map = Arc::new(Mutex::new(hmap));
+        let db = InMemoryTrieDB::new(map);
+        Trie::new(Box::new(db))
     }
 }
 
 #[cfg(test)]
 mod test {
+    use cita_trie::{MemoryDB as CitaMemoryDB, PatriciaTrie as CitaTrie, Trie as CitaTrieTrait};
     use std::sync::Arc;
 
-    use crate::test_utils::TestNodes;
-
     use super::*;
-    // Rename imports to avoid potential name clashes
-    use super::test_utils;
-    use cita_trie::{MemoryDB as CitaMemoryDB, PatriciaTrie as CitaTrie, Trie as CitaTrieTrait};
+
+    #[cfg(feature = "libmdbx")]
+    use crate::test_utils::libmdbx::TestNodes;
+    #[cfg(feature = "libmdbx")]
     use db::libmdbx::LibmdbxTrieDB;
+    #[cfg(feature = "libmdbx")]
+    use tempdir::TempDir;
+
     use hasher::HasherKeccak;
     use hex_literal::hex;
     use proptest::{
@@ -208,7 +227,6 @@ mod test {
         prelude::*,
         proptest,
     };
-    use tempdir::TempDir;
 
     #[test]
     fn compute_hash() {
@@ -507,9 +525,10 @@ mod test {
         );
     }
 
+    #[cfg(feature = "libmdbx")]
     #[test]
     fn get_old_state() {
-        let db = test_utils::new_db::<TestNodes>();
+        let db = test_utils::libmdbx::new_db::<TestNodes>();
         let mut trie = Trie::new(Box::new(LibmdbxTrieDB::<TestNodes>::new(db.clone())));
 
         trie.insert([0; 32].to_vec(), [0; 32].to_vec()).unwrap();
@@ -529,9 +548,10 @@ mod test {
         assert_eq!(trie.get(&[1; 32].to_vec()).unwrap(), Some([1; 32].to_vec()));
     }
 
+    #[cfg(feature = "libmdbx")]
     #[test]
     fn get_old_state_with_removals() {
-        let db = test_utils::new_db::<TestNodes>();
+        let db = test_utils::libmdbx::new_db::<TestNodes>();
         let mut trie = Trie::new(Box::new(LibmdbxTrieDB::<TestNodes>::new(db.clone())));
 
         trie.insert([0; 32].to_vec(), [0; 32].to_vec()).unwrap();
@@ -556,9 +576,10 @@ mod test {
         assert_eq!(trie.get(&[2; 32].to_vec()).unwrap(), Some([2; 32].to_vec()));
     }
 
+    #[cfg(feature = "libmdbx")]
     #[test]
     fn revert() {
-        let db = test_utils::new_db::<TestNodes>();
+        let db = test_utils::libmdbx::new_db::<TestNodes>();
         let mut trie = Trie::new(Box::new(LibmdbxTrieDB::<TestNodes>::new(db.clone())));
 
         trie.insert([0; 32].to_vec(), [0; 32].to_vec()).unwrap();
@@ -578,9 +599,10 @@ mod test {
         assert_eq!(trie.get(&[2; 32].to_vec()).unwrap(), Some([4; 32].to_vec()));
     }
 
+    #[cfg(feature = "libmdbx")]
     #[test]
     fn revert_with_removals() {
-        let db = test_utils::new_db::<TestNodes>();
+        let db = test_utils::libmdbx::new_db::<TestNodes>();
         let mut trie = Trie::new(Box::new(LibmdbxTrieDB::<TestNodes>::new(db.clone())));
 
         trie.insert([0; 32].to_vec(), [0; 32].to_vec()).unwrap();
@@ -603,6 +625,7 @@ mod test {
         assert_eq!(trie.get(&vec![0x02]).unwrap(), None);
     }
 
+    #[cfg(feature = "libmdbx")]
     #[test]
     fn resume_trie() {
         const TRIE_DIR: &str = "trie-db-resume-trie-test";
@@ -610,7 +633,7 @@ mod test {
         let trie_dir = trie_dir.path();
 
         // Create new trie from clean DB
-        let db = test_utils::new_db_with_path::<TestNodes>(trie_dir.into());
+        let db = test_utils::libmdbx::new_db_with_path::<TestNodes>(trie_dir.into());
         let mut trie = Trie::new(Box::new(LibmdbxTrieDB::<TestNodes>::new(db.clone())));
 
         trie.insert([0; 32].to_vec(), [1; 32].to_vec()).unwrap();
@@ -624,7 +647,7 @@ mod test {
         drop(db);
         drop(trie);
 
-        let db2 = test_utils::open_db::<TestNodes>(trie_dir.to_str().unwrap());
+        let db2 = test_utils::libmdbx::open_db::<TestNodes>(trie_dir.to_str().unwrap());
         // Create a new trie based on the previous trie's DB
         let trie = Trie::open(Box::new(LibmdbxTrieDB::<TestNodes>::new(db2)), root);
 

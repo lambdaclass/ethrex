@@ -7,7 +7,7 @@ pub fn deduct_caller<SPEC: Spec, EXT, DB: Database>(
     context: &mut revm::Context<EXT, DB>,
 ) -> Result<(), EVMError<DB::Error>> {
     // load caller's account.
-    let (caller_account, _) = context
+    let mut caller_account = context
         .evm
         .inner
         .journaled_state
@@ -19,7 +19,10 @@ pub fn deduct_caller<SPEC: Spec, EXT, DB: Database>(
         caller_account.info.balance += context.evm.inner.env.tx.value;
     }
     // deduct gas cost from caller's account.
-    revm::handler::mainnet::deduct_caller_inner::<SPEC>(caller_account, &context.evm.inner.env);
+    revm::handler::mainnet::deduct_caller_inner::<SPEC>(
+        &mut caller_account,
+        &context.evm.inner.env,
+    );
     Ok(())
 }
 

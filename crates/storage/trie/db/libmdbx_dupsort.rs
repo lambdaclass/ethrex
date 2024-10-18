@@ -74,7 +74,7 @@ fn node_hash_to_fixed_size(node_hash: Vec<u8>) -> [u8; 33] {
 mod test {
 
     use super::*;
-    use crate::test_utils::new_db;
+    use crate::test_utils::libmdbx::new_db;
     use libmdbx::{dupsort, table};
 
     dupsort!(

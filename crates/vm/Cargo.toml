@@ -4,27 +4,36 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-ethereum_rust-core.workspace = true
-ethereum_rust-storage.workspace = true
-revm = { version = "10.0.0", features = [
+ethereum_rust-core = { path = "../common", default-features = false }
+ethereum_rust-storage = { path = "../storage/store", default-features = false }
+revm = { version = "14.0.3", features = [
     "serde",
     "std",
     "serde-json",
     "optional_no_base_fee",
     "optional_block_gas_limit",
-] }
+], default-features = false }
+
 # These dependencies must be kept up to date with the corresponding revm version, otherwise errors may pop up because of trait implementation mismatches
-revm-inspectors = { version = "0.3.1" }
-revm-primitives = { version = "6.0.0" }
+revm-inspectors = { version = "0.8.1" }
+revm-primitives = { version = "10.0.0", features = [
+    "std",
+], default-features = false }
 bytes.workspace = true
 thiserror.workspace = true
 hex.workspace = true
 lazy_static.workspace = true
 cfg-if.workspace = true
 
+serde.workspace = true
+bincode = "1"
+
 [lib]
 path = "./vm.rs"
 
 [features]
-default = []
+default = ["libmdbx", "c-kzg", "blst"]
 l2 = []
+c-kzg = ["revm/c-kzg"]
+blst = ["revm/blst"]
+libmdbx = ["ethereum_rust-storage/default", "ethereum_rust-core/libmdbx"]

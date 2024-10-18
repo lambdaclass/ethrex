@@ -12,7 +12,7 @@ use super::TxType;
 pub type Index = u64;
 
 /// Result of a transaction
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
 pub struct Receipt {
     pub tx_type: TxType,
     pub succeeded: bool,

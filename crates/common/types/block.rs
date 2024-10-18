@@ -28,7 +28,7 @@ use lazy_static::lazy_static;
 lazy_static! {
     pub static ref DEFAULT_OMMERS_HASH: H256 = H256::from_slice(&hex::decode("1dcc4de8dec75d7aab85b567b6ccd41ad312451b948a7413f0a142fd40d49347").unwrap()); // = Keccak256(RLP([])) as of EIP-3675
 }
-#[derive(PartialEq, Eq, Debug, Clone)]
+#[derive(PartialEq, Eq, Debug, Clone, Deserialize, Serialize, Default)]
 pub struct Block {
     pub header: BlockHeader,
     pub body: BlockBody,
@@ -68,9 +68,9 @@ impl RLPDecode for Block {
 #[serde(rename_all = "camelCase")]
 pub struct BlockHeader {
     pub parent_hash: H256,
-    #[serde(rename(serialize = "sha3Uncles"))]
+    #[serde(rename = "sha3Uncles")]
     pub ommers_hash: H256, // ommer = uncle
-    #[serde(rename(serialize = "miner"))]
+    #[serde(rename = "miner")]
     pub coinbase: Address,
     pub state_root: H256,
     pub transactions_root: H256,
@@ -88,16 +88,24 @@ pub struct BlockHeader {
     pub timestamp: u64,
     #[serde(with = "crate::serde_utils::bytes")]
     pub extra_data: Bytes,
-    #[serde(rename(serialize = "mixHash"))]
+    #[serde(rename = "mixHash")]
     pub prev_randao: H256,
     #[serde(with = "crate::serde_utils::u64::hex_str_padding")]
     pub nonce: u64,
     #[serde(with = "crate::serde_utils::u64::hex_str_opt")]
     pub base_fee_per_gas: Option<u64>,
     pub withdrawals_root: Option<H256>,
-    #[serde(with = "crate::serde_utils::u64::hex_str_opt")]
+    #[serde(
+        skip_serializing_if = "Option::is_none",
+        with = "crate::serde_utils::u64::hex_str_opt",
+        default = "Option::default"
+    )]
     pub blob_gas_used: Option<u64>,
-    #[serde(with = "crate::serde_utils::u64::hex_str_opt")]
+    #[serde(
+        skip_serializing_if = "Option::is_none",
+        with = "crate::serde_utils::u64::hex_str_opt",
+        default = "Option::default"
+    )]
     pub excess_blob_gas: Option<u64>,
     pub parent_beacon_block_root: Option<H256>,
 }
@@ -183,11 +191,11 @@ impl RLPDecode for BlockHeader {
 }
 
 // The body of a block on the chain
-#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub struct BlockBody {
     pub transactions: Vec<Transaction>,
     // TODO: ommers list is always empty, so we can remove it
-    #[serde(rename(serialize = "uncles"))]
+    #[serde(rename = "uncles")]
     pub ommers: Vec<BlockHeader>,
     pub withdrawals: Option<Vec<Withdrawal>>,
 }

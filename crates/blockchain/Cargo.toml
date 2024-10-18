@@ -7,16 +7,25 @@ edition = "2021"
 
 [dependencies]
 thiserror.workspace = true
-ethereum_rust-core.workspace = true
-ethereum_rust-rlp.workspace = true
-ethereum_rust-storage.workspace = true
-ethereum_rust-vm.workspace = true
 sha3.workspace = true
 tracing.workspace = true
 bytes.workspace = true
+
+ethereum_rust-rlp.workspace = true
+ethereum_rust-core = { path = "../common", default-features = false }
+ethereum_rust-storage = { path = "../storage/store", default-features = false }
+ethereum_rust-vm = { path = "../vm", default-features = false }
 
 [dev-dependencies]
 serde_json.workspace = true
 
 [lib]
 path = "./blockchain.rs"
+
+[features]
+default = ["libmdbx"]
+libmdbx = [
+    "ethereum_rust-core/libmdbx",
+    "ethereum_rust-storage/default",
+    "ethereum_rust-vm/libmdbx",
+]

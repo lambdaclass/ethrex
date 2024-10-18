@@ -4,7 +4,7 @@ use bytes::Bytes;
 use ethereum_types::{Address, H256, U256};
 pub use mempool::MempoolTransaction;
 use secp256k1::{ecdsa::RecoveryId, Message, SECP256K1};
-use serde::{ser::SerializeStruct, Serialize};
+use serde::{ser::SerializeStruct, Deserialize, Serialize};
 pub use serde_impl::{AccessListEntry, GenericTransaction};
 use sha3::{Digest, Keccak256};
 
@@ -16,7 +16,7 @@ use ethereum_rust_rlp::{
     structs::{Decoder, Encoder},
 };
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum Transaction {
     LegacyTransaction(LegacyTransaction),
@@ -768,10 +768,11 @@ mod canonic_encoding {
 }
 
 // Serialization
+// This is used for RPC messaging and passing data into a RISC-V zkVM
 
 mod serde_impl {
     use serde::Deserialize;
-    use std::str::FromStr;
+    use std::{collections::HashMap, str::FromStr};
 
     use super::*;
 
@@ -981,6 +982,255 @@ mod serde_impl {
             struct_serializer.serialize_field("r", &self.signature_r)?;
             struct_serializer.serialize_field("s", &self.signature_s)?;
             struct_serializer.end()
+        }
+    }
+
+    impl<'de> Deserialize<'de> for LegacyTransaction {
+        fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+        where
+            D: serde::Deserializer<'de>,
+        {
+            let mut map = <HashMap<String, serde_json::Value>>::deserialize(deserializer)?;
+            let nonce = serde_json::from_value::<U256>(
+                map.remove("nonce")
+                    .ok_or_else(|| serde::de::Error::missing_field("nonce"))?,
+            )
+            .map_err(serde::de::Error::custom)?
+            .as_u64();
+            let to = serde_json::from_value(
+                map.remove("to")
+                    .ok_or_else(|| serde::de::Error::missing_field("to"))?,
+            )
+            .map_err(serde::de::Error::custom)?;
+            let value = serde_json::from_value(
+                map.remove("value")
+                    .ok_or_else(|| serde::de::Error::missing_field("value"))?,
+            )
+            .map_err(serde::de::Error::custom)?;
+            let data = serde_json::from_value(
+                map.remove("input")
+                    .ok_or_else(|| serde::de::Error::missing_field("input"))?,
+            )
+            .map_err(serde::de::Error::custom)?;
+            let r = serde_json::from_value(
+                map.remove("r")
+                    .ok_or_else(|| serde::de::Error::missing_field("r"))?,
+            )
+            .map_err(serde::de::Error::custom)?;
+            let s = serde_json::from_value(
+                map.remove("s")
+                    .ok_or_else(|| serde::de::Error::missing_field("s"))?,
+            )
+            .map_err(serde::de::Error::custom)?;
+
+            Ok(LegacyTransaction {
+                nonce,
+                gas_price: serde_json::from_value::<U256>(
+                    map.remove("gasPrice")
+                        .ok_or_else(|| serde::de::Error::missing_field("gasPrice"))?,
+                )
+                .map_err(serde::de::Error::custom)?
+                .as_u64(),
+                gas: serde_json::from_value::<U256>(
+                    map.remove("gas")
+                        .ok_or_else(|| serde::de::Error::missing_field("gas"))?,
+                )
+                .map_err(serde::de::Error::custom)?
+                .as_u64(),
+                to,
+                value,
+                data,
+                v: serde_json::from_value(
+                    map.remove("v")
+                        .ok_or_else(|| serde::de::Error::missing_field("v"))?,
+                )
+                .map_err(serde::de::Error::custom)?,
+                r,
+                s,
+            })
+        }
+    }
+
+    impl<'de> Deserialize<'de> for EIP2930Transaction {
+        fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+        where
+            D: serde::Deserializer<'de>,
+        {
+            let mut map = <HashMap<String, serde_json::Value>>::deserialize(deserializer)?;
+            let nonce = serde_json::from_value::<U256>(
+                map.remove("nonce")
+                    .ok_or_else(|| serde::de::Error::missing_field("nonce"))?,
+            )
+            .map_err(serde::de::Error::custom)?
+            .as_u64();
+            let to = serde_json::from_value(
+                map.remove("to")
+                    .ok_or_else(|| serde::de::Error::missing_field("to"))?,
+            )
+            .map_err(serde::de::Error::custom)?;
+            let value = serde_json::from_value(
+                map.remove("value")
+                    .ok_or_else(|| serde::de::Error::missing_field("value"))?,
+            )
+            .map_err(serde::de::Error::custom)?;
+            let data = serde_json::from_value(
+                map.remove("input")
+                    .ok_or_else(|| serde::de::Error::missing_field("input"))?,
+            )
+            .map_err(serde::de::Error::custom)?;
+            let r = serde_json::from_value(
+                map.remove("r")
+                    .ok_or_else(|| serde::de::Error::missing_field("r"))?,
+            )
+            .map_err(serde::de::Error::custom)?;
+            let s = serde_json::from_value(
+                map.remove("s")
+                    .ok_or_else(|| serde::de::Error::missing_field("s"))?,
+            )
+            .map_err(serde::de::Error::custom)?;
+
+            Ok(EIP2930Transaction {
+                chain_id: serde_json::from_value::<U256>(
+                    map.remove("chainId")
+                        .ok_or_else(|| serde::de::Error::missing_field("chainId"))?,
+                )
+                .map_err(serde::de::Error::custom)?
+                .as_u64(),
+                nonce,
+                gas_price: serde_json::from_value::<U256>(
+                    map.remove("gasPrice")
+                        .ok_or_else(|| serde::de::Error::missing_field("gasPrice"))?,
+                )
+                .map_err(serde::de::Error::custom)?
+                .as_u64(),
+                gas_limit: serde_json::from_value::<U256>(
+                    map.remove("gas")
+                        .ok_or_else(|| serde::de::Error::missing_field("gas"))?,
+                )
+                .map_err(serde::de::Error::custom)?
+                .as_u64(),
+                to,
+                value,
+                data,
+                access_list: serde_json::from_value(
+                    map.remove("accessList")
+                        .ok_or_else(|| serde::de::Error::missing_field("accessList"))?,
+                )
+                .map_err(serde::de::Error::custom)?,
+                signature_y_parity: u8::from_str_radix(
+                    serde_json::from_value::<String>(
+                        map.remove("yParity")
+                            .ok_or_else(|| serde::de::Error::missing_field("yParity"))?,
+                    )
+                    .map_err(serde::de::Error::custom)?
+                    .trim_start_matches("0x"),
+                    16,
+                )
+                .map_err(serde::de::Error::custom)?
+                    != 0,
+                signature_r: r,
+                signature_s: s,
+            })
+        }
+    }
+
+    impl<'de> Deserialize<'de> for EIP1559Transaction {
+        fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+        where
+            D: serde::Deserializer<'de>,
+        {
+            let mut map = <HashMap<String, serde_json::Value>>::deserialize(deserializer)?;
+            let nonce = serde_json::from_value::<U256>(
+                map.remove("nonce")
+                    .ok_or_else(|| serde::de::Error::missing_field("nonce"))?,
+            )
+            .map_err(serde::de::Error::custom)?
+            .as_u64();
+            let to = serde_json::from_value(
+                map.remove("to")
+                    .ok_or_else(|| serde::de::Error::missing_field("to"))?,
+            )
+            .map_err(serde::de::Error::custom)?;
+            let value = serde_json::from_value(
+                map.remove("value")
+                    .ok_or_else(|| serde::de::Error::missing_field("value"))?,
+            )
+            .map_err(serde::de::Error::custom)?;
+            let data = serde_json::from_value(
+                map.remove("input")
+                    .ok_or_else(|| serde::de::Error::missing_field("input"))?,
+            )
+            .map_err(serde::de::Error::custom)?;
+            let r = serde_json::from_value(
+                map.remove("r")
+                    .ok_or_else(|| serde::de::Error::missing_field("r"))?,
+            )
+            .map_err(serde::de::Error::custom)?;
+            let s = serde_json::from_value(
+                map.remove("s")
+                    .ok_or_else(|| serde::de::Error::missing_field("s"))?,
+            )
+            .map_err(serde::de::Error::custom)?;
+
+            Ok(EIP1559Transaction {
+                chain_id: serde_json::from_value::<U256>(
+                    map.remove("chainId")
+                        .ok_or_else(|| serde::de::Error::missing_field("chainId"))?,
+                )
+                .map_err(serde::de::Error::custom)?
+                .as_u64(),
+                nonce,
+                max_priority_fee_per_gas: serde_json::from_value::<U256>(
+                    map.remove("maxPriorityFeePerGas")
+                        .ok_or_else(|| serde::de::Error::missing_field("maxPriorityFeePerGas"))?,
+                )
+                .map_err(serde::de::Error::custom)?
+                .as_u64(),
+                max_fee_per_gas: serde_json::from_value::<U256>(
+                    map.remove("maxFeePerGas")
+                        .ok_or_else(|| serde::de::Error::missing_field("maxFeePerGas"))?,
+                )
+                .map_err(serde::de::Error::custom)?
+                .as_u64(),
+                gas_limit: serde_json::from_value::<U256>(
+                    map.remove("gas")
+                        .ok_or_else(|| serde::de::Error::missing_field("gas"))?,
+                )
+                .map_err(serde::de::Error::custom)?
+                .as_u64(),
+                to,
+                value,
+                data,
+                access_list: serde_json::from_value(
+                    map.remove("accessList")
+                        .ok_or_else(|| serde::de::Error::missing_field("accessList"))?,
+                )
+                .map_err(serde::de::Error::custom)?,
+                signature_y_parity: u8::from_str_radix(
+                    serde_json::from_value::<String>(
+                        map.remove("yParity")
+                            .ok_or_else(|| serde::de::Error::missing_field("yParity"))?,
+                    )
+                    .map_err(serde::de::Error::custom)?
+                    .trim_start_matches("0x"),
+                    16,
+                )
+                .map_err(serde::de::Error::custom)?
+                    != 0,
+                signature_r: r,
+                signature_s: s,
+            })
+        }
+    }
+
+    impl<'de> Deserialize<'de> for EIP4844Transaction {
+        fn deserialize<D>(_deserializer: D) -> Result<Self, D::Error>
+        where
+            D: serde::Deserializer<'de>,
+        {
+            Err(serde::de::Error::custom(
+                "EIP4844Transaction deserialization unimplemented",
+            ))
         }
     }
 
