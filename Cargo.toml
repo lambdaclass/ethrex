@@ -1,6 +1,7 @@
 [workspace]
 members = [
     "crates/blockchain",
+    "crates/blockchain/dev",
     "crates/common",
     "crates/networking/p2p",
     "crates/networking/rpc",

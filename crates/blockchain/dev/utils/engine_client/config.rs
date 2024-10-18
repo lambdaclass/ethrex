@@ -1,6 +1,5 @@
+use crate::utils::engine_client::errors::ConfigError;
 use serde::Deserialize;
-
-use super::errors::ConfigError;
 
 #[derive(Deserialize)]
 pub struct EngineApiConfig {

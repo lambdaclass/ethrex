@@ -30,10 +30,13 @@ tokio-util.workspace = true
 
 cfg-if = "1.0.0"
 
+ethereum_rust-dev = { path = "../../crates/blockchain/dev", optional = true }
+
 [[bin]]
 name = "ethereum_rust"
 path = "./ethereum_rust.rs"
 
 [features]
 default = []
+dev = ["dep:ethereum_rust-dev"]
 l2 = ["ethereum_rust-vm/l2"]

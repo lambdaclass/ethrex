@@ -11,7 +11,6 @@ use std::{
     io::{self, BufRead},
     path::Path,
     thread::sleep,
-    time::Duration,
 };
 
 #[derive(Subcommand)]

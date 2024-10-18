@@ -3,7 +3,6 @@ use libsecp256k1::SecretKey;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 pub mod config;
-pub mod engine_client;
 pub mod eth_client;
 
 pub fn secret_key_deserializer<'de, D>(deserializer: D) -> Result<SecretKey, D::Error>

@@ -60,6 +60,7 @@ impl Command {
             .map(std::path::Path::parent)
             .context("Failed to get parent")?
             .context("Failed to get grandparent")?;
+        let ethereum_rust_dev_path = root.join("crates/blockchain/dev");
         let l2_crate_path = root.join("crates/l2");
         let contracts_path = l2_crate_path.join("contracts");
 
@@ -72,7 +73,7 @@ impl Command {
                 // or in a testnet. If the L1 RPC URL is localhost, then it is
                 // a local environment and the local node needs to be started.
                 if l1_rpc_url.contains("localhost") {
-                    start_l1(&l2_crate_path).await?;
+                    start_l1(&l2_crate_path, &ethereum_rust_dev_path).await?;
                     tokio::time::sleep(std::time::Duration::from_secs(1)).await;
                 }
                 if !skip_l1_deployment {
@@ -84,7 +85,7 @@ impl Command {
             Command::Shutdown { l1, l2, force } => {
                 if force || (l1 && confirm("Are you sure you want to shutdown the local L1 node?")?)
                 {
-                    shutdown_l1(&l2_crate_path)?;
+                    shutdown_l1(&ethereum_rust_dev_path)?;
                 }
                 if force || (l2 && confirm("Are you sure you want to shutdown the L2 node?")?) {
                     shutdown_l2()?;
@@ -92,7 +93,7 @@ impl Command {
             }
             Command::Start { l1, l2, force } => {
                 if force || l1 {
-                    start_l1(&l2_crate_path).await?;
+                    start_l1(&l2_crate_path, &ethereum_rust_dev_path).await?;
                 }
                 if force || l2 {
                     start_l2(root.to_path_buf(), &l2_rpc_url).await?;
@@ -100,10 +101,18 @@ impl Command {
             }
             Command::Purge { force } => {
                 if force || confirm("Are you sure you want to purge the stack?")? {
-                    std::fs::remove_dir_all(l2_crate_path.join("volumes"))?;
-                    std::fs::remove_dir_all(contracts_path.join("out"))?;
-                    std::fs::remove_dir_all(contracts_path.join("lib"))?;
-                    std::fs::remove_dir_all(contracts_path.join("cache"))?;
+                    match std::fs::remove_dir_all(root.join("volumes")) {
+                        Ok(_) | Err(_) => (),
+                    };
+                    match std::fs::remove_dir_all(contracts_path.join("out")) {
+                        Ok(_) | Err(_) => (),
+                    };
+                    match std::fs::remove_dir_all(contracts_path.join("lib")) {
+                        Ok(_) | Err(_) => (),
+                    };
+                    match std::fs::remove_dir_all(contracts_path.join("cache")) {
+                        Ok(_) | Err(_) => (),
+                    };
                 } else {
                     println!("Aborted.");
                 }
@@ -187,14 +196,14 @@ fn deploy_l1(
     Ok(())
 }
 
-fn shutdown_l1(l2_crate_path: &Path) -> eyre::Result<()> {
-    let local_l1_docker_compose_path = l2_crate_path.join("docker-compose-l2.yml");
+fn shutdown_l1(ethereum_rust_dev_path: &Path) -> eyre::Result<()> {
+    let local_l1_docker_compose_path = ethereum_rust_dev_path.join("docker-compose-dev.yaml");
     let cmd = std::process::Command::new("docker")
         .arg("compose")
         .arg("-f")
         .arg(local_l1_docker_compose_path)
         .arg("down")
-        .current_dir(l2_crate_path)
+        .current_dir(ethereum_rust_dev_path)
         .spawn()?
         .wait()?;
     if !cmd.success() {
@@ -204,20 +213,17 @@ fn shutdown_l1(l2_crate_path: &Path) -> eyre::Result<()> {
 }
 
 fn shutdown_l2() -> eyre::Result<()> {
-    let cmd = std::process::Command::new("pkill")
+    std::process::Command::new("pkill")
         .arg("-f")
         .arg("ethereum_rust")
         .spawn()?
         .wait()?;
-    if !cmd.success() {
-        eyre::bail!("Failed to run local L1");
-    }
     Ok(())
 }
 
-async fn start_l1(l2_crate_path: &Path) -> eyre::Result<()> {
+async fn start_l1(l2_crate_path: &Path, ethereum_rust_dev_path: &Path) -> eyre::Result<()> {
     create_volumes(l2_crate_path)?;
-    docker_compose_l2_up(l2_crate_path)?;
+    docker_compose_l2_up(ethereum_rust_dev_path)?;
     Ok(())
 }
 
@@ -227,15 +233,15 @@ fn create_volumes(l2_crate_path: &Path) -> eyre::Result<()> {
     Ok(())
 }
 
-fn docker_compose_l2_up(l2_crate_path: &Path) -> eyre::Result<()> {
-    let local_l1_docker_compose_path = l2_crate_path.join("docker-compose-l2.yml");
+fn docker_compose_l2_up(ethereum_rust_dev_path: &Path) -> eyre::Result<()> {
+    let local_l1_docker_compose_path = ethereum_rust_dev_path.join("docker-compose-dev.yaml");
     let cmd = std::process::Command::new("docker")
         .arg("compose")
         .arg("-f")
         .arg(local_l1_docker_compose_path)
         .arg("up")
         .arg("-d")
-        .current_dir(l2_crate_path)
+        .current_dir(ethereum_rust_dev_path)
         .spawn()?
         .wait()?;
     if !cmd.success() {
@@ -249,8 +255,6 @@ async fn start_l2(root: PathBuf, l2_rpc_url: &str) -> eyre::Result<()> {
     let cmd = std::process::Command::new("cargo")
         .arg("run")
         .arg("--release")
-        .arg("--manifest-path")
-        .arg(root.join("Cargo.toml"))
         .arg("--bin")
         .arg("ethereum_rust")
         .arg("--features")
@@ -260,6 +264,7 @@ async fn start_l2(root: PathBuf, l2_rpc_url: &str) -> eyre::Result<()> {
         .arg(l2_genesis_file_path)
         .arg("--http.port")
         .arg(l2_rpc_url.split(':').last().unwrap())
+        .current_dir(root)
         .spawn()?
         .wait()?;
     if !cmd.success() {

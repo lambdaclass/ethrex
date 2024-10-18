@@ -2,7 +2,6 @@ use std::io::BufRead;
 
 use tracing::debug;
 
-pub mod engine_api;
 pub mod eth;
 pub mod l1_watcher;
 pub mod operator;

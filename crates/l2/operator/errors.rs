@@ -1,7 +1,5 @@
-use crate::utils::{
-    config::errors::ConfigError, engine_client::errors::EngineClientError,
-    eth_client::errors::EthClientError,
-};
+use crate::utils::{config::errors::ConfigError, eth_client::errors::EthClientError};
+use ethereum_rust_dev::utils::engine_client::errors::EngineClientError;
 
 #[derive(Debug, thiserror::Error)]
 pub enum L1WatcherError {

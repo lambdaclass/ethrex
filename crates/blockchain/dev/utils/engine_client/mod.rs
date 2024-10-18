@@ -1,4 +1,5 @@
 use bytes::Bytes;
+use config::EngineApiConfig;
 use errors::{
     EngineClientError, ExchangeCapabilitiesError, ForkChoiceUpdateError, GetPayloadError,
     NewPayloadError,
@@ -13,19 +14,23 @@ use ethereum_rust_rpc::{
         fork_choice::{ForkChoiceResponse, ForkChoiceState, PayloadAttributesV3},
         payload::{ExecutionPayloadResponse, ExecutionPayloadV3, PayloadStatus},
     },
-    utils::RpcRequest,
+    utils::{RpcErrorResponse, RpcRequest, RpcSuccessResponse},
 };
 use ethereum_types::H256;
 use reqwest::Client;
+use serde::Deserialize;
 use serde_json::json;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use crate::utils::config::engine_api::EngineApiConfig;
-
-use super::eth_client::RpcResponse;
-
+pub mod config;
 pub mod errors;
 
+#[derive(Deserialize, Debug)]
+#[serde(untagged)]
+pub enum RpcResponse {
+    Success(RpcSuccessResponse),
+    Error(RpcErrorResponse),
+}
 pub struct EngineClient {
     client: Client,
     secret: Bytes,
@@ -81,16 +86,17 @@ impl EngineClient {
     pub async fn engine_forkchoice_updated_v3(
         &self,
         state: ForkChoiceState,
-        payload_attributes: PayloadAttributesV3,
+        payload_attributes: Option<PayloadAttributesV3>,
     ) -> Result<ForkChoiceResponse, EngineClientError> {
         let request = ForkChoiceUpdatedV3 {
             fork_choice_state: state,
-            payload_attributes: Ok(Some(payload_attributes)),
+            payload_attributes: Ok(payload_attributes),
         }
-        // This try_into should always succeed, as we put an Ok before, but we handle
-        // the error as a serialization error to avoid unwraps.
         .try_into()
-        .map_err(EngineClientError::FailedToSerializeRequestBody)?;
+        .map_err(|e| {
+            ForkChoiceUpdateError::ConversionError(format!("Failed to convert to RPC request: {e}"))
+        })
+        .map_err(EngineClientError::from)?;
 
         match self.send_request(request).await {
             Ok(RpcResponse::Success(result)) => serde_json::from_value(result.result)
