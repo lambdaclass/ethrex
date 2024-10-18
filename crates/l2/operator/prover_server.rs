@@ -10,21 +10,21 @@ use std::{
 use tokio::signal::unix::{signal, SignalKind};
 use tracing::{debug, info, warn};
 
-use crate::utils::config::proof_data_provider::ProofDataProviderConfig;
+use crate::utils::config::prover_server::ProverServerConfig;
 
 use super::errors::ProofDataProviderError;
 
-pub async fn start_proof_data_provider() {
-    let config = ProofDataProviderConfig::from_env().expect("ProofDataProviderConfig::from_env()");
-    let proof_data_provider = ProofDataProvider::new_from_config(config.clone());
+pub async fn start_prover_server() {
+    let config = ProverServerConfig::from_env().expect("ProofDataProviderConfig::from_env()");
+    let prover_server = ProofDataProvider::new_from_config(config.clone());
 
     let (tx, rx) = mpsc::channel();
 
     let server = tokio::spawn(async move {
-        proof_data_provider
+        prover_server
             .start(rx)
             .await
-            .expect("proof_data_provider.start()")
+            .expect("prover_server.start()")
     });
 
     ProofDataProvider::handle_sigint(tx, config).await;
@@ -53,14 +53,14 @@ struct ProofDataProvider {
 }
 
 impl ProofDataProvider {
-    pub fn new_from_config(config: ProofDataProviderConfig) -> Self {
+    pub fn new_from_config(config: ProverServerConfig) -> Self {
         Self {
             ip: config.listen_ip,
             port: config.listen_port,
         }
     }
 
-    async fn handle_sigint(tx: mpsc::Sender<()>, config: ProofDataProviderConfig) {
+    async fn handle_sigint(tx: mpsc::Sender<()>, config: ProverServerConfig) {
         let mut sigint = signal(SignalKind::interrupt()).expect("Failed to create SIGINT stream");
         sigint.recv().await.expect("signal.recv()");
         tx.send(()).expect("Failed to send shutdown signal");

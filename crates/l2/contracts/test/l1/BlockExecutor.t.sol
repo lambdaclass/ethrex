@@ -2,12 +2,12 @@
 pragma solidity ^0.8.13;
 
 import {Test, console} from "forge-std/Test.sol";
-import {BlockExecutor} from "../../src/l1/BlockExecutor.sol";
+import {OnChainOperator} from "../../src/l1/OnChainOperator.sol";
 
-contract BlockExecutorTest is Test {
-    BlockExecutor public blockExecutor;
+contract OnChainOperatorTest is Test {
+    OnChainOperator public blockExecutor;
 
     function setUp() public {
-        blockExecutor = new BlockExecutor();
+        blockExecutor = new OnChainOperator();
     }
 }

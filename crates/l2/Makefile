@@ -31,7 +31,7 @@ deploy-l1:
 	forge script script/DeployL1.s.sol:DeployL1Script --rpc-url ${L1_RPC_URL} --private-key ${L1_PRIVATE_KEY} --broadcast
 
 deploy-block-executor:
-	forge create ${FOUNDRY_PROJECT_HOME}/src/l1/BlockExecutor.sol:BlockExecutor --rpc-url ${L1_RPC_URL} --private-key ${L1_PRIVATE_KEY}
+	forge create ${FOUNDRY_PROJECT_HOME}/src/l1/OnChainOperator.sol:OnChainOperator --rpc-url ${L1_RPC_URL} --private-key ${L1_PRIVATE_KEY}
 
 deploy-inbox:
 	forge create ${FOUNDRY_PROJECT_HOME}/src/l1/Inbox.sol:Inbox --rpc-url ${L1_RPC_URL} --private-key ${L1_PRIVATE_KEY}

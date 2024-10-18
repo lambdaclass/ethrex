@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.27;
 
-/// @title Interface for the BlockExecutor contract.
+/// @title Interface for the OnChainOperator contract.
 /// @author LambdaClass
-/// @notice A BlockExecutor contract ensures the advancement of the L2. It is used
+/// @notice A OnChainOperator contract ensures the advancement of the L2. It is used
 /// by the operator to commit blocks and verify block proofs.
-interface IBlockExecutor {
+interface IOnChainOperator {
     /// @notice A block has been committed.
     /// @dev Event emitted when a block is committed.
     event BlockCommitted(bytes32 indexed currentBlockCommitment);

@@ -1,11 +1,11 @@
 use tracing::info;
 
-pub mod proof_data_client;
 pub mod prover;
+pub mod prover_client;
 
 pub async fn start_prover() {
-    let proof_data_client = tokio::spawn(proof_data_client::start_proof_data_client());
+    let prover_client = tokio::spawn(prover_client::start_prover_client());
 
-    tokio::try_join!(proof_data_client).unwrap();
+    tokio::try_join!(prover_client).unwrap();
     info!("Prover finished!");
 }

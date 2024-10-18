@@ -18,7 +18,7 @@ use tokio::time::sleep;
 use tracing::{error, info, warn};
 
 pub mod l1_watcher;
-pub mod proof_data_provider;
+pub mod prover_server;
 
 pub mod errors;
 
@@ -41,7 +41,7 @@ pub async fn start_operator(store: Store) {
     }
 
     let l1_watcher = tokio::spawn(l1_watcher::start_l1_watcher(store.clone()));
-    let proof_data_provider = tokio::spawn(proof_data_provider::start_proof_data_provider());
+    let prover_server = tokio::spawn(prover_server::start_prover_server());
     let operator = tokio::spawn(async move {
         let eth_config = EthConfig::from_env().expect("EthConfig::from_env");
         let operator_config = OperatorConfig::from_env().expect("OperatorConfig::from_env");
@@ -63,7 +63,7 @@ pub async fn start_operator(store: Store) {
             .await
             .expect("Operator::start");
     });
-    tokio::try_join!(l1_watcher, proof_data_provider, operator).expect("tokio::try_join");
+    tokio::try_join!(l1_watcher, prover_server, operator).expect("tokio::try_join");
 }
 
 impl Operator {
