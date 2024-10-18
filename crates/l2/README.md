@@ -45,8 +45,8 @@ Users can deposit Eth in the L1 (Ethereum) and receive the corresponding funds o
 |           | `L1Watcher`                   | Listens for and handles L1 deposits                                         | ✅     |
 |           | `L1TxSender`                  | commits new block proposals and sends block execution proofs to be verified | ✅     |
 |           | Deposit transactions handling | new transaction type for minting funds corresponding to deposits            | ✅     |
-| CLI | `stack` | Support commands for initializing the stack | ✅     |
-| CLI | `config` | Support commands for stack config management | ✅     |
+| CLI | `stack` | Support commands for initializing the network | ✅     |
+| CLI | `config` | Support commands for network config management | ✅     |
 | CLI | `wallet deposit` | Support command por depositing funds on L2 | ✅     |
 | CLI | `wallet transfer` | Support command for transferring funds on L2   | ✅     |
 
@@ -84,7 +84,7 @@ It also supports EIP 4844 for L1 commit transactions, which means state diffs ar
 |   |  L1TxSender  |  Differentiate whether to send the commit transaction with calldata or blobs   |   ❌     |
 |    |    | Add program for proving blobs                                                       |    ❌    |
 | CLI    | `reconstruct-state`   | Add a command for reconstructing the state                                                       |    ❌    |
-|     | `init`   | Adapt stack initialization to either send blobs or calldata                                                       |    ❌    |
+|     | `init`   | Adapt network initialization to either send blobs or calldata                                                       |    ❌    |
 
 ### Milestone 3: Custom Native token
 
@@ -120,23 +120,29 @@ The L2 has added security mechanisms in place, running on Trusted Execution Envi
 | Contracts        |               | Support verifying multiple different zkVM executions |   ❌     |
 | VM        |               | Support running the operator on a TEE environment |   ❌     |
 
-### Milestone 6: Validium + Account Abstraction 
+### Milestone 6: Account Abstraction 
 
-The L2 can be initialized in Validium Mode, meaning the Data Availability layer is no longer the L1, but rather a DA layer of the user's choice.
-
-The L2 supports native account abstraction following EIP 4337, allowing for custom transaction validation logic and paymaster flows.
+The L2 supports native account abstraction following EIP 7702, allowing for custom transaction validation logic and paymaster flows.
 
 #### Status
 
 |           | Name          | Description                                            | Status |
 | --------- | ------------- | ------------------------------------------------------ | ------ |
-| Contracts | OnChainOperator | Do not check data availability in Validium mode                                                      |  ❌      |
-| VM        |               | The VM should return which storage slots were modified |   ❌     |
-| Operator  |  L1TxSender  |  Do no send data in commit transactions   |   ❌     |
-| CLI    | `init`   | Adapt stack initialization to support Validium stacks                                                       |    ❌    |
-|Misc  |    | Add a DA integration example for Validium mode                                                       |    ❌    |
 
 TODO: Expand on account abstraction tasks.
+
+### Milestone 7: Validium
+
+The L2 can be initialized in Validium Mode, meaning the Data Availability layer is no longer the L1, but rather a DA layer of the user's choice.
+
+#### Status
+
+|           | Name          | Description                                            | Status |
+| --------- | ------------- | ------------------------------------------------------ | ------ |
+| Contracts | BlockExecutor | Do not check data availability in Validium mode                                                      |  ❌      |
+| Operator  |  L1TxSender  |  Do not send data in commit transactions   |   ❌     |
+| CLI    | `init`   | Adapt network initialization to support Validium L2s                                                       |    ❌    |
+|Misc  |    | Add a DA integration example for Validium mode                                                       |    ❌    |
 
 ## Prerequisites
 
