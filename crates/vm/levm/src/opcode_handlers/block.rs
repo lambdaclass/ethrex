@@ -1,6 +1,6 @@
 use crate::{
     block::LAST_AVAILABLE_BLOCK_LIMIT,
-    constants::{call_opcode, WORD_SIZE},
+    constants::{call_opcode, BLOB_BASE_FEE_UPDATE_FRACTION, MIN_BASE_FEE_PER_BLOB_GAS, WORD_SIZE},
     vm::word_to_address,
 };
 use sha3::{Digest, Keccak256};
@@ -151,9 +151,19 @@ impl VM {
     ) -> Result<OpcodeSuccess, VMError> {
         self.increase_consumed_gas(current_call_frame, gas_cost::BLOBHASH)?;
 
+        // Should push in stack the blob hash
         unimplemented!("when we have tx implemented");
 
         // Ok(OpcodeSuccess::Continue)
+    }
+
+    fn get_blob_gasprice(&mut self) -> U256 {
+        fake_exponential(
+            MIN_BASE_FEE_PER_BLOB_GAS,
+            // Use unwrap because env should have a Some value in excess_blob_gas attribute
+            self.env.block_excess_blob_gas.unwrap(),
+            BLOB_BASE_FEE_UPDATE_FRACTION,
+        )
     }
 
     // BLOBBASEFEE operation
@@ -163,8 +173,8 @@ impl VM {
     ) -> Result<OpcodeSuccess, VMError> {
         self.increase_consumed_gas(current_call_frame, gas_cost::BLOBBASEFEE)?;
 
-        // TODO: Calculate blob gas price.
-        let blob_base_fee = U256::zero();
+        let blob_base_fee = self.get_blob_gasprice();
+
         current_call_frame.stack.push(blob_base_fee)?;
 
         Ok(OpcodeSuccess::Continue)
@@ -413,4 +423,17 @@ use std::str::FromStr;
 fn address_to_word(address: Address) -> U256 {
     // This unwrap can't panic, as Address are 20 bytes long and U256 use 32 bytes
     U256::from_str(&format!("{address:?}")).unwrap()
+}
+
+// Fuction inspired in EIP 4844 helpers. Link: https://eips.ethereum.org/EIPS/eip-4844#helpers
+fn fake_exponential(factor: U256, numerator: U256, denominator: U256) -> U256 {
+    let mut i = U256::one();
+    let mut output = U256::zero();
+    let mut numerator_accum = factor * denominator;
+    while numerator_accum > U256::zero() {
+        output += numerator_accum;
+        numerator_accum = (numerator_accum * numerator) / (denominator * i);
+        i += U256::one();
+    }
+    output / denominator
 }

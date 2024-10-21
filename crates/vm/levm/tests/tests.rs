@@ -2637,42 +2637,42 @@ fn basefee_op() {
 }
 
 // TODO: Add excess_blob_gas and blob_gas_used to env
-// #[test]
-// fn blobbasefee_op() {
-//     let operations = [Operation::BlobBaseFee, Operation::Stop];
+#[test]
+fn blobbasefee_op() {
+    let operations = [Operation::BlobBaseFee, Operation::Stop];
 
-//     let mut vm = new_vm_with_ops(&operations);
-//     vm.env.excess_blob_gas = Some(TARGET_BLOB_GAS_PER_BLOCK * 8);
-//     vm.env.blob_gas_used = Some(0);
+    let mut vm = new_vm_with_ops(&operations);
+    vm.env.block_excess_blob_gas = Some(TARGET_BLOB_GAS_PER_BLOCK * 8);
+    vm.env.block_blob_gas_used = Some(U256::zero());
 
-//     let mut current_call_frame = vm.call_frames.pop().unwrap();
-//     vm.execute(&mut current_call_frame).unwrap();
+    let mut current_call_frame = vm.call_frames.pop().unwrap();
+    vm.execute(&mut current_call_frame).unwrap();
 
-//     assert_eq!(
-//         vm.current_call_frame_mut().stack.pop().unwrap(),
-//         U256::from(2)
-//     );
-//     assert_eq!(vm.env.consumed_gas, TX_BASE_COST + 2);
-// }
+    assert_eq!(
+        vm.current_call_frame_mut().stack.pop().unwrap(),
+        U256::from(2)
+    );
+    assert_eq!(vm.env.consumed_gas, TX_BASE_COST + 2);
+}
 
 // TODO: Add excess_blob_gas and blob_gas_used to env
-// #[test]
-// fn blobbasefee_minimum_cost() {
-//     let operations = [Operation::BlobBaseFee, Operation::Stop];
+#[test]
+fn blobbasefee_minimum_cost() {
+    let operations = [Operation::BlobBaseFee, Operation::Stop];
 
-//     let mut vm = new_vm_with_ops(&operations);
-//     vm.env.excess_blob_gas = Some(0);
-//     vm.env.blob_gas_used = Some(0);
+    let mut vm = new_vm_with_ops(&operations);
+    vm.env.block_excess_blob_gas = Some(U256::zero());
+    vm.env.block_blob_gas_used = Some(U256::zero());
 
-//     let mut current_call_frame = vm.call_frames.pop().unwrap();
-//     vm.execute(&mut current_call_frame).unwrap();
+    let mut current_call_frame = vm.call_frames.pop().unwrap();
+    vm.execute(&mut current_call_frame).unwrap();
 
-//     assert_eq!(
-//         vm.current_call_frame_mut().stack.pop().unwrap(),
-//         U256::one()
-//     );
-//     assert_eq!(vm.env.consumed_gas, TX_BASE_COST + 2);
-// }
+    assert_eq!(
+        vm.current_call_frame_mut().stack.pop().unwrap(),
+        U256::one()
+    );
+    assert_eq!(vm.env.consumed_gas, TX_BASE_COST + 2);
+}
 
 #[test]
 fn pop_op() {
@@ -3834,6 +3834,8 @@ fn caller_op() {
         Default::default(),
         Default::default(),
         db,
+        Default::default(),
+        Default::default(),
     );
 
     let mut current_call_frame = vm.call_frames.pop().unwrap();
@@ -3873,6 +3875,8 @@ fn origin_op() {
         Default::default(),
         Default::default(),
         db,
+        Default::default(),
+        Default::default(),
     );
 
     let mut current_call_frame = vm.call_frames.pop().unwrap();
@@ -3938,6 +3942,8 @@ fn address_op() {
         Default::default(),
         Default::default(),
         db,
+        Default::default(),
+        Default::default(),
     );
 
     let mut current_call_frame = vm.call_frames.pop().unwrap();
@@ -3979,6 +3985,8 @@ fn selfbalance_op() {
         Default::default(),
         Default::default(),
         db,
+        Default::default(),
+        Default::default(),
     );
 
     let mut current_call_frame = vm.call_frames.pop().unwrap();
@@ -4016,6 +4024,8 @@ fn callvalue_op() {
         Default::default(),
         Default::default(),
         db,
+        Default::default(),
+        Default::default(),
     );
 
     let mut current_call_frame = vm.call_frames.pop().unwrap();
@@ -4052,6 +4062,8 @@ fn codesize_op() {
         Default::default(),
         Default::default(),
         db,
+        Default::default(),
+        Default::default(),
     );
 
     let mut current_call_frame = vm.call_frames.pop().unwrap();
@@ -4090,6 +4102,8 @@ fn gasprice_op() {
         Default::default(),
         U256::from(0x9876),
         db,
+        Default::default(),
+        Default::default(),
     );
 
     let mut current_call_frame = vm.call_frames.pop().unwrap();
@@ -4145,6 +4159,8 @@ fn codecopy_op() {
         Default::default(),
         Default::default(),
         db,
+        Default::default(),
+        Default::default(),
     );
 
     let mut current_call_frame = vm.call_frames.pop().unwrap();
