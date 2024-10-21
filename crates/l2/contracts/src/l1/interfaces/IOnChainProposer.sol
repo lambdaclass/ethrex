@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.27;
 
-/// @title Interface for the OnChainOperator contract.
+/// @title Interface for the OnChainProposer contract.
 /// @author LambdaClass
-/// @notice A OnChainOperator contract ensures the advancement of the L2. It is used
-/// by the operator to commit blocks and verify block proofs.
-interface IOnChainOperator {
+/// @notice A OnChainProposer contract ensures the advancement of the L2. It is used
+/// by the proposer to commit blocks and verify block proofs.
+interface IOnChainProposer {
     /// @notice A block has been committed.
     /// @dev Event emitted when a block is committed.
     event BlockCommitted(bytes32 indexed currentBlockCommitment);

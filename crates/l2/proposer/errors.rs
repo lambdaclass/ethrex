@@ -24,15 +24,15 @@ pub enum ProofDataProviderError {
 }
 
 #[derive(Debug, thiserror::Error)]
-pub enum OperatorError {
-    #[error("Operator failed because of an EthClient error: {0}")]
+pub enum ProposerError {
+    #[error("Proposer failed because of an EthClient error: {0}")]
     EthClientError(#[from] EthClientError),
-    #[error("Operator failed because of an EngineClient error: {0}")]
+    #[error("Proposer failed because of an EngineClient error: {0}")]
     EngineClientError(#[from] EngineClientError),
-    #[error("Operator failed to produce block: {0}")]
+    #[error("Proposer failed to produce block: {0}")]
     FailedToProduceBlock(String),
-    #[error("Operator failed to prepare PayloadAttributes timestamp: {0}")]
+    #[error("Proposer failed to prepare PayloadAttributes timestamp: {0}")]
     FailedToGetSystemTime(#[from] std::time::SystemTimeError),
-    #[error("Operator failed to serialize block: {0}")]
+    #[error("Proposer failed to serialize block: {0}")]
     FailedToRetrieveBlockFromStorage(String),
 }

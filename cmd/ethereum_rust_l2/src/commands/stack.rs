@@ -184,7 +184,7 @@ fn deploy_l1(
         .arg("--rpc-url")
         .arg(l1_rpc_url)
         .arg("--private-key")
-        .arg(hex::encode(deployer_private_key.serialize())) // TODO: In the future this must be the operator's private key.
+        .arg(hex::encode(deployer_private_key.serialize())) // TODO: In the future this must be the proposer's private key.
         .arg("--broadcast")
         .arg("--use")
         .arg(solc_path)

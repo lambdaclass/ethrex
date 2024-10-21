@@ -2,7 +2,7 @@
 pragma solidity ^0.8.13;
 
 import {Script, console} from "forge-std/Script.sol";
-import {OnChainOperator} from "../src/l1/OnChainOperator.sol";
+import {OnChainProposer} from "../src/l1/OnChainProposer.sol";
 import {CommonBridge} from "../src/l1/CommonBridge.sol";
 import {Utils} from "./Utils.sol";
 
@@ -19,15 +19,15 @@ contract DeployL1Script is Script {
     function run() public {
         console.log("Deploying L1 contracts");
 
-        deployOnChainOperator();
+        deployOnChainProposer();
         deployCommonBridge();
     }
 
-    function deployOnChainOperator() internal {
-        bytes memory bytecode = type(OnChainOperator).creationCode;
+    function deployOnChainProposer() internal {
+        bytes memory bytecode = type(OnChainProposer).creationCode;
         bytes32 salt = bytes32(0);
         address contractAddress = Utils.deployWithCreate2(bytecode, salt, DETERMINISTIC_CREATE2_ADDRESS);
-        console.log("OnChainOperator deployed at:", contractAddress);
+        console.log("OnChainProposer deployed at:", contractAddress);
     }
 
     function deployCommonBridge() internal {

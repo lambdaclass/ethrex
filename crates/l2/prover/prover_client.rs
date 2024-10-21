@@ -8,7 +8,7 @@ use sp1_sdk::SP1ProofWithPublicValues;
 use tokio::time::sleep;
 use tracing::{debug, error, warn};
 
-use crate::{operator::prover_server::ProofData, utils::config::prover_client::ProverClientConfig};
+use crate::{proposer::prover_server::ProofData, utils::config::prover_client::ProverClientConfig};
 
 use super::prover::Prover;
 

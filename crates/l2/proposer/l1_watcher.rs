@@ -1,5 +1,5 @@
 use crate::{
-    operator::errors::L1WatcherError,
+    proposer::errors::L1WatcherError,
     utils::{
         config::{eth::EthConfig, l1_watcher::L1WatcherConfig},
         eth_client::{transaction::PayloadRLPEncode, EthClient},
@@ -38,7 +38,7 @@ pub struct L1Watcher {
     check_interval: Duration,
     max_block_step: U256,
     last_block_fetched: U256,
-    l2_operator_pk: SecretKey,
+    l2_proposer_pk: SecretKey,
 }
 
 impl L1Watcher {
@@ -50,7 +50,7 @@ impl L1Watcher {
             check_interval: Duration::from_millis(watcher_config.check_interval_ms),
             max_block_step: watcher_config.max_block_step,
             last_block_fetched: U256::zero(),
-            l2_operator_pk: watcher_config.l2_operator_private_key,
+            l2_proposer_pk: watcher_config.l2_proposer_private_key,
         }
     }
 
@@ -142,7 +142,7 @@ impl L1Watcher {
             payload.append(mint_transaction.encode_payload_to_vec().as_mut());
 
             let data = Message::parse(&keccak(payload).0);
-            let signature = sign(&data, &self.l2_operator_pk);
+            let signature = sign(&data, &self.l2_proposer_pk);
 
             mint_transaction.signature_r = U256::from(signature.0.r.b32());
             mint_transaction.signature_s = U256::from(signature.0.s.b32());
