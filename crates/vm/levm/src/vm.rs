@@ -171,7 +171,8 @@ pub struct Environment {
     pub prev_randao: Option<H256>,
     pub chain_id: U256,
     pub base_fee_per_gas: U256,
-    pub gas_price: Option<U256>,
+    /// this attr is gas_price or max_fee_per_gas depending on transaction type
+    pub gas_price: U256,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -212,7 +213,7 @@ impl VM {
         prev_randao: Option<H256>,
         chain_id: U256,
         base_fee_per_gas: U256,
-        gas_price: Option<U256>,
+        gas_price: U256,
         db: Db,
     ) -> Self {
         // TODO: This handles only CALL transactions.

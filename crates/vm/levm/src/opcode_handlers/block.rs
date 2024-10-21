@@ -364,9 +364,8 @@ impl VM {
         if self.env.consumed_gas + gas_cost::GASPRICE > self.env.gas_limit {
             return Err(VMError::OutOfGas);
         }
-        // TODO: if not legacy or access list, then gas price is max_fee_per_gas
-        // TODO: Why do we unwrap here?
-        current_call_frame.stack.push(self.env.gas_price.unwrap())?;
+
+        current_call_frame.stack.push(self.env.gas_price)?;
 
         self.env.consumed_gas += gas_cost::GASPRICE;
 
