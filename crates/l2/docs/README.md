@@ -2,6 +2,7 @@
 
 Ethereum Rust L2 is composed of three main parts:
 
+- [General Overview](./overview.md)
 - [Operator](./operator.md)
 - [Prover](./prover.md)
 - [Contracts](./contracts.md)
