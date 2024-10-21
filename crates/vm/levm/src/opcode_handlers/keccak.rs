@@ -26,9 +26,8 @@ impl VM {
         let gas_cost = gas_cost::KECCAK25_STATIC
             + gas_cost::KECCAK25_DYNAMIC_BASE * minimum_word_size
             + memory_expansion_cost;
-        if self.env.consumed_gas + gas_cost > self.env.gas_limit {
-            return Err(VMError::OutOfGas);
-        }
+
+        self.increase_consumed_gas(current_call_frame, gas_cost)?;
 
         let value_bytes = current_call_frame.memory.load_range(offset, size);
 
@@ -38,7 +37,6 @@ impl VM {
         current_call_frame
             .stack
             .push(U256::from_big_endian(&result))?;
-        self.env.consumed_gas += gas_cost;
 
         Ok(OpcodeSuccess::Continue)
     }

@@ -35,9 +35,8 @@ impl VM {
             + gas_cost::LOGN_DYNAMIC_BASE * number_of_topics
             + gas_cost::LOGN_DYNAMIC_BYTE_BASE * size
             + memory_expansion_cost;
-        if self.env.consumed_gas + gas_cost > self.env.gas_limit {
-            return Err(VMError::OutOfGas);
-        }
+
+        self.increase_consumed_gas(current_call_frame, gas_cost)?;
 
         let data = current_call_frame.memory.load_range(offset, size);
         let log = Log {
@@ -46,7 +45,6 @@ impl VM {
             data: Bytes::from(data),
         };
         current_call_frame.logs.push(log);
-        self.env.consumed_gas += gas_cost;
 
         Ok(OpcodeSuccess::Continue)
     }

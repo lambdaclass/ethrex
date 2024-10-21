@@ -11,9 +11,7 @@ impl VM {
         &mut self,
         current_call_frame: &mut CallFrame,
     ) -> Result<OpcodeSuccess, VMError> {
-        if self.env.consumed_gas + gas_cost::CALLDATALOAD > self.env.gas_limit {
-            return Err(VMError::OutOfGas);
-        }
+        self.increase_consumed_gas(current_call_frame, gas_cost::CALLDATALOAD)?;
 
         let offset: usize = current_call_frame
             .stack
@@ -22,7 +20,6 @@ impl VM {
             .unwrap_or(usize::MAX);
         let value = U256::from_big_endian(&current_call_frame.calldata.slice(offset..offset + 32));
         current_call_frame.stack.push(value)?;
-        self.env.consumed_gas += gas_cost::CALLDATALOAD;
 
         Ok(OpcodeSuccess::Continue)
     }
@@ -32,14 +29,11 @@ impl VM {
         &mut self,
         current_call_frame: &mut CallFrame,
     ) -> Result<OpcodeSuccess, VMError> {
-        if self.env.consumed_gas + gas_cost::CALLDATASIZE > self.env.gas_limit {
-            return Err(VMError::OutOfGas);
-        }
+        self.increase_consumed_gas(current_call_frame, gas_cost::CALLDATASIZE)?;
 
         current_call_frame
             .stack
             .push(U256::from(current_call_frame.calldata.len()))?;
-        self.env.consumed_gas += gas_cost::CALLDATASIZE;
 
         Ok(OpcodeSuccess::Continue)
     }
@@ -73,11 +67,7 @@ impl VM {
             + gas_cost::CALLDATACOPY_DYNAMIC_BASE * minimum_word_size
             + memory_expansion_cost;
 
-        if self.env.consumed_gas + gas_cost > self.env.gas_limit {
-            return Err(VMError::OutOfGas);
-        }
-
-        self.env.consumed_gas += gas_cost;
+        self.increase_consumed_gas(current_call_frame, gas_cost)?;
 
         if size == 0 {
             return Ok(OpcodeSuccess::Continue);
@@ -96,14 +86,11 @@ impl VM {
         &mut self,
         current_call_frame: &mut CallFrame,
     ) -> Result<OpcodeSuccess, VMError> {
-        if self.env.consumed_gas + gas_cost::RETURNDATASIZE > self.env.gas_limit {
-            return Err(VMError::OutOfGas);
-        }
+        self.increase_consumed_gas(current_call_frame, gas_cost::RETURNDATASIZE)?;
 
         current_call_frame
             .stack
             .push(U256::from(current_call_frame.returndata.len()))?;
-        self.env.consumed_gas += gas_cost::RETURNDATASIZE;
 
         Ok(OpcodeSuccess::Continue)
     }
@@ -137,11 +124,7 @@ impl VM {
             + gas_cost::RETURNDATACOPY_DYNAMIC_BASE * minimum_word_size
             + memory_expansion_cost;
 
-        if self.env.consumed_gas + gas_cost > self.env.gas_limit {
-            return Err(VMError::OutOfGas);
-        }
-
-        self.env.consumed_gas += gas_cost;
+        self.increase_consumed_gas(current_call_frame, gas_cost)?;
 
         if size == 0 {
             return Ok(OpcodeSuccess::Continue);

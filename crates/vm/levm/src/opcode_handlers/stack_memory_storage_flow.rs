@@ -8,13 +8,8 @@ use super::*;
 impl VM {
     // POP operation
     pub fn op_pop(&mut self, current_call_frame: &mut CallFrame) -> Result<OpcodeSuccess, VMError> {
-        if self.env.consumed_gas + gas_cost::POP > self.env.gas_limit {
-            return Err(VMError::OutOfGas);
-        }
-
+        self.increase_consumed_gas(current_call_frame, gas_cost::POP)?;
         current_call_frame.stack.pop()?;
-        self.env.consumed_gas += gas_cost::POP;
-
         Ok(OpcodeSuccess::Continue)
     }
 
@@ -23,9 +18,7 @@ impl VM {
         &mut self,
         current_call_frame: &mut CallFrame,
     ) -> Result<OpcodeSuccess, VMError> {
-        if self.env.consumed_gas + gas_cost::TLOAD > self.env.gas_limit {
-            return Err(VMError::OutOfGas);
-        }
+        self.increase_consumed_gas(current_call_frame, gas_cost::TLOAD)?;
 
         let key = current_call_frame.stack.pop()?;
         let value = current_call_frame
@@ -35,8 +28,6 @@ impl VM {
             .unwrap_or(U256::zero());
 
         current_call_frame.stack.push(value)?;
-        self.env.consumed_gas += gas_cost::TLOAD;
-
         Ok(OpcodeSuccess::Continue)
     }
 
@@ -45,17 +36,13 @@ impl VM {
         &mut self,
         current_call_frame: &mut CallFrame,
     ) -> Result<OpcodeSuccess, VMError> {
-        if self.env.consumed_gas + gas_cost::TSTORE > self.env.gas_limit {
-            return Err(VMError::OutOfGas);
-        }
+        self.increase_consumed_gas(current_call_frame, gas_cost::TSTORE)?;
 
         let key = current_call_frame.stack.pop()?;
         let value = current_call_frame.stack.pop()?;
-
         current_call_frame
             .transient_storage
             .insert((current_call_frame.msg_sender, key), value);
-        self.env.consumed_gas += gas_cost::TSTORE;
 
         Ok(OpcodeSuccess::Continue)
     }
@@ -75,13 +62,10 @@ impl VM {
             .expansion_cost(offset + WORD_SIZE)?;
         let gas_cost = gas_cost::MLOAD_STATIC + memory_expansion_cost;
 
-        if self.env.consumed_gas + gas_cost > self.env.gas_limit {
-            return Err(VMError::OutOfGas);
-        }
+        self.increase_consumed_gas(current_call_frame, gas_cost)?;
 
         let value = current_call_frame.memory.load(offset);
         current_call_frame.stack.push(value)?;
-        self.env.consumed_gas += gas_cost;
 
         Ok(OpcodeSuccess::Continue)
     }
@@ -97,16 +81,13 @@ impl VM {
             .expansion_cost(offset + WORD_SIZE)?;
         let gas_cost = gas_cost::MSTORE_STATIC + memory_expansion_cost;
 
-        if self.env.consumed_gas + gas_cost > self.env.gas_limit {
-            return Err(VMError::OutOfGas);
-        }
+        self.increase_consumed_gas(current_call_frame, gas_cost)?;
 
         let value = current_call_frame.stack.pop()?;
         let mut value_bytes = [0u8; WORD_SIZE];
         value.to_big_endian(&mut value_bytes);
 
         current_call_frame.memory.store_bytes(offset, &value_bytes);
-        self.env.consumed_gas += gas_cost;
 
         Ok(OpcodeSuccess::Continue)
     }
@@ -120,9 +101,7 @@ impl VM {
         let memory_expansion_cost = current_call_frame.memory.expansion_cost(offset + 1)?;
         let gas_cost = gas_cost::MSTORE8_STATIC + memory_expansion_cost;
 
-        if self.env.consumed_gas + gas_cost > self.env.gas_limit {
-            return Err(VMError::OutOfGas);
-        }
+        self.increase_consumed_gas(current_call_frame, gas_cost)?;
 
         let value = current_call_frame.stack.pop()?;
         let mut value_bytes = [0u8; WORD_SIZE];
@@ -131,7 +110,6 @@ impl VM {
         current_call_frame
             .memory
             .store_bytes(offset, value_bytes[WORD_SIZE - 1..WORD_SIZE].as_ref());
-        self.env.consumed_gas += gas_cost;
 
         Ok(OpcodeSuccess::Continue)
     }
@@ -142,12 +120,9 @@ impl VM {
         current_call_frame: &mut CallFrame,
     ) -> Result<OpcodeSuccess, VMError> {
         let key = current_call_frame.stack.pop()?;
-        let address = if let Some(delegate) = current_call_frame.delegate {
-            delegate
-        } else {
-            current_call_frame.code_address
-        };
-
+        let address = current_call_frame
+            .delegate
+            .unwrap_or(current_call_frame.code_address);
         let current_value = self
             .db
             .read_account_storage(&address, &key)
@@ -170,11 +145,9 @@ impl VM {
 
         let key = current_call_frame.stack.pop()?;
         let value = current_call_frame.stack.pop()?;
-        let address = if let Some(delegate) = current_call_frame.delegate {
-            delegate
-        } else {
-            current_call_frame.code_address
-        };
+        let address = current_call_frame
+            .delegate
+            .unwrap_or(current_call_frame.code_address);
 
         let slot = self.db.read_account_storage(&address, &key);
         let (original_value, _) = match slot {
@@ -200,27 +173,19 @@ impl VM {
         &mut self,
         current_call_frame: &mut CallFrame,
     ) -> Result<OpcodeSuccess, VMError> {
-        if self.env.consumed_gas + gas_cost::MSIZE > self.env.gas_limit {
-            return Err(VMError::OutOfGas);
-        }
-
+        self.increase_consumed_gas(current_call_frame, gas_cost::MSIZE)?;
         current_call_frame
             .stack
             .push(current_call_frame.memory.size())?;
-        self.env.consumed_gas += gas_cost::MSIZE;
-
         Ok(OpcodeSuccess::Continue)
     }
 
     // GAS operation
     pub fn op_gas(&mut self, current_call_frame: &mut CallFrame) -> Result<OpcodeSuccess, VMError> {
-        if self.env.consumed_gas + gas_cost::GAS > self.env.gas_limit {
-            return Err(VMError::OutOfGas);
-        }
+        self.increase_consumed_gas(current_call_frame, gas_cost::GAS)?;
 
         let remaining_gas = self.env.gas_limit - self.env.consumed_gas - gas_cost::GAS;
         current_call_frame.stack.push(remaining_gas)?;
-        self.env.consumed_gas += gas_cost::GAS;
 
         Ok(OpcodeSuccess::Continue)
     }
@@ -246,10 +211,7 @@ impl VM {
             .try_into()
             .unwrap_or(usize::MAX);
 
-        let words_copied = size
-            .checked_add(WORD_SIZE - 1)
-            .ok_or(VMError::OverflowInArithmeticOp)?
-            / WORD_SIZE;
+        let words_copied = (size + WORD_SIZE - 1) / WORD_SIZE;
 
         let memory_byte_size = src_offset
             .checked_add(size)
@@ -259,16 +221,13 @@ impl VM {
                     .map(|dest_sum| src_sum.max(dest_sum))
             })
             .ok_or(VMError::OverflowInArithmeticOp)?;
+
         let memory_expansion_cost = current_call_frame.memory.expansion_cost(memory_byte_size)?;
         let gas_cost = gas_cost::MCOPY_STATIC
             + gas_cost::MCOPY_DYNAMIC_BASE * words_copied
             + memory_expansion_cost;
 
-        if self.env.consumed_gas + gas_cost > self.env.gas_limit {
-            return Err(VMError::OutOfGas);
-        }
-
-        self.env.consumed_gas += gas_cost;
+        self.increase_consumed_gas(current_call_frame, gas_cost)?;
 
         if size > 0 {
             current_call_frame
@@ -284,18 +243,12 @@ impl VM {
         &mut self,
         current_call_frame: &mut CallFrame,
     ) -> Result<OpcodeSuccess, VMError> {
-        if self.env.consumed_gas + gas_cost::JUMP > self.env.gas_limit {
-            return Err(VMError::OutOfGas);
-        }
+        self.increase_consumed_gas(current_call_frame, gas_cost::JUMP)?;
 
         let jump_address = current_call_frame.stack.pop()?;
-
         if !current_call_frame.jump(jump_address) {
-            self.env.consumed_gas = self.env.gas_limit; // Mark gas limit consumed
             return Err(VMError::InvalidJump);
         }
-
-        self.env.consumed_gas += gas_cost::JUMP;
 
         Ok(OpcodeSuccess::Continue)
     }
@@ -309,36 +262,29 @@ impl VM {
         let condition = current_call_frame.stack.pop()?;
 
         if condition != U256::zero() && !current_call_frame.jump(jump_address) {
-            self.env.consumed_gas = self.env.gas_limit; // Mark gas limit consumed
             return Err(VMError::InvalidJump);
         }
 
-        self.env.consumed_gas += gas_cost::JUMPI;
-
+        self.increase_consumed_gas(current_call_frame, gas_cost::JUMPI)?;
         Ok(OpcodeSuccess::Continue)
     }
 
     // JUMPDEST operation
-    pub fn op_jumpdest(&mut self) -> Result<OpcodeSuccess, VMError> {
-        if self.env.consumed_gas + gas_cost::JUMPDEST > self.env.gas_limit {
-            return Err(VMError::OutOfGas);
-        }
-
-        self.env.consumed_gas += gas_cost::JUMPDEST;
-
+    pub fn op_jumpdest(
+        &mut self,
+        current_call_frame: &mut CallFrame,
+    ) -> Result<OpcodeSuccess, VMError> {
+        self.increase_consumed_gas(current_call_frame, gas_cost::JUMPDEST)?;
         Ok(OpcodeSuccess::Continue)
     }
 
     // PC operation
     pub fn op_pc(&mut self, current_call_frame: &mut CallFrame) -> Result<OpcodeSuccess, VMError> {
-        if self.env.consumed_gas + gas_cost::PC > self.env.gas_limit {
-            return Err(VMError::OutOfGas);
-        }
+        self.increase_consumed_gas(current_call_frame, gas_cost::PC)?;
 
         current_call_frame
             .stack
             .push(U256::from(current_call_frame.pc - 1))?;
-        self.env.consumed_gas += gas_cost::PC;
 
         Ok(OpcodeSuccess::Continue)
     }
