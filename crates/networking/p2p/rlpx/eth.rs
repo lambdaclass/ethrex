@@ -1,3 +1,4 @@
+use super::{message::RLPxMessage, utils::snappy_encode};
 use bytes::BufMut;
 use ethereum_rust_core::{
     types::{BlockBody, BlockHash, BlockHeader, BlockNumber, ForkId},
@@ -15,7 +16,7 @@ use snap::raw::Decoder as SnappyDecoder;
 pub const ETH_VERSION: u32 = 68;
 pub const HASH_FIRST_BYTE_DECODER: u8 = 160;
 
-use super::{message::RLPxMessage, utils::snappy_encode};
+mod transactions;
 
 #[derive(Debug)]
 pub(crate) struct StatusMessage {
