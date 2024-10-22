@@ -2,32 +2,37 @@
 
 ## Table of Contents
 
-- [Table of Contents](#table-of-contents)
-- [Roadmap](#roadmap)
-  - [Milestone 0](#milestone-0)
-    - [Status](#status)
-  - [Milestone 1: MVP](#milestone-1-mvp)
-    - [Status](#status-1)
-  - [Milestone 2: State diffs + Data compression + EIP 4844 (Blobs)](#milestone-2-state-diffs--data-compression--eip-4844-blobs)
-    - [Status](#status-2)
-  - [Milestone 3: Custom Native token](#milestone-3-custom-native-token)
-  - [Milestone 4: Based Contestable Rollup](#milestone-4-based-contestable-rollup)
-  - [Milestone 5: Security (TEEs and Multi Prover support)](#milestone-5-security-tees-and-multi-prover-support)
-    - [Status](#status-3)
-  - [Milestone 6: Account Abstraction](#milestone-6-account-abstraction)
-    - [Status](#status-4)
-  - [Milestone 7: Validium](#milestone-7-validium)
-    - [Status](#status-5)
-- [Prerequisites](#prerequisites)
-  - [Foundry](#foundry)
-- [How to run](#how-to-run)
-  - [Install `ethereum_rust_l2` CLI](#install-ethereum_rust_l2-cli)
-  - [Configure your network](#configure-your-network)
-  - [Initialize the network](#initialize-the-network)
-  - [Restarting the network](#restarting-the-network)
-- [Local L1 Rich Wallets](#local-l1-rich-wallets)
-- [Docs](#docs)
-- [📚 References and acknowledgements](#-references-and-acknowledgements)
+- [Ethereum Rust L2](#ethereum-rust-l2)
+  - [Table of Contents](#table-of-contents)
+  - [Roadmap](#roadmap)
+    - [Milestone 0](#milestone-0)
+      - [Status](#status)
+    - [Milestone 1: MVP](#milestone-1-mvp)
+      - [Status](#status-1)
+    - [Milestone 2: Block Execution Proofs](#milestone-2-block-execution-proofs)
+      - [Status](#status-2)
+    - [Milestone 3: State diffs + Data compression + EIP 4844 (Blobs)](#milestone-3-state-diffs--data-compression--eip-4844-blobs)
+      - [Status](#status-3)
+    - [Milestone 4: Custom Native token](#milestone-4-custom-native-token)
+      - [Status](#status-4)
+    - [Milestone 5: Based Contestable Rollup](#milestone-5-based-contestable-rollup)
+      - [Status](#status-5)
+    - [Milestone 6: Security (TEEs and Multi Prover support)](#milestone-6-security-tees-and-multi-prover-support)
+      - [Status](#status-6)
+    - [Milestone 7: Account Abstraction](#milestone-7-account-abstraction)
+      - [Status](#status-7)
+    - [Milestone 8: Validium](#milestone-8-validium)
+      - [Status](#status-8)
+  - [Prerequisites](#prerequisites)
+    - [Foundry](#foundry)
+  - [How to run](#how-to-run)
+    - [Install `ethereum_rust_l2` CLI](#install-ethereum_rust_l2-cli)
+    - [Configure your network](#configure-your-network)
+    - [Initialize the network](#initialize-the-network)
+    - [Restarting the network](#restarting-the-network)
+  - [Local L1 Rich Wallets](#local-l1-rich-wallets)
+  - [Docs](#docs)
+  - [📚 References and acknowledgements](#-references-and-acknowledgements)
 
 ## Roadmap
 
@@ -35,11 +40,13 @@
 | --------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------ |
 | 0         | Users can deposit Eth in the L1 (Ethereum) and receive the corresponding funds on the L2.                                                                                                                                                                                                                         | ✅      |
 | 1         | The network supports basic L2 functionality, allowing users to deposit and withdraw funds to join and exit the network, while also interacting with the network as they do normally on the Ethereum network (deploying contracts, sending transactions, etc).                                                     | 🏗️      |
-| 2         | The network now commits to state diffs instead of the full state, lowering the commit transactions costs. These diffs are also submitted in compressed form, further reducing costs. It also supports EIP 4844 for L1 commit transactions, which means state diffs are sent as blob sidecars instead of calldata. | ❌      |
-| 3         | The L2 can also be deployed using a custom native token, meaning that a certain ERC20 can be the common currency that's used for paying network fees.                                                                                                                                                             | ❌      |
-| 4         | The network can be run as a Based Contestable Rollup, meaning sequencing is done by the Ethereum Validator set; transactions are sent to a private mempool and L1 Validators that opt into the L2 sequencing propose blocks for the L2 on every L1 block.                                                         | ❌      |
-| 5         | The L2 has added security mechanisms in place, running on Trusted Execution Environments and Multi Prover setup where multiple guarantees (Execution on TEEs, zkVMs/proving systems) are required for settlement on the L1. This better protects against possible security bugs on implementations.               | ❌      |
-| 6         | The L2 can be initialized in Validium Mode, meaning the Data Availability layer is no longer the L1, but rather a DA layer of the user's choice. The L2 supports native account abstraction following EIP 4337, allowing for custom transaction validation logic and paymaster flows.                             | ❌      |
+| 2         | The block execution is proven with a RISC-V zkVM and the proof is verified by the Verifier L1 contract.                                                     | 🏗️      |
+| 3         | The network now commits to state diffs instead of the full state, lowering the commit transactions costs. These diffs are also submitted in compressed form, further reducing costs. It also supports EIP 4844 for L1 commit transactions, which means state diffs are sent as blob sidecars instead of calldata. | ❌      |
+| 4         | The L2 can also be deployed using a custom native token, meaning that a certain ERC20 can be the common currency that's used for paying network fees.                                                                                                                                                             | ❌      |
+| 5         | The network can be run as a Based Contestable Rollup, meaning sequencing is done by the Ethereum Validator set; transactions are sent to a private mempool and L1 Validators that opt into the L2 sequencing propose blocks for the L2 on every L1 block.                                                         | ❌      |
+| 6         | The L2 has added security mechanisms in place, running on Trusted Execution Environments and Multi Prover setup where multiple guarantees (Execution on TEEs, zkVMs/proving systems) are required for settlement on the L1. This better protects against possible security bugs on implementations.               | ❌      |
+| 7         | The L2 supports native account abstraction following EIP 4337, allowing for custom transaction validation logic and paymaster flows.                             | ❌      |
+| 8         | The L2 can be initialized in Validium Mode, meaning the Data Availability layer is no longer the L1, but rather a DA layer of the user's choice.                             | ❌      |
 
 ### Milestone 0
 
@@ -73,11 +80,23 @@ The network supports basic L2 functionality, allowing users to deposit and withd
 | Contracts | `CommonBridge`                 | Withdraw method implementation                                                                                     | ❌      |
 |           | `OnChainOperator`              | Commit and verify implementation                                                                                   | 🏗️      |
 |           | `Verifier`                     | verifier                                                                                                           | 🏗️      |
-| Proposer  | `Prover Server`                | Feeds the `Prover Client` with block data to be proven and delivers proofs to the `L1TxSender` for L1 verification | 🏗️      |
 |           | Withdraw transactions handling | New transaction type for burning funds on L2 and unlock funds on L1                                                | 🏗️      |
 | Prover    | `Prover Client`                | Asks for block execution data to prove, generates proofs of execution and submits proofs to the `Prover Server`    | 🏗️      |
 
-### Milestone 2: State diffs + Data compression + EIP 4844 (Blobs)
+### Milestone 2: Block Execution Proofs
+
+The L2's block execution is proven with a RISC-V zkVM and the proof is verified by the Verifier L1 contract. This work is being done in parallel with other milestones as it doesn't block anything else.
+
+#### Status
+
+|           | Name                           | Description                                                                                                        | Status |
+| --------- | ------------------------------ | ------------------------------------------------------------------------------------------------------------------ | ------ |
+| VM |                 | `Return` the storage touched on block execution to pass the prover as a witness                                                                                     | 🏗️      |
+| Contracts          | `OnChainOperator`              | Call the actual SNARK proof verification on the `verify` function implementation                                                                                   | 🏗️      |
+| Proposer  | `Prover Server`                | Feeds the `Prover Client` with block data to be proven and delivers proofs to the `L1TxSender` for L1 verification | 🏗️      |
+| Prover    | `Prover Client`                | Asks for block execution data to prove, generates proofs of execution and submits proofs to the `Prover Server`    | 🏗️      |
+
+### Milestone 3: State diffs + Data compression + EIP 4844 (Blobs)
 
 The network now commits to state diffs instead of the full state, lowering the commit transactions costs. These diffs are also submitted in compressed form, further reducing costs.
 
@@ -97,9 +116,11 @@ It also supports EIP 4844 for L1 commit transactions, which means state diffs ar
 | CLI       | `reconstruct-state` | Add a command for reconstructing the state                                  | ❌      |
 |           | `init`              | Adapt network initialization to either send blobs or calldata               | ❌      |
 
-### Milestone 3: Custom Native token
+### Milestone 4: Custom Native token
 
 The L2 can also be deployed using a custom native token, meaning that a certain ERC20 can be the common currency that's used for paying network fees.
+
+#### Status
 
 |     | Name           | Description                                                                               | Status |
 | --- | -------------- | ----------------------------------------------------------------------------------------- | ------ |
@@ -109,9 +130,11 @@ The L2 can also be deployed using a custom native token, meaning that a certain 
 |     | `deposit`      | Handle native token deposits                                                              | ❌      |
 |     | `withdraw`     | Handle native token withdrawals                                                           | ❌      |
 
-### Milestone 4: Based Contestable Rollup
+### Milestone 5: Based Contestable Rollup
 
 The network can be run as a Based Rollup, meaning sequencing is done by the Ethereum Validator set; transactions are sent to a private mempool and L1 Validators that opt into the L2 sequencing propose blocks for the L2 on every L1 block.
+
+#### Status
 
 |     | Name              | Description                                                                    | Status |
 | --- | ----------------- | ------------------------------------------------------------------------------ | ------ |
@@ -119,7 +142,7 @@ The network can be run as a Based Rollup, meaning sequencing is done by the Ethe
 
 TODO: Expand on this.
 
-### Milestone 5: Security (TEEs and Multi Prover support)
+### Milestone 6: Security (TEEs and Multi Prover support)
 
 The L2 has added security mechanisms in place, running on Trusted Execution Environments and Multi Prover setup where multiple guarantees (Execution on TEEs, zkVMs/proving systems) are required for settlement on the L1. This better protects against possible security bugs on implementations.
 
@@ -131,7 +154,7 @@ The L2 has added security mechanisms in place, running on Trusted Execution Envi
 | Contracts |      | Support verifying multiple different zkVM executions | ❌      |
 | VM        |      | Support running the operator on a TEE environment    | ❌      |
 
-### Milestone 6: Account Abstraction 
+### Milestone 7: Account Abstraction 
 
 The L2 supports native account abstraction following EIP 7702, allowing for custom transaction validation logic and paymaster flows.
 
@@ -142,7 +165,7 @@ The L2 supports native account abstraction following EIP 7702, allowing for cust
 
 TODO: Expand on account abstraction tasks.
 
-### Milestone 7: Validium
+### Milestone 8: Validium
 
 The L2 can be initialized in Validium Mode, meaning the Data Availability layer is no longer the L1, but rather a DA layer of the user's choice.
 
