@@ -9,6 +9,9 @@ participants:
 additional_services:
   - assertoor
   - dora
+  - el_forkmon
+  - tx_spammer
+  - blob_spammer
 
 assertoor_params:
   run_stability_check: true

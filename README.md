@@ -269,6 +269,23 @@ make test CRATE="ethereum_rust-blockchain"
 Finally, we have End-to-End tests with hive.
 Hive is a system which simply sends RPC commands to our node,
 and expects a certain response. You can read more about it [here](https://github.com/ethereum/hive/blob/master/docs/overview.md).
+
+###### Prereqs
+We need to have go installed for the first time we run hive, an easy way to do this is adding the asdf go plugin:
+
+```shell
+asdf plugin add golang https://github.com/asdf-community/asdf-golang.git
+
+# If you need to se GOROOT please follow: https://github.com/asdf-community/asdf-golang?tab=readme-ov-file#goroot
+```
+
+And uncommenting the golang line in the asdf `.tool-versions` file:
+```
+rust 1.80.1
+golang 1.23.2
+```
+
+###### Running Simulations
 Hive tests are categorized by "simulations', and test instances can be filtered with a regex:
 ```bash
 make run-hive-debug SIMULATION=<simulation> TEST_PATTERN=<test-regex>
