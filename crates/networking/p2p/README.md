@@ -5,7 +5,7 @@ The network crate handles the ethereum networking protocols. This involves:
 -   [Discovery protocol](#discovery-protocol): built on top of udp and it is how we discover new nodes.
 -   devP2P: sits on top of tcp and is where the actual blockchain information exchange happens.
 
-The official spec can be found [here](https://github.com/ethereum/devp2p/tree/master).
+Implementation follows the official spec which can be found [here](https://github.com/ethereum/devp2p/tree/master). Also, we've inspired in some [geth code](https://github.com/ethereum/go-ethereum/tree/master/p2p/discover).
 
 ## Discovery protocol
 
@@ -69,7 +69,7 @@ Re-validations are tasks that are implemented as intervals, that is: they run an
     - otherwise: we decrement the liveness by a third of its value.
 3. If the liveness field is 0, we delete it and insert a new one from the replacements table.
 
-Liveness is a field that provides us with good criteria of which nodes are connected and we "trust" more. This trustiness is useful when deciding if we want to store this node in the database to use it as a future seeder or when establishing a connection in p2p.
+Liveness checks are not part of the spec but are taken from geth, see [here](https://github.com/ethereum/go-ethereum/blob/master/p2p/discover/table_reval.go). This field is useful because it provides us with good criteria of which nodes are connected and we "trust" more. This trustiness is useful when deciding if we want to store this node in the database to use it as a future seeder or when establishing a connection in p2p.
 
 Re-validations are another point of potential improvement. While it may be fine for now to keep simplicity at max, pinging the last recently pinged peers becomes quite expensive as the number of peers in the table increases. And it also isn't very "just" in selecting nodes so that they get their liveness increased so we trust them more and we might consider them as a seeder. A possible improvement could be:
 
@@ -78,6 +78,8 @@ Re-validations are another point of potential improvement. While it may be fine 
 -   We would have two intervals: one for pinging "a" and another for pinging to nodes in "b". The "b" would be quicker, as no initial validation has been done.
 -   When picking a node to ping, we would do it randomly, which is the best form of justice for a node to become trusted by us.
 -   When a node from `b` responds successfully, we move it to `a`, and when one from `a` does not respond, we move it to `b`.
+
+This improvement follows somewhat what geth does, see [here](https://github.com/ethereum/go-ethereum/blob/master/p2p/discover/table_reval.go).
 
 ### Recursive Lookups
 
@@ -91,6 +93,8 @@ Recursive lookups are as with re-validations implemented as intervals. Their cur
 3. We send a `find_node` to the closest 3 nodes (that we have not yet asked) from the pubkey.
 4. We wait for the neighbors' response and push or replace those who are closer to the potential peers.
 5. We select three other nodes from the potential peers vector and do the same until one lookup has no node to ask.
+
+The way to do lookups aren't part of the spec. Our implementation aligns with geth approach, see [here](https://github.com/ethereum/go-ethereum/blob/master/p2p/discover/v4_udp.go#L282-L310).
 
 ### An example of how you might build a network
 
