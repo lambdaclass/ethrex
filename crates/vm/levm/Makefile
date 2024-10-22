@@ -9,7 +9,7 @@ test: ## 🧪 Runs all tests except Ethereum tests
 	cargo test -p ethereum_rust-levm
 
 lint: ## 🧹 Linter check
-	cargo clippy --all-targets --all-features --workspace -- -D warnings
+	cargo clippy --all-targets --all-features -- -D warnings
 
 fmt: ## 📄 Runs rustfmt
 	cargo fmt --all
