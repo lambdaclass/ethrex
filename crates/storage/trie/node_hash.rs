@@ -189,7 +189,7 @@ impl NodeEncoder {
             l => {
                 let l_len = compute_byte_usage(l);
                 self.write_raw(&[long_base + l_len as u8]);
-                self.write_raw(&l.to_be_bytes()[size_of::<usize>() - l_len..]);
+                self.write_raw(&l.to_be_bytes()[core::mem::size_of::<usize>() - l_len..]);
             }
         }
     }
