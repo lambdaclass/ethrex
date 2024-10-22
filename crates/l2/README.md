@@ -197,41 +197,16 @@ The L2 can be initialized in Validium Mode, meaning the Data Availability layer 
 
 ## How to run
 
-### Install `ethereum_rust_l2` CLI
-
-First of all, you need to install the `ethereum_rust_l2` CLI. You can do that by running the command below at the root of this repo:
-
-```
-cargo install --path cmd/ethereum_rust_l2
-```
-
-> [!IMPORTANT]
-> Most of the CLI interaction needs a configuration to be set. You can set a configuration with the `config` command.
-
-### Configure your network
-
-> [!TIP]
-> You can create multiple configurations and switch between them.
-
-```
-ethereum_rust_l2 config create <config_name>
-```
-
-![](../../cmd/ethereum_rust_l2/assets/config_create.cast.gif)
-
 ### Initialize the network
 
 > [!IMPORTANT]
-> Before this step, make sure the Docker daemon is running.
-
-> [!IMPORTANT]
-> Add the SPI_PROVER=mock env variable to the command (to run the prover you need ).
+> Before this step:
+> 1. make sure the Docker daemon is running.
+> 2. make sure you have created a `.env` file following the `.env.example` file.
 
 ```
-ethereum_rust_l2 stack init
+make
 ```
-
-![](../../cmd/ethereum_rust_l2/assets/stack_init.cast.gif)
 
 This will setup a local Ethereum network as the L1, deploy all the needed contracts on it, then start an Ethereum Rust L2 node pointing to it.
 
@@ -241,10 +216,8 @@ This will setup a local Ethereum network as the L1, deploy all the needed contra
 > This command will cleanup your running L1 and L2 nodes.
 
 ```
-ethereum_rust_l2 stack restart
+make restart
 ```
-
-![](../../cmd/ethereum_rust_l2/assets/stack_restart.cast.gif)
 
 ## Local L1 Rich Wallets
 
