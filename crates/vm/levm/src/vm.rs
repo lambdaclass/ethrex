@@ -384,10 +384,47 @@ impl VM {
         }
     }
 
-    pub fn transact(&mut self) -> Result<OpcodeSuccess, VMError> {
-        // let account = self.db.accounts.get(&self.env.origin).unwrap();
+    /// Based on Ethereum yellow paper's initial tests of intrinsic validity (Section 6). The last version is
+    /// Shanghai, so there are probably missing Cancun validations. The intrinsic validations are:
+    ///
+    /// (1) The transaction is well-formed RLP, with no additional trailing bytes;
+    /// (2) The transaction signature is valid;
+    /// (3) The transaction nonce is valid (equivalent to the sender account's
+    /// current nonce);
+    /// (4) The sender account has no contract code deployed (see EIP-3607).
+    /// (5) The gas limit is no smaller than the intrinsic gas, used by the
+    /// transaction;
+    /// (6) The sender account balance contains at least the cost, required in
+    /// up-front payment;
+    /// (7) The max fee per gas, in the case of type 2 transactions, or gasPrice,
+    /// in the case of type 0 and type 1 transactions, is greater than or equal to
+    /// the block’s base fee;
+    /// (8) For type 2 transactions, max priority fee per fas, must be no larger
+    /// than max fee per fas.
+    fn validate_transaction(&self) -> Result<(), VMError> {
+        // Validations (1), (2), (3), (5), and (8) are assumed done in upper layers.
+        let sender_account = match self.db.accounts.get(&self.env.origin) {
+            Some(acc) => acc,
+            None => return Err(VMError::SenderAccountDoesNotExist),
+        };
+        // (4)
+        if sender_account.has_code() {
+            return Err(VMError::SenderAccountShouldNotHaveBytecode);
+        }
+        // (6)
+        if sender_account.balance < self.call_frames[0].msg_value {
+            return Err(VMError::SenderBalanceShouldContainTransferValue);
+        }
+        // (7)
+        if self.env.gas_price < self.env.base_fee_per_gas {
+            return Err(VMError::GasPriceIsLowerThanBaseFee);
+        }
+        Ok(())
+    }
 
-        // TODO: Add transaction validation.
+    pub fn transact(&mut self) -> Result<OpcodeSuccess, VMError> {
+        self.validate_transaction()?;
+
         let initial_gas = Default::default();
 
         self.env.consumed_gas = initial_gas;

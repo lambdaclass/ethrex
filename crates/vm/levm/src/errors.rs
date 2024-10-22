@@ -12,6 +12,10 @@ pub enum VMError {
     OverflowInArithmeticOp,
     FatalError,
     InvalidTransaction,
+    SenderAccountDoesNotExist,
+    SenderAccountShouldNotHaveBytecode,
+    SenderBalanceShouldContainTransferValue,
+    GasPriceIsLowerThanBaseFee,
 }
 
 pub enum OpcodeSuccess {
