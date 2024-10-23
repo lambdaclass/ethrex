@@ -12,6 +12,8 @@ pub enum EthClientError {
     EstimateGasPriceError(#[from] EstimateGasPriceError),
     #[error("eth_sendRawTransaction request error: {0}")]
     SendRawTransactionError(#[from] SendRawTransactionError),
+    #[error("eth_call request error: {0}")]
+    CallError(#[from] CallError),
     #[error("eth_getTransactionCount request error: {0}")]
     GetNonceError(#[from] GetNonceError),
     #[error("eth_blockNumber request error: {0}")]
@@ -52,6 +54,18 @@ pub enum EstimateGasPriceError {
 
 #[derive(Debug, thiserror::Error)]
 pub enum SendRawTransactionError {
+    #[error("{0}")]
+    ReqwestError(#[from] reqwest::Error),
+    #[error("{0}")]
+    SerdeJSONError(#[from] serde_json::Error),
+    #[error("{0}")]
+    RPCError(String),
+    #[error("{0}")]
+    ParseIntError(#[from] std::num::ParseIntError),
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum CallError {
     #[error("{0}")]
     ReqwestError(#[from] reqwest::Error),
     #[error("{0}")]

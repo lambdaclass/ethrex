@@ -1,8 +1,12 @@
 use crate::config::EthereumRustL2Config;
+use bytes::Bytes;
 use clap::Subcommand;
-use ethereum_rust_core::types::{EIP1559Transaction, TxKind};
-use ethereum_rust_l2::utils::eth_client::EthClient;
+use ethereum_rust_core::types::{EIP1559Transaction, GenericTransaction, TxKind};
+use ethereum_rust_l2::utils::eth_client::{errors::EthClientError, EthClient};
+use ethereum_rust_rlp::encode::RLPEncode;
 use ethereum_types::{Address, H256, U256};
+use hex::FromHexError;
+use keccak_hash::keccak;
 
 #[derive(Subcommand)]
 pub(crate) enum Command {
@@ -73,6 +77,135 @@ pub(crate) enum Command {
     Address,
     #[clap(about = "Get the wallet private key.")]
     PrivateKey,
+    #[clap(about = "Send a transaction")]
+    Send {
+        #[clap(long = "to")]
+        to: Address,
+        #[clap(
+            long = "value",
+            value_parser = U256::from_dec_str,
+            default_value = "0",
+            required = false,
+            help = "Value to send in wei"
+        )]
+        value: U256,
+        #[clap(long = "calldata", value_parser = decode_hex, required = false, default_value = "")]
+        calldata: Bytes,
+        #[clap(
+            long = "l1",
+            required = false,
+            help = "If set it will do an L1 transfer, defaults to an L2 transfer"
+        )]
+        l1: bool,
+        #[clap(long = "chain-id", required = false)]
+        chain_id: Option<u64>,
+        #[clap(long = "nonce", required = false)]
+        nonce: Option<u64>,
+        #[clap(long = "gas-limit", required = false)]
+        gas_limit: Option<u64>,
+        #[clap(long = "gas-price", required = false)]
+        gas_price: Option<u64>,
+        #[clap(long = "priority-gas-price", required = false)]
+        priority_gas_price: Option<u64>,
+    },
+    #[clap(about = "Make a call to a contract")]
+    Call {
+        #[clap(long = "to")]
+        to: Address,
+        #[clap(long = "calldata", value_parser = decode_hex, required = false, default_value = "")]
+        calldata: Bytes,
+        #[clap(
+            long = "l1",
+            required = false,
+            help = "If set it will do an L1 transfer, defaults to an L2 transfer"
+        )]
+        l1: bool,
+        #[clap(
+            long = "value",
+            value_parser = U256::from_dec_str,
+            default_value = "0",
+            required = false,
+            help = "Value to send in wei"
+        )]
+        value: U256,
+        #[clap(long = "from", required = false)]
+        from: Option<Address>,
+        #[clap(long = "gas-limit", required = false)]
+        gas_limit: Option<u64>,
+        #[clap(long = "gas-price", required = false)]
+        gas_price: Option<u64>,
+    },
+    #[clap(about = "Deploy a contract")]
+    Deploy {
+        #[clap(long = "bytecode", value_parser = decode_hex)]
+        bytecode: Bytes,
+        #[clap(
+            long = "l1",
+            required = false,
+            help = "If set it will do an L1 transfer, defaults to an L2 transfer"
+        )]
+        l1: bool,
+        #[clap(
+            long = "value",
+            value_parser = U256::from_dec_str,
+            default_value = "0",
+            required = false,
+            help = "Value to send in wei"
+        )]
+        value: U256,
+        #[clap(long = "chain-id", required = false)]
+        chain_id: Option<u64>,
+        #[clap(long = "nonce", required = false)]
+        nonce: Option<u64>,
+        #[clap(long = "gas-limit", required = false)]
+        gas_limit: Option<u64>,
+        #[clap(long = "gas-price", required = false)]
+        gas_price: Option<u64>,
+        #[clap(long = "priority-gas-price", required = false)]
+        priority_gas_price: Option<u64>,
+    },
+}
+
+fn decode_hex(s: &str) -> Result<Bytes, FromHexError> {
+    if s.starts_with("0x") {
+        return hex::decode(&s[2..]).map(Into::into);
+    }
+    return hex::decode(s).map(Into::into);
+}
+
+async fn make_eip1559_transaction(
+    client: &EthClient,
+    to: TxKind,
+    from: Address,
+    data: Bytes,
+    value: U256,
+    chain_id: u64,
+    nonce: Option<u64>,
+    gas_limit: Option<u64>,
+    gas_price: Option<u64>,
+    priority_gas_price: Option<u64>,
+) -> Result<EIP1559Transaction, EthClientError> {
+    let mut tx = EIP1559Transaction {
+        to,
+        data,
+        value,
+        chain_id,
+        nonce: match nonce {
+            Some(nonce) => nonce,
+            None => client.get_nonce(from).await?,
+        },
+        max_fee_per_gas: match gas_price {
+            Some(price) => price,
+            None => client.get_gas_price().await?.as_u64(),
+        },
+        max_priority_fee_per_gas: priority_gas_price.unwrap_or(Default::default()),
+        ..Default::default()
+    };
+    tx.gas_limit = match gas_limit {
+        Some(gas) => gas,
+        None => client.estimate_gas(tx.clone()).await?,
+    };
+    Ok(tx)
 }
 
 impl Command {
@@ -185,6 +318,123 @@ impl Command {
             }
             Command::PrivateKey => {
                 todo!()
+            }
+            Command::Send {
+                to,
+                value,
+                calldata,
+                l1,
+                chain_id,
+                nonce,
+                gas_limit,
+                gas_price,
+                priority_gas_price,
+            } => {
+                let client = match l1 {
+                    true => eth_client,
+                    false => rollup_client,
+                };
+
+                let tx = make_eip1559_transaction(
+                    &client,
+                    TxKind::Call(to),
+                    from,
+                    calldata,
+                    value,
+                    chain_id.unwrap_or_else(|| match l1 {
+                        true => cfg.network.l1_chain_id,
+                        false => cfg.network.l2_chain_id,
+                    }),
+                    nonce,
+                    gas_limit,
+                    gas_price,
+                    priority_gas_price,
+                )
+                .await?;
+
+                let tx_hash = client
+                    .send_eip1559_transaction(tx, cfg.wallet.private_key)
+                    .await?;
+
+                println!(
+                    "[{}] Transaction sent: {tx_hash:#x}",
+                    if l1 { "L1" } else { "L2" }
+                );
+            }
+            Command::Call {
+                to,
+                calldata,
+                l1,
+                value,
+                from,
+                gas_limit,
+                gas_price,
+            } => {
+                let client = match l1 {
+                    true => eth_client,
+                    false => rollup_client,
+                };
+
+                let call_tx = GenericTransaction {
+                    to: TxKind::Call(to),
+                    input: calldata,
+                    value,
+                    from: from.unwrap_or(Default::default()),
+                    gas: gas_limit,
+                    gas_price: gas_price.unwrap_or(Default::default()),
+                    ..Default::default()
+                };
+
+                let result = client.call(call_tx).await?;
+
+                println!("{result}");
+            }
+            Command::Deploy {
+                bytecode,
+                l1,
+                value,
+                chain_id,
+                nonce,
+                gas_limit,
+                gas_price,
+                priority_gas_price,
+            } => {
+                let client = match l1 {
+                    true => eth_client,
+                    false => rollup_client,
+                };
+
+                let nonce = nonce.unwrap_or(client.get_nonce(from).await?);
+                let tx = make_eip1559_transaction(
+                    &client,
+                    TxKind::Create,
+                    from,
+                    bytecode,
+                    value,
+                    chain_id.unwrap_or_else(|| match l1 {
+                        true => cfg.network.l1_chain_id,
+                        false => cfg.network.l2_chain_id,
+                    }),
+                    Some(nonce),
+                    gas_limit,
+                    gas_price,
+                    priority_gas_price,
+                )
+                .await?;
+
+                let hash = client
+                    .send_eip1559_transaction(tx, cfg.wallet.private_key)
+                    .await?;
+
+                let encoded_from = from.encode_to_vec();
+                let encoded_nonce = nonce.encode_to_vec();
+                let mut encoded = vec![(0xc0 + encoded_from.len() + encoded_nonce.len()) as u8];
+                encoded.extend(encoded_from.clone());
+                encoded.extend(encoded_nonce.clone());
+                let deployed_address = Address::from(keccak(encoded));
+
+                println!("Contract deployed in tx: {hash:#x}");
+                println!("Contract address: {deployed_address:#x}");
             }
         };
         Ok(())

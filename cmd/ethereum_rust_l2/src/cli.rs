@@ -1,5 +1,5 @@
 use crate::{
-    commands::{autocomplete, config, stack, test, wallet},
+    commands::{autocomplete, config, stack, test, utils, wallet},
     config::load_selected_config,
 };
 use clap::{Parser, Subcommand};
@@ -23,6 +23,12 @@ enum EthereumRustL2Command {
         visible_alias = "w"
     )]
     Wallet(wallet::Command),
+    #[clap(
+        subcommand,
+        about = "Different utilities for developers.",
+        visible_alias = "u"
+    )]
+    Utils(utils::Command),
     #[clap(subcommand, about = "CLI config commands.")]
     Config(config::Command),
     #[clap(subcommand, about = "Run tests.")]
@@ -40,6 +46,7 @@ pub async fn start() -> eyre::Result<()> {
     match command {
         EthereumRustL2Command::Stack(cmd) => cmd.run(cfg).await?,
         EthereumRustL2Command::Wallet(cmd) => cmd.run(cfg).await?,
+        EthereumRustL2Command::Utils(cmd) => cmd.run().await?,
         EthereumRustL2Command::Autocomplete(cmd) => cmd.run()?,
         EthereumRustL2Command::Config(_) => unreachable!(),
         EthereumRustL2Command::Test(cmd) => cmd.run(cfg).await?,

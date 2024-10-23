@@ -26,6 +26,7 @@ strum = "0.26.3"
 ethereum_rust-l2.workspace = true
 ethereum_rust-core.workspace = true
 ethereum_rust-blockchain.workspace = true
+ethereum_rust-rlp.workspace = true
 libsecp256k1 = "0.7.1"
 keccak-hash = "0.10.0"
 
