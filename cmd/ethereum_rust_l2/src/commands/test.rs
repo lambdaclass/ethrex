@@ -74,9 +74,7 @@ async fn transfer_from(
 
     let mut buffer = [0u8; 64];
     let public_key = libsecp256k1::PublicKey::from_secret_key(&private_key).serialize();
-    for i in 0..64 {
-        buffer[i] = public_key[i + 1];
-    }
+    buffer.copy_from_slice(&public_key[1..]);
 
     let address = H160::from(keccak(buffer));
     let nonce = client.get_nonce(address).await.unwrap();
@@ -130,18 +128,16 @@ impl Command {
                     println!("Sending to: {to_address:#x}");
 
                     let mut threads = vec![];
-                    for line in lines {
-                        if let Ok(pk) = line {
-                            let thread = tokio::spawn(transfer_from(
-                                pk,
-                                to_address.clone(),
-                                value,
-                                iterations,
-                                verbose,
-                                cfg.clone(),
-                            ));
-                            threads.push(thread);
-                        }
+                    for pk in lines.map_while(Result::ok) {
+                        let thread = tokio::spawn(transfer_from(
+                            pk,
+                            to_address,
+                            value,
+                            iterations,
+                            verbose,
+                            cfg.clone(),
+                        ));
+                        threads.push(thread);
                     }
 
                     let mut retries = 0;
