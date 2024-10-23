@@ -16,6 +16,7 @@ use snap::raw::Decoder as SnappyDecoder;
 pub const ETH_VERSION: u32 = 68;
 pub const HASH_FIRST_BYTE_DECODER: u8 = 160;
 
+mod receipts;
 mod transactions;
 
 #[derive(Debug)]
