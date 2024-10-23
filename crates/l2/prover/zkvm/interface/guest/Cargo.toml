@@ -1,0 +1,21 @@
+[package]
+name = "zkvm_program"
+version = "0.1.0"
+edition = "2021"
+
+[workspace]
+
+[dependencies]
+risc0-zkvm = { version = "1.1.2", default-features = false, features = ['std'] }
+
+ethereum_rust-core = { path = "../../../../../common", default-features = false }
+ethereum_rust-rlp = { path = "../../../../../common/rlp" }
+ethereum_rust-vm = { path = "../../../../../vm", default-features = false }
+ethereum_rust-blockchain = { path = "../../../../../blockchain", default-features = false }
+
+# revm
+revm = { version = "14.0.3", features = [
+    "std",
+    "serde",
+    "kzg-rs",
+], default-features = false }

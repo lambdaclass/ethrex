@@ -2,7 +2,7 @@ use serde::Deserialize;
 
 use super::errors::ConfigError;
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Debug)]
 pub struct EthConfig {
     pub rpc_url: String,
 }

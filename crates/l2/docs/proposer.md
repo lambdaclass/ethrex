@@ -6,7 +6,7 @@
 - [Components](#components)
   - [L1 Watcher](#l1-watcher)
   - [L1 Transaction Sender](#l1-transaction-sender)
-  - [Prover Client](#prover-client)
+  - [Prover Server](#prover-server)
 - [Configuration](#configuration)
 
 ## Components
@@ -27,7 +27,7 @@ Commit transactions are sent when the Proposer wants to commit to a new block. T
 
 Verify transactions are sent by the Proposer after the prover has successfully generated a proof of block execution to verify it. These transactions contain the proof to be verified in the L1.
 
-### Prover Client
+### Prover Server
 
 TODO
 

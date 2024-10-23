@@ -90,10 +90,10 @@ jobs:
 
       - name: RISC-V zkVM toolchain install
         run: |
-          curl -L https://sp1.succinct.xyz | bash
-          ~/.sp1/bin/sp1up
+          curl -L https://risczero.com/install | bash
+          ~/.risc0/bin/rzup install
 
-      - name: Build program
+      - name: Build prover and zkVM
         run: |
-          cd crates/l2/prover/sp1/program
-          ~/.sp1/bin/cargo-prove prove build
+          cd crates/l2/prover
+          cargo build --release --features build_zkvm

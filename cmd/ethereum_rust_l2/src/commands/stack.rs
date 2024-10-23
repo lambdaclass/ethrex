@@ -19,6 +19,13 @@ pub(crate) enum Command {
             help = "Skips L1 deployment. Beware that this will only work if the L1 is already set up. L1 contracts must be present in the config."
         )]
         skip_l1_deployment: bool,
+        #[arg(
+            long = "start-prover",
+            help = "Start ZK Prover for the L2 if set.",
+            short = 'p',
+            default_value_t = false
+        )]
+        start_prover: bool,
     },
     #[clap(about = "Shutdown the stack.")]
     Shutdown {
@@ -37,6 +44,13 @@ pub(crate) enum Command {
         l2: bool,
         #[clap(short = 'y', long, help = "Forces the start without confirmation.")]
         force: bool,
+        #[arg(
+            long = "start-prover",
+            help = "Start ZK Prover for the L2 if set.",
+            short = 'p',
+            default_value_t = false
+        )]
+        start_prover: bool,
     },
     #[clap(about = "Cleans up the stack. Prompts for confirmation.")]
     Purge {
@@ -68,7 +82,10 @@ impl Command {
         let l2_rpc_url = cfg.network.l2_rpc_url.clone();
 
         match self {
-            Command::Init { skip_l1_deployment } => {
+            Command::Init {
+                skip_l1_deployment,
+                start_prover,
+            } => {
                 // Delegate the command whether to init in a local environment
                 // or in a testnet. If the L1 RPC URL is localhost, then it is
                 // a local environment and the local node needs to be started.
@@ -80,7 +97,7 @@ impl Command {
                     contract_deps(&contracts_path)?;
                     deploy_l1(&l1_rpc_url, &cfg.wallet.private_key, &contracts_path)?;
                 }
-                start_l2(root.to_path_buf(), &l2_rpc_url).await?;
+                start_l2(root.to_path_buf(), &l2_rpc_url, start_prover).await?;
             }
             Command::Shutdown { l1, l2, force } => {
                 if force || (l1 && confirm("Are you sure you want to shutdown the local L1 node?")?)
@@ -91,12 +108,17 @@ impl Command {
                     shutdown_l2()?;
                 }
             }
-            Command::Start { l1, l2, force } => {
+            Command::Start {
+                l1,
+                l2,
+                force,
+                start_prover,
+            } => {
                 if force || l1 {
                     start_l1(&l2_crate_path, &ethereum_rust_dev_path).await?;
                 }
                 if force || l2 {
-                    start_l2(root.to_path_buf(), &l2_rpc_url).await?;
+                    start_l2(root.to_path_buf(), &l2_rpc_url, start_prover).await?;
                 }
             }
             Command::Purge { force } => {
@@ -133,6 +155,7 @@ impl Command {
                     Box::pin(async {
                         Self::Init {
                             skip_l1_deployment: false,
+                            start_prover: false,
                         }
                         .run(cfg.clone())
                         .await
@@ -250,25 +273,58 @@ fn docker_compose_l2_up(ethereum_rust_dev_path: &Path) -> eyre::Result<()> {
     Ok(())
 }
 
-async fn start_l2(root: PathBuf, l2_rpc_url: &str) -> eyre::Result<()> {
+// The cli is not displaying tracing logs.
+async fn start_l2(root: PathBuf, l2_rpc_url: &str, start_prover: bool) -> eyre::Result<()> {
     let l2_genesis_file_path = root.join("test_data/genesis-l2.json");
-    let cmd = std::process::Command::new("cargo")
-        .arg("run")
-        .arg("--release")
-        .arg("--bin")
-        .arg("ethereum_rust")
-        .arg("--features")
-        .arg("l2")
-        .arg("--")
-        .arg("--network")
-        .arg(l2_genesis_file_path)
-        .arg("--http.port")
-        .arg(l2_rpc_url.split(':').last().unwrap())
-        .current_dir(root)
-        .spawn()?
-        .wait()?;
-    if !cmd.success() {
-        eyre::bail!("Failed to run L2 node");
+    let l2_rpc_url_owned = l2_rpc_url.to_owned();
+    let root_clone = root.clone();
+    let l2_start_cmd = std::thread::spawn(move || {
+        let status = std::process::Command::new("cargo")
+            .arg("run")
+            .arg("--release")
+            .arg("--bin")
+            .arg("ethereum_rust")
+            .arg("--features")
+            .arg("l2")
+            .arg("--")
+            .arg("--network")
+            .arg(l2_genesis_file_path)
+            .arg("--http.port")
+            .arg(l2_rpc_url_owned.split(':').last().unwrap())
+            .current_dir(root)
+            .status();
+
+        match status {
+            Ok(s) if s.success() => Ok(()),
+            Ok(_) => Err(eyre::eyre!("Failed to run L2 node")),
+            Err(e) => Err(eyre::eyre!(e)),
+        }
+    });
+
+    let l2_result = l2_start_cmd.join().expect("L2 thread panicked");
+    l2_result?;
+
+    if start_prover {
+        let prover_start_cmd = std::thread::spawn(|| {
+            let status = std::process::Command::new("cargo")
+                .arg("run")
+                .arg("--release")
+                .arg("--features")
+                .arg("build_zkvm")
+                .arg("--bin")
+                .arg("ethereum_rust_prover")
+                .current_dir(root_clone)
+                .status();
+
+            match status {
+                Ok(s) if s.success() => Ok(()),
+                Ok(_) => Err(eyre::eyre!("Failed to Initialize Prover")),
+                Err(e) => Err(eyre::eyre!(e)),
+            }
+        });
+        let prover_result = prover_start_cmd.join().expect("Prover thread panicked");
+        prover_result?;
     }
+
     Ok(())
 }

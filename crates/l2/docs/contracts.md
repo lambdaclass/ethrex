@@ -2,11 +2,13 @@
 
 ## ToC
 
+- [ToC](#toc)
 - [L1 side](#l1-side)
-    - [`CommonBridge`](#commonbridge)
-    - [`OnChainOperator`](#blockexecutor)
+  - [`CommonBridge`](#commonbridge)
+  - [`OnChainOperator`](#onchainoperator)
+  - [`Verifier`](#verifier)
 - [L2 side](#l2-side)
-    - [`L1MessageSender`](#l1messagesender)
+  - [`L1MessageSender`](#l1messagesender)
 
 ## L1 side
 

@@ -1,0 +1,45 @@
+[package]
+name = "ethereum_rust-prover"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+serde_json.workspace = true
+serde.workspace = true
+bytes.workspace = true
+ethereum-types.workspace = true
+tokio.workspace = true
+tokio-util.workspace = true
+tracing-subscriber = { workspace = true, features = ["env-filter"] }
+tracing.workspace = true
+hex.workspace = true
+
+# ethereum_rust
+ethereum_rust-core.workspace = true
+ethereum_rust-rlp.workspace = true
+
+# l2
+ethereum_rust-l2.workspace = true
+
+# risc0
+zkvm_interface = { path = "./zkvm/interface", default-features = false }
+risc0-zkvm = { version = "1.1.2" }
+
+# revm (this dep is temporary, should be replaced with ethereum_rust-vm after ExecutionDB is completely integrated into the L1)
+revm = { version = "14.0.3", features = [
+  "std",
+  "serde",
+  "kzg-rs",
+], default-features = false }
+
+[lib]
+name = "ethereum_rust_prover_lib"
+path = "src/lib.rs"
+
+[[bin]]
+name = "ethereum_rust_prover"
+path = "src/main.rs"
+
+[features]
+default = []
+build_zkvm = ["zkvm_interface/build_zkvm"]

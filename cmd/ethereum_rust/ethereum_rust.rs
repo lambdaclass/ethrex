@@ -177,8 +177,6 @@ async fn main() {
         if #[cfg(feature = "l2")] {
             let l2_proposer = ethereum_rust_l2::start_proposer(store.clone()).into_future();
             tracker.spawn(l2_proposer);
-            // let l2_prover = ethereum_rust_l2::start_prover().into_future();
-            // tracker.spawn(l2_prover);
         } else if #[cfg(feature = "dev")] {
             use ethereum_rust_dev;
 
