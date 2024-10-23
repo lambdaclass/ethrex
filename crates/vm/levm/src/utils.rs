@@ -71,5 +71,6 @@ pub fn new_vm_with_ops_addr_bal(bytecode: Bytes, address: Address, balance: U256
         state,
         Default::default(),
         Default::default(),
+        Default::default(),
     )
 }

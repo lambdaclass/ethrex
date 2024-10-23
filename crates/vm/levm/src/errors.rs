@@ -19,6 +19,8 @@ pub enum VMError {
     OverflowInArithmeticOp,
     FatalError,
     InvalidTransaction,
+    MissingBlobHashes,
+    BlobHashIndexOutOfBounds,
     RevertOpcode,
     SenderAccountDoesNotExist,
     SenderAccountShouldNotHaveBytecode,
