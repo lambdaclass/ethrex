@@ -113,8 +113,6 @@ pub(crate) fn decode_ack_message(
 }
 
 fn decrypt_message(static_key: &SecretKey, msg: &[u8], auth_data: [u8; 2]) -> Vec<u8> {
-    info!("msg {msg:?}");
-
     // Split the message into its components. General layout is:
     // public-key (65) || iv (16) || ciphertext || mac (32)
     let (pk, rest) = msg.split_at(65);

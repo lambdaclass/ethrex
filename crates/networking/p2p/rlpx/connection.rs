@@ -289,6 +289,14 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
             _ => panic!("Received an unexpected message"),
         }
     }
+
+    pub fn get_remote_node_id(&self) -> H512 {
+        match &self.state {
+            RLPxConnectionState::Established(state) => state.remote_node_id,
+            // TODO proper error
+            _ => panic!("Invalid state"),
+        }
+    }
 }
 
 enum RLPxConnectionState {
@@ -358,6 +366,7 @@ impl ReceivedAuth {
 }
 
 struct InitiatedAuth {
+    pub(crate) remote_node_id: H512,
     pub(crate) local_nonce: H256,
     pub(crate) local_ephemeral_key: SecretKey,
     pub(crate) local_init_message: Vec<u8>,
@@ -366,6 +375,7 @@ struct InitiatedAuth {
 impl InitiatedAuth {
     pub fn new(previous_state: &Initiator, local_init_message: Vec<u8>) -> Self {
         Self {
+            remote_node_id: previous_state.remote_node_id,
             local_nonce: previous_state.nonce,
             local_ephemeral_key: previous_state.ephemeral_key.clone(),
             local_init_message,
@@ -374,6 +384,7 @@ impl InitiatedAuth {
 }
 
 pub struct Established {
+    pub remote_node_id: H512,
     pub(crate) mac_key: H256,
     pub ingress_mac: Keccak256,
     pub egress_mac: Keccak256,
@@ -391,6 +402,7 @@ impl Established {
         .into();
 
         Self::new(
+            previous_state.remote_node_id,
             init_message,
             previous_state.local_nonce,
             previous_state.local_ephemeral_key.clone(),
@@ -413,6 +425,7 @@ impl Established {
             Keccak256::digest([remote_nonce.0, previous_state.local_nonce.0].concat()).into();
 
         Self::new(
+            previous_state.remote_node_id,
             previous_state.local_init_message.clone(),
             previous_state.local_nonce,
             previous_state.local_ephemeral_key.clone(),
@@ -423,7 +436,9 @@ impl Established {
         )
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn new(
+        remote_node_id: H512,
         local_init_message: Vec<u8>,
         local_nonce: H256,
         local_ephemeral_key: SecretKey,
@@ -456,6 +471,7 @@ impl Established {
         let ingress_aes = <Aes256Ctr64BE as KeyIvInit>::new(&aes_key.0.into(), &[0; 16].into());
         let egress_aes = ingress_aes.clone();
         Self {
+            remote_node_id,
             mac_key,
             ingress_mac,
             egress_mac,

@@ -80,9 +80,13 @@ impl Node {
     pub fn enode_url(&self) -> String {
         let node_id = hex::encode(self.node_id);
         let node_ip = self.ip;
-        let discovery_port = self.tcp_port;
-        let listener_port = self.udp_port;
-        format!("enode://{node_id}@{node_ip}:{listener_port}?discport={discovery_port}")
+        let discovery_port = self.udp_port;
+        let listener_port = self.tcp_port;
+        if discovery_port != listener_port {
+            format!("enode://{node_id}@{node_ip}:{listener_port}?discport={discovery_port}")
+        } else {
+            format!("enode://{node_id}@{node_ip}:{listener_port}")
+        }
     }
 }
 
