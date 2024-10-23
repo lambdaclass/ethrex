@@ -51,6 +51,12 @@ impl Memory {
             .splice(offset..offset + len, value.iter().copied());
     }
 
+    pub fn store_n_bytes(&mut self, offset: usize, value: &[u8], size: usize) {
+        self.resize(offset + size);
+        self.data
+            .splice(offset..offset + size, value.iter().copied());
+    }
+
     pub fn size(&self) -> U256 {
         U256::from(self.data.len())
     }

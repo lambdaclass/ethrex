@@ -60,7 +60,7 @@ pub fn new_vm_with_ops_addr_bal(bytecode: Bytes, address: Address, balance: U256
         address,
         Default::default(),
         Default::default(),
-        U256::MAX,
+        U256::MAX, // arbitrary gas limit for now...
         Default::default(),
         Default::default(),
         Default::default(),

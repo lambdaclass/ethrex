@@ -1,4 +1,6 @@
-use ethereum_rust_levm::{call_frame::CallFrame, primitives::Bytes, utils::new_vm_with_bytecode};
+use ethereum_rust_levm::{
+    call_frame::CallFrame, errors::TxResult, primitives::Bytes, utils::new_vm_with_bytecode,
+};
 use revm::{
     db::BenchmarkDB,
     primitives::{address, Bytecode, TransactTo},
@@ -22,20 +24,20 @@ pub fn run_with_levm(program: &str, runs: usize, number_of_iterations: u32) {
         let mut vm = new_vm_with_bytecode(Bytes::new());
         *vm.current_call_frame_mut() = call_frame.clone();
         let mut current_call_frame = vm.call_frames.pop().unwrap();
-        let result = black_box(vm.execute(&mut current_call_frame));
-        assert!(result.is_ok());
+        let tx_report = black_box(vm.execute(&mut current_call_frame));
+        assert!(tx_report.result == TxResult::Success);
     }
     let mut vm = new_vm_with_bytecode(Bytes::new());
     *vm.current_call_frame_mut() = call_frame.clone();
     let mut current_call_frame = vm.call_frames.pop().unwrap();
-    let result = black_box(vm.execute(&mut current_call_frame));
-    assert!(result.is_ok());
+    let tx_report = black_box(vm.execute(&mut current_call_frame));
+    assert!(tx_report.result == TxResult::Success);
 
-    match result {
-        Ok(_) => {
-            println!("\t\t0x{}", hex::encode(current_call_frame.calldata));
+    match tx_report.result {
+        TxResult::Success => {
+            println!("\t\t0x{}", hex::encode(current_call_frame.returndata));
         }
-        Err(error) => panic!("Execution failed: {:?}", error),
+        TxResult::Revert(error) => panic!("Execution failed: {:?}", error),
     }
 }
 
