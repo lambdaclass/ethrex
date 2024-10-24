@@ -1,18 +1,25 @@
+// The behaviour of the filtering endpoints is based on:
+// - Manually testing the behaviour deploying contracts on the Sepolia test network.
+// - Go-Ethereum, specifically: https://github.com/ethereum/go-ethereum/blob/368e16f39d6c7e5cce72a92ec289adbfbaed4854/eth/filters/filter.go
+// - Ethereum's reference: https://ethereum.org/en/developers/docs/apis/json-rpc/#eth_newfilter
+use ethereum_rust_core::types::BlockNumber;
+use ethereum_rust_storage::Store;
 use std::{
     collections::HashMap,
     sync::{Arc, Mutex},
     time::{Duration, Instant},
 };
-
-use ethereum_rust_storage::Store;
 use tracing::error;
 
-use crate::utils::{parse_json_hex, RpcErr, RpcRequest};
 use crate::RpcHandler;
+use crate::{
+    types::block_identifier::{BlockIdentifier, BlockTag},
+    utils::{parse_json_hex, RpcErr, RpcRequest},
+};
 use rand::prelude::*;
 use serde_json::{json, Value};
 
-use super::logs::LogsFilter;
+use super::logs::{fetch_logs_with_filter, LogsFilter};
 
 #[derive(Debug, Clone)]
 pub struct NewFilterRequest {
@@ -36,8 +43,19 @@ pub fn clean_outdated_filters(filters: ActiveFilters, filter_duration: Duration)
     active_filters_guard
         .retain(|_, (filter_timestamp, _)| filter_timestamp.elapsed() <= filter_duration);
 }
-/// Maps IDs to active log filters and their timestamps.
-pub type ActiveFilters = Arc<Mutex<HashMap<u64, (Instant, LogsFilter)>>>;
+/// Maps IDs to active pollable filters and their timestamps.
+pub type ActiveFilters = Arc<Mutex<HashMap<u64, (Instant, PollableFilter)>>>;
+
+#[derive(Debug, Clone)]
+pub struct PollableFilter {
+    /// Last block number from when this
+    /// filter was requested or created.
+    /// i.e. if this filter is requested,
+    /// the log will be applied from this
+    /// block number up to the latest one.
+    pub last_block_number: BlockNumber,
+    pub filter_data: LogsFilter,
+}
 
 impl NewFilterRequest {
     pub fn parse(params: &Option<Vec<serde_json::Value>>) -> Result<Self, RpcErr> {
@@ -67,6 +85,10 @@ impl NewFilterRequest {
             return Err(RpcErr::BadParams("Invalid block range".to_string()));
         }
 
+        let Some(last_block_number) = storage.get_latest_block_number()? else {
+            error!("Latest block number was requested but it does not exist");
+            return Err(RpcErr::Internal("Failed to create filter".to_string()));
+        };
         let id: u64 = random();
         let timestamp = Instant::now();
         let mut active_filters_guard = filters.lock().unwrap_or_else(|mut poisoned_guard| {
@@ -75,8 +97,16 @@ impl NewFilterRequest {
             filters.clear_poison();
             poisoned_guard.into_inner()
         });
-
-        active_filters_guard.insert(id, (timestamp, self.request_data.clone()));
+        active_filters_guard.insert(
+            id,
+            (
+                timestamp,
+                PollableFilter {
+                    last_block_number,
+                    filter_data: self.request_data.clone(),
+                },
+            ),
+        );
         let as_hex = json!(format!("0x{:x}", id));
         Ok(as_hex)
     }
@@ -136,6 +166,90 @@ impl DeleteFilterRequest {
     }
 }
 
+pub struct FilterChangesRequest {
+    pub id: u64,
+}
+
+impl FilterChangesRequest {
+    pub fn parse(params: &Option<Vec<serde_json::Value>>) -> Result<Self, RpcErr> {
+        match params.as_deref() {
+            Some([param]) => {
+                let id = parse_json_hex(param).map_err(|_err| RpcErr::BadHexFormat(0))?;
+                Ok(FilterChangesRequest { id })
+            }
+            Some(_) => Err(RpcErr::BadParams(
+                "Expected an array with a single hex encoded id".to_string(),
+            )),
+            None => Err(RpcErr::MissingParam("0".to_string())),
+        }
+    }
+    pub fn handle(
+        &self,
+        storage: ethereum_rust_storage::Store,
+        filters: ActiveFilters,
+    ) -> Result<serde_json::Value, crate::utils::RpcErr> {
+        let Some(latest_block_num) = storage.get_latest_block_number()? else {
+            error!("Latest block number was requested but it does not exist");
+            return Err(RpcErr::Internal("Failed to create filter".to_string()));
+        };
+        let mut active_filters_guard = filters.lock().unwrap_or_else(|mut poisoned_guard| {
+            error!("THREAD CRASHED WITH MUTEX TAKEN; SYSTEM MIGHT BE UNSTABLE");
+            **poisoned_guard.get_mut() = HashMap::new();
+            filters.clear_poison();
+            poisoned_guard.into_inner()
+        });
+        if let Some((timestamp, filter)) = active_filters_guard.get_mut(&self.id) {
+            // We'll only get changes for a filter that either has a block
+            // range for upcoming blocks, or for the 'latest' tag.
+            let valid_block_range = match filter.filter_data.to_block {
+                BlockIdentifier::Tag(BlockTag::Latest) => true,
+                BlockIdentifier::Number(block_num) if block_num >= latest_block_num => true,
+                _ => false,
+            };
+            // This filter has a valid block range, so here's what we'll do:
+            // - Update the filter's timestamp and block number from the last poll.
+            // - Do the query to fetch logs in range last_block_number..=to_block for
+            //   this filter.
+            if valid_block_range {
+                // Since the filter was polled, updated its timestamp, so
+                // it does not expire.
+                *timestamp = Instant::now();
+                // Update this filter so the current query
+                // starts from the last polled block.
+                filter.filter_data.from_block = BlockIdentifier::Number(filter.last_block_number);
+                filter.last_block_number = latest_block_num;
+                let mut filter = filter.clone();
+                filter.filter_data.to_block = BlockIdentifier::Number(latest_block_num);
+                // Drop the lock early to process this filter's query
+                // and not keep the lock more than we should.
+                drop(active_filters_guard);
+                let logs = fetch_logs_with_filter(&filter.filter_data, storage)?;
+                serde_json::to_value(logs).map_err(|error| {
+                    tracing::error!("Log filtering request failed with: {error}");
+                    RpcErr::Internal("Failed to filter logs".to_string())
+                })
+            } else {
+                serde_json::to_value(Vec::<u8>::new()).map_err(|error| {
+                    tracing::error!("Log filtering request failed with: {error}");
+                    RpcErr::Internal("Failed to filter logs".to_string())
+                })
+            }
+        } else {
+            Err(RpcErr::BadParams(
+                "No matching filter for given id".to_string(),
+            ))
+        }
+    }
+    pub fn stateful_call(
+        req: &RpcRequest,
+        storage: ethereum_rust_storage::Store,
+        filters: ActiveFilters,
+    ) -> Result<serde_json::Value, crate::utils::RpcErr> {
+        let request = Self::parse(&req.params)?;
+        request.handle(storage, filters)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::{
@@ -144,20 +258,25 @@ mod tests {
         time::{Duration, Instant},
     };
 
+    use super::ActiveFilters;
     use crate::{
-        eth::logs::{AddressFilter, LogsFilter, TopicFilter},
+        eth::{
+            filter::PollableFilter,
+            logs::{AddressFilter, LogsFilter, TopicFilter},
+        },
         map_http_requests,
-        utils::test_utils::start_test_api,
+        utils::test_utils::{self, start_test_api},
         FILTER_DURATION,
     };
     use crate::{
         types::block_identifier::BlockIdentifier,
         utils::{test_utils::example_p2p_node, RpcRequest},
     };
+    use ethereum_rust_core::types::Genesis;
     use ethereum_rust_storage::{EngineType, Store};
-    use serde_json::{json, Value};
 
-    use super::ActiveFilters;
+    use serde_json::{json, Value};
+    use test_utils::TEST_GENESIS;
 
     #[test]
     fn filter_request_smoke_test_valid_params() {
@@ -184,10 +303,19 @@ mod tests {
         let filters = filters.lock().unwrap();
         assert!(filters.len() == 1);
         let (_, filter) = filters.clone().get(&id).unwrap().clone();
-        assert!(matches!(filter.from_block, BlockIdentifier::Number(1)));
-        assert!(matches!(filter.to_block, BlockIdentifier::Number(2)));
-        assert!(filter.address_filters.is_none());
-        assert!(matches!(&filter.topics[..], [TopicFilter::Topic(_)]));
+        assert!(matches!(
+            filter.filter_data.from_block,
+            BlockIdentifier::Number(1)
+        ));
+        assert!(matches!(
+            filter.filter_data.to_block,
+            BlockIdentifier::Number(2)
+        ));
+        assert!(filter.filter_data.address_filters.is_none());
+        assert!(matches!(
+            &filter.filter_data.topics[..],
+            [TopicFilter::Topic(_)]
+        ));
     }
 
     #[test]
@@ -212,10 +340,16 @@ mod tests {
         let filters = filters.lock().unwrap();
         assert!(filters.len() == 1);
         let (_, filter) = filters.clone().get(&id).unwrap().clone();
-        assert!(matches!(filter.from_block, BlockIdentifier::Number(1)));
-        assert!(matches!(filter.to_block, BlockIdentifier::Number(255)));
-        assert!(filter.address_filters.is_none());
-        assert!(matches!(&filter.topics[..], []));
+        assert!(matches!(
+            filter.filter_data.from_block,
+            BlockIdentifier::Number(1)
+        ));
+        assert!(matches!(
+            filter.filter_data.to_block,
+            BlockIdentifier::Number(255)
+        ));
+        assert!(filter.filter_data.address_filters.is_none());
+        assert!(matches!(&filter.filter_data.topics[..], []));
     }
 
     #[test]
@@ -240,13 +374,19 @@ mod tests {
         let filters = filters.lock().unwrap();
         assert!(filters.len() == 1);
         let (_, filter) = filters.clone().get(&id).unwrap().clone();
-        assert!(matches!(filter.from_block, BlockIdentifier::Number(1)));
-        assert!(matches!(filter.to_block, BlockIdentifier::Number(255)));
         assert!(matches!(
-            filter.address_filters.unwrap(),
+            filter.filter_data.from_block,
+            BlockIdentifier::Number(1)
+        ));
+        assert!(matches!(
+            filter.filter_data.to_block,
+            BlockIdentifier::Number(255)
+        ));
+        assert!(matches!(
+            filter.filter_data.address_filters.unwrap(),
             AddressFilter::Many(_)
         ));
-        assert!(matches!(&filter.topics[..], []));
+        assert!(matches!(&filter.filter_data.topics[..], []));
     }
 
     #[test]
@@ -298,14 +438,16 @@ mod tests {
     ) -> u64 {
         let node = example_p2p_node();
         let request: RpcRequest = serde_json::from_value(json_req).expect("Test json is incorrect");
-        let response = map_http_requests(
-            &request,
-            Store::new("in-mem", EngineType::InMemory).unwrap(),
-            node,
-            filters_pointer.clone(),
-        )
-        .unwrap()
-        .to_string();
+        let genesis_config: Genesis =
+            serde_json::from_str(TEST_GENESIS).expect("Fatal: non-valid genesis test config");
+        let store = Store::new("in-mem", EngineType::InMemory)
+            .expect("Fatal: could not create in memory test db");
+        store
+            .add_initial_state(genesis_config)
+            .expect("Fatal: could not add test genesis in test");
+        let response = map_http_requests(&request, store, node, filters_pointer.clone())
+            .unwrap()
+            .to_string();
         let trimmed_id = response.trim().trim_matches('"');
         assert!(trimmed_id.starts_with("0x"));
         let hex = trimmed_id.trim_start_matches("0x");
@@ -331,11 +473,14 @@ mod tests {
             0xFF,
             (
                 Instant::now(),
-                LogsFilter {
-                    from_block: BlockIdentifier::Number(1),
-                    to_block: BlockIdentifier::Number(2),
-                    address_filters: None,
-                    topics: vec![],
+                PollableFilter {
+                    last_block_number: 0,
+                    filter_data: LogsFilter {
+                        from_block: BlockIdentifier::Number(1),
+                        to_block: BlockIdentifier::Number(2),
+                        address_filters: None,
+                        topics: vec![],
+                    },
                 },
             ),
         );
@@ -413,6 +558,7 @@ mod tests {
             .await
             .unwrap();
 
+        dbg!(&response);
         assert!(
             response.get("result").is_some(),
             "Response should have a 'result' field"

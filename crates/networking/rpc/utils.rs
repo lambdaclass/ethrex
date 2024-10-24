@@ -252,6 +252,7 @@ pub mod test_utils {
 
     use crate::start_api;
 
+    pub const TEST_GENESIS: &str = include_str!("../../../test_data/genesis-l1.json");
     pub fn example_p2p_node() -> Node {
         let node_id_1 = H512::from_str("d860a01f9722d78051619d1e2351aba3f43f943f6f00718d1b9baa4101932a1f5011f16bb2b1bb35db20d6fe28fa0bf09636d26a87d31de9ec6203eeedb1f666").unwrap();
         Node {
@@ -278,6 +279,9 @@ pub mod test_utils {
         let authrpc_addr: SocketAddr = "127.0.0.1:8501".parse().unwrap();
         let storage =
             Store::new("", EngineType::InMemory).expect("Failed to create in-memory storage");
+        storage
+            .add_initial_state(serde_json::from_str(TEST_GENESIS).unwrap())
+            .expect("Failed to build test genesis");
 
         let jwt_secret = Default::default();
         let local_p2p_node = example_p2p_node();

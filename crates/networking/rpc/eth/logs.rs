@@ -1,3 +1,7 @@
+// The behaviour of the filtering endpoints is based on:
+// - Manually testing the behaviour deploying contracts on the Sepolia test network.
+// - Go-Ethereum, specifically: https://github.com/ethereum/go-ethereum/blob/368e16f39d6c7e5cce72a92ec289adbfbaed4854/eth/filters/filter.go
+// - Ethereum's reference: https://ethereum.org/en/developers/docs/apis/json-rpc/#eth_newfilter
 use crate::{
     types::{block_identifier::BlockIdentifier, receipt::RpcLog},
     RpcErr, RpcHandler,
@@ -80,121 +84,130 @@ impl RpcHandler for LogsFilter {
             )),
         }
     }
-    // TODO: This is longer than it has the right to be, maybe we should refactor it.
-    // The main problem here is the layers of indirection needed
-    // to fetch tx and block data for a log rpc response, some ideas here are:
-    // - The ideal one is to have a key-value store BlockNumber -> Log, where the log also stores
-    //   the block hash, transaction hash, transaction number and its own index.
-    // - Another on is the receipt stores the block hash, transaction hash and block number,
-    //   then we simply could retrieve each log from the receipt and add the info
-    //   needed for the RPCLog struct.
     fn handle(&self, storage: Store) -> Result<Value, RpcErr> {
-        let from = self
-            .from_block
-            .resolve_block_number(&storage)?
-            .ok_or(RpcErr::WrongParam("fromBlock".to_string()))?;
-        let to = self
-            .to_block
-            .resolve_block_number(&storage)?
-            .ok_or(RpcErr::WrongParam("toBlock".to_string()))?;
+        let filtered_logs = fetch_logs_with_filter(self, storage)?;
+        serde_json::to_value(filtered_logs).map_err(|error| {
+            tracing::error!("Log filtering request failed with: {error}");
+            RpcErr::Internal("Failed to filter logs".to_string())
+        })
+    }
+}
 
-        if (from..=to).is_empty() {
-            return Err(RpcErr::BadParams("Empty range".to_string()));
-        }
+// TODO: This is longer than it has the right to be, maybe we should refactor it.
+// The main problem here is the layers of indirection needed
+// to fetch tx and block data for a log rpc response, some ideas here are:
+// - The ideal one is to have a key-value store BlockNumber -> Log, where the log also stores
+//   the block hash, transaction hash, transaction number and its own index.
+// - Another on is the receipt stores the block hash, transaction hash and block number,
+//   then we simply could retrieve each log from the receipt and add the info
+//   needed for the RPCLog struct.
 
-        let address_filter: HashSet<_> = match &self.address_filters {
-            Some(AddressFilter::Single(address)) => std::iter::once(address).collect(),
-            Some(AddressFilter::Many(addresses)) => addresses.iter().collect(),
-            None => HashSet::new(),
-        };
+pub(crate) fn fetch_logs_with_filter(
+    filter: &LogsFilter,
+    storage: Store,
+) -> Result<Vec<RpcLog>, RpcErr> {
+    let from = filter
+        .from_block
+        .resolve_block_number(&storage)?
+        .ok_or(RpcErr::WrongParam("fromBlock".to_string()))?;
+    let to = filter
+        .to_block
+        .resolve_block_number(&storage)?
+        .ok_or(RpcErr::WrongParam("toBlock".to_string()))?;
+    if (from..=to).is_empty() {
+        return Err(RpcErr::BadParams("Empty range".to_string()));
+    }
+    let address_filter: HashSet<_> = match &filter.address_filters {
+        Some(AddressFilter::Single(address)) => std::iter::once(address).collect(),
+        Some(AddressFilter::Many(addresses)) => addresses.iter().collect(),
+        None => HashSet::new(),
+    };
 
-        let mut logs: Vec<RpcLog> = Vec::new();
-        // The idea here is to fetch every log and filter by address, if given.
-        // For that, we'll need each block in range, and its transactions,
-        // and for each transaction, we'll need its receipts, which
-        // contain the actual logs we want.
-        for block_num in from..=to {
-            // Take the header of the block, we
-            // will use it to access the transactions.
-            let block_body =
-                storage
-                    .get_block_body(block_num)?
-                    .ok_or(RpcErr::Internal(format!(
-                        "Could not get body for block {block_num}"
-                    )))?;
-            let block_header = storage
-                .get_block_header(block_num)?
-                .ok_or(RpcErr::Internal(format!(
-                    "Could not get header for block {block_num}"
-                )))?;
-            let block_hash = block_header.compute_block_hash();
+    let mut logs: Vec<RpcLog> = Vec::new();
+    // The idea here is to fetch every log and filter by address, if given.
+    // For that, we'll need each block in range, and its transactions,
+    // and for each transaction, we'll need its receipts, which
+    // contain the actual logs we want.
+    for block_num in from..=to {
+        // Take the header of the block, we
+        // will use it to access the transactions.
+        let block_body = storage
+            .get_block_body(block_num)?
+            .ok_or(RpcErr::Internal(format!(
+                "Could not get body for block {block_num}"
+            )))?;
+        let block_header = storage
+            .get_block_header(block_num)?
+            .ok_or(RpcErr::Internal(format!(
+                "Could not get header for block {block_num}"
+            )))?;
+        let block_hash = block_header.compute_block_hash();
 
-            let mut block_log_index = 0_u64;
+        let mut block_log_index = 0_u64;
 
-            // Since transactions share indices with their receipts,
-            // we'll use them to fetch their receipts, which have the actual logs.
-            for (tx_index, tx) in block_body.transactions.iter().enumerate() {
-                let tx_hash = tx.compute_hash();
-                let receipt = storage
-                    .get_receipt(block_num, tx_index as u64)?
-                    .ok_or(RpcErr::Internal("Could not get receipt".to_owned()))?;
+        // Since transactions share indices with their receipts,
+        // we'll use them to fetch their receipts, which have the actual logs.
+        for (tx_index, tx) in block_body.transactions.iter().enumerate() {
+            let tx_hash = tx.compute_hash();
+            let receipt = storage
+                .get_receipt(block_num, tx_index as u64)?
+                .ok_or(RpcErr::Internal("Could not get receipt".to_owned()))?;
 
-                if receipt.succeeded {
-                    for log in &receipt.logs {
-                        if address_filter.is_empty() || address_filter.contains(&log.address) {
-                            // Some extra data is needed when
-                            // forming the RPC response.
-                            logs.push(RpcLog {
-                                log: log.clone().into(),
-                                log_index: block_log_index,
-                                transaction_hash: tx_hash,
-                                transaction_index: tx_index as u64,
-                                block_number: block_num,
-                                block_hash,
-                                removed: false,
-                            });
-                        }
-                        block_log_index += 1;
+            if receipt.succeeded {
+                for log in &receipt.logs {
+                    if address_filter.is_empty() || address_filter.contains(&log.address) {
+                        // Some extra data is needed when
+                        // forming the RPC response.
+                        logs.push(RpcLog {
+                            log: log.clone().into(),
+                            log_index: block_log_index,
+                            transaction_hash: tx_hash,
+                            transaction_index: tx_index as u64,
+                            block_number: block_num,
+                            block_hash,
+                            removed: false,
+                        });
                     }
+                    block_log_index += 1;
                 }
             }
         }
-        // Now that we have the logs filtered by address,
-        // we still need to filter by topics if it was a given parameter.
+    }
+    // Now that we have the logs filtered by address,
+    // we still need to filter by topics if it was a given parameter.
 
-        let filtered_logs = if self.topics.is_empty() {
-            logs
-        } else {
-            logs.into_iter()
-                .filter(|rpc_log| {
-                    if self.topics.len() > rpc_log.log.topics.len() {
-                        return false;
-                    }
-                    for (i, topic_filter) in self.topics.iter().enumerate() {
-                        match topic_filter {
-                            TopicFilter::Topic(t) => {
-                                if let Some(topic) = t {
-                                    if rpc_log.log.topics[i] != *topic {
-                                        return false;
-                                    }
-                                }
-                            }
-                            TopicFilter::Topics(sub_topics) => {
-                                if !sub_topics.is_empty()
-                                    && !sub_topics
-                                        .iter()
-                                        .any(|st| st.map_or(true, |t| rpc_log.log.topics[i] == t))
-                                {
+    let filtered_logs = if filter.topics.is_empty() {
+        logs
+    } else {
+        logs.into_iter()
+            .filter(|rpc_log| {
+                if filter.topics.len() > rpc_log.log.topics.len() {
+                    return false;
+                }
+                for (i, topic_filter) in filter.topics.iter().enumerate() {
+                    match topic_filter {
+                        TopicFilter::Topic(t) => {
+                            if let Some(topic) = t {
+                                if rpc_log.log.topics[i] != *topic {
                                     return false;
                                 }
                             }
                         }
+                        TopicFilter::Topics(sub_topics) => {
+                            if !sub_topics.is_empty()
+                                && !sub_topics
+                                    .iter()
+                                    .any(|st| st.map_or(true, |t| rpc_log.log.topics[i] == t))
+                            {
+                                return false;
+                            }
+                        }
                     }
-                    true
-                })
-                .collect::<Vec<RpcLog>>()
-        };
+                }
+                true
+            })
+            .collect::<Vec<RpcLog>>()
+    };
 
-        serde_json::to_value(filtered_logs).map_err(|error| RpcErr::Internal(error.to_string()))
-    }
+    Ok(filtered_logs)
 }
