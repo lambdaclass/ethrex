@@ -38,8 +38,8 @@ async fn main() {
     )
     .expect("Malformed DEPLOYER_PRIVATE_KEY (SecretKey::parse)");
 
-    if std::fs::exists("solc_out").expect("Could not determine if solc_out exists") {
-        std::fs::remove_dir_all("solc_out").expect("Failed to remove solc_out");
+    if std::fs::exists("contracts/solc_out").expect("Could not determine if solc_out exists") {
+        std::fs::remove_dir_all("contracts/solc_out").expect("Failed to remove solc_out");
     }
 
     let overrides = Overrides {
