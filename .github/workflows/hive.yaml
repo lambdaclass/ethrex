@@ -4,10 +4,14 @@ on:
   merge_group:
   push:
     branches: [main]
-    paths-ignore: ["crates/l2/**"]
   pull_request:
     branches: ["*"]
-    paths-ignore: ["crates/l2/**"]
+    paths-ignore: 
+      - "crates/l2/**"
+      - 'README.md'
+      - 'LICENSE'
+      - "**/README.md"
+      - "**/docs/**"
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}

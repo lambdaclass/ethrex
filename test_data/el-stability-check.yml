@@ -1,0 +1,28 @@
+# This file is based upon `assertoor-tests` stability check file:
+#   https://github.com/ethpandaops/assertoor-test/blob/master/assertoor-tests/stability-check.yaml
+#
+# We removed the consensus checks to keep it minimal. The checks removed were:
+#   - check_consensus_finality
+#   - check_consensus_attestation_stats
+#   - check_consensus_reorgs
+#   - check_consensus_forks
+
+id: el-stability-check
+name: "Check Execution Stability"
+timeout: 2h
+tasks:
+- name: check_clients_are_healthy
+  title: "Check if at least one client is ready"
+  timeout: 5m
+  config:
+    minClientCount: 1
+
+- name: run_tasks_concurrent
+  title: "Check if all EL & CL clients are synced"
+  timeout: 30m
+  config:
+    tasks:
+    - name: check_consensus_sync_status
+      title: "Check if CL clients are synced"
+    - name: check_execution_sync_status
+      title: "Check if EL clients are synced"
