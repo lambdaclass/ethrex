@@ -271,7 +271,7 @@ impl Proposer {
             .saturating_add(TX_GAS_COST);
 
         self.eth_client
-            .send_eip1559_transaction(tx, self.l1_private_key)
+            .send_eip1559_transaction(&mut tx, self.l1_private_key)
             .await
             .map_err(ProposerError::from)
     }

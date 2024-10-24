@@ -86,7 +86,7 @@ async fn transfer_from(
             println!("transfer {i} from {pk}");
         }
 
-        let tx = EIP1559Transaction {
+        let mut tx = EIP1559Transaction {
             to: TxKind::Call(to_address),
             chain_id: cfg.network.l2_chain_id,
             nonce: i,
@@ -97,10 +97,7 @@ async fn transfer_from(
             ..Default::default()
         };
 
-        while let Err(e) = client
-            .send_eip1559_transaction(tx.clone(), private_key)
-            .await
-        {
+        while let Err(e) = client.send_eip1559_transaction(&mut tx, private_key).await {
             println!("Transaction failed (PK: {pk} - Nonce: {}): {e}", tx.nonce);
             retries += 1;
             sleep(std::time::Duration::from_secs(2));

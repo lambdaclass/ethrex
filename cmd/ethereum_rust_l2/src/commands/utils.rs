@@ -48,8 +48,8 @@ fn parse_arg(arg_type: &str, arg: &str) -> Vec<u8> {
         }
         "uint256" => {
             let number = U256::from_dec_str(arg).expect("Cannot parse number");
-            let mut buf: &mut [u8] = &mut [0u8; 32];
-            number.to_big_endian(&mut buf);
+            let buf = &mut [0u8; 32];
+            number.to_big_endian(buf);
             buf.to_vec()
         }
         "bytes32" => {

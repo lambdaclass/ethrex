@@ -1,0 +1,21 @@
+[package]
+name = "ethereum_rust_l2-deployer"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+tokio = { version = "1.38.0", features = ["full"] }
+ethereum-types = { version = "0.14.1", features = ["serialize"] }
+bytes = { version = "1.6.0", features = ["serde"] }
+libsecp256k1 = "0.7.1"
+keccak-hash = "0.10.0"
+hex = "0.4.3"
+
+ethereum_rust-l2 = { path = "../../l2" }
+ethereum_rust-core = { path = "../../common" }
+
+[[bin]]
+name = "ethereum_rust_l2_l1_deployer"
+path = "./deployer.rs"

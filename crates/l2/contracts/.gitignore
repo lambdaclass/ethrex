@@ -1,13 +1,3 @@
-# Compiler files
-cache/
-out/
-
-# Ignores development broadcast logs
-broadcast/
-
-# Docs
-docs/
-
 # Dotenv file
 .env
 
