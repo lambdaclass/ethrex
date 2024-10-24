@@ -1,4 +1,4 @@
-# Lambda Ethereum Rust Execution Client
+# Lambda Ethereum Rust
 
 [![Telegram Chat][tg-badge]][tg-url]
 [![license](https://img.shields.io/github/license/lambdaclass/ethereum_rust)](/LICENSE)
@@ -6,26 +6,14 @@
 [tg-badge]: https://img.shields.io/endpoint?url=https%3A%2F%2Ftg.sumanjay.workers.dev%2Frust_ethereum%2F&logo=telegram&label=chat&color=neon
 [tg-url]: https://t.me/rust_ethereum
 
-## 📚 References and acknowledgements
+# L1 and L2 support
 
-The following links, repos, companies and projects have been important in the development of this repo, we have learned a lot from them and want to thank and acknowledge them.
+This client supports running in two different modes:
 
-- [Ethereum](https://ethereum.org/en/)
-- [ZKsync](https://zksync.io/)
-- [Starkware](https://starkware.co/)
-- [Polygon](https://polygon.technology/)
-- [Optimism](https://www.optimism.io/)
-- [Arbitrum](https://arbitrum.io/)
-- [Geth](https://github.com/ethereum/go-ethereum)
-- [Taiko](https://taiko.xyz/)
-- [RISC Zero](https://risczero.com/)
-- [SP1](https://github.com/succinctlabs/sp1)
-- [Aleo](https://aleo.org/)
-- [Neptune](https://neptune.cash/)
-- [Mina](https://minaprotocol.com/)
-- [Nethermind](https://www.nethermind.io/)
+- As a regular Ethereum execution client, like [Geth](https://github.com/ethereum/go-ethereum).
+- As a ZK-Rollup, where block execution is proven and the proof sent to an L1 network for verification, thus inheriting the L1's security.
 
-If we forgot to include anyone, please file an issue so we can add you. We always strive to reference the inspirations and code we use, but as an organization with multiple people, mistakes can happen, and someone might forget to include a reference.
+We call the first one Lambda Ethereum Rust L1 and the second one Lambda Ethereum Rust L2.
 
 ## Philosophy
 
@@ -45,15 +33,6 @@ Read more about our engineering philosophy [here](https://blog.lambdaclass.com/l
 - Prioritize code readability and maintainability over premature optimizations.
 - Avoid concurrency split all over the codebase. Concurrency adds complexity. Only use where strictly necessary.
 
-# L1 and L2 support
-
-This client supports running in two different modes:
-
-- As a regular Ethereum execution client, like `geth`.
-- As a ZK-Rollup, where block execution is proven and the proof sent to an L1 network for verification, thus inheriting the L1's security.
-
-We call the first one Lambda Ethereum Rust L1 and the second one Lambda Ethereum Rust L2.
-
 # Lambda Ethereum Rust L2
 
 [Full Roadmap](./crates/l2/README.md)
@@ -67,17 +46,14 @@ The main differences between this mode and regular Ethereum Rust are:
 
 [](https://github.com/user-attachments/assets/99c96831-a641-4978-b70c-4acb519d0098)
 
-
-
 # Lambda Ethereum Rust L1
 
 ### Table of Contents
 
-- [Lambda Ethereum Rust Execution Client](#lambda-ethereum-rust-execution-client)
-  - [📚 References and acknowledgements](#-references-and-acknowledgements)
+- [Lambda Ethereum Rust](#lambda-ethereum-rust)
+- [L1 and L2 support](#l1-and-l2-support)
   - [Philosophy](#philosophy)
   - [Design Principles](#design-principles)
-- [L1 and L2 support](#l1-and-l2-support)
 - [Lambda Ethereum Rust L2](#lambda-ethereum-rust-l2)
 - [Lambda Ethereum Rust L1](#lambda-ethereum-rust-l1)
     - [Table of Contents](#table-of-contents)
@@ -97,9 +73,12 @@ The main differences between this mode and regular Ethereum Rust are:
         - [Ethereum Foundation Tests](#ethereum-foundation-tests)
         - [Crate Specific Tests](#crate-specific-tests)
         - [Hive Tests](#hive-tests)
+          - [Prereqs](#prereqs)
+          - [Running Simulations](#running-simulations)
     - [Run](#run)
     - [CLI Commands](#cli-commands)
 - [Crates documentation](#crates-documentation)
+  - [📚 References and acknowledgements](#-references-and-acknowledgements)
 
 ## Roadmap
 
@@ -335,3 +314,24 @@ Documentation for each crate can be found on the following links (still a work i
 
 -   [Networking](./crates/net/README.md)
 -   [L2](./crates/l2/README.md)
+
+## 📚 References and acknowledgements
+
+The following links, repos, companies and projects have been important in the development of this repo, we have learned a lot from them and want to thank and acknowledge them.
+
+- [Ethereum](https://ethereum.org/en/)
+- [ZKsync](https://zksync.io/)
+- [Starkware](https://starkware.co/)
+- [Polygon](https://polygon.technology/)
+- [Optimism](https://www.optimism.io/)
+- [Arbitrum](https://arbitrum.io/)
+- [Geth](https://github.com/ethereum/go-ethereum)
+- [Taiko](https://taiko.xyz/)
+- [RISC Zero](https://risczero.com/)
+- [SP1](https://github.com/succinctlabs/sp1)
+- [Aleo](https://aleo.org/)
+- [Neptune](https://neptune.cash/)
+- [Mina](https://minaprotocol.com/)
+- [Nethermind](https://www.nethermind.io/)
+
+If we forgot to include anyone, please file an issue so we can add you. We always strive to reference the inspirations and code we use, but as an organization with multiple people, mistakes can happen, and someone might forget to include a reference.
