@@ -1,21 +1,23 @@
 participants:
   - el_type: geth
     cl_type: lighthouse
-    count: 2
+    validator_count: 32
+  - el_type: geth
+    cl_type: prysm
+    validator_count: 32
   - el_type: ethereumrust
     cl_type: lighthouse
-    count: 1
+    validator_count: 32
 
 additional_services:
   - assertoor
   - dora
   - el_forkmon
   - tx_spammer
-  - blob_spammer
 
 assertoor_params:
   run_stability_check: false
   run_block_proposal_check: false
+  run_blob_transaction_test: true
   tests:
-    - 'https://raw.githubusercontent.com/lambdaclass/lambda_ethereum_rust/refs/heads/assertoor-run-on-cd/test_data/el-stability-check.yml'
-  
+    - 'https://raw.githubusercontent.com/lambdaclass/lambda_ethereum_rust/refs/heads/main/test_data/el-stability-check.yml'

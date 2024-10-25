@@ -1,28 +1,47 @@
-# This file is based upon `assertoor-tests` stability check file:
-#   https://github.com/ethpandaops/assertoor-test/blob/master/assertoor-tests/stability-check.yaml
+# This file is mix and match based upon the basic `assertoor-tests` playbooks:
+#   - https://github.com/ethpandaops/assertoor-test/blob/master/assertoor-tests/stability-check.yaml
+#   - https://github.com/ethpandaops/assertoor-test/blob/master/assertoor-tests/block-proposal-check.yaml
 #
-# We removed the consensus checks to keep it minimal. The checks removed were:
-#   - check_consensus_finality
-#   - check_consensus_attestation_stats
-#   - check_consensus_reorgs
-#   - check_consensus_forks
+# For reference on each individual check see: https://github.com/ethpandaops/assertoor/wiki#supported-tasks-in-assertoor
 
 id: el-stability-check
 name: "Check Execution Stability"
 timeout: 2h
 tasks:
 - name: check_clients_are_healthy
-  title: "Check if at least one client is ready"
-  timeout: 5m
-  config:
-    minClientCount: 1
+  title: "Check if all clients are ready"
+  timeout: 1m
 
 - name: run_tasks_concurrent
   title: "Check if all EL & CL clients are synced"
-  timeout: 30m
+  timeout: 5m
   config:
     tasks:
     - name: check_consensus_sync_status
       title: "Check if CL clients are synced"
     - name: check_execution_sync_status
       title: "Check if EL clients are synced"
+
+- name: run_task_matrix
+  title: "Check block proposals from all client pairs"
+  timeout: 2m
+  configVars:
+    matrixValues: "validatorPairNames"
+  config:
+    runConcurrent: true
+    matrixVar: "validatorPairName"
+    task:
+      name: check_consensus_block_proposals
+      title: "Wait for block proposal from ${validatorPairName}"
+      configVars:
+        validatorNamePattern: "validatorPairName"
+
+- name: run_tasks_concurrent
+  title: "Check chain stability (reorgs and forks)"
+  timeout: 7m
+  config:
+    tasks:
+    - name: check_consensus_reorgs
+      title: "Check consensus reorgs"
+    - name: check_consensus_forks
+      title: "Check consensus forks"
