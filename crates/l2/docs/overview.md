@@ -61,7 +61,7 @@ Going a bit further, instead of posting the entire transaction, we could just po
 
 This is called `state diffs`. Instead of publishing entire transactions for data availability, we only publish whatever state they modified. This is enough for anyone to reconstruct the entire state of the network.
 
-TODO: Decide on a state diff architecture and document it in detail here.
+Detailed documentation on the state diffs spec [here](./state_diffs.md).
 
 ### How do we prevent the sequencer from publishing the wrong state diffs?
 
@@ -74,8 +74,6 @@ With that, we can be sure that state diffs are published and that they are corre
 ### Compression
 
 Because state diffs are compressed to save space on L1, this compression needs to be proven as well. Otherwise, once again, the sequencer could send the wrong (compressed) state diffs. This is easy though, we just make the prover run the compression and we're done.
-
-TODO: Decide on a compression algorithm and document it.
 
 ## EIP 4844 (a.k.a. Blobs)
 
@@ -96,7 +94,15 @@ TODO: Explain this in more detail, show with an example what the polynomials P a
 
 ## How do deposits and withdrawals work?
 
-TODO: Explain Withdrawal Logs merkle tree among other things.
+### Deposits
+
+TODO
+
+### Withdrawals
+
+Detailed specs [here](./withdrawals.md).
+
+TODO: Explain it a high level maybe?
 
 ## Recap
 
