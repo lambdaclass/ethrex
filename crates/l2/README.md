@@ -35,15 +35,15 @@
 
 | Milestone | Description                                                                                                                                                                                                                                                                                                       | Status |
 | --------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------ |
-| 0         | Users can deposit Eth in the L1 (Ethereum) and receive the corresponding funds on the L2.                                                                                                                                                                                                                         | ✅      |
-| 1         | The network supports basic L2 functionality, allowing users to deposit and withdraw funds to join and exit the network, while also interacting with the network as they do normally on the Ethereum network (deploying contracts, sending transactions, etc).                                                     | 🏗️      |
-| 2         | The block execution is proven with a RISC-V zkVM and the proof is verified by the Verifier L1 contract.                                                     | 🏗️      |
-| 3         | The network now commits to state diffs instead of the full state, lowering the commit transactions costs. These diffs are also submitted in compressed form, further reducing costs. It also supports EIP 4844 for L1 commit transactions, which means state diffs are sent as blob sidecars instead of calldata. | ❌      |
-| 4         | The L2 can also be deployed using a custom native token, meaning that a certain ERC20 can be the common currency that's used for paying network fees.                                                                                                                                                             | ❌      |
-| 5         | The L2 has added security mechanisms in place, running on Trusted Execution Environments and Multi Prover setup where multiple guarantees (Execution on TEEs, zkVMs/proving systems) are required for settlement on the L1. This better protects against possible security bugs on implementations.               | ❌      |
-| 6         | The L2 supports native account abstraction following EIP 7702, allowing for custom transaction validation logic and paymaster flows.                             | ❌      |
-| 7         | The network can be run as a Based Contestable Rollup, meaning sequencing is done by the Ethereum Validator set; transactions are sent to a private mempool and L1 Validators that opt into the L2 sequencing propose blocks for the L2 on every L1 block.                                                       | ❌      |
-| 8         | The L2 can be initialized in Validium Mode, meaning the Data Availability layer is no longer the L1, but rather a DA layer of the user's choice.                             | ❌      |
+| 0         | Users can deposit Eth in the L1 (Ethereum) and receive the corresponding funds on the L2.                                                                                                                                                                                                                         | ✅     |
+| 1         | The network supports basic L2 functionality, allowing users to deposit and withdraw funds to join and exit the network, while also interacting with the network as they do normally on the Ethereum network (deploying contracts, sending transactions, etc).                                                     | 🏗️     |
+| 2         | The block execution is proven with a RISC-V zkVM and the proof is verified by the Verifier L1 contract.                                                                                                                                                                                                           | 🏗️     |
+| 3         | The network now commits to state diffs instead of the full state, lowering the commit transactions costs. These diffs are also submitted in compressed form, further reducing costs. It also supports EIP 4844 for L1 commit transactions, which means state diffs are sent as blob sidecars instead of calldata. | ❌     |
+| 4         | The L2 can also be deployed using a custom native token, meaning that a certain ERC20 can be the common currency that's used for paying network fees.                                                                                                                                                             | ❌     |
+| 5         | The L2 has added security mechanisms in place, running on Trusted Execution Environments and Multi Prover setup where multiple guarantees (Execution on TEEs, zkVMs/proving systems) are required for settlement on the L1. This better protects against possible security bugs on implementations.               | ❌     |
+| 6         | The L2 supports native account abstraction following EIP 7702, allowing for custom transaction validation logic and paymaster flows.                                                                                                                                                                              | ❌     |
+| 7         | The network can be run as a Based Contestable Rollup, meaning sequencing is done by the Ethereum Validator set; transactions are sent to a private mempool and L1 Validators that opt into the L2 sequencing propose blocks for the L2 on every L1 block.                                                         | ❌     |
+| 8         | The L2 can be initialized in Validium Mode, meaning the Data Availability layer is no longer the L1, but rather a DA layer of the user's choice.                                                                                                                                                                  | ❌     |
 
 ### Milestone 0
 
@@ -157,7 +157,7 @@ The network can be run as a Based Rollup, meaning sequencing is done by the Ethe
 
 |     | Name              | Description                                                                    | Status |
 | --- | ----------------- | ------------------------------------------------------------------------------ | ------ |
-|     | `OnChainOperator` | Add methods for proposing new blocks so the sequencing can be done from the L1 | ❌      |
+|     | `OnChainOperator` | Add methods for proposing new blocks so the sequencing can be done from the L1 | ❌     |
 
 TODO: Expand on this.
 
@@ -190,7 +190,7 @@ The L2 can be initialized in Validium Mode, meaning the Data Availability layer 
 > 2. make sure you have created a `.env` file following the `.env.example` file.
 
 ```
-make
+make init
 ```
 
 This will setup a local Ethereum network as the L1, deploy all the needed contracts on it, then start an Ethereum Rust L2 node pointing to it.

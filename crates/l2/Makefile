@@ -1,4 +1,4 @@
-.DEFAULT_GOAL := init
+.DEFAULT_GOAL := help
 
 .PHONY: help init down clean init-local-l1 down-local-l1 clean-local-l1 init-l2 down-l2 deploy-l1 deploy-block-executor deploy-inbox setup-prover
 
