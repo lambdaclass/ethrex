@@ -6,6 +6,7 @@ on:
   pull_request:
     branches: [ '*' ]
     paths-ignore:
+      - "crates/l2/**"
       - 'README.md'
       - 'LICENSE'
       - "**/README.md"
