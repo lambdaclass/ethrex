@@ -35,36 +35,6 @@ Read more about our engineering philosophy [here](https://blog.lambdaclass.com/l
 
 # Lambda Ethereum Rust L1
 
-### Table of Contents
-
-- [Lambda Ethereum Rust](#lambda-ethereum-rust)
-- [L1 and L2 support](#l1-and-l2-support)
-  - [Philosophy](#philosophy)
-  - [Design Principles](#design-principles)
-- [Lambda Ethereum Rust L2](#lambda-ethereum-rust-l2)
-- [Lambda Ethereum Rust L1](#lambda-ethereum-rust-l1)
-    - [Table of Contents](#table-of-contents)
-  - [Roadmap](#roadmap)
-    - [Milestone 1: Read-only RPC Node Support](#milestone-1-read-only-rpc-node-support)
-    - [Milestone 2: History \& Reorgs](#milestone-2-history--reorgs)
-    - [Milestone 3: Block building](#milestone-3-block-building)
-    - [Milestone 4: P2P Network](#milestone-4-p2p-network)
-    - [Milestone 5: State Sync](#milestone-5-state-sync)
-  - [Quick Start (L1 localnet)](#quick-start-l1-localnet)
-    - [Prerequisites](#prerequisites)
-  - [Dev Setup](#dev-setup)
-    - [Build](#build)
-      - [Rust](#rust)
-    - [Database](#database)
-    - [Test](#test)
-        - [Ethereum Foundation Tests](#ethereum-foundation-tests)
-        - [Crate Specific Tests](#crate-specific-tests)
-        - [Hive Tests](#hive-tests)
-          - [Prereqs](#prereqs)
-          - [Running Simulations](#running-simulations)
-    - [Run](#run)
-    - [CLI Commands](#cli-commands)
-
 ## Roadmap
 
 An Ethereum execution client consists roughly of the following parts:
@@ -147,8 +117,6 @@ Add support for the `SNAP` protocol, which lets us get a recent copy of the bloc
 Detailed issues and progress [here](https://github.com/lambdaclass/ethereum_rust/milestone/3).
 
 ## Quick Start (L1 localnet)
-
-![Demo](https://raw.githubusercontent.com/lambdaclass/ethereum_rust/8e3b69d727225686eec30b2c2b79cecdf7eac2d9/Demo.png)
 
 ### Prerequisites
 - [Kurtosis](https://docs.kurtosis.com/install/#ii-install-the-cli)
@@ -300,35 +268,6 @@ The main differences between this mode and regular Ethereum Rust are:
 - Block execution is proven using a RISC-V zkVM and its proofs are sent to L1 for verification.
 - A set of Solidity contracts to be deployed to the L1 are included as part of network initialization.
 - Two new types of transactions are included: deposits (native token mints) and withdrawals.
-
-### Table of Contents
-- [Ethereum Rust L2](#lambda-ethereum-rust-l2)
-  - [Table of Contents](#table-of-contents)
-  - [Roadmap](#roadmap)
-    - [Milestone 0](#milestone-0)
-      - [Status](#status)
-    - [Milestone 1: MVP](#milestone-1-mvp)
-      - [Status](#status-1)
-    - [Milestone 2: Block Execution Proofs](#milestone-2-block-execution-proofs)
-      - [Status](#status-2)
-    - [Milestone 3: State diffs + Data compression + EIP 4844 (Blobs)](#milestone-3-state-diffs--data-compression--eip-4844-blobs)
-      - [Status](#status-3)
-    - [Milestone 4: Custom Native token](#milestone-4-custom-native-token)
-      - [Status](#status-4)
-    - [Milestone 5: Security (TEEs and Multi Prover support)](#milestone-5-security-tees-and-multi-prover-support)
-      - [Status](#status-5)
-    - [Milestone 6: Account Abstraction](#milestone-6-account-abstraction)
-      - [Status](#status-6)
-    - [Milestone 7: Based Contestable Rollup](#milestone-7-based-contestable-rollup)
-      - [Status](#status-7)
-    - [Milestone 8: Validium](#milestone-8-validium)
-      - [Status](#status-8)
-  - [Prerequisites](#prerequisites)
-  - [How to run](#how-to-run)
-    - [Initialize the network](#initialize-the-network)
-    - [Restarting the network](#restarting-the-network)
-  - [Local L1 Rich Wallets](#local-l1-rich-wallets)
-  - [Docs](#docs)
 
 ## Roadmap
 
@@ -514,7 +453,7 @@ Most of them are [here](https://github.com/ethpandaops/ethereum-package/blob/mai
 }
 ```
 
-## Docs
+## Lambda Ethereum Rust L2 Docs
 
 - [Ethereum Rust L2 Docs](./docs/README.md)
 - [Ethereum Rust L2 CLI Docs](../../cmd/ethereum_rust_l2/README.md)
