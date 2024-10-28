@@ -5,9 +5,10 @@ use crate::{
         eth_client::{transaction::PayloadRLPEncode, EthClient},
     },
 };
-use bytes::Bytes;
 use ethereum_rust_blockchain::{constants::TX_GAS_COST, mempool};
-use ethereum_rust_core::types::{EIP1559Transaction, Transaction, TxKind, TxType};
+use ethereum_rust_core::types::{
+    PrivilegedL2Transaction, PrivilegedTxType, Transaction, TxKind, TxType,
+};
 use ethereum_rust_rlp::encode::RLPEncode;
 use ethereum_rust_rpc::types::receipt::RpcLog;
 use ethereum_rust_storage::Store;
@@ -72,7 +73,7 @@ impl L1Watcher {
         let logs = self
             .eth_client
             .get_logs(
-                self.last_block_fetched,
+                self.last_block_fetched + 1,
                 new_last_block,
                 self.address,
                 self.topics[0],
@@ -112,9 +113,9 @@ impl L1Watcher {
 
             info!("Initiating mint transaction for {beneficiary:#x} with value {mint_value:#x}",);
 
-            let mut mint_transaction = EIP1559Transaction {
+            let mut mint_transaction = PrivilegedL2Transaction {
+                tx_type: PrivilegedTxType::Deposit,
                 to: TxKind::Call(beneficiary),
-                data: Bytes::from(b"mint".as_slice()),
                 chain_id: store
                     .get_chain_config()
                     .map_err(|e| L1WatcherError::FailedToRetrieveChainConfig(e.to_string()))?
@@ -138,7 +139,7 @@ impl L1Watcher {
             mint_transaction.gas_limit = TX_GAS_COST.mul(2);
             mint_transaction.value = mint_value;
 
-            let mut payload = vec![TxType::EIP1559 as u8];
+            let mut payload = vec![TxType::Privileged as u8];
             payload.append(mint_transaction.encode_payload_to_vec().as_mut());
 
             let data = Message::parse(&keccak(payload).0);
@@ -151,11 +152,11 @@ impl L1Watcher {
             let mut encoded_tx = Vec::new();
             mint_transaction.encode(&mut encoded_tx);
 
-            let mut data = vec![TxType::EIP1559 as u8];
+            let mut data = vec![TxType::Privileged as u8];
             data.append(&mut encoded_tx);
 
             match mempool::add_transaction(
-                Transaction::EIP1559Transaction(mint_transaction),
+                Transaction::PrivilegedL2Transaction(mint_transaction),
                 store.clone(),
             ) {
                 Ok(hash) => {

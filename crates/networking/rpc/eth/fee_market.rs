@@ -200,6 +200,9 @@ impl FeeHistoryRequest {
                 Transaction::EIP4844Transaction(t) => t
                     .max_priority_fee_per_gas
                     .min(t.max_fee_per_gas.saturating_sub(base_fee_per_gas)),
+                Transaction::PrivilegedL2Transaction(t) => t
+                    .max_priority_fee_per_gas
+                    .min(t.max_fee_per_gas.saturating_sub(base_fee_per_gas)),
             })
             .collect();
 

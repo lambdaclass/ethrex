@@ -1,16 +1,19 @@
 use crate::utils::{
     config::{eth::EthConfig, proposer::ProposerConfig, read_env_file},
     eth_client::EthClient,
+    merkle_tree::merkelize,
 };
 use bytes::Bytes;
 use errors::ProposerError;
 use ethereum_rust_blockchain::constants::TX_GAS_COST;
-use ethereum_rust_core::types::{Block, EIP1559Transaction, TxKind};
+use ethereum_rust_core::types::{
+    Block, EIP1559Transaction, GenericTransaction, Transaction, TxKind,
+};
 use ethereum_rust_dev::utils::engine_client::{config::EngineApiConfig, EngineClient};
 use ethereum_rust_rlp::encode::RLPEncode;
 use ethereum_rust_rpc::types::fork_choice::{ForkChoiceState, PayloadAttributesV3};
 use ethereum_rust_storage::Store;
-use ethereum_types::{Address, H256};
+use ethereum_types::{Address, H256, U256};
 use keccak_hash::keccak;
 use libsecp256k1::SecretKey;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -22,8 +25,9 @@ pub mod prover_server;
 
 pub mod errors;
 
-const COMMIT_FUNCTION_SELECTOR: [u8; 4] = [241, 79, 203, 200];
-const VERIFY_FUNCTION_SELECTOR: [u8; 4] = [142, 118, 10, 254];
+const COMMIT_FUNCTION_SELECTOR: [u8; 4] = [28, 217, 139, 206];
+const VERIFY_FUNCTION_SELECTOR: [u8; 4] = [133, 133, 44, 228];
+
 pub struct Proposer {
     eth_client: EthClient,
     engine_client: EngineClient,
@@ -102,9 +106,37 @@ impl Proposer {
                     "Failed to get block by hash from storage".to_string(),
                 ))?;
 
-            let commitment = keccak(block.encode_to_vec());
+            let withdrawal_data_hashes: Vec<H256> = block
+                .body
+                .transactions
+                .iter()
+                .filter_map(|tx| match tx {
+                    Transaction::PrivilegedL2Transaction(tx) => tx.get_withdrawal_hash(),
+                    _ => None,
+                })
+                .collect();
 
-            match self.send_commitment(commitment).await {
+            let withdrawals_logs_merkle_root = if !withdrawal_data_hashes.is_empty() {
+                merkelize(withdrawal_data_hashes.clone())
+            } else {
+                H256::zero()
+            };
+
+            let new_state_root_hash = store
+                .state_trie(block.header.compute_block_hash())
+                .unwrap()
+                .unwrap()
+                .hash()
+                .unwrap();
+
+            match self
+                .send_commitment(
+                    block.header.number,
+                    new_state_root_hash,
+                    withdrawals_logs_merkle_root,
+                )
+                .await
+            {
                 Ok(commit_tx_hash) => {
                     info!(
                     "Sent commitment to block {head_block_hash:#x}, with transaction hash {commit_tx_hash:#x}"
@@ -118,15 +150,15 @@ impl Proposer {
 
             let proof = Vec::new();
 
-            match self.send_proof(&proof).await {
+            match self.send_proof(block.header.number, &proof).await {
                 Ok(verify_tx_hash) => {
                     info!(
                     "Sent proof for block {head_block_hash}, with transaction hash {verify_tx_hash:#x}"
                 );
                 }
                 Err(error) => {
-                    error!("Failed to send commitment to block {head_block_hash:#x}. Manual intervention required: {error}");
-                    panic!("Failed to send commitment to block {head_block_hash:#x}. Manual intervention required: {error}");
+                    error!("Failed to send proof to block {head_block_hash:#x}. Manual intervention required: {error}");
+                    panic!("Failed to send proof to block {head_block_hash:#x}. Manual intervention required: {error}");
                 }
             }
 
@@ -206,13 +238,24 @@ impl Proposer {
         keccak(block.encode_to_vec())
     }
 
-    pub async fn send_commitment(&self, commitment: H256) -> Result<H256, ProposerError> {
+    pub async fn send_commitment(
+        &self,
+        block_number: u64,
+        new_l2_state_root: H256,
+        withdrawal_logs_merkle_root: H256,
+    ) -> Result<H256, ProposerError> {
         info!("Sending commitment");
         let mut calldata = Vec::with_capacity(68);
         calldata.extend(COMMIT_FUNCTION_SELECTOR);
-        calldata.extend(commitment.0);
+        let mut block_number_bytes = [0_u8; 32];
+        U256::from(block_number).to_big_endian(&mut block_number_bytes);
+        calldata.extend(block_number_bytes);
+        calldata.extend(new_l2_state_root.0);
+        calldata.extend(withdrawal_logs_merkle_root.0);
 
-        let commit_tx_hash = self.send_transaction_with_calldata(calldata.into()).await?;
+        let commit_tx_hash = self
+            .send_transaction_with_calldata(self.on_chain_proposer_address, calldata.into())
+            .await?;
 
         info!("Commitment sent: {commit_tx_hash:#x}");
 
@@ -228,17 +271,26 @@ impl Proposer {
         Ok(commit_tx_hash)
     }
 
-    pub async fn send_proof(&self, block_proof: &[u8]) -> Result<H256, ProposerError> {
+    pub async fn send_proof(
+        &self,
+        block_number: u64,
+        block_proof: &[u8],
+    ) -> Result<H256, ProposerError> {
         info!("Sending proof");
         let mut calldata = Vec::new();
         calldata.extend(VERIFY_FUNCTION_SELECTOR);
+        let mut block_number_bytes = [0_u8; 32];
+        U256::from(block_number).to_big_endian(&mut block_number_bytes);
+        calldata.extend(block_number_bytes);
         calldata.extend(H256::from_low_u64_be(32).as_bytes());
         calldata.extend(H256::from_low_u64_be(block_proof.len() as u64).as_bytes());
         calldata.extend(block_proof);
         let leading_zeros = 32 - (calldata.len() % 32);
         calldata.extend(vec![0; leading_zeros]);
 
-        let verify_tx_hash = self.send_transaction_with_calldata(calldata.into()).await?;
+        let verify_tx_hash = self
+            .send_transaction_with_calldata(self.on_chain_proposer_address, calldata.into())
+            .await?;
 
         info!("Proof sent: {verify_tx_hash:#x}");
 
@@ -254,9 +306,13 @@ impl Proposer {
         Ok(verify_tx_hash)
     }
 
-    async fn send_transaction_with_calldata(&self, calldata: Bytes) -> Result<H256, ProposerError> {
+    async fn send_transaction_with_calldata(
+        &self,
+        to: Address,
+        calldata: Bytes,
+    ) -> Result<H256, ProposerError> {
         let mut tx = EIP1559Transaction {
-            to: TxKind::Call(self.on_chain_proposer_address),
+            to: TxKind::Call(to),
             data: calldata,
             max_fee_per_gas: self.eth_client.get_gas_price().await?.as_u64(),
             nonce: self.eth_client.get_nonce(self.l1_address).await?,
@@ -264,9 +320,12 @@ impl Proposer {
             ..Default::default()
         };
 
+        let mut generic_tx = GenericTransaction::from(tx.clone());
+        generic_tx.from = self.l1_address;
+
         tx.gas_limit = self
             .eth_client
-            .estimate_gas(tx.clone())
+            .estimate_gas(generic_tx)
             .await?
             .saturating_add(TX_GAS_COST);
 

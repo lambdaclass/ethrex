@@ -2,7 +2,7 @@ use ethereum_rust_core::{
     serde_utils,
     types::{
         BlobsBundle, BlockHash, BlockNumber, EIP1559Transaction, EIP2930Transaction,
-        EIP4844Transaction, LegacyTransaction, Transaction,
+        EIP4844Transaction, LegacyTransaction, PrivilegedL2Transaction, Transaction,
     },
     Address, H256,
 };
@@ -50,6 +50,7 @@ pub enum SendRawTransactionRequest {
     EIP2930(EIP2930Transaction),
     EIP1559(EIP1559Transaction),
     EIP4844(WrappedEIP4844Transaction),
+    PriviligedL2(PrivilegedL2Transaction),
 }
 
 // NOTE: We might move this transaction definitions to `core/types/transactions.rs` later on.
@@ -87,6 +88,9 @@ impl SendRawTransactionRequest {
             SendRawTransactionRequest::EIP1559(t) => Transaction::EIP1559Transaction(t.clone()),
             SendRawTransactionRequest::EIP2930(t) => Transaction::EIP2930Transaction(t.clone()),
             SendRawTransactionRequest::EIP4844(t) => Transaction::EIP4844Transaction(t.tx.clone()),
+            SendRawTransactionRequest::PriviligedL2(t) => {
+                Transaction::PrivilegedL2Transaction(t.clone())
+            }
         }
     }
 
@@ -113,6 +117,8 @@ impl SendRawTransactionRequest {
                     // EIP4844
                     0x3 => WrappedEIP4844Transaction::decode(tx_bytes)
                         .map(SendRawTransactionRequest::EIP4844),
+                    0x7e => PrivilegedL2Transaction::decode(tx_bytes)
+                        .map(SendRawTransactionRequest::PriviligedL2),
                     ty => Err(RLPDecodeError::Custom(format!(
                         "Invalid transaction type: {ty}"
                     ))),

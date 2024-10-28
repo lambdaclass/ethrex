@@ -1,9 +1,12 @@
 use crate::utils::config::eth::EthConfig;
 use errors::{
-    EstimateGasPriceError, EthClientError, GetBalanceError, GetBlockNumberError, GetGasPriceError,
-    GetLogsError, GetNonceError, GetTransactionReceiptError, SendRawTransactionError,
+    EstimateGasPriceError, EthClientError, GetBalanceError, GetBlockByHashError,
+    GetBlockNumberError, GetGasPriceError, GetLogsError, GetNonceError, GetTransactionByHashError,
+    GetTransactionReceiptError, SendRawTransactionError,
 };
-use ethereum_rust_core::types::{EIP1559Transaction, TxKind};
+use ethereum_rust_core::types::{
+    BlockBody, EIP1559Transaction, GenericTransaction, PrivilegedL2Transaction, TxKind, TxType,
+};
 use ethereum_rust_rlp::encode::RLPEncode;
 use ethereum_rust_rpc::{
     types::receipt::{RpcLog, RpcReceipt},
@@ -13,7 +16,7 @@ use ethereum_types::{Address, H256, U256};
 use keccak_hash::keccak;
 use libsecp256k1::{sign, Message, SecretKey};
 use reqwest::Client;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::json;
 use transaction::PayloadRLPEncode;
 
@@ -33,7 +36,8 @@ pub struct EthClient {
     url: String,
 }
 
-const EIP1559_TX_TYPE: u8 = 2;
+// 0x08c379a0 == Error(String)
+pub const ERROR_FUNCTION_SELECTOR: [u8; 4] = [0x08, 0xc3, 0x79, 0xa0];
 
 impl EthClient {
     pub fn new(url: &str) -> Self {
@@ -88,7 +92,7 @@ impl EthClient {
         tx: &mut EIP1559Transaction,
         private_key: SecretKey,
     ) -> Result<H256, EthClientError> {
-        let mut payload = vec![EIP1559_TX_TYPE];
+        let mut payload = vec![TxType::EIP1559 as u8];
         payload.append(tx.encode_payload_to_vec().as_mut());
 
         let data = Message::parse(&keccak(payload).0);
@@ -101,7 +105,31 @@ impl EthClient {
         let mut encoded_tx = Vec::new();
         tx.encode(&mut encoded_tx);
 
-        let mut data = vec![EIP1559_TX_TYPE];
+        let mut data = vec![TxType::EIP1559 as u8];
+        data.append(&mut encoded_tx);
+
+        self.send_raw_transaction(data.as_slice()).await
+    }
+
+    pub async fn send_privileged_l2_transaction(
+        &self,
+        mut tx: PrivilegedL2Transaction,
+        private_key: SecretKey,
+    ) -> Result<H256, EthClientError> {
+        let mut payload = vec![TxType::Privileged as u8];
+        payload.append(tx.encode_payload_to_vec().as_mut());
+
+        let data = Message::parse(&keccak(payload).0);
+        let signature = sign(&data, &private_key);
+
+        tx.signature_r = U256::from(signature.0.r.b32());
+        tx.signature_s = U256::from(signature.0.s.b32());
+        tx.signature_y_parity = signature.1.serialize() != 0;
+
+        let mut encoded_tx = Vec::new();
+        tx.encode(&mut encoded_tx);
+
+        let mut data = vec![TxType::Privileged as u8];
         data.append(&mut encoded_tx);
 
         self.send_raw_transaction(data.as_slice()).await
@@ -109,7 +137,7 @@ impl EthClient {
 
     pub async fn estimate_gas(
         &self,
-        transaction: EIP1559Transaction,
+        transaction: GenericTransaction,
     ) -> Result<u64, EthClientError> {
         let to = match transaction.to {
             TxKind::Call(addr) => addr,
@@ -117,7 +145,9 @@ impl EthClient {
         };
         let data = json!({
             "to": format!("{to:#x}"),
-            "input": format!("{:#x}", transaction.data),
+            "input": format!("{:#x}", transaction.input),
+            "from": format!("{:#x}", transaction.from),
+            "nonce": format!("{:#x}", transaction.nonce),
         });
 
         let request = RpcRequest {
@@ -136,7 +166,25 @@ impl EthClient {
             .map_err(EstimateGasPriceError::ParseIntError)
             .map_err(EthClientError::from),
             Ok(RpcResponse::Error(error_response)) => {
-                Err(EstimateGasPriceError::RPCError(error_response.error.message).into())
+                let error_data = if let Some(error_data) = error_response.error.data {
+                    if &error_data == "0x" {
+                        "unknown error".to_owned()
+                    } else {
+                        let abi_decoded_error_data =
+                            hex::decode(error_data.strip_prefix("0x").unwrap()).unwrap();
+                        let string_length = U256::from_big_endian(&abi_decoded_error_data[36..68]);
+                        let string_data =
+                            &abi_decoded_error_data[68..68 + string_length.as_usize()];
+                        String::from_utf8(string_data.to_vec()).unwrap()
+                    }
+                } else {
+                    "unknown error".to_owned()
+                };
+                Err(EstimateGasPriceError::RPCError(format!(
+                    "{}: {}",
+                    error_response.error.message, error_data
+                ))
+                .into())
             }
             Err(error) => Err(error),
         }
@@ -198,6 +246,25 @@ impl EthClient {
                 .map_err(EthClientError::from),
             Ok(RpcResponse::Error(error_response)) => {
                 Err(GetBlockNumberError::RPCError(error_response.error.message).into())
+            }
+            Err(error) => Err(error),
+        }
+    }
+
+    pub async fn get_block_by_hash(&self, block_hash: H256) -> Result<BlockBody, EthClientError> {
+        let request = RpcRequest {
+            id: RpcRequestId::Number(1),
+            jsonrpc: "2.0".to_string(),
+            method: "eth_getBlockByHash".to_string(),
+            params: Some(vec![json!(format!("{block_hash:#x}")), json!(true)]),
+        };
+
+        match self.send_request(request).await {
+            Ok(RpcResponse::Success(result)) => serde_json::from_value(result.result)
+                .map_err(GetBlockByHashError::SerdeJSONError)
+                .map_err(EthClientError::from),
+            Ok(RpcResponse::Error(error_response)) => {
+                Err(GetBlockByHashError::RPCError(error_response.error.message).into())
             }
             Err(error) => Err(error),
         }
@@ -294,4 +361,67 @@ impl EthClient {
             Err(error) => Err(error),
         }
     }
+
+    pub async fn get_transaction_by_hash(
+        &self,
+        tx_hash: H256,
+    ) -> Result<Option<GetTransactionByHashTransaction>, EthClientError> {
+        let request = RpcRequest {
+            id: RpcRequestId::Number(1),
+            jsonrpc: "2.0".to_string(),
+            method: "eth_getTransactionByHash".to_string(),
+            params: Some(vec![json!(format!("{tx_hash:#x}"))]),
+        };
+
+        match self.send_request(request).await {
+            Ok(RpcResponse::Success(result)) => serde_json::from_value(result.result)
+                .map_err(GetTransactionByHashError::SerdeJSONError)
+                .map_err(EthClientError::from),
+            Ok(RpcResponse::Error(error_response)) => {
+                Err(GetTransactionByHashError::RPCError(error_response.error.message).into())
+            }
+            Err(error) => Err(error),
+        }
+    }
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct GetTransactionByHashTransaction {
+    #[serde(default)]
+    pub chain_id: u64,
+    #[serde(default)]
+    pub nonce: u64,
+    #[serde(default)]
+    pub max_priority_fee_per_gas: u64,
+    #[serde(default)]
+    pub max_fee_per_gas: u64,
+    #[serde(default)]
+    pub gas_limit: u64,
+    #[serde(default)]
+    pub to: Address,
+    #[serde(default)]
+    pub value: U256,
+    #[serde(default)]
+    pub data: Vec<u8>,
+    #[serde(default)]
+    pub access_list: Vec<(Address, Vec<H256>)>,
+    #[serde(default)]
+    pub r#type: TxType,
+    #[serde(default)]
+    pub signature_y_parity: bool,
+    #[serde(default, with = "ethereum_rust_core::serde_utils::u64::hex_str")]
+    pub signature_r: u64,
+    #[serde(default, with = "ethereum_rust_core::serde_utils::u64::hex_str")]
+    pub signature_s: u64,
+    #[serde(default)]
+    pub block_number: U256,
+    #[serde(default)]
+    pub block_hash: H256,
+    #[serde(default)]
+    pub from: Address,
+    #[serde(default)]
+    pub hash: H256,
+    #[serde(default, with = "ethereum_rust_core::serde_utils::u64::hex_str")]
+    pub transaction_index: u64,
 }

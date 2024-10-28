@@ -40,10 +40,9 @@ restart-local-l1: down-local-l1 init-local-l1 ## 🔄 Restarts the L1 Lambda Eth
 
 # Contracts
 
-# contract-deps: ## 📦 Installs the dependencies for the L1 contracts
-
 clean-contract-deps: ## 🧹 Cleans the dependencies for the L1 contracts.
 	rm -rf contracts/solc_out
+	rm -rf contracts/lib
 
 restart-contract-deps: clean-contract-deps ## 🔄 Restarts the dependencies for the L1 contracts.
 

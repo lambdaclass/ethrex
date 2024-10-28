@@ -607,7 +607,7 @@ impl Store {
     }
 
     // Obtain the storage trie for the given block
-    fn state_trie(&self, block_hash: BlockHash) -> Result<Option<Trie>, StoreError> {
+    pub fn state_trie(&self, block_hash: BlockHash) -> Result<Option<Trie>, StoreError> {
         let Some(header) = self.get_block_header_by_hash(block_hash)? else {
             return Ok(None);
         };

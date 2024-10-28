@@ -3,7 +3,7 @@ use crate::utils::eth_client::{
     EthClient, RpcResponse,
 };
 use bytes::Bytes;
-use ethereum_rust_core::types::{EIP1559Transaction, GenericTransaction, TxKind};
+use ethereum_rust_core::types::{EIP1559Transaction, GenericTransaction, TxKind, TxType};
 use ethereum_rust_rlp::encode::RLPEncode;
 use ethereum_rust_rpc::utils::{RpcRequest, RpcRequestId};
 use ethereum_types::{Address, U256};
@@ -121,6 +121,15 @@ impl EthClient {
         data: Bytes,
         overrides: Overrides,
     ) -> Result<EIP1559Transaction, EthClientError> {
+        let generic_transaction = GenericTransaction {
+            r#type: TxType::EIP1559,
+            from,
+            to: to.clone(),
+            input: data.clone(),
+            nonce: overrides.nonce.unwrap_or(self.get_nonce(from).await?),
+            ..Default::default()
+        };
+
         let mut tx = EIP1559Transaction {
             to,
             data,
@@ -137,7 +146,7 @@ impl EthClient {
         };
         tx.gas_limit = overrides
             .gas_limit
-            .unwrap_or(self.estimate_gas(tx.clone()).await?);
+            .unwrap_or(self.estimate_gas(generic_transaction).await?);
 
         Ok(tx)
     }

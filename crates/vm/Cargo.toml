@@ -24,6 +24,7 @@ thiserror.workspace = true
 hex.workspace = true
 lazy_static.workspace = true
 cfg-if.workspace = true
+tracing.workspace = true
 
 serde.workspace = true
 bincode = "1"
