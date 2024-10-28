@@ -9,7 +9,7 @@ Meaning:
 - ❌: Work not Started yet
 
 Features:
-- Opcodes 🏗️
+- Opcodes ✅
 - Precompiles 🏗️
 - Transaction validation 🏗️
 - Pass all EF tests 🏗️
@@ -26,8 +26,6 @@ Features:
 ### Dependencies
 - Rust
 - Git
-
-### Running [🇼🇮🇵]
 
 ### Documentation
 [CallFrame](./docs/callframe.md)

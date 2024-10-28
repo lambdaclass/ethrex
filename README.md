@@ -262,12 +262,23 @@ Ethereum Rust supports the following command line arguments:
 
 # Lambda Ethereum Rust L2
 
+In this mode, the Ethereum Rust code is repurposed to run a rollup that settles on Ethereum as the L1.
+
 The main differences between this mode and regular Ethereum Rust are:
 
-- There is no consensus, only one sequencer proposes blocks for the network.
+- There is no consensus, the node is turned into a sequencer that proposes blocks for the network.
 - Block execution is proven using a RISC-V zkVM and its proofs are sent to L1 for verification.
 - A set of Solidity contracts to be deployed to the L1 are included as part of network initialization.
 - Two new types of transactions are included: deposits (native token mints) and withdrawals.
+
+At a high level, the following new parts are added to the node:
+
+- A `proposer` component, in charge of continually creating new blocks from the mempool transactions. This replaces the regular flow that an Ethereum L1 node has, where new blocks come from the consensus layer through the `forkChoiceUpdate` -> `getPayload` -> `NewPayload` Engine API flow in communication with the consensus layer.
+- A `prover` subsystem, which itself consists of two parts:
+  - A `proverClient` that takes new blocks from the node, proves them, then sends the proof back to the node to send to the L1. This is a separate binary running outside the node, as proving has very different (and higher) hardware requirements than the sequencer.
+  - A `proverServer` component inside the node that communicates with the prover, sending witness data for proving and receiving proofs for settlement on L1.
+- L1 contracts with functions to commit to new state and then verify the state transition function, only advancing the state of the L2 if the proof verifies. It also has functionality to process deposits and withdrawals to/from the L2.
+- The EVM is lightly modified with new features to process deposits and withdrawals accordingly.
 
 ## Roadmap
 
@@ -414,7 +425,7 @@ The L2 can be initialized in Validium Mode, meaning the Data Availability layer 
 
 ## Prerequisites
 
-- [Rust (explained in the repo's main README)](../../README.md)
+- [Rust (explained in L1 requirements section above)](#build)
 - [Docker](https://docs.docker.com/engine/install/) (with [Docker Compose](https://docs.docker.com/compose/install/))
 
 ## How to run
@@ -424,8 +435,9 @@ The L2 can be initialized in Validium Mode, meaning the Data Availability layer 
 > [!IMPORTANT]
 > Before this step:
 >
-> 1. make sure the Docker daemon is running.
-> 2. make sure you have created a `.env` file following the `.env.example` file.
+> 1. Make sure you are inside the `crates/l2` directory.
+> 2. Make sure the Docker daemon is running.
+> 3. Make sure you have created a `.env` file following the `.env.example` file.
 
 ```
 make init
@@ -455,8 +467,8 @@ Most of them are [here](https://github.com/ethpandaops/ethereum-package/blob/mai
 
 ## Lambda Ethereum Rust L2 Docs
 
-- [Ethereum Rust L2 Docs](./docs/README.md)
-- [Ethereum Rust L2 CLI Docs](../../cmd/ethereum_rust_l2/README.md)
+- [Ethereum Rust L2 Docs](./crates/l2/docs/README.md)
+- [Ethereum Rust L2 CLI Docs](./cmd/ethereum_rust_l2/README.md)
 
 
 ## 📚 References and acknowledgements
