@@ -1,12 +1,12 @@
 participants:
+  - el_type: ethereumrust
+    cl_type: lighthouse
+    validator_count: 32
   - el_type: geth
     cl_type: lighthouse
     validator_count: 32
   - el_type: geth
     cl_type: prysm
-    validator_count: 32
-  - el_type: ethereumrust
-    cl_type: lighthouse
     validator_count: 32
 
 additional_services:

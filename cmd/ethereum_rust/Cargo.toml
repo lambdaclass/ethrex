@@ -26,6 +26,7 @@ tokio = { version = "1.38.0", features = ["full"] }
 anyhow = "1.0.86"
 rand = "0.8.5"
 k256 = { version = "0.13.3", features = ["ecdh"] }
+local-ip-address = "0.6"
 tokio-util.workspace = true
 
 cfg-if = "1.0.0"
