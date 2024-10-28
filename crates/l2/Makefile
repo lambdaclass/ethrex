@@ -16,11 +16,11 @@ clean: clean-contract-deps ## 🧹 Cleans the localnet
 restart: restart-local-l1 restart-contract-deps deploy-l1 restart-l2 ## 🔄 Restarts the localnet
 
 cli: ## 🛠️ Installs the L2 Lambda Ethereum Rust CLI
-	cargo install --path ${ETHEREUM_RUST_PATH}/cmd/ethereum_rust/Cargo.toml --force
+	cargo install --path ${ETHEREUM_RUST_PATH}/cmd/ethereum_rust_l2/ --force
 
 # Variables
 
-ETHEREUM_RUST_PATH=$(shell pwd)/../../
+ETHEREUM_RUST_PATH=$(shell pwd)/../..
 ETHEREUM_RUST_BIN_PATH=$(ETHEREUM_RUST_PATH)/target/release/ethereum_rust
 ETHEREUM_RUST_DEV_DOCKER_COMPOSE_PATH=$(ETHEREUM_RUST_PATH)/crates/blockchain/dev/docker-compose-dev.yaml
 
