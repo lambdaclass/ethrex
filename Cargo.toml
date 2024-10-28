@@ -16,10 +16,10 @@ members = [
     "crates/vm/levm/bench/revm_comparison",
     "crates/l2/",
     "crates/l2/prover",
+    "crates/l2/contracts",
 ]
 resolver = "2"
 
-exclude = ["crates/l2/contracts"]
 default-members = [
     "cmd/ethereum_rust",
     "cmd/ethereum_rust_l2",
