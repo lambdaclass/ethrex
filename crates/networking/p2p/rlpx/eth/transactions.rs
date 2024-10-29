@@ -6,9 +6,7 @@ use ethereum_rust_rlp::{
 };
 use snap::raw::Decoder as SnappyDecoder;
 
-use crate::rlpx::message::RLPxMessage;
-
-use super::snappy_encode;
+use crate::rlpx::{message::RLPxMessage, utils::snappy_encode};
 
 // https://github.com/ethereum/devp2p/blob/master/caps/eth.md#transactions-0x02
 // Broadcast message

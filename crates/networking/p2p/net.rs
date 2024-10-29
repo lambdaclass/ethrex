@@ -50,6 +50,7 @@ pub async fn start_network(
     let discovery_handle = tokio::spawn(discover_peers(
         udp_addr,
         signer.clone(),
+        storage.clone(),
         table.clone(),
         bootnodes,
     ));
@@ -66,6 +67,7 @@ pub async fn start_network(
 async fn discover_peers(
     udp_addr: SocketAddr,
     signer: SigningKey,
+    storage: Store,
     table: Arc<Mutex<KademliaTable>>,
     bootnodes: Vec<BootNode>,
 ) {
@@ -74,6 +76,7 @@ async fn discover_peers(
     let server_handler = tokio::spawn(discover_peers_server(
         udp_addr,
         udp_socket.clone(),
+        storage,
         table.clone(),
         signer.clone(),
     ));
@@ -111,6 +114,7 @@ async fn discover_peers(
 async fn discover_peers_server(
     udp_addr: SocketAddr,
     udp_socket: Arc<UdpSocket>,
+    storage: Store,
     table: Arc<Mutex<KademliaTable>>,
     signer: SigningKey,
 ) {
@@ -196,9 +200,10 @@ async fn discover_peers_server(
 
                         let mut msg_buf = vec![0; read - 32];
                         buf[32..read].clone_into(&mut msg_buf);
-                        let signer_clone = signer.clone();
+                        let signer = signer.clone();
+                        let storage = storage.clone();
                         tokio::spawn(async move {
-                            handle_peer_as_initiator(signer_clone, &msg_buf, &peer.node, table)
+                            handle_peer_as_initiator(signer, &msg_buf, &peer.node, storage, table)
                                 .await;
                         });
                     } else {
@@ -724,13 +729,10 @@ async fn pong(socket: &UdpSocket, to_addr: SocketAddr, ping_hash: H256, signer: 
     let _ = socket.send_to(&buf, to_addr).await;
 }
 
-// TODO build a proper listen loop that receives requests from both
-// peers and business layer and propagate storage to use when required
-// https://github.com/lambdaclass/lambda_ethereum_rust/issues/840
 async fn serve_requests(
     tcp_addr: SocketAddr,
     signer: SigningKey,
-    _storage: Store,
+    storage: Store,
     table: Arc<Mutex<KademliaTable>>,
 ) {
     let tcp_socket = TcpSocket::new_v4().unwrap();
@@ -742,6 +744,7 @@ async fn serve_requests(
         tokio::spawn(handle_peer_as_receiver(
             signer.clone(),
             stream,
+            storage.clone(),
             table.clone(),
         ));
     }
@@ -750,9 +753,10 @@ async fn serve_requests(
 async fn handle_peer_as_receiver(
     signer: SigningKey,
     stream: TcpStream,
+    storage: Store,
     table: Arc<Mutex<KademliaTable>>,
 ) {
-    let conn = RLPxConnection::receiver(signer, stream);
+    let conn = RLPxConnection::receiver(signer, stream, storage);
     handle_peer(conn, table).await;
 }
 
@@ -760,6 +764,7 @@ async fn handle_peer_as_initiator(
     signer: SigningKey,
     msg: &[u8],
     node: &Node,
+    storage: Store,
     table: Arc<Mutex<KademliaTable>>,
 ) {
     info!("Trying RLPx connection with {node:?}");
@@ -768,19 +773,16 @@ async fn handle_peer_as_initiator(
         .connect(SocketAddr::new(node.ip, node.tcp_port))
         .await
         .unwrap();
-    let conn = RLPxConnection::initiator(signer, msg, stream).await;
+    let conn = RLPxConnection::initiator(signer, msg, stream, storage).await;
     handle_peer(conn, table).await;
 }
 
 async fn handle_peer(mut conn: RLPxConnection<TcpStream>, table: Arc<Mutex<KademliaTable>>) {
     match conn.handshake().await {
-        Ok(_) => {
-            // TODO Properly build listen loop
-            // https://github.com/lambdaclass/lambda_ethereum_rust/issues/840
-            // loop {
-            //     conn.await_messages();
-            // }
-        }
+        Ok(_) => match conn.handle_peer().await {
+            Ok(_) => unreachable!(),
+            Err(e) => info!("Error during RLPx connection: ({e})"),
+        },
         Err(e) => {
             // Discard peer from kademlia table
             info!("Handshake failed, discarding peer: ({e})");
@@ -798,6 +800,7 @@ pub fn node_id_from_signing_key(signer: &SigningKey) -> H512 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ethereum_rust_storage::EngineType;
     use kademlia::bucket_number;
     use rand::rngs::OsRng;
     use std::{
@@ -844,12 +847,15 @@ mod tests {
         let signer = SigningKey::random(&mut OsRng);
         let udp_socket = Arc::new(UdpSocket::bind(addr).await.unwrap());
         let node_id = node_id_from_signing_key(&signer);
+        let storage =
+            Store::new("temp.db", EngineType::InMemory).expect("Failed to create test DB");
         let table = Arc::new(Mutex::new(KademliaTable::new(node_id)));
 
         if should_start_server {
             tokio::spawn(discover_peers_server(
                 addr,
                 udp_socket.clone(),
+                storage.clone(),
                 table.clone(),
                 signer.clone(),
             ));

@@ -1,10 +1,8 @@
-use thiserror::Error;
-
 use ethereum_rust_core::types::InvalidBlockHeaderError;
 use ethereum_rust_storage::error::StoreError;
 use ethereum_rust_vm::EvmError;
 
-#[derive(Debug, Error)]
+#[derive(Debug, thiserror::Error)]
 pub enum ChainError {
     #[error("Invalid Block: {0}")]
     InvalidBlock(#[from] InvalidBlockError),
@@ -20,7 +18,7 @@ pub enum ChainError {
     EvmError(#[from] EvmError),
 }
 
-#[derive(Debug, Error)]
+#[derive(Debug, thiserror::Error)]
 pub enum InvalidBlockError {
     #[error("World State Root does not match the one in the header after executing")]
     StateRootMismatch,
@@ -36,7 +34,7 @@ pub enum InvalidBlockError {
     BlobGasUsedMismatch,
 }
 
-#[derive(Debug, Error)]
+#[derive(Debug, thiserror::Error)]
 pub enum MempoolError {
     #[error("No block header")]
     NoBlockHeaderError,
@@ -67,7 +65,7 @@ pub enum ForkChoiceElement {
     Finalized,
 }
 
-#[derive(Debug, Error)]
+#[derive(Debug, thiserror::Error)]
 pub enum InvalidForkChoice {
     #[error("DB error: {0}")]
     StoreError(#[from] StoreError),

@@ -1,7 +1,8 @@
 use bytes::BufMut;
 use ethereum_rust_core::H512;
 use ethereum_rust_rlp::{
-    encode::RLPEncode as _,
+    decode::RLPDecode,
+    encode::RLPEncode,
     error::{RLPDecodeError, RLPEncodeError},
     structs::{Decoder, Encoder},
 };
@@ -15,14 +16,43 @@ use super::{
     utils::{pubkey2id, snappy_encode},
 };
 
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) enum Capability {
+    P2p,
+    Eth,
+    Snap,
+}
+
+impl RLPEncode for Capability {
+    fn encode(&self, buf: &mut dyn BufMut) {
+        match self {
+            Self::P2p => "p2p".encode(buf),
+            Self::Eth => "eth".encode(buf),
+            Self::Snap => "snap".encode(buf),
+        }
+    }
+}
+
+impl RLPDecode for Capability {
+    fn decode_unfinished(rlp: &[u8]) -> Result<(Self, &[u8]), RLPDecodeError> {
+        let (cap_string, rest) = String::decode_unfinished(rlp)?;
+        match cap_string.as_str() {
+            "p2p" => Ok((Capability::P2p, rest)),
+            "eth" => Ok((Capability::Eth, rest)),
+            "snap" => Ok((Capability::Snap, rest)),
+            _ => Err(RLPDecodeError::UnexpectedString),
+        }
+    }
+}
+
 #[derive(Debug)]
 pub(crate) struct HelloMessage {
-    pub(crate) capabilities: Vec<(String, u8)>,
+    pub(crate) capabilities: Vec<(Capability, u8)>,
     pub(crate) node_id: PublicKey,
 }
 
 impl HelloMessage {
-    pub fn new(capabilities: Vec<(String, u8)>, node_id: PublicKey) -> Self {
+    pub fn new(capabilities: Vec<(Capability, u8)>, node_id: PublicKey) -> Self {
         Self {
             capabilities,
             node_id,
@@ -55,7 +85,7 @@ impl RLPxMessage for HelloMessage {
         // TODO: store client id for debugging purposes
 
         // [[cap1, capVersion1], [cap2, capVersion2], ...]
-        let (capabilities, decoder): (Vec<(String, u8)>, _) =
+        let (capabilities, decoder): (Vec<(Capability, u8)>, _) =
             decoder.decode_field("capabilities").unwrap();
 
         // This field should be ignored

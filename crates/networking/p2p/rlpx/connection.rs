@@ -1,5 +1,5 @@
 use crate::{
-    rlpx::{handshake::encode_ack_message, message::Message, p2p, utils::id2pubkey},
+    rlpx::{eth::backend, handshake::encode_ack_message, message::Message, p2p, utils::id2pubkey},
     MAX_DISC_PACKET_SIZE,
 };
 
@@ -8,12 +8,14 @@ use super::{
     frame,
     handshake::{decode_ack_message, decode_auth_message, encode_auth_message},
     message as rlpx,
+    p2p::Capability,
     utils::{ecdh_xchng, pubkey2id},
 };
 use aes::cipher::KeyIvInit;
 use bytes::BufMut as _;
 use ethereum_rust_core::{H256, H512};
 use ethereum_rust_rlp::decode::RLPDecode;
+use ethereum_rust_storage::Store;
 use k256::{
     ecdsa::{RecoveryId, Signature, SigningKey, VerifyingKey},
     PublicKey, SecretKey,
@@ -21,8 +23,11 @@ use k256::{
 use sha3::{Digest, Keccak256};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tracing::{error, info};
-pub const SUPPORTED_CAPABILITIES: [(&str, u8); 2] = [("p2p", 5), ("eth", 68)];
-// pub const SUPPORTED_CAPABILITIES: [(&str, u8); 3] = [("p2p", 5), ("eth", 68), ("snap", 1)];
+const CAP_P2P: (Capability, u8) = (Capability::P2p, 5);
+const CAP_ETH: (Capability, u8) = (Capability::Eth, 68);
+//const CAP_SNAP: (Capability, u8) = (Capability::Snap, 1);
+const SUPPORTED_CAPABILITIES: [(Capability, u8); 2] = [CAP_P2P, CAP_ETH];
+// pub const SUPPORTED_CAPABILITIES: [(&str, u8); 3] = [CAP_P2P, CAP_ETH, CAP_SNAP)];
 
 pub(crate) type Aes256Ctr64BE = ctr::Ctr64BE<aes::Aes256>;
 
@@ -31,20 +36,22 @@ pub(crate) struct RLPxConnection<S> {
     signer: SigningKey,
     state: RLPxConnectionState,
     stream: S,
-    capabilities: Vec<(String, u8)>,
+    storage: Store,
+    capabilities: Vec<(Capability, u8)>,
 }
 
 impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
-    fn new(signer: SigningKey, stream: S, state: RLPxConnectionState) -> Self {
+    fn new(signer: SigningKey, stream: S, state: RLPxConnectionState, storage: Store) -> Self {
         Self {
             signer,
             state,
             stream,
+            storage,
             capabilities: vec![],
         }
     }
 
-    pub fn receiver(signer: SigningKey, stream: S) -> Self {
+    pub fn receiver(signer: SigningKey, stream: S, storage: Store) -> Self {
         let mut rng = rand::thread_rng();
         Self::new(
             signer,
@@ -53,10 +60,11 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
                 H256::random_using(&mut rng),
                 SecretKey::random(&mut rng),
             )),
+            storage,
         )
     }
 
-    pub async fn initiator(signer: SigningKey, msg: &[u8], stream: S) -> Self {
+    pub async fn initiator(signer: SigningKey, msg: &[u8], stream: S, storage: Store) -> Self {
         let mut rng = rand::thread_rng();
         let digest = Keccak256::digest(&msg[65..]);
         let signature = &Signature::from_bytes(msg[..64].into()).unwrap();
@@ -67,7 +75,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
             SecretKey::random(&mut rng),
             pubkey2id(&peer_pk.into()),
         ));
-        RLPxConnection::new(signer, stream, state)
+        RLPxConnection::new(signer, stream, state, storage)
     }
 
     pub async fn handshake(&mut self) -> Result<(), RLPxError> {
@@ -89,11 +97,84 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
         info!("Completed handshake!");
 
         self.exchange_hello_messages().await?;
-        info!("Completed Hello roundtrip!");
         Ok(())
     }
 
-    pub async fn send_auth(&mut self) {
+    pub async fn exchange_hello_messages(&mut self) -> Result<(), RLPxError> {
+        let hello_msg = Message::Hello(p2p::HelloMessage::new(
+            SUPPORTED_CAPABILITIES.to_vec(),
+            PublicKey::from(self.signer.verifying_key()),
+        ));
+
+        self.send(hello_msg).await;
+
+        // Receive Hello message
+        match self.receive().await {
+            Message::Hello(hello_message) => {
+                self.capabilities = hello_message.capabilities;
+
+                // Check if we have any capability in common
+                for cap in self.capabilities.clone() {
+                    if SUPPORTED_CAPABILITIES.contains(&cap) {
+                        return Ok(());
+                    }
+                }
+                // Return error if not
+                Err(RLPxError::HandshakeError(
+                    "No matching capabilities".to_string(),
+                ))
+            }
+            _ => {
+                // Fail if it is not a hello message
+                Err(RLPxError::HandshakeError(
+                    "Expected Hello message".to_string(),
+                ))
+            }
+        }
+    }
+
+    pub async fn handle_peer(&mut self) -> Result<(), RLPxError> {
+        self.start_capabilities().await?;
+        match &self.state {
+            RLPxConnectionState::Established(_) => {
+                info!("Started peer main loop");
+                loop {
+                    match self.receive().await {
+                        // TODO: implement handlers for each message type
+                        Message::Disconnect(_) => info!("Received Disconnect"),
+                        Message::Ping(_) => info!("Received Ping"),
+                        Message::Pong(_) => info!("Received Pong"),
+                        Message::Status(_) => info!("Received Status"),
+                        // TODO: Add new message types and handlers as they are implemented
+                        message => return Err(RLPxError::UnexpectedMessage(message)),
+                    };
+                }
+            }
+            _ => Err(RLPxError::InvalidState(
+                "Invalid connection state".to_string(),
+            )),
+        }
+    }
+
+    pub fn get_remote_node_id(&self) -> H512 {
+        match &self.state {
+            RLPxConnectionState::Established(state) => state.remote_node_id,
+            // TODO proper error
+            _ => panic!("Invalid state"),
+        }
+    }
+
+    async fn start_capabilities(&mut self) -> Result<(), RLPxError> {
+        // Sending eth Status if peer supports it
+        if self.capabilities.contains(&CAP_ETH) {
+            let status = backend::get_status(&self.storage).unwrap();
+            self.send(Message::Status(status)).await;
+        }
+        // TODO: add new capabilities startup when required (eg. snap)
+        Ok(())
+    }
+
+    async fn send_auth(&mut self) {
         match &self.state {
             RLPxConnectionState::Initiator(initiator_state) => {
                 let secret_key: SecretKey = self.signer.clone().into();
@@ -109,7 +190,6 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
 
                 auth_message.put_slice(&msg);
                 self.stream.write_all(&auth_message).await.unwrap();
-                info!("Sent auth message correctly!");
 
                 self.state = RLPxConnectionState::InitiatedAuth(InitiatedAuth::new(
                     initiator_state,
@@ -121,24 +201,20 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
         };
     }
 
-    pub async fn send_ack(&mut self) {
+    async fn send_ack(&mut self) {
         match &self.state {
             RLPxConnectionState::ReceivedAuth(received_auth_state) => {
-                let secret_key: SecretKey = self.signer.clone().into();
                 let peer_pk = id2pubkey(received_auth_state.remote_node_id).unwrap();
 
                 let mut ack_message = vec![];
                 let msg = encode_ack_message(
-                    &secret_key,
                     &received_auth_state.local_ephemeral_key,
                     received_auth_state.local_nonce,
                     &peer_pk,
-                    &received_auth_state.remote_ephemeral_key,
                 );
 
                 ack_message.put_slice(&msg);
                 self.stream.write_all(&ack_message).await.unwrap();
-                info!("Sent ack message correctly!");
 
                 self.state = RLPxConnectionState::Established(Box::new(Established::for_receiver(
                     received_auth_state,
@@ -150,7 +226,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
         };
     }
 
-    pub async fn receive_auth(&mut self) {
+    async fn receive_auth(&mut self) {
         match &self.state {
             RLPxConnectionState::Receiver(receiver_state) => {
                 let secret_key: SecretKey = self.signer.clone().into();
@@ -169,7 +245,6 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
                 let auth_bytes = &buf[..msg_size + 2];
                 let msg = &buf[2..msg_size + 2];
                 let (auth, remote_ephemeral_key) = decode_auth_message(&secret_key, msg, auth_data);
-                info!("Received auth message correctly!");
 
                 // Build next state
                 self.state = RLPxConnectionState::ReceivedAuth(ReceivedAuth::new(
@@ -185,7 +260,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
         };
     }
 
-    pub async fn receive_ack(&mut self) {
+    async fn receive_ack(&mut self) {
         match &self.state {
             RLPxConnectionState::InitiatedAuth(initiated_auth_state) => {
                 let secret_key: SecretKey = self.signer.clone().into();
@@ -205,7 +280,6 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
                 let msg = &buf[2..msg_size + 2];
                 let ack = decode_ack_message(&secret_key, msg, ack_data);
                 let remote_ephemeral_key = ack.get_ephemeral_pubkey().unwrap();
-                info!("Received ack message correctly!");
 
                 // Build next state
                 self.state = RLPxConnectionState::Established(Box::new(Established::for_initiator(
@@ -220,46 +294,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
         };
     }
 
-    pub async fn exchange_hello_messages(&mut self) -> Result<(), RLPxError> {
-        let supported_capabilities: Vec<(String, u8)> = SUPPORTED_CAPABILITIES
-            .into_iter()
-            .map(|(name, version)| (name.to_string(), version))
-            .collect();
-        let hello_msg = Message::Hello(p2p::HelloMessage::new(
-            supported_capabilities.clone(),
-            PublicKey::from(self.signer.verifying_key()),
-        ));
-
-        self.send(hello_msg).await;
-        info!("Hello message sent!");
-
-        // Receive Hello message
-        match self.receive().await {
-            Message::Hello(hello_message) => {
-                info!("Hello message received {hello_message:?}");
-                self.capabilities = hello_message.capabilities;
-
-                // Check if we have any capability in common
-                for cap in self.capabilities.clone() {
-                    if supported_capabilities.contains(&cap) {
-                        return Ok(());
-                    }
-                }
-                // Return error if not
-                Err(RLPxError::HandshakeError(
-                    "No matching capabilities".to_string(),
-                ))
-            }
-            _ => {
-                // Fail if it is not a hello message
-                Err(RLPxError::HandshakeError(
-                    "Expected Hello message".to_string(),
-                ))
-            }
-        }
-    }
-
-    pub async fn send(&mut self, message: rlpx::Message) {
+    async fn send(&mut self, message: rlpx::Message) {
         match &mut self.state {
             RLPxConnectionState::Established(state) => {
                 let mut frame_buffer = vec![];
@@ -277,7 +312,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
         }
     }
 
-    pub async fn receive(&mut self) -> rlpx::Message {
+    async fn receive(&mut self) -> rlpx::Message {
         match &mut self.state {
             RLPxConnectionState::Established(state) => {
                 let frame_data = frame::read(state, &mut self.stream).await;
@@ -287,14 +322,6 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
             }
             // TODO proper error
             _ => panic!("Received an unexpected message"),
-        }
-    }
-
-    pub fn get_remote_node_id(&self) -> H512 {
-        match &self.state {
-            RLPxConnectionState::Established(state) => state.remote_node_id,
-            // TODO proper error
-            _ => panic!("Invalid state"),
         }
     }
 }

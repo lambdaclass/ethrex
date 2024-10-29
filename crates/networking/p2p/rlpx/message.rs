@@ -1,7 +1,8 @@
 use bytes::BufMut;
 use ethereum_rust_rlp::error::{RLPDecodeError, RLPEncodeError};
+use std::fmt::Display;
 
-use super::eth::StatusMessage;
+use super::eth::status::StatusMessage;
 use super::p2p::{DisconnectMessage, HelloMessage, PingMessage, PongMessage};
 
 pub trait RLPxMessage: Sized {
@@ -37,6 +38,18 @@ impl Message {
             Message::Ping(msg) => msg.encode(buf),
             Message::Pong(msg) => msg.encode(buf),
             Message::Status(msg) => msg.encode(buf),
+        }
+    }
+}
+
+impl Display for Message {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Message::Hello(_) => "p2p:Hello".fmt(f),
+            Message::Disconnect(_) => "p2p:Disconnect".fmt(f),
+            Message::Ping(_) => "p2p:Ping".fmt(f),
+            Message::Pong(_) => "p2p:Pong".fmt(f),
+            Message::Status(_) => "eth:Status".fmt(f),
         }
     }
 }

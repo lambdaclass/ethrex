@@ -13,7 +13,6 @@ use k256::{
     PublicKey, SecretKey,
 };
 use rand::Rng;
-use tracing::info;
 
 type Aes128Ctr64BE = ctr::Ctr64BE<aes::Aes128>;
 
@@ -56,39 +55,20 @@ pub(crate) fn decode_auth_message(
     // RLP-decode the message.
     let (auth, _padding) = AuthMessage::decode_unfinished(&payload).unwrap();
 
-    info!(
-        "signature: {:?} node_id: {:?} nonce: {:?}",
-        &auth.signature, &auth.node_id, &auth.nonce
-    );
-
-    let peer_pk = id2pubkey(auth.node_id).unwrap();
-
     // Derive a shared secret from the static keys.
+    let peer_pk = id2pubkey(auth.node_id).unwrap();
     let static_shared_secret = ecdh_xchng(static_key, &peer_pk);
-    info!("token {static_shared_secret:?}");
-
     let remote_ephemeral_key =
         retrieve_remote_ephemeral_key(static_shared_secret.into(), auth.nonce, auth.signature);
-
-    info!("remote pub key {remote_ephemeral_key:?}");
-
     (auth, remote_ephemeral_key)
 }
 
 /// Encodes an Ack message, to complete a handshake
 pub fn encode_ack_message(
-    static_key: &SecretKey,
     local_ephemeral_key: &SecretKey,
     local_nonce: H256,
     remote_static_pubkey: &PublicKey,
-    remote_ephemeral_key: &PublicKey,
 ) -> Vec<u8> {
-    // Derive a shared secret from the static keys.
-    let static_shared_secret = ecdh_xchng(static_key, remote_static_pubkey);
-    info!("token {static_shared_secret:?}");
-
-    info!("remote pub key {remote_ephemeral_key:?}");
-
     // Compose the ack message.
     let ack_msg = AckMessage::new(pubkey2id(&local_ephemeral_key.public_key()), local_nonce);
 
