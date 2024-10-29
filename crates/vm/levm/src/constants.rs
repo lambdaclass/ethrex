@@ -115,6 +115,8 @@ pub const TX_BASE_COST: U256 = U256([21000, 0, 0, 0]);
 pub const MAX_CODE_SIZE: usize = 0x6000;
 pub const MAX_CREATE_CODE_SIZE: usize = 2 * MAX_CODE_SIZE;
 
+pub const INVALID_CONTRACT_PREFIX: u8 = 0xef;
+
 // Costs in gas for init word and init code (in wei)
 pub const INIT_WORD_COST: i64 = 2;
 

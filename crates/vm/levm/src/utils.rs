@@ -46,7 +46,7 @@ pub fn new_vm_with_ops_addr_bal(bytecode: Bytes, address: Address, balance: U256
         ),
     ];
 
-    let state = Db {
+    let mut state = Db {
         accounts: accounts.into(),
         block_hashes: Default::default(),
     };
@@ -56,7 +56,7 @@ pub fn new_vm_with_ops_addr_bal(bytecode: Bytes, address: Address, balance: U256
     // add the account passed by parameter
 
     VM::new(
-        Address::from_low_u64_be(42),
+        Some(Address::from_low_u64_be(42)),
         address,
         Default::default(),
         Default::default(),
@@ -68,9 +68,12 @@ pub fn new_vm_with_ops_addr_bal(bytecode: Bytes, address: Address, balance: U256
         U256::one(),
         Default::default(),
         Default::default(),
-        state,
+        &mut state,
         Default::default(),
         Default::default(),
         Default::default(),
+        Default::default(),
+        None,
     )
+    .unwrap()
 }

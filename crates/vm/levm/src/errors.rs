@@ -22,10 +22,14 @@ pub enum VMError {
     MissingBlobHashes,
     BlobHashIndexOutOfBounds,
     RevertOpcode,
-    SenderAccountDoesNotExist,
+    AddressDoesNotMatchAnAccount,
     SenderAccountShouldNotHaveBytecode,
     SenderBalanceShouldContainTransferValue,
     GasPriceIsLowerThanBaseFee,
+    AddressAlreadyOccupied,
+    ContractOutputTooBig,
+    InvalidInitialByte,
+    NonceOverflow,
 }
 
 pub enum OpcodeSuccess {

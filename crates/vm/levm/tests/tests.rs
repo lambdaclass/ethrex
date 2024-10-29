@@ -3845,7 +3845,7 @@ fn caller_op() {
     );
 
     let mut vm = VM::new(
-        address_that_has_the_code,
+        Some(address_that_has_the_code),
         caller,
         Default::default(),
         Default::default(),
@@ -3857,11 +3857,14 @@ fn caller_op() {
         Default::default(),
         Default::default(),
         Default::default(),
-        db,
+        &mut db,
         Default::default(),
         Default::default(),
         Default::default(),
-    );
+        Default::default(),
+        None,
+    )
+    .unwrap();
 
     let mut current_call_frame = vm.call_frames.pop().unwrap();
     vm.execute(&mut current_call_frame);
@@ -3887,7 +3890,7 @@ fn origin_op() {
     );
 
     let mut vm = VM::new(
-        address_that_has_the_code,
+        Some(address_that_has_the_code),
         msg_sender,
         Default::default(),
         Default::default(),
@@ -3899,11 +3902,14 @@ fn origin_op() {
         Default::default(),
         Default::default(),
         Default::default(),
-        db,
+        &mut db,
         Default::default(),
         Default::default(),
         Default::default(),
-    );
+        Default::default(),
+        None,
+    )
+    .unwrap();
 
     let mut current_call_frame = vm.call_frames.pop().unwrap();
     vm.execute(&mut current_call_frame);
@@ -3955,7 +3961,7 @@ fn address_op() {
     );
 
     let mut vm = VM::new(
-        address_that_has_the_code,
+        Some(address_that_has_the_code),
         Default::default(),
         Default::default(),
         Default::default(),
@@ -3967,11 +3973,14 @@ fn address_op() {
         Default::default(),
         Default::default(),
         Default::default(),
-        db,
+        &mut db,
         Default::default(),
         Default::default(),
         Default::default(),
-    );
+        Default::default(),
+        None,
+    )
+    .unwrap();
 
     let mut current_call_frame = vm.call_frames.pop().unwrap();
     vm.execute(&mut current_call_frame);
@@ -3999,7 +4008,7 @@ fn selfbalance_op() {
     );
 
     let mut vm = VM::new(
-        address_that_has_the_code,
+        Some(address_that_has_the_code),
         Default::default(),
         Default::default(),
         Default::default(),
@@ -4011,11 +4020,14 @@ fn selfbalance_op() {
         Default::default(),
         Default::default(),
         Default::default(),
-        db,
+        &mut db,
         Default::default(),
         Default::default(),
         Default::default(),
-    );
+        Default::default(),
+        None,
+    )
+    .unwrap();
 
     let mut current_call_frame = vm.call_frames.pop().unwrap();
     vm.execute(&mut current_call_frame);
@@ -4039,7 +4051,7 @@ fn callvalue_op() {
     );
 
     let mut vm = VM::new(
-        address_that_has_the_code,
+        Some(address_that_has_the_code),
         Default::default(),
         value,
         Default::default(),
@@ -4051,11 +4063,14 @@ fn callvalue_op() {
         Default::default(),
         Default::default(),
         Default::default(),
-        db,
+        &mut db,
         Default::default(),
         Default::default(),
         Default::default(),
-    );
+        Default::default(),
+        None,
+    )
+    .unwrap();
 
     let mut current_call_frame = vm.call_frames.pop().unwrap();
     vm.execute(&mut current_call_frame);
@@ -4078,7 +4093,7 @@ fn codesize_op() {
     );
 
     let mut vm = VM::new(
-        address_that_has_the_code,
+        Some(address_that_has_the_code),
         Default::default(),
         Default::default(),
         Default::default(),
@@ -4090,11 +4105,14 @@ fn codesize_op() {
         Default::default(),
         Default::default(),
         Default::default(),
-        db,
+        &mut db,
         Default::default(),
         Default::default(),
         Default::default(),
-    );
+        Default::default(),
+        None,
+    )
+    .unwrap();
 
     let mut current_call_frame = vm.call_frames.pop().unwrap();
     vm.execute(&mut current_call_frame);
@@ -4119,7 +4137,7 @@ fn gasprice_op() {
     );
 
     let mut vm = VM::new(
-        address_that_has_the_code,
+        Some(address_that_has_the_code),
         Default::default(),
         Default::default(),
         Default::default(),
@@ -4131,11 +4149,14 @@ fn gasprice_op() {
         Default::default(),
         Default::default(),
         U256::from(0x9876),
-        db,
+        &mut db,
         Default::default(),
         Default::default(),
         Default::default(),
-    );
+        Default::default(),
+        None,
+    )
+    .unwrap();
 
     let mut current_call_frame = vm.call_frames.pop().unwrap();
     vm.execute(&mut current_call_frame);
@@ -4177,7 +4198,7 @@ fn codecopy_op() {
     );
 
     let mut vm = VM::new(
-        address_that_has_the_code,
+        Some(address_that_has_the_code),
         Default::default(),
         Default::default(),
         Default::default(),
@@ -4189,11 +4210,14 @@ fn codecopy_op() {
         Default::default(),
         Default::default(),
         Default::default(),
-        db,
+        &mut db,
         Default::default(),
         Default::default(),
         Default::default(),
-    );
+        Default::default(),
+        None,
+    )
+    .unwrap();
 
     let mut current_call_frame = vm.call_frames.pop().unwrap();
     vm.execute(&mut current_call_frame);
