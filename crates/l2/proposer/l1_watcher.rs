@@ -40,6 +40,7 @@ pub struct L1Watcher {
     max_block_step: U256,
     last_block_fetched: U256,
     l2_proposer_pk: SecretKey,
+    l2_proposer_address: Address,
 }
 
 impl L1Watcher {
@@ -52,6 +53,7 @@ impl L1Watcher {
             max_block_step: watcher_config.max_block_step,
             last_block_fetched: U256::zero(),
             l2_proposer_pk: watcher_config.l2_proposer_private_key,
+            l2_proposer_address: watcher_config.l2_proposer_address,
         }
     }
 
@@ -94,7 +96,20 @@ impl L1Watcher {
         logs: Vec<RpcLog>,
         store: &Store,
     ) -> Result<Vec<H256>, L1WatcherError> {
+        if logs.is_empty() {
+            return Ok(Vec::new());
+        }
+
         let mut deposit_txs = Vec::new();
+        let mut operator_nonce = store
+            .get_account_info(
+                self.eth_client.get_block_number().await?.as_u64(),
+                self.l2_proposer_address,
+            )
+            .map_err(|e| L1WatcherError::FailedToRetrieveDepositorAccountInfo(e.to_string()))?
+            .map(|info| info.nonce)
+            .unwrap_or_default();
+
         for log in logs {
             let mint_value = format!("{:#x}", log.log.topics[1])
                 .parse::<U256>()
@@ -123,14 +138,9 @@ impl L1Watcher {
                 ..Default::default()
             };
 
-            mint_transaction.nonce = store
-                .get_account_info(
-                    self.eth_client.get_block_number().await?.as_u64(),
-                    beneficiary,
-                )
-                .map_err(|e| L1WatcherError::FailedToRetrieveDepositorAccountInfo(e.to_string()))?
-                .map(|info| info.nonce)
-                .unwrap_or_default();
+            mint_transaction.nonce = operator_nonce;
+            operator_nonce += 1;
+
             mint_transaction.max_fee_per_gas = self.eth_client.get_gas_price().await?.as_u64();
             // TODO(IMPORTANT): gas_limit should come in the log and must
             // not be calculated in here. The reason for this is that the

@@ -354,7 +354,7 @@ impl Command {
                 //     .estimate_gas(transfer_transaction.clone())
                 //     .await?;
 
-                transfer_transaction.gas_limit = 21000 * 2;
+                transfer_transaction.gas_limit = 21000 * 5;
 
                 let tx_hash = if l1 {
                     eth_client

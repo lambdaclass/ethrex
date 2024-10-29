@@ -37,6 +37,8 @@ The full state diff sent on every block will then be a sequence of bytes encoded
   - Note that values `8` and `16` are mutually exclusive, and if `type` is greater or equal to `4`, then the address is a contract. Each address can only appear once in the list.
 - Next the `WithdrawalLogs` field:
     - First two bytes are the number of entries, then come the tuples `(to_u160, amount_u256, tx_hash_u256)`.
+- Next the `DepositLogs` field:
+    - First two bytes are the number of entries, then come the last 30 bytes of the `keccak` encoding of the concatenation of deposits with form `keccack256(to_u160 || value_u256)`.
 - In case of the only changes on an account are produced by withdrawals, the `ModifiedAccounts` for that address field must be omitted. In this case, the state diff can be computed by incrementing the nonce in one unit and subtracting the amount from the balance.
 
 To recap, using `||` for byte concatenation and `[]` for optional parameters, the full encoding for state diffs is:
@@ -46,7 +48,7 @@ version_header_u8 ||
 // Modified Accounts
 number_of_modified_accounts_u16 ||
 (
-  type_u8 || address_u20 || [balance_u256] || [nonce_increase_u16] ||
+  type_u8 || address_u160 || [balance_u256] || [nonce_increase_u16] ||
   [number_of_modified_storage_slots_u16 || (key_u256 || value_u256)... ] ||
   [bytecode_len_u16 || bytecode ...] ||
   [code_hash_u256]
@@ -54,6 +56,8 @@ number_of_modified_accounts_u16 ||
 // Withdraw Logs
 number_of_withdraw_logs_u16 ||
 (to_u160 || amount_u256 || tx_hash_u256) ...
+// Deposit Logs
+number_of_deposit_logs_u16 || keccak256(keccack256(to_u160 || value_u256) || ...)[2:32]
 ```
 
 The sequencer will then make a commitment to this encoded state diff (explained in the EIP 4844 section how this is done) and send on the `commit` transaction:

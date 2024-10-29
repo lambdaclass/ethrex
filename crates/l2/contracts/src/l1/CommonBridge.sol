@@ -24,6 +24,8 @@ contract CommonBridge is ICommonBridge, Ownable, ReentrancyGuard {
     /// that the logs were published on L1, and that that block was committed.
     mapping(uint256 => bytes32) public blockWithdrawalsLogs;
 
+    bytes32[] public depositLogs;
+
     address public ON_CHAIN_PROPOSER;
 
     modifier onlyOnChainProposer() {
@@ -59,11 +61,28 @@ contract CommonBridge is ICommonBridge, Ownable, ReentrancyGuard {
 
         // TODO: Build the tx.
         bytes32 l2MintTxHash = keccak256(abi.encodePacked("dummyl2MintTxHash"));
+        depositLogs.push(keccak256(abi.encodePacked(to, msg.value)));
         emit DepositInitiated(msg.value, to, l2MintTxHash);
     }
 
     receive() external payable {
         deposit(msg.sender);
+    }
+
+    /// @inheritdoc ICommonBridge
+    function removeDepositLogs(uint number) public onlyOnChainProposer {
+        require(
+            number <= depositLogs.length,
+            "CommonBridge: number is greater than the length of depositLogs"
+        );
+
+        for (uint i = 0; i < depositLogs.length - number; i++) {
+            depositLogs[i] = depositLogs[i + number];
+        }
+
+        for (uint _i = 0; _i < number; _i++) {
+            depositLogs.pop();
+        }
     }
 
     /// @inheritdoc ICommonBridge

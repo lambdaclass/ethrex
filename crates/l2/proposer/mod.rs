@@ -7,7 +7,7 @@ use bytes::Bytes;
 use errors::ProposerError;
 use ethereum_rust_blockchain::constants::TX_GAS_COST;
 use ethereum_rust_core::types::{
-    Block, EIP1559Transaction, GenericTransaction, Transaction, TxKind,
+    Block, EIP1559Transaction, GenericTransaction, PrivilegedTxType, Transaction, TxKind,
 };
 use ethereum_rust_dev::utils::engine_client::{config::EngineApiConfig, EngineClient};
 use ethereum_rust_rlp::encode::RLPEncode;
@@ -25,7 +25,7 @@ pub mod prover_server;
 
 pub mod errors;
 
-const COMMIT_FUNCTION_SELECTOR: [u8; 4] = [28, 217, 139, 206];
+const COMMIT_FUNCTION_SELECTOR: [u8; 4] = [132, 97, 12, 179];
 const VERIFY_FUNCTION_SELECTOR: [u8; 4] = [133, 133, 44, 228];
 
 pub struct Proposer {
@@ -122,6 +122,38 @@ impl Proposer {
                 H256::zero()
             };
 
+            let deposit_hashes: Vec<[u8; 32]> = block
+                .body
+                .transactions
+                .iter()
+                .filter_map(|tx| match tx {
+                    Transaction::PrivilegedL2Transaction(tx)
+                        if tx.tx_type == PrivilegedTxType::Deposit =>
+                    {
+                        let to = match tx.to {
+                            TxKind::Call(to) => to,
+                            TxKind::Create => Address::zero(),
+                        };
+                        let value_bytes = &mut [0u8; 32];
+                        tx.value.to_big_endian(value_bytes);
+                        Some(keccak([H256::from(to).0, H256::from(value_bytes).0].concat()).0)
+                    }
+                    _ => None,
+                })
+                .collect();
+            let deposit_logs_hash = if deposit_hashes.is_empty() {
+                H256::zero()
+            } else {
+                H256::from_slice(
+                    [
+                        &(deposit_hashes.len() as u16).to_be_bytes(),
+                        &keccak(deposit_hashes.concat()).0[2..32],
+                    ]
+                    .concat()
+                    .as_slice(),
+                )
+            };
+
             let new_state_root_hash = store
                 .state_trie(block.header.compute_block_hash())
                 .unwrap()
@@ -134,6 +166,7 @@ impl Proposer {
                     block.header.number,
                     new_state_root_hash,
                     withdrawals_logs_merkle_root,
+                    deposit_logs_hash,
                 )
                 .await
             {
@@ -243,15 +276,17 @@ impl Proposer {
         block_number: u64,
         new_l2_state_root: H256,
         withdrawal_logs_merkle_root: H256,
+        deposit_logs_hash: H256,
     ) -> Result<H256, ProposerError> {
         info!("Sending commitment");
-        let mut calldata = Vec::with_capacity(68);
+        let mut calldata = Vec::with_capacity(132);
         calldata.extend(COMMIT_FUNCTION_SELECTOR);
         let mut block_number_bytes = [0_u8; 32];
         U256::from(block_number).to_big_endian(&mut block_number_bytes);
         calldata.extend(block_number_bytes);
         calldata.extend(new_l2_state_root.0);
         calldata.extend(withdrawal_logs_merkle_root.0);
+        calldata.extend(deposit_logs_hash.0);
 
         let commit_tx_hash = self
             .send_transaction_with_calldata(self.on_chain_proposer_address, calldata.into())
@@ -285,7 +320,7 @@ impl Proposer {
         calldata.extend(H256::from_low_u64_be(32).as_bytes());
         calldata.extend(H256::from_low_u64_be(block_proof.len() as u64).as_bytes());
         calldata.extend(block_proof);
-        let leading_zeros = 32 - (calldata.len() % 32);
+        let leading_zeros = 32 - ((calldata.len() - 4) % 32);
         calldata.extend(vec![0; leading_zeros]);
 
         let verify_tx_hash = self

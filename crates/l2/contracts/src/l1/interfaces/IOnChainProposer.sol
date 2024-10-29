@@ -33,7 +33,8 @@ interface IOnChainProposer {
     function commit(
         uint256 blockNumber,
         bytes32 newL2StateRoot,
-        bytes32 withdrawalsLogsMerkleRoot
+        bytes32 withdrawalsLogsMerkleRoot,
+        bytes32 depositLogs
     ) external;
 
     /// @notice Method used to verify an L2 block proof.
