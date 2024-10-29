@@ -766,7 +766,7 @@ impl Transaction {
         };
         self.gas_fee_cap()
             .checked_sub(base_fee)
-            .map(|tip| min(tip, self.gas_fee_cap()))
+            .map(|tip| min(tip, self.gas_tip_cap()))
     }
 
     /// Returns whether the transaction is replay-protected.
