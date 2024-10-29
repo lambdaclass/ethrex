@@ -41,9 +41,6 @@ interface ICommonBridge {
         uint256 indexed claimedAmount
     );
 
-    /// @notice Error for when the deposit amount is 0.
-    error AmountToDepositIsZero();
-
     /// @notice Initializes the contract.
     /// @dev This method is called only once after the contract is deployed.
     /// @dev It sets the OnChainProposer address.

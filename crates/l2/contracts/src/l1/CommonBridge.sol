@@ -55,9 +55,8 @@ contract CommonBridge is ICommonBridge, Ownable, ReentrancyGuard {
 
     /// @inheritdoc ICommonBridge
     function deposit(address to) public payable {
-        if (msg.value == 0) {
-            revert AmountToDepositIsZero();
-        }
+        require(msg.value > 0, "CommonBridge: amount to deposit is zero");
+
         // TODO: Build the tx.
         bytes32 l2MintTxHash = keccak256(abi.encodePacked("dummyl2MintTxHash"));
         emit DepositInitiated(msg.value, to, l2MintTxHash);
