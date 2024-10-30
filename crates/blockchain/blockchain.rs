@@ -50,6 +50,7 @@ pub fn add_block(block: &Block, storage: &Store) -> Result<(), ChainError> {
     // Apply the account updates over the last block's state and compute the new state root
     let new_state_root = state
         .database()
+        .ok_or(ChainError::StoreError(StoreError::MissingStore))?
         .apply_account_updates(block.header.parent_hash, &account_updates)?
         .ok_or(ChainError::ParentStateNotFound)?;
 
@@ -127,7 +128,10 @@ pub fn validate_block(
     parent_header: &BlockHeader,
     state: &EvmState,
 ) -> Result<(), ChainError> {
-    let spec = spec_id(state.database(), block.header.timestamp).unwrap();
+    let spec = spec_id(
+        &state.chain_config().map_err(ChainError::from)?,
+        block.header.timestamp,
+    );
 
     // Verify initial header validity against parent
     validate_block_header(&block.header, parent_header).map_err(InvalidBlockError::from)?;

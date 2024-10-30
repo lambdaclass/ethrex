@@ -431,7 +431,8 @@ impl RpcHandler for EstimateGasRequest {
             // Block not found
             _ => return Ok(Value::Null),
         };
-        let spec_id = ethereum_rust_vm::spec_id(&storage, block_header.timestamp)?;
+        let spec_id =
+            ethereum_rust_vm::spec_id(&storage.get_chain_config()?, block_header.timestamp);
 
         // If the transaction is a plain value transfer, short circuit estimation.
         if let TxKind::Call(address) = self.transaction.to {

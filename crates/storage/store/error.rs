@@ -16,4 +16,6 @@ pub enum StoreError {
     RLPDecode(#[from] RLPDecodeError),
     #[error(transparent)]
     Trie(#[from] TrieError),
+    #[error("missing store: is an execution DB being used instead?")]
+    MissingStore,
 }
