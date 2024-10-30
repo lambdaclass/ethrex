@@ -28,10 +28,14 @@ use ethereum_rust_vm::{
 ///
 /// Performs pre and post execution validation, and updates the database with the post state.
 pub fn add_block(block: &Block, storage: &Store) -> Result<(), ChainError> {
-    // TODO(#438): handle cases where blocks are missing between the canonical chain and the block.
+    let block_hash = block.header.compute_block_hash();
 
     // Validate if it can be the new head and find the parent
-    let parent_header = find_parent_header(&block.header, storage)?;
+    let Ok(parent_header) = find_parent_header(&block.header, storage) else {
+        // If the parent is not present, we store it as pending.
+        storage.add_pending_block(block.clone())?;
+        return Err(ChainError::ParentNotFound);
+    };
     let mut state = evm_state(storage.clone(), block.header.parent_hash);
 
     // Validate the block pre-execution
@@ -47,12 +51,11 @@ pub fn add_block(block: &Block, storage: &Store) -> Result<(), ChainError> {
     let new_state_root = state
         .database()
         .apply_account_updates(block.header.parent_hash, &account_updates)?
-        .unwrap_or_default();
+        .ok_or(ChainError::ParentStateNotFound)?;
 
     // Check state root matches the one in block header after execution
     validate_state_root(&block.header, new_state_root)?;
 
-    let block_hash = block.header.compute_block_hash();
     store_block(storage, block.clone())?;
     store_receipts(storage, receipts, block_hash)?;
 
@@ -105,7 +108,7 @@ pub fn latest_canonical_block_hash(storage: &Store) -> Result<H256, ChainError> 
 }
 
 /// Validates if the provided block could be the new head of the chain, and returns the
-/// parent_header in that case
+/// parent_header in that case. If not found, the new block is saved as pending.
 pub fn find_parent_header(
     block_header: &BlockHeader,
     storage: &Store,

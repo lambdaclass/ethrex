@@ -158,6 +158,19 @@ impl Store {
         self.engine.get_block_body(block_number)
     }
 
+    pub fn add_pending_block(&self, block: Block) -> Result<(), StoreError> {
+        info!(
+            "Adding block to pending: {}",
+            block.header.compute_block_hash()
+        );
+        self.engine.add_pending_block(block)
+    }
+
+    pub fn get_pending_block(&self, block_hash: BlockHash) -> Result<Option<Block>, StoreError> {
+        info!("get pending: {}", block_hash);
+        self.engine.get_pending_block(block_hash)
+    }
+
     pub fn add_block_number(
         &self,
         block_hash: BlockHash,

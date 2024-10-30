@@ -41,6 +41,7 @@ struct StoreInner {
     block_total_difficulties: HashMap<BlockHash, U256>,
     // Stores local blocks by payload id
     payloads: HashMap<u64, Block>,
+    pending_blocks: HashMap<BlockHash, Block>,
 }
 
 #[derive(Default, Debug)]
@@ -81,6 +82,17 @@ impl StoreEngine for Store {
         } else {
             Ok(None)
         }
+    }
+
+    fn add_pending_block(&self, block: Block) -> Result<(), StoreError> {
+        self.inner()
+            .pending_blocks
+            .insert(block.header.compute_block_hash(), block);
+        Ok(())
+    }
+
+    fn get_pending_block(&self, block_hash: BlockHash) -> Result<Option<Block>, StoreError> {
+        Ok(self.inner().pending_blocks.get(&block_hash).cloned())
     }
 
     fn add_block_header(

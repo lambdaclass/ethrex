@@ -1,10 +1,10 @@
 #[cfg(test)]
-mod test {
+mod blockchain_integration_test {
     use std::{fs::File, io::BufReader};
 
     use crate::{
         add_block,
-        error::InvalidForkChoice,
+        error::{ChainError, InvalidForkChoice},
         fork_choice::apply_fork_choice,
         is_canonical, latest_canonical_block_hash,
         payload::{build_payload, create_payload, BuildPayloadArgs},
@@ -65,6 +65,34 @@ mod test {
         assert!(is_canonical(&store, 1, hash_1b).unwrap());
         assert!(is_canonical(&store, 2, hash_2).unwrap());
         assert!(!is_canonical(&store, 1, hash_1a).unwrap());
+    }
+
+    #[test]
+    fn test_sync_not_supported_yet() {
+        let store = test_store();
+        let genesis_header = store.get_block_header(0).unwrap().unwrap();
+
+        // Build a single valid block.
+        let block_1 = new_block(&store, &genesis_header);
+        let hash_1 = block_1.header.compute_block_hash();
+        add_block(&block_1, &store).unwrap();
+        apply_fork_choice(&store, hash_1, H256::zero(), H256::zero()).unwrap();
+
+        // Build a child, then change its parent, making it effectively a pending block.
+        let mut block_2 = new_block(&store, &block_1.header);
+        block_2.header.parent_hash = H256::random();
+        let hash_2 = block_2.header.compute_block_hash();
+        let result = add_block(&block_2, &store);
+        assert!(matches!(result, Err(ChainError::ParentNotFound)));
+
+        // block 2 should now be pending.
+        assert!(store.get_pending_block(hash_2).unwrap().is_some());
+
+        let fc_result = apply_fork_choice(&store, hash_2, H256::zero(), H256::zero());
+        assert!(matches!(fc_result, Err(InvalidForkChoice::Syncing)));
+
+        // block 2 should still be pending.
+        assert!(store.get_pending_block(hash_2).unwrap().is_some());
     }
 
     #[test]
