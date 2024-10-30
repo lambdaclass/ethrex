@@ -341,30 +341,29 @@ impl Command {
                     todo!("Handle ERC20 transfers")
                 }
 
+                let client = if l1 { eth_client } else { rollup_client };
+
                 let mut transfer_transaction = EIP1559Transaction {
                     to: TxKind::Call(to),
                     value: amount,
-                    chain_id: cfg.network.l1_chain_id,
-                    nonce: eth_client.get_nonce(from).await?,
-                    max_fee_per_gas: eth_client.get_gas_price().await?.as_u64(),
+                    chain_id: if l1 {
+                        cfg.network.l1_chain_id
+                    } else {
+                        cfg.network.l2_chain_id
+                    },
+                    nonce: client.get_nonce(from).await?,
+                    max_fee_per_gas: client.get_gas_price().await?.as_u64() * 100,
+                    gas_limit: 21000 * 100,
                     ..Default::default()
                 };
 
-                // let estimated_gas = eth_client
-                //     .estimate_gas(transfer_transaction.clone())
+                // transfer_transaction.gas_limit = client
+                //     .estimate_gas(transfer_transaction.clone().into())
                 //     .await?;
 
-                transfer_transaction.gas_limit = 21000 * 5;
-
-                let tx_hash = if l1 {
-                    eth_client
-                        .send_eip1559_transaction(&mut transfer_transaction, cfg.wallet.private_key)
-                        .await?
-                } else {
-                    rollup_client
-                        .send_eip1559_transaction(&mut transfer_transaction, cfg.wallet.private_key)
-                        .await?
-                };
+                let tx_hash = client
+                    .send_eip1559_transaction(&mut transfer_transaction, cfg.wallet.private_key)
+                    .await?;
 
                 println!(
                     "[{}] Transfer sent: {tx_hash:#x}",
