@@ -83,7 +83,7 @@ impl RpcHandler for NewPayloadV3Request {
         }
 
         // Check that block_hash is valid
-        let actual_block_hash = block.header.compute_block_hash();
+        let actual_block_hash = block.hash();
         if block_hash != actual_block_hash {
             let result = PayloadStatus::invalid_with_err("Invalid block hash");
             return serde_json::to_value(result)

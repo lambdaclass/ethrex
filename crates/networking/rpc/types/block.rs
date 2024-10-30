@@ -52,12 +52,9 @@ impl RpcBlock {
         full_transactions: bool,
         total_difficulty: U256,
     ) -> RpcBlock {
-        let size = Block {
-            header: header.clone(),
-            body: body.clone(),
-        }
-        .encode_to_vec()
-        .len();
+        let size = Block::new(header.clone(), body.clone())
+            .encode_to_vec()
+            .len();
         let body_wrapper = if full_transactions {
             BlockBodyWrapper::Full(FullBlockBody::from_body(body, header.number, hash))
         } else {

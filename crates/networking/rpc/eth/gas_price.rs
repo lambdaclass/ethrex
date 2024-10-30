@@ -211,10 +211,7 @@ mod tests {
                 withdrawals: Default::default(),
             };
             let block_header = test_header(block_num);
-            let block = Block {
-                body: block_body,
-                header: block_header.clone(),
-            };
+            let block = Block::new(block_header.clone(), block_body);
             store.add_block(block).unwrap();
             store
                 .set_canonical_block(block_num, block_header.compute_block_hash())
@@ -241,10 +238,7 @@ mod tests {
                 withdrawals: Default::default(),
             };
             let block_header = test_header(block_num);
-            let block = Block {
-                body: block_body,
-                header: block_header.clone(),
-            };
+            let block = Block::new(block_header.clone(), block_body);
             store.add_block(block).unwrap();
             store
                 .set_canonical_block(block_num, block_header.compute_block_hash())
@@ -272,10 +266,7 @@ mod tests {
                 withdrawals: Default::default(),
             };
             let block_header = test_header(block_num);
-            let block = Block {
-                body: block_body,
-                header: block_header.clone(),
-            };
+            let block = Block::new(block_header.clone(), block_body);
             store.add_block(block).unwrap();
             store
                 .set_canonical_block(block_num, block_header.compute_block_hash())
@@ -298,10 +289,7 @@ mod tests {
                 withdrawals: Default::default(),
             };
             let block_header = test_header(block_num);
-            let block = Block {
-                body: block_body,
-                header: block_header.clone(),
-            };
+            let block = Block::new(block_header.clone(), block_body);
             store.add_block(block).unwrap();
             store
                 .set_canonical_block(block_num, block_header.compute_block_hash())
@@ -342,10 +330,7 @@ mod tests {
                 withdrawals: Default::default(),
             };
             let block_header = test_header(block_num);
-            let block = Block {
-                body: block_body,
-                header: block_header.clone(),
-            };
+            let block = Block::new(block_header.clone(), block_body);
             storage.add_block(block).unwrap();
             storage
                 .set_canonical_block(block_num, block_header.compute_block_hash())

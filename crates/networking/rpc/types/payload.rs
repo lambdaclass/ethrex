@@ -91,33 +91,33 @@ impl ExecutionPayloadV3 {
             ommers: vec![],
             withdrawals: Some(self.withdrawals),
         };
-        Ok(Block {
-            header: BlockHeader {
-                parent_hash: self.parent_hash,
-                ommers_hash: *DEFAULT_OMMERS_HASH,
-                coinbase: self.fee_recipient,
-                state_root: self.state_root,
-                transactions_root: compute_transactions_root(&body.transactions),
-                receipts_root: self.receipts_root,
-                logs_bloom: self.logs_bloom,
-                difficulty: 0.into(),
-                number: self.block_number,
-                gas_limit: self.gas_limit,
-                gas_used: self.gas_used,
-                timestamp: self.timestamp,
-                extra_data: self.extra_data,
-                prev_randao: self.prev_randao,
-                nonce: 0,
-                base_fee_per_gas: Some(self.base_fee_per_gas),
-                withdrawals_root: Some(compute_withdrawals_root(
-                    &body.withdrawals.clone().unwrap_or_default(),
-                )),
-                blob_gas_used: Some(self.blob_gas_used),
-                excess_blob_gas: Some(self.excess_blob_gas),
-                parent_beacon_block_root: Some(parent_beacon_block_root),
-            },
-            body,
-        })
+
+        let header = BlockHeader {
+            parent_hash: self.parent_hash,
+            ommers_hash: *DEFAULT_OMMERS_HASH,
+            coinbase: self.fee_recipient,
+            state_root: self.state_root,
+            transactions_root: compute_transactions_root(&body.transactions),
+            receipts_root: self.receipts_root,
+            logs_bloom: self.logs_bloom,
+            difficulty: 0.into(),
+            number: self.block_number,
+            gas_limit: self.gas_limit,
+            gas_used: self.gas_used,
+            timestamp: self.timestamp,
+            extra_data: self.extra_data,
+            prev_randao: self.prev_randao,
+            nonce: 0,
+            base_fee_per_gas: Some(self.base_fee_per_gas),
+            withdrawals_root: Some(compute_withdrawals_root(
+                &body.withdrawals.clone().unwrap_or_default(),
+            )),
+            blob_gas_used: Some(self.blob_gas_used),
+            excess_blob_gas: Some(self.excess_blob_gas),
+            parent_beacon_block_root: Some(parent_beacon_block_root),
+        };
+
+        Ok(Block::new(header, body))
     }
 
     pub fn from_block(block: Block) -> Self {
@@ -134,7 +134,7 @@ impl ExecutionPayloadV3 {
             timestamp: block.header.timestamp,
             extra_data: block.header.extra_data.clone(),
             base_fee_per_gas: block.header.base_fee_per_gas.unwrap_or_default(),
-            block_hash: block.header.compute_block_hash(),
+            block_hash: block.hash(),
             transactions: block
                 .body
                 .transactions

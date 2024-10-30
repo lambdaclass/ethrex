@@ -466,7 +466,7 @@ impl StoreEngine for Store {
             Some(body) => body,
             None => return Ok(None),
         };
-        Ok(Some(Block { header, body }))
+        Ok(Some(Block::new(header, body)))
     }
 
     fn unset_canonical_block(&self, number: BlockNumber) -> Result<(), StoreError> {

@@ -110,7 +110,7 @@ impl RpcHandler for FeeHistoryRequest {
             );
 
             if let Some(percentiles) = &self.reward_percentiles {
-                let block = Block { header, body };
+                let block = Block::new(header, body);
                 reward.push(Self::calculate_percentiles_for_block(block, percentiles));
             }
         }

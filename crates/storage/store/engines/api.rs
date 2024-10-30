@@ -175,7 +175,7 @@ pub trait StoreEngine: Debug + Send + Sync + RefUnwindSafe {
             Some(body) => body,
             None => return Ok(None),
         };
-        Ok(Some(Block { header, body }))
+        Ok(Some(Block::new(header, body)))
     }
 
     // Get the canonical block hash for a given block number.

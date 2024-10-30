@@ -30,7 +30,7 @@ pub fn run_ef_test(test_key: &str, test: &TestUnit) {
 
         // Won't panic because test has been validated
         let block: &CoreBlock = &block_fixture.block().unwrap().clone().into();
-        let hash = block.header.compute_block_hash();
+        let hash = block.hash();
 
         // Attempt to add the block as the head of the chain
         let chain_result = add_block(block, &store);

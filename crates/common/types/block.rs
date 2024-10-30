@@ -24,6 +24,7 @@ pub type BlockNumber = u64;
 pub type BlockHash = H256;
 
 use lazy_static::lazy_static;
+use once_cell::sync::OnceCell;
 
 lazy_static! {
     pub static ref DEFAULT_OMMERS_HASH: H256 = H256::from_slice(&hex::decode("1dcc4de8dec75d7aab85b567b6ccd41ad312451b948a7413f0a142fd40d49347").unwrap()); // = Keccak256(RLP([])) as of EIP-3675
@@ -32,6 +33,22 @@ lazy_static! {
 pub struct Block {
     pub header: BlockHeader,
     pub body: BlockBody,
+    #[serde(skip)]
+    hash: OnceCell<BlockHash>,
+}
+
+impl Block {
+    pub fn new(header: BlockHeader, body: BlockBody) -> Block {
+        Block {
+            header,
+            body,
+            hash: OnceCell::new(),
+        }
+    }
+
+    pub fn hash(&self) -> BlockHash {
+        *self.hash.get_or_init(|| self.header.compute_block_hash())
+    }
 }
 
 impl RLPEncode for Block {
@@ -58,7 +75,7 @@ impl RLPDecode for Block {
             ommers,
             withdrawals,
         };
-        let block = Block { header, body };
+        let block = Block::new(header, body);
         Ok((block, remaining))
     }
 }
@@ -527,12 +544,26 @@ fn calc_excess_blob_gas(parent_header: &BlockHeader) -> u64 {
 
 #[cfg(test)]
 mod test {
-
-    use std::str::FromStr;
+    use std::{str::FromStr, time::Instant};
 
     use super::*;
     use ethereum_types::H160;
     use hex_literal::hex;
+
+    #[test]
+    fn compute_hash() {
+        let block = Block::default();
+
+        let start = Instant::now();
+        block.hash();
+        let duration = start.elapsed();
+
+        let start_2 = Instant::now();
+        block.hash();
+        let duration_2 = start_2.elapsed();
+
+        assert!(duration > 1000 * duration_2);
+    }
 
     #[test]
     fn test_compute_withdrawals_root() {

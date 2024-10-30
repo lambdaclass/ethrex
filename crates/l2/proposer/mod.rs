@@ -155,7 +155,7 @@ impl Proposer {
             };
 
             let new_state_root_hash = store
-                .state_trie(block.header.compute_block_hash())
+                .state_trie(block.hash())
                 .unwrap()
                 .unwrap()
                 .hash()

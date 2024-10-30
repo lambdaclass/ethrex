@@ -125,7 +125,7 @@ async fn main() {
         let blocks = read_chain_file(chain_rlp_path);
         let size = blocks.len();
         for block in &blocks {
-            let hash = block.header.compute_block_hash();
+            let hash = block.hash();
             info!(
                 "Adding block {} with hash {:#x}.",
                 block.header.number, hash
@@ -139,7 +139,7 @@ async fn main() {
             }
         }
         if let Some(last_block) = blocks.last() {
-            let hash = last_block.header.compute_block_hash();
+            let hash = last_block.hash();
             apply_fork_choice(&store, hash, hash, hash).unwrap();
         }
         info!("Added {} blocks to blockchain", size);

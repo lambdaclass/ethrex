@@ -171,9 +171,7 @@ pub struct GenesisAccount {
 
 impl Genesis {
     pub fn get_block(&self) -> Block {
-        let header = self.get_block_header();
-        let body = self.get_block_body();
-        Block { header, body }
+        Block::new(self.get_block_header(), self.get_block_body())
     }
 
     fn get_block_header(&self) -> BlockHeader {
@@ -379,7 +377,7 @@ mod tests {
         let reader = BufReader::new(file);
         let genesis: Genesis =
             serde_json::from_reader(reader).expect("Failed to deserialize genesis file");
-        let genesis_block_hash = genesis.get_block().header.compute_block_hash();
+        let genesis_block_hash = genesis.get_block().hash();
         assert_eq!(
             genesis_block_hash,
             H256::from_str("0xcb5306dd861d0f2c1f9952fbfbc75a46d0b6ce4f37bea370c3471fe8410bf40b")
@@ -403,7 +401,7 @@ mod tests {
         let reader = BufReader::new(file);
         let genesis: Genesis =
             serde_json::from_reader(reader).expect("Failed to deserialize genesis file");
-        let computed_block_hash = genesis.get_block().header.compute_block_hash();
+        let computed_block_hash = genesis.get_block().hash();
         let genesis_block_hash =
             H256::from_str("0x30f516e34fc173bb5fc4daddcc7532c4aca10b702c7228f3c806b4df2646fb7e")
                 .unwrap();

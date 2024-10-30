@@ -175,14 +175,14 @@ impl BlockWithRLP {
 }
 impl From<Block> for CoreBlock {
     fn from(val: Block) -> Self {
-        Self {
-            header: val.block_header.into(),
-            body: BlockBody {
+        CoreBlock::new(
+            val.block_header.into(),
+            BlockBody {
                 transactions: val.transactions.iter().map(|t| t.clone().into()).collect(),
                 ommers: val.uncle_headers.iter().map(|h| h.clone().into()).collect(),
                 withdrawals: val.withdrawals,
             },
-        }
+        )
     }
 }
 
