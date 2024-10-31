@@ -690,12 +690,43 @@ impl Store {
         Ok(trie.get_proof(&hash_key(storage_key))?)
     }
 
+    // Returns an iterator across all accounts in the state trie given by the state_root
+    // Does not check that the state_root is valid
+    pub fn iter_accounts(&self, state_root: H256) -> impl Iterator<Item = (H256, AccountState)> {
+        self.engine
+            .open_state_trie(state_root)
+            .into_iter()
+            .content()
+            .map_while(|(path, value)| {
+                Some((H256::from_slice(&path), AccountState::decode(&value).ok()?))
+            })
+    }
+
+    pub fn get_account_range_proof(
+        &self,
+        state_root: H256,
+        starting_hash: H256,
+        last_hash: Option<H256>,
+    ) -> Result<Vec<Vec<u8>>, StoreError> {
+        let state_trie = self.engine.open_state_trie(state_root);
+        let mut proof = state_trie.get_proof(&starting_hash.as_bytes().to_vec())?;
+        if let Some(last_hash) = last_hash {
+            proof.extend_from_slice(&state_trie.get_proof(&last_hash.as_bytes().to_vec())?);
+        }
+        Ok(proof)
+    }
+
     pub fn add_payload(&self, payload_id: u64, block: Block) -> Result<(), StoreError> {
         self.engine.add_payload(payload_id, block)
     }
 
     pub fn get_payload(&self, payload_id: u64) -> Result<Option<Block>, StoreError> {
         self.engine.get_payload(payload_id)
+    }
+
+    /// Creates a new state trie with an empty state root, for testing purposes only
+    pub fn new_state_trie_for_test(&self) -> Trie {
+        self.engine.open_state_trie(*EMPTY_TRIE_HASH)
     }
 }
 

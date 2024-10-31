@@ -15,6 +15,7 @@ tokio.workspace = true
 bytes.workspace = true
 hex.workspace = true
 thiserror.workspace = true
+lazy_static.workspace = true
 
 k256 = { version = "0.13.3", features = ["ecdh"] }
 sha3 = "0.10.8"

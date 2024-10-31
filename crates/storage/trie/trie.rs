@@ -5,6 +5,7 @@ mod node;
 mod node_hash;
 mod rlp;
 mod state;
+mod trie_iter;
 
 #[cfg(test)]
 mod test_utils;
@@ -21,7 +22,7 @@ pub use self::db::{libmdbx::LibmdbxTrieDB, libmdbx_dupsort::LibmdbxDupsortTrieDB
 pub use self::db::{in_memory::InMemoryTrieDB, TrieDB};
 
 pub use self::error::TrieError;
-use self::{nibble::NibbleSlice, node::LeafNode, state::TrieState};
+use self::{nibble::NibbleSlice, node::LeafNode, state::TrieState, trie_iter::TrieIterator};
 
 use lazy_static::lazy_static;
 
@@ -147,11 +148,9 @@ impl Trie {
         if let NodeHash::Inline(node) = root {
             node_path.push(node.to_vec());
         }
-        let root_node = self
-            .state
-            .get_node(root.clone())?
-            .expect("inconsistent tree structure");
-        root_node.get_path(&self.state, NibbleSlice::new(path), &mut node_path)?;
+        if let Some(root_node) = self.state.get_node(root.clone())? {
+            root_node.get_path(&self.state, NibbleSlice::new(path), &mut node_path)?;
+        }
         Ok(node_path)
     }
 
@@ -203,6 +202,16 @@ impl Trie {
         let map = Arc::new(Mutex::new(hmap));
         let db = InMemoryTrieDB::new(map);
         Trie::new(Box::new(db))
+    }
+}
+
+impl IntoIterator for Trie {
+    type Item = Node;
+
+    type IntoIter = TrieIterator;
+
+    fn into_iter(self) -> Self::IntoIter {
+        TrieIterator::new(self)
     }
 }
 

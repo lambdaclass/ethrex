@@ -36,6 +36,9 @@ jobs:
           - simulation: discv4
             name: "Devp2p discv4 tests"
             run_command: make run-hive SIMULATION=devp2p TEST_PATTERN="discv4"
+          - simulation: snap
+            name: "Devp2p snap tests"
+            run_command: make run-hive SIMULATION=devp2p TEST_PATTERN="/AccountRange"
           - simulation: engine
             name: "Engine tests"
             run_command:  make run-hive SIMULATION=ethereum/engine TEST_PATTERN="/Blob Transactions On Block 1, Cancun Genesis|Blob Transactions On Block 1, Shanghai Genesis|Blob Transaction Ordering, Single Account, Single Blob|Blob Transaction Ordering, Single Account, Dual Blob|Blob Transaction Ordering, Multiple Accounts|Replace Blob Transactions|Parallel Blob Transactions|ForkchoiceUpdatedV3 Modifies Payload ID on Different Beacon Root|NewPayloadV3 After Cancun|NewPayloadV3 Versioned Hashes|ForkchoiceUpdated Version on Payload Request"

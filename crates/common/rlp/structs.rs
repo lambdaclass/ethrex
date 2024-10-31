@@ -1,5 +1,3 @@
-use crate::encode::RLPEncodeSlim;
-
 use super::{
     decode::{decode_rlp_item, get_item_with_prefix, RLPDecode},
     encode::{encode_length, RLPEncode},
@@ -182,13 +180,6 @@ impl<'a> Encoder<'a> {
     /// Stores a field to be encoded.
     pub fn encode_field<T: RLPEncode>(mut self, value: &T) -> Self {
         <T as RLPEncode>::encode(value, &mut self.temp_buf);
-        self
-    }
-
-    /// Stores a field to be encoded, but in slim format
-    /// https://github.com/ethereum/devp2p/blob/master/caps/snap.md#data-format
-    pub fn encode_slim_field<T: RLPEncodeSlim>(mut self, value: &T) -> Self {
-        <T as RLPEncodeSlim>::encode(value, &mut self.temp_buf);
         self
     }
 

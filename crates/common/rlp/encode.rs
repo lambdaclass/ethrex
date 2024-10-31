@@ -29,16 +29,6 @@ pub trait RLPEncode {
     }
 }
 
-pub trait RLPEncodeSlim {
-    fn encode(&self, buf: &mut dyn BufMut);
-
-    fn length(&self) -> usize {
-        let mut buf = Vec::new();
-        self.encode(&mut buf);
-        buf.len()
-    }
-}
-
 impl RLPEncode for bool {
     #[inline(always)]
     fn encode(&self, buf: &mut dyn BufMut) {
@@ -375,38 +365,6 @@ impl RLPEncode for ethereum_types::Address {
 impl RLPEncode for ethereum_types::H256 {
     fn encode(&self, buf: &mut dyn BufMut) {
         self.as_bytes().encode(buf)
-    }
-}
-
-impl RLPEncodeSlim for ethereum_types::H256 {
-    fn encode(&self, buf: &mut dyn BufMut) {
-        self.as_bytes().encode(buf)
-    }
-}
-
-impl<T: RLPEncodeSlim> RLPEncodeSlim for Vec<T> {
-    fn encode(&self, buf: &mut dyn BufMut) {
-        if self.is_empty() {
-            buf.put_u8(0xc0);
-        } else {
-            let mut total_len = 0;
-            for item in self {
-                total_len += item.length();
-            }
-            encode_length(total_len, buf);
-            for item in self {
-                item.encode(buf);
-            }
-        }
-    }
-}
-
-impl<S: RLPEncodeSlim, T: RLPEncodeSlim> RLPEncodeSlim for (S, T) {
-    fn encode(&self, buf: &mut dyn BufMut) {
-        let total_len = self.0.length() + self.1.length();
-        encode_length(total_len, buf);
-        self.0.encode(buf);
-        self.1.encode(buf);
     }
 }
 

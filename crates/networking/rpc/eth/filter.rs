@@ -558,7 +558,6 @@ mod tests {
             .await
             .unwrap();
 
-        dbg!(&response);
         assert!(
             response.get("result").is_some(),
             "Response should have a 'result' field"

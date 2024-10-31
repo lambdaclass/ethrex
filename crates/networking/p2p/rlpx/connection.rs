@@ -1,5 +1,6 @@
 use crate::{
     rlpx::{eth::backend, handshake::encode_ack_message, message::Message, p2p, utils::id2pubkey},
+    snap::process_account_range_request,
     MAX_DISC_PACKET_SIZE,
 };
 
@@ -25,9 +26,8 @@ use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tracing::{error, info};
 const CAP_P2P: (Capability, u8) = (Capability::P2p, 5);
 const CAP_ETH: (Capability, u8) = (Capability::Eth, 68);
-//const CAP_SNAP: (Capability, u8) = (Capability::Snap, 1);
-const SUPPORTED_CAPABILITIES: [(Capability, u8); 2] = [CAP_P2P, CAP_ETH];
-// pub const SUPPORTED_CAPABILITIES: [(&str, u8); 3] = [CAP_P2P, CAP_ETH, CAP_SNAP)];
+const CAP_SNAP: (Capability, u8) = (Capability::Snap, 1);
+const SUPPORTED_CAPABILITIES: [(Capability, u8); 3] = [CAP_P2P, CAP_ETH, CAP_SNAP];
 
 pub(crate) type Aes256Ctr64BE = ctr::Ctr64BE<aes::Aes256>;
 
@@ -145,6 +145,11 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
                         Message::Ping(_) => info!("Received Ping"),
                         Message::Pong(_) => info!("Received Pong"),
                         Message::Status(_) => info!("Received Status"),
+                        Message::GetAccountRange(req) => {
+                            let response =
+                                process_account_range_request(req, self.storage.clone())?;
+                            self.send(Message::AccountRange(response)).await
+                        }
                         // TODO: Add new message types and handlers as they are implemented
                         message => return Err(RLPxError::UnexpectedMessage(message)),
                     };

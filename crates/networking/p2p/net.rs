@@ -31,6 +31,7 @@ pub mod bootnode;
 pub(crate) mod discv4;
 pub(crate) mod kademlia;
 pub mod rlpx;
+pub(crate) mod snap;
 pub mod types;
 
 const MAX_DISC_PACKET_SIZE: usize = 1280;

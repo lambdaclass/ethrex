@@ -65,7 +65,6 @@ pub(crate) async fn write<S: AsyncWrite + std::marker::Unpin>(
     };
     state.egress_mac.update(frame_mac_seed);
     let frame_mac = state.egress_mac.clone().finalize();
-
     // Send frame-mac
     stream.write_all(&frame_mac[..16]).await.unwrap();
 }
