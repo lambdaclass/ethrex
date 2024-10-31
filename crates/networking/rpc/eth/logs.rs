@@ -4,7 +4,7 @@
 // - Ethereum's reference: https://ethereum.org/en/developers/docs/apis/json-rpc/#eth_newfilter
 use crate::{
     types::{block_identifier::BlockIdentifier, receipt::RpcLog},
-    RpcErr, RpcHandler,
+    RpcApiContext, RpcErr, RpcHandler,
 };
 use ethereum_rust_core::{H160, H256};
 use ethereum_rust_storage::Store;
@@ -84,8 +84,8 @@ impl RpcHandler for LogsFilter {
             )),
         }
     }
-    fn handle(&self, storage: Store) -> Result<Value, RpcErr> {
-        let filtered_logs = fetch_logs_with_filter(self, storage)?;
+    fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
+        let filtered_logs = fetch_logs_with_filter(self, context.storage)?;
         serde_json::to_value(filtered_logs).map_err(|error| {
             tracing::error!("Log filtering request failed with: {error}");
             RpcErr::Internal("Failed to filter logs".to_string())

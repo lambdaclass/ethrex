@@ -3,12 +3,12 @@ use ethereum_rust_blockchain::error::ChainError;
 use ethereum_rust_blockchain::payload::build_payload;
 use ethereum_rust_core::types::Fork;
 use ethereum_rust_core::{H256, U256};
-use ethereum_rust_storage::Store;
 use serde_json::Value;
 use tracing::{error, info, warn};
 
 use crate::types::payload::ExecutionPayloadResponse;
 use crate::utils::RpcRequest;
+use crate::RpcApiContext;
 use crate::{
     types::payload::{ExecutionPayloadV3, PayloadStatus},
     RpcErr, RpcHandler,
@@ -56,7 +56,8 @@ impl RpcHandler for NewPayloadV3Request {
         })
     }
 
-    fn handle(&self, storage: Store) -> Result<Value, RpcErr> {
+    fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
+        let storage = &context.storage;
         let block_hash = self.payload.block_hash;
         info!("Received new payload with block hash: {block_hash:#x}");
 
@@ -114,7 +115,7 @@ impl RpcHandler for NewPayloadV3Request {
 
         // Execute and store the block
         info!("Executing payload with block hash: {block_hash:#x}");
-        let payload_status = match add_block(&block, &storage) {
+        let payload_status = match add_block(&block, storage) {
             Err(ChainError::ParentNotFound) => Ok(PayloadStatus::syncing()),
             // Under the current implementation this is not possible: we always calculate the state
             // transition of any new payload as long as the parent is present. If we received the
@@ -185,15 +186,15 @@ impl RpcHandler for GetPayloadV3Request {
         Ok(GetPayloadV3Request { payload_id })
     }
 
-    fn handle(&self, storage: Store) -> Result<Value, RpcErr> {
+    fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
         info!("Requested payload with id: {:#018x}", self.payload_id);
-        let Some(mut payload) = storage.get_payload(self.payload_id)? else {
+        let Some(mut payload) = context.storage.get_payload(self.payload_id)? else {
             return Err(RpcErr::UnknownPayload(format!(
                 "Payload with id {:#018x} not found",
                 self.payload_id
             )));
         };
-        let (blobs_bundle, block_value) = build_payload(&mut payload, &storage)
+        let (blobs_bundle, block_value) = build_payload(&mut payload, &context.storage)
             .map_err(|err| RpcErr::Internal(err.to_string()))?;
         serde_json::to_value(ExecutionPayloadResponse {
             execution_payload: ExecutionPayloadV3::from_block(payload),

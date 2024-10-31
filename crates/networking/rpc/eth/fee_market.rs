@@ -4,7 +4,7 @@ use serde::Serialize;
 use serde_json::Value;
 use tracing::info;
 
-use crate::{types::block_identifier::BlockIdentifier, utils::RpcErr, RpcHandler};
+use crate::{types::block_identifier::BlockIdentifier, utils::RpcErr, RpcApiContext, RpcHandler};
 use ethereum_rust_core::types::calculate_base_fee_per_blob_gas;
 use ethereum_rust_storage::Store;
 
@@ -67,7 +67,8 @@ impl RpcHandler for FeeHistoryRequest {
         })
     }
 
-    fn handle(&self, storage: Store) -> Result<Value, RpcErr> {
+    fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
+        let storage = &context.storage;
         info!(
             "Requested fee history for {} blocks starting from {}",
             self.block_count, self.newest_block
@@ -79,7 +80,7 @@ impl RpcHandler for FeeHistoryRequest {
         }
 
         let (start_block, end_block) =
-            Self::get_range(&storage, self.block_count, &self.newest_block)?;
+            Self::get_range(storage, self.block_count, &self.newest_block)?;
         let oldest_block = start_block;
         let block_count = (end_block - start_block) as usize;
         let mut base_fee_per_gas = Vec::<u64>::with_capacity(block_count + 1);

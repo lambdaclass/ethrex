@@ -1,9 +1,7 @@
+use serde_json::Value;
 use tracing::info;
 
-use ethereum_rust_storage::Store;
-use serde_json::Value;
-
-use crate::{utils::RpcErr, RpcHandler};
+use crate::{utils::RpcErr, RpcApiContext, RpcHandler};
 
 pub struct ChainId;
 impl RpcHandler for ChainId {
@@ -11,9 +9,10 @@ impl RpcHandler for ChainId {
         Ok(Self {})
     }
 
-    fn handle(&self, storage: Store) -> Result<Value, RpcErr> {
+    fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
         info!("Requested chain id");
-        let chain_spec = storage
+        let chain_spec = context
+            .storage
             .get_chain_config()
             .map_err(|error| RpcErr::Internal(error.to_string()))?;
         serde_json::to_value(format!("{:#x}", chain_spec.chain_id))
@@ -27,7 +26,7 @@ impl RpcHandler for Syncing {
         Ok(Self {})
     }
 
-    fn handle(&self, _storage: Store) -> Result<Value, RpcErr> {
+    fn handle(&self, _context: RpcApiContext) -> Result<Value, RpcErr> {
         Ok(Value::Bool(false))
     }
 }

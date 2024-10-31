@@ -70,12 +70,12 @@ pub struct RpcApiContext {
 trait RpcHandler: Sized {
     fn parse(params: &Option<Vec<Value>>) -> Result<Self, RpcErr>;
 
-    fn call(req: &RpcRequest, storage: Store) -> Result<Value, RpcErr> {
+    fn call(req: &RpcRequest, context: RpcApiContext) -> Result<Value, RpcErr> {
         let request = Self::parse(&req.params)?;
-        request.handle(storage)
+        request.handle(context)
     }
 
-    fn handle(&self, storage: Store) -> Result<Value, RpcErr>;
+    fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr>;
 }
 
 const FILTER_DURATION: Duration = {
@@ -149,15 +149,8 @@ pub async fn handle_http_request(
     State(service_context): State<RpcApiContext>,
     body: String,
 ) -> Json<Value> {
-    let storage = service_context.storage;
-    let local_p2p_node = service_context.local_p2p_node;
     let req: RpcRequest = serde_json::from_str(&body).unwrap();
-    let res = map_http_requests(
-        &req,
-        storage,
-        local_p2p_node,
-        service_context.active_filters,
-    );
+    let res = map_http_requests(&req, service_context);
     rpc_response(req.id, res)
 }
 
@@ -166,129 +159,116 @@ pub async fn handle_authrpc_request(
     auth_header: Option<TypedHeader<Authorization<Bearer>>>,
     body: String,
 ) -> Json<Value> {
-    let storage = service_context.storage;
-    let secret = service_context.jwt_secret;
     let req: RpcRequest = serde_json::from_str(&body).unwrap();
-    match authenticate(secret, auth_header) {
+    match authenticate(&service_context.jwt_secret, auth_header) {
         Err(error) => rpc_response(req.id, Err(error)),
         Ok(()) => {
             // Proceed with the request
-            let res = map_authrpc_requests(&req, storage, service_context.active_filters);
+            let res = map_authrpc_requests(&req, service_context);
             rpc_response(req.id, res)
         }
     }
 }
 
 /// Handle requests that can come from either clients or other users
-pub fn map_http_requests(
-    req: &RpcRequest,
-    storage: Store,
-    local_p2p_node: Node,
-    filters: ActiveFilters,
-) -> Result<Value, RpcErr> {
+pub fn map_http_requests(req: &RpcRequest, context: RpcApiContext) -> Result<Value, RpcErr> {
     match req.namespace() {
-        Ok(RpcNamespace::Eth) => map_eth_requests(req, storage, filters),
-        Ok(RpcNamespace::Admin) => map_admin_requests(req, storage, local_p2p_node),
-        Ok(RpcNamespace::Debug) => map_debug_requests(req, storage),
-        Ok(RpcNamespace::Web3) => map_web3_requests(req, storage),
+        Ok(RpcNamespace::Eth) => map_eth_requests(req, context),
+        Ok(RpcNamespace::Admin) => map_admin_requests(req, context),
+        Ok(RpcNamespace::Debug) => map_debug_requests(req, context),
+        Ok(RpcNamespace::Web3) => map_web3_requests(req, context),
         _ => Err(RpcErr::MethodNotFound(req.method.clone())),
     }
 }
 
 /// Handle requests from consensus client
-pub fn map_authrpc_requests(
-    req: &RpcRequest,
-    storage: Store,
-    active_filters: ActiveFilters,
-) -> Result<Value, RpcErr> {
+pub fn map_authrpc_requests(req: &RpcRequest, context: RpcApiContext) -> Result<Value, RpcErr> {
     match req.namespace() {
-        Ok(RpcNamespace::Engine) => map_engine_requests(req, storage),
-        Ok(RpcNamespace::Eth) => map_eth_requests(req, storage, active_filters),
+        Ok(RpcNamespace::Engine) => map_engine_requests(req, context),
+        Ok(RpcNamespace::Eth) => map_eth_requests(req, context),
         _ => Err(RpcErr::MethodNotFound(req.method.clone())),
     }
 }
 
-pub fn map_eth_requests(
-    req: &RpcRequest,
-    storage: Store,
-    filters: ActiveFilters,
-) -> Result<Value, RpcErr> {
+pub fn map_eth_requests(req: &RpcRequest, context: RpcApiContext) -> Result<Value, RpcErr> {
     match req.method.as_str() {
-        "eth_chainId" => ChainId::call(req, storage),
-        "eth_syncing" => Syncing::call(req, storage),
-        "eth_getBlockByNumber" => GetBlockByNumberRequest::call(req, storage),
-        "eth_getBlockByHash" => GetBlockByHashRequest::call(req, storage),
-        "eth_getBalance" => GetBalanceRequest::call(req, storage),
-        "eth_getCode" => GetCodeRequest::call(req, storage),
-        "eth_getStorageAt" => GetStorageAtRequest::call(req, storage),
+        "eth_chainId" => ChainId::call(req, context),
+        "eth_syncing" => Syncing::call(req, context),
+        "eth_getBlockByNumber" => GetBlockByNumberRequest::call(req, context),
+        "eth_getBlockByHash" => GetBlockByHashRequest::call(req, context),
+        "eth_getBalance" => GetBalanceRequest::call(req, context),
+        "eth_getCode" => GetCodeRequest::call(req, context),
+        "eth_getStorageAt" => GetStorageAtRequest::call(req, context),
         "eth_getBlockTransactionCountByNumber" => {
-            GetBlockTransactionCountRequest::call(req, storage)
+            GetBlockTransactionCountRequest::call(req, context)
         }
-        "eth_getBlockTransactionCountByHash" => GetBlockTransactionCountRequest::call(req, storage),
+        "eth_getBlockTransactionCountByHash" => GetBlockTransactionCountRequest::call(req, context),
         "eth_getTransactionByBlockNumberAndIndex" => {
-            GetTransactionByBlockNumberAndIndexRequest::call(req, storage)
+            GetTransactionByBlockNumberAndIndexRequest::call(req, context)
         }
         "eth_getTransactionByBlockHashAndIndex" => {
-            GetTransactionByBlockHashAndIndexRequest::call(req, storage)
+            GetTransactionByBlockHashAndIndexRequest::call(req, context)
         }
-        "eth_getBlockReceipts" => GetBlockReceiptsRequest::call(req, storage),
-        "eth_getTransactionByHash" => GetTransactionByHashRequest::call(req, storage),
-        "eth_getTransactionReceipt" => GetTransactionReceiptRequest::call(req, storage),
-        "eth_createAccessList" => CreateAccessListRequest::call(req, storage),
-        "eth_blockNumber" => BlockNumberRequest::call(req, storage),
-        "eth_call" => CallRequest::call(req, storage),
-        "eth_blobBaseFee" => GetBlobBaseFee::call(req, storage),
-        "eth_getTransactionCount" => GetTransactionCountRequest::call(req, storage),
-        "eth_feeHistory" => FeeHistoryRequest::call(req, storage),
-        "eth_estimateGas" => EstimateGasRequest::call(req, storage),
-        "eth_getLogs" => LogsFilter::call(req, storage),
-        "eth_newFilter" => NewFilterRequest::stateful_call(req, storage, filters),
-        "eth_uninstallFilter" => DeleteFilterRequest::stateful_call(req, storage, filters),
-        "eth_getFilterChanges" => FilterChangesRequest::stateful_call(req, storage, filters),
-        "eth_sendRawTransaction" => SendRawTransactionRequest::call(req, storage),
-        "eth_getProof" => GetProofRequest::call(req, storage),
-        "eth_gasPrice" => GasPrice::call(req, storage),
+        "eth_getBlockReceipts" => GetBlockReceiptsRequest::call(req, context),
+        "eth_getTransactionByHash" => GetTransactionByHashRequest::call(req, context),
+        "eth_getTransactionReceipt" => GetTransactionReceiptRequest::call(req, context),
+        "eth_createAccessList" => CreateAccessListRequest::call(req, context),
+        "eth_blockNumber" => BlockNumberRequest::call(req, context),
+        "eth_call" => CallRequest::call(req, context),
+        "eth_blobBaseFee" => GetBlobBaseFee::call(req, context),
+        "eth_getTransactionCount" => GetTransactionCountRequest::call(req, context),
+        "eth_feeHistory" => FeeHistoryRequest::call(req, context),
+        "eth_estimateGas" => EstimateGasRequest::call(req, context),
+        "eth_getLogs" => LogsFilter::call(req, context),
+        "eth_newFilter" => {
+            NewFilterRequest::stateful_call(req, context.storage, context.active_filters)
+        }
+        "eth_uninstallFilter" => {
+            DeleteFilterRequest::stateful_call(req, context.storage, context.active_filters)
+        }
+        "eth_getFilterChanges" => {
+            FilterChangesRequest::stateful_call(req, context.storage, context.active_filters)
+        }
+        "eth_sendRawTransaction" => SendRawTransactionRequest::call(req, context),
+        "eth_getProof" => GetProofRequest::call(req, context),
+        "eth_gasPrice" => GasPrice::call(req, context),
         unknown_eth_method => Err(RpcErr::MethodNotFound(unknown_eth_method.to_owned())),
     }
 }
 
-pub fn map_debug_requests(req: &RpcRequest, storage: Store) -> Result<Value, RpcErr> {
+pub fn map_debug_requests(req: &RpcRequest, context: RpcApiContext) -> Result<Value, RpcErr> {
     match req.method.as_str() {
-        "debug_getRawHeader" => GetRawHeaderRequest::call(req, storage),
-        "debug_getRawBlock" => GetRawBlockRequest::call(req, storage),
-        "debug_getRawTransaction" => GetRawTransaction::call(req, storage),
-        "debug_getRawReceipts" => GetRawReceipts::call(req, storage),
+        "debug_getRawHeader" => GetRawHeaderRequest::call(req, context),
+        "debug_getRawBlock" => GetRawBlockRequest::call(req, context),
+        "debug_getRawTransaction" => GetRawTransaction::call(req, context),
+        "debug_getRawReceipts" => GetRawReceipts::call(req, context),
         unknown_debug_method => Err(RpcErr::MethodNotFound(unknown_debug_method.to_owned())),
     }
 }
 
-pub fn map_engine_requests(req: &RpcRequest, storage: Store) -> Result<Value, RpcErr> {
+pub fn map_engine_requests(req: &RpcRequest, context: RpcApiContext) -> Result<Value, RpcErr> {
     match req.method.as_str() {
-        "engine_exchangeCapabilities" => ExchangeCapabilitiesRequest::call(req, storage),
-        "engine_forkchoiceUpdatedV3" => ForkChoiceUpdatedV3::call(req, storage),
-        "engine_newPayloadV3" => NewPayloadV3Request::call(req, storage),
+        "engine_exchangeCapabilities" => ExchangeCapabilitiesRequest::call(req, context),
+        "engine_forkchoiceUpdatedV3" => ForkChoiceUpdatedV3::call(req, context),
+        "engine_newPayloadV3" => NewPayloadV3Request::call(req, context),
         "engine_exchangeTransitionConfigurationV1" => {
-            ExchangeTransitionConfigV1Req::call(req, storage)
+            ExchangeTransitionConfigV1Req::call(req, context)
         }
-        "engine_getPayloadV3" => GetPayloadV3Request::call(req, storage),
+        "engine_getPayloadV3" => GetPayloadV3Request::call(req, context),
         unknown_engine_method => Err(RpcErr::MethodNotFound(unknown_engine_method.to_owned())),
     }
 }
 
-pub fn map_admin_requests(
-    req: &RpcRequest,
-    storage: Store,
-    local_p2p_node: Node,
-) -> Result<Value, RpcErr> {
+pub fn map_admin_requests(req: &RpcRequest, context: RpcApiContext) -> Result<Value, RpcErr> {
     match req.method.as_str() {
-        "admin_nodeInfo" => admin::node_info(storage, local_p2p_node),
+        "admin_nodeInfo" => admin::node_info(context.storage, context.local_p2p_node),
         unknown_admin_method => Err(RpcErr::MethodNotFound(unknown_admin_method.to_owned())),
     }
 }
 
-pub fn map_web3_requests(req: &RpcRequest, storage: Store) -> Result<Value, RpcErr> {
+pub fn map_web3_requests(req: &RpcRequest, context: RpcApiContext) -> Result<Value, RpcErr> {
     match req.method.as_str() {
-        "web3_clientVersion" => web3::client_version(req, storage),
+        "web3_clientVersion" => web3::client_version(req, context.storage),
         unknown_web3_method => Err(RpcErr::MethodNotFound(unknown_web3_method.to_owned())),
     }
 }
@@ -340,7 +320,13 @@ mod tests {
         let storage =
             Store::new("temp.db", EngineType::InMemory).expect("Failed to create test DB");
         storage.set_chain_config(&example_chain_config()).unwrap();
-        let result = map_http_requests(&request, storage, local_p2p_node, Default::default());
+        let context = RpcApiContext {
+            local_p2p_node,
+            storage,
+            jwt_secret: Default::default(),
+            active_filters: Default::default(),
+        };
+        let result = map_http_requests(&request, context);
         let rpc_response = rpc_response(request.id, result);
         let expected_response = to_rpc_response_success_value(
             r#"{"jsonrpc":"2.0","id":1,"result":{"enode":"enode://d860a01f9722d78051619d1e2351aba3f43f943f6f00718d1b9baa4101932a1f5011f16bb2b1bb35db20d6fe28fa0bf09636d26a87d31de9ec6203eeedb1f666@127.0.0.1:30303","id":"d860a01f9722d78051619d1e2351aba3f43f943f6f00718d1b9baa4101932a1f5011f16bb2b1bb35db20d6fe28fa0bf09636d26a87d31de9ec6203eeedb1f666","ip":"127.0.0.1","name":"ethereum_rust/0.1.0/rust1.80","ports":{"discovery":30303,"listener":30303},"protocols":{"eth":{"chainId":3151908,"homesteadBlock":0,"daoForkBlock":null,"daoForkSupport":false,"eip150Block":0,"eip155Block":0,"eip158Block":0,"byzantiumBlock":0,"constantinopleBlock":0,"petersburgBlock":0,"istanbulBlock":0,"muirGlacierBlock":null,"berlinBlock":0,"londonBlock":0,"arrowGlacierBlock":null,"grayGlacierBlock":null,"mergeNetsplitBlock":0,"shanghaiTime":0,"cancunTime":0,"pragueTime":1718232101,"verkleTime":null,"terminalTotalDifficulty":0,"terminalTotalDifficultyPassed":true}}}}"#,
@@ -371,7 +357,13 @@ mod tests {
             .expect("Failed to add genesis block to DB");
         let local_p2p_node = example_p2p_node();
         // Process request
-        let result = map_http_requests(&request, storage, local_p2p_node, Default::default());
+        let context = RpcApiContext {
+            local_p2p_node,
+            storage,
+            jwt_secret: Default::default(),
+            active_filters: Default::default(),
+        };
+        let result = map_http_requests(&request, context);
         let response = rpc_response(request.id, result);
         let expected_response = to_rpc_response_success_value(
             r#"{"jsonrpc":"2.0","id":1,"result":{"accessList":[],"gasUsed":"0x5208"}}"#,
@@ -394,7 +386,13 @@ mod tests {
             .expect("Failed to add genesis block to DB");
         let local_p2p_node = example_p2p_node();
         // Process request
-        let result = map_http_requests(&request, storage, local_p2p_node, Default::default());
+        let context = RpcApiContext {
+            local_p2p_node,
+            storage,
+            jwt_secret: Default::default(),
+            active_filters: Default::default(),
+        };
+        let result = map_http_requests(&request, context);
         let response =
             serde_json::from_value::<RpcSuccessResponse>(rpc_response(request.id, result).0)
                 .expect("Request failed");

@@ -2,7 +2,7 @@ pub mod exchange_transition_config;
 pub mod fork_choice;
 pub mod payload;
 
-use crate::{utils::RpcRequest, RpcErr, RpcHandler, Store};
+use crate::{utils::RpcRequest, RpcApiContext, RpcErr, RpcHandler};
 use serde_json::{json, Value};
 
 pub type ExchangeCapabilitiesRequest = Vec<String>;
@@ -30,7 +30,7 @@ impl RpcHandler for ExchangeCapabilitiesRequest {
             })
     }
 
-    fn handle(&self, _storage: Store) -> Result<Value, RpcErr> {
+    fn handle(&self, _context: RpcApiContext) -> Result<Value, RpcErr> {
         Ok(json!(*self))
     }
 }

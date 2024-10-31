@@ -1,9 +1,9 @@
-use ethereum_rust_storage::Store;
 use serde_json::Value;
 use tracing::info;
 
 use crate::types::account_proof::{AccountProof, StorageProof};
 use crate::types::block_identifier::BlockIdentifierOrHash;
+use crate::RpcApiContext;
 use crate::{utils::RpcErr, RpcHandler};
 use ethereum_rust_core::{Address, BigEndianHash, H256, U256};
 
@@ -47,19 +47,21 @@ impl RpcHandler for GetBalanceRequest {
             block: BlockIdentifierOrHash::parse(params[1].clone(), 1)?,
         })
     }
-    fn handle(&self, storage: Store) -> Result<Value, RpcErr> {
+    fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
         info!(
             "Requested balance of account {} at block {}",
             self.address, self.block
         );
 
-        let Some(block_number) = self.block.resolve_block_number(&storage)? else {
+        let Some(block_number) = self.block.resolve_block_number(&context.storage)? else {
             return Err(RpcErr::Internal(
                 "Could not resolve block number".to_owned(),
             )); // Should we return Null here?
         };
 
-        let account = storage.get_account_info(block_number, self.address)?;
+        let account = context
+            .storage
+            .get_account_info(block_number, self.address)?;
         let balance = account.map(|acc| acc.balance).unwrap_or_default();
 
         serde_json::to_value(format!("{:#x}", balance))
@@ -80,19 +82,20 @@ impl RpcHandler for GetCodeRequest {
             block: BlockIdentifierOrHash::parse(params[1].clone(), 1)?,
         })
     }
-    fn handle(&self, storage: Store) -> Result<Value, RpcErr> {
+    fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
         info!(
             "Requested code of account {} at block {}",
             self.address, self.block
         );
 
-        let Some(block_number) = self.block.resolve_block_number(&storage)? else {
+        let Some(block_number) = self.block.resolve_block_number(&context.storage)? else {
             return Err(RpcErr::Internal(
                 "Could not resolve block number".to_owned(),
             )); // Should we return Null here?
         };
 
-        let code = storage
+        let code = context
+            .storage
             .get_code_by_account_address(block_number, self.address)?
             .unwrap_or_default();
 
@@ -115,19 +118,20 @@ impl RpcHandler for GetStorageAtRequest {
             block: BlockIdentifierOrHash::parse(params[2].clone(), 2)?,
         })
     }
-    fn handle(&self, storage: Store) -> Result<Value, RpcErr> {
+    fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
         info!(
             "Requested storage sot {} of account {} at block {}",
             self.storage_slot, self.address, self.block
         );
 
-        let Some(block_number) = self.block.resolve_block_number(&storage)? else {
+        let Some(block_number) = self.block.resolve_block_number(&context.storage)? else {
             return Err(RpcErr::Internal(
                 "Could not resolve block number".to_owned(),
             )); // Should we return Null here?
         };
 
-        let storage_value = storage
+        let storage_value = context
+            .storage
             .get_storage_at(block_number, self.address, self.storage_slot)?
             .unwrap_or_default();
         let storage_value = H256::from_uint(&storage_value);
@@ -149,18 +153,19 @@ impl RpcHandler for GetTransactionCountRequest {
             block: BlockIdentifierOrHash::parse(params[1].clone(), 1)?,
         })
     }
-    fn handle(&self, storage: Store) -> Result<Value, RpcErr> {
+    fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
         info!(
             "Requested nonce of account {} at block {}",
             self.address, self.block
         );
 
-        let Some(block_number) = self.block.resolve_block_number(&storage)? else {
+        let Some(block_number) = self.block.resolve_block_number(&context.storage)? else {
             return serde_json::to_value("0x0")
                 .map_err(|error| RpcErr::Internal(error.to_string()));
         };
 
-        let nonce = storage
+        let nonce = context
+            .storage
             .get_nonce_by_account_address(block_number, self.address)?
             .unwrap_or_default();
 
@@ -186,12 +191,13 @@ impl RpcHandler for GetProofRequest {
         })
     }
 
-    fn handle(&self, storage: Store) -> Result<Value, RpcErr> {
+    fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
+        let storage = &context.storage;
         info!(
             "Requested proof for account {} at block {} with storage keys: {:?}",
             self.address, self.block, self.storage_keys
         );
-        let Some(block_number) = self.block.resolve_block_number(&storage)? else {
+        let Some(block_number) = self.block.resolve_block_number(storage)? else {
             return Ok(Value::Null);
         };
         // Create account proof

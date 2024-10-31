@@ -266,7 +266,7 @@ mod tests {
         },
         map_http_requests,
         utils::test_utils::{self, start_test_api},
-        FILTER_DURATION,
+        RpcApiContext, FILTER_DURATION,
     };
     use crate::{
         types::block_identifier::BlockIdentifier,
@@ -436,18 +436,22 @@ mod tests {
         json_req: serde_json::Value,
         filters_pointer: ActiveFilters,
     ) -> u64 {
-        let node = example_p2p_node();
+        let context = RpcApiContext {
+            storage: Store::new("in-mem", EngineType::InMemory)
+                .expect("Fatal: could not create in memory test db"),
+            jwt_secret: Default::default(),
+            local_p2p_node: example_p2p_node(),
+            active_filters: filters_pointer.clone(),
+        };
         let request: RpcRequest = serde_json::from_value(json_req).expect("Test json is incorrect");
         let genesis_config: Genesis =
             serde_json::from_str(TEST_GENESIS).expect("Fatal: non-valid genesis test config");
-        let store = Store::new("in-mem", EngineType::InMemory)
-            .expect("Fatal: could not create in memory test db");
-        store
+
+        context
+            .storage
             .add_initial_state(genesis_config)
             .expect("Fatal: could not add test genesis in test");
-        let response = map_http_requests(&request, store, node, filters_pointer.clone())
-            .unwrap()
-            .to_string();
+        let response = map_http_requests(&request, context).unwrap().to_string();
         let trimmed_id = response.trim().trim_matches('"');
         assert!(trimmed_id.starts_with("0x"));
         let hex = trimmed_id.trim_start_matches("0x");
@@ -485,13 +489,15 @@ mod tests {
             ),
         );
         let active_filters = Arc::new(Mutex::new(HashMap::from([filter])));
-        map_http_requests(
-            &uninstall_filter_req,
-            Store::new("in-mem", EngineType::InMemory).unwrap(),
-            example_p2p_node(),
-            active_filters.clone(),
-        )
-        .unwrap();
+        let context = RpcApiContext {
+            storage: Store::new("in-mem", EngineType::InMemory).unwrap(),
+            local_p2p_node: example_p2p_node(),
+            jwt_secret: Default::default(),
+            active_filters: active_filters.clone(),
+        };
+
+        map_http_requests(&uninstall_filter_req, context).unwrap();
+
         assert!(
             active_filters.clone().lock().unwrap().len() == 0,
             "Expected filter map to be empty after request"
@@ -500,6 +506,14 @@ mod tests {
 
     #[test]
     fn removing_non_existing_filter_returns_false() {
+        let active_filters = Arc::new(Mutex::new(HashMap::new()));
+
+        let context = RpcApiContext {
+            storage: Store::new("in-mem", EngineType::InMemory).unwrap(),
+            local_p2p_node: example_p2p_node(),
+            active_filters: active_filters.clone(),
+            jwt_secret: Default::default(),
+        };
         let uninstall_filter_req: RpcRequest = serde_json::from_value(json!(
         {
             "jsonrpc":"2.0",
@@ -511,14 +525,7 @@ mod tests {
                 ,"id":1
         }))
         .expect("Json for test is not a valid request");
-        let active_filters = Arc::new(Mutex::new(HashMap::new()));
-        let res = map_http_requests(
-            &uninstall_filter_req,
-            Store::new("in-mem", EngineType::InMemory).unwrap(),
-            example_p2p_node(),
-            active_filters.clone(),
-        )
-        .unwrap();
+        let res = map_http_requests(&uninstall_filter_req, context).unwrap();
         assert!(matches!(res, serde_json::Value::Bool(false)));
     }
 
