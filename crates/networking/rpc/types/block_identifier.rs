@@ -39,7 +39,15 @@ impl BlockIdentifier {
                 BlockTag::Finalized => storage.get_finalized_block_number(),
                 BlockTag::Safe => storage.get_safe_block_number(),
                 BlockTag::Latest => storage.get_latest_block_number(),
-                BlockTag::Pending => storage.get_pending_block_number(),
+                BlockTag::Pending => {
+                    storage
+                        .get_pending_block_number()
+                        // If there are no pending blocks, we return the latest block number
+                        .and_then(|pending_block_number| match pending_block_number {
+                            Some(block_number) => Ok(Some(block_number)),
+                            None => storage.get_latest_block_number(),
+                        })
+                }
             },
         }
     }

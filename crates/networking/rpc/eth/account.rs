@@ -156,9 +156,8 @@ impl RpcHandler for GetTransactionCountRequest {
         );
 
         let Some(block_number) = self.block.resolve_block_number(&storage)? else {
-            return Err(RpcErr::Internal(
-                "Could not resolve block number".to_owned(),
-            )); // Should we return Null here?
+            return serde_json::to_value("0x0")
+                .map_err(|error| RpcErr::Internal(error.to_string()));
         };
 
         let nonce = storage
