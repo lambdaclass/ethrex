@@ -18,6 +18,7 @@ ethereum_rust-rlp.workspace = true
 ethereum_rust-rpc.workspace = true
 ethereum_rust-blockchain.workspace = true
 ethereum_rust-storage.workspace = true
+ethereum_rust-vm.workspace = true
 ethereum_rust-dev = { path = "../../crates/blockchain/dev" }
 hex.workspace = true
 bytes.workspace = true

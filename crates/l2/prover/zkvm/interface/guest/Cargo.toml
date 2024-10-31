@@ -13,9 +13,8 @@ ethereum_rust-rlp = { path = "../../../../../common/rlp" }
 ethereum_rust-vm = { path = "../../../../../vm", default-features = false }
 ethereum_rust-blockchain = { path = "../../../../../blockchain", default-features = false }
 
-# revm
-revm = { version = "14.0.3", features = [
-    "std",
-    "serde",
-    "kzg-rs",
-], default-features = false }
+[patch.crates-io]
+crypto-bigint = { git = "https://github.com/risc0/RustCrypto-crypto-bigint", tag = "v0.5.5-risczero.0" }
+k256 = { git = "https://github.com/risc0/RustCrypto-elliptic-curves", tag = "k256/v0.13.3-risczero.0" }
+sha2 = { git = "https://github.com/risc0/RustCrypto-hashes", tag = "sha2-v0.10.6-risczero.0" }
+secp256k1 = { git = "https://github.com/sp1-patches/rust-secp256k1", branch = "patch-secp256k1-v0.29.1" }

@@ -1,9 +1,10 @@
+use ethereum_rust_core::types::Block;
 use tracing::info;
 
 // risc0
 use zkvm_interface::methods::{ZKVM_PROGRAM_ELF, ZKVM_PROGRAM_ID};
 
-use risc0_zkvm::{default_prover, ExecutorEnv, ExecutorEnvBuilder};
+use risc0_zkvm::{default_prover, ExecutorEnv, ExecutorEnvBuilder, ProverOpts};
 
 use ethereum_rust_rlp::encode::RLPEncode;
 
@@ -34,12 +35,12 @@ impl<'a> Prover<'a> {
 
     pub fn set_input(&mut self, input: ProverInputData) -> &mut Self {
         let head_block_rlp = input.block.encode_to_vec();
-        let parent_block_header_rlp = input.parent_block_header.encode_to_vec();
+        let parent_header_rlp = input.parent_header.encode_to_vec();
 
         // We should pass the inputs as a whole struct
         self.env_builder.write(&head_block_rlp).unwrap();
-        self.env_builder.write(&parent_block_header_rlp).unwrap();
         self.env_builder.write(&input.db).unwrap();
+        self.env_builder.write(&parent_header_rlp).unwrap();
 
         self
     }
@@ -59,13 +60,18 @@ impl<'a> Prover<'a> {
         // Proof information by proving the specified ELF binary.
         // This struct contains the receipt along with statistics about execution of the guest
         let prove_info = prover
-            .prove(env, self.elf)
+            .prove_with_opts(env, self.elf, &ProverOpts::groth16())
             .map_err(|_| "Failed to prove".to_string())?;
 
         // extract the receipt.
         let receipt = prove_info.receipt;
 
-        info!("Successfully generated Receipt!");
+        let executed_block: Block = receipt.journal.decode().map_err(|err| err.to_string())?;
+
+        info!(
+            "Successfully generated execution proof receipt for block {}",
+            executed_block.header.compute_block_hash()
+        );
         Ok(receipt)
     }
 

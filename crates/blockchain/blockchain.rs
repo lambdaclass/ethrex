@@ -161,7 +161,10 @@ pub fn is_canonical(
     }
 }
 
-fn validate_gas_used(receipts: &[Receipt], block_header: &BlockHeader) -> Result<(), ChainError> {
+pub fn validate_gas_used(
+    receipts: &[Receipt],
+    block_header: &BlockHeader,
+) -> Result<(), ChainError> {
     if let Some(last) = receipts.last() {
         if last.cumulative_gas_used != block_header.gas_used {
             return Err(ChainError::InvalidBlock(InvalidBlockError::GasUsedMismatch));
