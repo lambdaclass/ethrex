@@ -47,7 +47,6 @@ pub mod gas_cost {
     pub const RETURNDATACOPY_STATIC: U256 = U256([3, 0, 0, 0]);
     pub const RETURNDATACOPY_DYNAMIC_BASE: U256 = U256([3, 0, 0, 0]);
     pub const ADDRESS: U256 = U256([2, 0, 0, 0]);
-    pub const BALANCE: U256 = U256([100, 0, 0, 0]);
     pub const ORIGIN: U256 = U256([2, 0, 0, 0]);
     pub const CALLER: U256 = U256([2, 0, 0, 0]);
     pub const BLOCKHASH: U256 = U256([20, 0, 0, 0]);

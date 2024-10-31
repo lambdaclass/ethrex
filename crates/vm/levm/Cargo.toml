@@ -19,7 +19,3 @@ hex = "0.4.3"
 
 [features]
 ethereum_foundation_tests = []
-
-[profile.test]
-opt-level = 3
-debug-assertions = true

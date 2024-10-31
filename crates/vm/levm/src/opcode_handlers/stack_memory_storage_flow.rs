@@ -1,3 +1,5 @@
+use keccak_hash::H256;
+
 use crate::{constants::WORD_SIZE, vm::StorageSlot};
 
 use super::*;
@@ -115,26 +117,34 @@ impl VM {
     }
 
     // SLOAD operation
+    // TODO: add gas consumption
     pub fn op_sload(
         &mut self,
         current_call_frame: &mut CallFrame,
     ) -> Result<OpcodeSuccess, VMError> {
         let key = current_call_frame.stack.pop()?;
-        let address = current_call_frame
-            .delegate
-            .unwrap_or(current_call_frame.code_address);
-        let current_value = self
-            .db
-            .read_account_storage(&address, &key)
-            .unwrap_or_default()
-            .current_value;
+
+        let address = current_call_frame.to;
+
+        let mut bytes = [0u8; 32];
+        key.to_big_endian(&mut bytes);
+        let key = H256::from(bytes);
+
+        let current_value = if self.cache.is_slot_cached(&address, key) {
+            self.cache
+                .get_storage_slot(address, key)
+                .unwrap_or_default()
+                .current_value
+        } else {
+            self.db.get_storage_slot(address, key)
+        };
 
         current_call_frame.stack.push(current_value)?;
-
         Ok(OpcodeSuccess::Continue)
     }
 
     // SSTORE operation
+    // TODO: add gas consumption
     pub fn op_sstore(
         &mut self,
         current_call_frame: &mut CallFrame,
@@ -145,23 +155,29 @@ impl VM {
 
         let key = current_call_frame.stack.pop()?;
         let value = current_call_frame.stack.pop()?;
-        let address = current_call_frame
-            .delegate
-            .unwrap_or(current_call_frame.code_address);
 
-        let slot = self.db.read_account_storage(&address, &key);
-        let (original_value, _) = match slot {
-            Some(slot) => (slot.original_value, slot.current_value),
-            None => (value, value),
+        let mut bytes = [0u8; 32];
+        key.to_big_endian(&mut bytes);
+        let key = H256::from(bytes);
+
+        let address = current_call_frame.to;
+
+        let original_value = if self.cache.is_slot_cached(&address, key) {
+            self.cache
+                .get_storage_slot(address, key)
+                .expect("Storage slot should have been cached")
+                .original_value
+        } else {
+            self.cache_from_db(&address);
+            self.db.get_storage_slot(address, key)
         };
 
-        self.db.write_account_storage(
+        self.cache.write_account_storage(
             &address,
             key,
             StorageSlot {
                 original_value,
                 current_value: value,
-                is_cold: false,
             },
         );
 

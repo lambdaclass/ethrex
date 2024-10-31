@@ -30,10 +30,12 @@ impl VM {
             return Ok(OpcodeSuccess::Continue);
         }
 
-        if let Some(block_hash) = self.db.block_hashes.get(&block_number) {
+        let block_number = block_number.as_u64();
+
+        if let Some(block_hash) = self.db.get_block_hash(block_number) {
             current_call_frame
                 .stack
-                .push(U256::from_big_endian(&block_hash.0))?;
+                .push(U256::from_big_endian(block_hash.as_bytes()))?;
         } else {
             current_call_frame.stack.push(U256::zero())?;
         }
@@ -125,9 +127,15 @@ impl VM {
     ) -> Result<OpcodeSuccess, VMError> {
         self.increase_consumed_gas(current_call_frame, gas_cost::SELFBALANCE)?;
 
-        let balance = self.db.balance(&current_call_frame.code_address);
-        current_call_frame.stack.push(balance)?;
+        // the current account should have been cached when the contract was called
+        let balance = self
+            .cache
+            .get_account(current_call_frame.code_address)
+            .expect("The current account should always be cached")
+            .info
+            .balance;
 
+        current_call_frame.stack.push(balance)?;
         Ok(OpcodeSuccess::Continue)
     }
 

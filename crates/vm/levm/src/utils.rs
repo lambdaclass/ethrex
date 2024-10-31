@@ -1,6 +1,7 @@
 use crate::{
+    db::{Cache, Db},
     operations::Operation,
-    vm::{Account, Db, VM},
+    vm::{Account, AccountInfo, Environment, VM},
 };
 use bytes::Bytes;
 use ethereum_types::{Address, U256};
@@ -14,66 +15,88 @@ pub fn ops_to_bytecde(operations: &[Operation]) -> Bytes {
 }
 
 pub fn new_vm_with_bytecode(bytecode: Bytes) -> VM {
-    new_vm_with_ops_addr_bal(bytecode, Address::from_low_u64_be(100), U256::MAX)
+    new_vm_with_ops_addr_bal_db(
+        bytecode,
+        Address::from_low_u64_be(100),
+        U256::MAX,
+        Db::new(),
+        Cache::default(),
+    )
 }
 
 pub fn new_vm_with_ops(operations: &[Operation]) -> VM {
     let bytecode = ops_to_bytecde(operations);
-    new_vm_with_ops_addr_bal(bytecode, Address::from_low_u64_be(100), U256::MAX)
+    new_vm_with_ops_addr_bal_db(
+        bytecode,
+        Address::from_low_u64_be(100),
+        U256::MAX,
+        Db::new(),
+        Cache::default(),
+    )
 }
 
-pub fn new_vm_with_ops_addr_bal(bytecode: Bytes, address: Address, balance: U256) -> VM {
+pub fn new_vm_with_ops_db(operations: &[Operation], db: Db) -> VM {
+    let bytecode = ops_to_bytecde(operations);
+    new_vm_with_ops_addr_bal_db(
+        bytecode,
+        Address::from_low_u64_be(100),
+        U256::MAX,
+        db,
+        Cache::default(),
+    )
+}
+
+/// This function is for testing purposes only.
+pub fn new_vm_with_ops_addr_bal_db(
+    contract_bytecode: Bytes,
+    sender_address: Address,
+    sender_balance: U256,
+    mut db: Db,
+    mut cache: Cache,
+) -> VM {
     let accounts = [
+        // This is the contract account that is going to be executed
         (
             Address::from_low_u64_be(42),
             Account {
-                address: Address::from_low_u64_be(42),
-                balance: U256::MAX,
-                bytecode,
+                info: AccountInfo {
+                    nonce: 0,
+                    balance: U256::MAX,
+                    bytecode: contract_bytecode,
+                },
                 storage: HashMap::new(),
-                nonce: 0,
             },
         ),
         (
-            address,
+            // This is the sender account
+            sender_address,
             Account {
-                address,
-                balance,
-                bytecode: Bytes::default(),
+                info: AccountInfo {
+                    nonce: 0,
+                    balance: sender_balance,
+                    bytecode: Bytes::default(),
+                },
                 storage: HashMap::new(),
-                nonce: 0,
             },
         ),
     ];
 
-    let mut state = Db {
-        accounts: accounts.into(),
-        block_hashes: Default::default(),
-    };
+    db.add_accounts(accounts.to_vec());
 
-    // add the account with code to call
+    // add to cache accounts from list accounts
+    cache.add_account(&accounts[0].0, &accounts[0].1);
+    cache.add_account(&accounts[1].0, &accounts[1].1);
 
-    // add the account passed by parameter
+    let env = Environment::default_from_address(sender_address);
 
     VM::new(
         Some(Address::from_low_u64_be(42)),
-        address,
+        env,
         Default::default(),
         Default::default(),
-        U256::MAX, // arbitrary gas limit for now...
-        Default::default(),
-        Default::default(),
-        Default::default(),
-        Default::default(),
-        U256::one(),
-        Default::default(),
-        Default::default(),
-        &mut state,
-        Default::default(),
-        Default::default(),
-        Default::default(),
+        Box::new(db),
+        cache,
         Default::default(),
         None,
     )
-    .unwrap()
 }

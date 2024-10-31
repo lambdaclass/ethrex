@@ -1,9 +1,8 @@
+use super::*;
 use crate::{
     constants::{call_opcode, SUCCESS_FOR_RETURN},
     errors::ResultReason,
 };
-
-use super::*;
 
 // System Operations (10)
 // Opcodes: CREATE, CALL, CALLCODE, RETURN, DELEGATECALL, CREATE2, STATICCALL, REVERT, INVALID, SELFDESTRUCT
@@ -41,18 +40,20 @@ impl VM {
         let memory_byte_size = (args_offset + args_size).max(ret_offset + ret_size);
         let memory_expansion_cost = current_call_frame.memory.expansion_cost(memory_byte_size)?;
 
-        let address_access_cost = if self.accrued_substate.warm_addresses.contains(&code_address) {
-            call_opcode::WARM_ADDRESS_ACCESS_COST
-        } else {
-            call_opcode::COLD_ADDRESS_ACCESS_COST
-        };
-
         let positive_value_cost = if !value.is_zero() {
             call_opcode::NON_ZERO_VALUE_COST + call_opcode::BASIC_FALLBACK_FUNCTION_STIPEND
         } else {
             U256::zero()
         };
-        let account = self.db.get_account(&code_address)?;
+
+        let address_access_cost = if !self.cache.is_account_cached(&code_address) {
+            self.cache_from_db(&code_address);
+            call_opcode::COLD_ADDRESS_ACCESS_COST
+        } else {
+            call_opcode::WARM_ADDRESS_ACCESS_COST
+        };
+        let account = self.cache.get_account(code_address).unwrap().clone();
+
         let value_to_empty_account_cost = if !value.is_zero() && account.is_empty() {
             call_opcode::VALUE_TO_EMPTY_ACCOUNT_COST
         } else {
@@ -66,10 +67,8 @@ impl VM {
 
         self.increase_consumed_gas(current_call_frame, gas_cost)?;
 
-        self.accrued_substate.warm_addresses.insert(code_address);
-
-        let msg_sender = current_call_frame.msg_sender;
-        let to = current_call_frame.to;
+        let msg_sender = current_call_frame.to; // The new sender will be the current contract.
+        let to = code_address; // In this case code_address and the sub-context account are the same. Unlike CALLCODE or DELEGATECODE.
         let is_static = current_call_frame.is_static;
 
         self.generic_call(
@@ -79,7 +78,6 @@ impl VM {
             msg_sender,
             to,
             code_address,
-            None,
             false,
             is_static,
             args_offset,
@@ -102,7 +100,8 @@ impl VM {
         let ret_offset = current_call_frame.stack.pop()?.try_into().unwrap();
         let ret_size = current_call_frame.stack.pop()?.try_into().unwrap();
 
-        let msg_sender = current_call_frame.msg_sender;
+        // Sender and recipient are the same in this case. But the code executed is from another account.
+        let msg_sender = current_call_frame.to;
         let to = current_call_frame.to;
         let is_static = current_call_frame.is_static;
 
@@ -110,10 +109,9 @@ impl VM {
             current_call_frame,
             gas,
             value,
-            code_address,
+            msg_sender,
             to,
             code_address,
-            Some(msg_sender),
             false,
             is_static,
             args_offset,
@@ -164,8 +162,8 @@ impl VM {
         let ret_offset = current_call_frame.stack.pop()?.try_into().unwrap();
         let ret_size = current_call_frame.stack.pop()?.try_into().unwrap();
 
-        let value = current_call_frame.msg_value;
         let msg_sender = current_call_frame.msg_sender;
+        let value = current_call_frame.msg_value;
         let to = current_call_frame.to;
         let is_static = current_call_frame.is_static;
 
@@ -176,7 +174,6 @@ impl VM {
             msg_sender,
             to,
             code_address,
-            Some(msg_sender),
             false,
             is_static,
             args_offset,
@@ -198,17 +195,17 @@ impl VM {
         let ret_offset = current_call_frame.stack.pop()?.try_into().unwrap();
         let ret_size = current_call_frame.stack.pop()?.try_into().unwrap();
 
-        let msg_sender = current_call_frame.msg_sender;
-        let value = current_call_frame.msg_value;
+        let value = U256::zero();
+        let msg_sender = current_call_frame.to; // The new sender will be the current contract.
+        let to = code_address; // In this case code_address and the sub-context account are the same. Unlike CALLCODE or DELEGATECODE.
 
         self.generic_call(
             current_call_frame,
             gas,
             value,
             msg_sender,
+            to,
             code_address,
-            code_address,
-            None,
             false,
             true,
             args_offset,
