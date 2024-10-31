@@ -25,7 +25,7 @@ use crate::{
         GAS_LIMIT_BOUND_DIVISOR, GAS_PER_BLOB, MAX_BLOB_GAS_PER_BLOCK, MIN_GAS_LIMIT,
         TARGET_BLOB_GAS_PER_BLOCK, TX_GAS_COST,
     },
-    error::ChainError,
+    error::{ChainError, InvalidBlockError},
     mempool::{self, PendingTxFilter},
 };
 
@@ -222,7 +222,7 @@ pub fn apply_withdrawals(context: &mut PayloadBuildContext) -> Result<(), EvmErr
 /// Returns two transaction queues, one for plain and one for blob txs
 fn fetch_mempool_transactions(
     context: &mut PayloadBuildContext,
-) -> Result<(TransactionQueue, TransactionQueue), StoreError> {
+) -> Result<(TransactionQueue, TransactionQueue), ChainError> {
     let tx_filter = PendingTxFilter {
         /*TODO(https://github.com/lambdaclass/ethereum_rust/issues/680): add tip filter */
         base_fee: context.base_fee_per_gas(),
@@ -245,12 +245,12 @@ fn fetch_mempool_transactions(
         TransactionQueue::new(
             mempool::filter_transactions(&plain_tx_filter, store)?,
             context.base_fee_per_gas(),
-        ),
+        )?,
         // Blob txs
         TransactionQueue::new(
             mempool::filter_transactions(&blob_tx_filter, store)?,
             context.base_fee_per_gas(),
-        ),
+        )?,
     ))
 }
 
@@ -320,7 +320,7 @@ pub fn fill_transactions(context: &mut PayloadBuildContext) -> Result<(), ChainE
         // Execute tx
         let receipt = match apply_transaction(&head_tx, context) {
             Ok(receipt) => {
-                txs.shift();
+                txs.shift()?;
                 // Pull transaction from the mempool
                 mempool::remove_transaction(
                     tx_hash,
@@ -464,7 +464,10 @@ impl From<HeadTransaction> for Transaction {
 
 impl TransactionQueue {
     /// Creates a new TransactionQueue from a set of transactions grouped by sender and sorted by nonce
-    fn new(mut txs: HashMap<Address, Vec<MempoolTransaction>>, base_fee: Option<u64>) -> Self {
+    fn new(
+        mut txs: HashMap<Address, Vec<MempoolTransaction>>,
+        base_fee: Option<u64>,
+    ) -> Result<Self, ChainError> {
         let mut heads = Vec::new();
         for (address, txs) in txs.iter_mut() {
             // Pull the first tx from each list and add it to the heads list
@@ -472,18 +475,22 @@ impl TransactionQueue {
             let head_tx = txs.remove(0);
             heads.push(HeadTransaction {
                 // We already ran this method when filtering the transactions from the mempool so it shouldn't fail
-                tip: head_tx.effective_gas_tip(base_fee).unwrap(),
+                tip: head_tx
+                    .effective_gas_tip(base_fee)
+                    .ok_or(ChainError::InvalidBlock(
+                        InvalidBlockError::InvalidTransaction("Attempted to add an invalid transaction to the block. The transaction filter must have failed.".to_owned()),
+                    ))?,
                 tx: head_tx,
                 sender: *address,
             });
         }
         // Sort heads by higest tip (and lowest timestamp if tip is equal)
         heads.sort();
-        TransactionQueue {
+        Ok(TransactionQueue {
             heads,
             txs,
             base_fee,
-        }
+        })
     }
 
     /// Remove all transactions from the queue
@@ -513,7 +520,7 @@ impl TransactionQueue {
 
     /// Remove the top transaction
     /// Add a tx from the same sender to the head transactions
-    fn shift(&mut self) {
+    fn shift(&mut self) -> Result<(), ChainError> {
         let tx = self.heads.remove(0);
         if let Some(txs) = self.txs.get_mut(&tx.sender) {
             // Fetch next head
@@ -521,7 +528,11 @@ impl TransactionQueue {
                 let head_tx = txs.remove(0);
                 let head = HeadTransaction {
                     // We already ran this method when filtering the transactions from the mempool so it shouldn't fail
-                    tip: head_tx.effective_gas_tip(self.base_fee).unwrap(),
+                    tip: head_tx.effective_gas_tip(self.base_fee).ok_or(
+                        ChainError::InvalidBlock(
+                            InvalidBlockError::InvalidTransaction("Attempted to add an invalid transaction to the block. The transaction filter must have failed.".to_owned()),
+                        ),
+                    )?,
                     tx: head_tx,
                     sender: tx.sender,
                 };
@@ -533,6 +544,7 @@ impl TransactionQueue {
                 self.heads.insert(index, head);
             }
         }
+        Ok(())
     }
 }
 
