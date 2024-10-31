@@ -6,7 +6,7 @@ edition = "2021"
 [workspace]
 
 [dependencies]
-risc0-zkvm = { version = "1.1.2", default-features = false, features = ['std'] }
+risc0-zkvm = { version = "1.1.2", default-features = false, features = ["std"] }
 
 ethereum_rust-core = { path = "../../../../../common", default-features = false }
 ethereum_rust-rlp = { path = "../../../../../common/rlp" }
@@ -18,3 +18,4 @@ crypto-bigint = { git = "https://github.com/risc0/RustCrypto-crypto-bigint", tag
 k256 = { git = "https://github.com/risc0/RustCrypto-elliptic-curves", tag = "k256/v0.13.3-risczero.0" }
 sha2 = { git = "https://github.com/risc0/RustCrypto-hashes", tag = "sha2-v0.10.6-risczero.0" }
 secp256k1 = { git = "https://github.com/sp1-patches/rust-secp256k1", branch = "patch-secp256k1-v0.29.1" }
+ecdsa-core = { git = "https://github.com/sp1-patches/signatures", package = "ecdsa", branch = "patch-ecdsa-v0.16.9" }

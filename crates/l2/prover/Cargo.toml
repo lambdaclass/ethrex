@@ -16,6 +16,7 @@ hex.workspace = true
 
 # ethereum_rust
 ethereum_rust-core.workspace = true
+ethereum_rust-vm.workspace = true
 ethereum_rust-rlp.workspace = true
 
 # l2
@@ -32,6 +33,11 @@ revm = { version = "14.0.3", features = [
   "kzg-rs",
 ], default-features = false }
 
+[dev-dependencies]
+ethereum_rust-vm.workspace = true
+ethereum_rust-storage.workspace = true
+ethereum_rust-blockchain.workspace = true
+
 [lib]
 name = "ethereum_rust_prover_lib"
 path = "src/lib.rs"
@@ -43,3 +49,4 @@ path = "src/main.rs"
 [features]
 default = []
 build_zkvm = ["zkvm_interface/build_zkvm"]
+gpu = ["risc0-zkvm/cuda"]

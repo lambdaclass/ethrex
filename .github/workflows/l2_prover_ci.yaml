@@ -1,0 +1,57 @@
+name: L2 Prover CI
+on:
+  push:
+    branches: ["main"]
+    paths:
+      - "crates/l2/prover/**"
+  pull_request:
+    branches: ["**"]
+    paths:
+      - "crates/l2/prover/**"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
+  cancel-in-progress: true
+
+jobs:
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: true
+      matrix:
+        action:
+          - command: check
+            args: -p ethereum_rust-prover
+          - command: clippy
+            args: -p ethereum_rust-prover --all-targets --no-default-features
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v4
+      - name: Add Rust Cache
+        uses: Swatinem/rust-cache@v2
+      - name: ${{ matrix.action.command }} Command
+        run: cargo ${{ matrix.action.command }} ${{ matrix.action.args }}
+
+  build_and_test:
+    name: Build and Test RISC-V zkVM program
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v4
+      - name: Rust toolchain install
+        uses: dtolnay/rust-toolchain@stable
+      - name: RISC-V zkVM toolchain install
+        run: |
+          curl -L https://risczero.com/install | bash
+          ~/.risc0/bin/rzup install
+      - name: Caching
+        uses: Swatinem/rust-cache@v2
+      - name: Build prover and zkVM
+        run: |
+          cd crates/l2/prover
+          cargo build --release --features build_zkvm
+      - name: Test Prover Execution
+        run: |
+          cd crates/l2/prover
+          RUST_LOG=info make perf_test_proving

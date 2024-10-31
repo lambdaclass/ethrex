@@ -16,7 +16,7 @@ SPECTEST_VECTORS_DIR := cmd/ef_tests/vectors
 
 CRATE ?= *
 test: $(SPECTEST_VECTORS_DIR) ## 🧪 Run each crate's tests
-	cargo test -p '$(CRATE)' --workspace
+	cargo test -p '$(CRATE)' --workspace --exclude ethereum_rust-prover
 
 clean: clean-vectors ## 🧹 Remove build artifacts
 	cargo clean
