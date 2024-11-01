@@ -6,8 +6,8 @@ pragma solidity ^0.8.27;
 /// @notice A OnChainProposer contract ensures the advancement of the L2. It is used
 /// by the proposer to commit blocks and verify block proofs.
 interface IOnChainProposer {
-    /// @notice The commitments of the committed blocks.
-    function verifiedBlocks(uint256) external view returns (bool);
+    /// @notice The latest verified block number.
+    function lastVerifiedBlock() external view returns (uint256);
 
     /// @notice A block has been committed.
     /// @dev Event emitted when a block is committed.

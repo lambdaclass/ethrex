@@ -116,9 +116,8 @@ contract CommonBridge is ICommonBridge, Ownable, ReentrancyGuard {
             "CommonBridge: the block that emitted the withdrawal logs was not committed"
         );
         require(
-            IOnChainProposer(ON_CHAIN_PROPOSER).verifiedBlocks(
-                withdrawalBlockNumber
-            ),
+            withdrawalBlockNumber <=
+                IOnChainProposer(ON_CHAIN_PROPOSER).lastVerifiedBlock(),
             "CommonBridge: the block that emitted the withdrawal logs was not verified"
         );
         require(
