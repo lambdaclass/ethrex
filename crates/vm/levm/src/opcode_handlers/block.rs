@@ -1,12 +1,17 @@
 use crate::{
-    block::LAST_AVAILABLE_BLOCK_LIMIT,
-    constants::{BLOB_BASE_FEE_UPDATE_FRACTION, MIN_BASE_FEE_PER_BLOB_GAS},
+    call_frame::CallFrame,
+    constants::{gas_cost, LAST_AVAILABLE_BLOCK_LIMIT},
+    errors::{OpcodeSuccess, VMError},
+    vm::VM,
 };
-use keccak_hash::H256;
+use ethereum_rust_core::{
+    types::{BLOB_BASE_FEE_UPDATE_FRACTION, MIN_BASE_FEE_PER_BLOB_GAS},
+    Address, H256, U256,
+};
+use std::str::FromStr;
 
 // Block Information (11)
 // Opcodes: BLOCKHASH, COINBASE, TIMESTAMP, NUMBER, PREVRANDAO, GASLIMIT, CHAINID, SELFBALANCE, BASEFEE, BLOBHASH, BLOBBASEFEE
-use super::*;
 
 impl VM {
     // BLOCKHASH operation
@@ -183,10 +188,10 @@ impl VM {
 
     fn get_blob_gasprice(&mut self) -> U256 {
         fake_exponential(
-            MIN_BASE_FEE_PER_BLOB_GAS,
+            MIN_BASE_FEE_PER_BLOB_GAS.into(),
             // Use unwrap because env should have a Some value in excess_blob_gas attribute
             self.env.block_excess_blob_gas.unwrap(),
-            BLOB_BASE_FEE_UPDATE_FRACTION,
+            BLOB_BASE_FEE_UPDATE_FRACTION.into(),
         )
     }
 
@@ -205,7 +210,6 @@ impl VM {
     }
 }
 
-use std::str::FromStr;
 fn address_to_word(address: Address) -> U256 {
     // This unwrap can't panic, as Address are 20 bytes long and U256 use 32 bytes
     U256::from_str(&format!("{address:?}")).unwrap()

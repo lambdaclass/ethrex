@@ -1,6 +1,5 @@
-use crate::vm::{Account, AccountInfo, StorageSlot};
-use ethereum_types::{Address, U256};
-use keccak_hash::H256;
+use crate::account::{Account, AccountInfo, StorageSlot};
+use ethereum_rust_core::{Address, H256, U256};
 use std::collections::HashMap;
 
 pub trait Database {

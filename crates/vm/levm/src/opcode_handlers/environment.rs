@@ -1,11 +1,14 @@
-use super::*;
 use crate::{
+    call_frame::CallFrame,
     constants::{
         call_opcode::{COLD_ADDRESS_ACCESS_COST, WARM_ADDRESS_ACCESS_COST},
-        WORD_SIZE,
+        gas_cost, WORD_SIZE,
     },
-    vm::word_to_address,
+    errors::{OpcodeSuccess, VMError},
+    vm::{word_to_address, VM},
 };
+use bytes::Bytes;
+use ethereum_rust_core::U256;
 use sha3::{Digest, Keccak256};
 
 // Environmental Information (16)

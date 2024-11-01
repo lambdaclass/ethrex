@@ -11,19 +11,20 @@ path = "src/lib.rs"
 ethereum_rust-levm = { path = "../../" }
 hex = "0.4.3"
 revm = "9.0.0"
+bytes = "1.8.0"
 
 [[bin]]
-name="levm_factorial"
-path="src/levm_factorial.rs"
+name = "levm_factorial"
+path = "src/levm_factorial.rs"
 
 [[bin]]
-name="revm_factorial"
-path="src/revm_factorial.rs"
+name = "revm_factorial"
+path = "src/revm_factorial.rs"
 
 [[bin]]
-name="levm_fibonacci"
-path="src/levm_fibonacci.rs"
+name = "levm_fibonacci"
+path = "src/levm_fibonacci.rs"
 
 [[bin]]
-name="revm_fibonacci"
-path="src/revm_fibonacci.rs"
+name = "revm_fibonacci"
+path = "src/revm_fibonacci.rs"

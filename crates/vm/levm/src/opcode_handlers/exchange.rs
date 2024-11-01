@@ -1,6 +1,13 @@
+use crate::{
+    call_frame::CallFrame,
+    constants::gas_cost,
+    errors::{OpcodeSuccess, VMError},
+    opcodes::Opcode,
+    vm::VM,
+};
+
 // Exchange Operations (16)
 // Opcodes: SWAP1 ... SWAP16
-use super::*;
 
 impl VM {
     // SWAP operation

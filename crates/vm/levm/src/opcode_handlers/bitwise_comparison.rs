@@ -1,8 +1,13 @@
-use crate::constants::WORD_SIZE;
+use crate::{
+    call_frame::CallFrame,
+    constants::{gas_cost, WORD_SIZE},
+    errors::{OpcodeSuccess, VMError},
+    vm::VM,
+};
+use ethereum_rust_core::U256;
 
 // Comparison and Bitwise Logic Operations (14)
 // Opcodes: LT, GT, SLT, SGT, EQ, ISZERO, AND, OR, XOR, NOT, BYTE, SHL, SHR, SAR
-use super::*;
 
 impl VM {
     // LT operation

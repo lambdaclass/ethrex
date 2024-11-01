@@ -1,9 +1,14 @@
-use crate::constants::WORD_SIZE;
+use crate::{
+    call_frame::CallFrame,
+    constants::{gas_cost, WORD_SIZE},
+    errors::{OpcodeSuccess, VMError},
+    vm::VM,
+};
+use ethereum_rust_core::U256;
+use sha3::{Digest, Keccak256};
 
 // KECCAK256 (1)
 // Opcodes: KECCAK256
-use super::*;
-use sha3::{Digest, Keccak256};
 
 impl VM {
     pub fn op_keccak256(

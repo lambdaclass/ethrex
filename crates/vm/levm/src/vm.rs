@@ -1,96 +1,18 @@
 use crate::{
+    account::{Account, StorageSlot},
     call_frame::CallFrame,
     constants::*,
     db::{Cache, Database},
+    environment::Environment,
     errors::{OpcodeSuccess, ResultReason, TransactionReport, TxResult, VMError},
     opcodes::Opcode,
-    primitives::{Address, Bytes, H256, U256},
 };
+use bytes::Bytes;
+use ethereum_rust_core::{types::TxKind, Address, H256, U256};
 use ethereum_rust_rlp;
 use ethereum_rust_rlp::encode::RLPEncode;
-use ethereum_types::H160;
-use keccak_hash::keccak;
 use sha3::{Digest, Keccak256};
 use std::{collections::HashMap, str::FromStr};
-
-#[derive(Clone, Default, Debug, PartialEq, Eq)]
-pub struct AccountInfo {
-    pub balance: U256,
-    pub bytecode: Bytes,
-    pub nonce: u64,
-}
-impl AccountInfo {
-    pub fn is_empty(&self) -> bool {
-        self.balance.is_zero() && self.nonce == 0 && self.bytecode.is_empty()
-    }
-}
-
-#[derive(Clone, Default, Debug, PartialEq, Eq)]
-pub struct Account {
-    pub info: AccountInfo,
-    pub storage: HashMap<H256, StorageSlot>,
-}
-
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct StorageSlot {
-    pub original_value: U256,
-    pub current_value: U256,
-}
-
-impl Account {
-    pub fn new(
-        balance: U256,
-        bytecode: Bytes,
-        nonce: u64,
-        storage: HashMap<H256, StorageSlot>,
-    ) -> Self {
-        Self {
-            info: AccountInfo {
-                balance,
-                bytecode,
-                nonce,
-            },
-            storage,
-        }
-    }
-
-    pub fn has_code(&self) -> bool {
-        !(self.info.bytecode.is_empty()
-            || self.bytecode_hash() == H256::from_str(EMPTY_CODE_HASH_STR).unwrap())
-    }
-
-    pub fn bytecode_hash(&self) -> H256 {
-        keccak(self.info.bytecode.as_ref())
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.info.balance.is_zero() && self.info.nonce == 0 && self.info.bytecode.is_empty()
-    }
-
-    pub fn with_balance(mut self, balance: U256) -> Self {
-        self.info.balance = balance;
-        self
-    }
-
-    pub fn with_bytecode(mut self, bytecode: Bytes) -> Self {
-        self.info.bytecode = bytecode;
-        self
-    }
-
-    pub fn with_storage(mut self, storage: HashMap<H256, StorageSlot>) -> Self {
-        self.storage = storage;
-        self
-    }
-
-    pub fn with_nonce(mut self, nonce: u64) -> Self {
-        self.info.nonce = nonce;
-        self
-    }
-
-    pub fn increment_nonce(&mut self) {
-        self.info.nonce += 1;
-    }
-}
 
 pub type Storage = HashMap<U256, H256>;
 
@@ -100,47 +22,6 @@ pub struct Substate {
     // accessed addresses and storage keys are considered WARM
     // pub accessed_addresses: HashSet<Address>,
     // pub accessed_storage_keys: HashSet<(Address, U256)>,
-}
-
-#[derive(Debug, Default, Clone)]
-pub struct Environment {
-    /// The sender address of the transaction that originated
-    /// this execution.
-    pub origin: Address,
-    pub consumed_gas: U256,
-    pub refunded_gas: U256,
-    pub gas_limit: U256,
-    pub block_number: U256,
-    pub coinbase: Address,
-    pub timestamp: U256,
-    pub prev_randao: Option<H256>,
-    pub chain_id: U256,
-    pub base_fee_per_gas: U256,
-    pub gas_price: U256,
-    pub block_excess_blob_gas: Option<U256>,
-    pub block_blob_gas_used: Option<U256>,
-    pub tx_blob_hashes: Option<Vec<H256>>,
-}
-
-impl Environment {
-    pub fn default_from_address(origin: Address) -> Self {
-        Self {
-            origin,
-            consumed_gas: TX_BASE_COST,
-            refunded_gas: U256::zero(),
-            gas_limit: U256::MAX,
-            block_number: Default::default(),
-            coinbase: Default::default(),
-            timestamp: Default::default(),
-            prev_randao: Default::default(),
-            chain_id: U256::one(),
-            base_fee_per_gas: Default::default(),
-            gas_price: Default::default(),
-            block_excess_blob_gas: Default::default(),
-            block_blob_gas_used: Default::default(),
-            tx_blob_hashes: Default::default(),
-        }
-    }
 }
 
 pub struct VM {
@@ -153,12 +34,7 @@ pub struct VM {
     /// states.
     pub db: Box<dyn Database>,
     pub cache: Cache,
-    pub tx_type: TxType,
-}
-
-pub enum TxType {
-    CALL,
-    CREATE,
+    pub tx_kind: TxKind,
 }
 
 fn address_to_word(address: Address) -> U256 {
@@ -176,7 +52,7 @@ impl VM {
     // TODO: Refactor this.
     #[allow(clippy::too_many_arguments)]
     pub fn new(
-        to: Option<Address>,
+        to: TxKind,
         env: Environment,
         value: U256,
         calldata: Bytes,
@@ -188,7 +64,7 @@ impl VM {
         // Maybe this decision should be made in an upper layer
 
         match to {
-            Some(address_to) => {
+            TxKind::Call(address_to) => {
                 // CALL tx
                 let initial_call_frame = CallFrame::new(
                     env.origin,
@@ -209,10 +85,10 @@ impl VM {
                     env,
                     accrued_substate: Substate::default(),
                     cache,
-                    tx_type: TxType::CALL,
+                    tx_kind: to,
                 }
             }
-            None => {
+            TxKind::Create => {
                 // CREATE tx
                 let sender_account_info = db.get_account_info(env.origin);
                 // Note that this is a copy of account, not the real one
@@ -249,7 +125,7 @@ impl VM {
                     env,
                     accrued_substate: Substate::default(),
                     cache,
-                    tx_type: TxType::CREATE,
+                    tx_kind: TxKind::Create,
                 }
             }
         }
@@ -462,7 +338,7 @@ impl VM {
     }
 
     fn is_create(&self) -> bool {
-        matches!(self.tx_type, TxType::CREATE)
+        matches!(self.tx_kind, TxKind::Create)
     }
 
     fn revert_create(&mut self) -> Result<(), VMError> {
@@ -652,7 +528,7 @@ impl VM {
     /// Calculates the address of a new conctract using the CREATE opcode as follow
     ///
     /// address = keccak256(rlp([sender_address,sender_nonce]))[12:]
-    pub fn calculate_create_address(sender_address: Address, sender_nonce: u64) -> H160 {
+    pub fn calculate_create_address(sender_address: Address, sender_nonce: u64) -> Address {
         let mut encoded = Vec::new();
         sender_address.encode(&mut encoded);
         sender_nonce.encode(&mut encoded);
@@ -670,7 +546,7 @@ impl VM {
         sender_address: Address,
         initialization_code: &Bytes,
         salt: U256,
-    ) -> H160 {
+    ) -> Address {
         let mut hasher = Keccak256::new();
         hasher.update(initialization_code.clone());
         let initialization_code_hash = hasher.finalize();

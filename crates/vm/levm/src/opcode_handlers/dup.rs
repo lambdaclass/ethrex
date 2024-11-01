@@ -1,6 +1,13 @@
+use crate::{
+    call_frame::CallFrame,
+    constants::gas_cost,
+    errors::{OpcodeSuccess, VMError},
+    opcodes::Opcode,
+    vm::VM,
+};
+
 // Duplication Operation (16)
 // Opcodes: DUP1 ... DUP16
-use super::*;
 
 impl VM {
     // DUP operation

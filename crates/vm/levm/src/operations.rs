@@ -1,7 +1,6 @@
-use crate::{
-    opcodes::Opcode,
-    primitives::{Bytes, U256},
-};
+use crate::opcodes::Opcode;
+use bytes::Bytes;
+use ethereum_rust_core::U256;
 
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub enum Operation {

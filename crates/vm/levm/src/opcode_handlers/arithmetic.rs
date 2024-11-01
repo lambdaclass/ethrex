@@ -1,6 +1,13 @@
+use crate::{
+    call_frame::CallFrame,
+    constants::gas_cost,
+    errors::{OpcodeSuccess, VMError},
+    vm::VM,
+};
+use ethereum_rust_core::{U256, U512};
+
 // Arithmetic Operations (11)
 // Opcodes: ADD, SUB, MUL, DIV, SDIV, MOD, SMOD, ADDMOD, MULMOD, EXP, SIGNEXTEND
-use super::*;
 
 impl VM {
     // ADD operation

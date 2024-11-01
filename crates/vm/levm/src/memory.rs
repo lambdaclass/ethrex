@@ -1,6 +1,8 @@
-use crate::constants::{MEMORY_EXPANSION_QUOTIENT, WORD_SIZE};
-use crate::errors::VMError;
-use crate::primitives::U256;
+use crate::{
+    constants::{MEMORY_EXPANSION_QUOTIENT, WORD_SIZE},
+    errors::VMError,
+};
+use ethereum_rust_core::U256;
 
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Memory {

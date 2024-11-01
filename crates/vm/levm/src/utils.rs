@@ -1,13 +1,15 @@
 use crate::{
+    account::{Account, AccountInfo},
     db::{Cache, Db},
+    environment::Environment,
     operations::Operation,
-    vm::{Account, AccountInfo, Environment, VM},
+    vm::VM,
 };
 use bytes::Bytes;
-use ethereum_types::{Address, U256};
+use ethereum_rust_core::{types::TxKind, Address, U256};
 use std::collections::HashMap;
 
-pub fn ops_to_bytecde(operations: &[Operation]) -> Bytes {
+pub fn ops_to_bytecode(operations: &[Operation]) -> Bytes {
     operations
         .iter()
         .flat_map(Operation::to_bytecode)
@@ -25,7 +27,7 @@ pub fn new_vm_with_bytecode(bytecode: Bytes) -> VM {
 }
 
 pub fn new_vm_with_ops(operations: &[Operation]) -> VM {
-    let bytecode = ops_to_bytecde(operations);
+    let bytecode = ops_to_bytecode(operations);
     new_vm_with_ops_addr_bal_db(
         bytecode,
         Address::from_low_u64_be(100),
@@ -36,7 +38,7 @@ pub fn new_vm_with_ops(operations: &[Operation]) -> VM {
 }
 
 pub fn new_vm_with_ops_db(operations: &[Operation], db: Db) -> VM {
-    let bytecode = ops_to_bytecde(operations);
+    let bytecode = ops_to_bytecode(operations);
     new_vm_with_ops_addr_bal_db(
         bytecode,
         Address::from_low_u64_be(100),
@@ -90,7 +92,7 @@ pub fn new_vm_with_ops_addr_bal_db(
     let env = Environment::default_from_address(sender_address);
 
     VM::new(
-        Some(Address::from_low_u64_be(42)),
+        TxKind::Call(Address::from_low_u64_be(42)),
         env,
         Default::default(),
         Default::default(),
