@@ -350,7 +350,31 @@ It also supports EIP 4844 for L1 commit transactions, which means state diffs ar
 | Adapt the prover to prove a KZG commitment to the state diff and use the point evaluation precompile to show that the blob sent to the L1 is indeed the correct one through a proof of equivalence protocol | ❌      |
 | Add a command to the CLI to reconstructing the full L2 state from all the blob data on the L1.                                                                                                              | ❌      |
 
-### Milestone 4: Custom Native token
+### Milestone 4: Account Abstraction
+
+The L2 supports native account abstraction following EIP 7702, allowing for custom transaction validation logic and paymaster flows.
+
+#### Status
+
+| Task Description                                                           | Status |
+| -------------------------------------------------------------------------- | ------ |
+| Add support for `SET_CODE_TX_TYPE` transactions (i.e. implement EIP 7702). | ❌      |
+| Add examples of WebAuthn signing and paymaster flows using EIP 7702        | ❌      |
+
+### Milestone 5: L2s interoperability
+
+Support multiple L2s sharing the same bridge contract on L1 for seamless interoperability.
+
+#### Status
+
+| Task Description                                                                           | Status |
+| ------------------------------------------------------------------------------------------ | ------ |
+| Change state of the `commonBridge` and `onChainProposer` to be a mapping over `chainId`    | ❌      |
+| Adapt sequencer to be aware of its chain id and interact with the L1 contracts accordingly | ❌      |
+
+TODO: Expand on tasks about proper interoperability between chains (seamlessly bridging between chains, etc).
+
+### Milestone 6: Custom Native token
 
 The L2 can also be deployed using a custom native token, meaning that a certain ERC20 can be the common currency that's used for paying network fees.
 
@@ -362,7 +386,7 @@ The L2 can also be deployed using a custom native token, meaning that a certain 
 | On the `commonBridge`, for custom native token deposits, `msg.value` should always be zero, and the amount of the native token to mint should be a new `valueToMintOnL2` argument. The amount should be deducted from the caller thorugh a `transferFrom`. | ❌      |
 | On the CLI, add support for custom native token deposits and withdrawals                                                                                                                                                                                   | ❌      |
 
-### Milestone 5: Security (TEEs and Multi Prover support)
+### Milestone 7: Security (TEEs and Multi Prover support)
 
 The L2 has added security mechanisms in place, running on Trusted Execution Environments and Multi Prover setup where multiple guarantees (Execution on TEEs, zkVMs/proving systems) are required for settlement on the L1. This better protects against possible security bugs on implementations.
 
@@ -374,18 +398,7 @@ The L2 has added security mechanisms in place, running on Trusted Execution Envi
 | Support verifying multiple different zkVM executions on the `onChainProposer` L1 contract. | ❌      |
 | Support running the operator on a TEE environment                                          | ❌      |
 
-### Milestone 6: Account Abstraction
-
-The L2 supports native account abstraction following EIP 7702, allowing for custom transaction validation logic and paymaster flows.
-
-#### Status
-
-| Task Description | Status |
-| ---------------- | ------ |
-
-TODO: Expand on account abstraction tasks.
-
-### Milestone 7: Based Contestable Rollup
+### Milestone 8: Based Contestable Rollup
 
 The network can be run as a Based Rollup, meaning sequencing is done by the Ethereum Validator set; transactions are sent to a private mempool and L1 Validators that opt into the L2 sequencing propose blocks for the L2 on every L1 block.
 
@@ -397,7 +410,7 @@ The network can be run as a Based Rollup, meaning sequencing is done by the Ethe
 
 TODO: Expand on this.
 
-### Milestone 8: Validium
+### Milestone 9: Validium
 
 The L2 can be initialized in Validium Mode, meaning the Data Availability layer is no longer the L1, but rather a DA layer of the user's choice.
 
