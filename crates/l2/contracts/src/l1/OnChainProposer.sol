@@ -21,11 +21,12 @@ contract OnChainProposer is IOnChainProposer, ReentrancyGuard {
     /// @dev It is used by other contracts to verify if a block was committed.
     mapping(uint256 => BlockCommitmentInfo) public blockCommitments;
 
-    /// @notice The verified blocks.
-    /// @dev If a block is verified, the block hash is stored here.
-    /// @dev If a block was not verified yet, it won't be here.
-    /// @dev It is used by other contracts to verify if a block was verified.
-    mapping(uint256 => bool) public verifiedBlocks;
+    /// @notice The latest verified block number.
+    /// @dev This variable holds the block number of the most recently verified block.
+    /// @dev All blocks with a block number less than or equal to `lastVerifiedBlock` are considered verified.
+    /// @dev Blocks with a block number greater than `lastVerifiedBlock` have not been verified yet.
+    /// @dev This is crucial for ensuring that only valid and confirmed blocks are processed in the contract.
+    uint256 public lastVerifiedBlock;
 
     address public BRIDGE;
 
@@ -54,7 +55,7 @@ contract OnChainProposer is IOnChainProposer, ReentrancyGuard {
         bytes32 depositLogs
     ) external override {
         require(
-            !verifiedBlocks[blockNumber],
+            blockNumber == lastVerifiedBlock + 1,
             "OnChainProposer: block already verified"
         );
         require(
@@ -92,11 +93,11 @@ contract OnChainProposer is IOnChainProposer, ReentrancyGuard {
             "OnChainProposer: block not committed"
         );
         require(
-            !verifiedBlocks[blockNumber],
+            blockNumber == lastVerifiedBlock + 1,
             "OnChainProposer: block already verified"
         );
 
-        verifiedBlocks[blockNumber] = true;
+        lastVerifiedBlock = blockNumber;
         ICommonBridge(BRIDGE).removeDepositLogs(
             // The first 2 bytes are the number of deposits.
             uint16(uint256(blockCommitments[blockNumber].depositLogs >> 240))
