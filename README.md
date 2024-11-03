@@ -65,7 +65,7 @@ In a bit more detail:
 |  Add `libmdbx` bindings and basic API, create tables for state (blocks, transactions, etc)                                               | ✅     
 |   EVM wrapper for block execution                                                       | ✅     |
 |    JSON RPC API server setup                                                      | ✅     |
-|    RPC State-serving endpoints                                                     | 🏗️  (almost done, a few endpoint are left)   |
+|    RPC State-serving endpoints                                                     | 🏗️  (almost done, a few endpoints are left)   |
 |    Basic Engine API implementation. Set new chain head (`forkchoiceUpdated`) and new block (`newPayload`).                                                   | ✅   
 
 See detailed issues and progress for this milestone [here](https://github.com/lambdaclass/ethereum_rust/milestone/1).
