@@ -71,7 +71,7 @@ impl Database for Db {
     }
 }
 
-#[derive(Debug, Default, Clone)]
+#[derive(Debug, Default, Clone, Eq, PartialEq)]
 pub struct Cache {
     pub accounts: HashMap<Address, Account>,
 }

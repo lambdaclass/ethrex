@@ -17,9 +17,11 @@ pub enum VMError {
     OverflowInArithmeticOp,
     FatalError,
     InvalidTransaction,
+    RevertOpcode,
+    InvalidOpcode,
     MissingBlobHashes,
     BlobHashIndexOutOfBounds,
-    RevertOpcode,
+    SenderAccountDoesNotExist,
     AddressDoesNotMatchAnAccount,
     SenderAccountShouldNotHaveBytecode,
     SenderBalanceShouldContainTransferValue,
@@ -40,6 +42,7 @@ pub enum ResultReason {
     Stop,
     Revert,
     Return,
+    SelfDestruct,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

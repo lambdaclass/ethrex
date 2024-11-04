@@ -12,7 +12,10 @@ use ethereum_rust_core::{types::TxKind, Address, H256, U256};
 use ethereum_rust_rlp;
 use ethereum_rust_rlp::encode::RLPEncode;
 use sha3::{Digest, Keccak256};
-use std::{collections::HashMap, str::FromStr};
+use std::{
+    collections::{HashMap, HashSet},
+    str::FromStr,
+};
 
 pub type Storage = HashMap<U256, H256>;
 
@@ -22,6 +25,7 @@ pub struct Substate {
     // accessed addresses and storage keys are considered WARM
     // pub accessed_addresses: HashSet<Address>,
     // pub accessed_storage_keys: HashSet<(Address, U256)>,
+    pub selfdestrutct_set: HashSet<Address>,
 }
 
 pub struct VM {
@@ -133,10 +137,13 @@ impl VM {
     }
 
     pub fn execute(&mut self, current_call_frame: &mut CallFrame) -> TransactionReport {
-        // let mut current_call_frame = self
-        //     .call_frames
-        //     .pop()
-        //     .expect("Fatal Error: This should not happen"); // if this happens during execution, we are cooked 💀
+        // Backup of Database, Substate and Gas Refunds if sub-context is reverted
+        let (backup_db, backup_substate, backup_refunded_gas) = (
+            self.cache.clone(),
+            self.accrued_substate.clone(),
+            self.env.refunded_gas,
+        );
+
         loop {
             let opcode = current_call_frame.next_opcode().unwrap_or(Opcode::STOP);
             let op_result: Result<OpcodeSuccess, VMError> = match opcode {
@@ -232,6 +239,10 @@ impl VM {
                 Opcode::EXTCODESIZE => self.op_extcodesize(current_call_frame),
                 Opcode::EXTCODECOPY => self.op_extcodecopy(current_call_frame),
                 Opcode::EXTCODEHASH => self.op_extcodehash(current_call_frame),
+                Opcode::REVERT => self.op_revert(current_call_frame),
+                Opcode::INVALID => self.op_invalid(),
+                Opcode::SELFDESTRUCT => self.op_selfdestruct(current_call_frame),
+
                 _ => Err(VMError::OpcodeNotFound),
             };
 
@@ -254,19 +265,21 @@ impl VM {
                 Err(error) => {
                     self.call_frames.push(current_call_frame.clone());
 
-                    // CONSUME ALL GAS UNLESS THE ERROR IS FROM REVERT OPCODE
+                    // Unless error is from Revert opcode, all gas is consumed
                     if error != VMError::RevertOpcode {
                         let left_gas = current_call_frame.gas_limit - current_call_frame.gas_used;
                         current_call_frame.gas_used += left_gas;
                         self.env.consumed_gas += left_gas;
                     }
 
+                    self.restore_state(backup_db, backup_substate, backup_refunded_gas);
+
                     return TransactionReport {
                         result: TxResult::Revert(error),
                         new_state: self.cache.accounts.clone(),
                         gas_used: current_call_frame.gas_used.low_u64(),
                         gas_refunded: self.env.refunded_gas.low_u64(),
-                        output: current_call_frame.returndata.clone(),
+                        output: current_call_frame.returndata.clone(), // Bytes::new() if error is not RevertOpcode
                         logs: current_call_frame.logs.clone(),
                         created_address: None,
                     };
@@ -275,6 +288,18 @@ impl VM {
         }
     }
 
+    fn restore_state(
+        &mut self,
+        backup_cache: Cache,
+        backup_substate: Substate,
+        backup_refunded_gas: U256,
+    ) {
+        self.cache = backup_cache;
+        self.accrued_substate = backup_substate;
+        self.env.refunded_gas = backup_refunded_gas;
+    }
+
+    // let account = self.db.accounts.get(&self.env.origin).unwrap();
     /// Based on Ethereum yellow paper's initial tests of intrinsic validity (Section 6). The last version is
     /// Shanghai, so there are probably missing Cancun validations. The intrinsic validations are:
     ///
@@ -418,6 +443,7 @@ impl VM {
         self.call_frames.last_mut().unwrap()
     }
 
+    // TODO: Improve and test REVERT behavior for XCALL opcodes. Issue: https://github.com/lambdaclass/lambda_ethereum_rust/issues/1061
     #[allow(clippy::too_many_arguments)]
     pub fn generic_call(
         &mut self,
@@ -434,52 +460,40 @@ impl VM {
         ret_offset: usize,
         ret_size: usize,
     ) -> Result<OpcodeSuccess, VMError> {
-        // check balance
-        if !self.cache.is_account_cached(&current_call_frame.msg_sender) {
-            self.cache_from_db(&current_call_frame.msg_sender);
-        }
+        let mut sender_account = self.get_account(&current_call_frame.msg_sender);
 
-        if self
-            .cache
-            .get_account(current_call_frame.msg_sender)
-            .unwrap()
-            .info
-            .balance
-            < value
-        {
+        if sender_account.info.balance < value {
             current_call_frame.stack.push(U256::from(REVERT_FOR_CALL))?;
             return Ok(OpcodeSuccess::Continue);
         }
 
-        // transfer value
-        // transfer(&current_call_frame.msg_sender, &address, value);
+        let mut recipient_account = self.get_account(&to);
 
-        let code_address_bytecode = self
-            .cache
-            .get_account(code_address)
-            .unwrap()
-            .info
-            .bytecode
-            .clone();
+        // transfer value
+        sender_account.info.balance -= value;
+        recipient_account.info.balance += value;
+
+        let code_address_bytecode = self.get_account(&code_address).info.bytecode;
+
         if code_address_bytecode.is_empty() {
-            // should stop
             current_call_frame
                 .stack
                 .push(U256::from(SUCCESS_FOR_CALL))?;
             return Ok(OpcodeSuccess::Result(ResultReason::Stop));
         }
 
-        self.cache.increment_account_nonce(&code_address);
+        // self.cache.increment_account_nonce(&code_address); // Internal call doesn't increment account nonce.
 
         let calldata = current_call_frame
             .memory
             .load_range(args_offset, args_size)
             .into();
 
-        let gas_limit = std::cmp::min(
-            gas_limit,
-            (current_call_frame.gas_limit - current_call_frame.gas_used) / 64 * 63,
-        );
+        // I don't know if this gas limit should be calculated before or after consuming gas
+        let gas_limit = std::cmp::min(gas_limit, {
+            let remaining_gas = current_call_frame.gas_limit - current_call_frame.gas_used;
+            remaining_gas - remaining_gas / 64
+        });
 
         let mut new_call_frame = CallFrame::new(
             msg_sender,
@@ -497,10 +511,15 @@ impl VM {
         current_call_frame.sub_return_data_offset = ret_offset;
         current_call_frame.sub_return_data_size = ret_size;
 
+        // Update sender account and recipient in cache
+        self.cache
+            .add_account(&current_call_frame.msg_sender, &sender_account);
+        self.cache.add_account(&to, &recipient_account);
+
         // self.call_frames.push(new_call_frame.clone());
         let tx_report = self.execute(&mut new_call_frame);
 
-        current_call_frame.gas_used += tx_report.gas_used.into(); // We add the gas used by the sub-context to the current one after it's execution.
+        current_call_frame.gas_used += tx_report.gas_used.into(); // Add gas used by the sub-context to the current one after it's execution.
         current_call_frame.logs.extend(tx_report.logs);
         current_call_frame
             .memory
@@ -514,10 +533,8 @@ impl VM {
                     .stack
                     .push(U256::from(SUCCESS_FOR_CALL))?;
             }
-            TxResult::Revert(_error) => {
-                // Behavior for revert between contexts goes here if necessary
-                // It is also possible to differentiate between RevertOpcode error and other kinds of revert.
-
+            TxResult::Revert(_) => {
+                // Push 0 to stack
                 current_call_frame.stack.push(U256::from(REVERT_FOR_CALL))?;
             }
         }
@@ -563,6 +580,7 @@ impl VM {
     /// Common behavior for CREATE and CREATE2 opcodes
     ///
     /// Could be used for CREATE type transactions
+    // TODO: Improve and test REVERT behavior for CREATE. Issue: https://github.com/lambdaclass/lambda_ethereum_rust/issues/1061
     pub fn create(
         &mut self,
         value_in_wei_to_send: U256,
@@ -607,7 +625,7 @@ impl VM {
             return Ok(OpcodeSuccess::Result(ResultReason::Revert));
         };
         sender_account.info.nonce = new_nonce;
-        sender_account.info.balance -= value_in_wei_to_send;
+        // sender_account.info.balance -= value_in_wei_to_send; // This is done in the generic_call
         let code = Bytes::from(
             current_call_frame
                 .memory
@@ -631,7 +649,7 @@ impl VM {
             return Ok(OpcodeSuccess::Result(ResultReason::Revert));
         }
 
-        let new_account = Account::new(value_in_wei_to_send, code.clone(), 0, Default::default());
+        let new_account = Account::new(U256::zero(), code.clone(), 0, Default::default());
         self.cache.add_account(&new_address, &new_account);
 
         current_call_frame

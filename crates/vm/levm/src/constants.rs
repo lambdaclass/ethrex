@@ -87,6 +87,9 @@ pub mod gas_cost {
     pub const CODECOPY_DYNAMIC_BASE: U256 = U256([3, 0, 0, 0]);
     pub const GASPRICE: U256 = U256([2, 0, 0, 0]);
     pub const EXTCODECOPY_DYNAMIC_BASE: U256 = U256([3, 0, 0, 0]);
+    pub const SELFDESTRUCT_STATIC: U256 = U256([5000, 0, 0, 0]);
+    pub const SELFDESTRUCT_DYNAMIC: U256 = U256([25000, 0, 0, 0]);
+    pub const COLD_ADDRESS_ACCESS_COST: U256 = U256([2600, 0, 0, 0]);
 }
 
 // Costs in gas for call opcodes (in wei)

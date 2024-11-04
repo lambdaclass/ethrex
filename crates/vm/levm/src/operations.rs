@@ -85,9 +85,9 @@ pub enum Operation {
     DelegateCall,
     Create2,
     StaticCall,
-    // Revert,
-    // Invalid,
-    // SelfDestruct,
+    Revert,
+    Invalid,
+    SelfDestruct,
 }
 
 impl Operation {
@@ -201,9 +201,9 @@ impl Operation {
             Operation::DelegateCall => Bytes::copy_from_slice(&[Opcode::DELEGATECALL as u8]),
             Operation::Create2 => Bytes::copy_from_slice(&[Opcode::CREATE2 as u8]),
             Operation::StaticCall => Bytes::copy_from_slice(&[Opcode::STATICCALL as u8]),
-            // Operation::Revert => Bytes::copy_from_slice(&[Opcode::REVERT as u8]),
-            // Operation::Invalid => Bytes::copy_from_slice(&[Opcode::INVALID as u8]),
-            // Operation::SelfDestruct => Bytes::copy_from_slice(&[Opcode::SELFDESTRUCT as u8]),
+            Operation::Revert => Bytes::copy_from_slice(&[Opcode::REVERT as u8]),
+            Operation::Invalid => Bytes::copy_from_slice(&[Opcode::INVALID as u8]),
+            Operation::SelfDestruct => Bytes::copy_from_slice(&[Opcode::SELFDESTRUCT as u8]),
         }
     }
 }
