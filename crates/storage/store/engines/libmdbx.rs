@@ -1,15 +1,13 @@
 use super::api::StoreEngine;
 use crate::error::StoreError;
 use crate::rlp::{
-    AccountCodeHashRLP, AccountCodeRLP, BlobsBubdleRLP, BlockBodyRLP, BlockHashRLP, BlockHeaderRLP,
-    BlockRLP, BlockTotalDifficultyRLP, MempoolTransactionRLP, ReceiptRLP, Rlp, TransactionHashRLP,
-    TupleRLP,
+    AccountCodeHashRLP, AccountCodeRLP, BlockBodyRLP, BlockHashRLP, BlockHeaderRLP, BlockRLP,
+    BlockTotalDifficultyRLP, ReceiptRLP, Rlp, TransactionHashRLP, TupleRLP,
 };
 use anyhow::Result;
 use bytes::Bytes;
 use ethereum_rust_core::types::{
-    BlobsBundle, Block, BlockBody, BlockHash, BlockHeader, BlockNumber, ChainConfig, Index,
-    MempoolTransaction, Receipt, Transaction,
+    Block, BlockBody, BlockHash, BlockHeader, BlockNumber, ChainConfig, Index, Receipt, Transaction,
 };
 use ethereum_rust_rlp::decode::RLPDecode;
 use ethereum_rust_rlp::encode::RLPEncode;
@@ -23,7 +21,6 @@ use libmdbx::{
 };
 use libmdbx::{DatabaseOptions, Mode, ReadWriteOptions};
 use serde_json;
-use std::collections::HashMap;
 use std::fmt::{Debug, Formatter};
 use std::path::Path;
 use std::sync::Arc;
@@ -53,17 +50,6 @@ impl Store {
     fn read<T: Table>(&self, key: T::Key) -> Result<Option<T::Value>, StoreError> {
         let txn = self.db.begin_read().map_err(StoreError::LibmdbxError)?;
         txn.get::<T>(key).map_err(StoreError::LibmdbxError)
-    }
-
-    // Helper method to remove from a libmdbx table
-    fn remove<T: Table>(&self, key: T::Key) -> Result<(), StoreError> {
-        let txn = self
-            .db
-            .begin_readwrite()
-            .map_err(StoreError::LibmdbxError)?;
-        txn.delete::<T>(key, None)
-            .map_err(StoreError::LibmdbxError)?;
-        txn.commit().map_err(StoreError::LibmdbxError)
     }
 
     fn get_block_hash_by_block_number(
@@ -215,62 +201,6 @@ impl StoreEngine for Store {
                 self.get_block_hash_by_block_number(*number)
                     .is_ok_and(|o| o == Some(*hash))
             }))
-    }
-
-    fn add_transaction_to_pool(
-        &self,
-        hash: H256,
-        transaction: MempoolTransaction,
-    ) -> Result<(), StoreError> {
-        self.write::<TransactionPool>(hash.into(), transaction.into())?;
-        Ok(())
-    }
-
-    fn get_transaction_from_pool(
-        &self,
-        hash: H256,
-    ) -> Result<Option<MempoolTransaction>, StoreError> {
-        Ok(self.read::<TransactionPool>(hash.into())?.map(|t| t.to()))
-    }
-
-    fn add_blobs_bundle_to_pool(
-        &self,
-        tx_hash: H256,
-        blobs_bundle: BlobsBundle,
-    ) -> Result<(), StoreError> {
-        self.write::<BlobsBundlePool>(tx_hash.into(), blobs_bundle.into())?;
-        Ok(())
-    }
-
-    fn get_blobs_bundle_from_pool(&self, tx_hash: H256) -> Result<Option<BlobsBundle>, StoreError> {
-        Ok(self
-            .read::<BlobsBundlePool>(tx_hash.into())?
-            .map(|bb| bb.to()))
-    }
-
-    fn remove_transaction_from_pool(&self, hash: H256) -> Result<(), StoreError> {
-        self.remove::<TransactionPool>(hash.into())
-    }
-
-    fn filter_pool_transactions(
-        &self,
-        filter: &dyn Fn(&Transaction) -> bool,
-    ) -> Result<HashMap<Address, Vec<MempoolTransaction>>, StoreError> {
-        let txn = self.db.begin_read().map_err(StoreError::LibmdbxError)?;
-        let cursor = txn
-            .cursor::<TransactionPool>()
-            .map_err(StoreError::LibmdbxError)?;
-        let tx_iter = cursor
-            .walk(None)
-            .map_while(|res| res.ok().map(|(_, tx)| tx.to()));
-        let mut txs_by_sender: HashMap<Address, Vec<MempoolTransaction>> = HashMap::new();
-        for tx in tx_iter {
-            if filter(&tx) {
-                txs_by_sender.entry(tx.sender()).or_default().push(tx)
-            }
-        }
-        txs_by_sender.iter_mut().for_each(|(_, txs)| txs.sort());
-        Ok(txs_by_sender)
     }
 
     /// Stores the chain config serialized as json
@@ -546,16 +476,6 @@ dupsort!(
 );
 
 table!(
-    /// Transaction pool table.
-    ( TransactionPool ) TransactionHashRLP => MempoolTransactionRLP
-);
-
-table!(
-    /// BlobsBundle pool table, contains the corresponding blobs bundle for each blob transaction in the TransactionPool table
-    ( BlobsBundlePool ) TransactionHashRLP => BlobsBubdleRLP
-);
-
-table!(
     /// Stores chain data, each value is unique and stored as its rlp encoding
     /// See [ChainDataIndex] for available chain values
     ( ChainData ) ChainDataIndex => Vec<u8>
@@ -672,8 +592,6 @@ pub fn init_db(path: Option<impl AsRef<Path>>) -> Database {
         table_info!(AccountCodes),
         table_info!(Receipts),
         table_info!(TransactionLocations),
-        table_info!(TransactionPool),
-        table_info!(BlobsBundlePool),
         table_info!(ChainData),
         table_info!(StateTrieNodes),
         table_info!(StorageTriesNodes),

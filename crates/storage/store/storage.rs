@@ -7,7 +7,7 @@ use engines::api::StoreEngine;
 use ethereum_rust_core::types::{
     code_hash, AccountInfo, AccountState, BlobsBundle, Block, BlockBody, BlockHash, BlockHeader,
     BlockNumber, ChainConfig, Genesis, GenesisAccount, Index, MempoolTransaction, Receipt,
-    Transaction, EMPTY_TRIE_HASH,
+    Transaction, TxType, EMPTY_TRIE_HASH,
 };
 use ethereum_rust_rlp::decode::RLPDecode;
 use ethereum_rust_rlp::encode::RLPEncode;
@@ -16,7 +16,7 @@ use ethereum_types::{Address, H256, U256};
 use sha3::{Digest as _, Keccak256};
 use std::collections::HashMap;
 use std::fmt::Debug;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use tracing::info;
 
 mod engines;
@@ -27,6 +27,8 @@ mod rlp;
 pub struct Store {
     // TODO: Check if we can remove this mutex and move it to the in_memory::Store struct
     engine: Arc<dyn StoreEngine>,
+    pub mempool: Arc<Mutex<HashMap<H256, MempoolTransaction>>>,
+    pub blobs_bundle_pool: Arc<Mutex<HashMap<H256, BlobsBundle>>>,
 }
 
 #[allow(dead_code)]
@@ -74,9 +76,13 @@ impl Store {
             #[cfg(feature = "libmdbx")]
             EngineType::Libmdbx => Self {
                 engine: Arc::new(LibmdbxStore::new(path)?),
+                mempool: Arc::new(Mutex::new(HashMap::new())),
+                blobs_bundle_pool: Arc::new(Mutex::new(HashMap::new())),
             },
             EngineType::InMemory => Self {
                 engine: Arc::new(InMemoryStore::new()),
+                mempool: Arc::new(Mutex::new(HashMap::new())),
+                blobs_bundle_pool: Arc::new(Mutex::new(HashMap::new())),
             },
         };
         info!("Started store engine");
@@ -228,15 +234,13 @@ impl Store {
         hash: H256,
         transaction: MempoolTransaction,
     ) -> Result<(), StoreError> {
-        self.engine.add_transaction_to_pool(hash, transaction)
-    }
+        let mut mempool = self
+            .mempool
+            .lock()
+            .map_err(|error| StoreError::Custom(error.to_string()))?;
+        mempool.insert(hash, transaction);
 
-    /// Get a transaction from the pool
-    pub fn get_transaction_from_pool(
-        &self,
-        hash: H256,
-    ) -> Result<Option<MempoolTransaction>, StoreError> {
-        self.engine.get_transaction_from_pool(hash)
+        Ok(())
     }
 
     /// Add a blobs bundle to the pool by its blob transaction hash
@@ -245,7 +249,11 @@ impl Store {
         tx_hash: H256,
         blobs_bundle: BlobsBundle,
     ) -> Result<(), StoreError> {
-        self.engine.add_blobs_bundle_to_pool(tx_hash, blobs_bundle)
+        self.blobs_bundle_pool
+            .lock()
+            .map_err(|error| StoreError::Custom(error.to_string()))?
+            .insert(tx_hash, blobs_bundle);
+        Ok(())
     }
 
     /// Get a blobs bundle to the pool given its blob transaction hash
@@ -253,12 +261,32 @@ impl Store {
         &self,
         tx_hash: H256,
     ) -> Result<Option<BlobsBundle>, StoreError> {
-        self.engine.get_blobs_bundle_from_pool(tx_hash)
+        Ok(self
+            .blobs_bundle_pool
+            .lock()
+            .map_err(|error| StoreError::Custom(error.to_string()))?
+            .get(&tx_hash)
+            .cloned())
     }
 
     /// Remove a transaction from the pool
-    pub fn remove_transaction_from_pool(&self, hash: H256) -> Result<(), StoreError> {
-        self.engine.remove_transaction_from_pool(hash)
+    pub fn remove_transaction_from_pool(&self, hash: &H256) -> Result<(), StoreError> {
+        let mut mempool = self
+            .mempool
+            .lock()
+            .map_err(|error| StoreError::Custom(error.to_string()))?;
+        if let Some(tx) = mempool.get(hash) {
+            if matches!(tx.tx_type(), TxType::EIP4844) {
+                self.blobs_bundle_pool
+                    .lock()
+                    .map_err(|error| StoreError::Custom(error.to_string()))?
+                    .remove(&tx.compute_hash());
+            }
+
+            mempool.remove(hash);
+        };
+
+        Ok(())
     }
 
     /// Applies the filter and returns a set of suitable transactions from the mempool.
@@ -267,7 +295,23 @@ impl Store {
         &self,
         filter: &dyn Fn(&Transaction) -> bool,
     ) -> Result<HashMap<Address, Vec<MempoolTransaction>>, StoreError> {
-        self.engine.filter_pool_transactions(filter)
+        let mut txs_by_sender: HashMap<Address, Vec<MempoolTransaction>> = HashMap::new();
+        let mempool = self
+            .mempool
+            .lock()
+            .map_err(|error| StoreError::Custom(error.to_string()))?;
+
+        for (_, tx) in mempool.iter() {
+            if filter(tx) {
+                txs_by_sender
+                    .entry(tx.sender())
+                    .or_default()
+                    .push(tx.clone())
+            }
+        }
+
+        txs_by_sender.iter_mut().for_each(|(_, txs)| txs.sort());
+        Ok(txs_by_sender)
     }
 
     fn add_account_code(&self, code_hash: H256, code: Bytes) -> Result<(), StoreError> {

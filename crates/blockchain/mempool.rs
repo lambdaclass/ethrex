@@ -54,14 +54,6 @@ pub fn add_transaction(transaction: Transaction, store: Store) -> Result<H256, M
     Ok(hash)
 }
 
-/// Fetch a transaction from the mempool
-pub fn get_transaction(
-    hash: H256,
-    store: Store,
-) -> Result<Option<MempoolTransaction>, MempoolError> {
-    Ok(store.get_transaction_from_pool(hash)?)
-}
-
 /// Fetch a blobs bundle from the mempool given its blob transaction hash
 pub fn get_blobs_bundle(tx_hash: H256, store: Store) -> Result<Option<BlobsBundle>, MempoolError> {
     Ok(store.get_blobs_bundle_from_pool(tx_hash)?)
@@ -107,7 +99,7 @@ pub fn filter_transactions(
 }
 
 /// Remove a transaction from the mempool
-pub fn remove_transaction(hash: H256, store: &Store) -> Result<(), StoreError> {
+pub fn remove_transaction(hash: &H256, store: &Store) -> Result<(), StoreError> {
     store.remove_transaction_from_pool(hash)
 }
 
@@ -283,9 +275,7 @@ mod tests {
         TX_DATA_ZERO_GAS_COST, TX_GAS_COST, TX_INIT_CODE_WORD_GAS_COST,
     };
 
-    use super::{
-        add_transaction, get_transaction, transaction_intrinsic_gas, validate_transaction,
-    };
+    use super::{transaction_intrinsic_gas, validate_transaction};
     use ethereum_rust_core::types::{
         BlockHeader, ChainConfig, EIP1559Transaction, EIP4844Transaction, Transaction, TxKind,
     };
@@ -303,16 +293,6 @@ mod tests {
         store.set_chain_config(&config)?;
 
         Ok(store)
-    }
-
-    fn tx_equal(t1: &Transaction, t2: &Transaction) -> bool {
-        t1.nonce() == t2.nonce()
-            && t1.max_priority_fee().unwrap_or_default()
-                == t2.max_priority_fee().unwrap_or_default()
-            && t1.max_fee_per_gas().unwrap_or_default() == t2.max_fee_per_gas().unwrap_or_default()
-            && t1.gas_limit() == t2.gas_limit()
-            && t1.value() == t2.value()
-            && *t1.data() == *t2.data()
     }
 
     fn build_basic_config_and_header(
@@ -334,43 +314,6 @@ mod tests {
         };
 
         (config, header)
-    }
-
-    #[test]
-    fn store_and_fetch_transaction_happy_path() {
-        let config = ChainConfig {
-            shanghai_time: Some(10),
-            ..Default::default()
-        };
-
-        let header = BlockHeader {
-            number: 123,
-            gas_limit: 30_000_000,
-            gas_used: 0,
-            timestamp: 20,
-            ..Default::default()
-        };
-
-        let store = setup_storage(config, header).expect("Setup failed: ");
-
-        let tx = EIP1559Transaction {
-            nonce: 3,
-            max_priority_fee_per_gas: 0,
-            max_fee_per_gas: 0,
-            gas_limit: 100_000,
-            to: TxKind::Call(Address::from_low_u64_be(1)),
-            value: U256::zero(),
-            data: Bytes::default(),
-            access_list: Default::default(),
-            ..Default::default()
-        };
-
-        let tx = Transaction::EIP1559Transaction(tx);
-        let hash = add_transaction(tx.clone(), store.clone()).expect("Add transaction");
-        let ret_tx = get_transaction(hash, store).expect("Get transaction");
-        assert!(ret_tx.is_some());
-        let ret_tx = ret_tx.unwrap();
-        assert!(tx_equal(&tx, &ret_tx))
     }
 
     #[test]

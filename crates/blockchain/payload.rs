@@ -310,7 +310,7 @@ pub fn fill_transactions(context: &mut PayloadBuildContext) -> Result<(), ChainE
             debug!("Ignoring replay-protected transaction: {}", tx_hash);
             txs.pop();
             mempool::remove_transaction(
-                tx_hash,
+                &head_tx.tx.compute_hash(),
                 context
                     .store()
                     .ok_or(ChainError::StoreError(StoreError::MissingStore))?,
@@ -323,7 +323,7 @@ pub fn fill_transactions(context: &mut PayloadBuildContext) -> Result<(), ChainE
                 txs.shift()?;
                 // Pull transaction from the mempool
                 mempool::remove_transaction(
-                    tx_hash,
+                    &head_tx.tx.compute_hash(),
                     context
                         .store()
                         .ok_or(ChainError::StoreError(StoreError::MissingStore))?,
