@@ -50,6 +50,19 @@ pub(crate) struct StorageRanges {
     pub proof: Vec<Bytes>,
 }
 
+#[derive(Debug)]
+pub(crate) struct GetByteCodes {
+    pub id: u64,
+    pub hashes: Vec<H256>,
+    pub bytes: u64,
+}
+
+#[derive(Debug)]
+pub(crate) struct ByteCodes {
+    pub id: u64,
+    pub codes: Vec<Bytes>,
+}
+
 impl RLPxMessage for GetAccountRange {
     fn encode(&self, buf: &mut dyn BufMut) -> Result<(), RLPEncodeError> {
         let mut encoded_data = vec![];
@@ -190,6 +203,62 @@ impl RLPxMessage for StorageRanges {
         decoder.finish()?;
 
         Ok(Self { id, slots, proof })
+    }
+}
+
+impl RLPxMessage for GetByteCodes {
+    fn encode(&self, buf: &mut dyn BufMut) -> Result<(), RLPEncodeError> {
+        let mut encoded_data = vec![];
+        Encoder::new(&mut encoded_data)
+            .encode_field(&self.id)
+            .encode_field(&self.hashes)
+            .encode_field(&self.bytes)
+            .finish();
+
+        let msg_data = snappy_encode(encoded_data)?;
+        buf.put_slice(&msg_data);
+        Ok(())
+    }
+
+    fn decode(msg_data: &[u8]) -> Result<Self, RLPDecodeError> {
+        let mut snappy_decoder = SnappyDecoder::new();
+        let decompressed_data = snappy_decoder
+            .decompress_vec(msg_data)
+            .map_err(|e| RLPDecodeError::Custom(e.to_string()))?;
+        let decoder = Decoder::new(&decompressed_data)?;
+        let (id, decoder) = decoder.decode_field("request-id")?;
+        let (hashes, decoder) = decoder.decode_field("hashes")?;
+        let (bytes, decoder) = decoder.decode_field("bytes")?;
+        decoder.finish()?;
+
+        Ok(Self { id, hashes, bytes })
+    }
+}
+
+impl RLPxMessage for ByteCodes {
+    fn encode(&self, buf: &mut dyn BufMut) -> Result<(), RLPEncodeError> {
+        let mut encoded_data = vec![];
+        Encoder::new(&mut encoded_data)
+            .encode_field(&self.id)
+            .encode_field(&self.codes)
+            .finish();
+
+        let msg_data = snappy_encode(encoded_data)?;
+        buf.put_slice(&msg_data);
+        Ok(())
+    }
+
+    fn decode(msg_data: &[u8]) -> Result<Self, RLPDecodeError> {
+        let mut snappy_decoder = SnappyDecoder::new();
+        let decompressed_data = snappy_decoder
+            .decompress_vec(msg_data)
+            .map_err(|e| RLPDecodeError::Custom(e.to_string()))?;
+        let decoder = Decoder::new(&decompressed_data)?;
+        let (id, decoder) = decoder.decode_field("request-id")?;
+        let (codes, decoder) = decoder.decode_field("codes")?;
+        decoder.finish()?;
+
+        Ok(Self { id, codes })
     }
 }
 

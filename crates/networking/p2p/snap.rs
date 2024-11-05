@@ -3,8 +3,8 @@ use ethereum_rust_rlp::encode::RLPEncode;
 use ethereum_rust_storage::{error::StoreError, Store};
 
 use crate::rlpx::snap::{
-    AccountRange, AccountRangeUnit, AccountStateSlim, GetAccountRange, GetStorageRanges,
-    StorageRanges, StorageSlot,
+    AccountRange, AccountRangeUnit, AccountStateSlim, ByteCodes, GetAccountRange, GetByteCodes,
+    GetStorageRanges, StorageRanges, StorageSlot,
 };
 
 pub fn process_account_range_request(
@@ -95,6 +95,27 @@ pub fn process_storage_ranges_request(
         id: request.id,
         slots,
         proof,
+    })
+}
+
+pub fn process_byte_codes_request(
+    request: GetByteCodes,
+    store: Store,
+) -> Result<ByteCodes, StoreError> {
+    let mut codes = vec![];
+    let mut bytes_used = 0;
+    for code_hash in request.hashes {
+        if let Some(code) = store.get_account_code(code_hash)? {
+            bytes_used += code.len() as u64;
+            codes.push(code);
+        }
+        if bytes_used >= request.bytes {
+            break;
+        }
+    }
+    Ok(ByteCodes {
+        id: request.id,
+        codes,
     })
 }
 
