@@ -16,7 +16,15 @@ use ethereum_rust_rlp::{
     structs::{Decoder, Encoder},
 };
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+// The `#[serde(untagged)]` attribute allows the `Transaction` enum to be serialized without
+// a tag indicating the variant type. This means that Serde will serialize the enum's variants
+// directly according to the structure of the variant itself.
+// For each variant, Serde will use the serialization logic implemented
+// for the inner type of that variant (like `LegacyTransaction`, `EIP2930Transaction`, etc.).
+// The serialization will fail if the data does not match the structure of any variant.
+//
+// A custom Deserialization method is implemented to match the specific transaction `type`.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 #[serde(untagged)]
 pub enum Transaction {
     LegacyTransaction(LegacyTransaction),
@@ -951,6 +959,7 @@ mod canonic_encoding {
 
 mod serde_impl {
     use serde::Deserialize;
+    use serde_json::Value;
     use std::{collections::HashMap, str::FromStr};
 
     use super::*;
@@ -1164,6 +1173,79 @@ mod serde_impl {
         }
     }
 
+    impl<'de> Deserialize<'de> for Transaction {
+        fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+        where
+            D: serde::Deserializer<'de>,
+        {
+            let mut map = <HashMap<String, serde_json::Value>>::deserialize(deserializer)?;
+            let tx_type =
+                serde_json::from_value::<TxType>(map.remove("type").ok_or_else(|| {
+                    serde::de::Error::custom("Couldn't Deserialize the 'type' field".to_string())
+                })?)
+                .map_err(serde::de::Error::custom)?;
+
+            let iter = map.into_iter();
+            match tx_type {
+                TxType::Legacy => {
+                    LegacyTransaction::deserialize(serde::de::value::MapDeserializer::new(iter))
+                        .map(Transaction::LegacyTransaction)
+                        .map_err(|e| {
+                            serde::de::Error::custom(format!("Couldn't Deserialize Legacy {e}"))
+                        })
+                }
+                TxType::EIP2930 => {
+                    EIP2930Transaction::deserialize(serde::de::value::MapDeserializer::new(iter))
+                        .map(Transaction::EIP2930Transaction)
+                        .map_err(|e| {
+                            serde::de::Error::custom(format!("Couldn't Deserialize EIP2930 {e}"))
+                        })
+                }
+                TxType::EIP1559 => {
+                    EIP1559Transaction::deserialize(serde::de::value::MapDeserializer::new(iter))
+                        .map(Transaction::EIP1559Transaction)
+                        .map_err(|e| {
+                            serde::de::Error::custom(format!("Couldn't Deserialize EIP1559 {e}"))
+                        })
+                }
+                TxType::EIP4844 => {
+                    EIP4844Transaction::deserialize(serde::de::value::MapDeserializer::new(iter))
+                        .map(Transaction::EIP4844Transaction)
+                        .map_err(|e| {
+                            serde::de::Error::custom(format!("Couldn't Deserialize EIP4844 {e}"))
+                        })
+                }
+                TxType::Privileged => PrivilegedL2Transaction::deserialize(
+                    serde::de::value::MapDeserializer::new(iter),
+                )
+                .map(Transaction::PrivilegedL2Transaction)
+                .map_err(|e| serde::de::Error::custom(format!("Couldn't Deserialize Legacy {e}"))),
+            }
+        }
+    }
+
+    fn deserialize_input_field(
+        map: &mut std::collections::HashMap<String, Value>,
+    ) -> Result<Bytes, serde_json::Error> {
+        let data_str: String = serde_json::from_value(
+            map.remove("input")
+                .ok_or_else(|| serde::de::Error::missing_field("input"))?,
+        )
+        .map_err(serde::de::Error::custom)?;
+        if let Some(stripped) = data_str.strip_prefix("0x") {
+            match hex::decode(stripped) {
+                Ok(decoded_bytes) => Ok(Bytes::from(decoded_bytes)),
+                Err(_) => Err(serde::de::Error::custom(
+                    "Invalid hex format in 'input' field",
+                ))?,
+            }
+        } else {
+            Err(serde::de::Error::custom(
+                "'input' field must start with '0x'",
+            ))?
+        }
+    }
+
     impl<'de> Deserialize<'de> for LegacyTransaction {
         fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
         where
@@ -1186,11 +1268,7 @@ mod serde_impl {
                     .ok_or_else(|| serde::de::Error::missing_field("value"))?,
             )
             .map_err(serde::de::Error::custom)?;
-            let data = serde_json::from_value(
-                map.remove("input")
-                    .ok_or_else(|| serde::de::Error::missing_field("input"))?,
-            )
-            .map_err(serde::de::Error::custom)?;
+            let data = deserialize_input_field(&mut map).map_err(serde::de::Error::custom)?;
             let r = serde_json::from_value(
                 map.remove("r")
                     .ok_or_else(|| serde::de::Error::missing_field("r"))?,
@@ -1252,11 +1330,7 @@ mod serde_impl {
                     .ok_or_else(|| serde::de::Error::missing_field("value"))?,
             )
             .map_err(serde::de::Error::custom)?;
-            let data = serde_json::from_value(
-                map.remove("input")
-                    .ok_or_else(|| serde::de::Error::missing_field("input"))?,
-            )
-            .map_err(serde::de::Error::custom)?;
+            let data = deserialize_input_field(&mut map).map_err(serde::de::Error::custom)?;
             let r = serde_json::from_value(
                 map.remove("r")
                     .ok_or_else(|| serde::de::Error::missing_field("r"))?,
@@ -1335,11 +1409,7 @@ mod serde_impl {
                     .ok_or_else(|| serde::de::Error::missing_field("value"))?,
             )
             .map_err(serde::de::Error::custom)?;
-            let data = serde_json::from_value(
-                map.remove("input")
-                    .ok_or_else(|| serde::de::Error::missing_field("input"))?,
-            )
-            .map_err(serde::de::Error::custom)?;
+            let data = deserialize_input_field(&mut map).map_err(serde::de::Error::custom)?;
             let r = serde_json::from_value(
                 map.remove("r")
                     .ok_or_else(|| serde::de::Error::missing_field("r"))?,
@@ -1448,11 +1518,7 @@ mod serde_impl {
                     .ok_or_else(|| serde::de::Error::missing_field("value"))?,
             )
             .map_err(serde::de::Error::custom)?;
-            let data = serde_json::from_value(
-                map.remove("input")
-                    .ok_or_else(|| serde::de::Error::missing_field("input"))?,
-            )
-            .map_err(serde::de::Error::custom)?;
+            let data = deserialize_input_field(&mut map).map_err(serde::de::Error::custom)?;
             let access_list = serde_json::from_value::<Vec<AccessListEntry>>(
                 map.remove("accessList")
                     .ok_or_else(|| serde::de::Error::missing_field("accessList"))?,
@@ -1656,11 +1722,12 @@ mod mempool {
 #[cfg(test)]
 mod tests {
 
-    use crate::types::{compute_receipts_root, compute_transactions_root, BlockBody, Receipt};
-
     use super::*;
+    use crate::types::{compute_receipts_root, compute_transactions_root, BlockBody, Receipt};
+    use ethereum_types::H160;
     use hex_literal::hex;
     use serde_impl::{AccessListEntry, GenericTransaction};
+    use std::str::FromStr;
 
     #[test]
     fn test_compute_transactions_root() {
@@ -1895,7 +1962,7 @@ mod tests {
             "gas":"0x5208",
             "to":"0x6177843db3138ae69679A54b95cf345ED759450d",
             "value":"0x01",
-            "input":"0x",
+            "input":"0x3033",
             "accessList": [
                 {
                     "address": "0x000f3df6d732807ef1319fb7b8bb8522d0beac02",
@@ -1925,7 +1992,8 @@ mod tests {
             max_fee_per_blob_gas: U256::from(0x03),
             gas: 0x5208,
             value: U256::from(0x01),
-            data: Bytes::from_static(b"0x"),
+            // 03 in hex is 0x3033, that's why the 'input' has that number.
+            data: Bytes::from_static(b"03"),
             access_list: vec![(
                 Address::from_slice(
                     &hex::decode("000f3df6d732807ef1319fb7b8bb8522d0beac02").unwrap(),
@@ -1942,5 +2010,36 @@ mod tests {
             deserialized_eip4844_transaction,
             serde_json::from_str(eip4844_transaction).unwrap()
         )
+    }
+
+    #[test]
+    fn serialize_deserialize_transaction() {
+        let eip1559 = EIP1559Transaction {
+            chain_id: 1729,
+            nonce: 1,
+            max_priority_fee_per_gas: 1000,
+            max_fee_per_gas: 2000,
+            gas_limit: 21000,
+            to: TxKind::Call(H160::from_str("0x000a52D537c4150ec274dcE3962a0d179B7E71B0").unwrap()),
+            value: U256::from(100000),
+            data: Bytes::from_static(b"03"),
+            access_list: vec![],
+            signature_y_parity: true,
+            signature_r: U256::one(),
+            signature_s: U256::zero(),
+        };
+        let tx_to_serialize = Transaction::EIP1559Transaction(eip1559.clone());
+        let serialized = serde_json::to_string(&tx_to_serialize).expect("Failed to serialize");
+
+        println!("{serialized:?}");
+
+        let deserialized_tx: Transaction =
+            serde_json::from_str(&serialized).expect("Failed to deserialize");
+
+        assert!(deserialized_tx.tx_type() == TxType::EIP1559);
+
+        if let Transaction::EIP1559Transaction(tx) = deserialized_tx {
+            assert_eq!(tx, eip1559);
+        }
     }
 }
