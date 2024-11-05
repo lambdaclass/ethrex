@@ -2,7 +2,7 @@ use bytes::BufMut;
 use ethereum_rust_rlp::error::{RLPDecodeError, RLPEncodeError};
 use std::fmt::Display;
 
-use super::eth::blocks::{BlockHeaders, GetBlockHeaders};
+use super::eth::blocks::{BlockBodies, BlockHeaders, GetBlockBodies, GetBlockHeaders};
 use super::eth::status::StatusMessage;
 use super::p2p::{DisconnectMessage, HelloMessage, PingMessage, PongMessage};
 use super::snap::{
@@ -26,6 +26,8 @@ pub(crate) enum Message {
     // https://github.com/ethereum/devp2p/blob/5713591d0366da78a913a811c7502d9ca91d29a8/caps/eth.md#getblockheaders-0x03
     GetBlockHeaders(GetBlockHeaders),
     BlockHeaders(BlockHeaders),
+    GetBlockBodies(GetBlockBodies),
+    BlockBodies(BlockBodies),
     // snap capability
     GetAccountRange(GetAccountRange),
     AccountRange(AccountRange),
@@ -55,6 +57,7 @@ impl Message {
             0x10 => Ok(Message::Status(StatusMessage::decode(msg_data)?)),
             0x13 => Ok(Message::GetBlockHeaders(GetBlockHeaders::decode(msg_data)?)),
             0x14 => Ok(Message::BlockHeaders(BlockHeaders::decode(msg_data)?)),
+            0x15 => Ok(Message::GetBlockBodies(GetBlockBodies::decode(msg_data)?)),
             0x21 => Ok(Message::GetAccountRange(GetAccountRange::decode(msg_data)?)),
             0x22 => Ok(Message::AccountRange(AccountRange::decode(msg_data)?)),
             0x23 => Ok(Message::GetStorageRanges(GetStorageRanges::decode(
@@ -74,9 +77,20 @@ impl Message {
             Message::Ping(msg) => msg.encode(buf),
             Message::Pong(msg) => msg.encode(buf),
             Message::Status(msg) => msg.encode(buf),
-            Message::GetBlockHeaders(msg) => msg.encode(buf),
+            Message::GetBlockHeaders(msg) => {
+                0x13_u8.encode(buf);
+                msg.encode(buf)
+            }
             Message::BlockHeaders(msg) => {
                 0x14_u8.encode(buf);
+                msg.encode(buf)
+            }
+            Message::GetBlockBodies(msg) => {
+                0x15_u8.encode(buf);
+                msg.encode(buf)
+            }
+            Message::BlockBodies(msg) => {
+                0x16_u8.encode(buf);
                 msg.encode(buf)
             }
             Message::GetAccountRange(msg) => {
@@ -117,6 +131,8 @@ impl Display for Message {
             Message::Status(_) => "eth:Status".fmt(f),
             Message::GetBlockHeaders(_) => "eth:getBlockHeaders".fmt(f),
             Message::BlockHeaders(_) => "eth:BlockHeaders".fmt(f),
+            Message::BlockBodies(_) => "eth:BlockBodies".fmt(f),
+            Message::GetBlockBodies(_) => "eth:GetBlockBodies".fmt(f),
             Message::GetAccountRange(_) => "snap:GetAccountRange".fmt(f),
             Message::AccountRange(_) => "snap:AccountRange".fmt(f),
             Message::GetStorageRanges(_) => "snap:GetStorageRanges".fmt(f),

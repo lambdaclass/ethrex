@@ -20,7 +20,7 @@ use std::{
     net::{Ipv4Addr, SocketAddr, ToSocketAddrs},
 };
 use tokio_util::task::TaskTracker;
-use tracing::{info, warn};
+use tracing::{error, info, warn};
 use tracing_subscriber::filter::Directive;
 use tracing_subscriber::{EnvFilter, FmtSubscriber};
 mod cli;
@@ -137,6 +137,20 @@ async fn main() {
                     block.header.number, hash, error
                 );
             }
+            if store
+                .update_latest_block_number(block.header.number)
+                .is_err()
+            {
+                error!("Fatal: added block {} but could not update the block number -- aborting block import", block.header.number);
+                break;
+            };
+            if store
+                .set_canonical_block(block.header.number, hash)
+                .is_err()
+            {
+                error!("Fatal: added block {} but could not set it as canonical -- aborting block import", block.header.number);
+                break;
+            };
         }
         if let Some(last_block) = blocks.last() {
             let hash = last_block.hash();

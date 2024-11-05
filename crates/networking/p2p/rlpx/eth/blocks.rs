@@ -207,13 +207,40 @@ impl RLPxMessage for BlockHeaders {
 pub(crate) struct GetBlockBodies {
     // id is a u64 chosen by the requesting peer, the responding peer must mirror the value for the response
     // https://github.com/ethereum/devp2p/blob/master/caps/eth.md#protocol-messages
-    id: u64,
-    block_hashes: Vec<BlockHash>,
+    pub id: u64,
+    pub block_hashes: Vec<BlockHash>,
 }
+
+// Limit taken from here:
+// https://github.com/ethereum/go-ethereum/blob/a1093d98eb3260f2abf340903c2d968b2b891c11/eth/protocols/eth/handler.go#L45
+pub const BLOCK_BODY_LIMIT: usize = 1024;
 
 impl GetBlockBodies {
     pub fn new(id: u64, block_hashes: Vec<BlockHash>) -> Self {
         Self { block_hashes, id }
+    }
+    pub fn fetch_blocks(&self, storage: &Store) -> Vec<BlockBody> {
+        let mut block_bodies = vec![];
+        for block_hash in &self.block_hashes {
+            match storage.get_block_body_by_hash(*block_hash) {
+                Ok(Some(block)) => {
+                    block_bodies.push(block);
+                    if block_bodies.len() >= BLOCK_BODY_LIMIT {
+                        break;
+                    }
+                }
+                Ok(None) => {
+                    continue;
+                }
+                Err(err) => {
+                    tracing::error!(
+                        "Error accessing DB while building block bodies response for peer: {err}"
+                    );
+                    return vec![];
+                }
+            }
+        }
+        block_bodies
     }
 }
 
@@ -244,11 +271,12 @@ impl RLPxMessage for GetBlockBodies {
 }
 
 // https://github.com/ethereum/devp2p/blob/master/caps/eth.md#blockbodies-0x06
+#[derive(Debug)]
 pub(crate) struct BlockBodies {
     // id is a u64 chosen by the requesting peer, the responding peer must mirror the value for the response
     // https://github.com/ethereum/devp2p/blob/master/caps/eth.md#protocol-messages
-    id: u64,
-    block_bodies: Vec<BlockBody>,
+    pub id: u64,
+    pub block_bodies: Vec<BlockBody>,
 }
 
 impl BlockBodies {
