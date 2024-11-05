@@ -1,3 +1,4 @@
+use crate::rlpx::{message::RLPxMessage, utils::snappy_encode};
 use bytes::BufMut;
 use ethereum_rust_core::types::{BlockBody, BlockHash, BlockHeader, BlockNumber};
 use ethereum_rust_rlp::{
@@ -6,13 +7,13 @@ use ethereum_rust_rlp::{
     error::{RLPDecodeError, RLPEncodeError},
     structs::{Decoder, Encoder},
 };
+use ethereum_rust_storage::Store;
 use snap::raw::Decoder as SnappyDecoder;
-
-use crate::rlpx::{message::RLPxMessage, utils::snappy_encode};
+use tracing::error;
 
 pub const HASH_FIRST_BYTE_DECODER: u8 = 160;
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq, Clone)]
 pub enum HashOrNumber {
     Hash(BlockHash),
     Number(BlockNumber),
@@ -55,12 +56,15 @@ impl RLPDecode for HashOrNumber {
 pub(crate) struct GetBlockHeaders {
     // id is a u64 chosen by the requesting peer, the responding peer must mirror the value for the response
     // https://github.com/ethereum/devp2p/blob/master/caps/eth.md#protocol-messages
-    id: u64,
-    startblock: HashOrNumber,
-    limit: u64,
-    skip: u64,
-    reverse: bool,
+    pub id: u64,
+    pub startblock: HashOrNumber,
+    pub limit: u64,
+    pub skip: u64,
+    pub reverse: bool,
 }
+
+// Limit taken from here: https://github.com/ethereum/go-ethereum/blob/20bf543a64d7c2a590b18a1e1d907cae65707013/eth/protocols/eth/handler.go#L40
+pub const BLOCK_HEADER_LIMIT: u64 = 1024;
 
 impl GetBlockHeaders {
     pub fn new(id: u64, startblock: HashOrNumber, limit: u64, skip: u64, reverse: bool) -> Self {
@@ -72,19 +76,71 @@ impl GetBlockHeaders {
             reverse,
         }
     }
+    pub fn fetch_headers(&self, storage: &Store) -> Vec<BlockHeader> {
+        let start_block = match self.startblock {
+            // Check we have the given block hash and fetch its number
+            HashOrNumber::Hash(block_hash) => {
+                // TODO(#1073)
+                // Research what we should do when an error is found in a P2P request.
+                if let Ok(Some(block_number)) = storage.get_block_number(block_hash) {
+                    block_number
+                } else {
+                    error!("Could not fetch block number for hash {block_hash}");
+                    return vec![];
+                }
+            }
+            // Don't check if the block number is available
+            // because if it it's not, the loop below will
+            // break early and return an empty vec.
+            HashOrNumber::Number(block_num) => block_num,
+        };
+
+        let mut headers = vec![];
+
+        let mut current_block = start_block as i64;
+        let block_skip = if self.reverse {
+            -((self.skip + 1) as i64)
+        } else {
+            (self.skip + 1) as i64
+        };
+        let limit = if self.limit > BLOCK_HEADER_LIMIT {
+            BLOCK_HEADER_LIMIT
+        } else {
+            self.limit
+        };
+        for _ in 0..limit {
+            match storage.get_block_header(current_block as u64) {
+                Ok(Some(block_header)) => {
+                    headers.push(block_header);
+                    current_block += block_skip
+                }
+                Ok(None) => {
+                    break;
+                }
+                // TODO(#1073)
+                // Research what we should do when an error is found in a P2P request.
+                Err(err) => {
+                    tracing::error!(
+                        "Error accessing DB while building header response for peer: {err}"
+                    );
+                    return vec![];
+                }
+            }
+        }
+        headers
+    }
 }
 
 impl RLPxMessage for GetBlockHeaders {
     fn encode(&self, buf: &mut dyn BufMut) -> Result<(), RLPEncodeError> {
         let mut encoded_data = vec![];
+        let limit = self.limit;
+        let skip = self.skip;
+        let reverse = self.reverse as u8;
         Encoder::new(&mut encoded_data)
             .encode_field(&self.id)
-            .encode_field(&self.startblock)
-            .encode_field(&self.limit)
-            .encode_field(&self.skip)
-            .encode_field(&self.reverse)
+            .encode_field(&(self.startblock.clone(), limit, skip, reverse))
             .finish();
-
         let msg_data = snappy_encode(encoded_data)?;
         buf.put_slice(&msg_data);
         Ok(())
@@ -97,21 +153,19 @@ impl RLPxMessage for GetBlockHeaders {
             .map_err(|e| RLPDecodeError::Custom(e.to_string()))?;
         let decoder = Decoder::new(&decompressed_data)?;
         let (id, decoder): (u64, _) = decoder.decode_field("request-id")?;
-        let (startblock, decoder): (HashOrNumber, _) = decoder.decode_field("startblock")?;
-        let (limit, decoder): (u64, _) = decoder.decode_field("limit")?;
-        let (skip, decoder): (u64, _) = decoder.decode_field("skip")?;
-        let (reverse, _): (bool, _) = decoder.decode_field("reverse")?;
-
-        Ok(Self::new(id, startblock, limit, skip, reverse))
+        let ((start_block, limit, skip, reverse), _): ((HashOrNumber, u64, u64, bool), _) =
+            decoder.decode_field("get headers request params")?;
+        Ok(Self::new(id, start_block, limit, skip, reverse))
     }
 }
 
 // https://github.com/ethereum/devp2p/blob/master/caps/eth.md#blockheaders-0x04
+#[derive(Debug)]
 pub(crate) struct BlockHeaders {
     // id is a u64 chosen by the requesting peer, the responding peer must mirror the value for the response
     // https://github.com/ethereum/devp2p/blob/master/caps/eth.md#protocol-messages
-    id: u64,
-    block_headers: Vec<BlockHeader>,
+    pub id: u64,
+    pub block_headers: Vec<BlockHeader>,
 }
 
 impl BlockHeaders {
@@ -123,11 +177,13 @@ impl BlockHeaders {
 impl RLPxMessage for BlockHeaders {
     fn encode(&self, buf: &mut dyn BufMut) -> Result<(), RLPEncodeError> {
         let mut encoded_data = vec![];
+        // Each message is encoded with its own
+        // message identifier (code).
+        // Go ethereum reference: https://github.com/ethereum/go-ethereum/blob/20bf543a64d7c2a590b18a1e1d907cae65707013/p2p/transport.go#L94
         Encoder::new(&mut encoded_data)
             .encode_field(&self.id)
             .encode_field(&self.block_headers)
             .finish();
-
         let msg_data = snappy_encode(encoded_data)?;
         buf.put_slice(&msg_data);
         Ok(())

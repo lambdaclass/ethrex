@@ -45,19 +45,25 @@ impl RLPDecode for bool {
 
 impl RLPDecode for u8 {
     fn decode_unfinished(rlp: &[u8]) -> Result<(Self, &[u8]), RLPDecodeError> {
-        if rlp.is_empty() {
-            return Err(RLPDecodeError::InvalidLength);
-        }
-
-        match rlp[0] {
+        let first_byte = rlp.first().ok_or(RLPDecodeError::InvalidLength)?;
+        match first_byte {
             // Single byte in the range [0x00, 0x7f]
-            0..=0x7f => Ok((rlp[0], &rlp[1..])),
+            0..=0x7f => {
+                let rest = rlp.get(1..).ok_or(RLPDecodeError::MalformedData)?;
+                Ok((*first_byte, rest))
+            }
 
             // RLP_NULL represents zero
-            RLP_NULL => Ok((0, &rlp[1..])),
+            &RLP_NULL => {
+                let rest = rlp.get(1..).ok_or(RLPDecodeError::MalformedData)?;
+                Ok((0, rest))
+            }
 
             // Two bytes, where the first byte is RLP_NULL + 1
-            x if rlp.len() >= 2 && x == RLP_NULL + 1 => Ok((rlp[1], &rlp[2..])),
+            x if rlp.len() >= 2 && *x == RLP_NULL + 1 => {
+                let rest = rlp.get(2..).ok_or(RLPDecodeError::MalformedData)?;
+                Ok((rlp[1], rest))
+            }
 
             // Any other case is invalid for u8
             _ => Err(RLPDecodeError::MalformedData),
@@ -327,6 +333,30 @@ impl<T1: RLPDecode, T2: RLPDecode, T3: RLPDecode> RLPDecode for (T1, T2, T3) {
         }
 
         Ok(((first, second, third), input_rest))
+    }
+}
+
+// This implementation is useful when the message is a list with elements of mixed types
+// for example, the P2P message 'GetBlockHeaders', mixes hashes and numbers.
+impl<T1: RLPDecode, T2: RLPDecode, T3: RLPDecode, T4: RLPDecode> RLPDecode for (T1, T2, T3, T4) {
+    fn decode_unfinished(rlp: &[u8]) -> Result<(Self, &[u8]), RLPDecodeError> {
+        if rlp.is_empty() {
+            return Err(RLPDecodeError::InvalidLength);
+        }
+        let (is_list, payload, input_rest) = decode_rlp_item(rlp)?;
+        if !is_list {
+            return Err(RLPDecodeError::MalformedData);
+        }
+        let (first, first_rest) = T1::decode_unfinished(payload)?;
+        let (second, second_rest) = T2::decode_unfinished(first_rest)?;
+        let (third, third_rest) = T3::decode_unfinished(second_rest)?;
+        let (fourth, fourth_rest) = T4::decode_unfinished(third_rest)?;
+        // check that there is no more data to decode after the fourth element.
+        if !fourth_rest.is_empty() {
+            return Err(RLPDecodeError::MalformedData);
+        }
+
+        Ok(((first, second, third, fourth), input_rest))
     }
 }
 

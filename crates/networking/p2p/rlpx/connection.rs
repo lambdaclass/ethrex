@@ -1,5 +1,11 @@
 use crate::{
-    rlpx::{eth::backend, handshake::encode_ack_message, message::Message, p2p, utils::id2pubkey},
+    rlpx::{
+        eth::{backend, blocks::BlockHeaders},
+        handshake::encode_ack_message,
+        message::Message,
+        p2p,
+        utils::id2pubkey,
+    },
     snap::{
         process_account_range_request, process_byte_codes_request, process_storage_ranges_request,
     },
@@ -151,6 +157,13 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
                             let response =
                                 process_account_range_request(req, self.storage.clone())?;
                             self.send(Message::AccountRange(response)).await
+                        }
+                        Message::GetBlockHeaders(msg_data) => {
+                            let response = BlockHeaders {
+                                id: msg_data.id,
+                                block_headers: msg_data.fetch_headers(&self.storage),
+                            };
+                            self.send(Message::BlockHeaders(response)).await;
                         }
                         Message::GetStorageRanges(req) => {
                             let response =
