@@ -4,7 +4,7 @@ use ethereum_rust_core::types::{
     Block, BlockBody, BlockHash, BlockHeader, BlockNumber, ChainConfig, Index, Receipt,
 };
 use ethereum_rust_trie::{InMemoryTrieDB, Trie};
-use ethereum_types::{Address, H256, U256};
+use ethereum_types::{H256, U256};
 use std::{
     collections::HashMap,
     fmt::Debug,
@@ -31,7 +31,8 @@ struct StoreInner {
     transaction_locations: HashMap<H256, Vec<(BlockNumber, BlockHash, Index)>>,
     receipts: HashMap<BlockHash, HashMap<Index, Receipt>>,
     state_trie_nodes: NodeMap,
-    storage_trie_nodes: HashMap<Address, NodeMap>,
+    // A storage trie for each hashed account address
+    storage_trie_nodes: HashMap<H256, NodeMap>,
     // TODO (#307): Remove TotalDifficulty.
     block_total_difficulties: HashMap<BlockHash, U256>,
     // Stores local blocks by payload id
@@ -295,9 +296,9 @@ impl StoreEngine for Store {
         Ok(self.inner().chain_data.pending_block_number)
     }
 
-    fn open_storage_trie(&self, address: Address, storage_root: H256) -> Trie {
+    fn open_storage_trie(&self, hashed_address: H256, storage_root: H256) -> Trie {
         let mut store = self.inner();
-        let trie_backend = store.storage_trie_nodes.entry(address).or_default();
+        let trie_backend = store.storage_trie_nodes.entry(hashed_address).or_default();
         let db = Box::new(InMemoryTrieDB::new(trie_backend.clone()));
         Trie::open(db, storage_root)
     }

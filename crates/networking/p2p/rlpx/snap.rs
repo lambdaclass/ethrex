@@ -33,6 +33,23 @@ pub(crate) struct AccountRange {
     pub proof: Vec<Bytes>,
 }
 
+#[derive(Debug)]
+pub(crate) struct GetStorageRanges {
+    pub id: u64,
+    pub root_hash: H256,
+    pub account_hashes: Vec<H256>,
+    pub starting_hash: H256,
+    pub limit_hash: H256,
+    pub response_bytes: u64,
+}
+
+#[derive(Debug)]
+pub(crate) struct StorageRanges {
+    pub id: u64,
+    pub slots: Vec<Vec<StorageSlot>>,
+    pub proof: Vec<Bytes>,
+}
+
 impl RLPxMessage for GetAccountRange {
     fn encode(&self, buf: &mut dyn BufMut) -> Result<(), RLPEncodeError> {
         let mut encoded_data = vec![];
@@ -55,11 +72,12 @@ impl RLPxMessage for GetAccountRange {
             .decompress_vec(msg_data)
             .map_err(|e| RLPDecodeError::Custom(e.to_string()))?;
         let decoder = Decoder::new(&decompressed_data)?;
-        let (id, decoder): (u64, _) = decoder.decode_field("request-id")?;
-        let (root_hash, decoder): (H256, _) = decoder.decode_field("rootHash")?;
-        let (starting_hash, decoder): (H256, _) = decoder.decode_field("startingHash")?;
-        let (limit_hash, decoder): (H256, _) = decoder.decode_field("limitHash")?;
-        let (response_bytes, _): (u64, _) = decoder.decode_field("responseBytes")?;
+        let (id, decoder) = decoder.decode_field("request-id")?;
+        let (root_hash, decoder) = decoder.decode_field("rootHash")?;
+        let (starting_hash, decoder) = decoder.decode_field("startingHash")?;
+        let (limit_hash, decoder) = decoder.decode_field("limitHash")?;
+        let (response_bytes, decoder) = decoder.decode_field("responseBytes")?;
+        decoder.finish()?;
 
         Ok(Self {
             id,
@@ -104,6 +122,77 @@ impl RLPxMessage for AccountRange {
     }
 }
 
+impl RLPxMessage for GetStorageRanges {
+    fn encode(&self, buf: &mut dyn BufMut) -> Result<(), RLPEncodeError> {
+        let mut encoded_data = vec![];
+        Encoder::new(&mut encoded_data)
+            .encode_field(&self.id)
+            .encode_field(&self.root_hash)
+            .encode_field(&self.account_hashes)
+            .encode_field(&self.starting_hash)
+            .encode_field(&self.limit_hash)
+            .encode_field(&self.response_bytes)
+            .finish();
+
+        let msg_data = snappy_encode(encoded_data)?;
+        buf.put_slice(&msg_data);
+        Ok(())
+    }
+
+    fn decode(msg_data: &[u8]) -> Result<Self, RLPDecodeError> {
+        let mut snappy_decoder = SnappyDecoder::new();
+        let decompressed_data = snappy_decoder
+            .decompress_vec(msg_data)
+            .map_err(|e| RLPDecodeError::Custom(e.to_string()))?;
+        let decoder = Decoder::new(&decompressed_data)?;
+        let (id, decoder) = decoder.decode_field("request-id")?;
+        let (root_hash, decoder) = decoder.decode_field("rootHash")?;
+        let (account_hashes, decoder) = decoder.decode_field("accountHashes")?;
+        let (starting_hash, decoder) = decoder.decode_field("startingHash")?;
+        let (limit_hash, decoder) = decoder.decode_field("limitHash")?;
+        let (response_bytes, decoder) = decoder.decode_field("responseBytes")?;
+        decoder.finish()?;
+
+        Ok(Self {
+            id,
+            root_hash,
+            starting_hash,
+            account_hashes,
+            limit_hash,
+            response_bytes,
+        })
+    }
+}
+
+impl RLPxMessage for StorageRanges {
+    fn encode(&self, buf: &mut dyn BufMut) -> Result<(), RLPEncodeError> {
+        let mut encoded_data = vec![];
+        Encoder::new(&mut encoded_data)
+            .encode_field(&self.id)
+            .encode_field(&self.slots)
+            .encode_field(&self.proof)
+            .finish();
+
+        let msg_data = snappy_encode(encoded_data)?;
+        buf.put_slice(&msg_data);
+        Ok(())
+    }
+
+    fn decode(msg_data: &[u8]) -> Result<Self, RLPDecodeError> {
+        let mut snappy_decoder = SnappyDecoder::new();
+        let decompressed_data = snappy_decoder
+            .decompress_vec(msg_data)
+            .map_err(|e| RLPDecodeError::Custom(e.to_string()))?;
+        let decoder = Decoder::new(&decompressed_data)?;
+        let (id, decoder) = decoder.decode_field("request-id")?;
+        let (slots, decoder) = decoder.decode_field("slots")?;
+        let (proof, decoder) = decoder.decode_field("proof")?;
+        decoder.finish()?;
+
+        Ok(Self { id, slots, proof })
+    }
+}
+
 // Intermediate structures
 
 #[derive(Debug)]
@@ -118,6 +207,12 @@ pub struct AccountStateSlim {
     pub balance: U256,
     pub storage_root: Bytes,
     pub code_hash: Bytes,
+}
+
+#[derive(Debug)]
+pub struct StorageSlot {
+    pub hash: H256,
+    pub data: U256,
 }
 
 impl RLPEncode for AccountRangeUnit {
@@ -207,5 +302,23 @@ impl From<AccountStateSlim> for AccountState {
             storage_root,
             code_hash,
         }
+    }
+}
+
+impl RLPEncode for StorageSlot {
+    fn encode(&self, buf: &mut dyn BufMut) {
+        Encoder::new(buf)
+            .encode_field(&self.hash)
+            .encode_field(&self.data)
+            .finish();
+    }
+}
+
+impl RLPDecode for StorageSlot {
+    fn decode_unfinished(rlp: &[u8]) -> Result<(Self, &[u8]), RLPDecodeError> {
+        let decoder = Decoder::new(rlp)?;
+        let (hash, decoder) = decoder.decode_field("hash")?;
+        let (data, decoder) = decoder.decode_field("data")?;
+        Ok((Self { hash, data }, decoder.finish()?))
     }
 }

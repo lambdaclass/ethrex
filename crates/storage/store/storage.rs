@@ -392,9 +392,10 @@ impl Store {
                 }
                 // Store the added storage in the account's storage trie and compute its new root
                 if !update.added_storage.is_empty() {
-                    let mut storage_trie = self
-                        .engine
-                        .open_storage_trie(update.address, account_state.storage_root);
+                    let mut storage_trie = self.engine.open_storage_trie(
+                        H256::from_slice(&hashed_address),
+                        account_state.storage_root,
+                    );
                     for (storage_key, storage_value) in &update.added_storage {
                         let hashed_key = hash_key(storage_key);
                         if storage_value.is_zero() {
@@ -418,11 +419,14 @@ impl Store {
     ) -> Result<H256, StoreError> {
         let mut genesis_state_trie = self.engine.open_state_trie(*EMPTY_TRIE_HASH);
         for (address, account) in genesis_accounts {
+            let hashed_address = hash_address(&address);
             // Store account code (as this won't be stored in the trie)
             let code_hash = code_hash(&account.code);
             self.add_account_code(code_hash, account.code)?;
             // Store the account's storage in a clean storage trie and compute its root
-            let mut storage_trie = self.engine.open_storage_trie(address, *EMPTY_TRIE_HASH);
+            let mut storage_trie = self
+                .engine
+                .open_storage_trie(H256::from_slice(&hashed_address), *EMPTY_TRIE_HASH);
             for (storage_key, storage_value) in account.storage {
                 if !storage_value.is_zero() {
                     let hashed_key = hash_key(&storage_key);
@@ -437,7 +441,6 @@ impl Store {
                 storage_root,
                 code_hash,
             };
-            let hashed_address = hash_address(&address);
             genesis_state_trie.insert(hashed_address, account_state.encode_to_vec())?;
         }
         Ok(genesis_state_trie.hash()?)
@@ -688,7 +691,10 @@ impl Store {
         let account = AccountState::decode(&encoded_account)?;
         // Open storage_trie
         let storage_root = account.storage_root;
-        Ok(Some(self.engine.open_storage_trie(address, storage_root)))
+        Ok(Some(self.engine.open_storage_trie(
+            H256::from_slice(&hashed_address),
+            storage_root,
+        )))
     }
 
     pub fn get_account_state(
@@ -730,7 +736,9 @@ impl Store {
         storage_root: H256,
         storage_key: &H256,
     ) -> Result<Vec<Vec<u8>>, StoreError> {
-        let trie = self.engine.open_storage_trie(address, storage_root);
+        let trie = self
+            .engine
+            .open_storage_trie(hash_address_fixed(&address), storage_root);
         Ok(trie.get_proof(&hash_key(storage_key))?)
     }
 
@@ -746,6 +754,29 @@ impl Store {
             })
     }
 
+    // Returns an iterator across all accounts in the state trie given by the state_root
+    // Does not check that the state_root is valid
+    pub fn iter_storage(
+        &self,
+        state_root: H256,
+        hashed_address: H256,
+    ) -> Result<Option<impl Iterator<Item = (H256, U256)>>, StoreError> {
+        let state_trie = self.engine.open_state_trie(state_root);
+        let Some(account_rlp) = state_trie.get(&hashed_address.as_bytes().to_vec())? else {
+            return Ok(None);
+        };
+        let storage_root = AccountState::decode(&account_rlp)?.storage_root;
+        Ok(Some(
+            self.engine
+                .open_storage_trie(hashed_address, storage_root)
+                .into_iter()
+                .content()
+                .map_while(|(path, value)| {
+                    Some((H256::from_slice(&path), U256::decode(&value).ok()?))
+                }),
+        ))
+    }
+
     pub fn get_account_range_proof(
         &self,
         state_root: H256,
@@ -758,6 +789,26 @@ impl Store {
             proof.extend_from_slice(&state_trie.get_proof(&last_hash.as_bytes().to_vec())?);
         }
         Ok(proof)
+    }
+
+    pub fn get_storage_range_proof(
+        &self,
+        state_root: H256,
+        hashed_address: H256,
+        starting_hash: H256,
+        last_hash: Option<H256>,
+    ) -> Result<Option<Vec<Vec<u8>>>, StoreError> {
+        let state_trie = self.engine.open_state_trie(state_root);
+        let Some(account_rlp) = state_trie.get(&hashed_address.as_bytes().to_vec())? else {
+            return Ok(None);
+        };
+        let storage_root = AccountState::decode(&account_rlp)?.storage_root;
+        let storage_trie = self.engine.open_storage_trie(hashed_address, storage_root);
+        let mut proof = storage_trie.get_proof(&starting_hash.as_bytes().to_vec())?;
+        if let Some(last_hash) = last_hash {
+            proof.extend_from_slice(&storage_trie.get_proof(&last_hash.as_bytes().to_vec())?);
+        }
+        Ok(Some(proof))
     }
 
     pub fn add_payload(&self, payload_id: u64, block: Block) -> Result<(), StoreError> {
@@ -778,6 +829,13 @@ fn hash_address(address: &Address) -> Vec<u8> {
     Keccak256::new_with_prefix(address.to_fixed_bytes())
         .finalize()
         .to_vec()
+}
+fn hash_address_fixed(address: &Address) -> H256 {
+    H256(
+        Keccak256::new_with_prefix(address.to_fixed_bytes())
+            .finalize()
+            .into(),
+    )
 }
 
 fn hash_key(key: &H256) -> Vec<u8> {

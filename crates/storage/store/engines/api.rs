@@ -2,7 +2,7 @@ use bytes::Bytes;
 use ethereum_rust_core::types::{
     Block, BlockBody, BlockHash, BlockHeader, BlockNumber, ChainConfig, Index, Receipt, Transaction,
 };
-use ethereum_types::{Address, H256, U256};
+use ethereum_types::{H256, U256};
 use std::{fmt::Debug, panic::RefUnwindSafe};
 
 use crate::error::StoreError;
@@ -201,7 +201,7 @@ pub trait StoreEngine: Debug + Send + Sync + RefUnwindSafe {
     // Obtain a storage trie from the given address and storage_root
     // Doesn't check if the account is stored
     // Used for internal store operations
-    fn open_storage_trie(&self, address: Address, storage_root: H256) -> Trie;
+    fn open_storage_trie(&self, hashed_address: H256, storage_root: H256) -> Trie;
 
     // Obtain a state trie from the given state root
     // Doesn't check if the state root is valid

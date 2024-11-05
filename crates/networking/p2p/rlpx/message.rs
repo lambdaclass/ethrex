@@ -4,7 +4,7 @@ use std::fmt::Display;
 
 use super::eth::status::StatusMessage;
 use super::p2p::{DisconnectMessage, HelloMessage, PingMessage, PongMessage};
-use super::snap::{AccountRange, GetAccountRange};
+use super::snap::{AccountRange, GetAccountRange, GetStorageRanges, StorageRanges};
 
 use ethereum_rust_rlp::encode::RLPEncode;
 
@@ -23,6 +23,8 @@ pub(crate) enum Message {
     // snap capability
     GetAccountRange(GetAccountRange),
     AccountRange(AccountRange),
+    GetStorageRanges(GetStorageRanges),
+    StorageRanges(StorageRanges),
 }
 
 impl Message {
@@ -35,6 +37,10 @@ impl Message {
             0x10 => Ok(Message::Status(StatusMessage::decode(msg_data)?)),
             0x21 => Ok(Message::GetAccountRange(GetAccountRange::decode(msg_data)?)),
             0x22 => Ok(Message::AccountRange(AccountRange::decode(msg_data)?)),
+            0x23 => Ok(Message::GetStorageRanges(GetStorageRanges::decode(
+                msg_data,
+            )?)),
+            0x24 => Ok(Message::StorageRanges(StorageRanges::decode(msg_data)?)),
             _ => Err(RLPDecodeError::MalformedData),
         }
     }
@@ -54,6 +60,14 @@ impl Message {
                 0x22_u8.encode(buf);
                 msg.encode(buf)
             }
+            Message::GetStorageRanges(msg) => {
+                0x23_u8.encode(buf);
+                msg.encode(buf)
+            }
+            Message::StorageRanges(msg) => {
+                0x24_u8.encode(buf);
+                msg.encode(buf)
+            }
         }
     }
 }
@@ -68,6 +82,8 @@ impl Display for Message {
             Message::Status(_) => "eth:Status".fmt(f),
             Message::GetAccountRange(_) => "snap:GetAccountRange".fmt(f),
             Message::AccountRange(_) => "snap:AccountRange".fmt(f),
+            Message::GetStorageRanges(_) => "snap:GetStorageRanges".fmt(f),
+            Message::StorageRanges(_) => "snap:StorageRanges".fmt(f),
         }
     }
 }
