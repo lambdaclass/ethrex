@@ -349,3 +349,37 @@ async fn wait_for_transaction_receipt(tx_hash: H256, eth_client: &EthClient) {
         tokio::time::sleep(std::time::Duration::from_secs(1)).await;
     }
 }
+
+#[cfg(test)]
+mod test {
+    use crate::{compile_contracts, download_contract_deps};
+    use std::env;
+
+    #[test]
+    fn test_contract_compilation() {
+        let binding = env::current_dir().unwrap();
+        let parent_dir = binding.parent().unwrap();
+
+        env::set_current_dir(parent_dir).expect("Failed to change directory");
+
+        let solc_out = parent_dir.join("contracts/solc_out");
+        let lib = parent_dir.join("contracts/lib");
+
+        if let Err(e) = std::fs::remove_dir_all(&solc_out) {
+            if e.kind() != std::io::ErrorKind::NotFound {
+                panic!();
+            }
+        }
+        if let Err(e) = std::fs::remove_dir_all(&lib) {
+            if e.kind() != std::io::ErrorKind::NotFound {
+                panic!();
+            }
+        }
+
+        download_contract_deps();
+        compile_contracts();
+
+        std::fs::remove_dir_all(solc_out).unwrap();
+        std::fs::remove_dir_all(lib).unwrap();
+    }
+}

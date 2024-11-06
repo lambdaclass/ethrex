@@ -1,0 +1,56 @@
+name: L2 Contracts CI
+on:
+  push:
+    branches: ["main"]
+    paths:
+      - "crates/l2/contracts/**"
+  pull_request:
+    branches: ["**"]
+    paths:
+      - "crates/l2/contracts/**"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
+  cancel-in-progress: true
+
+jobs:
+  deployer:
+    name: L2 Contracts CI
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: true
+      matrix:
+        action:
+          - command: check
+          - command: clippy
+          # clippy::large_enum_variant warning for the EvmState enum
+          # from rust 1.82.0
+            args: -- -D warnings -A clippy::large_enum_variant
+          - command: fmt
+            args: --all -- --check
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v4
+      - name: Add Rust Cache
+        uses: Swatinem/rust-cache@v2
+      - name: ${{ matrix.action.command }} Command
+        run: |
+          cd crates/l2/contracts
+          cargo ${{ matrix.action.command }} ${{ matrix.action.args }}
+
+  test_compilation:
+    name: Compile Contracts
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v4
+      - name: Rust toolchain install
+        uses: dtolnay/rust-toolchain@stable
+      - name: Install solc
+        uses: pontem-network/get-solc@master
+      - name: Caching
+        uses: Swatinem/rust-cache@v2
+      - name: Run test of deployer.rs
+        run: |
+          cd crates/l2/contracts
+          cargo test
