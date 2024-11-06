@@ -1,5 +1,3 @@
-use ethereum_rust_core::U256;
-
 use crate::{
     call_frame::CallFrame,
     constants::gas_cost,
@@ -7,6 +5,7 @@ use crate::{
     opcodes::Opcode,
     vm::VM,
 };
+use ethereum_rust_core::U256;
 
 // Push Operations
 // Opcodes: PUSH0, PUSH1 ... PUSH32

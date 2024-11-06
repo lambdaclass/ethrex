@@ -6,6 +6,7 @@ edition = "2021"
 [dependencies]
 ethereum_rust-core = { path = "../common", default-features = false }
 ethereum_rust-storage = { path = "../storage/store", default-features = false }
+ethereum_rust_levm = { path = "./levm", optional = true }
 revm = { version = "14.0.3", features = [
     "serde",
     "std",
@@ -38,3 +39,4 @@ l2 = []
 c-kzg = ["revm/c-kzg"]
 blst = ["revm/blst"]
 libmdbx = ["ethereum_rust-storage/default", "ethereum_rust-core/libmdbx"]
+levm = ["ethereum_rust_levm"]

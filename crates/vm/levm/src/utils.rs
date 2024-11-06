@@ -7,7 +7,7 @@ use crate::{
 };
 use bytes::Bytes;
 use ethereum_rust_core::{types::TxKind, Address, U256};
-use std::collections::HashMap;
+use std::{collections::HashMap, sync::Arc};
 
 pub fn ops_to_bytecode(operations: &[Operation]) -> Bytes {
     operations
@@ -96,9 +96,7 @@ pub fn new_vm_with_ops_addr_bal_db(
         env,
         Default::default(),
         Default::default(),
-        Box::new(db),
+        Arc::new(db),
         cache,
-        Default::default(),
-        None,
     )
 }

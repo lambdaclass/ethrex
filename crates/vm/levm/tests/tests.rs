@@ -10,7 +10,7 @@ use ethereum_rust_levm::{
     vm::{word_to_address, Storage, VM},
     Environment,
 };
-use std::collections::HashMap;
+use std::{collections::HashMap, sync::Arc};
 
 fn create_opcodes(size: usize, offset: usize, value_to_transfer: usize) -> Vec<Operation> {
     vec![
@@ -2256,16 +2256,61 @@ fn jumpi_for_zero() {
     assert_eq!(vm.env.consumed_gas, TX_BASE_COST + 19);
 }
 
+// This test is just for trying things out, not a real test. But it is useful to have this as an example for conversions between bytes and u256.
+#[test]
+fn testing_bytes_u256_conversion() {
+    // From Bytes to U256 to Bytes again
+    let data: Bytes = vec![0x11, 0x22, 0x33, 0x44].into();
+    println!("{:?}", data);
+
+    let result = U256::from_big_endian(&data);
+    println!("{:?}", result);
+
+    // Convert from U256 to bytes
+    let mut temp_bytes = vec![0u8; 32];
+    result.to_big_endian(&mut temp_bytes);
+    println!("{:?}", temp_bytes);
+
+    let mut i = 0;
+    while i < temp_bytes.len() {
+        if temp_bytes[i] == 0 {
+            temp_bytes.remove(i);
+        } else {
+            i += 1;
+        }
+    }
+
+    println!("{:?}", temp_bytes);
+    let temp_bytes = Bytes::from(temp_bytes);
+    println!("{:?}", temp_bytes);
+
+    // Pad the rest with zeroes
+    let mut final_data = vec![];
+    for i in 0..32 {
+        if i < temp_bytes.len() {
+            final_data.push(temp_bytes[i]);
+        } else {
+            final_data.push(0);
+        }
+    }
+
+    let final_data = Bytes::from(final_data);
+    println!("{:?}", final_data);
+
+    let result = U256::from_big_endian(&final_data);
+    println!("{:?}", result);
+}
+
 #[test]
 fn calldataload() {
     let calldata = vec![
         0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99, 0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF,
-        0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E,
-        0x0F, 0x10,
+        0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09,
     ]
     .into();
+    println!("{:?}", calldata);
     let ops = vec![
-        Operation::Push((32, U256::from(0))), // offset
+        Operation::Push((32, U256::from(1))), // offset
         Operation::CallDataLoad,
         Operation::Stop,
     ];
@@ -2281,9 +2326,9 @@ fn calldataload() {
     assert_eq!(
         top_of_stack,
         U256::from_big_endian(&[
-            0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99, 0xAA, 0xBB, 0xCC, 0xDD, 0xEE,
-            0xFF, 0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B, 0x0C,
-            0x0D, 0x0E, 0x0F, 0x10
+            0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99, 0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF,
+            0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00
         ])
     );
     assert_eq!(vm.env.consumed_gas, TX_BASE_COST + 6);
@@ -3980,10 +4025,8 @@ fn caller_op() {
         env,
         Default::default(),
         Default::default(),
-        Box::new(db),
+        Arc::new(db),
         cache,
-        Default::default(),
-        None,
     );
 
     let mut current_call_frame = vm.call_frames.pop().unwrap();
@@ -4022,10 +4065,8 @@ fn origin_op() {
         env,
         Default::default(),
         Default::default(),
-        Box::new(db),
+        Arc::new(db),
         cache,
-        Default::default(),
-        None,
     );
 
     let mut current_call_frame = vm.call_frames.pop().unwrap();
@@ -4090,12 +4131,9 @@ fn address_op() {
         env,
         Default::default(),
         Default::default(),
-        Box::new(db),
+        Arc::new(db),
         cache,
-        Default::default(),
-        None,
     );
-
     let mut current_call_frame = vm.call_frames.pop().unwrap();
     vm.execute(&mut current_call_frame);
 
@@ -4136,12 +4174,9 @@ fn selfbalance_op() {
         env,
         Default::default(),
         Default::default(),
-        Box::new(db),
+        Arc::new(db),
         cache,
-        Default::default(),
-        None,
     );
-
     let mut current_call_frame = vm.call_frames.pop().unwrap();
     vm.execute(&mut current_call_frame);
 
@@ -4176,10 +4211,8 @@ fn callvalue_op() {
         env,
         value,
         Default::default(),
-        Box::new(db),
+        Arc::new(db),
         cache,
-        Default::default(),
-        None,
     );
 
     let mut current_call_frame = vm.call_frames.pop().unwrap();
@@ -4215,15 +4248,12 @@ fn codesize_op() {
         env,
         Default::default(),
         Default::default(),
-        Box::new(db),
+        Arc::new(db),
         cache,
-        Default::default(),
-        None,
     );
 
     let mut current_call_frame = vm.call_frames.pop().unwrap();
     vm.execute(&mut current_call_frame);
-
     assert_eq!(
         vm.current_call_frame_mut().stack.pop().unwrap(),
         U256::from(2)
@@ -4257,15 +4287,12 @@ fn gasprice_op() {
         env,
         Default::default(),
         Default::default(),
-        Box::new(db),
+        Arc::new(db),
         cache,
-        Default::default(),
-        None,
     );
 
     let mut current_call_frame = vm.call_frames.pop().unwrap();
     vm.execute(&mut current_call_frame);
-
     assert_eq!(
         vm.current_call_frame_mut().stack.pop().unwrap(),
         U256::from(0x9876)
@@ -4315,10 +4342,8 @@ fn codecopy_op() {
         env,
         Default::default(),
         Default::default(),
-        Box::new(db),
+        Arc::new(db),
         cache,
-        Default::default(),
-        None,
     );
 
     let mut current_call_frame = vm.call_frames.pop().unwrap();

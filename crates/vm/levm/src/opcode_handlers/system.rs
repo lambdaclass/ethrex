@@ -4,7 +4,7 @@ use crate::{
     errors::{OpcodeSuccess, ResultReason, VMError},
     vm::{word_to_address, VM},
 };
-use ethereum_rust_core::{types::TxKind, Address, U256};
+use ethereum_rust_core::{types::TxKind, U256};
 
 // System Operations (10)
 // Opcodes: CREATE, CALL, CALLCODE, RETURN, DELEGATECALL, CREATE2, STATICCALL, REVERT, INVALID, SELFDESTRUCT
@@ -16,7 +16,7 @@ impl VM {
         current_call_frame: &mut CallFrame,
     ) -> Result<OpcodeSuccess, VMError> {
         let gas = current_call_frame.stack.pop()?;
-        let code_address = Address::from_low_u64_be(current_call_frame.stack.pop()?.low_u64());
+        let code_address = word_to_address(current_call_frame.stack.pop()?);
         let value = current_call_frame.stack.pop()?;
         let args_offset = current_call_frame
             .stack
@@ -94,12 +94,13 @@ impl VM {
     }
 
     // CALLCODE operation
+    // TODO: https://github.com/lambdaclass/lambda_ethereum_rust/issues/1086
     pub fn op_callcode(
         &mut self,
         current_call_frame: &mut CallFrame,
     ) -> Result<OpcodeSuccess, VMError> {
         let gas = current_call_frame.stack.pop()?;
-        let code_address = Address::from_low_u64_be(current_call_frame.stack.pop()?.low_u64());
+        let code_address = word_to_address(current_call_frame.stack.pop()?);
         let value = current_call_frame.stack.pop()?;
         let args_offset = current_call_frame.stack.pop()?.try_into().unwrap();
         let args_size = current_call_frame.stack.pop()?.try_into().unwrap();
@@ -157,12 +158,13 @@ impl VM {
     }
 
     // DELEGATECALL operation
+    // TODO: https://github.com/lambdaclass/lambda_ethereum_rust/issues/1086
     pub fn op_delegatecall(
         &mut self,
         current_call_frame: &mut CallFrame,
     ) -> Result<OpcodeSuccess, VMError> {
         let gas = current_call_frame.stack.pop()?;
-        let code_address = Address::from_low_u64_be(current_call_frame.stack.pop()?.low_u64());
+        let code_address = word_to_address(current_call_frame.stack.pop()?);
         let args_offset = current_call_frame.stack.pop()?.try_into().unwrap();
         let args_size = current_call_frame.stack.pop()?.try_into().unwrap();
         let ret_offset = current_call_frame.stack.pop()?.try_into().unwrap();
@@ -190,12 +192,13 @@ impl VM {
     }
 
     // STATICCALL operation
+    // TODO: https://github.com/lambdaclass/lambda_ethereum_rust/issues/1086
     pub fn op_staticcall(
         &mut self,
         current_call_frame: &mut CallFrame,
     ) -> Result<OpcodeSuccess, VMError> {
         let gas = current_call_frame.stack.pop()?;
-        let code_address = Address::from_low_u64_be(current_call_frame.stack.pop()?.low_u64());
+        let code_address = word_to_address(current_call_frame.stack.pop()?);
         let args_offset = current_call_frame.stack.pop()?.try_into().unwrap();
         let args_size = current_call_frame.stack.pop()?.try_into().unwrap();
         let ret_offset = current_call_frame.stack.pop()?.try_into().unwrap();
@@ -222,6 +225,7 @@ impl VM {
     }
 
     // CREATE operation
+    // TODO: https://github.com/lambdaclass/lambda_ethereum_rust/issues/1086
     pub fn op_create(
         &mut self,
         current_call_frame: &mut CallFrame,
@@ -240,6 +244,7 @@ impl VM {
     }
 
     // CREATE2 operation
+    // TODO: https://github.com/lambdaclass/lambda_ethereum_rust/issues/1086
     pub fn op_create2(
         &mut self,
         current_call_frame: &mut CallFrame,

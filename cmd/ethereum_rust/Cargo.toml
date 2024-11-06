@@ -41,3 +41,4 @@ path = "./ethereum_rust.rs"
 default = []
 dev = ["dep:ethereum_rust-dev"]
 l2 = ["ethereum_rust-vm/l2"]
+levm = ["ethereum_rust-vm/levm", "ethereum_rust-blockchain/levm"]

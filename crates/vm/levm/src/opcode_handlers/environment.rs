@@ -105,8 +105,24 @@ impl VM {
             .pop()?
             .try_into()
             .unwrap_or(usize::MAX);
-        let value = U256::from_big_endian(&current_call_frame.calldata.slice(offset..offset + 32));
-        current_call_frame.stack.push(value)?;
+
+        // This check is because if offset is larger than the calldata then we should push 0 to the stack.
+        let result = if offset < current_call_frame.calldata.len() {
+            // Read calldata from offset to the end
+            let calldata = current_call_frame.calldata.slice(offset..);
+
+            // Get the 32 bytes from the data slice, padding with 0 if fewer than 32 bytes are available
+            let mut padded_calldata = [0u8; 32];
+            let data_len_to_copy = calldata.len().min(32);
+
+            padded_calldata[..data_len_to_copy].copy_from_slice(&calldata[..data_len_to_copy]);
+
+            U256::from_big_endian(&padded_calldata)
+        } else {
+            U256::zero()
+        };
+
+        current_call_frame.stack.push(result)?;
 
         Ok(OpcodeSuccess::Continue)
     }
@@ -181,7 +197,7 @@ impl VM {
             .stack
             .push(U256::from(current_call_frame.bytecode.len()))?;
 
-        self.env.consumed_gas += gas_cost::CODESIZE;
+        self.increase_consumed_gas(current_call_frame, gas_cost::CODESIZE)?;
 
         Ok(OpcodeSuccess::Continue)
     }

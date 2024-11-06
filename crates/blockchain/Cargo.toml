@@ -10,6 +10,7 @@ thiserror.workspace = true
 sha3.workspace = true
 tracing.workspace = true
 bytes.workspace = true
+cfg-if = "1.0.0"
 
 ethereum_rust-rlp.workspace = true
 ethereum_rust-core = { path = "../common", default-features = false }
@@ -29,3 +30,4 @@ libmdbx = [
     "ethereum_rust-storage/default",
     "ethereum_rust-vm/libmdbx",
 ]
+levm = ["ethereum_rust-vm/levm"]
