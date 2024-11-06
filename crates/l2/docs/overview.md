@@ -90,7 +90,22 @@ The solution is through a [proof of equivalence](https://ethresear.ch/t/easy-pro
 
 If we turn the first one into a polynomial commitment, we can take a random evaluation point through Fiat Shamir and prove that it evaluates to the same value as the KZG blob commitment at that point. The `commit` transaction then sends the blob commitment and, through the point evaluation precompile, verifies that the given blob evaluates to that same value. If it does, the underlying blob is indeed the correct state diff.
 
-TODO: Explain this in more detail, show with an example what the polynomials P and Q would be and all that.
+Our proof of equivalence implementation follows Method 1 [here](https://notes.ethereum.org/@dankrad/kzg_commitments_in_proofs). What we do is the following.
+
+### Prover side
+
+- Take the state diff being commited to as `4096` 32-byte chunks (these will be interpreted as field elements later on, but for now we don't care). Call these chunks $d_i$, with `i` ranging from 0 to 4095.
+- Build a merkle tree with the $d_i$ as leaves. Note that we can think of the merkle root as a polynomial commitment, where the `i`-th leaf is the evaluation of the polynomial on the `i`-th power of $\omega$, the `4096`-th root of unity on $F_q$, the field modulus of the `BLS12-381` curve. Call this polynomial $f$. This is the same polynomial that the L1 KZG blob commits to (by definition). Call the L1 blob KZG commitment $C_1$ and the merkle root we just computed $C_2$.
+- Choose `x` as keccak($C_1$, $C_2$) and calculate the evaluation $f(x)$; call it `y`. To do this calculation, because we only have the $d_i$, the easiest way to do it is through the [barycentric formula](https://dankradfeist.de/ethereum/2021/06/18/pcs-multiproofs.html#evaluating-a-polynomial-in-evaluation-form-on-a-point-outside-the-domain). IMPORTANT: we are taking the $d_i$, `x`, `y`, and $\omega$ as elements of $F_q$, NOT the native field used by our prover. The evaluation thus is:
+
+    $$y = f(x) = \dfrac{x^{4096} - 1}{4096} \sum_{i = 0}^{4095} d_i \dfrac{\omega^i}{x - \omega^i}$$
+- Set `x` and `y` as public inputs. All the above shows the verifier on L1 that we made a polynomial commitment to the state diff, that its evaluation on `x` is `y`, and that `x` was chosen through Fiat-Shamir by hashing the two commitments.
+
+### Verifier side
+
+- When commiting to the data on L1 send, as part of the calldata, a kzg blob commitment along with an opening proving that it evaluates to `y` on `x`. The contract, through the point evaluation precompile, checks that both:
+  - The commitment's hash is equal to the versioned hash for that blob.
+  - The evaluation is correct.
 
 ## How do deposits and withdrawals work?
 
