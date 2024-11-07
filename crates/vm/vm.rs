@@ -760,7 +760,7 @@ fn tx_env_from_generic(tx: &GenericTransaction, basefee: u64) -> TxEnv {
             .iter()
             .map(|hash| B256::from(hash.0))
             .collect(),
-        max_fee_per_blob_gas: tx.max_fee_per_blob_gas.map(RevmU256::from),
+        max_fee_per_blob_gas: tx.max_fee_per_blob_gas.map(|x| RevmU256::from_limbs(x.0)),
         // TODO revise
         // https://eips.ethereum.org/EIPS/eip-7702
         authorization_list: None,

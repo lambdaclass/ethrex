@@ -38,7 +38,7 @@ The full state diff sent on every block will then be a sequence of bytes encoded
 - Next the `WithdrawalLogs` field:
     - First two bytes are the number of entries, then come the tuples `(to_u160, amount_u256, tx_hash_u256)`.
 - Next the `DepositLogs` field:
-    - First two bytes are the number of entries, then come the last 30 bytes of the `keccak` encoding of the concatenation of deposits with form `keccack256(to_u160 || value_u256)`.
+    - First two bytes are the number of entries, then come the tuples `(to_u160, value_u256)`.
 - In case of the only changes on an account are produced by withdrawals, the `ModifiedAccounts` for that address field must be omitted. In this case, the state diff can be computed by incrementing the nonce in one unit and subtracting the amount from the balance.
 
 To recap, using `||` for byte concatenation and `[]` for optional parameters, the full encoding for state diffs is:
@@ -57,10 +57,14 @@ number_of_modified_accounts_u16 ||
 number_of_withdraw_logs_u16 ||
 (to_u160 || amount_u256 || tx_hash_u256) ...
 // Deposit Logs
-number_of_deposit_logs_u16 || keccak256(keccack256(to_u160 || value_u256) || ...)[2:32]
+number_of_deposit_logs_u16 ||
+(to_u160 || value_u256) ...
 ```
 
 The sequencer will then make a commitment to this encoded state diff (explained in the EIP 4844 section how this is done) and send on the `commit` transaction:
 
 - Through calldata, the state diff commitment (which is part of the public input to the proof).
 - Through the blob, the encoded state diff.
+
+> [!NOTE]
+> As the blob is encoded as 4096 BLS12-381 field elements, every 32-bytes chunk cannot be greater than the subgroup `r` size: `0x73eda753299d7d483339d80809a1d80553bda402fffe5bfeffffffff00000001`. _i.e._, the most significant byte must be less than `0x73`. To avoid conflicts, we insert a `0x00` byte before every 31-bytes chunk to ensure this condition is met.

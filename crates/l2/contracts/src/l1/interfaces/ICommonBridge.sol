@@ -54,13 +54,19 @@ interface ICommonBridge {
     /// @param to, the address in L2 to which the tokens will be minted to.
     function deposit(address to) external payable;
 
+    /// @notice Method to retrieve the versioned hash of the first `number` deposit logs.
+    /// @param number of deposit logs to retrieve the versioned hash.
+    function getDepositLogsVersionedHash(
+        uint16 number
+    ) external view returns (bytes32);
+
     /// @notice Remove deposit from depositLogs queue.
     /// @dev This method is used by the L2 OnChainOperator to remove the deposit
     /// logs from the queue after the deposit is verified.
     /// @param number of deposit logs to remove.
     /// As deposits are processed in order, we don't need to specify
     /// the deposit logs to remove, only the number of them.
-    function removeDepositLogs(uint number) external;
+    function removeDepositLogs(uint16 number) external;
 
     /// @notice Publishes the L2 withdrawals on L1.
     /// @dev This method is used by the L2 OnChainOperator to publish the L2

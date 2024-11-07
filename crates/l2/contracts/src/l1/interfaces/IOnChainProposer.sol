@@ -27,12 +27,13 @@ interface IOnChainProposer {
     /// @dev Committing to an L2 block means to store the block's commitment
     /// and to publish withdrawals if any.
     /// @param blockNumber the number of the block to be committed.
-    /// @param newL2StateRoot the new L2 state root of the block to be committed.
+    /// @param commitment of the block to be committed.
     /// @param withdrawalsLogsMerkleRoot the merkle root of the withdrawal logs
     /// of the block to be committed.
+    /// @param depositLogs the deposit logs of the block to be committed.
     function commit(
         uint256 blockNumber,
-        bytes32 newL2StateRoot,
+        bytes32 commitment,
         bytes32 withdrawalsLogsMerkleRoot,
         bytes32 depositLogs
     ) external;

@@ -6,7 +6,12 @@ use ethereum_rust_core::{
     },
     Address, H256,
 };
-use ethereum_rust_rlp::{decode::RLPDecode, error::RLPDecodeError, structs::Decoder};
+use ethereum_rust_rlp::{
+    decode::RLPDecode,
+    encode::RLPEncode,
+    error::RLPDecodeError,
+    structs::{Decoder, Encoder},
+};
 use serde::Serialize;
 
 #[allow(unused)]
@@ -59,6 +64,18 @@ pub enum SendRawTransactionRequest {
 pub struct WrappedEIP4844Transaction {
     pub tx: EIP4844Transaction,
     pub blobs_bundle: BlobsBundle,
+}
+
+impl RLPEncode for WrappedEIP4844Transaction {
+    fn encode(&self, buf: &mut dyn bytes::BufMut) {
+        let encoder = Encoder::new(buf);
+        encoder
+            .encode_field(&self.tx)
+            .encode_field(&self.blobs_bundle.blobs)
+            .encode_field(&self.blobs_bundle.commitments)
+            .encode_field(&self.blobs_bundle.proofs)
+            .finish();
+    }
 }
 
 impl RLPDecode for WrappedEIP4844Transaction {

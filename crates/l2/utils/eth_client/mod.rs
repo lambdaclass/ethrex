@@ -9,7 +9,10 @@ use ethereum_rust_core::types::{
 };
 use ethereum_rust_rlp::encode::RLPEncode;
 use ethereum_rust_rpc::{
-    types::receipt::{RpcLog, RpcReceipt},
+    types::{
+        receipt::{RpcLog, RpcReceipt},
+        transaction::WrappedEIP4844Transaction,
+    },
     utils::{RpcErrorResponse, RpcRequest, RpcRequestId, RpcSuccessResponse},
 };
 use ethereum_types::{Address, H256, U256};
@@ -109,6 +112,27 @@ impl EthClient {
         data.append(&mut encoded_tx);
 
         self.send_raw_transaction(data.as_slice()).await
+    }
+
+    pub async fn send_eip4844_transaction(
+        &self,
+        wrapped_tx: &mut WrappedEIP4844Transaction,
+        private_key: SecretKey,
+    ) -> Result<H256, EthClientError> {
+        let mut payload = vec![TxType::EIP4844 as u8];
+        payload.append(wrapped_tx.tx.encode_payload_to_vec().as_mut());
+
+        let data = Message::parse(&keccak(payload).0);
+        let signature = sign(&data, &private_key);
+
+        wrapped_tx.tx.signature_r = U256::from(signature.0.r.b32());
+        wrapped_tx.tx.signature_s = U256::from(signature.0.s.b32());
+        wrapped_tx.tx.signature_y_parity = signature.1.serialize() != 0;
+
+        let mut encoded_tx = wrapped_tx.encode_to_vec();
+        encoded_tx.insert(0, TxType::EIP4844 as u8);
+
+        self.send_raw_transaction(encoded_tx.as_slice()).await
     }
 
     pub async fn send_privileged_l2_transaction(
