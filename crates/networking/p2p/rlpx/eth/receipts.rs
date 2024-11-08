@@ -1,12 +1,13 @@
+use crate::rlpx::{
+    message::RLPxMessage,
+    utils::{snappy_compress, snappy_decompress},
+};
 use bytes::BufMut;
 use ethereum_rust_core::types::{BlockHash, Receipt};
 use ethereum_rust_rlp::{
     error::{RLPDecodeError, RLPEncodeError},
     structs::{Decoder, Encoder},
 };
-use snap::raw::Decoder as SnappyDecoder;
-
-use crate::rlpx::{message::RLPxMessage, utils::snappy_encode};
 
 // https://github.com/ethereum/devp2p/blob/master/caps/eth.md#getreceipts-0x0f
 #[derive(Debug)]
@@ -31,16 +32,13 @@ impl RLPxMessage for GetReceipts {
             .encode_field(&self.block_hashes)
             .finish();
 
-        let msg_data = snappy_encode(encoded_data)?;
+        let msg_data = snappy_compress(encoded_data)?;
         buf.put_slice(&msg_data);
         Ok(())
     }
 
     fn decode(msg_data: &[u8]) -> Result<Self, RLPDecodeError> {
-        let mut snappy_decoder = SnappyDecoder::new();
-        let decompressed_data = snappy_decoder
-            .decompress_vec(msg_data)
-            .map_err(|err| RLPDecodeError::Custom(err.to_string()))?;
+        let decompressed_data = snappy_decompress(msg_data)?;
         let decoder = Decoder::new(&decompressed_data)?;
         let (id, decoder): (u64, _) = decoder.decode_field("request-id")?;
         let (block_hashes, _): (Vec<BlockHash>, _) = decoder.decode_field("blockHashes")?;
@@ -71,16 +69,13 @@ impl RLPxMessage for Receipts {
             .encode_field(&self.receipts)
             .finish();
 
-        let msg_data = snappy_encode(encoded_data)?;
+        let msg_data = snappy_compress(encoded_data)?;
         buf.put_slice(&msg_data);
         Ok(())
     }
 
     fn decode(msg_data: &[u8]) -> Result<Self, RLPDecodeError> {
-        let mut snappy_decoder = SnappyDecoder::new();
-        let decompressed_data = snappy_decoder
-            .decompress_vec(msg_data)
-            .map_err(|err| RLPDecodeError::Custom(err.to_string()))?;
+        let decompressed_data = snappy_decompress(msg_data)?;
         let decoder = Decoder::new(&decompressed_data)?;
         let (id, decoder): (u64, _) = decoder.decode_field("request-id")?;
         let (receipts, _): (Vec<Vec<Receipt>>, _) = decoder.decode_field("receipts")?;

@@ -24,7 +24,7 @@ use tokio::{
     sync::Mutex,
     try_join,
 };
-use tracing::{debug, info};
+use tracing::{debug, error, info};
 use types::{Endpoint, Node};
 
 pub mod bootnode;
@@ -774,8 +774,12 @@ async fn handle_peer_as_initiator(
         .connect(SocketAddr::new(node.ip, node.tcp_port))
         .await
         .unwrap();
-    let conn = RLPxConnection::initiator(signer, msg, stream, storage).await;
-    handle_peer(conn, table).await;
+    match RLPxConnection::initiator(signer, msg, stream, storage).await {
+        Ok(conn) => handle_peer(conn, table).await,
+        Err(e) => {
+            error!("Error: {e}, Could not start connection with {node:?}");
+        }
+    }
 }
 
 async fn handle_peer(mut conn: RLPxConnection<TcpStream>, table: Arc<Mutex<KademliaTable>>) {
@@ -785,9 +789,13 @@ async fn handle_peer(mut conn: RLPxConnection<TcpStream>, table: Arc<Mutex<Kadem
             Err(e) => info!("Error during RLPx connection: ({e})"),
         },
         Err(e) => {
-            // Discard peer from kademlia table
-            info!("Handshake failed, discarding peer: ({e})");
-            table.lock().await.replace_peer(conn.get_remote_node_id());
+            if let Ok(node_id) = conn.get_remote_node_id() {
+                // Discard peer from kademlia table
+                info!("Handshake failed: ({e}), discarding peer {node_id}");
+                table.lock().await.replace_peer(node_id);
+            } else {
+                info!("Handshake failed: ({e}), unknown peer");
+            }
         }
     }
 }

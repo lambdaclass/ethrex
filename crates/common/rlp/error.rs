@@ -13,6 +13,8 @@ pub enum RLPDecodeError {
     UnexpectedList,
     #[error("UnexpectedString")]
     UnexpectedString,
+    #[error("InvalidCompression")]
+    InvalidCompression(#[from] snap::Error),
     #[error("{0}")]
     Custom(String),
 }
@@ -21,7 +23,7 @@ pub enum RLPDecodeError {
 #[derive(Debug, Error)]
 pub enum RLPEncodeError {
     #[error("InvalidCompression")]
-    InvalidCompression,
+    InvalidCompression(#[from] snap::Error),
     #[error("{0}")]
     Custom(String),
 }

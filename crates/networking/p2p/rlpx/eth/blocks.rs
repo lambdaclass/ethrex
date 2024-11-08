@@ -1,4 +1,7 @@
-use crate::rlpx::{message::RLPxMessage, utils::snappy_encode};
+use crate::rlpx::{
+    message::RLPxMessage,
+    utils::{snappy_compress, snappy_decompress},
+};
 use bytes::BufMut;
 use ethereum_rust_core::types::{BlockBody, BlockHash, BlockHeader, BlockNumber};
 use ethereum_rust_rlp::{
@@ -8,7 +11,6 @@ use ethereum_rust_rlp::{
     structs::{Decoder, Encoder},
 };
 use ethereum_rust_storage::Store;
-use snap::raw::Decoder as SnappyDecoder;
 use tracing::error;
 
 pub const HASH_FIRST_BYTE_DECODER: u8 = 160;
@@ -141,16 +143,13 @@ impl RLPxMessage for GetBlockHeaders {
             .encode_field(&self.id)
             .encode_field(&(self.startblock.clone(), limit, skip, reverse))
             .finish();
-        let msg_data = snappy_encode(encoded_data)?;
+        let msg_data = snappy_compress(encoded_data)?;
         buf.put_slice(&msg_data);
         Ok(())
     }
 
     fn decode(msg_data: &[u8]) -> Result<Self, RLPDecodeError> {
-        let mut snappy_decoder = SnappyDecoder::new();
-        let decompressed_data = snappy_decoder
-            .decompress_vec(msg_data)
-            .map_err(|e| RLPDecodeError::Custom(e.to_string()))?;
+        let decompressed_data = snappy_decompress(msg_data)?;
         let decoder = Decoder::new(&decompressed_data)?;
         let (id, decoder): (u64, _) = decoder.decode_field("request-id")?;
         let ((start_block, limit, skip, reverse), _): ((HashOrNumber, u64, u64, bool), _) =
@@ -184,16 +183,13 @@ impl RLPxMessage for BlockHeaders {
             .encode_field(&self.id)
             .encode_field(&self.block_headers)
             .finish();
-        let msg_data = snappy_encode(encoded_data)?;
+        let msg_data = snappy_compress(encoded_data)?;
         buf.put_slice(&msg_data);
         Ok(())
     }
 
     fn decode(msg_data: &[u8]) -> Result<Self, RLPDecodeError> {
-        let mut snappy_decoder = SnappyDecoder::new();
-        let decompressed_data = snappy_decoder
-            .decompress_vec(msg_data)
-            .map_err(|e| RLPDecodeError::Custom(e.to_string()))?;
+        let decompressed_data = snappy_decompress(msg_data)?;
         let decoder = Decoder::new(&decompressed_data)?;
         let (id, decoder): (u64, _) = decoder.decode_field("request-id")?;
         let (block_headers, _): (Vec<BlockHeader>, _) = decoder.decode_field("headers")?;
@@ -252,16 +248,13 @@ impl RLPxMessage for GetBlockBodies {
             .encode_field(&self.block_hashes)
             .finish();
 
-        let msg_data = snappy_encode(encoded_data)?;
+        let msg_data = snappy_compress(encoded_data)?;
         buf.put_slice(&msg_data);
         Ok(())
     }
 
     fn decode(msg_data: &[u8]) -> Result<Self, RLPDecodeError> {
-        let mut snappy_decoder = SnappyDecoder::new();
-        let decompressed_data = snappy_decoder
-            .decompress_vec(msg_data)
-            .map_err(|err| RLPDecodeError::Custom(err.to_string()))?;
+        let decompressed_data = snappy_decompress(msg_data)?;
         let decoder = Decoder::new(&decompressed_data)?;
         let (id, decoder): (u64, _) = decoder.decode_field("request-id")?;
         let (block_hashes, _): (Vec<BlockHash>, _) = decoder.decode_field("blockHashes")?;
@@ -293,16 +286,13 @@ impl RLPxMessage for BlockBodies {
             .encode_field(&self.block_bodies)
             .finish();
 
-        let msg_data = snappy_encode(encoded_data)?;
+        let msg_data = snappy_compress(encoded_data)?;
         buf.put_slice(&msg_data);
         Ok(())
     }
 
     fn decode(msg_data: &[u8]) -> Result<Self, RLPDecodeError> {
-        let mut snappy_decoder = SnappyDecoder::new();
-        let decompressed_data = snappy_decoder
-            .decompress_vec(msg_data)
-            .map_err(|err| RLPDecodeError::Custom(err.to_string()))?;
+        let decompressed_data = snappy_decompress(msg_data)?;
         let decoder = Decoder::new(&decompressed_data)?;
         let (id, decoder): (u64, _) = decoder.decode_field("request-id")?;
         let (block_bodies, _): (Vec<BlockBody>, _) = decoder.decode_field("blockBodies")?;

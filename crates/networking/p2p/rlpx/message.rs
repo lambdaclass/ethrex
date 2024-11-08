@@ -72,11 +72,26 @@ impl Message {
 
     pub fn encode(&self, buf: &mut dyn BufMut) -> Result<(), RLPEncodeError> {
         match self {
-            Message::Hello(msg) => msg.encode(buf),
-            Message::Disconnect(msg) => msg.encode(buf),
-            Message::Ping(msg) => msg.encode(buf),
-            Message::Pong(msg) => msg.encode(buf),
-            Message::Status(msg) => msg.encode(buf),
+            Message::Hello(msg) => {
+                0x00_u8.encode(buf);
+                msg.encode(buf)
+            }
+            Message::Disconnect(msg) => {
+                0x01_u8.encode(buf);
+                msg.encode(buf)
+            }
+            Message::Ping(msg) => {
+                0x02_u8.encode(buf);
+                msg.encode(buf)
+            }
+            Message::Pong(msg) => {
+                0x03_u8.encode(buf);
+                msg.encode(buf)
+            }
+            Message::Status(msg) => {
+                0x10_u8.encode(buf);
+                msg.encode(buf)
+            }
             Message::GetBlockHeaders(msg) => {
                 0x13_u8.encode(buf);
                 msg.encode(buf)
