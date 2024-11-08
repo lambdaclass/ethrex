@@ -6,9 +6,9 @@ pub use branch::BranchNode;
 pub use extension::ExtensionNode;
 pub use leaf::LeafNode;
 
-use crate::error::TrieError;
+use crate::{error::TrieError, nibbles::Nibbles};
 
-use super::{nibble::NibbleSlice, node_hash::NodeHash, state::TrieState, ValueRLP};
+use super::{node_hash::NodeHash, state::TrieState, ValueRLP};
 
 /// A Node in an Ethereum Compatible Patricia Merkle Trie
 #[derive(Debug, Clone)]
@@ -38,7 +38,7 @@ impl From<LeafNode> for Node {
 
 impl Node {
     /// Retrieves a value from the subtrie originating from this node given its path
-    pub fn get(&self, state: &TrieState, path: NibbleSlice) -> Result<Option<ValueRLP>, TrieError> {
+    pub fn get(&self, state: &TrieState, path: Nibbles) -> Result<Option<ValueRLP>, TrieError> {
         match self {
             Node::Branch(n) => n.get(state, path),
             Node::Extension(n) => n.get(state, path),
@@ -50,7 +50,7 @@ impl Node {
     pub fn insert(
         self,
         state: &mut TrieState,
-        path: NibbleSlice,
+        path: Nibbles,
         value: ValueRLP,
     ) -> Result<Node, TrieError> {
         match self {
@@ -65,7 +65,7 @@ impl Node {
     pub fn remove(
         self,
         state: &mut TrieState,
-        path: NibbleSlice,
+        path: Nibbles,
     ) -> Result<(Option<Node>, Option<ValueRLP>), TrieError> {
         match self {
             Node::Branch(n) => n.remove(state, path),
@@ -80,25 +80,21 @@ impl Node {
     pub fn get_path(
         &self,
         state: &TrieState,
-        path: NibbleSlice,
+        path: Nibbles,
         node_path: &mut Vec<Vec<u8>>,
     ) -> Result<(), TrieError> {
         match self {
             Node::Branch(n) => n.get_path(state, path, node_path),
             Node::Extension(n) => n.get_path(state, path, node_path),
-            Node::Leaf(n) => n.get_path(path, node_path),
+            Node::Leaf(n) => n.get_path(node_path),
         }
     }
 
-    pub fn insert_self(
-        self,
-        path_offset: usize,
-        state: &mut TrieState,
-    ) -> Result<NodeHash, TrieError> {
+    pub fn insert_self(self, state: &mut TrieState) -> Result<NodeHash, TrieError> {
         match self {
             Node::Branch(n) => n.insert_self(state),
             Node::Extension(n) => n.insert_self(state),
-            Node::Leaf(n) => n.insert_self(path_offset, state),
+            Node::Leaf(n) => n.insert_self(state),
         }
     }
 }

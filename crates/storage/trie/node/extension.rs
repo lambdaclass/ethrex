@@ -1,32 +1,29 @@
+use ethereum_rust_rlp::structs::Encoder;
+
 use crate::error::TrieError;
-use crate::nibble::NibbleSlice;
-use crate::nibble::NibbleVec;
-use crate::node_hash::{NodeEncoder, NodeHash, PathKind};
+use crate::nibbles::Nibbles;
+use crate::node_hash::NodeHash;
 use crate::state::TrieState;
 use crate::ValueRLP;
 
-use super::{BranchNode, LeafNode, Node};
+use super::{BranchNode, Node};
 
 /// Extension Node of an an Ethereum Compatible Patricia Merkle Trie
 /// Contains the node's prefix and a its child node hash, doesn't store any value
 #[derive(Debug, Clone)]
 pub struct ExtensionNode {
-    pub prefix: NibbleVec,
+    pub prefix: Nibbles,
     pub child: NodeHash,
 }
 
 impl ExtensionNode {
     /// Creates a new extension node given its child hash and prefix
-    pub(crate) fn new(prefix: NibbleVec, child: NodeHash) -> Self {
+    pub(crate) fn new(prefix: Nibbles, child: NodeHash) -> Self {
         Self { prefix, child }
     }
 
     /// Retrieves a value from the subtrie originating from this node given its path
-    pub fn get(
-        &self,
-        state: &TrieState,
-        mut path: NibbleSlice,
-    ) -> Result<Option<ValueRLP>, TrieError> {
+    pub fn get(&self, state: &TrieState, mut path: Nibbles) -> Result<Option<ValueRLP>, TrieError> {
         // If the path is prefixed by this node's prefix, delegate to its child.
         // Otherwise, no value is present.
         if path.skip_prefix(&self.prefix) {
@@ -44,80 +41,61 @@ impl ExtensionNode {
     pub fn insert(
         mut self,
         state: &mut TrieState,
-        mut path: NibbleSlice,
+        path: Nibbles,
         value: ValueRLP,
     ) -> Result<Node, TrieError> {
-        /* Possible flow paths (there are duplicates between different prefix lengths):
+        /* Possible flow paths:
+            * Prefix fully matches path
             Extension { prefix, child } -> Extension { prefix , child' } (insert into child)
-            Extension { prefixL+C+prefixR, child } -> Extension { prefixL, Branch { [ Extension { prefixR, child }, ..], Path, Value} } (if path fully traversed)
-            Extension { prefixL+C+prefixR, child } -> Extension { prefixL, Branch { [ Extension { prefixR, child }, Leaf { Path, Value }..] None, None} } (if path not fully traversed)
-            Extension { prefixL+C+None, child } -> Extension { prefixL, Branch { [child, ... ], Path, Value} } (if path fully traversed)
-            Extension { prefixL+C+None, child } -> Extension { prefixL, Branch { [child, ... ], Leaf { Path, Value }, ... }, None, None } (if path not fully traversed)
-            Extension { None+C+prefixR } -> Branch { [ Extension { prefixR, child } , ..], Path, Value} (if path fully traversed)
-            Extension { None+C+prefixR } -> Branch { [ Extension { prefixR, child } , Leaf { Path, Value } , ... ], None, None} (if path not fully traversed)
+            * No match between path and prefix
+            Extension { prefix, child } -> Branch { [ ] childValue } (insert into new branch node)
+            Extension { prefix, child }  -> Branch { [ child ] None } (insert into new branch node)
+            Extension { prefix, child }  -> Branch { [ Extension { prefix[1..], child } ] None } (insert into new branch node)
+            * Prefix partially matches path
+            Extension { prefix, child } -> Extension { prefix[..match], Extension { path[match..] child } } (insert into new extension node)
         */
-
-        if path.skip_prefix(&self.prefix) {
+        let match_index = path.count_prefix(&self.prefix);
+        if match_index == self.prefix.len() {
             // Insert into child node
             let child_node = state
                 .get_node(self.child)?
                 .expect("inconsistent internal tree structure");
-            let child_node = child_node.insert(state, path.clone(), value.clone())?;
-            // Child node will never be a leaf, so the path_offset is not used
-            self.child = child_node.insert_self(0, state)?;
-
+            let new_child_node =
+                child_node.insert(state, path.offset(match_index), value.clone())?;
+            self.child = new_child_node.insert_self(state)?;
             Ok(self.into())
-        } else {
-            let offset = path.clone().count_prefix_vec(&self.prefix);
-            path.offset_add(offset);
-            // Offset used when computing the hash of the new child
-            let child_offset = path.offset() + 1;
-            // Split prefix into left_prefix and right_prefix
-            let (left_prefix, choice, right_prefix) = self.prefix.split_extract_at(offset);
-
-            let left_prefix = (!left_prefix.is_empty()).then_some(left_prefix);
-            let right_prefix = (!right_prefix.is_empty()).then_some(right_prefix);
-
-            // Create right prefix node:
-            // If there is a right prefix the node will be Extension { prefixR, Self.child }
-            // If there is no right prefix the node will be Self.child
-            let right_prefix_node = if let Some(right_prefix) = right_prefix {
-                let extension_node = ExtensionNode::new(right_prefix, self.child);
-                extension_node.insert_self(state)?
-            } else {
+        } else if match_index == 0 {
+            let new_node = if self.prefix.len() == 1 {
                 self.child
-            };
-
-            // Create a branch node:
-            // If the path hasn't been traversed: Branch { [ RPrefixNode, Leaf { Path, Value }, ... ], None, None }
-            // If the path has been fully traversed: Branch { [ RPrefixNode, ... ], Path, Value }
-            let mut choices = BranchNode::EMPTY_CHOICES;
-            choices[choice as usize] = right_prefix_node;
-            let branch_node = if let Some(c) = path.next() {
-                let new_leaf = LeafNode::new(path.data(), value);
-                choices[c as usize] = new_leaf.insert_self(child_offset, state)?;
-                BranchNode::new(Box::new(choices))
             } else {
-                BranchNode::new_with_value(Box::new(choices), path.data(), value)
+                ExtensionNode::new(self.prefix.offset(1), self.child).insert_self(state)?
             };
-
-            // Create a final node, then return it:
-            // If there is a left_prefix: Extension { left_prefix , Branch }
-            // If there is no left_prefix: Branch
-            match left_prefix {
-                Some(left_prefix) => {
-                    let branch_hash = branch_node.insert_self(state)?;
-                    Ok(ExtensionNode::new(left_prefix, branch_hash).into())
+            let mut choices = BranchNode::EMPTY_CHOICES;
+            let branch_node = if self.prefix.at(0) == 16 {
+                match state.get_node(new_node)? {
+                    Some(Node::Leaf(leaf)) => {
+                        BranchNode::new_with_value(Box::new(choices), leaf.value)
+                    }
+                    _ => panic!("inconsistent internal tree structure"),
                 }
-                None => Ok(branch_node.into()),
-            }
+            } else {
+                choices[self.prefix.at(0)] = new_node;
+                BranchNode::new(Box::new(choices))
+            };
+            return branch_node.insert(state, path, value);
+        } else {
+            let new_extension = ExtensionNode::new(self.prefix.offset(match_index), self.child);
+            let new_node = new_extension.insert(state, path.offset(match_index), value)?;
+            self.prefix = self.prefix.slice(0, match_index);
+            self.child = new_node.insert_self(state)?;
+            Ok(self.into())
         }
     }
 
     pub fn remove(
         mut self,
         state: &mut TrieState,
-        mut path: NibbleSlice,
+        mut path: Nibbles,
     ) -> Result<(Option<Node>, Option<ValueRLP>), TrieError> {
         /* Possible flow paths:
             Extension { prefix, child } -> Extension { prefix, child } (no removal)
@@ -133,7 +111,7 @@ impl ExtensionNode {
                 .get_node(self.child)?
                 .expect("inconsistent internal tree structure");
             // Remove value from child subtrie
-            let (child_node, old_value) = child_node.remove(state, path.clone())?;
+            let (child_node, old_value) = child_node.remove(state, path)?;
             // Restructure node based on removal
             let node = match child_node {
                 // If there is no subtrie remove the node
@@ -151,7 +129,11 @@ impl ExtensionNode {
                         extension_node.into()
                     }
                     // If it is a leaf node replace self with it
-                    Node::Leaf(leaf_node) => leaf_node.into(),
+                    Node::Leaf(mut leaf_node) => {
+                        self.prefix.extend(&leaf_node.partial);
+                        leaf_node.partial = self.prefix;
+                        leaf_node.into()
+                    }
                 }),
             };
 
@@ -168,21 +150,18 @@ impl ExtensionNode {
 
     /// Encodes the node
     pub fn encode_raw(&self) -> Vec<u8> {
-        let child_hash = &self.child;
-        let prefix_len = NodeEncoder::path_len(self.prefix.len());
-        let child_len = match child_hash {
-            NodeHash::Inline(ref x) => x.len(),
-            NodeHash::Hashed(x) => NodeEncoder::bytes_len(32, x[0]),
-        };
-
-        let mut encoder = NodeEncoder::new();
-        encoder.write_list_header(prefix_len + child_len);
-        encoder.write_path_vec(&self.prefix, PathKind::Extension);
-        match child_hash {
-            NodeHash::Inline(x) => encoder.write_raw(x),
-            NodeHash::Hashed(x) => encoder.write_bytes(&x.0),
+        let mut buf = vec![];
+        let mut encoder = Encoder::new(&mut buf).encode_bytes(&self.prefix.encode_compact());
+        match &self.child {
+            NodeHash::Inline(x) => {
+                encoder = encoder.encode_raw(x);
+            }
+            NodeHash::Hashed(x) => {
+                encoder = encoder.encode_bytes(&x.0);
+            }
         }
-        encoder.finalize()
+        encoder.finish();
+        buf
     }
 
     /// Inserts the node into the state and returns its hash
@@ -198,7 +177,7 @@ impl ExtensionNode {
     pub fn get_path(
         &self,
         state: &TrieState,
-        mut path: NibbleSlice,
+        mut path: Nibbles,
         node_path: &mut Vec<Vec<u8>>,
     ) -> Result<(), TrieError> {
         // Add self to node_path (if not inlined in parent)
@@ -220,14 +199,11 @@ impl ExtensionNode {
 #[cfg(test)]
 mod test {
     use super::*;
-    use crate::{
-        pmt_node,
-        {nibble::Nibble, Trie},
-    };
+    use crate::{node::LeafNode, pmt_node, Trie};
 
     #[test]
     fn new() {
-        let node = ExtensionNode::new(NibbleVec::new(), Default::default());
+        let node = ExtensionNode::new(Nibbles::default(), Default::default());
 
         assert_eq!(node.prefix.len(), 0);
         assert_eq!(node.child, Default::default());
@@ -238,17 +214,17 @@ mod test {
         let mut trie = Trie::new_temp();
         let node = pmt_node! { @(trie)
             extension { [0], branch {
-                0 => leaf { vec![0x00] => vec![0x12, 0x34, 0x56, 0x78] },
-                1 => leaf { vec![0x01] => vec![0x34, 0x56, 0x78, 0x9A] },
+                0 => leaf { vec![16] => vec![0x12, 0x34, 0x56, 0x78] },
+                1 => leaf { vec![16] => vec![0x34, 0x56, 0x78, 0x9A] },
             } }
         };
 
         assert_eq!(
-            node.get(&trie.state, NibbleSlice::new(&[0x00])).unwrap(),
+            node.get(&trie.state, Nibbles::from_bytes(&[0x00])).unwrap(),
             Some(vec![0x12, 0x34, 0x56, 0x78]),
         );
         assert_eq!(
-            node.get(&trie.state, NibbleSlice::new(&[0x01])).unwrap(),
+            node.get(&trie.state, Nibbles::from_bytes(&[0x01])).unwrap(),
             Some(vec![0x34, 0x56, 0x78, 0x9A]),
         );
     }
@@ -258,13 +234,13 @@ mod test {
         let mut trie = Trie::new_temp();
         let node = pmt_node! { @(trie)
             extension { [0], branch {
-                0 => leaf { vec![0x00] => vec![0x12, 0x34, 0x56, 0x78] },
-                1 => leaf { vec![0x01] => vec![0x34, 0x56, 0x78, 0x9A] },
+                0 => leaf { vec![16] => vec![0x12, 0x34, 0x56, 0x78] },
+                1 => leaf { vec![16] => vec![0x34, 0x56, 0x78, 0x9A] },
             } }
         };
 
         assert_eq!(
-            node.get(&trie.state, NibbleSlice::new(&[0x02])).unwrap(),
+            node.get(&trie.state, Nibbles::from_bytes(&[0x02])).unwrap(),
             None,
         );
     }
@@ -274,19 +250,19 @@ mod test {
         let mut trie = Trie::new_temp();
         let node = pmt_node! { @(trie)
             extension { [0], branch {
-                0 => leaf { vec![0x00] => vec![0x12, 0x34, 0x56, 0x78] },
-                1 => leaf { vec![0x01] => vec![0x34, 0x56, 0x78, 0x9A] },
+                0 => leaf { vec![16] => vec![0x12, 0x34, 0x56, 0x78] },
+                1 => leaf { vec![16] => vec![0x34, 0x56, 0x78, 0x9A] },
             } }
         };
 
         let node = node
-            .insert(&mut trie.state, NibbleSlice::new(&[0x02]), vec![])
+            .insert(&mut trie.state, Nibbles::from_bytes(&[0x02]), vec![])
             .unwrap();
         let node = match node {
             Node::Extension(x) => x,
             _ => panic!("expected an extension node"),
         };
-        assert!(node.prefix.iter().eq([Nibble::V0].into_iter()));
+        assert_eq!(node.prefix.as_ref(), &[0]);
     }
 
     #[test]
@@ -294,20 +270,20 @@ mod test {
         let mut trie = Trie::new_temp();
         let node = pmt_node! { @(trie)
             extension { [0], branch {
-                0 => leaf { vec![0x00] => vec![0x12, 0x34, 0x56, 0x78] },
-                1 => leaf { vec![0x01] => vec![0x34, 0x56, 0x78, 0x9A] },
+                0 => leaf { vec![16] => vec![0x12, 0x34, 0x56, 0x78] },
+                1 => leaf { vec![16] => vec![0x34, 0x56, 0x78, 0x9A] },
             } }
         };
 
         let node = node
-            .insert(&mut trie.state, NibbleSlice::new(&[0x10]), vec![0x20])
+            .insert(&mut trie.state, Nibbles::from_bytes(&[0x10]), vec![0x20])
             .unwrap();
         let node = match node {
             Node::Branch(x) => x,
             _ => panic!("expected a branch node"),
         };
         assert_eq!(
-            node.get(&trie.state, NibbleSlice::new(&[0x10])).unwrap(),
+            node.get(&trie.state, Nibbles::from_bytes(&[0x10])).unwrap(),
             Some(vec![0x20])
         );
     }
@@ -317,20 +293,20 @@ mod test {
         let mut trie = Trie::new_temp();
         let node = pmt_node! { @(trie)
             extension { [0, 0], branch {
-                0 => leaf { vec![0x00, 0x00] => vec![0x12, 0x34, 0x56, 0x78] },
-                1 => leaf { vec![0x00, 0x10] => vec![0x34, 0x56, 0x78, 0x9A] },
+                0 => leaf { vec![16] => vec![0x12, 0x34, 0x56, 0x78] },
+                1 => leaf { vec![16]=> vec![0x34, 0x56, 0x78, 0x9A] },
             } }
         };
 
         let node = node
-            .insert(&mut trie.state, NibbleSlice::new(&[0x10]), vec![0x20])
+            .insert(&mut trie.state, Nibbles::from_bytes(&[0x10]), vec![0x20])
             .unwrap();
         let node = match node {
             Node::Branch(x) => x,
             _ => panic!("expected a branch node"),
         };
         assert_eq!(
-            node.get(&trie.state, NibbleSlice::new(&[0x10])).unwrap(),
+            node.get(&trie.state, Nibbles::from_bytes(&[0x10])).unwrap(),
             Some(vec![0x20])
         );
     }
@@ -340,12 +316,12 @@ mod test {
         let mut trie = Trie::new_temp();
         let node = pmt_node! { @(trie)
             extension { [0, 0], branch {
-                0 => leaf { vec![0x00, 0x00] => vec![0x12, 0x34, 0x56, 0x78] },
-                1 => leaf { vec![0x00, 0x10] => vec![0x34, 0x56, 0x78, 0x9A] },
+                0 => leaf { vec![16] => vec![0x12, 0x34, 0x56, 0x78] },
+                1 => leaf { vec![16] => vec![0x34, 0x56, 0x78, 0x9A] },
             } }
         };
 
-        let path = NibbleSlice::new(&[0x01]);
+        let path = Nibbles::from_bytes(&[0x01]);
         let value = vec![0x02];
 
         let node = node
@@ -361,12 +337,12 @@ mod test {
         let mut trie = Trie::new_temp();
         let node = pmt_node! { @(trie)
             extension { [0, 0], branch {
-                0 => leaf { vec![0x00, 0x00] => vec![0x12, 0x34, 0x56, 0x78] },
-                1 => leaf { vec![0x00, 0x10] => vec![0x34, 0x56, 0x78, 0x9A] },
+                0 => leaf { vec![16] => vec![0x12, 0x34, 0x56, 0x78] },
+                1 => leaf { vec![16] => vec![0x34, 0x56, 0x78, 0x9A] },
             } }
         };
 
-        let path = NibbleSlice::new(&[0x01]);
+        let path = Nibbles::from_bytes(&[0x01]);
         let value = vec![0x04];
 
         let node = node
@@ -382,13 +358,13 @@ mod test {
         let mut trie = Trie::new_temp();
         let node = pmt_node! { @(trie)
             extension { [0], branch {
-                0 => leaf { vec![0x00] => vec![0x00] },
-                1 => leaf { vec![0x01] => vec![0x01] },
+                0 => leaf { vec![16] => vec![0x00] },
+                1 => leaf { vec![16] => vec![0x01] },
             } }
         };
 
         let (node, value) = node
-            .remove(&mut trie.state, NibbleSlice::new(&[0x02]))
+            .remove(&mut trie.state, Nibbles::from_bytes(&[0x02]))
             .unwrap();
 
         assert!(matches!(node, Some(Node::Extension(_))));
@@ -400,13 +376,13 @@ mod test {
         let mut trie = Trie::new_temp();
         let node = pmt_node! { @(trie)
             extension { [0], branch {
-                0 => leaf { vec![0x00] => vec![0x00] },
-                1 => leaf { vec![0x01] => vec![0x01] },
+                0 => leaf { vec![16] => vec![0x00] },
+                1 => leaf { vec![16] => vec![0x01] },
             } }
         };
 
         let (node, value) = node
-            .remove(&mut trie.state, NibbleSlice::new(&[0x01]))
+            .remove(&mut trie.state, Nibbles::from_bytes(&[0x01]))
             .unwrap();
 
         assert!(matches!(node, Some(Node::Leaf(_))));
@@ -418,16 +394,16 @@ mod test {
         let mut trie = Trie::new_temp();
         let node = pmt_node! { @(trie)
             extension { [0], branch {
-                0 => leaf { vec![0x00] => vec![0x00] },
+                0 => leaf { vec![16] => vec![0x00] },
                 1 => extension { [0], branch {
-                    0 => leaf { vec![0x01, 0x00] => vec![0x01, 0x00] },
-                    1 => leaf { vec![0x01, 0x01] => vec![0x01, 0x01] },
+                    0 => leaf { vec![16] => vec![0x01, 0x00] },
+                    1 => leaf { vec![16] => vec![0x01, 0x01] },
                 } },
             } }
         };
 
         let (node, value) = node
-            .remove(&mut trie.state, NibbleSlice::new(&[0x00]))
+            .remove(&mut trie.state, Nibbles::from_bytes(&[0x00]))
             .unwrap();
 
         assert!(matches!(node, Some(Node::Extension(_))));
@@ -438,23 +414,20 @@ mod test {
     fn compute_hash() {
         /*
         Extension {
-            [0x00, 0x00]
+            [0, 0]
             Branch { [
-                Leaf { [0x00, 0x00], [0x12, 0x34] }
-                Leaf { [0x00, 0x10], [0x56, 0x78] }
+               0: Leaf { [0, 16], [0x12, 0x34] }
+               1: Leaf { [0, 16], [0x56, 0x78] }
             }
         }
         */
-        let leaf_node_a = LeafNode::new(vec![0x00, 0x00], vec![0x12, 0x34]);
-        let leaf_node_b = LeafNode::new(vec![0x00, 0x10], vec![0x56, 0x78]);
+        let leaf_node_a = LeafNode::new(Nibbles::from_hex(vec![0, 16]), vec![0x12, 0x34]);
+        let leaf_node_b = LeafNode::new(Nibbles::from_hex(vec![0, 16]), vec![0x56, 0x78]);
         let mut choices = BranchNode::EMPTY_CHOICES;
-        choices[0] = leaf_node_a.compute_hash(3);
-        choices[1] = leaf_node_b.compute_hash(3);
+        choices[0] = leaf_node_a.compute_hash();
+        choices[1] = leaf_node_b.compute_hash();
         let branch_node = BranchNode::new(Box::new(choices));
-        let node = ExtensionNode::new(
-            NibbleVec::from_nibbles([Nibble::V0, Nibble::V0].into_iter(), false),
-            branch_node.compute_hash(),
-        );
+        let node = ExtensionNode::new(Nibbles::from_hex(vec![0, 0]), branch_node.compute_hash());
 
         assert_eq!(
             node.compute_hash().as_ref(),
@@ -470,23 +443,26 @@ mod test {
     fn compute_hash_long() {
         /*
         Extension {
-            [0x00, 0x00]
+            [0, 0]
             Branch { [
-                Leaf { [0x00, 0x00], [0x12, 0x34, 0x56, 0x78, 0x9A] }
-                Leaf { [0x00, 0x10], [0x34, 0x56, 0x78, 0x9A, 0xBC] }
+                0: Leaf { [0, 16], [0x12, 0x34, 0x56, 0x78, 0x9A] }
+                1: Leaf { [0, 16], [0x34, 0x56, 0x78, 0x9A, 0xBC] }
             }
         }
         */
-        let leaf_node_a = LeafNode::new(vec![0x00, 0x00], vec![0x12, 0x34, 0x56, 0x78, 0x9A]);
-        let leaf_node_b = LeafNode::new(vec![0x00, 0x10], vec![0x34, 0x56, 0x78, 0x9A, 0xBC]);
-        let mut choices = BranchNode::EMPTY_CHOICES;
-        choices[0] = leaf_node_a.compute_hash(3);
-        choices[1] = leaf_node_b.compute_hash(3);
-        let branch_node = BranchNode::new(Box::new(choices));
-        let node = ExtensionNode::new(
-            NibbleVec::from_nibbles([Nibble::V0, Nibble::V0].into_iter(), false),
-            branch_node.compute_hash(),
+        let leaf_node_a = LeafNode::new(
+            Nibbles::from_hex(vec![0, 16]),
+            vec![0x12, 0x34, 0x56, 0x78, 0x9A],
         );
+        let leaf_node_b = LeafNode::new(
+            Nibbles::from_hex(vec![0, 16]),
+            vec![0x34, 0x56, 0x78, 0x9A, 0xBC],
+        );
+        let mut choices = BranchNode::EMPTY_CHOICES;
+        choices[0] = leaf_node_a.compute_hash();
+        choices[1] = leaf_node_b.compute_hash();
+        let branch_node = BranchNode::new(Box::new(choices));
+        let node = ExtensionNode::new(Nibbles::from_hex(vec![0, 0]), branch_node.compute_hash());
 
         assert_eq!(
             node.compute_hash().as_ref(),

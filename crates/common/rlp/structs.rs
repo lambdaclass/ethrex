@@ -207,6 +207,19 @@ impl<'a> Encoder<'a> {
         encode_length(self.temp_buf.len(), self.buf);
         self.buf.put_slice(&self.temp_buf);
     }
+
+    /// Adds a raw value to the buffer without rlp-encoding it
+    pub fn encode_raw(mut self, value: &[u8]) -> Self {
+        self.temp_buf.put_slice(value);
+        self
+    }
+
+    /// Stores a field to be encoded as bytes
+    /// This method is used to bypass the conflicting implementations between Vec<T> and Vec<u8>
+    pub fn encode_bytes(mut self, value: &[u8]) -> Self {
+        <[u8] as RLPEncode>::encode(value, &mut self.temp_buf);
+        self
+    }
 }
 
 #[cfg(test)]

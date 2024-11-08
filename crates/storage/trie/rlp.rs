@@ -31,7 +31,6 @@ impl RLPEncode for BranchNode {
         // TODO: choices encoded as vec due to conflicting trait impls for [T;N] & [u8;N], check if we can fix this later
         Encoder::new(buf)
             .encode_field(&self.choices.to_vec())
-            .encode_field(&self.path)
             .encode_field(&self.value)
             .finish()
     }
@@ -49,7 +48,7 @@ impl RLPEncode for ExtensionNode {
 impl RLPEncode for LeafNode {
     fn encode(&self, buf: &mut dyn bytes::BufMut) {
         Encoder::new(buf)
-            .encode_field(&self.path)
+            .encode_field(&self.partial)
             .encode_field(&self.value)
             .finish()
     }
@@ -64,16 +63,8 @@ impl RLPDecode for BranchNode {
         let choices = choices
             .try_into()
             .map_err(|_| RLPDecodeError::Custom(CHOICES_LEN_ERROR_MSG.to_string()))?;
-        let (path, decoder) = decoder.decode_field("path")?;
         let (value, decoder) = decoder.decode_field("value")?;
-        Ok((
-            Self {
-                choices,
-                path,
-                value,
-            },
-            decoder.finish()?,
-        ))
+        Ok((Self { choices, value }, decoder.finish()?))
     }
 }
 
@@ -89,9 +80,9 @@ impl RLPDecode for ExtensionNode {
 impl RLPDecode for LeafNode {
     fn decode_unfinished(rlp: &[u8]) -> Result<(Self, &[u8]), RLPDecodeError> {
         let decoder = Decoder::new(rlp)?;
-        let (path, decoder) = decoder.decode_field("path")?;
+        let (partial, decoder) = decoder.decode_field("partial")?;
         let (value, decoder) = decoder.decode_field("value")?;
-        Ok((Self { path, value }, decoder.finish()?))
+        Ok((Self { partial, value }, decoder.finish()?))
     }
 }
 
