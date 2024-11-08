@@ -143,7 +143,7 @@ impl VM {
 
         loop {
             let opcode = current_call_frame.next_opcode().unwrap_or(Opcode::STOP);
-            // Note: these are commented because they're still being used in development.
+            // Note: This is commented because it's used for debugging purposes in development.
             // dbg!(&current_call_frame.gas_used);
             // dbg!(&opcode);
             let op_result: Result<OpcodeSuccess, VMError> = match opcode {
@@ -396,22 +396,24 @@ impl VM {
 
         self.env.consumed_gas = initial_gas;
 
-        let mut current_call_frame = self.call_frames.pop().unwrap();
+        let mut initial_call_frame = self.call_frames.pop().unwrap();
+        let sender = initial_call_frame.msg_sender;
 
-        let mut report = self.execute(&mut current_call_frame);
-        let sender = self.call_frames.first().unwrap().msg_sender;
+        let mut report = self.execute(&mut initial_call_frame);
 
         // This cost applies both for call and create
         // 4 gas for each zero byte in the transaction data 16 gas for each non-zero byte in the transaction.
         let mut calldata_cost = 0;
-        for byte in &self.call_frames[0].calldata {
+        for byte in &initial_call_frame.calldata {
             if *byte != 0 {
                 calldata_cost += 16;
             } else {
                 calldata_cost += 4;
             }
         }
-        report.gas_used += calldata_cost;
+
+        let max_gas = self.env.gas_limit.low_u64();
+        report.add_gas_with_max(calldata_cost, max_gas);
 
         if self.is_create() {
             // If create should check if transaction failed. If failed should revert (delete created contract, )
@@ -434,14 +436,14 @@ impl VM {
             // the code-deposit cost, c, proportional to the size of the created contract’s code
             let mut creation_cost = 200 * contract_code.len() as u64;
             creation_cost += 32000;
-            report.gas_used += creation_cost;
+            report.add_gas_with_max(creation_cost, max_gas);
             // Charge 22100 gas for each storage variable set
 
             // GInitCodeword * number_of_words rounded up. GinitCodeWord = 2
-            let number_of_words = self.call_frames[0].calldata.chunks(32).len() as u64;
-            report.gas_used += number_of_words * 2;
+            let number_of_words = initial_call_frame.calldata.chunks(32).len() as u64;
+            report.add_gas_with_max(number_of_words * 2, max_gas);
 
-            let contract_address = self.call_frames.first().unwrap().to;
+            let contract_address = initial_call_frame.to;
             let mut created_contract = self.get_account(&contract_address);
 
             created_contract.info.bytecode = contract_code;
@@ -458,10 +460,28 @@ impl VM {
             .checked_sub(U256::from(report.gas_used) * self.env.gas_price)
             .ok_or(VMError::OutOfGas)?;
 
-        // Note: this is commented because it is still being used in development.
+        let receiver_address = initial_call_frame.to;
+        let mut receiver_account = self.get_account(&receiver_address);
+        // If execution was successful we want to transfer value from sender to receiver
+        if report.is_success() {
+            // Subtract to the caller the gas sent
+            sender_account.info.balance = sender_account
+                .info
+                .balance
+                .checked_sub(initial_call_frame.msg_value)
+                .ok_or(VMError::OutOfGas)?; // This error shouldn't be OutOfGas
+            receiver_account.info.balance = receiver_account
+                .info
+                .balance
+                .checked_add(initial_call_frame.msg_value)
+                .ok_or(VMError::OutOfGas)?; // This error shouldn't be OutOfGas
+        }
+
+        // Note: This is commented because it's used for debugging purposes in development.
         // dbg!(&report.gas_refunded);
 
         self.cache.add_account(&sender, &sender_account);
+        self.cache.add_account(&receiver_address, &receiver_account);
 
         // Send coinbase fee
         let priority_fee_per_gas = self.env.gas_price - self.env.base_fee_per_gas;

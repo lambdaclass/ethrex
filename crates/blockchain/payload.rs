@@ -418,6 +418,8 @@ fn apply_plain_transaction(
 
 fn finalize_payload(context: &mut PayloadBuildContext) -> Result<(), StoreError> {
     let account_updates = get_state_transitions(context.evm_state);
+    // Note: This is commented because it is still being used in development.
+    // dbg!(&account_updates);
     context.payload.header.state_root = context
         .store()
         .ok_or(StoreError::MissingStore)?
