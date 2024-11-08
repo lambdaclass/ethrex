@@ -137,6 +137,11 @@ impl Nibbles {
         compact
     }
 
+    /// Encodes the nibbles in compact form
+    pub fn decode_compact(compact: &[u8]) -> Self {
+        Self::from_hex(compact_to_hex(compact))
+    }
+
     /// Returns true if the nibbles contain the leaf flag (16) at the end
     pub fn is_leaf(&self) -> bool {
         if self.is_empty() {
@@ -182,6 +187,33 @@ impl RLPDecode for Nibbles {
         let (data, decoder) = decoder.decode_field("data")?;
         Ok((Self { data }, decoder.finish()?))
     }
+}
+
+// Code taken from https://github.com/ethereum/go-ethereum/blob/a1093d98eb3260f2abf340903c2d968b2b891c11/trie/encoding.go#L82
+fn compact_to_hex(compact: &[u8]) -> Vec<u8> {
+    if compact.is_empty() {
+        return vec![];
+    }
+    let mut base = keybytes_to_hex(compact);
+    // delete terminator flag
+    if base[0] < 2 {
+        base = base[..base.len() - 1].to_vec();
+    }
+    // apply odd flag
+    let chop = 2 - (base[0] & 1) as usize;
+    base[chop..].to_vec()
+}
+
+// Code taken from https://github.com/ethereum/go-ethereum/blob/a1093d98eb3260f2abf340903c2d968b2b891c11/trie/encoding.go#L96
+fn keybytes_to_hex(keybytes: &[u8]) -> Vec<u8> {
+    let l = keybytes.len() * 2 + 1;
+    let mut nibbles = vec![0; l];
+    for (i, b) in keybytes.iter().enumerate() {
+        nibbles[i * 2] = b / 16;
+        nibbles[i * 2 + 1] = b % 16;
+    }
+    nibbles[l - 1] = 16;
+    nibbles
 }
 
 #[cfg(test)]

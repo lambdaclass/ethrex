@@ -2,9 +2,12 @@ use bytes::Bytes;
 use ethereum_rust_rlp::encode::RLPEncode;
 use ethereum_rust_storage::{error::StoreError, Store};
 
-use crate::rlpx::snap::{
-    AccountRange, AccountRangeUnit, AccountStateSlim, ByteCodes, GetAccountRange, GetByteCodes,
-    GetStorageRanges, StorageRanges, StorageSlot,
+use crate::rlpx::{
+    error::RLPxError,
+    snap::{
+        AccountRange, AccountRangeUnit, AccountStateSlim, ByteCodes, GetAccountRange, GetByteCodes,
+        GetStorageRanges, GetTrieNodes, StorageRanges, StorageSlot, TrieNodes,
+    },
 };
 
 pub fn process_account_range_request(
@@ -116,6 +119,37 @@ pub fn process_byte_codes_request(
     Ok(ByteCodes {
         id: request.id,
         codes,
+    })
+}
+
+pub fn process_trie_nodes_request(
+    request: GetTrieNodes,
+    store: Store,
+) -> Result<TrieNodes, RLPxError> {
+    let mut nodes = vec![];
+    let mut remaining_bytes = request.bytes;
+    for paths in request.paths {
+        if paths.is_empty() {
+            return Err(RLPxError::BadRequest(
+                "zero-item pathset requested".to_string(),
+            ));
+        }
+        let trie_nodes = store.get_trie_nodes(
+            request.root_hash,
+            paths.into_iter().map(|bytes| bytes.to_vec()).collect(),
+            remaining_bytes,
+        )?;
+        nodes.extend(trie_nodes.iter().map(|nodes| Bytes::copy_from_slice(nodes)));
+        remaining_bytes = remaining_bytes
+            .saturating_sub(trie_nodes.iter().fold(0, |acc, nodes| acc + nodes.len()) as u64);
+        if remaining_bytes == 0 {
+            break;
+        }
+    }
+
+    Ok(TrieNodes {
+        id: request.id,
+        nodes,
     })
 }
 

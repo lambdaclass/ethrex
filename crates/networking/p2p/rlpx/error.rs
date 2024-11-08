@@ -21,6 +21,8 @@ pub(crate) enum RLPxError {
     InvalidMessageLength(),
     #[error("Cannot handle message")]
     MessageNotHandled(),
+    #[error("Bad Request: {0}")]
+    BadRequest(String),
     #[error(transparent)]
     RLPDecodeError(#[from] RLPDecodeError),
     #[error(transparent)]
