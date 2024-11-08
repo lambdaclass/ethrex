@@ -126,7 +126,7 @@ impl EthClient {
             from,
             to: to.clone(),
             input: data.clone(),
-            nonce: overrides.nonce.unwrap_or(self.get_nonce(from).await?),
+            nonce: overrides.nonce.or(self.get_nonce(from).await.ok()),
             ..Default::default()
         };
 

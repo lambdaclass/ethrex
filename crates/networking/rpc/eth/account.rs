@@ -1,8 +1,9 @@
+use ethereum_rust_blockchain::mempool;
 use serde_json::Value;
 use tracing::info;
 
 use crate::types::account_proof::{AccountProof, StorageProof};
-use crate::types::block_identifier::BlockIdentifierOrHash;
+use crate::types::block_identifier::{BlockIdentifierOrHash, BlockTag};
 use crate::RpcApiContext;
 use crate::{utils::RpcErr, RpcHandler};
 use ethereum_rust_core::{Address, BigEndianHash, H256, U256};
@@ -159,15 +160,27 @@ impl RpcHandler for GetTransactionCountRequest {
             self.address, self.block
         );
 
-        let Some(block_number) = self.block.resolve_block_number(&context.storage)? else {
-            return serde_json::to_value("0x0")
-                .map_err(|error| RpcErr::Internal(error.to_string()));
+        // If the tag is Pending, we need to get the nonce from the mempool
+        let pending_nonce = if self.block == BlockTag::Pending {
+            mempool::get_nonce(&self.address, &context.storage)?
+        } else {
+            None
         };
 
-        let nonce = context
-            .storage
-            .get_nonce_by_account_address(block_number, self.address)?
-            .unwrap_or_default();
+        let nonce = match pending_nonce {
+            Some(nonce) => nonce,
+            None => {
+                let Some(block_number) = self.block.resolve_block_number(&context.storage)? else {
+                    return serde_json::to_value("0x0")
+                        .map_err(|error| RpcErr::Internal(error.to_string()));
+                };
+
+                context
+                    .storage
+                    .get_nonce_by_account_address(block_number, self.address)?
+                    .unwrap_or_default()
+            }
+        };
 
         serde_json::to_value(format!("0x{:x}", nonce))
             .map_err(|error| RpcErr::Internal(error.to_string()))

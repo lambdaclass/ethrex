@@ -40,6 +40,8 @@ impl BlockIdentifier {
                 BlockTag::Safe => storage.get_safe_block_number(),
                 BlockTag::Latest => storage.get_latest_block_number(),
                 BlockTag::Pending => {
+                    // TODO(#1112): We need to check individual intrincacies of the pending tag for
+                    // each RPC method that uses it.
                     storage
                         .get_pending_block_number()
                         // If there are no pending blocks, we return the latest block number

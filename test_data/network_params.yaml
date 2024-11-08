@@ -21,5 +21,3 @@ assertoor_params:
   run_blob_transaction_test: true
   tests:
     - 'https://raw.githubusercontent.com/lambdaclass/lambda_ethereum_rust/refs/heads/main/test_data/el-stability-check.yml'
-tx_spammer_params:
-  tx_spammer_extra_args: ["--accounts=10", --txcount=10]

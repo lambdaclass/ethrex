@@ -436,15 +436,28 @@ impl RpcHandler for EstimateGasRequest {
             // Block not found
             _ => return Ok(Value::Null),
         };
+
+        let transaction = match self.transaction.nonce {
+            Some(_nonce) => self.transaction.clone(),
+            None => {
+                let transaction_nonce = storage
+                    .get_nonce_by_account_address(block_header.number, self.transaction.from)?;
+
+                let mut cloned_transaction = self.transaction.clone();
+                cloned_transaction.nonce = transaction_nonce;
+                cloned_transaction
+            }
+        };
+
         let spec_id =
             ethereum_rust_vm::spec_id(&storage.get_chain_config()?, block_header.timestamp);
 
         // If the transaction is a plain value transfer, short circuit estimation.
-        if let TxKind::Call(address) = self.transaction.to {
+        if let TxKind::Call(address) = transaction.to {
             let account_info = storage.get_account_info(block_header.number, address)?;
             let code = account_info.map(|info| storage.get_account_code(info.code_hash));
             if code.is_none() {
-                let mut value_transfer_transaction = self.transaction.clone();
+                let mut value_transfer_transaction = transaction.clone();
                 value_transfer_transaction.gas = Some(TRANSACTION_GAS);
                 let result: Result<ExecutionResult, RpcErr> = simulate_tx(
                     &value_transfer_transaction,
@@ -460,22 +473,22 @@ impl RpcHandler for EstimateGasRequest {
         }
 
         // Prepare binary search
-        let mut highest_gas_limit = match self.transaction.gas {
+        let mut highest_gas_limit = match transaction.gas {
             Some(gas) => gas.min(block_header.gas_limit),
             None => block_header.gas_limit,
         };
 
-        if self.transaction.gas_price != 0 {
+        if transaction.gas_price != 0 {
             highest_gas_limit = recap_with_account_balances(
                 highest_gas_limit,
-                &self.transaction,
+                &transaction,
                 storage,
                 block_header.number,
             )?;
         }
 
         // Check whether the execution is possible
-        let mut transaction = self.transaction.clone();
+        let mut transaction = transaction.clone();
         transaction.gas = Some(highest_gas_limit);
         let result = simulate_tx(&transaction, &block_header, storage.clone(), spec_id)?;
 

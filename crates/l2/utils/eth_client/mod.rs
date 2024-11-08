@@ -167,12 +167,16 @@ impl EthClient {
             TxKind::Call(addr) => addr,
             TxKind::Create => Address::zero(),
         };
-        let data = json!({
+        let mut data = json!({
             "to": format!("{to:#x}"),
             "input": format!("{:#x}", transaction.input),
             "from": format!("{:#x}", transaction.from),
-            "nonce": format!("{:#x}", transaction.nonce),
         });
+
+        // Add the nonce just if present, otherwise the RPC will use the latest nonce
+        if let Some(nonce) = transaction.nonce {
+            data["nonce"] = json!(format!("{:#x}", nonce));
+        }
 
         let request = RpcRequest {
             id: RpcRequestId::Number(1),

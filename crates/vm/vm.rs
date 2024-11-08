@@ -735,7 +735,7 @@ fn tx_env_from_generic(tx: &GenericTransaction, basefee: u64) -> TxEnv {
         },
         value: RevmU256::from_limbs(tx.value.0),
         data: tx.input.clone().into(),
-        nonce: Some(tx.nonce),
+        nonce: tx.nonce,
         chain_id: tx.chain_id,
         access_list: tx
             .access_list
