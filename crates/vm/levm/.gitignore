@@ -1,3 +1,4 @@
 *.tar.gz
 
-tests/ef_testcases
+tests/ef/tests
+tmp/

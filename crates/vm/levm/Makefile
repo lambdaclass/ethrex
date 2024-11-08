@@ -14,6 +14,29 @@ lint: ## 🧹 Linter check
 fmt: ## 📄 Runs rustfmt
 	cargo fmt --all
 
+###### EF Tests ######
+
+SPECTEST_VERSION := v14.1
+SPECTEST_ARTIFACT := tests_$(SPECTEST_VERSION).tar.gz
+SPECTEST_VECTORS_DIR := tests/ef/tests
+
+$(SPECTEST_ARTIFACT):
+	rm -f tests_*.tar.gz # Delete older versions
+	curl -L -o $(SPECTEST_ARTIFACT) "https://github.com/ethereum/tests/archive/refs/tags/$(SPECTEST_VERSION).tar.gz"
+
+$(SPECTEST_VECTORS_DIR): $(SPECTEST_ARTIFACT)
+	mkdir -p $(SPECTEST_VECTORS_DIR) tmp
+	tar -xzf $(SPECTEST_ARTIFACT) -C tmp
+	mv tmp/tests-14.1/GeneralStateTests $(SPECTEST_VECTORS_DIR)
+
+download-ef-tests: $(SPECTEST_VECTORS_DIR) ## 📥 Download EF Tests
+
+run-ef-tests: ## 🏃‍♂️ Run EF Tests
+	cargo test ef::testito -- --ignored
+
+clean-ef-tests: ## 🗑️  Clean test vectors
+	rm -rf $(SPECTEST_VECTORS_DIR)
+
 ###### Benchmarks ######
 
 revm-comparison:

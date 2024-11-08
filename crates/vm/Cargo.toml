@@ -40,3 +40,6 @@ c-kzg = ["revm/c-kzg"]
 blst = ["revm/blst"]
 libmdbx = ["ethereum_rust-storage/default", "ethereum_rust-core/libmdbx"]
 levm = ["ethereum_rust_levm"]
+
+[profile.test]
+opt-level = 3
