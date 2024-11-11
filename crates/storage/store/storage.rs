@@ -675,7 +675,7 @@ impl Store {
     }
 
     // Obtain the storage trie for the given account on the given block
-    fn storage_trie(
+    pub fn storage_trie(
         &self,
         block_hash: BlockHash,
         address: Address,
@@ -705,6 +705,21 @@ impl Store {
         let Some(block_hash) = self.engine.get_canonical_block_hash(block_number)? else {
             return Ok(None);
         };
+        let Some(state_trie) = self.state_trie(block_hash)? else {
+            return Ok(None);
+        };
+        let hashed_address = hash_address(&address);
+        let Some(encoded_state) = state_trie.get(&hashed_address)? else {
+            return Ok(None);
+        };
+        Ok(Some(AccountState::decode(&encoded_state)?))
+    }
+
+    pub fn get_account_state_by_hash(
+        &self,
+        block_hash: BlockHash,
+        address: Address,
+    ) -> Result<Option<AccountState>, StoreError> {
         let Some(state_trie) = self.state_trie(block_hash)? else {
             return Ok(None);
         };
@@ -876,7 +891,7 @@ impl Store {
     }
 }
 
-fn hash_address(address: &Address) -> Vec<u8> {
+pub fn hash_address(address: &Address) -> Vec<u8> {
     Keccak256::new_with_prefix(address.to_fixed_bytes())
         .finalize()
         .to_vec()
@@ -889,7 +904,7 @@ fn hash_address_fixed(address: &Address) -> H256 {
     )
 }
 
-fn hash_key(key: &H256) -> Vec<u8> {
+pub fn hash_key(key: &H256) -> Vec<u8> {
     Keccak256::new_with_prefix(key.to_fixed_bytes())
         .finalize()
         .to_vec()

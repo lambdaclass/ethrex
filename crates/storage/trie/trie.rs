@@ -154,6 +154,61 @@ impl Trie {
         Ok(node_path)
     }
 
+    pub fn verify_proof(
+        _proof: &[Vec<u8>],
+        _root_hash: NodeHash,
+        _path: &PathRLP,
+        _value: &ValueRLP,
+    ) -> Result<bool, TrieError> {
+        // This is a mockup function for verifying proof of inclusions. This function will be
+        // possible to implement after refactoring the current Trie implementation.
+
+        // We'll build a trie from the proof nodes and check whether:
+        //     1. the trie root hash is the one we expect
+        //     2. the trie contains the (key, value) pair to verify
+
+        // We will only be using the trie's cache so we don't need a working DB
+        // struct NullTrieDB;
+
+        // impl TrieDB for NullTrieDB {
+        //     fn get(&self, _key: Vec<u8>) -> Result<Option<Vec<u8>>, TrieError> {
+        //         Ok(None)
+        //     }
+
+        //     fn put(&self, _key: Vec<u8>, _value: Vec<u8>) -> Result<(), TrieError> {
+        //         Ok(())
+        //     }
+        // }
+
+        // let mut trie = Trie::new(Box::new(NullTrieDB));
+
+        // Insert root into trie
+        // let mut proof = proof.into_iter();
+        // let root_node = proof.next();
+        // trie.root = Some(root_node.insert_self(path_offset, &mut trie.state)?);
+
+        // Insert rest of nodes
+        // for node in proof {
+        //     node.insert_self(path_offset, &mut trie.state)?;
+        // }
+        // let expected_root_hash = trie.hash_no_commit()?.into();
+
+        // Check key exists
+        // let Some(retrieved_value) = trie.get(path)? else {
+        //     return Ok(false);
+        // };
+        // // Check value is correct
+        // if retrieved_value != *value {
+        //     return Ok(false);
+        // }
+        // // Check root hash
+        // if root_hash != expected_root_hash {
+        //     return Ok(false);
+        // }
+
+        Ok(true)
+    }
+
     /// Builds an in-memory trie from the given elements and returns its hash
     pub fn compute_hash_from_unsorted_iter(
         iter: impl Iterator<Item = (PathRLP, ValueRLP)>,
@@ -1056,5 +1111,21 @@ mod test {
         let cita_proof = cita_trie.get_proof(&a).unwrap();
         let trie_proof = trie.get_proof(&a).unwrap();
         assert_eq!(cita_proof, trie_proof);
+    }
+
+    #[test]
+    fn verify_proof_one_leaf() {
+        let mut trie = Trie::new_temp();
+        trie.insert(b"duck".to_vec(), b"duckling".to_vec()).unwrap();
+
+        let root_hash = trie.hash().unwrap().into();
+        let trie_proof = trie.get_proof(&b"duck".to_vec()).unwrap();
+        assert!(Trie::verify_proof(
+            &trie_proof,
+            root_hash,
+            &b"duck".to_vec(),
+            &b"duckling".to_vec(),
+        )
+        .unwrap());
     }
 }

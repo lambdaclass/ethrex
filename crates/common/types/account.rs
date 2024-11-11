@@ -3,6 +3,7 @@ use std::collections::HashMap;
 use bytes::Bytes;
 use ethereum_rust_trie::Trie;
 use ethereum_types::{H256, U256};
+use serde::{Deserialize, Serialize};
 use sha3::{Digest as _, Keccak256};
 
 use ethereum_rust_rlp::{
@@ -43,7 +44,7 @@ pub struct AccountInfo {
     pub nonce: u64,
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct AccountState {
     pub nonce: u64,
     pub balance: U256,

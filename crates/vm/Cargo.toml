@@ -7,6 +7,8 @@ edition = "2021"
 ethereum_rust-core = { path = "../common", default-features = false }
 ethereum_rust-storage = { path = "../storage/store", default-features = false }
 ethereum_rust_levm = { path = "./levm", optional = true }
+ethereum_rust-trie = { path = "../storage/trie", default-features = false }
+ethereum_rust-rlp = { path = "../common/rlp", default-features = false }
 revm = { version = "14.0.3", features = [
     "serde",
     "std",
@@ -18,7 +20,7 @@ revm = { version = "14.0.3", features = [
 # These dependencies must be kept up to date with the corresponding revm version, otherwise errors may pop up because of trait implementation mismatches
 revm-inspectors = { version = "0.8.1" }
 revm-primitives = { version = "10.0.0", features = [
-    "std",
+  "std",
 ], default-features = false }
 bytes.workspace = true
 thiserror.workspace = true
@@ -29,6 +31,8 @@ tracing.workspace = true
 
 serde.workspace = true
 bincode = "1"
+
+ethereum-types = "0.14.1"
 
 [lib]
 path = "./vm.rs"

@@ -53,10 +53,6 @@ pub enum EvmState {
 }
 
 impl EvmState {
-    pub fn from_exec_db(db: ExecutionDB) -> Self {
-        EvmState::Execution(revm::db::CacheDB::new(db))
-    }
-
     /// Get a reference to inner `Store` database
     pub fn database(&self) -> Option<&Store> {
         if let EvmState::Store(db) = self {
@@ -72,6 +68,12 @@ impl EvmState {
             EvmState::Store(db) => db.database.store.get_chain_config().map_err(EvmError::from),
             EvmState::Execution(db) => Ok(db.db.get_chain_config()),
         }
+    }
+}
+
+impl From<ExecutionDB> for EvmState {
+    fn from(value: ExecutionDB) -> Self {
+        EvmState::Execution(revm::db::CacheDB::new(value))
     }
 }
 

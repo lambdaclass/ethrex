@@ -1,4 +1,7 @@
+use ethereum_rust_core::types::BlockHash;
 use ethereum_rust_storage::error::StoreError;
+use ethereum_rust_trie::TrieError;
+use ethereum_types::H160;
 use revm::primitives::{
     result::EVMError as RevmError, Address as RevmAddress, B256 as RevmB256, U256 as RevmU256,
 };
@@ -26,6 +29,10 @@ pub enum ExecutionDBError {
     Store(#[from] StoreError),
     #[error("Evm error: {0}")]
     Evm(#[from] Box<EvmError>), // boxed to avoid cyclic definition
+    #[error("Trie error: {0}")]
+    Trie(#[from] TrieError),
+    #[error("State proofs error: {0}")]
+    StateProofs(#[from] StateProofsError),
     #[error("Account {0} not found")]
     AccountNotFound(RevmAddress),
     #[error("Code by hash {0} not found")]
@@ -36,10 +43,30 @@ pub enum ExecutionDBError {
     BlockHashNotFound(u64),
     #[error("Missing account {0} info while trying to create ExecutionDB")]
     NewMissingAccountInfo(RevmAddress),
-    #[error("Missing earliest or latest block number while trying to create ExecutionDB")]
-    NewMissingBlockNumber(),
+    #[error("Missing state trie of block {0} while trying to create ExecutionDB")]
+    NewMissingStateTrie(BlockHash),
+    #[error(
+        "Missing storage trie of block {0} and address {1} while trying to create ExecutionDB"
+    )]
+    NewMissingStorageTrie(BlockHash, RevmAddress),
     #[error("{0}")]
     Custom(String),
+}
+
+#[derive(Debug, Error)]
+pub enum StateProofsError {
+    #[error("Trie error: {0}")]
+    Trie(#[from] TrieError),
+    #[error("Storage trie for address {0} not found")]
+    StorageTrieNotFound(H160),
+    #[error("Storage for address {0} not found")]
+    StorageNotFound(RevmAddress),
+    #[error("Account proof for address {0} not found")]
+    AccountProofNotFound(RevmAddress),
+    #[error("Storage proofs for address {0} not found")]
+    StorageProofsNotFound(RevmAddress),
+    #[error("Storage proof for address {0} and key {1} not found")]
+    StorageProofNotFound(RevmAddress, RevmU256),
 }
 
 impl From<RevmError<StoreError>> for EvmError {
