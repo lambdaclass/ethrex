@@ -17,8 +17,11 @@ ethereum_rust-core = { path = "../common", default-features = false }
 ethereum_rust-storage = { path = "../storage/store", default-features = false }
 ethereum_rust-vm = { path = "../vm", default-features = false }
 
+k256 = { version = "0.13.3", features = ["ecdh"] }
+
 [dev-dependencies]
 serde_json.workspace = true
+hex = "0.4.3"
 
 [lib]
 path = "./blockchain.rs"

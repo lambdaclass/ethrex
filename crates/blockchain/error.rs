@@ -58,6 +58,8 @@ pub enum MempoolError {
     BlobTxNoBlobsBundle,
     #[error("Mismatch between blob versioned hashes and blobs bundle content length")]
     BlobsBundleWrongLen,
+    #[error("Blob versioned hashes do not match the blob commitments")]
+    BlobVersionedHashesIncorrectError,
 }
 
 #[derive(Debug)]

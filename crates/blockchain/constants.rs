@@ -59,3 +59,5 @@ pub const MIN_BASE_FEE_PER_BLOB_GAS: u64 = 1;
 pub const GAS_LIMIT_BOUND_DIVISOR: u64 = 1024;
 
 pub const MIN_GAS_LIMIT: u64 = 5000;
+
+pub const VERSIONED_HASH_VERSION_KZG: u8 = 0x01;
