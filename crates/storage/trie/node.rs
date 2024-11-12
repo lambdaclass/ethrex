@@ -2,7 +2,11 @@ mod branch;
 mod extension;
 mod leaf;
 
+use std::array;
+
 pub use branch::BranchNode;
+use ethereum_rust_rlp::{decode::decode_bytes, error::RLPDecodeError, structs::Decoder};
+use ethereum_types::H256;
 pub use extension::ExtensionNode;
 pub use leaf::LeafNode;
 
@@ -11,7 +15,7 @@ use crate::{error::TrieError, nibbles::Nibbles};
 use super::{node_hash::NodeHash, state::TrieState, ValueRLP};
 
 /// A Node in an Ethereum Compatible Patricia Merkle Trie
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum Node {
     Branch(BranchNode),
     Extension(ExtensionNode),
@@ -98,11 +102,75 @@ impl Node {
         }
     }
 
-    pub fn encode_raw(self) -> Vec<u8> {
+    /// Encodes the node
+    pub fn encode_raw(&self) -> Vec<u8> {
         match self {
             Node::Branch(n) => n.encode_raw(),
             Node::Extension(n) => n.encode_raw(),
             Node::Leaf(n) => n.encode_raw(),
         }
+    }
+
+    /// Decodes the node
+    pub fn decode_raw(rlp: &[u8]) -> Result<Self, RLPDecodeError> {
+        let mut rlp_items = vec![];
+        let mut decoder = Decoder::new(rlp)?;
+        let mut item;
+        // Get encoded fields
+        loop {
+            (item, decoder) = decoder.get_encoded_item()?;
+            rlp_items.push(item);
+            // Check if we reached the end or if we decoded more items than the ones we need
+            if decoder.is_done() || rlp_items.len() > 17 {
+                break;
+            }
+        }
+        // Deserialize into node depending on the available fields
+        Ok(match rlp_items.len() {
+            // Leaf or Extension Node
+            2 => {
+                let (path, _) = decode_bytes(&rlp_items[0])?;
+                let path = Nibbles::decode_compact(path);
+                if path.is_leaf() {
+                    // Decode as Leaf
+                    let (value, _) = decode_bytes(&rlp_items[1])?;
+                    LeafNode {
+                        partial: path,
+                        value: value.to_vec(),
+                    }
+                    .into()
+                } else {
+                    // Decode as Extension
+                    ExtensionNode {
+                        prefix: path,
+                        child: decode_child(&rlp_items[1]),
+                    }
+                    .into()
+                }
+            }
+            // Branch Node
+            17 => {
+                let choices = array::from_fn(|i| decode_child(&rlp_items[i]));
+                let (value, _) = decode_bytes(&rlp_items[16])?;
+                BranchNode {
+                    choices: Box::new(choices),
+                    value: value.to_vec(),
+                }
+                .into()
+            }
+            n => {
+                return Err(RLPDecodeError::Custom(format!(
+                    "Invalid arg count for Node, expected 2 or 17, got {n}"
+                )))
+            }
+        })
+    }
+}
+
+fn decode_child(rlp: &[u8]) -> NodeHash {
+    match decode_bytes(rlp) {
+        Ok((hash, &[])) if hash.len() == 32 => NodeHash::Hashed(H256::from_slice(hash)),
+        Ok((&[], &[])) => NodeHash::Inline(vec![]),
+        _ => NodeHash::Inline(rlp.to_vec()),
     }
 }

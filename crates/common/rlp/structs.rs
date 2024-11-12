@@ -103,6 +103,11 @@ impl<'a> Decoder<'a> {
         }
     }
 
+    /// Returns true if the decoder has finished decoding the given input
+    pub fn is_done(&self) -> bool {
+        self.payload.is_empty()
+    }
+
     /// Same as [`finish`](Self::finish), but discards the item's remaining payload
     /// instead of failing.
     pub fn finish_unchecked(self) -> &'a [u8] {

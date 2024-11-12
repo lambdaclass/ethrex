@@ -8,7 +8,7 @@ use crate::{
 use super::{ExtensionNode, Node};
 /// Leaf Node of an an Ethereum Compatible Patricia Merkle Trie
 /// Contains the node's hash, value & path
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, PartialEq)]
 pub struct LeafNode {
     pub partial: Nibbles,
     pub value: ValueRLP,
@@ -313,5 +313,35 @@ mod test {
                 0x87, 0x5F, 0x80, 0x7A,
             ],
         );
+    }
+
+    #[test]
+    fn symmetric_encoding_a() {
+        let node: Node = LeafNode::new(
+            Nibbles::from_bytes(b"key".as_ref()),
+            b"a comparatively long value".to_vec(),
+        )
+        .into();
+        assert_eq!(Node::decode_raw(&node.encode_raw()).unwrap(), node)
+    }
+
+    #[test]
+    fn symmetric_encoding_b() {
+        let node: Node = LeafNode::new(
+            Nibbles::from_bytes(&[0x12, 0x34]),
+            vec![0x12, 0x34, 0x56, 0x78],
+        )
+        .into();
+        assert_eq!(Node::decode_raw(&node.encode_raw()).unwrap(), node)
+    }
+
+    #[test]
+    fn symmetric_encoding_c() {
+        let node: Node = LeafNode::new(
+            Nibbles::from_bytes(&[]),
+            vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 20],
+        )
+        .into();
+        assert_eq!(Node::decode_raw(&node.encode_raw()).unwrap(), node)
     }
 }

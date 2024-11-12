@@ -25,6 +25,10 @@ impl TrieState {
 
     /// Retrieves a node based on its hash
     pub fn get_node(&self, hash: NodeHash) -> Result<Option<Node>, TrieError> {
+        // Decode the node if it is inlined
+        if let NodeHash::Inline(encoded) = hash {
+            return Ok(Some(Node::decode_raw(&encoded)?));
+        }
         if let Some(node) = self.cache.get(&hash) {
             return Ok(Some(node.clone()));
         };
@@ -36,7 +40,10 @@ impl TrieState {
 
     /// Inserts a node
     pub fn insert_node(&mut self, node: Node, hash: NodeHash) {
-        self.cache.insert(hash, node);
+        // Don't insert the node if it is already inlined on the parent
+        if matches!(hash, NodeHash::Hashed(_)) {
+            self.cache.insert(hash, node);
+        }
     }
 
     /// Commits cache changes to DB and clears it

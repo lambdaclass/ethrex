@@ -502,7 +502,7 @@ pub fn get_rlp_bytes_item_payload(rlp: &[u8]) -> &[u8] {
 /// It returns a 2-element tuple with the following elements:
 /// - The payload of the item.
 /// - The remaining bytes after the item.
-fn decode_bytes(data: &[u8]) -> Result<(&[u8], &[u8]), RLPDecodeError> {
+pub fn decode_bytes(data: &[u8]) -> Result<(&[u8], &[u8]), RLPDecodeError> {
     let (is_list, payload, rest) = decode_rlp_item(data)?;
     if is_list {
         return Err(RLPDecodeError::UnexpectedList);
