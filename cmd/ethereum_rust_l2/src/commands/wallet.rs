@@ -8,6 +8,7 @@ use ethereum_rust_l2::utils::{
     eth_client::{eth_sender::Overrides, EthClient},
     merkle_tree::merkle_proof,
 };
+use ethereum_rust_rpc::types::block::BlockBodyWrapper;
 use ethereum_types::{Address, H256, U256};
 use eyre::OptionExt;
 use hex::FromHexError;
@@ -212,19 +213,23 @@ async fn get_withdraw_merkle_proof(
         .await?
         .ok_or_eyre("Transaction receipt not found")?;
 
-    let transactions = client
+    let block = client
         .get_block_by_hash(tx_receipt.block_info.block_hash)
-        .await?
-        .transactions;
+        .await?;
+
+    let transactions = match block.body {
+        BlockBodyWrapper::Full(body) => body.transactions,
+        BlockBodyWrapper::OnlyHashes(_) => unreachable!(),
+    };
 
     let (index, tx_withdrawal_hash) = transactions
         .iter()
-        .filter(|tx| match tx {
+        .filter(|tx| match &tx.tx {
             Transaction::PrivilegedL2Transaction(tx) => tx.tx_type == PrivilegedTxType::Withdrawal,
             _ => false,
         })
-        .find_position(|tx| tx.compute_hash() == tx_hash)
-        .map(|(i, tx)| match tx {
+        .find_position(|tx| tx.hash == tx_hash)
+        .map(|(i, tx)| match &tx.tx {
             Transaction::PrivilegedL2Transaction(tx) => {
                 (i as u64, tx.get_withdrawal_hash().unwrap())
             }
@@ -235,7 +240,7 @@ async fn get_withdraw_merkle_proof(
     let path = merkle_proof(
         transactions
             .iter()
-            .filter_map(|tx| match tx {
+            .filter_map(|tx| match &tx.tx {
                 Transaction::PrivilegedL2Transaction(tx) => tx.get_withdrawal_hash(),
                 _ => None,
             })

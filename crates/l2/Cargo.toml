@@ -33,6 +33,10 @@ c-kzg = "^1.0.3"
 # risc0
 risc0-zkvm = { version = "1.1.2" }
 
+[dev-dependencies]
+ethereum_rust-sdk = { path = "./sdk" }
+rand = "0.8.5"
+
 
 [lib]
 path = "./l2.rs"

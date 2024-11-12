@@ -12,19 +12,19 @@ use ethereum_rust_rlp::{
     error::RLPDecodeError,
     structs::{Decoder, Encoder},
 };
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 #[allow(unused)]
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RpcTransaction {
     #[serde(flatten)]
-    tx: Transaction,
+    pub tx: Transaction,
     #[serde(with = "serde_utils::u64::hex_str")]
     block_number: BlockNumber,
     block_hash: BlockHash,
     from: Address,
-    hash: H256,
+    pub hash: H256,
     #[serde(with = "serde_utils::u64::hex_str")]
     transaction_index: u64,
 }

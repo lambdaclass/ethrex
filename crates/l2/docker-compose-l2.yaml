@@ -1,0 +1,40 @@
+include:
+  - ../blockchain/dev/docker-compose-dev.yaml
+
+services:
+  contract_deployer:
+    container_name: contract_deployer
+    image: ethereum_rust_l2_contract_deployer
+    build:
+      context: ../../
+      dockerfile: ./crates/l2/contracts/Dockerfile
+    volumes:
+      - ./contracts:/contracts
+    env_file:
+      - .env
+    environment:
+      - ETH_RPC_URL=http://ethereum_rust_l1:8545
+      - DEPLOYER_CONTRACTS_PATH=/contracts
+    depends_on:
+      - ethereum_rust
+    restart: on-failure:3
+
+  ethereum_rust_l2:
+    restart: always
+    container_name: ethereum_rust_l2
+    image: "ethereum_rust_l2"
+    build:
+      context: ../../
+      dockerfile: ./crates/l2/Dockerfile
+    ports:
+      - 127.0.0.1:1729:1729
+    env_file:
+      - .env
+    environment:
+      - ETH_RPC_URL=http://ethereum_rust_l1:8545
+    volumes:
+      - ../../test_data/genesis-l2.json:/genesis-l2.json
+    command: --network /genesis-l2.json --http.addr 0.0.0.0 --http.port 1729
+    depends_on:
+      contract_deployer:
+        condition: service_completed_successfully

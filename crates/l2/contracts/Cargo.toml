@@ -12,6 +12,7 @@ bytes = { version = "1.6.0", features = ["serde"] }
 libsecp256k1 = "0.7.1"
 keccak-hash = "0.10.0"
 hex = "0.4.3"
+tracing.workspace = true
 
 ethereum_rust-l2 = { path = "../../l2" }
 ethereum_rust-core = { path = "../../common" }

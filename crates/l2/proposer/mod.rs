@@ -122,8 +122,12 @@ impl Proposer {
             let withdrawals = self.get_block_withdrawals(&block)?;
             let deposits = self.get_block_deposits(&block)?;
 
-            let withdrawal_logs_merkle_root = self
-                .get_withdrawals_merkle_root(withdrawals.iter().map(|(hash, _tx)| *hash).collect());
+            let withdrawal_logs_merkle_root = self.get_withdrawals_merkle_root(
+                withdrawals
+                    .iter()
+                    .map(|(_hash, tx)| tx.get_withdrawal_hash().unwrap())
+                    .collect(),
+            );
             let deposit_logs_hash = self.get_deposit_hash(
                 deposits
                     .iter()
