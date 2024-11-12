@@ -206,6 +206,31 @@ fn validate_transaction(tx: &Transaction, store: Store) -> Result<(), MempoolErr
         }
     }
 
+    let maybe_sender_acc_info = store.get_account_info(header_no, tx.sender())?;
+
+    if let Some(sender_acc_info) = maybe_sender_acc_info {
+        if tx.nonce() < sender_acc_info.nonce {
+            return Err(MempoolError::InvalidNonce);
+        }
+
+        let tx_cost = tx
+            .cost_without_base_fee()
+            .ok_or(MempoolError::InvalidTxGasvalues)?;
+
+        if tx_cost > sender_acc_info.balance {
+            return Err(MempoolError::NotEnoughBalance);
+        }
+    } else {
+        // An account that is not in the database cannot possibly have enough balance to cover the transaction cost
+        return Err(MempoolError::NotEnoughBalance);
+    }
+
+    if let Some(chain_id) = tx.chain_id() {
+        if chain_id != config.chain_id {
+            return Err(MempoolError::InvalidChainId(config.chain_id));
+        }
+    }
+
     Ok(())
 }
 

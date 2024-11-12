@@ -144,6 +144,43 @@ impl Transaction {
             Transaction::PrivilegedL2Transaction(_) => TxType::Privileged,
         }
     }
+
+    pub fn effective_gas_price(&self, base_fee_per_gas: Option<u64>) -> Option<u64> {
+        match self.tx_type() {
+            TxType::Legacy => Some(self.gas_price()),
+            TxType::EIP2930 => Some(self.gas_price()),
+            TxType::EIP1559 => {
+                let priority_fee_per_gas = min(
+                    self.max_priority_fee()?,
+                    self.max_fee_per_gas()? - base_fee_per_gas?,
+                );
+                Some(priority_fee_per_gas + base_fee_per_gas?)
+            }
+            TxType::EIP4844 => {
+                let priority_fee_per_gas = min(
+                    self.max_priority_fee()?,
+                    self.max_fee_per_gas()? - base_fee_per_gas?,
+                );
+                Some(priority_fee_per_gas + base_fee_per_gas?)
+            }
+            TxType::Privileged => Some(self.gas_price()),
+        }
+    }
+
+    pub fn cost_without_base_fee(&self) -> Option<U256> {
+        let price = match self.tx_type() {
+            TxType::Legacy => self.gas_price(),
+            TxType::EIP2930 => self.gas_price(),
+            TxType::EIP1559 => self.max_fee_per_gas()?,
+            TxType::EIP4844 => self.max_fee_per_gas()?,
+            TxType::Privileged => self.gas_price(),
+        };
+
+        Some(U256::saturating_add(
+            U256::saturating_mul(price.into(), self.gas_limit().into()),
+            self.value(),
+        ))
+    }
 }
 
 impl RLPEncode for Transaction {

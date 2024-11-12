@@ -86,7 +86,7 @@ cfg_if::cfg_if! {
             Environment,
         };
         use std::{collections::HashMap, sync::Arc};
-        use ethereum_rust_core::types::{code_hash, TxType};
+        use ethereum_rust_core::types::code_hash;
 
         /// Executes all transactions in a block and returns their receipts.
         pub fn execute_block(
@@ -162,25 +162,7 @@ cfg_if::cfg_if! {
             block_header: &BlockHeader,
             db: Arc<dyn LevmDatabase>,
         ) -> Result<TransactionReport, VMError> {
-            let gas_price: U256 = match tx.tx_type() {
-                TxType::Legacy => tx.gas_price().into(),
-                TxType::EIP2930 => tx.gas_price().into(),
-                TxType::EIP1559 => {
-                    let priority_fee_per_gas = min(
-                        tx.max_priority_fee().unwrap(),
-                        tx.max_fee_per_gas().unwrap() - block_header.base_fee_per_gas.unwrap(),
-                    );
-                    (priority_fee_per_gas + block_header.base_fee_per_gas.unwrap()).into()
-                }
-                TxType::EIP4844 => {
-                    let priority_fee_per_gas = min(
-                        tx.max_priority_fee().unwrap(),
-                        tx.max_fee_per_gas().unwrap() - block_header.base_fee_per_gas.unwrap(),
-                    );
-                    (priority_fee_per_gas + block_header.base_fee_per_gas.unwrap()).into()
-                }
-                TxType::Privileged => tx.gas_price().into(),
-            };
+            let gas_price : U256 = tx.effective_gas_price(block_header.base_fee_per_gas).ok_or(VMError::InvalidTransaction)?.into();
 
             let env = Environment {
                 origin: tx.sender(),
