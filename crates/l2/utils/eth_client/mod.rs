@@ -5,11 +5,12 @@ use errors::{
     GetTransactionReceiptError, SendRawTransactionError,
 };
 use ethereum_rust_core::types::{
-    BlockBody, EIP1559Transaction, GenericTransaction, PrivilegedL2Transaction, TxKind, TxType,
+    EIP1559Transaction, GenericTransaction, PrivilegedL2Transaction, TxKind, TxType,
 };
 use ethereum_rust_rlp::encode::RLPEncode;
 use ethereum_rust_rpc::{
     types::{
+        block::RpcBlock,
         receipt::{RpcLog, RpcReceipt},
         transaction::WrappedEIP4844Transaction,
     },
@@ -171,6 +172,7 @@ impl EthClient {
             "to": format!("{to:#x}"),
             "input": format!("{:#x}", transaction.input),
             "from": format!("{:#x}", transaction.from),
+            "value": format!("{:#x}", transaction.value),
         });
 
         // Add the nonce just if present, otherwise the RPC will use the latest nonce
@@ -279,7 +281,7 @@ impl EthClient {
         }
     }
 
-    pub async fn get_block_by_hash(&self, block_hash: H256) -> Result<BlockBody, EthClientError> {
+    pub async fn get_block_by_hash(&self, block_hash: H256) -> Result<RpcBlock, EthClientError> {
         let request = RpcRequest {
             id: RpcRequestId::Number(1),
             jsonrpc: "2.0".to_string(),
@@ -416,15 +418,15 @@ impl EthClient {
 #[derive(Serialize, Deserialize, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct GetTransactionByHashTransaction {
-    #[serde(default)]
+    #[serde(default, with = "ethereum_rust_core::serde_utils::u64::hex_str")]
     pub chain_id: u64,
-    #[serde(default)]
+    #[serde(default, with = "ethereum_rust_core::serde_utils::u64::hex_str")]
     pub nonce: u64,
-    #[serde(default)]
+    #[serde(default, with = "ethereum_rust_core::serde_utils::u64::hex_str")]
     pub max_priority_fee_per_gas: u64,
-    #[serde(default)]
+    #[serde(default, with = "ethereum_rust_core::serde_utils::u64::hex_str")]
     pub max_fee_per_gas: u64,
-    #[serde(default)]
+    #[serde(default, with = "ethereum_rust_core::serde_utils::u64::hex_str")]
     pub gas_limit: u64,
     #[serde(default)]
     pub to: Address,

@@ -45,8 +45,8 @@ jobs:
         run: |
           curl -L https://risczero.com/install | bash
           ~/.risc0/bin/rzup install
-      - name: Caching
-        uses: Swatinem/rust-cache@v2
+      # - name: Caching
+      #   uses: Swatinem/rust-cache@v2
       - name: Build prover and zkVM
         run: |
           cd crates/l2/prover

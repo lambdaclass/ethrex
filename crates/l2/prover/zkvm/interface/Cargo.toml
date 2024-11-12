@@ -25,3 +25,6 @@ methods = ["guest"]
 [features]
 default = []
 build_zkvm = []
+
+[lib]
+path = "./src/lib.rs"

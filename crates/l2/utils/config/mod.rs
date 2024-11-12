@@ -25,6 +25,10 @@ pub fn read_env_file() -> Result<(), errors::ConfigError> {
 
         match line.split_once('=') {
             Some((key, value)) => {
+                if std::env::vars().any(|(k, _)| k == key) {
+                    debug!("Env var {key} already set, skipping");
+                    continue;
+                }
                 debug!("Setting env var from .env: {key}={value}");
                 std::env::set_var(key, value)
             }

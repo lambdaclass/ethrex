@@ -1,8 +1,7 @@
-
-version: '3.2'
 services:
   ethereum_rust:
     restart: always
+    container_name: ethereum_rust_l1
     image: "ethereum_rust_dev"
     build:
       context: ../../../
