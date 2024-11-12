@@ -1,4 +1,4 @@
-use crate::opcodes::Opcode;
+use crate::{errors::VMError, opcodes::Opcode};
 use bytes::Bytes;
 use ethereum_rust_core::U256;
 
@@ -91,8 +91,8 @@ pub enum Operation {
 }
 
 impl Operation {
-    pub fn to_bytecode(&self) -> Bytes {
-        match self {
+    pub fn to_bytecode(&self) -> Result<Bytes, VMError> {
+        let bytecode = match self {
             Operation::Stop => Bytes::copy_from_slice(&[Opcode::STOP as u8]),
             Operation::Add => Bytes::copy_from_slice(&[Opcode::ADD as u8]),
             Operation::Mul => Bytes::copy_from_slice(&[Opcode::MUL as u8]),
@@ -176,7 +176,7 @@ impl Operation {
                 // extract the last n bytes to push
                 let value_to_push = &word_buffer[((32 - *n) as usize)..];
                 assert_eq!(value_to_push.len(), *n as usize);
-                let opcode = Opcode::from(Opcode::PUSH0 as u8 + *n);
+                let opcode = Opcode::try_from(Opcode::PUSH0 as u8 + *n)?;
                 let mut bytes = vec![opcode as u8];
                 bytes.extend_from_slice(value_to_push);
 
@@ -204,6 +204,7 @@ impl Operation {
             Operation::Revert => Bytes::copy_from_slice(&[Opcode::REVERT as u8]),
             Operation::Invalid => Bytes::copy_from_slice(&[Opcode::INVALID as u8]),
             Operation::SelfDestruct => Bytes::copy_from_slice(&[Opcode::SELFDESTRUCT as u8]),
-        }
+        };
+        Ok(bytecode)
     }
 }

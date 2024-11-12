@@ -7,6 +7,7 @@ on:
       - 'LICENSE'
       - "**/README.md"
       - "**/docs/**"
+      - "crates/vm/levm/**"
 jobs:
   lint:
     name: Lint

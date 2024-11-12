@@ -2,6 +2,7 @@ use crate::ef::{report::EFTestsReport, test::EFTest};
 use ethereum_rust_core::{H256, U256};
 use ethereum_rust_levm::{
     db::{Cache, Db},
+    errors::{TransactionReport, VMError},
     vm::VM,
     Environment,
 };
@@ -42,29 +43,31 @@ pub fn run_ef_tests() -> Result<EFTestsReport, Box<dyn Error>> {
                 continue;
             }
         }
-        spinner.update_text(report.to_string());
+        spinner.update_text(report.progress());
     }
-
+    spinner.success(&report.progress());
+    let mut spinner = Spinner::new(Dots, "Loading report...".to_owned(), Color::Cyan);
+    spinner.success(&report.to_string());
     Ok(report)
 }
 
 pub fn run_ef_test(test: EFTest, report: &mut EFTestsReport) -> Result<(), Box<dyn Error>> {
-    let evm = prepare_vm(&test);
+    dbg!(&test.name);
+    let mut evm = prepare_vm(&test, report)?;
     ensure_pre_state(&evm, &test, report)?;
-    // let _transaction_report = evm.transact().unwrap();
-    ensure_post_state(&evm, &test, report)?;
-    report.register_pass(&test.name);
+    let execution_result = evm.transact();
+    ensure_post_state(execution_result, &evm, &test, report)?;
     Ok(())
 }
 
-pub fn prepare_vm(test: &EFTest) -> VM {
-    VM::new(
+pub fn prepare_vm(test: &EFTest, report: &mut EFTestsReport) -> Result<VM, Box<dyn Error>> {
+    let vm_result = VM::new(
         test.transaction.to.clone(),
         Environment {
             origin: test.transaction.sender,
-            consumed_gas: test.env.current_gas_limit,
+            consumed_gas: U256::default(),
             refunded_gas: U256::default(),
-            gas_limit: *test.transaction.gas_limit.first().unwrap(),
+            gas_limit: test.env.current_gas_limit,
             block_number: test.env.current_number,
             coinbase: test.env.current_coinbase,
             timestamp: test.env.current_timestamp,
@@ -80,7 +83,16 @@ pub fn prepare_vm(test: &EFTest) -> VM {
         test.transaction.data.first().unwrap().clone(),
         Arc::new(Db::from(test)),
         Cache::default(),
-    )
+    );
+
+    match vm_result {
+        Ok(vm) => Ok(vm),
+        Err(err) => {
+            let error_reason = format!("VM initialization failed: {err:?}");
+            report.register_fail(&test.name, &error_reason);
+            Err(error_reason.into())
+        }
+    }
 }
 
 pub fn ensure_pre_state(
@@ -145,16 +157,59 @@ fn ensure_pre_state_condition(
     report: &mut EFTestsReport,
 ) -> Result<(), Box<dyn Error>> {
     if !condition {
-        report.register_fail(&test.name, "Pre-state condition failed");
+        let error_reason = format!("Pre-state condition failed: {error_reason}");
+        report.register_fail(&test.name, &error_reason);
         return Err(error_reason.into());
     }
     Ok(())
 }
 
 pub fn ensure_post_state(
+    execution_result: Result<TransactionReport, VMError>,
     _evm: &VM,
-    _test: &EFTest,
-    _report: &mut EFTestsReport,
+    test: &EFTest,
+    report: &mut EFTestsReport,
 ) -> Result<(), Box<dyn Error>> {
+    match execution_result {
+        Ok(_execution_report) => {
+            match test
+                .post
+                .clone()
+                .values()
+                .first()
+                .map(|v| v.clone().expect_exception)
+            {
+                // Execution result was successful but an exception was expected.
+                Some(Some(expected_exception)) => {
+                    let error_reason = format!("Expected exception: {expected_exception}");
+                    report.register_fail(&test.name, &error_reason);
+                    return Err(format!("Post-state condition failed: {error_reason}").into());
+                }
+                // Execution result was successful and no exception was expected.
+                // TODO: Check that the post-state matches the expected post-state.
+                None | Some(None) => {}
+            }
+        }
+        Err(err) => {
+            match test
+                .post
+                .clone()
+                .values()
+                .first()
+                .map(|v| v.clone().expect_exception)
+            {
+                // Execution result was unsuccessful and an exception was expected.
+                // TODO: Check that the exception matches the expected exception.
+                Some(Some(_expected_exception)) => {}
+                // Execution result was unsuccessful but no exception was expected.
+                None | Some(None) => {
+                    let error_reason = format!("Unexpected exception: {err:?}");
+                    report.register_fail(&test.name, &error_reason);
+                    return Err(format!("Post-state condition failed: {error_reason}").into());
+                }
+            }
+        }
+    };
+    report.register_pass(&test.name);
     Ok(())
 }

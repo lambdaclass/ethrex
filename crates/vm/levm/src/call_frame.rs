@@ -36,8 +36,12 @@ impl Stack {
         self.stack.get(index).ok_or(VMError::StackUnderflow)
     }
 
-    pub fn swap(&mut self, a: usize, b: usize) {
-        self.stack.swap(a, b)
+    pub fn swap(&mut self, a: usize, b: usize) -> Result<(), VMError> {
+        if a >= self.stack.len() || b >= self.stack.len() {
+            return Err(VMError::StackUnderflow);
+        }
+        self.stack.swap(a, b);
+        Ok(())
     }
 }
 
@@ -144,6 +148,10 @@ impl CallFrame {
     }
 
     fn opcode_at(&self, offset: usize) -> Option<Opcode> {
-        self.bytecode.get(offset).copied().map(Opcode::from)
+        self.bytecode
+            .get(offset)
+            .copied()
+            .map(Opcode::try_from)?
+            .ok()
     }
 }

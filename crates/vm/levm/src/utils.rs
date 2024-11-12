@@ -10,10 +10,11 @@ use ethereum_rust_core::{types::TxKind, Address, U256};
 use std::{collections::HashMap, sync::Arc};
 
 pub fn ops_to_bytecode(operations: &[Operation]) -> Bytes {
-    operations
-        .iter()
-        .flat_map(Operation::to_bytecode)
-        .collect::<Bytes>()
+    let mut bytecode = Vec::new();
+    for op in operations {
+        bytecode.extend_from_slice(&op.to_bytecode().unwrap());
+    }
+    bytecode.into()
 }
 
 pub fn new_vm_with_bytecode(bytecode: Bytes) -> VM {
@@ -99,4 +100,5 @@ pub fn new_vm_with_ops_addr_bal_db(
         Arc::new(db),
         cache,
     )
+    .unwrap()
 }

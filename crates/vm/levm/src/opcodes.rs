@@ -1,3 +1,5 @@
+use crate::errors::VMError;
+
 #[derive(Debug, PartialEq, Eq, Clone, PartialOrd)]
 pub enum Opcode {
     // Stop and Arithmetic Operations
@@ -172,9 +174,11 @@ pub enum Opcode {
 
 impl Copy for Opcode {}
 
-impl From<u8> for Opcode {
-    fn from(byte: u8) -> Self {
-        match byte {
+impl TryFrom<u8> for Opcode {
+    type Error = VMError;
+
+    fn try_from(byte: u8) -> Result<Self, Self::Error> {
+        let op = match byte {
             0x00 => Opcode::STOP,
             0x01 => Opcode::ADD,
             0x16 => Opcode::AND,
@@ -324,7 +328,8 @@ impl From<u8> for Opcode {
             0xFD => Opcode::REVERT,
             0xFE => Opcode::INVALID,
             0xFF => Opcode::SELFDESTRUCT,
-            _ => panic!("Unknown opcode: 0x{:02X}", byte),
-        }
+            _ => return Err(VMError::InvalidOpcode),
+        };
+        Ok(op)
     }
 }

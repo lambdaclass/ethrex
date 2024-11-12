@@ -23,14 +23,28 @@ impl EFTestsReport {
             .push((test_name.to_owned(), reason.to_owned()));
         self.total += 1;
     }
+
+    pub fn progress(&self) -> String {
+        format!(
+            "{}: {} {} {}",
+            "Ethereum Foundation Tests Run".bold(),
+            format!("{} passed", self.passed).green().bold(),
+            format!("{} failed", self.failed).red().bold(),
+            format!("{} total run", self.total).blue().bold(),
+        )
+    }
 }
 
 impl fmt::Display for EFTestsReport {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let title = "Ethereum Foundation Tests Run Report".bold();
-        let passed = format!("{} passed", self.passed).green().bold();
-        let failed = format!("{} failed", self.failed).red().bold();
-        let total = format!("{} total run", self.total).blue().bold();
-        write!(f, "{title}: {passed} {failed} {total}",)
+        for failing_test in self.failed_tests.clone() {
+            writeln!(
+                f,
+                "{}: {}",
+                failing_test.0.bold(),
+                failing_test.1.bright_red().bold()
+            )?;
+        }
+        Ok(())
     }
 }

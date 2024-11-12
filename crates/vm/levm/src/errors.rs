@@ -31,8 +31,17 @@ pub enum VMError {
     InvalidInitialByte,
     NonceOverflow,
     InternalError,
+    MemoryLoadOutOfBounds,
+    GasLimitPriceProductOverflow,
+    DataSizeOverflow,
+    Internal,
+    GasCostOverflow,
+    OffsetOverflow,
+    CreationCostIsTooHigh,
+    MaxGasLimitExceeded,
 }
 
+#[derive(Debug, Clone)]
 pub enum OpcodeSuccess {
     Continue,
     Result(ResultReason),

@@ -27,14 +27,18 @@ impl VM {
             .unwrap_or(usize::MAX);
 
         let minimum_word_size = (size + WORD_SIZE - 1) / WORD_SIZE;
-        let memory_expansion_cost = current_call_frame.memory.expansion_cost(offset + size)?;
+        let memory_expansion_cost = current_call_frame.memory.expansion_cost(
+            offset
+                .checked_add(size)
+                .ok_or(VMError::MemoryLoadOutOfBounds)?,
+        )?;
         let gas_cost = gas_cost::KECCAK25_STATIC
             + gas_cost::KECCAK25_DYNAMIC_BASE * minimum_word_size
             + memory_expansion_cost;
 
         self.increase_consumed_gas(current_call_frame, gas_cost)?;
 
-        let value_bytes = current_call_frame.memory.load_range(offset, size);
+        let value_bytes = current_call_frame.memory.load_range(offset, size)?;
 
         let mut hasher = Keccak256::new();
         hasher.update(value_bytes);

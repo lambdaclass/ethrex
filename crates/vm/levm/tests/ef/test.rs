@@ -87,13 +87,23 @@ pub struct EFTestEnv {
     pub current_timestamp: U256,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Clone)]
 pub enum EFTestPost {
     Cancun(Vec<EFTestPostValue>),
 }
 
-#[derive(Debug, Deserialize)]
+impl EFTestPost {
+    pub fn values(self) -> Vec<EFTestPostValue> {
+        match self {
+            EFTestPost::Cancun(v) => v,
+        }
+    }
+}
+
+#[derive(Debug, Deserialize, Clone)]
 pub struct EFTestPostValue {
+    #[serde(rename = "expectException")]
+    pub expect_exception: Option<String>,
     pub hash: H256,
     #[serde(deserialize_with = "deserialize_ef_post_value_indexes")]
     pub indexes: HashMap<String, U256>,

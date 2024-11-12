@@ -64,14 +64,16 @@ impl VM {
             .pop()?
             .try_into()
             .unwrap_or(usize::MAX);
-        let memory_expansion_cost = current_call_frame
-            .memory
-            .expansion_cost(offset + WORD_SIZE)?;
+        let memory_expansion_cost = current_call_frame.memory.expansion_cost(
+            offset
+                .checked_add(WORD_SIZE)
+                .ok_or(VMError::OverflowInArithmeticOp)?,
+        )?;
         let gas_cost = gas_cost::MLOAD_STATIC + memory_expansion_cost;
 
         self.increase_consumed_gas(current_call_frame, gas_cost)?;
 
-        let value = current_call_frame.memory.load(offset);
+        let value = current_call_frame.memory.load(offset)?;
         current_call_frame.stack.push(value)?;
 
         Ok(OpcodeSuccess::Continue)
@@ -82,10 +84,16 @@ impl VM {
         &mut self,
         current_call_frame: &mut CallFrame,
     ) -> Result<OpcodeSuccess, VMError> {
-        let offset = current_call_frame.stack.pop()?.try_into().unwrap();
-        let memory_expansion_cost = current_call_frame
-            .memory
-            .expansion_cost(offset + WORD_SIZE)?;
+        let offset: usize = current_call_frame
+            .stack
+            .pop()?
+            .try_into()
+            .map_err(|_err| VMError::VeryLargeNumber)?;
+        let memory_expansion_cost = current_call_frame.memory.expansion_cost(
+            offset
+                .checked_add(WORD_SIZE)
+                .ok_or(VMError::OverflowInArithmeticOp)?,
+        )?;
         let gas_cost = gas_cost::MSTORE_STATIC + memory_expansion_cost;
 
         self.increase_consumed_gas(current_call_frame, gas_cost)?;
@@ -94,7 +102,9 @@ impl VM {
         let mut value_bytes = [0u8; WORD_SIZE];
         value.to_big_endian(&mut value_bytes);
 
-        current_call_frame.memory.store_bytes(offset, &value_bytes);
+        current_call_frame
+            .memory
+            .store_bytes(offset, &value_bytes)?;
 
         Ok(OpcodeSuccess::Continue)
     }
@@ -104,8 +114,12 @@ impl VM {
         &mut self,
         current_call_frame: &mut CallFrame,
     ) -> Result<OpcodeSuccess, VMError> {
-        let offset = current_call_frame.stack.pop()?.try_into().unwrap();
-        let memory_expansion_cost = current_call_frame.memory.expansion_cost(offset + 1)?;
+        let offset: usize = current_call_frame.stack.pop()?.try_into().unwrap();
+        let memory_expansion_cost = current_call_frame.memory.expansion_cost(
+            offset
+                .checked_add(1)
+                .ok_or(VMError::OverflowInArithmeticOp)?,
+        )?;
         let gas_cost = gas_cost::MSTORE8_STATIC + memory_expansion_cost;
 
         self.increase_consumed_gas(current_call_frame, gas_cost)?;
@@ -116,7 +130,7 @@ impl VM {
 
         current_call_frame
             .memory
-            .store_bytes(offset, value_bytes[WORD_SIZE - 1..WORD_SIZE].as_ref());
+            .store_bytes(offset, value_bytes[WORD_SIZE - 1..WORD_SIZE].as_ref())?;
 
         Ok(OpcodeSuccess::Continue)
     }
@@ -277,7 +291,7 @@ impl VM {
         if size > 0 {
             current_call_frame
                 .memory
-                .copy(src_offset, dest_offset, size);
+                .copy(src_offset, dest_offset, size)?;
         }
 
         Ok(OpcodeSuccess::Continue)
