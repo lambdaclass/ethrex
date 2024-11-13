@@ -15,16 +15,16 @@ impl VM {
         &mut self,
         current_call_frame: &mut CallFrame,
     ) -> Result<OpcodeSuccess, VMError> {
-        let offset = current_call_frame
+        let offset: usize = current_call_frame
             .stack
             .pop()?
             .try_into()
-            .unwrap_or(usize::MAX);
+            .map_err(|_| VMError::VeryLargeNumber)?;
         let size = current_call_frame
             .stack
             .pop()?
             .try_into()
-            .unwrap_or(usize::MAX);
+            .map_err(|_| VMError::VeryLargeNumber)?;
 
         let minimum_word_size = (size + WORD_SIZE - 1) / WORD_SIZE;
         let memory_expansion_cost = current_call_frame.memory.expansion_cost(

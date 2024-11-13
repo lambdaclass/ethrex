@@ -14,6 +14,7 @@ serde = { version = "1.0.203", features = ["derive", "rc"] }
 serde_json = { version = "1.0.117" }
 walkdir = "2.5.0"
 keccak-hash = "0.11.0"
+thiserror = "2.0.3"
 
 [dev-dependencies]
 hex = "0.4.3"
@@ -23,5 +24,20 @@ spinoff = "0.8.0"
 [features]
 ethereum_foundation_tests = []
 
+# [lints.rust]
+# unsafe_code = "forbid"
+# warnings = "warn"
+# rust_2018_idioms = "warn"
+
+[lints.clippy]
+as_conversions = "deny"
+# unwrap_used = "deny"
+# expect_used = "deny"
+# panic = "deny"
+unnecessary_cast = "warn"
+# deref_by_slicing = "warn"
+# indexing_slicing = "warn"
+# manual_unwrap_or = "warn"
+# manual_unwrap_or_default = "warn"
 [lib]
 path = "./src/lib.rs"

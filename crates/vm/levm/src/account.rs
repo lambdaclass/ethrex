@@ -1,8 +1,7 @@
-use std::{collections::HashMap, str::FromStr};
-
 use bytes::Bytes;
 use ethereum_rust_core::{H256, U256};
 use keccak_hash::keccak;
+use std::{collections::HashMap, str::FromStr};
 
 use crate::constants::EMPTY_CODE_HASH_STR;
 

@@ -4,7 +4,7 @@ use crate::{
     constants::*,
     db::{Cache, Database},
     environment::Environment,
-    errors::{OpcodeSuccess, ResultReason, TransactionReport, TxResult, VMError},
+    errors::{InternalError, OpcodeSuccess, ResultReason, TransactionReport, TxResult, VMError},
     opcodes::Opcode,
 };
 use bytes::Bytes;
@@ -440,13 +440,22 @@ impl VM {
 
             // If the initialization code completes successfully, a final contract-creation cost is paid,
             // the code-deposit cost, c, proportional to the size of the created contract’s code
-            let mut creation_cost = 200 * contract_code.len() as u64;
+            let code_length: u64 = contract_code
+                .len()
+                .try_into()
+                .map_err(|_| VMError::Internal(InternalError::ConversionError))?;
+            let mut creation_cost = 200 * code_length;
             creation_cost += 32000;
             report.add_gas_with_max(creation_cost, max_gas);
             // Charge 22100 gas for each storage variable set
 
             // GInitCodeword * number_of_words rounded up. GinitCodeWord = 2
-            let number_of_words = initial_call_frame.calldata.chunks(32).len() as u64;
+            let number_of_words: u64 = initial_call_frame
+                .calldata
+                .chunks(WORD_SIZE)
+                .len()
+                .try_into()
+                .map_err(|_| VMError::Internal(InternalError::ConversionError))?;
             report.add_gas_with_max(number_of_words * 2, max_gas);
 
             let contract_address = initial_call_frame.to;
@@ -662,7 +671,7 @@ impl VM {
             .checked_add(U256::from(31))
             .ok_or(VMError::DataSizeOverflow)?)
         .checked_div(U256::from(32))
-        .ok_or(VMError::Internal)?; // '32' will never be zero
+        .ok_or(VMError::OverflowInArithmeticOp)?; // '32' will never be zero. The error is wrong but will see later...
 
         let init_code_cost = minimum_word_size
             .checked_mul(INIT_CODE_WORD_COST)

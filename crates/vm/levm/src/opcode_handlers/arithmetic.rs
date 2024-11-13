@@ -1,7 +1,7 @@
 use crate::{
     call_frame::CallFrame,
     constants::gas_cost,
-    errors::{OpcodeSuccess, VMError},
+    errors::{InternalError, OpcodeSuccess, VMError},
     vm::VM,
 };
 use ethereum_rust_core::{U256, U512};
@@ -214,7 +214,11 @@ impl VM {
         let base = current_call_frame.stack.pop()?;
         let exponent = current_call_frame.stack.pop()?;
 
-        let exponent_byte_size = (exponent.bits() as u64 + 7) / 8;
+        let exponent_bits: u64 = exponent
+            .bits()
+            .try_into()
+            .map_err(|_| VMError::Internal(InternalError::ConversionError))?;
+        let exponent_byte_size = (exponent_bits + 7) / 8;
         let gas_cost = gas_cost::EXP_STATIC + gas_cost::EXP_DYNAMIC_BASE * exponent_byte_size;
 
         self.increase_consumed_gas(current_call_frame, gas_cost)?;

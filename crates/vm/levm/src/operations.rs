@@ -93,117 +93,119 @@ pub enum Operation {
 impl Operation {
     pub fn to_bytecode(&self) -> Result<Bytes, VMError> {
         let bytecode = match self {
-            Operation::Stop => Bytes::copy_from_slice(&[Opcode::STOP as u8]),
-            Operation::Add => Bytes::copy_from_slice(&[Opcode::ADD as u8]),
-            Operation::Mul => Bytes::copy_from_slice(&[Opcode::MUL as u8]),
-            Operation::Sub => Bytes::copy_from_slice(&[Opcode::SUB as u8]),
-            Operation::Div => Bytes::copy_from_slice(&[Opcode::DIV as u8]),
-            Operation::Sdiv => Bytes::copy_from_slice(&[Opcode::SDIV as u8]),
-            Operation::Mod => Bytes::copy_from_slice(&[Opcode::MOD as u8]),
-            Operation::SMod => Bytes::copy_from_slice(&[Opcode::SMOD as u8]),
-            Operation::Addmod => Bytes::copy_from_slice(&[Opcode::ADDMOD as u8]),
-            Operation::Mulmod => Bytes::copy_from_slice(&[Opcode::MULMOD as u8]),
-            Operation::Exp => Bytes::copy_from_slice(&[Opcode::EXP as u8]),
-            Operation::SignExtend => Bytes::copy_from_slice(&[Opcode::SIGNEXTEND as u8]),
-            Operation::Lt => Bytes::copy_from_slice(&[Opcode::LT as u8]),
-            Operation::Gt => Bytes::copy_from_slice(&[Opcode::GT as u8]),
-            Operation::Slt => Bytes::copy_from_slice(&[Opcode::SLT as u8]),
-            Operation::Sgt => Bytes::copy_from_slice(&[Opcode::SGT as u8]),
-            Operation::Eq => Bytes::copy_from_slice(&[Opcode::EQ as u8]),
-            Operation::IsZero => Bytes::copy_from_slice(&[Opcode::ISZERO as u8]),
-            Operation::And => Bytes::copy_from_slice(&[Opcode::AND as u8]),
-            Operation::Or => Bytes::copy_from_slice(&[Opcode::OR as u8]),
-            Operation::Xor => Bytes::copy_from_slice(&[Opcode::XOR as u8]),
-            Operation::Not => Bytes::copy_from_slice(&[Opcode::NOT as u8]),
-            Operation::Byte => Bytes::copy_from_slice(&[Opcode::BYTE as u8]),
-            Operation::Shl => Bytes::copy_from_slice(&[Opcode::SHL as u8]),
-            Operation::Shr => Bytes::copy_from_slice(&[Opcode::SHR as u8]),
-            Operation::Sar => Bytes::copy_from_slice(&[Opcode::SAR as u8]),
-            Operation::Keccak256 => Bytes::copy_from_slice(&[Opcode::KECCAK256 as u8]),
-            Operation::Address => Bytes::copy_from_slice(&[Opcode::ADDRESS as u8]),
-            Operation::Balance => Bytes::copy_from_slice(&[Opcode::BALANCE as u8]),
-            Operation::Origin => Bytes::copy_from_slice(&[Opcode::ORIGIN as u8]),
-            Operation::Caller => Bytes::copy_from_slice(&[Opcode::CALLER as u8]),
-            Operation::Callvalue => Bytes::copy_from_slice(&[Opcode::CALLVALUE as u8]),
-            Operation::CallDataLoad => Bytes::copy_from_slice(&[Opcode::CALLDATALOAD as u8]),
-            Operation::CallDataSize => Bytes::copy_from_slice(&[Opcode::CALLDATASIZE as u8]),
-            Operation::CallDataCopy => Bytes::copy_from_slice(&[Opcode::CALLDATACOPY as u8]),
-            Operation::Codesize => Bytes::copy_from_slice(&[Opcode::CODESIZE as u8]),
-            Operation::Codecopy => Bytes::copy_from_slice(&[Opcode::CODECOPY as u8]),
-            Operation::Gasprice => Bytes::copy_from_slice(&[Opcode::GASPRICE as u8]),
-            Operation::ExtcodeSize => Bytes::copy_from_slice(&[Opcode::EXTCODESIZE as u8]),
-            Operation::ExtcodeCopy => Bytes::copy_from_slice(&[Opcode::EXTCODECOPY as u8]),
-            Operation::ReturnDataSize => Bytes::copy_from_slice(&[Opcode::RETURNDATASIZE as u8]),
-            Operation::ReturnDataCopy => Bytes::copy_from_slice(&[Opcode::RETURNDATACOPY as u8]),
-            Operation::ExtcodeHash => Bytes::copy_from_slice(&[Opcode::EXTCODEHASH as u8]),
-            Operation::BlockHash => Bytes::copy_from_slice(&[Opcode::BLOCKHASH as u8]),
-            Operation::Coinbase => Bytes::copy_from_slice(&[Opcode::COINBASE as u8]),
-            Operation::Timestamp => Bytes::copy_from_slice(&[Opcode::TIMESTAMP as u8]),
-            Operation::Number => Bytes::copy_from_slice(&[Opcode::NUMBER as u8]),
-            Operation::Prevrandao => Bytes::copy_from_slice(&[Opcode::PREVRANDAO as u8]),
-            Operation::Gaslimit => Bytes::copy_from_slice(&[Opcode::GASLIMIT as u8]),
-            Operation::Chainid => Bytes::copy_from_slice(&[Opcode::CHAINID as u8]),
-            Operation::SelfBalance => Bytes::copy_from_slice(&[Opcode::SELFBALANCE as u8]),
-            Operation::Basefee => Bytes::copy_from_slice(&[Opcode::BASEFEE as u8]),
-            Operation::BlobHash => Bytes::copy_from_slice(&[Opcode::BLOBHASH as u8]),
-            Operation::BlobBaseFee => Bytes::copy_from_slice(&[Opcode::BLOBBASEFEE as u8]),
-            Operation::Pop => Bytes::copy_from_slice(&[Opcode::POP as u8]),
-            Operation::Mload => Bytes::copy_from_slice(&[Opcode::MLOAD as u8]),
-            Operation::Mstore => Bytes::copy_from_slice(&[Opcode::MSTORE as u8]),
-            Operation::Mstore8 => Bytes::copy_from_slice(&[Opcode::MSTORE8 as u8]),
-            Operation::Sload => Bytes::copy_from_slice(&[Opcode::SLOAD as u8]),
-            Operation::Sstore => Bytes::copy_from_slice(&[Opcode::SSTORE as u8]),
-            Operation::Jump => Bytes::copy_from_slice(&[Opcode::JUMP as u8]),
-            Operation::Jumpi => Bytes::copy_from_slice(&[Opcode::JUMPI as u8]),
-            Operation::PC => Bytes::copy_from_slice(&[Opcode::PC as u8]),
-            Operation::Msize => Bytes::copy_from_slice(&[Opcode::MSIZE as u8]),
-            Operation::Gas => Bytes::copy_from_slice(&[Opcode::GAS as u8]),
-            Operation::Jumpdest => Bytes::copy_from_slice(&[Opcode::JUMPDEST as u8]),
-            Operation::Tload => Bytes::copy_from_slice(&[Opcode::TLOAD as u8]),
-            Operation::Tstore => Bytes::copy_from_slice(&[Opcode::TSTORE as u8]),
-            Operation::Mcopy => Bytes::copy_from_slice(&[Opcode::MCOPY as u8]),
-            Operation::Push0 => Bytes::copy_from_slice(&[Opcode::PUSH0 as u8]),
+            Operation::Stop => Bytes::copy_from_slice(&[u8::from(Opcode::STOP)]),
+            Operation::Add => Bytes::copy_from_slice(&[u8::from(Opcode::ADD)]),
+            Operation::Mul => Bytes::copy_from_slice(&[u8::from(Opcode::MUL)]),
+            Operation::Sub => Bytes::copy_from_slice(&[u8::from(Opcode::SUB)]),
+            Operation::Div => Bytes::copy_from_slice(&[u8::from(Opcode::DIV)]),
+            Operation::Sdiv => Bytes::copy_from_slice(&[u8::from(Opcode::SDIV)]),
+            Operation::Mod => Bytes::copy_from_slice(&[u8::from(Opcode::MOD)]),
+            Operation::SMod => Bytes::copy_from_slice(&[u8::from(Opcode::SMOD)]),
+            Operation::Addmod => Bytes::copy_from_slice(&[u8::from(Opcode::ADDMOD)]),
+            Operation::Mulmod => Bytes::copy_from_slice(&[u8::from(Opcode::MULMOD)]),
+            Operation::Exp => Bytes::copy_from_slice(&[u8::from(Opcode::EXP)]),
+            Operation::SignExtend => Bytes::copy_from_slice(&[u8::from(Opcode::SIGNEXTEND)]),
+            Operation::Lt => Bytes::copy_from_slice(&[u8::from(Opcode::LT)]),
+            Operation::Gt => Bytes::copy_from_slice(&[u8::from(Opcode::GT)]),
+            Operation::Slt => Bytes::copy_from_slice(&[u8::from(Opcode::SLT)]),
+            Operation::Sgt => Bytes::copy_from_slice(&[u8::from(Opcode::SGT)]),
+            Operation::Eq => Bytes::copy_from_slice(&[u8::from(Opcode::EQ)]),
+            Operation::IsZero => Bytes::copy_from_slice(&[u8::from(Opcode::ISZERO)]),
+            Operation::And => Bytes::copy_from_slice(&[u8::from(Opcode::AND)]),
+            Operation::Or => Bytes::copy_from_slice(&[u8::from(Opcode::OR)]),
+            Operation::Xor => Bytes::copy_from_slice(&[u8::from(Opcode::XOR)]),
+            Operation::Not => Bytes::copy_from_slice(&[u8::from(Opcode::NOT)]),
+            Operation::Byte => Bytes::copy_from_slice(&[u8::from(Opcode::BYTE)]),
+            Operation::Shl => Bytes::copy_from_slice(&[u8::from(Opcode::SHL)]),
+            Operation::Shr => Bytes::copy_from_slice(&[u8::from(Opcode::SHR)]),
+            Operation::Sar => Bytes::copy_from_slice(&[u8::from(Opcode::SAR)]),
+            Operation::Keccak256 => Bytes::copy_from_slice(&[u8::from(Opcode::KECCAK256)]),
+            Operation::Address => Bytes::copy_from_slice(&[u8::from(Opcode::ADDRESS)]),
+            Operation::Balance => Bytes::copy_from_slice(&[u8::from(Opcode::BALANCE)]),
+            Operation::Origin => Bytes::copy_from_slice(&[u8::from(Opcode::ORIGIN)]),
+            Operation::Caller => Bytes::copy_from_slice(&[u8::from(Opcode::CALLER)]),
+            Operation::Callvalue => Bytes::copy_from_slice(&[u8::from(Opcode::CALLVALUE)]),
+            Operation::CallDataLoad => Bytes::copy_from_slice(&[u8::from(Opcode::CALLDATALOAD)]),
+            Operation::CallDataSize => Bytes::copy_from_slice(&[u8::from(Opcode::CALLDATASIZE)]),
+            Operation::CallDataCopy => Bytes::copy_from_slice(&[u8::from(Opcode::CALLDATACOPY)]),
+            Operation::Codesize => Bytes::copy_from_slice(&[u8::from(Opcode::CODESIZE)]),
+            Operation::Codecopy => Bytes::copy_from_slice(&[u8::from(Opcode::CODECOPY)]),
+            Operation::Gasprice => Bytes::copy_from_slice(&[u8::from(Opcode::GASPRICE)]),
+            Operation::ExtcodeSize => Bytes::copy_from_slice(&[u8::from(Opcode::EXTCODESIZE)]),
+            Operation::ExtcodeCopy => Bytes::copy_from_slice(&[u8::from(Opcode::EXTCODECOPY)]),
+            Operation::ReturnDataSize => {
+                Bytes::copy_from_slice(&[u8::from(Opcode::RETURNDATASIZE)])
+            }
+            Operation::ReturnDataCopy => {
+                Bytes::copy_from_slice(&[u8::from(Opcode::RETURNDATACOPY)])
+            }
+            Operation::ExtcodeHash => Bytes::copy_from_slice(&[u8::from(Opcode::EXTCODEHASH)]),
+            Operation::BlockHash => Bytes::copy_from_slice(&[u8::from(Opcode::BLOCKHASH)]),
+            Operation::Coinbase => Bytes::copy_from_slice(&[u8::from(Opcode::COINBASE)]),
+            Operation::Timestamp => Bytes::copy_from_slice(&[u8::from(Opcode::TIMESTAMP)]),
+            Operation::Number => Bytes::copy_from_slice(&[u8::from(Opcode::NUMBER)]),
+            Operation::Prevrandao => Bytes::copy_from_slice(&[u8::from(Opcode::PREVRANDAO)]),
+            Operation::Gaslimit => Bytes::copy_from_slice(&[u8::from(Opcode::GASLIMIT)]),
+            Operation::Chainid => Bytes::copy_from_slice(&[u8::from(Opcode::CHAINID)]),
+            Operation::SelfBalance => Bytes::copy_from_slice(&[u8::from(Opcode::SELFBALANCE)]),
+            Operation::Basefee => Bytes::copy_from_slice(&[u8::from(Opcode::BASEFEE)]),
+            Operation::BlobHash => Bytes::copy_from_slice(&[u8::from(Opcode::BLOBHASH)]),
+            Operation::BlobBaseFee => Bytes::copy_from_slice(&[u8::from(Opcode::BLOBBASEFEE)]),
+            Operation::Pop => Bytes::copy_from_slice(&[u8::from(Opcode::POP)]),
+            Operation::Mload => Bytes::copy_from_slice(&[u8::from(Opcode::MLOAD)]),
+            Operation::Mstore => Bytes::copy_from_slice(&[u8::from(Opcode::MSTORE)]),
+            Operation::Mstore8 => Bytes::copy_from_slice(&[u8::from(Opcode::MSTORE8)]),
+            Operation::Sload => Bytes::copy_from_slice(&[u8::from(Opcode::SLOAD)]),
+            Operation::Sstore => Bytes::copy_from_slice(&[u8::from(Opcode::SSTORE)]),
+            Operation::Jump => Bytes::copy_from_slice(&[u8::from(Opcode::JUMP)]),
+            Operation::Jumpi => Bytes::copy_from_slice(&[u8::from(Opcode::JUMPI)]),
+            Operation::PC => Bytes::copy_from_slice(&[u8::from(Opcode::PC)]),
+            Operation::Msize => Bytes::copy_from_slice(&[u8::from(Opcode::MSIZE)]),
+            Operation::Gas => Bytes::copy_from_slice(&[u8::from(Opcode::GAS)]),
+            Operation::Jumpdest => Bytes::copy_from_slice(&[u8::from(Opcode::JUMPDEST)]),
+            Operation::Tload => Bytes::copy_from_slice(&[u8::from(Opcode::TLOAD)]),
+            Operation::Tstore => Bytes::copy_from_slice(&[u8::from(Opcode::TSTORE)]),
+            Operation::Mcopy => Bytes::copy_from_slice(&[u8::from(Opcode::MCOPY)]),
+            Operation::Push0 => Bytes::copy_from_slice(&[u8::from(Opcode::PUSH0)]),
             Operation::Push((n, value)) => {
+                let n_usize: usize = (*n).into();
                 assert!(*n <= 32, "PUSH32 is the max");
-                // the amount of bytes needed to represent the value must
-                // be less than the n in PUSHn
                 assert!(
-                    value.bits().div_ceil(8) <= *n as usize,
+                    value.bits().div_ceil(8) <= n_usize,
                     "value doesn't fit in n bytes"
                 );
                 let mut word_buffer = [0; 32];
                 value.to_big_endian(&mut word_buffer);
-                // extract the last n bytes to push
-                let value_to_push = &word_buffer[((32 - *n) as usize)..];
-                assert_eq!(value_to_push.len(), *n as usize);
-                let opcode = Opcode::try_from(Opcode::PUSH0 as u8 + *n)?;
-                let mut bytes = vec![opcode as u8];
+                let value_to_push = &word_buffer[(32 - n_usize)..];
+                assert_eq!(value_to_push.len(), n_usize);
+                let opcode = Opcode::try_from(u8::from(Opcode::PUSH0) + *n)?;
+                let mut bytes = vec![u8::from(opcode)];
                 bytes.extend_from_slice(value_to_push);
 
                 Bytes::copy_from_slice(&bytes)
             }
             Operation::Dup(n) => {
                 assert!(*n <= 16, "DUP16 is the max");
-                Bytes::copy_from_slice(&[Opcode::DUP1 as u8 + n - 1])
+                Bytes::copy_from_slice(&[u8::from(Opcode::DUP1) + n - 1])
             }
             Operation::Swap(n) => {
                 assert!(*n <= 16, "SWAP16 is the max");
-                Bytes::copy_from_slice(&[Opcode::SWAP1 as u8 + n - 1])
+                Bytes::copy_from_slice(&[u8::from(Opcode::SWAP1) + n - 1])
             }
             Operation::Log(n) => {
                 assert!(*n <= 4, "LOG4 is the max");
-                Bytes::copy_from_slice(&[Opcode::LOG0 as u8 + n])
+                Bytes::copy_from_slice(&[u8::from(Opcode::LOG0) + n])
             }
-            Operation::Create => Bytes::copy_from_slice(&[Opcode::CREATE as u8]),
-            Operation::Call => Bytes::copy_from_slice(&[Opcode::CALL as u8]),
-            Operation::CallCode => Bytes::copy_from_slice(&[Opcode::CALLCODE as u8]),
-            Operation::Return => Bytes::copy_from_slice(&[Opcode::RETURN as u8]),
-            Operation::DelegateCall => Bytes::copy_from_slice(&[Opcode::DELEGATECALL as u8]),
-            Operation::Create2 => Bytes::copy_from_slice(&[Opcode::CREATE2 as u8]),
-            Operation::StaticCall => Bytes::copy_from_slice(&[Opcode::STATICCALL as u8]),
-            Operation::Revert => Bytes::copy_from_slice(&[Opcode::REVERT as u8]),
-            Operation::Invalid => Bytes::copy_from_slice(&[Opcode::INVALID as u8]),
-            Operation::SelfDestruct => Bytes::copy_from_slice(&[Opcode::SELFDESTRUCT as u8]),
+            Operation::Create => Bytes::copy_from_slice(&[u8::from(Opcode::CREATE)]),
+            Operation::Call => Bytes::copy_from_slice(&[u8::from(Opcode::CALL)]),
+            Operation::CallCode => Bytes::copy_from_slice(&[u8::from(Opcode::CALLCODE)]),
+            Operation::Return => Bytes::copy_from_slice(&[u8::from(Opcode::RETURN)]),
+            Operation::DelegateCall => Bytes::copy_from_slice(&[u8::from(Opcode::DELEGATECALL)]),
+            Operation::Create2 => Bytes::copy_from_slice(&[u8::from(Opcode::CREATE2)]),
+            Operation::StaticCall => Bytes::copy_from_slice(&[u8::from(Opcode::STATICCALL)]),
+            Operation::Revert => Bytes::copy_from_slice(&[u8::from(Opcode::REVERT)]),
+            Operation::Invalid => Bytes::copy_from_slice(&[u8::from(Opcode::INVALID)]),
+            Operation::SelfDestruct => Bytes::copy_from_slice(&[u8::from(Opcode::SELFDESTRUCT)]),
         };
         Ok(bytecode)
     }
