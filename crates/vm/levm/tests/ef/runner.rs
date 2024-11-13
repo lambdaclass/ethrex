@@ -1,3 +1,5 @@
+#![allow(clippy::unwrap_used)]
+
 use crate::ef::{report::EFTestsReport, test::EFTest};
 use ethereum_rust_core::{H256, U256};
 use ethereum_rust_levm::{

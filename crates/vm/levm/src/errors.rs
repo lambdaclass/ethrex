@@ -60,6 +60,8 @@ pub enum VMError {
     MemoryStoreOutOfBounds,
     #[error("Gas limit price product overflow")]
     GasLimitPriceProductOverflow,
+    #[error("Internal error: {0}")]
+    Internal(#[from] InternalError),
     #[error("Data size overflow")]
     DataSizeOverflow,
     #[error("Gas cost overflow")]
@@ -70,12 +72,20 @@ pub enum VMError {
     CreationCostIsTooHigh,
     #[error("Max gas limit exceeded")]
     MaxGasLimitExceeded,
-    #[error("Internal error: {0}")]
-    Internal(#[from] InternalError),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum InternalError {
+    #[error("Could not access last callframe")]
+    CouldNotAccessLastCallframe,
+    #[error("Could not pop callframe")]
+    CouldNotPopCallframe,
+    #[error("Account not found")]
+    AccountNotFound,
+    #[error("ExcessBlobGas should not be None")]
+    ExcessBlobGasShouldNotBeNone,
+    #[error("Error in utils file")]
+    UtilsError,
     #[error("Accound should have been cached")]
     AccountShouldHaveBeenCached,
     #[error("Tried to convert one type to another")]

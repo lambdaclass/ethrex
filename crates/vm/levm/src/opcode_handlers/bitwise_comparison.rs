@@ -213,7 +213,7 @@ impl VM {
         let shift = current_call_frame.stack.pop()?;
         let value = current_call_frame.stack.pop()?;
         let res = if shift < U256::from(256) {
-            arithmetic_shift_right(value, shift)
+            arithmetic_shift_right(value, shift)?
         } else if value.bit(255) {
             U256::MAX
         } else {
@@ -225,15 +225,15 @@ impl VM {
     }
 }
 
-pub fn arithmetic_shift_right(value: U256, shift: U256) -> U256 {
-    let shift_usize: usize = shift.try_into().unwrap(); // we know its not bigger than 256
+pub fn arithmetic_shift_right(value: U256, shift: U256) -> Result<U256, VMError> {
+    let shift_usize: usize = shift.try_into().map_err(|_| VMError::VeryLargeNumber)?; // we know its not bigger than 256
 
     if value.bit(255) {
         // if negative fill with 1s
         let shifted = value >> shift_usize;
         let mask = U256::MAX << (256 - shift_usize);
-        shifted | mask
+        Ok(shifted | mask)
     } else {
-        value >> shift_usize
+        Ok(value >> shift_usize)
     }
 }

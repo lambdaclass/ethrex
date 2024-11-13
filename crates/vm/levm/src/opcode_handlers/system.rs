@@ -65,7 +65,7 @@ impl VM {
         } else {
             call_opcode::WARM_ADDRESS_ACCESS_COST
         };
-        let account = self.cache.get_account(code_address).unwrap().clone();
+        let account = self.get_account(&code_address);
 
         let value_to_empty_account_cost = if !value.is_zero() && account.is_empty() {
             call_opcode::VALUE_TO_EMPTY_ACCOUNT_COST

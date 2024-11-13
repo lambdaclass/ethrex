@@ -1,14 +1,13 @@
 use crate::{
     call_frame::CallFrame,
     constants::{gas_cost, LAST_AVAILABLE_BLOCK_LIMIT},
-    errors::{OpcodeSuccess, VMError},
-    vm::VM,
+    errors::{InternalError, OpcodeSuccess, VMError},
+    vm::{address_to_word, VM},
 };
 use ethereum_rust_core::{
     types::{BLOB_BASE_FEE_UPDATE_FRACTION, MIN_BASE_FEE_PER_BLOB_GAS},
-    Address, H256, U256,
+    H256, U256,
 };
-use std::str::FromStr;
 
 // Block Information (11)
 // Opcodes: BLOCKHASH, COINBASE, TIMESTAMP, NUMBER, PREVRANDAO, GASLIMIT, CHAINID, SELFBALANCE, BASEFEE, BLOBHASH, BLOBBASEFEE
@@ -184,13 +183,15 @@ impl VM {
         Ok(OpcodeSuccess::Continue)
     }
 
-    fn get_blob_gasprice(&mut self) -> U256 {
-        fake_exponential(
+    fn get_blob_gasprice(&mut self) -> Result<U256, VMError> {
+        Ok(fake_exponential(
             MIN_BASE_FEE_PER_BLOB_GAS.into(),
             // Use unwrap because env should have a Some value in excess_blob_gas attribute
-            self.env.block_excess_blob_gas.unwrap(),
+            self.env.block_excess_blob_gas.ok_or(VMError::Internal(
+                InternalError::ExcessBlobGasShouldNotBeNone,
+            ))?,
             BLOB_BASE_FEE_UPDATE_FRACTION.into(),
-        )
+        ))
     }
 
     // BLOBBASEFEE operation
@@ -200,17 +201,12 @@ impl VM {
     ) -> Result<OpcodeSuccess, VMError> {
         self.increase_consumed_gas(current_call_frame, gas_cost::BLOBBASEFEE)?;
 
-        let blob_base_fee = self.get_blob_gasprice();
+        let blob_base_fee = self.get_blob_gasprice()?;
 
         current_call_frame.stack.push(blob_base_fee)?;
 
         Ok(OpcodeSuccess::Continue)
     }
-}
-
-fn address_to_word(address: Address) -> U256 {
-    // This unwrap can't panic, as Address are 20 bytes long and U256 use 32 bytes
-    U256::from_str(&format!("{address:?}")).unwrap()
 }
 
 // Fuction inspired in EIP 4844 helpers. Link: https://eips.ethereum.org/EIPS/eip-4844#helpers

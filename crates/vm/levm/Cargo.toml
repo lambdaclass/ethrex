@@ -31,7 +31,7 @@ rust_2018_idioms = "warn"
 
 [lints.clippy]
 as_conversions = "deny"
-# unwrap_used = "deny"
+unwrap_used = "deny"
 expect_used = "deny"
 # panic = "deny"
 unnecessary_cast = "warn"

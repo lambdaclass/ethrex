@@ -36,7 +36,7 @@ impl Memory {
                 .checked_add(32)
                 .ok_or(VMError::MemoryLoadOutOfBounds)?,
         );
-        let value_bytes: [u8; 32] = self
+        let value_bytes = self
             .data
             .get(
                 offset
@@ -44,10 +44,9 @@ impl Memory {
                         .checked_add(32)
                         .ok_or(VMError::MemoryLoadOutOfBounds)?,
             )
-            .ok_or(VMError::MemoryLoadOutOfBounds)?
-            .try_into()
-            .unwrap();
-        Ok(U256::from(value_bytes))
+            .ok_or(VMError::MemoryLoadOutOfBounds)?;
+
+        Ok(U256::from_big_endian(value_bytes))
     }
 
     pub fn load_range(&mut self, offset: usize, size: usize) -> Result<Vec<u8>, VMError> {

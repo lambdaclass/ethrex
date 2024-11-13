@@ -1,5 +1,5 @@
 use crate::errors::{InternalError, VMError};
-use ethereum_rust_core::U256;
+use ethereum_rust_core::{H256, U256};
 
 pub const SUCCESS_FOR_CALL: i32 = 1;
 pub const REVERT_FOR_CALL: i32 = 0;
@@ -107,8 +107,10 @@ pub const STACK_LIMIT: usize = 1024;
 
 pub const GAS_REFUND_DENOMINATOR: u64 = 5;
 
-pub const EMPTY_CODE_HASH_STR: &str =
-    "0xc5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a470";
+pub const EMPTY_CODE_HASH: H256 = H256([
+    0xc5, 0xd2, 0x46, 0x01, 0x86, 0xf7, 0x23, 0x3c, 0x92, 0x7e, 0x7d, 0xb2, 0xdc, 0xc7, 0x03, 0xc0,
+    0xe5, 0x00, 0xb6, 0x53, 0xca, 0x82, 0x27, 0x3b, 0x7b, 0xfa, 0xd8, 0x04, 0x5d, 0x85, 0xa4, 0x70,
+]);
 
 pub const MEMORY_EXPANSION_QUOTIENT: usize = 512;
 

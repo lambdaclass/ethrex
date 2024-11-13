@@ -20,14 +20,14 @@ pub fn run_with_levm(program: &str, runs: usize, number_of_iterations: u32) {
     call_frame.calldata = Bytes::from(calldata);
 
     for _ in 0..runs - 1 {
-        let mut vm = new_vm_with_bytecode(Bytes::new());
-        *vm.current_call_frame_mut() = call_frame.clone();
+        let mut vm = new_vm_with_bytecode(Bytes::new()).unwrap();
+        *vm.current_call_frame_mut().unwrap() = call_frame.clone();
         let mut current_call_frame = vm.call_frames.pop().unwrap();
         let tx_report = black_box(vm.execute(&mut current_call_frame));
         assert!(tx_report.result == TxResult::Success);
     }
-    let mut vm = new_vm_with_bytecode(Bytes::new());
-    *vm.current_call_frame_mut() = call_frame.clone();
+    let mut vm = new_vm_with_bytecode(Bytes::new()).unwrap();
+    *vm.current_call_frame_mut().unwrap() = call_frame.clone();
     let mut current_call_frame = vm.call_frames.pop().unwrap();
     let tx_report = black_box(vm.execute(&mut current_call_frame));
     assert!(tx_report.result == TxResult::Success);
