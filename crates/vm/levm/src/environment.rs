@@ -26,7 +26,7 @@ impl Environment {
         Self {
             origin,
             consumed_gas: TX_BASE_COST,
-            refunded_gas: U256::zero(),
+            refunded_gas: U256::default(),
             gas_limit: U256::MAX,
             block_number: Default::default(),
             coinbase: Default::default(),
