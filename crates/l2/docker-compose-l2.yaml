@@ -3,10 +3,13 @@ include:
 
 services:
   contract_deployer:
+    platform: linux/amd64
     container_name: contract_deployer
     image: ethereum_rust_l2_contract_deployer
     build:
       context: ../../
+      args:
+        - BUILDPLATFORM=linux/amd64
       dockerfile: ./crates/l2/contracts/Dockerfile
     volumes:
       - ./contracts:/contracts

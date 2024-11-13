@@ -47,13 +47,11 @@ RUN cargo chef cook --release --recipe-path recipe.json --manifest-path crates/l
 COPY . .
 RUN cargo build --release --manifest-path crates/l2/contracts/Cargo.toml
 
-FROM ubuntu:24.04
+FROM --platform=${BUILDPLATFORM} ubuntu:24.04
 WORKDIR /usr/local/bin
 
-RUN apt-get update && apt-get -y install git gnupg
-RUN echo 'deb https://ppa.launchpadcontent.net/ethereum/ethereum/ubuntu noble main' > /etc/apt/sources.list.d/ethereum-ethereum-noble.list && \
-    echo 'deb-src https://ppa.launchpadcontent.net/ethereum/ethereum/ubuntu noble main' >> /etc/apt/sources.list.d/ethereum-ethereum-noble.list
-RUN apt-key adv --keyserver keyserver.ubuntu.com --recv-keys E66CB8FE57F8218E96B13446B50ABD2EE384B7D4
+RUN apt-get update && apt-get -y install git gnupg software-properties-common
+RUN add-apt-repository ppa:ethereum/ethereum
 RUN apt-get update && apt-get -y install solc
 
 COPY --from=builder ethereum_rust/target/release/ethereum_rust_l2_l1_deployer .

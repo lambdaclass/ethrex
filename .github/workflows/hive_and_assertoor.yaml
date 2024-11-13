@@ -2,15 +2,13 @@ name: "Hive & Assertoor"
 on:
   merge_group:
     paths-ignore:
-      - "crates/l2/**"
       - 'README.md'
       - 'LICENSE'
       - "**/README.md"
       - "**/docs/**"
   pull_request:
     branches: ["**"]
-    paths-ignore: 
-      - "crates/l2/**"
+    paths-ignore:
       - 'README.md'
       - 'LICENSE'
       - "**/README.md"
@@ -116,7 +114,7 @@ jobs:
 
       - name: Load image
         run: |
-          docker load --input /tmp/ethereum_rust_image.tar      
+          docker load --input /tmp/ethereum_rust_image.tar
 
       - name: Setup kurtosis testnet and run assertoor tests
         uses: ethpandaops/kurtosis-assertoor-github-action@v1
