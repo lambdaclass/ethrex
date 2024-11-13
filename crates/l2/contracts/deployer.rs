@@ -1,7 +1,7 @@
 use bytes::Bytes;
 use ethereum_rust_core::types::{TxKind, GAS_LIMIT_ADJUSTMENT_FACTOR, GAS_LIMIT_MINIMUM};
 use ethereum_rust_l2::utils::{
-    config::read_env_file,
+    config::{read_env_as_lines, read_env_file, write_env},
     eth_client::{eth_sender::Overrides, EthClient},
 };
 use ethereum_types::{Address, H160, H256};
@@ -36,6 +36,27 @@ async fn main() {
         &eth_client,
     )
     .await;
+
+    let env_lines = read_env_as_lines().expect("Failed to read env file as lines.");
+
+    let mut wr_lines: Vec<String> = Vec::new();
+    for line in env_lines {
+        let mut line = line.unwrap();
+        if let Some(eq) = line.find('=') {
+            let (envar, _) = line.split_at(eq);
+            line = match envar {
+                "PROPOSER_ON_CHAIN_PROPOSER_ADDRESS" => {
+                    format!("{envar}={on_chain_proposer:#x}")
+                }
+                "L1_WATCHER_BRIDGE_ADDRESS" => {
+                    format!("{envar}={bridge_address:#x}")
+                }
+                _ => line,
+            };
+        }
+        wr_lines.push(line);
+    }
+    write_env(wr_lines).expect("Failed to write changes to the .env file.");
 }
 
 fn setup() -> (Address, SecretKey, EthClient, PathBuf) {
