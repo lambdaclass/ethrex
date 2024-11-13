@@ -72,6 +72,10 @@ pub enum VMError {
     CreationCostIsTooHigh,
     #[error("Max gas limit exceeded")]
     MaxGasLimitExceeded,
+    #[error("Gas refunds underflow")]
+    GasRefundsUnderflow,
+    #[error("Gas refunds overflow")]
+    GasRefundsOverflow,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]

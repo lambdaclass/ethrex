@@ -185,6 +185,7 @@ impl VM {
         let key = current_call_frame.stack.pop()?;
         let value = current_call_frame.stack.pop()?;
 
+        // Convert key from U256 to H256
         let mut bytes = [0u8; 32];
         key.to_big_endian(&mut bytes);
         let key = H256::from(bytes);
@@ -213,6 +214,45 @@ impl VM {
         };
 
         self.increase_consumed_gas(current_call_frame, base_dynamic_gas)?;
+
+        // Gas Refunds
+        // TODO: Think about what to do in case of underflow of gas refunds (when we try to substract from it if the value is low)
+        let mut gas_refunds = U256::zero();
+        if value != storage_slot.current_value {
+            if storage_slot.current_value == storage_slot.original_value {
+                if storage_slot.original_value.is_zero() && value.is_zero() {
+                    gas_refunds = gas_refunds
+                        .checked_add(U256::from(4800))
+                        .ok_or(VMError::GasRefundsOverflow)?;
+                }
+            } else if !storage_slot.original_value.is_zero() {
+                if storage_slot.current_value.is_zero() {
+                    gas_refunds = gas_refunds
+                        .checked_sub(U256::from(4800))
+                        .ok_or(VMError::GasRefundsUnderflow)?;
+                } else if value.is_zero() {
+                    gas_refunds = gas_refunds
+                        .checked_add(U256::from(4800))
+                        .ok_or(VMError::GasRefundsOverflow)?;
+                }
+            } else if value == storage_slot.original_value {
+                if storage_slot.original_value.is_zero() {
+                    gas_refunds = gas_refunds
+                        .checked_add(U256::from(19900))
+                        .ok_or(VMError::GasRefundsOverflow)?;
+                } else {
+                    gas_refunds = gas_refunds
+                        .checked_add(U256::from(2800))
+                        .ok_or(VMError::GasRefundsOverflow)?;
+                }
+            }
+        };
+
+        self.env.refunded_gas = self
+            .env
+            .refunded_gas
+            .checked_add(gas_refunds)
+            .ok_or(VMError::GasLimitPriceProductOverflow)?;
 
         self.cache.write_account_storage(
             &address,
