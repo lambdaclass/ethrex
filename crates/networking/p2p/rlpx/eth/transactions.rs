@@ -14,8 +14,11 @@ use crate::rlpx::{
 // Broadcast message
 #[derive(Debug)]
 pub(crate) struct Transactions {
-    transactions: Vec<Transaction>,
+    pub(crate) transactions: Vec<Transaction>,
 }
+// TODO(#1132): Also limit transactions by message byte-size.
+// Limit taken from here: https://github.com/ethereum/go-ethereum/blob/df182a742cec68adcc034d4747afa5182fc75ca3/eth/fetcher/tx_fetcher.go#L49
+pub const TRANSACTION_LIMIT: usize = 256;
 
 impl Transactions {
     pub fn new(transactions: Vec<Transaction>) -> Self {
@@ -26,10 +29,12 @@ impl Transactions {
 impl RLPxMessage for Transactions {
     fn encode(&self, buf: &mut dyn BufMut) -> Result<(), RLPEncodeError> {
         let mut encoded_data = vec![];
-        Encoder::new(&mut encoded_data)
-            .encode_field(&self.transactions)
-            .finish();
-
+        let mut encoder = Encoder::new(&mut encoded_data);
+        let txs_iter = self.transactions.iter();
+        for tx in txs_iter {
+            encoder = encoder.encode_field(tx)
+        }
+        encoder.finish();
         let msg_data = snappy_compress(encoded_data)?;
         buf.put_slice(&msg_data);
         Ok(())
@@ -37,9 +42,20 @@ impl RLPxMessage for Transactions {
 
     fn decode(msg_data: &[u8]) -> Result<Self, RLPDecodeError> {
         let decompressed_data = snappy_decompress(msg_data)?;
-        let decoder = Decoder::new(&decompressed_data)?;
-        let (transactions, _): (Vec<Transaction>, _) = decoder.decode_field("transactions")?;
-
+        let mut decoder = Decoder::new(&decompressed_data)?;
+        let mut transactions: Vec<Transaction> = vec![];
+        // This is done like this because the blanket Vec<T> implementation
+        // gets confused since a legacy transaction is actually a list,
+        // or so it seems.
+        while let Ok((tx, updated_decoder)) = decoder.decode_field::<Transaction>("p2p transaction")
+        {
+            if transactions.len() > TRANSACTION_LIMIT {
+                break;
+            } else {
+                decoder = updated_decoder;
+                transactions.push(tx);
+            }
+        }
         Ok(Self::new(transactions))
     }
 }

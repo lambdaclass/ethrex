@@ -486,9 +486,9 @@ pub fn get_item_with_prefix(data: &[u8]) -> Result<(&[u8], &[u8]), RLPDecodeErro
     }
 }
 
-pub fn is_encoded_as_bytes(rlp: &[u8]) -> bool {
-    let prefix = *rlp.first().unwrap();
-    (0xb8..=0xbf).contains(&prefix)
+pub fn is_encoded_as_bytes(rlp: &[u8]) -> Result<bool, RLPDecodeError> {
+    let prefix = rlp.first().ok_or(RLPDecodeError::MalformedData)?;
+    Ok((0xb8..=0xbf).contains(prefix))
 }
 
 /// Receives an RLP bytes item (prefix between 0xb8 and 0xbf) and returns its payload

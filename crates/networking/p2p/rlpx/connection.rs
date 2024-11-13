@@ -1,8 +1,11 @@
+use std::sync::Arc;
+
 use crate::{
     rlpx::{
         eth::{
             backend,
             blocks::{BlockBodies, BlockHeaders},
+            transactions::Transactions,
         },
         handshake::encode_ack_message,
         message::Message,
@@ -33,8 +36,12 @@ use k256::{
     PublicKey, SecretKey,
 };
 use sha3::{Digest, Keccak256};
-use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
-use tracing::info;
+use tokio::{
+    io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt},
+    sync::broadcast::{self, error::RecvError},
+    task::Id,
+};
+use tracing::{error, info};
 const CAP_P2P: (Capability, u8) = (Capability::P2p, 5);
 const CAP_ETH: (Capability, u8) = (Capability::Eth, 68);
 const CAP_SNAP: (Capability, u8) = (Capability::Snap, 1);
@@ -49,20 +56,41 @@ pub(crate) struct RLPxConnection<S> {
     stream: S,
     storage: Store,
     capabilities: Vec<(Capability, u8)>,
+    /// Send end of the channel used to broadcast messages
+    /// to other connected peers, is ok to have it here,
+    /// since internally it's an Arc.
+    /// The ID is to ignore the message sent from the same task.
+    /// This is used both to send messages and to received broadcasted
+    /// messages from other connections (sent from other peers).
+    /// The receive end is instantiated after the handshake is completed
+    /// under `handle_peer`.
+    connection_broadcast_send: broadcast::Sender<(tokio::task::Id, Arc<Message>)>,
 }
 
 impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
-    fn new(signer: SigningKey, stream: S, state: RLPxConnectionState, storage: Store) -> Self {
+    fn new(
+        signer: SigningKey,
+        stream: S,
+        state: RLPxConnectionState,
+        storage: Store,
+        connection_broadcast: broadcast::Sender<(tokio::task::Id, Arc<Message>)>,
+    ) -> Self {
         Self {
             signer,
             state,
             stream,
             storage,
             capabilities: vec![],
+            connection_broadcast_send: connection_broadcast,
         }
     }
 
-    pub fn receiver(signer: SigningKey, stream: S, storage: Store) -> Self {
+    pub fn receiver(
+        signer: SigningKey,
+        stream: S,
+        storage: Store,
+        connection_broadcast: broadcast::Sender<(tokio::task::Id, Arc<Message>)>,
+    ) -> Self {
         let mut rng = rand::thread_rng();
         Self::new(
             signer,
@@ -72,6 +100,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
                 SecretKey::random(&mut rng),
             )),
             storage,
+            connection_broadcast,
         )
     }
 
@@ -80,6 +109,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
         msg: &[u8],
         stream: S,
         storage: Store,
+        connection_broadcast_send: broadcast::Sender<(tokio::task::Id, Arc<Message>)>,
     ) -> Result<Self, RLPxError> {
         let mut rng = rand::thread_rng();
         let digest = Keccak256::digest(msg.get(65..).ok_or(RLPxError::InvalidMessageLength())?);
@@ -96,7 +126,13 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
             SecretKey::random(&mut rng),
             pubkey2id(&peer_pk.into()),
         ));
-        Ok(RLPxConnection::new(signer, stream, state, storage))
+        Ok(RLPxConnection::new(
+            signer,
+            stream,
+            state,
+            storage,
+            connection_broadcast_send,
+        ))
     }
 
     pub async fn handshake(&mut self) -> Result<(), RLPxError> {
@@ -159,52 +195,109 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
         match &self.state {
             RLPxConnectionState::Established(_) => {
                 info!("Started peer main loop");
+                // Wait for eth status message or timeout.
+                let mut broadcaster_receive = {
+                    if self.capabilities.contains(&CAP_ETH) {
+                        Some(self.connection_broadcast_send.subscribe())
+                    } else {
+                        None
+                    }
+                };
+                // Status message received, start listening for connections,
+                // and subscribe this connection to the broadcasting.
                 loop {
-                    match self.receive().await? {
-                        // TODO: implement handlers for each message type
-                        // https://github.com/lambdaclass/lambda_ethereum_rust/issues/1030
-                        Message::Disconnect(_) => info!("Received Disconnect"),
-                        Message::Ping(_) => info!("Received Ping"),
-                        Message::Pong(_) => info!("Received Pong"),
-                        Message::Status(_) => info!("Received Status"),
-                        Message::GetAccountRange(req) => {
-                            let response =
-                                process_account_range_request(req, self.storage.clone())?;
-                            self.send(Message::AccountRange(response)).await?
+                    let peer_supports_eth = self.capabilities.contains(&CAP_ETH);
+                    tokio::select! {
+                        received_msg = self.receive() => {
+                            match received_msg? {
+                                Message::Disconnect(_) => info!("Received Disconnect"),
+                                Message::Ping(_) => info!("Received Ping"),
+                                Message::Pong(_) => info!("Received Pong"),
+                                Message::Status(_) if !peer_supports_eth => {
+                                    info!("Received Status");
+                                    // TODO: Check peer's status message.
+                                    broadcaster_receive = Some(self.connection_broadcast_send.subscribe());
+                                    self.capabilities.push(CAP_ETH);
+                                }
+                                // TODO: implement handlers for each message type
+                                Message::GetAccountRange(req) => {
+                                    let response =
+                                        process_account_range_request(req, self.storage.clone())?;
+                                    self.send(Message::AccountRange(response)).await?
+                                }
+                                // TODO(#1129) Add the transaction to the mempool once received.
+                                txs_msg @ Message::Transactions(_) if peer_supports_eth => {
+                                    self.broadcast_message(txs_msg).await?;
+                                }
+                                Message::GetBlockHeaders(msg_data) if peer_supports_eth => {
+                                    let response = BlockHeaders {
+                                        id: msg_data.id,
+                                        block_headers: msg_data.fetch_headers(&self.storage),
+                                    };
+                                    self.send(Message::BlockHeaders(response)).await?;
+                                }
+                                Message::GetBlockBodies(msg_data) if peer_supports_eth => {
+                                    let response = BlockBodies {
+                                        id: msg_data.id,
+                                        block_bodies: msg_data.fetch_blocks(&self.storage),
+                                    };
+                                    self.send(Message::BlockBodies(response)).await?;
+                                }
+                                Message::GetStorageRanges(req) => {
+                                    let response =
+                                        process_storage_ranges_request(req, self.storage.clone())?;
+                                    self.send(Message::StorageRanges(response)).await?
+                                }
+                                Message::GetByteCodes(req) => {
+                                    let response = process_byte_codes_request(req, self.storage.clone())?;
+                                    self.send(Message::ByteCodes(response)).await?
+                                }
+                                Message::GetTrieNodes(req) => {
+                                    let response = process_trie_nodes_request(req, self.storage.clone())?;
+                                    self.send(Message::TrieNodes(response)).await?
+                                }
+                                // TODO: Add new message types and handlers as they are implemented
+                                message => return Err(RLPxError::MessageNotHandled(format!("{message}"))),
+                            }
                         }
-                        Message::GetBlockHeaders(msg_data) => {
-                            let response = BlockHeaders {
-                                id: msg_data.id,
-                                block_headers: msg_data.fetch_headers(&self.storage),
-                            };
-                            self.send(Message::BlockHeaders(response)).await?
+                        // This is not ideal, but using the receiver without
+                        // this function call, causes the loop to take ownwership
+                        // of the variable and the compiler will complain about it,
+                        // with this function, we avoid that.
+                        // If the broadcaster is Some (i.e. we're connected to a peer that supports an eth protocol),
+                        // we'll receive broadcasted messages from another connections through a channel, otherwise
+                        // the function below will yield immediately but the select will not match and
+                        // ignore the returned value.
+                        Some(Ok((id, broadcasted_msg))) = Self::maybe_wait_for_broadcaster(&mut broadcaster_receive) => {
+                            if id != tokio::task::id() {
+                                match broadcasted_msg.as_ref() {
+                                    Message::Transactions(ref txs) => {
+                                        // TODO(#1131): Avoid cloning this vector.
+                                        let cloned = txs.transactions.clone();
+                                        let new_msg = Message::Transactions(Transactions { transactions: cloned });
+                                        self.send(new_msg).await?;
+                                    }
+                                    msg => {
+                                        error!("Unsupported message was broadcasted: {msg}");
+                                        return Err(RLPxError::BroadcastError(format!("Non-supported message broadcasted {}", msg)))
+                                    }
+                                }
+
+                            }
                         }
-                        Message::GetBlockBodies(msg_data) => {
-                            let response = BlockBodies {
-                                id: msg_data.id,
-                                block_bodies: msg_data.fetch_blocks(&self.storage),
-                            };
-                            self.send(Message::BlockBodies(response)).await?
-                        }
-                        Message::GetStorageRanges(req) => {
-                            let response =
-                                process_storage_ranges_request(req, self.storage.clone())?;
-                            self.send(Message::StorageRanges(response)).await?
-                        }
-                        Message::GetByteCodes(req) => {
-                            let response = process_byte_codes_request(req, self.storage.clone())?;
-                            self.send(Message::ByteCodes(response)).await?
-                        }
-                        Message::GetTrieNodes(req) => {
-                            let response = process_trie_nodes_request(req, self.storage.clone())?;
-                            self.send(Message::TrieNodes(response)).await?
-                        }
-                        // TODO: Add new message types and handlers as they are implemented
-                        _ => return Err(RLPxError::MessageNotHandled()),
-                    };
+                    }
                 }
             }
             _ => Err(RLPxError::InvalidState()),
+        }
+    }
+
+    async fn maybe_wait_for_broadcaster(
+        receiver: &mut Option<tokio::sync::broadcast::Receiver<(Id, Arc<Message>)>>,
+    ) -> Option<Result<(Id, Arc<Message>), RecvError>> {
+        match receiver {
+            None => None,
+            Some(rec) => Some(rec.recv().await),
         }
     }
 
@@ -217,9 +310,26 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
 
     async fn start_capabilities(&mut self) -> Result<(), RLPxError> {
         // Sending eth Status if peer supports it
-        if self.capabilities.contains(&CAP_ETH) {
+        if let Some(cap_index) = self.capabilities.iter().position(|cap| cap == &CAP_ETH) {
             let status = backend::get_status(&self.storage)?;
             self.send(Message::Status(status)).await?;
+            // The next immediate message in the ETH protocol is the
+            // status, reference here:
+            // https://github.com/ethereum/devp2p/blob/master/caps/eth.md#status-0x00
+            // let Ok(Message::Status(_)) = self.receive().await else {
+            //     self.capabilities.iter_mut().position(|cap| cap == &CAP_ETH).map(|indx| self.capabilities.remove(indx));
+            // }
+            match self.receive().await? {
+                Message::Status(_) => {
+                    // TODO: Check message status is correct.
+                }
+                msg => {
+                    error!(
+                        "Peer established eth capability but sent message: {msg} instead of status"
+                    );
+                    self.capabilities.remove(cap_index);
+                }
+            }
         }
         // TODO: add new capabilities startup when required (eg. snap)
         Ok(())
@@ -388,6 +498,28 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
                 Ok(rlpx::Message::decode(msg_id, msg_data)?)
             }
             _ => Err(RLPxError::InvalidState()),
+        }
+    }
+
+    pub async fn broadcast_message(&self, msg: Message) -> Result<(), RLPxError> {
+        match msg {
+            txs_msg @ Message::Transactions(_) => {
+                let txs = Arc::new(txs_msg);
+                let task_id = tokio::task::id();
+                let Ok(_) = self.connection_broadcast_send.send((task_id, txs)) else {
+                    error!("Could not broadcast message in task!");
+                    return Err(RLPxError::BroadcastError(
+                        "Could not broadcast received transactions".to_owned(),
+                    ));
+                };
+                Ok(())
+            }
+            msg => {
+                error!("Non supported message: {msg} was tried to be broadcasted");
+                Err(RLPxError::BroadcastError(format!(
+                    "Broadcasting for msg: {msg} is not supported"
+                )))
+            }
         }
     }
 }

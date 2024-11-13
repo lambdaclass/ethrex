@@ -19,8 +19,8 @@ pub(crate) enum RLPxError {
     InvalidRecoveryId(),
     #[error("Invalid message length")]
     InvalidMessageLength(),
-    #[error("Cannot handle message")]
-    MessageNotHandled(),
+    #[error("Cannot handle message: {0}")]
+    MessageNotHandled(String),
     #[error("Bad Request: {0}")]
     BadRequest(String),
     #[error(transparent)]
@@ -31,6 +31,8 @@ pub(crate) enum RLPxError {
     StoreError(#[from] StoreError),
     #[error("Error in cryptographic library: {0}")]
     CryptographyError(String),
+    #[error("Failed to broadcast msg: {0}")]
+    BroadcastError(String),
 }
 
 // Grouping all cryptographic related errors in a single CryptographicError variant

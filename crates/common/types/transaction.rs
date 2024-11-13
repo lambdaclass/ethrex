@@ -202,7 +202,7 @@ impl RLPDecode for Transaction {
     /// B) Non legacy transactions: rlp(Bytes) where Bytes represents the canonical encoding for the transaction as a bytes object.
     /// Checkout [Transaction::decode_canonical] for more information
     fn decode_unfinished(rlp: &[u8]) -> Result<(Self, &[u8]), RLPDecodeError> {
-        if is_encoded_as_bytes(rlp) {
+        if is_encoded_as_bytes(rlp)? {
             // Adjust the encoding to get the payload
             let payload = get_rlp_bytes_item_payload(rlp);
             let tx_type = payload.first().unwrap();
