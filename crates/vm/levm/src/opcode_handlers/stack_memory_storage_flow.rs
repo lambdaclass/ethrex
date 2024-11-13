@@ -154,10 +154,7 @@ impl VM {
             // If slot is warm (cached) add 100 to base_dynamic_gas
             base_dynamic_gas += WARM_ADDRESS_ACCESS_COST;
 
-            self.cache
-                .get_storage_slot(address, key)
-                .expect("Should be already cached") // Because entered the if is_slot_cached
-                .current_value
+            self.get_storage_slot(&address, key).current_value
         } else {
             // If slot is cold (not cached) add 2100 to base_dynamic_gas
             base_dynamic_gas += COLD_STORAGE_ACCESS_COST;
@@ -222,7 +219,7 @@ impl VM {
                 original_value: storage_slot.original_value,
                 current_value: value,
             },
-        );
+        )?;
 
         Ok(OpcodeSuccess::Continue)
     }

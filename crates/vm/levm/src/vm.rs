@@ -646,7 +646,7 @@ impl VM {
         sender_address: Address,
         initialization_code: &Bytes,
         salt: U256,
-    ) -> Address {
+    ) -> Result<Address, VMError> {
         let mut hasher = Keccak256::new();
         hasher.update(initialization_code.clone());
         let initialization_code_hash = hasher.finalize();
@@ -657,7 +657,9 @@ impl VM {
         hasher.update(sender_address.as_bytes());
         hasher.update(salt_bytes);
         hasher.update(initialization_code_hash);
-        Address::from_slice(&hasher.finalize()[12..])
+        Ok(Address::from_slice(hasher.finalize().get(12..).ok_or(
+            VMError::Internal(InternalError::CouldNotComputeCreate2Address),
+        )?))
     }
 
     fn compute_gas_create(
@@ -671,7 +673,7 @@ impl VM {
             .checked_add(U256::from(31))
             .ok_or(VMError::DataSizeOverflow)?)
         .checked_div(U256::from(32))
-        .ok_or(VMError::OverflowInArithmeticOp)?; // '32' will never be zero. The error is wrong but will see later...
+        .ok_or(VMError::Internal(InternalError::DivisionError))?; // '32' will never be zero
 
         let init_code_cost = minimum_word_size
             .checked_mul(INIT_CODE_WORD_COST)
@@ -782,7 +784,7 @@ impl VM {
 
         let new_address = match salt {
             Some(salt) => {
-                Self::calculate_create2_address(current_call_frame.msg_sender, &code, salt)
+                Self::calculate_create2_address(current_call_frame.msg_sender, &code, salt)?
             }
             None => Self::calculate_create_address(
                 current_call_frame.msg_sender,

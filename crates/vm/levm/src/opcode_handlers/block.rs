@@ -134,9 +134,7 @@ impl VM {
 
         // the current account should have been cached when the contract was called
         let balance = self
-            .cache
-            .get_account(current_call_frame.code_address)
-            .expect("The current account should always be cached")
+            .get_account(&current_call_frame.code_address)
             .info
             .balance;
 
