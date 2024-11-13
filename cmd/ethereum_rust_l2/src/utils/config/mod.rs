@@ -11,7 +11,7 @@ use crate::{
 use dialoguer::{theme::ColorfulTheme, Confirm, Input, Select};
 use ethereum_types::H256;
 use eyre::ContextCompat;
-use libsecp256k1::SecretKey;
+use secp256k1::SecretKey;
 use std::{path::PathBuf, str::FromStr};
 
 pub mod default_values;
@@ -112,11 +112,11 @@ pub fn prompt_config() -> eyre::Result<EthereumRustL2Config> {
                     format!(
                         "0x{}",
                         hex::encode(
-                            SecretKey::parse(DEFAULT_PRIVATE_KEY.as_fixed_bytes())?.serialize(),
+                            SecretKey::from_slice(DEFAULT_PRIVATE_KEY.as_bytes())?.secret_bytes(),
                         )
                     ),
                 )?;
-                SecretKey::parse(H256::from_str(&prompted_private_key[2..])?.as_fixed_bytes())?
+                SecretKey::from_slice(H256::from_str(&prompted_private_key[2..])?.as_fixed_bytes())?
             },
             address: prompt(ADDRESS_PROMPT_MSG, DEFAULT_ADDRESS)?,
         },
@@ -218,10 +218,10 @@ pub fn edit_existing_config_interactively(
                     PRIVATE_KEY_PROMPT_MSG,
                     format!(
                         "0x{}",
-                        hex::encode(existing_config.wallet.private_key.serialize())
+                        hex::encode(existing_config.wallet.private_key.secret_bytes())
                     ),
                 )?;
-                SecretKey::parse(H256::from_str(&prompted_private_key[2..])?.as_fixed_bytes())?
+                SecretKey::from_slice(H256::from_str(&prompted_private_key[2..])?.as_fixed_bytes())?
             },
             address: prompt(ADDRESS_PROMPT_MSG, existing_config.wallet.address)?,
         },
@@ -265,7 +265,7 @@ pub fn edit_existing_config_non_interactively(
             private_key: opts
                 .private_key
                 .map(|pk| {
-                    SecretKey::parse(H256::from_str(&pk[2..]).unwrap().as_fixed_bytes()).unwrap()
+                    SecretKey::from_slice(H256::from_str(&pk[2..]).unwrap().as_bytes()).unwrap()
                 })
                 .unwrap_or(existing_config.wallet.private_key),
         },

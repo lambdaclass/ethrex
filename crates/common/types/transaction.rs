@@ -2,8 +2,9 @@ use std::cmp::min;
 
 use bytes::Bytes;
 use ethereum_types::{Address, H256, U256};
+use keccak_hash::keccak;
 pub use mempool::MempoolTransaction;
-use secp256k1::{ecdsa::RecoveryId, Message, SECP256K1};
+use secp256k1::{ecdsa::RecoveryId, Message, SecretKey};
 use serde::{ser::SerializeStruct, Deserialize, Serialize};
 pub use serde_impl::{AccessListEntry, GenericTransaction};
 use sha3::{Digest, Keccak256};
@@ -11,7 +12,7 @@ use sha3::{Digest, Keccak256};
 use ethereum_rust_rlp::{
     constants::RLP_NULL,
     decode::{get_rlp_bytes_item_payload, is_encoded_as_bytes, RLPDecode},
-    encode::RLPEncode,
+    encode::{PayloadRLPEncode, RLPEncode},
     error::RLPDecodeError,
     structs::{Decoder, Encoder},
 };
@@ -132,6 +133,19 @@ pub enum TxType {
     // We take the same approach as Optimism to define the privileged tx prefix
     // https://github.com/ethereum-optimism/specs/blob/c6903a3b2cad575653e1f5ef472debb573d83805/specs/protocol/deposits.md#the-deposited-transaction-type
     Privileged = 0x7e,
+}
+
+pub trait Signable {
+    fn sign(&self, private_key: &SecretKey) -> Self
+    where
+        Self: Sized,
+        Self: Clone,
+    {
+        let mut signable = self.clone();
+        signable.sign_inplace(private_key);
+        signable
+    }
+    fn sign_inplace(&mut self, private_key: &SecretKey);
 }
 
 impl Transaction {
@@ -375,6 +389,97 @@ impl RLPEncode for PrivilegedL2Transaction {
     }
 }
 
+impl PayloadRLPEncode for Transaction {
+    fn encode_payload(&self, buf: &mut dyn bytes::BufMut) {
+        match self {
+            Transaction::LegacyTransaction(tx) => tx.encode_payload(buf),
+            Transaction::EIP1559Transaction(tx) => tx.encode_payload(buf),
+            Transaction::EIP2930Transaction(tx) => tx.encode_payload(buf),
+            Transaction::EIP4844Transaction(tx) => tx.encode_payload(buf),
+            Transaction::PrivilegedL2Transaction(tx) => tx.encode_payload(buf),
+        }
+    }
+}
+
+impl PayloadRLPEncode for LegacyTransaction {
+    fn encode_payload(&self, buf: &mut dyn bytes::BufMut) {
+        Encoder::new(buf)
+            .encode_field(&self.nonce)
+            .encode_field(&self.gas_price)
+            .encode_field(&self.gas)
+            .encode_field(&self.to)
+            .encode_field(&self.value)
+            .encode_field(&self.data)
+            .finish();
+    }
+}
+
+impl PayloadRLPEncode for EIP1559Transaction {
+    fn encode_payload(&self, buf: &mut dyn bytes::BufMut) {
+        Encoder::new(buf)
+            .encode_field(&self.chain_id)
+            .encode_field(&self.nonce)
+            .encode_field(&self.max_priority_fee_per_gas)
+            .encode_field(&self.max_fee_per_gas)
+            .encode_field(&self.gas_limit)
+            .encode_field(&self.to)
+            .encode_field(&self.value)
+            .encode_field(&self.data)
+            .encode_field(&self.access_list)
+            .finish();
+    }
+}
+
+impl PayloadRLPEncode for EIP2930Transaction {
+    fn encode_payload(&self, buf: &mut dyn bytes::BufMut) {
+        Encoder::new(buf)
+            .encode_field(&self.chain_id)
+            .encode_field(&self.nonce)
+            .encode_field(&self.gas_price)
+            .encode_field(&self.gas_limit)
+            .encode_field(&self.to)
+            .encode_field(&self.value)
+            .encode_field(&self.data)
+            .encode_field(&self.access_list)
+            .finish();
+    }
+}
+
+impl PayloadRLPEncode for EIP4844Transaction {
+    fn encode_payload(&self, buf: &mut dyn bytes::BufMut) {
+        Encoder::new(buf)
+            .encode_field(&self.chain_id)
+            .encode_field(&self.nonce)
+            .encode_field(&self.max_priority_fee_per_gas)
+            .encode_field(&self.max_fee_per_gas)
+            .encode_field(&self.gas)
+            .encode_field(&self.to)
+            .encode_field(&self.value)
+            .encode_field(&self.data)
+            .encode_field(&self.access_list)
+            .encode_field(&self.max_fee_per_blob_gas)
+            .encode_field(&self.blob_versioned_hashes)
+            .finish();
+    }
+}
+
+impl PayloadRLPEncode for PrivilegedL2Transaction {
+    fn encode_payload(&self, buf: &mut dyn bytes::BufMut) {
+        Encoder::new(buf)
+            .encode_field(&self.chain_id)
+            .encode_field(&self.nonce)
+            .encode_field(&self.max_priority_fee_per_gas)
+            .encode_field(&self.max_fee_per_gas)
+            .encode_field(&self.gas_limit)
+            .encode_field(&self.to)
+            .encode_field(&self.value)
+            .encode_field(&self.data)
+            .encode_field(&self.access_list)
+            .encode_field(&self.tx_type)
+            .finish();
+    }
+}
+
 impl RLPDecode for LegacyTransaction {
     fn decode_unfinished(rlp: &[u8]) -> Result<(LegacyTransaction, &[u8]), RLPDecodeError> {
         let decoder = Decoder::new(rlp)?;
@@ -543,6 +648,125 @@ impl RLPDecode for PrivilegedL2Transaction {
             signature_s,
         };
         Ok((tx, decoder.finish()?))
+    }
+}
+
+impl Signable for Transaction {
+    fn sign_inplace(&mut self, private_key: &SecretKey) {
+        match self {
+            Transaction::LegacyTransaction(tx) => tx.sign_inplace(private_key),
+            Transaction::EIP2930Transaction(tx) => tx.sign_inplace(private_key),
+            Transaction::EIP1559Transaction(tx) => tx.sign_inplace(private_key),
+            Transaction::EIP4844Transaction(tx) => tx.sign_inplace(private_key),
+            Transaction::PrivilegedL2Transaction(tx) => tx.sign_inplace(private_key),
+        }
+    }
+}
+
+impl Signable for LegacyTransaction {
+    fn sign_inplace(&mut self, private_key: &SecretKey) {
+        let data = Message::from_digest_slice(&keccak(self.encode_payload_to_vec()).0).unwrap();
+
+        let (recovery_id, signature) = secp256k1::SECP256K1
+            .sign_ecdsa_recoverable(&data, private_key)
+            .serialize_compact();
+
+        let mut r = [0u8; 32];
+        let mut s = [0u8; 32];
+        r.copy_from_slice(&signature[..32]);
+        s.copy_from_slice(&signature[32..]);
+
+        self.r = U256::from(&r);
+        self.s = U256::from(&s);
+        self.v = U256::from(recovery_id.to_i32());
+    }
+}
+
+impl Signable for EIP1559Transaction {
+    fn sign_inplace(&mut self, private_key: &SecretKey) {
+        let mut payload = vec![TxType::EIP1559 as u8];
+        payload.append(self.encode_payload_to_vec().as_mut());
+        let data = Message::from_digest_slice(&keccak(payload).0).unwrap();
+
+        let (recovery_id, signature) = secp256k1::SECP256K1
+            .sign_ecdsa_recoverable(&data, private_key)
+            .serialize_compact();
+
+        let mut r = [0u8; 32];
+        let mut s = [0u8; 32];
+        r.copy_from_slice(&signature[..32]);
+        s.copy_from_slice(&signature[32..]);
+        let parity = recovery_id.to_i32() != 0;
+
+        self.signature_r = U256::from(&r);
+        self.signature_s = U256::from(&s);
+        self.signature_y_parity = parity;
+    }
+}
+
+impl Signable for EIP2930Transaction {
+    fn sign_inplace(&mut self, private_key: &SecretKey) {
+        let mut payload = vec![TxType::EIP2930 as u8];
+        payload.append(self.encode_payload_to_vec().as_mut());
+        let data = Message::from_digest_slice(&keccak(payload).0).unwrap();
+
+        let (recovery_id, signature) = secp256k1::SECP256K1
+            .sign_ecdsa_recoverable(&data, private_key)
+            .serialize_compact();
+
+        let mut r = [0u8; 32];
+        let mut s = [0u8; 32];
+        r.copy_from_slice(&signature[..32]);
+        s.copy_from_slice(&signature[32..]);
+        let parity = recovery_id.to_i32() != 0;
+
+        self.signature_r = U256::from(&r);
+        self.signature_s = U256::from(&s);
+        self.signature_y_parity = parity;
+    }
+}
+
+impl Signable for EIP4844Transaction {
+    fn sign_inplace(&mut self, private_key: &SecretKey) {
+        let mut payload = vec![TxType::EIP4844 as u8];
+        payload.append(self.encode_payload_to_vec().as_mut());
+        let data = Message::from_digest_slice(&keccak(payload).0).unwrap();
+
+        let (recovery_id, signature) = secp256k1::SECP256K1
+            .sign_ecdsa_recoverable(&data, private_key)
+            .serialize_compact();
+
+        let mut r = [0u8; 32];
+        let mut s = [0u8; 32];
+        r.copy_from_slice(&signature[..32]);
+        s.copy_from_slice(&signature[32..]);
+        let parity = recovery_id.to_i32() != 0;
+
+        self.signature_r = U256::from(&r);
+        self.signature_s = U256::from(&s);
+        self.signature_y_parity = parity;
+    }
+}
+
+impl Signable for PrivilegedL2Transaction {
+    fn sign_inplace(&mut self, private_key: &SecretKey) {
+        let mut payload = vec![TxType::Privileged as u8];
+        payload.append(self.encode_payload_to_vec().as_mut());
+        let data = Message::from_digest_slice(&keccak(payload).0).unwrap();
+
+        let (recovery_id, signature) = secp256k1::SECP256K1
+            .sign_ecdsa_recoverable(&data, private_key)
+            .serialize_compact();
+
+        let mut r = [0u8; 32];
+        let mut s = [0u8; 32];
+        r.copy_from_slice(&signature[..32]);
+        s.copy_from_slice(&signature[32..]);
+        let parity = recovery_id.to_i32() != 0;
+
+        self.signature_r = U256::from(&r);
+        self.signature_s = U256::from(&s);
+        self.signature_y_parity = parity;
     }
 }
 
@@ -847,7 +1071,7 @@ fn recover_address(
         .finalize()
         .into();
     // Recover public key
-    let public = SECP256K1
+    let public = secp256k1::SECP256K1
         .recover_ecdsa(&Message::from_digest(msg_digest), &signature)
         .unwrap();
     // Hash public key to obtain address
@@ -1829,7 +2053,7 @@ mod serde_impl {
                 blob_versioned_hashes: vec![],
                 blobs: vec![],
                 chain_id: Some(value.chain_id),
-                ..Default::default()
+                from: Address::default(),
             }
         }
     }
@@ -1854,8 +2078,34 @@ mod serde_impl {
                     .collect(),
                 blob_versioned_hashes: value.blob_versioned_hashes,
                 blobs: vec![],
-                chain_id: None,
-                ..Default::default()
+                chain_id: Some(value.chain_id),
+                from: Address::default(),
+            }
+        }
+    }
+
+    impl From<PrivilegedL2Transaction> for GenericTransaction {
+        fn from(value: PrivilegedL2Transaction) -> Self {
+            Self {
+                r#type: TxType::Privileged,
+                nonce: Some(value.nonce),
+                to: value.to,
+                gas: Some(value.gas_limit),
+                value: value.value,
+                input: value.data,
+                gas_price: value.max_fee_per_gas,
+                max_priority_fee_per_gas: Some(value.max_priority_fee_per_gas),
+                max_fee_per_gas: Some(value.max_fee_per_gas),
+                max_fee_per_blob_gas: None,
+                access_list: value
+                    .access_list
+                    .iter()
+                    .map(AccessListEntry::from)
+                    .collect(),
+                blob_versioned_hashes: vec![],
+                blobs: vec![],
+                chain_id: Some(value.chain_id),
+                from: Address::default(),
             }
         }
     }

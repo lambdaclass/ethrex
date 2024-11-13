@@ -9,7 +9,7 @@ edition = "2021"
 tokio = { version = "1.38.0", features = ["full"] }
 ethereum-types = { version = "0.14.1", features = ["serialize"] }
 bytes = { version = "1.6.0", features = ["serde"] }
-libsecp256k1 = "0.7.1"
+secp256k1.workspace = true
 keccak-hash = "0.10.0"
 hex = "0.4.3"
 tracing.workspace = true

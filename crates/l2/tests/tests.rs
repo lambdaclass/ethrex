@@ -1,7 +1,7 @@
 use ethereum_rust_l2::utils::eth_client::EthClient;
 use ethereum_types::{Address, H160, U256};
 use keccak_hash::H256;
-use libsecp256k1::{PublicKey, SecretKey};
+use secp256k1::SecretKey;
 use std::str::FromStr;
 
 const DEFAULT_ETH_URL: &str = "http://localhost:8545";
@@ -17,8 +17,8 @@ const DEFAULT_L1_RICH_WALLET_PRIVATE_KEY: H256 = H256([
     0x33, 0xf6, 0x6b, 0x39, 0x60, 0xd9, 0xe6, 0x22, 0x9c, 0x1c, 0xd2, 0x14, 0xed, 0x3b, 0xbe, 0x31,
 ]);
 
-const L1_GAS_COST_MAX_DELTA: U256 = U256([1_000_000_000, 0, 0, 0]);
-const L2_GAS_COST_MAX_DELTA: U256 = U256([1_000_000_000_000, 0, 0, 0]);
+const L1_GAS_COST_MAX_DELTA: U256 = U256([100_000_000_000_000, 0, 0, 0]);
+const L2_GAS_COST_MAX_DELTA: U256 = U256([100_000_000_000_000, 0, 0, 0]);
 
 /// Test the full flow of depositing, transferring, and withdrawing funds
 /// from L1 to L2 and back.
@@ -273,13 +273,12 @@ fn l1_rich_wallet_address() -> Address {
 
 fn l1_rich_wallet_private_key() -> SecretKey {
     std::env::var("L1_RICH_WALLET_PRIVATE_KEY")
-        .map(|s| SecretKey::parse(H256::from_str(&s).unwrap().as_fixed_bytes()).unwrap())
-        .unwrap_or(SecretKey::parse(DEFAULT_L1_RICH_WALLET_PRIVATE_KEY.as_fixed_bytes()).unwrap())
+        .map(|s| SecretKey::from_slice(H256::from_str(&s).unwrap().as_bytes()).unwrap())
+        .unwrap_or(SecretKey::from_slice(DEFAULT_L1_RICH_WALLET_PRIVATE_KEY.as_bytes()).unwrap())
 }
 
 fn random_account() -> (Address, SecretKey) {
-    let sk = SecretKey::random(&mut rand::thread_rng());
-    let pk = PublicKey::from_secret_key(&sk);
-    let address = Address::from_slice(pk.serialize()[45..].try_into().unwrap());
+    let (sk, pk) = secp256k1::generate_keypair(&mut rand::thread_rng());
+    let address = Address::from(keccak_hash::keccak(&pk.serialize_uncompressed()[1..]));
     (address, sk)
 }

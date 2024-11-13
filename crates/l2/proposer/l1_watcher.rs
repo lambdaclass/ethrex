@@ -2,19 +2,17 @@ use crate::{
     proposer::errors::L1WatcherError,
     utils::{
         config::{eth::EthConfig, l1_watcher::L1WatcherConfig},
-        eth_client::{transaction::PayloadRLPEncode, EthClient},
+        eth_client::{eth_sender::Overrides, EthClient},
     },
 };
+use bytes::Bytes;
 use ethereum_rust_blockchain::{constants::TX_GAS_COST, mempool};
-use ethereum_rust_core::types::{
-    PrivilegedL2Transaction, PrivilegedTxType, Transaction, TxKind, TxType,
-};
-use ethereum_rust_rlp::encode::RLPEncode;
+use ethereum_rust_core::types::PrivilegedTxType;
+use ethereum_rust_core::types::{Signable, Transaction};
 use ethereum_rust_rpc::types::receipt::RpcLog;
 use ethereum_rust_storage::Store;
 use ethereum_types::{Address, BigEndianHash, H256, U256};
-use keccak_hash::keccak;
-use libsecp256k1::{sign, Message, SecretKey};
+use secp256k1::SecretKey;
 use std::{cmp::min, ops::Mul, time::Duration};
 use tokio::time::sleep;
 use tracing::{debug, info, warn};
@@ -128,42 +126,35 @@ impl L1Watcher {
 
             info!("Initiating mint transaction for {beneficiary:#x} with value {mint_value:#x}",);
 
-            let mut mint_transaction = PrivilegedL2Transaction {
-                tx_type: PrivilegedTxType::Deposit,
-                to: TxKind::Call(beneficiary),
-                chain_id: store
-                    .get_chain_config()
-                    .map_err(|e| L1WatcherError::FailedToRetrieveChainConfig(e.to_string()))?
-                    .chain_id,
-                ..Default::default()
-            };
+            let mut mint_transaction = self
+                .eth_client
+                .build_privileged_transaction(
+                    PrivilegedTxType::Deposit,
+                    beneficiary,
+                    Bytes::new(),
+                    Overrides {
+                        chain_id: Some(
+                            store
+                                .get_chain_config()
+                                .map_err(|e| {
+                                    L1WatcherError::FailedToRetrieveChainConfig(e.to_string())
+                                })?
+                                .chain_id,
+                        ),
+                        nonce: Some(operator_nonce),
+                        value: Some(mint_value),
+                        // TODO(IMPORTANT): gas_limit should come in the log and must
+                        // not be calculated in here. The reason for this is that the
+                        // gas_limit for this transaction is payed by the caller in
+                        // the L1 as part of the deposited funds.
+                        gas_limit: Some(TX_GAS_COST.mul(2)),
+                        ..Default::default()
+                    },
+                )
+                .await?;
+            mint_transaction.sign_inplace(&self.l2_proposer_pk);
 
-            mint_transaction.nonce = operator_nonce;
             operator_nonce += 1;
-
-            mint_transaction.max_fee_per_gas = self.eth_client.get_gas_price().await?.as_u64();
-            // TODO(IMPORTANT): gas_limit should come in the log and must
-            // not be calculated in here. The reason for this is that the
-            // gas_limit for this transaction is payed by the caller in
-            // the L1 as part of the deposited funds.
-            mint_transaction.gas_limit = TX_GAS_COST.mul(2);
-            mint_transaction.value = mint_value;
-
-            let mut payload = vec![TxType::Privileged as u8];
-            payload.append(mint_transaction.encode_payload_to_vec().as_mut());
-
-            let data = Message::parse(&keccak(payload).0);
-            let signature = sign(&data, &self.l2_proposer_pk);
-
-            mint_transaction.signature_r = U256::from(signature.0.r.b32());
-            mint_transaction.signature_s = U256::from(signature.0.s.b32());
-            mint_transaction.signature_y_parity = signature.1.serialize() != 0;
-
-            let mut encoded_tx = Vec::new();
-            mint_transaction.encode(&mut encoded_tx);
-
-            let mut data = vec![TxType::Privileged as u8];
-            data.append(&mut encoded_tx);
 
             match mempool::add_transaction(
                 Transaction::PrivilegedL2Transaction(mint_transaction),

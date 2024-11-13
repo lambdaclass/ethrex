@@ -3,12 +3,12 @@ use crate::utils::eth_client::{
     EthClient, RpcResponse,
 };
 use bytes::Bytes;
-use ethereum_rust_core::types::{EIP1559Transaction, GenericTransaction, TxKind, TxType};
+use ethereum_rust_core::types::{GenericTransaction, TxKind};
 use ethereum_rust_rlp::encode::RLPEncode;
 use ethereum_rust_rpc::utils::{RpcRequest, RpcRequestId};
 use ethereum_types::{Address, U256};
 use keccak_hash::{keccak, H256};
-use libsecp256k1::SecretKey;
+use secp256k1::SecretKey;
 use serde_json::json;
 
 #[derive(Default, Clone)]
@@ -20,6 +20,8 @@ pub struct Overrides {
     pub gas_limit: Option<u64>,
     pub gas_price: Option<u64>,
     pub priority_gas_price: Option<u64>,
+    pub access_list: Vec<(Address, Vec<H256>)>,
+    pub gas_price_per_blob: Option<U256>,
 }
 
 impl EthClient {
@@ -70,22 +72,6 @@ impl EthClient {
         }
     }
 
-    pub async fn send(
-        &self,
-        calldata: Bytes,
-        from: Address,
-        to: TxKind,
-        sender_private_key: SecretKey,
-        overrides: Overrides,
-    ) -> Result<H256, EthClientError> {
-        let mut tx = self
-            .make_eip1559_transaction(to, from, calldata, overrides)
-            .await?;
-
-        self.send_eip1559_transaction(&mut tx, sender_private_key)
-            .await
-    }
-
     pub async fn deploy(
         &self,
         deployer: Address,
@@ -93,14 +79,12 @@ impl EthClient {
         init_code: Bytes,
         overrides: Overrides,
     ) -> Result<(H256, Address), EthClientError> {
+        let mut deploy_tx = self
+            .build_eip1559_transaction(Address::zero(), init_code, overrides)
+            .await?;
+        deploy_tx.to = TxKind::Create;
         let deploy_tx_hash = self
-            .send(
-                init_code,
-                deployer,
-                TxKind::Create,
-                deployer_private_key,
-                overrides,
-            )
+            .send_eip1559_transaction(deploy_tx, &deployer_private_key)
             .await?;
 
         let encoded_from = deployer.encode_to_vec();
@@ -112,43 +96,5 @@ impl EthClient {
         let deployed_address = Address::from(keccak(encoded));
 
         Ok((deploy_tx_hash, deployed_address))
-    }
-
-    async fn make_eip1559_transaction(
-        &self,
-        to: TxKind,
-        from: Address,
-        data: Bytes,
-        overrides: Overrides,
-    ) -> Result<EIP1559Transaction, EthClientError> {
-        let generic_transaction = GenericTransaction {
-            r#type: TxType::EIP1559,
-            from,
-            to: to.clone(),
-            input: data.clone(),
-            value: overrides.value.unwrap_or_default(),
-            nonce: overrides.nonce.or(self.get_nonce(from).await.ok()),
-            ..Default::default()
-        };
-
-        let mut tx = EIP1559Transaction {
-            to,
-            data,
-            value: overrides.value.unwrap_or_default(),
-            chain_id: overrides
-                .chain_id
-                .unwrap_or(self.get_chain_id().await?.as_u64()),
-            nonce: overrides.nonce.unwrap_or(self.get_nonce(from).await?),
-            max_fee_per_gas: overrides
-                .gas_price
-                .unwrap_or(self.get_gas_price().await?.as_u64()),
-            max_priority_fee_per_gas: overrides.priority_gas_price.unwrap_or_default(),
-            ..Default::default()
-        };
-        tx.gas_limit = overrides
-            .gas_limit
-            .unwrap_or(self.estimate_gas(generic_transaction).await?);
-
-        Ok(tx)
     }
 }

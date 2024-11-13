@@ -1,26 +1,22 @@
 use crate::utils::{
     config::{eth::EthConfig, proposer::ProposerConfig, read_env_file},
-    eth_client::{transaction::blob_from_bytes, EthClient},
+    eth_client::{eth_sender::Overrides, transaction::blob_from_bytes, EthClient},
     merkle_tree::merkelize,
 };
 use bytes::Bytes;
 use c_kzg::{Bytes48, KzgSettings};
 use errors::ProposerError;
-use ethereum_rust_blockchain::constants::TX_GAS_COST;
 use ethereum_rust_core::types::{
-    BlobsBundle, Block, EIP1559Transaction, EIP4844Transaction, GenericTransaction,
-    PrivilegedL2Transaction, PrivilegedTxType, Transaction, TxKind, BYTES_PER_BLOB,
+    BlobsBundle, Block, PrivilegedL2Transaction, PrivilegedTxType, Transaction, TxKind,
+    BYTES_PER_BLOB,
 };
 use ethereum_rust_dev::utils::engine_client::{config::EngineApiConfig, EngineClient};
-use ethereum_rust_rpc::types::{
-    fork_choice::{ForkChoiceState, PayloadAttributesV3},
-    transaction::WrappedEIP4844Transaction,
-};
+use ethereum_rust_rpc::types::fork_choice::{ForkChoiceState, PayloadAttributesV3};
 use ethereum_rust_storage::Store;
 use ethereum_rust_vm::{evm_state, execute_block, get_state_transitions};
 use ethereum_types::{Address, H256, U256};
 use keccak_hash::keccak;
-use libsecp256k1::SecretKey;
+use secp256k1::SecretKey;
 use sha2::{Digest, Sha256};
 use state_diff::{AccountStateDiff, DepositLog, StateDiff, WithdrawalLog};
 use std::{
@@ -432,26 +428,6 @@ impl Proposer {
         calldata.extend(withdrawal_logs_merkle_root.0);
         calldata.extend(deposit_logs_hash.0);
 
-        let mut tx = EIP4844Transaction {
-            to: self.on_chain_proposer_address,
-            data: Bytes::from(calldata),
-            max_fee_per_gas: self.eth_client.get_gas_price().await?.as_u64(),
-            nonce: self.eth_client.get_nonce(self.l1_address).await?,
-            chain_id: self.eth_client.get_chain_id().await?.as_u64(),
-            blob_versioned_hashes: vec![H256::from_slice(&blob_versioned_hash)],
-            max_fee_per_blob_gas: U256::from_dec_str("100000000000000").unwrap(),
-            ..Default::default()
-        };
-
-        let mut generic_tx = GenericTransaction::from(tx.clone());
-        generic_tx.from = self.l1_address;
-
-        tx.gas = self
-            .eth_client
-            .estimate_gas(generic_tx)
-            .await?
-            .saturating_add(TX_GAS_COST);
-
         let mut buf = [0u8; BYTES_PER_BLOB];
         buf.copy_from_slice(
             blob_from_bytes(blob_data)
@@ -460,18 +436,29 @@ impl Proposer {
                 .as_slice(),
         );
 
-        let mut wrapped_tx = WrappedEIP4844Transaction {
-            tx,
-            blobs_bundle: BlobsBundle {
-                blobs: vec![buf],
-                commitments: vec![commitment],
-                proofs: vec![proof],
-            },
+        let blobs_bundle = BlobsBundle {
+            blobs: vec![buf],
+            commitments: vec![commitment],
+            proofs: vec![proof],
         };
+        let wrapped_tx = self
+            .eth_client
+            .build_eip4844_transaction(
+                self.on_chain_proposer_address,
+                Bytes::from(calldata),
+                Overrides {
+                    from: Some(self.l1_address),
+                    gas_price_per_blob: Some(U256::from_dec_str("100000000000000").unwrap()),
+                    ..Default::default()
+                },
+                blobs_bundle,
+            )
+            .await
+            .map_err(ProposerError::from)?;
 
         let commit_tx_hash = self
             .eth_client
-            .send_eip4844_transaction(&mut wrapped_tx, self.l1_private_key)
+            .send_eip4844_transaction(wrapped_tx, &self.l1_private_key)
             .await
             .map_err(ProposerError::from)?;
 
@@ -500,14 +487,26 @@ impl Proposer {
         let mut block_number_bytes = [0_u8; 32];
         U256::from(block_number).to_big_endian(&mut block_number_bytes);
         calldata.extend(block_number_bytes);
-        calldata.extend(H256::from_low_u64_be(32).as_bytes());
+        calldata.extend(H256::from_low_u64_be(64).as_bytes());
         calldata.extend(H256::from_low_u64_be(block_proof.len() as u64).as_bytes());
         calldata.extend(block_proof);
         let leading_zeros = 32 - ((calldata.len() - 4) % 32);
         calldata.extend(vec![0; leading_zeros]);
 
+        let verify_tx = self
+            .eth_client
+            .build_eip1559_transaction(
+                self.on_chain_proposer_address,
+                calldata.into(),
+                Overrides {
+                    from: Some(self.l1_address),
+                    ..Default::default()
+                },
+            )
+            .await?;
         let verify_tx_hash = self
-            .send_transaction_with_calldata(self.on_chain_proposer_address, calldata.into())
+            .eth_client
+            .send_eip1559_transaction(verify_tx, &self.l1_private_key)
             .await?;
 
         info!("Proof sent: {verify_tx_hash:#x}");
@@ -522,34 +521,5 @@ impl Proposer {
         }
 
         Ok(verify_tx_hash)
-    }
-
-    async fn send_transaction_with_calldata(
-        &self,
-        to: Address,
-        calldata: Bytes,
-    ) -> Result<H256, ProposerError> {
-        let mut tx = EIP1559Transaction {
-            to: TxKind::Call(to),
-            data: calldata,
-            max_fee_per_gas: self.eth_client.get_gas_price().await?.as_u64(),
-            nonce: self.eth_client.get_nonce(self.l1_address).await?,
-            chain_id: self.eth_client.get_chain_id().await?.as_u64(),
-            ..Default::default()
-        };
-
-        let mut generic_tx = GenericTransaction::from(tx.clone());
-        generic_tx.from = self.l1_address;
-
-        tx.gas_limit = self
-            .eth_client
-            .estimate_gas(generic_tx)
-            .await?
-            .saturating_add(TX_GAS_COST);
-
-        self.eth_client
-            .send_eip1559_transaction(&mut tx, self.l1_private_key)
-            .await
-            .map_err(ProposerError::from)
     }
 }

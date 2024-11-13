@@ -12,7 +12,7 @@ ethereum-types.workspace = true
 tokio.workspace = true
 hex.workspace = true
 keccak-hash = "0.11.0"
-libsecp256k1 = "0.7.1"
+secp256k1.workspace = true
 itertools = "0.13.0"
 
 [lib]

@@ -30,6 +30,8 @@ pub enum EthClientError {
     GetBalanceError(#[from] GetBalanceError),
     #[error("eth_getTransactionByHash request error: {0}")]
     GetTransactionByHashError(#[from] GetTransactionByHashError),
+    #[error("Unreachable nonce")]
+    UnrecheableNonce,
 }
 
 #[derive(Debug, thiserror::Error)]

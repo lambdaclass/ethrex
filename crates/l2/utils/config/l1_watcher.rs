@@ -1,6 +1,6 @@
 use crate::utils::secret_key_deserializer;
 use ethereum_types::{Address, H256, U256};
-use libsecp256k1::SecretKey;
+use secp256k1::SecretKey;
 use serde::Deserialize;
 
 use super::errors::ConfigError;

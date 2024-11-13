@@ -23,7 +23,7 @@ colored = "2.1.0"
 spinoff = "0.8.0"
 itertools = "0.13.0"
 strum = "0.26.3"
-libsecp256k1 = "0.7.1"
+secp256k1.workspace = true
 keccak-hash = "0.10.0"
 
 ethereum_rust-l2.workspace = true

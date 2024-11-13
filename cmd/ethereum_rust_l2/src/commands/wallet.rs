@@ -1,9 +1,7 @@
 use crate::{commands::utils::encode_calldata, config::EthereumRustL2Config};
 use bytes::Bytes;
 use clap::Subcommand;
-use ethereum_rust_core::types::{
-    EIP1559Transaction, PrivilegedL2Transaction, PrivilegedTxType, Transaction, TxKind,
-};
+use ethereum_rust_core::types::{PrivilegedTxType, Transaction};
 use ethereum_rust_l2::utils::{
     eth_client::{eth_sender::Overrides, EthClient},
     merkle_tree::merkle_proof,
@@ -340,17 +338,19 @@ impl Command {
                     hex::encode(claim_withdrawal_data.clone())
                 );
 
-                let tx_hash = eth_client
-                    .send(
+                let tx = eth_client
+                    .build_eip1559_transaction(
+                        cfg.contracts.common_bridge,
                         claim_withdrawal_data.into(),
-                        from,
-                        TxKind::Call(cfg.contracts.common_bridge),
-                        cfg.wallet.private_key,
                         Overrides {
                             chain_id: Some(cfg.network.l1_chain_id),
+                            from: Some(cfg.wallet.address),
                             ..Default::default()
                         },
                     )
+                    .await?;
+                let tx_hash = eth_client
+                    .send_eip1559_transaction(tx, &cfg.wallet.private_key)
                     .await?;
 
                 println!("Withdrawal claim sent: {tx_hash:#x}");
@@ -374,26 +374,27 @@ impl Command {
 
                 let client = if l1 { eth_client } else { rollup_client };
 
-                let mut transfer_transaction = EIP1559Transaction {
-                    to: TxKind::Call(to),
-                    value: amount,
-                    chain_id: if l1 {
-                        cfg.network.l1_chain_id
-                    } else {
-                        cfg.network.l2_chain_id
-                    },
-                    nonce: nonce.unwrap_or(client.get_nonce(from).await?),
-                    max_fee_per_gas: client.get_gas_price().await?.as_u64() * 100,
-                    gas_limit: 21000 * 100,
-                    ..Default::default()
-                };
-
-                // transfer_transaction.gas_limit = client
-                //     .estimate_gas(transfer_transaction.clone().into())
-                //     .await?;
+                let transfer_tx = client
+                    .build_eip1559_transaction(
+                        to,
+                        Bytes::new(),
+                        Overrides {
+                            value: Some(amount),
+                            chain_id: if l1 {
+                                Some(cfg.network.l1_chain_id)
+                            } else {
+                                Some(cfg.network.l2_chain_id)
+                            },
+                            nonce,
+                            from: Some(cfg.wallet.address),
+                            gas_limit: Some(21000 * 100),
+                            ..Default::default()
+                        },
+                    )
+                    .await?;
 
                 let tx_hash = client
-                    .send_eip1559_transaction(&mut transfer_transaction, cfg.wallet.private_key)
+                    .send_eip1559_transaction(transfer_tx, &cfg.wallet.private_key)
                     .await?;
 
                 println!(
@@ -413,19 +414,24 @@ impl Command {
                 wait_for_receipt,
                 explorer_url: _,
             } => {
-                let withdraw_transaction = PrivilegedL2Transaction {
-                    to: TxKind::Call(to.unwrap_or(cfg.wallet.address)),
-                    value: amount,
-                    chain_id: cfg.network.l2_chain_id,
-                    nonce: nonce.unwrap_or(rollup_client.get_nonce(from).await?),
-                    max_fee_per_gas: 800000000,
-                    tx_type: PrivilegedTxType::Withdrawal,
-                    gas_limit: 21000 * 2,
-                    ..Default::default()
-                };
+                let withdraw_transaction = rollup_client
+                    .build_privileged_transaction(
+                        PrivilegedTxType::Withdrawal,
+                        to.unwrap_or(cfg.wallet.address),
+                        Bytes::new(),
+                        Overrides {
+                            nonce,
+                            from: Some(cfg.wallet.address),
+                            value: Some(amount),
+                            gas_limit: Some(21000 * 2),
+                            gas_price: Some(800000000),
+                            ..Default::default()
+                        },
+                    )
+                    .await?;
 
                 let tx_hash = rollup_client
-                    .send_privileged_l2_transaction(withdraw_transaction, cfg.wallet.private_key)
+                    .send_privileged_l2_transaction(withdraw_transaction, &cfg.wallet.private_key)
                     .await?;
 
                 println!("Withdrawal sent: {tx_hash:#x}");
@@ -461,22 +467,30 @@ impl Command {
                     false => rollup_client,
                 };
 
-                let tx_hash = client
-                    .send(
+                let tx = client
+                    .build_eip1559_transaction(
+                        to,
                         calldata,
-                        from,
-                        TxKind::Call(to),
-                        cfg.wallet.private_key,
                         Overrides {
-                            value: value.into(),
+                            value: Some(value),
+                            chain_id: if let Some(chain_id) = chain_id {
+                                Some(chain_id)
+                            } else if l1 {
+                                Some(cfg.network.l1_chain_id)
+                            } else {
+                                Some(cfg.network.l2_chain_id)
+                            },
                             nonce,
-                            chain_id,
                             gas_limit,
                             gas_price,
                             priority_gas_price,
+                            from: Some(cfg.wallet.address),
                             ..Default::default()
                         },
                     )
+                    .await?;
+                let tx_hash = client
+                    .send_eip1559_transaction(tx, &cfg.wallet.private_key)
                     .await?;
 
                 println!(

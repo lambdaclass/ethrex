@@ -392,6 +392,15 @@ impl RLPEncode for ethereum_types::Bloom {
     }
 }
 
+pub trait PayloadRLPEncode {
+    fn encode_payload(&self, buf: &mut dyn bytes::BufMut);
+    fn encode_payload_to_vec(&self) -> Vec<u8> {
+        let mut buf = Vec::new();
+        self.encode_payload(&mut buf);
+        buf
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::net::IpAddr;

@@ -7,7 +7,7 @@ use crate::{
 };
 use ethereum_types::Address;
 use eyre::Context;
-use libsecp256k1::SecretKey;
+use secp256k1::SecretKey;
 use serde::{Deserialize, Serialize};
 
 #[derive(Deserialize, Serialize, Clone)]

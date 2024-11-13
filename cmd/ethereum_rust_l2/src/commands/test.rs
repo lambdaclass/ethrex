@@ -1,11 +1,11 @@
 use crate::config::EthereumRustL2Config;
+use bytes::Bytes;
 use clap::Subcommand;
 use ethereum_rust_blockchain::constants::TX_GAS_COST;
-use ethereum_rust_core::types::{EIP1559Transaction, TxKind};
-use ethereum_rust_l2::utils::eth_client::EthClient;
+use ethereum_rust_l2::utils::eth_client::{eth_sender::Overrides, EthClient};
 use ethereum_types::{Address, H160, H256, U256};
 use keccak_hash::keccak;
-use libsecp256k1::SecretKey;
+use secp256k1::SecretKey;
 use std::{
     fs::File,
     io::{self, BufRead},
@@ -70,10 +70,10 @@ async fn transfer_from(
     cfg: EthereumRustL2Config,
 ) -> u64 {
     let client = EthClient::new(&cfg.network.l2_rpc_url);
-    let private_key = SecretKey::parse(pk.parse::<H256>().unwrap().as_fixed_bytes()).unwrap();
+    let private_key = SecretKey::from_slice(pk.parse::<H256>().unwrap().as_bytes()).unwrap();
 
     let mut buffer = [0u8; 64];
-    let public_key = libsecp256k1::PublicKey::from_secret_key(&private_key).serialize();
+    let public_key = private_key.public_key(secp256k1::SECP256K1).serialize();
     buffer.copy_from_slice(&public_key[1..]);
 
     let address = H160::from(keccak(buffer));
@@ -86,18 +86,27 @@ async fn transfer_from(
             println!("transfer {i} from {pk}");
         }
 
-        let mut tx = EIP1559Transaction {
-            to: TxKind::Call(to_address),
-            chain_id: cfg.network.l2_chain_id,
-            nonce: i,
-            gas_limit: TX_GAS_COST,
-            value,
-            max_fee_per_gas: 3121115334,
-            max_priority_fee_per_gas: 3000000000,
-            ..Default::default()
-        };
+        let tx = client
+            .build_eip1559_transaction(
+                to_address,
+                Bytes::new(),
+                Overrides {
+                    chain_id: Some(cfg.network.l2_chain_id),
+                    nonce: Some(i),
+                    value: Some(value),
+                    gas_price: Some(3121115334),
+                    priority_gas_price: Some(3000000000),
+                    gas_limit: Some(TX_GAS_COST),
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap();
 
-        while let Err(e) = client.send_eip1559_transaction(&mut tx, private_key).await {
+        while let Err(e) = client
+            .send_eip1559_transaction(tx.clone(), &private_key)
+            .await
+        {
             println!("Transaction failed (PK: {pk} - Nonce: {}): {e}", tx.nonce);
             retries += 1;
             sleep(std::time::Duration::from_secs(2));

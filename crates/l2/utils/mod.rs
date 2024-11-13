@@ -1,5 +1,5 @@
 use keccak_hash::H256;
-use libsecp256k1::SecretKey;
+use secp256k1::SecretKey;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 pub mod config;
@@ -12,13 +12,13 @@ where
     D: Deserializer<'de>,
 {
     let hex = H256::deserialize(deserializer)?;
-    SecretKey::parse(hex.as_fixed_bytes()).map_err(serde::de::Error::custom)
+    SecretKey::from_slice(hex.as_bytes()).map_err(serde::de::Error::custom)
 }
 
 pub fn secret_key_serializer<S>(secret_key: &SecretKey, serializer: S) -> Result<S::Ok, S::Error>
 where
     S: Serializer,
 {
-    let hex = H256::from_slice(&secret_key.serialize());
+    let hex = H256::from_slice(&secret_key.secret_bytes());
     hex.serialize(serializer)
 }

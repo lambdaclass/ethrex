@@ -1,4 +1,4 @@
-use ethereum_rust_core::types::{PrivilegedL2Transaction, PrivilegedTxType, Transaction, TxKind};
+use ethereum_rust_core::types::{PrivilegedTxType, Transaction};
 use ethereum_rust_l2::utils::{
     eth_client::{
         errors::{EthClientError, GetTransactionReceiptError},
@@ -11,7 +11,7 @@ use ethereum_rust_rpc::types::{block::BlockBodyWrapper, receipt::RpcReceipt};
 use ethereum_types::{Address, H160, H256, U256};
 use itertools::Itertools;
 use keccak_hash::keccak;
-use libsecp256k1::SecretKey;
+use secp256k1::SecretKey;
 
 // 0x6bf26397c5676a208d5c4e5f35cb479bacbbe454
 pub const DEFAULT_BRIDGE_ADDRESS: Address = H160([
@@ -68,18 +68,18 @@ pub async fn transfer(
         from = from,
         to = to
     );
-    client
-        .send(
+    let tx = client
+        .build_eip1559_transaction(
+            to,
             Default::default(),
-            from,
-            TxKind::Call(to),
-            private_key,
             Overrides {
                 value: Some(amount),
+                from: Some(from),
                 ..Default::default()
             },
         )
-        .await
+        .await?;
+    client.send_eip1559_transaction(tx, &private_key).await
 }
 
 pub async fn deposit(
@@ -98,19 +98,23 @@ pub async fn withdraw(
     from_pk: SecretKey,
     proposer_client: &EthClient,
 ) -> Result<H256, EthClientError> {
-    let withdraw_transaction = PrivilegedL2Transaction {
-        to: TxKind::Call(from),
-        value: amount,
-        chain_id: proposer_client.get_chain_id().await?.as_u64(),
-        nonce: proposer_client.get_nonce(from).await?,
-        max_fee_per_gas: 800000000,
-        tx_type: PrivilegedTxType::Withdrawal,
-        gas_limit: 21000 * 2,
-        ..Default::default()
-    };
+    let withdraw_transaction = proposer_client
+        .build_privileged_transaction(
+            PrivilegedTxType::Withdrawal,
+            from,
+            Default::default(),
+            Overrides {
+                value: Some(amount),
+                from: Some(from),
+                gas_price: Some(800000000),
+                gas_limit: Some(21000 * 2),
+                ..Default::default()
+            },
+        )
+        .await?;
 
     proposer_client
-        .send_privileged_l2_transaction(withdraw_transaction, from_pk)
+        .send_privileged_l2_transaction(withdraw_transaction, &from_pk)
         .await
 }
 
@@ -187,14 +191,19 @@ pub async fn claim_withdraw(
         hex::encode(&claim_withdrawal_data)
     );
 
-    eth_client
-        .send(
+    let claim_tx = eth_client
+        .build_eip1559_transaction(
+            bridge_address(),
             claim_withdrawal_data.into(),
-            from,
-            TxKind::Call(bridge_address()),
-            from_pk,
-            Overrides::default(),
+            Overrides {
+                from: Some(from),
+                ..Default::default()
+            },
         )
+        .await?;
+
+    eth_client
+        .send_eip1559_transaction(claim_tx, &from_pk)
         .await
 }
 
