@@ -1,4 +1,5 @@
 use bytes::Bytes;
+use colored::Colorize;
 use ethereum_rust_core::types::{GAS_LIMIT_ADJUSTMENT_FACTOR, GAS_LIMIT_MINIMUM};
 use ethereum_rust_l2::utils::{
     config::{read_env_as_lines, read_env_file, write_env},
@@ -7,6 +8,7 @@ use ethereum_rust_l2::utils::{
 use ethereum_types::{Address, H160, H256};
 use keccak_hash::keccak;
 use secp256k1::SecretKey;
+use spinoff::{spinner, spinners, Color, Spinner};
 use std::{
     path::{Path, PathBuf},
     process::Command,
@@ -19,7 +21,10 @@ const DETERMINISTIC_CREATE2_ADDRESS: Address = H160([
     0x4e, 0x59, 0xb4, 0x48, 0x47, 0xb3, 0x79, 0x57, 0x85, 0x88, 0x92, 0x0c, 0xa7, 0x8f, 0xbf, 0x26,
     0xc0, 0xb4, 0x95, 0x6c,
 ]);
-const SALT: H256 = H256::zero();
+
+lazy_static::lazy_static! {
+    static ref SALT: std::sync::Mutex<H256> = std::sync::Mutex::new(H256::zero());
+}
 
 #[tokio::main]
 async fn main() {
@@ -86,6 +91,18 @@ fn setup() -> (Address, SecretKey, EthClient, PathBuf) {
             .as_str(),
     )
     .to_path_buf();
+
+    // If not set, randomize the SALT
+    let input = std::env::var("DEPLOYER_SALT_IS_ZERO").unwrap_or("false".to_owned());
+    match input.trim().to_lowercase().as_str() {
+        "true" | "1" => (),
+        "false" | "0" => {
+            let mut salt = SALT.lock().unwrap();
+            *salt = H256::random();
+            println!("SALT: {salt:?}");
+        }
+        _ => panic!("Invalid boolean string: {input}"),
+    };
 
     (deployer, deployer_private_key, eth_client, contracts_path)
 }
@@ -166,6 +183,14 @@ async fn deploy_contracts(
         ..Default::default()
     };
 
+    let deploy_frames = spinner!(["📭❱❱", "❱📬❱", "❱❱📫"], 220);
+
+    let mut spinner = Spinner::new(
+        deploy_frames.clone(),
+        "Deploying OnChainProposer",
+        Color::Cyan,
+    );
+
     let (on_chain_proposer_deployment_tx_hash, on_chain_proposer_address) =
         deploy_on_chain_proposer(
             deployer,
@@ -175,11 +200,15 @@ async fn deploy_contracts(
             contracts_path,
         )
         .await;
-    println!(
-        "OnChainProposer deployed at address {:#x} with tx hash {:#x}",
-        on_chain_proposer_address, on_chain_proposer_deployment_tx_hash
-    );
 
+    let msg = format!(
+        "OnChainProposer:\n\tDeployed at address {} with tx hash {}",
+        format!("{on_chain_proposer_address:#x}").bright_green(),
+        format!("{on_chain_proposer_deployment_tx_hash:#x}").bright_cyan()
+    );
+    spinner.success(&msg);
+
+    let mut spinner = Spinner::new(deploy_frames, "Deploying CommonBridge", Color::Cyan);
     let (bridge_deployment_tx_hash, bridge_address) = deploy_bridge(
         deployer,
         deployer_private_key,
@@ -188,10 +217,13 @@ async fn deploy_contracts(
         contracts_path,
     )
     .await;
-    println!(
-        "Bridge deployed at address {:#x} with tx hash {:#x}",
-        bridge_address, bridge_deployment_tx_hash
+
+    let msg = format!(
+        "CommonBridge:\n\tDeployed at address {} with tx hash {}",
+        format!("{bridge_address:#x}").bright_green(),
+        format!("{bridge_deployment_tx_hash:#x}").bright_cyan(),
     );
+    spinner.success(&msg);
 
     (on_chain_proposer_address, bridge_address)
 }
@@ -263,7 +295,7 @@ async fn create2_deploy(
     overrides: Overrides,
     eth_client: &EthClient,
 ) -> (H256, Address) {
-    let calldata = [SALT.as_bytes(), init_code].concat();
+    let calldata = [SALT.lock().unwrap().as_bytes(), init_code].concat();
     let deploy_tx = eth_client
         .build_eip1559_transaction(
             DETERMINISTIC_CREATE2_ADDRESS,
@@ -293,7 +325,7 @@ fn create2_address(init_code_hash: H256) -> Address {
             [
                 &[0xff],
                 DETERMINISTIC_CREATE2_ADDRESS.as_bytes(),
-                SALT.as_bytes(),
+                SALT.lock().unwrap().as_bytes(),
                 init_code_hash.as_bytes(),
             ]
             .concat(),
@@ -311,7 +343,15 @@ async fn initialize_contracts(
     bridge: Address,
     eth_client: &EthClient,
 ) {
-    initialize_on_chain_proposer(
+    let initialize_frames = spinner!(["🪄❱❱", "❱🪄❱", "❱❱🪄"], 200);
+
+    let mut spinner = Spinner::new(
+        initialize_frames.clone(),
+        "Initilazing OnChainProposer",
+        Color::Cyan,
+    );
+
+    let initialize_tx_hash = initialize_on_chain_proposer(
         on_chain_proposer,
         bridge,
         deployer,
@@ -319,7 +359,18 @@ async fn initialize_contracts(
         eth_client,
     )
     .await;
-    initialize_bridge(
+    let msg = format!(
+        "OnChainProposer:\n\tInitialized with tx hash {}",
+        format!("{initialize_tx_hash:#x}").bright_cyan()
+    );
+    spinner.success(&msg);
+
+    let mut spinner = Spinner::new(
+        initialize_frames.clone(),
+        "Initilazing CommonBridge",
+        Color::Cyan,
+    );
+    let initialize_tx_hash = initialize_bridge(
         on_chain_proposer,
         bridge,
         deployer,
@@ -327,6 +378,11 @@ async fn initialize_contracts(
         eth_client,
     )
     .await;
+    let msg = format!(
+        "CommonBridge:\n\tInitialized with tx hash {}",
+        format!("{initialize_tx_hash:#x}").bright_cyan()
+    );
+    spinner.success(&msg);
 }
 
 async fn initialize_on_chain_proposer(
@@ -335,7 +391,7 @@ async fn initialize_on_chain_proposer(
     deployer: Address,
     deployer_private_key: SecretKey,
     eth_client: &EthClient,
-) {
+) -> H256 {
     let on_chain_proposer_initialize_selector = keccak(b"initialize(address)")
         .as_bytes()
         .get(..4)
@@ -371,7 +427,7 @@ async fn initialize_on_chain_proposer(
 
     wait_for_transaction_receipt(initialize_tx_hash, eth_client).await;
 
-    println!("OnChainProposer initialized with tx hash {initialize_tx_hash:#x}\n");
+    initialize_tx_hash
 }
 
 async fn initialize_bridge(
@@ -380,7 +436,7 @@ async fn initialize_bridge(
     deployer: Address,
     deployer_private_key: SecretKey,
     eth_client: &EthClient,
-) {
+) -> H256 {
     let bridge_initialize_selector = keccak(b"initialize(address)")
         .as_bytes()
         .get(..4)
@@ -415,7 +471,7 @@ async fn initialize_bridge(
 
     wait_for_transaction_receipt(initialize_tx_hash, eth_client).await;
 
-    println!("Bridge initialized with tx hash {initialize_tx_hash:#x}\n");
+    initialize_tx_hash
 }
 
 async fn wait_for_transaction_receipt(tx_hash: H256, eth_client: &EthClient) {
