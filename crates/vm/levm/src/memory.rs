@@ -122,22 +122,35 @@ impl Memory {
                 .checked_add(size)
                 .ok_or(VMError::MemoryLoadOutOfBounds)?,
         );
-        self.resize(max_size);
+
+        if max_size > self.data.len() {
+            self.resize(max_size);
+        }
+
         let mut temp = vec![0u8; size];
 
-        temp.copy_from_slice(
-            &self.data[src_offset
-                ..src_offset
-                    .checked_add(size)
-                    .ok_or(VMError::MemoryLoadOutOfBounds)?],
-        );
+        for i in 0..size {
+            if let Some(temp_byte) = temp.get_mut(i) {
+                *temp_byte = *self
+                    .data
+                    .get(
+                        src_offset
+                            .checked_add(i)
+                            .ok_or(VMError::MemoryLoadOutOfBounds)?,
+                    )
+                    .unwrap_or(&0u8);
+            }
+        }
 
-        self.data[dest_offset
-            ..dest_offset
-                .checked_add(size)
-                .ok_or(VMError::MemoryLoadOutOfBounds)?]
-            .copy_from_slice(&temp);
-
+        for i in 0..size {
+            if let Some(memory_byte) = self.data.get_mut(
+                dest_offset
+                    .checked_add(i)
+                    .ok_or(VMError::MemoryLoadOutOfBounds)?,
+            ) {
+                *memory_byte = *temp.get(i).unwrap_or(&0u8);
+            }
+        }
         Ok(())
     }
 

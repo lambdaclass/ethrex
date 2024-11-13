@@ -1,3 +1,4 @@
+#![allow(clippy::indexing_slicing)]
 #![allow(clippy::unwrap_used)]
 
 use bytes::Bytes;
@@ -3794,7 +3795,7 @@ fn create_happy_path() {
     let call_frame = vm.current_call_frame_mut().unwrap();
     let returned_address = call_frame.stack.pop().unwrap();
 
-    let expected_address = VM::calculate_create_address(sender_addr, sender_nonce + 1);
+    let expected_address = VM::calculate_create_address(sender_addr, sender_nonce + 1).unwrap();
     assert_eq!(word_to_address(returned_address), expected_address);
 
     // check the created account is correct

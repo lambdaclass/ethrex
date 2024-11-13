@@ -105,7 +105,9 @@ impl VM {
 
                 // (2)
                 let new_contract_address =
-                    VM::calculate_create_address(env.origin, sender_account_info.nonce);
+                    VM::calculate_create_address(env.origin, sender_account_info.nonce).map_err(
+                        |_| VMError::Internal(InternalError::CouldNotComputeCreateAddress),
+                    )?; // TODO: Remove after merging the PR that removes unwraps.
 
                 // (3)
                 let created_contract = Account::new(value, calldata.clone(), 1, HashMap::new());
@@ -433,6 +435,14 @@ impl VM {
 
         let sender = initial_call_frame.msg_sender;
 
+        let initial_call_frame = self
+            .call_frames
+            .last()
+            .ok_or(VMError::Internal(
+                InternalError::CouldNotAccessLastCallframe,
+            ))?
+            .clone();
+
         // This cost applies both for call and create
         // 4 gas for each zero byte in the transaction data 16 gas for each non-zero byte in the transaction.
         let mut calldata_cost = 0;
@@ -465,7 +475,11 @@ impl VM {
                 return Err(VMError::ContractOutputTooBig);
             }
             // Supposing contract code has contents
-            if contract_code[0] == INVALID_CONTRACT_PREFIX {
+            if *contract_code
+                .first()
+                .ok_or(VMError::Internal(InternalError::TriedToIndexEmptyCode))?
+                == INVALID_CONTRACT_PREFIX
+            {
                 return Err(VMError::InvalidInitialByte);
             }
 
@@ -662,12 +676,17 @@ impl VM {
     /// Calculates the address of a new conctract using the CREATE opcode as follow
     ///
     /// address = keccak256(rlp([sender_address,sender_nonce]))[12:]
-    pub fn calculate_create_address(sender_address: Address, sender_nonce: u64) -> Address {
+    pub fn calculate_create_address(
+        sender_address: Address,
+        sender_nonce: u64,
+    ) -> Result<Address, VMError> {
         let mut encoded = Vec::new();
         (sender_address, sender_nonce).encode(&mut encoded);
         let mut hasher = Keccak256::new();
         hasher.update(encoded);
-        Address::from_slice(&hasher.finalize()[12..])
+        Ok(Address::from_slice(hasher.finalize().get(12..).ok_or(
+            VMError::Internal(InternalError::CouldNotComputeCreateAddress),
+        )?))
     }
 
     /// Calculates the address of a new contract using the CREATE2 opcode as follow
@@ -823,7 +842,7 @@ impl VM {
             None => Self::calculate_create_address(
                 current_call_frame.msg_sender,
                 sender_account.info.nonce,
-            ),
+            )?,
         };
 
         if self.cache.accounts.contains_key(&new_address) {

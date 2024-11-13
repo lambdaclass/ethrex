@@ -1,4 +1,7 @@
-use crate::{errors::VMError, opcodes::Opcode};
+use crate::{
+    errors::{InternalError, VMError},
+    opcodes::Opcode,
+};
 use bytes::Bytes;
 use ethereum_rust_core::U256;
 
@@ -176,7 +179,9 @@ impl Operation {
                 );
                 let mut word_buffer = [0; 32];
                 value.to_big_endian(&mut word_buffer);
-                let value_to_push = &word_buffer[(32 - n_usize)..];
+                let value_to_push = &word_buffer
+                    .get((32 - n_usize)..)
+                    .ok_or(VMError::Internal(InternalError::SlicingError))?;
                 assert_eq!(value_to_push.len(), n_usize);
                 let opcode = Opcode::try_from(u8::from(Opcode::PUSH0) + *n)?;
                 let mut bytes = vec![u8::from(opcode)];

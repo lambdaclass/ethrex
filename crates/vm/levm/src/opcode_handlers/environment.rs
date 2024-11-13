@@ -4,7 +4,7 @@ use crate::{
         call_opcode::{COLD_ADDRESS_ACCESS_COST, WARM_ADDRESS_ACCESS_COST},
         gas_cost, WORD_SIZE,
     },
-    errors::{OpcodeSuccess, VMError},
+    errors::{InternalError, OpcodeSuccess, VMError},
     vm::{word_to_address, VM},
 };
 use bytes::Bytes;
@@ -106,21 +106,20 @@ impl VM {
             .try_into()
             .map_err(|_| VMError::VeryLargeNumber)?;
 
-        // This check is because if offset is larger than the calldata then we should push 0 to the stack.
-        let result = if offset < current_call_frame.calldata.len() {
-            // Read calldata from offset to the end
-            let calldata = current_call_frame.calldata.slice(offset..);
-
-            // Get the 32 bytes from the data slice, padding with 0 if fewer than 32 bytes are available
-            let mut padded_calldata = [0u8; 32];
-            let data_len_to_copy = calldata.len().min(32);
-
-            padded_calldata[..data_len_to_copy].copy_from_slice(&calldata[..data_len_to_copy]);
-
-            U256::from_big_endian(&padded_calldata)
-        } else {
-            U256::zero()
-        };
+        // All bytes after the end of the calldata are set to 0.
+        let mut data = [0u8; 32];
+        for (i, byte) in current_call_frame
+            .calldata
+            .iter()
+            .skip(offset)
+            .take(32)
+            .enumerate()
+        {
+            if let Some(data_byte) = data.get_mut(i) {
+                *data_byte = *byte;
+            }
+        }
+        let result = U256::from_big_endian(&data);
 
         current_call_frame.stack.push(result)?;
 
@@ -178,25 +177,20 @@ impl VM {
             return Ok(OpcodeSuccess::Continue);
         }
 
-        // This check is because if offset is larger than the calldata then we should push 0 to the stack.
-        let result = if calldata_offset < current_call_frame.calldata.len() {
-            // Read calldata from offset to the end
-            let calldata = current_call_frame.calldata.slice(calldata_offset..);
+        let mut data = [0u8; 32];
+        for (i, byte) in current_call_frame
+            .calldata
+            .iter()
+            .skip(calldata_offset)
+            .take(32)
+            .enumerate()
+        {
+            if let Some(data_byte) = data.get_mut(i) {
+                *data_byte = *byte;
+            }
+        }
 
-            // Get the 32 bytes from the data slice, padding with 0 if fewer than 32 bytes are available
-            let mut padded_calldata = vec![0u8; size];
-            let data_len_to_copy = calldata.len().min(size);
-
-            padded_calldata[..data_len_to_copy].copy_from_slice(&calldata[..data_len_to_copy]);
-
-            padded_calldata
-        } else {
-            vec![0u8; size]
-        };
-
-        current_call_frame
-            .memory
-            .store_bytes(dest_offset, &result)?;
+        current_call_frame.memory.store_bytes(dest_offset, &data)?;
 
         Ok(OpcodeSuccess::Continue)
     }
@@ -360,10 +354,14 @@ impl VM {
         }
         current_call_frame.memory.store_bytes(
             dest_offset,
-            &bytecode[offset
-                ..offset
-                    .checked_add(size)
-                    .ok_or(VMError::MemoryLoadOutOfBounds)?],
+            bytecode
+                .get(
+                    offset
+                        ..offset
+                            .checked_add(size)
+                            .ok_or(VMError::MemoryLoadOutOfBounds)?,
+                )
+                .ok_or(VMError::Internal(InternalError::SlicingError))?, // bytecode can be "refactored" in order to avoid handling the error.
         )?;
 
         Ok(OpcodeSuccess::Continue)
