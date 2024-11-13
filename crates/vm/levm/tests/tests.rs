@@ -4031,7 +4031,7 @@ fn create2_happy_path() {
     // Code that returns the value 0xffffffff putting it in memory
     let initialization_code = hex::decode("63FFFFFFFF6000526004601CF3").unwrap();
     let expected_address = VM::calculate_create2_address(
-        sender_addr,
+        Address::from_low_u64_be(42), // this is the addr initializated in new_vm_with_ops_addr_bal_db
         &Bytes::from(initialization_code.clone()),
         U256::from(salt),
     )

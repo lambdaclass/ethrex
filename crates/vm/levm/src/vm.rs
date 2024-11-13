@@ -13,6 +13,7 @@ use ethereum_rust_core::{types::TxKind, Address, H256, U256};
 use ethereum_rust_rlp;
 use ethereum_rust_rlp::encode::RLPEncode;
 use gas_cost::KECCAK25_DYNAMIC_BASE;
+use keccak_hash::keccak;
 use sha3::{Digest, Keccak256};
 use std::{
     collections::{HashMap, HashSet},
@@ -700,19 +701,27 @@ impl VM {
         initialization_code: &Bytes,
         salt: U256,
     ) -> Result<Address, VMError> {
-        let mut hasher = Keccak256::new();
-        hasher.update(initialization_code.clone());
-        let initialization_code_hash = hasher.finalize();
-        let mut hasher = Keccak256::new();
+        let init_code_hash = keccak(initialization_code);
         let mut salt_bytes = [0; 32];
         salt.to_big_endian(&mut salt_bytes);
-        hasher.update([0xff]);
-        hasher.update(sender_address.as_bytes());
-        hasher.update(salt_bytes);
-        hasher.update(initialization_code_hash);
-        Ok(Address::from_slice(hasher.finalize().get(12..).ok_or(
-            VMError::Internal(InternalError::CouldNotComputeCreate2Address),
-        )?))
+
+        let generated_address = Address::from_slice(
+            keccak(
+                [
+                    &[0xff],
+                    sender_address.as_bytes(),
+                    &salt_bytes,
+                    init_code_hash.as_bytes(),
+                ]
+                .concat(),
+            )
+            .as_bytes()
+            .get(12..)
+            .ok_or(VMError::Internal(
+                InternalError::CouldNotComputeCreate2Address,
+            ))?,
+        );
+        Ok(generated_address)
     }
 
     fn compute_gas_create(
@@ -836,9 +845,7 @@ impl VM {
         );
 
         let new_address = match salt {
-            Some(salt) => {
-                Self::calculate_create2_address(current_call_frame.msg_sender, &code, salt)?
-            }
+            Some(salt) => Self::calculate_create2_address(current_call_frame.to, &code, salt)?,
             None => Self::calculate_create_address(
                 current_call_frame.msg_sender,
                 sender_account.info.nonce,
