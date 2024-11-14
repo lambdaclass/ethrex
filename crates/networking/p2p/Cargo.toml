@@ -16,6 +16,7 @@ bytes.workspace = true
 hex.workspace = true
 thiserror.workspace = true
 lazy_static.workspace = true
+snap.workspace = true
 
 k256 = { version = "0.13.3", features = ["ecdh"] }
 sha3 = "0.10.8"
@@ -26,7 +27,6 @@ hmac = "0.12.1"
 aes = "0.8.4"
 ctr = "0.9.2"
 rand = "0.8.5"
-snap = "1.1.1"
 
 [dev-dependencies]
 hex-literal = "0.4.1"

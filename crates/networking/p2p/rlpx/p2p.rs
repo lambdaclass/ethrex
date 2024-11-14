@@ -102,7 +102,7 @@ impl RLPxMessage for HelloMessage {
 
 #[derive(Debug)]
 pub(crate) struct DisconnectMessage {
-    reason: Option<u8>,
+    pub(crate) reason: Option<u8>,
 }
 
 impl DisconnectMessage {

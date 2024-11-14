@@ -18,7 +18,7 @@ use k256::{
 };
 use kademlia::{bucket_number, KademliaTable, MAX_NODES_PER_BUCKET};
 use rand::rngs::OsRng;
-use rlpx::{connection::RLPxConnection, message::Message as RLPxMessage};
+use rlpx::{connection::RLPxConnection, error::RLPxError, message::Message as RLPxMessage};
 use tokio::{
     net::{TcpSocket, TcpStream, UdpSocket},
     sync::{broadcast, Mutex},
@@ -809,20 +809,29 @@ async fn handle_peer_as_initiator(
 }
 
 async fn handle_peer(mut conn: RLPxConnection<TcpStream>, table: Arc<Mutex<KademliaTable>>) {
-    match conn.handshake().await {
-        Ok(_) => match conn.handle_peer().await {
-            Ok(_) => unreachable!(),
-            Err(e) => info!("Error during RLPx connection: ({e})"),
-        },
-        Err(e) => {
-            if let Ok(node_id) = conn.get_remote_node_id() {
-                // Discard peer from kademlia table
-                info!("Handshake failed: ({e}), discarding peer {node_id}");
-                table.lock().await.replace_peer(node_id);
-            } else {
-                info!("Handshake failed: ({e}), unknown peer");
-            }
+    // Perform handshake
+    if let Err(e) = conn.handshake().await {
+        peer_conn_failed("Handshake failed", e, conn, table).await;
+    } else {
+        // Handshake OK: handle connection
+        if let Err(e) = conn.handle_peer_conn().await {
+            peer_conn_failed("Error during RLPx connection", e, conn, table).await;
         }
+    }
+}
+
+async fn peer_conn_failed(
+    error_text: &str,
+    error: RLPxError,
+    conn: RLPxConnection<TcpStream>,
+    table: Arc<Mutex<KademliaTable>>,
+) {
+    if let Ok(node_id) = conn.get_remote_node_id() {
+        // Discard peer from kademlia table
+        info!("{error_text}: ({error}), discarding peer {node_id}");
+        table.lock().await.replace_peer(node_id);
+    } else {
+        info!("{error_text}: ({error}), unknown peer")
     }
 }
 
