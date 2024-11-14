@@ -6,7 +6,8 @@ use tracing::{self, debug, warn, Level};
 #[tokio::main]
 async fn main() {
     let subscriber = tracing_subscriber::FmtSubscriber::builder()
-        .with_max_level(Level::DEBUG)
+        // Hiding debug!() logs.
+        .with_max_level(Level::INFO)
         .finish();
     tracing::subscriber::set_global_default(subscriber).expect("setting default subscriber failed");
 

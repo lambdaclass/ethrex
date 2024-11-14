@@ -28,7 +28,7 @@ pub struct ProverOutputData {
 pub struct Prover<'a> {
     env_builder: ExecutorEnvBuilder<'a>,
     elf: &'a [u8],
-    id: [u32; 8],
+    pub id: [u32; 8],
 }
 
 impl<'a> Default for Prover<'a> {

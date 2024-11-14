@@ -26,15 +26,15 @@ use tracing_subscriber::{EnvFilter, FmtSubscriber};
 mod cli;
 mod decode;
 
+const DEFAULT_DATADIR: &str = "ethereum_rust";
 #[tokio::main]
 async fn main() {
     let matches = cli::cli().get_matches();
 
     if let Some(matches) = matches.subcommand_matches("removedb") {
-        let default_datadir = get_default_datadir();
         let data_dir = matches
             .get_one::<String>("datadir")
-            .unwrap_or(&default_datadir);
+            .map_or(set_datadir(DEFAULT_DATADIR), |datadir| set_datadir(datadir));
         let path = Path::new(&data_dir);
         if path.exists() {
             std::fs::remove_dir_all(path).expect("Failed to remove data directory");
@@ -110,11 +110,11 @@ async fn main() {
     let tcp_socket_addr =
         parse_socket_addr(tcp_addr, tcp_port).expect("Failed to parse addr and port");
 
-    let default_datadir = get_default_datadir();
     let data_dir = matches
         .get_one::<String>("datadir")
-        .unwrap_or(&default_datadir);
-    let store = Store::new(data_dir, EngineType::Libmdbx).expect("Failed to create Store");
+        .map_or(set_datadir(DEFAULT_DATADIR), |datadir| set_datadir(datadir));
+
+    let store = Store::new(&data_dir, EngineType::Libmdbx).expect("Failed to create Store");
 
     let genesis = read_genesis_file(genesis_file_path);
     store
@@ -204,7 +204,7 @@ async fn main() {
     // We do not want to start the networking module if the l2 feature is enabled.
     cfg_if::cfg_if! {
         if #[cfg(feature = "l2")] {
-            let l2_proposer = ethereum_rust_l2::start_proposer(store.clone()).into_future();
+            let l2_proposer = ethereum_rust_l2::start_proposer(store).into_future();
             tracker.spawn(l2_proposer);
         } else if #[cfg(feature = "dev")] {
             use ethereum_rust_dev;
@@ -283,9 +283,8 @@ fn parse_socket_addr(addr: &str, port: &str) -> io::Result<SocketAddr> {
         ))
 }
 
-fn get_default_datadir() -> String {
-    let project_dir =
-        ProjectDirs::from("", "", "ethereum_rust").expect("Couldn't find home directory");
+fn set_datadir(datadir: &str) -> String {
+    let project_dir = ProjectDirs::from("", "", datadir).expect("Couldn't find home directory");
     project_dir
         .data_local_dir()
         .to_str()

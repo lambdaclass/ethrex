@@ -39,7 +39,7 @@ pub enum RpcResponse {
 
 pub struct EthClient {
     client: Client,
-    url: String,
+    pub url: String,
 }
 
 // 0x08c379a0 == Error(String)
@@ -142,7 +142,7 @@ impl EthClient {
         };
         let mut data = json!({
             "to": format!("{to:#x}"),
-            "input": format!("{:#x}", transaction.input),
+            "input": format!("0x{:#x}", transaction.input),
             "from": format!("{:#x}", transaction.from),
             "value": format!("{:#x}", transaction.value),
         });
@@ -405,7 +405,11 @@ impl EthClient {
                 self.get_chain_id().await?.as_u64()
             },
             nonce: self.get_nonce_from_overrides(&overrides).await?,
-            max_priority_fee_per_gas: overrides.priority_gas_price.unwrap_or_default(),
+            max_priority_fee_per_gas: if let Some(gas_price) = overrides.priority_gas_price {
+                gas_price
+            } else {
+                self.get_gas_price().await?.as_u64()
+            },
             max_fee_per_gas: if let Some(gas_price) = overrides.gas_price {
                 gas_price
             } else {
@@ -462,7 +466,11 @@ impl EthClient {
                 self.get_chain_id().await?.as_u64()
             },
             nonce: self.get_nonce_from_overrides(&overrides).await?,
-            max_priority_fee_per_gas: overrides.priority_gas_price.unwrap_or_default(),
+            max_priority_fee_per_gas: if let Some(gas_price) = overrides.priority_gas_price {
+                gas_price
+            } else {
+                self.get_gas_price().await?.as_u64()
+            },
             max_fee_per_gas: if let Some(gas_price) = overrides.gas_price {
                 gas_price
             } else {
@@ -510,7 +518,11 @@ impl EthClient {
                 self.get_chain_id().await?.as_u64()
             },
             nonce: self.get_nonce_from_overrides(&overrides).await?,
-            max_priority_fee_per_gas: overrides.priority_gas_price.unwrap_or_default(),
+            max_priority_fee_per_gas: if let Some(gas_price) = overrides.priority_gas_price {
+                gas_price
+            } else {
+                self.get_gas_price().await?.as_u64()
+            },
             max_fee_per_gas: if let Some(gas_price) = overrides.gas_price {
                 gas_price
             } else {

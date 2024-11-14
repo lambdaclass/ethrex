@@ -8,12 +8,14 @@
 - [How](#how)
   - [Dev Mode](#dev-mode)
     - [Quick Test](#quick-test)
+    - [Run the whole system with the prover](#run-the-whole-system-with-the-prover)
   - [GPU mode](#gpu-mode)
     - [Proving Process Test](#proving-process-test)
+    - [Run the whole system with the prover in Sepolia](#run-the-whole-system-with-the-prover-in-sepolia)
 - [Configuration](#configuration)
 
 >[!NOTE]
-> The shipping/deploying process and the `Prover` itself is under development.
+> The shipping/deploying process and the `Prover` itself are under development.
 
 ## What
 
@@ -28,13 +30,13 @@ The `Prover Server` monitors requests for new jobs from the `Prover Client`, whi
 
 ```mermaid
 sequenceDiagram
-    participant Prover
+    participant zkVM
     participant ProverClient
     participant ProverServer
     ProverClient->>+ProverServer: ProofData::Request
     ProverServer-->>-ProverClient: ProofData::Response(block_number, ProverInputs)
-    ProverClient->>+Prover: Prove(block_number, ProverInputs)
-    Prover-->>-ProverClient: Creates zkProof
+    ProverClient->>+zkVM: Prove(ProverInputs)
+    zkVM-->>-ProverClient: Creates zkProof
     ProverClient->>+ProverServer: ProofData::Submit(block_number, zkProof)
     ProverServer-->>-ProverClient: ProofData::SubmitAck(block_number)
 ```
@@ -65,26 +67,38 @@ cd crates/l2/prover
 make perf_test_proving
 ```
 
+#### Run the whole system with the prover
+
+1. `cd crates/l2`
+2. `make rm_dev_libmdbx_l2 && make down`
+   - It will remove any old database, if present, stored in your computer. The absolute path of libmdbx is defined by [data_dir](https://docs.rs/dirs/latest/dirs/fn.data_dir.html).
+3. `cp .env.example .env` &rarr; check if you want to change any config.
+4. `make init`
+   - Init the L1 in a docker container on port `8545`.
+   - Deploy the needed contracts for the L2 on the L1.
+   - Start the L2 locally on port `1729`.
+5. In a new terminal &rarr; `make init-l2-prover`.
+
+After this initialization the system has to be running in `dev-mode` &rarr; No proof verification.
+
 ### GPU mode
 
-**Dependencies (based on the Docker CUDA image):**
+**Steps for Ubuntu 22.04 with Nvidia A4000:**
 
->[!NOTE]
-> If you don't want to run it inside a Docker container based on the NVIDIA CUDA image, [the following steps from RISC0](https://dev.risczero.com/api/generating-proofs/local-proving) may be helpful.
-
-- [Rust](https://www.rust-lang.org/tools/install)
-- [RISC0](https://dev.risczero.com/api/zkvm/install)
-
-Next, install the following packages:
+1. Install `docker` &rarr; using the [Ubuntu apt repository](https://docs.docker.com/engine/install/ubuntu/#install-using-the-repository)
+   - Add the `user` you are using to the `docker` group &rarr; command: `sudo usermod -aG docker $USER`. (needs reboot, doing it after CUDA installation)
+   - `id -nG` after reboot to check if the user is in the group.
+2. Install [Rust](https://www.rust-lang.org/tools/install)
+3. Install [RISC0](https://dev.risczero.com/api/zkvm/install)
+4. Install [CUDA for Ubuntu](https://developer.nvidia.com/cuda-downloads?target_os=Linux&target_arch=x86_64&Distribution=Ubuntu&target_version=22.04&target_type=deb_local)
+   - Install `CUDA Toolkit Installer` first. Then the `nvidia-open` drivers.
+5. Reboot
+6. Run the following commands:
 
 ```sh
 sudo apt-get install libssl-dev pkg-config libclang-dev clang
-```
-
-To start the `prover_client`, use the following command:
-
-```sh
-make init-l2-prover-gpu
+echo 'export PATH=/usr/local/cuda/bin:$PATH' >> ~/.bashrc
+echo 'export LD_LIBRARY_PATH=/usr/local/cuda/lib64:$LD_LIBRARY_PATH' >> ~/.bashrc
 ```
 
 #### Proving Process Test
@@ -96,6 +110,40 @@ cd crates/l2/prover
 make perf_gpu
 ```
 
+#### Run the whole system with the prover in Sepolia
+
+Two servers are required: one for the `prover` and another for the `proposer`. If you run both components on the same machine, the `prover` may consume all available resources, leading to potential stuttering or performance issues for the `proposer`/`node`.
+
+1. `prover`/`zkvm` &rarr; prover with gpu, make sure to have all the required dependencies described at the beginning of [Gpu Mode](#gpu-mode) section.
+    1. `cd lambda_ethereum_rust/crates/l2`
+    2. `cp .example.env` and change the `PROVER_CLIENT_PROVER_SERVER_ENDPOINT` with the ip of the other server.
+
+The env variables needed are:
+
+```sh
+PROVER_CLIENT_PROVER_SERVER_ENDPOINT=<ip-address>:3000
+RISC0_DEV_MODE=0
+```
+
+Finally, to start the `prover_client`/`zkvm`, run:
+
+- `make init-l2-prover-gpu`
+
+2.  `proposer` &rarr; this server just needs rust installed.
+    1. `cd lambda_ethereum_rust/crates/l2`
+    2. `cp .example.env` and change the addresses and the following fields:
+       - `PROVER_SERVER_LISTEN_IP=0.0.0.0` &rarr; used to handle the tcp communication with the other server.
+       - The `COMMITTER` and `PROVER_SERVER_VERIFIER` must be different accounts, the `DEPLOYER_ADDRESS` as well as the `L1_WATCHER` may be the same account used by the `COMMITTER`
+       - `DEPLOYER_CONTRACT_VERIFIER=0xd9b0d07CeCd808a8172F21fA7C97992168f045CA` &rarr; risc0’s verifier contract deployed on Sepolia.
+       - Set the `ETH_RPC_URL` to any Sepolia's endpoint.
+
+>[!NOTE]
+> Make sure to have funds, if you want to perform a quick test `0.2[ether]` on each account should be enough.
+
+Finally, to start the `proposer`/`l2 node`, run:
+    - `make rm_dev_libmdbx_l2 && make down`
+    - `make init`
+
 ## Configuration
 
 The following environment variables are available to configure the prover:
@@ -103,3 +151,8 @@ The following environment variables are available to configure the prover:
 - `PROVER_SERVER_LISTEN_IP`: IP used to start the Server.
 - `PROVER_SERVER_LISTEN_PORT`: Port used to start the Server.
 - `PROVER_CLIENT_PROVER_SERVER_ENDPOINT`: Prover Server's Endpoint used to connect the Client to the Server.
+- `PROVER_SERVER_VERIFIER_ADDRESS`: The address of the account that sends the zkProofs on-chain and interacts with the `OnChainProposer` `verify()` function.
+- `PROVER_SERVER_VERIFIER_PRIVATE_KEY`: The private key of the account that sends the zkProofs on-chain and interacts with the `OnChainProposer` `verify()` function.
+
+>[!NOTE]
+> The `PROVER_SERVER_VERIFIER` account must differ from the `COMMITTER_L1` account.
