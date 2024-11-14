@@ -1,6 +1,4 @@
-#![allow(clippy::unwrap_used)]
-
-use crate::ef::{report::EFTestsReport, test::EFTest};
+use crate::{report::EFTestsReport, types::EFTest};
 use ethereum_rust_core::{H256, U256};
 use ethereum_rust_levm::{
     db::{Cache, Db},
@@ -15,7 +13,7 @@ use std::{error::Error, sync::Arc};
 pub fn run_ef_tests() -> Result<EFTestsReport, Box<dyn Error>> {
     let mut report = EFTestsReport::default();
     let cargo_manifest_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let ef_general_state_tests_path = cargo_manifest_dir.join("tests/ef/tests/GeneralStateTests");
+    let ef_general_state_tests_path = cargo_manifest_dir.join("vectors/GeneralStateTests");
     let mut spinner = Spinner::new(Dots, report.to_string(), Color::Cyan);
     for test_dir in std::fs::read_dir(ef_general_state_tests_path)?.flatten() {
         for test in std::fs::read_dir(test_dir.path())?
@@ -54,7 +52,6 @@ pub fn run_ef_tests() -> Result<EFTestsReport, Box<dyn Error>> {
 }
 
 pub fn run_ef_test(test: EFTest, report: &mut EFTestsReport) -> Result<(), Box<dyn Error>> {
-    dbg!(&test.name);
     let mut evm = prepare_vm(&test, report)?;
     ensure_pre_state(&evm, &test, report)?;
     let execution_result = evm.transact();

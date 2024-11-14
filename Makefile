@@ -12,11 +12,11 @@ lint: ## 🧹 Linter check
 
 SPECTEST_VERSION := v3.0.0
 SPECTEST_ARTIFACT := tests_$(SPECTEST_VERSION).tar.gz
-SPECTEST_VECTORS_DIR := cmd/ef_tests/vectors
+SPECTEST_VECTORS_DIR := cmd/ef_tests/ethereum_rust/vectors
 
 CRATE ?= *
 test: $(SPECTEST_VECTORS_DIR) ## 🧪 Run each crate's tests
-	cargo test -p '$(CRATE)' --workspace --exclude ethereum_rust-prover -- --skip test_contract_compilation --skip testito
+	cargo test -p '$(CRATE)' --workspace --exclude ethereum_rust-prover --exclude ethereum_rust-levm --exclude ef_tests-levm -- --skip test_contract_compilation --skip testito
 
 clean: clean-vectors ## 🧹 Remove build artifacts
 	cargo clean

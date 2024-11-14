@@ -1,5 +1,5 @@
 [package]
-name = "ef_tests"
+name = "ef_tests-ethereum_rust"
 version.workspace = true
 edition.workspace = true
 

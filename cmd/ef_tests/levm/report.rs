@@ -1,6 +1,5 @@
 // Note: I use this to do not affect the EF tests logic with this side effects
 // The cost to add this would be to return a Result<(), InternalError> in EFTestsReport methods
-#![allow(clippy::arithmetic_side_effects)]
 
 use colored::Colorize;
 use std::fmt;

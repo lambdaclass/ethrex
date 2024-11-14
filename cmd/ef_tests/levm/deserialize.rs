@@ -1,4 +1,4 @@
-use crate::ef::test::EFTest;
+use crate::types::EFTest;
 use bytes::Bytes;
 use ethereum_rust_core::U256;
 use serde::Deserialize;
