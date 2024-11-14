@@ -179,27 +179,54 @@ impl Operation {
                 );
                 let mut word_buffer = [0; 32];
                 value.to_big_endian(&mut word_buffer);
+                // extract the last n bytes to push
                 let value_to_push = &word_buffer
-                    .get((32 - n_usize)..)
+                    .get(
+                        (32_usize.checked_sub(n_usize).ok_or(VMError::Internal(
+                            InternalError::ArithmeticOperationUnderflow,
+                        ))?)..,
+                    )
                     .ok_or(VMError::Internal(InternalError::SlicingError))?;
                 assert_eq!(value_to_push.len(), n_usize);
-                let opcode = Opcode::try_from(u8::from(Opcode::PUSH0) + *n)?;
+                let opcode = Opcode::try_from((u8::from(Opcode::PUSH0)).checked_add(*n).ok_or(
+                    VMError::Internal(InternalError::ArithmeticOperationOverflow),
+                )?)?;
                 let mut bytes = vec![u8::from(opcode)];
                 bytes.extend_from_slice(value_to_push);
 
                 Bytes::copy_from_slice(&bytes)
             }
             Operation::Dup(n) => {
+                assert!(*n >= 1, "DUP1 is the min");
                 assert!(*n <= 16, "DUP16 is the max");
-                Bytes::copy_from_slice(&[u8::from(Opcode::DUP1) + n - 1])
+                Bytes::copy_from_slice(&[(u8::from(Opcode::DUP1))
+                    .checked_add(*n)
+                    .ok_or(VMError::Internal(
+                        InternalError::ArithmeticOperationOverflow,
+                    ))?
+                    .checked_sub(1)
+                    .ok_or(VMError::Internal(
+                        InternalError::ArithmeticOperationUnderflow,
+                    ))?])
             }
             Operation::Swap(n) => {
+                assert!(*n >= 1, "SWAP1 is the min");
                 assert!(*n <= 16, "SWAP16 is the max");
-                Bytes::copy_from_slice(&[u8::from(Opcode::SWAP1) + n - 1])
+                Bytes::copy_from_slice(&[(u8::from(Opcode::SWAP1))
+                    .checked_add(*n)
+                    .ok_or(VMError::Internal(
+                        InternalError::ArithmeticOperationOverflow,
+                    ))?
+                    .checked_sub(1)
+                    .ok_or(VMError::Internal(
+                        InternalError::ArithmeticOperationUnderflow,
+                    ))?])
             }
             Operation::Log(n) => {
                 assert!(*n <= 4, "LOG4 is the max");
-                Bytes::copy_from_slice(&[u8::from(Opcode::LOG0) + n])
+                Bytes::copy_from_slice(&[(u8::from(Opcode::LOG0)).checked_add(*n).ok_or(
+                    VMError::Internal(InternalError::ArithmeticOperationOverflow),
+                )?])
             }
             Operation::Create => Bytes::copy_from_slice(&[u8::from(Opcode::CREATE)]),
             Operation::Call => Bytes::copy_from_slice(&[u8::from(Opcode::CALL)]),

@@ -1,4 +1,9 @@
-use crate::{constants::STACK_LIMIT, errors::VMError, memory::Memory, opcodes::Opcode};
+use crate::{
+    constants::STACK_LIMIT,
+    errors::{InternalError, VMError},
+    memory::Memory,
+    opcodes::Opcode,
+};
 use bytes::Bytes;
 use ethereum_rust_core::{types::Log, Address, U256};
 use std::collections::HashMap;
@@ -114,18 +119,22 @@ impl CallFrame {
         }
     }
 
-    pub fn next_opcode(&mut self) -> Option<Opcode> {
+    pub fn next_opcode(&mut self) -> Result<Option<Opcode>, VMError> {
         let opcode = self.opcode_at(self.pc);
-        self.increment_pc();
-        opcode
+        self.increment_pc()?;
+        Ok(opcode)
     }
 
-    pub fn increment_pc_by(&mut self, count: usize) {
-        self.pc += count;
+    pub fn increment_pc_by(&mut self, count: usize) -> Result<(), VMError> {
+        self.pc = self
+            .pc
+            .checked_add(count)
+            .ok_or(VMError::Internal(InternalError::PCOverflowed))?;
+        Ok(())
     }
 
-    pub fn increment_pc(&mut self) {
-        self.increment_pc_by(1);
+    pub fn increment_pc(&mut self) -> Result<(), VMError> {
+        self.increment_pc_by(1)
     }
 
     pub fn pc(&self) -> usize {

@@ -40,5 +40,10 @@ as_conversions = "deny"
 unwrap_used = "deny"
 expect_used = "deny"
 
+arithmetic_side_effects = "deny"
+overflow_check_conditional = "warn"
+manual_saturating_arithmetic = "warn"
+
+
 [lib]
 path = "./src/lib.rs"

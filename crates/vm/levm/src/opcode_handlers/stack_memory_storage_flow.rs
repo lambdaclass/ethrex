@@ -1,10 +1,9 @@
 use crate::{
     account::StorageSlot,
     call_frame::CallFrame,
-    constants::{
-        call_opcode::WARM_ADDRESS_ACCESS_COST, gas_cost, COLD_STORAGE_ACCESS_COST, WORD_SIZE,
-    },
-    errors::{OpcodeSuccess, VMError},
+    constants::{COLD_STORAGE_ACCESS_COST, WARM_ADDRESS_ACCESS_COST, WORD_SIZE},
+    errors::{InternalError, OpcodeSuccess, OutOfGasError, VMError},
+    gas_cost,
     vm::VM,
 };
 use ethereum_rust_core::{H256, U256};
@@ -64,12 +63,8 @@ impl VM {
             .pop()?
             .try_into()
             .map_err(|_| VMError::VeryLargeNumber)?;
-        let memory_expansion_cost = current_call_frame.memory.expansion_cost(
-            offset
-                .checked_add(WORD_SIZE)
-                .ok_or(VMError::OverflowInArithmeticOp)?,
-        )?;
-        let gas_cost = gas_cost::MLOAD_STATIC + memory_expansion_cost;
+
+        let gas_cost = gas_cost::mload(current_call_frame, offset).map_err(VMError::OutOfGas)?;
 
         self.increase_consumed_gas(current_call_frame, gas_cost)?;
 
@@ -89,12 +84,8 @@ impl VM {
             .pop()?
             .try_into()
             .map_err(|_err| VMError::VeryLargeNumber)?;
-        let memory_expansion_cost = current_call_frame.memory.expansion_cost(
-            offset
-                .checked_add(WORD_SIZE)
-                .ok_or(VMError::OverflowInArithmeticOp)?,
-        )?;
-        let gas_cost = gas_cost::MSTORE_STATIC + memory_expansion_cost;
+
+        let gas_cost = gas_cost::mstore(current_call_frame, offset).map_err(VMError::OutOfGas)?;
 
         self.increase_consumed_gas(current_call_frame, gas_cost)?;
 
@@ -114,17 +105,14 @@ impl VM {
         &mut self,
         current_call_frame: &mut CallFrame,
     ) -> Result<OpcodeSuccess, VMError> {
+        // TODO: modify expansion cost to accept U256
         let offset: usize = current_call_frame
             .stack
             .pop()?
             .try_into()
             .map_err(|_| VMError::VeryLargeNumber)?;
-        let memory_expansion_cost = current_call_frame.memory.expansion_cost(
-            offset
-                .checked_add(1)
-                .ok_or(VMError::OverflowInArithmeticOp)?,
-        )?;
-        let gas_cost = gas_cost::MSTORE8_STATIC + memory_expansion_cost;
+
+        let gas_cost = gas_cost::mstore8(current_call_frame, offset).map_err(VMError::OutOfGas)?;
 
         self.increase_consumed_gas(current_call_frame, gas_cost)?;
 
@@ -152,21 +140,19 @@ impl VM {
         key.to_big_endian(&mut bytes);
         let key = H256::from(bytes);
 
-        let mut base_dynamic_gas: U256 = U256::zero();
+        let is_cached = self.cache.is_slot_cached(&address, key);
 
-        let current_value = if self.cache.is_slot_cached(&address, key) {
-            // If slot is warm (cached) add 100 to base_dynamic_gas
-            base_dynamic_gas += WARM_ADDRESS_ACCESS_COST;
-
-            self.get_storage_slot(&address, key).current_value
+        let gas_cost = if is_cached {
+            // If slot is warm (cached) add 100 to gas_cost
+            WARM_ADDRESS_ACCESS_COST
         } else {
-            // If slot is cold (not cached) add 2100 to base_dynamic_gas
-            base_dynamic_gas += COLD_STORAGE_ACCESS_COST;
-
-            self.get_storage_slot(&address, key).current_value
+            // If slot is cold (not cached) add 2100 to gas_cost
+            COLD_STORAGE_ACCESS_COST
         };
 
-        self.increase_consumed_gas(current_call_frame, base_dynamic_gas)?;
+        let current_value = self.get_storage_slot(&address, key).current_value;
+
+        self.increase_consumed_gas(current_call_frame, gas_cost)?;
 
         current_call_frame.stack.push(current_value)?;
         Ok(OpcodeSuccess::Continue)
@@ -192,28 +178,14 @@ impl VM {
 
         let address = current_call_frame.to;
 
-        let mut base_dynamic_gas: U256 = U256::zero();
-
-        if !self.cache.is_slot_cached(&address, key) {
-            // If slot is cold 2100 is added to base_dynamic_gas
-            base_dynamic_gas += U256::from(2100);
-        };
+        let is_cached = self.cache.is_slot_cached(&address, key);
 
         let storage_slot = self.get_storage_slot(&address, key);
 
-        base_dynamic_gas += if value == storage_slot.current_value {
-            U256::from(100)
-        } else if storage_slot.current_value == storage_slot.original_value {
-            if storage_slot.original_value == U256::zero() {
-                U256::from(20000)
-            } else {
-                U256::from(2900)
-            }
-        } else {
-            U256::from(100)
-        };
+        let gas_cost =
+            gas_cost::sstore(value, is_cached, &storage_slot).map_err(VMError::OutOfGas)?;
 
-        self.increase_consumed_gas(current_call_frame, base_dynamic_gas)?;
+        self.increase_consumed_gas(current_call_frame, gas_cost)?;
 
         // Gas Refunds
         // TODO: Think about what to do in case of underflow of gas refunds (when we try to substract from it if the value is low)
@@ -282,7 +254,14 @@ impl VM {
     pub fn op_gas(&mut self, current_call_frame: &mut CallFrame) -> Result<OpcodeSuccess, VMError> {
         self.increase_consumed_gas(current_call_frame, gas_cost::GAS)?;
 
-        let remaining_gas = self.env.gas_limit - self.env.consumed_gas - gas_cost::GAS;
+        let remaining_gas = self
+            .env
+            .gas_limit
+            .checked_sub(self.env.consumed_gas)
+            .ok_or(VMError::OutOfGas(OutOfGasError::ConsumedGasOverflow))?
+            .checked_sub(gas_cost::GAS)
+            .ok_or(VMError::OutOfGas(OutOfGasError::ConsumedGasOverflow))?;
+        // Note: These are not consumed gas calculations, but are related, so I used this wrapping here
         current_call_frame.stack.push(remaining_gas)?;
 
         Ok(OpcodeSuccess::Continue)
@@ -309,21 +288,8 @@ impl VM {
             .try_into()
             .map_err(|_| VMError::VeryLargeNumber)?;
 
-        let words_copied = (size + WORD_SIZE - 1) / WORD_SIZE;
-
-        let memory_byte_size = src_offset
-            .checked_add(size)
-            .and_then(|src_sum| {
-                dest_offset
-                    .checked_add(size)
-                    .map(|dest_sum| src_sum.max(dest_sum))
-            })
-            .ok_or(VMError::OverflowInArithmeticOp)?;
-
-        let memory_expansion_cost = current_call_frame.memory.expansion_cost(memory_byte_size)?;
-        let gas_cost = gas_cost::MCOPY_STATIC
-            + gas_cost::MCOPY_DYNAMIC_BASE * words_copied
-            + memory_expansion_cost;
+        let gas_cost = gas_cost::mcopy(current_call_frame, size, src_offset, dest_offset)
+            .map_err(VMError::OutOfGas)?;
 
         self.increase_consumed_gas(current_call_frame, gas_cost)?;
 
@@ -380,9 +346,12 @@ impl VM {
     pub fn op_pc(&mut self, current_call_frame: &mut CallFrame) -> Result<OpcodeSuccess, VMError> {
         self.increase_consumed_gas(current_call_frame, gas_cost::PC)?;
 
-        current_call_frame
-            .stack
-            .push(U256::from(current_call_frame.pc - 1))?;
+        current_call_frame.stack.push(U256::from(
+            current_call_frame
+                .pc
+                .checked_sub(1)
+                .ok_or(VMError::Internal(InternalError::PCUnderflowed))?,
+        ))?;
 
         Ok(OpcodeSuccess::Continue)
     }

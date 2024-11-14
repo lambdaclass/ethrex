@@ -1,7 +1,7 @@
 use crate::{
     call_frame::CallFrame,
-    constants::gas_cost,
     errors::{OpcodeSuccess, VMError},
+    gas_cost,
     opcodes::Opcode,
     vm::VM,
 };
@@ -22,7 +22,10 @@ impl VM {
             return Err(VMError::OpcodeNotAllowedInStaticContext);
         }
 
-        let number_of_topics = u8::from(op) - u8::from(Opcode::LOG0);
+        let number_of_topics = (u8::from(op))
+            .checked_sub(u8::from(Opcode::LOG0))
+            .ok_or(VMError::InvalidOpcode)?;
+
         let offset: usize = current_call_frame
             .stack
             .pop()?
@@ -41,15 +44,8 @@ impl VM {
             topics.push(H256::from_slice(&topic_bytes));
         }
 
-        let memory_expansion_cost = current_call_frame.memory.expansion_cost(
-            offset
-                .checked_add(size)
-                .ok_or(VMError::MemoryLoadOutOfBounds)?,
-        )?;
-        let gas_cost = gas_cost::LOGN_STATIC
-            + gas_cost::LOGN_DYNAMIC_BASE * number_of_topics
-            + gas_cost::LOGN_DYNAMIC_BYTE_BASE * size
-            + memory_expansion_cost;
+        let gas_cost = gas_cost::log(current_call_frame, size, offset, number_of_topics)
+            .map_err(VMError::OutOfGas)?;
 
         self.increase_consumed_gas(current_call_frame, gas_cost)?;
 

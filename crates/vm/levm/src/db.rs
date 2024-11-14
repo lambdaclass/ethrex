@@ -112,10 +112,16 @@ impl Cache {
         Ok(())
     }
 
-    pub fn increment_account_nonce(&mut self, address: &Address) {
+    // TODO: Replace nonce increments with this (currently does not have senders)
+    pub fn increment_account_nonce(&mut self, address: &Address) -> Result<(), VMError> {
         if let Some(account) = self.accounts.get_mut(address) {
-            account.info.nonce += 1;
+            account.info.nonce = account
+                .info
+                .nonce
+                .checked_add(1)
+                .ok_or(VMError::Internal(InternalError::NonceOverflowed))?;
         }
+        Ok(())
     }
 
     pub fn is_account_cached(&self, address: &Address) -> bool {

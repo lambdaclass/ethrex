@@ -1,9 +1,11 @@
+use crate::{
+    constants::EMPTY_CODE_HASH,
+    errors::{InternalError, VMError},
+};
 use bytes::Bytes;
 use ethereum_rust_core::{H256, U256};
 use keccak_hash::keccak;
 use std::collections::HashMap;
-
-use crate::{constants::EMPTY_CODE_HASH, errors::VMError};
 
 #[derive(Clone, Default, Debug, PartialEq, Eq)]
 pub struct AccountInfo {
@@ -88,7 +90,13 @@ impl Account {
         self
     }
 
-    pub fn increment_nonce(&mut self) {
-        self.info.nonce += 1;
+    // TODO: Replace nonce increments with this or cache's analog (currently does not have senders)
+    pub fn increment_nonce(&mut self) -> Result<(), VMError> {
+        self.info.nonce = self
+            .info
+            .nonce
+            .checked_add(1)
+            .ok_or(VMError::Internal(InternalError::NonceOverflowed))?;
+        Ok(())
     }
 }

@@ -1,6 +1,6 @@
 use crate::{
     constants::{MEMORY_EXPANSION_QUOTIENT, WORD_SIZE},
-    errors::VMError,
+    errors::{InternalError, OutOfGasError, VMError},
 };
 use ethereum_rust_core::U256;
 
@@ -25,24 +25,22 @@ impl Memory {
     }
 
     fn resize(&mut self, offset: usize) {
-        if offset.next_multiple_of(32) > self.data.len() {
-            self.data.resize(offset.next_multiple_of(32), 0);
+        if offset.next_multiple_of(WORD_SIZE) > self.data.len() {
+            self.data.resize(offset.next_multiple_of(WORD_SIZE), 0);
         }
     }
 
     pub fn load(&mut self, offset: usize) -> Result<U256, VMError> {
-        self.resize(
-            offset
-                .checked_add(32)
-                .ok_or(VMError::MemoryLoadOutOfBounds)?,
-        );
+        self.resize(offset.checked_add(WORD_SIZE).ok_or(VMError::Internal(
+            InternalError::ArithmeticOperationOverflow, // MemoryLoadOutOfBounds?
+        ))?);
         let value_bytes = self
             .data
             .get(
                 offset
-                    ..offset
-                        .checked_add(32)
-                        .ok_or(VMError::MemoryLoadOutOfBounds)?,
+                    ..offset.checked_add(WORD_SIZE).ok_or(VMError::Internal(
+                        InternalError::ArithmeticOperationOverflow, // MemoryLoadOutOfBounds?
+                    ))?,
             )
             .ok_or(VMError::MemoryLoadOutOfBounds)?;
 
@@ -50,36 +48,25 @@ impl Memory {
     }
 
     pub fn load_range(&mut self, offset: usize, size: usize) -> Result<Vec<u8>, VMError> {
-        self.resize(
-            offset
-                .checked_add(size)
-                .ok_or(VMError::MemoryLoadOutOfBounds)?,
-        );
+        let size_to_load = offset.checked_add(size).ok_or(VMError::Internal(
+            InternalError::ArithmeticOperationOverflow,
+        ))?;
+        self.resize(size_to_load);
         self.data
-            .get(
-                offset
-                    ..offset
-                        .checked_add(size)
-                        .ok_or(VMError::MemoryLoadOutOfBounds)?,
-            )
+            .get(offset..size_to_load)
             .ok_or(VMError::MemoryLoadOutOfBounds)
             .map(|slice| slice.to_vec())
     }
 
     pub fn store_bytes(&mut self, offset: usize, value: &[u8]) -> Result<(), VMError> {
         let len = value.len();
-        self.resize(
-            offset
-                .checked_add(len)
-                .ok_or(VMError::MemoryLoadOutOfBounds)?,
-        );
-        self.data.splice(
-            offset
-                ..offset
-                    .checked_add(len)
-                    .ok_or(VMError::MemoryLoadOutOfBounds)?,
-            value.iter().copied(),
-        );
+        let size_to_store = offset.checked_add(len).ok_or(VMError::Internal(
+            InternalError::ArithmeticOperationOverflow,
+        ))?;
+        self.resize(size_to_store);
+        self.data
+            .splice(offset..size_to_store, value.iter().copied());
+
         Ok(())
     }
 
@@ -89,18 +76,13 @@ impl Memory {
         value: &[u8],
         size: usize,
     ) -> Result<(), VMError> {
-        self.resize(
-            offset
-                .checked_add(size)
-                .ok_or(VMError::MemoryLoadOutOfBounds)?,
-        );
-        self.data.splice(
-            offset
-                ..offset
-                    .checked_add(size)
-                    .ok_or(VMError::MemoryLoadOutOfBounds)?,
-            value.iter().copied(),
-        );
+        let size_to_store = offset.checked_add(size).ok_or(VMError::Internal(
+            InternalError::ArithmeticOperationOverflow,
+        ))?;
+        self.resize(size_to_store);
+        self.data
+            .splice(offset..size_to_store, value.iter().copied());
+
         Ok(())
     }
 
@@ -114,20 +96,25 @@ impl Memory {
         dest_offset: usize,
         size: usize,
     ) -> Result<(), VMError> {
-        let max_size = std::cmp::max(
-            src_offset
-                .checked_add(size)
-                .ok_or(VMError::MemoryLoadOutOfBounds)?,
-            dest_offset
-                .checked_add(size)
-                .ok_or(VMError::MemoryLoadOutOfBounds)?,
-        );
+        let src_copy_size = src_offset.checked_add(size).ok_or(VMError::Internal(
+            InternalError::ArithmeticOperationOverflow,
+        ))?;
+        let dest_copy_size = dest_offset.checked_add(size).ok_or(VMError::Internal(
+            InternalError::ArithmeticOperationOverflow,
+        ))?;
+        let max_size = std::cmp::max(src_copy_size, dest_copy_size);
 
         if max_size > self.data.len() {
             self.resize(max_size);
         }
 
         let mut temp = vec![0u8; size];
+
+        temp.copy_from_slice(
+            self.data
+                .get(src_offset..src_copy_size)
+                .ok_or(VMError::Internal(InternalError::SlicingError))?,
+        );
 
         for i in 0..size {
             if let Some(temp_byte) = temp.get_mut(i) {
@@ -154,35 +141,38 @@ impl Memory {
         Ok(())
     }
 
-    pub fn expansion_cost(&self, memory_byte_size: usize) -> Result<U256, VMError> {
+    pub fn expansion_cost(&self, memory_byte_size: usize) -> Result<U256, OutOfGasError> {
         if memory_byte_size <= self.data.len() {
             return Ok(U256::zero());
         }
 
         let new_memory_size_word = memory_byte_size
             .checked_add(WORD_SIZE - 1)
-            .ok_or(VMError::OverflowInArithmeticOp)?
+            .ok_or(OutOfGasError::GasCostOverflow)?
             / WORD_SIZE;
 
         let new_memory_cost = new_memory_size_word
             .checked_mul(new_memory_size_word)
             .map(|square| square / MEMORY_EXPANSION_QUOTIENT)
             .and_then(|cost| cost.checked_add(new_memory_size_word.checked_mul(3)?))
-            .ok_or(VMError::OverflowInArithmeticOp)?;
+            .ok_or(OutOfGasError::GasCostOverflow)?;
 
         let last_memory_size_word = self
             .data
             .len()
             .checked_add(WORD_SIZE - 1)
-            .ok_or(VMError::OverflowInArithmeticOp)?
+            .ok_or(OutOfGasError::GasCostOverflow)?
             / WORD_SIZE;
 
         let last_memory_cost = last_memory_size_word
             .checked_mul(last_memory_size_word)
             .map(|square| square / MEMORY_EXPANSION_QUOTIENT)
             .and_then(|cost| cost.checked_add(last_memory_size_word.checked_mul(3)?))
-            .ok_or(VMError::OverflowInArithmeticOp)?;
+            .ok_or(OutOfGasError::GasCostOverflow)?;
 
-        Ok((new_memory_cost - last_memory_cost).into())
+        Ok((new_memory_cost
+            .checked_sub(last_memory_cost)
+            .ok_or(OutOfGasError::GasCostOverflow)?)
+        .into())
     }
 }
