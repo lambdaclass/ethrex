@@ -396,9 +396,17 @@ impl VM {
         // Notes:
         //      The actual reversion of changes is made in the execute() function.
 
-        let offset = current_call_frame.stack.pop()?.as_usize();
+        let offset: usize = current_call_frame
+            .stack
+            .pop()?
+            .try_into()
+            .map_err(|_err| VMError::VeryLargeNumber)?;
 
-        let size = current_call_frame.stack.pop()?.as_usize();
+        let size = current_call_frame
+            .stack
+            .pop()?
+            .try_into()
+            .map_err(|_err| VMError::VeryLargeNumber)?;
 
         let gas_cost =
             current_call_frame

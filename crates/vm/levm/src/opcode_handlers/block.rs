@@ -35,7 +35,9 @@ impl VM {
             return Ok(OpcodeSuccess::Continue);
         }
 
-        let block_number = block_number.as_u64();
+        let block_number: u64 = block_number
+            .try_into()
+            .map_err(|_err| VMError::VeryLargeNumber)?;
 
         if let Some(block_hash) = self.db.get_block_hash(block_number) {
             current_call_frame
@@ -162,7 +164,11 @@ impl VM {
     ) -> Result<OpcodeSuccess, VMError> {
         self.increase_consumed_gas(current_call_frame, gas_cost::BLOBHASH)?;
 
-        let index = current_call_frame.stack.pop()?.as_usize();
+        let index: usize = current_call_frame
+            .stack
+            .pop()?
+            .try_into()
+            .map_err(|_err| VMError::VeryLargeNumber)?;
 
         let blob_hash: H256 = match &self.env.tx_blob_hashes {
             Some(vec) => match vec.get(index) {

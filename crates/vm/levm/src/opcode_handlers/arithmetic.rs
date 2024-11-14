@@ -262,7 +262,6 @@ impl VM {
 
         let max_byte_size: usize = 31;
         let byte_size: usize = byte_size.min(max_byte_size);
-
         let total_bits = bits_per_byte
             .checked_mul(byte_size)
             .ok_or(VMError::Internal(
@@ -274,14 +273,13 @@ impl VM {
                 .ok_or(VMError::Internal(
                     InternalError::ArithmeticOperationOverflow,
                 ))?;
-
         let is_negative = value_to_extend.bit(sign_bit_index);
+
         let sign_bit_mask = checked_shift_left(U256::one(), sign_bit_index)?
             .checked_sub(U256::one())
             .ok_or(VMError::Internal(
                 InternalError::ArithmeticOperationUnderflow,
             ))?; //Shifted should be at least one
-
         let result = if is_negative {
             value_to_extend | !sign_bit_mask
         } else {
