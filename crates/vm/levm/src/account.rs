@@ -30,6 +30,15 @@ pub struct StorageSlot {
     pub current_value: U256,
 }
 
+impl From<AccountInfo> for Account {
+    fn from(info: AccountInfo) -> Self {
+        Self {
+            info,
+            storage: HashMap::new(),
+        }
+    }
+}
+
 impl Account {
     pub fn new(
         balance: U256,
