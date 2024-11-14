@@ -41,7 +41,7 @@ use tokio::{
     sync::broadcast::{self, error::RecvError},
     task::Id,
 };
-use tracing::{error, info};
+use tracing::{debug, error};
 const CAP_P2P: (Capability, u8) = (Capability::P2p, 5);
 const CAP_ETH: (Capability, u8) = (Capability::Eth, 68);
 const CAP_SNAP: (Capability, u8) = (Capability::Snap, 1);
@@ -151,7 +151,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
                 ))
             }
         };
-        info!("Completed handshake!");
+        debug!("Completed handshake!");
 
         self.exchange_hello_messages().await?;
         Ok(())
@@ -194,7 +194,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
         self.start_capabilities().await?;
         match &self.state {
             RLPxConnectionState::Established(_) => {
-                info!("Started peer main loop");
+                debug!("Started peer main loop");
                 // Wait for eth status message or timeout.
                 let mut broadcaster_receive = {
                     if self.capabilities.contains(&CAP_ETH) {
@@ -210,11 +210,11 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
                     tokio::select! {
                         received_msg = self.receive() => {
                             match received_msg? {
-                                Message::Disconnect(_) => info!("Received Disconnect"),
-                                Message::Ping(_) => info!("Received Ping"),
-                                Message::Pong(_) => info!("Received Pong"),
+                                Message::Disconnect(_) => debug!("Received Disconnect"),
+                                Message::Ping(_) => debug!("Received Ping"),
+                                Message::Pong(_) => debug!("Received Pong"),
                                 Message::Status(_) if !peer_supports_eth => {
-                                    info!("Received Status");
+                                    debug!("Received Status");
                                     // TODO: Check peer's status message.
                                     broadcaster_receive = Some(self.connection_broadcast_send.subscribe());
                                     self.capabilities.push(CAP_ETH);

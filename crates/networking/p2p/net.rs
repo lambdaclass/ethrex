@@ -24,7 +24,7 @@ use tokio::{
     sync::{broadcast, Mutex},
     try_join,
 };
-use tracing::{debug, error, info};
+use tracing::{debug, error};
 use types::{Endpoint, Node};
 
 pub mod bootnode;
@@ -49,8 +49,8 @@ pub async fn start_network(
     signer: SigningKey,
     storage: Store,
 ) {
-    info!("Starting discovery service at {udp_addr}");
-    info!("Listening for requests at {tcp_addr}");
+    debug!("Starting discovery service at {udp_addr}");
+    debug!("Listening for requests at {tcp_addr}");
     let local_node_id = node_id_from_signing_key(&signer);
     let table = Arc::new(Mutex::new(KademliaTable::new(local_node_id)));
     let (channel_broadcast_send_end, _) = tokio::sync::broadcast::channel::<(
@@ -794,7 +794,7 @@ async fn handle_peer_as_initiator(
     table: Arc<Mutex<KademliaTable>>,
     connection_broadcast: broadcast::Sender<(tokio::task::Id, Arc<RLPxMessage>)>,
 ) {
-    info!("Trying RLPx connection with {node:?}");
+    debug!("Trying RLPx connection with {node:?}");
     let stream = TcpSocket::new_v4()
         .unwrap()
         .connect(SocketAddr::new(node.ip, node.tcp_port))
@@ -812,15 +812,15 @@ async fn handle_peer(mut conn: RLPxConnection<TcpStream>, table: Arc<Mutex<Kadem
     match conn.handshake().await {
         Ok(_) => match conn.handle_peer().await {
             Ok(_) => unreachable!(),
-            Err(e) => info!("Error during RLPx connection: ({e})"),
+            Err(e) => debug!("Error during RLPx connection: ({e})"),
         },
         Err(e) => {
             if let Ok(node_id) = conn.get_remote_node_id() {
                 // Discard peer from kademlia table
-                info!("Handshake failed: ({e}), discarding peer {node_id}");
+                debug!("Handshake failed: ({e}), discarding peer {node_id}");
                 table.lock().await.replace_peer(node_id);
             } else {
-                info!("Handshake failed: ({e}), unknown peer");
+                debug!("Handshake failed: ({e}), unknown peer");
             }
         }
     }
