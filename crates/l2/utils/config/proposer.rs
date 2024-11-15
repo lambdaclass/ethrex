@@ -1,3 +1,4 @@
+use ethereum_types::Address;
 use serde::Deserialize;
 
 use super::errors::ConfigError;
@@ -5,6 +6,7 @@ use super::errors::ConfigError;
 #[derive(Deserialize)]
 pub struct ProposerConfig {
     pub interval_ms: u64,
+    pub coinbase_address: Address,
 }
 
 impl ProposerConfig {

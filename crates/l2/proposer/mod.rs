@@ -18,6 +18,7 @@ pub mod errors;
 pub struct Proposer {
     engine_client: EngineClient,
     block_production_interval: Duration,
+    coinbase_address: Address,
 }
 
 pub async fn start_proposer(store: Store) {
@@ -61,6 +62,7 @@ impl Proposer {
         Ok(Self {
             engine_client: EngineClient::new_from_config(engine_config)?,
             block_production_interval: Duration::from_millis(proposer_config.interval_ms),
+            coinbase_address: proposer_config.coinbase_address,
         })
     }
 
@@ -88,11 +90,7 @@ impl Proposer {
         };
         let payload_attributes = PayloadAttributesV3 {
             timestamp: SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs(),
-            // Setting the COINBASE address / fee_recipient.
-            // TODO: revise it, maybe we would like to have this set with an envar
-            suggested_fee_recipient: Address::from_slice(
-                &hex::decode("0007a881CD95B1484fca47615B64803dad620C8d").unwrap(),
-            ),
+            suggested_fee_recipient: self.coinbase_address,
             ..Default::default()
         };
         let fork_choice_response = match self
