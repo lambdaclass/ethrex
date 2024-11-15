@@ -1,20 +1,25 @@
-use crate::{report::EFTestsReport, types::EFTest};
-use ethereum_rust_core::{H256, U256};
+use crate::{report::EFTestsReport, types::EFTest, utils};
+use ethereum_rust_core::{
+    types::{code_hash, AccountInfo},
+    H256, U256,
+};
 use ethereum_rust_levm::{
-    db::{Cache, Db},
+    db::Cache,
     errors::{TransactionReport, VMError},
     vm::VM,
     Environment,
 };
+use ethereum_rust_storage::AccountUpdate;
+use ethereum_rust_vm::db::StoreWrapper;
 use keccak_hash::keccak;
 use spinoff::{spinners::Dots, Color, Spinner};
-use std::{error::Error, sync::Arc};
+use std::{collections::HashMap, error::Error, sync::Arc};
 
 pub fn run_ef_tests() -> Result<EFTestsReport, Box<dyn Error>> {
     let mut report = EFTestsReport::default();
     let cargo_manifest_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let ef_general_state_tests_path = cargo_manifest_dir.join("vectors/GeneralStateTests");
-    let mut spinner = Spinner::new(Dots, report.to_string(), Color::Cyan);
+    let mut spinner = Spinner::new(Dots, report.progress(), Color::Cyan);
     for test_dir in std::fs::read_dir(ef_general_state_tests_path)?.flatten() {
         for test in std::fs::read_dir(test_dir.path())?
             .flatten()
@@ -59,7 +64,7 @@ pub fn run_ef_test_tx(
     let mut evm = prepare_vm_for_tx(tx_id, test)?;
     ensure_pre_state(&evm, test)?;
     let execution_result = evm.transact();
-    ensure_post_state(execution_result, &evm, test, report)?;
+    ensure_post_state(execution_result, test, report)?;
     Ok(())
 }
 
@@ -84,6 +89,11 @@ pub fn run_ef_test(test: EFTest, report: &mut EFTestsReport) -> Result<(), Box<d
 }
 
 pub fn prepare_vm_for_tx(tx_id: usize, test: &EFTest) -> Result<VM, Box<dyn Error>> {
+    let (initial_state, block_hash) = utils::load_initial_state(test);
+    let db = Arc::new(StoreWrapper {
+        store: initial_state.database().unwrap().clone(),
+        block_hash,
+    });
     let vm_result = VM::new(
         test.transactions.get(tx_id).unwrap().1.to.clone(),
         Environment {
@@ -110,7 +120,7 @@ pub fn prepare_vm_for_tx(tx_id: usize, test: &EFTest) -> Result<VM, Box<dyn Erro
         },
         test.transactions.get(tx_id).unwrap().1.value,
         test.transactions.get(tx_id).unwrap().1.data.clone(),
-        Arc::new(Db::from(test)),
+        db,
         Cache::default(),
     );
 
@@ -176,12 +186,11 @@ fn ensure_pre_state_condition(condition: bool, error_reason: String) -> Result<(
 
 pub fn ensure_post_state(
     execution_result: Result<TransactionReport, VMError>,
-    _evm: &VM,
     test: &EFTest,
     report: &mut EFTestsReport,
 ) -> Result<(), Box<dyn Error>> {
     match execution_result {
-        Ok(_execution_report) => {
+        Ok(execution_report) => {
             match test
                 .post
                 .clone()
@@ -196,7 +205,24 @@ pub fn ensure_post_state(
                 }
                 // Execution result was successful and no exception was expected.
                 // TODO: Check that the post-state matches the expected post-state.
-                None | Some(None) => {}
+                None | Some(None) => {
+                    let pos_state_root = post_state_root(execution_report, test);
+                    let expected_post_state_value = test.post.iter().next().cloned();
+                    if let Some(expected_post_state_root_hash) = expected_post_state_value {
+                        let expected_post_state_root_hash = expected_post_state_root_hash.hash;
+                        if expected_post_state_root_hash != pos_state_root {
+                            let error_reason = format!(
+                                "Post-state root mismatch: expected {expected_post_state_root_hash:#x}, got {pos_state_root:#x}",
+                            );
+                            return Err(
+                                format!("Post-state condition failed: {error_reason}").into()
+                            );
+                        }
+                    } else {
+                        let error_reason = "No post-state root hash provided";
+                        return Err(format!("Post-state condition failed: {error_reason}").into());
+                    }
+                }
             }
         }
         Err(err) => {
@@ -220,4 +246,44 @@ pub fn ensure_post_state(
     };
     report.register_pass(&test.name);
     Ok(())
+}
+
+pub fn post_state_root(execution_report: TransactionReport, test: &EFTest) -> H256 {
+    let (initial_state, block_hash) = utils::load_initial_state(test);
+
+    let mut account_updates: Vec<AccountUpdate> = vec![];
+    for (address, account) in execution_report.new_state {
+        let mut added_storage = HashMap::new();
+
+        for (key, value) in account.storage {
+            added_storage.insert(key, value.current_value);
+        }
+
+        let code = if account.info.bytecode.is_empty() {
+            None
+        } else {
+            Some(account.info.bytecode.clone())
+        };
+
+        let account_update = AccountUpdate {
+            address,
+            removed: false,
+            info: Some(AccountInfo {
+                code_hash: code_hash(&account.info.bytecode),
+                balance: account.info.balance,
+                nonce: account.info.nonce,
+            }),
+            code,
+            added_storage,
+        };
+
+        account_updates.push(account_update);
+    }
+
+    initial_state
+        .database()
+        .unwrap()
+        .apply_account_updates(block_hash, &account_updates)
+        .unwrap()
+        .unwrap()
 }

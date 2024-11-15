@@ -4,10 +4,11 @@ version.workspace = true
 edition.workspace = true
 
 [dependencies]
-ethereum_rust-blockchain.workspace = true
+ethereum_rust-blockchain = { workspace = true, features = ["levm"] }
 ethereum_rust-core.workspace = true
 ethereum_rust-storage.workspace = true
 ethereum_rust-rlp.workspace = true
+ethereum_rust-vm = { workspace = true, features = ["levm"] }
 ethereum_rust-levm = { path = "../../../crates/vm/levm" }
 serde.workspace = true
 serde_json.workspace = true

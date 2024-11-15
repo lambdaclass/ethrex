@@ -13,7 +13,7 @@ use super::{
 };
 
 #[allow(unused)]
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Debug, Deserialize, Clone, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct Genesis {
     /// Chain configuration

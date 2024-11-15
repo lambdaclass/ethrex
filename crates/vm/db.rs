@@ -27,7 +27,7 @@ cfg_if::cfg_if! {
                     .store
                     .get_account_code(acc_info.code_hash)
                     .unwrap()
-                    .unwrap();
+                    .unwrap_or_default();
 
                 ethereum_rust_levm::account::AccountInfo {
                     balance: acc_info.balance,
