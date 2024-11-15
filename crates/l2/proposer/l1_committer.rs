@@ -70,25 +70,11 @@ impl Committer {
 
     pub async fn start(&self) -> Result<(), CommitterError> {
         loop {
-            let last_committed_block = get_last_committed_block(
+            let last_committed_block = EthClient::get_last_committed_block(
                 &self.eth_client,
                 self.on_chain_proposer_address,
-                Overrides::default(),
             )
             .await?;
-
-            let last_committed_block = last_committed_block
-                .strip_prefix("0x")
-                .expect("Couldn't strip prefix from last_committed_block.");
-
-            if last_committed_block.is_empty() {
-                error!("Failed to fetch last_committed_block");
-                panic!("Failed to fetch last_committed_block. Manual intervention required");
-            }
-
-            let last_committed_block = U256::from_str_radix(last_committed_block, 16)
-                .map_err(CommitterError::from)?
-                .as_u64();
 
             let block_number_to_fetch = if last_committed_block == u64::MAX {
                 0
@@ -425,28 +411,6 @@ pub async fn send_transaction_with_calldata(
 
     eth_client
         .send_eip1559_transaction(tx, &l1_private_key)
-        .await
-}
-
-async fn get_last_committed_block(
-    eth_client: &EthClient,
-    contract_address: Address,
-    overrides: Overrides,
-) -> Result<String, EthClientError> {
-    let selector = keccak(b"lastCommittedBlock()")
-        .as_bytes()
-        .get(..4)
-        .expect("Failed to get initialize selector")
-        .to_vec();
-
-    let mut calldata = Vec::new();
-    calldata.extend_from_slice(&selector);
-
-    let leading_zeros = 32 - ((calldata.len() - 4) % 32);
-    calldata.extend(vec![0; leading_zeros]);
-
-    eth_client
-        .call(contract_address, calldata.into(), overrides)
         .await
 }
 

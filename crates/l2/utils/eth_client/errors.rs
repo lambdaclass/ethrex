@@ -32,6 +32,8 @@ pub enum EthClientError {
     GetTransactionByHashError(#[from] GetTransactionByHashError),
     #[error("Unreachable nonce")]
     UnrecheableNonce,
+    #[error("Error: {0}")]
+    Custom(String),
 }
 
 #[derive(Debug, thiserror::Error)]
