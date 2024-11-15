@@ -5,7 +5,6 @@ use crate::{
     gas_cost,
     vm::{word_to_address, VM},
 };
-use bytes::Bytes;
 use ethereum_rust_core::U256;
 use sha3::{Digest, Keccak256};
 
@@ -319,37 +318,32 @@ impl VM {
             self.cache_from_db(&address);
         };
 
-        let mut bytecode = self.get_account(&address).info.bytecode;
+        let bytecode = self.get_account(&address).info.bytecode;
 
-        let new_offset = offset.checked_add(size).ok_or(VMError::Internal(
+        let new_memory_size = dest_offset.checked_add(size).ok_or(VMError::Internal(
             InternalError::ArithmeticOperationOverflow,
         ))?;
-
-        if bytecode.len() < new_offset {
-            let mut extended_code = bytecode.to_vec();
-
-            // Expand the size
-            let size_to_expand =
-                new_offset
-                    .checked_sub(extended_code.len())
-                    .ok_or(VMError::Internal(
-                        InternalError::ArithmeticOperationUnderflow,
-                    ))?;
-            extended_code
-                .try_reserve(size_to_expand)
-                .map_err(|_err| VMError::MemorySizeOverflow)?;
-
-            // Fill the new space with zeros
-            extended_code.extend(std::iter::repeat(0).take(size_to_expand));
-
-            bytecode = Bytes::from(extended_code);
+        let current_memory_size = current_call_frame.memory.data.len();
+        if current_memory_size < new_memory_size {
+            current_call_frame.memory.data.resize(new_memory_size, 0);
         }
-        current_call_frame.memory.store_bytes(
-            dest_offset,
-            bytecode
-                .get(offset..new_offset)
-                .ok_or(VMError::Internal(InternalError::SlicingError))?, // bytecode can be "refactored" in order to avoid handling the error.
-        )?;
+
+        for i in 0..size {
+            if let Some(memory_byte) =
+                current_call_frame
+                    .memory
+                    .data
+                    .get_mut(dest_offset.checked_add(i).ok_or(VMError::Internal(
+                        InternalError::ArithmeticOperationOverflow,
+                    ))?)
+            {
+                *memory_byte = *bytecode
+                    .get(offset.checked_add(i).ok_or(VMError::Internal(
+                        InternalError::ArithmeticOperationOverflow,
+                    ))?)
+                    .unwrap_or(&0u8);
+            }
+        }
 
         Ok(OpcodeSuccess::Continue)
     }
