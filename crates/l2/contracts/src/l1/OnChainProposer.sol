@@ -147,10 +147,13 @@ contract OnChainProposer is IOnChainProposer, ReentrancyGuard {
         }
 
         lastVerifiedBlock = blockNumber;
-        ICommonBridge(BRIDGE).removeDepositLogs(
-            // The first 2 bytes are the number of deposits.
-            uint16(bytes2(blockCommitments[blockNumber].depositLogs))
+        // The first 2 bytes are the number of deposits.
+        uint16 deposits_amount = uint16(
+            bytes2(blockCommitments[blockNumber].depositLogs)
         );
+        if (deposits_amount > 0) {
+            ICommonBridge(BRIDGE).removeDepositLogs(deposits_amount);
+        }
 
         // Remove previous block commitment as it is no longer needed.
         delete blockCommitments[blockNumber - 1];

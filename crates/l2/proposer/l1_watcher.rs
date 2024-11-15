@@ -70,7 +70,7 @@ impl L1Watcher {
             self.last_block_fetched, new_last_block
         );
 
-        let logs = self
+        let logs = match self
             .eth_client
             .get_logs(
                 self.last_block_fetched + 1,
@@ -78,7 +78,14 @@ impl L1Watcher {
                 self.address,
                 self.topics[0],
             )
-            .await?;
+            .await
+        {
+            Ok(logs) => logs,
+            Err(error) => {
+                warn!("Error when getting logs from L1: {}", error);
+                vec![]
+            }
+        };
 
         debug!("Logs: {:#?}", logs);
 

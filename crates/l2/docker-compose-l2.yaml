@@ -13,11 +13,13 @@ services:
       dockerfile: ./crates/l2/contracts/Dockerfile
     volumes:
       - ./contracts:/contracts
+      - .env:/.env
     env_file:
       - .env
     environment:
       - ETH_RPC_URL=http://ethereum_rust_l1:8545
       - DEPLOYER_CONTRACTS_PATH=/contracts
+      - ENV_FILE=/.env
     depends_on:
       - ethereum_rust
     restart: on-failure:3
@@ -31,13 +33,14 @@ services:
       dockerfile: ./crates/l2/Dockerfile
     ports:
       - 127.0.0.1:1729:1729
-    env_file:
-      - .env
+      - 3000:3000
     environment:
       - ETH_RPC_URL=http://ethereum_rust_l1:8545
+      - ENV_FILE=/.env
     volumes:
       - ../../test_data/genesis-l2.json:/genesis-l2.json
-    command: --network /genesis-l2.json --http.addr 0.0.0.0 --http.port 1729
+      - .env:/.env:ro
+    command: --network /genesis-l2.json --http.addr 0.0.0.0 --http.port 1729 --authrpc.port 8551
     depends_on:
       contract_deployer:
         condition: service_completed_successfully

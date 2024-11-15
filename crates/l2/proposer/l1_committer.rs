@@ -115,7 +115,13 @@ impl Committer {
                 let deposits = self.get_block_deposits(&block_to_commit)?;
 
                 let withdrawal_logs_merkle_root = self.get_withdrawals_merkle_root(
-                    withdrawals.iter().map(|(hash, _tx)| *hash).collect(),
+                    withdrawals
+                        .iter()
+                        .map(|(_hash, tx)| {
+                            tx.get_withdrawal_hash()
+                                .expect("Not a withdrawal transaction")
+                        })
+                        .collect(),
                 );
                 let deposit_logs_hash = self.get_deposit_hash(
                     deposits

@@ -405,7 +405,7 @@ impl EthClient {
                 self.get_chain_id().await?.as_u64()
             },
             nonce: self.get_nonce_from_overrides(&overrides).await?,
-            max_priority_fee_per_gas: if let Some(gas_price) = overrides.priority_gas_price {
+            max_priority_fee_per_gas: if let Some(gas_price) = overrides.gas_price {
                 gas_price
             } else {
                 self.get_gas_price().await?.as_u64()
@@ -466,7 +466,7 @@ impl EthClient {
                 self.get_chain_id().await?.as_u64()
             },
             nonce: self.get_nonce_from_overrides(&overrides).await?,
-            max_priority_fee_per_gas: if let Some(gas_price) = overrides.priority_gas_price {
+            max_priority_fee_per_gas: if let Some(gas_price) = overrides.gas_price {
                 gas_price
             } else {
                 self.get_gas_price().await?.as_u64()
@@ -518,7 +518,7 @@ impl EthClient {
                 self.get_chain_id().await?.as_u64()
             },
             nonce: self.get_nonce_from_overrides(&overrides).await?,
-            max_priority_fee_per_gas: if let Some(gas_price) = overrides.priority_gas_price {
+            max_priority_fee_per_gas: if let Some(gas_price) = overrides.gas_price {
                 gas_price
             } else {
                 self.get_gas_price().await?.as_u64()
