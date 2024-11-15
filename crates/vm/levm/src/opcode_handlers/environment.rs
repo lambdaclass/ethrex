@@ -327,7 +327,21 @@ impl VM {
 
         if bytecode.len() < new_offset {
             let mut extended_code = bytecode.to_vec();
-            extended_code.resize(new_offset, 0);
+
+            // Expand the size
+            let size_to_expand =
+                new_offset
+                    .checked_sub(extended_code.len())
+                    .ok_or(VMError::Internal(
+                        InternalError::ArithmeticOperationUnderflow,
+                    ))?;
+            extended_code
+                .try_reserve(size_to_expand)
+                .map_err(|_err| VMError::MemorySizeOverflow)?;
+
+            // Fill the new space with zeros
+            extended_code.extend(std::iter::repeat(0).take(size_to_expand));
+
             bytecode = Bytes::from(extended_code);
         }
         current_call_frame.memory.store_bytes(

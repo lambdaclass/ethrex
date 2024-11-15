@@ -24,16 +24,34 @@ impl Memory {
         Self { data }
     }
 
-    fn resize(&mut self, offset: usize) {
-        if offset.next_multiple_of(WORD_SIZE) > self.data.len() {
-            self.data.resize(offset.next_multiple_of(WORD_SIZE), 0);
+    fn resize(&mut self, offset: usize) -> Result<(), VMError> {
+        let new_offset = offset
+            .checked_next_multiple_of(WORD_SIZE)
+            .ok_or(VMError::Internal(
+                InternalError::ArithmeticOperationOverflow,
+            ))?;
+        if new_offset > self.data.len() {
+            // Expand the size
+            let size_to_expand =
+                new_offset
+                    .checked_sub(self.data.len())
+                    .ok_or(VMError::Internal(
+                        InternalError::ArithmeticOperationUnderflow,
+                    ))?;
+            self.data
+                .try_reserve(size_to_expand)
+                .map_err(|_err| VMError::MemorySizeOverflow)?;
+
+            // Fill the new space with zeros
+            self.data.extend(std::iter::repeat(0).take(size_to_expand));
         }
+        Ok(())
     }
 
     pub fn load(&mut self, offset: usize) -> Result<U256, VMError> {
         self.resize(offset.checked_add(WORD_SIZE).ok_or(VMError::Internal(
             InternalError::ArithmeticOperationOverflow, // MemoryLoadOutOfBounds?
-        ))?);
+        ))?)?;
         let value_bytes = self
             .data
             .get(
@@ -51,7 +69,7 @@ impl Memory {
         let size_to_load = offset.checked_add(size).ok_or(VMError::Internal(
             InternalError::ArithmeticOperationOverflow,
         ))?;
-        self.resize(size_to_load);
+        self.resize(size_to_load)?;
         self.data
             .get(offset..size_to_load)
             .ok_or(VMError::MemoryLoadOutOfBounds)
@@ -63,7 +81,7 @@ impl Memory {
         let size_to_store = offset.checked_add(len).ok_or(VMError::Internal(
             InternalError::ArithmeticOperationOverflow,
         ))?;
-        self.resize(size_to_store);
+        self.resize(size_to_store)?;
         self.data
             .splice(offset..size_to_store, value.iter().copied());
 
@@ -79,7 +97,7 @@ impl Memory {
         let size_to_store = offset.checked_add(size).ok_or(VMError::Internal(
             InternalError::ArithmeticOperationOverflow,
         ))?;
-        self.resize(size_to_store);
+        self.resize(size_to_store)?;
         self.data
             .splice(offset..size_to_store, value.iter().copied());
 
@@ -105,7 +123,7 @@ impl Memory {
         let max_size = std::cmp::max(src_copy_size, dest_copy_size);
 
         if max_size > self.data.len() {
-            self.resize(max_size);
+            self.resize(max_size)?;
         }
 
         let mut temp = vec![0u8; size];

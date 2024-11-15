@@ -488,21 +488,19 @@ impl VM {
             let contract_code = report.clone().output;
 
             // TODO: Is this the expected behavior?
-            if contract_code.is_empty() {
-                return Err(VMError::InvalidBytecode);
-            }
-
-            // (6)
-            if contract_code.len() > MAX_CODE_SIZE {
-                return Err(VMError::ContractOutputTooBig);
-            }
-            // Supposing contract code has contents
-            if *contract_code
-                .first()
-                .ok_or(VMError::Internal(InternalError::TriedToIndexEmptyCode))?
-                == INVALID_CONTRACT_PREFIX
-            {
-                return Err(VMError::InvalidInitialByte);
+            if !contract_code.is_empty() {
+                // (6)
+                if contract_code.len() > MAX_CODE_SIZE {
+                    return Err(VMError::ContractOutputTooBig);
+                }
+                // Supposing contract code has contents
+                if *contract_code
+                    .first()
+                    .ok_or(VMError::Internal(InternalError::TriedToIndexEmptyCode))?
+                    == INVALID_CONTRACT_PREFIX
+                {
+                    return Err(VMError::InvalidInitialByte);
+                }
             }
 
             // If the initialization code completes successfully, a final contract-creation cost is paid,

@@ -15,7 +15,7 @@ pub struct EFTest {
     pub env: EFTestEnv,
     pub post: EFTestPost,
     pub pre: EFTestPre,
-    pub transaction: EFTestTransaction,
+    pub transactions: Vec<((usize, usize, usize), EFTestTransaction)>,
 }
 
 impl From<&EFTest> for ethereum_rust_levm::db::Db {
@@ -129,7 +129,7 @@ pub struct EFTestPreValue {
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct EFTestTransaction {
+pub struct EFTestRawTransaction {
     #[serde(deserialize_with = "deserialize_hex_bytes_vec")]
     pub data: Vec<Bytes>,
     #[serde(deserialize_with = "deserialize_u256_vec_safe")]
@@ -143,4 +143,19 @@ pub struct EFTestTransaction {
     pub to: TxKind,
     #[serde(deserialize_with = "deserialize_u256_vec_safe")]
     pub value: Vec<U256>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EFTestTransaction {
+    pub data: Bytes,
+    pub gas_limit: U256,
+    #[serde(default, deserialize_with = "deserialize_u256_optional_safe")]
+    pub gas_price: Option<U256>,
+    #[serde(deserialize_with = "deserialize_u256_safe")]
+    pub nonce: U256,
+    pub secret_key: H256,
+    pub sender: Address,
+    pub to: TxKind,
+    pub value: U256,
 }

@@ -4,6 +4,8 @@ use ethereum_rust_core::U256;
 use serde::Deserialize;
 use std::{collections::HashMap, str::FromStr};
 
+use crate::types::{EFTestRawTransaction, EFTestTransaction};
+
 pub fn deserialize_ef_post_value_indexes<'de, D>(
     deserializer: D,
 ) -> Result<HashMap<String, U256>, D::Error>
@@ -134,6 +136,41 @@ impl<'de> Deserialize<'de> for EFTest {
         let test_data = aux
             .get(test_name)
             .ok_or(serde::de::Error::missing_field("test data value"))?;
+
+        let raw_tx: EFTestRawTransaction = serde_json::from_value(
+            test_data
+                .get("transaction")
+                .ok_or(serde::de::Error::missing_field("transaction"))?
+                .clone(),
+        )
+        .map_err(|err| {
+            serde::de::Error::custom(format!(
+                "error deserializing test \"{test_name}\", \"transaction\" field: {err}"
+            ))
+        })?;
+
+        let mut transactions = Vec::new();
+
+        // Note that inthis order of iteration, in an example tx with 2 datas, 2 gasLimit and 2 values, order would be
+        // 111, 112, 121, 122, 211, 212, 221, 222
+        for (data_id, data) in raw_tx.data.iter().enumerate() {
+            for (gas_limit_id, gas_limit) in raw_tx.gas_limit.iter().enumerate() {
+                for (value_id, value) in raw_tx.value.iter().enumerate() {
+                    let tx = EFTestTransaction {
+                        data: data.clone(),
+                        gas_limit: *gas_limit,
+                        gas_price: raw_tx.gas_price,
+                        nonce: raw_tx.nonce,
+                        secret_key: raw_tx.secret_key,
+                        sender: raw_tx.sender,
+                        to: raw_tx.to.clone(),
+                        value: *value,
+                    };
+                    transactions.push(((data_id, gas_limit_id, value_id), tx));
+                }
+            }
+        }
+
         let ef_test = Self {
             name: test_name.to_owned().to_owned(),
             _info: serde_json::from_value(
@@ -180,17 +217,7 @@ impl<'de> Deserialize<'de> for EFTest {
                     "error deserializing test \"{test_name}\", \"pre\" field: {err}"
                 ))
             })?,
-            transaction: serde_json::from_value(
-                test_data
-                    .get("transaction")
-                    .ok_or(serde::de::Error::missing_field("transaction"))?
-                    .clone(),
-            )
-            .map_err(|err| {
-                serde::de::Error::custom(format!(
-                    "error deserializing test \"{test_name}\", \"transaction\" field: {err}"
-                ))
-            })?,
+            transactions,
         };
         Ok(ef_test)
     }

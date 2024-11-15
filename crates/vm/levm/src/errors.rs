@@ -63,6 +63,8 @@ pub enum VMError {
     GasRefundsUnderflow,
     #[error("Gas refunds overflow")]
     GasRefundsOverflow,
+    #[error("Memory size overflows")]
+    MemorySizeOverflow,
     // OutOfGas
     #[error("Out Of Gas")]
     OutOfGas(#[from] OutOfGasError),
