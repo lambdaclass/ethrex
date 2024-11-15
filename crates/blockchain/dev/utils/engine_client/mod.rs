@@ -1,5 +1,4 @@
 use bytes::Bytes;
-use config::EngineApiConfig;
 use errors::{
     EngineClientError, ExchangeCapabilitiesError, ForkChoiceUpdateError, GetPayloadError,
     NewPayloadError,
@@ -44,14 +43,6 @@ impl EngineClient {
             secret,
             execution_client_url: execution_client_url.to_string(),
         }
-    }
-
-    pub fn new_from_config(config: EngineApiConfig) -> Result<Self, EngineClientError> {
-        Ok(Self {
-            client: Client::new(),
-            secret: std::fs::read(config.jwt_path)?.into(),
-            execution_client_url: config.rpc_url,
-        })
     }
 
     async fn send_request(&self, request: RpcRequest) -> Result<RpcResponse, EngineClientError> {

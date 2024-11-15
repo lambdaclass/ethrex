@@ -28,6 +28,8 @@ pub enum EngineClientError {
     FailedToReadSecret(#[from] std::io::Error),
     #[error("EngineClient failed to serialize request body: {0}")]
     FailedToSerializeRequestBody(String),
+    #[error("EngineClient System Failed after: {0}")]
+    SystemFailed(String),
 }
 
 #[derive(Debug, thiserror::Error)]

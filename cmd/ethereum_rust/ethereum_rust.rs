@@ -215,7 +215,8 @@ async fn main() {
                 store.get_canonical_block_hash(current_block_number).unwrap().unwrap()
             };
             let max_tries = 3;
-            let block_producer_engine = ethereum_rust_dev::block_producer::start_block_producer(authrpc_socket_addr, authrpc_jwtsecret.into(), head_block_hash, max_tries);
+            let url = format!("http://{authrpc_socket_addr}");
+            let block_producer_engine = ethereum_rust_dev::block_producer::start_block_producer(url, authrpc_jwtsecret.into(), head_block_hash, max_tries, 1000, ethereum_rust_core::Address::default());
             tracker.spawn(block_producer_engine);
         } else {
             let networking = ethereum_rust_net::start_network(

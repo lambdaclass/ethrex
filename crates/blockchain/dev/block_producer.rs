@@ -1,21 +1,19 @@
-use crate::utils::engine_client::EngineClient;
+use crate::utils::engine_client::{errors::EngineClientError, EngineClient};
 use bytes::Bytes;
 use ethereum_rust_rpc::types::fork_choice::{ForkChoiceState, PayloadAttributesV3};
-use ethereum_types::H256;
+use ethereum_types::{Address, H256};
 use sha2::{Digest, Sha256};
-use std::{
-    net::SocketAddr,
-    time::{SystemTime, UNIX_EPOCH},
-};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 pub async fn start_block_producer(
-    execution_client_auth_url: SocketAddr,
+    execution_client_auth_url: String,
     jwt_secret: Bytes,
     head_block_hash: H256,
     max_tries: u32,
-) {
-    let engine_client =
-        EngineClient::new(&format!("http://{execution_client_auth_url}"), jwt_secret);
+    block_production_interval_ms: u64,
+    coinbase_address: Address,
+) -> Result<(), EngineClientError> {
+    let engine_client = EngineClient::new(&execution_client_auth_url, jwt_secret);
 
     let mut head_block_hash: H256 = head_block_hash;
     let mut tries = 0;
@@ -26,11 +24,10 @@ pub async fn start_block_producer(
             safe_block_hash: head_block_hash,
             finalized_block_hash: head_block_hash,
         };
+
         let payload_attributes = PayloadAttributesV3 {
-            timestamp: SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .expect("Failed to produce block: error getting current timestamp")
-                .as_secs(),
+            timestamp: SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs(),
+            suggested_fee_recipient: coinbase_address,
             ..Default::default()
         };
         let fork_choice_response = match engine_client
@@ -95,6 +92,10 @@ pub async fn start_block_producer(
 
         head_block_hash = produced_block_hash;
 
-        tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
+        tokio::time::sleep(tokio::time::Duration::from_millis(
+            block_production_interval_ms,
+        ))
+        .await;
     }
+    Err(EngineClientError::SystemFailed(format!("{}", max_tries)))
 }

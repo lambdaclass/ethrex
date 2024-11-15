@@ -1,12 +1,9 @@
 use crate::utils::config::{proposer::ProposerConfig, read_env_file};
 use errors::ProposerError;
-use ethereum_rust_dev::utils::engine_client::{config::EngineApiConfig, EngineClient};
-use ethereum_rust_rpc::types::fork_choice::{ForkChoiceState, PayloadAttributesV3};
+use ethereum_rust_dev::utils::engine_client::{config::EngineApiConfig, errors::EngineClientError};
 use ethereum_rust_storage::Store;
 use ethereum_types::{Address, H256};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
-use tokio::time::sleep;
-use tracing::{error, info, warn};
+use tracing::{info, warn};
 
 pub mod l1_committer;
 pub mod l1_watcher;
@@ -16,8 +13,8 @@ pub mod state_diff;
 pub mod errors;
 
 pub struct Proposer {
-    engine_client: EngineClient,
-    block_production_interval: Duration,
+    engine_config: EngineApiConfig,
+    block_production_interval: u64,
     coinbase_address: Address,
 }
 
@@ -60,92 +57,22 @@ impl Proposer {
         engine_config: EngineApiConfig,
     ) -> Result<Self, ProposerError> {
         Ok(Self {
-            engine_client: EngineClient::new_from_config(engine_config)?,
-            block_production_interval: Duration::from_millis(proposer_config.interval_ms),
+            engine_config,
+            block_production_interval: proposer_config.interval_ms,
             coinbase_address: proposer_config.coinbase_address,
         })
     }
 
     pub async fn start(&self, head_block_hash: H256) -> Result<(), ProposerError> {
-        let mut head_block_hash = head_block_hash;
-        loop {
-            head_block_hash = self.produce_block(head_block_hash).await?;
-
-            // TODO: Check what happens with the transactions included in the payload of the failed block.
-            if head_block_hash == H256::zero() {
-                error!("Failed to produce block");
-                continue;
-            }
-
-            sleep(self.block_production_interval).await;
-        }
-    }
-
-    pub async fn produce_block(&self, head_block_hash: H256) -> Result<H256, ProposerError> {
-        info!("Producing block");
-        let fork_choice_state = ForkChoiceState {
+        ethereum_rust_dev::block_producer::start_block_producer(
+            self.engine_config.rpc_url.clone(),
+            std::fs::read(&self.engine_config.jwt_path).unwrap().into(),
             head_block_hash,
-            safe_block_hash: head_block_hash,
-            finalized_block_hash: head_block_hash,
-        };
-        let payload_attributes = PayloadAttributesV3 {
-            timestamp: SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs(),
-            suggested_fee_recipient: self.coinbase_address,
-            ..Default::default()
-        };
-        let fork_choice_response = match self
-            .engine_client
-            .engine_forkchoice_updated_v3(fork_choice_state, Some(payload_attributes))
-            .await
-        {
-            Ok(response) => response,
-            Err(error) => {
-                error!("Error sending forkchoiceUpdateV3: {error}");
-                return Err(ProposerError::FailedToProduceBlock(format!(
-                    "forkchoiceUpdateV3: {error}",
-                )));
-            }
-        };
-        let payload_id =
-            fork_choice_response
-                .payload_id
-                .ok_or(ProposerError::FailedToProduceBlock(
-                    "payload_id is None in ForkChoiceResponse".to_string(),
-                ))?;
-        let execution_payload_response =
-            match self.engine_client.engine_get_payload_v3(payload_id).await {
-                Ok(response) => response,
-                Err(error) => {
-                    error!("Error sending getPayloadV3: {error}");
-                    return Err(ProposerError::FailedToProduceBlock(format!(
-                        "getPayloadV3: {error}"
-                    )));
-                }
-            };
-        let payload_status = match self
-            .engine_client
-            .engine_new_payload_v3(
-                execution_payload_response.execution_payload,
-                Default::default(),
-                Default::default(),
-            )
-            .await
-        {
-            Ok(response) => response,
-            Err(error) => {
-                error!("Error sending newPayloadV3: {error}");
-                return Err(ProposerError::FailedToProduceBlock(format!(
-                    "newPayloadV3: {error}"
-                )));
-            }
-        };
-        let produced_block_hash =
-            payload_status
-                .latest_valid_hash
-                .ok_or(ProposerError::FailedToProduceBlock(
-                    "latest_valid_hash is None in PayloadStatus".to_string(),
-                ))?;
-        info!("Produced block {produced_block_hash:#x}");
-        Ok(produced_block_hash)
+            10,
+            self.block_production_interval,
+            self.coinbase_address,
+        )
+        .await
+        .map_err(EngineClientError::into)
     }
 }
