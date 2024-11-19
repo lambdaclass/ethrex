@@ -114,6 +114,9 @@ async fn main() {
         .get_one::<String>("datadir")
         .map_or(set_datadir(DEFAULT_DATADIR), |datadir| set_datadir(datadir));
 
+    // TODO: Use snap as default
+    let is_snap_sync = is_snap_sync(&matches);
+
     let store = Store::new(&data_dir, EngineType::Libmdbx).expect("Failed to create Store");
 
     let genesis = read_genesis_file(genesis_file_path);
@@ -225,6 +228,7 @@ async fn main() {
                 bootnodes,
                 signer,
                 store,
+                is_snap_sync
             )
             .into_future();
             tracker.spawn(networking);
@@ -282,6 +286,19 @@ fn parse_socket_addr(addr: &str, port: &str) -> io::Result<SocketAddr> {
             io::ErrorKind::NotFound,
             "Failed to parse socket address",
         ))
+}
+
+fn is_snap_sync(matches: &clap::ArgMatches) -> bool {
+    let syncmode = matches.get_one::<String>("syncmode");
+    if let Some(syncmode) = syncmode {
+        match &**syncmode {
+            "full" => false,
+            "snap" => true,
+            other => panic!("Invalid syncmode {other} expected either snap or full"),
+        }
+    } else {
+        false
+    }
 }
 
 fn set_datadir(datadir: &str) -> String {

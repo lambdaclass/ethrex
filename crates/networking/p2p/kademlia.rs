@@ -1,5 +1,6 @@
 use crate::{
     discv4::{time_now_unix, FindNodeRequest},
+    rlpx::message::Message,
     types::Node,
 };
 use ethereum_rust_core::{H256, H512, U256};
@@ -224,6 +225,17 @@ impl KademliaTable {
         self.replace_peer_inner(node_id, bucket_idx)
     }
 
+    pub fn set_sender(&mut self, node_id: H512, sender: tokio::sync::mpsc::Sender<Message>) {
+        let bucket_idx = bucket_number(self.local_node_id, node_id);
+        if let Some(peer) = self.buckets[bucket_idx]
+            .peers
+            .iter_mut()
+            .find(|peer| peer.node.node_id == node_id)
+        {
+            peer.sender = Some(sender)
+        }
+    }
+
     #[cfg(test)]
     pub fn replace_peer_on_custom_bucket(
         &mut self,
@@ -279,6 +291,8 @@ pub struct PeerData {
     pub liveness: u16,
     /// if a revalidation was sent to the peer, the bool marks if it has answered
     pub revalidation: Option<bool>,
+    /// sender end of the channel between the peer and its rlpx connection
+    pub sender: Option<tokio::sync::mpsc::Sender<Message>>,
 }
 
 impl PeerData {
@@ -292,6 +306,7 @@ impl PeerData {
             last_ping_hash: None,
             find_node_request: None,
             revalidation: None,
+            sender: None,
         }
     }
 

@@ -1,7 +1,10 @@
 use ethereum_rust_rlp::error::{RLPDecodeError, RLPEncodeError};
 use ethereum_rust_storage::error::StoreError;
+use ethereum_rust_trie::TrieError;
 use thiserror::Error;
 use tokio::sync::broadcast::error::RecvError;
+
+use super::message::Message;
 
 // TODO improve errors
 #[derive(Debug, Error)]
@@ -34,10 +37,14 @@ pub(crate) enum RLPxError {
     StoreError(#[from] StoreError),
     #[error("Error in cryptographic library: {0}")]
     CryptographyError(String),
+    #[error(transparent)]
+    Trie(#[from] TrieError),
     #[error("Failed to broadcast msg: {0}")]
     BroadcastError(String),
     #[error(transparent)]
     RecvError(#[from] RecvError),
+    #[error(transparent)]
+    Send(#[from] tokio::sync::mpsc::error::SendError<Message>),
 }
 
 // Grouping all cryptographic related errors in a single CryptographicError variant

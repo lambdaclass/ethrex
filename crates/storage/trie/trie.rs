@@ -1,15 +1,14 @@
 mod db;
 mod error;
+mod nibbles;
 mod node;
 mod node_hash;
 mod rlp;
 mod state;
-mod trie_iter;
-
-mod nibbles;
 #[cfg(test)]
 mod test_utils;
-
+mod trie_iter;
+mod verify_range;
 use ethereum_rust_rlp::constants::RLP_NULL;
 use ethereum_types::H256;
 use nibbles::Nibbles;
@@ -21,6 +20,7 @@ use sha3::{Digest, Keccak256};
 pub use self::db::{libmdbx::LibmdbxTrieDB, libmdbx_dupsort::LibmdbxDupsortTrieDB};
 
 pub use self::db::{in_memory::InMemoryTrieDB, TrieDB};
+pub use self::verify_range::verify_range;
 
 pub use self::error::TrieError;
 use self::{node::LeafNode, state::TrieState, trie_iter::TrieIterator};
@@ -168,19 +168,8 @@ impl Trie {
         //     2. the trie contains the (key, value) pair to verify
 
         // We will only be using the trie's cache so we don't need a working DB
-        // struct NullTrieDB;
 
-        // impl TrieDB for NullTrieDB {
-        //     fn get(&self, _key: Vec<u8>) -> Result<Option<Vec<u8>>, TrieError> {
-        //         Ok(None)
-        //     }
-
-        //     fn put(&self, _key: Vec<u8>, _value: Vec<u8>) -> Result<(), TrieError> {
-        //         Ok(())
-        //     }
-        // }
-
-        // let mut trie = Trie::new(Box::new(NullTrieDB));
+        // let mut trie = Trie::stateless();
 
         // Insert root into trie
         // let mut proof = proof.into_iter();
@@ -213,6 +202,20 @@ impl Trie {
     pub fn compute_hash_from_unsorted_iter(
         iter: impl Iterator<Item = (PathRLP, ValueRLP)>,
     ) -> H256 {
+        let mut trie = Trie::stateless();
+        for (path, value) in iter {
+            // Unwraping here won't panic as our in_memory trie DB won't fail
+            trie.insert(path, value).unwrap();
+        }
+        trie.root
+            .as_ref()
+            .map(|root| root.clone().finalize())
+            .unwrap_or(*EMPTY_TRIE_HASH)
+    }
+
+    /// Creates a new stateless trie. This trie won't be able to store any nodes so all data will be lost after calculating the hash
+    /// Only use it for proof verification or computing a hash from an iterator
+    pub(crate) fn stateless() -> Trie {
         // We will only be using the trie's cache so we don't need a working DB
         struct NullTrieDB;
 
@@ -226,15 +229,7 @@ impl Trie {
             }
         }
 
-        let mut trie = Trie::new(Box::new(NullTrieDB));
-        for (path, value) in iter {
-            // Unwraping here won't panic as our in_memory trie DB won't fail
-            trie.insert(path, value).unwrap();
-        }
-        trie.root
-            .as_ref()
-            .map(|root| root.clone().finalize())
-            .unwrap_or(*EMPTY_TRIE_HASH)
+        Trie::new(Box::new(NullTrieDB))
     }
 
     /// Obtain the encoded node given its path.

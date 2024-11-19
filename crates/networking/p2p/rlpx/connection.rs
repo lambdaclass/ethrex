@@ -23,7 +23,7 @@ use super::{
     error::RLPxError,
     frame,
     handshake::{decode_ack_message, decode_auth_message, encode_auth_message},
-    message as rlpx,
+    message::{self as rlpx},
     p2p::Capability,
     utils::{ecdh_xchng, pubkey2id},
 };
@@ -38,7 +38,10 @@ use k256::{
 use sha3::{Digest, Keccak256};
 use tokio::{
     io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt},
-    sync::broadcast::{self, error::RecvError},
+    sync::{
+        broadcast::{self, error::RecvError},
+        mpsc,
+    },
     task,
     time::{sleep, Instant},
 };
@@ -191,7 +194,11 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
         }
     }
 
-    pub async fn handle_peer_conn(&mut self) -> Result<(), RLPxError> {
+    pub async fn handle_peer_conn(
+        &mut self,
+        backend_send: mpsc::Sender<rlpx::Message>,
+        mut backend_receive: mpsc::Receiver<rlpx::Message>,
+    ) -> Result<(), RLPxError> {
         if let RLPxConnectionState::Established(_) = &self.state {
             self.init_peer_conn().await?;
             info!("Started peer main loop");
@@ -210,7 +217,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
                 tokio::select! {
                     // TODO check if this is cancel safe, and fix it if not.
                     message = self.receive() => {
-                        self.handle_message(message?).await?;
+                        self.handle_message(message?, backend_send.clone()).await?;
                     }
                     // This is not ideal, but using the receiver without
                     // this function call, causes the loop to take ownwership
@@ -222,6 +229,9 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
                     // ignore the returned value.
                     Some(broadcasted_msg) = Self::maybe_wait_for_broadcaster(&mut broadcaster_receive) => {
                         self.handle_broadcast(broadcasted_msg?).await?
+                    }
+                    Some(message) = backend_receive.recv() => {
+                        self.send(message).await?;
                     }
                     _ = sleep(PERIODIC_TASKS_CHECK_INTERVAL) => {
                         // no progress on other tasks, yield control to check
@@ -261,7 +271,11 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
         Ok(())
     }
 
-    async fn handle_message(&mut self, message: Message) -> Result<(), RLPxError> {
+    async fn handle_message(
+        &mut self,
+        message: Message,
+        backend_send: mpsc::Sender<Message>,
+    ) -> Result<(), RLPxError> {
         let peer_supports_eth = self.capabilities.contains(&CAP_ETH);
         match message {
             Message::Disconnect(msg_data) => {
@@ -318,6 +332,11 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
                 let response = process_trie_nodes_request(req, self.storage.clone())?;
                 self.send(Message::TrieNodes(response)).await?
             }
+            // Send snap request responses to the SyncManager
+            message @ Message::AccountRange(_)
+            | message @ Message::StorageRanges(_)
+            | message @ Message::ByteCodes(_)
+            | message @ Message::TrieNodes(_) => backend_send.send(message).await?,
             // TODO: Add new message types and handlers as they are implemented
             message => return Err(RLPxError::MessageNotHandled(format!("{message}"))),
         };

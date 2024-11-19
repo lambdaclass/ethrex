@@ -326,7 +326,7 @@ pub struct AccountRangeUnit {
     pub account: AccountStateSlim,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct AccountStateSlim {
     pub nonce: u64,
     pub balance: U256,

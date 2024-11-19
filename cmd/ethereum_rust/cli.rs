@@ -104,6 +104,12 @@ pub fn cli() -> Command {
                 .required(false)
                 .value_name("CHAIN_RLP_PATH"),
         )
+        .arg(
+            Arg::new("syncmode")
+                .long("syncmode")
+                .required(false)
+                .value_name("SYNC_MODE"),
+        )
         .subcommand(
             Command::new("removedb").about("Remove the database").arg(
                 Arg::new("datadir")

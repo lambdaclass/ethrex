@@ -1,6 +1,8 @@
 use bytes::Bytes;
+use ethereum_rust_core::types::AccountState;
 use ethereum_rust_rlp::encode::RLPEncode;
 use ethereum_rust_storage::{error::StoreError, Store};
+use ethereum_rust_trie::verify_range;
 
 use crate::rlpx::{
     error::RLPxError,
@@ -9,6 +11,8 @@ use crate::rlpx::{
         GetStorageRanges, GetTrieNodes, StorageRanges, StorageSlot, TrieNodes,
     },
 };
+
+// Request Processing
 
 pub fn process_account_range_request(
     request: GetAccountRange,
@@ -26,15 +30,11 @@ pub fn process_account_range_request(
             break;
         }
     }
-    let proof = store
-        .get_account_range_proof(
-            request.root_hash,
-            request.starting_hash,
-            accounts.last().map(|acc| acc.hash),
-        )?
-        .iter()
-        .map(|bytes| Bytes::copy_from_slice(bytes))
-        .collect();
+    let proof = proof_to_encodable(store.get_account_range_proof(
+        request.root_hash,
+        request.starting_hash,
+        accounts.last().map(|acc| acc.hash),
+    )?);
     Ok(AccountRange {
         id: request.id,
         accounts,
@@ -72,7 +72,7 @@ pub fn process_storage_ranges_request(
         // Generate proofs only if the response doesn't contain the full storage range for the account
         // Aka if the starting hash is not zero or if the response was capped due to byte limit
         if !request.starting_hash.is_zero() || res_capped && !account_slots.is_empty() {
-            proof.extend(
+            proof.extend(proof_to_encodable(
                 store
                     .get_storage_range_proof(
                         request.root_hash,
@@ -80,10 +80,8 @@ pub fn process_storage_ranges_request(
                         request.starting_hash,
                         account_slots.last().map(|acc| acc.hash),
                     )?
-                    .unwrap_or_default()
-                    .iter()
-                    .map(|bytes| Bytes::copy_from_slice(bytes)),
-            );
+                    .unwrap_or_default(),
+            ));
         }
 
         if !account_slots.is_empty() {
@@ -151,6 +149,47 @@ pub fn process_trie_nodes_request(
         id: request.id,
         nodes,
     })
+}
+
+// Response Processing
+
+#[allow(unused)]
+pub fn validate_account_range_response(
+    request: &GetAccountRange,
+    response: &AccountRange,
+) -> Result<(), RLPxError> {
+    // Verify Range Proof
+    let (keys, accounts): (Vec<_>, Vec<_>) = response
+        .accounts
+        .iter()
+        .map(|unit| {
+            (
+                unit.hash,
+                AccountState::from(unit.account.clone()).encode_to_vec(),
+            )
+        })
+        .unzip();
+    let proof = encodable_to_proof(&response.proof);
+    verify_range(
+        request.root_hash,
+        &request.starting_hash,
+        &keys,
+        &accounts,
+        &proof,
+    )?;
+    Ok(())
+}
+
+// Helper method to convert proof to RLP-encodable format
+#[inline]
+fn proof_to_encodable(proof: Vec<Vec<u8>>) -> Vec<Bytes> {
+    proof.into_iter().map(|bytes| Bytes::from(bytes)).collect()
+}
+
+// Helper method to obtain proof from RLP-encodable format
+#[inline]
+fn encodable_to_proof(proof: &Vec<Bytes>) -> Vec<Vec<u8>> {
+    proof.into_iter().map(|bytes| bytes.to_vec()).collect()
 }
 
 #[cfg(test)]
