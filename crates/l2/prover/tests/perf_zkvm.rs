@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::path::Path;
 use tracing::info;
 
 use ethereum_rust_blockchain::add_block;
@@ -11,15 +11,10 @@ use ethereum_rust_vm::execution_db::ExecutionDB;
 async fn test_performance_zkvm() {
     tracing_subscriber::fmt::init();
 
-    let mut path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    // Go back 3 levels (Go to the root of the project)
-    for _ in 0..3 {
-        path.pop();
-    }
-    path.push("test_data");
+    let mut path = Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../../../test_data"));
 
     // Another use is genesis-execution-api.json in conjunction with chain.rlp(20 blocks not too loaded).
-    let genesis_file_path = path.join("genesis-l2.json");
+    let genesis_file_path = path.join("genesis-l2-old.json");
     // l2-loadtest.rlp has blocks with many txs.
     let chain_file_path = path.join("l2-loadtest.rlp");
 
