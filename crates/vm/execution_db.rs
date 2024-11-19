@@ -29,17 +29,17 @@ use crate::{
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ExecutionDB {
     /// indexed by account address
-    accounts: HashMap<RevmAddress, AccountState>,
+    pub accounts: HashMap<RevmAddress, AccountState>,
     /// indexed by code hash
-    code: HashMap<RevmB256, RevmBytecode>,
+    pub code: HashMap<RevmB256, RevmBytecode>,
     /// indexed by account address and storage key
-    storage: HashMap<RevmAddress, HashMap<RevmU256, RevmU256>>,
+    pub storage: HashMap<RevmAddress, HashMap<RevmU256, RevmU256>>,
     /// indexed by block number
-    block_hashes: HashMap<u64, RevmB256>,
+    pub block_hashes: HashMap<u64, RevmB256>,
     /// stored chain config
-    chain_config: ChainConfig,
+    pub chain_config: ChainConfig,
     /// proofs of inclusion of account and storage values of the initial state
-    initial_proofs: StateProofs,
+    pub initial_proofs: StateProofs,
 }
 
 /// Merkle proofs of inclusion of state values.
