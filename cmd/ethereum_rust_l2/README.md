@@ -1,23 +1,24 @@
-# Ethereum Rust L2 CLI
+# ethrex L2 CLI
 
 ## Table of Contents
 
-- [Introduction](#introduction)
-- [How to install](#how-to-install)
-- [Commands](#commands)
-  - [`config`](#config)
-  - [`stack`](#stack)
-  - [`wallet`](#wallet)
-  - [`autocomplete`](#autocomplete)
-- [Examples](#examples)
+- [ethrex L2 CLI](#ethrex-l2-cli)
+  - [Table of Contents](#table-of-contents)
+  - [How to install](#how-to-install)
+  - [Commands](#commands)
     - [`config`](#config)
-        - [Adding a configuration](#adding-a-configuration)
-        - [Editing exiting configuration interactively](#editing-exiting-configuration-interactively)
-        - [Deleting existing configuration interactively](#deleting-existing-configuration-interactively)
-        - [Setting a configuration interactively](#setting-a-configuration-interactively)
     - [`stack`](#stack)
-        - [Initializing the stack](#initializing-the-stack)
-        - [Restarting the stack](#restarting-the-stack)
+    - [`wallet`](#wallet)
+    - [`autocomplete`](#autocomplete)
+  - [Examples](#examples)
+    - [`config`](#config-1)
+      - [Adding a configuration](#adding-a-configuration)
+      - [Editing exiting configuration interactively](#editing-exiting-configuration-interactively)
+      - [Deleting existing configuration interactively](#deleting-existing-configuration-interactively)
+      - [Setting a configuration interactively](#setting-a-configuration-interactively)
+    - [`stack`](#stack-1)
+      - [Initializing the stack](#initializing-the-stack)
+      - [Restarting the stack](#restarting-the-stack)
 
 ## How to install
 

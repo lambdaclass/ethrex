@@ -1,6 +1,6 @@
 # High Level Docs
 
-This document aims to explain how the Lambda Ethereum Rust L2 and all its moving parts work.
+This document aims to explain how the Lambda ethrex L2 and all its moving parts work.
 
 ## Intro
 

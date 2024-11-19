@@ -1,18 +1,19 @@
-# Ethereum Rust L2 Prover
+# ethrex L2 Prover
 
 ## ToC
 
-- [ToC](#toc)
-- [What](#what)
-- [Workflow](#workflow)
-- [How](#how)
-  - [Dev Mode](#dev-mode)
-    - [Quick Test](#quick-test)
-    - [Run the whole system with the prover](#run-the-whole-system-with-the-prover)
-  - [GPU mode](#gpu-mode)
-    - [Proving Process Test](#proving-process-test)
-    - [Run the whole system with the prover in Sepolia](#run-the-whole-system-with-the-prover-in-sepolia)
-- [Configuration](#configuration)
+- [ethrex L2 Prover](#ethrex-l2-prover)
+  - [ToC](#toc)
+  - [What](#what)
+  - [Workflow](#workflow)
+  - [How](#how)
+    - [Dev Mode](#dev-mode)
+      - [Quick Test](#quick-test)
+      - [Run the whole system with the prover](#run-the-whole-system-with-the-prover)
+    - [GPU mode](#gpu-mode)
+      - [Proving Process Test](#proving-process-test)
+      - [Run the whole system with the prover in Sepolia](#run-the-whole-system-with-the-prover-in-sepolia)
+  - [Configuration](#configuration)
 
 >[!NOTE]
 > The shipping/deploying process and the `Prover` itself are under development.

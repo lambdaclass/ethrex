@@ -1,4 +1,4 @@
-# Ethereum Rust L2 Docs
+# ethrex L2 Docs
 
 For a high level overview of the L2:
 

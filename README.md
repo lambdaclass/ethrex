@@ -1,4 +1,4 @@
-# Lambda Ethereum Rust
+# ethrex
 
 [![Telegram Chat][tg-badge]][tg-url]
 [![license](https://img.shields.io/github/license/lambdaclass/ethereum_rust)](/LICENSE)
@@ -13,7 +13,7 @@ This client supports running in two different modes:
 - As a regular Ethereum execution client
 - As a ZK-Rollup, where block execution is proven and the proof sent to an L1 network for verification, thus inheriting the L1's security.
 
-We call the first one Lambda Ethereum Rust L1 and the second one Lambda Ethereum Rust L2.
+We call the first one ethrex L1 and the second one ethrex L2.
 
 ## Philosophy
 
@@ -33,7 +33,7 @@ Read more about our engineering philosophy [here](https://blog.lambdaclass.com/l
 - Prioritize code readability and maintainability over premature optimizations.
 - Avoid concurrency split all over the codebase. Concurrency adds complexity. Only use where strictly necessary.
 
-# Lambda Ethereum Rust L1
+# ethrex L1
 
 ## Roadmap
 
@@ -244,7 +244,7 @@ For more information about the different cli arguments check out the next sectio
 
 ### CLI Commands
 
-Ethereum Rust supports the following command line arguments:
+ethrex supports the following command line arguments:
 - `--network <FILE>`: Receives a `Genesis` struct in json format. This is the only argument which is required. You can look at some example genesis files at `test_data/genesis*`.
 - `--datadir <DIRECTORY>`: Receives the name of the directory where the Database is located.
 - `--import <FILE>`: Receives an rlp encoded `Chain` object (aka a list of `Block`s). You can look at the example chain file at `test_data/chain.rlp`.
@@ -260,11 +260,11 @@ Ethereum Rust supports the following command line arguments:
 - `--bootnodes <BOOTNODE_LIST>`: Comma separated enode URLs for P2P discovery bootstrap.
 - `--log.level <LOG_LEVEL>`: The verbosity level used for logs. Default value: info. possible values: info, debug, trace, warn, error
 
-# Lambda Ethereum Rust L2
+# ethrex L2
 
-In this mode, the Ethereum Rust code is repurposed to run a rollup that settles on Ethereum as the L1.
+In this mode, the ethrex code is repurposed to run a rollup that settles on Ethereum as the L1.
 
-The main differences between this mode and regular Ethereum Rust are:
+The main differences between this mode and regular ethrex are:
 
 - There is no consensus, the node is turned into a sequencer that proposes blocks for the network.
 - Block execution is proven using a RISC-V zkVM and its proofs are sent to L1 for verification.
@@ -443,7 +443,7 @@ The L2 can be initialized in Validium Mode, meaning the Data Availability layer 
 make init
 ```
 
-This will setup a local Ethereum network as the L1, deploy all the needed contracts on it, then start an Ethereum Rust L2 node pointing to it.
+This will setup a local Ethereum network as the L1, deploy all the needed contracts on it, then start an ethrex L2 node pointing to it.
 
 ### Restarting the network
 
@@ -465,10 +465,10 @@ Most of them are [here](https://github.com/ethpandaops/ethereum-package/blob/mai
 }
 ```
 
-## Lambda Ethereum Rust L2 Docs
+## ethrex L2 Docs
 
-- [Ethereum Rust L2 Docs](./crates/l2/docs/README.md)
-- [Ethereum Rust L2 CLI Docs](./cmd/ethereum_rust_l2/README.md)
+- [ethrex L2 Docs](./crates/l2/docs/README.md)
+- [ethrex L2 CLI Docs](./cmd/ethereum_rust_l2/README.md)
 
 
 ## 📚 References and acknowledgements
