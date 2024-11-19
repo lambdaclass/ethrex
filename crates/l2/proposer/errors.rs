@@ -1,4 +1,5 @@
 use crate::utils::{config::errors::ConfigError, eth_client::errors::EthClientError};
+use ethereum_rust_core::types::BlobsBundleError;
 use ethereum_rust_dev::utils::engine_client::errors::EngineClientError;
 use ethereum_rust_storage::error::StoreError;
 use ethereum_rust_vm::EvmError;
@@ -48,6 +49,8 @@ pub enum CommitterError {
     FailedToParseLastCommittedBlock(#[from] FromStrRadixErr),
     #[error("Committer failed retrieve block from storage: {0}")]
     FailedToRetrieveBlockFromStorage(#[from] StoreError),
+    #[error("Committer failed to generate blobs bundle: {0}")]
+    FailedToGenerateBlobsBundle(#[from] BlobsBundleError),
     #[error("Committer failed to get information from storage")]
     FailedToGetInformationFromStorage(String),
     #[error("Committer failed to encode state diff: {0}")]
@@ -56,8 +59,6 @@ pub enum CommitterError {
     FailedToOpenPointsFile(#[from] std::io::Error),
     #[error("Committer failed to re-execute block: {0}")]
     FailedToReExecuteBlock(#[from] EvmError),
-    #[error("Committer failed to make KZG operations: {0}")]
-    KZGError(#[from] c_kzg::Error),
     #[error("Committer failed to send transaction: {0}")]
     FailedToSendCommitment(String),
 }

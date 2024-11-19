@@ -14,6 +14,9 @@ ethereum-types.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
+k256.workspace = true
+# TODO(#1102): Move to Lambdaworks in the future
+c-kzg = "^1.0.3"
 keccak-hash = "0.10.0"
 sha3.workspace = true
 secp256k1.workspace = true

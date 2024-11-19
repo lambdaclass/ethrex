@@ -29,7 +29,6 @@ use sha2::{Digest, Sha256};
 
 pub mod errors;
 pub mod eth_sender;
-pub mod transaction;
 
 #[derive(Deserialize, Debug)]
 #[serde(untagged)]
