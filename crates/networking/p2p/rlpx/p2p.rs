@@ -1,6 +1,6 @@
 use bytes::BufMut;
-use ethereum_rust_core::H512;
-use ethereum_rust_rlp::{
+use ethrex_core::H512;
+use ethrex_rlp::{
     decode::RLPDecode,
     encode::RLPEncode,
     error::{RLPDecodeError, RLPEncodeError},

@@ -1,6 +1,6 @@
 use bytes::Bytes;
-use ethereum_rust_rlp::encode::RLPEncode;
-use ethereum_rust_storage::{error::StoreError, Store};
+use ethrex_rlp::encode::RLPEncode;
+use ethrex_storage::{error::StoreError, Store};
 
 use crate::rlpx::{
     error::RLPxError,
@@ -157,9 +157,9 @@ pub fn process_trie_nodes_request(
 mod tests {
     use std::str::FromStr;
 
-    use ethereum_rust_core::{types::AccountState, BigEndianHash, H256};
-    use ethereum_rust_rlp::{decode::RLPDecode, encode::RLPEncode};
-    use ethereum_rust_storage::EngineType;
+    use ethrex_core::{types::AccountState, BigEndianHash, H256};
+    use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
+    use ethrex_storage::EngineType;
 
     use crate::rlpx::snap::AccountStateSlim;
 

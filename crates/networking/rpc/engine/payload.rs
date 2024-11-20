@@ -1,8 +1,8 @@
-use ethereum_rust_blockchain::add_block;
-use ethereum_rust_blockchain::error::ChainError;
-use ethereum_rust_blockchain::payload::build_payload;
-use ethereum_rust_core::types::Fork;
-use ethereum_rust_core::{H256, U256};
+use ethrex_blockchain::add_block;
+use ethrex_blockchain::error::ChainError;
+use ethrex_blockchain::payload::build_payload;
+use ethrex_core::types::Fork;
+use ethrex_core::{H256, U256};
 use serde_json::Value;
 use tracing::{error, info, warn};
 

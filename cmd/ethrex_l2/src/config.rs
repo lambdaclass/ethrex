@@ -11,7 +11,7 @@ use secp256k1::SecretKey;
 use serde::{Deserialize, Serialize};
 
 #[derive(Deserialize, Serialize, Clone)]
-pub struct EthereumRustL2Config {
+pub struct EthrexL2Config {
     pub network: NetworkConfig,
     pub wallet: WalletConfig,
     pub contracts: ContractsConfig,
@@ -31,8 +31,8 @@ pub struct NetworkConfig {
 pub struct WalletConfig {
     pub address: Address,
     #[serde(
-        serialize_with = "ethereum_rust_l2::utils::secret_key_serializer",
-        deserialize_with = "ethereum_rust_l2::utils::secret_key_deserializer"
+        serialize_with = "ethrex_l2::utils::secret_key_serializer",
+        deserialize_with = "ethrex_l2::utils::secret_key_deserializer"
     )]
     pub private_key: SecretKey,
 }
@@ -42,7 +42,7 @@ pub struct ContractsConfig {
     pub common_bridge: Address,
 }
 
-pub async fn try_load_selected_config() -> eyre::Result<Option<EthereumRustL2Config>> {
+pub async fn try_load_selected_config() -> eyre::Result<Option<EthrexL2Config>> {
     let config_path = selected_config_path()?;
     if !config_path.exists() {
         return Ok(None);
@@ -53,7 +53,7 @@ pub async fn try_load_selected_config() -> eyre::Result<Option<EthereumRustL2Con
         .map(Some)
 }
 
-pub async fn load_selected_config() -> eyre::Result<EthereumRustL2Config> {
+pub async fn load_selected_config() -> eyre::Result<EthrexL2Config> {
     let config_path = selected_config_path()?;
     if !config_path.exists() {
         println!("No config set, please select a config to set");

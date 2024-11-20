@@ -5,7 +5,7 @@ use crate::{
     opcodes::Opcode,
 };
 use bytes::Bytes;
-use ethereum_rust_core::{types::Log, Address, U256};
+use ethrex_core::{types::Log, Address, U256};
 use std::collections::HashMap;
 
 /// [EIP-1153]: https://eips.ethereum.org/EIPS/eip-1153#reference-implementation

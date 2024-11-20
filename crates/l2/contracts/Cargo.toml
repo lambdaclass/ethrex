@@ -1,5 +1,5 @@
 [package]
-name = "ethereum_rust_l2-deployer"
+name = "ethrex_l2-deployer"
 version = "0.1.0"
 edition = "2021"
 
@@ -17,9 +17,9 @@ colored = "2.1.0"
 lazy_static = "1.5.0"
 tracing.workspace = true
 
-ethereum_rust-l2 = { path = "../../l2" }
-ethereum_rust-core = { path = "../../common" }
+ethrex-l2 = { path = "../../l2" }
+ethrex-core = { path = "../../common" }
 
 [[bin]]
-name = "ethereum_rust_l2_l1_deployer"
+name = "ethrex_l2_l1_deployer"
 path = "./deployer.rs"

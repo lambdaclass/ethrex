@@ -9,10 +9,10 @@ members = [
     "crates/vm",
     "crates/storage/trie",
     "crates/common/rlp",
-    "cmd/ethereum_rust",
-    "cmd/ef_tests/ethereum_rust",
+    "cmd/ethrex",
+    "cmd/ef_tests/ethrex",
     "cmd/ef_tests/levm",
-    "cmd/ethereum_rust_l2",
+    "cmd/ethrex_l2",
     "crates/vm/levm",
     "crates/vm/levm/bench/revm_comparison",
     "crates/l2/",
@@ -23,8 +23,8 @@ members = [
 resolver = "2"
 
 default-members = [
-    "cmd/ethereum_rust",
-    "cmd/ethereum_rust_l2",
+    "cmd/ethrex",
+    "cmd/ethrex_l2",
     "crates/l2/prover",
 ]
 
@@ -33,16 +33,16 @@ version = "0.1.0"
 edition = "2021"
 
 [workspace.dependencies]
-ethereum_rust-blockchain = { path = "./crates/blockchain" }
-ethereum_rust-core = { path = "./crates/common" }
-ethereum_rust-net = { path = "./crates/networking/p2p" }
-ethereum_rust-rpc = { path = "./crates/networking/rpc" }
-ethereum_rust-storage = { path = "./crates/storage/store" }
-ethereum_rust-vm = { path = "./crates/vm" }
-ethereum_rust-trie = { path = "./crates/storage/trie" }
-ethereum_rust-rlp = { path = "./crates/common/rlp" }
-ethereum_rust-l2 = { path = "./crates/l2" }
-ethereum_rust-prover = { path = "./crates/l2/prover" }
+ethrex-blockchain = { path = "./crates/blockchain" }
+ethrex-core = { path = "./crates/common" }
+ethrex-net = { path = "./crates/networking/p2p" }
+ethrex-rpc = { path = "./crates/networking/rpc" }
+ethrex-storage = { path = "./crates/storage/store" }
+ethrex-vm = { path = "./crates/vm" }
+ethrex-trie = { path = "./crates/storage/trie" }
+ethrex-rlp = { path = "./crates/common/rlp" }
+ethrex-l2 = { path = "./crates/l2" }
+ethrex-prover = { path = "./crates/l2/prover" }
 
 tracing = { version = "0.1", features = ["log"] }
 tracing-subscriber = "0.3.0"

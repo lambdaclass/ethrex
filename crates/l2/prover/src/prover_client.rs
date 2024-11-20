@@ -7,7 +7,7 @@ use std::{
 use tokio::time::sleep;
 use tracing::{debug, error, info, warn};
 
-use ethereum_rust_l2::{
+use ethrex_l2::{
     proposer::prover_server::{ProofData, ProverInputData},
     utils::config::prover_client::ProverClientConfig,
 };

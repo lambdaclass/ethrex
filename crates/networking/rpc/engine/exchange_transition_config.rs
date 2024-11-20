@@ -1,4 +1,4 @@
-use ethereum_rust_core::{serde_utils, H256};
+use ethrex_core::{serde_utils, H256};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tracing::{info, warn};

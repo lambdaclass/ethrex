@@ -1,6 +1,6 @@
 use std::path::Path;
 
-use ef_tests_ethereum_rust::test_runner::{parse_test_file, run_ef_test};
+use ef_tests_ethrex::test_runner::{parse_test_file, run_ef_test};
 
 fn parse_and_execute(path: &Path) -> datatest_stable::Result<()> {
     let tests = parse_test_file(path);

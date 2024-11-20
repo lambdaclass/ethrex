@@ -1,6 +1,6 @@
 use crate::{
     commands::{self, config::EditConfigOpts},
-    config::{ContractsConfig, EthereumRustL2Config, NetworkConfig, WalletConfig},
+    config::{ContractsConfig, EthrexL2Config, NetworkConfig, WalletConfig},
     utils::messages::{
         ADDRESS_PROMPT_MSG, CONFIG_CREATE_PROMPT_MSG, CONFIG_EDIT_PROMPT_MSG,
         L1_CHAIN_ID_PROMPT_MSG, L1_EXPLORER_URL_PROMPT_MSG, L1_RPC_URL_PROMPT_MSG,
@@ -28,7 +28,7 @@ pub const SELECTED_CONFIG_FILE_NAME: &str = ".selected";
 pub fn configs_dir_path() -> eyre::Result<std::path::PathBuf> {
     let configs_dir_path = dirs::config_dir()
         .ok_or_else(|| eyre::eyre!("Could not find user's config directory"))?
-        .join("ethereum-rust-l2-cli")
+        .join("Ethrex-l2-cli")
         .join("configs");
     if !configs_dir_path.exists() {
         std::fs::create_dir_all(&configs_dir_path)?;
@@ -95,8 +95,8 @@ pub fn config_path_interactive_selection(prompt: &str) -> eyre::Result<PathBuf> 
     config_path(configs.get(selection).context("No config selected")?)
 }
 
-pub fn prompt_config() -> eyre::Result<EthereumRustL2Config> {
-    let prompted_config = EthereumRustL2Config {
+pub fn prompt_config() -> eyre::Result<EthrexL2Config> {
+    let prompted_config = EthrexL2Config {
         network: NetworkConfig {
             l1_rpc_url: prompt(L1_RPC_URL_PROMPT_MSG, DEFAULT_L1_RPC_URL.into())?,
             l1_chain_id: prompt(L1_CHAIN_ID_PROMPT_MSG, DEFAULT_L1_CHAIN_ID)?,
@@ -149,11 +149,8 @@ pub fn selected_config_path() -> eyre::Result<PathBuf> {
     Ok(configs_dir_path()?.join(SELECTED_CONFIG_FILE_NAME))
 }
 
-pub fn edit_config_by_name_interactively(
-    config_path: &PathBuf,
-) -> eyre::Result<EthereumRustL2Config> {
-    let existing_config: EthereumRustL2Config =
-        toml::from_str(&std::fs::read_to_string(config_path)?)?;
+pub fn edit_config_by_name_interactively(config_path: &PathBuf) -> eyre::Result<EthrexL2Config> {
+    let existing_config: EthrexL2Config = toml::from_str(&std::fs::read_to_string(config_path)?)?;
     let new_config = edit_existing_config_interactively(existing_config)?;
     Ok(new_config)
 }
@@ -161,16 +158,15 @@ pub fn edit_config_by_name_interactively(
 pub fn edit_config_by_name_with_args(
     config_path: &PathBuf,
     opts: EditConfigOpts,
-) -> eyre::Result<EthereumRustL2Config> {
-    let existing_config: EthereumRustL2Config =
-        toml::from_str(&std::fs::read_to_string(config_path)?)?;
+) -> eyre::Result<EthrexL2Config> {
+    let existing_config: EthrexL2Config = toml::from_str(&std::fs::read_to_string(config_path)?)?;
     let new_config = edit_existing_config_non_interactively(existing_config, opts)?;
     Ok(new_config)
 }
 
-pub fn edit_config_interactively() -> eyre::Result<(EthereumRustL2Config, PathBuf)> {
+pub fn edit_config_interactively() -> eyre::Result<(EthrexL2Config, PathBuf)> {
     let config_path = config_path_interactive_selection(CONFIG_EDIT_PROMPT_MSG)?;
-    let existing_config: EthereumRustL2Config =
+    let existing_config: EthrexL2Config =
         toml::from_str(&std::fs::read_to_string(config_path.clone())?)?;
     let new_config = edit_existing_config_interactively(existing_config)?;
     Ok((new_config, config_path))
@@ -195,9 +191,9 @@ pub async fn set_new_config(config_path: PathBuf) -> eyre::Result<()> {
 }
 
 pub fn edit_existing_config_interactively(
-    existing_config: EthereumRustL2Config,
-) -> eyre::Result<EthereumRustL2Config> {
-    let config = EthereumRustL2Config {
+    existing_config: EthrexL2Config,
+) -> eyre::Result<EthrexL2Config> {
+    let config = EthrexL2Config {
         network: NetworkConfig {
             l1_rpc_url: prompt(L1_RPC_URL_PROMPT_MSG, existing_config.network.l1_rpc_url)?,
             l1_chain_id: prompt(L1_CHAIN_ID_PROMPT_MSG, existing_config.network.l1_chain_id)?,
@@ -236,10 +232,10 @@ pub fn edit_existing_config_interactively(
 }
 
 pub fn edit_existing_config_non_interactively(
-    existing_config: EthereumRustL2Config,
+    existing_config: EthrexL2Config,
     opts: EditConfigOpts,
-) -> eyre::Result<EthereumRustL2Config> {
-    let config = EthereumRustL2Config {
+) -> eyre::Result<EthrexL2Config> {
+    let config = EthrexL2Config {
         network: NetworkConfig {
             l1_rpc_url: opts
                 .l1_rpc_url

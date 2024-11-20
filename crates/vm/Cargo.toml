@@ -1,14 +1,14 @@
 [package]
-name = "ethereum_rust-vm"
+name = "ethrex-vm"
 version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-ethereum_rust-core = { path = "../common", default-features = false }
-ethereum_rust-storage = { path = "../storage/store", default-features = false }
-ethereum_rust-levm = { path = "./levm", optional = true }
-ethereum_rust-trie = { path = "../storage/trie", default-features = false }
-ethereum_rust-rlp = { path = "../common/rlp", default-features = false }
+ethrex-core = { path = "../common", default-features = false }
+ethrex-storage = { path = "../storage/store", default-features = false }
+ethrex-levm = { path = "./levm", optional = true }
+ethrex-trie = { path = "../storage/trie", default-features = false }
+ethrex-rlp = { path = "../common/rlp", default-features = false }
 revm = { version = "14.0.3", features = [
   "serde",
   "std",
@@ -42,8 +42,8 @@ default = ["libmdbx", "c-kzg", "blst"]
 l2 = []
 c-kzg = ["revm/c-kzg"]
 blst = ["revm/blst"]
-libmdbx = ["ethereum_rust-storage/default", "ethereum_rust-core/libmdbx"]
-levm = ["ethereum_rust-levm"]
+libmdbx = ["ethrex-storage/default", "ethrex-core/libmdbx"]
+levm = ["ethrex-levm"]
 
 [profile.test]
 opt-level = 3

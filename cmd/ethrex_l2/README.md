@@ -22,7 +22,7 @@
 
 ## How to install
 
-Running the command below will install the `ethereum_rust_l2` binary in your system.
+Running the command below will install the `ethrex_l2` binary in your system.
 
 ```
 cargo install --path .
@@ -31,7 +31,7 @@ cargo install --path .
 ## Commands
 
 ```
-Usage: ethereum_rust_l2 <COMMAND>
+Usage: ethrex_l2 <COMMAND>
 
 Commands:
   stack         Stack related commands.
@@ -45,7 +45,7 @@ Options:
   -V, --version  Print version
 ```
 
-> [!IMPORTANT]  
+> [!IMPORTANT]
 > Most of the CLI interaction needs a configuration to be set. You can set a configuration with the `config` command.
 
 ### `config`
@@ -53,7 +53,7 @@ Options:
 ```
 CLI config commands.
 
-Usage: ethereum_rust_l2 config <COMMAND>
+Usage: ethrex_l2 config <COMMAND>
 
 Commands:
   edit     Edit an existing config.
@@ -73,7 +73,7 @@ Options:
 ```
 Stack related commands.
 
-Usage: ethereum_rust_l2 stack <COMMAND>
+Usage: ethrex_l2 stack <COMMAND>
 
 Commands:
   init      Initializes the L2 network in the provided L1. [aliases: i]
@@ -95,7 +95,7 @@ Options:
 ```
 Wallet interaction commands. The configured wallet could operate both with the L1 and L2 networks.
 
-Usage: ethereum_rust_l2 wallet <COMMAND>
+Usage: ethrex_l2 wallet <COMMAND>
 
 Commands:
   balance            Get the balance of the wallet.
@@ -116,7 +116,7 @@ Options:
 ```
 Generate shell completion scripts.
 
-Usage: ethereum_rust_l2 autocomplete <COMMAND>
+Usage: ethrex_l2 autocomplete <COMMAND>
 
 Commands:
   generate  Generate autocomplete shell script.

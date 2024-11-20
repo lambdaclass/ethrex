@@ -1,5 +1,5 @@
-use ethereum_rust_rlp::{decode::RLPDecode, encode::RLPEncode};
 use ethereum_types::H256;
+use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
 #[cfg(feature = "libmdbx")]
 use libmdbx::orm::{Decodable, Encodable};
 use sha3::{Digest, Keccak256};
@@ -123,9 +123,7 @@ impl RLPEncode for NodeHash {
 }
 
 impl RLPDecode for NodeHash {
-    fn decode_unfinished(
-        rlp: &[u8],
-    ) -> Result<(Self, &[u8]), ethereum_rust_rlp::error::RLPDecodeError> {
+    fn decode_unfinished(rlp: &[u8]) -> Result<(Self, &[u8]), ethrex_rlp::error::RLPDecodeError> {
         let (hash, rest): (Vec<u8>, &[u8]);
         (hash, rest) = RLPDecode::decode_unfinished(rlp)?;
         let hash = NodeHash::from(hash);

@@ -1,4 +1,4 @@
-use ethereum_rust_blockchain::{
+use ethrex_blockchain::{
     error::{ChainError, InvalidForkChoice},
     fork_choice::apply_fork_choice,
     latest_canonical_block_hash,

@@ -1,10 +1,10 @@
-use ethereum_rust_storage::error::StoreError;
-use ethereum_rust_vm::EvmError;
+use ethrex_storage::error::StoreError;
+use ethrex_vm::EvmError;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::authentication::AuthenticationError;
-use ethereum_rust_blockchain::error::MempoolError;
+use ethrex_blockchain::error::MempoolError;
 
 #[derive(Debug, Deserialize)]
 pub enum RpcErr {
@@ -246,9 +246,9 @@ pub fn parse_json_hex(hex: &serde_json::Value) -> Result<u64, String> {
 pub mod test_utils {
     use std::{net::SocketAddr, str::FromStr};
 
-    use ethereum_rust_core::H512;
-    use ethereum_rust_net::types::Node;
-    use ethereum_rust_storage::{EngineType, Store};
+    use ethrex_core::H512;
+    use ethrex_net::types::Node;
+    use ethrex_storage::{EngineType, Store};
 
     use crate::start_api;
 

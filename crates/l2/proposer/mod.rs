@@ -1,8 +1,8 @@
 use crate::utils::config::{proposer::ProposerConfig, read_env_file};
 use errors::ProposerError;
-use ethereum_rust_dev::utils::engine_client::{config::EngineApiConfig, errors::EngineClientError};
-use ethereum_rust_storage::Store;
 use ethereum_types::{Address, H256};
+use ethrex_dev::utils::engine_client::{config::EngineApiConfig, errors::EngineClientError};
+use ethrex_storage::Store;
 use tracing::{info, warn};
 
 pub mod l1_committer;
@@ -64,7 +64,7 @@ impl Proposer {
     }
 
     pub async fn start(&self, head_block_hash: H256) -> Result<(), ProposerError> {
-        ethereum_rust_dev::block_producer::start_block_producer(
+        ethrex_dev::block_producer::start_block_producer(
             self.engine_config.rpc_url.clone(),
             std::fs::read(&self.engine_config.jwt_path).unwrap().into(),
             head_block_hash,

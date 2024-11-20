@@ -1,11 +1,11 @@
 use std::path::Path;
 use tracing::info;
 
-use ethereum_rust_blockchain::add_block;
-use ethereum_rust_l2::proposer::prover_server::ProverInputData;
-use ethereum_rust_prover_lib::prover::Prover;
-use ethereum_rust_storage::{EngineType, Store};
-use ethereum_rust_vm::execution_db::ExecutionDB;
+use ethrex_blockchain::add_block;
+use ethrex_l2::proposer::prover_server::ProverInputData;
+use ethrex_prover_lib::prover::Prover;
+use ethrex_storage::{EngineType, Store};
+use ethrex_vm::execution_db::ExecutionDB;
 
 #[tokio::test]
 async fn test_performance_zkvm() {
@@ -20,13 +20,11 @@ async fn test_performance_zkvm() {
 
     let store = Store::new("memory", EngineType::InMemory).expect("Failed to create Store");
 
-    let genesis = ethereum_rust_l2::utils::test_data_io::read_genesis_file(
-        genesis_file_path.to_str().unwrap(),
-    );
+    let genesis =
+        ethrex_l2::utils::test_data_io::read_genesis_file(genesis_file_path.to_str().unwrap());
     store.add_initial_state(genesis.clone()).unwrap();
 
-    let blocks =
-        ethereum_rust_l2::utils::test_data_io::read_chain_file(chain_file_path.to_str().unwrap());
+    let blocks = ethrex_l2::utils::test_data_io::read_chain_file(chain_file_path.to_str().unwrap());
     info!("Number of blocks to insert: {}", blocks.len());
 
     for block in &blocks {

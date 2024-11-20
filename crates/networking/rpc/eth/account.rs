@@ -1,4 +1,4 @@
-use ethereum_rust_blockchain::mempool;
+use ethrex_blockchain::mempool;
 use serde_json::Value;
 use tracing::info;
 
@@ -6,7 +6,7 @@ use crate::types::account_proof::{AccountProof, StorageProof};
 use crate::types::block_identifier::{BlockIdentifierOrHash, BlockTag};
 use crate::RpcApiContext;
 use crate::{utils::RpcErr, RpcHandler};
-use ethereum_rust_core::{Address, BigEndianHash, H256, U256};
+use ethrex_core::{Address, BigEndianHash, H256, U256};
 
 pub struct GetBalanceRequest {
     pub address: Address,

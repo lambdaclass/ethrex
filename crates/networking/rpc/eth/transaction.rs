@@ -7,16 +7,16 @@ use crate::{
     utils::RpcErr,
     RpcApiContext, RpcHandler,
 };
-use ethereum_rust_core::{
+use ethrex_core::{
     types::{AccessListEntry, BlockHash, BlockHeader, BlockNumber, GenericTransaction, TxKind},
     H256, U256,
 };
 
-use ethereum_rust_blockchain::mempool;
-use ethereum_rust_rlp::encode::RLPEncode;
-use ethereum_rust_storage::Store;
+use ethrex_blockchain::mempool;
+use ethrex_rlp::encode::RLPEncode;
+use ethrex_storage::Store;
 
-use ethereum_rust_vm::{evm_state, ExecutionResult, SpecId};
+use ethrex_vm::{evm_state, ExecutionResult, SpecId};
 use serde::Serialize;
 
 use serde_json::Value;
@@ -68,7 +68,7 @@ pub struct AccessListResult {
     access_list: Vec<AccessListEntry>,
     #[serde(skip_serializing_if = "Option::is_none")]
     error: Option<String>,
-    #[serde(with = "ethereum_rust_core::serde_utils::u64::hex_str")]
+    #[serde(with = "ethrex_core::serde_utils::u64::hex_str")]
     gas_used: u64,
 }
 
@@ -233,7 +233,7 @@ impl RpcHandler for GetTransactionByHashRequest {
                 _ => return Ok(Value::Null),
             };
 
-        let transaction: ethereum_rust_core::types::Transaction =
+        let transaction: ethrex_core::types::Transaction =
             match storage.get_transaction_by_location(block_hash, index)? {
                 Some(transaction) => transaction,
                 _ => return Ok(Value::Null),
@@ -319,7 +319,7 @@ impl RpcHandler for CreateAccessListRequest {
             _ => return Ok(Value::Null),
         };
         // Run transaction and obtain access list
-        let (gas_used, access_list, error) = match ethereum_rust_vm::create_access_list(
+        let (gas_used, access_list, error) = match ethrex_vm::create_access_list(
             &self.transaction,
             &header,
             &mut evm_state(context.storage, header.compute_block_hash()),
@@ -449,8 +449,7 @@ impl RpcHandler for EstimateGasRequest {
             }
         };
 
-        let spec_id =
-            ethereum_rust_vm::spec_id(&storage.get_chain_config()?, block_header.timestamp);
+        let spec_id = ethrex_vm::spec_id(&storage.get_chain_config()?, block_header.timestamp);
 
         // If the transaction is a plain value transfer, short circuit estimation.
         if let TxKind::Call(address) = transaction.to {
@@ -548,7 +547,7 @@ fn simulate_tx(
     storage: Store,
     spec_id: SpecId,
 ) -> Result<ExecutionResult, RpcErr> {
-    match ethereum_rust_vm::simulate_tx_from_generic(
+    match ethrex_vm::simulate_tx_from_generic(
         transaction,
         block_header,
         &mut evm_state(storage, block_header.compute_block_hash()),

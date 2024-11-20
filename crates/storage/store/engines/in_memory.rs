@@ -1,10 +1,10 @@
 use crate::error::StoreError;
 use bytes::Bytes;
-use ethereum_rust_core::types::{
+use ethereum_types::{H256, U256};
+use ethrex_core::types::{
     Block, BlockBody, BlockHash, BlockHeader, BlockNumber, ChainConfig, Index, Receipt,
 };
-use ethereum_rust_trie::{InMemoryTrieDB, Trie};
-use ethereum_types::{H256, U256};
+use ethrex_trie::{InMemoryTrieDB, Trie};
 use std::{
     collections::HashMap,
     fmt::Debug,

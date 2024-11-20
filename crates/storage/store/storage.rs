@@ -4,15 +4,15 @@ use self::engines::libmdbx::Store as LibmdbxStore;
 use self::error::StoreError;
 use bytes::Bytes;
 use engines::api::StoreEngine;
-use ethereum_rust_core::types::{
+use ethereum_types::{Address, H256, U256};
+use ethrex_core::types::{
     code_hash, AccountInfo, AccountState, BlobsBundle, Block, BlockBody, BlockHash, BlockHeader,
     BlockNumber, ChainConfig, Genesis, GenesisAccount, Index, MempoolTransaction, Receipt,
     Transaction, TxType, EMPTY_TRIE_HASH,
 };
-use ethereum_rust_rlp::decode::RLPDecode;
-use ethereum_rust_rlp::encode::RLPEncode;
-use ethereum_rust_trie::Trie;
-use ethereum_types::{Address, H256, U256};
+use ethrex_rlp::decode::RLPDecode;
+use ethrex_rlp::encode::RLPEncode;
+use ethrex_trie::Trie;
 use sha3::{Digest as _, Keccak256};
 use std::collections::HashMap;
 use std::fmt::Debug;
@@ -915,12 +915,12 @@ mod tests {
     use std::{fs, panic, str::FromStr};
 
     use bytes::Bytes;
-    use ethereum_rust_core::{
+    use ethereum_types::{H256, U256};
+    use ethrex_core::{
         types::{Transaction, TxType, BYTES_PER_BLOB},
         Bloom,
     };
-    use ethereum_rust_rlp::decode::RLPDecode;
-    use ethereum_types::{H256, U256};
+    use ethrex_rlp::decode::RLPDecode;
 
     use super::*;
 

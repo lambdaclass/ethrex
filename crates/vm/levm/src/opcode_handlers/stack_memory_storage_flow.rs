@@ -6,7 +6,7 @@ use crate::{
     gas_cost,
     vm::VM,
 };
-use ethereum_rust_core::{H256, U256};
+use ethrex_core::{H256, U256};
 
 // Stack, Memory, Storage and Flow Operations (15)
 // Opcodes: POP, MLOAD, MSTORE, MSTORE8, SLOAD, SSTORE, JUMP, JUMPI, PC, MSIZE, GAS, JUMPDEST, TLOAD, TSTORE, MCOPY
@@ -159,7 +159,7 @@ impl VM {
     }
 
     // SSTORE operation
-    // TODO: https://github.com/lambdaclass/lambda_ethereum_rust/issues/1087
+    // TODO: https://github.com/lambdaclass/lambda_ethrex/issues/1087
     pub fn op_sstore(
         &mut self,
         current_call_frame: &mut CallFrame,

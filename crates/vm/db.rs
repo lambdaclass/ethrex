@@ -1,5 +1,5 @@
-use ethereum_rust_core::{types::BlockHash, Address as CoreAddress, H256 as CoreH256};
-use ethereum_rust_storage::{error::StoreError, Store};
+use ethrex_core::{types::BlockHash, Address as CoreAddress, H256 as CoreH256};
+use ethrex_storage::{error::StoreError, Store};
 use revm::primitives::{
     AccountInfo as RevmAccountInfo, Address as RevmAddress, Bytecode as RevmBytecode,
     Bytes as RevmBytes, B256 as RevmB256, U256 as RevmU256,
@@ -12,11 +12,11 @@ pub struct StoreWrapper {
 
 cfg_if::cfg_if! {
     if #[cfg(feature = "levm")] {
-        use ethereum_rust_core::{U256 as CoreU256};
-        use ethereum_rust_levm::db::Database as LevmDatabase;
+        use ethrex_core::{U256 as CoreU256};
+        use ethrex_levm::db::Database as LevmDatabase;
 
         impl LevmDatabase for StoreWrapper {
-            fn get_account_info(&self, address: CoreAddress) -> ethereum_rust_levm::account::AccountInfo {
+            fn get_account_info(&self, address: CoreAddress) -> ethrex_levm::account::AccountInfo {
                 let acc_info = self
                     .store
                     .get_account_info_by_hash(self.block_hash, address)
@@ -29,7 +29,7 @@ cfg_if::cfg_if! {
                     .unwrap()
                     .unwrap_or_default();
 
-                ethereum_rust_levm::account::AccountInfo {
+                ethrex_levm::account::AccountInfo {
                     balance: acc_info.balance,
                     nonce: acc_info.nonce,
                     bytecode: acc_code,

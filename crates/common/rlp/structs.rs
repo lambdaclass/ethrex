@@ -16,9 +16,9 @@ use bytes::Bytes;
 /// # Examples
 ///
 /// ```
-/// # use ethereum_rust_rlp::structs::Decoder;
-/// # use ethereum_rust_rlp::error::RLPDecodeError;
-/// # use ethereum_rust_rlp::decode::RLPDecode;
+/// # use ethrex_rlp::structs::Decoder;
+/// # use ethrex_rlp::error::RLPDecodeError;
+/// # use ethrex_rlp::decode::RLPDecode;
 /// #[derive(Debug, PartialEq, Eq)]
 /// struct Simple {
 ///     pub a: u8,
@@ -131,8 +131,8 @@ fn field_decode_error<T>(field_name: &str, err: RLPDecodeError) -> RLPDecodeErro
 /// # Examples
 ///
 /// ```
-/// # use ethereum_rust_rlp::structs::Encoder;
-/// # use ethereum_rust_rlp::encode::RLPEncode;
+/// # use ethrex_rlp::structs::Encoder;
+/// # use ethrex_rlp::encode::RLPEncode;
 /// # use bytes::BufMut;
 /// #[derive(Debug, PartialEq, Eq)]
 /// struct Simple {

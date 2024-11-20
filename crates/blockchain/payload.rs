@@ -3,7 +3,7 @@ use std::{
     collections::HashMap,
 };
 
-use ethereum_rust_core::{
+use ethrex_core::{
     types::{
         calculate_base_fee_per_blob_gas, calculate_base_fee_per_gas, compute_receipts_root,
         compute_transactions_root, compute_withdrawals_root, BlobsBundle, Block, BlockBody,
@@ -12,9 +12,9 @@ use ethereum_rust_core::{
     },
     Address, Bloom, Bytes, H256, U256,
 };
-use ethereum_rust_rlp::encode::RLPEncode;
-use ethereum_rust_storage::{error::StoreError, Store};
-use ethereum_rust_vm::{
+use ethrex_rlp::encode::RLPEncode;
+use ethrex_storage::{error::StoreError, Store};
+use ethrex_vm::{
     beacon_root_contract_call, evm_state, execute_tx, get_state_transitions, process_withdrawals,
     spec_id, EvmError, EvmState, SpecId,
 };
@@ -224,7 +224,7 @@ fn fetch_mempool_transactions(
     context: &mut PayloadBuildContext,
 ) -> Result<(TransactionQueue, TransactionQueue), ChainError> {
     let tx_filter = PendingTxFilter {
-        /*TODO(https://github.com/lambdaclass/ethereum_rust/issues/680): add tip filter */
+        /*TODO(https://github.com/lambdaclass/ethrex/issues/680): add tip filter */
         base_fee: context.base_fee_per_gas(),
         blob_fee: Some(context.base_fee_per_blob_gas),
         ..Default::default()

@@ -5,7 +5,7 @@ services:
   contract_deployer:
     platform: linux/amd64
     container_name: contract_deployer
-    image: ethereum_rust_l2_contract_deployer
+    image: ethrex_l2_contract_deployer
     build:
       context: ../../
       args:
@@ -17,17 +17,17 @@ services:
     env_file:
       - .env
     environment:
-      - ETH_RPC_URL=http://ethereum_rust_l1:8545
+      - ETH_RPC_URL=http://ethrex_l1:8545
       - DEPLOYER_CONTRACTS_PATH=/contracts
       - ENV_FILE=/.env
     depends_on:
-      - ethereum_rust
+      - ethrex
     restart: on-failure:3
 
-  ethereum_rust_l2:
+  ethrex_l2:
     restart: always
-    container_name: ethereum_rust_l2
-    image: "ethereum_rust_l2"
+    container_name: ethrex_l2
+    image: "ethrex_l2"
     build:
       context: ../../
       dockerfile: ./crates/l2/Dockerfile
@@ -35,7 +35,7 @@ services:
       - 127.0.0.1:1729:1729
       - 3000:3000
     environment:
-      - ETH_RPC_URL=http://ethereum_rust_l1:8545
+      - ETH_RPC_URL=http://ethrex_l1:8545
       - ENV_FILE=/.env
     volumes:
       - ../../test_data/genesis-l2.json:/genesis-l2.json

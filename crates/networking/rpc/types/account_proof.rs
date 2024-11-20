@@ -1,4 +1,4 @@
-use ethereum_rust_core::{serde_utils, Address, H256, U256};
+use ethrex_core::{serde_utils, Address, H256, U256};
 use serde::{ser::SerializeSeq, Serialize, Serializer};
 
 #[derive(Debug, Serialize)]

@@ -7,7 +7,7 @@ use crate::{
     vm::VM,
 };
 use bytes::Bytes;
-use ethereum_rust_core::{types::TxKind, Address, U256};
+use ethrex_core::{types::TxKind, Address, U256};
 use std::{collections::HashMap, sync::Arc};
 
 pub fn ops_to_bytecode(operations: &[Operation]) -> Result<Bytes, VMError> {

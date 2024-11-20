@@ -1,9 +1,9 @@
 use crate::utils::{config::errors::ConfigError, eth_client::errors::EthClientError};
-use ethereum_rust_core::types::BlobsBundleError;
-use ethereum_rust_dev::utils::engine_client::errors::EngineClientError;
-use ethereum_rust_storage::error::StoreError;
-use ethereum_rust_vm::EvmError;
 use ethereum_types::FromStrRadixErr;
+use ethrex_core::types::BlobsBundleError;
+use ethrex_dev::utils::engine_client::errors::EngineClientError;
+use ethrex_storage::error::StoreError;
+use ethrex_vm::EvmError;
 
 #[derive(Debug, thiserror::Error)]
 pub enum L1WatcherError {

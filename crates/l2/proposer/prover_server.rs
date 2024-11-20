@@ -1,5 +1,5 @@
-use ethereum_rust_storage::Store;
-use ethereum_rust_vm::execution_db::ExecutionDB;
+use ethrex_storage::Store;
+use ethrex_vm::execution_db::ExecutionDB;
 use keccak_hash::keccak;
 use secp256k1::SecretKey;
 use serde::{Deserialize, Serialize};
@@ -16,7 +16,7 @@ use tokio::{
 };
 use tracing::{debug, error, info, warn};
 
-use ethereum_rust_core::{
+use ethrex_core::{
     types::{Block, BlockHeader, EIP1559Transaction},
     Address, H256,
 };

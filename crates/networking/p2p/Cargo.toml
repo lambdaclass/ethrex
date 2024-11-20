@@ -1,14 +1,14 @@
 [package]
-name = "ethereum_rust-net"
+name = "ethrex-net"
 version = "0.1.0"
 edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-ethereum_rust-core.workspace = true
-ethereum_rust-rlp.workspace = true
-ethereum_rust-storage.workspace = true
+ethrex-core.workspace = true
+ethrex-rlp.workspace = true
+ethrex-storage.workspace = true
 
 tracing.workspace = true
 tokio.workspace = true

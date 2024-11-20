@@ -1,6 +1,6 @@
-use ethereum_rust_core::types::{BlobsBundleError, InvalidBlockHeaderError};
-use ethereum_rust_storage::error::StoreError;
-use ethereum_rust_vm::EvmError;
+use ethrex_core::types::{BlobsBundleError, InvalidBlockHeaderError};
+use ethrex_storage::error::StoreError;
+use ethrex_vm::EvmError;
 
 #[derive(Debug, thiserror::Error)]
 pub enum ChainError {

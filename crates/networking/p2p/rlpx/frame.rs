@@ -2,8 +2,8 @@ use aes::{
     cipher::{BlockEncrypt as _, KeyInit as _, StreamCipher as _},
     Aes256Enc,
 };
-use ethereum_rust_core::H128;
-use ethereum_rust_rlp::encode::RLPEncode as _;
+use ethrex_core::H128;
+use ethrex_rlp::encode::RLPEncode as _;
 use sha3::Digest as _;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 

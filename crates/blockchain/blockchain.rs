@@ -7,15 +7,15 @@ mod smoke_test;
 
 use constants::{GAS_PER_BLOB, MAX_BLOB_GAS_PER_BLOCK, MAX_BLOB_NUMBER_PER_BLOCK};
 use error::{ChainError, InvalidBlockError};
-use ethereum_rust_core::types::{
+use ethrex_core::types::{
     validate_block_header, validate_cancun_header_fields, validate_no_cancun_header_fields, Block,
     BlockHash, BlockHeader, BlockNumber, EIP4844Transaction, Receipt, Transaction,
 };
-use ethereum_rust_core::H256;
+use ethrex_core::H256;
 
-use ethereum_rust_storage::error::StoreError;
-use ethereum_rust_storage::Store;
-use ethereum_rust_vm::{evm_state, execute_block, spec_id, EvmState, SpecId};
+use ethrex_storage::error::StoreError;
+use ethrex_storage::Store;
+use ethrex_vm::{evm_state, execute_block, spec_id, EvmState, SpecId};
 
 //TODO: Implement a struct Chain or BlockChain to encapsulate
 //functionality and canonical chain state and config
@@ -27,7 +27,7 @@ use ethereum_rust_vm::{evm_state, execute_block, spec_id, EvmState, SpecId};
 /// Performs pre and post execution validation, and updates the database with the post state.
 #[cfg(not(feature = "levm"))]
 pub fn add_block(block: &Block, storage: &Store) -> Result<(), ChainError> {
-    use ethereum_rust_vm::get_state_transitions;
+    use ethrex_vm::get_state_transitions;
 
     let block_hash = block.header.compute_block_hash();
 

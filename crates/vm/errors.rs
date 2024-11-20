@@ -1,7 +1,7 @@
-use ethereum_rust_core::types::BlockHash;
-use ethereum_rust_storage::error::StoreError;
-use ethereum_rust_trie::TrieError;
 use ethereum_types::H160;
+use ethrex_core::types::BlockHash;
+use ethrex_storage::error::StoreError;
+use ethrex_trie::TrieError;
 use revm::primitives::{
     result::EVMError as RevmError, Address as RevmAddress, B256 as RevmB256, U256 as RevmU256,
 };

@@ -9,18 +9,18 @@ RUN apt-get update && apt-get install -y \
     && rm -rf /var/lib/apt/lists/*
 RUN cargo install cargo-chef
 
-WORKDIR /ethereum_rust
+WORKDIR /ethrex
 
 FROM chef AS planner
 
 COPY . .
 # Determine the crates that need to be built from dependencies
-RUN cargo chef prepare --bin ethereum_rust_l2_l1_deployer --recipe-path recipe.json
+RUN cargo chef prepare --bin ethrex_l2_l1_deployer --recipe-path recipe.json
 
 FROM chef AS builder
-COPY --from=planner /ethereum_rust/recipe.json recipe.json
+COPY --from=planner /ethrex/recipe.json recipe.json
 # Build dependencies only, these remained cached
-RUN cargo chef cook --release --recipe-path recipe.json --manifest-path crates/l2/contracts/Cargo.toml --bin ethereum_rust_l2_l1_deployer
+RUN cargo chef cook --release --recipe-path recipe.json --manifest-path crates/l2/contracts/Cargo.toml --bin ethrex_l2_l1_deployer
 
 COPY . .
 RUN cargo build --release --manifest-path crates/l2/contracts/Cargo.toml
@@ -32,7 +32,7 @@ RUN apt-get update && apt-get -y install git gnupg software-properties-common
 RUN add-apt-repository ppa:ethereum/ethereum
 RUN apt-get update && apt-get -y install solc
 
-COPY --from=builder ethereum_rust/target/release/ethereum_rust_l2_l1_deployer .
+COPY --from=builder ethrex/target/release/ethrex_l2_l1_deployer .
 
 EXPOSE 1729
-ENTRYPOINT [ "./ethereum_rust_l2_l1_deployer" ]
+ENTRYPOINT [ "./ethrex_l2_l1_deployer" ]

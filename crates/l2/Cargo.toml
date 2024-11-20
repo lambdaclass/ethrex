@@ -1,5 +1,5 @@
 [package]
-name = "ethereum_rust-l2"
+name = "ethrex-l2"
 version = "0.1.0"
 edition = "2021"
 
@@ -13,13 +13,13 @@ tracing.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 ethereum-types.workspace = true
-ethereum_rust-core.workspace = true
-ethereum_rust-rlp.workspace = true
-ethereum_rust-rpc.workspace = true
-ethereum_rust-blockchain.workspace = true
-ethereum_rust-storage.workspace = true
-ethereum_rust-vm.workspace = true
-ethereum_rust-dev = { path = "../../crates/blockchain/dev" }
+ethrex-core.workspace = true
+ethrex-rlp.workspace = true
+ethrex-rpc.workspace = true
+ethrex-blockchain.workspace = true
+ethrex-storage.workspace = true
+ethrex-vm.workspace = true
+ethrex-dev = { path = "../../crates/blockchain/dev" }
 hex.workspace = true
 bytes.workspace = true
 jsonwebtoken.workspace = true
@@ -33,7 +33,7 @@ sha2 = "0.10.8"
 risc0-zkvm = { version = "1.1.2" }
 
 [dev-dependencies]
-ethereum_rust-sdk = { path = "./sdk" }
+ethrex-sdk = { path = "./sdk" }
 rand = "0.8.5"
 
 

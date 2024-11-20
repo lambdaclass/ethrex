@@ -1,4 +1,4 @@
-use ethereum_rust_core::H512;
+use ethrex_core::H512;
 use std::{net::SocketAddr, num::ParseIntError, str::FromStr};
 
 #[derive(Debug, Clone, PartialEq, Eq, Copy)]
@@ -12,7 +12,7 @@ impl FromStr for BootNode {
     /// Takes a str with the format "enode://nodeID@IPaddress:port" and
     /// parses it to a BootNode
     // TODO: fix it to support different UDP and TCP ports, according to
-    // https://github.com/lambdaclass/lambda_ethereum_rust/issues/905
+    // https://github.com/lambdaclass/lambda_ethrex/issues/905
     fn from_str(input: &str) -> Result<BootNode, ParseIntError> {
         // TODO: error handling
         let node_id = H512::from_str(&input[8..136]).expect("Failed to parse node id");

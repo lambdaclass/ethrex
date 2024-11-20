@@ -1,6 +1,6 @@
 use bytes::BufMut;
-use ethereum_rust_core::{types::Transaction, H256};
-use ethereum_rust_rlp::{
+use ethrex_core::{types::Transaction, H256};
+use ethrex_rlp::{
     error::{RLPDecodeError, RLPEncodeError},
     structs::{Decoder, Encoder},
 };
@@ -218,7 +218,7 @@ impl RLPxMessage for PooledTransactions {
 
 #[cfg(test)]
 mod tests {
-    use ethereum_rust_core::{types::Transaction, H256};
+    use ethrex_core::{types::Transaction, H256};
 
     use crate::rlpx::{
         eth::transactions::{GetPooledTransactions, PooledTransactions},

@@ -1,11 +1,11 @@
 [package]
-name = "ethereum_rust-levm"
+name = "ethrex-levm"
 version.workspace = true
 edition.workspace = true
 
 [dependencies]
-ethereum_rust-core.workspace = true
-ethereum_rust-rlp.workspace = true
+ethrex-core.workspace = true
+ethrex-rlp.workspace = true
 
 bytes.workspace = true
 sha3 = "0.10.8"

@@ -1,14 +1,14 @@
 [package]
-name = "ethereum_rust-storage"
+name = "ethrex-storage"
 version = "0.1.0"
 edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-ethereum_rust-rlp.workspace = true
-ethereum_rust-core = { path = "../../common", default-features = false }
-ethereum_rust-trie = { path = "../../storage/trie", default-features = false }
+ethrex-rlp.workspace = true
+ethrex-core = { path = "../../common", default-features = false }
+ethrex-trie = { path = "../../storage/trie", default-features = false }
 
 ethereum-types = "0.14.1"
 anyhow = "1.0.86"
@@ -25,8 +25,8 @@ libmdbx = { workspace = true, optional = true }
 default = ["libmdbx"]
 libmdbx = [
     "dep:libmdbx",
-    "ethereum_rust-trie/libmdbx",
-    "ethereum_rust-core/libmdbx",
+    "ethrex-trie/libmdbx",
+    "ethrex-core/libmdbx",
 ]
 
 [dev-dependencies]

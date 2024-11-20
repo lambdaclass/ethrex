@@ -19,7 +19,7 @@ At startup, the discovery server launches three concurrent tokio tasks:
 
 Before starting these tasks, we run a [startup](#startup) process to connect to an array of initial nodes.
 
-Before diving into what each task does, first, we need to understand how we are storing our nodes. Nodes are stored in an in-memory matrix which we call a [Kademlia table](https://github.com/lambdaclass/ethereum_rust/blob/main/crates/net/kademlia.rs#L20-L23), though it isn't really a Kademlia table as we don't thoroughly follow the spec but we take it as a reference, you can read more [here](https://en.wikipedia.org/wiki/Kademlia). This table holds:
+Before diving into what each task does, first, we need to understand how we are storing our nodes. Nodes are stored in an in-memory matrix which we call a [Kademlia table](https://github.com/lambdaclass/ethrex/blob/main/crates/net/kademlia.rs#L20-L23), though it isn't really a Kademlia table as we don't thoroughly follow the spec but we take it as a reference, you can read more [here](https://en.wikipedia.org/wiki/Kademlia). This table holds:
 
 -   Our `node_id`: `node_id`s are derived from the public key. They are the 64 bytes starting from index 1 of the encoded pub key.
 -   A vector of 256 `bucket`s which holds:
@@ -46,7 +46,7 @@ Before starting the server, we do a startup where we connect to an array of seed
 -   Inserting them into our table
 -   Pinging them to notify our presence, so they acknowledge us.
 
-This startup is far from being completed. The current state allows us to do basic tests and connections. Later, we want to do a real startup by first trying to connect to those nodes we were previously connected. For that, we'd need to store nodes on the database. If those nodes aren't enough to fill our table, then we also ping some bootnodes, which could be hardcoded or received through the cli. Current issues are opened regarding [startup](https://github.com/lambdaclass/ethereum_rust/issues/398) and [nodes db](https://github.com/lambdaclass/ethereum_rust/issues/454).
+This startup is far from being completed. The current state allows us to do basic tests and connections. Later, we want to do a real startup by first trying to connect to those nodes we were previously connected. For that, we'd need to store nodes on the database. If those nodes aren't enough to fill our table, then we also ping some bootnodes, which could be hardcoded or received through the cli. Current issues are opened regarding [startup](https://github.com/lambdaclass/ethrex/issues/398) and [nodes db](https://github.com/lambdaclass/ethrex/issues/454).
 
 ### Listen loop
 
@@ -55,8 +55,8 @@ The listen loop handles messages sent to our socket. The spec defines 6 types of
 -   **Ping**: Responds with a `pong` message. If the peer is not in our table we add it, if the corresponding bucket is already filled then we add it as a replacement for that bucket. If it was inserted we send a `ping from our end to get an endpoint proof.
 -   **Pong**: Verifies that the `pong` corresponds to a previously sent `ping`, if so we mark the peer as proven.
 -   **FindNodes**: Responds with a `neighbors` message that contains as many as the 16 closest nodes from the given target. A target is a pubkey provided by the peer in the message. The response can't be sent in one packet as it might exceed the discv4 max packet size. So we split it into different packets.
--   **Neighbors**: First we verify that we have sent the corresponding `find_node` message. If so, we receive the peers, store them, and ping them. Also, every [`find_node` request](https://github.com/lambdaclass/ethereum_rust/blob/229ca0b316a79403412a917d04e3b95f579c56c7/crates/net/discv4.rs#L305-L314) may have a [tokio `Sender`](https://docs.rs/tokio/latest/tokio/sync/mpsc/struct.Sender.html) attached, if that is the case, we forward the nodes from the message through the channel. This becomes useful when waiting for a `find_node` response, [something we do in the lookups](https://github.com/lambdaclass/ethereum_rust/blob/229ca0b316a79403412a917d04e3b95f579c56c7/crates/net/net.rs#L517-L570).
--   **ENRRequest**: currently not implemented see [here](https://github.com/lambdaclass/ethereum_rust/issues/432).
+-   **Neighbors**: First we verify that we have sent the corresponding `find_node` message. If so, we receive the peers, store them, and ping them. Also, every [`find_node` request](https://github.com/lambdaclass/ethrex/blob/229ca0b316a79403412a917d04e3b95f579c56c7/crates/net/discv4.rs#L305-L314) may have a [tokio `Sender`](https://docs.rs/tokio/latest/tokio/sync/mpsc/struct.Sender.html) attached, if that is the case, we forward the nodes from the message through the channel. This becomes useful when waiting for a `find_node` response, [something we do in the lookups](https://github.com/lambdaclass/ethrex/blob/229ca0b316a79403412a917d04e3b95f579c56c7/crates/net/net.rs#L517-L570).
+-   **ENRRequest**: currently not implemented see [here](https://github.com/lambdaclass/ethrex/issues/432).
 -   **ENRResponse**: same as above.
 
 ### Re-validations
@@ -103,7 +103,7 @@ Finally, here is an example of how you could build a network and see how they co
 We'll have three nodes: `a`, `b`, and `c`, we'll start `a`, then `b` setting `a` as a bootnode, and finally we'll start `c` with `b` as bootnode we should see that `c` connects to both `a` and `b` and so all the network should be connected.
 
 **node a**:
-`cargo run --bin ethereum_rust --network test_data/kurtosis.json`
+`cargo run --bin ethrex --network test_data/kurtosis.json`
 
 We get the `enode` by querying the node_info:
 `curl http://localhost:8545 \
@@ -115,7 +115,7 @@ We get the `enode` by querying the node_info:
 We start a new server passing the `node_a` `enode` as bootnodes
 
 ```bash
-cargo run --bin ethereum_rust --network ./test_data/kurtosis.json --bootnodes=`NODE_A_ENODE` \
+cargo run --bin ethrex --network ./test_data/kurtosis.json --bootnodes=`NODE_A_ENODE` \
 --authrpc.port=8552 --http.port=8546 --p2p.port=30305 --discovery.port=3036
 ```
 
@@ -123,7 +123,7 @@ cargo run --bin ethereum_rust --network ./test_data/kurtosis.json --bootnodes=`N
 Finally, with `node_c` we connect to `node_b`. When the lookup runs, `node_c` should end up connecting to `node_a`:
 
 ```bash
- cargo run --bin ethereum_rust --network ./test_data/kurtosis.json --bootnodes=`NODE_B_ENODE`" \
+ cargo run --bin ethrex --network ./test_data/kurtosis.json --bootnodes=`NODE_B_ENODE`" \
 --authrpc.port=8553 --http.port=8547 --p2p.port=30308 --discovery.port=30310
 ```
 

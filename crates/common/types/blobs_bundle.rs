@@ -11,7 +11,7 @@ use crate::{
 #[cfg(feature = "c-kzg")]
 use c_kzg::{ethereum_kzg_settings, KzgCommitment, KzgProof, KzgSettings};
 
-use ethereum_rust_rlp::{
+use ethrex_rlp::{
     decode::RLPDecode,
     encode::RLPEncode,
     error::RLPDecodeError,

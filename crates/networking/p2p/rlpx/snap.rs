@@ -3,11 +3,11 @@ use super::{
     utils::{snappy_compress, snappy_decompress},
 };
 use bytes::{BufMut, Bytes};
-use ethereum_rust_core::{
+use ethrex_core::{
     types::{AccountState, EMPTY_KECCACK_HASH, EMPTY_TRIE_HASH},
     H256, U256,
 };
-use ethereum_rust_rlp::{
+use ethrex_rlp::{
     decode::RLPDecode,
     encode::RLPEncode,
     error::{RLPDecodeError, RLPEncodeError},

@@ -1,5 +1,5 @@
 participants:
-  - el_type: ethereumrust
+  - el_type: ethrex
     cl_type: lighthouse
     validator_count: 32
   - el_type: geth
@@ -20,4 +20,4 @@ assertoor_params:
   run_block_proposal_check: false
   run_blob_transaction_test: true
   tests:
-    - 'https://raw.githubusercontent.com/lambdaclass/lambda_ethereum_rust/refs/heads/main/test_data/el-stability-check.yml'
+    - 'https://raw.githubusercontent.com/lambdaclass/lambda_ethrex/refs/heads/main/test_data/el-stability-check.yml'

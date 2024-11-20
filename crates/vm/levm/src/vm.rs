@@ -12,9 +12,9 @@ use crate::{
     opcodes::Opcode,
 };
 use bytes::Bytes;
-use ethereum_rust_core::{types::TxKind, Address, H256, U256};
-use ethereum_rust_rlp;
-use ethereum_rust_rlp::encode::RLPEncode;
+use ethrex_core::{types::TxKind, Address, H256, U256};
+use ethrex_rlp;
+use ethrex_rlp::encode::RLPEncode;
 use keccak_hash::keccak;
 use sha3::{Digest, Keccak256};
 use std::{
@@ -25,7 +25,7 @@ use std::{
 pub type Storage = HashMap<U256, H256>;
 
 #[derive(Debug, Clone, Default)]
-// TODO: https://github.com/lambdaclass/ethereum_rust/issues/604
+// TODO: https://github.com/lambdaclass/ethrex/issues/604
 pub struct Substate {
     // accessed addresses and storage keys are considered WARM
     // pub accessed_addresses: HashSet<Address>,
@@ -151,7 +151,7 @@ impl VM {
                 })
             }
         }
-        // TODO: https://github.com/lambdaclass/lambda_ethereum_rust/issues/1088
+        // TODO: https://github.com/lambdaclass/lambda_ethrex/issues/1088
     }
 
     pub fn execute(&mut self, current_call_frame: &mut CallFrame) -> TransactionReport {
@@ -600,7 +600,7 @@ impl VM {
         ))
     }
 
-    // TODO: Improve and test REVERT behavior for XCALL opcodes. Issue: https://github.com/lambdaclass/lambda_ethereum_rust/issues/1061
+    // TODO: Improve and test REVERT behavior for XCALL opcodes. Issue: https://github.com/lambdaclass/lambda_ethrex/issues/1061
     #[allow(clippy::too_many_arguments)]
     pub fn generic_call(
         &mut self,
@@ -782,7 +782,7 @@ impl VM {
     /// Common behavior for CREATE and CREATE2 opcodes
     ///
     /// Could be used for CREATE type transactions
-    // TODO: Improve and test REVERT behavior for CREATE. Issue: https://github.com/lambdaclass/lambda_ethereum_rust/issues/1061
+    // TODO: Improve and test REVERT behavior for CREATE. Issue: https://github.com/lambdaclass/lambda_ethrex/issues/1061
     pub fn create(
         &mut self,
         value_in_wei_to_send: U256,

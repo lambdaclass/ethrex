@@ -8,10 +8,10 @@ edition = "2021"
 [dependencies]
 risc0-zkvm = { version = "1.1.2", default-features = false, features = ["std"] }
 
-ethereum_rust-core = { path = "../../../../../common", default-features = false }
-ethereum_rust-rlp = { path = "../../../../../common/rlp" }
-ethereum_rust-vm = { path = "../../../../../vm", default-features = false }
-ethereum_rust-blockchain = { path = "../../../../../blockchain", default-features = false }
+ethrex-core = { path = "../../../../../common", default-features = false }
+ethrex-rlp = { path = "../../../../../common/rlp" }
+ethrex-vm = { path = "../../../../../vm", default-features = false }
+ethrex-blockchain = { path = "../../../../../blockchain", default-features = false }
 
 [build-dependencies]
 ## cc version ^1.1.31 breaks the compilation.

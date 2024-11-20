@@ -6,12 +6,13 @@ use errors::{
     GetTransactionReceiptError, SendRawTransactionError,
 };
 use eth_sender::Overrides;
-use ethereum_rust_core::types::{
+use ethereum_types::{Address, H256, U256};
+use ethrex_core::types::{
     BlobsBundle, EIP1559Transaction, EIP4844Transaction, GenericTransaction,
     PrivilegedL2Transaction, PrivilegedTxType, Signable, TxKind, TxType,
 };
-use ethereum_rust_rlp::encode::RLPEncode;
-use ethereum_rust_rpc::{
+use ethrex_rlp::encode::RLPEncode;
+use ethrex_rpc::{
     types::{
         block::RpcBlock,
         receipt::{RpcLog, RpcReceipt},
@@ -19,7 +20,6 @@ use ethereum_rust_rpc::{
     },
     utils::{RpcErrorResponse, RpcRequest, RpcRequestId, RpcSuccessResponse},
 };
-use ethereum_types::{Address, H256, U256};
 use keccak_hash::keccak;
 use reqwest::Client;
 use secp256k1::SecretKey;
@@ -629,15 +629,15 @@ impl EthClient {
 #[derive(Serialize, Deserialize, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct GetTransactionByHashTransaction {
-    #[serde(default, with = "ethereum_rust_core::serde_utils::u64::hex_str")]
+    #[serde(default, with = "ethrex_core::serde_utils::u64::hex_str")]
     pub chain_id: u64,
-    #[serde(default, with = "ethereum_rust_core::serde_utils::u64::hex_str")]
+    #[serde(default, with = "ethrex_core::serde_utils::u64::hex_str")]
     pub nonce: u64,
-    #[serde(default, with = "ethereum_rust_core::serde_utils::u64::hex_str")]
+    #[serde(default, with = "ethrex_core::serde_utils::u64::hex_str")]
     pub max_priority_fee_per_gas: u64,
-    #[serde(default, with = "ethereum_rust_core::serde_utils::u64::hex_str")]
+    #[serde(default, with = "ethrex_core::serde_utils::u64::hex_str")]
     pub max_fee_per_gas: u64,
-    #[serde(default, with = "ethereum_rust_core::serde_utils::u64::hex_str")]
+    #[serde(default, with = "ethrex_core::serde_utils::u64::hex_str")]
     pub gas_limit: u64,
     #[serde(default)]
     pub to: Address,
@@ -651,9 +651,9 @@ pub struct GetTransactionByHashTransaction {
     pub r#type: TxType,
     #[serde(default)]
     pub signature_y_parity: bool,
-    #[serde(default, with = "ethereum_rust_core::serde_utils::u64::hex_str")]
+    #[serde(default, with = "ethrex_core::serde_utils::u64::hex_str")]
     pub signature_r: u64,
-    #[serde(default, with = "ethereum_rust_core::serde_utils::u64::hex_str")]
+    #[serde(default, with = "ethrex_core::serde_utils::u64::hex_str")]
     pub signature_s: u64,
     #[serde(default)]
     pub block_number: U256,
@@ -663,6 +663,6 @@ pub struct GetTransactionByHashTransaction {
     pub from: Address,
     #[serde(default)]
     pub hash: H256,
-    #[serde(default, with = "ethereum_rust_core::serde_utils::u64::hex_str")]
+    #[serde(default, with = "ethrex_core::serde_utils::u64::hex_str")]
     pub transaction_index: u64,
 }

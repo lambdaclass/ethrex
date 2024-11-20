@@ -1,12 +1,12 @@
 use std::collections::HashMap;
 
 use bytes::Bytes;
-use ethereum_rust_trie::Trie;
 use ethereum_types::{H256, U256};
+use ethrex_trie::Trie;
 use serde::{Deserialize, Serialize};
 use sha3::{Digest as _, Keccak256};
 
-use ethereum_rust_rlp::{
+use ethrex_rlp::{
     constants::RLP_NULL,
     decode::RLPDecode,
     encode::RLPEncode,

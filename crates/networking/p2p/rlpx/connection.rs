@@ -28,9 +28,9 @@ use super::{
     utils::{ecdh_xchng, pubkey2id},
 };
 use aes::cipher::KeyIvInit;
-use ethereum_rust_core::{H256, H512};
-use ethereum_rust_rlp::decode::RLPDecode;
-use ethereum_rust_storage::Store;
+use ethrex_core::{H256, H512};
+use ethrex_rlp::decode::RLPDecode;
+use ethrex_storage::Store;
 use k256::{
     ecdsa::{RecoveryId, Signature, SigningKey, VerifyingKey},
     PublicKey, SecretKey,
@@ -278,7 +278,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
                 // We ignore received Pong messages
             }
             // Implmenent Status vaidations
-            // https://github.com/lambdaclass/lambda_ethereum_rust/issues/420
+            // https://github.com/lambdaclass/lambda_ethrex/issues/420
             Message::Status(_) if !peer_supports_eth => {
                 info!("Received Status");
                 // TODO: Check peer's status message.

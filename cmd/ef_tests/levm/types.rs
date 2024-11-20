@@ -4,7 +4,7 @@ use crate::deserialize::{
     deserialize_u256_vec_safe,
 };
 use bytes::Bytes;
-use ethereum_rust_core::{
+use ethrex_core::{
     types::{Genesis, GenesisAccount, TxKind},
     Address, H256, U256,
 };

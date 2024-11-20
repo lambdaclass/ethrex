@@ -1,13 +1,13 @@
 [package]
-name = "ethereum_rust-core"
+name = "ethrex-core"
 version = "0.1.0"
 edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-ethereum_rust-rlp.workspace = true
-ethereum_rust-trie = { path = "../storage/trie", default-features = false }
+ethrex-rlp.workspace = true
+ethrex-trie = { path = "../storage/trie", default-features = false }
 
 tinyvec = "1.6.0"
 ethereum-types.workspace = true
@@ -31,7 +31,7 @@ hex-literal.workspace = true
 
 [features]
 default = ["libmdbx", "c-kzg"]
-libmdbx = ["ethereum_rust-trie/libmdbx"]
+libmdbx = ["ethrex-trie/libmdbx"]
 c-kzg = ["dep:c-kzg"]
 
 [lib]

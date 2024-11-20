@@ -1,5 +1,5 @@
 [package]
-name = "ethereum_rust_l2_cli"
+name = "ethrex_l2_cli"
 version.workspace = true
 edition.workspace = true
 
@@ -26,12 +26,12 @@ strum = "0.26.3"
 secp256k1.workspace = true
 keccak-hash = "0.10.0"
 
-ethereum_rust-l2.workspace = true
-ethereum_rust-core.workspace = true
-ethereum_rust-blockchain.workspace = true
-ethereum_rust-prover.workspace = true
-ethereum_rust-rlp.workspace = true
-ethereum_rust-rpc.workspace = true
+ethrex-l2.workspace = true
+ethrex-core.workspace = true
+ethrex-blockchain.workspace = true
+ethrex-prover.workspace = true
+ethrex-rlp.workspace = true
+ethrex-rpc.workspace = true
 
 [[bin]]
 name = "l2"

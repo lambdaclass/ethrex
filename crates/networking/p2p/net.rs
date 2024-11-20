@@ -10,8 +10,8 @@ use discv4::{
     get_expiration, is_expired, time_now_unix, time_since_in_hs, FindNodeMessage, Message,
     NeighborsMessage, Packet, PingMessage, PongMessage,
 };
-use ethereum_rust_core::{H256, H512};
-use ethereum_rust_storage::Store;
+use ethrex_core::{H256, H512};
+use ethrex_storage::Store;
 use k256::{
     ecdsa::SigningKey,
     elliptic_curve::{sec1::ToEncodedPoint, PublicKey},
@@ -345,7 +345,7 @@ async fn discovery_startup(
             ip: bootnode.socket_address.ip(),
             udp_port: bootnode.socket_address.port(),
             // TODO: udp port can differ from tcp port.
-            // see https://github.com/lambdaclass/lambda_ethereum_rust/issues/905
+            // see https://github.com/lambdaclass/lambda_ethrex/issues/905
             tcp_port: bootnode.socket_address.port(),
             node_id: bootnode.node_id,
         });
@@ -844,7 +844,7 @@ pub fn node_id_from_signing_key(signer: &SigningKey) -> H512 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ethereum_rust_storage::EngineType;
+    use ethrex_storage::EngineType;
     use kademlia::bucket_number;
     use rand::rngs::OsRng;
     use std::{

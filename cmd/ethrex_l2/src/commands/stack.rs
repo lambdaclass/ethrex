@@ -1,4 +1,4 @@
-use crate::{config::EthereumRustL2Config, utils::config::confirm};
+use crate::{config::EthrexL2Config, utils::config::confirm};
 use clap::Subcommand;
 use eyre::ContextCompat;
 use secp256k1::SecretKey;
@@ -68,13 +68,13 @@ pub(crate) enum Command {
 }
 
 impl Command {
-    pub async fn run(self, cfg: EthereumRustL2Config) -> eyre::Result<()> {
+    pub async fn run(self, cfg: EthrexL2Config) -> eyre::Result<()> {
         let root = std::path::Path::new(CARGO_MANIFEST_DIR)
             .parent()
             .map(std::path::Path::parent)
             .context("Failed to get parent")?
             .context("Failed to get grandparent")?;
-        let ethereum_rust_dev_path = root.join("crates/blockchain/dev");
+        let ethrex_dev_path = root.join("crates/blockchain/dev");
         let l2_crate_path = root.join("crates/l2");
         let contracts_path = l2_crate_path.join("contracts");
 
@@ -90,7 +90,7 @@ impl Command {
                 // or in a testnet. If the L1 RPC URL is localhost, then it is
                 // a local environment and the local node needs to be started.
                 if l1_rpc_url.contains("localhost") {
-                    start_l1(&l2_crate_path, &ethereum_rust_dev_path).await?;
+                    start_l1(&l2_crate_path, &ethrex_dev_path).await?;
                     tokio::time::sleep(std::time::Duration::from_secs(1)).await;
                 }
                 if !skip_l1_deployment {
@@ -101,7 +101,7 @@ impl Command {
             Command::Shutdown { l1, l2, force } => {
                 if force || (l1 && confirm("Are you sure you want to shutdown the local L1 node?")?)
                 {
-                    shutdown_l1(&ethereum_rust_dev_path)?;
+                    shutdown_l1(&ethrex_dev_path)?;
                 }
                 if force || (l2 && confirm("Are you sure you want to shutdown the L2 node?")?) {
                     shutdown_l2()?;
@@ -114,7 +114,7 @@ impl Command {
                 start_prover,
             } => {
                 if force || l1 {
-                    start_l1(&l2_crate_path, &ethereum_rust_dev_path).await?;
+                    start_l1(&l2_crate_path, &ethrex_dev_path).await?;
                 }
                 if force || l2 {
                     start_l2(root.to_path_buf(), &l2_rpc_url, start_prover).await?;
@@ -200,14 +200,14 @@ fn deploy_l1(
     Ok(())
 }
 
-fn shutdown_l1(ethereum_rust_dev_path: &Path) -> eyre::Result<()> {
-    let local_l1_docker_compose_path = ethereum_rust_dev_path.join("docker-compose-dev.yaml");
+fn shutdown_l1(ethrex_dev_path: &Path) -> eyre::Result<()> {
+    let local_l1_docker_compose_path = ethrex_dev_path.join("docker-compose-dev.yaml");
     let cmd = std::process::Command::new("docker")
         .arg("compose")
         .arg("-f")
         .arg(local_l1_docker_compose_path)
         .arg("down")
-        .current_dir(ethereum_rust_dev_path)
+        .current_dir(ethrex_dev_path)
         .spawn()?
         .wait()?;
     if !cmd.success() {
@@ -219,15 +219,15 @@ fn shutdown_l1(ethereum_rust_dev_path: &Path) -> eyre::Result<()> {
 fn shutdown_l2() -> eyre::Result<()> {
     std::process::Command::new("pkill")
         .arg("-f")
-        .arg("ethereum_rust")
+        .arg("ethrex")
         .spawn()?
         .wait()?;
     Ok(())
 }
 
-async fn start_l1(l2_crate_path: &Path, ethereum_rust_dev_path: &Path) -> eyre::Result<()> {
+async fn start_l1(l2_crate_path: &Path, ethrex_dev_path: &Path) -> eyre::Result<()> {
     create_volumes(l2_crate_path)?;
-    docker_compose_l2_up(ethereum_rust_dev_path)?;
+    docker_compose_l2_up(ethrex_dev_path)?;
     Ok(())
 }
 
@@ -237,15 +237,15 @@ fn create_volumes(l2_crate_path: &Path) -> eyre::Result<()> {
     Ok(())
 }
 
-fn docker_compose_l2_up(ethereum_rust_dev_path: &Path) -> eyre::Result<()> {
-    let local_l1_docker_compose_path = ethereum_rust_dev_path.join("docker-compose-dev.yaml");
+fn docker_compose_l2_up(ethrex_dev_path: &Path) -> eyre::Result<()> {
+    let local_l1_docker_compose_path = ethrex_dev_path.join("docker-compose-dev.yaml");
     let cmd = std::process::Command::new("docker")
         .arg("compose")
         .arg("-f")
         .arg(local_l1_docker_compose_path)
         .arg("up")
         .arg("-d")
-        .current_dir(ethereum_rust_dev_path)
+        .current_dir(ethrex_dev_path)
         .spawn()?
         .wait()?;
     if !cmd.success() {
@@ -264,7 +264,7 @@ async fn start_l2(root: PathBuf, l2_rpc_url: &str, start_prover: bool) -> eyre::
             .arg("run")
             .arg("--release")
             .arg("--bin")
-            .arg("ethereum_rust")
+            .arg("ethrex")
             .arg("--features")
             .arg("l2")
             .arg("--")
@@ -293,7 +293,7 @@ async fn start_l2(root: PathBuf, l2_rpc_url: &str, start_prover: bool) -> eyre::
                 .arg("--features")
                 .arg("build_zkvm")
                 .arg("--bin")
-                .arg("ethereum_rust_prover")
+                .arg("ethrex_prover")
                 .current_dir(root_clone)
                 .status();
 

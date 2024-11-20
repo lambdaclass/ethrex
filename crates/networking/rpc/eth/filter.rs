@@ -2,8 +2,8 @@
 // - Manually testing the behaviour deploying contracts on the Sepolia test network.
 // - Go-Ethereum, specifically: https://github.com/ethereum/go-ethereum/blob/368e16f39d6c7e5cce72a92ec289adbfbaed4854/eth/filters/filter.go
 // - Ethereum's reference: https://ethereum.org/en/developers/docs/apis/json-rpc/#eth_newfilter
-use ethereum_rust_core::types::BlockNumber;
-use ethereum_rust_storage::Store;
+use ethrex_core::types::BlockNumber;
+use ethrex_storage::Store;
 use std::{
     collections::HashMap,
     sync::{Arc, Mutex},
@@ -67,7 +67,7 @@ impl NewFilterRequest {
 
     pub fn handle(
         &self,
-        storage: ethereum_rust_storage::Store,
+        storage: ethrex_storage::Store,
         filters: ActiveFilters,
     ) -> Result<serde_json::Value, crate::utils::RpcErr> {
         let from = self
@@ -141,7 +141,7 @@ impl DeleteFilterRequest {
 
     pub fn handle(
         &self,
-        _storage: ethereum_rust_storage::Store,
+        _storage: ethrex_storage::Store,
         filters: ActiveFilters,
     ) -> Result<serde_json::Value, crate::utils::RpcErr> {
         let mut active_filters_guard = filters.lock().unwrap_or_else(|mut poisoned_guard| {
@@ -158,7 +158,7 @@ impl DeleteFilterRequest {
 
     pub fn stateful_call(
         req: &RpcRequest,
-        storage: ethereum_rust_storage::Store,
+        storage: ethrex_storage::Store,
         filters: ActiveFilters,
     ) -> Result<serde_json::Value, crate::utils::RpcErr> {
         let request = Self::parse(&req.params)?;
@@ -185,7 +185,7 @@ impl FilterChangesRequest {
     }
     pub fn handle(
         &self,
-        storage: ethereum_rust_storage::Store,
+        storage: ethrex_storage::Store,
         filters: ActiveFilters,
     ) -> Result<serde_json::Value, crate::utils::RpcErr> {
         let Some(latest_block_num) = storage.get_latest_block_number()? else {
@@ -242,7 +242,7 @@ impl FilterChangesRequest {
     }
     pub fn stateful_call(
         req: &RpcRequest,
-        storage: ethereum_rust_storage::Store,
+        storage: ethrex_storage::Store,
         filters: ActiveFilters,
     ) -> Result<serde_json::Value, crate::utils::RpcErr> {
         let request = Self::parse(&req.params)?;
@@ -272,8 +272,8 @@ mod tests {
         types::block_identifier::BlockIdentifier,
         utils::{test_utils::example_p2p_node, RpcRequest},
     };
-    use ethereum_rust_core::types::Genesis;
-    use ethereum_rust_storage::{EngineType, Store};
+    use ethrex_core::types::Genesis;
+    use ethrex_storage::{EngineType, Store};
 
     use serde_json::{json, Value};
     use test_utils::TEST_GENESIS;

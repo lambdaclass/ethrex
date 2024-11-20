@@ -6,7 +6,7 @@ help: ## 📚 Show help for each of the Makefile recipes
 	@grep -E '^[a-zA-Z0-9_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-30s\033[0m %s\n", $$1, $$2}'
 
 test: ## 🧪 Runs all tests except Ethereum tests
-	cargo test -p ethereum_rust-levm
+	cargo test -p ethrex-levm
 
 lint: ## 🧹 Linter check
 	cargo clippy --all-targets --all-features -- -D warnings

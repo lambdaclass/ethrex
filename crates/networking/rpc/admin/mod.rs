@@ -1,6 +1,6 @@
-use ethereum_rust_core::types::ChainConfig;
-use ethereum_rust_net::types::Node;
-use ethereum_rust_storage::Store;
+use ethrex_core::types::ChainConfig;
+use ethrex_net::types::Node;
+use ethrex_storage::Store;
 use serde::Serialize;
 use serde_json::Value;
 use std::collections::HashMap;
@@ -41,7 +41,7 @@ pub fn node_info(storage: Store, local_node: Node) -> Result<Value, RpcErr> {
     let node_info = NodeInfo {
         enode: enode_url,
         id: hex::encode(local_node.node_id),
-        name: "ethereum_rust/0.1.0/rust1.80".to_string(),
+        name: "ethrex/0.1.0/rust1.80".to_string(),
         ip: local_node.ip.to_string(),
         ports: Ports {
             discovery: local_node.udp_port,

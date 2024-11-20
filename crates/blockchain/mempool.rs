@@ -9,13 +9,13 @@ use crate::{
     },
     error::MempoolError,
 };
-use ethereum_rust_core::{
+use ethrex_core::{
     types::{
         BlobsBundle, BlockHeader, ChainConfig, EIP4844Transaction, MempoolTransaction, Transaction,
     },
     Address, H256, U256,
 };
-use ethereum_rust_storage::{error::StoreError, Store};
+use ethrex_storage::{error::StoreError, Store};
 
 /// Add a blob transaction and its blobs bundle to the mempool
 #[cfg(feature = "c-kzg")]
@@ -82,7 +82,7 @@ pub fn filter_transactions(
                 return false;
             }
         // This is a temporary fix to avoid invalid transactions to be included.
-        // This should be removed once https://github.com/lambdaclass/ethereum_rust/issues/680
+        // This should be removed once https://github.com/lambdaclass/ethrex/issues/680
         // is addressed.
         } else if tx.effective_gas_tip(filter.base_fee).is_none() {
             return false;
@@ -305,12 +305,12 @@ mod tests {
     };
 
     use super::{transaction_intrinsic_gas, validate_transaction};
-    use ethereum_rust_core::types::{
+    use ethrex_core::types::{
         BlockHeader, ChainConfig, EIP1559Transaction, EIP4844Transaction, Transaction, TxKind,
     };
-    use ethereum_rust_core::{Address, Bytes, H256, U256};
-    use ethereum_rust_storage::EngineType;
-    use ethereum_rust_storage::{error::StoreError, Store};
+    use ethrex_core::{Address, Bytes, H256, U256};
+    use ethrex_storage::EngineType;
+    use ethrex_storage::{error::StoreError, Store};
 
     fn setup_storage(config: ChainConfig, header: BlockHeader) -> Result<Store, StoreError> {
         let store = Store::new("test", EngineType::InMemory)?;

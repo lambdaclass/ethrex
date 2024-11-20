@@ -1,12 +1,12 @@
 [package]
-name = "ethereum_rust-sdk"
+name = "ethrex-sdk"
 version.workspace = true
 edition.workspace = true
 
 [dependencies]
-ethereum_rust-l2.workspace = true
-ethereum_rust-core.workspace = true
-ethereum_rust-rpc.workspace = true
+ethrex-l2.workspace = true
+ethrex-core.workspace = true
+ethrex-rpc.workspace = true
 
 ethereum-types.workspace = true
 tokio.workspace = true
@@ -16,5 +16,5 @@ secp256k1.workspace = true
 itertools = "0.13.0"
 
 [lib]
-name = "ethereum_rust_l2_sdk"
+name = "ethrex_l2_sdk"
 path = "src/sdk.rs"

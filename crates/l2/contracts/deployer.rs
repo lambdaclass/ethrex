@@ -1,11 +1,11 @@
 use bytes::Bytes;
 use colored::Colorize;
-use ethereum_rust_core::types::{GAS_LIMIT_ADJUSTMENT_FACTOR, GAS_LIMIT_MINIMUM};
-use ethereum_rust_l2::utils::{
+use ethereum_types::{Address, H160, H256};
+use ethrex_core::types::{GAS_LIMIT_ADJUSTMENT_FACTOR, GAS_LIMIT_MINIMUM};
+use ethrex_l2::utils::{
     config::{read_env_as_lines, read_env_file, write_env},
     eth_client::{eth_sender::Overrides, EthClient},
 };
-use ethereum_types::{Address, H160, H256};
 use keccak_hash::keccak;
 use secp256k1::SecretKey;
 use spinoff::{spinner, spinners, Color, Spinner};

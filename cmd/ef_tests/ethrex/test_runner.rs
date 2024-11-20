@@ -1,12 +1,12 @@
 use std::{collections::HashMap, path::Path};
 
 use crate::types::{BlockWithRLP, TestUnit};
-use ethereum_rust_blockchain::{add_block, fork_choice::apply_fork_choice};
-use ethereum_rust_core::types::{
+use ethrex_blockchain::{add_block, fork_choice::apply_fork_choice};
+use ethrex_core::types::{
     Account as CoreAccount, Block as CoreBlock, BlockHeader as CoreBlockHeader,
 };
-use ethereum_rust_rlp::decode::RLPDecode;
-use ethereum_rust_storage::{EngineType, Store};
+use ethrex_rlp::decode::RLPDecode;
+use ethrex_storage::{EngineType, Store};
 
 pub fn run_ef_test(test_key: &str, test: &TestUnit) {
     // check that the decoded genesis block header matches the deserialized one

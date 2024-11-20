@@ -5,7 +5,7 @@ use crate::{
     opcode_handlers::bitwise_comparison::checked_shift_left,
     vm::VM,
 };
-use ethereum_rust_core::{U256, U512};
+use ethrex_core::{U256, U512};
 
 // Arithmetic Operations (11)
 // Opcodes: ADD, SUB, MUL, DIV, SDIV, MOD, SMOD, ADDMOD, MULMOD, EXP, SIGNEXTEND

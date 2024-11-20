@@ -2,7 +2,7 @@ use crate::{
     discv4::{time_now_unix, FindNodeRequest},
     types::Node,
 };
-use ethereum_rust_core::{H256, H512, U256};
+use ethrex_core::{H256, H512, U256};
 use sha3::{Digest, Keccak256};
 use tokio::sync::mpsc::UnboundedSender;
 

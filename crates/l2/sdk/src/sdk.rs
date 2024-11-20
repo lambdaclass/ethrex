@@ -1,5 +1,6 @@
-use ethereum_rust_core::types::{PrivilegedTxType, Transaction};
-use ethereum_rust_l2::utils::{
+use ethereum_types::{Address, H160, H256, U256};
+use ethrex_core::types::{PrivilegedTxType, Transaction};
+use ethrex_l2::utils::{
     eth_client::{
         errors::{EthClientError, GetTransactionReceiptError},
         eth_sender::Overrides,
@@ -7,8 +8,7 @@ use ethereum_rust_l2::utils::{
     },
     merkle_tree::merkle_proof,
 };
-use ethereum_rust_rpc::types::{block::BlockBodyWrapper, receipt::RpcReceipt};
-use ethereum_types::{Address, H160, H256, U256};
+use ethrex_rpc::types::{block::BlockBodyWrapper, receipt::RpcReceipt};
 use itertools::Itertools;
 use keccak_hash::keccak;
 use secp256k1::SecretKey;

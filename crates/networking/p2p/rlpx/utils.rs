@@ -1,5 +1,5 @@
-use ethereum_rust_core::H512;
-use ethereum_rust_rlp::error::{RLPDecodeError, RLPEncodeError};
+use ethrex_core::H512;
+use ethrex_rlp::error::{RLPDecodeError, RLPEncodeError};
 use k256::{
     elliptic_curve::sec1::{FromEncodedPoint, ToEncodedPoint},
     EncodedPoint, PublicKey, SecretKey,

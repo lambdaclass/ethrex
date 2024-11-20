@@ -1,11 +1,11 @@
 use bytes::Bytes;
-use ethereum_rust_core::types::{
-    code_hash, Account as ethereum_rustAccount, AccountInfo, Block as CoreBlock, BlockBody,
+use ethrex_core::types::{
+    code_hash, Account as ethrexAccount, AccountInfo, Block as CoreBlock, BlockBody,
     EIP1559Transaction, EIP2930Transaction, EIP4844Transaction, LegacyTransaction,
-    Transaction as ethereum_rustTransaction, TxKind,
+    Transaction as ethrexTransaction, TxKind,
 };
-use ethereum_rust_core::types::{Genesis, GenesisAccount, Withdrawal};
-use ethereum_rust_core::{types::BlockHeader, Address, Bloom, H256, H64, U256};
+use ethrex_core::types::{Genesis, GenesisAccount, Withdrawal};
+use ethrex_core::{types::BlockHeader, Address, Bloom, H256, H64, U256};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
@@ -18,7 +18,7 @@ pub struct TestUnit {
     pub info: Option<serde_json::Value>,
     pub blocks: Vec<BlockWithRLP>,
     pub genesis_block_header: Header,
-    #[serde(rename = "genesisRLP", with = "ethereum_rust_core::serde_utils::bytes")]
+    #[serde(rename = "genesisRLP", with = "ethrex_core::serde_utils::bytes")]
     pub genesis_rlp: Bytes,
     pub lastblockhash: H256,
     pub network: Network,
@@ -70,7 +70,7 @@ impl TestUnit {
 #[derive(Debug, PartialEq, Eq, Serialize, Deserialize, Clone)]
 pub struct Account {
     pub balance: U256,
-    #[serde(with = "ethereum_rust_core::serde_utils::bytes")]
+    #[serde(with = "ethrex_core::serde_utils::bytes")]
     pub code: Bytes,
     pub nonce: U256,
     pub storage: HashMap<U256, U256>,
@@ -109,7 +109,7 @@ pub struct Header {
     pub bloom: Bloom,
     pub coinbase: Address,
     pub difficulty: U256,
-    #[serde(with = "ethereum_rust_core::serde_utils::bytes")]
+    #[serde(with = "ethrex_core::serde_utils::bytes")]
     pub extra_data: Bytes,
     pub gas_limit: U256,
     pub gas_used: U256,
@@ -134,7 +134,7 @@ pub struct Header {
 #[derive(Debug, PartialEq, Eq, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct BlockWithRLP {
-    #[serde(with = "ethereum_rust_core::serde_utils::bytes")]
+    #[serde(with = "ethrex_core::serde_utils::bytes")]
     pub rlp: Bytes,
     #[serde(flatten)]
     inner: Option<BlockInner>,
@@ -191,7 +191,7 @@ impl From<Block> for CoreBlock {
 pub struct Transaction {
     #[serde(rename = "type")]
     pub transaction_type: Option<U256>,
-    #[serde(with = "ethereum_rust_core::serde_utils::bytes")]
+    #[serde(with = "ethrex_core::serde_utils::bytes")]
     pub data: Bytes,
     pub gas_limit: U256,
     pub gas_price: Option<U256>,
@@ -211,7 +211,7 @@ pub struct Transaction {
     pub to: TxKind,
 }
 
-// Conversions between EFtests & ethereum_rust types
+// Conversions between EFtests & ethrex types
 impl From<Header> for BlockHeader {
     fn from(val: Header) -> Self {
         BlockHeader {
@@ -239,17 +239,17 @@ impl From<Header> for BlockHeader {
     }
 }
 
-impl From<Transaction> for ethereum_rustTransaction {
+impl From<Transaction> for ethrexTransaction {
     fn from(val: Transaction) -> Self {
         match val.transaction_type {
             Some(tx_type) => match tx_type.as_u64() {
-                0 => ethereum_rustTransaction::LegacyTransaction(val.into()),
-                1 => ethereum_rustTransaction::EIP2930Transaction(val.into()),
-                2 => ethereum_rustTransaction::EIP1559Transaction(val.into()),
-                3 => ethereum_rustTransaction::EIP4844Transaction(val.into()),
+                0 => ethrexTransaction::LegacyTransaction(val.into()),
+                1 => ethrexTransaction::EIP2930Transaction(val.into()),
+                2 => ethrexTransaction::EIP1559Transaction(val.into()),
+                3 => ethrexTransaction::EIP4844Transaction(val.into()),
                 _ => unimplemented!(),
             },
-            None => ethereum_rustTransaction::LegacyTransaction(val.into()),
+            None => ethrexTransaction::LegacyTransaction(val.into()),
         }
     }
 }
@@ -365,9 +365,9 @@ impl From<Transaction> for EIP2930Transaction {
     }
 }
 
-impl From<Account> for ethereum_rustAccount {
+impl From<Account> for ethrexAccount {
     fn from(val: Account) -> Self {
-        ethereum_rustAccount {
+        ethrexAccount {
             info: AccountInfo {
                 code_hash: code_hash(&val.code),
                 balance: val.balance,

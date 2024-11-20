@@ -1,11 +1,11 @@
 use bytes::Bytes;
-use ethereum_rust_rlp::{
+use ethereum_types::{Address, Bloom, BloomInput, H256};
+use ethrex_rlp::{
     decode::RLPDecode,
     encode::RLPEncode,
     error::RLPDecodeError,
     structs::{Decoder, Encoder},
 };
-use ethereum_types::{Address, Bloom, BloomInput, H256};
 use serde::{Deserialize, Serialize};
 
 use super::TxType;

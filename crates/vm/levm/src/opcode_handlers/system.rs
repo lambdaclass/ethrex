@@ -5,7 +5,7 @@ use crate::{
     gas_cost,
     vm::{word_to_address, VM},
 };
-use ethereum_rust_core::{types::TxKind, U256};
+use ethrex_core::{types::TxKind, U256};
 
 // System Operations (10)
 // Opcodes: CREATE, CALL, CALLCODE, RETURN, DELEGATECALL, CREATE2, STATICCALL, REVERT, INVALID, SELFDESTRUCT
@@ -87,7 +87,7 @@ impl VM {
     }
 
     // CALLCODE operation
-    // TODO: https://github.com/lambdaclass/lambda_ethereum_rust/issues/1086
+    // TODO: https://github.com/lambdaclass/lambda_ethrex/issues/1086
     pub fn op_callcode(
         &mut self,
         current_call_frame: &mut CallFrame,
@@ -192,7 +192,7 @@ impl VM {
     }
 
     // DELEGATECALL operation
-    // TODO: https://github.com/lambdaclass/lambda_ethereum_rust/issues/1086
+    // TODO: https://github.com/lambdaclass/lambda_ethrex/issues/1086
     pub fn op_delegatecall(
         &mut self,
         current_call_frame: &mut CallFrame,
@@ -260,7 +260,7 @@ impl VM {
     }
 
     // STATICCALL operation
-    // TODO: https://github.com/lambdaclass/lambda_ethereum_rust/issues/1086
+    // TODO: https://github.com/lambdaclass/lambda_ethrex/issues/1086
     pub fn op_staticcall(
         &mut self,
         current_call_frame: &mut CallFrame,
@@ -328,7 +328,7 @@ impl VM {
     }
 
     // CREATE operation
-    // TODO: https://github.com/lambdaclass/lambda_ethereum_rust/issues/1086
+    // TODO: https://github.com/lambdaclass/lambda_ethrex/issues/1086
     pub fn op_create(
         &mut self,
         current_call_frame: &mut CallFrame,
@@ -357,7 +357,7 @@ impl VM {
     }
 
     // CREATE2 operation
-    // TODO: https://github.com/lambdaclass/lambda_ethereum_rust/issues/1086
+    // TODO: https://github.com/lambdaclass/lambda_ethrex/issues/1086
     pub fn op_create2(
         &mut self,
         current_call_frame: &mut CallFrame,

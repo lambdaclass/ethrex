@@ -5,7 +5,7 @@ use crate::{
     gas_cost,
     vm::VM,
 };
-use ethereum_rust_core::U256;
+use ethrex_core::U256;
 
 // Comparison and Bitwise Logic Operations (14)
 // Opcodes: LT, GT, SLT, SGT, EQ, ISZERO, AND, OR, XOR, NOT, BYTE, SHL, SHR, SAR

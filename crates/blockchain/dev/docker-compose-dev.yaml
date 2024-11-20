@@ -1,8 +1,8 @@
 services:
-  ethereum_rust:
+  ethrex:
     restart: always
-    container_name: ethereum_rust_l1
-    image: "ethereum_rust_dev"
+    container_name: ethrex_l1
+    image: "ethrex_dev"
     build:
       context: ../../../
       dockerfile: ./crates/blockchain/dev/Dockerfile

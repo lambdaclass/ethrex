@@ -9,7 +9,7 @@ use serde::{ser::SerializeStruct, Deserialize, Serialize};
 pub use serde_impl::{AccessListEntry, GenericTransaction};
 use sha3::{Digest, Keccak256};
 
-use ethereum_rust_rlp::{
+use ethrex_rlp::{
     constants::RLP_NULL,
     decode::{get_rlp_bytes_item_payload, is_encoded_as_bytes, RLPDecode},
     encode::{PayloadRLPEncode, RLPEncode},

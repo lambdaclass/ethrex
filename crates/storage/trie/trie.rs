@@ -7,10 +7,11 @@ mod rlp;
 mod state;
 #[cfg(test)]
 mod test_utils;
+
 mod trie_iter;
 mod verify_range;
-use ethereum_rust_rlp::constants::RLP_NULL;
 use ethereum_types::H256;
+use ethrex_rlp::constants::RLP_NULL;
 use nibbles::Nibbles;
 use node::Node;
 use node_hash::NodeHash;

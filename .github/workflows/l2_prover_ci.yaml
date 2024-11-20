@@ -17,9 +17,9 @@ jobs:
       matrix:
         action:
           - command: check
-            args: -p ethereum_rust-prover
+            args: -p ethrex-prover
           - command: clippy
-            args: -p ethereum_rust-prover --all-targets --no-default-features
+            args: -p ethrex-prover --all-targets --no-default-features
     steps:
       - name: Checkout sources
         uses: actions/checkout@v4

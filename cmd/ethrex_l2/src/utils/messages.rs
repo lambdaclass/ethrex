@@ -1,4 +1,4 @@
-// `ethereum_rust_l2 config` messages
+// `ethrex_l2 config` messages
 pub const CONFIG_OVERRIDE_PROMPT_MSG: &str = "Config already exists. Do you want to overwrite it?";
 pub const CONFIG_CREATE_PROMPT_MSG: &str = "This config does not exist. Do you want to create it?";
 pub const CONFIG_CREATE_NAME_PROMPT_MSG: &str = "What do you want to name the new config?";

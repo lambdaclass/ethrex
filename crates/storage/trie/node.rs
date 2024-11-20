@@ -5,8 +5,8 @@ mod leaf;
 use std::array;
 
 pub use branch::BranchNode;
-use ethereum_rust_rlp::{decode::decode_bytes, error::RLPDecodeError, structs::Decoder};
 use ethereum_types::H256;
+use ethrex_rlp::{decode::decode_bytes, error::RLPDecodeError, structs::Decoder};
 pub use extension::ExtensionNode;
 pub use leaf::LeafNode;
 

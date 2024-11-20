@@ -2,8 +2,8 @@
 #![allow(clippy::unwrap_used)]
 
 use bytes::Bytes;
-use ethereum_rust_core::{types::TxKind, Address, H256, U256};
-use ethereum_rust_levm::{
+use ethrex_core::{types::TxKind, Address, H256, U256};
+use ethrex_levm::{
     account::Account,
     constants::*,
     db::{Cache, Db},

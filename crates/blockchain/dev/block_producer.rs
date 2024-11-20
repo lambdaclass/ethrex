@@ -1,7 +1,7 @@
 use crate::utils::engine_client::{errors::EngineClientError, EngineClient};
 use bytes::Bytes;
-use ethereum_rust_rpc::types::fork_choice::{ForkChoiceState, PayloadAttributesV3};
 use ethereum_types::{Address, H256};
+use ethrex_rpc::types::fork_choice::{ForkChoiceState, PayloadAttributesV3};
 use sha2::{Digest, Sha256};
 use std::time::{SystemTime, UNIX_EPOCH};
 

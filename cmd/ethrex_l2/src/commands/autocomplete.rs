@@ -1,4 +1,4 @@
-use crate::cli::EthereumRustL2CLI;
+use crate::cli::EthrexL2CLI;
 use clap::{CommandFactory, Subcommand, ValueEnum};
 use clap_complete::{aot::Shell, generate};
 use std::fs::{File, OpenOptions};
@@ -58,8 +58,8 @@ fn generate_bash_script(shell_arg: Option<Shell>) -> eyre::Result<()> {
     let shell = get_shell(shell_arg)?;
     generate(
         shell,
-        &mut EthereumRustL2CLI::command(),
-        "ethereum_rust_l2",
+        &mut EthrexL2CLI::command(),
+        "ethrex_l2",
         &mut io::stdout(),
     );
     Ok(())
@@ -67,9 +67,9 @@ fn generate_bash_script(shell_arg: Option<Shell>) -> eyre::Result<()> {
 
 fn shellrc_command_exists(shellrc_path: &std::path::Path, shell: Shell) -> eyre::Result<bool> {
     let expected_string = if shell == Shell::Elvish {
-        "-source $HOME/.ethereum-rust-l2-completion"
+        "-source $HOME/.ethrex-l2-completion"
     } else {
-        ". $HOME/.ethereum-rust-l2-completion"
+        ". $HOME/.ethrex-l2-completion"
     };
 
     let file = File::open(shellrc_path)?;
@@ -90,14 +90,9 @@ fn install_bash_script(shell_arg: Option<Shell>) -> eyre::Result<()> {
 
     let file_path = dirs::home_dir()
         .ok_or(eyre::eyre!("Cannot find home directory."))?
-        .join(".ethereum-rust-l2-completion");
+        .join(".ethrex-l2-completion");
     let mut file = File::create(file_path)?;
-    generate(
-        shell,
-        &mut EthereumRustL2CLI::command(),
-        "ethereum_rust_l2",
-        &mut file,
-    );
+    generate(shell, &mut EthrexL2CLI::command(), "ethrex_l2", &mut file);
     file.flush()?;
 
     let shellrc_path = dirs::home_dir()
@@ -107,9 +102,9 @@ fn install_bash_script(shell_arg: Option<Shell>) -> eyre::Result<()> {
     if !shellrc_command_exists(&shellrc_path, shell)? {
         let mut file = OpenOptions::new().append(true).open(shellrc_path)?;
         if shell == Shell::Elvish {
-            file.write_all(b"\n-source $HOME/.ethereum-rust-l2-completion\n")?;
+            file.write_all(b"\n-source $HOME/.ethrex-l2-completion\n")?;
         } else {
-            file.write_all(b"\n. $HOME/.ethereum-rust-l2-completion\n")?;
+            file.write_all(b"\n. $HOME/.ethrex-l2-completion\n")?;
         }
         file.flush()?;
     }

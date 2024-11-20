@@ -1,13 +1,13 @@
 use bytes::Bytes;
 use directories::ProjectDirs;
-use ethereum_rust_blockchain::add_block;
-use ethereum_rust_blockchain::fork_choice::apply_fork_choice;
-use ethereum_rust_core::types::{Block, Genesis};
-use ethereum_rust_core::H256;
-use ethereum_rust_net::bootnode::BootNode;
-use ethereum_rust_net::node_id_from_signing_key;
-use ethereum_rust_net::types::Node;
-use ethereum_rust_storage::{EngineType, Store};
+use ethrex_blockchain::add_block;
+use ethrex_blockchain::fork_choice::apply_fork_choice;
+use ethrex_core::types::{Block, Genesis};
+use ethrex_core::H256;
+use ethrex_net::bootnode::BootNode;
+use ethrex_net::node_id_from_signing_key;
+use ethrex_net::types::Node;
+use ethrex_storage::{EngineType, Store};
 use k256::ecdsa::SigningKey;
 use local_ip_address::local_ip;
 use std::future::IntoFuture;
@@ -26,7 +26,7 @@ use tracing_subscriber::{EnvFilter, FmtSubscriber};
 mod cli;
 mod decode;
 
-const DEFAULT_DATADIR: &str = "ethereum_rust";
+const DEFAULT_DATADIR: &str = "ethrex";
 #[tokio::main]
 async fn main() {
     let matches = cli::cli().get_matches();
@@ -161,7 +161,7 @@ async fn main() {
     let jwt_secret = read_jwtsecret_file(authrpc_jwtsecret);
 
     // TODO Learn how should the key be created
-    // https://github.com/lambdaclass/lambda_ethereum_rust/issues/836
+    // https://github.com/lambdaclass/lambda_ethrex/issues/836
     //let signer = SigningKey::random(&mut OsRng);
     let key_bytes =
         H256::from_str("577d8278cc7748fad214b5378669b420f8221afb45ce930b7f22da49cbc545f3").unwrap();
@@ -185,7 +185,7 @@ async fn main() {
 
     // TODO: Check every module starts properly.
     let tracker = TaskTracker::new();
-    let rpc_api = ethereum_rust_rpc::start_api(
+    let rpc_api = ethrex_rpc::start_api(
         http_socket_addr,
         authrpc_socket_addr,
         store.clone(),
@@ -195,7 +195,7 @@ async fn main() {
     .into_future();
 
     // TODO Find a proper place to show node information
-    // https://github.com/lambdaclass/lambda_ethereum_rust/issues/836
+    // https://github.com/lambdaclass/lambda_ethrex/issues/836
     let enode = local_p2p_node.enode_url();
     info!("Node: {enode}");
 
@@ -204,10 +204,10 @@ async fn main() {
     // We do not want to start the networking module if the l2 feature is enabled.
     cfg_if::cfg_if! {
         if #[cfg(feature = "l2")] {
-            let l2_proposer = ethereum_rust_l2::start_proposer(store).into_future();
+            let l2_proposer = ethrex_l2::start_proposer(store).into_future();
             tracker.spawn(l2_proposer);
         } else if #[cfg(feature = "dev")] {
-            use ethereum_rust_dev;
+            use ethrex_dev;
 
             let authrpc_jwtsecret = std::fs::read(authrpc_jwtsecret).expect("Failed to read JWT secret");
             let head_block_hash = {
@@ -216,10 +216,10 @@ async fn main() {
             };
             let max_tries = 3;
             let url = format!("http://{authrpc_socket_addr}");
-            let block_producer_engine = ethereum_rust_dev::block_producer::start_block_producer(url, authrpc_jwtsecret.into(), head_block_hash, max_tries, 1000, ethereum_rust_core::Address::default());
+            let block_producer_engine = ethrex_dev::block_producer::start_block_producer(url, authrpc_jwtsecret.into(), head_block_hash, max_tries, 1000, ethrex_core::Address::default());
             tracker.spawn(block_producer_engine);
         } else {
-            let networking = ethereum_rust_net::start_network(
+            let networking = ethrex_net::start_network(
                 udp_socket_addr,
                 tcp_socket_addr,
                 bootnodes,

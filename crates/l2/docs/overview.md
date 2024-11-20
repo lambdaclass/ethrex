@@ -23,7 +23,7 @@ Below some answers to these questions, along with an overview of all the moving 
 
 Now that general purpose `zkVM`s exist, most people have little trouble with the idea that you can prove execution. Just take the usual EVM code you wrote in Rust, compile to some `zkVM` target instead and you're mostly done. You can now prove it.
 
-What's usually less clear is how you prove state. Let's say we want to prove a new L2 block that was just built. Running the `ethereum_rust` `execute_block` function on a Rust `zkVM` does the trick, but that only proves that you ran the VM correctly on **some** previous state/block. How do you know it was the actual previous state of the L2 and not some other, modified one?
+What's usually less clear is how you prove state. Let's say we want to prove a new L2 block that was just built. Running the `ethrex` `execute_block` function on a Rust `zkVM` does the trick, but that only proves that you ran the VM correctly on **some** previous state/block. How do you know it was the actual previous state of the L2 and not some other, modified one?
 
 In other words, how do you ensure that:
 
@@ -36,7 +36,7 @@ To solve this, we do what we always do: instead of having the actual previous st
 The flow for the prover is then roughly as follows:
 
 - Take as public input the previous block commitment and the next (output) block commitment.
-- Execute the current block to prove its execution is valid. Here "execution" means more than just transaction execution; there's also header validation, transaction validation, etc. (essentially all the logic `ethereum_rust` needs to follow when executing and adding a new block to the chain).
+- Execute the current block to prove its execution is valid. Here "execution" means more than just transaction execution; there's also header validation, transaction validation, etc. (essentially all the logic `ethrex` needs to follow when executing and adding a new block to the chain).
 - For every storage slot read, present and verify a merkle path from it to the previous state root (i.e. previous block commitment).
 - For every storage slot written, present and verify a merkle path from it to the next state root (i.e. next block commitment).
 
@@ -65,7 +65,7 @@ Detailed documentation on the state diffs spec [here](./state_diffs.md).
 
 ### How do we prevent the sequencer from publishing the wrong state diffs?
 
-Once again, state diffs have to be part of the public input. With them, the prover can show that they are equal to the ones returned by the VM after executing the block. As always, the actual state diffs are not part of the public input, but **their hash** is, so the size is a fixed 32 bytes. This hash is then part of the block commitment. The prover then assures us that the given state diff hash is correct (i.e. it exactly corresponds to the changes in state of the executed block). 
+Once again, state diffs have to be part of the public input. With them, the prover can show that they are equal to the ones returned by the VM after executing the block. As always, the actual state diffs are not part of the public input, but **their hash** is, so the size is a fixed 32 bytes. This hash is then part of the block commitment. The prover then assures us that the given state diff hash is correct (i.e. it exactly corresponds to the changes in state of the executed block).
 
 There's still a problem however: the L1 contract needs to have the actual state diff for data availability, not just the hash. This is sent as part of calldata of the `commit` transaction (actually later as a blob, we'll get to that), so the sequencer could in theory send the wrong state diff. To make sure this can't happen, the L1 contract hashes it to make sure that it matches the actual state diff hash that is included as part of the public input.
 
@@ -85,7 +85,7 @@ This is important. If you recall, the way the L1 ensured that the state diff pub
 
 The solution is through a [proof of equivalence](https://ethresear.ch/t/easy-proof-of-equivalence-between-multiple-polynomial-commitment-schemes-to-the-same-data/8188) between polynomial commitment schemes. The idea is as follows: proofs of equivalence allow you to show that two (polynomial) commitments point to the same underlying data. In our case, we have two commitments:
 
-- The state diff commitment calculated by the sequencer/prover. 
+- The state diff commitment calculated by the sequencer/prover.
 - The KZG commitment of the blob sent on the commit transaction (recall that the blob should just be the state diff).
 
 If we turn the first one into a polynomial commitment, we can take a random evaluation point through Fiat Shamir and prove that it evaluates to the same value as the KZG blob commitment at that point. The `commit` transaction then sends the blob commitment and, through the point evaluation precompile, verifies that the given blob evaluates to that same value. If it does, the underlying blob is indeed the correct state diff.

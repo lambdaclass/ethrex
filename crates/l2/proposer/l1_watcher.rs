@@ -6,12 +6,12 @@ use crate::{
     },
 };
 use bytes::Bytes;
-use ethereum_rust_blockchain::{constants::TX_GAS_COST, mempool};
-use ethereum_rust_core::types::PrivilegedTxType;
-use ethereum_rust_core::types::{Signable, Transaction};
-use ethereum_rust_rpc::types::receipt::RpcLog;
-use ethereum_rust_storage::Store;
 use ethereum_types::{Address, BigEndianHash, H256, U256};
+use ethrex_blockchain::{constants::TX_GAS_COST, mempool};
+use ethrex_core::types::PrivilegedTxType;
+use ethrex_core::types::{Signable, Transaction};
+use ethrex_rpc::types::receipt::RpcLog;
+use ethrex_storage::Store;
 use secp256k1::SecretKey;
 use std::{cmp::min, ops::Mul, time::Duration};
 use tokio::time::sleep;

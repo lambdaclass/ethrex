@@ -1,16 +1,16 @@
 use crate::{report::EFTestsReport, types::EFTest, utils};
-use ethereum_rust_core::{
+use ethrex_core::{
     types::{code_hash, AccountInfo},
     H256, U256,
 };
-use ethereum_rust_levm::{
+use ethrex_levm::{
     db::Cache,
     errors::{TransactionReport, VMError},
     vm::VM,
     Environment,
 };
-use ethereum_rust_storage::AccountUpdate;
-use ethereum_rust_vm::db::StoreWrapper;
+use ethrex_storage::AccountUpdate;
+use ethrex_vm::db::StoreWrapper;
 use keccak_hash::keccak;
 use spinoff::{spinners::Dots, Color, Spinner};
 use std::{collections::HashMap, error::Error, sync::Arc};

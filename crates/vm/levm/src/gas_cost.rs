@@ -6,7 +6,7 @@ use crate::{
 };
 use bytes::Bytes;
 /// Contains the gas costs of the EVM instructions (in wei)
-use ethereum_rust_core::U256;
+use ethrex_core::U256;
 
 // Opcodes cost
 pub const ADD: U256 = U256([3, 0, 0, 0]);

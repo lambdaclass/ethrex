@@ -10,17 +10,17 @@ use crate::{
     },
 };
 use bytes::Bytes;
-use ethereum_rust_blockchain::constants::TX_GAS_COST;
-use ethereum_rust_core::{
+use ethrex_blockchain::constants::TX_GAS_COST;
+use ethrex_core::{
     types::{
         blobs_bundle, BlobsBundle, Block, EIP1559Transaction, GenericTransaction,
         PrivilegedL2Transaction, PrivilegedTxType, Transaction, TxKind,
     },
     Address, H256, U256,
 };
-use ethereum_rust_rpc::types::transaction::WrappedEIP4844Transaction;
-use ethereum_rust_storage::Store;
-use ethereum_rust_vm::{evm_state, execute_block, get_state_transitions};
+use ethrex_rpc::types::transaction::WrappedEIP4844Transaction;
+use ethrex_storage::Store;
+use ethrex_vm::{evm_state, execute_block, get_state_transitions};
 use keccak_hash::keccak;
 use secp256k1::SecretKey;
 use sha2::{Digest, Sha256};

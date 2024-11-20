@@ -2,7 +2,7 @@ use crate::{
     constants::{MEMORY_EXPANSION_QUOTIENT, WORD_SIZE},
     errors::{InternalError, OutOfGasError, VMError},
 };
-use ethereum_rust_core::U256;
+use ethrex_core::U256;
 
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Memory {

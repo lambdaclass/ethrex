@@ -1,5 +1,5 @@
-use ethereum_rust_l2::utils::config::{prover_client::ProverClientConfig, read_env_file};
-use ethereum_rust_prover_lib::init_client;
+use ethrex_l2::utils::config::{prover_client::ProverClientConfig, read_env_file};
+use ethrex_prover_lib::init_client;
 
 use tracing::{self, debug, warn, Level};
 

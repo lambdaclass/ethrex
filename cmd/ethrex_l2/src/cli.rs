@@ -7,14 +7,14 @@ use clap::{Parser, Subcommand};
 pub const VERSION_STRING: &str = env!("CARGO_PKG_VERSION");
 
 #[derive(Parser)]
-#[command(name="ethereum_rust_l2_cli", author, version=VERSION_STRING, about, long_about = None)]
-pub struct EthereumRustL2CLI {
+#[command(name="Ethrex_l2_cli", author, version=VERSION_STRING, about, long_about = None)]
+pub struct EthrexL2CLI {
     #[command(subcommand)]
-    command: EthereumRustL2Command,
+    command: EthrexL2Command,
 }
 
 #[derive(Subcommand)]
-enum EthereumRustL2Command {
+enum EthrexL2Command {
     #[clap(subcommand, about = "Stack related commands.")]
     Stack(stack::Command),
     #[clap(
@@ -38,18 +38,18 @@ enum EthereumRustL2Command {
 }
 
 pub async fn start() -> eyre::Result<()> {
-    let EthereumRustL2CLI { command } = EthereumRustL2CLI::parse();
-    if let EthereumRustL2Command::Config(cmd) = command {
+    let EthrexL2CLI { command } = EthrexL2CLI::parse();
+    if let EthrexL2Command::Config(cmd) = command {
         return cmd.run().await;
     }
     let cfg = load_selected_config().await?;
     match command {
-        EthereumRustL2Command::Stack(cmd) => cmd.run(cfg).await?,
-        EthereumRustL2Command::Wallet(cmd) => cmd.run(cfg).await?,
-        EthereumRustL2Command::Utils(cmd) => cmd.run().await?,
-        EthereumRustL2Command::Autocomplete(cmd) => cmd.run()?,
-        EthereumRustL2Command::Config(_) => unreachable!(),
-        EthereumRustL2Command::Test(cmd) => cmd.run(cfg).await?,
+        EthrexL2Command::Stack(cmd) => cmd.run(cfg).await?,
+        EthrexL2Command::Wallet(cmd) => cmd.run(cfg).await?,
+        EthrexL2Command::Utils(cmd) => cmd.run().await?,
+        EthrexL2Command::Autocomplete(cmd) => cmd.run()?,
+        EthrexL2Command::Config(_) => unreachable!(),
+        EthrexL2Command::Test(cmd) => cmd.run(cfg).await?,
     };
     Ok(())
 }

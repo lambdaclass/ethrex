@@ -1,11 +1,11 @@
 use bytes::Bytes;
-use ethereum_rust_trie::Trie;
 use ethereum_types::{Address, Bloom, H256, U256};
+use ethrex_trie::Trie;
 use serde::{Deserialize, Serialize};
 use sha3::{Digest, Keccak256};
 use std::collections::HashMap;
 
-use ethereum_rust_rlp::encode::RLPEncode;
+use ethrex_rlp::encode::RLPEncode;
 
 use super::{
     compute_receipts_root, compute_transactions_root, compute_withdrawals_root, AccountState,

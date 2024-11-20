@@ -1,5 +1,5 @@
 [package]
-name = "ethereum_rust-rpc"
+name = "ethrex-rpc"
 version = "0.1.0"
 edition = "2021"
 
@@ -13,12 +13,12 @@ tokio.workspace = true
 bytes.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
-ethereum_rust-core.workspace = true
-ethereum_rust-storage.workspace = true
-ethereum_rust-vm.workspace = true
-ethereum_rust-blockchain.workspace = true
-ethereum_rust-net.workspace = true
-ethereum_rust-rlp.workspace = true
+ethrex-core.workspace = true
+ethrex-storage.workspace = true
+ethrex-vm.workspace = true
+ethrex-blockchain.workspace = true
+ethrex-net.workspace = true
+ethrex-rlp.workspace = true
 hex.workspace = true
 axum-extra = { version = "0.9.3", features = ["typed-header"] }
 jsonwebtoken.workspace = true

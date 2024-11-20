@@ -1,12 +1,12 @@
-use ethereum_rust_blockchain::constants::MAX_BLOB_GAS_PER_BLOCK;
-use ethereum_rust_core::types::{Block, Transaction};
+use ethrex_blockchain::constants::MAX_BLOB_GAS_PER_BLOCK;
+use ethrex_core::types::{Block, Transaction};
 use serde::Serialize;
 use serde_json::Value;
 use tracing::info;
 
 use crate::{types::block_identifier::BlockIdentifier, utils::RpcErr, RpcApiContext, RpcHandler};
-use ethereum_rust_core::types::calculate_base_fee_per_blob_gas;
-use ethereum_rust_storage::Store;
+use ethrex_core::types::calculate_base_fee_per_blob_gas;
+use ethrex_storage::Store;
 
 #[derive(Clone, Debug)]
 pub struct FeeHistoryRequest {

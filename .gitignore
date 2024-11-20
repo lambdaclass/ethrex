@@ -13,7 +13,7 @@ Cargo.lock
 # MSVC Windows builds of rustc generate these, which store debugging information
 *.pdb
 
-cmd/ef_tests/ethereum_rust/vectors
+cmd/ef_tests/ethrex/vectors
 cmd/ef_tests/levm/vectors
 
 # Repos checked out by make target

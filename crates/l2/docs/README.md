@@ -19,7 +19,7 @@ Configuration is done through env vars. A detailed list is available in each par
 Load tests are available via L2 CLI. The test take a list of private keys and send a bunch of transactions from each of them to some address. To run them, use the following command:
 
 ```bash
-cargo run --bin ethereum_rust_l2 -- test load --path <path-to-pks>
+cargo run --bin ethrex_l2 -- test load --path <path-to-pks>
 ```
 
 The path should point to a plain text file containing a list of private keys, one per line. Those account must be funded on the L2 network. Use `--help` to see more available options.

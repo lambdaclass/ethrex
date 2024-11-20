@@ -1,10 +1,10 @@
 [package]
-name = "ethereum_rust-trie"
+name = "ethrex-trie"
 version.workspace = true
 edition.workspace = true
 
 [dependencies]
-ethereum_rust-rlp.workspace = true
+ethrex-rlp.workspace = true
 
 ethereum-types = "0.14.1"
 anyhow = "1.0.86"

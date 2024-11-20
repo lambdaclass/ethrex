@@ -1,5 +1,5 @@
-use ethereum_rust_rlp::error::RLPDecodeError;
-use ethereum_rust_trie::TrieError;
+use ethrex_rlp::error::RLPDecodeError;
+use ethrex_trie::TrieError;
 use thiserror::Error;
 
 // TODO improve errors

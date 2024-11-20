@@ -5,7 +5,7 @@ use crate::{
     gas_cost,
     vm::{address_to_word, VM},
 };
-use ethereum_rust_core::{
+use ethrex_core::{
     types::{BLOB_BASE_FEE_UPDATE_FRACTION, MIN_BASE_FEE_PER_BLOB_GAS},
     H256, U256,
 };

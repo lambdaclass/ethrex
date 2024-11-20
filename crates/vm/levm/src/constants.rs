@@ -1,4 +1,4 @@
-use ethereum_rust_core::{H256, U256};
+use ethrex_core::{H256, U256};
 
 pub const SUCCESS_FOR_CALL: i32 = 1;
 pub const REVERT_FOR_CALL: i32 = 0;
@@ -27,7 +27,7 @@ pub const MAX_CREATE_CODE_SIZE: usize = 2 * MAX_CODE_SIZE;
 pub const INVALID_CONTRACT_PREFIX: u8 = 0xef;
 
 pub mod create_opcode {
-    use ethereum_rust_core::U256;
+    use ethrex_core::U256;
 
     pub const INIT_CODE_WORD_COST: U256 = U256([2, 0, 0, 0]);
     pub const CODE_DEPOSIT_COST: U256 = U256([200, 0, 0, 0]);

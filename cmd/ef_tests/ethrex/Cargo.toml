@@ -1,13 +1,13 @@
 [package]
-name = "ef_tests-ethereum_rust"
+name = "ef_tests-ethrex"
 version.workspace = true
 edition.workspace = true
 
 [dependencies]
-ethereum_rust-blockchain.workspace = true
-ethereum_rust-core.workspace = true
-ethereum_rust-storage.workspace = true
-ethereum_rust-rlp.workspace = true
+ethrex-blockchain.workspace = true
+ethrex-core.workspace = true
+ethrex-storage.workspace = true
+ethrex-rlp.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 bytes.workspace = true

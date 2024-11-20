@@ -4,7 +4,7 @@ use crate::{
     gas_cost,
     vm::VM,
 };
-use ethereum_rust_core::U256;
+use ethrex_core::U256;
 use sha3::{Digest, Keccak256};
 
 // KECCAK256 (1)

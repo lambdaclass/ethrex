@@ -1,5 +1,5 @@
 [package]
-name = "ethereum_rust-blockchain"
+name = "ethrex-blockchain"
 version = "0.1.0"
 edition = "2021"
 
@@ -12,10 +12,10 @@ tracing.workspace = true
 bytes.workspace = true
 cfg-if = "1.0.0"
 
-ethereum_rust-rlp.workspace = true
-ethereum_rust-core = { path = "../common", default-features = false }
-ethereum_rust-storage = { path = "../storage/store", default-features = false }
-ethereum_rust-vm = { path = "../vm", default-features = false }
+ethrex-rlp.workspace = true
+ethrex-core = { path = "../common", default-features = false }
+ethrex-storage = { path = "../storage/store", default-features = false }
+ethrex-vm = { path = "../vm", default-features = false }
 
 k256 = { version = "0.13.3", features = ["ecdh"] }
 
@@ -29,9 +29,9 @@ path = "./blockchain.rs"
 [features]
 default = ["libmdbx", "c-kzg"]
 libmdbx = [
-    "ethereum_rust-core/libmdbx",
-    "ethereum_rust-storage/default",
-    "ethereum_rust-vm/libmdbx",
+    "ethrex-core/libmdbx",
+    "ethrex-storage/default",
+    "ethrex-vm/libmdbx",
 ]
-levm = ["ethereum_rust-vm/levm"]
-c-kzg =["ethereum_rust-core/c-kzg"]
+levm = ["ethrex-vm/levm"]
+c-kzg =["ethrex-core/c-kzg"]

@@ -1,9 +1,9 @@
-use crate::config::EthereumRustL2Config;
+use crate::config::EthrexL2Config;
 use bytes::Bytes;
 use clap::Subcommand;
-use ethereum_rust_blockchain::constants::TX_GAS_COST;
-use ethereum_rust_l2::utils::eth_client::{eth_sender::Overrides, EthClient};
 use ethereum_types::{Address, H160, H256, U256};
+use ethrex_blockchain::constants::TX_GAS_COST;
+use ethrex_l2::utils::eth_client::{eth_sender::Overrides, EthClient};
 use keccak_hash::keccak;
 use secp256k1::SecretKey;
 use std::{
@@ -67,7 +67,7 @@ async fn transfer_from(
     value: U256,
     iterations: u64,
     verbose: bool,
-    cfg: EthereumRustL2Config,
+    cfg: EthrexL2Config,
 ) -> u64 {
     let client = EthClient::new(&cfg.network.l2_rpc_url);
     let private_key = SecretKey::from_slice(pk.parse::<H256>().unwrap().as_bytes()).unwrap();
@@ -117,7 +117,7 @@ async fn transfer_from(
 }
 
 impl Command {
-    pub async fn run(self, cfg: EthereumRustL2Config) -> eyre::Result<()> {
+    pub async fn run(self, cfg: EthrexL2Config) -> eyre::Result<()> {
         match self {
             Command::Load {
                 path,

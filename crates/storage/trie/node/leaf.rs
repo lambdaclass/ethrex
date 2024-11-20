@@ -1,4 +1,4 @@
-use ethereum_rust_rlp::structs::Encoder;
+use ethrex_rlp::structs::Encoder;
 
 use crate::{
     error::TrieError, nibbles::Nibbles, node::BranchNode, node_hash::NodeHash, state::TrieState,

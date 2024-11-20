@@ -1,5 +1,5 @@
 use bytes::Bytes;
-use ethereum_rust_levm::{call_frame::CallFrame, errors::TxResult, utils::new_vm_with_bytecode};
+use ethrex_levm::{call_frame::CallFrame, errors::TxResult, utils::new_vm_with_bytecode};
 use revm::{
     db::BenchmarkDB,
     primitives::{address, Bytecode, TransactTo},

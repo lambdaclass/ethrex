@@ -1,7 +1,7 @@
 use crate::rlpx::utils::{ecdh_xchng, id2pubkey, kdf, pubkey2id, sha256, sha256_hmac};
 use aes::cipher::{KeyIvInit, StreamCipher};
-use ethereum_rust_core::{Signature, H128, H256, H512};
-use ethereum_rust_rlp::{
+use ethrex_core::{Signature, H128, H256, H512};
+use ethrex_rlp::{
     decode::RLPDecode,
     encode::RLPEncode,
     error::RLPDecodeError,
@@ -320,7 +320,7 @@ impl RLPDecode for AckMessage {
 mod tests {
     use std::str::FromStr;
 
-    use ethereum_rust_core::H256;
+    use ethrex_core::H256;
     use hex_literal::hex;
     use k256::SecretKey;
 

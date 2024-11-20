@@ -6,12 +6,12 @@ use zkvm_interface::methods::{ZKVM_PROGRAM_ELF, ZKVM_PROGRAM_ID};
 
 use risc0_zkvm::{default_prover, ExecutorEnv, ExecutorEnvBuilder, ProverOpts};
 
-use ethereum_rust_core::types::Receipt;
-use ethereum_rust_l2::{
+use ethrex_core::types::Receipt;
+use ethrex_l2::{
     proposer::prover_server::ProverInputData, utils::config::prover_client::ProverClientConfig,
 };
-use ethereum_rust_rlp::encode::RLPEncode;
-use ethereum_rust_vm::execution_db::ExecutionDB;
+use ethrex_rlp::encode::RLPEncode;
+use ethrex_vm::execution_db::ExecutionDB;
 
 // The order of variables in this structure should match the order in which they were
 // committed in the zkVM, with each variable represented by a field.

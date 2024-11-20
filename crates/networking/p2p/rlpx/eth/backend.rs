@@ -1,5 +1,5 @@
-use ethereum_rust_core::{types::ForkId, U256};
-use ethereum_rust_storage::Store;
+use ethrex_core::{types::ForkId, U256};
+use ethrex_storage::Store;
 
 use crate::rlpx::error::RLPxError;
 

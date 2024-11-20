@@ -3,7 +3,7 @@ use crate::{
     errors::{InternalError, VMError},
 };
 use bytes::Bytes;
-use ethereum_rust_core::{H256, U256};
+use ethrex_core::{H256, U256};
 use keccak_hash::keccak;
 use std::collections::HashMap;
 

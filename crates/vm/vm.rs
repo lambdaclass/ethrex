@@ -9,14 +9,14 @@ use db::StoreWrapper;
 use execution_db::ExecutionDB;
 use std::cmp::min;
 
-use ethereum_rust_core::{
+use ethrex_core::{
     types::{
         AccountInfo, Block, BlockHash, BlockHeader, ChainConfig, Fork, GenericTransaction,
         PrivilegedTxType, Receipt, Transaction, TxKind, Withdrawal, GWEI_TO_WEI, INITIAL_BASE_FEE,
     },
     Address, BigEndianHash, H256, U256,
 };
-use ethereum_rust_storage::{error::StoreError, AccountUpdate, Store};
+use ethrex_storage::{error::StoreError, AccountUpdate, Store};
 use lazy_static::lazy_static;
 use revm::{
     db::{states::bundle_state::BundleRetention, AccountState, AccountStatus},
@@ -79,14 +79,14 @@ impl From<ExecutionDB> for EvmState {
 
 cfg_if::cfg_if! {
     if #[cfg(feature = "levm")] {
-        use ethereum_rust_levm::{
+        use ethrex_levm::{
             db::{Cache, Database as LevmDatabase},
             errors::{TransactionReport, TxResult, VMError},
             vm::VM,
             Environment,
         };
         use std::{collections::HashMap, sync::Arc};
-        use ethereum_rust_core::types::code_hash;
+        use ethrex_core::types::code_hash;
 
         /// Executes all transactions in a block and returns their receipts.
         pub fn execute_block(
@@ -116,7 +116,7 @@ cfg_if::cfg_if! {
                     transaction.tx_type(),
                     matches!(result.result, TxResult::Success),
                     cumulative_gas_used,
-                    // TODO: https://github.com/lambdaclass/lambda_ethereum_rust/issues/1089
+                    // TODO: https://github.com/lambdaclass/lambda_ethrex/issues/1089
                     vec![],
                 );
                 receipts.push(receipt);

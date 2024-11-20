@@ -1,4 +1,4 @@
-use ethereum_rust_rlp::error::RLPDecodeError;
+use ethrex_rlp::error::RLPDecodeError;
 use thiserror::Error;
 
 #[derive(Debug, Error)]
