@@ -1,0 +1,30 @@
+name: Docker build
+
+on:
+    workflow_call:
+
+jobs:
+    docker-build:
+        name: Docker Build image
+        runs-on: ubuntu-latest
+        steps:
+            - uses: actions/checkout@v4
+
+            - name: Set up Docker Buildx
+              uses: docker/setup-buildx-action@v3
+
+            - name: Build Docker image
+              uses: docker/build-push-action@v5
+              with:
+                    context: .
+                    file: ./Dockerfile
+                    load: true
+                    tags: ethrex
+                    outputs: type=docker,dest=/tmp/ethrex_image.tar
+
+            - name: Upload artifacts
+              uses: actions/upload-artifact@v4
+              with:
+                    name: ethrex_image
+                    path: /tmp/ethrex_image.tar
+
