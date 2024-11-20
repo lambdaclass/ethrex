@@ -13,6 +13,7 @@ members = [
     "cmd/ef_tests/ethrex",
     "cmd/ef_tests/levm",
     "cmd/ethrex_l2",
+    "cmd/hive_report",
     "crates/vm/levm",
     "crates/vm/levm/bench/revm_comparison",
     "crates/l2/",
@@ -22,11 +23,7 @@ members = [
 ]
 resolver = "2"
 
-default-members = [
-    "cmd/ethrex",
-    "cmd/ethrex_l2",
-    "crates/l2/prover",
-]
+default-members = ["cmd/ethrex", "cmd/ethrex_l2", "crates/l2/prover"]
 
 [workspace.package]
 version = "0.1.0"

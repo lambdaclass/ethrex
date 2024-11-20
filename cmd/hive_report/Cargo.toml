@@ -1,0 +1,8 @@
+[package]
+name = "hive_report"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+serde_json.workspace = true
+serde.workspace = true
