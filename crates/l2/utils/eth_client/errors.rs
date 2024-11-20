@@ -20,6 +20,8 @@ pub enum EthClientError {
     GetBlockNumberError(#[from] GetBlockNumberError),
     #[error("eth_getBlockByHash request error: {0}")]
     GetBlockByHashError(#[from] GetBlockByHashError),
+    #[error("eth_getBlockByNumber request error: {0}")]
+    GetBlockByNumberError(#[from] GetBlockByNumberError),
     #[error("eth_getLogs request error: {0}")]
     GetLogsError(#[from] GetLogsError),
     #[error("eth_getTransactionReceipt request error: {0}")]
@@ -118,6 +120,14 @@ pub enum GetBlockByHashError {
     RPCError(String),
     #[error("{0}")]
     ParseIntError(#[from] std::num::ParseIntError),
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum GetBlockByNumberError {
+    #[error("{0}")]
+    SerdeJSONError(#[from] serde_json::Error),
+    #[error("{0}")]
+    RPCError(String),
 }
 
 #[derive(Debug, thiserror::Error)]
