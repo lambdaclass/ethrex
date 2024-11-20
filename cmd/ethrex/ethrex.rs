@@ -1,5 +1,6 @@
 use bytes::Bytes;
 use directories::ProjectDirs;
+
 use ethrex_blockchain::add_block;
 use ethrex_blockchain::fork_choice::apply_fork_choice;
 use ethrex_core::types::{Block, Genesis};
@@ -7,9 +8,11 @@ use ethrex_core::H256;
 use ethrex_net::bootnode::BootNode;
 use ethrex_net::node_id_from_signing_key;
 use ethrex_net::types::Node;
+use ethrex_rlp::decode::RLPDecode;
 use ethrex_storage::{EngineType, Store};
 use k256::ecdsa::SigningKey;
 use local_ip_address::local_ip;
+use std::fs;
 use std::future::IntoFuture;
 use std::path::Path;
 use std::str::FromStr as _;
@@ -122,42 +125,30 @@ async fn main() {
         .expect("Failed to create genesis block");
 
     if let Some(chain_rlp_path) = matches.get_one::<String>("import") {
+        info!("Importing blocks from chain file: {}", chain_rlp_path);
         let blocks = read_chain_file(chain_rlp_path);
-        let size = blocks.len();
-        for block in &blocks {
-            let hash = block.hash();
-            info!(
-                "Adding block {} with hash {:#x}.",
-                block.header.number, hash
-            );
-            let result = add_block(block, &store);
-            if let Some(error) = result.err() {
-                warn!(
-                    "Failed to add block {} with hash {:#x}: {}.",
-                    block.header.number, hash, error
-                );
-            }
-            if store
-                .update_latest_block_number(block.header.number)
-                .is_err()
-            {
-                error!("Fatal: added block {} but could not update the block number -- aborting block import", block.header.number);
-                break;
-            };
-            if store
-                .set_canonical_block(block.header.number, hash)
-                .is_err()
-            {
-                error!("Fatal: added block {} but could not set it as canonical -- aborting block import", block.header.number);
-                break;
-            };
-        }
-        if let Some(last_block) = blocks.last() {
-            let hash = last_block.hash();
-            apply_fork_choice(&store, hash, hash, hash).unwrap();
-        }
-        info!("Added {} blocks to blockchain", size);
+        import_blocks(&store, &blocks);
     }
+
+    if let Some(blocks_path) = matches.get_one::<String>("import_dir") {
+        info!(
+            "Importing blocks from individual block files in directory: {}",
+            blocks_path
+        );
+        let mut blocks = vec![];
+        let dir_reader = fs::read_dir(blocks_path).expect("Failed to read blocks directory");
+        for file_res in dir_reader {
+            let file = file_res.expect("Failed to open file in directory");
+            let path = file.path();
+            let s = path
+                .to_str()
+                .expect("Path could not be converted into string");
+            blocks.push(read_block_file(s));
+        }
+
+        import_blocks(&store, &blocks);
+    }
+
     let jwt_secret = read_jwtsecret_file(authrpc_jwtsecret);
 
     // TODO Learn how should the key be created
@@ -268,6 +259,13 @@ fn read_chain_file(chain_rlp_path: &str) -> Vec<Block> {
     decode::chain_file(chain_file).expect("Failed to decode chain rlp file")
 }
 
+fn read_block_file(block_file_path: &str) -> Block {
+    let encoded_block = std::fs::read(block_file_path)
+        .unwrap_or_else(|_| panic!("Failed to read block file with path {}", block_file_path));
+    Block::decode(&encoded_block)
+        .unwrap_or_else(|_| panic!("Failed to decode block file {}", block_file_path))
+}
+
 fn read_genesis_file(genesis_file_path: &str) -> Genesis {
     let genesis_file = std::fs::File::open(genesis_file_path).expect("Failed to open genesis file");
     decode::genesis_file(genesis_file).expect("Failed to decode genesis file")
@@ -291,4 +289,44 @@ fn set_datadir(datadir: &str) -> String {
         .to_str()
         .expect("invalid data directory")
         .to_owned()
+}
+
+fn import_blocks(store: &Store, blocks: &Vec<Block>) {
+    let size = blocks.len();
+    for block in blocks {
+        let hash = block.hash();
+        info!(
+            "Adding block {} with hash {:#x}.",
+            block.header.number, hash
+        );
+        let result = add_block(block, store);
+        if let Some(error) = result.err() {
+            warn!(
+                "Failed to add block {} with hash {:#x}: {}.",
+                block.header.number, hash, error
+            );
+        }
+        if store
+            .update_latest_block_number(block.header.number)
+            .is_err()
+        {
+            error!("Fatal: added block {} but could not update the block number -- aborting block import", block.header.number);
+            break;
+        };
+        if store
+            .set_canonical_block(block.header.number, hash)
+            .is_err()
+        {
+            error!(
+                "Fatal: added block {} but could not set it as canonical -- aborting block import",
+                block.header.number
+            );
+            break;
+        };
+    }
+    if let Some(last_block) = blocks.last() {
+        let hash = last_block.hash();
+        apply_fork_choice(store, hash, hash, hash).unwrap();
+    }
+    info!("Added {} blocks to blockchain", size);
 }

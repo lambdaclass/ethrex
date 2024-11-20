@@ -104,6 +104,12 @@ pub fn cli() -> Command {
                 .required(false)
                 .value_name("CHAIN_RLP_PATH"),
         )
+        .arg(
+            Arg::new("import_dir")
+                .long("import_dir")
+                .required(false)
+                .value_name("BLOCKS_DIR_PATH"),
+        )
         .subcommand(
             Command::new("removedb").about("Remove the database").arg(
                 Arg::new("datadir")
