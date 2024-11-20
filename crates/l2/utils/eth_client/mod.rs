@@ -25,7 +25,6 @@ use reqwest::Client;
 use secp256k1::SecretKey;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use sha2::{Digest, Sha256};
 
 pub mod errors;
 pub mod eth_sender;
@@ -446,17 +445,7 @@ impl EthClient {
         overrides: Overrides,
         blobs_bundle: BlobsBundle,
     ) -> Result<WrappedEIP4844Transaction, EthClientError> {
-        let blob_versioned_hashes = blobs_bundle
-            .commitments
-            .iter()
-            .map(|commitment| {
-                let mut hasher = Sha256::new();
-                hasher.update(commitment);
-                let mut blob_versioned_hash = hasher.finalize();
-                blob_versioned_hash[0] = 0x01; // EIP-4844 versioning
-                H256::from_slice(blob_versioned_hash.as_slice())
-            })
-            .collect::<Vec<H256>>();
+        let blob_versioned_hashes = blobs_bundle.generate_versioned_hashes();
 
         let mut tx = EIP4844Transaction {
             to,
