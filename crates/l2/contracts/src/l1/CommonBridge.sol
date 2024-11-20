@@ -56,6 +56,11 @@ contract CommonBridge is ICommonBridge, Ownable, ReentrancyGuard {
     }
 
     /// @inheritdoc ICommonBridge
+    function getDepositLogs() public view returns (bytes32[] memory) {
+        return depositLogs;
+    }
+
+    /// @inheritdoc ICommonBridge
     function deposit(address to) public payable {
         require(msg.value > 0, "CommonBridge: amount to deposit is zero");
 

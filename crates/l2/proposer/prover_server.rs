@@ -105,6 +105,9 @@ pub async fn start_prover_server(store: Store) {
                 .await
                 .unwrap();
 
+            info!("Sending verify transaction with tx hash: {tx_hash:#x}");
+
+            let mut retries = 1;
             while eth_client
                 .get_transaction_receipt(tx_hash)
                 .await
@@ -112,9 +115,17 @@ pub async fn start_prover_server(store: Store) {
                 .is_none()
             {
                 thread::sleep(Duration::from_secs(1));
+                retries += 1;
+                if retries > 10 {
+                    error!("Couldn't find receipt for transaction {tx_hash:#x}");
+                    panic!("Couldn't find receipt for transaction {tx_hash:#x}");
+                }
             }
 
-            info!("Mocked verify transaction sent");
+            info!(
+                "Mocked verify transaction sent for block {}",
+                last_verified_block + 1
+            );
         }
     } else {
         let mut prover_server = ProverServer::new_from_config(

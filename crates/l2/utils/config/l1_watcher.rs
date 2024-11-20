@@ -13,7 +13,6 @@ pub struct L1WatcherConfig {
     pub max_block_step: U256,
     #[serde(deserialize_with = "secret_key_deserializer")]
     pub l2_proposer_private_key: SecretKey,
-    pub l2_proposer_address: Address,
 }
 
 impl L1WatcherConfig {
