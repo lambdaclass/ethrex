@@ -16,7 +16,7 @@ serde_json.workspace = true
 thiserror.workspace = true
 k256.workspace = true
 # TODO(#1102): Move to Lambdaworks in the future
-c-kzg = "^1.0.3"
+c-kzg = { version = "^1.0.3", optional = true }
 keccak-hash = "0.10.0"
 sha3.workspace = true
 secp256k1.workspace = true
@@ -30,8 +30,9 @@ lazy_static.workspace = true
 hex-literal.workspace = true
 
 [features]
-default = ["libmdbx"]
+default = ["libmdbx", "c-kzg"]
 libmdbx = ["ethereum_rust-trie/libmdbx"]
+c-kzg = ["dep:c-kzg"]
 
 [lib]
 path = "./core.rs"

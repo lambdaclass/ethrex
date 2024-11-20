@@ -1,3 +1,4 @@
+#[cfg(feature = "c-kzg")]
 use lazy_static::lazy_static;
 use std::ops::AddAssign;
 
@@ -6,7 +7,10 @@ use crate::{
     types::{constants::VERSIONED_HASH_VERSION_KZG, transaction::EIP4844Transaction},
     Bytes, H256,
 };
+
+#[cfg(feature = "c-kzg")]
 use c_kzg::{ethereum_kzg_settings, KzgCommitment, KzgProof, KzgSettings};
+
 use ethereum_rust_rlp::{
     decode::RLPDecode,
     encode::RLPEncode,
@@ -22,6 +26,7 @@ pub type Blob = [u8; BYTES_PER_BLOB];
 pub type Commitment = Bytes48;
 pub type Proof = Bytes48;
 
+#[cfg(feature = "c-kzg")]
 lazy_static! {
     static ref KZG_SETTINGS: &'static KzgSettings = ethereum_kzg_settings();
 }
@@ -65,6 +70,7 @@ fn kzg_commitment_to_versioned_hash(data: &Commitment) -> H256 {
     versioned_hash.into()
 }
 
+#[cfg(feature = "c-kzg")]
 fn blob_to_kzg_commitment_and_proof(blob: &Blob) -> Result<(Commitment, Proof), BlobsBundleError> {
     let blob: c_kzg::Blob = (*blob).into();
 
@@ -81,6 +87,7 @@ fn blob_to_kzg_commitment_and_proof(blob: &Blob) -> Result<(Commitment, Proof), 
     Ok((commitment_bytes.into_inner(), proof_bytes.into_inner()))
 }
 
+#[cfg(feature = "c-kzg")]
 fn verify_blob_kzg_proof(
     blob: Blob,
     commitment: Commitment,
@@ -96,6 +103,7 @@ fn verify_blob_kzg_proof(
 
 impl BlobsBundle {
     // In the future we might want to provide a new method that calculates the commitments and proofs using the following.
+    #[cfg(feature = "c-kzg")]
     pub fn create_from_blobs(blobs: &Vec<Blob>) -> Result<Self, BlobsBundleError> {
         let mut commitments = Vec::new();
         let mut proofs = Vec::new();
@@ -121,6 +129,7 @@ impl BlobsBundle {
             .collect()
     }
 
+    #[cfg(feature = "c-kzg")]
     pub fn validate(&self, tx: &EIP4844Transaction) -> Result<(), BlobsBundleError> {
         let blob_count = self.blobs.len();
 

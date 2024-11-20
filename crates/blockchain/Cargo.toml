@@ -27,10 +27,11 @@ hex = "0.4.3"
 path = "./blockchain.rs"
 
 [features]
-default = ["libmdbx"]
+default = ["libmdbx", "c-kzg"]
 libmdbx = [
     "ethereum_rust-core/libmdbx",
     "ethereum_rust-storage/default",
     "ethereum_rust-vm/libmdbx",
 ]
 levm = ["ethereum_rust-vm/levm"]
+c-kzg =["ethereum_rust-core/c-kzg"]
