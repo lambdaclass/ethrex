@@ -7,4 +7,6 @@ pub enum TrieError {
     LibmdbxError(anyhow::Error),
     #[error(transparent)]
     RLPDecode(#[from] RLPDecodeError),
+    #[error("Verification Error: {0}")]
+    Verify(String),
 }
