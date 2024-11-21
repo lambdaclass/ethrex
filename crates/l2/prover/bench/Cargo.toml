@@ -1,0 +1,20 @@
+[package]
+name = "bench"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+ethrex-core.workspace = true
+ethrex-vm.workspace = true
+ethrex-rlp.workspace = true
+ethrex-l2.workspace = true
+
+zkvm_interface = { path = "../zkvm/interface", default-features = false }
+
+[[bin]]
+name = "ethrexl2"
+path = "src/ethrexl2.rs"
+
+[[bin]]
+name = "rsp"
+path = "src/rsp.rs"
