@@ -13,7 +13,6 @@ jobs:
   loc:
     name: Count ethrex loc and generate report
     runs-on: ubuntu-latest
-    needs: [build]
     steps:
       - name: Checkout sources
         uses: actions/checkout@v4
