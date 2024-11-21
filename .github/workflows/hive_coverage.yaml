@@ -1,9 +1,10 @@
-name: Weekly Hive Coverage
+name: Daily Hive Coverage
 
 on:
   schedule:
-    # Every Friday at midnight
-    - cron: '0 0 * * 5'
+    # Every day at UTC midnight
+    - cron: '0 0 * * *'
+  workflow_dispatch:
 
 env:
   RUST_VERSION: 1.80.1
@@ -41,3 +42,10 @@ jobs:
 
       - name: Run Hive Simulation
         run: make run-hive-on-latest SIMULATION=ethereum/engine
+        continue-on-error: true
+
+      - name: Caching
+        uses: Swatinem/rust-cache@v2
+
+      - name: Generate the hive report
+        run: cargo run -p hive_report
