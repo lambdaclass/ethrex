@@ -1,3 +1,8 @@
+use crate::utils::save_prover_state::{self, *};
+use ethrex_core::{
+    types::{Block, BlockHeader, EIP1559Transaction},
+    Address, H256,
+};
 use ethrex_storage::Store;
 use ethrex_vm::{execution_db::ExecutionDB, EvmError};
 use keccak_hash::keccak;
@@ -15,11 +20,6 @@ use tokio::{
     time::sleep,
 };
 use tracing::{debug, error, info, warn};
-
-use ethrex_core::{
-    types::{Block, BlockHeader, EIP1559Transaction},
-    Address, H256,
-};
 
 use risc0_zkvm::sha::{Digest, Digestible};
 
@@ -190,7 +190,6 @@ struct ProverServer {
     on_chain_proposer_address: Address,
     verifier_address: Address,
     verifier_private_key: SecretKey,
-    last_verified_block: u64,
 }
 
 impl ProverServer {
@@ -203,15 +202,6 @@ impl ProverServer {
         let eth_client = EthClient::new(&eth_config.rpc_url);
         let on_chain_proposer_address = committer_config.on_chain_proposer_address;
 
-        let last_verified_block =
-            EthClient::get_last_verified_block(&eth_client, on_chain_proposer_address).await?;
-
-        let last_verified_block = if last_verified_block == u64::MAX {
-            0
-        } else {
-            last_verified_block
-        };
-
         Ok(Self {
             ip: config.listen_ip,
             port: config.listen_port,
@@ -220,7 +210,6 @@ impl ProverServer {
             on_chain_proposer_address,
             verifier_address: config.verifier_address,
             verifier_private_key: config.verifier_private_key,
-            last_verified_block,
         })
     }
 
@@ -251,15 +240,24 @@ impl ProverServer {
     }
 
     async fn handle_connection(&mut self, mut stream: TcpStream) -> Result<(), ProverServerError> {
+        // Get latestVerfiedBlock
+        let last_verified_block =
+            EthClient::get_last_verified_block(&self.eth_client, self.on_chain_proposer_address)
+                .await?;
+        let last_verified_block = if last_verified_block == u64::MAX {
+            0
+        } else {
+            last_verified_block
+        };
+
+        let block_to_verify = last_verified_block + 1;
+
         let buf_reader = BufReader::new(&stream);
 
         let data: Result<ProofData, _> = serde_json::de::from_reader(buf_reader);
         match data {
             Ok(ProofData::Request) => {
-                if let Err(e) = self
-                    .handle_request(&mut stream, self.last_verified_block + 1)
-                    .await
-                {
+                if let Err(e) = self.handle_request(&mut stream, block_to_verify).await {
                     warn!("Failed to handle request: {e}");
                 }
             }
@@ -267,16 +265,28 @@ impl ProverServer {
                 block_number,
                 receipt,
             }) => {
-                self.handle_proof_submission(block_number, receipt.clone())
-                    .await?;
+                // Save Proof
+                save_prover_state::write_state_in_block_state_path(
+                    block_number,
+                    StateType::Proof(receipt.clone()),
+                    StateFileType::Proof,
+                )
+                .map_err(|e| {
+                    ProverServerError::FailedToSaveState(
+                        format!("Failed to write proof: {e:?}").to_owned(),
+                    )
+                })?;
+
+                let _ = self
+                    .handle_proof_submission(block_number, receipt.clone())
+                    .await;
 
                 if let Err(e) = self.handle_submit(&mut stream, block_number) {
                     error!("Failed to handle submit_ack: {e}");
                     panic!("Failed to handle submit_ack: {e}");
                 }
 
-                assert!(block_number == (self.last_verified_block + 1), "Prover Client submitted an invalid block_number: {block_number}. The last_proved_block is: {}", self.last_verified_block);
-                self.last_verified_block = block_number;
+                assert!(block_number == (block_to_verify), "Prover Client submitted an invalid block_number: {block_number}. The last_proved_block is: {}", block_to_verify);
             }
             Err(e) => {
                 warn!("Failed to parse request: {e}");
@@ -293,10 +303,64 @@ impl ProverServer {
     async fn handle_request(
         &self,
         stream: &mut TcpStream,
-        block_number: u64,
+        block_to_verify: u64,
     ) -> Result<(), ProverServerError> {
         debug!("Request received");
+        // How to Handle shut-downs?
+        // 1. Read latest proof from file
+        // 2. Check if we have the proof of the block_to_verify == latestVerifiedBlock + 1
+        //   - if we don't have it -> handle request and send inputs to the prover_client
+        //   - if we have it -> resend tx with the same proof_number bumping the gas
 
+        let proof: Option<Box<(risc0_zkvm::Receipt, Vec<u32>)>>;
+        let has_proof;
+        match save_prover_state::block_number_has_state_file(StateFileType::Proof, block_to_verify)
+        {
+            Ok(bool) => {
+                if bool {
+                    proof = match save_prover_state::read_state_file_for_block_number(
+                        block_to_verify,
+                        StateFileType::Proof,
+                    ) {
+                        Ok(state) => match state {
+                            StateType::Proof(p) => {
+                                has_proof = true;
+                                Some(p)
+                            }
+                            _ => unreachable!("Expected Proof state type, but got something else"),
+                        },
+                        Err(e) => {
+                            error!(
+                                "Error reading state file for block number {}: {}",
+                                block_to_verify, e,
+                            );
+                            // If we reach here, we may have encoded the proof wrong.
+                            // Or it is missing.
+                            // How can we recover this error?
+                            has_proof = false;
+                            None
+                        }
+                    };
+                } else {
+                    proof = None;
+                    has_proof = false
+                }
+            }
+            // Send inputs to the prover
+            Err(_) => {
+                proof = None;
+                has_proof = false
+            }
+        };
+
+        // Send a transaction with the saved proof.
+        if let Some(pending_proof) = proof {
+            info!("Resending saved proof {block_to_verify:?}.");
+            self.handle_proof_submission(block_to_verify, pending_proof)
+                .await?;
+        }
+
+        let send_input = !has_proof;
         let last_committed_block =
             EthClient::get_last_committed_block(&self.eth_client, self.on_chain_proposer_address)
                 .await?;
@@ -305,7 +369,8 @@ impl ProverServer {
         // is greater or equal to the next block_number.
         // Since the block_number passed to the function is the lastVerifiedBlock, we are essentially checking if the
         // block was committed before starting the proving process.
-        let response = if last_committed_block < block_number {
+        // Also checks if there is a proof saved.
+        let response = if (last_committed_block < block_to_verify) && !send_input {
             let response = ProofData::Response {
                 block_number: None,
                 input: None,
@@ -313,12 +378,12 @@ impl ProverServer {
             warn!("Didn't send response");
             response
         } else {
-            let input = self.create_prover_input(block_number)?;
+            let input = self.create_prover_input(block_to_verify)?;
             let response = ProofData::Response {
-                block_number: Some(block_number),
+                block_number: Some(block_to_verify),
                 input: Some(input),
             };
-            info!("Sent Response for block_number: {block_number}");
+            info!("Sent Response for block_number: {block_to_verify}");
             response
         };
 
@@ -371,6 +436,19 @@ impl ProverServer {
 
         let journal_digest = Digestible::digest(&receipt.0.journal);
 
+        let mut eip1559 = match self
+            .build_verify_tx(block_number, &seal, image_id, journal_digest)
+            .await
+        {
+            Ok(tx) => tx,
+            Err(error) => {
+                error!("Failed when constructing the verify for block {block_number:#x}. Manual intervention required: {error}");
+                // TODO: retry instead of throwing error.
+                // it may fail in the estimate_gas fn.
+                return Err(error);
+            }
+        };
+
         // The `verify` function in the `OnChainProposer` contract has two `require` checks:
         //      "OnChainProposer: block not committed"
         //      "OnChainProposer: block already verified"
@@ -382,23 +460,32 @@ impl ProverServer {
         // smaller than the `lastVerifiedBlock` tracked by the contract, which is stored in `ProverServer::last_verified_block`.
         // We shouldn't encounter this error either.
         //
-        // Both errors will trigger a error, along with any errors resulting from sending the transactions.
+        // Both errors will trigger an error, along with any errors resulting from sending the transactions.
         let mut retries = 0;
         let max_retries: u32 = 100;
         while retries < max_retries {
-            match self
-                .send_proof(block_number, &seal, image_id, journal_digest)
-                .await
-            {
+            match self.send_proof(&eip1559).await {
                 Ok(tx_hash) => {
                     info!(
                         "Sent proof for block {block_number}, with transaction hash {tx_hash:#x}"
                     );
+                    // Remove the state path.
+                    // We don't store the account updates atm.
+                    // Handle errors, a retry may not be sufficient.
+                    save_prover_state::delete_state_path_for_block_number(block_number).map_err(
+                        |e| {
+                            ProverServerError::FailedToSaveState(
+                                format!("Failed to delete proof: {e:?}").to_owned(),
+                            )
+                        },
+                    )?;
                     break;
                 }
 
                 Err(e) => {
                     error!("Failed to send proof to block {block_number:#x}. Retrying [{retries}/{max_retries}]. Error: {e}");
+
+                    self.eth_client.bump_eip1559(&mut eip1559, 1.1);
                     retries += 1;
                     sleep(Duration::from_secs(2)).await;
                 }
@@ -440,14 +527,14 @@ impl ProverServer {
         })
     }
 
-    pub async fn send_proof(
+    pub async fn build_verify_tx(
         &self,
         block_number: u64,
         seal: &[u8],
         image_id: Digest,
         journal_digest: Digest,
-    ) -> Result<H256, ProverServerError> {
-        info!("Sending proof");
+    ) -> Result<EIP1559Transaction, ProverServerError> {
+        debug!("Preparing proof");
         let mut calldata = Vec::new();
 
         // IOnChainProposer
@@ -503,14 +590,22 @@ impl ProverServer {
                 },
             )
             .await?;
+
+        Ok(verify_tx)
+    }
+
+    pub async fn send_proof(
+        &self,
+        eip1559: &EIP1559Transaction,
+    ) -> Result<H256, ProverServerError> {
         let verify_tx_hash = self
             .eth_client
-            .send_eip1559_transaction(verify_tx.clone(), &self.verifier_private_key)
+            .send_eip1559_transaction(eip1559.clone(), &self.verifier_private_key)
             .await?;
 
         eip1559_transaction_handler(
             &self.eth_client,
-            &verify_tx,
+            eip1559,
             &self.verifier_private_key,
             verify_tx_hash,
             20,

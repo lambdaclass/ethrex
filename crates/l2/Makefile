@@ -1,6 +1,6 @@
 .DEFAULT_GOAL := help
 
-.PHONY: help init down clean init-local-l1 down-local-l1 clean-local-l1 init-l2 down-l2 deploy-l1 deploy-block-executor deploy-inbox setup-prover test
+.PHONY: help init down clean init-local-l1 down-local-l1 clean-local-l1 init-l2 down-l2 deploy-l1 deploy-block-executor deploy-inbox setup-prover test purge_prover_state
 
 L2_GENESIS_FILE_PATH=../../test_data/genesis-l2.json
 L1_GENESIS_FILE_PATH=../../test_data/genesis-l1.json
@@ -103,3 +103,26 @@ test:
 	docker compose -f ${ethrex_L2_DOCKER_COMPOSE_PATH} up -d --build
 	BRIDGE_ADDRESS=$$(grep 'L1_WATCHER_BRIDGE_ADDRESS' .env | cut -d= -f2) ON_CHAIN_PROPOSER_ADDRESS=$$(grep 'COMMITTER_ON_CHAIN_PROPOSER_ADDRESS' .env | cut -d= -f2) cargo test --release testito -- --nocapture
 	docker compose -f ${ethrex_L2_DOCKER_COMPOSE_PATH} down
+
+
+# Purge L2's state
+
+UNAME_S:=$(shell uname -s)
+PROJECT_NAME:=ethrex_l2_state
+
+ifeq ($(UNAME_S),Linux)
+    PROJECT_PATH := $(HOME)/.local/share/${PROJECT_NAME}
+else ifeq ($(UNAME_S),Darwin)
+    PROJECT_PATH := $(HOME)/Library/Application\ Support/${PROJECT_NAME}
+else
+    $(error Unsupported platform: $(UNAME_S))
+endif
+
+purge_prover_state: ## 🧹 Removes the L2 state, only use to start fresh.
+	@echo "Are you sure you want to delete the directory: $(PROJECT_PATH) ? [y/n]"
+	@read answer; \
+	if [ "$$answer" != "y" ]; then \
+		echo "Operation canceled."; \
+	fi; \
+	rm -rf $(PROJECT_PATH); \
+	echo "Directory deleted."

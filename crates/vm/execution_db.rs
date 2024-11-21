@@ -6,7 +6,7 @@ use ethrex_core::{
     H256,
 };
 use ethrex_rlp::encode::RLPEncode;
-use ethrex_storage::{hash_address, hash_key, Store};
+use ethrex_storage::{hash_address, hash_key, AccountUpdate, Store};
 use ethrex_trie::Trie;
 use revm::{
     primitives::{
@@ -52,15 +52,23 @@ pub struct StateProofs {
 }
 
 impl ExecutionDB {
-    /// Creates a database by executing a block, without performing any validation.
+    /// Creates a database and returns the ExecutionDB by executing a block,
+    /// without performing any validation.
     pub fn from_exec(block: &Block, store: &Store) -> Result<Self, ExecutionDBError> {
         // TODO: perform validation to exit early
+        let account_updates = Self::get_account_updates(block, store)?;
+        Self::from_account_updates(account_updates, block, store)
+    }
 
-        // Execute and obtain account updates
-        let mut state = evm_state(store.clone(), block.header.parent_hash);
+    /// Creates a database and returns the ExecutionDB from a Vec<[AccountUpdate]>,
+    /// without performing any validation.
+    pub fn from_account_updates(
+        account_updates: Vec<AccountUpdate>,
+        block: &Block,
+        store: &Store,
+    ) -> Result<Self, ExecutionDBError> {
+        // TODO: perform validation to exit early
         let chain_config = store.get_chain_config()?;
-        execute_block(block, &mut state).map_err(Box::new)?;
-        let account_updates = get_state_transitions(&mut state);
 
         // Store data touched by updates and get all touched storage keys for each account
         let mut accounts = HashMap::new();
@@ -140,6 +148,21 @@ impl ExecutionDB {
             chain_config,
             initial_proofs,
         })
+    }
+
+    /// Gets the Vec<[AccountUpdate]>/StateTransitions obtained after executing a block.
+    pub fn get_account_updates(
+        block: &Block,
+        store: &Store,
+    ) -> Result<Vec<AccountUpdate>, ExecutionDBError> {
+        // TODO: perform validation to exit early
+
+        let mut state = evm_state(store.clone(), block.header.parent_hash);
+
+        execute_block(block, &mut state).map_err(Box::new)?;
+
+        let account_updates = get_state_transitions(&mut state);
+        Ok(account_updates)
     }
 
     pub fn get_chain_config(&self) -> ChainConfig {

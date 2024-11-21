@@ -13,6 +13,7 @@ use ethrex_core::types::{
 use ethrex_rlp::decode::RLPDecode;
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_trie::Trie;
+use serde::{Deserialize, Serialize};
 use sha3::{Digest as _, Keccak256};
 use std::collections::HashMap;
 use std::fmt::Debug;
@@ -39,7 +40,7 @@ pub enum EngineType {
     Libmdbx,
 }
 
-#[derive(Default, Debug)]
+#[derive(Default, Debug, Serialize, Deserialize, Clone)]
 pub struct AccountUpdate {
     pub address: Address,
     pub removed: bool,

@@ -37,6 +37,8 @@ pub enum ProverServerError {
     ItemNotFoundInStore(String),
     #[error("ProverServer failed to create inputs for the Prover: {0}")]
     FailedToCreateProverInputs(#[from] EvmError),
+    #[error("ProverServer failed to save state: {0}")]
+    FailedToSaveState(String),
 }
 
 #[derive(Debug, thiserror::Error)]
