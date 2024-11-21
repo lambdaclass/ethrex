@@ -20,10 +20,11 @@ members = [
     "crates/l2/prover",
     "crates/l2/contracts",
     "crates/l2/sdk",
+    "cmd/loc",
 ]
 resolver = "2"
 
-default-members = ["cmd/ethrex", "cmd/ethrex_l2", "crates/l2/prover"]
+default-members = ["cmd/ethrex", "cmd/ethrex_l2", "crates/l2/prover", "cmd/loc"]
 
 [workspace.package]
 version = "0.1.0"
