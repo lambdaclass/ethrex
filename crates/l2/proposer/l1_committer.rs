@@ -226,17 +226,25 @@ impl Committer {
     ) -> Result<StateDiff, CommitterError> {
         info!("Preparing state diff for block {}", block.header.number);
 
-        let mut state = evm_state(store.clone(), block.header.parent_hash);
-        execute_block(block, &mut state).map_err(CommitterError::from)?;
-        let account_updates = get_state_transitions(&mut state);
+        let prev_state = evm_state(store.clone(), block.header.parent_hash);
+        let mut new_state = evm_state(store.clone(), block.header.parent_hash);
+        execute_block(block, &mut new_state).map_err(CommitterError::from)?;
+        let account_updates = get_state_transitions(&mut new_state);
 
         let mut modified_accounts = HashMap::new();
         account_updates.iter().for_each(|account_update| {
+            let prev_nonce = prev_state
+                .database()
+                .unwrap()
+                .get_account_info(block.header.number - 1, account_update.address)
+                .unwrap()
+                .map(|info| info.nonce)
+                .unwrap_or(0);
             modified_accounts.insert(
                 account_update.address,
                 AccountStateDiff {
                     new_balance: account_update.info.clone().map(|info| info.balance),
-                    nonce_diff: account_update.info.clone().map(|info| info.nonce as u16),
+                    nonce_diff: (account_update.info.clone().unwrap().nonce - prev_nonce) as u16,
                     storage: account_update.added_storage.clone().into_iter().collect(),
                     bytecode: account_update.code.clone(),
                     bytecode_hash: None,
