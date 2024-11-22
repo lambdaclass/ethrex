@@ -4,17 +4,15 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-serde = { version = "1.0", default-features = false, features = ["derive"] }
-thiserror = "1.0.64"
+serde = { version = "1.0.203", features = ["derive"] }
+serde_with = "3.11.0"
+thiserror = "1.0.61"
 
-ethrex-storage = { path = "../../../../storage/store" }
-
-# revm
-revm = { version = "14.0.3", features = [
-    "std",
-    "serde",
-    "kzg-rs",
-], default-features = false }
+ethrex-core = { path = "../../../../common/", default-features = false }
+ethrex-vm = { path = "../../../../vm", default-features = false }
+ethrex-rlp = { path = "../../../../common/rlp", default-features = false }
+ethrex-storage = { path = "../../../../storage/store", default-features = false }
+ethrex-trie = { path = "../../../../storage/trie", default-features = false }
 
 [build-dependencies]
 risc0-build = { version = "1.1.2" }

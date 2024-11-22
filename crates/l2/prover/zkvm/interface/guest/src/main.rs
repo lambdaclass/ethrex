@@ -1,49 +1,49 @@
-use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode, error::RLPDecodeError};
 use risc0_zkvm::guest::env;
 
 use ethrex_blockchain::{validate_block, validate_gas_used};
-use ethrex_core::types::{Block, BlockHeader};
-use ethrex_vm::{execute_block, execution_db::ExecutionDB, get_state_transitions, EvmState};
+use ethrex_vm::{execute_block, get_state_transitions, EvmState};
+use zkvm_interface::{
+    io::{ProgramInput, ProgramOutput},
+    trie::update_tries,
+};
 
 fn main() {
-    let (block, execution_db, parent_header) = read_inputs().expect("failed to read inputs");
-    let mut state = EvmState::from(execution_db.clone());
+    let ProgramInput {
+        block,
+        parent_block_header,
+        db,
+    } = env::read();
+    let mut state = EvmState::from(db.clone());
 
     // Validate the block pre-execution
-    validate_block(&block, &parent_header, &state).expect("invalid block");
+    validate_block(&block, &parent_block_header, &state).expect("invalid block");
 
     // Validate the initial state
-    if !execution_db
-        .verify_initial_state(parent_header.state_root)
-        .expect("failed to verify initial state")
-    {
-        panic!("initial state is not valid");
-    };
+    let (mut state_trie, mut storage_tries) = db
+        .build_tries()
+        .expect("failed to build state and storage tries or state is not valid");
 
-    let receipts = execute_block(&block, &mut state).unwrap();
+    let initial_state_hash = state_trie.hash_no_commit();
+    if initial_state_hash != parent_block_header.state_root {
+        panic!("invalid initial state trie");
+    }
 
-    env::commit(&receipts);
-
+    let receipts = execute_block(&block, &mut state).expect("failed to execute block");
     validate_gas_used(&receipts, &block.header).expect("invalid gas used");
 
-    let _account_updates = get_state_transitions(&mut state);
+    let account_updates = get_state_transitions(&mut state);
 
-    // TODO: compute new state root from account updates and check it matches with the block's
-    // header one.
-}
+    // Update tries and calculate final state root hash
+    update_tries(&mut state_trie, &mut storage_tries, &account_updates)
+        .expect("failed to update state and storage tries");
+    let final_state_hash = state_trie.hash_no_commit();
 
-fn read_inputs() -> Result<(Block, ExecutionDB, BlockHeader), RLPDecodeError> {
-    let head_block_bytes = env::read::<Vec<u8>>();
-    let execution_db = env::read::<ExecutionDB>();
-    let parent_header_bytes = env::read::<Vec<u8>>();
+    if final_state_hash != block.header.state_root {
+        panic!("invalid final state trie");
+    }
 
-    let block = Block::decode(&head_block_bytes)?;
-    let parent_header = BlockHeader::decode(&parent_header_bytes)?;
-
-    // make inputs public
-    env::commit(&block.encode_to_vec());
-    env::commit(&execution_db);
-    env::commit(&parent_header.encode_to_vec());
-
-    Ok((block, execution_db, parent_header))
+    env::commit(&ProgramOutput {
+        initial_state_hash,
+        final_state_hash,
+    });
 }
