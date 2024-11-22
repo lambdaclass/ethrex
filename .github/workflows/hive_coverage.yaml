@@ -48,4 +48,4 @@ jobs:
         uses: Swatinem/rust-cache@v2
 
       - name: Generate the hive report
-        run: cargo run -p hive_report
+        run: cargo run -p hive_report >> $GITHUB_STEP_SUMMARY
