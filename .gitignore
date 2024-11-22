@@ -46,3 +46,5 @@ jwt.hex
 tests_v3.0.0.tar.gz
 
 .env
+
+levm_ef_tests_report.txt

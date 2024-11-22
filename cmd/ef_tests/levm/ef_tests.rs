@@ -1,5 +1,6 @@
 mod deserialize;
+pub mod parser;
 mod report;
 pub mod runner;
-mod types;
+pub mod types;
 mod utils;
