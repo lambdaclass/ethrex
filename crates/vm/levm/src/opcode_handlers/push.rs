@@ -1,5 +1,6 @@
 use crate::{
     call_frame::CallFrame,
+    constants::WORD_SIZE,
     errors::{InternalError, OpcodeSuccess, VMError},
     gas_cost,
     opcodes::Opcode,
@@ -25,20 +26,33 @@ impl VM {
             .checked_add(1)
             .ok_or(VMError::InvalidOpcode)?;
 
-        let next_n_bytes = current_call_frame
+        let read_n_bytes: Vec<u8> = current_call_frame
             .bytecode
-            .get(
-                current_call_frame.pc()
-                    ..current_call_frame
-                        .pc()
-                        .checked_add(n_bytes)
-                        .ok_or(VMError::Internal(InternalError::PCOverflowed))?,
-            )
-            .ok_or(VMError::InvalidBytecode)?; // This shouldn't happen during execution
+            .get(current_call_frame.pc()..)
+            .unwrap_or_default()
+            .iter()
+            .take(n_bytes)
+            .cloned()
+            .collect();
 
-        let value_to_push = U256::from(next_n_bytes);
+        let mut value_to_push = [0u8; WORD_SIZE];
 
-        current_call_frame.stack.push(value_to_push)?;
+        let start_index = WORD_SIZE.checked_sub(n_bytes).ok_or(VMError::Internal(
+            InternalError::ArithmeticOperationUnderflow,
+        ))?;
+
+        // Rellenamos el array `value_to_push` con los bytes leídos
+        for (i, byte) in read_n_bytes.iter().enumerate() {
+            let index = start_index.checked_add(i).ok_or(VMError::Internal(
+                InternalError::ArithmeticOperationOverflow,
+            ))?;
+            if let Some(data_byte) = value_to_push.get_mut(index) {
+                *data_byte = *byte;
+            }
+        }
+
+        let bytes_push: &[u8] = &value_to_push;
+        current_call_frame.stack.push(U256::from(bytes_push))?;
 
         current_call_frame.increment_pc_by(n_bytes)?;
 
