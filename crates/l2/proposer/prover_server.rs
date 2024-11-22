@@ -17,7 +17,7 @@ use tokio::{
 use tracing::{debug, error, info, warn};
 
 use ethrex_core::{
-    types::{Block, BlockHeader, EIP1559Transaction},
+    types::{Block, BlockHeader},
     Address, H256,
 };
 
@@ -32,7 +32,7 @@ pub struct ProverInputData {
 
 use crate::utils::{
     config::{committer::CommitterConfig, eth::EthConfig, prover_server::ProverServerConfig},
-    eth_client::{errors::EthClientError, eth_sender::Overrides, EthClient},
+    eth_client::{errors::EthClientError, eth_sender::Overrides, EthClient, WrappedTransaction},
 };
 
 use super::errors::ProverServerError;
@@ -91,9 +91,9 @@ pub async fn start_prover_server(store: Store) {
             let verify_tx = eth_client
                 .build_eip1559_transaction(
                     proposer_config.on_chain_proposer_address,
+                    server_config.verifier_address,
                     calldata.into(),
                     Overrides {
-                        from: Some(server_config.verifier_address),
                         ..Default::default()
                     },
                 )
@@ -101,7 +101,7 @@ pub async fn start_prover_server(store: Store) {
                 .unwrap();
 
             let tx_hash = eth_client
-                .send_eip1559_transaction(verify_tx, &server_config.verifier_private_key)
+                .send_eip1559_transaction(&verify_tx, &server_config.verifier_private_key)
                 .await
                 .unwrap();
 
@@ -490,79 +490,22 @@ impl ProverServer {
             .eth_client
             .build_eip1559_transaction(
                 self.on_chain_proposer_address,
+                self.verifier_address,
                 calldata.into(),
-                Overrides {
-                    from: Some(self.verifier_address),
-                    ..Default::default()
-                },
+                Overrides::default(),
             )
             .await?;
+
         let verify_tx_hash = self
             .eth_client
-            .send_eip1559_transaction(verify_tx.clone(), &self.verifier_private_key)
+            .send_wrapped_transaction_with_retry(
+                &WrappedTransaction::EIP1559(verify_tx),
+                &self.verifier_private_key,
+                3 * 60,
+                10,
+            )
             .await?;
-
-        eip1559_transaction_handler(
-            &self.eth_client,
-            &verify_tx,
-            &self.verifier_private_key,
-            verify_tx_hash,
-            20,
-        )
-        .await?;
 
         Ok(verify_tx_hash)
     }
-}
-
-async fn eip1559_transaction_handler(
-    eth_client: &EthClient,
-    eip1559: &EIP1559Transaction,
-    l1_private_key: &SecretKey,
-    verify_tx_hash: H256,
-    max_retries: u32,
-) -> Result<H256, ProverServerError> {
-    let mut retries = 0;
-    let max_receipt_retries: u32 = 60 * 2; // 2 minutes
-    let mut verify_tx_hash = verify_tx_hash;
-    let mut tx = eip1559.clone();
-
-    while retries < max_retries {
-        if (eth_client.get_transaction_receipt(verify_tx_hash).await?).is_some() {
-            // If the tx_receipt was found, return the tx_hash.
-            return Ok(verify_tx_hash);
-        } else {
-            // Else, wait for receipt and send again if necessary.
-            let mut receipt_retries = 0;
-
-            // Try for 2 minutes with an interval of 1 second to get the tx_receipt.
-            while receipt_retries < max_receipt_retries {
-                match eth_client.get_transaction_receipt(verify_tx_hash).await? {
-                    Some(_) => return Ok(verify_tx_hash),
-                    None => {
-                        receipt_retries += 1;
-                        sleep(Duration::from_secs(1)).await;
-                    }
-                }
-            }
-
-            // If receipt was not found, send the same tx(same nonce) but with more gas.
-            // Sometimes the penalty is a 100%
-            warn!("Transaction not confirmed, resending with 110% more gas...");
-            // Increase max fee per gas by 110% (set it to 210% of the original)
-            tx.max_fee_per_gas = (tx.max_fee_per_gas as f64 * 2.1).round() as u64;
-            tx.max_priority_fee_per_gas +=
-                (tx.max_priority_fee_per_gas as f64 * 2.1).round() as u64;
-
-            verify_tx_hash = eth_client
-                .send_eip1559_transaction(tx.clone(), l1_private_key)
-                .await
-                .map_err(ProverServerError::from)?;
-
-            retries += 1;
-        }
-    }
-    Err(ProverServerError::FailedToVerifyProofOnChain(
-        "Error handling eip1559".to_owned(),
-    ))
 }

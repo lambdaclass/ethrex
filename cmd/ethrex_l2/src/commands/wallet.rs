@@ -341,6 +341,7 @@ impl Command {
                 let tx = eth_client
                     .build_eip1559_transaction(
                         cfg.contracts.common_bridge,
+                        cfg.wallet.address,
                         claim_withdrawal_data.into(),
                         Overrides {
                             chain_id: Some(cfg.network.l1_chain_id),
@@ -350,7 +351,7 @@ impl Command {
                     )
                     .await?;
                 let tx_hash = eth_client
-                    .send_eip1559_transaction(tx, &cfg.wallet.private_key)
+                    .send_eip1559_transaction(&tx, &cfg.wallet.private_key)
                     .await?;
 
                 println!("Withdrawal claim sent: {tx_hash:#x}");
@@ -377,6 +378,7 @@ impl Command {
                 let transfer_tx = client
                     .build_eip1559_transaction(
                         to,
+                        cfg.wallet.address,
                         Bytes::new(),
                         Overrides {
                             value: Some(amount),
@@ -394,7 +396,7 @@ impl Command {
                     .await?;
 
                 let tx_hash = client
-                    .send_eip1559_transaction(transfer_tx, &cfg.wallet.private_key)
+                    .send_eip1559_transaction(&transfer_tx, &cfg.wallet.private_key)
                     .await?;
 
                 println!(
@@ -418,6 +420,7 @@ impl Command {
                     .build_privileged_transaction(
                         PrivilegedTxType::Withdrawal,
                         to.unwrap_or(cfg.wallet.address),
+                        to.unwrap_or(cfg.wallet.address),
                         Bytes::new(),
                         Overrides {
                             nonce,
@@ -431,7 +434,7 @@ impl Command {
                     .await?;
 
                 let tx_hash = rollup_client
-                    .send_privileged_l2_transaction(withdraw_transaction, &cfg.wallet.private_key)
+                    .send_privileged_l2_transaction(&withdraw_transaction, &cfg.wallet.private_key)
                     .await?;
 
                 println!("Withdrawal sent: {tx_hash:#x}");
@@ -470,6 +473,7 @@ impl Command {
                 let tx = client
                     .build_eip1559_transaction(
                         to,
+                        cfg.wallet.address,
                         calldata,
                         Overrides {
                             value: Some(value),
@@ -490,7 +494,7 @@ impl Command {
                     )
                     .await?;
                 let tx_hash = client
-                    .send_eip1559_transaction(tx, &cfg.wallet.private_key)
+                    .send_eip1559_transaction(&tx, &cfg.wallet.private_key)
                     .await?;
 
                 println!(
