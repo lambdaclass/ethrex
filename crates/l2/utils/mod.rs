@@ -25,7 +25,7 @@ where
 }
 
 pub fn get_address_from_secret_key(secret_key: &SecretKey) -> Address {
-    let mut buffer = [0u8; 64];
+    let mut buffer = [0u8; 32];
     let public_key = secret_key.public_key(secp256k1::SECP256K1).serialize();
     buffer.copy_from_slice(&public_key[1..]);
 

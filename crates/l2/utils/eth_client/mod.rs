@@ -46,6 +46,7 @@ pub enum RpcResponse {
     Error(RpcErrorResponse),
 }
 
+#[derive(Debug, Clone)]
 pub struct EthClient {
     client: Client,
     pub url: String,
