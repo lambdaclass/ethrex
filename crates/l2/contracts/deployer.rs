@@ -1,7 +1,10 @@
 use bytes::Bytes;
 use colored::Colorize;
 use ethereum_types::{Address, H160, H256};
-use ethrex_core::types::{GAS_LIMIT_ADJUSTMENT_FACTOR, GAS_LIMIT_MINIMUM};
+use ethrex_core::{
+    types::{GAS_LIMIT_ADJUSTMENT_FACTOR, GAS_LIMIT_MINIMUM},
+    U256,
+};
 use ethrex_l2::utils::{
     config::{read_env_as_lines, read_env_file, write_env},
     eth_client::{eth_sender::Overrides, EthClient},
@@ -28,15 +31,25 @@ lazy_static::lazy_static! {
 
 #[tokio::main]
 async fn main() {
-    let (deployer, deployer_private_key, contract_verifier_address, eth_client, contracts_path) =
-        setup();
+    let (
+        deployer,
+        deployer_private_key,
+        committer_private_key,
+        verifier_private_key,
+        contract_verifier_address,
+        eth_client,
+        contracts_path,
+    ) = setup();
     download_contract_deps(&contracts_path);
     compile_contracts(&contracts_path);
     let (on_chain_proposer, bridge_address) =
         deploy_contracts(deployer, deployer_private_key, &eth_client, &contracts_path).await;
+
     initialize_contracts(
         deployer,
         deployer_private_key,
+        committer_private_key,
+        verifier_private_key,
         on_chain_proposer,
         bridge_address,
         contract_verifier_address,
@@ -66,7 +79,15 @@ async fn main() {
     write_env(wr_lines).expect("Failed to write changes to the .env file.");
 }
 
-fn setup() -> (Address, SecretKey, Address, EthClient, PathBuf) {
+fn setup() -> (
+    Address,
+    SecretKey,
+    Address,
+    Address,
+    Address,
+    EthClient,
+    PathBuf,
+) {
     if let Err(e) = read_env_file() {
         warn!("Failed to read .env file: {e}");
     }
@@ -81,12 +102,22 @@ fn setup() -> (Address, SecretKey, Address, EthClient, PathBuf) {
             std::env::var("DEPLOYER_PRIVATE_KEY")
                 .expect("DEPLOYER_PRIVATE_KEY not set")
                 .strip_prefix("0x")
-                .expect("Malformed DEPLOYER_ADDRESS (strip_prefix(\"0x\"))"),
+                .expect("Malformed DEPLOYER PRIVATE KEY (strip_prefix(\"0x\"))"),
         )
-        .expect("Malformed DEPLOYER_ADDRESS (H256::from_str)")
+        .expect("Malformed DEPLOYER_PRIVATE_KEY (H256::from_str)")
         .as_bytes(),
     )
     .expect("Malformed DEPLOYER_PRIVATE_KEY (SecretKey::parse)");
+
+    let committer = std::env::var("COMMITTER_L1_ADDRESS")
+        .expect("COMMITTER_L1_ADDRESS not set")
+        .parse()
+        .expect("Malformed COMMITTER_L1_ADDRESS");
+    let verifier = std::env::var("PROVER_SERVER_VERIFIER_ADDRESS")
+        .expect("PROVER_SERVER_VERIFIER_ADDRESS not set")
+        .parse()
+        .expect("Malformed PROVER_SERVER_VERIFIER_ADDRESS");
+
     let contracts_path = Path::new(
         std::env::var("DEPLOYER_CONTRACTS_PATH")
             .unwrap_or(".".to_string())
@@ -111,6 +142,8 @@ fn setup() -> (Address, SecretKey, Address, EthClient, PathBuf) {
     (
         deployer,
         deployer_private_key,
+        committer,
+        verifier,
         contract_verifier_address,
         eth_client,
         contracts_path,
@@ -353,9 +386,12 @@ fn create2_address(init_code_hash: H256) -> Address {
     )
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn initialize_contracts(
     deployer: Address,
     deployer_private_key: SecretKey,
+    committer: Address,
+    verifier: Address,
     on_chain_proposer: Address,
     bridge: Address,
     contract_verifier_address: Address,
@@ -375,6 +411,8 @@ async fn initialize_contracts(
         contract_verifier_address,
         deployer,
         deployer_private_key,
+        committer,
+        verifier,
         eth_client,
     )
     .await;
@@ -404,15 +442,18 @@ async fn initialize_contracts(
     spinner.success(&msg);
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn initialize_on_chain_proposer(
     on_chain_proposer: Address,
     bridge: Address,
     contract_verifier_address: Address,
     deployer: Address,
     deployer_private_key: SecretKey,
+    committer: Address,
+    verifier: Address,
     eth_client: &EthClient,
 ) -> H256 {
-    let on_chain_proposer_initialize_selector = keccak(b"initialize(address,address)")
+    let on_chain_proposer_initialize_selector = keccak(b"initialize(address,address,address[])")
         .as_bytes()
         .get(..4)
         .expect("Failed to get initialize selector")
@@ -436,6 +477,18 @@ async fn initialize_on_chain_proposer(
         .extend_from_slice(&on_chain_proposer_initialize_selector);
     on_chain_proposer_initialization_calldata.extend_from_slice(&encoded_bridge);
     on_chain_proposer_initialization_calldata.extend_from_slice(&encoded_contract_verifier);
+
+    let mut encoded_offset = [0; 32];
+    U256::from(32 * 3).to_big_endian(&mut encoded_offset);
+    on_chain_proposer_initialization_calldata.extend_from_slice(&encoded_offset);
+    let mut allowed_addresses = [0; 32];
+    U256::from(2).to_big_endian(&mut allowed_addresses);
+    on_chain_proposer_initialization_calldata.extend_from_slice(&allowed_addresses);
+
+    let committer_h256: H256 = committer.into();
+    let verifier_h256: H256 = verifier.into();
+    on_chain_proposer_initialization_calldata.extend_from_slice(committer_h256.as_fixed_bytes());
+    on_chain_proposer_initialization_calldata.extend_from_slice(verifier_h256.as_fixed_bytes());
 
     let initialize_tx = eth_client
         .build_eip1559_transaction(

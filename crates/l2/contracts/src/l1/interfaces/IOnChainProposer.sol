@@ -25,7 +25,7 @@ interface IOnChainProposer {
     /// @dev It sets the bridge address.
     /// @param bridge the address of the bridge contract.
     /// @param r0verifier the address of the risc0 groth16 verifier.
-    function initialize(address bridge, address r0verifier) external;
+    function initialize(address bridge, address r0verifier, address[] calldata sequencerAddress) external;
 
     /// @notice Commits to an L2 block.
     /// @dev Committing to an L2 block means to store the block's commitment

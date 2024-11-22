@@ -37,6 +37,9 @@ contract OnChainProposer is IOnChainProposer, ReentrancyGuard {
     /// @dev In the initialize function, `lastCommittedBlock` is set to u64::MAX == 0xFFFFFFFFFFFFFFFF, this value is used to allow the block 0 to be committed.
     uint256 public lastCommittedBlock;
 
+    /// @dev The sequencer addresses that are authorized to commit and verify blocks.
+    mapping(address _authorizedAddress => bool) public authorizedSequencerAddresses;
+
     address public BRIDGE;
     address public R0VERIFIER;
 
@@ -45,10 +48,19 @@ contract OnChainProposer is IOnChainProposer, ReentrancyGuard {
     /// @dev Used only in dev mode.
     address public constant DEV_MODE = address(0xAA);
 
+    modifier onlySequencer() {
+        require(
+            authorizedSequencerAddresses[msg.sender],
+            "OnChainProposer: caller is not the sequencer"
+        );
+        _;
+    }
+
     /// @inheritdoc IOnChainProposer
     function initialize(
         address bridge,
-        address r0verifier
+        address r0verifier,
+        address[] calldata sequencerAddresses
     ) public nonReentrant {
         require(
             BRIDGE == address(0),
@@ -78,6 +90,10 @@ contract OnChainProposer is IOnChainProposer, ReentrancyGuard {
         );
         R0VERIFIER = r0verifier;
 
+        for (uint256 i = 0; i < sequencerAddresses.length; i++) {
+            authorizedSequencerAddresses[sequencerAddresses[i]] = true;
+        }
+
         lastCommittedBlock = 0xFFFFFFFFFFFFFFFF;
     }
 
@@ -87,7 +103,7 @@ contract OnChainProposer is IOnChainProposer, ReentrancyGuard {
         bytes32 commitment,
         bytes32 withdrawalsLogsMerkleRoot,
         bytes32 depositLogs
-    ) external override {
+    ) external override onlySequencer {
         require(
             blockNumber == lastCommittedBlock + 1 ||
                 (blockNumber == 0 && lastCommittedBlock == 0xFFFFFFFFFFFFFFFF),
@@ -127,7 +143,7 @@ contract OnChainProposer is IOnChainProposer, ReentrancyGuard {
         bytes calldata blockProof,
         bytes32 imageId,
         bytes32 journalDigest
-    ) external override {
+    ) external override onlySequencer {
         require(
             blockCommitments[blockNumber].commitmentHash != bytes32(0),
             "OnChainProposer: block not committed"
