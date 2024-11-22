@@ -2,8 +2,6 @@ name: CI LEVM
 
 on:
   merge_group:
-    paths:
-      - "crates/vm/levm/**"
   pull_request:
     paths:
       - "crates/vm/levm/**"

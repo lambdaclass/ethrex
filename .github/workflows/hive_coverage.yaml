@@ -11,7 +11,7 @@ env:
 
 jobs:
   build:
-    uses: ./.github/workflows/docker-build.yaml
+    uses: ./.github/workflows/docker_build.yaml
 
   hive-coverage:
     name: Run engine hive simulator to gather coverage information.

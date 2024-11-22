@@ -78,7 +78,7 @@ jobs:
         run: |
           make test
 
-  docker-build:
+  docker_build:
     name: Build Docker image
     runs-on: ubuntu-latest
     steps:
