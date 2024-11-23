@@ -58,6 +58,7 @@ impl RpcHandler for NewPayloadV3Request {
 
     fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
         let storage = &context.storage;
+
         let block_hash = self.payload.block_hash;
         info!("Received new payload with block hash: {block_hash:#x}");
 
@@ -136,7 +137,10 @@ impl RpcHandler for NewPayloadV3Request {
             }
             Err(ChainError::EvmError(error)) => {
                 warn!("Error executing block: {error}");
-                Ok(PayloadStatus::invalid_with_err(&error.to_string()))
+                Ok(PayloadStatus::invalid_with(
+                    block.header.parent_hash,
+                    error.to_string(),
+                ))
             }
             Err(ChainError::StoreError(error)) => {
                 warn!("Error storing block: {error}");
