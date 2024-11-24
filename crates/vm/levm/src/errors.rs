@@ -37,11 +37,11 @@ pub enum VMError {
     SenderAccountDoesNotExist,
     #[error("Address Does Not Match An Account")]
     AddressDoesNotMatchAnAccount,
-    #[error("Sender Account Should Not Have Bytecode")]
-    SenderAccountShouldNotHaveBytecode,
-    #[error("Sender Balance Should Contain Transfer Value")]
-    SenderBalanceShouldContainTransferValue,
-    #[error("Gas Price Is Lower Than Base Fee")]
+    #[error("Sender account should not have bytecode")]
+    SenderNotEOA,
+    #[error("Insufficient account founds")]
+    InsufficientAccountFunds,
+    #[error("Gas price is lower than base fee")]
     GasPriceIsLowerThanBaseFee,
     #[error("Address Already Occupied")]
     AddressAlreadyOccupied,
@@ -49,7 +49,9 @@ pub enum VMError {
     ContractOutputTooBig,
     #[error("Invalid Initial Byte")]
     InvalidInitialByte,
-    #[error("Memory Load Out Of Bounds")]
+    #[error("Nonce is max (overflow)")]
+    NonceIsMax,
+    #[error("Memory load out of bounds")]
     MemoryLoadOutOfBounds,
     #[error("Memory Store Out Of Bounds")]
     MemoryStoreOutOfBounds,
@@ -63,8 +65,30 @@ pub enum VMError {
     GasRefundsUnderflow,
     #[error("Gas refunds overflow")]
     GasRefundsOverflow,
+    #[error("Initcode size exceeded")]
+    InitcodeSizeExceeded,
+    #[error("Priority fee greater than max fee per gas")]
+    PriorityGreaterThanMaxFeePerGas,
+    #[error("Intrinsic gas too low")]
+    IntrinsicGasTooLow,
+    #[error("Gas allowance exceeded")]
+    GasAllowanceExceeded,
+    #[error("Insufficient max fee per gas")]
+    InsufficientMaxFeePerGas,
+    #[error("Insufficient max fee per blob gas")]
+    InsufficientMaxFeePerBlobGas,
     #[error("Memory size overflows")]
     MemorySizeOverflow,
+    #[error("Type3TxZeroBlobs")]
+    Type3TxZeroBlobs,
+    #[error("Type3TxInvalidBlobVersionedHash")]
+    Type3TxInvalidBlobVersionedHash,
+    #[error("Type3TxBlobCountExceeded")]
+    Type3TxBlobCountExceeded,
+    #[error("Type3TxContractCreation")]
+    Type3TxContractCreation,
+    #[error("Revert Create")]
+    RevertCreate,
     // OutOfGas
     #[error("Out Of Gas")]
     OutOfGas(#[from] OutOfGasError),
@@ -129,6 +153,16 @@ pub enum InternalError {
     ExcessBlobGasShouldNotBeNone,
     #[error("Error in utils file")]
     UtilsError,
+    #[error("Overflow error")]
+    OperationOverflow,
+    #[error("Undefined state")]
+    UndefinedState(i32), // This error is temporarily for things that cause an undefined state.
+}
+
+impl VMError {
+    pub fn is_internal(&self) -> bool {
+        matches!(self, VMError::Internal(_))
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -165,9 +199,14 @@ pub struct TransactionReport {
 }
 
 impl TransactionReport {
-    /// Function to add gas to report without exceeding the maximum gas limit
-    pub fn add_gas_with_max(&mut self, gas: u64, max: u64) {
-        self.gas_used = self.gas_used.saturating_add(gas).min(max);
+    /// Function to add gas to report, if it exceeds max gas limit it should return OutOfGas error. Only used for adding gas after execution.
+    pub fn add_gas_with_max(&mut self, gas: u64, max: u64) -> Result<(), VMError> {
+        self.gas_used = self
+            .gas_used
+            .checked_add(gas)
+            .filter(|&total| total <= max)
+            .ok_or(VMError::OutOfGas(OutOfGasError::MaxGasLimitExceeded))?;
+        Ok(())
     }
 
     pub fn is_success(&self) -> bool {

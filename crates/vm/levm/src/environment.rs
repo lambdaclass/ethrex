@@ -1,4 +1,3 @@
-use crate::constants::TX_BASE_COST;
 use ethrex_core::{Address, H256, U256};
 
 #[derive(Debug, Default, Clone)]
@@ -15,17 +14,22 @@ pub struct Environment {
     pub prev_randao: Option<H256>,
     pub chain_id: U256,
     pub base_fee_per_gas: U256,
+    // It should store effective gas price, in type 2 transactions it is not defined but we calculate if with max fee per gas and max priority fee per gas.
     pub gas_price: U256,
     pub block_excess_blob_gas: Option<U256>,
     pub block_blob_gas_used: Option<U256>,
     pub tx_blob_hashes: Option<Vec<H256>>,
+    pub block_gas_limit: U256,
+    pub tx_max_priority_fee_per_gas: Option<U256>,
+    pub tx_max_fee_per_gas: Option<U256>,
+    pub tx_max_fee_per_blob_gas: Option<U256>,
 }
 
 impl Environment {
     pub fn default_from_address(origin: Address) -> Self {
         Self {
             origin,
-            consumed_gas: TX_BASE_COST,
+            consumed_gas: U256::zero(),
             refunded_gas: U256::default(),
             gas_limit: U256::MAX,
             block_number: Default::default(),
@@ -38,6 +42,10 @@ impl Environment {
             block_excess_blob_gas: Default::default(),
             block_blob_gas_used: Default::default(),
             tx_blob_hashes: Default::default(),
+            block_gas_limit: Default::default(),
+            tx_max_priority_fee_per_gas: Default::default(),
+            tx_max_fee_per_gas: Default::default(),
+            tx_max_fee_per_blob_gas: Default::default(),
         }
     }
 }

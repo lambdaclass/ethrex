@@ -8,7 +8,7 @@ use crate::{
         InternalError, OpcodeSuccess, OutOfGasError, ResultReason, TransactionReport, TxResult,
         VMError,
     },
-    gas_cost,
+    gas_cost::CREATE_BASE_COST,
     opcodes::Opcode,
 };
 use bytes::Bytes;
@@ -99,7 +99,7 @@ impl VM {
                     calldata.clone(),
                     false,
                     env.gas_limit.min(MAX_BLOCK_GAS_LIMIT),
-                    TX_BASE_COST,
+                    U256::zero(),
                     0,
                 );
 
@@ -137,7 +137,7 @@ impl VM {
                     calldata.clone(),
                     false,
                     env.gas_limit.min(MAX_BLOCK_GAS_LIMIT),
-                    TX_BASE_COST,
+                    U256::zero(),
                     0,
                 );
 
@@ -154,7 +154,14 @@ impl VM {
         // TODO: https://github.com/lambdaclass/lambda_ethrex/issues/1088
     }
 
-    pub fn execute(&mut self, current_call_frame: &mut CallFrame) -> TransactionReport {
+    /// Executes opcodes in callframe
+    /// Returns a TransactionReport with the result of the transaction
+    /// and the new state of the accounts.
+    /// It only returns an error if the error was internal, otherwise it will be a TransactionReport with revert status.
+    pub fn execute(
+        &mut self,
+        current_call_frame: &mut CallFrame,
+    ) -> Result<TransactionReport, VMError> {
         // Backup of Database, Substate and Gas Refunds if sub-context is reverted
         let (backup_db, backup_substate, backup_refunded_gas) = (
             self.cache.clone(),
@@ -163,20 +170,7 @@ impl VM {
         );
 
         loop {
-            let opcode = match current_call_frame.next_opcode() {
-                Ok(opt) => opt.unwrap_or(Opcode::STOP),
-                Err(e) => {
-                    return TransactionReport {
-                        result: TxResult::Revert(e),
-                        new_state: self.cache.accounts.clone(),
-                        gas_used: current_call_frame.gas_used.low_u64(),
-                        gas_refunded: self.env.refunded_gas.low_u64(),
-                        output: current_call_frame.returndata.clone(), // Bytes::new() if error is not RevertOpcode
-                        logs: current_call_frame.logs.clone(),
-                        created_address: None,
-                    };
-                }
-            };
+            let opcode = current_call_frame.next_opcode()?.unwrap_or(Opcode::STOP); // This will execute opcode stop if there are no more opcodes, there are other ways of solving this but this is the simplest and doesn't change VM behavior.
 
             // Note: This is commented because it's used for debugging purposes in development.
             // dbg!(&current_call_frame.gas_used);
@@ -287,7 +281,7 @@ impl VM {
                 Ok(OpcodeSuccess::Continue) => {}
                 Ok(OpcodeSuccess::Result(_)) => {
                     self.call_frames.push(current_call_frame.clone());
-                    return TransactionReport {
+                    return Ok(TransactionReport {
                         result: TxResult::Success,
                         new_state: self.cache.accounts.clone(),
                         gas_used: current_call_frame.gas_used.low_u64(),
@@ -295,10 +289,15 @@ impl VM {
                         output: current_call_frame.returndata.clone(),
                         logs: current_call_frame.logs.clone(),
                         created_address: None,
-                    };
+                    });
                 }
                 Err(error) => {
                     self.call_frames.push(current_call_frame.clone());
+
+                    // If error is internal then propagate it to the upper layer
+                    if error.is_internal() {
+                        return Err(error);
+                    }
 
                     // Unless error is from Revert opcode, all gas is consumed
                     if error != VMError::RevertOpcode {
@@ -312,7 +311,7 @@ impl VM {
 
                     self.restore_state(backup_db, backup_substate, backup_refunded_gas);
 
-                    return TransactionReport {
+                    return Ok(TransactionReport {
                         result: TxResult::Revert(error),
                         new_state: self.cache.accounts.clone(),
                         gas_used: current_call_frame.gas_used.low_u64(),
@@ -320,7 +319,7 @@ impl VM {
                         output: current_call_frame.returndata.clone(), // Bytes::new() if error is not RevertOpcode
                         logs: current_call_frame.logs.clone(),
                         created_address: None,
-                    };
+                    });
                 }
             }
         }
@@ -337,70 +336,132 @@ impl VM {
         self.env.refunded_gas = backup_refunded_gas;
     }
 
-    // let account = self.db.accounts.get(&self.env.origin).ok_or(VMError::FatalUnwrap)?;
-    /// Based on Ethereum yellow paper's initial tests of intrinsic validity (Section 6). The last version is
-    /// Shanghai, so there are probably missing Cancun validations. The intrinsic validations are:
-    ///
-    /// (1) The transaction is well-formed RLP, with no additional trailing bytes;
-    /// (2) The transaction signature is valid;
-    /// (3) The transaction nonce is valid (equivalent to the sender account's
-    /// current nonce);
-    /// (4) The sender account has no contract code deployed (see EIP-3607).
-    /// (5) The gas limit is no smaller than the intrinsic gas, used by the
-    /// transaction;
-    /// (6) The sender account balance contains at least the cost, required in
-    /// up-front payment;
-    /// (7) The max fee per gas, in the case of type 2 transactions, or gasPrice,
-    /// in the case of type 0 and type 1 transactions, is greater than or equal to
-    /// the block’s base fee;
-    /// (8) For type 2 transactions, max priority fee per fas, must be no larger
-    /// than max fee per fas.
-    fn validate_transaction(&mut self) -> Result<(), VMError> {
-        // Validations (1), (2), (3), (5), and (8) are assumed done in upper layers.
+    /// ## Description
+    /// This method performs validations and returns an error if any of the validations fail.
+    /// It also makes initial changes alongside the validations:
+    /// - It increases sender nonce
+    /// - It substracts up-front-cost from sender balance.
+    /// - It calculates and adds intrinsic gas to the 'gas used' of callframe and environment.
+    ///   See 'docs' for more information about validations.
+    fn validate_transaction(&mut self, initial_call_frame: &mut CallFrame) -> Result<(), VMError> {
+        //TODO: This should revert the transaction, not throw an error. And I don't know if it should be done here...
+        // if self.is_create() {
+        //     // If address is already in db, there's an error
+        //     let new_address_acc = self.db.get_account_info(call_frame.to);
+        //     if !new_address_acc.is_empty() {
+        //         return Err(VMError::AddressAlreadyOccupied);
+        //     }
+        // }
+        let sender_address = self.env.origin;
+        let mut sender_account = self.get_account(&sender_address);
 
-        let call_frame = self
-            .call_frames
-            .last()
-            .ok_or(VMError::Internal(
-                InternalError::CouldNotAccessLastCallframe,
-            ))?
-            .clone();
+        // (1) GASLIMIT_PRICE_PRODUCT_OVERFLOW
+        let gaslimit_price_product = self
+            .gas_price_or_max_fee_per_gas()
+            .checked_mul(self.env.gas_limit)
+            .ok_or(VMError::GasLimitPriceProductOverflow)?;
 
+        // Up front cost is the maximum amount of wei that a user is willing to pay for.
+        let up_front_cost = gaslimit_price_product
+            .checked_add(initial_call_frame.msg_value)
+            .ok_or(VMError::InsufficientAccountFunds)?;
+
+        // (2) INSUFFICIENT_ACCOUNT_FUNDS
+        sender_account.info.balance = sender_account
+            .info
+            .balance
+            .checked_sub(up_front_cost)
+            .ok_or(VMError::InsufficientAccountFunds)?;
+
+        // (3) INSUFFICIENT_MAX_FEE_PER_GAS
+        if self.gas_price_or_max_fee_per_gas() < self.env.base_fee_per_gas {
+            return Err(VMError::InsufficientMaxFeePerGas);
+        }
+
+        // (4) INITCODE_SIZE_EXCEEDED
         if self.is_create() {
-            // If address is already in db, there's an error
-            let new_address_acc = self.db.get_account_info(call_frame.to);
-            if !new_address_acc.is_empty() {
-                return Err(VMError::AddressAlreadyOccupied);
+            // INITCODE_SIZE_EXCEEDED
+            if initial_call_frame.calldata.len() > INIT_CODE_MAX_SIZE {
+                return Err(VMError::InitcodeSizeExceeded);
             }
         }
 
-        let origin = self.env.origin;
+        // (5) INTRINSIC_GAS_TOO_LOW
+        self.add_intrinsic_gas(initial_call_frame)?;
 
-        let mut sender_account = self.get_account(&origin);
-
-        // See if it's raised in upper layers
+        // (6) NONCE_IS_MAX
         sender_account.info.nonce = sender_account
             .info
             .nonce
             .checked_add(1)
-            .ok_or(VMError::Internal(InternalError::NonceOverflowed))?;
+            .ok_or(VMError::NonceIsMax)?;
 
-        // (4)
-        if sender_account.has_code()? {
-            return Err(VMError::SenderAccountShouldNotHaveBytecode);
+        // Update cache with account with incremented nonce
+        self.cache.add_account(&sender_address, &sender_account);
+
+        // (7) PRIORITY_GREATER_THAN_MAX_FEE_PER_GAS
+        if let (Some(tx_max_priority_fee), Some(tx_max_fee_per_gas)) = (
+            self.env.tx_max_priority_fee_per_gas,
+            self.env.tx_max_fee_per_gas,
+        ) {
+            if tx_max_priority_fee > tx_max_fee_per_gas {
+                return Err(VMError::PriorityGreaterThanMaxFeePerGas);
+            }
         }
 
-        // (6)
-        if sender_account.info.balance < call_frame.msg_value {
-            return Err(VMError::SenderBalanceShouldContainTransferValue);
+        // (8) SENDER_NOT_EOA
+        if sender_account.has_code() {
+            return Err(VMError::SenderNotEOA);
         }
 
-        self.cache.add_account(&origin, &sender_account);
-
-        // (7)
-        if self.env.gas_price < self.env.base_fee_per_gas {
-            return Err(VMError::GasPriceIsLowerThanBaseFee);
+        // (9) GAS_ALLOWANCE_EXCEEDED
+        if self.env.gas_limit > self.env.block_gas_limit {
+            return Err(VMError::GasAllowanceExceeded);
         }
+
+        // (10) INSUFFICIENT_MAX_FEE_PER_BLOB_GAS
+        if let Some(tx_max_fee_per_blob_gas) = self.env.tx_max_fee_per_blob_gas {
+            if tx_max_fee_per_blob_gas < self.env.base_fee_per_gas {
+                return Err(VMError::InsufficientMaxFeePerGas);
+            }
+        }
+
+        //TODO: Implement the rest of the validations (TYPE_3)
+
+        // (11) TYPE_3_TX_ZERO_BLOBS
+        if let Some(tx_blob_hashes) = &self.env.tx_blob_hashes {
+            if tx_blob_hashes.is_empty() {
+                return Err(VMError::Type3TxZeroBlobs);
+            }
+        }
+
+        // (12) TYPE_3_TX_INVALID_BLOB_VERSIONED_HASH
+        if let Some(tx_blob_hashes) = &self.env.tx_blob_hashes {
+            for blob_hash in tx_blob_hashes {
+                let blob_hash = blob_hash.as_bytes();
+                if let Some(first_byte) = blob_hash.first() {
+                    if !VALID_BLOB_PREFIXES.contains(first_byte) {
+                        return Err(VMError::Type3TxInvalidBlobVersionedHash);
+                    }
+                }
+            }
+        }
+
+        // (13) TYPE_3_TX_PRE_FORK -> This is not necessary for now because we are not supporting pre-cancun transactions yet. But we should somehow be able to tell the current context.
+
+        // (14) TYPE_3_TX_BLOB_COUNT_EXCEEDED
+        if let Some(tx_blob_hashes) = &self.env.tx_blob_hashes {
+            if tx_blob_hashes.len() > MAX_BLOB_COUNT {
+                return Err(VMError::Type3TxBlobCountExceeded);
+            }
+        }
+
+        // (15) TYPE_3_TX_CONTRACT_CREATION
+        // The current way of checking if the transaction is a Type 3 Tx is by checking if the tx_blob_hashes is Some.
+        if self.env.tx_blob_hashes.is_some() && self.is_create() {
+            return Err(VMError::Type3TxContractCreation);
+        }
+
         Ok(())
     }
 
@@ -408,103 +469,236 @@ impl VM {
         matches!(self.tx_kind, TxKind::Create)
     }
 
-    fn revert_create(&mut self) -> Result<(), VMError> {
-        // Note: currently working with copies
-        let call_frame = self
-            .call_frames
-            .last()
-            .ok_or(VMError::Internal(
-                InternalError::CouldNotAccessLastCallframe,
-            ))?
-            .clone();
+    // Maybe this function is not necessary.
+    // fn revert_create(&mut self) -> Result<(), VMError> {
+    //     // Note: currently working with copies
+    //     let call_frame = self
+    //         .call_frames
+    //         .last()
+    //         .ok_or(VMError::Internal(
+    //             InternalError::CouldNotAccessLastCallframe,
+    //         ))?
+    //         .clone();
 
-        let sender = call_frame.msg_sender;
-        let mut sender_account = self.get_account(&sender);
+    //     let sender = call_frame.msg_sender;
+    //     let mut sender_account = self.get_account(&sender);
 
-        sender_account.info.nonce = sender_account
+    //     sender_account.info.nonce = sender_account
+    //         .info
+    //         .nonce
+    //         .checked_sub(1)
+    //         .ok_or(VMError::Internal(InternalError::NonceUnderflowed))?;
+
+    //     let new_contract_address = call_frame.to;
+
+    //     if self.cache.accounts.remove(&new_contract_address).is_none() {
+    //         return Err(VMError::AddressDoesNotMatchAnAccount); // Should not be this error
+    //     }
+
+    //     // Should revert this?
+    //     // sender_account.info.balance -= self.call_frames.first().ok_or(VMError::FatalUnwrap)?.msg_value;
+
+    //     Ok(())
+    // }
+
+    /// Calculates effective gas price and updates variable gas_price in env.
+    pub fn update_effective_gas_price(&mut self) -> Result<(), VMError> {
+        if let (Some(max_priority_fee_per_gas), Some(max_fee_per_gas)) = (
+            self.env.tx_max_priority_fee_per_gas,
+            self.env.tx_max_fee_per_gas,
+        ) {
+            // Effective Gas Price = Base Fee + min(maxPriorityFeePerGas, maxFeePerGas - Base Fee)
+            self.env.gas_price = self
+                .env
+                .base_fee_per_gas
+                .checked_add(
+                    max_priority_fee_per_gas.min(
+                        max_fee_per_gas
+                            .checked_sub(self.env.base_fee_per_gas)
+                            .ok_or(VMError::InsufficientMaxFeePerGas)?,
+                    ),
+                )
+                .ok_or(VMError::Internal(
+                    InternalError::ArithmeticOperationOverflow,
+                ))?;
+            // TODO: See what to return if base fee + priority fee causes overflow.
+        };
+        Ok(())
+    }
+
+    pub fn create_post_execution(
+        &mut self,
+        initial_call_frame: &mut CallFrame,
+        report: &mut TransactionReport,
+    ) -> Result<(), VMError> {
+        if self.is_create() {
+            if let TxResult::Revert(error) = &report.result {
+                return Err(error.clone());
+            }
+
+            let contract_code = report.clone().output;
+
+            // (6)
+            if contract_code.len() > MAX_CODE_SIZE {
+                return Err(VMError::ContractOutputTooBig);
+            }
+
+            // If contract code is not empty then the first byte should not be 0xef
+            if *contract_code.first().unwrap_or(&0) == INVALID_CONTRACT_PREFIX {
+                return Err(VMError::InvalidInitialByte);
+            }
+
+            let max_gas = self.env.gas_limit.low_u64();
+
+            // If initialization code is successful, code-deposit cost is paid.
+            let code_length: u64 = contract_code
+                .len()
+                .try_into()
+                .map_err(|_| VMError::Internal(InternalError::ConversionError))?;
+            let code_deposit_cost = code_length
+                .checked_mul(200)
+                .ok_or(VMError::Internal(InternalError::OperationOverflow))?;
+
+            report.add_gas_with_max(code_deposit_cost, max_gas)?;
+            // Charge 22100 gas for each storage variable set (???)
+
+            // Assign bytecode to the new contract
+            let contract_address = initial_call_frame.to;
+            let mut created_contract = self.get_account(&contract_address);
+
+            created_contract.info.bytecode = contract_code;
+
+            self.cache.add_account(&contract_address, &created_contract);
+        }
+        Ok(())
+    }
+
+    /// ## Description
+    /// Changes to the state post-execution, if this fails we won't be able to determine a final state.
+    /// Errors here are mostly related to balance overflows.
+    /// TODO: Determine the right behavior when a balance overflow occurs.
+    /// 1. Refund unused gas to sender
+    /// 2. Transfer value to recipient or return value to sender depending on execution result.
+    /// 3. Pay priority fee to coinbase
+    pub fn post_execution_changes(
+        &mut self,
+        initial_call_frame: &CallFrame,
+        report: &TransactionReport,
+    ) -> Result<(), VMError> {
+        // 1. Refund unused gas to sender
+        let sender_address = self.env.origin;
+        let mut sender_account = self.get_account(&sender_address);
+
+        let max_gas = self.env.gas_limit.low_u64();
+        let consumed_gas = report.gas_used;
+        let refunded_gas = report.gas_refunded.min(
+            consumed_gas
+                .checked_div(5)
+                .ok_or(VMError::Internal(InternalError::UndefinedState(-1)))?,
+        );
+        // "The max refundable proportion of gas was reduced from one half to one fifth by EIP-3529 by Buterin and Swende [2021] in the London release"
+
+        let gas_to_return = max_gas
+            .checked_sub(consumed_gas)
+            .and_then(|gas| gas.checked_add(refunded_gas))
+            .ok_or(VMError::Internal(InternalError::UndefinedState(0)))?;
+
+        let gas_return_amount = self
+            .env
+            .gas_price
+            .checked_mul(U256::from(gas_to_return))
+            .ok_or(VMError::Internal(InternalError::UndefinedState(1)))?;
+
+        sender_account.info.balance = sender_account
             .info
-            .nonce
-            .checked_sub(1)
-            .ok_or(VMError::Internal(InternalError::NonceUnderflowed))?;
+            .balance
+            .checked_add(gas_return_amount)
+            .ok_or(VMError::Internal(InternalError::UndefinedState(2)))?;
 
-        let new_contract_address = call_frame.to;
+        // 2. Transfer value to recipient or return value to sender depending on execution result.
+        let recipient_address = initial_call_frame.to;
+        let mut recipient_account = self.get_account(&recipient_address);
 
-        if self.cache.accounts.remove(&new_contract_address).is_none() {
-            return Err(VMError::AddressDoesNotMatchAnAccount); // Should not be this error
+        if report.is_success() {
+            // transfer value to recipient
+            recipient_account.info.balance = recipient_account
+                .info
+                .balance
+                .checked_add(initial_call_frame.msg_value)
+                .ok_or(VMError::Internal(InternalError::UndefinedState(3)))?;
+        } else {
+            // return value to sender
+            sender_account.info.balance = sender_account
+                .info
+                .balance
+                .checked_add(initial_call_frame.msg_value)
+                .ok_or(VMError::Internal(InternalError::UndefinedState(4)))?;
         }
 
-        // Should revert this?
-        // sender_account.info.balance -= self.call_frames.first().ok_or(VMError::FatalUnwrap)?.msg_value;
+        self.cache.add_account(&sender_address, &sender_account);
+        self.cache
+            .add_account(&recipient_address, &recipient_account);
+
+        // 3. Pay priority fee to coinbase
+        let coinbase_address = self.env.coinbase;
+        let priority_fee_per_gas = self
+            .env
+            .gas_price
+            .checked_sub(self.env.base_fee_per_gas)
+            .ok_or(VMError::Internal(InternalError::UndefinedState(5)))?;
+        let coinbase_fee = (U256::from(consumed_gas))
+            .checked_mul(priority_fee_per_gas)
+            .ok_or(VMError::Internal(InternalError::UndefinedState(6)))?;
+
+        let mut coinbase_account = self.get_account(&coinbase_address);
+
+        coinbase_account.info.balance = coinbase_account
+            .info
+            .balance
+            .checked_add(coinbase_fee)
+            .ok_or(VMError::Internal(InternalError::UndefinedState(7)))?;
+
+        self.cache.add_account(&coinbase_address, &coinbase_account);
 
         Ok(())
     }
 
-    pub fn transact(&mut self) -> Result<TransactionReport, VMError> {
-        self.validate_transaction()?;
+    pub fn add_intrinsic_gas(&mut self, initial_call_frame: &mut CallFrame) -> Result<(), VMError> {
+        // Intrinsic gas is the gas consumed by the transaction before the execution of the opcodes. Section 6.2 in the Yellow Paper.
 
-        let initial_gas = Default::default();
+        // Intrinsic Gas = Calldata cost + Create cost + Base cost + Access list cost
+        let mut intrinsic_gas: U256 = U256::zero();
 
-        self.env.consumed_gas = initial_gas;
+        // Calldata Cost
+        // 4 gas for each zero byte in the transaction data 16 gas for each non-zero byte in the transaction.
+        let mut calldata_cost: U256 = U256::zero();
+        for byte in &initial_call_frame.calldata {
+            if *byte != 0 {
+                calldata_cost = calldata_cost
+                    .checked_add(U256::from(16))
+                    .ok_or(VMError::OutOfGas(OutOfGasError::ConsumedGasOverflow))?;
+            } else {
+                calldata_cost = calldata_cost
+                    .checked_add(U256::from(4))
+                    .ok_or(VMError::OutOfGas(OutOfGasError::ConsumedGasOverflow))?;
+            }
+        }
 
-        let mut current_call_frame = self
-            .call_frames
-            .pop()
-            .ok_or(VMError::Internal(InternalError::CouldNotPopCallframe))?;
-
-        let mut report = self.execute(&mut current_call_frame);
-
-        let initial_call_frame = self
-            .call_frames
-            .last()
-            .ok_or(VMError::Internal(
-                InternalError::CouldNotAccessLastCallframe,
-            ))?
-            .clone();
-
-        let sender = initial_call_frame.msg_sender;
-
-        let initial_call_frame = self
-            .call_frames
-            .last()
-            .ok_or(VMError::Internal(
-                InternalError::CouldNotAccessLastCallframe,
-            ))?
-            .clone();
-
-        let calldata_cost =
-            gas_cost::tx_calldata(&initial_call_frame.calldata).map_err(VMError::OutOfGas)?;
-
-        report.gas_used = report
-            .gas_used
+        intrinsic_gas = intrinsic_gas
             .checked_add(calldata_cost)
-            .ok_or(VMError::OutOfGas(OutOfGasError::GasUsedOverflow))?;
+            .ok_or(VMError::OutOfGas(OutOfGasError::ConsumedGasOverflow))?;
 
+        // Base Cost
+        intrinsic_gas = intrinsic_gas
+            .checked_add(TX_BASE_COST)
+            .ok_or(VMError::OutOfGas(OutOfGasError::ConsumedGasOverflow))?;
+
+        // Create Cost
         if self.is_create() {
-            // If create should check if transaction failed. If failed should revert (delete created contract, )
-            if let TxResult::Revert(error) = report.result {
-                self.revert_create()?;
-                return Err(error);
-            }
-            let contract_code = report.clone().output;
+            intrinsic_gas = intrinsic_gas
+                .checked_add(CREATE_BASE_COST)
+                .ok_or(VMError::OutOfGas(OutOfGasError::ConsumedGasOverflow))?;
 
-            // TODO: Is this the expected behavior?
-            if !contract_code.is_empty() {
-                // (6)
-                if contract_code.len() > MAX_CODE_SIZE {
-                    return Err(VMError::ContractOutputTooBig);
-                }
-                // Supposing contract code has contents
-                if *contract_code
-                    .first()
-                    .ok_or(VMError::Internal(InternalError::TriedToIndexEmptyCode))?
-                    == INVALID_CONTRACT_PREFIX
-                {
-                    return Err(VMError::InvalidInitialByte);
-                }
-            }
-
-            // If the initialization code completes successfully, a final contract-creation cost is paid,
-            // the code-deposit cost, c, proportional to the size of the created contract’s code
             let number_of_words: u64 = initial_call_frame
                 .calldata
                 .chunks(WORD_SIZE)
@@ -512,82 +706,58 @@ impl VM {
                 .try_into()
                 .map_err(|_| VMError::Internal(InternalError::ConversionError))?;
 
-            let code_length: u64 = contract_code
-                .len()
-                .try_into()
-                .map_err(|_| VMError::Internal(InternalError::ConversionError))?;
-
-            let creation_cost =
-                gas_cost::tx_creation(code_length, number_of_words).map_err(VMError::OutOfGas)?;
-            report.gas_used = report
-                .gas_used
-                .checked_add(creation_cost)
-                .ok_or(VMError::OutOfGas(OutOfGasError::GasUsedOverflow))?;
-            // Charge 22100 gas for each storage variable set
-
-            let contract_address = initial_call_frame.to;
-
-            let mut created_contract = self.get_account(&contract_address);
-
-            created_contract.info.bytecode = contract_code;
-
-            self.cache.add_account(&contract_address, &created_contract);
+            intrinsic_gas = intrinsic_gas
+                .checked_add(
+                    U256::from(number_of_words)
+                        .checked_mul(U256::from(2))
+                        .ok_or(VMError::OutOfGas(OutOfGasError::ConsumedGasOverflow))?,
+                )
+                .ok_or(VMError::OutOfGas(OutOfGasError::ConsumedGasOverflow))?;
         }
 
-        let mut sender_account = self.get_account(&sender);
-        let coinbase_address = self.env.coinbase;
+        // Access List Cost
+        // TODO: Implement access list cost.
 
-        sender_account.info.balance = sender_account
-            .info
-            .balance
-            .checked_sub(
-                U256::from(report.gas_used)
-                    .checked_mul(self.env.gas_price)
-                    .ok_or(VMError::GasLimitPriceProductOverflow)?,
-            )
-            .ok_or(VMError::BalanceUnderflow)?;
+        self.increase_consumed_gas(initial_call_frame, intrinsic_gas)
+            .map_err(|_| VMError::IntrinsicGasTooLow)?;
 
-        let receiver_address = initial_call_frame.to;
-        let mut receiver_account = self.get_account(&receiver_address);
-        // If execution was successful we want to transfer value from sender to receiver
-        if report.is_success() {
-            // Subtract to the caller the gas sent
-            sender_account.info.balance = sender_account
-                .info
-                .balance
-                .checked_sub(initial_call_frame.msg_value)
-                .ok_or(VMError::BalanceUnderflow)?;
-            receiver_account.info.balance = receiver_account
-                .info
-                .balance
-                .checked_add(initial_call_frame.msg_value)
-                .ok_or(VMError::BalanceUnderflow)?;
-        }
+        Ok(())
+    }
 
-        // Note: This is commented because it's used for debugging purposes in development.
-        // dbg!(&report.gas_refunded);
+    pub fn transact(&mut self) -> Result<TransactionReport, VMError> {
+        let mut initial_call_frame = self
+            .call_frames
+            .pop()
+            .ok_or(VMError::Internal(InternalError::CouldNotPopCallframe))?;
 
-        self.cache.add_account(&sender, &sender_account);
-        self.cache.add_account(&receiver_address, &receiver_account);
+        // Validates transaction and performs pre-exeuction changes.
+        // Errors don't revert execution, they are propagated because transaction is invalid.
+        self.validate_transaction(&mut initial_call_frame)?;
 
-        // Send coinbase fee
-        let priority_fee_per_gas = self
-            .env
-            .gas_price
-            .checked_sub(self.env.base_fee_per_gas)
-            .ok_or(VMError::GasPriceIsLowerThanBaseFee)?;
-        let coinbase_fee = (U256::from(report.gas_used))
-            .checked_mul(priority_fee_per_gas)
-            .ok_or(VMError::BalanceOverflow)?;
+        self.update_effective_gas_price()?; // This is for gas_price to be a reasonable value
 
-        let mut coinbase_account = self.get_account(&coinbase_address);
-        coinbase_account.info.balance = coinbase_account
-            .info
-            .balance
-            .checked_add(coinbase_fee)
-            .ok_or(VMError::BalanceOverflow)?;
+        // We need cache before execution because if a create transaction reverts in post-execution then we need to revert whatever the init-code did.
+        let cache_before_execution = self.cache.clone();
+        let mut report = self.execute(&mut initial_call_frame)?;
 
-        self.cache.add_account(&coinbase_address, &coinbase_account);
+        // Validation of create transaction post execution
+        // If it fails, it reverts contract creation.
+        match self.create_post_execution(&mut initial_call_frame, &mut report) {
+            Ok(_) => {}
+            Err(error) => {
+                if error.is_internal() {
+                    return Err(error);
+                } else {
+                    report.result = TxResult::Revert(error);
+                    report.gas_refunded = 0;
+                    report.gas_used = self.env.gas_limit.low_u64();
+                    self.cache = cache_before_execution;
+                    self.cache.accounts.remove(&initial_call_frame.to);
+                }
+            }
+        };
+
+        self.post_execution_changes(&initial_call_frame, &report)?;
 
         report.new_state.clone_from(&self.cache.accounts);
 
@@ -600,7 +770,11 @@ impl VM {
         ))
     }
 
-    // TODO: Improve and test REVERT behavior for XCALL opcodes. Issue: https://github.com/lambdaclass/lambda_ethrex/issues/1061
+    pub fn gas_price_or_max_fee_per_gas(&self) -> U256 {
+        self.env.tx_max_fee_per_gas.unwrap_or(self.env.gas_price)
+    }
+
+    // TODO: Improve and test REVERT behavior for XCALL opcodes. Issue: https://github.com/lambdaclass/lambda_ethereum_rust/issues/1061
     #[allow(clippy::too_many_arguments)]
     pub fn generic_call(
         &mut self,
@@ -700,7 +874,7 @@ impl VM {
         self.cache.add_account(&to, &recipient_account);
 
         // self.call_frames.push(new_call_frame.clone());
-        let tx_report = self.execute(&mut new_call_frame);
+        let tx_report = self.execute(&mut new_call_frame)?;
 
         // Add gas used by the sub-context to the current one after it's execution.
         current_call_frame.gas_used = current_call_frame
