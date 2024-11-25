@@ -314,6 +314,10 @@ impl VM {
 
         self.increase_consumed_gas(current_call_frame, gas_cost)?;
 
+        if size == 0 {
+            return Ok(OpcodeSuccess::Continue);
+        }
+
         if !is_cached {
             self.cache_from_db(&address);
         };
