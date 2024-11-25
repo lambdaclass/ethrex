@@ -1,3 +1,5 @@
+use std::str::FromStr;
+
 use bytes::Bytes;
 use ethrex_core::U256;
 use ethrex_levm::{
@@ -101,6 +103,22 @@ fn test_is_negative() {
     let mut vm = new_vm_with_bytecode(Bytes::copy_from_slice(&[58, 63, 58, 5])).unwrap();
     let mut current_call_frame = vm.call_frames.pop().unwrap();
     vm.execute(&mut current_call_frame);
+}
+
+#[test]
+fn test_non_compliance_keccak256() {
+    let mut vm = new_vm_with_bytecode(Bytes::copy_from_slice(&[88, 88, 32, 89])).unwrap();
+    let mut current_call_frame = vm.call_frames.pop().unwrap();
+    vm.execute(&mut current_call_frame);
+    assert_eq!(
+        *current_call_frame.stack.stack.first().unwrap(),
+        U256::from_str("0xc5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a470")
+            .unwrap()
+    );
+    assert_eq!(
+        *current_call_frame.stack.stack.get(1).unwrap(),
+        U256::zero()
+    );
 }
 
 #[test]
