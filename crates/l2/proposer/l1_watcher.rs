@@ -182,6 +182,7 @@ impl L1Watcher {
                 .build_privileged_transaction(
                     PrivilegedTxType::Deposit,
                     beneficiary,
+                    beneficiary,
                     Bytes::new(),
                     Overrides {
                         chain_id: Some(

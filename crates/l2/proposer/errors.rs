@@ -61,6 +61,8 @@ pub enum CommitterError {
     FailedToReExecuteBlock(#[from] EvmError),
     #[error("Committer failed to send transaction: {0}")]
     FailedToSendCommitment(String),
+    #[error("Withdrawal transaction was invalid")]
+    InvalidWithdrawalTransaction,
 }
 
 #[derive(Debug, thiserror::Error)]

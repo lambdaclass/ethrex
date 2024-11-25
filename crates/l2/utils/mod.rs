@@ -1,4 +1,5 @@
-use keccak_hash::H256;
+use ethrex_core::Address;
+use keccak_hash::{keccak, H256};
 use secp256k1::SecretKey;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
@@ -21,4 +22,12 @@ where
 {
     let hex = H256::from_slice(&secret_key.secret_bytes());
     hex.serialize(serializer)
+}
+
+pub fn get_address_from_secret_key(secret_key: &SecretKey) -> Address {
+    let mut buffer = [0u8; 64];
+    let public_key = secret_key.public_key(secp256k1::SECP256K1).serialize();
+    buffer.copy_from_slice(&public_key[1..]);
+
+    Address::from(keccak(buffer))
 }
