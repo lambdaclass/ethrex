@@ -1,13 +1,9 @@
-name: "Assertoor"
+name: Assertoor
 on:
   merge_group:
-  pull_request:
-    branches: ["**"]
-    paths-ignore:
-      - 'README.md'
-      - 'LICENSE'
-      - "**/README.md"
-      - "**/docs/**"
+  workflow_run:
+    workflows: [Docker build]
+    types: [completed]
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
@@ -17,13 +13,10 @@ env:
   RUST_VERSION: 1.80.1
 
 jobs:
-  build:
-    uses: ./.github/workflows/docker_build.yaml
-
   run-assertoor:
     name: Stability Check
     runs-on: ubuntu-latest
-    needs: [build]
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
     steps:
       - uses: actions/checkout@v4
 
@@ -40,7 +33,7 @@ jobs:
       - name: Setup kurtosis testnet and run assertoor tests
         uses: ethpandaops/kurtosis-assertoor-github-action@v1
         with:
-          kurtosis_version: '1.3.1'
-          ethereum_package_url: 'github.com/lambdaclass/ethereum-package'
-          ethereum_package_branch: 'ethrex-integration'
-          ethereum_package_args: './test_data/network_params.yaml'
+          kurtosis_version: "1.3.1"
+          ethereum_package_url: "github.com/lambdaclass/ethereum-package"
+          ethereum_package_branch: "ethrex-integration"
+          ethereum_package_args: "./test_data/network_params.yaml"

@@ -3,8 +3,8 @@ on:
   pull_request:
     branches: ["**"]
     paths:
-      - 'README.md'
-      - 'LICENSE'
+      - "README.md"
+      - "LICENSE"
       - "**/README.md"
       - "**/docs/**"
       - "crates/vm/levm/**"
@@ -13,22 +13,22 @@ jobs:
     name: Lint
     runs-on: ubuntu-latest
     if: false
-    steps: [run: true]
+    steps: [run: "true"]
 
   test:
     name: Test
     runs-on: ubuntu-latest
     if: false
-    steps: [run: true]
+    steps: [run: "true"]
 
   docker_build:
     name: Build Docker image
     runs-on: ubuntu-latest
     if: false
-    steps: [run: true]
+    steps: [run: "true"]
 
   prover:
     name: Build RISC-V zkVM program
     runs-on: ubuntu-latest
     if: false
-    steps: [run: true]
+    steps: [run: "true"]
