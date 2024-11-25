@@ -105,3 +105,6 @@ run-hive-debug: build-image setup-hive ## 🐞 Run Hive testing suite in debug m
 
 clean-hive-logs: ## 🧹 Clean Hive logs
 	rm -rf ./hive/workspace/logs
+
+loc:
+	cargo run -p loc

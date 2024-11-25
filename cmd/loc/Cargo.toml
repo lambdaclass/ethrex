@@ -1,0 +1,8 @@
+[package]
+name = "loc"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+tokei = "12.1.2"
+colored = "2.1.0"

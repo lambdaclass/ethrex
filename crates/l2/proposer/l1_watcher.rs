@@ -12,6 +12,7 @@ use ethrex_core::types::PrivilegedTxType;
 use ethrex_core::types::{Signable, Transaction};
 use ethrex_rpc::types::receipt::RpcLog;
 use ethrex_storage::Store;
+use keccak_hash::keccak;
 use secp256k1::SecretKey;
 use std::{cmp::min, ops::Mul, time::Duration};
 use tokio::time::sleep;
@@ -20,11 +21,31 @@ use tracing::{debug, info, warn};
 pub async fn start_l1_watcher(store: Store) {
     let eth_config = EthConfig::from_env().expect("EthConfig::from_env()");
     let watcher_config = L1WatcherConfig::from_env().expect("L1WatcherConfig::from_env()");
+    let sleep_duration = Duration::from_millis(watcher_config.check_interval_ms);
     let mut l1_watcher = L1Watcher::new_from_config(watcher_config, eth_config);
     loop {
-        let logs = l1_watcher.get_logs().await.expect("l1_watcher.get_logs()");
+        sleep(sleep_duration).await;
+
+        let logs = match l1_watcher.get_logs().await {
+            Ok(logs) => logs,
+            Err(error) => {
+                warn!("Error when getting logs from L1: {}", error);
+                continue;
+            }
+        };
+        if logs.is_empty() {
+            continue;
+        }
+
+        let pending_deposits_logs = match l1_watcher.get_pending_deposit_logs().await {
+            Ok(logs) => logs,
+            Err(error) => {
+                warn!("Error when getting L1 pending deposit logs: {}", error);
+                continue;
+            }
+        };
         let _deposit_txs = l1_watcher
-            .process_logs(logs, &store)
+            .process_logs(logs, &pending_deposits_logs, &store)
             .await
             .expect("l1_watcher.process_logs()");
     }
@@ -34,11 +55,9 @@ pub struct L1Watcher {
     eth_client: EthClient,
     address: Address,
     topics: Vec<H256>,
-    check_interval: Duration,
     max_block_step: U256,
     last_block_fetched: U256,
     l2_proposer_pk: SecretKey,
-    l2_proposer_address: Address,
 }
 
 impl L1Watcher {
@@ -47,12 +66,30 @@ impl L1Watcher {
             eth_client: EthClient::new_from_config(eth_config),
             address: watcher_config.bridge_address,
             topics: watcher_config.topics,
-            check_interval: Duration::from_millis(watcher_config.check_interval_ms),
             max_block_step: watcher_config.max_block_step,
             last_block_fetched: U256::zero(),
             l2_proposer_pk: watcher_config.l2_proposer_private_key,
-            l2_proposer_address: watcher_config.l2_proposer_address,
         }
+    }
+
+    pub async fn get_pending_deposit_logs(&self) -> Result<Vec<H256>, L1WatcherError> {
+        Ok(hex::decode(
+            &self
+                .eth_client
+                .call(
+                    self.address,
+                    Bytes::copy_from_slice(&[0x35, 0x6d, 0xa2, 0x49]),
+                    Overrides::default(),
+                )
+                .await?[2..],
+        )
+        .map_err(|_| L1WatcherError::FailedToDeserializeLog("Not a valid hex string".to_string()))?
+        .chunks(32)
+        .map(H256::from_slice)
+        .collect::<Vec<H256>>()
+        .split_at(2) // Two first words are index and length abi encode
+        .1
+        .to_vec())
     }
 
     pub async fn get_logs(&mut self) -> Result<Vec<RpcLog>, L1WatcherError> {
@@ -91,25 +128,25 @@ impl L1Watcher {
 
         self.last_block_fetched = new_last_block;
 
-        sleep(self.check_interval).await;
-
         Ok(logs)
     }
 
     pub async fn process_logs(
         &self,
         logs: Vec<RpcLog>,
+        l1_deposit_logs: &[H256],
         store: &Store,
     ) -> Result<Vec<H256>, L1WatcherError> {
-        if logs.is_empty() {
-            return Ok(Vec::new());
-        }
-
         let mut deposit_txs = Vec::new();
         let mut operator_nonce = store
             .get_account_info(
-                self.eth_client.get_block_number().await?.as_u64(),
-                self.l2_proposer_address,
+                store
+                    .get_latest_block_number()
+                    .map_err(|e| L1WatcherError::FailedToRetrieveChainConfig(e.to_string()))?
+                    .ok_or(L1WatcherError::FailedToRetrieveChainConfig(
+                        "Last block is None".to_string(),
+                    ))?,
+                Address::zero(),
             )
             .map_err(|e| L1WatcherError::FailedToRetrieveDepositorAccountInfo(e.to_string()))?
             .map(|info| info.nonce)
@@ -130,6 +167,13 @@ impl L1Watcher {
                         "Failed to parse beneficiary from log: {e:#?}"
                     ))
                 })?;
+
+            let mut value_bytes = [0u8; 32];
+            mint_value.to_big_endian(&mut value_bytes);
+            if !l1_deposit_logs.contains(&keccak([beneficiary.as_bytes(), &value_bytes].concat())) {
+                warn!("Deposit already processed (to: {beneficiary:#x}, value: {mint_value}), skipping.");
+                continue;
+            }
 
             info!("Initiating mint transaction for {beneficiary:#x} with value {mint_value:#x}",);
 

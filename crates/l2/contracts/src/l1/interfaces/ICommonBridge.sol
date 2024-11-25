@@ -41,6 +41,11 @@ interface ICommonBridge {
         uint256 indexed claimedAmount
     );
 
+    /// @notice Method to retrieve all the deposit logs hashes.
+    /// @dev This method is used by the L2 L1_Watcher to get the remaining
+    /// deposit logs to be processed.
+    function getDepositLogs() external view returns (bytes32[] memory);
+
     /// @notice Initializes the contract.
     /// @dev This method is called only once after the contract is deployed.
     /// @dev It sets the OnChainProposer address.

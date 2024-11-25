@@ -23,7 +23,7 @@ use revm::{
     inspector_handle_register,
     inspectors::TracerEip3155,
     precompile::{PrecompileSpecId, Precompiles},
-    primitives::{BlobExcessGasAndPrice, BlockEnv, TxEnv, B256, U256 as RevmU256},
+    primitives::{BlobExcessGasAndPrice, BlockEnv, TxEnv, B256},
     Database, DatabaseCommit, Evm,
 };
 use revm_inspectors::access_list::AccessListInspector;
@@ -35,7 +35,7 @@ use revm_primitives::{
 // Export needed types
 pub use errors::EvmError;
 pub use execution_result::*;
-pub use revm::primitives::{Address as RevmAddress, SpecId};
+pub use revm::primitives::{Address as RevmAddress, SpecId, U256 as RevmU256};
 
 type AccessList = Vec<(Address, Vec<H256>)>;
 

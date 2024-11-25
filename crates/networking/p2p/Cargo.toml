@@ -21,6 +21,8 @@ snap.workspace = true
 k256 = { version = "0.13.3", features = ["ecdh"] }
 sha3 = "0.10.8"
 
+serde_json = "1.0.117"
+
 # RLPx
 concat-kdf = "0.1.0"
 hmac = "0.12.1"

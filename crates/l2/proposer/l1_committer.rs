@@ -23,7 +23,6 @@ use ethrex_storage::Store;
 use ethrex_vm::{evm_state, execute_block, get_state_transitions};
 use keccak_hash::keccak;
 use secp256k1::SecretKey;
-use sha2::{Digest, Sha256};
 use std::ops::Div;
 use std::{collections::HashMap, time::Duration};
 use tokio::time::sleep;
@@ -295,24 +294,19 @@ impl Committer {
     ) -> Result<H256, CommitterError> {
         info!("Sending commitment for block {block_number}");
 
-        // TODO: This could be done using BlobsBundle.generate_versioned_hashes but we use different hashing crates
-        // in l1 and l2, we might need to consider unification later, for now the implementation here still works
-        let mut hasher = Sha256::new();
-        hasher.update(
-            blobs_bundle
-                .commitments
-                .first()
-                .expect("At least one commitment should be present"),
-        );
-        let mut blob_versioned_hash = hasher.finalize();
-        blob_versioned_hash[0] = 0x01; // EIP-4844 versioning
-
         let mut calldata = Vec::with_capacity(132);
         calldata.extend(COMMIT_FUNCTION_SELECTOR);
         let mut block_number_bytes = [0_u8; 32];
         U256::from(block_number).to_big_endian(&mut block_number_bytes);
         calldata.extend(block_number_bytes);
-        calldata.extend(blob_versioned_hash);
+
+        let blob_versioned_hashes = blobs_bundle.generate_versioned_hashes();
+        // We only actually support one versioned hash on the onChainProposer for now,
+        // but eventually this should work if we start sending multiple blobs per commit operation.
+        for blob_versioned_hash in blob_versioned_hashes {
+            let blob_versioned_hash_bytes = blob_versioned_hash.to_fixed_bytes();
+            calldata.extend(blob_versioned_hash_bytes);
+        }
         calldata.extend(withdrawal_logs_merkle_root.0);
         calldata.extend(deposit_logs_hash.0);
 

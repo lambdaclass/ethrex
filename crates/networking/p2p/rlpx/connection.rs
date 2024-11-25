@@ -9,7 +9,7 @@ use crate::{
         },
         handshake::encode_ack_message,
         message::Message,
-        p2p::{self, PingMessage, PongMessage},
+        p2p::{self, DisconnectMessage, PingMessage, PongMessage},
         utils::id2pubkey,
     },
     snap::{
@@ -38,7 +38,10 @@ use k256::{
 use sha3::{Digest, Keccak256};
 use tokio::{
     io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt},
-    sync::broadcast::{self, error::RecvError},
+    sync::{
+        broadcast::{self, error::RecvError},
+        Mutex,
+    },
     task,
     time::{sleep, Instant},
 };
@@ -85,7 +88,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
             storage,
             capabilities: vec![],
             next_periodic_task_check: Instant::now() + PERIODIC_TASKS_CHECK_INTERVAL,
-            connection_broadcast_send: connection_broadcast.clone(),
+            connection_broadcast_send: connection_broadcast,
         }
     }
 
@@ -139,7 +142,50 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
         ))
     }
 
-    pub async fn handshake(&mut self) -> Result<(), RLPxError> {
+    /// Starts a handshake and runs the peer connection.
+    /// It runs in it's own task and blocks until the connection is dropped
+    pub async fn start_peer(&mut self, table: Arc<Mutex<crate::kademlia::KademliaTable>>) {
+        // Perform handshake
+        if let Err(e) = self.handshake().await {
+            self.peer_conn_failed("Handshake failed", e, table).await;
+        } else {
+            // Handshake OK: handle connection
+            if let Err(e) = self.handle_peer_conn().await {
+                self.peer_conn_failed("Error during RLPx connection", e, table)
+                    .await;
+            }
+        }
+    }
+
+    async fn peer_conn_failed(
+        &mut self,
+        error_text: &str,
+        error: RLPxError,
+        table: Arc<Mutex<crate::kademlia::KademliaTable>>,
+    ) {
+        self.send(Message::Disconnect(DisconnectMessage {
+            reason: self.match_disconnect_reason(&error),
+        }))
+        .await
+        .unwrap_or_else(|e| info!("Could not send Disconnect message: ({e})"));
+        if let Ok(node_id) = self.get_remote_node_id() {
+            // Discard peer from kademlia table
+            info!("{error_text}: ({error}), discarding peer {node_id}");
+            table.lock().await.replace_peer(node_id);
+        } else {
+            info!("{error_text}: ({error}), unknown peer")
+        }
+    }
+
+    fn match_disconnect_reason(&self, error: &RLPxError) -> Option<u8> {
+        match error {
+            RLPxError::RLPDecodeError(_) => Some(2_u8),
+            // TODO build a proper matching between error types and disconnection reasons
+            _ => None,
+        }
+    }
+
+    async fn handshake(&mut self) -> Result<(), RLPxError> {
         match &self.state {
             RLPxConnectionState::Initiator(_) => {
                 self.send_auth().await?;
@@ -161,7 +207,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
         Ok(())
     }
 
-    pub async fn exchange_hello_messages(&mut self) -> Result<(), RLPxError> {
+    async fn exchange_hello_messages(&mut self) -> Result<(), RLPxError> {
         let hello_msg = Message::Hello(p2p::HelloMessage::new(
             SUPPORTED_CAPABILITIES.to_vec(),
             PublicKey::from(self.signer.verifying_key()),
@@ -191,7 +237,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
         }
     }
 
-    pub async fn handle_peer_conn(&mut self) -> Result<(), RLPxError> {
+    async fn handle_peer_conn(&mut self) -> Result<(), RLPxError> {
         if let RLPxConnectionState::Established(_) = &self.state {
             self.init_peer_conn().await?;
             info!("Started peer main loop");
@@ -244,7 +290,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
         }
     }
 
-    pub fn get_remote_node_id(&self) -> Result<H512, RLPxError> {
+    fn get_remote_node_id(&self) -> Result<H512, RLPxError> {
         if let RLPxConnectionState::Established(state) = &self.state {
             Ok(state.remote_node_id)
         } else {
@@ -277,13 +323,10 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
             Message::Pong(_) => {
                 // We ignore received Pong messages
             }
-            // Implmenent Status vaidations
-            // https://github.com/lambdaclass/lambda_ethrex/issues/420
-            Message::Status(_) if !peer_supports_eth => {
+            Message::Status(msg_data) if !peer_supports_eth => {
                 info!("Received Status");
-                // TODO: Check peer's status message.
+                backend::validate_status(msg_data, &self.storage)?
             }
-            // TODO: implement handlers for each message type
             Message::GetAccountRange(req) => {
                 let response = process_account_range_request(req, self.storage.clone())?;
                 self.send(Message::AccountRange(response)).await?
@@ -354,16 +397,16 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
         // Sending eth Status if peer supports it
         if self.capabilities.contains(&CAP_ETH) {
             let status = backend::get_status(&self.storage)?;
+            info!("Sending status");
             self.send(Message::Status(status)).await?;
             // The next immediate message in the ETH protocol is the
             // status, reference here:
             // https://github.com/ethereum/devp2p/blob/master/caps/eth.md#status-0x00
-            // let Ok(Message::Status(_)) = self.receive().await else {
-            //     self.capabilities.iter_mut().position(|cap| cap == &CAP_ETH).map(|indx| self.capabilities.remove(indx));
-            // }
             match self.receive().await? {
-                Message::Status(_) => {
+                Message::Status(msg_data) => {
                     // TODO: Check message status is correct.
+                    info!("Received Status");
+                    backend::validate_status(msg_data, &self.storage)?
                 }
                 _msg => {
                     return Err(RLPxError::HandshakeError(
@@ -372,7 +415,6 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
                 }
             }
         }
-        // TODO: add new capabilities startup when required (eg. snap)
         Ok(())
     }
 
