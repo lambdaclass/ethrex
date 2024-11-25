@@ -134,7 +134,7 @@ impl VM {
                     new_contract_address,
                     code,
                     value,
-                    calldata.clone(),
+                    Bytes::new(),
                     false,
                     env.gas_limit.min(MAX_BLOCK_GAS_LIMIT),
                     TX_BASE_COST,
