@@ -1,0 +1,40 @@
+name: CI L2
+on:
+  merge_group:
+  pull_request:
+    branches: ["**"]
+    paths-ignore:
+      - "README.md"
+      - "LICENSE"
+      - "**/README.md"
+      - "**/docs/**"
+      - "crates/vm/levm/**" # We ran this in a separate workflow
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
+  cancel-in-progress: true
+
+env:
+  RUST_VERSION: 1.80.1
+
+jobs:
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v4
+
+      - name: Rustup toolchain install
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: ${{ env.RUST_VERSION }}
+
+      - name: Caching
+        uses: Swatinem/rust-cache@v2
+
+      - name: Run L2 integration test
+        run: |
+          cd crates/l2
+          cp .env.example .env
+          make test
