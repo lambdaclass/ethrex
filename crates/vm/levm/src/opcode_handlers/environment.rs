@@ -393,19 +393,19 @@ impl VM {
         }
 
         let sub_return_data_len = current_call_frame.sub_return_data.len();
-        let data = if returndata_offset < sub_return_data_len {
-            current_call_frame.sub_return_data.slice(
-                returndata_offset
-                    ..(returndata_offset
-                        .checked_add(size)
-                        .ok_or(VMError::Internal(
-                            InternalError::ArithmeticOperationOverflow,
-                        ))?)
-                    .min(sub_return_data_len),
-            )
-        } else {
-            vec![0u8; size].into()
-        };
+
+        if returndata_offset >= sub_return_data_len {
+            return Err(VMError::VeryLargeNumber); // Maybe can create a new error instead of using this one
+        }
+        let data = current_call_frame.sub_return_data.slice(
+            returndata_offset
+                ..(returndata_offset
+                    .checked_add(size)
+                    .ok_or(VMError::Internal(
+                        InternalError::ArithmeticOperationOverflow,
+                    ))?)
+                .min(sub_return_data_len),
+        );
 
         current_call_frame.memory.store_bytes(dest_offset, &data)?;
 

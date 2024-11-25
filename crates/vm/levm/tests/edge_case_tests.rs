@@ -1,6 +1,7 @@
 use bytes::Bytes;
 use ethrex_core::U256;
 use ethrex_levm::{
+    errors::{TxResult, VMError},
     operations::Operation,
     utils::{new_vm_with_bytecode, new_vm_with_ops},
 };
@@ -113,4 +114,13 @@ fn test_sdiv_zero_dividend_and_negative_divisor() {
     let mut current_call_frame = vm.call_frames.pop().unwrap();
     vm.execute(&mut current_call_frame);
     assert_eq!(current_call_frame.stack.pop().unwrap(), U256::zero());
+}
+
+#[test]
+fn test_non_compliance_returndatacopy() {
+    let mut vm =
+        new_vm_with_bytecode(Bytes::copy_from_slice(&[56, 56, 56, 56, 56, 56, 62, 56])).unwrap();
+    let mut current_call_frame = vm.call_frames.pop().unwrap();
+    let txreport = vm.execute(&mut current_call_frame);
+    assert_eq!(txreport.result, TxResult::Revert(VMError::VeryLargeNumber));
 }
