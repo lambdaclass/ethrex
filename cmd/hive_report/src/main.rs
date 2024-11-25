@@ -62,7 +62,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     results.sort_by(|a, b| a.0.cmp(&b.0));
 
     for (file_name, passed, total) in results {
-        println!("{}: {}/{}", file_name, passed, total);
+        println!("- {}: {}/{}", file_name, passed, total);
     }
 
     Ok(())

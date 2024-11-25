@@ -1,13 +1,13 @@
 use std::collections::HashMap;
 
-use ethereum_types::{Address, H160, U256};
+use ethereum_types::H160;
 use ethrex_core::{
     types::{AccountState, Block, ChainConfig},
     H256,
 };
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_storage::{hash_address, hash_key, Store};
-use ethrex_trie::Trie;
+use ethrex_trie::{NodeRLP, Trie};
 use revm::{
     primitives::{
         AccountInfo as RevmAccountInfo, Address as RevmAddress, Bytecode as RevmBytecode,
@@ -17,10 +17,7 @@ use revm::{
 };
 use serde::{Deserialize, Serialize};
 
-use crate::{
-    errors::{ExecutionDBError, StateProofsError},
-    evm_state, execute_block, get_state_transitions,
-};
+use crate::{errors::ExecutionDBError, evm_state, execute_block, get_state_transitions};
 
 /// In-memory EVM database for caching execution data.
 ///
@@ -38,17 +35,12 @@ pub struct ExecutionDB {
     pub block_hashes: HashMap<u64, RevmB256>,
     /// stored chain config
     pub chain_config: ChainConfig,
-    /// proofs of inclusion of account and storage values of the initial state
-    pub initial_proofs: StateProofs,
-}
-
-/// Merkle proofs of inclusion of state values.
-///
-/// Contains Merkle proofs to verfy the inclusion of values in the state and storage tries.
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct StateProofs {
-    account: HashMap<RevmAddress, Vec<Vec<u8>>>,
-    storage: HashMap<RevmAddress, HashMap<RevmU256, Vec<Vec<u8>>>>,
+    /// encoded nodes to reconstruct a state trie, but only including relevant data (pruned).
+    /// root node is stored separately from the rest.
+    pub pruned_state_trie: (Option<NodeRLP>, Vec<NodeRLP>),
+    /// encoded nodes to reconstruct every storage trie, but only including relevant data (pruned)
+    /// root nodes are stored separately from the rest.
+    pub pruned_storage_tries: HashMap<H160, (Option<NodeRLP>, Vec<NodeRLP>)>,
 }
 
 impl ExecutionDB {
@@ -104,33 +96,31 @@ impl ExecutionDB {
             );
         }
 
-        // Compute Merkle proofs for the initial state values
-        let initial_state_trie = store.state_trie(block.header.parent_hash)?.ok_or(
+        // Get pruned state and storage tries. For this we get the "state" (all relevant nodes) of every trie.
+        // "Pruned" because we're only getting the nodes that make paths to the relevant
+        // key-values.
+        let state_trie = store.state_trie(block.header.parent_hash)?.ok_or(
             ExecutionDBError::NewMissingStateTrie(block.header.parent_hash),
         )?;
-        let initial_storage_tries = accounts
-            .keys()
-            .map(|address| {
-                Ok((
-                    H160::from_slice(address.as_slice()),
-                    store
-                        .storage_trie(
-                            block.header.parent_hash,
-                            H160::from_slice(address.as_slice()),
-                        )?
-                        .ok_or(ExecutionDBError::NewMissingStorageTrie(
-                            block.header.parent_hash,
-                            *address,
-                        ))?,
-                ))
-            })
-            .collect::<Result<HashMap<_, _>, ExecutionDBError>>()?;
 
-        let initial_proofs = StateProofs::new(
-            &initial_state_trie,
-            &initial_storage_tries,
-            &address_storage_keys,
-        )?;
+        // Get pruned state trie
+        let state_paths: Vec<_> = address_storage_keys.keys().map(hash_address).collect();
+        let pruned_state_trie = state_trie.get_proofs(&state_paths)?;
+
+        // Get pruned storage tries for every account
+        let mut pruned_storage_tries = HashMap::new();
+        for (address, keys) in address_storage_keys {
+            let storage_trie = store
+                .storage_trie(block.header.parent_hash, address)?
+                .ok_or(ExecutionDBError::NewMissingStorageTrie(
+                    block.header.parent_hash,
+                    address,
+                ))?;
+            let storage_paths: Vec<_> = keys.iter().map(hash_key).collect();
+            let (storage_trie_root, storage_trie_nodes) =
+                storage_trie.get_proofs(&storage_paths)?;
+            pruned_storage_tries.insert(address, (storage_trie_root, storage_trie_nodes));
+        }
 
         Ok(Self {
             accounts,
@@ -138,7 +128,8 @@ impl ExecutionDB {
             storage,
             block_hashes,
             chain_config,
-            initial_proofs,
+            pruned_state_trie,
+            pruned_storage_tries,
         })
     }
 
@@ -146,101 +137,52 @@ impl ExecutionDB {
         self.chain_config
     }
 
-    /// Verifies that [self] holds the initial state (prior to block execution) with some root
-    /// hash.
-    pub fn verify_initial_state(&self, state_root: H256) -> Result<bool, StateProofsError> {
-        self.verify_state_proofs(state_root, &self.initial_proofs)
-    }
+    /// Verifies that all data in [self] is included in the stored tries, and then builds the
+    /// pruned tries from the stored nodes.
+    pub fn build_tries(&self) -> Result<(Trie, HashMap<H160, Trie>), ExecutionDBError> {
+        let (state_trie_root, state_trie_nodes) = &self.pruned_state_trie;
+        let state_trie = Trie::from_nodes(state_trie_root.as_ref(), state_trie_nodes)?;
+        let mut storage_tries = HashMap::new();
 
-    fn verify_state_proofs(
-        &self,
-        state_root: H256,
-        proofs: &StateProofs,
-    ) -> Result<bool, StateProofsError> {
-        proofs.verify(state_root, &self.accounts, &self.storage)
-    }
-}
+        for (revm_address, account) in &self.accounts {
+            let address = H160::from_slice(revm_address.as_slice());
 
-impl StateProofs {
-    fn new(
-        state_trie: &Trie,
-        storage_tries: &HashMap<Address, Trie>,
-        address_storage_keys: &HashMap<Address, Vec<H256>>,
-    ) -> Result<Self, StateProofsError> {
-        let mut account = HashMap::default();
-        let mut storage = HashMap::default();
-
-        for (address, storage_keys) in address_storage_keys {
-            let storage_trie = storage_tries
-                .get(address)
-                .ok_or(StateProofsError::StorageTrieNotFound(*address))?;
-
-            let proof = state_trie.get_proof(&hash_address(address))?;
-            let address = RevmAddress::from_slice(address.as_bytes());
-            account.insert(address, proof);
-
-            let mut storage_proofs = HashMap::new();
-            for key in storage_keys {
-                let proof = storage_trie.get_proof(&hash_key(key))?;
-                let key = RevmU256::from_be_bytes(key.to_fixed_bytes());
-                storage_proofs.insert(key, proof);
+            // check account is in state trie
+            if state_trie.get(&hash_address(&address))?.is_none() {
+                return Err(ExecutionDBError::MissingAccountInStateTrie(address));
             }
-            storage.insert(address, storage_proofs);
-        }
 
-        Ok(Self { account, storage })
-    }
+            let (storage_trie_root, storage_trie_nodes) =
+                self.pruned_storage_tries
+                    .get(&address)
+                    .ok_or(ExecutionDBError::MissingStorageTrie(address))?;
 
-    fn verify(
-        &self,
-        state_root: H256,
-        accounts: &HashMap<RevmAddress, AccountState>,
-        storages: &HashMap<RevmAddress, HashMap<RevmU256, RevmU256>>,
-    ) -> Result<bool, StateProofsError> {
-        // Check accounts inclusion in the state trie
-        for (address, account) in accounts {
-            let proof = self
-                .account
-                .get(address)
-                .ok_or(StateProofsError::AccountProofNotFound(*address))?;
-
-            let hashed_address = hash_address(&H160::from_slice(address.as_slice()));
-            let mut encoded_account = Vec::new();
-            account.encode(&mut encoded_account);
-
-            if !Trie::verify_proof(proof, state_root.into(), &hashed_address, &encoded_account)? {
-                return Ok(false);
+            // compare account storage root with storage trie root
+            let storage_trie = Trie::from_nodes(storage_trie_root.as_ref(), storage_trie_nodes)?;
+            if storage_trie.hash_no_commit() != account.storage_root {
+                return Err(ExecutionDBError::InvalidStorageTrieRoot(address));
             }
-        }
-        // so all account storage roots are valid at this point
 
-        // Check storage values inclusion in storage tries
-        for (address, storage) in storages {
-            let storage_root = accounts
-                .get(address)
-                .map(|account| account.storage_root)
-                .ok_or(StateProofsError::StorageNotFound(*address))?;
-
-            let storage_proofs = self
+            // check all storage keys are in storage trie and compare values
+            let storage = self
                 .storage
-                .get(address)
-                .ok_or(StateProofsError::StorageProofsNotFound(*address))?;
-
+                .get(revm_address)
+                .ok_or(ExecutionDBError::StorageNotFound(*revm_address))?;
             for (key, value) in storage {
-                let proof = storage_proofs
-                    .get(key)
-                    .ok_or(StateProofsError::StorageProofNotFound(*address, *key))?;
-
-                let hashed_key = hash_key(&H256::from_slice(&key.to_be_bytes_vec()));
-                let encoded_value = U256::from_big_endian(&value.to_be_bytes_vec()).encode_to_vec();
-
-                if !Trie::verify_proof(proof, storage_root.into(), &hashed_key, &encoded_value)? {
-                    return Ok(false);
+                let key = H256::from_slice(&key.to_be_bytes_vec());
+                let value = H256::from_slice(&value.to_be_bytes_vec());
+                let retrieved_value = storage_trie
+                    .get(&hash_key(&key))?
+                    .ok_or(ExecutionDBError::MissingKeyInStorageTrie(address, key))?;
+                if value.encode_to_vec() != retrieved_value {
+                    return Err(ExecutionDBError::InvalidStorageTrieValue(address, key));
                 }
             }
+
+            storage_tries.insert(address, storage_trie);
         }
 
-        Ok(true)
+        Ok((state_trie, storage_tries))
     }
 }
 
@@ -281,7 +223,7 @@ impl DatabaseRef for ExecutionDB {
             .ok_or(ExecutionDBError::AccountNotFound(address))?
             .get(&index)
             .cloned()
-            .ok_or(ExecutionDBError::StorageNotFound(address, index))
+            .ok_or(ExecutionDBError::StorageValueNotFound(address, index))
     }
 
     /// Get block hash by block number.

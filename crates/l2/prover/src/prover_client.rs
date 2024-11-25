@@ -7,9 +7,10 @@ use std::{
 use tokio::time::sleep;
 use tracing::{debug, error, info, warn};
 
+use zkvm_interface::io::ProgramInput;
+
 use ethrex_l2::{
-    proposer::prover_server::{ProofData, ProverInputData},
-    utils::config::prover_client::ProverClientConfig,
+    proposer::prover_server::ProofData, utils::config::prover_client::ProverClientConfig,
 };
 
 use super::prover::Prover;
@@ -38,7 +39,7 @@ impl ProverClient {
         loop {
             match self.request_new_input() {
                 Ok((block_number, input)) => {
-                    match prover.set_input(input).prove() {
+                    match prover.prove(input) {
                         Ok(proof) => {
                             if let Err(e) =
                                 self.submit_proof(block_number, proof, prover.id.to_vec())
@@ -58,7 +59,7 @@ impl ProverClient {
         }
     }
 
-    fn request_new_input(&self) -> Result<(u64, ProverInputData), String> {
+    fn request_new_input(&self) -> Result<(u64, ProgramInput), String> {
         // Request the input with the correct block_number
         let request = ProofData::Request;
         let response = connect_to_prover_server_wr(&self.prover_server_endpoint, &request)
@@ -71,7 +72,11 @@ impl ProverClient {
             } => match (block_number, input) {
                 (Some(n), Some(i)) => {
                     info!("Received Response for block_number: {n}");
-                    Ok((n, i))
+                    Ok((n, ProgramInput {
+                        block: i.block,
+                        parent_block_header: i.parent_block_header,
+                        db: i.db
+                    }))
                 }
                 _ => Err(
                     "Received Empty Response, meaning that the ProverServer doesn't have blocks to prove.\nThe Prover may be advancing faster than the Proposer."

@@ -69,7 +69,7 @@ impl Committer {
         }
     }
 
-    pub async fn main_logic(&self) -> Result<(), CommitterError> {
+    async fn main_logic(&self) -> Result<(), CommitterError> {
         let last_committed_block =
             EthClient::get_last_committed_block(&self.eth_client, self.on_chain_proposer_address)
                 .await?;
@@ -135,12 +135,9 @@ impl Committer {
                 .await
             {
                 Ok(commit_tx_hash) => {
-                    info!(
-                "Sent commitment to block {head_block_hash:#x}, with transaction hash {commit_tx_hash:#x}"
-            );
+                    info!("Sent commitment to block {head_block_hash:#x}, with transaction hash {commit_tx_hash:#x}");
                 }
                 Err(error) => {
-                    error!("Failed to send commitment to block {head_block_hash:#x}. Manual intervention required: {error}");
                     return Err(CommitterError::FailedToSendCommitment(format!("Failed to send commitment to block {head_block_hash:#x}. Manual intervention required: {error}")));
                 }
             }
@@ -323,6 +320,7 @@ impl Committer {
                     ..Default::default()
                 },
                 blobs_bundle,
+                10,
             )
             .await
             .map_err(CommitterError::from)?;

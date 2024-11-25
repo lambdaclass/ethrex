@@ -159,7 +159,7 @@ impl VM {
     }
 
     // SSTORE operation
-    // TODO: https://github.com/lambdaclass/lambda_ethrex/issues/1087
+    // TODO: https://github.com/lambdaclass/ethrex/issues/1087
     pub fn op_sstore(
         &mut self,
         current_call_frame: &mut CallFrame,

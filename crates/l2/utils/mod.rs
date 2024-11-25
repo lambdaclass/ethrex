@@ -1,3 +1,5 @@
+use std::array::TryFromSliceError;
+
 use ethrex_core::Address;
 use keccak_hash::{keccak, H256};
 use secp256k1::SecretKey;
@@ -24,10 +26,14 @@ where
     hex.serialize(serializer)
 }
 
-pub fn get_address_from_secret_key(secret_key: &SecretKey) -> Address {
-    let mut buffer = [0u8; 64];
-    let public_key = secret_key.public_key(secp256k1::SECP256K1).serialize();
-    buffer.copy_from_slice(&public_key[1..]);
+pub fn get_address_from_secret_key(secret_key: &SecretKey) -> Result<Address, TryFromSliceError> {
+    let public_key = secret_key
+        .public_key(secp256k1::SECP256K1)
+        .serialize_uncompressed();
+    let hash = keccak(&public_key[1..]);
 
-    Address::from(keccak(buffer))
+    // Get the lat 20 bytes of the hash
+    let address_bytes: [u8; 20] = hash[12..32].try_into()?;
+
+    Ok(Address::from(address_bytes))
 }

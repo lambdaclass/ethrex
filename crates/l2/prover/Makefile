@@ -1,5 +1,5 @@
 RISC0_DEV_MODE?=1
-RUST_LOG?="debug"
+RUST_LOG?="info"
 perf_test_proving:
 	@echo "Using RISC0_DEV_MODE: ${RISC0_DEV_MODE}"
 	RISC0_DEV_MODE=${RISC0_DEV_MODE} RUST_LOG=${RUST_LOG} cargo test --release --test perf_zkvm --features build_zkvm -- --show-output

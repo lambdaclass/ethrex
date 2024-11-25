@@ -2,10 +2,10 @@ use std::path::Path;
 use tracing::info;
 
 use ethrex_blockchain::add_block;
-use ethrex_l2::proposer::prover_server::ProverInputData;
 use ethrex_prover_lib::prover::Prover;
 use ethrex_storage::{EngineType, Store};
 use ethrex_vm::execution_db::ExecutionDB;
+use zkvm_interface::io::ProgramInput;
 
 #[tokio::test]
 async fn test_performance_zkvm() {
@@ -34,23 +34,22 @@ async fn test_performance_zkvm() {
 
     let db = ExecutionDB::from_exec(block_to_prove, &store).unwrap();
 
-    let parent_header = store
+    let parent_block_header = store
         .get_block_header_by_hash(block_to_prove.header.parent_hash)
         .unwrap()
         .unwrap();
 
-    let input = ProverInputData {
-        db,
+    let input = ProgramInput {
         block: block_to_prove.clone(),
-        parent_header,
+        parent_block_header,
+        db,
     };
 
     let mut prover = Prover::new();
-    prover.set_input(input);
 
     let start = std::time::Instant::now();
 
-    let receipt = prover.prove().unwrap();
+    let receipt = prover.prove(input).unwrap();
 
     let duration = start.elapsed();
     info!(
@@ -62,12 +61,5 @@ async fn test_performance_zkvm() {
 
     prover.verify(&receipt).unwrap();
 
-    let output = Prover::get_commitment(&receipt).unwrap();
-
-    let execution_cumulative_gas_used = output.block_receipts.last().unwrap().cumulative_gas_used;
-    info!("Cumulative Gas Used {execution_cumulative_gas_used}");
-
-    let gas_per_second = execution_cumulative_gas_used as f64 / duration.as_secs_f64();
-
-    info!("Gas per Second: {}", gas_per_second);
+    let _program_output = Prover::get_commitment(&receipt).unwrap();
 }

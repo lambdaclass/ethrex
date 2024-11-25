@@ -80,7 +80,7 @@ impl EthClient {
         overrides: Overrides,
     ) -> Result<(H256, Address), EthClientError> {
         let mut deploy_tx = self
-            .build_eip1559_transaction(Address::zero(), deployer, init_code, overrides)
+            .build_eip1559_transaction(Address::zero(), deployer, init_code, overrides, 10)
             .await?;
         deploy_tx.to = TxKind::Create;
         let deploy_tx_hash = self

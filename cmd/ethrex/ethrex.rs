@@ -152,7 +152,7 @@ async fn main() {
     let jwt_secret = read_jwtsecret_file(authrpc_jwtsecret);
 
     // TODO Learn how should the key be created
-    // https://github.com/lambdaclass/lambda_ethrex/issues/836
+    // https://github.com/lambdaclass/ethrex/issues/836
     //let signer = SigningKey::random(&mut OsRng);
     let key_bytes =
         H256::from_str("577d8278cc7748fad214b5378669b420f8221afb45ce930b7f22da49cbc545f3").unwrap();
@@ -186,7 +186,7 @@ async fn main() {
     .into_future();
 
     // TODO Find a proper place to show node information
-    // https://github.com/lambdaclass/lambda_ethrex/issues/836
+    // https://github.com/lambdaclass/ethrex/issues/836
     let enode = local_p2p_node.enode_url();
     info!("Node: {enode}");
 

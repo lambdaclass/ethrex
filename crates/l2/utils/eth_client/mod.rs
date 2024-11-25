@@ -46,6 +46,7 @@ pub enum RpcResponse {
     Error(RpcErrorResponse),
 }
 
+#[derive(Debug, Clone)]
 pub struct EthClient {
     client: Client,
     pub url: String,
@@ -150,21 +151,33 @@ impl EthClient {
         max_seconds_to_wait: u64,
         retries: u64,
     ) -> Result<H256, EthClientError> {
-        // Failing when sending the first transaction
-        // The estimation goes well, but then:
-        // ERROR ethrex_l2::proposer::l1_committer: Failed to send commitment to block 0x3a24444ba29a8c524006db1781fff950538b21dd69181737c09c4b8bf514cb5c. Manual intervention required: Committer failed because of an EthClient error: eth_sendRawTransaction request error: replacement transaction underpriced: new tx gas fee cap 97509022 <= 101317673 queued
-        let mut tx_hash = match wrapped_tx {
+        let tx_hash_res = match wrapped_tx {
             WrappedTransaction::EIP4844(wrapped_eip4844_transaction) => {
                 self.send_eip4844_transaction(wrapped_eip4844_transaction, private_key)
-                    .await?
+                    .await
             }
             WrappedTransaction::EIP1559(eip1559_transaction) => {
                 self.send_eip1559_transaction(eip1559_transaction, private_key)
-                    .await?
+                    .await
             }
             WrappedTransaction::L2(privileged_l2_transaction) => {
                 self.send_privileged_l2_transaction(privileged_l2_transaction, private_key)
-                    .await?
+                    .await
+            }
+        };
+
+        // Check if the tx is `already known`, bump gas and resend it.
+        let mut tx_hash = match tx_hash_res {
+            Ok(hash) => hash,
+            Err(e) => {
+                let error = format!("{e}");
+                if error.contains("already known")
+                    || error.contains("replacement transaction underpriced")
+                {
+                    H256::zero()
+                } else {
+                    return Err(e);
+                }
             }
         };
 
@@ -221,12 +234,15 @@ impl EthClient {
         tx: &mut EIP1559Transaction,
         private_key: &SecretKey,
     ) -> Result<H256, EthClientError> {
-        let from = get_address_from_secret_key(private_key);
+        let from = get_address_from_secret_key(private_key).map_err(|e| {
+            EthClientError::Custom(format!("Failed to get_address_from_secret_key: {e}"))
+        })?;
         // Sometimes the penalty is a 100%
         // Increase max fee per gas by 110% (set it to 210% of the original)
         self.bump_eip1559(tx, 1.1);
         let wrapped_tx = &mut WrappedTransaction::EIP1559(tx.clone());
         self.estimate_gas_for_wrapped_tx(wrapped_tx, from).await?;
+
         if let WrappedTransaction::EIP1559(eip1559) = wrapped_tx {
             tx.max_fee_per_gas = eip1559.max_fee_per_gas;
             tx.max_priority_fee_per_gas = eip1559.max_fee_per_gas;
@@ -248,13 +264,16 @@ impl EthClient {
         wrapped_tx: &mut WrappedEIP4844Transaction,
         private_key: &SecretKey,
     ) -> Result<H256, EthClientError> {
-        let from = get_address_from_secret_key(private_key);
+        let from = get_address_from_secret_key(private_key).map_err(|e| {
+            EthClientError::Custom(format!("Failed to get_address_from_secret_key: {e}"))
+        })?;
         // Sometimes the penalty is a 100%
         // Increase max fee per gas by 110% (set it to 210% of the original)
         self.bump_eip4844(wrapped_tx, 1.1);
         let wrapped_eip4844 = &mut WrappedTransaction::EIP4844(wrapped_tx.clone());
         self.estimate_gas_for_wrapped_tx(wrapped_eip4844, from)
             .await?;
+
         if let WrappedTransaction::EIP4844(eip4844) = wrapped_eip4844 {
             wrapped_tx.tx.max_fee_per_gas = eip4844.tx.max_fee_per_gas;
             wrapped_tx.tx.max_priority_fee_per_gas = eip4844.tx.max_fee_per_gas;
@@ -285,7 +304,9 @@ impl EthClient {
         tx: &mut PrivilegedL2Transaction,
         private_key: &SecretKey,
     ) -> Result<H256, EthClientError> {
-        let from = get_address_from_secret_key(private_key);
+        let from = get_address_from_secret_key(private_key).map_err(|e| {
+            EthClientError::Custom(format!("Failed to get_address_from_secret_key: {e}"))
+        })?;
         // Sometimes the penalty is a 100%
         // Increase max fee per gas by 110% (set it to 210% of the original)
         self.bump_privileged_l2(tx, 1.1);
@@ -360,12 +381,24 @@ impl EthClient {
                     if &error_data == "0x" {
                         "unknown error".to_owned()
                     } else {
-                        let abi_decoded_error_data =
-                            hex::decode(error_data.strip_prefix("0x").unwrap()).unwrap();
+                        let abi_decoded_error_data = hex::decode(
+                            error_data.strip_prefix("0x").ok_or(EthClientError::Custom(
+                                "Failed to strip_prefix in estimate_gas".to_owned(),
+                            ))?,
+                        )
+                        .map_err(|_| {
+                            EthClientError::Custom(
+                                "Failed to hex::decode in estimate_gas".to_owned(),
+                            )
+                        })?;
                         let string_length = U256::from_big_endian(&abi_decoded_error_data[36..68]);
                         let string_data =
                             &abi_decoded_error_data[68..68 + string_length.as_usize()];
-                        String::from_utf8(string_data.to_vec()).unwrap()
+                        String::from_utf8(string_data.to_vec()).map_err(|_| {
+                            EthClientError::Custom(
+                                "Failed to String::from_utf8 in estimate_gas".to_owned(),
+                            )
+                        })?
                     }
                 } else {
                     "unknown error".to_owned()
@@ -629,11 +662,10 @@ impl EthClient {
         from: Address,
         calldata: Bytes,
         overrides: Overrides,
-        // TODO
-        //bump_if_tx_gas_too_low: bool,
+        bump_retries: u64,
     ) -> Result<EIP1559Transaction, EthClientError> {
         let get_gas_price;
-        let tx = EIP1559Transaction {
+        let mut tx = EIP1559Transaction {
             to: TxKind::Call(to),
             chain_id: if let Some(chain_id) = overrides.chain_id {
                 chain_id
@@ -661,31 +693,43 @@ impl EthClient {
             ..Default::default()
         };
 
-        let mut wrapped_tx = WrappedTransaction::EIP1559(tx);
+        let mut wrapped_tx;
 
-        let gas_limit = if let Some(overrides_gas_limit) = overrides.gas_limit {
-            overrides_gas_limit
+        if let Some(overrides_gas_limit) = overrides.gas_limit {
+            tx.gas_limit = overrides_gas_limit;
+            Ok(tx)
         } else {
-            match self
-                .estimate_gas_for_wrapped_tx(&mut wrapped_tx, from)
-                .await
-            {
-                Ok(gas_limit) => gas_limit,
-                Err(e) => {
-                    warn!("ERROR ESTIMATING GAS");
-                    return Err(e);
+            let mut retry = 0_u64;
+            while retry < bump_retries {
+                wrapped_tx = WrappedTransaction::EIP1559(tx.clone());
+                match self
+                    .estimate_gas_for_wrapped_tx(&mut wrapped_tx, from)
+                    .await
+                {
+                    Ok(gas_limit) => {
+                        // Estimation succeeded.
+                        tx.gas_limit = gas_limit;
+                        return Ok(tx);
+                    }
+                    Err(e) => {
+                        warn!("ERROR ESTIMATING GAS");
+                        let error = format!("{e}");
+                        if error.contains("replacement transaction underpriced") {
+                            warn!("Bumping gas while building: already known");
+                            retry += 1;
+                            self.bump_eip1559(&mut tx, 1.1);
+                            continue;
+                        }
+                        return Err(e);
+                    }
                 }
             }
-        };
-
-        // Setting the gas_limit
-        if let WrappedTransaction::EIP1559(mut w) = wrapped_tx {
-            w.gas_limit = gas_limit;
-            return Ok(w);
+            Err(EthClientError::EstimateGasPriceError(
+                EstimateGasPriceError::Custom(
+                    "Exceeded maximum retries while estimating gas.".to_string(),
+                ),
+            ))
         }
-        Err(EthClientError::Custom(
-            "Error in: build_eip1559_transaction".to_owned(),
-        ))
     }
 
     /// Build an EIP4844 transaction with the given parameters.
@@ -700,6 +744,7 @@ impl EthClient {
         calldata: Bytes,
         overrides: Overrides,
         blobs_bundle: BlobsBundle,
+        bump_retries: u64,
     ) -> Result<WrappedEIP4844Transaction, EthClientError> {
         let blob_versioned_hashes = blobs_bundle.generate_versioned_hashes();
 
@@ -734,34 +779,44 @@ impl EthClient {
             ..Default::default()
         };
 
-        let mut wrapped_tx = WrappedTransaction::EIP4844(WrappedEIP4844Transaction {
-            tx: tx.clone(),
-            blobs_bundle,
-        });
-
-        let gas_limit = if let Some(overrides_gas_limit) = overrides.gas_limit {
-            overrides_gas_limit
+        let mut wrapped_eip4844 = WrappedEIP4844Transaction { tx, blobs_bundle };
+        let mut wrapped_tx;
+        if let Some(overrides_gas_limit) = overrides.gas_limit {
+            wrapped_eip4844.tx.gas = overrides_gas_limit;
+            Ok(wrapped_eip4844)
         } else {
-            match self
-                .estimate_gas_for_wrapped_tx(&mut wrapped_tx, from)
-                .await
-            {
-                Ok(gas_limit) => gas_limit,
-                Err(e) => {
-                    warn!("ERROR ESTIMATING GAS");
-                    return Err(e);
+            let mut retry = 0_u64;
+            while retry < bump_retries {
+                wrapped_tx = WrappedTransaction::EIP4844(wrapped_eip4844.clone());
+
+                match self
+                    .estimate_gas_for_wrapped_tx(&mut wrapped_tx, from)
+                    .await
+                {
+                    Ok(gas_limit) => {
+                        // Estimation succeeded.
+                        wrapped_eip4844.tx.gas = gas_limit;
+                        return Ok(wrapped_eip4844);
+                    }
+                    Err(e) => {
+                        warn!("ERROR ESTIMATING GAS");
+                        let error = format!("{e}");
+                        if error.contains("already known") {
+                            warn!("Bumping gas while building: already known");
+                            retry += 1;
+                            self.bump_eip4844(&mut wrapped_eip4844, 1.1);
+                            continue;
+                        }
+                        return Err(e);
+                    }
                 }
             }
-        };
-
-        // Setting the gas_limit
-        if let WrappedTransaction::EIP4844(mut w) = wrapped_tx {
-            w.tx.gas = gas_limit;
-            return Ok(w);
+            Err(EthClientError::EstimateGasPriceError(
+                EstimateGasPriceError::Custom(
+                    "Exceeded maximum retries while estimating gas.".to_string(),
+                ),
+            ))
         }
-        Err(EthClientError::Custom(
-            "Error in: build_eip4844_transaction".to_owned(),
-        ))
     }
 
     /// Build a PrivilegedL2 transaction with the given parameters.
@@ -776,9 +831,10 @@ impl EthClient {
         from: Address,
         calldata: Bytes,
         overrides: Overrides,
+        bump_retries: u64,
     ) -> Result<PrivilegedL2Transaction, EthClientError> {
         let get_gas_price;
-        let tx = PrivilegedL2Transaction {
+        let mut tx = PrivilegedL2Transaction {
             tx_type,
             to: TxKind::Call(to),
             chain_id: if let Some(chain_id) = overrides.chain_id {
@@ -807,31 +863,43 @@ impl EthClient {
             ..Default::default()
         };
 
-        let mut wrapped_tx = WrappedTransaction::L2(tx);
+        let mut wrapped_tx;
 
-        let gas_limit = if let Some(overrides_gas_limit) = overrides.gas_limit {
-            overrides_gas_limit
+        if let Some(overrides_gas_limit) = overrides.gas_limit {
+            tx.gas_limit = overrides_gas_limit;
+            Ok(tx)
         } else {
-            match self
-                .estimate_gas_for_wrapped_tx(&mut wrapped_tx, from)
-                .await
-            {
-                Ok(gas_limit) => gas_limit,
-                Err(e) => {
-                    warn!("ERROR ESTIMATING GAS");
-                    return Err(e);
+            let mut retry = 0_u64;
+            while retry < bump_retries {
+                wrapped_tx = WrappedTransaction::L2(tx.clone());
+                match self
+                    .estimate_gas_for_wrapped_tx(&mut wrapped_tx, from)
+                    .await
+                {
+                    Ok(gas_limit) => {
+                        // Estimation succeeded.
+                        tx.gas_limit = gas_limit;
+                        return Ok(tx);
+                    }
+                    Err(e) => {
+                        warn!("ERROR ESTIMATING GAS");
+                        let error = format!("{e}");
+                        if error.contains("already known") {
+                            warn!("Bumping gas while building: already known");
+                            retry += 1;
+                            self.bump_privileged_l2(&mut tx, 1.1);
+                            continue;
+                        }
+                        return Err(e);
+                    }
                 }
             }
-        };
-
-        // Setting the gas_limit
-        if let WrappedTransaction::L2(mut w) = wrapped_tx {
-            w.gas_limit = gas_limit;
-            return Ok(w);
+            Err(EthClientError::EstimateGasPriceError(
+                EstimateGasPriceError::Custom(
+                    "Exceeded maximum retries while estimating gas.".to_string(),
+                ),
+            ))
         }
-        Err(EthClientError::Custom(
-            "Error in: build_privileged_transaction".to_owned(),
-        ))
     }
 
     async fn get_nonce_from_overrides_or_rpc(
@@ -877,7 +945,7 @@ impl EthClient {
         let selector = keccak(selector)
             .as_bytes()
             .get(..4)
-            .expect("Failed to get initialize selector")
+            .ok_or(EthClientError::Custom("Failed to get selector.".to_owned()))?
             .to_vec();
 
         let mut calldata = Vec::new();
@@ -894,13 +962,14 @@ impl EthClient {
             )
             .await?;
 
-        let hex_string = hex_string
-            .strip_prefix("0x")
-            .expect("Couldn't strip prefix from last_committed_block.");
+        let hex_string = hex_string.strip_prefix("0x").ok_or(EthClientError::Custom(
+            "Couldn't strip prefix from last_committed_block.".to_owned(),
+        ))?;
 
-        // TODO return error
         if hex_string.is_empty() {
-            panic!("Failed to fetch last_committed_block. Manual intervention required");
+            return Err(EthClientError::Custom(
+                "Failed to fetch last_committed_block. Manual intervention required.".to_owned(),
+            ));
         }
 
         let value = U256::from_str_radix(hex_string, 16)

@@ -314,15 +314,23 @@ impl VM {
 
         self.increase_consumed_gas(current_call_frame, gas_cost)?;
 
+        if size == 0 {
+            return Ok(OpcodeSuccess::Continue);
+        }
+
         if !is_cached {
             self.cache_from_db(&address);
         };
 
         let bytecode = self.get_account(&address).info.bytecode;
 
-        let new_memory_size = dest_offset.checked_add(size).ok_or(VMError::Internal(
+        let new_memory_size = (((!size).checked_add(1).ok_or(VMError::Internal(
             InternalError::ArithmeticOperationOverflow,
-        ))?;
+        ))?) & 31)
+            .checked_add(size)
+            .ok_or(VMError::Internal(
+                InternalError::ArithmeticOperationOverflow,
+            ))?;
         let current_memory_size = current_call_frame.memory.data.len();
         if current_memory_size < new_memory_size {
             current_call_frame.memory.data.resize(new_memory_size, 0);
@@ -393,19 +401,19 @@ impl VM {
         }
 
         let sub_return_data_len = current_call_frame.sub_return_data.len();
-        let data = if returndata_offset < sub_return_data_len {
-            current_call_frame.sub_return_data.slice(
-                returndata_offset
-                    ..(returndata_offset
-                        .checked_add(size)
-                        .ok_or(VMError::Internal(
-                            InternalError::ArithmeticOperationOverflow,
-                        ))?)
-                    .min(sub_return_data_len),
-            )
-        } else {
-            vec![0u8; size].into()
-        };
+
+        if returndata_offset >= sub_return_data_len {
+            return Err(VMError::VeryLargeNumber); // Maybe can create a new error instead of using this one
+        }
+        let data = current_call_frame.sub_return_data.slice(
+            returndata_offset
+                ..(returndata_offset
+                    .checked_add(size)
+                    .ok_or(VMError::Internal(
+                        InternalError::ArithmeticOperationOverflow,
+                    ))?)
+                .min(sub_return_data_len),
+        );
 
         current_call_frame.memory.store_bytes(dest_offset, &data)?;
 

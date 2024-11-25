@@ -21,7 +21,7 @@ jobs:
     if: false
     steps: [run: true]
 
-  docker-build:
+  docker_build:
     name: Build Docker image
     runs-on: ubuntu-latest
     if: false

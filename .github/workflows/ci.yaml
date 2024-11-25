@@ -68,17 +68,11 @@ jobs:
         run: |
           make download-test-vectors
 
-      - name: Run L2 integration test
-        run: |
-          cd crates/l2
-          cp .env.example .env
-          make test
-
       - name: Run tests
         run: |
           make test
 
-  docker-build:
+  docker_build:
     name: Build Docker image
     runs-on: ubuntu-latest
     steps:

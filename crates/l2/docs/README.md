@@ -6,9 +6,10 @@ For a high level overview of the L2:
 
 For more detailed documentation on each part of the system:
 
+- [Contracts](./contracts.md)
+- [Execution program](./program.md)
 - [Proposer](./proposer.md)
 - [Prover](./prover.md)
-- [Contracts](./contracts.md)
 
 ## Configuration
 

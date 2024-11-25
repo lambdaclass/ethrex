@@ -7,10 +7,13 @@ edition = "2021"
 
 [dependencies]
 risc0-zkvm = { version = "1.1.2", default-features = false, features = ["std"] }
+zkvm_interface = { path = "../" }
 
 ethrex-core = { path = "../../../../../common", default-features = false }
 ethrex-rlp = { path = "../../../../../common/rlp" }
-ethrex-vm = { path = "../../../../../vm", default-features = false }
+ethrex-vm = { path = "../../../../../vm", default-features = false, features = [
+  "l2",
+] }
 ethrex-blockchain = { path = "../../../../../blockchain", default-features = false }
 
 [build-dependencies]

@@ -2,8 +2,6 @@ name: CI LEVM
 
 on:
   merge_group:
-    paths:
-      - "crates/vm/levm/**"
   pull_request:
     paths:
       - "crates/vm/levm/**"
@@ -36,12 +34,12 @@ jobs:
       - name: Download EF Tests
         run: |
           cd crates/vm/levm
-          make download-ef-tests
+          make download-evm-ef-tests
 
       - name: Run tests
         run: |
           cd crates/vm/levm
-          make run-ef-tests
+          make run-evm-ef-tests
   test:
     name: Tests
     runs-on: ubuntu-latest

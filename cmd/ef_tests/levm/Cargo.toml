@@ -17,6 +17,17 @@ hex.workspace = true
 keccak-hash = "0.11.0"
 colored = "2.1.0"
 spinoff = "0.8.0"
+thiserror = "2.0.3"
+clap = { version = "4.3", features = ["derive"] }
+clap_complete = "4.5.17"
+
+revm = { version = "14.0.3", features = [
+    "serde",
+    "std",
+    "serde-json",
+    "optional_no_base_fee",
+    "optional_block_gas_limit",
+], default-features = false }
 
 [dev-dependencies]
 hex = "0.4.3"
@@ -25,5 +36,5 @@ hex = "0.4.3"
 path = "./ef_tests.rs"
 
 [[test]]
-name = "test"
+name = "ef_tests_levm"
 harness = false
