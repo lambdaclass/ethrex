@@ -27,8 +27,9 @@ jobs:
 
       - name: Generate the loc report
         id: loc-report
-        run: make loc
-        echo "content=$(cat loc_report.md)" >> $GITHUB_OUTPUT
+        run: |
+          make loc
+          echo "content=$(cat loc_report.md)" >> $GITHUB_OUTPUT
 
       - name: Post results in summary
         run: |
