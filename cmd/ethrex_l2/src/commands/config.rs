@@ -17,13 +17,29 @@ pub(crate) enum Command {
     #[clap(about = "Edit an existing config.")]
     Edit {
         config_name: Option<String>,
+        #[arg(
+            long,
+            help = "Show the config after editing?",
+            short = 's',
+            default_value_t = false
+        )]
+        show: bool,
         #[command(flatten)]
-        opts: EditConfigOpts,
+        opts: Box<EditConfigOpts>,
     },
     #[clap(about = "Create a new config.")]
     Create { config_name: String },
     #[clap(about = "Set the config to use.")]
-    Set { config_name: Option<String> },
+    Set {
+        #[arg(
+            long,
+            help = "Show the config after editing?",
+            short = 's',
+            default_value_t = false
+        )]
+        show: bool,
+        config_name: Option<String>,
+    },
     #[clap(about = "Display a config.")]
     Display { config_name: Option<String> },
     #[clap(about = "List all configs.")]
@@ -72,7 +88,11 @@ impl EditConfigOpts {
 impl Command {
     pub async fn run(self) -> eyre::Result<()> {
         match self {
-            Command::Edit { config_name, opts } => {
+            Command::Edit {
+                config_name,
+                opts,
+                show,
+            } => {
                 let (new_config, config_path) = if let Some(ref config_name) = config_name {
                     let config_path = config_path(config_name)?;
                     if !config_path.exists() {
@@ -81,7 +101,7 @@ impl Command {
                     let new_config = if opts.is_empty() {
                         edit_config_by_name_interactively(&config_path)?
                     } else {
-                        edit_config_by_name_with_args(&config_path, opts)?
+                        edit_config_by_name_with_args(&config_path, *opts)?
                     };
                     (new_config, config_path)
                 } else {
@@ -89,9 +109,10 @@ impl Command {
                 };
                 let toml_config = toml::to_string_pretty(&new_config)?;
                 std::fs::write(&config_path, &toml_config)?;
-                set_new_config(config_path.clone()).await?;
-                println!("Config updated at: {}", config_path.display());
-                println!("\n{toml_config}");
+                if show {
+                    println!("Config updated at: {}", config_path.display());
+                }
+                set_new_config(config_path.clone(), show).await?;
             }
             Command::Create { config_name } => {
                 let config_path = config_path(&config_name)?;
@@ -110,7 +131,7 @@ impl Command {
                 );
                 std::fs::write(config_path, toml_config)?;
             }
-            Command::Set { config_name } => {
+            Command::Set { config_name, show } => {
                 let config_path_to_select = if let Some(config_name) = config_name {
                     let config_path_to_select = config_path(&config_name)?;
                     if !config_path_to_select.exists() {
@@ -122,7 +143,9 @@ impl Command {
                 };
                 let selected_config = std::fs::read_to_string(config_path_to_select)?;
                 std::fs::write(selected_config_path()?, &selected_config)?;
-                println!("Config \"{selected_config}\" set");
+                if show {
+                    println!("Config:\n{selected_config}");
+                }
             }
             Command::Display { config_name } => {
                 let config_to_display_path = if let Some(config_name) = config_name {
@@ -150,7 +173,7 @@ impl Command {
                 }
             }
             Command::Delete { config_name } => {
-                let config_path = if let Some(config_name) = config_name {
+                let config_path: std::path::PathBuf = if let Some(config_name) = config_name {
                     config_path(&config_name)?
                 } else {
                     config_path_interactive_selection(CONFIG_SELECTION_TO_DELETE_PROMPT_MSG)?

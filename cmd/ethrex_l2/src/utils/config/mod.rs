@@ -172,7 +172,7 @@ pub fn edit_config_interactively() -> eyre::Result<(EthrexL2Config, PathBuf)> {
     Ok((new_config, config_path))
 }
 
-pub async fn set_new_config(config_path: PathBuf) -> eyre::Result<()> {
+pub async fn set_new_config(config_path: PathBuf, show: bool) -> eyre::Result<()> {
     Box::pin(async {
         commands::config::Command::Set {
             config_name: Some(
@@ -183,6 +183,7 @@ pub async fn set_new_config(config_path: PathBuf) -> eyre::Result<()> {
                     .into_string()
                     .map_err(|e| eyre::eyre!("Invalid file name: {:?}", e.into_string()))?,
             ),
+            show,
         }
         .run()
         .await

@@ -57,10 +57,13 @@ pub async fn load_selected_config() -> eyre::Result<EthrexL2Config> {
     let config_path = selected_config_path()?;
     if !config_path.exists() {
         println!("No config set, please select a config to set");
-        if (commands::config::Command::Set { config_name: None })
-            .run()
-            .await
-            .is_err()
+        if (commands::config::Command::Set {
+            config_name: None,
+            show: true,
+        })
+        .run()
+        .await
+        .is_err()
         {
             let config_name = prompt(
                 CONFIG_CREATE_NAME_PROMPT_MSG,
