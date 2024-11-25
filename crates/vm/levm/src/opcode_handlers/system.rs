@@ -1,6 +1,5 @@
 use crate::{
     call_frame::CallFrame,
-    constants::SUCCESS_FOR_RETURN,
     errors::{InternalError, OpcodeSuccess, ResultReason, VMError},
     gas_cost,
     vm::{word_to_address, VM},
@@ -184,9 +183,6 @@ impl VM {
 
         let return_data = current_call_frame.memory.load_range(offset, size)?.into();
         current_call_frame.returndata = return_data;
-        current_call_frame
-            .stack
-            .push(U256::from(SUCCESS_FOR_RETURN))?;
 
         Ok(OpcodeSuccess::Result(ResultReason::Return))
     }
