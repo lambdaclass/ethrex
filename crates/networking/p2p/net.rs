@@ -345,7 +345,7 @@ async fn discovery_startup(
             ip: bootnode.socket_address.ip(),
             udp_port: bootnode.socket_address.port(),
             // TODO: udp port can differ from tcp port.
-            // see https://github.com/lambdaclass/lambda_ethrex/issues/905
+            // see https://github.com/lambdaclass/ethrex/issues/905
             tcp_port: bootnode.socket_address.port(),
             node_id: bootnode.node_id,
         });

@@ -120,7 +120,7 @@ cfg_if::cfg_if! {
                     transaction.tx_type(),
                     matches!(result.result, TxResult::Success),
                     cumulative_gas_used,
-                    // TODO: https://github.com/lambdaclass/lambda_ethrex/issues/1089
+                    // TODO: https://github.com/lambdaclass/ethrex/issues/1089
                     vec![],
                 );
                 receipts.push(receipt);

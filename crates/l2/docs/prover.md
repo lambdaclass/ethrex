@@ -116,7 +116,7 @@ make perf_gpu
 Two servers are required: one for the `prover` and another for the `proposer`. If you run both components on the same machine, the `prover` may consume all available resources, leading to potential stuttering or performance issues for the `proposer`/`node`.
 
 1. `prover`/`zkvm` &rarr; prover with gpu, make sure to have all the required dependencies described at the beginning of [Gpu Mode](#gpu-mode) section.
-    1. `cd lambda_ethrex/crates/l2`
+    1. `cd ethrex/crates/l2`
     2. `cp .example.env` and change the `PROVER_CLIENT_PROVER_SERVER_ENDPOINT` with the ip of the other server.
 
 The env variables needed are:
@@ -131,7 +131,7 @@ Finally, to start the `prover_client`/`zkvm`, run:
 - `make init-l2-prover-gpu`
 
 2.  `proposer` &rarr; this server just needs rust installed.
-    1. `cd lambda_ethrex/crates/l2`
+    1. `cd ethrex/crates/l2`
     2. `cp .example.env` and change the addresses and the following fields:
        - `PROVER_SERVER_LISTEN_IP=0.0.0.0` &rarr; used to handle the tcp communication with the other server.
        - The `COMMITTER` and `PROVER_SERVER_VERIFIER` must be different accounts, the `DEPLOYER_ADDRESS` as well as the `L1_WATCHER` may be the same account used by the `COMMITTER`
