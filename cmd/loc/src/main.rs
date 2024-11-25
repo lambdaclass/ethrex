@@ -1,4 +1,3 @@
-use colored::Colorize;
 use std::path::PathBuf;
 use tokei::{Config, LanguageType, Languages};
 
@@ -23,14 +22,20 @@ fn main() {
     languages.get_statistics(&[ethrex_l2], &[], &config);
     let ethrex_l2_loc = &languages.get(&LanguageType::Rust).unwrap();
 
-    println!("{}", "ethrex loc summary".bold());
-    println!("{}", "====================".bold());
-    println!(
-        "{}: {:?}",
-        "ethrex L1".bold(),
-        ethrex_loc.code - ethrex_l2_loc.code - levm_loc.code
+    let report = format!(
+        r#"```
+ethrex loc summary
+====================
+ethrex L1: {}
+ethrex L2: {}
+levm: {}
+ethrex (total): {}
+```"#,
+        ethrex_loc.code - ethrex_l2_loc.code - levm_loc.code,
+        ethrex_l2_loc.code,
+        levm_loc.code,
+        ethrex_loc.code,
     );
-    println!("{}: {:?}", "ethrex L2".bold(), ethrex_l2_loc.code);
-    println!("{}: {:?}", "levm".bold(), levm_loc.code);
-    println!("{}: {:?}", "ethrex (total)".bold(), ethrex_loc.code);
+
+    std::fs::write("loc_report.md", report).unwrap();
 }
