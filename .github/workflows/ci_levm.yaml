@@ -2,10 +2,12 @@ name: CI LEVM
 
 on:
   merge_group:
-  pull_request:
     paths:
       - "crates/vm/levm/**"
-    branches: ["*"]
+  pull_request:
+    branches: ["**"]
+    paths:
+      - "crates/vm/levm/**"
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}

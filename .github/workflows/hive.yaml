@@ -1,6 +1,5 @@
-name: "Hive"
+name: Hive
 on:
-  merge_group:
   pull_request:
     branches: ["**"]
     paths-ignore:
@@ -8,6 +7,8 @@ on:
       - 'LICENSE'
       - "**/README.md"
       - "**/docs/**"
+      - "crates/vm/levm/**"
+      - "crates/l2/**"
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}

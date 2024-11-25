@@ -3,6 +3,8 @@ on:
   merge_group:
   pull_request:
     branches: ["**"]
+    paths:
+      - "crates/l2/prover/**"
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}

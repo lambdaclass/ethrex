@@ -1,7 +1,6 @@
 name: L2 Contracts CI
 on:
-  push:
-    branches: ["main"]
+  merge_group:
     paths:
       - "crates/l2/contracts/**"
   pull_request:

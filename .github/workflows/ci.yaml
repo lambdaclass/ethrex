@@ -8,7 +8,7 @@ on:
       - "LICENSE"
       - "**/README.md"
       - "**/docs/**"
-      - "crates/vm/levm/**" # We ran this in a separate workflow
+      - "crates/vm/levm/**" # We run this in a separate workflow
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
