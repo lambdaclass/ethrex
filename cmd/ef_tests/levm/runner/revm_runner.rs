@@ -7,7 +7,7 @@ use crate::{
 use ethrex_core::{types::TxKind, Address};
 use ethrex_levm::errors::{TransactionReport, TxResult};
 use ethrex_storage::{error::StoreError, AccountUpdate};
-use ethrex_vm::{db::StoreWrapper, spec_id, EvmState, RevmAddress, RevmU256};
+use ethrex_vm::{db::StoreWrapper, EvmState, RevmAddress, RevmU256, SpecId};
 use revm::{
     db::State,
     inspectors::TracerEip3155 as RevmTracerEip3155,
@@ -135,7 +135,7 @@ pub fn prepare_revm_for_tx<'state>(
         .with_block_env(block_env)
         .with_tx_env(tx_env)
         .modify_cfg_env(|cfg| cfg.chain_id = chain_spec.chain_id)
-        .with_spec_id(spec_id(&chain_spec, test.env.current_timestamp.as_u64()))
+        .with_spec_id(SpecId::CANCUN)
         .with_external_context(
             RevmTracerEip3155::new(Box::new(std::io::stderr())).without_summary(),
         );
