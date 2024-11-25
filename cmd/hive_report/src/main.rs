@@ -61,8 +61,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Sort by file name.
     results.sort_by(|a, b| a.0.cmp(&b.0));
 
-    println!("# Hive coverage report\n");
-
     for (file_name, passed, total) in results {
         println!("- {}: {}/{}", file_name, passed, total);
     }
