@@ -1,4 +1,8 @@
-use crate::{report::EFTestsReport, types::EFTest, utils};
+use crate::{
+    report::EFTestsReport,
+    types::{EFTest, EFTestPostValue},
+    utils,
+};
 use ethrex_core::{
     types::{code_hash, AccountInfo},
     H256, U256,
@@ -64,7 +68,7 @@ pub fn run_ef_test_tx(
     let mut evm = prepare_vm_for_tx(tx_id, test)?;
     ensure_pre_state(&evm, test)?;
     let execution_result = evm.transact();
-    ensure_post_state(execution_result, test, report)?;
+    ensure_post_state(execution_result, test, report, tx_id)?;
     Ok(())
 }
 
@@ -184,20 +188,42 @@ fn ensure_pre_state_condition(condition: bool, error_reason: String) -> Result<(
     Ok(())
 }
 
+fn get_indexes_tuple(post_value: &EFTestPostValue) -> Option<(usize, usize, usize)> {
+    let data_index: usize = post_value.indexes.get("data")?.as_usize();
+    let gas_index: usize = post_value.indexes.get("gas")?.as_usize();
+    let value_index: usize = post_value.indexes.get("value")?.as_usize();
+    Some((data_index, gas_index, value_index))
+}
+
+fn get_post_value(test: &EFTest, tx_id: usize) -> Option<EFTestPostValue> {
+    if let Some(transaction) = test.transactions.get(tx_id) {
+        let indexes = transaction.0;
+        test.post
+            .clone()
+            .iter()
+            .find(|post_value| {
+                if let Some(post_indexes) = get_indexes_tuple(post_value) {
+                    indexes == post_indexes
+                } else {
+                    false
+                }
+            })
+            .cloned()
+    } else {
+        None
+    }
+}
+
 pub fn ensure_post_state(
     execution_result: Result<TransactionReport, VMError>,
     test: &EFTest,
     report: &mut EFTestsReport,
+    tx_id: usize,
 ) -> Result<(), Box<dyn Error>> {
+    let post_value = get_post_value(test, tx_id);
     match execution_result {
         Ok(execution_report) => {
-            match test
-                .post
-                .clone()
-                .values()
-                .first()
-                .map(|v| v.clone().expect_exception)
-            {
+            match post_value.clone().map(|v| v.clone().expect_exception) {
                 // Execution result was successful but an exception was expected.
                 Some(Some(expected_exception)) => {
                     let error_reason = format!("Expected exception: {expected_exception}");
@@ -207,8 +233,7 @@ pub fn ensure_post_state(
                 // TODO: Check that the post-state matches the expected post-state.
                 None | Some(None) => {
                     let pos_state_root = post_state_root(execution_report, test);
-                    let expected_post_state_value = test.post.iter().next().cloned();
-                    if let Some(expected_post_state_root_hash) = expected_post_state_value {
+                    if let Some(expected_post_state_root_hash) = post_value {
                         let expected_post_state_root_hash = expected_post_state_root_hash.hash;
                         if expected_post_state_root_hash != pos_state_root {
                             let error_reason = format!(
@@ -226,13 +251,7 @@ pub fn ensure_post_state(
             }
         }
         Err(err) => {
-            match test
-                .post
-                .clone()
-                .values()
-                .first()
-                .map(|v| v.clone().expect_exception)
-            {
+            match post_value.map(|v| v.clone().expect_exception) {
                 // Execution result was unsuccessful and an exception was expected.
                 // TODO: Check that the exception matches the expected exception.
                 Some(Some(_expected_exception)) => {}
