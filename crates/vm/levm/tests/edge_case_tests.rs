@@ -101,3 +101,15 @@ fn test_is_negative() {
     let mut current_call_frame = vm.call_frames.pop().unwrap();
     vm.execute(&mut current_call_frame);
 }
+
+#[test]
+fn test_non_compliance_calldatacopy_memory_resize() {
+    let mut vm =
+        new_vm_with_bytecode(Bytes::copy_from_slice(&[0x60, 34, 0x5f, 0x5f, 55, 89])).unwrap();
+    let mut current_call_frame = vm.call_frames.pop().unwrap();
+    vm.execute(&mut current_call_frame);
+    assert_eq!(
+        *current_call_frame.stack.stack.first().unwrap(),
+        U256::from(64)
+    );
+}
