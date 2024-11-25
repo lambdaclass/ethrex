@@ -324,9 +324,13 @@ impl VM {
 
         let bytecode = self.get_account(&address).info.bytecode;
 
-        let new_memory_size = dest_offset.checked_add(size).ok_or(VMError::Internal(
+        let new_memory_size = (((!size).checked_add(1).ok_or(VMError::Internal(
             InternalError::ArithmeticOperationOverflow,
-        ))?;
+        ))?) & 31)
+            .checked_add(size)
+            .ok_or(VMError::Internal(
+                InternalError::ArithmeticOperationOverflow,
+            ))?;
         let current_memory_size = current_call_frame.memory.data.len();
         if current_memory_size < new_memory_size {
             current_call_frame.memory.data.resize(new_memory_size, 0);
