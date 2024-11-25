@@ -1,10 +1,76 @@
-use crate::types::EFTest;
+use crate::types::{EFTest, TransactionExpectedException};
 use bytes::Bytes;
-use ethrex_core::U256;
-use serde::Deserialize;
+use ethrex_core::{H256, U256};
+use serde::{Deserialize, Deserializer};
 use std::{collections::HashMap, str::FromStr};
 
 use crate::types::{EFTestRawTransaction, EFTestTransaction};
+
+pub fn deserialize_transaction_expected_exception<'de, D>(
+    deserializer: D,
+) -> Result<Option<Vec<TransactionExpectedException>>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let option: Option<String> = Option::deserialize(deserializer)?;
+
+    if let Some(value) = option {
+        let exceptions = value
+            .split('|')
+            .map(|s| match s.trim() {
+                "TransactionException.INITCODE_SIZE_EXCEEDED" => {
+                    TransactionExpectedException::InitcodeSizeExceeded
+                }
+                "TransactionException.NONCE_IS_MAX" => TransactionExpectedException::NonceIsMax,
+                "TransactionException.TYPE_3_TX_BLOB_COUNT_EXCEEDED" => {
+                    TransactionExpectedException::Type3TxBlobCountExceeded
+                }
+                "TransactionException.TYPE_3_TX_ZERO_BLOBS" => {
+                    TransactionExpectedException::Type3TxZeroBlobs
+                }
+                "TransactionException.TYPE_3_TX_CONTRACT_CREATION" => {
+                    TransactionExpectedException::Type3TxContractCreation
+                }
+                "TransactionException.TYPE_3_TX_INVALID_BLOB_VERSIONED_HASH" => {
+                    TransactionExpectedException::Type3TxInvalidBlobVersionedHash
+                }
+                "TransactionException.INTRINSIC_GAS_TOO_LOW" => {
+                    TransactionExpectedException::IntrinsicGasTooLow
+                }
+                "TransactionException.INSUFFICIENT_ACCOUNT_FUNDS" => {
+                    TransactionExpectedException::InsufficientAccountFunds
+                }
+                "TransactionException.SENDER_NOT_EOA" => TransactionExpectedException::SenderNotEoa,
+                "TransactionException.PRIORITY_GREATER_THAN_MAX_FEE_PER_GAS" => {
+                    TransactionExpectedException::PriorityGreaterThanMaxFeePerGas
+                }
+                "TransactionException.GAS_ALLOWANCE_EXCEEDED" => {
+                    TransactionExpectedException::GasAllowanceExceeded
+                }
+                "TransactionException.INSUFFICIENT_MAX_FEE_PER_GAS" => {
+                    TransactionExpectedException::InsufficientMaxFeePerGas
+                }
+                "TransactionException.RLP_INVALID_VALUE" => {
+                    TransactionExpectedException::RlpInvalidValue
+                }
+                "TransactionException.GASLIMIT_PRICE_PRODUCT_OVERFLOW" => {
+                    TransactionExpectedException::GasLimitPriceProductOverflow
+                }
+                "TransactionException.TYPE_3_TX_PRE_FORK" => {
+                    TransactionExpectedException::Type3TxPreFork
+                }
+                "TransactionException.INSUFFICIENT_MAX_FEE_PER_BLOB_GAS" => {
+                    TransactionExpectedException::InsufficientMaxFeePerBlobGas
+                }
+                other => panic!("Unexpected error type: {}", other), // Should not fail, TODO is to return an error
+            })
+            .collect();
+
+        Ok(Some(exceptions))
+    } else {
+        Ok(None)
+    }
+}
 
 pub fn deserialize_ef_post_value_indexes<'de, D>(
     deserializer: D,
@@ -50,6 +116,29 @@ where
         ));
     }
     Ok(ret)
+}
+
+pub fn deserialize_h256_vec_optional_safe<'de, D>(
+    deserializer: D,
+) -> Result<Option<Vec<H256>>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let s = Option::<Vec<String>>::deserialize(deserializer)?;
+    match s {
+        Some(s) => {
+            let mut ret = Vec::new();
+            for s in s {
+                ret.push(H256::from_str(s.trim_start_matches("0x")).map_err(|err| {
+                    serde::de::Error::custom(format!(
+                        "error parsing H256 when deserializing H256 vec optional: {err}"
+                    ))
+                })?);
+            }
+            Ok(Some(ret))
+        }
+        None => Ok(None),
+    }
 }
 
 pub fn deserialize_u256_safe<'de, D>(deserializer: D) -> Result<U256, D::Error>
@@ -165,6 +254,10 @@ impl<'de> Deserialize<'de> for EFTest {
                         sender: raw_tx.sender,
                         to: raw_tx.to.clone(),
                         value: *value,
+                        max_fee_per_gas: raw_tx.max_fee_per_gas,
+                        max_priority_fee_per_gas: raw_tx.max_priority_fee_per_gas,
+                        max_fee_per_blob_gas: raw_tx.max_fee_per_blob_gas,
+                        blob_versioned_hashes: raw_tx.blob_versioned_hashes.clone(),
                     };
                     transactions.push(((data_id, gas_limit_id, value_id), tx));
                 }

@@ -96,6 +96,10 @@ impl Cache {
         self.accounts.insert(*address, account.clone());
     }
 
+    pub fn remove_account(&mut self, address: &Address) {
+        self.accounts.remove(address);
+    }
+
     pub fn write_account_storage(
         &mut self,
         address: &Address,

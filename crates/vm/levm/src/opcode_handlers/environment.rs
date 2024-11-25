@@ -1,7 +1,7 @@
 use crate::{
     call_frame::CallFrame,
     constants::{BALANCE_COLD_ADDRESS_ACCESS_COST, WARM_ADDRESS_ACCESS_COST},
-    errors::{InternalError, OpcodeSuccess, OutOfGasError, VMError},
+    errors::{OpcodeSuccess, OutOfGasError, VMError},
     gas_cost,
     vm::{word_to_address, VM},
 };
@@ -239,10 +239,7 @@ impl VM {
         let code = if offset < bytecode_len {
             current_call_frame.bytecode.slice(
                 offset
-                    ..(offset.checked_add(size).ok_or(VMError::Internal(
-                        InternalError::ArithmeticOperationOverflow,
-                    ))?)
-                    .min(bytecode_len),
+                    ..(offset.checked_add(size).ok_or(VMError::VeryLargeNumber)?).min(bytecode_len),
             )
         } else {
             vec![0u8; size].into()
@@ -320,28 +317,26 @@ impl VM {
 
         let bytecode = self.get_account(&address).info.bytecode;
 
-        let new_memory_size = dest_offset.checked_add(size).ok_or(VMError::Internal(
-            InternalError::ArithmeticOperationOverflow,
-        ))?;
+        // If offset + size overflows usize we should return VeryLargeNumber.
+        let new_memory_size = dest_offset
+            .checked_add(size)
+            .ok_or(VMError::VeryLargeNumber)?;
         let current_memory_size = current_call_frame.memory.data.len();
         if current_memory_size < new_memory_size {
             current_call_frame.memory.data.resize(new_memory_size, 0);
         }
 
         for i in 0..size {
-            if let Some(memory_byte) =
-                current_call_frame
-                    .memory
-                    .data
-                    .get_mut(dest_offset.checked_add(i).ok_or(VMError::Internal(
-                        InternalError::ArithmeticOperationOverflow,
-                    ))?)
+            if let Some(memory_byte) = current_call_frame
+                .memory
+                .data
+                .get_mut(dest_offset.checked_add(i).ok_or(VMError::VeryLargeNumber)?)
             {
-                *memory_byte = *bytecode
-                    .get(offset.checked_add(i).ok_or(VMError::Internal(
-                        InternalError::ArithmeticOperationOverflow,
-                    ))?)
-                    .unwrap_or(&0u8);
+                *memory_byte = if let Some(new_offset) = offset.checked_add(i) {
+                    *bytecode.get(new_offset).unwrap_or(&0u8)
+                } else {
+                    0u8
+                };
             }
         }
 
@@ -398,9 +393,7 @@ impl VM {
                 returndata_offset
                     ..(returndata_offset
                         .checked_add(size)
-                        .ok_or(VMError::Internal(
-                            InternalError::ArithmeticOperationOverflow,
-                        ))?)
+                        .ok_or(VMError::VeryLargeNumber)?)
                     .min(sub_return_data_len),
             )
         } else {

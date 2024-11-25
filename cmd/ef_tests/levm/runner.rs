@@ -1,4 +1,8 @@
-use crate::{report::EFTestsReport, types::EFTest, utils};
+use crate::{
+    report::EFTestsReport,
+    types::{EFTest, EFTestPostValue, TransactionExpectedException},
+    utils,
+};
 use ethrex_core::{
     types::{code_hash, AccountInfo},
     H256, U256,
@@ -32,14 +36,21 @@ pub fn run_ef_tests() -> Result<EFTestsReport, Box<dyn Error>> {
             })
         {
             // TODO: Figure out what to do with overflowed value: 0x10000000000000000000000000000000000000000000000000000000000000001.
-            // Deserialization fails because the value is too big for U256.
+            // Deserialization of ValueOverflowParis fails because the value is too big for U256.
+            // Intrinsic is skipped because execution fails as access lists are not yet implemented.
             if test
                 .path()
                 .file_name()
-                .is_some_and(|name| name == "ValueOverflowParis.json")
+                .is_some_and(|name| name == "ValueOverflowParis.json" || name == "intrinsic.json")
             {
                 continue;
             }
+            // 'If' for running a specific test when necessary.
+            // if test
+            //     .path()
+            //     .file_name()
+            //     .is_some_and(|name| name == "valCausesOOF.json")
+            // {
             let test_result = run_ef_test(
                 serde_json::from_reader(std::fs::File::open(test.path())?)?,
                 &mut report,
@@ -47,6 +58,7 @@ pub fn run_ef_tests() -> Result<EFTestsReport, Box<dyn Error>> {
             if test_result.is_err() {
                 continue;
             }
+            // }
         }
         spinner.update_text(report.progress());
     }
@@ -64,13 +76,18 @@ pub fn run_ef_test_tx(
     let mut evm = prepare_vm_for_tx(tx_id, test)?;
     ensure_pre_state(&evm, test)?;
     let execution_result = evm.transact();
-    ensure_post_state(execution_result, test, report)?;
+    ensure_post_state(execution_result, test, report, tx_id)?;
     Ok(())
 }
 
 pub fn run_ef_test(test: EFTest, report: &mut EFTestsReport) -> Result<(), Box<dyn Error>> {
+    println!("Running test: {}", &test.name);
     let mut failed = false;
     for (tx_id, (tx_indexes, _tx)) in test.transactions.iter().enumerate() {
+        // Code for debugging a specific case.
+        // if *tx_indexes != (346, 0, 0) {
+        //     continue;
+        // }
         match run_ef_test_tx(tx_id, &test, report) {
             Ok(_) => {}
             Err(e) => {
@@ -100,7 +117,7 @@ pub fn prepare_vm_for_tx(tx_id: usize, test: &EFTest) -> Result<VM, Box<dyn Erro
             origin: test.transactions.get(tx_id).unwrap().1.sender,
             consumed_gas: U256::default(),
             refunded_gas: U256::default(),
-            gas_limit: test.env.current_gas_limit,
+            gas_limit: test.transactions.get(tx_id).unwrap().1.gas_limit, // Gas limit of Tx
             block_number: test.env.current_number,
             coinbase: test.env.current_coinbase,
             timestamp: test.env.current_timestamp,
@@ -116,7 +133,22 @@ pub fn prepare_vm_for_tx(tx_id: usize, test: &EFTest) -> Result<VM, Box<dyn Erro
                 .unwrap_or_default(), // or max_fee_per_gas?
             block_excess_blob_gas: Some(test.env.current_excess_blob_gas),
             block_blob_gas_used: None,
-            tx_blob_hashes: None,
+            tx_blob_hashes: test
+                .transactions
+                .get(tx_id)
+                .unwrap()
+                .1
+                .blob_versioned_hashes
+                .clone(),
+            block_gas_limit: test.env.current_gas_limit,
+            tx_max_priority_fee_per_gas: test
+                .transactions
+                .get(tx_id)
+                .unwrap()
+                .1
+                .max_priority_fee_per_gas,
+            tx_max_fee_per_gas: test.transactions.get(tx_id).unwrap().1.max_fee_per_gas,
+            tx_max_fee_per_blob_gas: test.transactions.get(tx_id).unwrap().1.max_fee_per_blob_gas,
         },
         test.transactions.get(tx_id).unwrap().1.value,
         test.transactions.get(tx_id).unwrap().1.data.clone(),
@@ -184,31 +216,121 @@ fn ensure_pre_state_condition(condition: bool, error_reason: String) -> Result<(
     Ok(())
 }
 
+fn get_indexes_tuple(post_value: &EFTestPostValue) -> Option<(usize, usize, usize)> {
+    let data_index: usize = post_value.indexes.get("data")?.as_usize();
+    let gas_index: usize = post_value.indexes.get("gas")?.as_usize();
+    let value_index: usize = post_value.indexes.get("value")?.as_usize();
+    Some((data_index, gas_index, value_index))
+}
+
+fn get_post_value(test: &EFTest, tx_id: usize) -> Option<EFTestPostValue> {
+    if let Some(transaction) = test.transactions.get(tx_id) {
+        let indexes = transaction.0;
+        test.post
+            .clone()
+            .iter()
+            .find(|post_value| {
+                if let Some(post_indexes) = get_indexes_tuple(post_value) {
+                    indexes == post_indexes
+                } else {
+                    false
+                }
+            })
+            .cloned()
+    } else {
+        None
+    }
+}
+
+// Exceptions not covered: RlpInvalidValue and Type3TxPreFork
+fn exception_is_expected(
+    expected_exceptions: Vec<TransactionExpectedException>,
+    returned_error: VMError,
+) -> bool {
+    expected_exceptions.iter().any(|exception| {
+        matches!(
+            (exception, &returned_error),
+            (
+                TransactionExpectedException::IntrinsicGasTooLow,
+                VMError::IntrinsicGasTooLow
+            ) | (
+                TransactionExpectedException::InsufficientAccountFunds,
+                VMError::InsufficientAccountFunds
+            ) | (
+                TransactionExpectedException::PriorityGreaterThanMaxFeePerGas,
+                VMError::PriorityGreaterThanMaxFeePerGas
+            ) | (
+                TransactionExpectedException::GasLimitPriceProductOverflow,
+                VMError::GasLimitPriceProductOverflow
+            ) | (
+                TransactionExpectedException::SenderNotEoa,
+                VMError::SenderNotEOA
+            ) | (
+                TransactionExpectedException::InsufficientMaxFeePerGas,
+                VMError::InsufficientMaxFeePerGas
+            ) | (
+                TransactionExpectedException::NonceIsMax,
+                VMError::NonceIsMax
+            ) | (
+                TransactionExpectedException::GasAllowanceExceeded,
+                VMError::GasAllowanceExceeded
+            ) | (
+                TransactionExpectedException::Type3TxBlobCountExceeded,
+                VMError::Type3TxBlobCountExceeded
+            ) | (
+                TransactionExpectedException::Type3TxZeroBlobs,
+                VMError::Type3TxZeroBlobs
+            ) | (
+                TransactionExpectedException::Type3TxContractCreation,
+                VMError::Type3TxContractCreation
+            ) | (
+                TransactionExpectedException::Type3TxInvalidBlobVersionedHash,
+                VMError::Type3TxInvalidBlobVersionedHash
+            ) | (
+                TransactionExpectedException::InsufficientMaxFeePerBlobGas,
+                VMError::InsufficientMaxFeePerBlobGas
+            ) | (
+                TransactionExpectedException::InitcodeSizeExceeded,
+                VMError::InitcodeSizeExceeded
+            )
+        )
+    })
+}
+
 pub fn ensure_post_state(
     execution_result: Result<TransactionReport, VMError>,
     test: &EFTest,
     report: &mut EFTestsReport,
+    tx_id: usize,
 ) -> Result<(), Box<dyn Error>> {
+    let post_value = get_post_value(test, tx_id);
     match execution_result {
         Ok(execution_report) => {
-            match test
-                .post
-                .clone()
-                .values()
-                .first()
-                .map(|v| v.clone().expect_exception)
-            {
+            match post_value.clone().map(|v| v.clone().expect_exception) {
                 // Execution result was successful but an exception was expected.
-                Some(Some(expected_exception)) => {
-                    let error_reason = format!("Expected exception: {expected_exception}");
+                Some(Some(expected_exceptions)) => {
+                    let error_reason = match expected_exceptions.get(1) {
+                        Some(second_exception) => {
+                            format!(
+                                "Expected exception: {:?} or {:?}",
+                                expected_exceptions.first().unwrap(),
+                                second_exception
+                            )
+                        }
+                        None => {
+                            format!(
+                                "Expected exception: {:?}",
+                                expected_exceptions.first().unwrap()
+                            )
+                        }
+                    };
+
                     return Err(format!("Post-state condition failed: {error_reason}").into());
                 }
                 // Execution result was successful and no exception was expected.
-                // TODO: Check that the post-state matches the expected post-state.
                 None | Some(None) => {
                     let pos_state_root = post_state_root(execution_report, test);
-                    let expected_post_state_value = test.post.iter().next().cloned();
-                    if let Some(expected_post_state_root_hash) = expected_post_state_value {
+                    if let Some(expected_post_state_root_hash) = post_value {
                         let expected_post_state_root_hash = expected_post_state_root_hash.hash;
                         if expected_post_state_root_hash != pos_state_root {
                             let error_reason = format!(
@@ -226,16 +348,31 @@ pub fn ensure_post_state(
             }
         }
         Err(err) => {
-            match test
-                .post
-                .clone()
-                .values()
-                .first()
-                .map(|v| v.clone().expect_exception)
-            {
+            match post_value.map(|v| v.clone().expect_exception) {
                 // Execution result was unsuccessful and an exception was expected.
-                // TODO: Check that the exception matches the expected exception.
-                Some(Some(_expected_exception)) => {}
+                Some(Some(expected_exceptions)) => {
+                    // Instead of cloning could use references
+                    if !exception_is_expected(expected_exceptions.clone(), err.clone()) {
+                        let error_reason = match expected_exceptions.get(1) {
+                            Some(second_exception) => {
+                                format!(
+                                    "Returned exception is not the expected: Returned {:?} but expected {:?} or {:?}",
+                                    err,
+                                    expected_exceptions.first().unwrap(),
+                                    second_exception
+                                )
+                            }
+                            None => {
+                                format!(
+                                    "Returned exception is not the expected: Returned {:?} but expected {:?}",
+                                    err,
+                                    expected_exceptions.first().unwrap()
+                                )
+                            }
+                        };
+                        return Err(format!("Post-state condition failed: {error_reason}").into());
+                    }
+                }
                 // Execution result was unsuccessful but no exception was expected.
                 None | Some(None) => {
                     let error_reason = format!("Unexpected exception: {err:?}");
