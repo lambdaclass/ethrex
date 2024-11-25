@@ -20,27 +20,54 @@ jobs:
   build:
     uses: ./.github/workflows/docker_build.yaml
 
-  run-assertoor:
-    name: Stability Check
+  run-assertoor-tx-check:
+    name: Transaction Stability Check
     runs-on: ubuntu-latest
     needs: [build]
     steps:
       - uses: actions/checkout@v4
 
-      - name: Download artifacts
+      - name: Download artifacts (tx)
         uses: actions/download-artifact@v4
         with:
           name: ethrex_image
           path: /tmp
 
-      - name: Load image
+      - name: Load image (tx)
         run: |
           docker load --input /tmp/ethrex_image.tar
 
-      - name: Setup kurtosis testnet and run assertoor tests
+      - name: Run assertoor (tx)
         uses: ethpandaops/kurtosis-assertoor-github-action@v1
         with:
-          kurtosis_version: '1.3.1'
+          kurtosis_version: '1.4.2'
           ethereum_package_url: 'github.com/lambdaclass/ethereum-package'
           ethereum_package_branch: 'ethrex-integration'
-          ethereum_package_args: './test_data/network_params.yaml'
+          ethereum_package_args: './test_data/assertoor/network_params_tx.yaml'
+
+  run-assertoor-blob-check:
+    name: Blobs Stability Check
+    runs-on: ubuntu-latest
+    needs: [build]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download artifacts (blob)
+        uses: actions/download-artifact@v4
+        with:
+          name: ethrex_image
+          path: /tmp
+
+      - name: Load image (blob)
+        run: |
+          docker load --input /tmp/ethrex_image.tar
+
+      - name: Run assertoor (blob)
+        uses: ethpandaops/kurtosis-assertoor-github-action@v1
+        with:
+          kurtosis_version: '1.4.2'
+          ethereum_package_url: 'github.com/lambdaclass/ethereum-package'
+          ethereum_package_branch: 'ethrex-integration'
+          ethereum_package_args: './test_data/assertoor/network_params_blob.yaml'
+  
+
