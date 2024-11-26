@@ -89,6 +89,7 @@ async fn transfer_from(
         let tx = client
             .build_eip1559_transaction(
                 to_address,
+                address,
                 Bytes::new(),
                 Overrides {
                     chain_id: Some(cfg.network.l2_chain_id),
@@ -99,14 +100,12 @@ async fn transfer_from(
                     gas_limit: Some(TX_GAS_COST),
                     ..Default::default()
                 },
+                10,
             )
             .await
             .unwrap();
 
-        while let Err(e) = client
-            .send_eip1559_transaction(tx.clone(), &private_key)
-            .await
-        {
+        while let Err(e) = client.send_eip1559_transaction(&tx, &private_key).await {
             println!("Transaction failed (PK: {pk} - Nonce: {}): {e}", tx.nonce);
             retries += 1;
             sleep(std::time::Duration::from_secs(2));

@@ -16,39 +16,13 @@ use keccak_hash::keccak;
 use secp256k1::SecretKey;
 use std::{cmp::min, ops::Mul, time::Duration};
 use tokio::time::sleep;
-use tracing::{debug, info, warn};
+use tracing::{debug, error, info, warn};
 
 pub async fn start_l1_watcher(store: Store) {
     let eth_config = EthConfig::from_env().expect("EthConfig::from_env()");
     let watcher_config = L1WatcherConfig::from_env().expect("L1WatcherConfig::from_env()");
-    let sleep_duration = Duration::from_millis(watcher_config.check_interval_ms);
     let mut l1_watcher = L1Watcher::new_from_config(watcher_config, eth_config);
-    loop {
-        sleep(sleep_duration).await;
-
-        let logs = match l1_watcher.get_logs().await {
-            Ok(logs) => logs,
-            Err(error) => {
-                warn!("Error when getting logs from L1: {}", error);
-                continue;
-            }
-        };
-        if logs.is_empty() {
-            continue;
-        }
-
-        let pending_deposits_logs = match l1_watcher.get_pending_deposit_logs().await {
-            Ok(logs) => logs,
-            Err(error) => {
-                warn!("Error when getting L1 pending deposit logs: {}", error);
-                continue;
-            }
-        };
-        let _deposit_txs = l1_watcher
-            .process_logs(logs, &pending_deposits_logs, &store)
-            .await
-            .expect("l1_watcher.process_logs()");
-    }
+    l1_watcher.run(&store).await;
 }
 
 pub struct L1Watcher {
@@ -58,6 +32,7 @@ pub struct L1Watcher {
     max_block_step: U256,
     last_block_fetched: U256,
     l2_proposer_pk: SecretKey,
+    check_interval: Duration,
 }
 
 impl L1Watcher {
@@ -69,6 +44,35 @@ impl L1Watcher {
             max_block_step: watcher_config.max_block_step,
             last_block_fetched: U256::zero(),
             l2_proposer_pk: watcher_config.l2_proposer_private_key,
+            check_interval: Duration::from_millis(watcher_config.check_interval_ms),
+        }
+    }
+
+    pub async fn run(&mut self, store: &Store) {
+        loop {
+            if let Err(err) = self.main_logic(store.clone()).await {
+                error!("L1 Watcher Error: {}", err);
+            }
+
+            sleep(self.check_interval).await;
+        }
+    }
+
+    async fn main_logic(&mut self, store: Store) -> Result<(), L1WatcherError> {
+        loop {
+            sleep(self.check_interval).await;
+
+            let logs = self.get_logs().await?;
+
+            // We may not have a deposit nor a withdrawal, that means no events -> no logs.
+            if logs.is_empty() {
+                continue;
+            }
+
+            let pending_deposits_logs = self.get_pending_deposit_logs().await?;
+            let _deposit_txs = self
+                .process_logs(logs, &pending_deposits_logs, &store)
+                .await?;
         }
     }
 
@@ -182,6 +186,7 @@ impl L1Watcher {
                 .build_privileged_transaction(
                     PrivilegedTxType::Deposit,
                     beneficiary,
+                    beneficiary,
                     Bytes::new(),
                     Overrides {
                         chain_id: Some(
@@ -201,6 +206,7 @@ impl L1Watcher {
                         gas_limit: Some(TX_GAS_COST.mul(2)),
                         ..Default::default()
                     },
+                    10,
                 )
                 .await?;
             mint_transaction.sign_inplace(&self.l2_proposer_pk);

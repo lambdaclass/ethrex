@@ -1,9 +1,12 @@
+use std::sync::mpsc::SendError;
+
 use crate::utils::{config::errors::ConfigError, eth_client::errors::EthClientError};
 use ethereum_types::FromStrRadixErr;
 use ethrex_core::types::BlobsBundleError;
 use ethrex_dev::utils::engine_client::errors::EngineClientError;
 use ethrex_storage::error::StoreError;
 use ethrex_vm::EvmError;
+use tokio::task::JoinError;
 
 #[derive(Debug, thiserror::Error)]
 pub enum L1WatcherError {
@@ -29,6 +32,28 @@ pub enum ProverServerError {
     EthClientError(#[from] EthClientError),
     #[error("ProverServer failed to send transaction: {0}")]
     FailedToVerifyProofOnChain(String),
+    #[error("ProverServer failed retrieve block from storage: {0}")]
+    FailedToRetrieveBlockFromStorage(#[from] StoreError),
+    #[error("ProverServer failed retrieve block from storaga, data is None.")]
+    StorageDataIsNone,
+    #[error("ProverServer failed to create ProverInputs: {0}")]
+    FailedToCreateProverInputs(#[from] EvmError),
+    #[error("ProverServer SigIntError: {0}")]
+    SigIntError(#[from] SigIntError),
+    #[error("ProverServer JoinError: {0}")]
+    JoinError(#[from] JoinError),
+    #[error("ProverServer failed: {0}")]
+    Custom(String),
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum SigIntError {
+    #[error("SigInt sigint.recv() failed")]
+    Recv,
+    #[error("SigInt tx.send(()) failed: {0}")]
+    Send(#[from] SendError<()>),
+    #[error("SigInt shutdown(Shutdown::Both) failed: {0}")]
+    Shutdown(#[from] std::io::Error),
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -39,6 +64,10 @@ pub enum ProposerError {
     FailedToProduceBlock(String),
     #[error("Proposer failed to prepare PayloadAttributes timestamp: {0}")]
     FailedToGetSystemTime(#[from] std::time::SystemTimeError),
+    #[error("Proposer failed retrieve block from storage: {0}")]
+    FailedToRetrieveBlockFromStorage(#[from] StoreError),
+    #[error("Proposer failed retrieve block from storaga, data is None.")]
+    StorageDataIsNone,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -61,6 +90,8 @@ pub enum CommitterError {
     FailedToReExecuteBlock(#[from] EvmError),
     #[error("Committer failed to send transaction: {0}")]
     FailedToSendCommitment(String),
+    #[error("Withdrawal transaction was invalid")]
+    InvalidWithdrawalTransaction,
 }
 
 #[derive(Debug, thiserror::Error)]
