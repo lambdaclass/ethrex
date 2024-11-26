@@ -1,5 +1,7 @@
 # ethrex
 
+Ethereum Rust Execution L1 and L2 client.
+
 [![Telegram Chat][tg-badge]][tg-url]
 [![license](https://img.shields.io/github/license/lambdaclass/ethrex)](/LICENSE)
 
