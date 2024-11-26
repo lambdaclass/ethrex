@@ -1,9 +1,14 @@
 name: Assertoor
 on:
-  merge_group:
-  workflow_run:
-    workflows: [Docker build]
-    types: [completed]
+  pull_request:
+    branches: ["**"]
+    paths-ignore:
+      - "README.md"
+      - "LICENSE"
+      - "**/README.md"
+      - "**/docs/**"
+      - "crates/vm/levm/**"
+      - "crates/l2/**"
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
@@ -13,10 +18,13 @@ env:
   RUST_VERSION: 1.80.1
 
 jobs:
+  build:
+    uses: ./.github/workflows/docker_build.yaml
+
   run-assertoor:
     name: Stability Check
     runs-on: ubuntu-latest
-    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+    needs: [build]
     steps:
       - uses: actions/checkout@v4
 
@@ -25,8 +33,6 @@ jobs:
         with:
           name: ethrex_image
           path: /tmp
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          run-id: ${{ github.event.workflow_run.id }}
 
       - name: Load image
         run: |
