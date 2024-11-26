@@ -1,14 +1,9 @@
 name: Hive
 on:
-  pull_request:
-    branches: ["**"]
-    paths-ignore:
-      - 'README.md'
-      - 'LICENSE'
-      - "**/README.md"
-      - "**/docs/**"
-      - "crates/vm/levm/**"
-      - "crates/l2/**"
+  merge_group:
+  workflow_run:
+    workflows: [Docker build]
+    types: [completed]
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
@@ -18,13 +13,10 @@ env:
   RUST_VERSION: 1.80.1
 
 jobs:
-  build:
-    uses: ./.github/workflows/docker_build.yaml
-
   run-hive:
     name: ${{ matrix.name }}
-    needs: [build]
     runs-on: ubuntu-latest
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
     strategy:
       matrix:
         include:
@@ -45,16 +37,18 @@ jobs:
             run_command: make run-hive-on-latest SIMULATION=devp2p TEST_PATTERN="eth/Status|GetBlockHeaders|SimultaneousRequests|SameRequestID|ZeroRequestID|GetBlockBodies|MaliciousHandshake|MaliciousStatus|Transaction"
           - simulation: engine
             name: "Engine Auth and EC tests"
-            run_command:  make run-hive-on-latest SIMULATION=ethereum/engine TEST_PATTERN="engine-(auth|exchange-capabilities)/"
+            run_command: make run-hive-on-latest SIMULATION=ethereum/engine TEST_PATTERN="engine-(auth|exchange-capabilities)/"
           - simulation: engine-cancun
             name: "Cancun Engine tests"
-            run_command:  make run-hive-on-latest SIMULATION=ethereum/engine HIVE_EXTRA_ARGS="--sim.parallelism 4" TEST_PATTERN="engine-cancun/Blob Transactions On Block 1|Blob Transaction Ordering, Single|Blob Transaction Ordering, Multiple Accounts|Replace Blob Transactions|Parallel Blob Transactions|ForkchoiceUpdatedV3 Modifies Payload ID on Different Beacon Root|NewPayloadV3 After Cancun|NewPayloadV3 Versioned Hashes|Incorrect BlobGasUsed|Bad Hash|ParentHash equals BlockHash|RPC:|in ForkchoiceState|Unknown|Invalid PayloadAttributes|Unique|ForkchoiceUpdated Version on Payload Request|Re-Execute Payload|In-Order Consecutive Payload|Multiple New Payloads|Valid NewPayload->|NewPayload with|Payload Build after|Build Payload with|Invalid Missing Ancestor ReOrg, StateRoot|Re-Org Back to|Re-org to Previously|Safe Re-Org to Side Chain|Transaction Re-Org, Re-Org Back In|Re-Org Back into Canonical Chain, Depth=5|Suggested Fee Recipient Test|PrevRandao Opcode|Invalid NewPayload, [^R][^e]|Fork ID Genesis=0, Cancun=0|Fork ID Genesis=0, Cancun=1|Fork ID Genesis=1, Cancun=0|Fork ID Genesis=1, Cancun=2, Shanghai=2"
+            run_command: make run-hive-on-latest SIMULATION=ethereum/engine HIVE_EXTRA_ARGS="--sim.parallelism 4" TEST_PATTERN="engine-cancun/Blob Transactions On Block 1|Blob Transaction Ordering, Single|Blob Transaction Ordering, Multiple Accounts|Replace Blob Transactions|Parallel Blob Transactions|ForkchoiceUpdatedV3 Modifies Payload ID on Different Beacon Root|NewPayloadV3 After Cancun|NewPayloadV3 Versioned Hashes|Incorrect BlobGasUsed|Bad Hash|ParentHash equals BlockHash|RPC:|in ForkchoiceState|Unknown|Invalid PayloadAttributes|Unique|ForkchoiceUpdated Version on Payload Request|Re-Execute Payload|In-Order Consecutive Payload|Multiple New Payloads|Valid NewPayload->|NewPayload with|Payload Build after|Build Payload with|Invalid Missing Ancestor ReOrg, StateRoot|Re-Org Back to|Re-org to Previously|Safe Re-Org to Side Chain|Transaction Re-Org, Re-Org Back In|Re-Org Back into Canonical Chain, Depth=5|Suggested Fee Recipient Test|PrevRandao Opcode|Invalid NewPayload, [^R][^e]|Fork ID Genesis=0, Cancun=0|Fork ID Genesis=0, Cancun=1|Fork ID Genesis=1, Cancun=0|Fork ID Genesis=1, Cancun=2, Shanghai=2"
     steps:
       - name: Download artifacts
         uses: actions/download-artifact@v4
         with:
           name: ethrex_image
           path: /tmp
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          run-id: ${{ github.event.workflow_run.id }}
 
       - name: Load image
         run: |

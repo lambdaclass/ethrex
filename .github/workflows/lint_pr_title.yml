@@ -1,7 +1,6 @@
 name: Lint PR title
 
 on:
-  merge_group:
   pull_request_target:
     types:
       - opened
@@ -11,8 +10,6 @@ on:
 jobs:
   main:
     name: Validate PR title
-    # Skip step for events that are not pull request targets as it currenlty fails when ran in the merge queue
-    if: github.event_name == 'pull_request_target'
     runs-on: ubuntu-latest
     steps:
       - uses: amannn/action-semantic-pull-request@v5
