@@ -1,3 +1,4 @@
+#![allow(clippy::expect_used)]
 use ethrex_core::types::{Block, Genesis};
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
 use ethrex_storage::Store;

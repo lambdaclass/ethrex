@@ -1,7 +1,7 @@
 use crate::{
     proposer::errors::L1WatcherError,
     utils::{
-        config::{eth::EthConfig, l1_watcher::L1WatcherConfig},
+        config::{eth::EthConfig, l1_watcher::L1WatcherConfig, errors::ConfigError},
         eth_client::{eth_sender::Overrides, EthClient},
     },
 };
@@ -18,11 +18,12 @@ use std::{cmp::min, ops::Mul, time::Duration};
 use tokio::time::sleep;
 use tracing::{debug, error, info, warn};
 
-pub async fn start_l1_watcher(store: Store) {
-    let eth_config = EthConfig::from_env().expect("EthConfig::from_env()");
-    let watcher_config = L1WatcherConfig::from_env().expect("L1WatcherConfig::from_env()");
+pub async fn start_l1_watcher(store: Store) -> Result<(), ConfigError> {
+    let eth_config = EthConfig::from_env()?;
+    let watcher_config = L1WatcherConfig::from_env()?;
     let mut l1_watcher = L1Watcher::new_from_config(watcher_config, eth_config);
     l1_watcher.run(&store).await;
+    Ok(())
 }
 
 pub struct L1Watcher {

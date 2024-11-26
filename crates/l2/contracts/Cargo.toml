@@ -23,3 +23,6 @@ ethrex-core = { path = "../../common" }
 [[bin]]
 name = "ethrex_l2_l1_deployer"
 path = "./deployer.rs"
+
+[lints.clippy]
+expect_used = "deny"
