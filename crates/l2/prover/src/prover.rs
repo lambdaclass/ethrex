@@ -61,6 +61,12 @@ impl<'a> Prover<'a> {
         Ok(())
     }
 
+    pub fn get_gas(&self) -> Result<u64, Box<dyn std::error::Error>> {
+        Ok(risc0_zkvm::serde::from_slice(
+            &self.stdout[..8], // first 8 bytes
+        )?)
+    }
+
     pub fn get_commitment(
         receipt: &risc0_zkvm::Receipt,
     ) -> Result<ProgramOutput, Box<dyn std::error::Error>> {

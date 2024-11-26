@@ -3,6 +3,7 @@ use secp256k1::SecretKey;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 pub mod config;
+pub mod error;
 pub mod eth_client;
 pub mod merkle_tree;
 pub mod test_data_io;

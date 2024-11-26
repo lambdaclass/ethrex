@@ -1,5 +1,5 @@
 pub mod db;
-mod errors;
+pub mod errors;
 pub mod execution_db;
 mod execution_result;
 #[cfg(feature = "l2")]
