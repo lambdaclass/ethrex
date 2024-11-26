@@ -167,12 +167,12 @@ impl VM {
             return Ok(OpcodeSuccess::Continue);
         }
 
-        let mut data = [0u8; 32];
+        let mut data = vec![0u8; size];
         for (i, byte) in current_call_frame
             .calldata
             .iter()
             .skip(calldata_offset)
-            .take(32)
+            .take(size)
             .enumerate()
         {
             if let Some(data_byte) = data.get_mut(i) {
