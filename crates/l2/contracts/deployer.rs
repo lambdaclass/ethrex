@@ -30,66 +30,48 @@ lazy_static::lazy_static! {
     static ref SALT: std::sync::Mutex<H256> = std::sync::Mutex::new(H256::zero());
 }
 
-type SetupResult = (
-    Address,
-    SecretKey,
-    Address,
-    Address,
-    Address,
-    EthClient,
-    PathBuf,
-);
+struct SetupResult {
+    deployer_address: Address,
+    deployer_private_key: SecretKey,
+    committer_address: Address,
+    verifier_address: Address,
+    contract_verifier_address: Address,
+    eth_client: EthClient,
+    contracts_path: PathBuf,
+}
 
 #[tokio::main]
 async fn main() {
-    let (
-        deployer,
-        deployer_private_key,
-        committer_private_key,
-        verifier_private_key,
-        contract_verifier_address,
-        eth_client,
-        contracts_path,
-    );
+    let setup_result: SetupResult;
     match setup() {
-        Ok(val) => {
-            (
-                deployer,
-                deployer_private_key,
-                committer_private_key,
-                verifier_private_key,
-                contract_verifier_address,
-                eth_client,
-                contracts_path,
-            ) = val;
-        },
+        Ok(res) => setup_result = res,
         Err(err) => {
             panic!("Error in deployer setup: {err}")
         }
     };
 
-    if let Err(err) = download_contract_deps(&contracts_path) {
+    if let Err(err) = download_contract_deps(&setup_result.contracts_path) {
         panic!("Error downloading dependencies: {err}")
     };
 
-    if let Err(err) = compile_contracts(&contracts_path) {
+    if let Err(err) = compile_contracts(&setup_result.contracts_path) {
         panic!("Error compiling contracts: {err}")
     }
 
     let (on_chain_proposer, bridge_address) =
-        deploy_contracts(deployer, deployer_private_key, &eth_client, &contracts_path)
+        deploy_contracts(setup_result.deployer_address, setup_result.deployer_private_key, &setup_result.eth_client, &setup_result.contracts_path)
             .await
             .unwrap_or_else(|e| panic!("Error deploying contract: {e}"));
 
     if let Err(err) = initialize_contracts(
-        deployer,
-        deployer_private_key,
-        committer_private_key,
-        verifier_private_key,
+        setup_result.deployer_address,
+        setup_result.deployer_private_key,
+        setup_result.committer_address,
+        setup_result.verifier_address,
         on_chain_proposer,
         bridge_address,
-        contract_verifier_address,
-        &eth_client,
+        setup_result.contract_verifier_address,
+        &setup_result.eth_client,
     ).await {
         panic!("Failed to initialize contracts: {err}");
     }
@@ -127,7 +109,7 @@ fn setup() -> Result<SetupResult, DeployerError> {
 
     let eth_client = EthClient::new(&read_env_var("ETH_RPC_URL")?);
 
-    let deployer = parse_env_var("DEPLOYER_ADDRESS")?;
+    let deployer_address = parse_env_var("DEPLOYER_ADDRESS")?;
     let deployer_private_key = SecretKey::from_slice(
         H256::from_str(
             read_env_var("DEPLOYER_PRIVATE_KEY")?
@@ -143,9 +125,9 @@ fn setup() -> Result<SetupResult, DeployerError> {
         DeployerError::ParseError(format!("Malformed DEPLOYER_PRIVATE_KEY (SecretKey::parse): {err}"))
     })?;
 
-    let committer = parse_env_var("COMMITTER_L1_ADDRESS")?;
+    let committer_address = parse_env_var("COMMITTER_L1_ADDRESS")?;
 
-    let verifier = parse_env_var("PROVER_SERVER_VERIFIER_ADDRESS")?;
+    let verifier_address = parse_env_var("PROVER_SERVER_VERIFIER_ADDRESS")?;
 
     let contracts_path = Path::new(
         std::env::var("DEPLOYER_CONTRACTS_PATH")
@@ -167,15 +149,15 @@ fn setup() -> Result<SetupResult, DeployerError> {
         }
     };
     let contract_verifier_address = parse_env_var("DEPLOYER_CONTRACT_VERIFIER")?;
-    Ok((
-        deployer,
+    Ok(SetupResult {
+        deployer_address,
         deployer_private_key,
-        committer,
-        verifier,
+        committer_address,
+        verifier_address,
         contract_verifier_address,
         eth_client,
         contracts_path,
-    ))
+    })
 }
 
 fn read_env_var(key: &str) -> Result<String, DeployerError> {
