@@ -6,7 +6,7 @@ Ethereum Rust Execution L1 and L2 client.
 [![license](https://img.shields.io/github/license/lambdaclass/ethrex)](/LICENSE)
 
 [tg-badge]: https://img.shields.io/endpoint?url=https%3A%2F%2Ftg.sumanjay.workers.dev%2Frust_ethereum%2F&logo=telegram&label=chat&color=neon
-[tg-url]: https://t.me/rust_ethereum
+[tg-url]: https://t.me/ethrex_client
 
 # L1 and L2 support
 
