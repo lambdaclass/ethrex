@@ -10,6 +10,9 @@ participants:
     validator_count: 32
 
 additional_services:
-  - dora
-  - el_forkmon
-  - tx_spammer
+  - assertoor
+
+assertoor_params:
+  run_stability_check: false
+  run_block_proposal_check: false
+  run_transaction_test: true
