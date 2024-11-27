@@ -1,9 +1,9 @@
 name: CI LEVM
 
 on:
+  push:
+    branches: ["main"]
   merge_group:
-    paths:
-      - "crates/vm/levm/**"
   pull_request:
     branches: ["**"]
     paths:

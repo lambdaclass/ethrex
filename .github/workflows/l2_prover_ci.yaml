@@ -1,5 +1,7 @@
 name: L2 Prover CI
 on:
+  push:
+    branches: ["main"]
   merge_group:
   pull_request:
     branches: ["**"]

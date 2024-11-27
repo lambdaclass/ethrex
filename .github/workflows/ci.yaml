@@ -1,14 +1,16 @@
 name: CI
 on:
+  push:
+    branches: ["main"]
   merge_group:
   pull_request:
     branches: ["**"]
-    paths-ignore:
-      - "README.md"
-      - "LICENSE"
-      - "**/README.md"
-      - "**/docs/**"
-      - "crates/vm/levm/**" # We run this in a separate workflow
+    # paths-ignore:
+    #   - "README.md"
+    #   - "LICENSE"
+    #   - "**/README.md"
+    #   - "**/docs/**"
+    #   - "crates/vm/levm/**" # We run this in a separate workflow
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}

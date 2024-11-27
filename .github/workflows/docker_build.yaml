@@ -1,8 +1,17 @@
 name: Docker build
 
+# This workflow is later used in assertoor and hive workflows
 on:
-  workflow_call:
+  push:
+    branches: ["main"]
   merge_group:
+  pull_request:
+    branches: ["**"]
+    # paths-ignore:
+    #   - "README.md"
+    #   - "LICENSE"
+    #   - "**/README.md"
+    #   - "**/docs/**"
 
 jobs:
   docker_build:
