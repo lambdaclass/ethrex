@@ -9,6 +9,3 @@ opt-level = 3
 [profile.release]
 debug = 1
 lto = true
-
-[lints.clippy]
-expect_used = "deny"
