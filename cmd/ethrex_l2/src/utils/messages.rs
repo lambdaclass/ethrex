@@ -16,3 +16,4 @@ pub const L1_EXPLORER_URL_PROMPT_MSG: &str = "L1 Explorer URL";
 pub const PRIVATE_KEY_PROMPT_MSG: &str = "Private key";
 pub const ADDRESS_PROMPT_MSG: &str = "Address";
 pub const CONTRACTS_COMMON_BRIDGE_PROMPT_MSG: &str = "Bridge contract address";
+pub const CONTRACTS_ON_CHAIN_PROPOSER_PROMPT_MSG: &str = "OnChainProposer contract address";

@@ -1,4 +1,4 @@
-use std::time::Duration;
+use std::{fmt, time::Duration};
 
 use crate::utils::config::eth::EthConfig;
 use bytes::Bytes;
@@ -1020,4 +1020,50 @@ pub struct GetTransactionByHashTransaction {
     pub hash: H256,
     #[serde(default, with = "ethrex_core::serde_utils::u64::hex_str")]
     pub transaction_index: u64,
+}
+
+impl fmt::Display for GetTransactionByHashTransaction {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(
+            f,
+            r#"
+            chain_id: {},
+            nonce: {},
+            max_priority_fee_per_gas: {},
+            max_fee_per_gas: {},
+            gas_limit: {},
+            to: {:#x},
+            value: {},
+            data: {:#?},
+            access_list: {:#?},
+            type: {:?},
+            signature_y_parity: {},
+            signature_r: {:x},
+            signature_s: {:x},
+            block_number: {},
+            block_hash: {:#x},
+            from: {:#x},
+            hash: {:#x},
+            transaction_index: {}
+            "#,
+            self.chain_id,
+            self.nonce,
+            self.max_priority_fee_per_gas,
+            self.max_fee_per_gas,
+            self.gas_limit,
+            self.to,
+            self.value,
+            self.data,
+            self.access_list,
+            self.r#type,
+            self.signature_y_parity,
+            self.signature_r,
+            self.signature_s,
+            self.block_number,
+            self.block_hash,
+            self.from,
+            self.hash,
+            self.transaction_index
+        )
+    }
 }

@@ -57,7 +57,7 @@ down-local-l1: ## 🛑 Shuts down the L1 Lambda ethrex Client
 
 restart-local-l1: down-local-l1 init-local-l1 ## 🔄 Restarts the L1 Lambda ethrex Client
 
-rm_dev_libmdbx_l1: ## 🛑 Removes the Libmdbx DB used by the L1
+rm_db_l1: ## 🛑 Removes the DB used by the L1
 	cargo run --release --manifest-path ../../Cargo.toml --bin ethrex -- removedb --datadir ${ethrex_L1_DEV_LIBMDBX}
 
 # Contracts
@@ -92,7 +92,7 @@ init-l2-prover: ## 🚀 Initializes the Prover
 init-l2-prover-gpu: ## 🚀 Initializes the Prover with GPU support
 	cargo run --release --features "build_zkvm,gpu" --manifest-path ../../Cargo.toml --bin ethrex_prover
 
-rm_dev_libmdbx_l2: ## 🛑 Removes the Libmdbx DB used by the L2
+rm_db_l2: ## 🛑 Removes the DB used by the L2
 	cargo run --release --manifest-path ../../Cargo.toml --bin ethrex -- removedb --datadir ${ethrex_L2_DEV_LIBMDBX}
 
 

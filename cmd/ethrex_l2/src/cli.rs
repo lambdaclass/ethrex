@@ -1,5 +1,5 @@
 use crate::{
-    commands::{autocomplete, config, stack, test, utils, wallet},
+    commands::{autocomplete, config, info, stack, test, utils, wallet},
     config::load_selected_config,
 };
 use clap::{Parser, Subcommand};
@@ -35,6 +35,8 @@ enum EthrexL2Command {
     Test(test::Command),
     #[clap(subcommand, about = "Generate shell completion scripts.")]
     Autocomplete(autocomplete::Command),
+    #[clap(subcommand, about = "Gets L2's information.")]
+    Info(info::Command),
 }
 
 pub async fn start() -> eyre::Result<()> {
@@ -50,6 +52,7 @@ pub async fn start() -> eyre::Result<()> {
         EthrexL2Command::Autocomplete(cmd) => cmd.run()?,
         EthrexL2Command::Config(_) => unreachable!(),
         EthrexL2Command::Test(cmd) => cmd.run(cfg).await?,
+        EthrexL2Command::Info(cmd) => cmd.run(cfg).await?,
     };
     Ok(())
 }
