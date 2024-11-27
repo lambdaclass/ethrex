@@ -34,7 +34,7 @@ jobs:
       - name: Setup kurtosis testnet and run assertoor tests
         uses: ethpandaops/kurtosis-assertoor-github-action@v1
         with:
-          kurtosis_version: "1.3.1"
+          kurtosis_version: "1.4.2"
           ethereum_package_url: "github.com/lambdaclass/ethereum-package"
           ethereum_package_branch: "ethrex-integration"
           ethereum_package_args: "./test_data/network_params.yaml"
