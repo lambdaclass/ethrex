@@ -30,6 +30,16 @@ lazy_static::lazy_static! {
     static ref SALT: std::sync::Mutex<H256> = std::sync::Mutex::new(H256::zero());
 }
 
+type SetupResult = (
+    Address,
+    SecretKey,
+    Address,
+    Address,
+    Address,
+    EthClient,
+    PathBuf,
+);
+
 #[tokio::main]
 async fn main() {
     let (
@@ -110,15 +120,7 @@ async fn main() {
     }
 }
 
-fn setup() -> Result<(
-    Address,
-    SecretKey,
-    Address,
-    Address,
-    Address,
-    EthClient,
-    PathBuf,
-), DeployerError> {
+fn setup() -> Result<SetupResult, DeployerError> {
     if let Err(e) = read_env_file() {
         warn!("Failed to read .env file: {e}");
     }
