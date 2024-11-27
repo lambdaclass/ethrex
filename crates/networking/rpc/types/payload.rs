@@ -35,9 +35,9 @@ pub struct ExecutionPayloadV3 {
     pub block_hash: H256,
     transactions: Vec<EncodedTransaction>,
     withdrawals: Vec<Withdrawal>,
-    #[serde(with = "serde_utils::u64::hex_str")]
+    #[serde(with = "serde_utils::u64::hex_str", default)]
     blob_gas_used: u64,
-    #[serde(with = "serde_utils::u64::hex_str")]
+    #[serde(with = "serde_utils::u64::hex_str", default)]
     excess_blob_gas: u64,
 }
 

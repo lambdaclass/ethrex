@@ -1,11 +1,14 @@
 use ethrex_rlp::error::{RLPDecodeError, RLPEncodeError};
 use ethrex_storage::error::StoreError;
+use ethrex_trie::TrieError;
 use thiserror::Error;
 use tokio::sync::broadcast::error::RecvError;
 
+use super::message::Message;
+
 // TODO improve errors
 #[derive(Debug, Error)]
-pub(crate) enum RLPxError {
+pub enum RLPxError {
     #[error("{0}")]
     HandshakeError(String),
     #[error("{0}")]
@@ -34,10 +37,16 @@ pub(crate) enum RLPxError {
     StoreError(#[from] StoreError),
     #[error("Error in cryptographic library: {0}")]
     CryptographyError(String),
+    #[error(transparent)]
+    Trie(#[from] TrieError),
     #[error("Failed to broadcast msg: {0}")]
     BroadcastError(String),
     #[error(transparent)]
     RecvError(#[from] RecvError),
+    #[error(transparent)]
+    Send(#[from] tokio::sync::mpsc::error::SendError<Message>),
+    #[error("No peers to interact with yet")]
+    NoPeers,
 }
 
 // Grouping all cryptographic related errors in a single CryptographicError variant

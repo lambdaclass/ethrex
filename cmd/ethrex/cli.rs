@@ -105,6 +105,12 @@ pub fn cli() -> Command {
                 .value_name("CHAIN_RLP_PATH"),
         )
         .arg(
+            Arg::new("syncmode")
+                .long("syncmode")
+                .required(false)
+                .value_name("SYNC_MODE"),
+        )
+        .arg(
             Arg::new("import_dir")
                 .long("import_dir")
                 .required(false)

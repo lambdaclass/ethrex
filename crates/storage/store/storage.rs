@@ -886,9 +886,13 @@ impl Store {
         self.engine.get_payload(payload_id)
     }
 
-    /// Creates a new state trie with an empty state root, for testing purposes only
-    pub fn new_state_trie_for_test(&self) -> Trie {
+    /// Creates a new clean state trie (with an empty root)
+    pub fn new_state_trie(&self) -> Trie {
         self.engine.open_state_trie(*EMPTY_TRIE_HASH)
+    }
+
+    pub fn open_state_trie(&self, state_root: H256) -> Trie {
+        self.engine.open_state_trie(state_root)
     }
 }
 

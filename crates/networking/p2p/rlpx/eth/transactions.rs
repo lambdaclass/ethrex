@@ -12,7 +12,7 @@ use crate::rlpx::{
 
 // https://github.com/ethereum/devp2p/blob/master/caps/eth.md#transactions-0x02
 // Broadcast message
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub(crate) struct Transactions {
     pub(crate) transactions: Vec<Transaction>,
 }

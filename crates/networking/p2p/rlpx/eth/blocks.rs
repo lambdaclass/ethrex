@@ -37,6 +37,12 @@ impl RLPEncode for HashOrNumber {
     }
 }
 
+impl From<BlockHash> for HashOrNumber {
+    fn from(value: BlockHash) -> Self {
+        Self::Hash(value)
+    }
+}
+
 impl RLPDecode for HashOrNumber {
     fn decode_unfinished(buf: &[u8]) -> Result<(Self, &[u8]), RLPDecodeError> {
         let first_byte = buf.first().ok_or(RLPDecodeError::InvalidLength)?;
@@ -54,8 +60,8 @@ impl RLPDecode for HashOrNumber {
 }
 
 // https://github.com/ethereum/devp2p/blob/master/caps/eth.md#getblockheaders-0x03
-#[derive(Debug)]
-pub(crate) struct GetBlockHeaders {
+#[derive(Debug, Clone)]
+pub struct GetBlockHeaders {
     // id is a u64 chosen by the requesting peer, the responding peer must mirror the value for the response
     // https://github.com/ethereum/devp2p/blob/master/caps/eth.md#protocol-messages
     pub id: u64,
@@ -159,8 +165,8 @@ impl RLPxMessage for GetBlockHeaders {
 }
 
 // https://github.com/ethereum/devp2p/blob/master/caps/eth.md#blockheaders-0x04
-#[derive(Debug)]
-pub(crate) struct BlockHeaders {
+#[derive(Debug, Clone)]
+pub struct BlockHeaders {
     // id is a u64 chosen by the requesting peer, the responding peer must mirror the value for the response
     // https://github.com/ethereum/devp2p/blob/master/caps/eth.md#protocol-messages
     pub id: u64,
@@ -199,8 +205,8 @@ impl RLPxMessage for BlockHeaders {
 }
 
 // https://github.com/ethereum/devp2p/blob/master/caps/eth.md#getblockbodies-0x05
-#[derive(Debug)]
-pub(crate) struct GetBlockBodies {
+#[derive(Debug, Clone)]
+pub struct GetBlockBodies {
     // id is a u64 chosen by the requesting peer, the responding peer must mirror the value for the response
     // https://github.com/ethereum/devp2p/blob/master/caps/eth.md#protocol-messages
     pub id: u64,
@@ -264,8 +270,8 @@ impl RLPxMessage for GetBlockBodies {
 }
 
 // https://github.com/ethereum/devp2p/blob/master/caps/eth.md#blockbodies-0x06
-#[derive(Debug)]
-pub(crate) struct BlockBodies {
+#[derive(Debug, Clone)]
+pub struct BlockBodies {
     // id is a u64 chosen by the requesting peer, the responding peer must mirror the value for the response
     // https://github.com/ethereum/devp2p/blob/master/caps/eth.md#protocol-messages
     pub id: u64,
