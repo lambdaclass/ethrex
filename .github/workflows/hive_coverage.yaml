@@ -3,7 +3,7 @@ name: Daily Hive Coverage
 on:
   schedule:
     # Every day at UTC midnight
-    - cron: '0 0 * * *'
+    - cron: "0 0 * * *"
   workflow_dispatch:
 
 env:
@@ -57,7 +57,17 @@ jobs:
           echo "# Hive coverage report" >> $GITHUB_STEP_SUMMARY
           cat results.md >> $GITHUB_STEP_SUMMARY
 
-      - name: Post results to slack
+      - name: Post results to ethrex L1 slack channel
         env:
-          url: ${{ secrets.SLACK_WEBHOOK_URL }}
+          url: ${{ secrets.ETHREX_L1_SLACK_WEBHOOK }}
+        run: sh publish.sh
+
+      - name: Post results to ethrex L2 slack channel
+        env:
+          url: ${{ secrets.ETHREX_L2_SLACK_WEBHOOK }}
+        run: sh publish.sh
+
+      - name: Post results to levm slack channel
+        env:
+          url: ${{ secrets.LEVM_SLACK_WEBHOOK }}
         run: sh publish.sh

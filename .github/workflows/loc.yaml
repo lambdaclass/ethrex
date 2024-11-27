@@ -2,8 +2,8 @@ name: Weekly LoC
 
 on:
   schedule:
-    # Every Friday at midnight
-    - cron: "0 0 * * 5"
+    # Every day at midnight
+    - cron: "0 0 * * *"
   workflow_dispatch:
 
 env:
@@ -34,7 +34,17 @@ jobs:
           echo "# `ethrex` lines of code report" >> $GITHUB_STEP_SUMMARY
           cat loc_report.md >> $GITHUB_STEP_SUMMARY
 
-      - name: Post results to slack
+      - name: Post results to ethrex L1 slack channel
         env:
-          url: ${{ secrets.SLACK_WEBHOOK_URL }}
+          url: ${{ secrets.ETHREX_L1_SLACK_WEBHOOK }}
+        run: sh publish_loc.sh
+
+      - name: Post results to ethrex L2 slack channel
+        env:
+          url: ${{ secrets.ETHREX_L2_SLACK_WEBHOOK }}
+        run: sh publish_loc.sh
+
+      - name: Post results to levm slack channel
+        env:
+          url: ${{ secrets.LEVM_SLACK_WEBHOOK }}
         run: sh publish_loc.sh
