@@ -6,16 +6,12 @@ use ethrex_core::{H256, U256};
 use serde_json::Value;
 use tracing::{error, info, warn};
 
-use crate::types::payload::ExecutionPayloadResponse;
+use crate::types::payload::{ExecutionPayload, ExecutionPayloadResponse, PayloadStatus};
 use crate::utils::RpcRequest;
-use crate::RpcApiContext;
-use crate::{
-    types::payload::{ExecutionPayloadV3, PayloadStatus},
-    RpcErr, RpcHandler,
-};
+use crate::{RpcApiContext, RpcErr, RpcHandler};
 
 pub struct NewPayloadV3Request {
-    pub payload: ExecutionPayloadV3,
+    pub payload: ExecutionPayload,
     pub expected_blob_versioned_hashes: Vec<H256>,
     pub parent_beacon_block_root: H256,
 }
@@ -65,7 +61,7 @@ impl RpcHandler for NewPayloadV3Request {
         let block = match self
             .payload
             .clone()
-            .into_block(self.parent_beacon_block_root)
+            .into_block(Some(self.parent_beacon_block_root))
         {
             Ok(block) => block,
             Err(error) => {
@@ -201,10 +197,10 @@ impl RpcHandler for GetPayloadV3Request {
         let (blobs_bundle, block_value) = build_payload(&mut payload, &context.storage)
             .map_err(|err| RpcErr::Internal(err.to_string()))?;
         serde_json::to_value(ExecutionPayloadResponse {
-            execution_payload: ExecutionPayloadV3::from_block(payload),
+            execution_payload: ExecutionPayload::from_block(payload),
             block_value,
-            blobs_bundle,
-            should_override_builder: false,
+            blobs_bundle: Some(blobs_bundle),
+            should_override_builder: Some(false),
         })
         .map_err(|error| RpcErr::Internal(error.to_string()))
     }
