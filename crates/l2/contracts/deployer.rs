@@ -1,9 +1,11 @@
 mod errors;
 
+use crate::errors::DeployerError;
 use bytes::Bytes;
 use colored::Colorize;
 use ethereum_types::{Address, H160, H256};
 use ethrex_core::U256;
+use ethrex_l2::utils::eth_client::errors::EthClientError;
 use ethrex_l2::utils::{
     config::{read_env_as_lines, read_env_file, write_env},
     eth_client::{eth_sender::Overrides, EthClient},
@@ -16,9 +18,7 @@ use std::{
     process::Command,
     str::FromStr,
 };
-use tracing::{warn};
-use ethrex_l2::utils::eth_client::errors::EthClientError;
-use crate::errors::DeployerError;
+use tracing::warn;
 
 // 0x4e59b44847b379578588920cA78FbF26c0B4956C
 const DETERMINISTIC_CREATE2_ADDRESS: Address = H160([
@@ -58,10 +58,14 @@ async fn main() {
         panic!("Error compiling contracts: {err}")
     }
 
-    let (on_chain_proposer, bridge_address) =
-        deploy_contracts(setup_result.deployer_address, setup_result.deployer_private_key, &setup_result.eth_client, &setup_result.contracts_path)
-            .await
-            .unwrap_or_else(|e| panic!("Error deploying contract: {e}"));
+    let (on_chain_proposer, bridge_address) = deploy_contracts(
+        setup_result.deployer_address,
+        setup_result.deployer_private_key,
+        &setup_result.eth_client,
+        &setup_result.contracts_path,
+    )
+    .await
+    .unwrap_or_else(|e| panic!("Error deploying contract: {e}"));
 
     if let Err(err) = initialize_contracts(
         setup_result.deployer_address,
@@ -72,7 +76,9 @@ async fn main() {
         bridge_address,
         setup_result.contract_verifier_address,
         &setup_result.eth_client,
-    ).await {
+    )
+    .await
+    {
         panic!("Failed to initialize contracts: {err}");
     }
 
@@ -98,7 +104,10 @@ async fn main() {
         wr_lines.push(line);
     }
     if let Err(err) = write_env(wr_lines) {
-        panic!("{}", format!("Failed to write changes to the .env file: {err}"));
+        panic!(
+            "{}",
+            format!("Failed to write changes to the .env file: {err}")
+        );
     }
 }
 
@@ -114,15 +123,21 @@ fn setup() -> Result<SetupResult, DeployerError> {
         H256::from_str(
             read_env_var("DEPLOYER_PRIVATE_KEY")?
                 .strip_prefix("0x")
-                .ok_or(
-                    DeployerError::ParseError("Malformed DEPLOYER PRIVATE KEY (strip_prefix(\"0x\"))".to_owned())
-                )?
-        ).map_err(|err| {
-            DeployerError::ParseError(format!("Malformed DEPLOYER PRIVATE KEY (H256::from_str): {err}"))
+                .ok_or(DeployerError::ParseError(
+                    "Malformed DEPLOYER PRIVATE KEY (strip_prefix(\"0x\"))".to_owned(),
+                ))?,
+        )
+        .map_err(|err| {
+            DeployerError::ParseError(format!(
+                "Malformed DEPLOYER PRIVATE KEY (H256::from_str): {err}"
+            ))
         })?
         .as_bytes(),
-    ).map_err(|err| {
-        DeployerError::ParseError(format!("Malformed DEPLOYER_PRIVATE_KEY (SecretKey::parse): {err}"))
+    )
+    .map_err(|err| {
+        DeployerError::ParseError(format!(
+            "Malformed DEPLOYER_PRIVATE_KEY (SecretKey::parse): {err}"
+        ))
     })?;
 
     let committer_address = parse_env_var("COMMITTER_L1_ADDRESS")?;
@@ -145,7 +160,9 @@ fn setup() -> Result<SetupResult, DeployerError> {
             *salt = H256::random();
         }
         _ => {
-            return Err(DeployerError::ParseError(format!("Invalid boolean string: {input}")));
+            return Err(DeployerError::ParseError(format!(
+                "Invalid boolean string: {input}"
+            )));
         }
     };
     let contract_verifier_address = parse_env_var("DEPLOYER_CONTRACT_VERIFIER")?;
@@ -161,8 +178,7 @@ fn setup() -> Result<SetupResult, DeployerError> {
 }
 
 fn read_env_var(key: &str) -> Result<String, DeployerError> {
-    std::env::var(key)
-        .map_err(|_| DeployerError::ConfigValueNotSet(key.to_owned()))
+    std::env::var(key).map_err(|_| DeployerError::ConfigValueNotSet(key.to_owned()))
 }
 
 fn parse_env_var(key: &str) -> Result<Address, DeployerError> {
@@ -172,8 +188,9 @@ fn parse_env_var(key: &str) -> Result<Address, DeployerError> {
 }
 
 fn download_contract_deps(contracts_path: &Path) -> Result<(), DeployerError> {
-    std::fs::create_dir_all(contracts_path.join("lib"))
-        .map_err(|err| DeployerError::DependencyError(format!("Failed to create contracts/lib: {err}")))?;
+    std::fs::create_dir_all(contracts_path.join("lib")).map_err(|err| {
+        DeployerError::DependencyError(format!("Failed to create contracts/lib: {err}"))
+    })?;
     Command::new("git")
         .arg("clone")
         .arg("https://github.com/OpenZeppelin/openzeppelin-contracts.git")
@@ -193,45 +210,51 @@ fn download_contract_deps(contracts_path: &Path) -> Result<(), DeployerError> {
 fn compile_contracts(contracts_path: &Path) -> Result<(), DeployerError> {
     // Both the contract path and the output path are relative to where the Makefile is.
     if !Command::new("solc")
-            .arg("--bin")
-            .arg(
-                contracts_path
-                    .join("src/l1/OnChainProposer.sol")
-                    .to_str()
-                    .unwrap()
-            )
-            .arg("-o")
-            .arg(contracts_path.join("solc_out").to_str().unwrap())
-            .arg("--overwrite")
-            .arg("--allow-paths")
-            .arg(contracts_path.to_str().unwrap())
-            .spawn()
+        .arg("--bin")
+        .arg(
+            contracts_path
+                .join("src/l1/OnChainProposer.sol")
+                .to_str()
+                .unwrap(),
+        )
+        .arg("-o")
+        .arg(contracts_path.join("solc_out").to_str().unwrap())
+        .arg("--overwrite")
+        .arg("--allow-paths")
+        .arg(contracts_path.to_str().unwrap())
+        .spawn()
         .map_err(|err| DeployerError::CompilationError(format!("Failed to spawn solc: {err}")))?
-            .wait()
+        .wait()
         .map_err(|err| DeployerError::CompilationError(format!("Failed to wait for solc: {err}")))?
-        .success() {
-        return Err(DeployerError::CompilationError("Failed to compile OnChainProposer.sol".to_owned()));
+        .success()
+    {
+        return Err(DeployerError::CompilationError(
+            "Failed to compile OnChainProposer.sol".to_owned(),
+        ));
     }
 
     if !Command::new("solc")
-            .arg("--bin")
-            .arg(
-                contracts_path
-                    .join("src/l1/CommonBridge.sol")
-                    .to_str()
-                    .unwrap()
-            )
-            .arg("-o")
-            .arg(contracts_path.join("solc_out").to_str().unwrap())
-            .arg("--overwrite")
-            .arg("--allow-paths")
-            .arg(contracts_path.to_str().unwrap())
-            .spawn()
+        .arg("--bin")
+        .arg(
+            contracts_path
+                .join("src/l1/CommonBridge.sol")
+                .to_str()
+                .unwrap(),
+        )
+        .arg("-o")
+        .arg(contracts_path.join("solc_out").to_str().unwrap())
+        .arg("--overwrite")
+        .arg("--allow-paths")
+        .arg(contracts_path.to_str().unwrap())
+        .spawn()
         .map_err(|err| DeployerError::CompilationError(format!("Failed to spawn solc: {err}")))?
-            .wait()
+        .wait()
         .map_err(|err| DeployerError::CompilationError(format!("Failed to wait for solc: {err}")))?
-        .success() {
-        return Err(DeployerError::CompilationError("Failed to compile CommonBridge.sol".to_owned()));
+        .success()
+    {
+        return Err(DeployerError::CompilationError(
+            "Failed to compile CommonBridge.sol".to_owned(),
+        ));
     }
     Ok(())
 }
@@ -251,7 +274,8 @@ async fn deploy_contracts(
     );
 
     let (on_chain_proposer_deployment_tx_hash, on_chain_proposer_address) =
-        deploy_on_chain_proposer(deployer, deployer_private_key, eth_client, contracts_path).await?;
+        deploy_on_chain_proposer(deployer, deployer_private_key, eth_client, contracts_path)
+            .await?;
 
     let msg = format!(
         "OnChainProposer:\n\tDeployed at address {} with tx hash {}",
@@ -281,12 +305,18 @@ async fn deploy_on_chain_proposer(
     contracts_path: &Path,
 ) -> Result<(H256, Address), DeployerError> {
     let on_chain_proposer_init_code = hex::decode(
-        std::fs::read_to_string(contracts_path.join("solc_out/OnChainProposer.bin"))
-            .map_err(|err| {
-                DeployerError::DecodingError(format!("Failed to read on_chain_proposer_init_code: {err}"))
-            })?,
-    ).map_err(|err| {
-        DeployerError::DecodingError(format!("Failed to decode on_chain_proposer_init_code: {err}"))
+        std::fs::read_to_string(contracts_path.join("solc_out/OnChainProposer.bin")).map_err(
+            |err| {
+                DeployerError::DecodingError(format!(
+                    "Failed to read on_chain_proposer_init_code: {err}"
+                ))
+            },
+        )?,
+    )
+    .map_err(|err| {
+        DeployerError::DecodingError(format!(
+            "Failed to decode on_chain_proposer_init_code: {err}"
+        ))
     })?
     .into();
 
@@ -295,7 +325,9 @@ async fn deploy_on_chain_proposer(
         deployer_private_key,
         &on_chain_proposer_init_code,
         eth_client,
-    ).await.map_err(DeployerError::from)?;
+    )
+    .await
+    .map_err(DeployerError::from)?;
 
     Ok((deploy_tx_hash, on_chain_proposer))
 }
@@ -307,11 +339,11 @@ async fn deploy_bridge(
     contracts_path: &Path,
 ) -> Result<(H256, Address), DeployerError> {
     let mut bridge_init_code = hex::decode(
-        std::fs::read_to_string(contracts_path.join("solc_out/CommonBridge.bin"))
-            .map_err(|err| {
-                DeployerError::DecodingError(format!("Failed to read bridge_init_code: {err}"))
-            })?,
-    ).map_err(|err| {
+        std::fs::read_to_string(contracts_path.join("solc_out/CommonBridge.bin")).map_err(
+            |err| DeployerError::DecodingError(format!("Failed to read bridge_init_code: {err}")),
+        )?,
+    )
+    .map_err(|err| {
         DeployerError::DecodingError(format!("Failed to decode bridge_init_code: {err}"))
     })?;
 
@@ -329,7 +361,9 @@ async fn deploy_bridge(
         deployer_private_key,
         &bridge_init_code.into(),
         eth_client,
-    ).await.map_err(DeployerError::from)?;
+    )
+    .await
+    .map_err(DeployerError::from)?;
 
     Ok((deploy_tx_hash, bridge_address))
 }
@@ -355,7 +389,9 @@ async fn create2_deploy(
         .send_eip1559_transaction(&deploy_tx, &deployer_private_key)
         .await?;
 
-    wait_for_transaction_receipt(deploy_tx_hash, eth_client).await.map_err(DeployerError::from)?;
+    wait_for_transaction_receipt(deploy_tx_hash, eth_client)
+        .await
+        .map_err(DeployerError::from)?;
 
     let deployed_address = create2_address(keccak(init_code))?;
 
@@ -375,9 +411,9 @@ fn create2_address(init_code_hash: H256) -> Result<Address, DeployerError> {
         )
         .as_bytes()
         .get(12..)
-            .ok_or(
-                DeployerError::DecodingError("Failed to get create2 address".to_owned())
-            )?,
+        .ok_or(DeployerError::DecodingError(
+            "Failed to get create2 address".to_owned(),
+        ))?,
     );
     Ok(addr)
 }
@@ -411,7 +447,8 @@ async fn initialize_contracts(
         verifier,
         eth_client,
     )
-        .await.map_err(DeployerError::from)?;
+    .await
+    .map_err(DeployerError::from)?;
     let msg = format!(
         "OnChainProposer:\n\tInitialized with tx hash {}",
         format!("{initialize_tx_hash:#x}").bright_cyan()
@@ -429,7 +466,9 @@ async fn initialize_contracts(
         deployer,
         deployer_private_key,
         eth_client,
-    ).await.map_err(DeployerError::from)?;
+    )
+    .await
+    .map_err(DeployerError::from)?;
     let msg = format!(
         "CommonBridge:\n\tInitialized with tx hash {}",
         format!("{initialize_tx_hash:#x}").bright_cyan()
@@ -452,7 +491,9 @@ async fn initialize_on_chain_proposer(
     let on_chain_proposer_initialize_selector = keccak(b"initialize(address,address,address[])")
         .as_bytes()
         .get(..4)
-        .ok_or(DeployerError::DecodingError("Failed to get initialize selector".to_owned()))?
+        .ok_or(DeployerError::DecodingError(
+            "Failed to get initialize selector".to_owned(),
+        ))?
         .to_vec();
     let encoded_bridge = {
         let offset = 32 - bridge.as_bytes().len() % 32;
@@ -514,7 +555,9 @@ async fn initialize_bridge(
     let bridge_initialize_selector = keccak(b"initialize(address)")
         .as_bytes()
         .get(..4)
-        .ok_or(DeployerError::DecodingError("Failed to get initialize selector".to_owned()))?
+        .ok_or(DeployerError::DecodingError(
+            "Failed to get initialize selector".to_owned(),
+        ))?
         .to_vec();
     let encoded_on_chain_proposer = {
         let offset = 32 - on_chain_proposer.as_bytes().len() % 32;
@@ -535,22 +578,25 @@ async fn initialize_bridge(
             Overrides::default(),
             10,
         )
-        .await.map_err(DeployerError::from)?;
+        .await
+        .map_err(DeployerError::from)?;
     let initialize_tx_hash = eth_client
         .send_eip1559_transaction(&initialize_tx, &deployer_private_key)
-        .await.map_err(DeployerError::from)?;
+        .await
+        .map_err(DeployerError::from)?;
 
-    wait_for_transaction_receipt(initialize_tx_hash, eth_client).await.map_err(DeployerError::from)?;
+    wait_for_transaction_receipt(initialize_tx_hash, eth_client)
+        .await
+        .map_err(DeployerError::from)?;
 
     Ok(initialize_tx_hash)
 }
 
-async fn wait_for_transaction_receipt(tx_hash: H256, eth_client: &EthClient) -> Result<(), EthClientError> {
-    while eth_client
-        .get_transaction_receipt(tx_hash)
-        .await?
-        .is_none()
-    {
+async fn wait_for_transaction_receipt(
+    tx_hash: H256,
+    eth_client: &EthClient,
+) -> Result<(), EthClientError> {
+    while eth_client.get_transaction_receipt(tx_hash).await?.is_none() {
         tokio::time::sleep(std::time::Duration::from_secs(1)).await;
     }
     Ok(())

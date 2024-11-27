@@ -1,11 +1,11 @@
 use std::time::Duration;
 
-use crate::utils::config::{proposer::ProposerConfig, read_env_file, errors::ConfigError};
+use crate::utils::config::{errors::ConfigError, proposer::ProposerConfig, read_env_file};
 use errors::ProposerError;
 use ethereum_types::Address;
-use tokio::task::JoinSet;
 use ethrex_dev::utils::engine_client::config::EngineApiConfig;
 use ethrex_storage::Store;
+use tokio::task::JoinSet;
 use tokio::time::sleep;
 use tracing::{error, info};
 
@@ -37,10 +37,10 @@ pub async fn start_proposer(store: Store) {
 
     while let Some(res) = task_set.join_next().await {
         match res {
-            Ok(Ok(_)) => {},
+            Ok(Ok(_)) => {}
             Ok(Err(err)) => {
                 panic!("Error starting Proposer: {err}");
-            },
+            }
             Err(err) => {
                 panic!("Error starting Proposer: {err}");
             }
@@ -51,8 +51,8 @@ pub async fn start_proposer(store: Store) {
 async fn start_proposer_server(store: Store) -> Result<(), ConfigError> {
     let proposer_config = ProposerConfig::from_env()?;
     let engine_config = EngineApiConfig::from_env().map_err(ConfigError::from)?;
-    let proposer = Proposer::new_from_config(&proposer_config, engine_config)
-        .map_err(ConfigError::from)?;
+    let proposer =
+        Proposer::new_from_config(&proposer_config, engine_config).map_err(ConfigError::from)?;
 
     proposer.run(store.clone()).await;
     Ok(())

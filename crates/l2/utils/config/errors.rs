@@ -1,6 +1,6 @@
-use ethrex_dev::utils::engine_client;
 use crate::proposer::errors::ProposerError;
 use crate::utils::eth_client::errors::EthClientError;
+use ethrex_dev::utils::engine_client;
 
 #[derive(Debug, thiserror::Error)]
 pub enum ConfigError {

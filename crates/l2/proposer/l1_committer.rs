@@ -4,7 +4,7 @@ use crate::{
         state_diff::{AccountStateDiff, DepositLog, StateDiff, WithdrawalLog},
     },
     utils::{
-        config::{committer::CommitterConfig, eth::EthConfig, errors::ConfigError},
+        config::{committer::CommitterConfig, errors::ConfigError, eth::EthConfig},
         eth_client::{eth_sender::Overrides, EthClient, WrappedTransaction},
         merkle_tree::merkelize,
     },

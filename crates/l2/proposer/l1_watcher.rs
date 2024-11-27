@@ -1,7 +1,7 @@
 use crate::{
     proposer::errors::L1WatcherError,
     utils::{
-        config::{eth::EthConfig, l1_watcher::L1WatcherConfig, errors::ConfigError},
+        config::{errors::ConfigError, eth::EthConfig, l1_watcher::L1WatcherConfig},
         eth_client::{eth_sender::Overrides, EthClient},
     },
 };

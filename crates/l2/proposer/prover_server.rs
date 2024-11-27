@@ -1,6 +1,9 @@
 use super::errors::{ProverServerError, SigIntError};
 use crate::utils::{
-    config::{committer::CommitterConfig, eth::EthConfig, prover_server::ProverServerConfig, errors::ConfigError},
+    config::{
+        committer::CommitterConfig, errors::ConfigError, eth::EthConfig,
+        prover_server::ProverServerConfig,
+    },
     eth_client::{errors::EthClientError, eth_sender::Overrides, EthClient, WrappedTransaction},
 };
 use ethrex_core::{
