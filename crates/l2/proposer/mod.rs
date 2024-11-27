@@ -3,6 +3,7 @@ use std::time::Duration;
 use crate::utils::config::{proposer::ProposerConfig, read_env_file, errors::ConfigError};
 use errors::ProposerError;
 use ethereum_types::Address;
+use tokio::task::JoinSet;
 use ethrex_dev::utils::engine_client::config::EngineApiConfig;
 use ethrex_storage::Store;
 use tokio::time::sleep;
@@ -28,12 +29,22 @@ pub async fn start_proposer(store: Store) {
         panic!("Failed to read .env file: {e}");
     }
 
-    let l1_watcher = tokio::spawn(l1_watcher::start_l1_watcher(store.clone()));
-    let l1_committer = tokio::spawn(l1_committer::start_l1_commiter(store.clone()));
-    let prover_server = tokio::spawn(prover_server::start_prover_server(store.clone()));
-    let proposer = tokio::spawn(start_proposer_server(store.clone()));
-    if let Err(e) = tokio::try_join!(l1_watcher, l1_committer, prover_server, proposer) {
-        error!("Error starting Proposer: {e}");
+    let mut task_set = JoinSet::new();
+    task_set.spawn(l1_watcher::start_l1_watcher(store.clone()));
+    task_set.spawn(l1_committer::start_l1_commiter(store.clone()));
+    task_set.spawn(prover_server::start_prover_server(store.clone()));
+    task_set.spawn(start_proposer_server(store.clone()));
+
+    while let Some(res) = task_set.join_next().await {
+        match res {
+            Ok(Ok(_)) => {},
+            Ok(Err(err)) => {
+                panic!("Error starting Proposer: {err}");
+            },
+            Err(err) => {
+                panic!("Error starting Proposer: {err}");
+            }
+        };
     }
 }
 
