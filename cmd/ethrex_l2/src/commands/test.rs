@@ -72,7 +72,7 @@ async fn transfer_from(
     let client = EthClient::new(&cfg.network.l2_rpc_url);
     let private_key = SecretKey::from_slice(pk.parse::<H256>().unwrap().as_bytes()).unwrap();
 
-    let mut buffer = [0u8; 64];
+    let mut buffer = [0u8; 32];
     let public_key = private_key.public_key(secp256k1::SECP256K1).serialize();
     buffer.copy_from_slice(&public_key[1..]);
 

@@ -27,13 +27,15 @@ pub fn add_blob_transaction(
     // Validate blobs bundle
     blobs_bundle.validate(&transaction)?;
 
-    // Validate transaction
     let transaction = Transaction::EIP4844Transaction(transaction);
-    validate_transaction(&transaction, store.clone())?;
+    let sender = transaction.sender();
+
+    // Validate transaction
+    validate_transaction(&transaction, sender, store.clone())?;
 
     // Add transaction and blobs bundle to storage
     let hash = transaction.compute_hash();
-    store.add_transaction_to_pool(hash, MempoolTransaction::new(transaction))?;
+    store.add_transaction_to_pool(hash, MempoolTransaction::new(transaction, sender))?;
     store.add_blobs_bundle_to_pool(hash, blobs_bundle)?;
     Ok(hash)
 }
@@ -44,13 +46,14 @@ pub fn add_transaction(transaction: Transaction, store: Store) -> Result<H256, M
     if matches!(transaction, Transaction::EIP4844Transaction(_)) {
         return Err(MempoolError::BlobTxNoBlobsBundle);
     }
+    let sender = transaction.sender();
     // Validate transaction
-    validate_transaction(&transaction, store.clone())?;
+    validate_transaction(&transaction, sender, store.clone())?;
 
     let hash = transaction.compute_hash();
 
     // Add transaction to storage
-    store.add_transaction_to_pool(hash, MempoolTransaction::new(transaction))?;
+    store.add_transaction_to_pool(hash, MempoolTransaction::new(transaction, sender))?;
 
     Ok(hash)
 }
@@ -163,7 +166,11 @@ Stateful validations
 
 */
 
-fn validate_transaction(tx: &Transaction, store: Store) -> Result<(), MempoolError> {
+fn validate_transaction(
+    tx: &Transaction,
+    sender: Address,
+    store: Store,
+) -> Result<(), MempoolError> {
     // TODO: Add validations here
 
     let header_no = store
@@ -207,7 +214,7 @@ fn validate_transaction(tx: &Transaction, store: Store) -> Result<(), MempoolErr
         }
     };
 
-    let maybe_sender_acc_info = store.get_account_info(header_no, tx.sender())?;
+    let maybe_sender_acc_info = store.get_account_info(header_no, sender)?;
 
     if let Some(sender_acc_info) = maybe_sender_acc_info {
         if tx.nonce() < sender_acc_info.nonce {
@@ -541,7 +548,7 @@ mod tests {
         };
 
         let tx = Transaction::EIP1559Transaction(tx);
-        let validation = validate_transaction(&tx, store);
+        let validation = validate_transaction(&tx, Address::random(), store);
         assert!(matches!(
             validation,
             Err(MempoolError::TxMaxInitCodeSizeError)
@@ -567,7 +574,7 @@ mod tests {
         };
 
         let tx = Transaction::EIP1559Transaction(tx);
-        let validation = validate_transaction(&tx, store);
+        let validation = validate_transaction(&tx, Address::random(), store);
         assert!(matches!(
             validation,
             Err(MempoolError::TxGasLimitExceededError)
@@ -593,7 +600,7 @@ mod tests {
         };
 
         let tx = Transaction::EIP1559Transaction(tx);
-        let validation = validate_transaction(&tx, store);
+        let validation = validate_transaction(&tx, Address::random(), store);
         assert!(matches!(
             validation,
             Err(MempoolError::TxTipAboveFeeCapError)
@@ -620,7 +627,7 @@ mod tests {
         };
 
         let tx = Transaction::EIP1559Transaction(tx);
-        let validation = validate_transaction(&tx, store);
+        let validation = validate_transaction(&tx, Address::random(), store);
         assert!(matches!(
             validation,
             Err(MempoolError::TxIntrinsicGasCostAboveLimitError)
@@ -646,7 +653,7 @@ mod tests {
         };
 
         let tx = Transaction::EIP4844Transaction(tx);
-        let validation = validate_transaction(&tx, store);
+        let validation = validate_transaction(&tx, Address::random(), store);
         assert!(matches!(
             validation,
             Err(MempoolError::TxBlobBaseFeeTooLowError)
