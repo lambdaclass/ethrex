@@ -60,4 +60,4 @@ jobs:
       - name: Post results to levm slack channel
         env:
           url: ${{ secrets.LEVM_SLACK_WEBHOOK }}
-        run: sh publish.sh
+        run: sh .github/scripts/publish.sh

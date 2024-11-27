@@ -37,14 +37,14 @@ jobs:
       - name: Post results to ethrex L1 slack channel
         env:
           url: ${{ secrets.ETHREX_L1_SLACK_WEBHOOK }}
-        run: sh publish_loc.sh
+        run: sh .github/scripts/publish_loc.sh
 
       - name: Post results to ethrex L2 slack channel
         env:
           url: ${{ secrets.ETHREX_L2_SLACK_WEBHOOK }}
-        run: sh publish_loc.sh
+        run: sh .github/scripts/publish_loc.sh
 
       - name: Post results to levm slack channel
         env:
           url: ${{ secrets.LEVM_SLACK_WEBHOOK }}
-        run: sh publish_loc.sh
+        run: sh .github/scripts/publish_loc.sh

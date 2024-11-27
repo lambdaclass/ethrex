@@ -1,8 +1,9 @@
-name: Publish docker image to Github Packages
+name: Publish Docker
 
 on:
   push:
     branches: ["main"]
+  workflow_dispatch:
 
 env:
   REGISTRY: ghcr.io
@@ -10,6 +11,7 @@ env:
 
 jobs:
   build-and-push-image:
+    name: Build and push Docker image
     runs-on: ubuntu-latest
 
     # Sets the permissions granted to the `GITHUB_TOKEN` for the actions in this job.
@@ -45,8 +47,6 @@ jobs:
           context: .
           push: true
           tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
 
       - name: Generate artifact attestation
         uses: actions/attest-build-provenance@v1
