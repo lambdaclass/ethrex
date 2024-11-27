@@ -10,9 +10,22 @@ env:
   RUST_VERSION: 1.80.1
 
 jobs:
-  hive-coverage:
-    name: Daily Hive Coverage
+  run-hive:
+    name: Run engine hive simulator to gather coverage information.
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - simulation: rpc-compat
+            name: "Rpc Compat tests"
+            run_command: make run-hive-on-latest SIMULATION=ethereum/rpc-compat HIVE_EXTRA_ARGS="--sim.parallelism 4"
+          - simulation: devp2p
+            name: "Devp2p eth tests"
+            run_command: make run-hive-on-latest SIMULATION=devp2p HIVE_EXTRA_ARGS="--sim.parallelism 4"
+          - simulation: engine
+            name: "Cancun Engine tests"
+            run_command: make run-hive-on-latest SIMULATION=ethereum/engine HIVE_EXTRA_ARGS="--sim.parallelism 4"
+
     steps:
       - name: Pull image
         run: |
@@ -22,25 +35,44 @@ jobs:
       - name: Checkout sources
         uses: actions/checkout@v3
 
+      - name: Setup Go
+        uses: actions/setup-go@v3
+
+      - name: Run Hive Simulation
+        run: ${{ matrix.run_command }}
+        continue-on-error: true
+
+      - name: Upload results
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.simulation }}_logs
+          path: hive/workspace/logs/*-*.json
+
+  hive-report:
+    name: Generate report and upload to summary and slack
+    needs: run-hive
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v3
+
       - name: Rustup toolchain install
         uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: ${{ env.RUST_VERSION }}
 
-      - name: Setup Go
-        uses: actions/setup-go@v3
-
-      - name: Run Hive Simulation
-        run: make run-hive-on-latest SIMULATION=ethereum/engine
-        continue-on-error: true
+      - name: Download all results
+        uses: actions/download-artifact@v4
+        with:
+          path: hive/workspace/logs
+          pattern: "*_logs"
+          merge-multiple: true
 
       - name: Caching
         uses: Swatinem/rust-cache@v2
 
       - name: Generate the hive report
-        id: report
-        run: |
-          cargo run -p hive_report > results.md
+        run: cargo run -p hive_report > results.md
 
       - name: Post results in summary
         run: |

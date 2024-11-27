@@ -7,7 +7,7 @@ $(jq -n --arg text "$(cat results.md)" '{
             "type": "header",
             "text": {
                 "type": "plain_text",
-                "text": "Daily report"
+                "text": "Daily Hive Coverage report"
             }
         },
         {
