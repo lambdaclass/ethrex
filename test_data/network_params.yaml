@@ -6,7 +6,7 @@ participants:
     cl_type: lighthouse
     validator_count: 32
   - el_type: geth
-    cl_type: prysm
+    cl_type: lighthouse
     validator_count: 32
 
 additional_services:
