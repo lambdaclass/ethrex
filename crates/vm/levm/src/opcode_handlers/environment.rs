@@ -235,6 +235,10 @@ impl VM {
 
         self.increase_consumed_gas(current_call_frame, gas_cost)?;
 
+        if size == 0 {
+            return Ok(OpcodeSuccess::Continue);
+        }
+
         let bytecode_len = current_call_frame.bytecode.len();
         let code = if offset < bytecode_len {
             current_call_frame.bytecode.slice(

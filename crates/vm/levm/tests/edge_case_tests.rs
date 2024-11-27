@@ -211,3 +211,17 @@ fn test_non_compliance_addmod2() {
         &U256::from("0xfc7490ee00fc74a0ee00fc7490ee00fc7490ee5")
     );
 }
+
+#[test]
+fn test_non_compliance_codecopy() {
+    let mut vm = new_vm_with_bytecode(Bytes::copy_from_slice(&[
+        0x5f, 0x60, 5, 0x60, 5, 0x39, 0x59,
+    ]))
+    .unwrap();
+    let mut current_call_frame = vm.call_frames.pop().unwrap();
+    vm.execute(&mut current_call_frame);
+    assert_eq!(
+        current_call_frame.stack.stack.first().unwrap(),
+        &U256::zero()
+    );
+}
