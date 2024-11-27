@@ -16,7 +16,8 @@ use k256::{
     ecdsa::SigningKey,
     elliptic_curve::{sec1::ToEncodedPoint, PublicKey},
 };
-use kademlia::{bucket_number, KademliaTable, MAX_NODES_PER_BUCKET};
+pub use kademlia::KademliaTable;
+use kademlia::{bucket_number, MAX_NODES_PER_BUCKET};
 use rand::rngs::OsRng;
 use rlpx::{connection::RLPxConnection, message::Message as RLPxMessage};
 use tokio::{
@@ -30,8 +31,10 @@ use types::{Endpoint, Node};
 pub mod bootnode;
 pub(crate) mod discv4;
 pub(crate) mod kademlia;
+pub mod peer_channels;
 pub mod rlpx;
 pub(crate) mod snap;
+pub mod sync;
 pub mod types;
 
 const MAX_DISC_PACKET_SIZE: usize = 1280;
@@ -42,17 +45,21 @@ const MAX_DISC_PACKET_SIZE: usize = 1280;
 // we should bump this limit.
 const MAX_MESSAGES_TO_BROADCAST: usize = 1000;
 
+pub fn peer_table(signer: SigningKey) -> Arc<Mutex<KademliaTable>> {
+    let local_node_id = node_id_from_signing_key(&signer);
+    Arc::new(Mutex::new(KademliaTable::new(local_node_id)))
+}
+
 pub async fn start_network(
     udp_addr: SocketAddr,
     tcp_addr: SocketAddr,
     bootnodes: Vec<BootNode>,
     signer: SigningKey,
+    peer_table: Arc<Mutex<KademliaTable>>,
     storage: Store,
 ) {
     info!("Starting discovery service at {udp_addr}");
     info!("Listening for requests at {tcp_addr}");
-    let local_node_id = node_id_from_signing_key(&signer);
-    let table = Arc::new(Mutex::new(KademliaTable::new(local_node_id)));
     let (channel_broadcast_send_end, _) = tokio::sync::broadcast::channel::<(
         tokio::task::Id,
         Arc<RLPxMessage>,
@@ -61,7 +68,7 @@ pub async fn start_network(
         udp_addr,
         signer.clone(),
         storage.clone(),
-        table.clone(),
+        peer_table.clone(),
         bootnodes,
         channel_broadcast_send_end.clone(),
     ));
@@ -69,7 +76,7 @@ pub async fn start_network(
         tcp_addr,
         signer.clone(),
         storage.clone(),
-        table.clone(),
+        peer_table.clone(),
         channel_broadcast_send_end,
     ));
 
