@@ -1,5 +1,5 @@
 use crate::{
-    commands::{autocomplete, config, info, stack, test, utils, wallet},
+    commands::{autocomplete, config, info, prove, stack, test, utils, wallet},
     config::load_selected_config,
 };
 use clap::{Parser, Subcommand};
@@ -37,6 +37,8 @@ enum EthrexL2Command {
     Autocomplete(autocomplete::Command),
     #[clap(subcommand, about = "Gets L2's information.")]
     Info(info::Command),
+    #[clap(about = "Read a test chain from disk and prove a block.")]
+    Prove(prove::Command),
 }
 
 pub async fn start() -> eyre::Result<()> {
@@ -44,6 +46,10 @@ pub async fn start() -> eyre::Result<()> {
     if let EthrexL2Command::Config(cmd) = command {
         return cmd.run().await;
     }
+    if let EthrexL2Command::Prove(cmd) = command {
+        return cmd.run();
+    }
+
     let cfg = load_selected_config().await?;
     match command {
         EthrexL2Command::Stack(cmd) => cmd.run(cfg).await?,
@@ -53,6 +59,7 @@ pub async fn start() -> eyre::Result<()> {
         EthrexL2Command::Config(_) => unreachable!(),
         EthrexL2Command::Test(cmd) => cmd.run(cfg).await?,
         EthrexL2Command::Info(cmd) => cmd.run(cfg).await?,
+        EthrexL2Command::Prove(_) => unreachable!(),
     };
     Ok(())
 }
