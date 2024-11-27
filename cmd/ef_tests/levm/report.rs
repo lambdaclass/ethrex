@@ -1,7 +1,10 @@
 use crate::runner::{EFTestRunnerError, InternalError};
 use colored::Colorize;
 use ethrex_core::{Address, H256};
-use ethrex_levm::errors::{TransactionReport, TxResult, VMError};
+use ethrex_levm::{
+    errors::{TransactionReport, TxResult, VMError},
+    Account, StorageSlot,
+};
 use ethrex_storage::{error::StoreError, AccountUpdate};
 use ethrex_vm::SpecId;
 use revm::primitives::{EVMError, ExecutionResult as RevmExecutionResult};
@@ -340,6 +343,7 @@ impl EFTestReport {
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
 pub struct AccountUpdatesReport {
+    pub initial_accounts: HashMap<Address, Account>,
     pub levm_account_updates: Vec<AccountUpdate>,
     pub revm_account_updates: Vec<AccountUpdate>,
     pub levm_updated_accounts_only: HashSet<Address>,
@@ -353,6 +357,89 @@ impl fmt::Display for AccountUpdatesReport {
         for levm_updated_account_only in self.levm_updated_accounts_only.iter() {
             writeln!(f, "  {levm_updated_account_only:#x}:")?;
             writeln!(f, "{}", "    Was updated in LEVM but not in REVM".red())?;
+            let initial_account = self
+                .initial_accounts
+                .get(levm_updated_account_only)
+                .cloned()
+                .unwrap_or_default();
+            let updated_account_update = self
+                .levm_account_updates
+                .iter()
+                .find(|account_update| &account_update.address == levm_updated_account_only)
+                .unwrap();
+            let updated_account_storage = updated_account_update
+                .added_storage
+                .iter()
+                .map(|(key, value)| {
+                    let storage_slot = StorageSlot {
+                        original_value: *value,
+                        current_value: *value,
+                    };
+                    (*key, storage_slot)
+                })
+                .collect();
+            let updated_account_info = updated_account_update.info.clone().unwrap();
+            let updated_account = Account::new(
+                updated_account_info.balance,
+                updated_account_update.code.clone().unwrap_or_default(),
+                updated_account_info.nonce,
+                updated_account_storage,
+            );
+            let mut updates = 0;
+            if initial_account.info.balance != updated_account.info.balance {
+                writeln!(
+                    f,
+                    "{}",
+                    format!(
+                        "      Balance updated: {initial_balance} -> {updated_balance}",
+                        initial_balance = initial_account.info.balance,
+                        updated_balance = updated_account.info.balance
+                    )
+                    .red()
+                )?;
+                updates += 1;
+            }
+            if initial_account.info.nonce != updated_account.info.nonce {
+                writeln!(
+                    f,
+                    "{}",
+                    format!(
+                        "      Nonce updated: {initial_nonce} -> {updated_nonce}",
+                        initial_nonce = initial_account.info.nonce,
+                        updated_nonce = updated_account.info.nonce
+                    )
+                    .red()
+                )?;
+                updates += 1;
+            }
+            if initial_account.info.bytecode != updated_account.info.bytecode {
+                writeln!(
+                    f,
+                    "{}",
+                    format!(
+                        "      Code updated: {initial_code}, {updated_code}",
+                        initial_code = hex::encode(&initial_account.info.bytecode),
+                        updated_code = hex::encode(&updated_account.info.bytecode)
+                    )
+                    .red()
+                )?;
+                updates += 1;
+            }
+            for (added_storage_address, added_storage_slot) in updated_account.storage.iter() {
+                writeln!(
+                    f,
+                    "{}",
+                    format!(
+                        "      Storage slot added: {added_storage_address}: {} -> {}",
+                        added_storage_slot.original_value, added_storage_slot.current_value
+                    )
+                    .red()
+                )?;
+                updates += 1;
+            }
+            if updates == 0 {
+                writeln!(f, "{}", "      No changes".green())?;
+            }
         }
         for revm_updated_account_only in self.revm_updated_accounts_only.iter() {
             writeln!(f, "  {revm_updated_account_only:#x}:")?;
