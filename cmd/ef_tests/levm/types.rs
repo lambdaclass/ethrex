@@ -1,6 +1,7 @@
 use crate::{
     deserialize::{
-        deserialize_ef_post_value_indexes, deserialize_hex_bytes, deserialize_hex_bytes_vec,
+        deserialize_access_lists, deserialize_ef_post_value_indexes,
+        deserialize_h256_vec_optional_safe, deserialize_hex_bytes, deserialize_hex_bytes_vec,
         deserialize_u256_optional_safe, deserialize_u256_safe,
         deserialize_u256_valued_hashmap_safe, deserialize_u256_vec_safe,
     },
@@ -230,6 +231,13 @@ impl From<&EFTestPreValue> for GenesisAccount {
     }
 }
 
+#[derive(Debug, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct EFTestAccessListItem {
+    pub address: Address,
+    pub storage_keys: Vec<H256>,
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct EFTestRawTransaction {
@@ -246,6 +254,16 @@ pub struct EFTestRawTransaction {
     pub to: TxKind,
     #[serde(deserialize_with = "deserialize_u256_vec_safe")]
     pub value: Vec<U256>,
+    #[serde(default, deserialize_with = "deserialize_u256_optional_safe")]
+    pub max_fee_per_gas: Option<U256>,
+    #[serde(default, deserialize_with = "deserialize_u256_optional_safe")]
+    pub max_priority_fee_per_gas: Option<U256>,
+    #[serde(default, deserialize_with = "deserialize_u256_optional_safe")]
+    pub max_fee_per_blob_gas: Option<U256>,
+    #[serde(default, deserialize_with = "deserialize_h256_vec_optional_safe")]
+    pub blob_versioned_hashes: Option<Vec<H256>>,
+    #[serde(default, deserialize_with = "deserialize_access_lists")]
+    pub access_lists: Option<Vec<Vec<EFTestAccessListItem>>>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -253,7 +271,6 @@ pub struct EFTestRawTransaction {
 pub struct EFTestTransaction {
     pub data: Bytes,
     pub gas_limit: U256,
-    #[serde(default, deserialize_with = "deserialize_u256_optional_safe")]
     pub gas_price: Option<U256>,
     #[serde(deserialize_with = "deserialize_u256_safe")]
     pub nonce: U256,
@@ -261,4 +278,9 @@ pub struct EFTestTransaction {
     pub sender: Address,
     pub to: TxKind,
     pub value: U256,
+    pub max_fee_per_gas: Option<U256>,
+    pub max_priority_fee_per_gas: Option<U256>,
+    pub max_fee_per_blob_gas: Option<U256>,
+    pub blob_versioned_hashes: Vec<H256>,
+    pub access_list: Vec<EFTestAccessListItem>,
 }

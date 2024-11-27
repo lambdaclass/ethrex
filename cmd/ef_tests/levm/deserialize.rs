@@ -1,6 +1,6 @@
-use crate::types::{EFTest, EFTests};
+use crate::types::{EFTest, EFTestAccessListItem, EFTests};
 use bytes::Bytes;
-use ethrex_core::U256;
+use ethrex_core::{H256, U256};
 use serde::Deserialize;
 use std::{collections::HashMap, str::FromStr};
 
@@ -63,6 +63,50 @@ where
             ))
         },
     )
+}
+
+pub fn deserialize_h256_vec_optional_safe<'de, D>(
+    deserializer: D,
+) -> Result<Option<Vec<H256>>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let s = Option::<Vec<String>>::deserialize(deserializer)?;
+    match s {
+        Some(s) => {
+            let mut ret = Vec::new();
+            for s in s {
+                ret.push(H256::from_str(s.trim_start_matches("0x")).map_err(|err| {
+                    serde::de::Error::custom(format!(
+                        "error parsing H256 when deserializing H256 vec optional: {err}"
+                    ))
+                })?);
+            }
+            Ok(Some(ret))
+        }
+        None => Ok(None),
+    }
+}
+
+pub fn deserialize_access_lists<'de, D>(
+    deserializer: D,
+) -> Result<Option<Vec<Vec<EFTestAccessListItem>>>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let access_lists: Option<Vec<Option<Vec<EFTestAccessListItem>>>> =
+        Option::<Vec<Option<Vec<EFTestAccessListItem>>>>::deserialize(deserializer)?;
+
+    let mut final_access_lists: Vec<Vec<EFTestAccessListItem>> = Vec::new();
+
+    if let Some(access_lists) = access_lists {
+        for access_list in access_lists {
+            // Treat `null` as an empty vector
+            final_access_lists.push(access_list.unwrap_or_default());
+        }
+    }
+
+    Ok(Some(final_access_lists))
 }
 
 pub fn deserialize_u256_optional_safe<'de, D>(deserializer: D) -> Result<Option<U256>, D::Error>
@@ -164,6 +208,20 @@ impl<'de> Deserialize<'de> for EFTests {
                             sender: raw_tx.sender,
                             to: raw_tx.to.clone(),
                             value: *value,
+                            blob_versioned_hashes: raw_tx
+                                .blob_versioned_hashes
+                                .clone()
+                                .unwrap_or_default(),
+                            max_fee_per_blob_gas: raw_tx.max_fee_per_blob_gas,
+                            max_priority_fee_per_gas: raw_tx.max_priority_fee_per_gas,
+                            max_fee_per_gas: raw_tx.max_fee_per_gas,
+                            access_list: raw_tx
+                                .access_lists
+                                .clone()
+                                .unwrap_or_default()
+                                .get(data_id)
+                                .cloned()
+                                .unwrap_or_default(),
                         };
                         transactions.insert((data_id, gas_limit_id, value_id), tx);
                     }

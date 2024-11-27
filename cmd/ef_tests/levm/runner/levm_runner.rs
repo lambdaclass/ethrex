@@ -78,7 +78,7 @@ pub fn prepare_vm_for_tx(vector: &TestVector, test: &EFTest) -> Result<VM, EFTes
             origin: test.transactions.get(vector).unwrap().sender,
             consumed_gas: U256::default(),
             refunded_gas: U256::default(),
-            gas_limit: test.env.current_gas_limit,
+            gas_limit: test.env.current_gas_limit, //this should be tx gas limit
             block_number: test.env.current_number,
             coinbase: test.env.current_coinbase,
             timestamp: test.env.current_timestamp,

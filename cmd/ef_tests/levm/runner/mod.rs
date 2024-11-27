@@ -88,6 +88,45 @@ fn run_with_levm(
     Ok(())
 }
 
+/// ### Runs all tests with REVM
+/// **Note:** This is not used in the current implementation because we only run with REVM the tests that failed with LEVM so that execution time is minimized.
+fn _run_with_revm(
+    reports: &mut Vec<EFTestReport>,
+    ef_tests: &[EFTest],
+) -> Result<(), EFTestRunnerError> {
+    let revm_run_time = std::time::Instant::now();
+    let mut revm_run_spinner = Spinner::new(
+        Dots,
+        "Running all tests with REVM...".to_owned(),
+        Color::Cyan,
+    );
+    for (idx, test) in ef_tests.iter().enumerate() {
+        let total_tests = ef_tests.len();
+        revm_run_spinner.update_text(format!(
+            "{} {}/{total_tests} - {}",
+            "Running all tests with REVM".bold(),
+            idx + 1,
+            format_duration_as_mm_ss(revm_run_time.elapsed())
+        ));
+        let ef_test_report = match revm_runner::_run_ef_test_revm(test) {
+            Ok(ef_test_report) => ef_test_report,
+            Err(EFTestRunnerError::Internal(err)) => return Err(EFTestRunnerError::Internal(err)),
+            non_internal_errors => {
+                return Err(EFTestRunnerError::Internal(InternalError::FirstRunInternal(format!(
+                    "Non-internal error raised when executing revm. This should not happen: {non_internal_errors:?}",
+                ))))
+            }
+        };
+        reports.push(ef_test_report);
+        revm_run_spinner.update_text(report::progress(reports, revm_run_time.elapsed()));
+    }
+    revm_run_spinner.success(&format!(
+        "Ran all tests with REVM in {}",
+        format_duration_as_mm_ss(revm_run_time.elapsed())
+    ));
+    Ok(())
+}
+
 fn re_run_with_revm(
     reports: &mut [EFTestReport],
     ef_tests: &[EFTest],
