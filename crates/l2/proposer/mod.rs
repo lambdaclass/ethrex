@@ -1,10 +1,11 @@
 use std::time::Duration;
 
-use crate::utils::config::{proposer::ProposerConfig, read_env_file};
+use crate::utils::config::{errors::ConfigError, proposer::ProposerConfig, read_env_file};
 use errors::ProposerError;
 use ethereum_types::Address;
 use ethrex_dev::utils::engine_client::config::EngineApiConfig;
 use ethrex_storage::Store;
+use tokio::task::JoinSet;
 use tokio::time::sleep;
 use tracing::{error, info};
 
@@ -28,18 +29,33 @@ pub async fn start_proposer(store: Store) {
         panic!("Failed to read .env file: {e}");
     }
 
-    let l1_watcher = tokio::spawn(l1_watcher::start_l1_watcher(store.clone()));
-    let l1_committer = tokio::spawn(l1_committer::start_l1_commiter(store.clone()));
-    let prover_server = tokio::spawn(prover_server::start_prover_server(store.clone()));
-    let proposer = tokio::spawn(async move {
-        let proposer_config = ProposerConfig::from_env().expect("ProposerConfig::from_env");
-        let engine_config = EngineApiConfig::from_env().expect("EngineApiConfig::from_env");
-        let proposer = Proposer::new_from_config(&proposer_config, engine_config)
-            .expect("Proposer::new_from_config");
+    let mut task_set = JoinSet::new();
+    task_set.spawn(l1_watcher::start_l1_watcher(store.clone()));
+    task_set.spawn(l1_committer::start_l1_commiter(store.clone()));
+    task_set.spawn(prover_server::start_prover_server(store.clone()));
+    task_set.spawn(start_proposer_server(store.clone()));
 
-        proposer.run(store.clone()).await;
-    });
-    tokio::try_join!(l1_watcher, l1_committer, prover_server, proposer).expect("tokio::try_join");
+    while let Some(res) = task_set.join_next().await {
+        match res {
+            Ok(Ok(_)) => {}
+            Ok(Err(err)) => {
+                panic!("Error starting Proposer: {err}");
+            }
+            Err(err) => {
+                panic!("Error starting Proposer: {err}");
+            }
+        };
+    }
+}
+
+async fn start_proposer_server(store: Store) -> Result<(), ConfigError> {
+    let proposer_config = ProposerConfig::from_env()?;
+    let engine_config = EngineApiConfig::from_env().map_err(ConfigError::from)?;
+    let proposer =
+        Proposer::new_from_config(&proposer_config, engine_config).map_err(ConfigError::from)?;
+
+    proposer.run(store.clone()).await;
+    Ok(())
 }
 
 impl Proposer {

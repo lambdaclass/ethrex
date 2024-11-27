@@ -1,3 +1,4 @@
+#![allow(clippy::expect_used)]
 use bytes::Bytes;
 use ethereum_types::{Address, H160, U256};
 use ethrex_l2::utils::eth_client::{eth_sender::Overrides, EthClient};
@@ -234,7 +235,11 @@ async fn testito() {
         16,
     )
     .unwrap()
-        < withdraw_tx_receipt.block_info.block_number
+        < withdraw_tx_receipt
+            .as_ref()
+            .expect("Receipt is None")
+            .block_info
+            .block_number
     {
         println!("Withdrawal is not verified on L1 yet");
         std::thread::sleep(Duration::from_secs(2));

@@ -1,6 +1,9 @@
 use super::errors::{ProverServerError, SigIntError};
 use crate::utils::{
-    config::{committer::CommitterConfig, eth::EthConfig, prover_server::ProverServerConfig},
+    config::{
+        committer::CommitterConfig, errors::ConfigError, eth::EthConfig,
+        prover_server::ProverServerConfig,
+    },
     eth_client::{errors::EthClientError, eth_sender::Overrides, EthClient, WrappedTransaction},
 };
 use ethrex_core::{
@@ -75,15 +78,16 @@ pub enum ProofData {
     SubmitAck { block_number: u64 },
 }
 
-pub async fn start_prover_server(store: Store) {
-    let server_config = ProverServerConfig::from_env().expect("ProverServerConfig::from_env()");
-    let eth_config = EthConfig::from_env().expect("EthConfig::from_env()");
-    let proposer_config = CommitterConfig::from_env().expect("CommitterConfig::from_env()");
+pub async fn start_prover_server(store: Store) -> Result<(), ConfigError> {
+    let server_config = ProverServerConfig::from_env()?;
+    let eth_config = EthConfig::from_env()?;
+    let proposer_config = CommitterConfig::from_env()?;
     let mut prover_server =
         ProverServer::new_from_config(server_config.clone(), &proposer_config, eth_config, store)
             .await
-            .expect("ProverServer::new_from_config");
+            .map_err(ConfigError::from)?;
     prover_server.run(&server_config).await;
+    Ok(())
 }
 
 impl ProverServer {
