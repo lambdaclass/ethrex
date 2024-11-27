@@ -28,6 +28,8 @@ contract CommonBridge is ICommonBridge, Ownable, ReentrancyGuard {
 
     address public ON_CHAIN_PROPOSER;
 
+    uint256 public lastFetchedL1Block;
+
     modifier onlyOnChainProposer() {
         require(
             msg.sender == ON_CHAIN_PROPOSER,
@@ -53,6 +55,8 @@ contract CommonBridge is ICommonBridge, Ownable, ReentrancyGuard {
             "CommonBridge: onChainProposer is the contract address"
         );
         ON_CHAIN_PROPOSER = onChainProposer;
+
+        lastFetchedL1Block = block.number;
     }
 
     /// @inheritdoc ICommonBridge

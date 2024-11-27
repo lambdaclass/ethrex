@@ -2,7 +2,7 @@ use crate::{
     proposer::errors::L1WatcherError,
     utils::{
         config::{eth::EthConfig, l1_watcher::L1WatcherConfig},
-        eth_client::{eth_sender::Overrides, EthClient},
+        eth_client::{errors::EthClientError, eth_sender::Overrides, EthClient},
     },
 };
 use bytes::Bytes;
@@ -21,7 +21,9 @@ use tracing::{debug, error, info, warn};
 pub async fn start_l1_watcher(store: Store) {
     let eth_config = EthConfig::from_env().expect("EthConfig::from_env()");
     let watcher_config = L1WatcherConfig::from_env().expect("L1WatcherConfig::from_env()");
-    let mut l1_watcher = L1Watcher::new_from_config(watcher_config, eth_config);
+    let mut l1_watcher = L1Watcher::new_from_config(watcher_config, eth_config)
+        .await
+        .expect("new");
     l1_watcher.run(&store).await;
 }
 
@@ -36,16 +38,24 @@ pub struct L1Watcher {
 }
 
 impl L1Watcher {
-    pub fn new_from_config(watcher_config: L1WatcherConfig, eth_config: EthConfig) -> Self {
-        Self {
-            eth_client: EthClient::new_from_config(eth_config),
+    pub async fn new_from_config(
+        watcher_config: L1WatcherConfig,
+        eth_config: EthConfig,
+    ) -> Result<Self, EthClientError> {
+        let eth_client = EthClient::new_from_config(eth_config);
+        let last_block_fetched =
+            EthClient::get_last_fetched_l1_block(&eth_client, watcher_config.bridge_address)
+                .await?
+                .into();
+        Ok(Self {
+            eth_client,
             address: watcher_config.bridge_address,
             topics: watcher_config.topics,
             max_block_step: watcher_config.max_block_step,
-            last_block_fetched: U256::zero(),
+            last_block_fetched,
             l2_proposer_pk: watcher_config.l2_proposer_private_key,
             check_interval: Duration::from_millis(watcher_config.check_interval_ms),
-        }
+        })
     }
 
     pub async fn run(&mut self, store: &Store) {
@@ -62,7 +72,7 @@ impl L1Watcher {
         loop {
             sleep(self.check_interval).await;
 
-            let logs = self.get_logs().await?;
+            let (logs, new_block_to_fetch) = self.get_logs().await?;
 
             // We may not have a deposit nor a withdrawal, that means no events -> no logs.
             if logs.is_empty() {
@@ -71,7 +81,7 @@ impl L1Watcher {
 
             let pending_deposits_logs = self.get_pending_deposit_logs().await?;
             let _deposit_txs = self
-                .process_logs(logs, &pending_deposits_logs, &store)
+                .process_logs(logs, &pending_deposits_logs, new_block_to_fetch, &store)
                 .await?;
         }
     }
@@ -96,7 +106,7 @@ impl L1Watcher {
         .to_vec())
     }
 
-    pub async fn get_logs(&mut self) -> Result<Vec<RpcLog>, L1WatcherError> {
+    pub async fn get_logs(&self) -> Result<(Vec<RpcLog>, U256), L1WatcherError> {
         let current_block = self.eth_client.get_block_number().await?;
 
         debug!(
@@ -111,6 +121,8 @@ impl L1Watcher {
             self.last_block_fetched, new_last_block
         );
 
+        // We may get an error if the RPC doesn't has the logs for the requested
+        // block interval. For example, Light Nodes.
         let logs = match self
             .eth_client
             .get_logs(
@@ -130,15 +142,14 @@ impl L1Watcher {
 
         debug!("Logs: {:#?}", logs);
 
-        self.last_block_fetched = new_last_block;
-
-        Ok(logs)
+        Ok((logs, new_last_block))
     }
 
     pub async fn process_logs(
-        &self,
+        &mut self,
         logs: Vec<RpcLog>,
         l1_deposit_logs: &[H256],
+        new_block_to_fetch: U256,
         store: &Store,
     ) -> Result<Vec<H256>, L1WatcherError> {
         let mut deposit_txs = Vec::new();
@@ -228,6 +239,10 @@ impl L1Watcher {
                 }
             }
         }
+
+        // If we have an error adding the tx to the mempool we may assign it to the next
+        // block to fetch, but we may lose a deposit tx.
+        self.last_block_fetched = new_block_to_fetch;
         Ok(deposit_txs)
     }
 }
