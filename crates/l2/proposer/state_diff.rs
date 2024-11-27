@@ -8,7 +8,7 @@ use super::errors::StateDiffError;
 #[derive(Clone)]
 pub struct AccountStateDiff {
     pub new_balance: Option<U256>,
-    pub nonce_diff: Option<u16>,
+    pub nonce_diff: u16,
     pub storage: Vec<(H256, U256)>,
     pub bytecode: Option<Bytes>,
     pub bytecode_hash: Option<H256>,
@@ -125,9 +125,9 @@ impl AccountStateDiff {
             encoded.extend_from_slice(buf);
         }
 
-        if let Some(nonce_diff) = self.nonce_diff {
+        if self.nonce_diff != 0 {
             r#type += AccountStateDiffType::NonceDiff as u8;
-            encoded.extend(nonce_diff.to_be_bytes());
+            encoded.extend(self.nonce_diff.to_be_bytes());
         }
 
         if !self.storage.is_empty() {
