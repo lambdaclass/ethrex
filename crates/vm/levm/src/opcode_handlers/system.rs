@@ -453,6 +453,9 @@ impl VM {
 
         current_account.info.balance = U256::zero();
 
+        // Update cache after modifying current account
+        self.cache.add_account(&current_call_frame.to, &current_account);
+
         let is_cached = self.cache.is_account_cached(&target_address);
 
         // 3 & 4. Get target account and add the balance of the current account to it
@@ -476,9 +479,7 @@ impl VM {
         }
         // Accounts in SelfDestruct set should be destroyed at the end of the transaction.
 
-        // Update cache after modifying accounts.
-        self.cache
-            .add_account(&current_call_frame.to, &current_account);
+        // Update cache after modifying target account.
         self.cache.add_account(&target_address, &target_account);
 
         self.increase_consumed_gas(current_call_frame, gas_cost)?;

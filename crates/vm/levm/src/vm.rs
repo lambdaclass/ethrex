@@ -98,7 +98,7 @@ impl VM {
                     value,
                     calldata.clone(),
                     false,
-                    env.gas_limit.min(MAX_BLOCK_GAS_LIMIT),
+                    env.gas_limit,
                     TX_BASE_COST,
                     0,
                 );
@@ -136,7 +136,7 @@ impl VM {
                     value,
                     Bytes::new(),
                     false,
-                    env.gas_limit.min(MAX_BLOCK_GAS_LIMIT),
+                    env.gas_limit,
                     TX_BASE_COST,
                     0,
                 );
@@ -179,8 +179,10 @@ impl VM {
             };
 
             // Note: This is commented because it's used for debugging purposes in development.
-            // dbg!(&current_call_frame.gas_used);
-            // dbg!(&opcode);
+            //dbg!(&current_call_frame.gas_used);
+            //println!("Memory: {:?}", &current_call_frame.memory);
+            //dbg!(&current_call_frame.stack);
+            //dbg!(&opcode);
             let op_result: Result<OpcodeSuccess, VMError> = match opcode {
                 Opcode::STOP => Ok(OpcodeSuccess::Result(ResultReason::Stop)),
                 Opcode::ADD => self.op_add(current_call_frame),
@@ -586,9 +588,12 @@ impl VM {
             .balance
             .checked_add(coinbase_fee)
             .ok_or(VMError::BalanceOverflow)?;
-
         self.cache.add_account(&coinbase_address, &coinbase_account);
 
+        if coinbase_fee.is_zero() {
+            self.cache.accounts.remove(&coinbase_address);
+        }
+        
         report.new_state.clone_from(&self.cache.accounts);
 
         Ok(report)
@@ -617,7 +622,7 @@ impl VM {
         ret_offset: usize,
         ret_size: usize,
     ) -> Result<OpcodeSuccess, VMError> {
-        let mut sender_account = self.get_account(&current_call_frame.msg_sender);
+        let mut sender_account = self.get_account(&current_call_frame.to);
 
         if sender_account.info.balance < value {
             current_call_frame.stack.push(U256::from(REVERT_FOR_CALL))?;
@@ -696,7 +701,7 @@ impl VM {
 
         // Update sender account and recipient in cache
         self.cache
-            .add_account(&current_call_frame.msg_sender, &sender_account);
+            .add_account(&current_call_frame.to, &sender_account);
         self.cache.add_account(&to, &recipient_account);
 
         // self.call_frames.push(new_call_frame.clone());

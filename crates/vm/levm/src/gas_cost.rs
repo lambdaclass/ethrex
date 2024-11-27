@@ -191,11 +191,15 @@ fn copy_behavior(
         .saturating_sub(1))
         / WORD_SIZE;
 
-    let memory_expansion_cost = current_call_frame.memory.expansion_cost(
-        offset
-            .checked_add(size)
-            .ok_or(OutOfGasError::GasCostOverflow)?,
-    )?;
+    let memory_expansion_cost = if size != 0 {
+        current_call_frame.memory.expansion_cost(
+            offset
+                .checked_add(size)
+                .ok_or(OutOfGasError::GasCostOverflow)?
+        )?
+    } else {
+        U256::zero()
+    };
 
     let minimum_word_size_cost = dynamic_base
         .checked_mul(minimum_word_size.into())
