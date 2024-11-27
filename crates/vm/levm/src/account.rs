@@ -59,8 +59,8 @@ impl Account {
         }
     }
 
-    pub fn has_code(&self) -> Result<bool, VMError> {
-        Ok(!(self.info.bytecode.is_empty() || self.bytecode_hash() == EMPTY_CODE_HASH))
+    pub fn has_code(&self) -> bool {
+        !(self.info.bytecode.is_empty() || self.bytecode_hash() == EMPTY_CODE_HASH)
     }
 
     pub fn bytecode_hash(&self) -> H256 {
