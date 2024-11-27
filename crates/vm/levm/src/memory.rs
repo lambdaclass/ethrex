@@ -1,5 +1,5 @@
 use crate::{
-    constants::{MEMORY_EXPANSION_QUOTIENT, WORD_SIZE},
+    constants::{MEMORY_EXPANSION_QUOTIENT, WORD_SIZE, WORD_SIZE_IN_BYTES},
     errors::{InternalError, OutOfGasError, VMError},
 };
 use ethrex_core::U256;
@@ -193,4 +193,42 @@ impl Memory {
             .ok_or(OutOfGasError::GasCostOverflow)?)
         .into())
     }
+}
+
+/// The total cost for a given memory size.
+pub fn cost(memory_size: U256) -> Result<U256, VMError> {
+    let memory_size_word = memory_size
+        .checked_add(
+            WORD_SIZE_IN_BYTES
+                .checked_sub(U256::one())
+                .ok_or(InternalError::ArithmeticOperationUnderflow)?,
+        )
+        .ok_or(OutOfGasError::MemoryExpansionCostOverflow)?
+        .checked_div(WORD_SIZE_IN_BYTES)
+        .ok_or(OutOfGasError::MemoryExpansionCostOverflow)?;
+
+    Ok(memory_size_word
+        .checked_pow(U256::from(2))
+        .ok_or(OutOfGasError::MemoryExpansionCostOverflow)?
+        .checked_div(U256::from(512))
+        .ok_or(OutOfGasError::MemoryExpansionCostOverflow)?
+        .checked_add(
+            U256::from(3)
+                .checked_mul(memory_size_word)
+                .ok_or(OutOfGasError::MemoryExpansionCostOverflow)?,
+        )
+        .ok_or(OutOfGasError::MemoryExpansionCostOverflow)?)
+}
+
+/// When a memory expansion is triggered, only the additional bytes of memory
+/// must be paid for.
+pub fn expansion_cost(new_memory_size: U256, old_memory_size: U256) -> Result<U256, VMError> {
+    let cost = if new_memory_size <= old_memory_size {
+        U256::zero()
+    } else {
+        cost(new_memory_size)?
+            .checked_sub(cost(old_memory_size)?)
+            .ok_or(InternalError::ArithmeticOperationUnderflow)?
+    };
+    Ok(cost)
 }

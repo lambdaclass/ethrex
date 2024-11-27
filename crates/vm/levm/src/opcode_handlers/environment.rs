@@ -1,12 +1,12 @@
 use crate::{
     call_frame::CallFrame,
-    constants::{BALANCE_COLD_ADDRESS_ACCESS_COST, WARM_ADDRESS_ACCESS_COST},
+    constants::WORD_SIZE_IN_BYTES_USIZE,
     errors::{InternalError, OpcodeSuccess, OutOfGasError, VMError},
     gas_cost,
     vm::{word_to_address, VM},
 };
 use ethrex_core::U256;
-use sha3::{Digest, Keccak256};
+use keccak_hash::keccak;
 
 // Environmental Information (16)
 // Opcodes: ADDRESS, BALANCE, ORIGIN, CALLER, CALLVALUE, CALLDATALOAD, CALLDATASIZE, CALLDATACOPY, CODESIZE, CODECOPY, GASPRICE, EXTCODESIZE, EXTCODECOPY, RETURNDATASIZE, RETURNDATACOPY, EXTCODEHASH
@@ -31,18 +31,14 @@ impl VM {
         &mut self,
         current_call_frame: &mut CallFrame,
     ) -> Result<OpcodeSuccess, VMError> {
-        let address = &word_to_address(current_call_frame.stack.pop()?);
+        let address = word_to_address(current_call_frame.stack.pop()?);
 
-        if self.cache.is_account_cached(address) {
-            self.increase_consumed_gas(current_call_frame, WARM_ADDRESS_ACCESS_COST)?;
-        } else {
-            self.increase_consumed_gas(current_call_frame, BALANCE_COLD_ADDRESS_ACCESS_COST)?;
-            self.cache_from_db(address);
-        };
+        let (account_info, address_was_cold) = self.access_account(address);
 
-        let balance = self.get_account(address).info.balance;
+        self.increase_consumed_gas(current_call_frame, gas_cost::balance(address_was_cold)?)?;
 
-        current_call_frame.stack.push(balance)?;
+        current_call_frame.stack.push(account_info.balance)?;
+
         Ok(OpcodeSuccess::Continue)
     }
 
@@ -276,16 +272,14 @@ impl VM {
     ) -> Result<OpcodeSuccess, VMError> {
         let address = word_to_address(current_call_frame.stack.pop()?);
 
-        if self.cache.is_account_cached(&address) {
-            self.increase_consumed_gas(current_call_frame, WARM_ADDRESS_ACCESS_COST)?;
-        } else {
-            self.increase_consumed_gas(current_call_frame, BALANCE_COLD_ADDRESS_ACCESS_COST)?;
-            self.cache_from_db(&address);
-        };
+        let (account_info, address_was_cold) = self.access_account(address);
 
-        let bytecode = self.get_account(&address).info.bytecode;
+        self.increase_consumed_gas(current_call_frame, gas_cost::extcodesize(address_was_cold)?)?;
 
-        current_call_frame.stack.push(bytecode.len().into())?;
+        current_call_frame
+            .stack
+            .push(account_info.bytecode.len().into())?;
+
         Ok(OpcodeSuccess::Continue)
     }
 
@@ -311,33 +305,42 @@ impl VM {
             .try_into()
             .map_err(|_| VMError::VeryLargeNumber)?;
 
-        let is_cached = self.cache.is_account_cached(&address);
+        let (account_info, address_was_cold) = self.access_account(address);
 
-        let gas_cost = gas_cost::extcodecopy(current_call_frame, size, dest_offset, is_cached)
-            .map_err(VMError::OutOfGas)?;
+        let new_memory_size = dest_offset
+            .checked_add(size)
+            .ok_or(VMError::Internal(
+                InternalError::ArithmeticOperationOverflow,
+            ))?
+            .checked_next_multiple_of(WORD_SIZE_IN_BYTES_USIZE)
+            .ok_or(VMError::Internal(
+                InternalError::ArithmeticOperationOverflow,
+            ))?;
+        let current_memory_size = current_call_frame.memory.data.len();
 
-        self.increase_consumed_gas(current_call_frame, gas_cost)?;
+        self.increase_consumed_gas(
+            current_call_frame,
+            gas_cost::extcodecopy(
+                new_memory_size.into(),
+                current_memory_size.into(),
+                address_was_cold,
+            )?,
+        )?;
 
         if size == 0 {
             return Ok(OpcodeSuccess::Continue);
         }
 
-        if !is_cached {
-            self.cache_from_db(&address);
-        };
-
-        let bytecode = self.get_account(&address).info.bytecode;
-
-        let new_memory_size = (((!size).checked_add(1).ok_or(VMError::Internal(
-            InternalError::ArithmeticOperationOverflow,
-        ))?) & 31)
-            .checked_add(size)
-            .ok_or(VMError::Internal(
-                InternalError::ArithmeticOperationOverflow,
-            ))?;
-        let current_memory_size = current_call_frame.memory.data.len();
         if current_memory_size < new_memory_size {
-            current_call_frame.memory.data.resize(new_memory_size, 0);
+            current_call_frame
+                .memory
+                .data
+                .try_reserve(new_memory_size)
+                .map_err(|_err| VMError::MemorySizeOverflow)?;
+            current_call_frame
+                .memory
+                .data
+                .extend(std::iter::repeat(0).take(new_memory_size));
         }
 
         for i in 0..size {
@@ -349,7 +352,8 @@ impl VM {
                         InternalError::ArithmeticOperationOverflow,
                     ))?)
             {
-                *memory_byte = *bytecode
+                *memory_byte = *account_info
+                    .bytecode
                     .get(offset.checked_add(i).ok_or(VMError::Internal(
                         InternalError::ArithmeticOperationOverflow,
                     ))?)
@@ -431,21 +435,13 @@ impl VM {
     ) -> Result<OpcodeSuccess, VMError> {
         let address = word_to_address(current_call_frame.stack.pop()?);
 
-        if self.cache.is_account_cached(&address) {
-            self.increase_consumed_gas(current_call_frame, WARM_ADDRESS_ACCESS_COST)?;
-        } else {
-            self.increase_consumed_gas(current_call_frame, BALANCE_COLD_ADDRESS_ACCESS_COST)?;
-            self.cache_from_db(&address);
-        };
+        let (account_info, address_was_cold) = self.access_account(address);
 
-        let bytecode = self.get_account(&address).info.bytecode;
+        self.increase_consumed_gas(current_call_frame, gas_cost::extcodehash(address_was_cold)?)?;
 
-        let mut hasher = Keccak256::new();
-        hasher.update(bytecode);
-        let result = hasher.finalize();
-        current_call_frame
-            .stack
-            .push(U256::from_big_endian(&result))?;
+        current_call_frame.stack.push(U256::from_big_endian(
+            keccak(account_info.bytecode).as_fixed_bytes(),
+        ))?;
 
         Ok(OpcodeSuccess::Continue)
     }

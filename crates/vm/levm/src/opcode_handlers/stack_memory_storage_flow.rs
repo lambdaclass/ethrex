@@ -1,7 +1,6 @@
 use crate::{
-    account::StorageSlot,
     call_frame::CallFrame,
-    constants::{COLD_STORAGE_ACCESS_COST, WARM_ADDRESS_ACCESS_COST, WORD_SIZE},
+    constants::WORD_SIZE,
     errors::{InternalError, OpcodeSuccess, OutOfGasError, VMError},
     gas_cost,
     vm::VM,
@@ -132,29 +131,19 @@ impl VM {
         &mut self,
         current_call_frame: &mut CallFrame,
     ) -> Result<OpcodeSuccess, VMError> {
-        let key = current_call_frame.stack.pop()?;
-
+        let storage_slot_key = current_call_frame.stack.pop()?;
         let address = current_call_frame.to;
 
         let mut bytes = [0u8; 32];
-        key.to_big_endian(&mut bytes);
-        let key = H256::from(bytes);
+        storage_slot_key.to_big_endian(&mut bytes);
+        let storage_slot_key = H256::from(bytes);
 
-        let is_cached = self.cache.is_slot_cached(&address, key);
+        let (storage_slot, storage_slot_was_cold) =
+            self.access_storage_slot(address, storage_slot_key);
 
-        let gas_cost = if is_cached {
-            // If slot is warm (cached) add 100 to gas_cost
-            WARM_ADDRESS_ACCESS_COST
-        } else {
-            // If slot is cold (not cached) add 2100 to gas_cost
-            COLD_STORAGE_ACCESS_COST
-        };
+        self.increase_consumed_gas(current_call_frame, gas_cost::sload(storage_slot_was_cold)?)?;
 
-        let current_value = self.get_storage_slot(&address, key).current_value;
-
-        self.increase_consumed_gas(current_call_frame, gas_cost)?;
-
-        current_call_frame.stack.push(current_value)?;
+        current_call_frame.stack.push(storage_slot.current_value)?;
         Ok(OpcodeSuccess::Continue)
     }
 
@@ -168,31 +157,28 @@ impl VM {
             return Err(VMError::OpcodeNotAllowedInStaticContext);
         }
 
-        let key = current_call_frame.stack.pop()?;
-        let value = current_call_frame.stack.pop()?;
+        let storage_slot_key = current_call_frame.stack.pop()?;
+        let new_storage_slot_value = current_call_frame.stack.pop()?;
 
         // Convert key from U256 to H256
         let mut bytes = [0u8; 32];
-        key.to_big_endian(&mut bytes);
+        storage_slot_key.to_big_endian(&mut bytes);
         let key = H256::from(bytes);
 
-        let address = current_call_frame.to;
+        let (storage_slot, storage_slot_was_cold) =
+            self.access_storage_slot(current_call_frame.to, key);
 
-        let is_cached = self.cache.is_slot_cached(&address, key);
-
-        let storage_slot = self.get_storage_slot(&address, key);
-
-        let gas_cost =
-            gas_cost::sstore(value, is_cached, &storage_slot).map_err(VMError::OutOfGas)?;
-
-        self.increase_consumed_gas(current_call_frame, gas_cost)?;
+        self.increase_consumed_gas(
+            current_call_frame,
+            gas_cost::sstore(&storage_slot, new_storage_slot_value, storage_slot_was_cold)?,
+        )?;
 
         // Gas Refunds
         // TODO: Think about what to do in case of underflow of gas refunds (when we try to substract from it if the value is low)
         let mut gas_refunds = U256::zero();
-        if value != storage_slot.current_value {
+        if new_storage_slot_value != storage_slot.current_value {
             if storage_slot.current_value == storage_slot.original_value {
-                if storage_slot.original_value.is_zero() && value.is_zero() {
+                if storage_slot.original_value.is_zero() && new_storage_slot_value.is_zero() {
                     gas_refunds = gas_refunds
                         .checked_add(U256::from(4800))
                         .ok_or(VMError::GasRefundsOverflow)?;
@@ -202,12 +188,12 @@ impl VM {
                     gas_refunds = gas_refunds
                         .checked_sub(U256::from(4800))
                         .ok_or(VMError::GasRefundsUnderflow)?;
-                } else if value.is_zero() {
+                } else if new_storage_slot_value.is_zero() {
                     gas_refunds = gas_refunds
                         .checked_add(U256::from(4800))
                         .ok_or(VMError::GasRefundsOverflow)?;
                 }
-            } else if value == storage_slot.original_value {
+            } else if new_storage_slot_value == storage_slot.original_value {
                 if storage_slot.original_value.is_zero() {
                     gas_refunds = gas_refunds
                         .checked_add(U256::from(19900))
@@ -226,14 +212,7 @@ impl VM {
             .checked_add(gas_refunds)
             .ok_or(VMError::GasLimitPriceProductOverflow)?;
 
-        self.cache.write_account_storage(
-            &address,
-            key,
-            StorageSlot {
-                original_value: storage_slot.original_value,
-                current_value: value,
-            },
-        )?;
+        self.update_account_storage(current_call_frame.to, key, new_storage_slot_value)?;
 
         Ok(OpcodeSuccess::Continue)
     }
