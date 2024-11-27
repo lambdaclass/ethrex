@@ -39,7 +39,7 @@ pub fn add_blob_transaction(
 }
 
 /// Add a transaction to the mempool
-pub fn add_transaction(transaction: Transaction, store: Store) -> Result<H256, MempoolError> {
+pub fn add_transaction(transaction: Transaction, store: &Store) -> Result<H256, MempoolError> {
     // Blob transactions should be submitted via add_blob_transaction along with the corresponding blobs bundle
     if matches!(transaction, Transaction::EIP4844Transaction(_)) {
         return Err(MempoolError::BlobTxNoBlobsBundle);

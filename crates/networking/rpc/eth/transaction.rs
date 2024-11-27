@@ -595,7 +595,7 @@ impl RpcHandler for SendRawTransactionRequest {
                 context.storage,
             )
         } else {
-            mempool::add_transaction(self.to_transaction(), context.storage)
+            mempool::add_transaction(self.to_transaction(), &context.storage)
         }?;
         serde_json::to_value(format!("{:#x}", hash))
             .map_err(|error| RpcErr::Internal(error.to_string()))
