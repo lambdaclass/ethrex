@@ -80,7 +80,7 @@ impl Trie {
             let root_node = self
                 .state
                 .get_node(root.clone())?
-                .expect("inconsistent internal tree structure");
+                .ok_or(TrieError::InconsistentTree)?;
             root_node.get(&self.state, Nibbles::from_bytes(path))
         } else {
             Ok(None)
@@ -115,7 +115,7 @@ impl Trie {
             let root_node = self
                 .state
                 .get_node(root)?
-                .expect("inconsistent internal tree structure");
+                .ok_or(TrieError::InconsistentTree)?;
             let (root_node, old_value) =
                 root_node.remove(&mut self.state, Nibbles::from_bytes(&path))?;
             self.root = root_node
@@ -294,7 +294,7 @@ impl Trie {
                         let child_node = self
                             .state
                             .get_node(child_hash.clone())?
-                            .expect("inconsistent internal tree structure");
+                            .ok_or(TrieError::InconsistentTree)?;
                         self.get_node_inner(child_node, partial_path)
                     } else {
                         Ok(vec![])
@@ -309,7 +309,7 @@ impl Trie {
                     let child_node = self
                         .state
                         .get_node(extension_node.child.clone())?
-                        .expect("inconsistent internal tree structure");
+                        .ok_or(TrieError::InconsistentTree)?;
                     self.get_node_inner(child_node, partial_path)
                 } else {
                     Ok(vec![])

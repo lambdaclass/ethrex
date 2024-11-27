@@ -29,7 +29,7 @@ impl ExtensionNode {
         if path.skip_prefix(&self.prefix) {
             let child_node = state
                 .get_node(self.child.clone())?
-                .expect("inconsistent internal tree structure");
+                .ok_or(TrieError::InconsistentTree)?;
 
             child_node.get(state, path)
         } else {
@@ -59,7 +59,7 @@ impl ExtensionNode {
             // Insert into child node
             let child_node = state
                 .get_node(self.child)?
-                .expect("inconsistent internal tree structure");
+                .ok_or(TrieError::InconsistentTree)?;
             let new_child_node =
                 child_node.insert(state, path.offset(match_index), value.clone())?;
             self.child = new_child_node.insert_self(state)?;
@@ -76,7 +76,7 @@ impl ExtensionNode {
                     Some(Node::Leaf(leaf)) => {
                         BranchNode::new_with_value(Box::new(choices), leaf.value)
                     }
-                    _ => panic!("inconsistent internal tree structure"),
+                    _ => return Err(TrieError::InconsistentTree),
                 }
             } else {
                 choices[self.prefix.at(0)] = new_node;
@@ -109,7 +109,7 @@ impl ExtensionNode {
         if path.skip_prefix(&self.prefix) {
             let child_node = state
                 .get_node(self.child)?
-                .expect("inconsistent internal tree structure");
+                .ok_or(TrieError::InconsistentTree)?;
             // Remove value from child subtrie
             let (child_node, old_value) = child_node.remove(state, path)?;
             // Restructure node based on removal
@@ -189,7 +189,7 @@ impl ExtensionNode {
         if path.skip_prefix(&self.prefix) {
             let child_node = state
                 .get_node(self.child.clone())?
-                .expect("inconsistent internal tree structure");
+                .ok_or(TrieError::InconsistentTree)?;
             child_node.get_path(state, path, node_path)?;
         }
         Ok(())
