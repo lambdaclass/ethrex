@@ -39,19 +39,13 @@ pub fn progress(reports: &[EFTestReport], time: Duration) -> String {
         format_duration_as_mm_ss(time)
     )
 }
+
 pub fn summary(reports: &[EFTestReport]) -> String {
     let total_passed = reports.iter().filter(|report| report.passed()).count();
     let total_run = reports.len();
+    let success_percentage = (total_passed as f64 / total_run as f64) * 100.0;
     format!(
-        "{} {}/{total_run}\n\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n",
-        "Summary:".bold(),
-        if total_passed == total_run {
-            format!("{}", total_passed).green()
-        } else if total_passed > 0 {
-            format!("{}", total_passed).yellow()
-        } else {
-            format!("{}", total_passed).red()
-        },
+        "Summary: {total_passed}/{total_run} ({success_percentage:.2}%)\n\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n",
         fork_summary(reports, SpecId::CANCUN),
         fork_summary(reports, SpecId::SHANGHAI),
         fork_summary(reports, SpecId::HOMESTEAD),
@@ -62,6 +56,33 @@ pub fn summary(reports: &[EFTestReport]) -> String {
         fork_summary(reports, SpecId::CONSTANTINOPLE),
         fork_summary(reports, SpecId::MERGE),
         fork_summary(reports, SpecId::FRONTIER),
+    )
+}
+
+pub fn summary_pretty(reports: &[EFTestReport]) -> String {
+    let total_passed = reports.iter().filter(|report| report.passed()).count();
+    let total_run = reports.len();
+    let success_percentage = (total_passed as f64 / total_run as f64) * 100.0;
+    format!(
+        "{} {}/{total_run} ({success_percentage:.2})\n\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n",
+        "Summary:".bold(),
+        if total_passed == total_run {
+            format!("{}", total_passed).green()
+        } else if total_passed > 0 {
+            format!("{}", total_passed).yellow()
+        } else {
+            format!("{}", total_passed).red()
+        },
+        fork_summary_pretty(reports, SpecId::CANCUN),
+        fork_summary_pretty(reports, SpecId::SHANGHAI),
+        fork_summary_pretty(reports, SpecId::HOMESTEAD),
+        fork_summary_pretty(reports, SpecId::ISTANBUL),
+        fork_summary_pretty(reports, SpecId::LONDON),
+        fork_summary_pretty(reports, SpecId::BYZANTIUM),
+        fork_summary_pretty(reports, SpecId::BERLIN),
+        fork_summary_pretty(reports, SpecId::CONSTANTINOPLE),
+        fork_summary_pretty(reports, SpecId::MERGE),
+        fork_summary_pretty(reports, SpecId::FRONTIER),
     )
 }
 
@@ -84,6 +105,18 @@ pub fn write(reports: &[EFTestReport]) -> Result<PathBuf, EFTestRunnerError> {
         )))
     })?;
     Ok(report_file_path)
+}
+
+pub const LEVM_EF_TESTS_SUMMARY_FILE_PATH: &str = "./levm_ef_tests_summary.txt";
+
+pub fn write_summary(reports: &[EFTestReport]) -> Result<PathBuf, EFTestRunnerError> {
+    let summary_file_path = PathBuf::from(LEVM_EF_TESTS_SUMMARY_FILE_PATH);
+    std::fs::write(LEVM_EF_TESTS_SUMMARY_FILE_PATH, summary(reports)).map_err(|err| {
+        EFTestRunnerError::Internal(InternalError::MainRunnerInternal(format!(
+            "Failed to write summary to file: {err}"
+        )))
+    })?;
+    Ok(summary_file_path)
 }
 
 pub const EF_TESTS_CACHE_FILE_PATH: &str = "./levm_ef_tests_cache.json";
@@ -149,16 +182,20 @@ impl Display for EFTestsReport {
             },
         )?;
         writeln!(f)?;
-        writeln!(f, "{}", fork_summary(&self.0, SpecId::CANCUN))?;
-        writeln!(f, "{}", fork_summary(&self.0, SpecId::SHANGHAI))?;
-        writeln!(f, "{}", fork_summary(&self.0, SpecId::HOMESTEAD))?;
-        writeln!(f, "{}", fork_summary(&self.0, SpecId::ISTANBUL))?;
-        writeln!(f, "{}", fork_summary(&self.0, SpecId::LONDON))?;
-        writeln!(f, "{}", fork_summary(&self.0, SpecId::BYZANTIUM))?;
-        writeln!(f, "{}", fork_summary(&self.0, SpecId::BERLIN))?;
-        writeln!(f, "{}", fork_summary(&self.0, SpecId::CONSTANTINOPLE))?;
-        writeln!(f, "{}", fork_summary(&self.0, SpecId::MERGE))?;
-        writeln!(f, "{}", fork_summary(&self.0, SpecId::FRONTIER))?;
+        writeln!(f, "{}", fork_summary_pretty(&self.0, SpecId::CANCUN))?;
+        writeln!(f, "{}", fork_summary_pretty(&self.0, SpecId::SHANGHAI))?;
+        writeln!(f, "{}", fork_summary_pretty(&self.0, SpecId::HOMESTEAD))?;
+        writeln!(f, "{}", fork_summary_pretty(&self.0, SpecId::ISTANBUL))?;
+        writeln!(f, "{}", fork_summary_pretty(&self.0, SpecId::LONDON))?;
+        writeln!(f, "{}", fork_summary_pretty(&self.0, SpecId::BYZANTIUM))?;
+        writeln!(f, "{}", fork_summary_pretty(&self.0, SpecId::BERLIN))?;
+        writeln!(
+            f,
+            "{}",
+            fork_summary_pretty(&self.0, SpecId::CONSTANTINOPLE)
+        )?;
+        writeln!(f, "{}", fork_summary_pretty(&self.0, SpecId::MERGE))?;
+        writeln!(f, "{}", fork_summary_pretty(&self.0, SpecId::FRONTIER))?;
         writeln!(f)?;
         writeln!(f, "{}", "Failed tests:".bold())?;
         writeln!(f)?;
@@ -243,8 +280,20 @@ fn fork_summary(reports: &[EFTestReport], fork: SpecId) -> String {
         .iter()
         .filter(|report| report.fork == fork && report.passed())
         .count();
+    let fork_success_percentage = (fork_passed_tests as f64 / fork_tests as f64) * 100.0;
+    format!("{fork_str}: {fork_passed_tests}/{fork_tests} ({fork_success_percentage:.2}%)")
+}
+
+fn fork_summary_pretty(reports: &[EFTestReport], fork: SpecId) -> String {
+    let fork_str: &str = fork.into();
+    let fork_tests = reports.iter().filter(|report| report.fork == fork).count();
+    let fork_passed_tests = reports
+        .iter()
+        .filter(|report| report.fork == fork && report.passed())
+        .count();
+    let fork_success_percentage = (fork_passed_tests as f64 / fork_tests as f64) * 100.0;
     format!(
-        "{}: {}/{fork_tests}",
+        "{}: {}/{fork_tests} ({fork_success_percentage}%)",
         fork_str.bold(),
         if fork_passed_tests == fork_tests {
             format!("{}", fork_passed_tests).green()

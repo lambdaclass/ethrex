@@ -35,6 +35,10 @@ run-evm-ef-tests: ## 🏃‍♂️ Run EF Tests
 	cd ../../../ && \
 	time cargo test -p ef_tests-levm --test ef_tests_levm
 
+generate-evm-ef-tests-report: ## 📊 Generate EF Tests Report
+	cd ../../../ && \
+	cargo test -p ef_tests-levm --test ef_tests_levm -- --summary
+
 clean-evm-ef-tests: ## 🗑️  Clean test vectors
 	rm -rf $(SPECTEST_VECTORS_DIR)
 
