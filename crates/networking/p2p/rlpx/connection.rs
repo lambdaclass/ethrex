@@ -1,7 +1,8 @@
 use std::sync::Arc;
 
 use crate::{
-    peer_channels::PeerChannels, rlpx::{
+    peer_channels::PeerChannels,
+    rlpx::{
         eth::{
             backend,
             blocks::{BlockBodies, BlockHeaders},
@@ -11,10 +12,12 @@ use crate::{
         message::Message,
         p2p::{self, DisconnectMessage, PingMessage, PongMessage},
         utils::id2pubkey,
-    }, snap::{
+    },
+    snap::{
         process_account_range_request, process_byte_codes_request, process_storage_ranges_request,
         process_trie_nodes_request,
-    }, MAX_DISC_PACKET_SIZE
+    },
+    MAX_DISC_PACKET_SIZE,
 };
 
 use super::{

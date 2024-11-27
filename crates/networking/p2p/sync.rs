@@ -4,7 +4,9 @@ use ethrex_core::{
     types::{validate_block_header, BlockHash, BlockHeader, InvalidBlockHeaderError},
     H256,
 };
+use ethrex_rlp::encode::RLPEncode;
 use ethrex_storage::Store;
+use ethrex_trie::EMPTY_TRIE_HASH;
 use tokio::sync::Mutex;
 use tracing::info;
 
@@ -40,10 +42,7 @@ impl SyncManager {
             let peer = self.peers.lock().await.get_peer_channels().await;
             info!("[Sync] Requesting Block Headers from {current_head}");
             // Request Block Headers from Peer
-            if let Some(block_headers) = peer
-                .request_block_headers(current_head)
-                .await
-            {
+            if let Some(block_headers) = peer.request_block_headers(current_head).await {
                 // We received the correct message, we can now:
                 // - Validate the batch of headers received and start downloading their state (Future Iteration)
                 // - Check if we need to download another batch (aka we don't have the sync_head yet)
@@ -150,9 +149,7 @@ async fn fetch_blocks_and_receipts(
     loop {
         let peer = peers.lock().await.get_peer_channels().await;
         info!("[Sync] Requesting Block Headers ");
-        if let Some(block_bodies) = peer.request_block_bodies(block_hashes.clone())
-            .await
-        {
+        if let Some(block_bodies) = peer.request_block_bodies(block_hashes.clone()).await {
             info!("[SYNC] Received {} Block Bodies", block_bodies.len());
             // Track which bodies we have already fetched
             let (fetched_hashes, remaining_hashes) = block_hashes.split_at(block_bodies.len());
@@ -179,48 +176,48 @@ async fn fetch_snap_state(
     peers: Arc<Mutex<KademliaTable>>,
     store: Store,
 ) {
-    // for root_hash in state_roots {
-    //     // Fetch Account Ranges
-    //     let mut account_ranges_request = GetAccountRange {
-    //         id: 7,
-    //         root_hash,
-    //         starting_hash: H256::zero(),
-    //         limit_hash: H256::from_str(
-    //             "0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
-    //         )
-    //         .unwrap(),
-    //         response_bytes: 500,
-    //     };
-    //     loop {
-    //         // TODO: Randomize id
-    //         account_ranges_request.id += 1;
-    //         info!("[Sync] Sending Block headers request ");
-    //         // Send a GetBlockBodies request to a peer
-    //         if peers
-    //             .lock()
-    //             .await
-    //             .send_message_to_peer(Message::GetAccountRange(account_ranges_request.clone()))
-    //             .await
-    //             .is_err()
-    //         {
-    //             info!("[Sync] No peers available, retrying in 10 sec");
-    //             // This is the unlikely case where we just started the node and don't have peers, wait a bit and try again
-    //             tokio::time::sleep(tokio::time::Duration::from_secs(10)).await;
-    //             continue;
-    //         };
-    //         // Wait for the peer to reply
-    //         match tokio::time::timeout(REPLY_TIMEOUT, reply_receiver.recv()).await {
-    //             Ok(Some(Message::AccountRange(message)))
-    //                 if message.id == account_ranges_request.id && !message.accounts.is_empty() =>
-    //             {
-    //                 info!("[SYNC] Received {} Accounts", message.accounts.len());
-    //             }
+    for state_root in state_roots {
+        fetch_snap_state_inner(state_root, peers.clone(), store.clone()).await
+    }
+}
 
-    //             // Bad peer response, lets try a different peer
-    //             Ok(Some(_)) => info!("[Sync] Bad peer response"),
-    //             // Reply timeouted/peer shut down, lets try a different peer
-    //             _ => info!("[Sync] Peer response timeout( Snap Account Range)"),
-    //         }
-    //     }
-    // }
+/// Rebuilds a Block's account state by requesting state from peers
+async fn fetch_snap_state_inner(state_root: H256, peers: Arc<Mutex<KademliaTable>>, store: Store) {
+    let mut start_account_hash = H256::zero();
+    // Start from an empty state trie
+    // We cannot keep an open trie here so we will track the root between lookups
+    let mut current_state_root = *EMPTY_TRIE_HASH;
+    // Fetch Account Ranges
+    loop {
+        let peer = peers.lock().await.get_peer_channels().await;
+        info!("[Sync] Requesting Account Range for state root {state_root}, starting hash: {start_account_hash}");
+        if let Some((account_hashes, accounts, should_continue)) = peer
+            .request_account_range(state_root, start_account_hash)
+            .await
+        {
+            // Update starting hash for next batch
+            if should_continue {
+                start_account_hash = *account_hashes.last().unwrap();
+            }
+
+            // Update trie
+            let mut trie = store.open_state_trie(current_state_root);
+            for (account_hash, account) in account_hashes.iter().zip(accounts.iter()) {
+                // TODO: Handle
+                trie.insert(account_hash.0.to_vec(), account.encode_to_vec())
+                    .unwrap();
+            }
+            // TODO: Handle
+            current_state_root = trie.hash().unwrap();
+
+            if !should_continue {
+                // All accounts fetched!
+                break;
+            }
+        }
+    }
+    if current_state_root != state_root {
+        info!("[Sync] State sync failed for hash {state_root}");
+    }
+    info!("[Sync] Completed state sync for hash {state_root}");
 }

@@ -1,5 +1,7 @@
 use crate::{
-    discv4::{time_now_unix, FindNodeRequest}, peer_channels::PeerChannels, types::Node,
+    discv4::{time_now_unix, FindNodeRequest},
+    peer_channels::PeerChannels,
+    types::Node,
 };
 use ethrex_core::{H256, H512, U256};
 use sha3::{Digest, Keccak256};
@@ -280,14 +282,13 @@ impl KademliaTable {
     pub async fn get_peer_channels(&self) -> PeerChannels {
         loop {
             if let Some(channels) = self.get_peer().and_then(|peer| peer.channels) {
-                return channels
+                return channels;
             }
             info!("[Sync] No peers available, retrying in 10 sec");
             // This is the unlikely case where we just started the node and don't have peers, wait a bit and try again
             tokio::time::sleep(tokio::time::Duration::from_secs(10)).await;
         }
     }
-
 }
 
 /// Computes the distance between two nodes according to the discv4 protocol
