@@ -64,36 +64,39 @@ impl ExecutionDB {
 
         for account_update in account_updates.iter() {
             let address = RevmAddress::from_slice(account_update.address.as_bytes());
-            let account_state = match store.get_account_state_by_hash(
-                block.header.parent_hash,
-                H160::from_slice(address.as_slice()),
-            )? {
-                Some(state) => state,
-                None => continue,
-            };
-            accounts.insert(address, account_state);
 
-            let account_storage = account_update
-                .added_storage
-                .iter()
-                .map(|(key, value)| {
-                    let mut value_bytes = [0u8; 32];
-                    value.to_big_endian(&mut value_bytes);
-                    (
-                        RevmU256::from_be_bytes(key.to_fixed_bytes()),
-                        RevmU256::from_be_slice(&value_bytes),
-                    )
-                })
-                .collect();
-            storage.insert(address, account_storage);
-            address_storage_keys.insert(
-                account_update.address,
-                account_update
+            // if the account existed already:
+            if let Some(state) =
+                store.get_account_state_by_hash(block.header.parent_hash, account_update.address)?
+            {
+                address_storage_keys.insert(
+                    account_update.address,
+                    Some(
+                        account_update
+                            .added_storage
+                            .keys()
+                            .cloned()
+                            .collect::<Vec<_>>(),
+                    ),
+                );
+
+                let account_storage = account_update
                     .added_storage
-                    .keys()
-                    .cloned()
-                    .collect::<Vec<_>>(),
-            );
+                    .iter()
+                    .map(|(key, value)| {
+                        let mut value_bytes = [0u8; 32];
+                        value.to_big_endian(&mut value_bytes);
+                        (
+                            RevmU256::from_be_bytes(key.to_fixed_bytes()),
+                            RevmU256::from_be_slice(&value_bytes),
+                        )
+                    })
+                    .collect();
+                accounts.insert(address, state);
+                storage.insert(address, account_storage);
+            } else {
+                address_storage_keys.insert(account_update.address, None);
+            }
         }
 
         // Get pruned state and storage tries. For this we get the "state" (all relevant nodes) of every trie.
@@ -110,16 +113,18 @@ impl ExecutionDB {
         // Get pruned storage tries for every account
         let mut pruned_storage_tries = HashMap::new();
         for (address, keys) in address_storage_keys {
-            let storage_trie = store
-                .storage_trie(block.header.parent_hash, address)?
-                .ok_or(ExecutionDBError::NewMissingStorageTrie(
-                    block.header.parent_hash,
-                    address,
-                ))?;
-            let storage_paths: Vec<_> = keys.iter().map(hash_key).collect();
-            let (storage_trie_root, storage_trie_nodes) =
-                storage_trie.get_proofs(&storage_paths)?;
-            pruned_storage_tries.insert(address, (storage_trie_root, storage_trie_nodes));
+            if let Some(keys) = keys {
+                let storage_trie = store
+                    .storage_trie(block.header.parent_hash, address)?
+                    .ok_or(ExecutionDBError::NewMissingStorageTrie(
+                        block.header.parent_hash,
+                        address,
+                    ))?;
+                let storage_paths: Vec<_> = keys.iter().map(hash_key).collect();
+                let (storage_trie_root, storage_trie_nodes) =
+                    storage_trie.get_proofs(&storage_paths)?;
+                pruned_storage_tries.insert(address, (storage_trie_root, storage_trie_nodes));
+            }
         }
 
         Ok(Self {
