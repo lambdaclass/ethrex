@@ -16,42 +16,26 @@ fn main() {
     let mut state = EvmState::from(db.clone());
 
     // Validate the block pre-execution
-    if let Err(err) = validate_block(&block, &parent_block_header, &state) {
-        panic!("invalid block: {err}");
-    };
+    validate_block(&block, &parent_block_header, &state).expect("invalid block");
 
     // Validate the initial state
-    let (mut state_trie, mut storage_tries);
-    match db.build_tries() {
-        Ok((state, storage)) => {
-            (state_trie, storage_tries) = (state, storage)
-        },
-        Err(err) => {
-            panic!("failed to build state and storage tries or state is not valid: {err}");
-        }
-    };
+    let (mut state_trie, mut storage_tries) = db
+        .build_tries()
+        .expect("failed to build state and storage tries or state is not valid");
 
     let initial_state_hash = state_trie.hash_no_commit();
     if initial_state_hash != parent_block_header.state_root {
         panic!("invalid initial state trie");
     }
 
-    let receipts;
-    match execute_block(&block, &mut state) {
-        Ok(rec) => receipts = rec,
-        Err(err) => panic!("failed to execute block: {err}")
-    }
-
-    if let Err(err) = validate_gas_used(&receipts, &block.header) {
-        panic!("invalid gas used: {err}")
-    }
+    let receipts = execute_block(&block, &mut state).expect("failed to execute block");
+    validate_gas_used(&receipts, &block.header).expect("invalid gas used");
 
     let account_updates = get_state_transitions(&mut state);
 
     // Update tries and calculate final state root hash
-    if let Err(err) = update_tries(&mut state_trie, &mut storage_tries, &account_updates) {
-        panic!("failed to update state and storage tries: {err}")
-    }
+    update_tries(&mut state_trie, &mut storage_tries, &account_updates)
+        .expect("failed to update state and storage tries");
     let final_state_hash = state_trie.hash_no_commit();
 
     if final_state_hash != block.header.state_root {
