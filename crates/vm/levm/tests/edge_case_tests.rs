@@ -225,3 +225,15 @@ fn test_non_compliance_codecopy() {
         &U256::zero()
     );
 }
+
+#[test]
+fn test_non_compliance_smod() {
+    let mut vm =
+        new_vm_with_bytecode(Bytes::copy_from_slice(&[0x60, 1, 0x60, 1, 0x19, 0x07])).unwrap();
+    let mut current_call_frame = vm.call_frames.pop().unwrap();
+    vm.execute(&mut current_call_frame);
+    assert_eq!(
+        current_call_frame.stack.stack.first().unwrap(),
+        &U256::zero()
+    );
+}

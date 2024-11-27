@@ -134,28 +134,32 @@ impl VM {
     ) -> Result<OpcodeSuccess, VMError> {
         self.increase_consumed_gas(current_call_frame, gas_cost::SMOD)?;
 
-        let dividend = current_call_frame.stack.pop()?;
-        let divisor = current_call_frame.stack.pop()?;
-        if divisor.is_zero() {
+        let unchecked_dividend = current_call_frame.stack.pop()?;
+        let unchecked_divisor = current_call_frame.stack.pop()?;
+
+        if unchecked_divisor.is_zero() {
             current_call_frame.stack.push(U256::zero())?;
-        } else {
-            let normalized_dividend = abs(dividend);
-            let normalized_divisor = abs(divisor);
-
-            let mut remainder =
-                normalized_dividend
-                    .checked_rem(normalized_divisor)
-                    .ok_or(VMError::Internal(
-                        InternalError::ArithmeticOperationDividedByZero,
-                    ))?; // Cannot be zero bc if above;
-
-            // The remainder should have the same sign as the dividend
-            if is_negative(dividend) {
-                remainder = negate(remainder);
-            }
-
-            current_call_frame.stack.push(remainder)?;
+            return Ok(OpcodeSuccess::Continue);
         }
+
+        let divisor = abs(unchecked_divisor);
+        let dividend = abs(unchecked_dividend);
+
+        let unchecked_remainder = match dividend.checked_rem(divisor) {
+            Some(remainder) => remainder,
+            None => {
+                current_call_frame.stack.push(U256::zero())?;
+                return Ok(OpcodeSuccess::Continue);
+            }
+        };
+
+        let remainder = if is_negative(unchecked_dividend) {
+            negate(unchecked_remainder)
+        } else {
+            unchecked_remainder
+        };
+
+        current_call_frame.stack.push(remainder)?;
 
         Ok(OpcodeSuccess::Continue)
     }
@@ -294,16 +298,15 @@ fn is_negative(value: U256) -> bool {
 }
 
 /// Negates a number in two's complement
+fn negate(value: U256) -> U256 {
+    let (dividend, _overflowed) = (!value).overflowing_add(U256::one());
+    dividend
+}
+
 fn abs(value: U256) -> U256 {
     if is_negative(value) {
         negate(value)
     } else {
         value
     }
-}
-
-/// Negates a number in two's complement
-fn negate(value: U256) -> U256 {
-    let inverted = !value;
-    inverted.saturating_add(U256::one())
 }

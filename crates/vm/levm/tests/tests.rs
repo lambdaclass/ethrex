@@ -176,7 +176,10 @@ fn smod_op() {
     let mut current_call_frame = vm.call_frames.pop().unwrap();
     vm.execute(&mut current_call_frame);
 
-    assert!(vm.current_call_frame_mut().unwrap().stack.pop().unwrap() == U256::from(1));
+    assert_eq!(
+        vm.current_call_frame_mut().unwrap().stack.pop().unwrap(),
+        U256::one()
+    );
 
     // Second Example
     // Example taken from evm.codes
@@ -209,7 +212,7 @@ fn smod_op() {
     )
     .unwrap();
 
-    assert!(vm.current_call_frame_mut().unwrap().stack.pop().unwrap() == c);
+    assert_eq!(vm.current_call_frame_mut().unwrap().stack.pop().unwrap(), c);
 }
 
 #[test]
