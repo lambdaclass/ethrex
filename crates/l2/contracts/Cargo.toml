@@ -16,6 +16,7 @@ spinoff = "0.8.0"
 colored = "2.1.0"
 lazy_static = "1.5.0"
 tracing.workspace = true
+thiserror.workspace = true
 
 ethrex-l2 = { path = "../../l2" }
 ethrex-core = { path = "../../common" }
@@ -23,3 +24,6 @@ ethrex-core = { path = "../../common" }
 [[bin]]
 name = "ethrex_l2_l1_deployer"
 path = "./deployer.rs"
+
+[lints.clippy]
+unwrap_used = "deny"

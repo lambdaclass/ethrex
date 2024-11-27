@@ -1,3 +1,4 @@
+#![allow(clippy::unwrap_used)]
 use bytes::Bytes;
 use ethereum_types::{Address, H160, U256};
 use ethrex_l2::utils::eth_client::{eth_sender::Overrides, EthClient};
@@ -71,7 +72,9 @@ async fn testito() {
     println!("Waiting for deposit transaction receipt");
 
     let _deposit_tx_receipt =
-        ethrex_l2_sdk::wait_for_transaction_receipt(deposit_tx, &eth_client, 5).await;
+        ethrex_l2_sdk::wait_for_transaction_receipt(deposit_tx, &eth_client, 5)
+            .await
+            .unwrap();
 
     // 3. Check balances on L1 and L2
 
@@ -141,7 +144,9 @@ async fn testito() {
     .await
     .unwrap();
     let _transfer_tx_receipt =
-        ethrex_l2_sdk::wait_for_transaction_receipt(transfer_tx, &proposer_client, 30).await;
+        ethrex_l2_sdk::wait_for_transaction_receipt(transfer_tx, &proposer_client, 30)
+            .await
+            .unwrap();
 
     // 5. Check balances on L2
 
@@ -185,7 +190,9 @@ async fn testito() {
     .await
     .unwrap();
     let withdraw_tx_receipt =
-        ethrex_l2_sdk::wait_for_transaction_receipt(withdraw_tx, &proposer_client, 30).await;
+        ethrex_l2_sdk::wait_for_transaction_receipt(withdraw_tx, &proposer_client, 30)
+            .await
+            .unwrap();
 
     // 7. Check balances on L1 and L2
 
@@ -251,8 +258,9 @@ async fn testito() {
     .await
     .unwrap();
 
-    let _claim_tx_receipt =
-        ethrex_l2_sdk::wait_for_transaction_receipt(claim_tx, &eth_client, 15).await;
+    let _claim_tx_receipt = ethrex_l2_sdk::wait_for_transaction_receipt(claim_tx, &eth_client, 15)
+        .await
+        .unwrap();
 
     // 9. Check balances on L1 and L2
 
@@ -289,6 +297,7 @@ fn proposer_client() -> EthClient {
     EthClient::new(&std::env::var("PROPOSER_URL").unwrap_or(DEFAULT_PROPOSER_URL.to_owned()))
 }
 
+#[allow(clippy::unwrap_used)]
 fn l1_rich_wallet_address() -> Address {
     std::env::var("L1_RICH_WALLET_ADDRESS")
         .unwrap_or(format!("{DEFAULT_L1_RICH_WALLET_ADDRESS:#x}"))
@@ -296,6 +305,7 @@ fn l1_rich_wallet_address() -> Address {
         .unwrap()
 }
 
+#[allow(clippy::unwrap_used)]
 fn l1_rich_wallet_private_key() -> SecretKey {
     std::env::var("L1_RICH_WALLET_PRIVATE_KEY")
         .map(|s| SecretKey::from_slice(H256::from_str(&s).unwrap().as_bytes()).unwrap())

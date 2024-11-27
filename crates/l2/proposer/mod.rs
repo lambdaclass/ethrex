@@ -74,9 +74,16 @@ impl Proposer {
                 .ok_or(ProposerError::StorageDataIsNone)?
         };
 
+        let Ok(jwt_secret) = std::fs::read(&self.engine_config.jwt_path) else {
+            panic!(
+                "Failed to read jwt_secret from: {}",
+                &self.engine_config.jwt_path
+            );
+        };
+
         ethrex_dev::block_producer::start_block_producer(
             self.engine_config.rpc_url.clone(),
-            std::fs::read(&self.engine_config.jwt_path).unwrap().into(),
+            jwt_secret.into(),
             head_block_hash,
             10,
             self.block_production_interval,

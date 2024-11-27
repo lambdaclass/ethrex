@@ -38,3 +38,6 @@ rand = "0.8.5"
 
 [lib]
 path = "./l2.rs"
+
+[lints.clippy]
+unwrap_used = "deny"

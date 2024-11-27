@@ -14,7 +14,11 @@ hex.workspace = true
 keccak-hash = "0.11.0"
 secp256k1.workspace = true
 itertools = "0.13.0"
+thiserror.workspace = true
 
 [lib]
 name = "ethrex_l2_sdk"
 path = "src/sdk.rs"
+
+[lints.clippy]
+unwrap_used = "deny"

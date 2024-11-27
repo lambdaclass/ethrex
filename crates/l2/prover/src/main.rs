@@ -15,7 +15,9 @@ async fn main() {
         warn!("Failed to read .env file: {e}");
     }
 
-    let config = ProverClientConfig::from_env().unwrap();
+    let Ok(config) = ProverClientConfig::from_env() else {
+        panic!("Failed to read ProverClientConfig from .env file");
+    };
     debug!("Prover Client has started");
     init_client(config).await;
 }

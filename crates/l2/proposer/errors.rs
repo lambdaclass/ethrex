@@ -68,6 +68,8 @@ pub enum ProposerError {
     FailedToRetrieveBlockFromStorage(#[from] StoreError),
     #[error("Proposer failed retrieve block from storaga, data is None.")]
     StorageDataIsNone,
+    #[error("Proposer failed to read jwt_secret: {0}")]
+    FailedToReadJWT(#[from] std::io::Error),
 }
 
 #[derive(Debug, thiserror::Error)]

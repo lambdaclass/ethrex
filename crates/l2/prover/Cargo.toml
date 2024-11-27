@@ -50,3 +50,6 @@ path = "src/main.rs"
 default = []
 build_zkvm = ["zkvm_interface/build_zkvm"]
 gpu = ["risc0-zkvm/cuda"]
+
+[lints.clippy]
+unwrap_used = "deny"

@@ -89,7 +89,7 @@ impl EthClient {
 
         let encoded_from = deployer.encode_to_vec();
         // FIXME: We'll probably need to use nonce - 1 since it was updated above.
-        let encoded_nonce = self.get_nonce(deployer).await.unwrap().encode_to_vec();
+        let encoded_nonce = self.get_nonce(deployer).await?.encode_to_vec();
         let mut encoded = vec![(0xc0 + encoded_from.len() + encoded_nonce.len()) as u8];
         encoded.extend(encoded_from.clone());
         encoded.extend(encoded_nonce.clone());

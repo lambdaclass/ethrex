@@ -1,3 +1,4 @@
+#![allow(clippy::unwrap_used)]
 use std::path::Path;
 use tracing::info;
 

@@ -19,19 +19,25 @@ pub const DEFAULT_BRIDGE_ADDRESS: Address = H160([
     0xac, 0xbb, 0xe4, 0x54,
 ]);
 
+#[derive(Debug, thiserror::Error)]
+pub enum SdkError {
+    #[error("Failed to parse address from hex")]
+    FailedToParseAddressFromHex,
+}
+
 /// BRIDGE_ADDRESS or 0x6bf26397c5676a208d5c4e5f35cb479bacbbe454
-pub fn bridge_address() -> Address {
+pub fn bridge_address() -> Result<Address, SdkError> {
     std::env::var("BRIDGE_ADDRESS")
         .unwrap_or(format!("{DEFAULT_BRIDGE_ADDRESS:#x}"))
         .parse()
-        .unwrap()
+        .map_err(|_| SdkError::FailedToParseAddressFromHex)
 }
 
 pub async fn wait_for_transaction_receipt(
     tx_hash: H256,
     client: &EthClient,
     max_retries: u64,
-) -> RpcReceipt {
+) -> Option<RpcReceipt> {
     let mut receipt = client
         .get_transaction_receipt(tx_hash)
         .await
@@ -52,7 +58,7 @@ pub async fn wait_for_transaction_receipt(
             .await
             .expect("Failed to get transaction receipt");
     }
-    receipt.unwrap()
+    receipt
 }
 
 pub async fn transfer(
@@ -90,7 +96,14 @@ pub async fn deposit(
     eth_client: &EthClient,
 ) -> Result<H256, EthClientError> {
     println!("Depositing {amount} from {from:#x} to bridge");
-    transfer(amount, from, bridge_address(), from_pk, eth_client).await
+    transfer(
+        amount,
+        from,
+        bridge_address().map_err(|err| EthClientError::Custom(err.to_string()))?,
+        from_pk,
+        eth_client,
+    )
+    .await
 }
 
 pub async fn withdraw(
@@ -195,7 +208,7 @@ pub async fn claim_withdraw(
 
     let claim_tx = eth_client
         .build_eip1559_transaction(
-            bridge_address(),
+            bridge_address().map_err(|err| EthClientError::Custom(err.to_string()))?,
             from,
             claim_withdrawal_data.into(),
             Overrides {
@@ -215,7 +228,13 @@ pub async fn get_withdraw_merkle_proof(
     client: &EthClient,
     tx_hash: H256,
 ) -> Result<(u64, Vec<H256>), EthClientError> {
-    let tx_receipt = client.get_transaction_receipt(tx_hash).await?.unwrap();
+    let tx_receipt =
+        client
+            .get_transaction_receipt(tx_hash)
+            .await?
+            .ok_or(EthClientError::Custom(
+                "Failed to get transaction receipt".to_string(),
+            ))?;
 
     let block = client
         .get_block_by_hash(tx_receipt.block_info.block_hash)
@@ -225,8 +244,7 @@ pub async fn get_withdraw_merkle_proof(
         BlockBodyWrapper::Full(body) => body.transactions,
         BlockBodyWrapper::OnlyHashes(_) => unreachable!(),
     };
-
-    let (index, tx_withdrawal_hash) = transactions
+    let Some(Some((index, tx_withdrawal_hash))) = transactions
         .iter()
         .filter(|tx| match &tx.tx {
             Transaction::PrivilegedL2Transaction(tx) => tx.tx_type == PrivilegedTxType::Withdrawal,
@@ -234,12 +252,18 @@ pub async fn get_withdraw_merkle_proof(
         })
         .find_position(|tx| tx.hash == tx_hash)
         .map(|(i, tx)| match &tx.tx {
-            Transaction::PrivilegedL2Transaction(tx) => {
-                (i as u64, tx.get_withdrawal_hash().unwrap())
+            Transaction::PrivilegedL2Transaction(privileged_l2_transaction) => {
+                privileged_l2_transaction
+                    .get_withdrawal_hash()
+                    .map(|withdrawal_hash| (i as u64, (withdrawal_hash)))
             }
             _ => unreachable!(),
         })
-        .unwrap();
+    else {
+        return Err(EthClientError::Custom(
+            "Failed to get widthdrawal hash, transaction is not a withdrawal".to_string(),
+        ));
+    };
 
     let path = merkle_proof(
         transactions
@@ -251,7 +275,9 @@ pub async fn get_withdraw_merkle_proof(
             .collect(),
         tx_withdrawal_hash,
     )
-    .unwrap();
+    .ok_or(EthClientError::Custom(
+        "Failed to generate merkle proof, element is not on the tree".to_string(),
+    ))?;
 
     Ok((index, path))
 }

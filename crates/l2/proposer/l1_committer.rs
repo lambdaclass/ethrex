@@ -318,7 +318,7 @@ impl Committer {
                 Bytes::from(calldata),
                 Overrides {
                     from: Some(self.l1_address),
-                    gas_price_per_blob: Some(U256::from_dec_str("100000000000").unwrap()),
+                    gas_price_per_blob: Some(U256::from(100000000000_i64)),
                     ..Default::default()
                 },
                 blobs_bundle,
