@@ -237,3 +237,17 @@ fn test_non_compliance_smod() {
         &U256::zero()
     );
 }
+
+#[test]
+fn test_non_compliance_extcodecopy_size_and_destoffset() {
+    let mut vm = new_vm_with_bytecode(Bytes::copy_from_slice(&[
+        0x60, 17, 0x60, 17, 0x60, 17, 0x60, 17, 0x3c, 0x59,
+    ]))
+    .unwrap();
+    let mut current_call_frame = vm.call_frames.pop().unwrap();
+    vm.execute(&mut current_call_frame);
+    assert_eq!(
+        current_call_frame.stack.stack.first().unwrap(),
+        &U256::from(64)
+    );
+}
