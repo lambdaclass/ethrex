@@ -1,10 +1,12 @@
 use crate::{
     discv4::{time_now_unix, FindNodeRequest},
+    peer_channels::PeerChannels,
     types::Node,
 };
 use ethrex_core::{H256, H512, U256};
 use sha3::{Digest, Keccak256};
 use tokio::sync::mpsc::UnboundedSender;
+use tracing::info;
 
 pub const MAX_NODES_PER_BUCKET: usize = 16;
 const NUMBER_OF_BUCKETS: usize = 256;
@@ -187,7 +189,7 @@ impl KademliaTable {
     /// ## Dev note:
     /// This function should be improved:
     /// We might keep the `peers` list sorted by last_ping as we would avoid unnecessary loops
-    pub fn get_least_recently_pinged_peers(&mut self, limit: usize) -> Vec<PeerData> {
+    pub fn get_least_recently_pinged_peers(&self, limit: usize) -> Vec<PeerData> {
         let mut peers = vec![];
 
         for bucket in &self.buckets {
@@ -254,6 +256,40 @@ impl KademliaTable {
 
         None
     }
+
+    /// Set the sender end of the channel between the kademlia table and the peer's active connection
+    /// This function should be called each time a connection is established so the backend can send requests to the peers
+    pub fn set_channels(&mut self, node_id: H512, channels: PeerChannels) {
+        let bucket_idx = bucket_number(self.local_node_id, node_id);
+        if let Some(peer) = self.buckets.get_mut(bucket_idx).and_then(|bucket| {
+            bucket
+                .peers
+                .iter_mut()
+                .find(|peer| peer.node.node_id == node_id)
+        }) {
+            peer.channels = Some(channels)
+        }
+    }
+
+    /// TODO: Randomly select peer
+    pub fn get_peer(&self) -> Option<PeerData> {
+        self.get_least_recently_pinged_peers(1).pop()
+    }
+
+    /// Returns the channel ends to an active peer connection
+    /// The peer is selected randomly (TODO), and doesn't guarantee that the selected peer is not currenlty busy
+    /// If no peer is found, this method will try again after 10 seconds
+    /// TODO: Filter peers by capabilities, set max amount of retries
+    pub async fn get_peer_channels(&self) -> PeerChannels {
+        loop {
+            if let Some(channels) = self.get_peer().and_then(|peer| peer.channels) {
+                return channels;
+            }
+            info!("[Sync] No peers available, retrying in 10 sec");
+            // This is the unlikely case where we just started the node and don't have peers, wait a bit and try again
+            tokio::time::sleep(tokio::time::Duration::from_secs(10)).await;
+        }
+    }
 }
 
 /// Computes the distance between two nodes according to the discv4 protocol
@@ -279,6 +315,8 @@ pub struct PeerData {
     pub liveness: u16,
     /// if a revalidation was sent to the peer, the bool marks if it has answered
     pub revalidation: Option<bool>,
+    /// communication channels between the peer data and its active connection
+    pub channels: Option<PeerChannels>,
 }
 
 impl PeerData {
@@ -292,6 +330,7 @@ impl PeerData {
             last_ping_hash: None,
             find_node_request: None,
             revalidation: None,
+            channels: None,
         }
     }
 

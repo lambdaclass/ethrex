@@ -32,6 +32,7 @@ use eth::{
         GetTransactionByHashRequest, GetTransactionReceiptRequest,
     },
 };
+use ethrex_net::sync::SyncManager;
 use serde_json::Value;
 use std::{
     collections::HashMap,
@@ -40,7 +41,7 @@ use std::{
     sync::{Arc, Mutex},
     time::Duration,
 };
-use tokio::net::TcpListener;
+use tokio::{net::TcpListener, sync::Mutex as TokioMutex};
 use tracing::info;
 use types::transaction::SendRawTransactionRequest;
 use utils::{
@@ -65,6 +66,7 @@ pub struct RpcApiContext {
     jwt_secret: Bytes,
     local_p2p_node: Node,
     active_filters: ActiveFilters,
+    syncer: Arc<TokioMutex<SyncManager>>,
 }
 
 trait RpcHandler: Sized {
@@ -92,6 +94,7 @@ pub async fn start_api(
     storage: Store,
     jwt_secret: Bytes,
     local_p2p_node: Node,
+    syncer: SyncManager,
 ) {
     // TODO: Refactor how filters are handled,
     // filters are used by the filters endpoints (eth_newFilter, eth_getFilterChanges, ...etc)
@@ -101,6 +104,7 @@ pub async fn start_api(
         jwt_secret,
         local_p2p_node,
         active_filters: active_filters.clone(),
+        syncer: Arc::new(TokioMutex::new(syncer)),
     };
 
     // Periodically clean up the active filters for the filters endpoints.
@@ -325,6 +329,7 @@ mod tests {
             storage,
             jwt_secret: Default::default(),
             active_filters: Default::default(),
+            syncer: Arc::new(TokioMutex::new(SyncManager::dummy())),
         };
         let result = map_http_requests(&request, context);
         let rpc_response = rpc_response(request.id, result);
@@ -362,6 +367,7 @@ mod tests {
             storage,
             jwt_secret: Default::default(),
             active_filters: Default::default(),
+            syncer: Arc::new(TokioMutex::new(SyncManager::dummy())),
         };
         let result = map_http_requests(&request, context);
         let response = rpc_response(request.id, result);
@@ -391,6 +397,7 @@ mod tests {
             storage,
             jwt_secret: Default::default(),
             active_filters: Default::default(),
+            syncer: Arc::new(TokioMutex::new(SyncManager::dummy())),
         };
         let result = map_http_requests(&request, context);
         let response =

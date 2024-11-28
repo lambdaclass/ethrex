@@ -7,10 +7,6 @@ mod rlp;
 mod state;
 #[cfg(test)]
 mod test_utils;
-
-use std::collections::HashSet;
-
-use db::null::NullTrieDB;
 mod trie_iter;
 mod verify_range;
 use ethereum_types::H256;
@@ -19,6 +15,7 @@ use nibbles::Nibbles;
 use node::Node;
 use node_hash::NodeHash;
 use sha3::{Digest, Keccak256};
+use std::collections::HashSet;
 
 #[cfg(feature = "libmdbx")]
 pub use self::db::{libmdbx::LibmdbxTrieDB, libmdbx_dupsort::LibmdbxDupsortTrieDB};
@@ -207,7 +204,7 @@ impl Trie {
         root_node: Option<&NodeRLP>,
         other_nodes: &[NodeRLP],
     ) -> Result<Self, TrieError> {
-        let mut trie = Trie::new(Box::new(NullTrieDB));
+        let mut trie = Trie::stateless();
 
         if let Some(root_node) = root_node {
             let root_node = Node::decode_raw(root_node)?;
