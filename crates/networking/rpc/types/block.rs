@@ -17,7 +17,7 @@ pub struct RpcBlock {
     // TODO (#307): Remove TotalDifficulty.
     total_difficulty: U256,
     #[serde(flatten)]
-    header: BlockHeader,
+    pub header: BlockHeader,
     #[serde(flatten)]
     pub body: BlockBodyWrapper,
 }
