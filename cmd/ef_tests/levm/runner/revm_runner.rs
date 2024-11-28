@@ -365,6 +365,7 @@ pub fn _run_ef_test_revm(test: &EFTest) -> Result<EFTestReport, EFTestRunnerErro
     dbg!(&test.name);
     let mut ef_test_report = EFTestReport::new(
         test.name.clone(),
+        test.dir.clone(),
         test._info.generated_test_hash,
         test.fork(),
     );

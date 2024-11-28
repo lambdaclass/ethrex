@@ -22,6 +22,7 @@ pub struct EFTests(pub Vec<EFTest>);
 #[derive(Debug)]
 pub struct EFTest {
     pub name: String,
+    pub dir: String,
     pub _info: EFTestInfo,
     pub env: EFTestEnv,
     pub post: EFTestPost,

@@ -230,6 +230,7 @@ impl<'de> Deserialize<'de> for EFTests {
 
             let ef_test = EFTest {
                 name: test_name.to_owned().to_owned(),
+                dir: String::default(),
                 _info: serde_json::from_value(
                     test_data
                         .get("_info")
