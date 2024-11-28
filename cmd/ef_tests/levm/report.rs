@@ -18,7 +18,7 @@ use std::{
 };
 
 pub const LEVM_EF_TESTS_SUMMARY_SLACK_FILE_PATH: &str = "./levm_ef_tests_summary_slack.txt";
-pub const LEVM_EF_TESTS_SUMMARY_GITHUB_FILE_PATH: &str = "./levm_ef_tests_summary_slack.txt";
+pub const LEVM_EF_TESTS_SUMMARY_GITHUB_FILE_PATH: &str = "./levm_ef_tests_summary_github.txt";
 pub const EF_TESTS_CACHE_FILE_PATH: &str = "./levm_ef_tests_cache.json";
 
 pub type TestVector = (usize, usize, usize);
