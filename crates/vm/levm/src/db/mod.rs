@@ -1,9 +1,9 @@
-use crate::{
-    account::{Account, AccountInfo, StorageSlot},
-    errors::{InternalError, VMError},
-};
+use crate::account::{Account, AccountInfo, StorageSlot};
 use ethrex_core::{Address, H256, U256};
 use std::collections::HashMap;
+
+pub mod cache;
+pub use cache::CacheDB;
 
 pub trait Database {
     fn get_account_info(&self, address: Address) -> AccountInfo;
@@ -71,68 +71,5 @@ impl Database for Db {
 
     fn get_block_hash(&self, block_number: u64) -> Option<H256> {
         self.block_hashes.get(&block_number).cloned()
-    }
-}
-
-#[derive(Debug, Default, Clone, Eq, PartialEq)]
-pub struct Cache {
-    pub accounts: HashMap<Address, Account>,
-}
-
-impl Cache {
-    pub fn get_account(&self, address: Address) -> Option<&Account> {
-        self.accounts.get(&address)
-    }
-
-    pub fn get_mut_account(&mut self, address: Address) -> Option<&mut Account> {
-        self.accounts.get_mut(&address)
-    }
-
-    pub fn get_storage_slot(&self, address: Address, key: H256) -> Option<StorageSlot> {
-        self.get_account(address)?.storage.get(&key).cloned()
-    }
-
-    pub fn add_account(&mut self, address: &Address, account: &Account) {
-        self.accounts.insert(*address, account.clone());
-    }
-
-    pub fn write_account_storage(
-        &mut self,
-        address: &Address,
-        key: H256,
-        slot: StorageSlot,
-    ) -> Result<(), VMError> {
-        self.accounts
-            .get_mut(address)
-            .ok_or(VMError::Internal(
-                InternalError::AccountShouldHaveBeenCached,
-            ))?
-            .storage
-            .insert(key, slot);
-        Ok(())
-    }
-
-    // TODO: Replace nonce increments with this (currently does not have senders)
-    pub fn increment_account_nonce(&mut self, address: &Address) -> Result<(), VMError> {
-        if let Some(account) = self.accounts.get_mut(address) {
-            account.info.nonce = account
-                .info
-                .nonce
-                .checked_add(1)
-                .ok_or(VMError::Internal(InternalError::NonceOverflowed))?;
-        }
-        Ok(())
-    }
-
-    pub fn is_account_cached(&self, address: &Address) -> bool {
-        self.accounts.contains_key(address)
-    }
-
-    pub fn is_slot_cached(&self, address: &Address, key: H256) -> bool {
-        self.is_account_cached(address)
-            && self
-                .get_account(*address)
-                .map(|account| account.storage.contains_key(&key))
-                .unwrap_or(false)
     }
 }

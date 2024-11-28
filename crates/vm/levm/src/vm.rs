@@ -2,7 +2,7 @@ use crate::{
     account::{Account, StorageSlot},
     call_frame::CallFrame,
     constants::*,
-    db::{Cache, Database},
+    db::{cache, CacheDB, Database},
     environment::Environment,
     errors::{
         InternalError, OpcodeSuccess, OutOfGasError, ResultReason, TransactionReport, TxResult,
@@ -10,6 +10,7 @@ use crate::{
     },
     gas_cost,
     opcodes::Opcode,
+    AccountInfo,
 };
 use bytes::Bytes;
 use ethrex_core::{types::TxKind, Address, H256, U256};
@@ -42,8 +43,11 @@ pub struct VM {
     /// Mapping between addresses (160-bit identifiers) and account
     /// states.
     pub db: Arc<dyn Database>,
-    pub cache: Cache,
+    pub cache: CacheDB,
     pub tx_kind: TxKind,
+
+    pub touched_accounts: HashSet<Address>,
+    pub touched_storage_slots: HashMap<Address, HashSet<H256>>,
 }
 
 pub fn address_to_word(address: Address) -> U256 {
@@ -72,22 +76,25 @@ impl VM {
         value: U256,
         calldata: Bytes,
         db: Arc<dyn Database>,
-        mut cache: Cache,
+        mut cache: CacheDB,
     ) -> Result<Self, VMError> {
         // Maybe this decision should be made in an upper layer
 
         // Add sender, coinbase and recipient (in the case of a Call) to cache [https://www.evm.codes/about#access_list]
-        let sender_account_info = db.get_account_info(env.origin);
-        cache.add_account(&env.origin, &Account::from(sender_account_info.clone()));
-
-        let coinbase_account_info = db.get_account_info(env.coinbase);
-        cache.add_account(&env.coinbase, &Account::from(coinbase_account_info));
+        let mut default_touched_accounts =
+            HashSet::from_iter([env.origin, env.coinbase].iter().cloned());
 
         match to {
             TxKind::Call(address_to) => {
+                default_touched_accounts.insert(address_to);
+
                 // add address_to to cache
                 let recipient_account_info = db.get_account_info(address_to);
-                cache.add_account(&address_to, &Account::from(recipient_account_info.clone()));
+                cache::insert_account(
+                    &mut cache,
+                    address_to,
+                    Account::from(recipient_account_info.clone()),
+                );
 
                 // CALL tx
                 let initial_call_frame = CallFrame::new(
@@ -110,6 +117,8 @@ impl VM {
                     accrued_substate: Substate::default(),
                     cache,
                     tx_kind: to,
+                    touched_accounts: HashSet::new(),
+                    touched_storage_slots: HashMap::new(),
                 })
             }
             TxKind::Create => {
@@ -117,13 +126,16 @@ impl VM {
 
                 // (2)
                 let new_contract_address =
-                    VM::calculate_create_address(env.origin, sender_account_info.nonce).map_err(
-                        |_| VMError::Internal(InternalError::CouldNotComputeCreateAddress),
-                    )?; // TODO: Remove after merging the PR that removes unwraps.
+                    VM::calculate_create_address(env.origin, db.get_account_info(env.origin).nonce)
+                        .map_err(|_| {
+                            VMError::Internal(InternalError::CouldNotComputeCreateAddress)
+                        })?;
+
+                default_touched_accounts.insert(new_contract_address);
 
                 // (3)
                 let created_contract = Account::new(value, calldata.clone(), 1, HashMap::new());
-                cache.add_account(&new_contract_address, &created_contract);
+                cache::insert_account(&mut cache, new_contract_address, created_contract);
 
                 // (5)
                 let code: Bytes = calldata.clone();
@@ -148,6 +160,8 @@ impl VM {
                     accrued_substate: Substate::default(),
                     cache,
                     tx_kind: TxKind::Create,
+                    touched_accounts: default_touched_accounts,
+                    touched_storage_slots: HashMap::new(),
                 })
             }
         }
@@ -168,7 +182,7 @@ impl VM {
                 Err(e) => {
                     return TransactionReport {
                         result: TxResult::Revert(e),
-                        new_state: self.cache.accounts.clone(),
+                        new_state: self.cache.clone(),
                         gas_used: current_call_frame.gas_used.low_u64(),
                         gas_refunded: self.env.refunded_gas.low_u64(),
                         output: current_call_frame.returndata.clone(), // Bytes::new() if error is not RevertOpcode
@@ -289,7 +303,7 @@ impl VM {
                     self.call_frames.push(current_call_frame.clone());
                     return TransactionReport {
                         result: TxResult::Success,
-                        new_state: self.cache.accounts.clone(),
+                        new_state: self.cache.clone(),
                         gas_used: current_call_frame.gas_used.low_u64(),
                         gas_refunded: self.env.refunded_gas.low_u64(),
                         output: current_call_frame.returndata.clone(),
@@ -314,7 +328,7 @@ impl VM {
 
                     return TransactionReport {
                         result: TxResult::Revert(error),
-                        new_state: self.cache.accounts.clone(),
+                        new_state: self.cache.clone(),
                         gas_used: current_call_frame.gas_used.low_u64(),
                         gas_refunded: self.env.refunded_gas.low_u64(),
                         output: current_call_frame.returndata.clone(), // Bytes::new() if error is not RevertOpcode
@@ -328,7 +342,7 @@ impl VM {
 
     fn restore_state(
         &mut self,
-        backup_cache: Cache,
+        backup_cache: CacheDB,
         backup_substate: Substate,
         backup_refunded_gas: U256,
     ) {
@@ -374,28 +388,19 @@ impl VM {
             }
         }
 
-        let origin = self.env.origin;
+        let (sender_account_info, _address_was_cold) = self.access_account(self.env.origin);
 
-        let mut sender_account = self.get_account(&origin);
-
-        // See if it's raised in upper layers
-        sender_account.info.nonce = sender_account
-            .info
-            .nonce
-            .checked_add(1)
-            .ok_or(VMError::Internal(InternalError::NonceOverflowed))?;
+        self.increment_account_nonce(self.env.origin)?;
 
         // (4)
-        if sender_account.has_code()? {
+        if sender_account_info.has_code() {
             return Err(VMError::SenderAccountShouldNotHaveBytecode);
         }
 
         // (6)
-        if sender_account.info.balance < call_frame.msg_value {
+        if sender_account_info.balance < call_frame.msg_value {
             return Err(VMError::SenderBalanceShouldContainTransferValue);
         }
-
-        self.cache.add_account(&origin, &sender_account);
 
         // (7)
         if self.env.gas_price < self.env.base_fee_per_gas {
@@ -418,18 +423,10 @@ impl VM {
             ))?
             .clone();
 
-        let sender = call_frame.msg_sender;
-        let mut sender_account = self.get_account(&sender);
-
-        sender_account.info.nonce = sender_account
-            .info
-            .nonce
-            .checked_sub(1)
-            .ok_or(VMError::Internal(InternalError::NonceUnderflowed))?;
+        self.decrement_account_nonce(call_frame.msg_sender)?;
 
         let new_contract_address = call_frame.to;
-
-        if self.cache.accounts.remove(&new_contract_address).is_none() {
+        if cache::remove_account(&mut self.cache, &new_contract_address).is_none() {
             return Err(VMError::AddressDoesNotMatchAnAccount); // Should not be this error
         }
 
@@ -462,14 +459,6 @@ impl VM {
             .clone();
 
         let sender = initial_call_frame.msg_sender;
-
-        let initial_call_frame = self
-            .call_frames
-            .last()
-            .ok_or(VMError::Internal(
-                InternalError::CouldNotAccessLastCallframe,
-            ))?
-            .clone();
 
         let calldata_cost =
             gas_cost::tx_calldata(&initial_call_frame.calldata).map_err(VMError::OutOfGas)?;
@@ -527,48 +516,25 @@ impl VM {
 
             let contract_address = initial_call_frame.to;
 
-            let mut created_contract = self.get_account(&contract_address);
-
-            created_contract.info.bytecode = contract_code;
-
-            self.cache.add_account(&contract_address, &created_contract);
+            self.update_account_bytecode(contract_address, contract_code)?;
         }
 
-        let mut sender_account = self.get_account(&sender);
         let coinbase_address = self.env.coinbase;
 
-        sender_account.info.balance = sender_account
-            .info
-            .balance
-            .checked_sub(
-                U256::from(report.gas_used)
-                    .checked_mul(self.env.gas_price)
-                    .ok_or(VMError::GasLimitPriceProductOverflow)?,
-            )
-            .ok_or(VMError::BalanceUnderflow)?;
+        self.decrease_account_balance(
+            sender,
+            U256::from(report.gas_used)
+                .checked_mul(self.env.gas_price)
+                .ok_or(VMError::GasLimitPriceProductOverflow)?,
+        )?;
 
         let receiver_address = initial_call_frame.to;
-        let mut receiver_account = self.get_account(&receiver_address);
         // If execution was successful we want to transfer value from sender to receiver
         if report.is_success() {
             // Subtract to the caller the gas sent
-            sender_account.info.balance = sender_account
-                .info
-                .balance
-                .checked_sub(initial_call_frame.msg_value)
-                .ok_or(VMError::BalanceUnderflow)?;
-            receiver_account.info.balance = receiver_account
-                .info
-                .balance
-                .checked_add(initial_call_frame.msg_value)
-                .ok_or(VMError::BalanceUnderflow)?;
+            self.decrease_account_balance(sender, initial_call_frame.msg_value)?;
+            self.increase_account_balance(receiver_address, initial_call_frame.msg_value)?;
         }
-
-        // Note: This is commented because it's used for debugging purposes in development.
-        // dbg!(&report.gas_refunded);
-
-        self.cache.add_account(&sender, &sender_account);
-        self.cache.add_account(&receiver_address, &receiver_account);
 
         // Send coinbase fee
         let priority_fee_per_gas = self
@@ -580,16 +546,9 @@ impl VM {
             .checked_mul(priority_fee_per_gas)
             .ok_or(VMError::BalanceOverflow)?;
 
-        let mut coinbase_account = self.get_account(&coinbase_address);
-        coinbase_account.info.balance = coinbase_account
-            .info
-            .balance
-            .checked_add(coinbase_fee)
-            .ok_or(VMError::BalanceOverflow)?;
+        self.increase_account_balance(coinbase_address, coinbase_fee)?;
 
-        self.cache.add_account(&coinbase_address, &coinbase_account);
-
-        report.new_state.clone_from(&self.cache.accounts);
+        report.new_state.clone_from(&self.cache);
 
         Ok(report)
     }
@@ -617,30 +576,20 @@ impl VM {
         ret_offset: usize,
         ret_size: usize,
     ) -> Result<OpcodeSuccess, VMError> {
-        let mut sender_account = self.get_account(&current_call_frame.msg_sender);
+        let (sender_account_info, _address_was_cold) =
+            self.access_account(current_call_frame.msg_sender);
 
-        if sender_account.info.balance < value {
+        if sender_account_info.balance < value {
             current_call_frame.stack.push(U256::from(REVERT_FOR_CALL))?;
             return Ok(OpcodeSuccess::Continue);
         }
 
-        let mut recipient_account = self.get_account(&to);
+        self.decrease_account_balance(current_call_frame.msg_sender, value)?;
+        self.increase_account_balance(to, value)?;
 
-        // transfer value
-        sender_account.info.balance = sender_account
-            .info
-            .balance
-            .checked_sub(value)
-            .ok_or(VMError::BalanceUnderflow)?;
-        recipient_account.info.balance = recipient_account
-            .info
-            .balance
-            .checked_add(value)
-            .ok_or(VMError::BalanceOverflow)?;
+        let (code_account_info, _address_was_cold) = self.access_account(code_address);
 
-        let code_address_bytecode = self.get_account(&code_address).info.bytecode;
-
-        if code_address_bytecode.is_empty() {
+        if code_account_info.bytecode.is_empty() {
             current_call_frame
                 .stack
                 .push(U256::from(SUCCESS_FOR_CALL))?;
@@ -675,7 +624,7 @@ impl VM {
             msg_sender,
             to,
             code_address,
-            code_address_bytecode,
+            code_account_info.bytecode,
             value,
             calldata,
             is_static,
@@ -694,12 +643,6 @@ impl VM {
         current_call_frame.sub_return_data_offset = ret_offset;
         current_call_frame.sub_return_data_size = ret_size;
 
-        // Update sender account and recipient in cache
-        self.cache
-            .add_account(&current_call_frame.msg_sender, &sender_account);
-        self.cache.add_account(&to, &recipient_account);
-
-        // self.call_frames.push(new_call_frame.clone());
         let tx_report = self.execute(&mut new_call_frame);
 
         // Add gas used by the sub-context to the current one after it's execution.
@@ -808,29 +751,25 @@ impl VM {
             return Ok(OpcodeSuccess::Result(ResultReason::Revert));
         }
 
-        if !self.cache.is_account_cached(&current_call_frame.msg_sender) {
-            self.cache_from_db(&current_call_frame.msg_sender);
-        };
+        let (sender_account_info, _sender_address_was_cold) =
+            self.access_account(current_call_frame.msg_sender);
 
-        let sender_account = self
-            .cache
-            .get_mut_account(current_call_frame.msg_sender)
-            .ok_or(VMError::Internal(InternalError::AccountNotFound))?;
-
-        if sender_account.info.balance < value_in_wei_to_send {
+        if sender_account_info.balance < value_in_wei_to_send {
             current_call_frame
                 .stack
                 .push(U256::from(REVERT_FOR_CREATE))?;
             return Ok(OpcodeSuccess::Result(ResultReason::Revert));
         }
 
-        let Some(new_nonce) = sender_account.info.nonce.checked_add(1) else {
-            current_call_frame
-                .stack
-                .push(U256::from(REVERT_FOR_CREATE))?;
-            return Ok(OpcodeSuccess::Result(ResultReason::Revert));
+        let new_nonce = match self.increment_account_nonce(current_call_frame.msg_sender) {
+            Ok(nonce) => nonce,
+            Err(_) => {
+                current_call_frame
+                    .stack
+                    .push(U256::from(REVERT_FOR_CREATE))?;
+                return Ok(OpcodeSuccess::Result(ResultReason::Revert));
+            }
         };
-        sender_account.info.nonce = new_nonce;
 
         let code_offset_in_memory = code_offset_in_memory
             .try_into()
@@ -844,13 +783,11 @@ impl VM {
 
         let new_address = match salt {
             Some(salt) => Self::calculate_create2_address(current_call_frame.to, &code, salt)?,
-            None => Self::calculate_create_address(
-                current_call_frame.msg_sender,
-                sender_account.info.nonce,
-            )?,
+            None => Self::calculate_create_address(current_call_frame.msg_sender, new_nonce)?,
         };
 
-        if self.cache.accounts.contains_key(&new_address) {
+        // FIXME: Shouldn't we check against the db?
+        if cache::is_account_cached(&self.cache, &new_address) {
             current_call_frame
                 .stack
                 .push(U256::from(REVERT_FOR_CREATE))?;
@@ -858,7 +795,7 @@ impl VM {
         }
 
         let new_account = Account::new(U256::zero(), code.clone(), 0, Default::default());
-        self.cache.add_account(&new_address, &new_account);
+        cache::insert_account(&mut self.cache, new_address, new_account);
 
         current_call_frame
             .stack
@@ -866,7 +803,7 @@ impl VM {
 
         self.generic_call(
             current_call_frame,
-            U256::MAX,
+            U256::MAX, // FIXME: Why we send U256::MAX here?
             value_in_wei_to_send,
             current_call_frame.msg_sender,
             new_address,
@@ -897,7 +834,7 @@ impl VM {
         let potential_consumed_gas = current_call_frame
             .gas_used
             .checked_add(gas)
-            .ok_or(VMError::OutOfGas(OutOfGasError::ConsumedGasOverflow))?;
+            .ok_or(OutOfGasError::ConsumedGasOverflow)?;
         if potential_consumed_gas > current_call_frame.gas_limit {
             return Err(VMError::OutOfGas(OutOfGasError::MaxGasLimitExceeded));
         }
@@ -907,52 +844,172 @@ impl VM {
             .env
             .consumed_gas
             .checked_add(gas)
-            .ok_or(VMError::OutOfGas(OutOfGasError::ConsumedGasOverflow))?;
+            .ok_or(OutOfGasError::ConsumedGasOverflow)?;
 
         Ok(())
     }
 
-    pub fn cache_from_db(&mut self, address: &Address) {
-        let acc_info = self.db.get_account_info(*address);
-        self.cache.add_account(
+    pub fn cache_from_db(&mut self, address: Address) {
+        let acc_info = self.db.get_account_info(address);
+        cache::insert_account(
+            &mut self.cache,
             address,
-            &Account {
+            Account {
                 info: acc_info.clone(),
                 storage: HashMap::new(),
             },
         );
     }
 
-    /// Gets account, first checking the cache and then the database (caching in the second case)
-    pub fn get_account(&mut self, address: &Address) -> Account {
-        match self.cache.get_account(*address) {
-            Some(acc) => acc.clone(),
-            None => {
-                let acc_info = self.db.get_account_info(*address);
-                let acc = Account {
-                    info: acc_info,
-                    storage: HashMap::new(),
-                };
-                self.cache.add_account(address, &acc);
-                acc
-            }
-        }
+    /// Accesses to an account's information.
+    ///
+    /// Accessed accounts are stored in the `touched_accounts` set.
+    /// Accessed accounts take place in some gas cost computation.
+    #[must_use]
+    pub fn access_account(&mut self, address: Address) -> (AccountInfo, bool) {
+        let address_was_cold = self.touched_accounts.insert(address);
+        let account = match cache::get_account(&self.cache, &address) {
+            Some(account) => account.info.clone(),
+            None => self.db.get_account_info(address),
+        };
+        (account, address_was_cold)
     }
 
-    /// Gets storage slot, first checking the cache and then the database (caching in the second case)
-    pub fn get_storage_slot(&mut self, address: &Address, key: H256) -> StorageSlot {
-        match self.cache.get_storage_slot(*address, key) {
-            Some(slot) => slot,
+    /// Accesses to an account's storage slot.
+    ///
+    /// Accessed storage slots are stored in the `touched_storage_slots` set.
+    /// Accessed storage slots take place in some gas cost computation.
+    #[must_use]
+    pub fn access_storage_slot(&mut self, address: Address, key: H256) -> (StorageSlot, bool) {
+        let storage_slot_was_cold = self
+            .touched_storage_slots
+            .entry(address)
+            .or_default()
+            .insert(key);
+        let storage_slot = match cache::get_account(&self.cache, &address) {
+            Some(account) => match account.storage.get(&key) {
+                Some(storage_slot) => storage_slot.clone(),
+                None => {
+                    let value = self.db.get_storage_slot(address, key);
+                    StorageSlot {
+                        original_value: value,
+                        current_value: value,
+                    }
+                }
+            },
             None => {
-                let value = self.db.get_storage_slot(*address, key);
-                let slot = StorageSlot {
+                let value = self.db.get_storage_slot(address, key);
+                StorageSlot {
                     original_value: value,
                     current_value: value,
+                }
+            }
+        };
+        (storage_slot, storage_slot_was_cold)
+    }
+
+    pub fn increase_account_balance(
+        &mut self,
+        address: Address,
+        increase: U256,
+    ) -> Result<(), VMError> {
+        let account = self.get_account_mut(address)?;
+        account.info.balance = account
+            .info
+            .balance
+            .checked_add(increase)
+            .ok_or(VMError::BalanceOverflow)?;
+        Ok(())
+    }
+
+    pub fn decrease_account_balance(
+        &mut self,
+        address: Address,
+        decrease: U256,
+    ) -> Result<(), VMError> {
+        let account = self.get_account_mut(address)?;
+        account.info.balance = account
+            .info
+            .balance
+            .checked_sub(decrease)
+            .ok_or(VMError::BalanceUnderflow)?;
+        Ok(())
+    }
+
+    pub fn increment_account_nonce(&mut self, address: Address) -> Result<u64, VMError> {
+        let account = self.get_account_mut(address)?;
+        account.info.nonce = account
+            .info
+            .nonce
+            .checked_add(1)
+            .ok_or(VMError::NonceOverflow)?;
+        Ok(account.info.nonce)
+    }
+
+    pub fn decrement_account_nonce(&mut self, address: Address) -> Result<(), VMError> {
+        let account = self.get_account_mut(address)?;
+        account.info.nonce = account
+            .info
+            .nonce
+            .checked_sub(1)
+            .ok_or(VMError::NonceUnderflow)?;
+        Ok(())
+    }
+
+    pub fn update_account_bytecode(
+        &mut self,
+        address: Address,
+        new_bytecode: Bytes,
+    ) -> Result<(), VMError> {
+        let account = self.get_account_mut(address)?;
+        account.info.bytecode = new_bytecode;
+        Ok(())
+    }
+
+    pub fn update_account_storage(
+        &mut self,
+        address: Address,
+        key: H256,
+        new_value: U256,
+    ) -> Result<(), VMError> {
+        let account = self.get_account_mut(address)?;
+        let account_original_storage_slot_value = account
+            .storage
+            .get(&key)
+            .map_or(U256::zero(), |slot| slot.original_value);
+        let slot = account.storage.entry(key).or_insert(StorageSlot {
+            original_value: account_original_storage_slot_value,
+            current_value: new_value,
+        });
+        slot.current_value = new_value;
+        Ok(())
+    }
+
+    pub fn get_account_mut(&mut self, address: Address) -> Result<&mut Account, VMError> {
+        if !cache::is_account_cached(&self.cache, &address) {
+            let account_info = self.db.get_account_info(address);
+            let account = Account {
+                info: account_info,
+                storage: HashMap::new(),
+            };
+            cache::insert_account(&mut self.cache, address, account.clone());
+        }
+        cache::get_account_mut(&mut self.cache, &address)
+            .ok_or(VMError::Internal(InternalError::AccountNotFound))
+    }
+
+    /// Gets account, first checking the cache and then the database (caching in the second case)
+    pub fn get_account(&mut self, address: Address) -> Account {
+        match cache::get_account(&self.cache, &address) {
+            Some(acc) => acc.clone(),
+            None => {
+                let account_info = self.db.get_account_info(address);
+                let account = Account {
+                    info: account_info,
+                    storage: HashMap::new(),
                 };
-                let mut acc = self.get_account(address);
-                acc.storage.insert(key, slot.clone());
-                self.cache.add_account(address, &acc);
-                slot
+                cache::insert_account(&mut self.cache, address, account.clone());
+                account
             }
         }
     }

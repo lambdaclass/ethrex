@@ -1,8 +1,8 @@
 use crate::{
     call_frame::CallFrame,
-    constants::{COLD_STORAGE_ACCESS_COST, WORD_SIZE},
-    errors::OutOfGasError,
-    StorageSlot,
+    constants::{WORD_SIZE, WORD_SIZE_IN_BYTES},
+    errors::{InternalError, OutOfGasError, VMError},
+    memory, StorageSlot,
 };
 use bytes::Bytes;
 /// Contains the gas costs of the EVM instructions (in wei)
@@ -84,9 +84,60 @@ pub const CODESIZE: U256 = U256([2, 0, 0, 0]);
 pub const CODECOPY_STATIC: U256 = U256([3, 0, 0, 0]);
 pub const CODECOPY_DYNAMIC_BASE: U256 = U256([3, 0, 0, 0]);
 pub const GASPRICE: U256 = U256([2, 0, 0, 0]);
-pub const EXTCODECOPY_DYNAMIC_BASE: U256 = U256([3, 0, 0, 0]);
 pub const SELFDESTRUCT_STATIC: U256 = U256([5000, 0, 0, 0]);
 pub const SELFDESTRUCT_DYNAMIC: U256 = U256([25000, 0, 0, 0]);
+
+pub const DEFAULT_STATIC: U256 = U256::zero();
+pub const DEFAULT_COLD_DYNAMIC: U256 = U256([2600, 0, 0, 0]);
+pub const DEFAULT_WARM_DYNAMIC: U256 = U256([100, 0, 0, 0]);
+
+pub const SLOAD_STATIC: U256 = U256::zero();
+pub const SLOAD_COLD_DYNAMIC: U256 = U256([2100, 0, 0, 0]);
+pub const SLOAD_WARM_DYNAMIC: U256 = U256([100, 0, 0, 0]);
+
+pub const SSTORE_STATIC: U256 = U256::zero();
+pub const SSTORE_COLD_DYNAMIC: U256 = U256([2100, 0, 0, 0]);
+pub const SSTORE_DEFAULT_DYNAMIC: U256 = U256([100, 0, 0, 0]);
+pub const SSTORE_STORAGE_CREATION: U256 = U256([20000, 0, 0, 0]);
+pub const SSTORE_STORAGE_MODIFICATION: U256 = U256([5000, 0, 0, 0]);
+
+pub const BALANCE_STATIC: U256 = DEFAULT_STATIC;
+pub const BALANCE_COLD_DYNAMIC: U256 = DEFAULT_COLD_DYNAMIC;
+pub const BALANCE_WARM_DYNAMIC: U256 = DEFAULT_WARM_DYNAMIC;
+
+pub const EXTCODESIZE_STATIC: U256 = DEFAULT_STATIC;
+pub const EXTCODESIZE_COLD_DYNAMIC: U256 = DEFAULT_COLD_DYNAMIC;
+pub const EXTCODESIZE_WARM_DYNAMIC: U256 = DEFAULT_WARM_DYNAMIC;
+
+pub const EXTCODEHASH_STATIC: U256 = DEFAULT_STATIC;
+pub const EXTCODEHASH_COLD_DYNAMIC: U256 = DEFAULT_COLD_DYNAMIC;
+pub const EXTCODEHASH_WARM_DYNAMIC: U256 = DEFAULT_WARM_DYNAMIC;
+
+pub const EXTCODECOPY_STATIC: U256 = U256::zero();
+pub const EXTCODECOPY_DYNAMIC_BASE: U256 = U256([3, 0, 0, 0]);
+pub const EXTCODECOPY_COLD_DYNAMIC: U256 = DEFAULT_COLD_DYNAMIC;
+pub const EXTCODECOPY_WARM_DYNAMIC: U256 = DEFAULT_WARM_DYNAMIC;
+
+pub const CALL_STATIC: U256 = DEFAULT_STATIC;
+pub const CALL_COLD_DYNAMIC: U256 = DEFAULT_COLD_DYNAMIC;
+pub const CALL_WARM_DYNAMIC: U256 = DEFAULT_WARM_DYNAMIC;
+pub const CALL_POSITIVE_VALUE: U256 = U256([9000, 0, 0, 0]);
+pub const CALL_POSITIVE_VALUE_STIPEND: U256 = U256([2300, 0, 0, 0]);
+pub const CALL_TO_EMPTY_ACCOUNT: U256 = U256([25000, 0, 0, 0]);
+
+pub const CALLCODE_STATIC: U256 = DEFAULT_STATIC;
+pub const CALLCODE_COLD_DYNAMIC: U256 = DEFAULT_COLD_DYNAMIC;
+pub const CALLCODE_WARM_DYNAMIC: U256 = DEFAULT_WARM_DYNAMIC;
+pub const CALLCODE_POSITIVE_VALUE: U256 = U256([9000, 0, 0, 0]);
+pub const CALLCODE_POSITIVE_VALUE_STIPEND: U256 = U256([2300, 0, 0, 0]);
+
+pub const DELEGATECALL_STATIC: U256 = DEFAULT_STATIC;
+pub const DELEGATECALL_COLD_DYNAMIC: U256 = DEFAULT_COLD_DYNAMIC;
+pub const DELEGATECALL_WARM_DYNAMIC: U256 = DEFAULT_WARM_DYNAMIC;
+
+pub const STATICCALL_STATIC: U256 = DEFAULT_STATIC;
+pub const STATICCALL_COLD_DYNAMIC: U256 = DEFAULT_COLD_DYNAMIC;
+pub const STATICCALL_WARM_DYNAMIC: U256 = DEFAULT_WARM_DYNAMIC;
 
 // Costs in gas for call opcodes (in wei)
 pub const WARM_ADDRESS_ACCESS_COST: U256 = U256([100, 0, 0, 0]);
@@ -114,7 +165,7 @@ pub fn exp(exponent_bits: u64) -> Result<U256, OutOfGasError> {
 }
 
 pub fn calldatacopy(
-    current_call_frame: &mut CallFrame,
+    current_call_frame: &CallFrame,
     size: usize,
     dest_offset: usize,
 ) -> Result<U256, OutOfGasError> {
@@ -128,7 +179,7 @@ pub fn calldatacopy(
 }
 
 pub fn codecopy(
-    current_call_frame: &mut CallFrame,
+    current_call_frame: &CallFrame,
     size: usize,
     dest_offset: usize,
 ) -> Result<U256, OutOfGasError> {
@@ -141,31 +192,8 @@ pub fn codecopy(
     )
 }
 
-pub fn extcodecopy(
-    current_call_frame: &mut CallFrame,
-    size: usize,
-    dest_offset: usize,
-    is_cached: bool,
-) -> Result<U256, OutOfGasError> {
-    let address_access_cost = if is_cached {
-        WARM_ADDRESS_ACCESS_COST
-    } else {
-        COLD_ADDRESS_ACCESS_COST
-    };
-
-    // address_access_cost is not a static cost, but there's no static
-    // cost and there is the address_access_cost
-    copy_behavior(
-        EXTCODECOPY_DYNAMIC_BASE,
-        address_access_cost,
-        current_call_frame,
-        size,
-        dest_offset,
-    )
-}
-
 pub fn returndatacopy(
-    current_call_frame: &mut CallFrame,
+    current_call_frame: &CallFrame,
     size: usize,
     dest_offset: usize,
 ) -> Result<U256, OutOfGasError> {
@@ -181,7 +209,7 @@ pub fn returndatacopy(
 fn copy_behavior(
     dynamic_base: U256,
     static_cost: U256,
-    current_call_frame: &mut CallFrame,
+    current_call_frame: &CallFrame,
     size: usize,
     offset: usize,
 ) -> Result<U256, OutOfGasError> {
@@ -208,7 +236,7 @@ fn copy_behavior(
 }
 
 pub fn keccak256(
-    current_call_frame: &mut CallFrame,
+    current_call_frame: &CallFrame,
     size: usize,
     offset: usize,
 ) -> Result<U256, OutOfGasError> {
@@ -222,7 +250,7 @@ pub fn keccak256(
 }
 
 pub fn log(
-    current_call_frame: &mut CallFrame,
+    current_call_frame: &CallFrame,
     size: usize,
     offset: usize,
     number_of_topics: u8,
@@ -248,20 +276,20 @@ pub fn log(
         .ok_or(OutOfGasError::GasCostOverflow)
 }
 
-pub fn mload(current_call_frame: &mut CallFrame, offset: usize) -> Result<U256, OutOfGasError> {
+pub fn mload(current_call_frame: &CallFrame, offset: usize) -> Result<U256, OutOfGasError> {
     mem_expansion_behavior(current_call_frame, offset, WORD_SIZE, MLOAD_STATIC)
 }
 
-pub fn mstore(current_call_frame: &mut CallFrame, offset: usize) -> Result<U256, OutOfGasError> {
+pub fn mstore(current_call_frame: &CallFrame, offset: usize) -> Result<U256, OutOfGasError> {
     mem_expansion_behavior(current_call_frame, offset, WORD_SIZE, MSTORE_STATIC)
 }
 
-pub fn mstore8(current_call_frame: &mut CallFrame, offset: usize) -> Result<U256, OutOfGasError> {
+pub fn mstore8(current_call_frame: &CallFrame, offset: usize) -> Result<U256, OutOfGasError> {
     mem_expansion_behavior(current_call_frame, offset, 1, MSTORE8_STATIC)
 }
 
 fn mem_expansion_behavior(
-    current_call_frame: &mut CallFrame,
+    current_call_frame: &CallFrame,
     offset: usize,
     offset_add: usize,
     static_cost: U256,
@@ -276,49 +304,52 @@ fn mem_expansion_behavior(
         .ok_or(OutOfGasError::GasCostOverflow)
 }
 
-pub fn sload(is_cached: bool) -> U256 {
-    if is_cached {
-        // If slot is warm (cached) add 100 to base_dynamic_gas
-        WARM_ADDRESS_ACCESS_COST
+pub fn sload(storage_slot_was_cold: bool) -> Result<U256, VMError> {
+    let static_gas = SLOAD_STATIC;
+
+    let dynamic_cost = if storage_slot_was_cold {
+        SLOAD_COLD_DYNAMIC
     } else {
-        // If slot is cold (not cached) add 2100 to base_dynamic_gas
-        COLD_STORAGE_ACCESS_COST
-    }
+        SLOAD_WARM_DYNAMIC
+    };
+
+    Ok(static_gas
+        .checked_add(dynamic_cost)
+        .ok_or(OutOfGasError::GasCostOverflow)?)
 }
 
 pub fn sstore(
-    value: U256,
-    is_cached: bool,
     storage_slot: &StorageSlot,
-) -> Result<U256, OutOfGasError> {
-    let mut base_dynamic_gas: U256 = U256::zero();
+    new_value: U256,
+    storage_slot_was_cold: bool,
+) -> Result<U256, VMError> {
+    let static_gas = SSTORE_STATIC;
 
-    if !is_cached {
-        // If slot is cold 2100 is added to base_dynamic_gas
-        base_dynamic_gas = base_dynamic_gas
-            .checked_add(U256::from(2100))
-            .ok_or(OutOfGasError::GasCostOverflow)?;
-    };
-
-    let sstore_gas_cost = if value == storage_slot.current_value {
-        U256::from(100)
+    let mut base_dynamic_gas = if new_value == storage_slot.current_value {
+        SSTORE_DEFAULT_DYNAMIC
     } else if storage_slot.current_value == storage_slot.original_value {
-        if storage_slot.original_value == U256::zero() {
-            U256::from(20000)
+        if storage_slot.original_value.is_zero() {
+            SSTORE_STORAGE_CREATION
         } else {
-            U256::from(2900)
+            SSTORE_STORAGE_MODIFICATION
         }
     } else {
-        U256::from(100)
+        SSTORE_DEFAULT_DYNAMIC
     };
 
-    base_dynamic_gas
-        .checked_add(sstore_gas_cost)
-        .ok_or(OutOfGasError::GasCostOverflow)
+    if storage_slot_was_cold {
+        base_dynamic_gas = base_dynamic_gas
+            .checked_add(SSTORE_COLD_DYNAMIC)
+            .ok_or(OutOfGasError::GasCostOverflow)?;
+    }
+
+    Ok(static_gas
+        .checked_add(base_dynamic_gas)
+        .ok_or(OutOfGasError::GasCostOverflow)?)
 }
 
 pub fn mcopy(
-    current_call_frame: &mut CallFrame,
+    current_call_frame: &CallFrame,
     size: usize,
     src_offset: usize,
     dest_offset: usize,
@@ -349,152 +380,8 @@ pub fn mcopy(
         .ok_or(OutOfGasError::GasCostOverflow)
 }
 
-#[allow(clippy::too_many_arguments)]
-pub fn call(
-    current_call_frame: &mut CallFrame,
-    args_size: usize,
-    args_offset: usize,
-    ret_size: usize,
-    ret_offset: usize,
-    value: U256,
-    is_cached: bool,
-    account_is_empty: bool,
-) -> Result<U256, OutOfGasError> {
-    let memory_byte_size = args_size
-        .checked_add(args_offset)
-        .ok_or(OutOfGasError::GasCostOverflow)?
-        .max(
-            ret_size
-                .checked_add(ret_offset)
-                .ok_or(OutOfGasError::GasCostOverflow)?,
-        );
-    let memory_expansion_cost = current_call_frame.memory.expansion_cost(memory_byte_size)?;
-
-    let positive_value_cost = if !value.is_zero() {
-        NON_ZERO_VALUE_COST
-            .checked_add(BASIC_FALLBACK_FUNCTION_STIPEND)
-            .ok_or(OutOfGasError::GasCostOverflow)?
-    } else {
-        U256::zero()
-    };
-
-    let address_access_cost = if !is_cached {
-        COLD_ADDRESS_ACCESS_COST
-    } else {
-        WARM_ADDRESS_ACCESS_COST
-    };
-
-    let value_to_empty_account_cost = if !value.is_zero() && account_is_empty {
-        VALUE_TO_EMPTY_ACCOUNT_COST
-    } else {
-        U256::zero()
-    };
-
-    memory_expansion_cost
-        .checked_add(address_access_cost)
-        .ok_or(OutOfGasError::GasCostOverflow)?
-        .checked_add(positive_value_cost)
-        .ok_or(OutOfGasError::GasCostOverflow)?
-        .checked_add(value_to_empty_account_cost)
-        .ok_or(OutOfGasError::GasCostOverflow)
-}
-
-pub fn callcode(
-    current_call_frame: &mut CallFrame,
-    args_size: usize,
-    args_offset: usize,
-    ret_size: usize,
-    ret_offset: usize,
-    value: U256,
-    is_cached: bool,
-) -> Result<U256, OutOfGasError> {
-    let transfer_cost = if value == U256::zero() {
-        U256::zero()
-    } else {
-        NON_ZERO_VALUE_COST
-        // Should also add BASIC_FALLBACK_FUNCTION_STIPEND??
-        // See https://www.evm.codes/?fork=cancun#f2 and call impl
-    };
-
-    compute_gas_call(
-        current_call_frame,
-        args_size,
-        args_offset,
-        ret_size,
-        ret_offset,
-        is_cached,
-    )?
-    .checked_add(transfer_cost)
-    .ok_or(OutOfGasError::GasCostOverflow)
-}
-
-pub fn delegatecall(
-    current_call_frame: &mut CallFrame,
-    args_size: usize,
-    args_offset: usize,
-    ret_size: usize,
-    ret_offset: usize,
-    is_cached: bool,
-) -> Result<U256, OutOfGasError> {
-    compute_gas_call(
-        current_call_frame,
-        args_size,
-        args_offset,
-        ret_size,
-        ret_offset,
-        is_cached,
-    )
-}
-
-pub fn staticcall(
-    current_call_frame: &mut CallFrame,
-    args_size: usize,
-    args_offset: usize,
-    ret_size: usize,
-    ret_offset: usize,
-    is_cached: bool,
-) -> Result<U256, OutOfGasError> {
-    compute_gas_call(
-        current_call_frame,
-        args_size,
-        args_offset,
-        ret_size,
-        ret_offset,
-        is_cached,
-    )
-}
-
-fn compute_gas_call(
-    current_call_frame: &mut CallFrame,
-    args_size: usize,
-    args_offset: usize,
-    ret_size: usize,
-    ret_offset: usize,
-    is_cached: bool,
-) -> Result<U256, OutOfGasError> {
-    let memory_byte_size = args_offset
-        .checked_add(args_size)
-        .and_then(|src_sum| {
-            ret_offset
-                .checked_add(ret_size)
-                .map(|dest_sum| src_sum.max(dest_sum))
-        })
-        .ok_or(OutOfGasError::GasCostOverflow)?;
-    let memory_expansion_cost = current_call_frame.memory.expansion_cost(memory_byte_size)?;
-
-    let access_cost = if is_cached {
-        WARM_ADDRESS_ACCESS_COST
-    } else {
-        COLD_ADDRESS_ACCESS_COST
-    };
-
-    memory_expansion_cost
-        .checked_add(access_cost)
-        .ok_or(OutOfGasError::GasCostOverflow)
-}
-
 pub fn create(
-    current_call_frame: &mut CallFrame,
+    current_call_frame: &CallFrame,
     code_offset_in_memory: U256,
     code_size_in_memory: U256,
 ) -> Result<U256, OutOfGasError> {
@@ -507,7 +394,7 @@ pub fn create(
 }
 
 pub fn create_2(
-    current_call_frame: &mut CallFrame,
+    current_call_frame: &CallFrame,
     code_offset_in_memory: U256,
     code_size_in_memory: U256,
 ) -> Result<U256, OutOfGasError> {
@@ -520,7 +407,7 @@ pub fn create_2(
 }
 
 fn compute_gas_create(
-    current_call_frame: &mut CallFrame,
+    current_call_frame: &CallFrame,
     code_offset_in_memory: U256,
     code_size_in_memory: U256,
     is_create_2: bool,
@@ -566,10 +453,10 @@ fn compute_gas_create(
         .ok_or(OutOfGasError::CreationCostIsTooHigh)
 }
 
-pub fn selfdestruct(is_cached: bool, account_is_empty: bool) -> Result<U256, OutOfGasError> {
+pub fn selfdestruct(address_was_cold: bool, account_is_empty: bool) -> Result<U256, OutOfGasError> {
     let mut gas_cost = SELFDESTRUCT_STATIC;
 
-    if !is_cached {
+    if address_was_cold {
         gas_cost = gas_cost
             .checked_add(COLD_ADDRESS_ACCESS_COST)
             .ok_or(OutOfGasError::GasCostOverflow)?;
@@ -617,4 +504,228 @@ pub fn tx_creation(code_length: u64, number_of_words: u64) -> Result<u64, OutOfG
     creation_cost
         .checked_add(words_cost)
         .ok_or(OutOfGasError::GasUsedOverflow)
+}
+
+fn address_access_cost(
+    address_was_cold: bool,
+    static_cost: U256,
+    cold_dynamic_cost: U256,
+    warm_dynamic_cost: U256,
+) -> Result<U256, VMError> {
+    let static_gas = static_cost;
+    let dynamic_cost: U256 = if address_was_cold {
+        cold_dynamic_cost
+    } else {
+        warm_dynamic_cost
+    };
+
+    Ok(static_gas
+        .checked_add(dynamic_cost)
+        .ok_or(OutOfGasError::GasCostOverflow)?)
+}
+
+fn memory_access_cost(
+    new_memory_size: U256,
+    current_memory_size: U256,
+    static_cost: U256,
+    dynamic_base_cost: U256,
+) -> Result<U256, VMError> {
+    let minimum_word_size = new_memory_size
+        .checked_add(
+            WORD_SIZE_IN_BYTES
+                .checked_sub(U256::one())
+                .ok_or(InternalError::ArithmeticOperationUnderflow)?,
+        )
+        .ok_or(OutOfGasError::MemoryExpansionCostOverflow)?
+        .checked_div(WORD_SIZE_IN_BYTES)
+        .ok_or(OutOfGasError::MemoryExpansionCostOverflow)?;
+
+    let static_gas = static_cost;
+    let dynamic_cost = dynamic_base_cost
+        .checked_mul(minimum_word_size)
+        .ok_or(OutOfGasError::MemoryExpansionCostOverflow)?
+        .checked_add(memory::expansion_cost(
+            new_memory_size,
+            current_memory_size,
+        )?)
+        .ok_or(OutOfGasError::MemoryExpansionCostOverflow)?;
+
+    Ok(static_gas
+        .checked_add(dynamic_cost)
+        .ok_or(OutOfGasError::GasCostOverflow)?)
+}
+
+pub fn balance(address_was_cold: bool) -> Result<U256, VMError> {
+    address_access_cost(
+        address_was_cold,
+        BALANCE_STATIC,
+        BALANCE_COLD_DYNAMIC,
+        BALANCE_WARM_DYNAMIC,
+    )
+}
+
+pub fn extcodesize(address_was_cold: bool) -> Result<U256, VMError> {
+    address_access_cost(
+        address_was_cold,
+        EXTCODESIZE_STATIC,
+        EXTCODESIZE_COLD_DYNAMIC,
+        EXTCODESIZE_WARM_DYNAMIC,
+    )
+}
+
+pub fn extcodecopy(
+    new_memory_size: U256,
+    current_memory_size: U256,
+    address_was_cold: bool,
+) -> Result<U256, VMError> {
+    Ok(memory_access_cost(
+        new_memory_size,
+        current_memory_size,
+        EXTCODECOPY_STATIC,
+        EXTCODECOPY_DYNAMIC_BASE,
+    )?
+    .checked_add(address_access_cost(
+        address_was_cold,
+        EXTCODECOPY_STATIC,
+        EXTCODECOPY_COLD_DYNAMIC,
+        EXTCODECOPY_WARM_DYNAMIC,
+    )?)
+    .ok_or(OutOfGasError::GasCostOverflow)?)
+}
+
+pub fn extcodehash(address_was_cold: bool) -> Result<U256, VMError> {
+    address_access_cost(
+        address_was_cold,
+        EXTCODEHASH_STATIC,
+        EXTCODEHASH_COLD_DYNAMIC,
+        EXTCODEHASH_WARM_DYNAMIC,
+    )
+}
+
+pub fn call(
+    new_memory_size: U256,
+    current_memory_size: U256,
+    address_was_cold: bool,
+    address_is_empty: bool,
+    value_to_transfer: U256,
+) -> Result<U256, VMError> {
+    let static_gas = CALL_STATIC;
+
+    let memory_expansion_cost = memory::expansion_cost(new_memory_size, current_memory_size)?;
+    let address_access_cost = address_access_cost(
+        address_was_cold,
+        CALL_STATIC,
+        CALL_COLD_DYNAMIC,
+        CALL_WARM_DYNAMIC,
+    )?;
+    let positive_value_cost = if !value_to_transfer.is_zero() {
+        CALL_POSITIVE_VALUE
+            .checked_add(CALL_POSITIVE_VALUE_STIPEND)
+            .ok_or(InternalError::ArithmeticOperationOverflow)?
+    } else {
+        U256::zero()
+    };
+    let value_to_empty_account = if address_is_empty && !value_to_transfer.is_zero() {
+        CALL_TO_EMPTY_ACCOUNT
+    } else {
+        U256::zero()
+    };
+
+    // Note: code_execution_cost will be charged from the sub context post-state.
+    let dynamic_gas = memory_expansion_cost
+        .checked_add(address_access_cost)
+        .ok_or(OutOfGasError::GasCostOverflow)?
+        .checked_add(positive_value_cost)
+        .ok_or(OutOfGasError::GasCostOverflow)?
+        .checked_add(value_to_empty_account)
+        .ok_or(OutOfGasError::GasCostOverflow)?;
+
+    Ok(static_gas
+        .checked_add(dynamic_gas)
+        .ok_or(OutOfGasError::GasCostOverflow)?)
+}
+
+pub fn callcode(
+    new_memory_size: U256,
+    current_memory_size: U256,
+    address_was_cold: bool,
+    value_to_transfer: U256,
+) -> Result<U256, VMError> {
+    let static_gas = CALLCODE_STATIC;
+
+    let memory_expansion_cost = memory::expansion_cost(new_memory_size, current_memory_size)?;
+    let address_access_cost = address_access_cost(
+        address_was_cold,
+        CALLCODE_STATIC,
+        CALLCODE_COLD_DYNAMIC,
+        CALLCODE_WARM_DYNAMIC,
+    )?;
+    let positive_value_cost = if !value_to_transfer.is_zero() {
+        CALLCODE_POSITIVE_VALUE
+            .checked_add(CALLCODE_POSITIVE_VALUE_STIPEND)
+            .ok_or(InternalError::ArithmeticOperationOverflow)?
+    } else {
+        U256::zero()
+    };
+
+    // Note: code_execution_cost will be charged from the sub context post-state.
+    let dynamic_gas = memory_expansion_cost
+        .checked_add(address_access_cost)
+        .ok_or(OutOfGasError::GasCostOverflow)?
+        .checked_add(positive_value_cost)
+        .ok_or(OutOfGasError::GasCostOverflow)?;
+
+    Ok(static_gas
+        .checked_add(dynamic_gas)
+        .ok_or(OutOfGasError::GasCostOverflow)?)
+}
+
+pub fn delegatecall(
+    new_memory_size: U256,
+    current_memory_size: U256,
+    address_was_cold: bool,
+) -> Result<U256, VMError> {
+    let static_gas = DELEGATECALL_STATIC;
+
+    let memory_expansion_cost = memory::expansion_cost(new_memory_size, current_memory_size)?;
+    let address_access_cost = address_access_cost(
+        address_was_cold,
+        DELEGATECALL_STATIC,
+        DELEGATECALL_COLD_DYNAMIC,
+        DELEGATECALL_WARM_DYNAMIC,
+    )?;
+
+    // Note: code_execution_cost will be charged from the sub context post-state.
+    let dynamic_gas = memory_expansion_cost
+        .checked_add(address_access_cost)
+        .ok_or(OutOfGasError::GasCostOverflow)?;
+
+    Ok(static_gas
+        .checked_add(dynamic_gas)
+        .ok_or(OutOfGasError::GasCostOverflow)?)
+}
+
+pub fn staticcall(
+    new_memory_size: U256,
+    current_memory_size: U256,
+    address_was_cold: bool,
+) -> Result<U256, VMError> {
+    let static_gas = STATICCALL_STATIC;
+
+    let memory_expansion_cost = memory::expansion_cost(new_memory_size, current_memory_size)?;
+    let address_access_cost = address_access_cost(
+        address_was_cold,
+        STATICCALL_STATIC,
+        STATICCALL_COLD_DYNAMIC,
+        STATICCALL_WARM_DYNAMIC,
+    )?;
+
+    // Note: code_execution_cost will be charged from the sub context post-state.
+    let dynamic_gas = memory_expansion_cost
+        .checked_add(address_access_cost)
+        .ok_or(OutOfGasError::GasCostOverflow)?;
+
+    Ok(static_gas
+        .checked_add(dynamic_gas)
+        .ok_or(OutOfGasError::GasCostOverflow)?)
 }

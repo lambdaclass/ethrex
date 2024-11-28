@@ -1,5 +1,8 @@
 use ethrex_core::{H256, U256};
 
+pub const WORD_SIZE_IN_BYTES: U256 = U256([32, 0, 0, 0]);
+pub const WORD_SIZE_IN_BYTES_USIZE: usize = 32;
+
 pub const SUCCESS_FOR_CALL: i32 = 1;
 pub const REVERT_FOR_CALL: i32 = 0;
 pub const HALT_FOR_CALL: i32 = 2;
@@ -41,11 +44,6 @@ pub const MAX_BLOB_NUMBER_PER_BLOCK: usize = 6;
 pub const TARGET_BLOB_GAS_PER_BLOCK: U256 = U256([393216, 0, 0, 0]); // TARGET_BLOB_NUMBER_PER_BLOCK * GAS_PER_BLOB
 pub const MIN_BASE_FEE_PER_BLOB_GAS: U256 = U256([1, 0, 0, 0]);
 pub const BLOB_BASE_FEE_UPDATE_FRACTION: U256 = U256([3338477, 0, 0, 0]);
-
-// Storage constants
-pub const COLD_STORAGE_ACCESS_COST: U256 = U256([2100, 0, 0, 0]);
-pub const WARM_ADDRESS_ACCESS_COST: U256 = U256([100, 0, 0, 0]);
-pub const BALANCE_COLD_ADDRESS_ACCESS_COST: U256 = U256([2600, 0, 0, 0]);
 
 // Block constants
 pub const LAST_AVAILABLE_BLOCK_LIMIT: U256 = U256([256, 0, 0, 0]);

@@ -136,7 +136,7 @@ impl VM {
 
         // the current account should have been cached when the contract was called
         let balance = self
-            .get_account(&current_call_frame.code_address)
+            .get_account(current_call_frame.code_address)
             .info
             .balance;
 

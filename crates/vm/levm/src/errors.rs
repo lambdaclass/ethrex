@@ -66,6 +66,10 @@ pub enum VMError {
     GasRefundsOverflow,
     #[error("Memory size overflows")]
     MemorySizeOverflow,
+    #[error("Nonce overflowed")]
+    NonceOverflow,
+    #[error("Nonce underflowed")]
+    NonceUnderflow,
     // OutOfGas
     #[error("Out Of Gas")]
     OutOfGas(#[from] OutOfGasError),
@@ -88,14 +92,12 @@ pub enum OutOfGasError {
     MaxGasLimitExceeded,
     #[error("Arithmetic operation divided by zero in gas calculation")]
     ArithmeticOperationDividedByZero,
+    #[error("Memory Expansion Cost Overflow")]
+    MemoryExpansionCostOverflow,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error, Serialize, Deserialize)]
 pub enum InternalError {
-    #[error("Overflowed when incrementing nonce")]
-    NonceOverflowed,
-    #[error("Underflowed when incrementing nonce")]
-    NonceUnderflowed,
     #[error("Overflowed when incrementing program counter")]
     PCOverflowed,
     #[error("Underflowed when decrementing program counter")]

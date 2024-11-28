@@ -1,6 +1,6 @@
 use crate::{
     account::{Account, AccountInfo},
-    db::{Cache, Db},
+    db::{cache, CacheDB, Db},
     environment::Environment,
     errors::{InternalError, VMError},
     operations::Operation,
@@ -27,7 +27,7 @@ pub fn new_vm_with_bytecode(bytecode: Bytes) -> Result<VM, VMError> {
         Address::from_low_u64_be(100),
         U256::MAX,
         Db::new(),
-        Cache::default(),
+        CacheDB::default(),
     )
 }
 
@@ -38,7 +38,7 @@ pub fn new_vm_with_ops(operations: &[Operation]) -> Result<VM, VMError> {
         Address::from_low_u64_be(100),
         U256::MAX,
         Db::new(),
-        Cache::default(),
+        CacheDB::default(),
     )
 }
 
@@ -49,7 +49,7 @@ pub fn new_vm_with_ops_db(operations: &[Operation], db: Db) -> Result<VM, VMErro
         Address::from_low_u64_be(100),
         U256::MAX,
         db,
-        Cache::default(),
+        CacheDB::default(),
     )
 }
 
@@ -59,7 +59,7 @@ pub fn new_vm_with_ops_addr_bal_db(
     sender_address: Address,
     sender_balance: U256,
     mut db: Db,
-    mut cache: Cache,
+    mut cache: CacheDB,
 ) -> Result<VM, VMError> {
     let accounts = [
         // This is the contract account that is going to be executed
@@ -91,8 +91,8 @@ pub fn new_vm_with_ops_addr_bal_db(
     db.add_accounts(accounts.to_vec());
 
     // add to cache accounts from list accounts
-    cache.add_account(&accounts[0].0, &accounts[0].1);
-    cache.add_account(&accounts[1].0, &accounts[1].1);
+    cache::insert_account(&mut cache, accounts[0].0, accounts[0].1.clone());
+    cache::insert_account(&mut cache, accounts[1].0, accounts[1].1.clone());
 
     let env = Environment::default_from_address(sender_address);
 
