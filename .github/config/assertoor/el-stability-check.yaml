@@ -6,14 +6,14 @@
 
 id: el-stability-check
 name: "Check Execution Stability"
-timeout: 2h
+timeout: 18m
 tasks:
 - name: check_clients_are_healthy
   title: "Check if all clients are ready"
   timeout: 1m
 
 - name: run_tasks_concurrent
-  title: "Check if all EL & CL clients are synced"
+  title: "Check if all EL & CL clients are synced and the tx spammer is working"
   timeout: 5m
   config:
     tasks:
@@ -21,6 +21,12 @@ tasks:
       title: "Check if CL clients are synced"
     - name: check_execution_sync_status
       title: "Check if EL clients are synced"
+    - name: check_consensus_block_proposals
+      title: "Check the tx spammer is working as expected for block proposal with >= 50 transactions"
+      config:
+        minTransactionCount: 50
+      configVars:
+        clientPattern: "1-ethrex-lighthouse"
 
 - name: run_task_matrix
   title: "Check block proposals from all client pairs"
@@ -45,3 +51,5 @@ tasks:
       title: "Check consensus reorgs"
     - name: check_consensus_forks
       title: "Check consensus forks"
+
+

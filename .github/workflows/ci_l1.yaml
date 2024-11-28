@@ -101,11 +101,10 @@ jobs:
           name: ethrex_image
           path: /tmp/ethrex_image.tar
 
-  run-assertoor:
-    name: Assertoor - Stability Check
+  run-assertoor-tx-check:
+    name: Assertoor - Transaction Check
     runs-on: ubuntu-latest
     needs: [docker_build]
-    if: ${{ github.event_name != 'merge_group' }}
     steps:
       - uses: actions/checkout@v4
 
@@ -119,13 +118,40 @@ jobs:
         run: |
           docker load --input /tmp/ethrex_image.tar
 
-      - name: Setup kurtosis testnet and run assertoor tests
+      - name: Run assertoor
         uses: ethpandaops/kurtosis-assertoor-github-action@v1
         with:
+          enclave_name: "ethrex-assertoor-tx"
           kurtosis_version: "1.4.2"
           ethereum_package_url: "github.com/lambdaclass/ethereum-package"
           ethereum_package_branch: "ethrex-integration"
-          ethereum_package_args: "./test_data/network_params.yaml"
+          ethereum_package_args: "./.github/config/assertoor/network_params_tx.yaml"
+
+  run-assertoor-blob-check:
+    name: Assertoor - Blobs & Stability Check
+    runs-on: ubuntu-latest
+    needs: [docker_build]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: ethrex_image
+          path: /tmp
+
+      - name: Load image
+        run: |
+          docker load --input /tmp/ethrex_image.tar
+
+      - name: Run assertoor
+        uses: ethpandaops/kurtosis-assertoor-github-action@v1
+        with:
+          enclave_name: "ethrex-assertoor-blob"
+          kurtosis_version: "1.4.2"
+          ethereum_package_url: "github.com/lambdaclass/ethereum-package"
+          ethereum_package_branch: "ethrex-integration"
+          ethereum_package_args: "./.github/config/assertoor/network_params_blob.yaml"
 
   run-hive:
     name: Hive - ${{ matrix.name }}
@@ -186,14 +212,19 @@ jobs:
     # "Integration Test" is a required check, don't change the name
     name: Integration Test
     runs-on: ubuntu-latest
-    needs: [run-assertoor, run-hive]
+    needs: [run-assertoor-tx-check, run-assertoor-blob-check, run-hive]
     # Make sure this job runs even if the previous jobs failed or were skipped  
     if: ${{ always() && needs.run-assertoor.result != 'skipped' && needs.run-hive.result != 'skipped' }}
     steps:
       - name: Check if any job failed
         run: |
-          if [ "${{ needs.run-assertoor.result }}" != "success" ]; then
-            echo "Job Assertoor failed"
+          if [ "${{ needs.run-assertoor-tx-check.result }}" != "success" ]; then
+            echo "Job Assertoor Tx Check failed"
+            exit 1
+          fi
+
+          if [ "${{ needs.run-assertoor-blob-check.result }}" != "success" ]; then
+            echo "Job Assertoor Blob Check failed"
             exit 1
           fi
 
