@@ -4,8 +4,8 @@ use crate::utils::config::eth::EthConfig;
 use bytes::Bytes;
 use errors::{
     EstimateGasPriceError, EthClientError, GetBalanceError, GetBlockByHashError,
-    GetBlockNumberError, GetGasPriceError, GetLogsError, GetNonceError, GetTransactionByHashError,
-    GetTransactionReceiptError, SendRawTransactionError,
+    GetBlockByNumberError, GetBlockNumberError, GetGasPriceError, GetLogsError, GetNonceError,
+    GetTransactionByHashError, GetTransactionReceiptError, SendRawTransactionError,
 };
 use eth_sender::Overrides;
 use ethereum_types::{Address, H256, U256};
@@ -57,6 +57,13 @@ pub enum WrappedTransaction {
     EIP4844(WrappedEIP4844Transaction),
     EIP1559(EIP1559Transaction),
     L2(PrivilegedL2Transaction),
+}
+
+pub enum BlockByNumber {
+    Number(u64),
+    Latest,
+    Earliest,
+    Pending,
 }
 
 // 0x08c379a0 == Error(String)
@@ -479,7 +486,7 @@ impl EthClient {
             id: RpcRequestId::Number(1),
             jsonrpc: "2.0".to_string(),
             method: "eth_getBlockByHash".to_string(),
-            params: Some(vec![json!(format!("{block_hash:#x}")), json!(true)]),
+            params: Some(vec![json!(block_hash), json!(true)]),
         };
 
         match self.send_request(request).await {
@@ -488,6 +495,37 @@ impl EthClient {
                 .map_err(EthClientError::from),
             Ok(RpcResponse::Error(error_response)) => {
                 Err(GetBlockByHashError::RPCError(error_response.error.message).into())
+            }
+            Err(error) => Err(error),
+        }
+    }
+
+    /// Fetches a block from the Ethereum blockchain by its number or the latest/earliest/pending block.
+    /// If no `block_number` is provided, get the latest.
+    pub async fn get_block_by_number(
+        &self,
+        block: BlockByNumber,
+    ) -> Result<RpcBlock, EthClientError> {
+        let r = match block {
+            BlockByNumber::Number(n) => format!("{n:#x}"),
+            BlockByNumber::Latest => "latest".to_owned(),
+            BlockByNumber::Earliest => "earliest".to_owned(),
+            BlockByNumber::Pending => "pending".to_owned(),
+        };
+        let request = RpcRequest {
+            id: RpcRequestId::Number(1),
+            jsonrpc: "2.0".to_string(),
+            method: "eth_getBlockByNumber".to_string(),
+            // With false it just returns the hash of the transactions.
+            params: Some(vec![json!(r), json!(false)]),
+        };
+
+        match self.send_request(request).await {
+            Ok(RpcResponse::Success(result)) => serde_json::from_value(result.result)
+                .map_err(GetBlockByNumberError::SerdeJSONError)
+                .map_err(EthClientError::from),
+            Ok(RpcResponse::Error(error_response)) => {
+                Err(GetBlockByNumberError::RPCError(error_response.error.message).into())
             }
             Err(error) => Err(error),
         }

@@ -94,6 +94,18 @@ pub enum CommitterError {
     FailedToSendCommitment(String),
     #[error("Withdrawal transaction was invalid")]
     InvalidWithdrawalTransaction,
+    #[error("Blob estimation failed: {0}")]
+    BlobEstimationError(#[from] BlobEstimationError),
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum BlobEstimationError {
+    #[error("Overflow error while estimating blob gas")]
+    OverflowError,
+    #[error("Failed to calculate blob gas due to invalid parameters")]
+    CalculationError,
+    #[error("Blob gas estimation resulted in an infinite or undefined value. Outside valid or expected ranges")]
+    NonFiniteResult,
 }
 
 #[derive(Debug, thiserror::Error)]
