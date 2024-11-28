@@ -25,6 +25,9 @@ jobs:
           - simulation: engine
             name: "Cancun Engine tests"
             run_command: make run-hive-on-latest SIMULATION=ethereum/engine HIVE_EXTRA_ARGS="--sim.parallelism 4"
+          - simulation: sync
+            name: "Sync tests"
+            run_command: make run-hive-on-latest SIMULATION=ethereum/sync HIVE_EXTRA_ARGS="--sim.parallelism 4"
 
     steps:
       - name: Pull image
