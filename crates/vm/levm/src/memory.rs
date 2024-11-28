@@ -66,6 +66,10 @@ impl Memory {
     }
 
     pub fn load_range(&mut self, offset: usize, size: usize) -> Result<Vec<u8>, VMError> {
+        if size == 0 {
+            return Ok(Vec::new());
+        }
+
         let size_to_load = offset.checked_add(size).ok_or(VMError::Internal(
             InternalError::ArithmeticOperationOverflow,
         ))?;
