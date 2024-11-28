@@ -76,6 +76,48 @@ pub enum VMError {
     // Internal
     #[error("Internal error: {0}")]
     Internal(#[from] InternalError),
+    #[error("Transaction validation error: {0}")]
+    TxValidation(#[from] TxValidationError),
+}
+
+impl VMError {
+    pub fn is_internal(&self) -> bool {
+        matches!(self, VMError::Internal(_))
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error, Serialize, Deserialize)]
+pub enum TxValidationError {
+    #[error("Sender account should not have bytecode")]
+    SenderNotEOA,
+    #[error("Insufficient account founds")]
+    InsufficientAccountFunds,
+    #[error("Nonce is max (overflow)")]
+    NonceIsMax,
+    #[error("Initcode size exceeded")]
+    InitcodeSizeExceeded,
+    #[error("Priority fee greater than max fee per gas")]
+    PriorityGreaterThanMaxFeePerGas,
+    #[error("Intrinsic gas too low")]
+    IntrinsicGasTooLow,
+    #[error("Gas allowance exceeded")]
+    GasAllowanceExceeded,
+    #[error("Insufficient max fee per gas")]
+    InsufficientMaxFeePerGas,
+    #[error("Insufficient max fee per blob gas")]
+    InsufficientMaxFeePerBlobGas,
+    #[error("Type3TxZeroBlobs")]
+    Type3TxZeroBlobs,
+    #[error("Type3TxInvalidBlobVersionedHash")]
+    Type3TxInvalidBlobVersionedHash,
+    #[error("Type3TxBlobCountExceeded")]
+    Type3TxBlobCountExceeded,
+    #[error("Type3TxContractCreation")]
+    Type3TxContractCreation,
+    #[error("Undefined state")]
+    UndefinedState(i32), // This error is temporarily for things that cause an undefined state.
+    #[error("Gas limit price product overflow")]
+    GasLimitPriceProductOverflow,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, thiserror::Error, Serialize, Deserialize)]

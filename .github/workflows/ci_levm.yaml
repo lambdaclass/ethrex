@@ -14,7 +14,7 @@ concurrency:
 
 env:
   CARGO_TERM_COLOR: always
-  RUST_VERSION: 1.79.0
+  RUST_VERSION: 1.81.0
 
 jobs:
   ef-test:

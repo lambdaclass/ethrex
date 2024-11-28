@@ -7,7 +7,7 @@ use crate::{
 };
 use ethrex_core::{
     types::{BLOB_BASE_FEE_UPDATE_FRACTION, MIN_BASE_FEE_PER_BLOB_GAS},
-    H256, U256,
+    U256,
 };
 
 // Block Information (11)
@@ -170,22 +170,16 @@ impl VM {
             .try_into()
             .map_err(|_err| VMError::VeryLargeNumber)?;
 
-        let blob_hash: H256 = match &self.env.tx_blob_hashes {
-            Some(vec) => match vec.get(index) {
-                Some(el) => *el,
-                None => {
-                    return Err(VMError::BlobHashIndexOutOfBounds);
-                }
-            },
-            None => {
-                return Err(VMError::MissingBlobHashes);
-            }
-        };
+        let blob_hashes = &self.env.tx_blob_hashes;
 
-        // Could not find a better way to translate from H256 to U256
-        let u256_blob = U256::from(blob_hash.as_bytes());
-
-        current_call_frame.stack.push(u256_blob)?;
+        blob_hashes
+            .get(index)
+            .map(|el| {
+                current_call_frame
+                    .stack
+                    .push(U256::from_big_endian(el.as_bytes()))
+            })
+            .unwrap_or_else(|| current_call_frame.stack.push(U256::zero()))?;
 
         Ok(OpcodeSuccess::Continue)
     }

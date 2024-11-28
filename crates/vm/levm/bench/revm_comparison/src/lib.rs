@@ -23,13 +23,13 @@ pub fn run_with_levm(program: &str, runs: usize, number_of_iterations: u32) {
         let mut vm = new_vm_with_bytecode(Bytes::new()).unwrap();
         *vm.current_call_frame_mut().unwrap() = call_frame.clone();
         let mut current_call_frame = vm.call_frames.pop().unwrap();
-        let tx_report = black_box(vm.execute(&mut current_call_frame));
+        let tx_report = black_box(vm.execute(&mut current_call_frame).unwrap());
         assert!(tx_report.result == TxResult::Success);
     }
     let mut vm = new_vm_with_bytecode(Bytes::new()).unwrap();
     *vm.current_call_frame_mut().unwrap() = call_frame.clone();
     let mut current_call_frame = vm.call_frames.pop().unwrap();
-    let tx_report = black_box(vm.execute(&mut current_call_frame));
+    let tx_report = black_box(vm.execute(&mut current_call_frame).unwrap());
     assert!(tx_report.result == TxResult::Success);
 
     match tx_report.result {
