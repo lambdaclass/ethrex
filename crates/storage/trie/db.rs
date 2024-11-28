@@ -3,7 +3,6 @@ pub mod in_memory;
 pub mod libmdbx;
 #[cfg(feature = "libmdbx")]
 pub mod libmdbx_dupsort;
-pub mod null;
 
 use crate::error::TrieError;
 

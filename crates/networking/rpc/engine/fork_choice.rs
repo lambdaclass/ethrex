@@ -58,36 +58,56 @@ impl RpcHandler for ForkChoiceUpdatedV3 {
     }
 
     fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
-        let storage = &context.storage;
         info!(
             "New fork choice request with head: {}, safe: {}, finalized: {}.",
             self.fork_choice_state.head_block_hash,
             self.fork_choice_state.safe_block_hash,
             self.fork_choice_state.finalized_block_hash
         );
-        let fork_choice_error_to_response = |error| {
-            let response = match error {
-                InvalidForkChoice::NewHeadAlreadyCanonical => ForkChoiceResponse::from(
-                    PayloadStatus::valid_with_hash(latest_canonical_block_hash(storage).unwrap()),
-                ),
-                InvalidForkChoice::Syncing => ForkChoiceResponse::from(PayloadStatus::syncing()),
-                reason => {
-                    warn!("Invalid fork choice state. Reason: {:#?}", reason);
-                    return Err(RpcErr::InvalidForkChoiceState(reason.to_string()));
-                }
-            };
-
-            serde_json::to_value(response).map_err(|error| RpcErr::Internal(error.to_string()))
-        };
 
         let head_block = match apply_fork_choice(
-            storage,
+            &context.storage,
             self.fork_choice_state.head_block_hash,
             self.fork_choice_state.safe_block_hash,
             self.fork_choice_state.finalized_block_hash,
         ) {
             Ok(head) => head,
-            Err(error) => return fork_choice_error_to_response(error),
+            Err(error) => {
+                let fork_choice_response = match error {
+                    InvalidForkChoice::NewHeadAlreadyCanonical => {
+                        ForkChoiceResponse::from(PayloadStatus::valid_with_hash(
+                            latest_canonical_block_hash(&context.storage).unwrap(),
+                        ))
+                    }
+                    InvalidForkChoice::Syncing => {
+                        // Start sync
+                        let current_number = context.storage.get_latest_block_number()?.unwrap();
+                        let Some(current_head) =
+                            context.storage.get_canonical_block_hash(current_number)?
+                        else {
+                            return Err(RpcErr::Internal(
+                                "Missing latest canonical block".to_owned(),
+                            ));
+                        };
+                        let sync_head = self.fork_choice_state.head_block_hash;
+                        tokio::spawn(async move {
+                            // If we can't get hold of the syncer, then it means that there is an active sync in process
+                            if let Ok(mut syncer) = context.syncer.try_lock() {
+                                syncer
+                                    .start_sync(current_head, sync_head, context.storage.clone())
+                                    .await
+                            }
+                        });
+                        ForkChoiceResponse::from(PayloadStatus::syncing())
+                    }
+                    reason => {
+                        warn!("Invalid fork choice state. Reason: {:#?}", reason);
+                        return Err(RpcErr::InvalidForkChoiceState(reason.to_string()));
+                    }
+                };
+                return serde_json::to_value(fork_choice_response)
+                    .map_err(|error| RpcErr::Internal(error.to_string()));
+            }
         };
 
         // Build block from received payload. This step is skipped if applying the fork choice state failed
@@ -101,7 +121,7 @@ impl RpcHandler for ForkChoiceUpdatedV3 {
             Ok(None) => (),
             Ok(Some(attributes)) => {
                 info!("Fork choice updated includes payload attributes. Creating a new payload.");
-                let chain_config = storage.get_chain_config()?;
+                let chain_config = context.storage.get_chain_config()?;
                 if !chain_config.is_cancun_activated(attributes.timestamp) {
                     return Err(RpcErr::UnsuportedFork(
                         "forkChoiceV3 used to build pre-Cancun payload".to_string(),
@@ -123,14 +143,14 @@ impl RpcHandler for ForkChoiceUpdatedV3 {
                 };
                 let payload_id = args.id();
                 response.set_id(payload_id);
-                let payload = match create_payload(&args, storage) {
+                let payload = match create_payload(&args, &context.storage) {
                     Ok(payload) => payload,
                     Err(ChainError::EvmError(error)) => return Err(error.into()),
                     // Parent block is guaranteed to be present at this point,
                     // so the only errors that may be returned are internal storage errors
                     Err(error) => return Err(RpcErr::Internal(error.to_string())),
                 };
-                storage.add_payload(payload_id, payload)?;
+                context.storage.add_payload(payload_id, payload)?;
             }
         }
 
