@@ -41,7 +41,7 @@ pub fn node_info(storage: Store, local_node: Node) -> Result<Value, RpcErr> {
     let node_info = NodeInfo {
         enode: enode_url,
         id: hex::encode(local_node.node_id),
-        name: "ethrex/0.1.0/rust1.80".to_string(),
+        name: "ethrex/0.1.0/rust1.81".to_string(),
         ip: local_node.ip.to_string(),
         ports: Ports {
             discovery: local_node.udp_port,

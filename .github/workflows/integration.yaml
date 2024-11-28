@@ -11,7 +11,7 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  RUST_VERSION: 1.80.1
+  RUST_VERSION: 1.81.0
 
 jobs:
   docker_build:

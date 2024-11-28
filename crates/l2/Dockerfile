@@ -1,4 +1,4 @@
-FROM rust:1.80 AS chef
+FROM rust:1.81 AS chef
 
 RUN apt-get update && apt-get install -y \
 	build-essential \
