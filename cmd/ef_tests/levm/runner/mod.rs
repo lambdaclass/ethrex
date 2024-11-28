@@ -44,15 +44,20 @@ pub struct EFTestRunnerOptions {
     pub fork: Vec<SpecId>,
     #[arg(short, long, value_name = "TESTS")]
     pub tests: Vec<String>,
+    #[arg(short, long, value_name = "SUMMARY", default_value = "false")]
+    pub summary: bool,
 }
 
 pub fn run_ef_tests(
     ef_tests: Vec<EFTest>,
-    _opts: &EFTestRunnerOptions,
+    opts: &EFTestRunnerOptions,
 ) -> Result<(), EFTestRunnerError> {
     let mut reports = report::load()?;
     if reports.is_empty() {
-        run_with_levm(&mut reports, &ef_tests)?;
+        run_with_levm(&mut reports, &ef_tests, opts)?;
+    }
+    if opts.summary {
+        return Ok(());
     }
     re_run_with_revm(&mut reports, &ef_tests)?;
     write_report(&reports)
@@ -61,6 +66,7 @@ pub fn run_ef_tests(
 fn run_with_levm(
     reports: &mut Vec<EFTestReport>,
     ef_tests: &[EFTest],
+    opts: &EFTestRunnerOptions,
 ) -> Result<(), EFTestRunnerError> {
     let levm_run_time = std::time::Instant::now();
     let mut levm_run_spinner = Spinner::new(
@@ -83,8 +89,13 @@ fn run_with_levm(
     }
     levm_run_spinner.success(&report::progress(reports, levm_run_time.elapsed()));
 
+    if opts.summary {
+        report::write_summary_for_slack(reports)?;
+        report::write_summary_for_github(reports)?;
+    }
+
     let mut summary_spinner = Spinner::new(Dots, "Loading summary...".to_owned(), Color::Cyan);
-    summary_spinner.success(&report::summary(reports));
+    summary_spinner.success(&report::summary_for_shell(reports));
     Ok(())
 }
 

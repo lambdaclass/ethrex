@@ -48,5 +48,7 @@ tests_v3.0.0.tar.gz
 .env
 
 levm_ef_tests_report.txt
-
+levm_ef_tests_summary_slack.txt
+levm_ef_tests_summary_github.txt
+levm_ef_tests_summary.txt
 loc_report.md
