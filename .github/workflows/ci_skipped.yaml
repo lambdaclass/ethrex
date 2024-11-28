@@ -2,11 +2,15 @@ name: CI Skipped
 on:
   pull_request:
     branches: ["**"]
-    paths:
-      - 'README.md'
-      - 'LICENSE'
-      - "**/README.md"
-      - "**/docs/**"
+    paths-ignore:
+      - '**/*.rs'
+      - '**/*.toml'
+      - '**/*.yaml'
+      - '**/*.sh'
+      - '**/*.json'
+      - '**/*.rlp'
+      - 'Dockefile*'
+
 jobs:
   lint:
     # "Lint" is a required check, don't change the name
