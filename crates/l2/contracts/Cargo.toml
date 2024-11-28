@@ -27,3 +27,4 @@ path = "./deployer.rs"
 
 [lints.clippy]
 unwrap_used = "deny"
+expect_used = "deny"

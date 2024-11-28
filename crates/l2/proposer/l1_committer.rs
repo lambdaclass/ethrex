@@ -4,7 +4,7 @@ use crate::{
         state_diff::{AccountStateDiff, DepositLog, StateDiff, WithdrawalLog},
     },
     utils::{
-        config::{committer::CommitterConfig, eth::EthConfig},
+        config::{committer::CommitterConfig, errors::ConfigError, eth::EthConfig},
         eth_client::{eth_sender::Overrides, EthClient, WrappedTransaction},
         merkle_tree::merkelize,
     },
@@ -36,11 +36,12 @@ pub struct Committer {
     interval_ms: u64,
 }
 
-pub async fn start_l1_commiter(store: Store) {
-    let eth_config = EthConfig::from_env().expect("EthConfig::from_env()");
-    let committer_config = CommitterConfig::from_env().expect("CommitterConfig::from_env");
+pub async fn start_l1_commiter(store: Store) -> Result<(), ConfigError> {
+    let eth_config = EthConfig::from_env()?;
+    let committer_config = CommitterConfig::from_env()?;
     let committer = Committer::new_from_config(&committer_config, eth_config, store);
     committer.run().await;
+    Ok(())
 }
 
 impl Committer {

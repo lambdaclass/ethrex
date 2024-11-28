@@ -37,11 +37,8 @@ pub async fn wait_for_transaction_receipt(
     tx_hash: H256,
     client: &EthClient,
     max_retries: u64,
-) -> Option<RpcReceipt> {
-    let mut receipt = client
-        .get_transaction_receipt(tx_hash)
-        .await
-        .expect("Failed to get transaction receipt");
+) -> Result<RpcReceipt, EthClientError> {
+    let mut receipt = client.get_transaction_receipt(tx_hash).await?;
     let mut r#try = 1;
     while receipt.is_none() {
         println!("[{try}/{max_retries}] Retrying to get transaction receipt for {tx_hash:#x}");
@@ -53,12 +50,11 @@ pub async fn wait_for_transaction_receipt(
 
         tokio::time::sleep(std::time::Duration::from_secs(2)).await;
 
-        receipt = client
-            .get_transaction_receipt(tx_hash)
-            .await
-            .expect("Failed to get transaction receipt");
+        receipt = client.get_transaction_receipt(tx_hash).await?;
     }
-    receipt
+    receipt.ok_or(EthClientError::Custom(
+        "Transaction receipt is None".to_owned(),
+    ))
 }
 
 pub async fn transfer(

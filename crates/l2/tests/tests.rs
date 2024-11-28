@@ -1,4 +1,5 @@
 #![allow(clippy::unwrap_used)]
+#![allow(clippy::expect_used)]
 use bytes::Bytes;
 use ethereum_types::{Address, H160, U256};
 use ethrex_l2::utils::eth_client::{eth_sender::Overrides, EthClient};
@@ -192,7 +193,7 @@ async fn testito() {
     let withdraw_tx_receipt =
         ethrex_l2_sdk::wait_for_transaction_receipt(withdraw_tx, &proposer_client, 30)
             .await
-            .unwrap();
+            .expect("Withdraw tx receipt not found");
 
     // 7. Check balances on L1 and L2
 
