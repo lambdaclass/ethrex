@@ -1,8 +1,7 @@
-name: L2 Prover CI
+name: L2 Prover
 on:
   push:
     branches: ["main"]
-  merge_group:
   pull_request:
     branches: ["**"]
     paths:
@@ -14,6 +13,7 @@ concurrency:
 
 jobs:
   lint:
+    # "Lint" is a required check, don't change the name
     name: Lint
     runs-on: ubuntu-latest
     strategy:
@@ -32,8 +32,9 @@ jobs:
       - name: ${{ matrix.action.command }} Command
         run: cargo ${{ matrix.action.command }} ${{ matrix.action.args }}
 
-  build_and_test:
-    name: Build and Test RISC-V zkVM program
+  test:
+    # "Test" is a required check, don't change the name
+    name: Test
     runs-on: ubuntu-latest
     steps:
       - name: Checkout sources

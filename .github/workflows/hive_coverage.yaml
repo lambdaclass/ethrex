@@ -16,18 +16,18 @@ jobs:
     strategy:
       matrix:
         include:
-          - simulation: rpc-compat
-            name: "Rpc Compat tests"
-            run_command: make run-hive-on-latest SIMULATION=ethereum/rpc-compat HIVE_EXTRA_ARGS="--sim.parallelism 4"
-          - simulation: devp2p
-            name: "Devp2p eth tests"
-            run_command: make run-hive-on-latest SIMULATION=devp2p HIVE_EXTRA_ARGS="--sim.parallelism 4"
-          - simulation: engine
-            name: "Cancun Engine tests"
-            run_command: make run-hive-on-latest SIMULATION=ethereum/engine HIVE_EXTRA_ARGS="--sim.parallelism 4"
-          - simulation: sync
-            name: "Sync tests"
-            run_command: make run-hive-on-latest SIMULATION=ethereum/sync HIVE_EXTRA_ARGS="--sim.parallelism 4"
+          - name: "Rpc Compat tests"
+            file_name: rpc-compat
+            simulation: ethereum/rpc-compat
+          - name: "Devp2p eth tests"
+            file_name: devp2p
+            simulation: devp2p
+          - name: "Cancun Engine tests"
+            file_name: engine
+            simulation: ethereum/engine
+          - name: "Sync tests"
+            file_name: sync
+            simulation: ethereum/sync
 
     steps:
       - name: Pull image
@@ -41,14 +41,17 @@ jobs:
       - name: Setup Go
         uses: actions/setup-go@v3
 
+      - name: Setup Hive
+        run: make setup-hive
+
       - name: Run Hive Simulation
-        run: ${{ matrix.run_command }}
+        run: cd hive && ./hive --client ethrex --sim ${{ matrix.simulation }} --sim.parallelism 4
         continue-on-error: true
 
       - name: Upload results
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.simulation }}_logs
+          name: ${{ matrix.file_name }}_logs
           path: hive/workspace/logs/*-*.json
 
   hive-report:

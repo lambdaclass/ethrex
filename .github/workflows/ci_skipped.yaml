@@ -1,0 +1,37 @@
+name: CI Skipped
+on:
+  pull_request:
+    branches: ["**"]
+    paths:
+      - 'README.md'
+      - 'LICENSE'
+      - "**/README.md"
+      - "**/docs/**"
+jobs:
+  lint:
+    # "Lint" is a required check, don't change the name
+    name: Lint
+    runs-on: ubuntu-latest
+    if: false
+    steps: [run: true]
+
+  test:
+    # "Test" is a required check, don't change the name
+    name: Test
+    runs-on: ubuntu-latest
+    if: false
+    steps: [run: true]
+
+  docker-build:
+    # "Build Docker" is a required check, don't change the name
+    name: Build Docker
+    runs-on: ubuntu-latest
+    if: false
+    steps: [run: true]
+
+  all-tests:
+    # "Integration Test" is a required check, don't change the name
+    name: Integration Test
+    runs-on: ubuntu-latest
+    if: false
+    steps: [run: true]

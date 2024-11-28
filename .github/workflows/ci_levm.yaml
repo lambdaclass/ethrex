@@ -1,9 +1,8 @@
-name: CI LEVM
+name: LEVM
 
 on:
   push:
     branches: ["main"]
-  merge_group:
   pull_request:
     branches: ["**"]
     paths:
@@ -19,7 +18,8 @@ env:
 
 jobs:
   ef-test:
-    name: EF Tests
+    # "Integration Test" is a required check, don't change the name
+    name: Integration Test
     runs-on: ubuntu-latest
     steps:
       - name: Checkout sources
@@ -43,7 +43,8 @@ jobs:
           cd crates/vm/levm
           make run-evm-ef-tests
   test:
-    name: Tests
+    # "Test" is a required check, don't change the name
+    name: Test
     runs-on: ubuntu-latest
     steps:
       - name: Checkout sources
@@ -87,6 +88,7 @@ jobs:
           cd crates/vm/levm
           make revm-comparison
   lint:
+    # "Lint" is a required check, don't change the name
     name: Lint
     runs-on: ubuntu-latest
     steps:

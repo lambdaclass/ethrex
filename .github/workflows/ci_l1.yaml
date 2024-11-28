@@ -1,0 +1,203 @@
+name: L1
+on:
+  push:
+    branches: ["main"]
+  merge_group:
+  pull_request:
+    branches: ["**"]
+    paths-ignore:
+      - "README.md"
+      - "LICENSE"
+      - "**/README.md"
+      - "**/docs/**"
+      - "crates/vm/levm/**" # We run this in a separate workflow
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
+  cancel-in-progress: true
+
+env:
+  RUST_VERSION: 1.81.0
+
+jobs:
+  lint:
+    # "Lint" is a required check, don't change the name
+    name: Lint
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v4
+
+      - name: Rustup toolchain install
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: ${{ env.RUST_VERSION }}
+          components: rustfmt, clippy
+
+      - name: Add Rust Cache
+        uses: Swatinem/rust-cache@v2
+
+      - name: Run cargo check
+        run: cargo check
+
+      - name: Run cargo build
+        run: |
+          cargo build
+
+      - name: Run cargo clippy
+        run: |
+          cargo clippy --all-targets --all-features --workspace --exclude ethrex-prover -- -D warnings
+
+      - name: Run cargo fmt
+        run: |
+          cargo fmt --all -- --check
+
+  test:
+    # "Test" is a required check, don't change the name
+    name: Test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v4
+
+      - name: Rustup toolchain install
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: ${{ env.RUST_VERSION }}
+
+      - name: Caching
+        uses: Swatinem/rust-cache@v2
+
+      - name: Download test vectors
+        run: |
+          make download-test-vectors
+
+      - name: Run tests
+        run: |
+          make test
+  
+  docker_build:
+    # "Build Docker" is a required check, don't change the name
+    name: Build Docker
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./Dockerfile
+          load: true
+          tags: ethrex
+          outputs: type=docker,dest=/tmp/ethrex_image.tar
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ethrex_image
+          path: /tmp/ethrex_image.tar
+
+  run-assertoor:
+    name: Assertoor - Stability Check
+    runs-on: ubuntu-latest
+    needs: [docker_build]
+    if: ${{ github.event_name != 'merge_group' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: ethrex_image
+          path: /tmp
+
+      - name: Load image
+        run: |
+          docker load --input /tmp/ethrex_image.tar
+
+      - name: Setup kurtosis testnet and run assertoor tests
+        uses: ethpandaops/kurtosis-assertoor-github-action@v1
+        with:
+          kurtosis_version: "1.4.2"
+          ethereum_package_url: "github.com/lambdaclass/ethereum-package"
+          ethereum_package_branch: "ethrex-integration"
+          ethereum_package_args: "./test_data/network_params.yaml"
+
+  run-hive:
+    name: Hive - ${{ matrix.name }}
+    runs-on: ubuntu-latest
+    needs: [docker_build]
+    if: ${{ github.event_name != 'merge_group' }}
+    strategy:
+      matrix:
+        include:
+          - name: "Rpc Compat tests"
+            simulation: ethereum/rpc-compat
+            test_pattern: /eth_chainId|eth_getTransactionByBlockHashAndIndex|eth_getTransactionByBlockNumberAndIndex|eth_getCode|eth_getStorageAt|eth_call|eth_getTransactionByHash|eth_getBlockByHash|eth_getBlockByNumber|eth_createAccessList|eth_getBlockTransactionCountByNumber|eth_getBlockTransactionCountByHash|eth_getBlockReceipts|eth_getTransactionReceipt|eth_blobGasPrice|eth_blockNumber|ethGetTransactionCount|debug_getRawHeader|debug_getRawBlock|debug_getRawTransaction|debug_getRawReceipts|eth_estimateGas|eth_getBalance|eth_sendRawTransaction|eth_getProof|eth_getLogs
+          - name: "Devp2p discv4 tests"
+            simulation: devp2p
+            test_pattern: discv4
+          - name: "Devp2p snap tests"
+            simulation: devp2p
+            test_pattern: /AccountRange|StorageRanges|ByteCodes|TrieNodes
+          - name: "Devp2p eth tests"
+            simulation: devp2p
+            test_pattern: eth/Status|GetBlockHeaders|SimultaneousRequests|SameRequestID|ZeroRequestID|GetBlockBodies|MaliciousHandshake|MaliciousStatus|Transaction|InvalidTxs
+          - name: "Engine Auth and EC tests"
+            simulation: ethereum/engine
+            test_pattern: engine-(auth|exchange-capabilities)/
+          - name: "Cancun Engine tests"
+            simulation: ethereum/engine
+            test_pattern: engine-cancun/Blob Transactions On Block 1|Blob Transaction Ordering, Single|Blob Transaction Ordering, Multiple Accounts|Replace Blob Transactions|Parallel Blob Transactions|ForkchoiceUpdatedV3 Modifies Payload ID on Different Beacon Root|NewPayloadV3 After Cancun|NewPayloadV3 Versioned Hashes|Incorrect BlobGasUsed|Bad Hash|ParentHash equals BlockHash|RPC:|in ForkchoiceState|Unknown|Invalid PayloadAttributes|Unique|ForkchoiceUpdated Version on Payload Request|Re-Execute Payload|In-Order Consecutive Payload|Multiple New Payloads|Valid NewPayload->|NewPayload with|Payload Build after|Build Payload with|Invalid Missing Ancestor ReOrg, StateRoot|Re-Org Back to|Re-org to Previously|Safe Re-Org to Side Chain|Transaction Re-Org, Re-Org Back In|Re-Org Back into Canonical Chain, Depth=5|Suggested Fee Recipient Test|PrevRandao Opcode|Invalid NewPayload, [^R][^e]|Fork ID Genesis=0, Cancun=0|Fork ID Genesis=0, Cancun=1|Fork ID Genesis=1, Cancun=0|Fork ID Genesis=1, Cancun=2, Shanghai=2
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: ethrex_image
+          path: /tmp
+
+      - name: Load image
+        run: |
+          docker load --input /tmp/ethrex_image.tar
+
+      - name: Checkout sources
+        uses: actions/checkout@v3
+
+      - name: Rustup toolchain install
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: ${{ env.RUST_VERSION }}
+
+      - name: Setup Go
+        uses: actions/setup-go@v3
+
+      - name: Setup Hive
+        run: make setup-hive
+
+      - name: Run Hive Simulation
+        run: cd hive && ./hive --client ethrex --sim ${{ matrix.simulation }} --sim.limit "${{ matrix.test_pattern }}" --sim.parallelism 4
+
+  # The purpose of this job is to add it as a required check in GitHub so that we don't have to add every individual job as a required check
+  all-tests:
+    # "Integration Test" is a required check, don't change the name
+    name: Integration Test
+    runs-on: ubuntu-latest
+    needs: [run-assertoor, run-hive]
+    # Make sure this job runs even if the previous jobs failed or were skipped  
+    if: ${{ always() && needs.run-assertoor.result != 'skipped' && needs.run-hive.result != 'skipped' }}
+    steps:
+      - name: Check if any job failed
+        run: |
+          if [ "${{ needs.run-assertoor.result }}" != "success" ]; then
+            echo "Job Assertoor failed"
+            exit 1
+          fi
+
+          if [ "${{ needs.run-hive.result }}" != "success" ]; then
+            echo "Job Hive failed"
+            exit 1
+          fi
