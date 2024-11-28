@@ -9,6 +9,7 @@ edition = "2021"
 ethrex-core.workspace = true
 ethrex-rlp.workspace = true
 ethrex-storage.workspace = true
+ethrex-blockchain.workspace = true
 
 tracing.workspace = true
 tokio.workspace = true

@@ -1,3 +1,4 @@
+use ethrex_blockchain::error::MempoolError;
 use ethrex_rlp::error::{RLPDecodeError, RLPEncodeError};
 use ethrex_storage::error::StoreError;
 use thiserror::Error;
@@ -38,6 +39,8 @@ pub(crate) enum RLPxError {
     BroadcastError(String),
     #[error(transparent)]
     RecvError(#[from] RecvError),
+    #[error("Error when inserting transaction in the mempool: {0}")]
+    MempoolError(#[from] MempoolError),
 }
 
 // Grouping all cryptographic related errors in a single CryptographicError variant

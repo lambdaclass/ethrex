@@ -84,7 +84,7 @@ jobs:
             run_command: make run-hive-on-latest SIMULATION=devp2p TEST_PATTERN="/AccountRange|StorageRanges|ByteCodes|TrieNodes"
           - simulation: eth
             name: "Devp2p eth tests"
-            run_command: make run-hive-on-latest SIMULATION=devp2p TEST_PATTERN="eth/Status|GetBlockHeaders|SimultaneousRequests|SameRequestID|ZeroRequestID|GetBlockBodies|MaliciousHandshake|MaliciousStatus|Transaction"
+            run_command: make run-hive-on-latest SIMULATION=devp2p TEST_PATTERN="eth/Status|GetBlockHeaders|SimultaneousRequests|SameRequestID|ZeroRequestID|GetBlockBodies|MaliciousHandshake|MaliciousStatus|Transaction|InvalidTxs"
           - simulation: engine
             name: "Engine Auth and EC tests"
             run_command: make run-hive-on-latest SIMULATION=ethereum/engine TEST_PATTERN="engine-(auth|exchange-capabilities)/"

@@ -28,6 +28,7 @@ use super::{
     utils::{ecdh_xchng, pubkey2id},
 };
 use aes::cipher::KeyIvInit;
+use ethrex_blockchain::mempool;
 use ethrex_core::{H256, H512};
 use ethrex_rlp::decode::RLPDecode;
 use ethrex_storage::Store;
@@ -332,8 +333,11 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
                 self.send(Message::AccountRange(response)).await?
             }
             // TODO(#1129) Add the transaction to the mempool once received.
-            txs_msg @ Message::Transactions(_) if peer_supports_eth => {
-                self.broadcast_message(txs_msg).await?;
+            Message::Transactions(txs) if peer_supports_eth => {
+                for tx in &txs.transactions {
+                    mempool::add_transaction(tx.clone(), &self.storage)?;
+                }
+                self.broadcast_message(Message::Transactions(txs)).await?;
             }
             Message::GetBlockHeaders(msg_data) if peer_supports_eth => {
                 let response = BlockHeaders {

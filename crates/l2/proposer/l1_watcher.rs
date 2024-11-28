@@ -216,7 +216,7 @@ impl L1Watcher {
 
             match mempool::add_transaction(
                 Transaction::PrivilegedL2Transaction(mint_transaction),
-                store.clone(),
+                store,
             ) {
                 Ok(hash) => {
                     info!("Mint transaction added to mempool {hash:#x}",);
