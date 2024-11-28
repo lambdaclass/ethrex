@@ -115,13 +115,9 @@ impl VM {
 
         let dividend = current_call_frame.stack.pop()?;
         let divisor = current_call_frame.stack.pop()?;
-        if divisor.is_zero() {
-            current_call_frame.stack.push(U256::zero())?;
-            return Ok(OpcodeSuccess::Continue);
-        }
-        let remainder = dividend.checked_rem(divisor).ok_or(VMError::Internal(
-            InternalError::ArithmeticOperationDividedByZero,
-        ))?; // Cannot be zero bc if above;
+
+        let remainder = dividend.checked_rem(divisor).unwrap_or_default();
+
         current_call_frame.stack.push(remainder)?;
 
         Ok(OpcodeSuccess::Continue)
