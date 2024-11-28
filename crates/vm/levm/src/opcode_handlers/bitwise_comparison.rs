@@ -167,7 +167,14 @@ impl VM {
         self.increase_consumed_gas(current_call_frame, gas_cost::BYTE)?;
         let op1 = current_call_frame.stack.pop()?;
         let op2 = current_call_frame.stack.pop()?;
-        let byte_index = op1.try_into().unwrap_or(usize::MAX);
+        let byte_index = match op1.try_into() {
+            Ok(byte_index) => byte_index,
+            Err(_) => {
+                // Index is out of bounds, then push 0
+                current_call_frame.stack.push(U256::zero())?;
+                return Ok(OpcodeSuccess::Continue);
+            }
+        };
 
         if byte_index < WORD_SIZE {
             let byte_to_push = WORD_SIZE
