@@ -1,4 +1,4 @@
-name: Weekly LoC
+name: Daily Lines of Code Report
 
 on:
   schedule:
@@ -25,9 +25,29 @@ jobs:
       - name: Add Rust Cache
         uses: Swatinem/rust-cache@v2
 
+      - name: Restore cache
+        id: cache-loc-report
+        uses: actions/cache@v3
+        with:
+          path: loc_report.json
+          key: loc-report-${{ github.ref_name }}
+          restore-keys: |
+            loc-report-
+
+      - name: Rename cached loc_report.json to loc_report.json.old
+        if: steps.cache-loc-report.outputs.cache-hit == 'true'
+        run: mv loc_report.json loc_report.json.old
+
       - name: Generate the loc report
         run: |
           make loc
+
+      - name: Save new loc_report.json to cache
+        if: success()
+        uses: actions/cache@v3
+        with:
+          path: loc_report.json
+          key: loc-report-${{ github.ref_name }}
 
       - name: Post results in summary
         run: |
