@@ -32,7 +32,7 @@ jobs:
       - name: Post results in summary
         run: |
           echo "# `ethrex` lines of code report" >> $GITHUB_STEP_SUMMARY
-          cat loc_report.md >> $GITHUB_STEP_SUMMARY
+          cat loc_report_github.txt >> $GITHUB_STEP_SUMMARY
 
       - name: Post results to ethrex L1 slack channel
         env:
