@@ -219,11 +219,7 @@ fn copy_behavior(
         .saturating_sub(1))
         / WORD_SIZE;
 
-    let memory_expansion_cost = current_call_frame.memory.expansion_cost(
-        offset
-            .checked_add(size)
-            .ok_or(OutOfGasError::GasCostOverflow)?,
-    )?;
+    let memory_expansion_cost = current_call_frame.memory.expansion_cost(offset, size)?;
 
     let minimum_word_size_cost = dynamic_base
         .checked_mul(minimum_word_size.into())
@@ -255,11 +251,7 @@ pub fn log(
     offset: usize,
     number_of_topics: u8,
 ) -> Result<U256, OutOfGasError> {
-    let memory_expansion_cost = current_call_frame.memory.expansion_cost(
-        offset
-            .checked_add(size)
-            .ok_or(OutOfGasError::GasCostOverflow)?,
-    )?;
+    let memory_expansion_cost = current_call_frame.memory.expansion_cost(offset, size)?;
 
     let topics_cost = LOGN_DYNAMIC_BASE
         .checked_mul(number_of_topics.into())
@@ -294,11 +286,9 @@ fn mem_expansion_behavior(
     offset_add: usize,
     static_cost: U256,
 ) -> Result<U256, OutOfGasError> {
-    let memory_expansion_cost = current_call_frame.memory.expansion_cost(
-        offset
-            .checked_add(offset_add)
-            .ok_or(OutOfGasError::GasCostOverflow)?,
-    )?;
+    let memory_expansion_cost = current_call_frame
+        .memory
+        .expansion_cost(offset, offset_add)?;
     static_cost
         .checked_add(memory_expansion_cost)
         .ok_or(OutOfGasError::GasCostOverflow)
@@ -360,16 +350,21 @@ pub fn mcopy(
         .saturating_sub(1))
         / WORD_SIZE;
 
-    let memory_byte_size = src_offset
+    let src_sum = src_offset
         .checked_add(size)
-        .and_then(|src_sum| {
-            dest_offset
-                .checked_add(size)
-                .map(|dest_sum| src_sum.max(dest_sum))
-        })
+        .ok_or(OutOfGasError::GasCostOverflow)?;
+    let dest_sum = dest_offset
+        .checked_add(size)
         .ok_or(OutOfGasError::GasCostOverflow)?;
 
-    let memory_expansion_cost = current_call_frame.memory.expansion_cost(memory_byte_size)?;
+    let memory_expansion_cost = if src_sum > dest_sum {
+        current_call_frame.memory.expansion_cost(src_offset, size)?
+    } else {
+        current_call_frame
+            .memory
+            .expansion_cost(dest_offset, size)?
+    };
+
     let copied_words_cost = MCOPY_DYNAMIC_BASE
         .checked_mul(words_copied.into())
         .ok_or(OutOfGasError::GasCostOverflow)?;
@@ -381,9 +376,9 @@ pub fn mcopy(
 }
 
 pub fn create(
-    current_call_frame: &CallFrame,
-    code_offset_in_memory: U256,
-    code_size_in_memory: U256,
+    current_call_frame: &mut CallFrame,
+    code_offset_in_memory: usize,
+    code_size_in_memory: usize,
 ) -> Result<U256, OutOfGasError> {
     compute_gas_create(
         current_call_frame,
@@ -394,9 +389,9 @@ pub fn create(
 }
 
 pub fn create_2(
-    current_call_frame: &CallFrame,
-    code_offset_in_memory: U256,
-    code_size_in_memory: U256,
+    current_call_frame: &mut CallFrame,
+    code_offset_in_memory: usize,
+    code_size_in_memory: usize,
 ) -> Result<U256, OutOfGasError> {
     compute_gas_create(
         current_call_frame,
@@ -407,49 +402,45 @@ pub fn create_2(
 }
 
 fn compute_gas_create(
-    current_call_frame: &CallFrame,
-    code_offset_in_memory: U256,
-    code_size_in_memory: U256,
+    current_call_frame: &mut CallFrame,
+    code_offset_in_memory: usize,
+    code_size_in_memory: usize,
     is_create_2: bool,
 ) -> Result<U256, OutOfGasError> {
     let minimum_word_size = (code_size_in_memory
-        .checked_add(U256::from(31))
+        .checked_add(31)
         .ok_or(OutOfGasError::GasCostOverflow)?)
-    .checked_div(U256::from(32))
+    .checked_div(32)
     .ok_or(OutOfGasError::ArithmeticOperationDividedByZero)?; // '32' will never be zero
 
     let init_code_cost = minimum_word_size
-        .checked_mul(INIT_CODE_WORD_COST)
+        .checked_mul(INIT_CODE_WORD_COST.as_usize()) // will not panic since it's 2
         .ok_or(OutOfGasError::GasCostOverflow)?;
 
     let code_deposit_cost = code_size_in_memory
-        .checked_mul(CODE_DEPOSIT_COST)
+        .checked_mul(CODE_DEPOSIT_COST.as_usize()) // will not panic since it's 200
         .ok_or(OutOfGasError::GasCostOverflow)?;
 
-    let memory_expansion_cost = current_call_frame.memory.expansion_cost(
-        code_size_in_memory
-            .checked_add(code_offset_in_memory)
-            .ok_or(OutOfGasError::GasCostOverflow)?
-            .try_into()
-            .map_err(|_err| OutOfGasError::GasCostOverflow)?,
-    )?;
+    let memory_expansion_cost = current_call_frame
+        .memory
+        .expansion_cost(code_offset_in_memory, code_size_in_memory)?;
 
     let hash_cost = if is_create_2 {
         minimum_word_size
-            .checked_mul(KECCAK25_DYNAMIC_BASE)
+            .checked_mul(KECCAK25_DYNAMIC_BASE.as_usize()) // will not panic since it's 6
             .ok_or(OutOfGasError::GasCostOverflow)?
     } else {
-        U256::zero()
+        0
     };
 
-    init_code_cost
-        .checked_add(memory_expansion_cost)
+    memory_expansion_cost
+        .checked_add(init_code_cost.into())
         .ok_or(OutOfGasError::CreationCostIsTooHigh)?
-        .checked_add(code_deposit_cost)
+        .checked_add(code_deposit_cost.into())
         .ok_or(OutOfGasError::CreationCostIsTooHigh)?
         .checked_add(CREATE_BASE_COST)
         .ok_or(OutOfGasError::CreationCostIsTooHigh)?
-        .checked_add(hash_cost)
+        .checked_add(hash_cost.into())
         .ok_or(OutOfGasError::CreationCostIsTooHigh)
 }
 

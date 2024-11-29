@@ -105,7 +105,7 @@ impl VM {
                     value,
                     calldata.clone(),
                     false,
-                    env.gas_limit.min(MAX_BLOCK_GAS_LIMIT),
+                    env.gas_limit,
                     TX_BASE_COST,
                     0,
                 );
@@ -117,7 +117,7 @@ impl VM {
                     accrued_substate: Substate::default(),
                     cache,
                     tx_kind: to,
-                    touched_accounts: HashSet::new(),
+                    touched_accounts: default_touched_accounts,
                     touched_storage_slots: HashMap::new(),
                 })
             }
@@ -148,7 +148,7 @@ impl VM {
                     value,
                     Bytes::new(),
                     false,
-                    env.gas_limit.min(MAX_BLOCK_GAS_LIMIT),
+                    env.gas_limit,
                     TX_BASE_COST,
                     0,
                 );
@@ -182,9 +182,6 @@ impl VM {
         loop {
             let opcode = current_call_frame.next_opcode()?.unwrap_or(Opcode::STOP); // This will execute opcode stop if there are no more opcodes, there are other ways of solving this but this is the simplest and doesn't change VM behavior.
 
-            // Note: This is commented because it's used for debugging purposes in development.
-            // dbg!(&current_call_frame.gas_used);
-            // dbg!(&opcode);
             let op_result: Result<OpcodeSuccess, VMError> = match opcode {
                 Opcode::STOP => Ok(OpcodeSuccess::Result(ResultReason::Stop)),
                 Opcode::ADD => self.op_add(current_call_frame),
@@ -625,7 +622,9 @@ impl VM {
             .checked_mul(priority_fee_per_gas)
             .ok_or(VMError::BalanceOverflow)?;
 
-        self.increase_account_balance(coinbase_address, coinbase_fee)?;
+        if !coinbase_fee.is_zero() {
+            self.increase_account_balance(coinbase_address, coinbase_fee)?;
+        }
 
         report.new_state.clone_from(&self.cache);
 
@@ -655,15 +654,14 @@ impl VM {
         ret_offset: usize,
         ret_size: usize,
     ) -> Result<OpcodeSuccess, VMError> {
-        let (sender_account_info, _address_was_cold) =
-            self.access_account(current_call_frame.msg_sender);
+        let (sender_account_info, _address_was_cold) = self.access_account(msg_sender);
 
         if sender_account_info.balance < value {
             current_call_frame.stack.push(U256::from(REVERT_FOR_CALL))?;
             return Ok(OpcodeSuccess::Continue);
         }
 
-        self.decrease_account_balance(current_call_frame.msg_sender, value)?;
+        self.decrease_account_balance(msg_sender, value)?;
         self.increase_account_balance(to, value)?;
 
         let (code_account_info, _address_was_cold) = self.access_account(code_address);
@@ -808,15 +806,11 @@ impl VM {
     pub fn create(
         &mut self,
         value_in_wei_to_send: U256,
-        code_offset_in_memory: U256,
-        code_size_in_memory: U256,
+        code_offset_in_memory: usize,
+        code_size_in_memory: usize,
         salt: Option<U256>,
         current_call_frame: &mut CallFrame,
     ) -> Result<OpcodeSuccess, VMError> {
-        let code_size_in_memory = code_size_in_memory
-            .try_into()
-            .map_err(|_err| VMError::VeryLargeNumber)?;
-
         if code_size_in_memory > MAX_CODE_SIZE * 2 {
             current_call_frame
                 .stack
@@ -849,10 +843,6 @@ impl VM {
                 return Ok(OpcodeSuccess::Result(ResultReason::Revert));
             }
         };
-
-        let code_offset_in_memory = code_offset_in_memory
-            .try_into()
-            .map_err(|_err| VMError::VeryLargeNumber)?;
 
         let code = Bytes::from(
             current_call_frame

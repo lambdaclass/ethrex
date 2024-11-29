@@ -191,12 +191,7 @@ impl VM {
             .try_into()
             .map_err(|_| VMError::VeryLargeNumber)?;
 
-        let gas_cost =
-            current_call_frame
-                .memory
-                .expansion_cost(offset.checked_add(size).ok_or(VMError::Internal(
-                    InternalError::ArithmeticOperationOverflow,
-                ))?)?;
+        let gas_cost = current_call_frame.memory.expansion_cost(offset, size)?;
 
         self.increase_consumed_gas(current_call_frame, gas_cost)?;
 
@@ -368,8 +363,16 @@ impl VM {
         current_call_frame: &mut CallFrame,
     ) -> Result<OpcodeSuccess, VMError> {
         let value_in_wei_to_send = current_call_frame.stack.pop()?;
-        let code_offset_in_memory = current_call_frame.stack.pop()?;
-        let code_size_in_memory = current_call_frame.stack.pop()?;
+        let code_offset_in_memory = current_call_frame
+            .stack
+            .pop()?
+            .try_into()
+            .map_err(|_err| VMError::VeryLargeNumber)?;
+        let code_size_in_memory = current_call_frame
+            .stack
+            .pop()?
+            .try_into()
+            .map_err(|_err| VMError::VeryLargeNumber)?;
 
         // Gas Cost
         let gas_cost = gas_cost::create(
@@ -397,8 +400,16 @@ impl VM {
         current_call_frame: &mut CallFrame,
     ) -> Result<OpcodeSuccess, VMError> {
         let value_in_wei_to_send = current_call_frame.stack.pop()?;
-        let code_offset_in_memory = current_call_frame.stack.pop()?;
-        let code_size_in_memory = current_call_frame.stack.pop()?;
+        let code_offset_in_memory: usize = current_call_frame
+            .stack
+            .pop()?
+            .try_into()
+            .map_err(|_err| VMError::VeryLargeNumber)?;
+        let code_size_in_memory: usize = current_call_frame
+            .stack
+            .pop()?
+            .try_into()
+            .map_err(|_err| VMError::VeryLargeNumber)?;
         let salt = current_call_frame.stack.pop()?;
 
         // Gas Cost
@@ -442,12 +453,7 @@ impl VM {
             .try_into()
             .map_err(|_err| VMError::VeryLargeNumber)?;
 
-        let gas_cost =
-            current_call_frame
-                .memory
-                .expansion_cost(offset.checked_add(size).ok_or(VMError::Internal(
-                    InternalError::ArithmeticOperationOverflow,
-                ))?)?;
+        let gas_cost = current_call_frame.memory.expansion_cost(offset, size)?;
 
         self.increase_consumed_gas(current_call_frame, gas_cost)?;
 
@@ -474,7 +480,6 @@ impl VM {
         // 3. Get the target account, checking if it is empty and if it is cold. Update gas cost accordingly.
         // 4. Add the balance of the current account to the target account
         // 5. Register account to be destroyed in accrued substate.
-
         // Notes:
         //      If context is Static, return error.
         //      If executed in the same transaction a contract was created, the current account is registered to be destroyed

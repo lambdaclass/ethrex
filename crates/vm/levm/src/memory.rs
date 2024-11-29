@@ -163,7 +163,14 @@ impl Memory {
         Ok(())
     }
 
-    pub fn expansion_cost(&self, memory_byte_size: usize) -> Result<U256, OutOfGasError> {
+    pub fn expansion_cost(&self, offset: usize, size: usize) -> Result<U256, OutOfGasError> {
+        if size == 0 {
+            return Ok(U256::zero());
+        }
+
+        let memory_byte_size = offset
+            .checked_add(size)
+            .ok_or(OutOfGasError::GasCostOverflow)?;
         if memory_byte_size <= self.data.len() {
             return Ok(U256::zero());
         }
