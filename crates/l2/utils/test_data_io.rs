@@ -1,15 +1,21 @@
 #![allow(clippy::unwrap_used)]
 #![allow(clippy::expect_used)]
+
+use ethrex_blockchain::add_block;
 use ethrex_core::types::{Block, Genesis};
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
-use ethrex_storage::Store;
+use ethrex_storage::{EngineType, Store};
+use ethrex_vm::execution_db::ExecutionDB;
 use tracing::info;
+use zkvm_interface::io::ProgramInput;
 
 use std::{
     fs::File,
     io::{BufReader, Read as _, Write},
     path::PathBuf,
 };
+
+use super::error::ProverInputError;
 
 // From cmd/ethrex
 pub fn read_chain_file(chain_rlp_path: &str) -> Vec<Block> {
@@ -51,6 +57,37 @@ pub fn generate_rlp(
         info!("TEST RLP GENERATED AT: {path:?}");
     }
     Ok(())
+}
+
+pub fn generate_program_input(
+    genesis: Genesis,
+    chain: Vec<Block>,
+    block_number: usize,
+) -> Result<ProgramInput, ProverInputError> {
+    let block = chain
+        .get(block_number)
+        .ok_or(ProverInputError::InvalidBlockNumber(block_number))?
+        .clone();
+
+    // create store
+    let store = Store::new("memory", EngineType::InMemory)?;
+    store.add_initial_state(genesis)?;
+    for block in chain {
+        add_block(&block, &store)?;
+    }
+
+    let parent_block_header = store
+        .get_block_header_by_hash(block.header.parent_hash)?
+        .ok_or(ProverInputError::InvalidParentBlock(
+            block.header.parent_hash,
+        ))?;
+    let db = ExecutionDB::from_exec(&block, &store)?;
+
+    Ok(ProgramInput {
+        db,
+        block,
+        parent_block_header,
+    })
 }
 
 // From cmd/ethrex/decode.rs
