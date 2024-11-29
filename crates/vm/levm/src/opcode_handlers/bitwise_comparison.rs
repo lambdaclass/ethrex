@@ -202,12 +202,10 @@ impl VM {
         let shift = current_call_frame.stack.pop()?;
         let value = current_call_frame.stack.pop()?;
 
-        let shift_usize: usize = shift.try_into().map_err(|_| VMError::VeryLargeNumber)?; // we know its not bigger than 256
-
         if shift < U256::from(256) {
             current_call_frame
                 .stack
-                .push(checked_shift_left(value, shift_usize)?)?;
+                .push(checked_shift_left(value, shift)?)?;
         } else {
             current_call_frame.stack.push(U256::zero())?;
         }
@@ -221,12 +219,10 @@ impl VM {
         let shift = current_call_frame.stack.pop()?;
         let value = current_call_frame.stack.pop()?;
 
-        let shift_usize: usize = shift.try_into().map_err(|_| VMError::VeryLargeNumber)?; // we know its not bigger than 256
-
         if shift < U256::from(256) {
             current_call_frame
                 .stack
-                .push(checked_shift_right(value, shift_usize)?)?;
+                .push(checked_shift_right(value, shift)?)?;
         } else {
             current_call_frame.stack.push(U256::zero())?;
         }
@@ -253,32 +249,32 @@ impl VM {
 }
 
 pub fn arithmetic_shift_right(value: U256, shift: U256) -> Result<U256, VMError> {
-    let shift_usize: usize = shift.try_into().map_err(|_| VMError::VeryLargeNumber)?; // we know its not bigger than 256
-
     if value.bit(255) {
         // if negative fill with 1s
-        let shifted = checked_shift_right(value, shift_usize)?;
+        let shifted = checked_shift_right(value, shift)?;
         let mask = checked_shift_left(
             U256::MAX,
-            256_usize.checked_sub(shift_usize).ok_or(VMError::Internal(
-                InternalError::ArithmeticOperationUnderflow,
-            ))?, // Note that this is already checked in op_sar
+            (U256::from(256))
+                .checked_sub(shift)
+                .ok_or(VMError::Internal(
+                    InternalError::ArithmeticOperationUnderflow,
+                ))?, // Note that this is already checked in op_sar
         )?;
 
         Ok(shifted | mask)
     } else {
-        Ok(checked_shift_right(value, shift_usize)?)
+        Ok(checked_shift_right(value, shift)?)
     }
 }
 
 /// Instead of using unsafe <<, uses checked_mul n times, replicating n shifts.
 /// Note: These (checked_shift_left and checked_shift_right) are done because
 /// are not available in U256
-pub fn checked_shift_left(value: U256, shift: usize) -> Result<U256, VMError> {
+pub fn checked_shift_left(value: U256, shift: U256) -> Result<U256, VMError> {
     let mut result = value;
     let mut shifts_left = shift;
 
-    while shifts_left > 0 {
+    while !shifts_left.is_zero() {
         result = match result.checked_mul(U256::from(2)) {
             Some(num) => num,
             None => {
@@ -297,26 +293,30 @@ pub fn checked_shift_left(value: U256, shift: usize) -> Result<U256, VMError> {
                     ))?
             }
         };
-        shifts_left = shifts_left.checked_sub(1).ok_or(VMError::Internal(
-            InternalError::ArithmeticOperationUnderflow,
-        ))?; // Should not reach negative values
+        shifts_left = shifts_left
+            .checked_sub(U256::one())
+            .ok_or(VMError::Internal(
+                InternalError::ArithmeticOperationUnderflow,
+            ))?; // Should not reach negative values
     }
 
     Ok(result)
 }
 
 // Instead of using unsafe >>, uses checked_div n times, replicating n shifts
-fn checked_shift_right(value: U256, shift: usize) -> Result<U256, VMError> {
+fn checked_shift_right(value: U256, shift: U256) -> Result<U256, VMError> {
     let mut result = value;
     let mut shifts_left = shift;
 
-    while shifts_left > 0 {
+    while !shifts_left.is_zero() {
         result = result.checked_div(U256::from(2)).ok_or(VMError::Internal(
             InternalError::ArithmeticOperationDividedByZero,
         ))?; // '2' will never be zero
-        shifts_left = shifts_left.checked_sub(1).ok_or(VMError::Internal(
-            InternalError::ArithmeticOperationUnderflow,
-        ))?; // Should not reach negative values
+        shifts_left = shifts_left
+            .checked_sub(U256::one())
+            .ok_or(VMError::Internal(
+                InternalError::ArithmeticOperationUnderflow,
+            ))?; // Should not reach negative values
     }
 
     Ok(result)

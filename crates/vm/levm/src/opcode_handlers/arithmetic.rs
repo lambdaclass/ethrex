@@ -237,19 +237,14 @@ impl VM {
     ) -> Result<OpcodeSuccess, VMError> {
         self.increase_consumed_gas(current_call_frame, gas_cost::SIGNEXTEND)?;
 
-        let byte_size: usize = current_call_frame
-            .stack
-            .pop()?
-            .try_into()
-            .map_err(|_| VMError::VeryLargeNumber)?;
-
+        let byte_size = current_call_frame.stack.pop()?;
         let value_to_extend = current_call_frame.stack.pop()?;
 
-        let bits_per_byte: usize = 8;
-        let sign_bit_position_on_byte = 7;
+        let bits_per_byte = U256::from(8);
+        let sign_bit_position_on_byte = U256::from(7);
 
-        let max_byte_size: usize = 31;
-        let byte_size: usize = byte_size.min(max_byte_size);
+        let max_byte_size = U256::from(31);
+        let byte_size = byte_size.min(max_byte_size);
         let total_bits = bits_per_byte
             .checked_mul(byte_size)
             .ok_or(VMError::Internal(
@@ -261,9 +256,20 @@ impl VM {
                 .ok_or(VMError::Internal(
                     InternalError::ArithmeticOperationOverflow,
                 ))?;
+
+        let sign_bit_index: usize = match sign_bit_index.try_into() {
+            Ok(val) => val,
+            Err(_) => {
+                // this means the value_to_extend was too big to extend, so remains the same.
+                // Maybe this verification could be done before in this function
+                current_call_frame.stack.push(value_to_extend)?;
+                return Ok(OpcodeSuccess::Continue);
+            }
+        };
+
         let is_negative = value_to_extend.bit(sign_bit_index);
 
-        let sign_bit_mask = checked_shift_left(U256::one(), sign_bit_index)?
+        let sign_bit_mask = checked_shift_left(U256::one(), U256::from(sign_bit_index))?
             .checked_sub(U256::one())
             .ok_or(VMError::Internal(
                 InternalError::ArithmeticOperationUnderflow,
