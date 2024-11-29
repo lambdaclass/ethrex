@@ -30,8 +30,9 @@ lazy_static.workspace = true
 hex-literal.workspace = true
 
 [features]
-default = ["libmdbx", "c-kzg"]
+default = ["c-kzg"]
 libmdbx = ["ethrex-trie/libmdbx"]
+redb = ["ethrex-trie/redb"]
 c-kzg = ["dep:c-kzg"]
 
 [lib]

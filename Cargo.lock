@@ -2055,8 +2055,10 @@ dependencies = [
  "ethrex-vm",
  "hex",
  "k256",
+ "libmdbx",
  "local-ip-address",
  "rand 0.8.5",
+ "redb",
  "serde_json",
  "tokio",
  "tokio-util",
@@ -2154,6 +2156,7 @@ dependencies = [
  "tokio",
  "tokio-util",
  "tracing",
+ "zkvm_interface",
 ]
 
 [[package]]
@@ -2295,6 +2298,7 @@ dependencies = [
  "hex",
  "hex-literal",
  "libmdbx",
+ "redb",
  "serde",
  "serde_json",
  "sha3",
@@ -2318,6 +2322,7 @@ dependencies = [
  "lazy_static",
  "libmdbx",
  "proptest",
+ "redb",
  "serde",
  "serde_json",
  "sha3",
@@ -4655,6 +4660,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "678054eb77286b51581ba43620cc911abf02758c91f93f479767aed0f90458b2"
 dependencies = [
  "rand_core 0.3.1",
+]
+
+[[package]]
+name = "redb"
+version = "2.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "84b1de48a7cf7ba193e81e078d17ee2b786236eed1d3f7c60f8a09545efc4925"
+dependencies = [
+ "libc",
 ]
 
 [[package]]

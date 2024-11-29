@@ -20,13 +20,19 @@ hex.workspace = true
 serde = { version = "1.0.203", features = ["derive"] }
 serde_json = "1.0.117"
 libmdbx = { workspace = true, optional = true }
+redb = { workspace = true, optional = true }
 
 [features]
-default = ["libmdbx"]
+default = []
 libmdbx = [
     "dep:libmdbx",
     "ethrex-trie/libmdbx",
     "ethrex-core/libmdbx",
+]
+redb = [
+    "dep:redb",
+    "ethrex-trie/redb",
+    "ethrex-core/redb"
 ]
 
 [dev-dependencies]

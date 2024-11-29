@@ -120,7 +120,15 @@ async fn main() {
         info!("snap-sync not available, defaulting to full-sync");
     }
 
-    let store = Store::new(&data_dir, EngineType::Libmdbx).expect("Failed to create Store");
+    cfg_if::cfg_if! {
+        if #[cfg(feature = "redb")] {
+            let store = Store::new(&data_dir, EngineType::RedB).expect("Failed to create Store");
+        } else if #[cfg(feature = "libmdbx")] {
+            let store = Store::new(&data_dir, EngineType::Libmdbx).expect("Failed to create Store");
+        } else {
+            let store = Store::new(&data_dir, EngineType::InMemory).expect("Failed to create Store");
+        }
+    }
 
     let genesis = read_genesis_file(genesis_file_path);
     store

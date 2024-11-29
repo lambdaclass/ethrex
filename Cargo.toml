@@ -43,7 +43,7 @@ ethrex-l2 = { path = "./crates/l2" }
 ethrex-prover = { path = "./crates/l2/prover" }
 
 tracing = { version = "0.1", features = ["log"] }
-tracing-subscriber = "0.3.0"
+tracing-subscriber = { version = "0.3.0", features = ["env-filter"] }
 
 ethereum-types = { version = "0.14.1", features = ["serialize"] }
 serde = { version = "1.0.203", features = ["derive"] }
@@ -62,6 +62,7 @@ jsonwebtoken = "9.3.0"
 rand = "0.8.5"
 cfg-if = "1.0.0"
 reqwest = { version = "0.12.7", features = ["json"] }
+redb = "2.2.0"
 snap = "1.1.1"
 k256 = { version = "0.13.3", features = ["ecdh"] }
 secp256k1 = { version = "0.29", default-features = false, features = [
