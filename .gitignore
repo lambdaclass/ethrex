@@ -50,3 +50,4 @@ levm_ef_tests_summary.txt
 
 loc_report_slack.txt
 loc_report_github.txt
+loc_report.json

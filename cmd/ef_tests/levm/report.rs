@@ -112,7 +112,27 @@ pub fn summary_for_slack(reports: &[EFTestReport]) -> String {
     let total_run = reports.len();
     let success_percentage = (total_passed as f64 / total_run as f64) * 100.0;
     format!(
-        r#""*Summary*: {total_passed}/{total_run} ({success_percentage:.2}%)\n\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n""#,
+        r#"{{
+    "blocks": [
+        {{
+            "type": "header",
+            "text": {{
+                "type": "plain_text",
+                "text": "Daily LEVM EF Tests Run Report"
+            }}
+        }},
+        {{
+            "type": "divider"
+        }},
+        {{
+            "type": "section",
+            "text": {{
+                "type": "mrkdwn",
+                "text": "*Summary*: {total_passed}/{total_run} ({success_percentage:.2}%)\n\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n"
+            }}             
+        }}
+    ]
+}}"#,
         fork_summary_for_slack(reports, SpecId::CANCUN),
         fork_summary_for_slack(reports, SpecId::SHANGHAI),
         fork_summary_for_slack(reports, SpecId::HOMESTEAD),
