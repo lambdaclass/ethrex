@@ -73,7 +73,7 @@ fn slack_message(old_report: LinesOfCodeReport, new_report: LinesOfCodeReport) -
             "type": "header",
             "text": {{
                 "type": "plain_text",
-                "text": "Daily LEVM EF Tests Run Report"
+                "text": "Daily Lines of Code Report"
             }}
         }},
         {{
