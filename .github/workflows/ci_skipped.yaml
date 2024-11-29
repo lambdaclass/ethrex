@@ -7,6 +7,14 @@ on:
       - 'LICENSE'
       - "**/README.md"
       - "**/docs/**"
+      - '!**/*.rs'
+      - '!**/*.toml'
+      - '!**/*.yaml'
+      - '!**/*.sh'
+      - '!**/*.json'
+      - '!**/*.rlp'
+      - '!**Dockefile'
+      - '!**Makefile'
 jobs:
   lint:
     # "Lint" is a required check, don't change the name
