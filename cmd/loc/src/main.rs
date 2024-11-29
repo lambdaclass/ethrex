@@ -46,7 +46,7 @@ fn main() {
 
     let old_report: LinesOfCodeReport = std::fs::read_to_string("loc_report.json.old")
         .map(|s| serde_json::from_str(&s).unwrap())
-        .unwrap_or_default();
+        .unwrap_or(new_report);
 
     std::fs::write(
         "loc_report_slack.txt",
@@ -67,7 +67,7 @@ fn slack_message(old_report: LinesOfCodeReport, new_report: LinesOfCodeReport) -
     let ethrex_diff_total = ethrex_l1_diff + ethrex_l2_diff + levm_diff;
 
     format!(
-        r#"*ethrex L1:* {} {}\n*ethrex L2:* {} {}\n*levm:* {} {}\n*ethrex (total):* {} {}"#,
+        r#""*ethrex L1:* {} {}\n*ethrex L2:* {} {}\n*levm:* {} {}\n*ethrex (total):* {} {}""#,
         new_report.ethrex_l1,
         if new_report.ethrex > old_report.ethrex {
             format!("(+{ethrex_l1_diff})")

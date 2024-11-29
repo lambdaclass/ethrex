@@ -17,7 +17,7 @@ $(jq -n --arg text "$(cat cmd/ef_tests/levm/levm_ef_tests_summary_slack.txt)" '{
             "type": "section",
             "text": {
                 "type": "mrkdwn",
-                "text": "$text"
+                "text": $text
             }             
         }
     ]

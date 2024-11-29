@@ -17,7 +17,7 @@ $(jq -n --arg text "$(cat loc_report_slack.txt)" '{
             "type": "section",
             "text": {
                 "type": "mrkdwn",
-                "text": "$text"
+                "text": $text
             }             
         }
     ]
