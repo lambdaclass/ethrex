@@ -62,7 +62,7 @@ impl BranchNode {
             if child_hash.is_valid() {
                 let child_node = state
                     .get_node(child_hash.clone())?
-                    .expect("inconsistent internal tree structure");
+                    .ok_or(TrieError::InconsistentTree)?;
                 child_node.get(state, path)
             } else {
                 Ok(None)
@@ -94,7 +94,7 @@ impl BranchNode {
                 choice_hash => {
                     let child_node = state
                         .get_node(choice_hash.clone())?
-                        .expect("inconsistent internal tree structure");
+                        .ok_or(TrieError::InconsistentTree)?;
 
                     let child_node = child_node.insert(state, path, value)?;
                     *choice_hash = child_node.insert_self(state)?;
@@ -139,7 +139,7 @@ impl BranchNode {
             if self.choices[choice_index].is_valid() {
                 let child_node = state
                     .get_node(self.choices[choice_index].clone())?
-                    .expect("inconsistent internal tree structure");
+                    .ok_or(TrieError::InconsistentTree)?;
                 // Remove value from child node
                 let (child_node, old_value) = child_node.remove(state, path.clone())?;
                 if let Some(child_node) = child_node {
@@ -180,7 +180,7 @@ impl BranchNode {
                 let (choice_index, child_hash) = children[0];
                 let child = state
                     .get_node(child_hash.clone())?
-                    .expect("inconsistent internal tree structure");
+                    .ok_or(TrieError::InconsistentTree)?;
                 match child {
                     // Replace self with an extension node leading to the child
                     Node::Branch(_) => ExtensionNode::new(
@@ -254,7 +254,7 @@ impl BranchNode {
             if child_hash.is_valid() {
                 let child_node = state
                     .get_node(child_hash.clone())?
-                    .expect("inconsistent internal tree structure");
+                    .ok_or(TrieError::InconsistentTree)?;
                 child_node.get_path(state, path, node_path)?;
             }
         }

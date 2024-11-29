@@ -100,10 +100,18 @@ pub mod trie {
             } else {
                 // Add or update AccountState in the trie
                 // Fetch current state or create a new state to be inserted
-                let mut account_state = match state_trie.get(&hashed_address)? {
-                    Some(encoded_state) => AccountState::decode(&encoded_state)?,
-                    None => AccountState::default(),
+                let account_state = state_trie.get(&hashed_address);
+
+                // if there isn't a path into the account (inconsistent tree error), then
+                // it's potentially a new account. This is because we're using pruned tries
+                // so the path into a new account might not be included in the pruned state trie.
+                let mut account_state = match account_state {
+                    Ok(Some(encoded_state)) => AccountState::decode(&encoded_state)?,
+                    Ok(None) | Err(TrieError::InconsistentTree) => AccountState::default(),
+                    Err(err) => return Err(err.into()),
                 };
+                let is_account_new = account_state == AccountState::default();
+
                 if let Some(info) = &update.info {
                     account_state.nonce = info.nonce;
                     account_state.balance = info.balance;
@@ -111,21 +119,26 @@ pub mod trie {
                 }
                 // Store the added storage in the account's storage trie and compute its new root
                 if !update.added_storage.is_empty() {
-                    let storage_trie = storage_tries
-                        .get_mut(&update.address)
-                        .ok_or(Error::StorageNotFound(update.address))?;
+                    let storage_trie = if is_account_new {
+                        let trie = Trie::from_nodes(None, &[])?;
+                        storage_tries.insert(update.address, trie);
+                        storage_tries.get_mut(&update.address).unwrap()
+                    } else {
+                        storage_tries
+                            .get_mut(&update.address)
+                            .ok_or(Error::StorageNotFound(update.address))?
+                    };
                     for (storage_key, storage_value) in &update.added_storage {
                         let hashed_key = hash_key(storage_key);
-                        if storage_value.is_zero() {
+                        if storage_value.is_zero() && !is_account_new {
                             storage_trie.remove(hashed_key)?;
-                        } else {
+                        } else if !storage_value.is_zero() {
                             storage_trie.insert(hashed_key, storage_value.encode_to_vec())?;
                         }
                     }
                     account_state.storage_root = storage_trie.hash_no_commit();
                 }
                 state_trie.insert(hashed_address, account_state.encode_to_vec())?;
-                println!("inserted new state");
             }
         }
         Ok(())
