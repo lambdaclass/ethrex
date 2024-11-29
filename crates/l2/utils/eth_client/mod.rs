@@ -29,7 +29,7 @@ use keccak_hash::keccak;
 use reqwest::Client;
 use secp256k1::SecretKey;
 use serde::{Deserialize, Serialize};
-use serde_json::json;
+use serde_json::{json, Value};
 use std::ops::Div;
 use tokio::time::{sleep, Instant};
 use tracing::warn;
@@ -365,7 +365,9 @@ impl EthClient {
 
         // Add the nonce just if present, otherwise the RPC will use the latest nonce
         if let Some(nonce) = transaction.nonce {
-            data["nonce"] = json!(format!("{:#x}", nonce));
+            if let Value::Object(ref mut map) = data {
+                map.insert("nonce".to_owned(), json!(format!("{nonce:#x}")));
+            }
         }
 
         let request = RpcRequest {
@@ -377,8 +379,12 @@ impl EthClient {
 
         match self.send_request(request).await {
             Ok(RpcResponse::Success(result)) => u64::from_str_radix(
-                &serde_json::from_value::<String>(result.result)
-                    .map_err(EstimateGasPriceError::SerdeJSONError)?[2..],
+                serde_json::from_value::<String>(result.result)
+                    .map_err(EstimateGasPriceError::SerdeJSONError)?
+                    .get(2..)
+                    .ok_or(EstimateGasPriceError::Custom(
+                        "Failed to slice index response in estimate_gas".to_owned(),
+                    ))?,
                 16,
             )
             .map_err(EstimateGasPriceError::ParseIntError)
@@ -398,9 +404,20 @@ impl EthClient {
                                 "Failed to hex::decode in estimate_gas".to_owned(),
                             )
                         })?;
-                        let string_length = U256::from_big_endian(&abi_decoded_error_data[36..68]);
-                        let string_data =
-                            &abi_decoded_error_data[68..68 + string_length.as_usize()];
+                        let string_length = U256::from_big_endian(
+                            abi_decoded_error_data
+                                .get(36..68)
+                                .ok_or(EthClientError::Custom(
+                                    "Failed to slice index abi_decoded_error_data in estimate_gas"
+                                        .to_owned(),
+                                ))?,
+                        );
+                        let string_data = abi_decoded_error_data
+                            .get(68..68 + string_length.as_usize())
+                            .ok_or(EthClientError::Custom(
+                                "Failed to slice index abi_decoded_error_data in estimate_gas"
+                                    .to_owned(),
+                            ))?;
                         String::from_utf8(string_data.to_vec()).map_err(|_| {
                             EthClientError::Custom(
                                 "Failed to String::from_utf8 in estimate_gas".to_owned(),
@@ -449,8 +466,12 @@ impl EthClient {
 
         match self.send_request(request).await {
             Ok(RpcResponse::Success(result)) => u64::from_str_radix(
-                &serde_json::from_value::<String>(result.result)
-                    .map_err(GetNonceError::SerdeJSONError)?[2..],
+                serde_json::from_value::<String>(result.result)
+                    .map_err(GetNonceError::SerdeJSONError)?
+                    .get(2..)
+                    .ok_or(EthClientError::Custom(
+                        "Failed to deserialize get_nonce request".to_owned(),
+                    ))?,
                 16,
             )
             .map_err(GetNonceError::ParseIntError)

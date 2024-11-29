@@ -163,7 +163,14 @@ pub async fn claim_withdraw(
         let mut calldata = Vec::new();
 
         // Function selector
-        calldata.extend_from_slice(&keccak(CLAIM_WITHDRAWAL_SIGNATURE).as_bytes()[..4]);
+        calldata.extend_from_slice(
+            keccak(CLAIM_WITHDRAWAL_SIGNATURE)
+                .as_bytes()
+                .get(..4)
+                .ok_or(EthClientError::Custom(
+                    "failed to slice into the claim withdrawal signature".to_owned(),
+                ))?,
+        );
 
         // bytes32 l2WithdrawalTxHash
         calldata.extend_from_slice(l2_withdrawal_tx_hash.as_fixed_bytes());
@@ -271,6 +278,7 @@ pub async fn get_withdraw_merkle_proof(
             .collect(),
         tx_withdrawal_hash,
     )
+    .map_err(|err| EthClientError::Custom(format!("Failed to generate merkle proof: {err}")))?
     .ok_or(EthClientError::Custom(
         "Failed to generate merkle proof, element is not on the tree".to_string(),
     ))?;

@@ -1,5 +1,4 @@
-use std::array::TryFromSliceError;
-
+use crate::utils::eth_client::errors::EthClientError;
 use ethrex_core::Address;
 use keccak_hash::{keccak, H256};
 use secp256k1::SecretKey;
@@ -26,14 +25,23 @@ where
     hex.serialize(serializer)
 }
 
-pub fn get_address_from_secret_key(secret_key: &SecretKey) -> Result<Address, TryFromSliceError> {
+pub fn get_address_from_secret_key(secret_key: &SecretKey) -> Result<Address, EthClientError> {
     let public_key = secret_key
         .public_key(secp256k1::SECP256K1)
         .serialize_uncompressed();
     let hash = keccak(&public_key[1..]);
 
-    // Get the lat 20 bytes of the hash
-    let address_bytes: [u8; 20] = hash[12..32].try_into()?;
+    // Get the last 20 bytes of the hash
+    let address_bytes: [u8; 20] = hash
+        .as_ref()
+        .get(12..32)
+        .ok_or(EthClientError::Custom(
+            "Failed to get_address_from_secret_key: error slicing address_bytes".to_owned(),
+        ))?
+        .try_into()
+        .map_err(|err| {
+            EthClientError::Custom(format!("Failed to get_address_from_secret_key: {err}"))
+        })?;
 
     Ok(Address::from(address_bytes))
 }

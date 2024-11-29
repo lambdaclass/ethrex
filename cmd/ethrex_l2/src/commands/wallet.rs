@@ -245,6 +245,12 @@ async fn get_withdraw_merkle_proof(
             .collect(),
         tx_withdrawal_hash,
     )
+    .map_err(|err| {
+        eyre::eyre!(
+            "Failed to generate merkle proof in get_withdraw_merkle_proof: {:?}",
+            err
+        )
+    })?
     .ok_or_eyre("Transaction's WithdrawalData is not in block's WithdrawalDataMerkleRoot")?;
 
     Ok((index, path))

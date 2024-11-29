@@ -117,13 +117,13 @@ impl Committer {
                 }
 
                 let withdrawal_logs_merkle_root =
-                    self.get_withdrawals_merkle_root(withdrawal_hashes);
+                    self.get_withdrawals_merkle_root(withdrawal_hashes)?;
                 let deposit_logs_hash = self.get_deposit_hash(
                     deposits
                         .iter()
                         .filter_map(|tx| tx.get_deposit_hash())
                         .collect(),
-                );
+                )?;
 
                 let state_diff = self.prepare_state_diff(
                     &block_to_commit,
@@ -180,11 +180,14 @@ impl Committer {
         Ok(withdrawals)
     }
 
-    pub fn get_withdrawals_merkle_root(&self, withdrawals_hashes: Vec<H256>) -> H256 {
+    pub fn get_withdrawals_merkle_root(
+        &self,
+        withdrawals_hashes: Vec<H256>,
+    ) -> Result<H256, CommitterError> {
         if !withdrawals_hashes.is_empty() {
-            merkelize(withdrawals_hashes)
+            merkelize(withdrawals_hashes).map_err(CommitterError::FailedToMerkelize)
         } else {
-            H256::zero()
+            Ok(H256::zero())
         }
     }
 
@@ -206,25 +209,27 @@ impl Committer {
         deposits
     }
 
-    pub fn get_deposit_hash(&self, deposit_hashes: Vec<H256>) -> H256 {
+    pub fn get_deposit_hash(&self, deposit_hashes: Vec<H256>) -> Result<H256, CommitterError> {
         if !deposit_hashes.is_empty() {
-            H256::from_slice(
+            Ok(H256::from_slice(
                 [
                     &(deposit_hashes.len() as u16).to_be_bytes(),
-                    &keccak(
+                    keccak(
                         deposit_hashes
                             .iter()
                             .map(H256::as_bytes)
                             .collect::<Vec<&[u8]>>()
                             .concat(),
                     )
-                    .as_bytes()[2..32],
+                    .as_bytes()
+                    .get(2..32)
+                    .ok_or(CommitterError::FailedToDecodeDepositHash)?,
                 ]
                 .concat()
                 .as_slice(),
-            )
+            ))
         } else {
-            H256::zero()
+            Ok(H256::zero())
         }
     }
     /// Prepare the state diff for the block.

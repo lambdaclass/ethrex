@@ -54,3 +54,4 @@ gpu = ["risc0-zkvm/cuda"]
 [lints.clippy]
 unwrap_used = "deny"
 expect_used = "deny"
+indexing_slicing = "deny"

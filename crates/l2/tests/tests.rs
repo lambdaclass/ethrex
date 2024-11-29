@@ -226,7 +226,7 @@ async fn testito() {
     println!("Claiming funds on L1");
 
     while u64::from_str_radix(
-        &eth_client
+        eth_client
             .call(
                 Address::from_str(
                     &std::env::var("ON_CHAIN_PROPOSER_ADDRESS")
@@ -238,7 +238,9 @@ async fn testito() {
                 Overrides::default(),
             )
             .await
-            .unwrap()[2..],
+            .unwrap()
+            .get(2..)
+            .unwrap(),
         16,
     )
     .unwrap()
