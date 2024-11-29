@@ -38,7 +38,7 @@ jobs:
       - name: Post results in summary
         run: |
           echo "# Daily LEVM EF Tests Run Report" >> $GITHUB_STEP_SUMMARY
-          cat crates/vm/levm/levm_ef_tests_summary_github.txt >> $GITHUB_STEP_SUMMARY
+          cat cmd/ef_tests/levm/levm_ef_tests_summary_github.txt >> $GITHUB_STEP_SUMMARY
 
       - name: Post results to ethrex L1 slack channel
         env:
