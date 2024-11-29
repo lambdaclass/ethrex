@@ -1,6 +1,6 @@
 use crate::{
     call_frame::CallFrame,
-    constants::WORD_SIZE_IN_BYTES_USIZE,
+    constants::{WORD_SIZE, WORD_SIZE_IN_BYTES_USIZE},
     errors::{InternalError, OpcodeSuccess, OutOfGasError, VMError},
     gas_cost,
     vm::{word_to_address, VM},
@@ -210,12 +210,12 @@ impl VM {
         &mut self,
         current_call_frame: &mut CallFrame,
     ) -> Result<OpcodeSuccess, VMError> {
-        let dest_offset: usize = current_call_frame
+        let destination_offset: usize = current_call_frame
             .stack
             .pop()?
             .try_into()
             .map_err(|_| VMError::VeryLargeNumber)?;
-        let offset: usize = current_call_frame
+        let code_offset: usize = current_call_frame
             .stack
             .pop()?
             .try_into()
@@ -226,8 +226,8 @@ impl VM {
             .try_into()
             .map_err(|_| VMError::VeryLargeNumber)?;
 
-        let gas_cost =
-            gas_cost::codecopy(current_call_frame, size, dest_offset).map_err(VMError::OutOfGas)?;
+        let gas_cost = gas_cost::codecopy(current_call_frame, size, destination_offset)
+            .map_err(VMError::OutOfGas)?;
 
         self.increase_consumed_gas(current_call_frame, gas_cost)?;
 
@@ -235,20 +235,43 @@ impl VM {
             return Ok(OpcodeSuccess::Continue);
         }
 
-        let bytecode_len = current_call_frame.bytecode.len();
-        let code = if offset < bytecode_len {
-            current_call_frame.bytecode.slice(
-                offset
-                    ..(offset.checked_add(size).ok_or(VMError::Internal(
+        let new_memory_size = (destination_offset
+            .checked_add(size)
+            .ok_or(VMError::Internal(
+                InternalError::ArithmeticOperationOverflow,
+            ))?)
+        .checked_next_multiple_of(WORD_SIZE)
+        .ok_or(VMError::Internal(
+            InternalError::ArithmeticOperationOverflow,
+        ))?;
+        let current_memory_size = current_call_frame.memory.data.len();
+
+        if current_memory_size < new_memory_size {
+            current_call_frame
+                .memory
+                .data
+                .try_reserve(new_memory_size)
+                .map_err(|_err| VMError::MemorySizeOverflow)?;
+            current_call_frame.memory.data.resize(new_memory_size, 0);
+        }
+
+        for i in 0..size {
+            if let Some(memory_byte) =
+                current_call_frame
+                    .memory
+                    .data
+                    .get_mut(destination_offset.checked_add(i).ok_or(VMError::Internal(
                         InternalError::ArithmeticOperationOverflow,
                     ))?)
-                    .min(bytecode_len),
-            )
-        } else {
-            vec![0u8; size].into()
-        };
-
-        current_call_frame.memory.store_bytes(dest_offset, &code)?;
+            {
+                *memory_byte = *current_call_frame
+                    .bytecode
+                    .get(code_offset.checked_add(i).ok_or(VMError::Internal(
+                        InternalError::ArithmeticOperationOverflow,
+                    ))?)
+                    .unwrap_or(&0u8);
+            }
+        }
 
         Ok(OpcodeSuccess::Continue)
     }
