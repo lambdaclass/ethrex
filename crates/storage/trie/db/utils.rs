@@ -1,3 +1,4 @@
+#[cfg(feature = "libmdbx")]
 // In order to use NodeHash as key in a dupsort table we must encode it into a fixed size type
 pub fn node_hash_to_fixed_size(node_hash: Vec<u8>) -> [u8; 33] {
     // keep original len so we can re-construct it later

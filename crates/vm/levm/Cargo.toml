@@ -41,7 +41,7 @@ unwrap_used = "deny"
 expect_used = "deny"
 
 arithmetic_side_effects = "deny"
-overflow_check_conditional = "warn"
+panicking_overflow_checks = "warn"
 manual_saturating_arithmetic = "warn"
 
 [lib]
