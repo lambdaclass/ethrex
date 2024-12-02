@@ -462,18 +462,18 @@ pub fn selfdestruct(address_was_cold: bool, account_is_empty: bool) -> Result<U2
     Ok(gas_cost)
 }
 
-pub fn tx_calldata(calldata: &Bytes) -> Result<u64, OutOfGasError> {
+pub fn tx_calldata(calldata: &Bytes) -> Result<U256, OutOfGasError> {
     // This cost applies both for call and create
     // 4 gas for each zero byte in the transaction data 16 gas for each non-zero byte in the transaction.
-    let mut calldata_cost: u64 = 0;
+    let mut calldata_cost: U256 = U256::zero();
     for byte in calldata {
         if *byte != 0 {
             calldata_cost = calldata_cost
-                .checked_add(16)
+                .checked_add(U256::from(16))
                 .ok_or(OutOfGasError::GasUsedOverflow)?;
         } else {
             calldata_cost = calldata_cost
-                .checked_add(4)
+                .checked_add(U256::from(4))
                 .ok_or(OutOfGasError::GasUsedOverflow)?;
         }
     }
@@ -719,4 +719,44 @@ pub fn staticcall(
     Ok(static_gas
         .checked_add(dynamic_gas)
         .ok_or(OutOfGasError::GasCostOverflow)?)
+}
+
+pub fn fake_exponential(factor: u64, numerator: u64, denominator: u64) -> Result<U256, VMError> {
+    let mut i = 1;
+    let mut output: u64 = 0;
+
+    // Initial multiplication: factor * denominator
+    let mut numerator_accum = factor.checked_mul(denominator).ok_or(VMError::Internal(
+        InternalError::ArithmeticOperationOverflow,
+    ))?;
+
+    while numerator_accum > 0 {
+        // Safe addition to output
+        output = output
+            .checked_add(numerator_accum)
+            .ok_or(VMError::Internal(
+                InternalError::ArithmeticOperationOverflow,
+            ))?;
+
+        // Safe multiplication and division within loop
+        numerator_accum = numerator_accum
+            .checked_mul(numerator)
+            .ok_or(VMError::Internal(
+                InternalError::ArithmeticOperationOverflow,
+            ))?
+            .checked_div(denominator.checked_mul(i).ok_or(VMError::Internal(
+                InternalError::ArithmeticOperationOverflow,
+            ))?)
+            .ok_or(VMError::Internal(
+                InternalError::ArithmeticOperationOverflow,
+            ))?;
+
+        i = i.checked_add(1).ok_or(VMError::Internal(
+            InternalError::ArithmeticOperationOverflow,
+        ))?;
+    }
+
+    Ok(U256::from(output.checked_div(denominator).ok_or(
+        VMError::Internal(InternalError::ArithmeticOperationOverflow),
+    )?))
 }
