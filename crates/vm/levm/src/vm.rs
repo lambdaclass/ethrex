@@ -653,16 +653,19 @@ impl VM {
         args_size: usize,
         ret_offset: usize,
         ret_size: usize,
+        should_transfer_value: bool,
     ) -> Result<OpcodeSuccess, VMError> {
         let (sender_account_info, _address_was_cold) = self.access_account(msg_sender);
 
-        if sender_account_info.balance < value {
-            current_call_frame.stack.push(U256::from(REVERT_FOR_CALL))?;
-            return Ok(OpcodeSuccess::Continue);
-        }
+        if should_transfer_value {
+            if sender_account_info.balance < value {
+                current_call_frame.stack.push(U256::from(REVERT_FOR_CALL))?;
+                return Ok(OpcodeSuccess::Continue);
+            }
 
-        self.decrease_account_balance(msg_sender, value)?;
-        self.increase_account_balance(to, value)?;
+            self.decrease_account_balance(msg_sender, value)?;
+            self.increase_account_balance(to, value)?;
+        }
 
         let (code_account_info, _address_was_cold) = self.access_account(code_address);
 
@@ -883,6 +886,7 @@ impl VM {
             code_size_in_memory,
             code_offset_in_memory,
             code_size_in_memory,
+            true,
         )?;
 
         // Erases the success value in the stack result of calling generic call, probably this should be refactored soon...
@@ -948,7 +952,6 @@ impl VM {
     ///
     /// Accessed storage slots are stored in the `touched_storage_slots` set.
     /// Accessed storage slots take place in some gas cost computation.
-    #[must_use]
     pub fn access_storage_slot(&mut self, address: Address, key: H256) -> (StorageSlot, bool) {
         let storage_slot_was_cold = self
             .touched_storage_slots
