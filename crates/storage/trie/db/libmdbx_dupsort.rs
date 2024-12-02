@@ -52,6 +52,18 @@ where
         .map_err(TrieError::LibmdbxError)?;
         txn.commit().map_err(TrieError::LibmdbxError)
     }
+
+    fn put_batch(&self, key_values: Vec<(Vec<u8>, Vec<u8>)>) -> Result<(), TrieError> {
+        let txn = self.db.begin_readwrite().map_err(TrieError::LibmdbxError)?;
+        for (key, value) in key_values {
+            txn.upsert::<T>(
+                (self.fixed_key.clone(), node_hash_to_fixed_size(key)),
+                value,
+            )
+            .map_err(TrieError::LibmdbxError)?;
+        }
+        txn.commit().map_err(TrieError::LibmdbxError)
+    }
 }
 
 #[cfg(test)]
