@@ -61,9 +61,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Sort by file name.
     results.sort_by(|a, b| a.0.cmp(&b.0));
 
-    for (file_name, passed, total) in results {
-        println!("- {}: {}/{}", file_name, passed, total);
+    for (file_name, passed, total) in &results {
+        let success_percentage = (*passed as f64 / *total as f64) * 100.0;
+        println!("{file_name}: {passed}/{total} ({success_percentage:.02}%)");
     }
+    println!();
+    let total_passed = results.iter().map(|(_, p, _)| p).sum::<usize>();
+    let total_tests = results.iter().map(|(_, _, t)| t).sum::<usize>();
+    let total_percentage = (total_passed as f64 / total_tests as f64) * 100.0;
+    println!("Total: {total_passed}/{total_tests} ({total_percentage:.02}%)");
 
     Ok(())
 }
