@@ -115,6 +115,25 @@ async fn transfer_from(
     retries
 }
 
+async fn test_connection(cfg: EthrexL2Config) -> bool {
+    let client = EthClient::new(&cfg.network.l2_rpc_url);
+    let mut retries = 0;
+    while retries < 50 {
+        match client.get_chain_id().await {
+            Ok(_) => {
+                return true;
+            }
+            Err(err) => {
+                println!("Connection to server failed: {err}, retrying ({retries}/50)");
+                retries += 1;
+                sleep(std::time::Duration::from_secs(30));
+            }
+        }
+    }
+    println!("Failed to establish connection to the server");
+    false
+}
+
 impl Command {
     pub async fn run(self, cfg: EthrexL2Config) -> eyre::Result<()> {
         match self {
@@ -125,33 +144,40 @@ impl Command {
                 iterations,
                 verbose,
             } => {
-                if let Ok(lines) = read_lines(path) {
-                    let to_address = match to {
-                        Some(address) => address,
-                        None => Address::random(),
-                    };
-                    println!("Sending to: {to_address:#x}");
+                let Ok(lines) = read_lines(path) else {
+                    return Ok(());
+                };
 
-                    let mut threads = vec![];
-                    for pk in lines.map_while(Result::ok) {
-                        let thread = tokio::spawn(transfer_from(
-                            pk,
-                            to_address,
-                            value,
-                            iterations,
-                            verbose,
-                            cfg.clone(),
-                        ));
-                        threads.push(thread);
-                    }
-
-                    let mut retries = 0;
-                    for thread in threads {
-                        retries += thread.await?;
-                    }
-
-                    println!("Total retries: {retries}");
+                if !test_connection(cfg.clone()).await {
+                    println!("Test failed to establish connection to server");
+                    return Ok(());
                 }
+
+                let to_address = match to {
+                    Some(address) => address,
+                    None => Address::random(),
+                };
+                println!("Sending to: {to_address:#x}");
+
+                let mut threads = vec![];
+                for pk in lines.map_while(Result::ok) {
+                    let thread = tokio::spawn(transfer_from(
+                        pk,
+                        to_address,
+                        value,
+                        iterations,
+                        verbose,
+                        cfg.clone(),
+                    ));
+                    threads.push(thread);
+                }
+
+                let mut retries = 0;
+                for thread in threads {
+                    retries += thread.await?;
+                }
+
+                println!("Total retries: {retries}");
 
                 Ok(())
             }

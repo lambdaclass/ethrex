@@ -1,0 +1,79 @@
+name: Daily Flamegraph Reporter
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "**" ]
+  workflow_dispatch:
+
+env:
+  RUST_VERSION: 1.81.0
+
+jobs:
+  flamegraph:
+    name: Generate Flamegraph for load test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v4
+
+      - name: Rustup toolchain install
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: ${{ env.RUST_VERSION }}
+
+      - name: Caching
+        uses: Swatinem/rust-cache@v2
+
+      - name: Change perf settings
+        run: |
+          sudo sysctl kernel.perf_event_paranoid=-1
+          sudo perf list hw
+
+      - name: Install flamegraph
+        run: cargo install flamegraph
+
+      - name: Install Foundry
+        uses: foundry-rs/foundry-toolchain@v1
+
+      - name: Install ethrex_l2 cli
+        run: |
+          cargo install --path cmd/ethrex_l2
+          ethrex_l2 config create default --default
+          ethrex_l2 config set default
+
+      - name: Build ethrex
+        run: CARGO_PROFILE_RELEASE_DEBUG=true cargo build --release --bin ethrex --features dev
+
+      - name: Generate Flamegraph data for Ethrex
+        shell: bash
+        run: |
+          CARGO_PROFILE_RELEASE_DEBUG=true cargo flamegraph -c "record -o perf.data -F997 --call-graph dwarf,16384 -g" --bin ethrex --features dev  --  --network test_data/genesis-l2.json --http.port 1729 &
+          echo "waiting to execute load test..."
+          sleep 30 &&
+          echo "executing load test..."
+          bash .github/scripts/flamegraph.sh &&
+          echo "Load test finished"
+
+      - name: Generate SVG
+        run: |
+          wget https://raw.githubusercontent.com/brendangregg/FlameGraph/refs/heads/master/stackcollapse-perf.pl
+          wget https://raw.githubusercontent.com/brendangregg/FlameGraph/refs/heads/master/flamegraph.pl
+          chmod +x ./stackcollapse-perf.pl
+          chmod +x ./flamegraph.pl
+          ./stackcollapse-perf.pl perf.data > perf.folded
+          ./flamegraph.pl perf.folded > flamegraph.svg
+
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: perf.data
+          path: ./perf.data
+
+      - name: Upload artifacts - flamegraph.svg
+        uses: actions/upload-artifact@v4
+        with:
+          name: flamegraph.svg
+          path: ./flamegraph.svg
