@@ -14,13 +14,13 @@ pub struct ForkChoiceState {
 #[derive(Debug, Deserialize, Default, Serialize)]
 #[serde(rename_all = "camelCase")]
 #[allow(unused)]
-pub struct PayloadAttributesV3 {
+pub struct PayloadAttributes {
     #[serde(with = "serde_utils::u64::hex_str")]
     pub timestamp: u64,
     pub prev_randao: H256,
     pub suggested_fee_recipient: Address,
     pub withdrawals: Vec<Withdrawal>,
-    pub parent_beacon_block_root: H256,
+    pub parent_beacon_block_root: Option<H256>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
