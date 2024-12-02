@@ -234,3 +234,110 @@ impl DatabaseRef for ExecutionDB {
             .ok_or(ExecutionDBError::BlockHashNotFound(number))
     }
 }
+
+pub mod touched_state {
+    use ethrex_core::{types::Block, Address, U256};
+    use revm::{inspectors::TracerEip3155, DatabaseCommit, DatabaseRef, Evm};
+    use revm_primitives::{
+        Account as RevmAccount, Address as RevmAddress, EVMError, SpecId, U256 as RevmU256,
+    };
+
+    use crate::{block_env, tx_env};
+
+    type TouchedStateDBError = ();
+
+    /// Dummy DB for storing touched account addresses and storage keys while executing a block.
+    #[derive(Default)]
+    struct TouchedStateDB {
+        touched_state: Vec<(RevmAddress, Vec<RevmU256>)>,
+    }
+
+    #[allow(unused_variables)]
+    impl DatabaseRef for TouchedStateDB {
+        type Error = TouchedStateDBError;
+
+        fn basic_ref(
+            &self,
+            address: RevmAddress,
+        ) -> Result<Option<revm_primitives::AccountInfo>, Self::Error> {
+            Ok(Some(Default::default()))
+        }
+        fn storage_ref(
+            &self,
+            address: RevmAddress,
+            index: RevmU256,
+        ) -> Result<RevmU256, Self::Error> {
+            Ok(Default::default())
+        }
+        fn block_hash_ref(&self, number: u64) -> Result<revm_primitives::B256, Self::Error> {
+            Ok(Default::default())
+        }
+        fn code_by_hash_ref(
+            &self,
+            code_hash: revm_primitives::B256,
+        ) -> Result<revm_primitives::Bytecode, Self::Error> {
+            Ok(Default::default())
+        }
+    }
+
+    impl DatabaseCommit for TouchedStateDB {
+        fn commit(&mut self, changes: revm_primitives::HashMap<RevmAddress, RevmAccount>) {
+            for (address, account) in changes {
+                if !account.is_touched() {
+                    continue;
+                }
+                self.touched_state
+                    .push((address, account.storage.keys().cloned().collect()));
+            }
+        }
+    }
+
+    /// Get all touched account addresses and storage keys during the execution of a block.
+    ///
+    /// Generally used for building an [super::ExecutionDB].
+    pub fn get_touched_state(
+        block: &Block,
+        chain_id: u64,
+        spec_id: SpecId,
+    ) -> Result<Vec<(Address, Vec<U256>)>, EVMError<TouchedStateDBError>> {
+        let block_env = block_env(&block.header);
+        let mut db = TouchedStateDB::default();
+
+        for transaction in &block.body.transactions {
+            let tx_env = tx_env(transaction);
+
+            // execute tx
+            let evm_builder = Evm::builder()
+                .with_block_env(block_env.clone())
+                .with_tx_env(tx_env)
+                .modify_cfg_env(|cfg| cfg.chain_id = chain_id)
+                .with_spec_id(spec_id)
+                .with_external_context(
+                    TracerEip3155::new(Box::new(std::io::stderr())).without_summary(),
+                );
+            let mut evm = evm_builder.with_ref_db(&mut db).build();
+            evm.transact_commit()?;
+        }
+
+        let mut touched_state: Vec<(Address, Vec<U256>)> = db
+            .touched_state
+            .into_iter()
+            .map(|(address, storage_keys)| {
+                (
+                    Address::from_slice(address.as_slice()),
+                    storage_keys
+                        .into_iter()
+                        .map(|key| U256::from_big_endian(&key.to_be_bytes_vec()))
+                        .collect(),
+                )
+            })
+            .collect();
+
+        // add withdrawal accounts
+        if let Some(ref withdrawals) = block.body.withdrawals {
+            touched_state.extend(withdrawals.iter().map(|w| (w.address, Vec::new())))
+        }
+
+        Ok(touched_state)
+    }
+}
