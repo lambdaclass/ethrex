@@ -55,3 +55,4 @@ gpu = ["risc0-zkvm/cuda"]
 unwrap_used = "deny"
 expect_used = "deny"
 indexing_slicing = "deny"
+panic = "deny"
