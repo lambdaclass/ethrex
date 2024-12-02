@@ -12,8 +12,9 @@ use crate::{
 use bytes::Bytes;
 use ethrex_core::{
     types::{
-        blobs_bundle, BlobsBundle, Block, PrivilegedL2Transaction, PrivilegedTxType, Transaction,
-        TxKind, BLOB_BASE_FEE_UPDATE_FRACTION,
+        blobs_bundle, fake_exponential, BlobsBundle, Block, PrivilegedL2Transaction,
+        PrivilegedTxType, Transaction, TxKind, BLOB_BASE_FEE_UPDATE_FRACTION,
+        MIN_BASE_FEE_PER_BLOB_GAS,
     },
     Address, H256, U256,
 };
@@ -21,7 +22,6 @@ use ethrex_storage::{error::StoreError, Store};
 use ethrex_vm::{evm_state, execute_block, get_state_transitions};
 use keccak_hash::keccak;
 use secp256k1::SecretKey;
-use std::f64::consts::E;
 use std::{collections::HashMap, time::Duration};
 use tokio::time::sleep;
 use tracing::{error, info};
@@ -211,9 +211,13 @@ impl Committer {
 
     pub fn get_deposit_hash(&self, deposit_hashes: Vec<H256>) -> Result<H256, CommitterError> {
         if !deposit_hashes.is_empty() {
+            let deposit_hashes_len: u16 = deposit_hashes
+                .len()
+                .try_into()
+                .map_err(CommitterError::from)?;
             Ok(H256::from_slice(
                 [
-                    &(deposit_hashes.len() as u16).to_be_bytes(),
+                    &deposit_hashes_len.to_be_bytes(),
                     keccak(
                         deposit_hashes
                             .iter()
@@ -270,7 +274,9 @@ impl Committer {
                         .clone()
                         .ok_or(CommitterError::FailedToRetrieveDataFromStorage)?
                         .nonce
-                        - prev_nonce) as u16,
+                        - prev_nonce)
+                        .try_into()
+                        .map_err(CommitterError::from)?,
                     storage: account_update.added_storage.clone().into_iter().collect(),
                     bytecode: account_update.code.clone(),
                     bytecode_hash: None,
@@ -347,7 +353,7 @@ impl Committer {
         let le_bytes = estimate_blob_gas(
             &self.eth_client,
             self.arbitrary_base_blob_gas_price,
-            1.2, // 20% of headroom
+            20, // 20% of headroom
         )
         .await?
         .to_le_bytes();
@@ -393,7 +399,7 @@ impl Committer {
 /// # Parameters:
 /// - `eth_client`: The Ethereum client used to fetch the latest block.
 /// - `arbitrary_base_blob_gas_price`: The base gas price that serves as the minimum price for blob transactions.
-/// - `headroom`: A multiplier (as a float) applied to the estimated gas price to provide a buffer against fluctuations.
+/// - `headroom`: Percentage applied to the estimated gas price to provide a buffer against fluctuations.
 ///
 /// # Formula:
 /// The gas price is estimated using an exponential function based on the blob gas used in the latest block and the
@@ -404,7 +410,7 @@ impl Committer {
 async fn estimate_blob_gas(
     eth_client: &EthClient,
     arbitrary_base_blob_gas_price: u64,
-    headroom: f64,
+    headroom: u64,
 ) -> Result<u64, CommitterError> {
     let latest_block = eth_client
         .get_block_by_number(BlockByNumber::Latest)
@@ -432,15 +438,16 @@ async fn estimate_blob_gas(
     };
 
     // If the blob's market is in high demand, the equation may give a really big number.
-    let exponent = (total_blob_gas as f64) / (BLOB_BASE_FEE_UPDATE_FRACTION as f64);
-    let blob_gas = match E.powf(exponent) {
-        result if result.is_finite() => result,
-        _ => return Err(BlobEstimationError::NonFiniteResult.into()),
-    };
+    let blob_gas = fake_exponential(
+        MIN_BASE_FEE_PER_BLOB_GAS,
+        total_blob_gas,
+        BLOB_BASE_FEE_UPDATE_FRACTION,
+    );
+
+    let gas_with_headroom = (blob_gas * (100 + headroom)) / 100;
 
     // Check if we have an overflow when we take the headroom into account.
-    let gas_with_headroom = blob_gas * headroom;
-    let blob_gas = match arbitrary_base_blob_gas_price.checked_add(gas_with_headroom as u64) {
+    let blob_gas = match arbitrary_base_blob_gas_price.checked_add(gas_with_headroom) {
         Some(gas) => gas,
         None => return Err(BlobEstimationError::OverflowError.into()),
     };

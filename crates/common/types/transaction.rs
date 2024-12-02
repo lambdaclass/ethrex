@@ -135,6 +135,18 @@ pub enum TxType {
     Privileged = 0x7e,
 }
 
+impl From<TxType> for u8 {
+    fn from(val: TxType) -> Self {
+        match val {
+            TxType::Legacy => 0x00,
+            TxType::EIP2930 => 0x01,
+            TxType::EIP1559 => 0x02,
+            TxType::EIP4844 => 0x03,
+            TxType::Privileged => 0x7e,
+        }
+    }
+}
+
 pub trait Signable {
     fn sign(&self, private_key: &SecretKey) -> Self
     where

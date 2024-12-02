@@ -69,15 +69,32 @@ impl Default for StateDiff {
     }
 }
 
+impl From<AccountStateDiffType> for u8 {
+    fn from(value: AccountStateDiffType) -> Self {
+        match value {
+            AccountStateDiffType::NewBalance => 1,
+            AccountStateDiffType::NonceDiff => 2,
+            AccountStateDiffType::Storage => 4,
+            AccountStateDiffType::Bytecode => 8,
+            AccountStateDiffType::BytecodeHash => 16,
+        }
+    }
+}
+
 impl StateDiff {
     pub fn encode(&self) -> Result<Bytes, StateDiffError> {
         if self.version != 1 {
             return Err(StateDiffError::UnsupportedVersion(self.version));
         }
+        let modified_accounts_len: u16 = self
+            .modified_accounts
+            .len()
+            .try_into()
+            .map_err(StateDiffError::from)?;
 
         let mut encoded: Vec<u8> = Vec::new();
         encoded.push(self.version);
-        encoded.extend((self.modified_accounts.len() as u16).to_be_bytes());
+        encoded.extend(modified_accounts_len.to_be_bytes());
 
         for (address, diff) in &self.modified_accounts {
             let (r#type, diff_encoded) = diff.encode()?;
@@ -119,20 +136,28 @@ impl AccountStateDiff {
         let mut encoded: Vec<u8> = Vec::new();
 
         if let Some(new_balance) = self.new_balance {
-            r#type += AccountStateDiffType::NewBalance as u8;
+            let r_type: u8 = AccountStateDiffType::NewBalance.into();
+            r#type += r_type;
             let buf = &mut [0u8; 32];
             new_balance.to_big_endian(buf);
             encoded.extend_from_slice(buf);
         }
 
         if self.nonce_diff != 0 {
-            r#type += AccountStateDiffType::NonceDiff as u8;
+            let r_type: u8 = AccountStateDiffType::NonceDiff.into();
+            r#type += r_type;
             encoded.extend(self.nonce_diff.to_be_bytes());
         }
 
         if !self.storage.is_empty() {
-            r#type += AccountStateDiffType::Storage as u8;
-            encoded.extend((self.storage.len() as u16).to_be_bytes());
+            let r_type: u8 = AccountStateDiffType::Storage.into();
+            let storage_len: u16 = self
+                .storage
+                .len()
+                .try_into()
+                .map_err(StateDiffError::from)?;
+            r#type += r_type;
+            encoded.extend(storage_len.to_be_bytes());
             for (key, value) in &self.storage {
                 encoded.extend_from_slice(&key.0);
                 let buf = &mut [0u8; 32];
@@ -142,13 +167,20 @@ impl AccountStateDiff {
         }
 
         if let Some(bytecode) = &self.bytecode {
-            r#type += AccountStateDiffType::Bytecode as u8;
-            encoded.extend((bytecode.len() as u16).to_be_bytes());
+            let r_type: u8 = AccountStateDiffType::Bytecode.into();
+            let bytecode_len: u16 = self
+                .storage
+                .len()
+                .try_into()
+                .map_err(StateDiffError::from)?;
+            r#type += r_type;
+            encoded.extend(bytecode_len.to_be_bytes());
             encoded.extend(bytecode);
         }
 
         if let Some(bytecode_hash) = &self.bytecode_hash {
-            r#type += AccountStateDiffType::BytecodeHash as u8;
+            let r_type: u8 = AccountStateDiffType::BytecodeHash.into();
+            r#type += r_type;
             encoded.extend(&bytecode_hash.0);
         }
 

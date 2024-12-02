@@ -103,6 +103,8 @@ pub enum CommitterError {
     InvalidWithdrawalTransaction,
     #[error("Blob estimation failed: {0}")]
     BlobEstimationError(#[from] BlobEstimationError),
+    #[error("length does not fit in u16")]
+    TryIntoError(#[from] std::num::TryFromIntError),
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -131,4 +133,6 @@ pub enum StateDiffError {
     BytecodeAndBytecodeHashSet,
     #[error("Empty account diff")]
     EmptyAccountDiff,
+    #[error("The length of the vector is too big to fit in u16: {0}")]
+    LengthTooBig(#[from] core::num::TryFromIntError),
 }

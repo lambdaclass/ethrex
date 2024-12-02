@@ -417,7 +417,12 @@ impl ProverServer {
         calldata.extend(journal_digest.as_bytes());
 
         // extend with size of seal
-        calldata.extend(H256::from_low_u64_be(seal.len() as u64).as_bytes());
+        calldata.extend(
+            H256::from_low_u64_be(seal.len().try_into().map_err(|err| {
+                ProverServerError::Custom(format!("Seal length does not fit in u64: {}", err))
+            })?)
+            .as_bytes(),
+        );
         // extend with seal
         calldata.extend(seal);
         // extend with zero padding

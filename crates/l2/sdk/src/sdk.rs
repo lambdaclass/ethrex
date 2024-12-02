@@ -258,7 +258,7 @@ pub async fn get_withdraw_merkle_proof(
             Transaction::PrivilegedL2Transaction(privileged_l2_transaction) => {
                 privileged_l2_transaction
                     .get_withdrawal_hash()
-                    .map(|withdrawal_hash| (i as u64, (withdrawal_hash)))
+                    .map(|withdrawal_hash| (i, (withdrawal_hash)))
             }
             _ => unreachable!(),
         })
@@ -283,5 +283,10 @@ pub async fn get_withdraw_merkle_proof(
         "Failed to generate merkle proof, element is not on the tree".to_string(),
     ))?;
 
-    Ok((index, path))
+    Ok((
+        index
+            .try_into()
+            .map_err(|err| EthClientError::Custom(format!("index does not fit in u64: {}", err)))?,
+        path,
+    ))
 }
