@@ -180,7 +180,8 @@ impl VM {
         );
 
         loop {
-            let opcode = current_call_frame.next_opcode()?.unwrap_or(Opcode::STOP); // This will execute opcode stop if there are no more opcodes, there are other ways of solving this but this is the simplest and doesn't change VM behavior.
+            let opcode = current_call_frame.next_opcode();
+            current_call_frame.increment_pc()?;
 
             let op_result: Result<OpcodeSuccess, VMError> = match opcode {
                 Opcode::STOP => Ok(OpcodeSuccess::Result(ResultReason::Stop)),

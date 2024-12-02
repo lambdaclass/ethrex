@@ -188,9 +188,9 @@ impl Operation {
                     )
                     .ok_or(VMError::Internal(InternalError::SlicingError))?;
                 assert_eq!(value_to_push.len(), n_usize);
-                let opcode = Opcode::try_from((u8::from(Opcode::PUSH0)).checked_add(*n).ok_or(
+                let opcode = Opcode::from((u8::from(Opcode::PUSH0)).checked_add(*n).ok_or(
                     VMError::Internal(InternalError::ArithmeticOperationOverflow),
-                )?)?;
+                )?);
                 let mut bytes = vec![u8::from(opcode)];
                 bytes.extend_from_slice(value_to_push);
 

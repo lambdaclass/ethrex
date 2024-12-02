@@ -289,9 +289,7 @@ impl VM {
         self.increase_consumed_gas(current_call_frame, gas_cost::JUMP)?;
 
         let jump_address = current_call_frame.stack.pop()?;
-        if !current_call_frame.jump(jump_address)? {
-            return Err(VMError::InvalidJump);
-        }
+        current_call_frame.jump(jump_address)?;
 
         Ok(OpcodeSuccess::Continue)
     }
@@ -304,11 +302,11 @@ impl VM {
         let jump_address = current_call_frame.stack.pop()?;
         let condition = current_call_frame.stack.pop()?;
 
-        if condition != U256::zero() && !current_call_frame.jump(jump_address)? {
-            return Err(VMError::InvalidJump);
-        }
-
         self.increase_consumed_gas(current_call_frame, gas_cost::JUMPI)?;
+
+        if !condition.is_zero() {
+            current_call_frame.jump(jump_address)?;
+        }
         Ok(OpcodeSuccess::Continue)
     }
 
