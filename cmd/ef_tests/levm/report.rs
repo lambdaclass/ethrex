@@ -294,18 +294,7 @@ impl Display for EFTestsReport {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let total_passed = self.0.iter().filter(|report| report.passed()).count();
         let total_run = self.0.len();
-        writeln!(
-            f,
-            "{} {}/{total_run}",
-            "Summary:".bold(),
-            if total_passed == total_run {
-                format!("{}", total_passed).green()
-            } else if total_passed > 0 {
-                format!("{}", total_passed).yellow()
-            } else {
-                format!("{}", total_passed).red()
-            },
-        )?;
+        writeln!(f, "Summary: {total_passed}/{total_run}",)?;
         writeln!(f)?;
         writeln!(f, "{}", fork_summary_shell(&self.0, SpecId::CANCUN))?;
         writeln!(f, "{}", fork_summary_shell(&self.0, SpecId::SHANGHAI))?;
@@ -318,25 +307,22 @@ impl Display for EFTestsReport {
         writeln!(f, "{}", fork_summary_shell(&self.0, SpecId::MERGE))?;
         writeln!(f, "{}", fork_summary_shell(&self.0, SpecId::FRONTIER))?;
         writeln!(f)?;
-        writeln!(f, "{}", "Failed tests:".bold())?;
+        writeln!(f, "Failed tests:")?;
         writeln!(f)?;
         writeln!(f, "{}", test_dir_summary_for_shell(&self.0))?;
         for report in self.0.iter() {
             if report.failed_vectors.is_empty() {
                 continue;
             }
-            writeln!(f, "{}", format!("Test: {}", report.name).bold())?;
+            writeln!(f, "Test: {}", report.name)?;
             writeln!(f)?;
             for (failed_vector, error) in &report.failed_vectors {
                 writeln!(
                     f,
-                    "{} (data_index: {}, gas_limit_index: {}, value_index: {})",
-                    "Vector:".bold(),
-                    failed_vector.0,
-                    failed_vector.1,
-                    failed_vector.2
+                    "Vector: (data_index: {}, gas_limit_index: {}, value_index: {})",
+                    failed_vector.0, failed_vector.1, failed_vector.2
                 )?;
-                writeln!(f, "{} {}", "Error:".bold(), error.to_string().red())?;
+                writeln!(f, "Error: {error}")?;
                 if let Some(re_run_report) = &report.re_run_report {
                     if let Some(execution_report) =
                         re_run_report.execution_report.get(failed_vector)
@@ -346,8 +332,7 @@ impl Display for EFTestsReport {
                         {
                             writeln!(
                                 f,
-                                "{}: LEVM: {levm_result:?}, REVM: {revm_result:?}",
-                                "Execution result mismatch".bold()
+                                "Execution result mismatch: LEVM: {levm_result:?}, REVM: {revm_result:?}",
                             )?;
                         }
                         if let Some((levm_gas_used, revm_gas_used)) =
@@ -355,8 +340,7 @@ impl Display for EFTestsReport {
                         {
                             writeln!(
                                 f,
-                                "{}: LEVM: {levm_gas_used}, REVM: {revm_gas_used} (diff: {})",
-                                "Gas used mismatch".bold(),
+                                "Gas used mismatch: LEVM: {levm_gas_used}, REVM: {revm_gas_used} (diff: {})",
                                 levm_gas_used.abs_diff(*revm_gas_used)
                             )?;
                         }
@@ -365,16 +349,12 @@ impl Display for EFTestsReport {
                         {
                             writeln!(
                                 f,
-                                "{}: LEVM: {levm_gas_refunded}, REVM: {revm_gas_refunded} (diff: {})",
-                                "Gas refunded mismatch".bold(), levm_gas_refunded.abs_diff(*revm_gas_refunded)
+                                "Gas refunded mismatch: LEVM: {levm_gas_refunded}, REVM: {revm_gas_refunded} (diff: {})",
+                                levm_gas_refunded.abs_diff(*revm_gas_refunded)
                             )?;
                         }
                         if let Some((levm_result, revm_error)) = &execution_report.re_runner_error {
-                            writeln!(
-                                f,
-                                "{}: LEVM: {levm_result:?}, REVM: {revm_error}",
-                                "Re-run error".bold()
-                            )?;
+                            writeln!(f, "Re-run error: LEVM: {levm_result:?}, REVM: {revm_error}",)?;
                         }
                     }
 
@@ -483,7 +463,9 @@ impl EFTestReport {
 }
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
-pub struct AccountUpdatesReport {
+pub struct ComparisonReport {
+    pub levm_post_state_root: H256,
+    pub revm_post_state_root: H256,
     pub initial_accounts: HashMap<Address, Account>,
     pub levm_account_updates: Vec<AccountUpdate>,
     pub revm_account_updates: Vec<AccountUpdate>,
@@ -492,12 +474,26 @@ pub struct AccountUpdatesReport {
     pub shared_updated_accounts: HashSet<Address>,
 }
 
-impl fmt::Display for AccountUpdatesReport {
+impl fmt::Display for ComparisonReport {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if self.levm_post_state_root != self.revm_post_state_root {
+            writeln!(
+                f,
+                "Post-state roots mismatch: LEVM: {levm_post_state_root:#x}, REVM: {revm_post_state_root:#x}",
+                levm_post_state_root = self.levm_post_state_root,
+                revm_post_state_root = self.revm_post_state_root
+            )?;
+        } else {
+            writeln!(
+                f,
+                "Post-state roots match to: {levm_post_state_root:#x}",
+                levm_post_state_root = self.levm_post_state_root
+            )?;
+        }
         writeln!(f, "Account Updates:")?;
         for levm_updated_account_only in self.levm_updated_accounts_only.iter() {
             writeln!(f, "  {levm_updated_account_only:#x}:")?;
-            writeln!(f, "{}", "    Was updated in LEVM but not in REVM".red())?;
+            writeln!(f, "    Was updated in LEVM but not in REVM")?;
             let initial_account = self
                 .initial_accounts
                 .get(levm_updated_account_only)
@@ -530,70 +526,50 @@ impl fmt::Display for AccountUpdatesReport {
             if initial_account.info.balance != updated_account.info.balance {
                 writeln!(
                     f,
-                    "{}",
-                    format!(
-                        "      Balance updated: {initial_balance} -> {updated_balance}",
-                        initial_balance = initial_account.info.balance,
-                        updated_balance = updated_account.info.balance
-                    )
-                    .red()
+                    "      Balance updated: {initial_balance} -> {updated_balance}",
+                    initial_balance = initial_account.info.balance,
+                    updated_balance = updated_account.info.balance
                 )?;
                 updates += 1;
             }
             if initial_account.info.nonce != updated_account.info.nonce {
                 writeln!(
                     f,
-                    "{}",
-                    format!(
-                        "      Nonce updated: {initial_nonce} -> {updated_nonce}",
-                        initial_nonce = initial_account.info.nonce,
-                        updated_nonce = updated_account.info.nonce
-                    )
-                    .red()
+                    "      Nonce updated: {initial_nonce} -> {updated_nonce}",
+                    initial_nonce = initial_account.info.nonce,
+                    updated_nonce = updated_account.info.nonce
                 )?;
                 updates += 1;
             }
             if initial_account.info.bytecode != updated_account.info.bytecode {
                 writeln!(
                     f,
-                    "{}",
-                    format!(
-                        "      Code updated: {initial_code}, {updated_code}",
-                        initial_code = hex::encode(&initial_account.info.bytecode),
-                        updated_code = hex::encode(&updated_account.info.bytecode)
-                    )
-                    .red()
+                    "      Code updated: {initial_code}, {updated_code}",
+                    initial_code = hex::encode(&initial_account.info.bytecode),
+                    updated_code = hex::encode(&updated_account.info.bytecode)
                 )?;
                 updates += 1;
             }
             for (added_storage_address, added_storage_slot) in updated_account.storage.iter() {
                 writeln!(
                     f,
-                    "{}",
-                    format!(
-                        "      Storage slot added: {added_storage_address}: {} -> {}",
-                        added_storage_slot.original_value, added_storage_slot.current_value
-                    )
-                    .red()
+                    "      Storage slot added: {added_storage_address}: {} -> {}",
+                    added_storage_slot.original_value, added_storage_slot.current_value
                 )?;
                 updates += 1;
             }
             if updates == 0 {
-                writeln!(f, "{}", "      No changes".green())?;
+                writeln!(f, "      No changes")?;
             }
         }
         for revm_updated_account_only in self.revm_updated_accounts_only.iter() {
             writeln!(f, "  {revm_updated_account_only:#x}:")?;
-            writeln!(f, "{}", "    Was updated in REVM but not in LEVM".red())?;
+            writeln!(f, "    Was updated in REVM but not in LEVM")?;
         }
         for shared_updated_account in self.shared_updated_accounts.iter() {
             writeln!(f, "  {shared_updated_account:#x}:")?;
 
-            writeln!(
-                f,
-                "{}",
-                "    Was updated in both LEVM and REVM".to_string().green()
-            )?;
+            writeln!(f, "    Was updated in both LEVM and REVM")?;
 
             let levm_updated_account = self
                 .levm_account_updates
@@ -606,20 +582,15 @@ impl fmt::Display for AccountUpdatesReport {
                 .find(|account_update| &account_update.address == shared_updated_account)
                 .unwrap();
 
+            let mut diffs = 0;
             match (levm_updated_account.removed, revm_updated_account.removed) {
                 (true, false) => {
-                    writeln!(
-                        f,
-                        "{}",
-                        "    Removed in LEVM but not in REVM".to_string().red()
-                    )?;
+                    writeln!(f, "      Removed in LEVM but not in REVM")?;
+                    diffs += 1;
                 }
                 (false, true) => {
-                    writeln!(
-                        f,
-                        "{}",
-                        "    Removed in REVM but not in LEVM".to_string().red()
-                    )?;
+                    writeln!(f, "      Removed in REVM but not in LEVM")?;
+                    diffs += 1;
                 }
                 // Account was removed in both VMs.
                 (false, false) | (true, true) => {}
@@ -627,29 +598,19 @@ impl fmt::Display for AccountUpdatesReport {
 
             match (&levm_updated_account.code, &revm_updated_account.code) {
                 (None, Some(_)) => {
-                    writeln!(
-                        f,
-                        "{}",
-                        "    Has code in REVM but not in LEVM".to_string().red()
-                    )?;
+                    writeln!(f, "      Has code in REVM but not in LEVM")?;
+                    diffs += 1;
                 }
                 (Some(_), None) => {
-                    writeln!(
-                        f,
-                        "{}",
-                        "    Has code in LEVM but not in REVM".to_string().red()
-                    )?;
+                    writeln!(f, "      Has code in LEVM but not in REVM")?;
+                    diffs += 1;
                 }
                 (Some(levm_account_code), Some(revm_account_code)) => {
                     if levm_account_code != revm_account_code {
                         writeln!(f,
-                            "{}",
-                            format!(
-                                "    Code mismatch: LEVM: {levm_account_code}, REVM: {revm_account_code}",
-                                levm_account_code = hex::encode(levm_account_code),
-                                revm_account_code = hex::encode(revm_account_code)
-                            )
-                            .red()
+                            "      Code mismatch: LEVM: {levm_account_code}, REVM: {revm_account_code}",
+                            levm_account_code = hex::encode(levm_account_code),
+                            revm_account_code = hex::encode(revm_account_code)
                         )?;
                     }
                 }
@@ -660,40 +621,34 @@ impl fmt::Display for AccountUpdatesReport {
                 (None, Some(_)) => {
                     writeln!(
                         f,
-                        "{}",
-                        format!("    Account {shared_updated_account:#x} has info in REVM but not in LEVM",)
-                            .red()
-                            .bold()
+                        "      Account {shared_updated_account:#x} has info in REVM but not in LEVM"
                     )?;
+                    diffs += 1;
                 }
                 (Some(levm_account_info), Some(revm_account_info)) => {
                     if levm_account_info.balance != revm_account_info.balance {
                         writeln!(f,
-                            "{}",
-                            format!(
-                                "    Balance mismatch: LEVM: {levm_account_balance}, REVM: {revm_account_balance}",
-                                levm_account_balance = levm_account_info.balance,
-                                revm_account_balance = revm_account_info.balance
-                            )
-                            .red()
-                            .bold()
+                            "      Balance mismatch: LEVM: {levm_account_balance}, REVM: {revm_account_balance}",
+                            levm_account_balance = levm_account_info.balance,
+                            revm_account_balance = revm_account_info.balance
                         )?;
+                        diffs += 1;
                     }
                     if levm_account_info.nonce != revm_account_info.nonce {
                         writeln!(f,
-                            "{}",
-                            format!(
-                                "    Nonce mismatch: LEVM: {levm_account_nonce}, REVM: {revm_account_nonce}",
+                                "      Nonce mismatch: LEVM: {levm_account_nonce}, REVM: {revm_account_nonce}",
                                 levm_account_nonce = levm_account_info.nonce,
                                 revm_account_nonce = revm_account_info.nonce
-                            )
-                            .red()
-                            .bold()
                         )?;
+                        diffs += 1;
                     }
                 }
                 // We ignore the case (Some(_), None) because we always add the account info to the account update.
                 (Some(_), None) | (None, None) => {}
+            }
+
+            if diffs == 0 {
+                writeln!(f, "      Same changes")?;
             }
         }
         Ok(())
@@ -711,7 +666,7 @@ pub struct TestReRunExecutionReport {
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
 pub struct TestReRunReport {
     pub execution_report: HashMap<TestVector, TestReRunExecutionReport>,
-    pub account_updates_report: HashMap<TestVector, AccountUpdatesReport>,
+    pub account_updates_report: HashMap<TestVector, ComparisonReport>,
 }
 
 impl TestReRunReport {
@@ -776,7 +731,7 @@ impl TestReRunReport {
     pub fn register_account_updates_report(
         &mut self,
         vector: TestVector,
-        report: AccountUpdatesReport,
+        report: ComparisonReport,
     ) {
         self.account_updates_report.insert(vector, report);
     }

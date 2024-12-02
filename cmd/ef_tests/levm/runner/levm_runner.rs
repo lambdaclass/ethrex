@@ -15,7 +15,7 @@ use ethrex_levm::{
     Environment,
 };
 use ethrex_storage::AccountUpdate;
-use ethrex_vm::db::StoreWrapper;
+use ethrex_vm::{db::StoreWrapper, EvmState};
 use keccak_hash::keccak;
 use std::{collections::HashMap, sync::Arc};
 
@@ -182,7 +182,9 @@ pub fn ensure_post_state(
                 }
                 // Execution result was successful and no exception was expected.
                 None => {
-                    let levm_account_updates = get_state_transitions(execution_report);
+                    let (initial_state, _block_hash) = utils::load_initial_state(test);
+                    let levm_account_updates =
+                        get_state_transitions(&initial_state, execution_report);
                     let pos_state_root = post_state_root(&levm_account_updates, test);
                     let expected_post_state_root_hash = test.post.vector_post_value(vector).hash;
                     if expected_post_state_root_hash != pos_state_root {
@@ -212,28 +214,57 @@ pub fn ensure_post_state(
     Ok(())
 }
 
-pub fn get_state_transitions(execution_report: &TransactionReport) -> Vec<AccountUpdate> {
+pub fn get_state_transitions(
+    initial_state: &EvmState,
+    execution_report: &TransactionReport,
+) -> Vec<AccountUpdate> {
+    let current_db = match initial_state {
+        EvmState::Store(state) => state.database.store.clone(),
+        EvmState::Execution(_cache_db) => unreachable!("Execution state should not be passed here"),
+    };
     let mut account_updates: Vec<AccountUpdate> = vec![];
-    for (address, account) in &execution_report.new_state {
+    for (new_state_account_address, new_state_account) in &execution_report.new_state {
         let mut added_storage = HashMap::new();
 
-        for (key, value) in &account.storage {
+        for (key, value) in &new_state_account.storage {
             added_storage.insert(*key, value.current_value);
         }
 
-        let code = if account.info.bytecode.is_empty() {
+        // Check if the code has changed
+        let code = if new_state_account.info.bytecode.is_empty() {
+            // The new state account has no code
             None
         } else {
-            Some(account.info.bytecode.clone())
+            // Get the code hash of the new state account bytecode
+            let potential_new_bytecode_hash = code_hash(&new_state_account.info.bytecode);
+            // Look into the current database to see if the bytecode hash is already present
+            let current_bytecode = current_db
+                .get_account_code(potential_new_bytecode_hash)
+                .expect("Error getting account code by hash");
+            let code = new_state_account.info.bytecode.clone();
+            // The code is present in the current database
+            if let Some(current_bytecode) = current_bytecode {
+                if current_bytecode != code {
+                    // The code has changed
+                    Some(code)
+                } else {
+                    // The code has not changed
+                    None
+                }
+            } else {
+                // The new state account code is not present in the current
+                // database, then it must be new
+                Some(code)
+            }
         };
 
         let account_update = AccountUpdate {
-            address: *address,
+            address: *new_state_account_address,
             removed: false,
             info: Some(AccountInfo {
-                code_hash: code_hash(&account.info.bytecode),
-                balance: account.info.balance,
-                nonce: account.info.nonce,
+                code_hash: code_hash(&new_state_account.info.bytecode),
+                balance: new_state_account.info.balance,
+                nonce: new_state_account.info.nonce,
             }),
             code,
             added_storage,
