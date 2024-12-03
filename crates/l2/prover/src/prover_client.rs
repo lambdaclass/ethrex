@@ -13,7 +13,7 @@ use ethrex_l2::{
     proposer::prover_server::ProofData, utils::config::prover_client::ProverClientConfig,
 };
 
-use super::prover::Prover;
+use crate::prover::{Prover, ProvingOutput, Risc0Prover};
 
 pub async fn start_proof_data_client(config: ProverClientConfig) {
     let proof_data_client = ProverClient::new(config);
@@ -34,7 +34,7 @@ impl ProverClient {
     }
 
     pub async fn start(&self) {
-        let mut prover = Prover::new();
+        let mut prover = Risc0Prover::new();
 
         loop {
             match self.request_new_input() {
@@ -90,12 +90,17 @@ impl ProverClient {
     fn submit_proof(
         &self,
         block_number: u64,
-        receipt: risc0_zkvm::Receipt,
+        proving_output: ProvingOutput,
         prover_id: Vec<u32>,
     ) -> Result<(), String> {
+        // TODO replace
+        let receipt = match proving_output {
+            ProvingOutput::Risc0Prover(receipt) => receipt,
+            ProvingOutput::Sp1Prover(_) => todo!(),
+        };
         let submit = ProofData::Submit {
             block_number,
-            receipt: Box::new((receipt, prover_id)),
+            receipt: Box::new((*receipt, prover_id)),
         };
         let submit_ack = connect_to_prover_server_wr(&self.prover_server_endpoint, &submit)
             .map_err(|e| format!("Failed to get SubmitAck: {e}"))?;

@@ -1,18 +1,33 @@
 .PHONY: perf_test_proving perf_gpu rsp_comparison
+.PHONY: perf_test_sp1_proving
 
 ROOT_DIRECTORY := ../../..
 
+########################################################################
+###############                 RISC0                    ###############
+########################################################################
 RISC0_DEV_MODE?=1
 RUST_LOG?="info"
 perf_test_proving:
 	@echo "Using RISC0_DEV_MODE: ${RISC0_DEV_MODE}"
-	RISC0_DEV_MODE=${RISC0_DEV_MODE} RUST_LOG=${RUST_LOG} cargo test --release --test perf_zkvm --features build_zkvm -- --show-output
+	RISC0_DEV_MODE=${RISC0_DEV_MODE} RUST_LOG=${RUST_LOG} cargo test --release --test perf_zkvm --features build_zkvm -- test_performance_zkvm --exact --show-output
 
 perf_gpu:
-	RUSTFLAGS="-C target-cpu=native" RISC0_DEV_MODE=0 RUST_LOG="debug" cargo test --release --test perf_zkvm --features "build_zkvm,gpu" -- --show-output
+	RUSTFLAGS="-C target-cpu=native" RISC0_DEV_MODE=0 RUST_LOG="debug" cargo test --release --test perf_zkvm --features "build_zkvm,gpu" -- test_performance_zkvm --exact --show-output
 
-# L2 Prover comparison with rsp. Uses GPU by default.
 
+########################################################################
+###############                  SP1                     ###############
+########################################################################
+SP1_PROVER?=mock
+RUST_LOG?="debug"
+perf_test_sp1_proving:
+	@echo "Using SP1_PROVER: ${SP1_PROVER}"
+	SP1_PROVER=${SP1_PROVER} RUST_LOG=${RUST_LOG} cargo test --release --test perf_zkvm --features build_sp1 -- test_performance_sp1_zkvm --exact --show-output
+
+########################################################################
+########## L2 Prover comparison with rsp. Uses GPU by default ##########
+########################################################################
 ETHREX_L2_BIN := ./target/release/ethrex_l2
 RSP_BIN := ./target/release/rsp
 
