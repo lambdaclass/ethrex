@@ -7,8 +7,8 @@ use axum_extra::{
 use bytes::Bytes;
 use engine::{
     exchange_transition_config::ExchangeTransitionConfigV1Req,
-    fork_choice::ForkChoiceUpdatedV3,
-    payload::{GetPayloadV3Request, NewPayloadV3Request},
+    fork_choice::{ForkChoiceUpdatedV2, ForkChoiceUpdatedV3},
+    payload::{GetPayloadV2Request, GetPayloadV3Request, NewPayloadV2Request, NewPayloadV3Request},
     ExchangeCapabilitiesRequest,
 };
 use eth::{
@@ -253,12 +253,15 @@ pub fn map_debug_requests(req: &RpcRequest, context: RpcApiContext) -> Result<Va
 pub fn map_engine_requests(req: &RpcRequest, context: RpcApiContext) -> Result<Value, RpcErr> {
     match req.method.as_str() {
         "engine_exchangeCapabilities" => ExchangeCapabilitiesRequest::call(req, context),
+        "engine_forkchoiceUpdatedV2" => ForkChoiceUpdatedV2::call(req, context),
         "engine_forkchoiceUpdatedV3" => ForkChoiceUpdatedV3::call(req, context),
         "engine_newPayloadV3" => NewPayloadV3Request::call(req, context),
+        "engine_newPayloadV2" => NewPayloadV2Request::call(req, context),
         "engine_exchangeTransitionConfigurationV1" => {
             ExchangeTransitionConfigV1Req::call(req, context)
         }
         "engine_getPayloadV3" => GetPayloadV3Request::call(req, context),
+        "engine_getPayloadV2" => GetPayloadV2Request::call(req, context),
         unknown_engine_method => Err(RpcErr::MethodNotFound(unknown_engine_method.to_owned())),
     }
 }

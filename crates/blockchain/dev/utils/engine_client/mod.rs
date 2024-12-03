@@ -6,13 +6,16 @@ use errors::{
 use ethereum_types::H256;
 use ethrex_rpc::{
     engine::{
-        fork_choice::ForkChoiceUpdatedV3,
-        payload::{GetPayloadV3Request, NewPayloadV3Request},
+        fork_choice::{ForkChoiceUpdated, ForkChoiceUpdatedV3, ForkChoiceUpdatedVersion},
+        payload::{
+            GetPayloadRequest, GetPayloadRequestVersion, GetPayloadV3Request, NewPayloadRequest,
+            NewPayloadRequestVersion, NewPayloadV3Request,
+        },
         ExchangeCapabilitiesRequest,
     },
     types::{
-        fork_choice::{ForkChoiceResponse, ForkChoiceState, PayloadAttributesV3},
-        payload::{ExecutionPayloadResponse, ExecutionPayloadV3, PayloadStatus},
+        fork_choice::{ForkChoiceResponse, ForkChoiceState, PayloadAttributes},
+        payload::{ExecutionPayload, ExecutionPayloadResponse, PayloadStatus},
     },
     utils::{RpcErrorResponse, RpcRequest, RpcSuccessResponse},
 };
@@ -77,12 +80,13 @@ impl EngineClient {
     pub async fn engine_forkchoice_updated_v3(
         &self,
         state: ForkChoiceState,
-        payload_attributes: Option<PayloadAttributesV3>,
+        payload_attributes: Option<PayloadAttributes>,
     ) -> Result<ForkChoiceResponse, EngineClientError> {
-        let request = ForkChoiceUpdatedV3 {
+        let request = ForkChoiceUpdatedV3(ForkChoiceUpdated {
             fork_choice_state: state,
             payload_attributes: Ok(payload_attributes),
-        }
+            version: ForkChoiceUpdatedVersion::V3,
+        })
         .try_into()
         .map_err(|e| {
             ForkChoiceUpdateError::ConversionError(format!("Failed to convert to RPC request: {e}"))
@@ -104,7 +108,11 @@ impl EngineClient {
         &self,
         payload_id: u64,
     ) -> Result<ExecutionPayloadResponse, EngineClientError> {
-        let request = GetPayloadV3Request { payload_id }.into();
+        let request = GetPayloadV3Request(GetPayloadRequest {
+            payload_id,
+            version: GetPayloadRequestVersion::V3,
+        })
+        .into();
 
         match self.send_request(request).await {
             Ok(RpcResponse::Success(result)) => serde_json::from_value(result.result)
@@ -119,14 +127,18 @@ impl EngineClient {
 
     pub async fn engine_new_payload_v3(
         &self,
-        execution_payload: ExecutionPayloadV3,
+        execution_payload: ExecutionPayload,
         expected_blob_versioned_hashes: Vec<H256>,
         parent_beacon_block_root: H256,
     ) -> Result<PayloadStatus, EngineClientError> {
         let request = NewPayloadV3Request {
-            payload: execution_payload,
-            expected_blob_versioned_hashes,
-            parent_beacon_block_root,
+            new_payload_request: NewPayloadRequest {
+                payload: execution_payload,
+                version: NewPayloadRequestVersion::V3 {
+                    expected_blob_versioned_hashes,
+                    parent_beacon_block_root,
+                },
+            },
         }
         .into();
 
