@@ -118,9 +118,7 @@ pub fn store_receipts(
     receipts: Vec<Receipt>,
     block_hash: BlockHash,
 ) -> Result<(), ChainError> {
-    for (index, receipt) in receipts.into_iter().enumerate() {
-        storage.add_receipt(block_hash, index as u64, receipt)?;
-    }
+    storage.add_receipts(block_hash, receipts)?;
     Ok(())
 }
 

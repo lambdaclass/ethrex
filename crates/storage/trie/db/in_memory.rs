@@ -25,4 +25,14 @@ impl TrieDB for InMemoryTrieDB {
         self.inner.lock().unwrap().insert(key, value);
         Ok(())
     }
+
+    fn put_batch(&self, key_values: Vec<(Vec<u8>, Vec<u8>)>) -> Result<(), TrieError> {
+        let mut db = self.inner.lock().unwrap();
+
+        for (key, value) in key_values {
+            db.insert(key, value);
+        }
+
+        Ok(())
+    }
 }

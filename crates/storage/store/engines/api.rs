@@ -78,6 +78,12 @@ pub trait StoreEngine: Debug + Send + Sync + RefUnwindSafe {
         index: Index,
     ) -> Result<(), StoreError>;
 
+    /// Store transaction locations in batch (one db transaction for all)
+    fn add_transaction_locations(
+        &self,
+        locations: Vec<(H256, BlockNumber, BlockHash, Index)>,
+    ) -> Result<(), StoreError>;
+
     /// Obtain transaction location (block hash and index)
     fn get_transaction_location(
         &self,
@@ -91,6 +97,10 @@ pub trait StoreEngine: Debug + Send + Sync + RefUnwindSafe {
         index: Index,
         receipt: Receipt,
     ) -> Result<(), StoreError>;
+
+    /// Add receipt
+    fn add_receipts(&self, block_hash: BlockHash, receipts: Vec<Receipt>)
+        -> Result<(), StoreError>;
 
     /// Obtain receipt for a canonical block represented by the block number.
     fn get_receipt(

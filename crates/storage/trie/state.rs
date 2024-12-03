@@ -56,6 +56,20 @@ impl TrieState {
 
     // Writes a node and its children into the DB
     fn commit_node(&mut self, node_hash: &NodeHash) -> Result<(), TrieError> {
+        let mut to_commit = vec![];
+        self.commit_node_tail_recursive(node_hash, &mut to_commit)?;
+
+        self.db.put_batch(to_commit)?;
+
+        Ok(())
+    }
+
+    // Writes a node and its children into the DB
+    fn commit_node_tail_recursive(
+        &mut self,
+        node_hash: &NodeHash,
+        acc: &mut Vec<(Vec<u8>, Vec<u8>)>,
+    ) -> Result<(), TrieError> {
         let Some(node) = self.cache.remove(node_hash) else {
             // If the node is not in the cache then it means it is already stored in the DB
             return Ok(());
@@ -65,14 +79,16 @@ impl TrieState {
             Node::Branch(n) => {
                 for child in n.choices.iter() {
                     if child.is_valid() {
-                        self.commit_node(child)?;
+                        self.commit_node_tail_recursive(child, acc)?;
                     }
                 }
             }
-            Node::Extension(n) => self.commit_node(&n.child)?,
+            Node::Extension(n) => self.commit_node_tail_recursive(&n.child, acc)?,
             Node::Leaf(_) => {}
         }
         // Commit self
-        self.db.put(node_hash.into(), node.encode_to_vec())
+        acc.push((node_hash.into(), node.encode_to_vec()));
+
+        Ok(())
     }
 }
