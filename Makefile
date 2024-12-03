@@ -95,7 +95,7 @@ TEST_PATTERN ?= /
 # For example, to run the rpc-compat suites for eth_chainId & eth_blockNumber you should run:
 # `make run-hive SIMULATION=ethereum/rpc-compat TEST_PATTERN="/eth_chainId|eth_blockNumber"`
 run-hive: build-image setup-hive ## 🧪 Run Hive testing suite
-	cd hive && ./hive --sim $(SIMULATION) --client ethrex --sim.limit "$(TEST_PATTERN)"
+	cd hive && ./hive --client ethrex --sim $(SIMULATION) --sim.limit "$(TEST_PATTERN)"
 
 run-hive-debug: build-image setup-hive ## 🐞 Run Hive testing suite in debug mode
 	cd hive && ./hive --sim $(SIMULATION) --client ethrex --sim.limit "$(TEST_PATTERN)" --docker.output
@@ -105,3 +105,25 @@ clean-hive-logs: ## 🧹 Clean Hive logs
 
 loc:
 	cargo run -p loc
+
+hive-stats:
+	git clone --quiet --single-branch --branch master --shallow-since=$(HIVE_SHALLOW_SINCE) https://github.com/lambdaclass/hive || true
+	cd hive && git checkout --quiet --detach $(HIVE_REVISION) && go build .
+	if [ "$$(cd hive && git rev-parse HEAD)" != "$(HIVE_REVISION)" ]; then \
+		cd hive && \
+		git checkout --quiet master && \
+		git fetch --quiet --shallow-since=$(HIVE_SHALLOW_SINCE) && \
+		git checkout --quiet --detach $(HIVE_REVISION) && go build . ;\
+	fi
+	rm -rf hive/workspace $(FILE_NAME)_logs
+	cd hive && ./hive --client ethrex --sim ethereum/rpc-compat --sim.parallelism 4 || exit 0
+	cd hive && ./hive --client ethrex --sim devp2p --sim.parallelism 4 || exit 0
+	cd hive && ./hive --client ethrex --sim ethereum/engine --sim.parallelism 4 || exit 0
+	cd hive && ./hive --client ethrex --sim ethereum/sync --sim.parallelism 4 || exit 0
+
+stats:
+	cd crates/vm/levm && make download-evm-ef-tests
+	cargo run --quiet --release -p loc -- --summary && echo
+	cargo test --quiet -p ef_tests-levm --test ef_tests_levm -- --summary && echo
+	make hive-stats
+	cargo run --quiet --release -p hive_report
