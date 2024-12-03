@@ -174,6 +174,8 @@ pub enum InternalError {
     ExcessBlobGasShouldNotBeNone,
     #[error("Error in utils file")]
     UtilsError,
+    #[error("PC out of bounds")]
+    PCOutOfBounds,
 }
 
 #[derive(Debug, Clone)]
