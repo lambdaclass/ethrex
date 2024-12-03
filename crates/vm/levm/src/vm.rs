@@ -584,9 +584,18 @@ impl VM {
         let cache_before_execution = self.cache.clone();
         self.validate_transaction(&mut initial_call_frame)?;
 
+        // Maybe can be done in validate_transaction
+        let sender = initial_call_frame.msg_sender;
+        let receiver_address = initial_call_frame.to;
+        self.decrease_account_balance(sender, initial_call_frame.msg_value)?;
+        self.increase_account_balance(receiver_address, initial_call_frame.msg_value)?;
+
         let mut report = self.execute(&mut initial_call_frame)?;
 
-        let sender = initial_call_frame.msg_sender;
+        if let TxResult::Revert(_) = report.result {
+            self.decrease_account_balance(receiver_address, initial_call_frame.msg_value)?;
+            self.increase_account_balance(sender, initial_call_frame.msg_value)?;
+        }
 
         if self.is_create() {
             match self.create_post_execution(&mut initial_call_frame, &mut report) {
@@ -612,14 +621,6 @@ impl VM {
                 .checked_mul(self.env.gas_price)
                 .ok_or(VMError::GasLimitPriceProductOverflow)?,
         )?;
-
-        let receiver_address = initial_call_frame.to;
-        // If execution was successful we want to transfer value from sender to receiver
-        if report.is_success() {
-            // Subtract to the caller the gas sent
-            self.decrease_account_balance(sender, initial_call_frame.msg_value)?;
-            self.increase_account_balance(receiver_address, initial_call_frame.msg_value)?;
-        }
 
         // Send coinbase fee
         let priority_fee_per_gas = self
@@ -704,16 +705,19 @@ impl VM {
         args_size: usize,
         ret_offset: usize,
         ret_size: usize,
+        should_transfer_value: bool,
     ) -> Result<OpcodeSuccess, VMError> {
         let (sender_account_info, _address_was_cold) = self.access_account(msg_sender);
 
-        if sender_account_info.balance < value {
-            current_call_frame.stack.push(U256::from(REVERT_FOR_CALL))?;
-            return Ok(OpcodeSuccess::Continue);
-        }
+        if should_transfer_value {
+            if sender_account_info.balance < value {
+                current_call_frame.stack.push(U256::from(REVERT_FOR_CALL))?;
+                return Ok(OpcodeSuccess::Continue);
+            }
 
-        self.decrease_account_balance(msg_sender, value)?;
-        self.increase_account_balance(to, value)?;
+            self.decrease_account_balance(msg_sender, value)?;
+            self.increase_account_balance(to, value)?;
+        }
 
         let (code_account_info, _address_was_cold) = self.access_account(code_address);
 
@@ -934,6 +938,7 @@ impl VM {
             code_size_in_memory,
             code_offset_in_memory,
             code_size_in_memory,
+            true,
         )?;
 
         // Erases the success value in the stack result of calling generic call, probably this should be refactored soon...
@@ -999,7 +1004,6 @@ impl VM {
     ///
     /// Accessed storage slots are stored in the `touched_storage_slots` set.
     /// Accessed storage slots take place in some gas cost computation.
-    #[must_use]
     pub fn access_storage_slot(&mut self, address: Address, key: H256) -> (StorageSlot, bool) {
         let storage_slot_was_cold = self
             .touched_storage_slots

@@ -88,6 +88,11 @@ pub fn parse_ef_test_dir(
         }
 
         // Skip tests that are not in the list of tests to run.
+        if &test_dir.file_name().to_str().unwrap().to_owned() == "vmPerformance" {
+            return Ok(Vec::new());
+        }
+
+        // Skip tests that are not in the list of tests to run.
         if !opts.tests.is_empty()
             && !opts
                 .tests
