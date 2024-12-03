@@ -27,7 +27,7 @@ jobs:
 
       - name: Restore cache
         id: cache-loc-report
-        uses: actions/cache@v3
+        uses: actions/cache@v4
         with:
           path: loc_report.json
           key: loc-report-${{ github.ref_name }}
@@ -44,7 +44,7 @@ jobs:
 
       - name: Save new loc_report.json to cache
         if: success()
-        uses: actions/cache@v3
+        uses: actions/cache@v4
         with:
           path: loc_report.json
           key: loc-report-${{ github.ref_name }}

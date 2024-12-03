@@ -1,0 +1,20 @@
+name: Github Actions
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      ".github/**.yaml"
+
+jobs:
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v4
+
+      - name: actionlint
+        uses: raven-actions/actionlint@v2
+        with:
+          flags: "-ignore SC2086 -ignore SC2006"

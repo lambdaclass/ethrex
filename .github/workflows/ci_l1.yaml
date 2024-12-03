@@ -87,7 +87,7 @@ jobs:
         uses: docker/setup-buildx-action@v3
 
       - name: Build Docker image
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@v6
         with:
           context: .
           file: ./Dockerfile
@@ -176,7 +176,7 @@ jobs:
           docker load --input /tmp/ethrex_image.tar
 
       - name: Checkout sources
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
       - name: Rustup toolchain install
         uses: dtolnay/rust-toolchain@stable
@@ -184,7 +184,7 @@ jobs:
           toolchain: ${{ env.RUST_VERSION }}
 
       - name: Setup Go
-        uses: actions/setup-go@v3
+        uses: actions/setup-go@v5
 
       - name: Setup Hive
         run: make setup-hive

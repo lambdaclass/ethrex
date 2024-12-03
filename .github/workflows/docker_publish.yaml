@@ -35,14 +35,14 @@ jobs:
       # Generates the tags and labels based on the image name. The id allows using it in the next step.
       - name: Extract metadata (tags, labels) for Docker
         id: meta
-        uses: docker/metadata-action@v4
+        uses: docker/metadata-action@v5
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
 
       # Pushes to ghcr.io/ethrex
       - name: Build and push Docker image
         id: push
-        uses: docker/build-push-action@v4
+        uses: docker/build-push-action@v6
         with:
           context: .
           push: true
