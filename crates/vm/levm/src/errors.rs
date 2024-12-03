@@ -136,6 +136,8 @@ pub enum OutOfGasError {
     ArithmeticOperationDividedByZero,
     #[error("Memory Expansion Cost Overflow")]
     MemoryExpansionCostOverflow,
+    #[error("Tried to convert one type to another")]
+    ConversionError,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error, Serialize, Deserialize)]
