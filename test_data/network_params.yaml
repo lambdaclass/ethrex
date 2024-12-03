@@ -4,10 +4,12 @@ participants:
     cl_image: sigp/lighthouse:v5.3.0
     validator_count: 32
   - el_type: geth
+    el_image: ethereum/client-go:v1.14.12
     cl_type: lighthouse
     cl_image: sigp/lighthouse:v5.3.0
     validator_count: 32
   - el_type: geth
+    el_image: ethereum/client-go:v1.14.12
     cl_type: lighthouse
     cl_image: sigp/lighthouse:v5.3.0
     validator_count: 32
