@@ -151,6 +151,13 @@ pub const INIT_CODE_WORD_COST: U256 = U256([2, 0, 0, 0]);
 pub const CODE_DEPOSIT_COST: U256 = U256([200, 0, 0, 0]);
 pub const CREATE_BASE_COST: U256 = U256([32000, 0, 0, 0]);
 
+// Calldata costs
+pub const CALLDATA_COST_ZERO_BYTE: U256 = U256([4, 0, 0, 0]);
+pub const CALLDATA_COST_NON_ZERO_BYTE: U256 = U256([16, 0, 0, 0]);
+
+// Blob gas costs
+pub const BLOB_GAS_PER_BLOB: U256 = U256([131072, 0, 0, 0]);
+
 pub fn exp(exponent_bits: u64) -> Result<U256, OutOfGasError> {
     let exponent_byte_size = (exponent_bits
         .checked_add(7)
@@ -462,18 +469,18 @@ pub fn selfdestruct(address_was_cold: bool, account_is_empty: bool) -> Result<U2
     Ok(gas_cost)
 }
 
-pub fn tx_calldata(calldata: &Bytes) -> Result<u64, OutOfGasError> {
+pub fn tx_calldata(calldata: &Bytes) -> Result<U256, OutOfGasError> {
     // This cost applies both for call and create
     // 4 gas for each zero byte in the transaction data 16 gas for each non-zero byte in the transaction.
-    let mut calldata_cost: u64 = 0;
+    let mut calldata_cost: U256 = U256::zero();
     for byte in calldata {
         if *byte != 0 {
             calldata_cost = calldata_cost
-                .checked_add(16)
+                .checked_add(CALLDATA_COST_NON_ZERO_BYTE)
                 .ok_or(OutOfGasError::GasUsedOverflow)?;
         } else {
             calldata_cost = calldata_cost
-                .checked_add(4)
+                .checked_add(CALLDATA_COST_ZERO_BYTE)
                 .ok_or(OutOfGasError::GasUsedOverflow)?;
         }
     }
@@ -719,4 +726,44 @@ pub fn staticcall(
     Ok(static_gas
         .checked_add(dynamic_gas)
         .ok_or(OutOfGasError::GasCostOverflow)?)
+}
+
+pub fn fake_exponential(factor: u64, numerator: u64, denominator: u64) -> Result<U256, VMError> {
+    let mut i = 1;
+    let mut output: u64 = 0;
+
+    // Initial multiplication: factor * denominator
+    let mut numerator_accum = factor
+        .checked_mul(denominator)
+        .ok_or(InternalError::ArithmeticOperationOverflow)?;
+
+    while numerator_accum > 0 {
+        // Safe addition to output
+        output = output
+            .checked_add(numerator_accum)
+            .ok_or(InternalError::ArithmeticOperationOverflow)?;
+
+        // Safe multiplication and division within loop
+        numerator_accum = numerator_accum
+            .checked_mul(numerator)
+            .ok_or(InternalError::ArithmeticOperationOverflow)?
+            .checked_div(
+                denominator
+                    .checked_mul(i)
+                    .ok_or(InternalError::ArithmeticOperationOverflow)?,
+            )
+            .ok_or(VMError::Internal(
+                InternalError::ArithmeticOperationOverflow,
+            ))?;
+
+        i = i
+            .checked_add(1)
+            .ok_or(InternalError::ArithmeticOperationOverflow)?;
+    }
+
+    Ok(U256::from(
+        output
+            .checked_div(denominator)
+            .ok_or(InternalError::ArithmeticOperationOverflow)?,
+    ))
 }

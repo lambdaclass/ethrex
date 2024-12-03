@@ -4,11 +4,11 @@ use crate::{
         levm_runner::{self, post_state_root},
         EFTestRunnerError, InternalError,
     },
-    types::{EFTest, EFTestTransaction},
-    utils::load_initial_state,
+    types::EFTest,
+    utils::{effective_gas_price, load_initial_state},
 };
 use bytes::Bytes;
-use ethrex_core::{types::TxKind, Address, H256, U256};
+use ethrex_core::{types::TxKind, Address, H256};
 use ethrex_levm::{
     errors::{TransactionReport, TxResult},
     Account, StorageSlot,
@@ -90,19 +90,6 @@ pub fn re_run_failed_ef_test_tx(
     Ok(())
 }
 
-// If gas price is not provided, calculate it with current base fee and priority fee
-pub fn effective_gas_price(test: &EFTest, tx: &&EFTestTransaction) -> U256 {
-    match tx.gas_price {
-        None => {
-            let current_base_fee = test.env.current_base_fee.unwrap();
-            let priority_fee = tx.max_priority_fee_per_gas.unwrap();
-            let max_fee_per_gas = tx.max_fee_per_gas.unwrap();
-            std::cmp::min(max_fee_per_gas, current_base_fee + priority_fee)
-        }
-        Some(price) => price,
-    }
-}
-
 pub fn prepare_revm_for_tx<'state>(
     initial_state: &'state mut EvmState,
     vector: &TestVector,
@@ -148,7 +135,7 @@ pub fn prepare_revm_for_tx<'state>(
     let tx_env = RevmTxEnv {
         caller: tx.sender.0.into(),
         gas_limit: tx.gas_limit.as_u64(),
-        gas_price: RevmU256::from_limbs(effective_gas_price(test, tx).0),
+        gas_price: RevmU256::from_limbs(effective_gas_price(test, tx)?.0),
         transact_to: match tx.to {
             TxKind::Call(to) => RevmTxKind::Call(to.0.into()),
             TxKind::Create => RevmTxKind::Create,
