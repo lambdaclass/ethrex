@@ -26,13 +26,6 @@ ethrex-l2.workspace = true
 zkvm_interface = { path = "./zkvm/interface", default-features = false }
 risc0-zkvm = { version = "1.1.2" }
 
-# revm (this dep is temporary, should be replaced with ethrex-vm after ExecutionDB is completely integrated into the L1)
-revm = { version = "14.0.3", features = [
-  "std",
-  "serde",
-  "kzg-rs",
-], default-features = false }
-
 [dev-dependencies]
 ethrex-vm.workspace = true
 ethrex-storage.workspace = true
@@ -57,3 +50,4 @@ expect_used = "deny"
 indexing_slicing = "deny"
 as_conversions = "deny"
 unnecessary_cast = "warn"
+panic = "deny"

@@ -44,7 +44,9 @@ pub async fn wait_for_transaction_receipt(
         println!("[{try}/{max_retries}] Retrying to get transaction receipt for {tx_hash:#x}");
 
         if max_retries == r#try {
-            panic!("Transaction receipt for {tx_hash:#x} not found after {max_retries} retries");
+            return Err(EthClientError::Custom(format!(
+                "Transaction receipt for {tx_hash:#x} not found after {max_retries} retries"
+            )));
         }
         r#try += 1;
 

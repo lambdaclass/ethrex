@@ -2,6 +2,7 @@ use bytes::Bytes;
 use colored::Colorize;
 use ethereum_types::{Address, H160, H256};
 use ethrex_core::U256;
+use ethrex_l2::utils::config::errors;
 use ethrex_l2::utils::eth_client::errors::EthClientError;
 use ethrex_l2::utils::{
     config::{read_env_as_lines, read_env_file, write_env},
@@ -15,7 +16,6 @@ use std::{
     process::Command,
     str::FromStr,
 };
-use tracing::warn;
 
 struct SetupResult {
     deployer_address: Address,
@@ -45,6 +45,8 @@ pub enum DeployError {
     EthClientError(#[from] EthClientError),
     #[error("Deployer decoding error: {0}")]
     DecodingError(String),
+    #[error("Failed to interact with .env file, error: {0}")]
+    EnvFileError(#[from] errors::ConfigError),
 }
 
 // 0x4e59b44847b379578588920cA78FbF26c0B4956C
@@ -58,35 +60,20 @@ lazy_static::lazy_static! {
 }
 
 #[tokio::main]
-async fn main() {
-    let Ok(setup_result) = setup() else {
-        panic!("Failed on setup");
-    };
-    if let Err(e) = download_contract_deps(&setup_result.contracts_path) {
-        panic!("Failed to download contracts {e}");
-    };
-    if let Err(e) = compile_contracts(&setup_result.contracts_path) {
-        panic!("Failed to compile contracts {e}");
-    };
+async fn main() -> Result<(), DeployError> {
+    let setup_result = setup()?;
+    download_contract_deps(&setup_result.contracts_path)?;
+    compile_contracts(&setup_result.contracts_path)?;
 
-    let on_chain_proposer;
-    let bridge_address;
-    match deploy_contracts(
+    let (on_chain_proposer, bridge_address) = deploy_contracts(
         setup_result.deployer_address,
         setup_result.deployer_private_key,
         &setup_result.eth_client,
         &setup_result.contracts_path,
     )
-    .await
-    {
-        Ok((ocp, ba)) => {
-            on_chain_proposer = ocp;
-            bridge_address = ba;
-        }
-        Err(e) => panic!("Failed to deploy contracts {e}"),
-    };
+    .await?;
 
-    if let Err(err) = initialize_contracts(
+    initialize_contracts(
         setup_result.deployer_address,
         setup_result.deployer_private_key,
         setup_result.committer_address,
@@ -96,14 +83,9 @@ async fn main() {
         setup_result.contract_verifier_address,
         &setup_result.eth_client,
     )
-    .await
-    {
-        panic!("Failed to initialize contracts: {err}");
-    }
+    .await?;
 
-    let Ok(env_lines) = read_env_as_lines() else {
-        panic!("Failed to read env file as lines.");
-    };
+    let env_lines = read_env_as_lines().map_err(DeployError::EnvFileError)?;
 
     let mut wr_lines: Vec<String> = Vec::new();
     let mut env_lines_iter = env_lines.into_iter();
@@ -122,18 +104,12 @@ async fn main() {
         }
         wr_lines.push(line);
     }
-    if let Err(err) = write_env(wr_lines) {
-        panic!(
-            "{}",
-            format!("Failed to write changes to the .env file: {err}")
-        );
-    }
+    write_env(wr_lines).map_err(DeployError::EnvFileError)?;
+    Ok(())
 }
 
 fn setup() -> Result<SetupResult, DeployError> {
-    if let Err(e) = read_env_file() {
-        warn!("Failed to read .env file: {e}");
-    }
+    read_env_file()?;
 
     let eth_client = EthClient::new(&read_env_var("ETH_RPC_URL")?);
 
@@ -650,13 +626,14 @@ async fn wait_for_transaction_receipt(
 
 #[allow(clippy::unwrap_used)]
 #[allow(clippy::expect_used)]
+#[allow(clippy::panic)]
 #[cfg(test)]
 mod test {
-    use crate::{compile_contracts, download_contract_deps};
+    use crate::{compile_contracts, download_contract_deps, DeployError};
     use std::{env, path::Path};
 
     #[test]
-    fn test_contract_compilation() {
+    fn test_contract_compilation() -> Result<(), DeployError> {
         let binding = env::current_dir().unwrap();
         let parent_dir = binding.parent().unwrap();
 
@@ -676,14 +653,11 @@ mod test {
             }
         }
 
-        if download_contract_deps(Path::new("contracts")).is_err() {
-            panic!("failed to download contract deps");
-        };
-        if compile_contracts(Path::new("contracts")).is_err() {
-            panic!("failed to compile contracts");
-        };
+        download_contract_deps(Path::new("contracts"))?;
+        compile_contracts(Path::new("contracts"))?;
 
         std::fs::remove_dir_all(solc_out).unwrap();
         std::fs::remove_dir_all(lib).unwrap();
+        Ok(())
     }
 }

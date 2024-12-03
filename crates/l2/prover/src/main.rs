@@ -10,7 +10,8 @@ async fn main() {
         .with_max_level(Level::INFO)
         .finish();
     if let Err(e) = tracing::subscriber::set_global_default(subscriber) {
-        error!("setting default subscriber failed: {e}");
+        error!("Failed setting tracing::subscriber: {e}");
+        return;
     }
 
     if let Err(e) = read_env_file() {
@@ -18,8 +19,10 @@ async fn main() {
     }
 
     let Ok(config) = ProverClientConfig::from_env() else {
-        panic!("Failed to read ProverClientConfig from .env file");
+        error!("Failed to read ProverClientConfig from .env file");
+        return;
     };
+
     debug!("Prover Client has started");
     init_client(config).await;
 }

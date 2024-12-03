@@ -20,13 +20,15 @@ pub struct Proposer {
     engine_config: EngineApiConfig,
     block_production_interval: u64,
     coinbase_address: Address,
+    jwt_secret: Vec<u8>,
 }
 
 pub async fn start_proposer(store: Store) {
     info!("Starting Proposer");
 
     if let Err(e) = read_env_file() {
-        panic!("Failed to read .env file: {e}");
+        error!("Failed to read .env file: {e}");
+        return;
     }
 
     let mut task_set = JoinSet::new();
@@ -39,10 +41,14 @@ pub async fn start_proposer(store: Store) {
         match res {
             Ok(Ok(_)) => {}
             Ok(Err(err)) => {
-                panic!("Error starting Proposer: {err}");
+                error!("Error starting Proposer: {err}");
+                task_set.abort_all();
+                break;
             }
             Err(err) => {
-                panic!("Error starting Proposer: {err}");
+                error!("JoinSet error: {err}");
+                task_set.abort_all();
+                break;
             }
         };
     }
@@ -63,10 +69,12 @@ impl Proposer {
         proposer_config: &ProposerConfig,
         engine_config: EngineApiConfig,
     ) -> Result<Self, ProposerError> {
+        let jwt_secret = std::fs::read(&engine_config.jwt_path)?;
         Ok(Self {
             engine_config,
             block_production_interval: proposer_config.interval_ms,
             coinbase_address: proposer_config.coinbase_address,
+            jwt_secret,
         })
     }
 
@@ -90,16 +98,9 @@ impl Proposer {
                 .ok_or(ProposerError::StorageDataIsNone)?
         };
 
-        let Ok(jwt_secret) = std::fs::read(&self.engine_config.jwt_path) else {
-            panic!(
-                "Failed to read jwt_secret from: {}",
-                &self.engine_config.jwt_path
-            );
-        };
-
         ethrex_dev::block_producer::start_block_producer(
             self.engine_config.rpc_url.clone(),
-            jwt_secret.into(),
+            self.jwt_secret.clone().into(),
             head_block_hash,
             10,
             self.block_production_interval,
