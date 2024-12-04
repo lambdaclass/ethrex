@@ -35,6 +35,10 @@ run-evm-ef-tests: ## 🏃‍♂️ Run EF Tests
 	cd ../../../ && \
 	time cargo test -p ef_tests-levm --test ef_tests_levm
 
+run-evm-ef-tests-ci: ## 🏃‍♂️ Run EF Tests only with LEVM and without spinner, for CI.
+	cd ../../../ && \
+	time cargo test -p ef_tests-levm --test ef_tests_levm -- --disable-spinner --summary
+
 generate-evm-ef-tests-report: ## 📊 Generate EF Tests Report
 	cd ../../../ && \
 	cargo test -p ef_tests-levm --test ef_tests_levm -- --summary

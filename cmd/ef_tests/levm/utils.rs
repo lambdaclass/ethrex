@@ -5,6 +5,7 @@ use crate::{
 use ethrex_core::{types::Genesis, H256, U256};
 use ethrex_storage::{EngineType, Store};
 use ethrex_vm::{evm_state, EvmState};
+use spinoff::Spinner;
 
 pub fn load_initial_state(test: &EFTest) -> (EvmState, H256) {
     let genesis = Genesis::from(test);
@@ -19,6 +20,22 @@ pub fn load_initial_state(test: &EFTest) -> (EvmState, H256) {
         ),
         genesis.get_block().header.compute_block_hash(),
     )
+}
+
+pub fn spinner_update_text_or_print(spinner: &mut Spinner, text: String, no_spinner: bool) {
+    if no_spinner {
+        println!("{}", text);
+    } else {
+        spinner.update_text(text);
+    }
+}
+
+pub fn spinner_success_or_print(spinner: &mut Spinner, text: String, no_spinner: bool) {
+    if no_spinner {
+        println!("{}", text);
+    } else {
+        spinner.success(&text);
+    }
 }
 
 // If gas price is not provided, calculate it with current base fee and priority fee

@@ -41,7 +41,7 @@ jobs:
       - name: Run tests
         run: |
           cd crates/vm/levm
-          make run-evm-ef-tests
+          make run-evm-ef-tests-ci
   test:
     # "Test" is a required check, don't change the name
     name: Test
