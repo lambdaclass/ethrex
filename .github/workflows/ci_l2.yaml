@@ -35,4 +35,4 @@ jobs:
         run: |
           cd crates/l2
           cp .env.example .env
-          make test
+          make ci_test
