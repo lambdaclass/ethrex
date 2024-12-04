@@ -3,7 +3,6 @@ use crate::{
     constants::WORD_SIZE,
     errors::{InternalError, OpcodeSuccess, VMError},
     gas_cost,
-    opcodes::Opcode,
     vm::VM,
 };
 use ethrex_core::U256;
@@ -16,43 +15,16 @@ impl VM {
     pub fn op_push(
         &mut self,
         current_call_frame: &mut CallFrame,
-        op: Opcode,
+        n_bytes: usize,
     ) -> Result<OpcodeSuccess, VMError> {
         self.increase_consumed_gas(current_call_frame, gas_cost::PUSHN)?;
 
-        let n_bytes = (usize::from(op))
-            .checked_sub(usize::from(Opcode::PUSH1))
-            .ok_or(VMError::InvalidOpcode)?
-            .checked_add(1)
-            .ok_or(VMError::InvalidOpcode)?;
+        let read_n_bytes = read_bytcode_slice(current_call_frame, n_bytes);
+        let value_to_push = bytes_to_word(&read_n_bytes, n_bytes)?;
 
-        let read_n_bytes: Vec<u8> = current_call_frame
-            .bytecode
-            .get(current_call_frame.pc()..)
-            .unwrap_or_default()
-            .iter()
-            .take(n_bytes)
-            .cloned()
-            .collect();
-
-        let mut value_to_push = [0u8; WORD_SIZE];
-
-        let start_index = WORD_SIZE.checked_sub(n_bytes).ok_or(VMError::Internal(
-            InternalError::ArithmeticOperationUnderflow,
-        ))?;
-
-        // Rellenamos el array `value_to_push` con los bytes leídos
-        for (i, byte) in read_n_bytes.iter().enumerate() {
-            let index = start_index.checked_add(i).ok_or(VMError::Internal(
-                InternalError::ArithmeticOperationOverflow,
-            ))?;
-            if let Some(data_byte) = value_to_push.get_mut(index) {
-                *data_byte = *byte;
-            }
-        }
-
-        let bytes_push: &[u8] = &value_to_push;
-        current_call_frame.stack.push(U256::from(bytes_push))?;
+        current_call_frame
+            .stack
+            .push(U256::from(value_to_push.as_slice()))?;
 
         current_call_frame.increment_pc_by(n_bytes)?;
 
@@ -70,4 +42,33 @@ impl VM {
 
         Ok(OpcodeSuccess::Continue)
     }
+}
+
+fn read_bytcode_slice(current_call_frame: &CallFrame, n_bytes: usize) -> Vec<u8> {
+    current_call_frame
+        .bytecode
+        .get(current_call_frame.pc()..)
+        .unwrap_or_default()
+        .iter()
+        .take(n_bytes)
+        .cloned()
+        .collect()
+}
+
+fn bytes_to_word(read_n_bytes: &[u8], n_bytes: usize) -> Result<[u8; WORD_SIZE], VMError> {
+    let mut value_to_push = [0u8; WORD_SIZE];
+    let start_index = WORD_SIZE.checked_sub(n_bytes).ok_or(VMError::Internal(
+        InternalError::ArithmeticOperationUnderflow,
+    ))?;
+
+    for (i, byte) in read_n_bytes.iter().enumerate() {
+        let index = start_index.checked_add(i).ok_or(VMError::Internal(
+            InternalError::ArithmeticOperationOverflow,
+        ))?;
+        if let Some(data_byte) = value_to_push.get_mut(index) {
+            *data_byte = *byte;
+        }
+    }
+
+    Ok(value_to_push)
 }
