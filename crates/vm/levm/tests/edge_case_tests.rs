@@ -87,17 +87,29 @@ fn test_usize_overflow_blobhash() {
 }
 
 #[test]
-fn add_op() {
+fn push_with_overflow() {
     let mut vm = new_vm_with_ops(&[
+        // This PUSH instruction is 33 bytes long.
+        // 1 byte for the Opcode and 32 bytes for the argument.
+        // The program counter starts at 0, so this instruction will
+        // start at byte 0 and go up until byte 32 ([0:32])
         Operation::Push((32, U256::MAX)),
+        // Now the program counter will be 33. It's the PC from the
+        // last instruction + 1.
+        // This instruction will try to jump to the destination in the
+        // stack. That destination is 32 bytes, all containing the
+        // maximum 256bit value. That is invalid, so JUMP will stop
+        // the VM's execution
         Operation::Jump,
-        Operation::Stop,
+        // Because JUMP instruction never got to jump to the specified
+        // instruction, the PC is never changed, so it maintains its
+        // last value. That is 33.
     ])
     .unwrap();
     let mut current_call_frame = vm.call_frames.pop().unwrap();
     vm.execute(&mut current_call_frame).unwrap();
 
-    assert_eq!(vm.current_call_frame_mut().unwrap().pc(), 34);
+    assert_eq!(vm.current_call_frame_mut().unwrap().pc(), 33);
 }
 
 #[test]

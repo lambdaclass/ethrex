@@ -141,29 +141,4 @@ impl CallFrame {
     pub fn pc(&self) -> usize {
         self.pc
     }
-
-    /// Jump to the given address, returns false if the jump position wasn't a JUMPDEST
-    pub fn jump(&mut self, jump_address: U256) -> Result<(), VMError> {
-        let jump_address_usize = jump_address
-            .try_into()
-            .map_err(|_err| VMError::VeryLargeNumber)?;
-
-        self.validate_jump(jump_address_usize)?;
-        self.pc = jump_address_usize;
-        Ok(())
-    }
-
-    fn validate_jump(&self, to_jump_address: usize) -> Result<(), VMError> {
-        if matches!(
-            self.bytecode
-                .get(to_jump_address)
-                .copied()
-                .map(Opcode::try_from),
-            Some(Ok(Opcode::JUMPDEST))
-        ) {
-            Ok(())
-        } else {
-            Err(VMError::InvalidJump)
-        }
-    }
 }
