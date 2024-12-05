@@ -626,6 +626,12 @@ impl VM {
                 .checked_mul(self.env.gas_price)
                 .ok_or(VMError::GasLimitPriceProductOverflow)?,
         )?;
+        self.increase_account_balance(
+            sender,
+            U256::from(report.gas_refunded)
+                .checked_mul(self.env.gas_price)
+                .ok_or(VMError::GasLimitPriceProductOverflow)?,
+        )?;
 
         // Send coinbase fee
         let priority_fee_per_gas = self
