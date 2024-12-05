@@ -116,8 +116,6 @@ pub enum TxValidationError {
     Type3TxBlobCountExceeded,
     #[error("Type3TxContractCreation")]
     Type3TxContractCreation,
-    #[error("Undefined state")]
-    UndefinedState(i32), // This error is temporarily for things that cause an undefined state.
     #[error("Gas limit price product overflow")]
     GasLimitPriceProductOverflow,
 }
@@ -178,6 +176,8 @@ pub enum InternalError {
     UtilsError,
     #[error("PC out of bounds")]
     PCOutOfBounds,
+    #[error("Undefined state")]
+    UndefinedState(i32), // This error is temporarily for things that cause an undefined state.
 }
 
 #[derive(Debug, Clone)]
