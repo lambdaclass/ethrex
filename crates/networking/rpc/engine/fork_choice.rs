@@ -77,7 +77,7 @@ impl RpcHandler for ForkChoiceUpdatedV3 {
 
     fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
         let (head_block_opt, mut response) =
-            handle_forkchoice(&self.fork_choice_state, context.clone(), 2)?;
+            handle_forkchoice(&self.fork_choice_state, context.clone(), 3)?;
         if let (Some(head_block), Some(attributes)) = (head_block_opt, &self.payload_attributes) {
             validate_v3(attributes, head_block, &context)?;
             let payload_id = build_payload(attributes, context, &self.fork_choice_state, 3)?;
@@ -116,7 +116,7 @@ fn handle_forkchoice(
     version: usize,
 ) -> Result<(Option<BlockHeader>, ForkChoiceResponse), RpcErr> {
     info!(
-        "New fork choice request v{} with head: {}, safe: {}, finalized: {}.",
+        "New fork choice request v{} with head: {:#x}, safe: {:#x}, finalized: {:#x}.",
         version,
         fork_choice_state.head_block_hash,
         fork_choice_state.safe_block_hash,

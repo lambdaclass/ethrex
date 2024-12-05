@@ -137,7 +137,9 @@ impl NewPayloadRequest {
         // Check that block_hash is valid
         let actual_block_hash = block.hash();
         if block_hash != actual_block_hash {
-            let result = PayloadStatus::invalid_with_err("Invalid block hash");
+            let result = PayloadStatus::invalid_with_err(&format!(
+                "Invalid block hash. Expected {actual_block_hash:#x}, got {block_hash:#x}"
+            ));
             return serde_json::to_value(result)
                 .map_err(|error| RpcErr::Internal(error.to_string()));
         }

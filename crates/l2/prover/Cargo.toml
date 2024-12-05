@@ -24,7 +24,7 @@ ethrex-l2.workspace = true
 
 # risc0
 zkvm_interface = { path = "./zkvm/interface", default-features = false }
-risc0-zkvm = { version = "1.1.2" }
+risc0-zkvm = { version = "1.2.0" }
 
 [dev-dependencies]
 ethrex-vm.workspace = true

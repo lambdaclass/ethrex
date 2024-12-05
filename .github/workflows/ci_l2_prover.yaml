@@ -41,12 +41,14 @@ jobs:
         uses: actions/checkout@v4
       - name: Rust toolchain install
         uses: dtolnay/rust-toolchain@stable
+      # Use cargo-risczero v1.2.0
+      # The risc0-zkvm crate should match this version
       - name: RISC-V zkVM toolchain install
         run: |
           curl -L https://risczero.com/install | bash
           ~/.risc0/bin/rzup install
-      # - name: Caching
-      #   uses: Swatinem/rust-cache@v2
+          ~/.risc0/bin/rzup extension install cargo-risczero v1.2.0
+          ~/.risc0/bin/rzup extension use cargo-risczero v1.2.0
       - name: Build prover and zkVM
         run: |
           cd crates/l2/prover

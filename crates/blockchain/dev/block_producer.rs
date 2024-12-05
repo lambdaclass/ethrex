@@ -16,9 +16,11 @@ pub async fn start_block_producer(
     let engine_client = EngineClient::new(&execution_client_auth_url, jwt_secret);
 
     let mut head_block_hash: H256 = head_block_hash;
+    let parent_beacon_block_root = H256::zero();
     let mut tries = 0;
     while tries < max_tries {
         tracing::info!("Producing block");
+        tracing::debug!("Head block hash: {head_block_hash:#x}");
         let fork_choice_state = ForkChoiceState {
             head_block_hash,
             safe_block_hash: head_block_hash,
@@ -28,13 +30,17 @@ pub async fn start_block_producer(
         let payload_attributes = PayloadAttributesV3 {
             timestamp: SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs(),
             suggested_fee_recipient: coinbase_address,
+            parent_beacon_block_root: Some(parent_beacon_block_root),
             ..Default::default()
         };
         let fork_choice_response = match engine_client
             .engine_forkchoice_updated_v3(fork_choice_state, Some(payload_attributes))
             .await
         {
-            Ok(response) => response,
+            Ok(response) => {
+                tracing::debug!("ForkChoiceV3 response: {response:?}");
+                response
+            }
             Err(error) => {
                 tracing::error!(
                     "Failed to produce block: error sending engine_forkchoiceUpdateV3 with PayloadAttributes: {error}"
@@ -48,7 +54,10 @@ pub async fn start_block_producer(
             .expect("Failed to produce block: payload_id is None in ForkChoiceResponse");
         let execution_payload_response = match engine_client.engine_get_payload_v3(payload_id).await
         {
-            Ok(response) => response,
+            Ok(response) => {
+                tracing::debug!("GetPayloadV3 response: {response:?}");
+                response
+            }
             Err(error) => {
                 tracing::error!(
                     "Failed to produce block: error sending engine_getPayloadV3: {error}"
@@ -73,11 +82,14 @@ pub async fn start_block_producer(
                         H256::from_slice(&hash)
                     })
                     .collect(),
-                Default::default(),
+                parent_beacon_block_root,
             )
             .await
         {
-            Ok(response) => response,
+            Ok(response) => {
+                tracing::debug!("NewPayloadV3 response: {response:?}");
+                response
+            }
             Err(error) => {
                 tracing::error!(
                     "Failed to produce block: error sending engine_newPayloadV3: {error}"
@@ -86,9 +98,14 @@ pub async fn start_block_producer(
                 continue;
             }
         };
-        let produced_block_hash = payload_status
-            .latest_valid_hash
-            .expect("Failed to produce block: latest_valid_hash is None in PayloadStatus");
+        let produced_block_hash = if let Some(latest_valid_hash) = payload_status.latest_valid_hash
+        {
+            latest_valid_hash
+        } else {
+            tracing::error!("Failed to produce block: latest_valid_hash is None in PayloadStatus: {payload_status:?}");
+            tries += 1;
+            continue;
+        };
         tracing::info!("Produced block {produced_block_hash:#x}");
 
         head_block_hash = produced_block_hash;

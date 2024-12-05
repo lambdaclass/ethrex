@@ -71,7 +71,11 @@ impl EngineClient {
                 .map_err(ExchangeCapabilitiesError::SerdeJSONError)
                 .map_err(EngineClientError::from),
             Ok(RpcResponse::Error(error_response)) => {
-                Err(ExchangeCapabilitiesError::RPCError(error_response.error.message).into())
+                Err(ExchangeCapabilitiesError::RPCError(format!(
+                    "{}: {:?}",
+                    error_response.error.message, error_response.error.data
+                ))
+                .into())
             }
             Err(error) => Err(error),
         }
@@ -92,7 +96,11 @@ impl EngineClient {
                 .map_err(ForkChoiceUpdateError::SerdeJSONError)
                 .map_err(EngineClientError::from),
             Ok(RpcResponse::Error(error_response)) => {
-                Err(ForkChoiceUpdateError::RPCError(error_response.error.message).into())
+                Err(ForkChoiceUpdateError::RPCError(format!(
+                    "{}: {:?}",
+                    error_response.error.message, error_response.error.data
+                ))
+                .into())
             }
             Err(error) => Err(error),
         }
@@ -112,9 +120,11 @@ impl EngineClient {
             Ok(RpcResponse::Success(result)) => serde_json::from_value(result.result)
                 .map_err(GetPayloadError::SerdeJSONError)
                 .map_err(EngineClientError::from),
-            Ok(RpcResponse::Error(error_response)) => {
-                Err(GetPayloadError::RPCError(error_response.error.message).into())
-            }
+            Ok(RpcResponse::Error(error_response)) => Err(GetPayloadError::RPCError(format!(
+                "{}: {:?}",
+                error_response.error.message, error_response.error.data
+            ))
+            .into()),
             Err(error) => Err(error),
         }
     }
@@ -140,9 +150,11 @@ impl EngineClient {
             Ok(RpcResponse::Success(result)) => serde_json::from_value(result.result)
                 .map_err(NewPayloadError::SerdeJSONError)
                 .map_err(EngineClientError::from),
-            Ok(RpcResponse::Error(error_response)) => {
-                Err(NewPayloadError::RPCError(error_response.error.message).into())
-            }
+            Ok(RpcResponse::Error(error_response)) => Err(NewPayloadError::RPCError(format!(
+                "{}: {:?}",
+                error_response.error.message, error_response.error.data
+            ))
+            .into()),
             Err(error) => Err(error),
         }
     }
