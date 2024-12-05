@@ -1,3 +1,5 @@
+// Here add #![allow(clippy::<lint_name>)] if necessary, we don't want to lint the test code.
+
 use std::str::FromStr;
 
 use bytes::Bytes;

@@ -138,15 +138,13 @@ impl VM {
                 let created_contract = Account::new(value, calldata.clone(), 1, HashMap::new());
                 cache::insert_account(&mut cache, new_contract_address, created_contract);
 
-                let bytecode: Bytes = calldata.clone();
-
                 let initial_call_frame = CallFrame::new(
                     env.origin,
                     new_contract_address,
                     new_contract_address,
-                    bytecode,
+                    Bytes::new(), // Bytecode is assigned after passing validations.
                     value,
-                    Bytes::new(), // Contract creation does not have calldata
+                    calldata, // Calldata is removed after passing validations.
                     false,
                     env.gas_limit,
                     U256::zero(),
@@ -378,12 +376,7 @@ impl VM {
                 .checked_add(CREATE_BASE_COST)
                 .ok_or(OutOfGasError::ConsumedGasOverflow)?;
 
-            let number_of_words: u64 = initial_call_frame
-                .calldata
-                .chunks(WORD_SIZE)
-                .len()
-                .try_into()
-                .map_err(|_| InternalError::ConversionError)?;
+            let number_of_words = initial_call_frame.calldata.len().div_ceil(WORD_SIZE);
 
             intrinsic_gas = intrinsic_gas
                 .checked_add(
@@ -493,7 +486,7 @@ impl VM {
         // (4) INITCODE_SIZE_EXCEEDED
         if self.is_create() {
             // INITCODE_SIZE_EXCEEDED
-            if initial_call_frame.bytecode.len() > INIT_CODE_MAX_SIZE {
+            if initial_call_frame.calldata.len() > INIT_CODE_MAX_SIZE {
                 return Err(VMError::TxValidation(
                     TxValidationError::InitcodeSizeExceeded,
                 ));
@@ -588,6 +581,12 @@ impl VM {
 
         let cache_before_execution = self.cache.clone();
         self.validate_transaction(&mut initial_call_frame)?;
+
+        if self.is_create() {
+            // Assign bytecode to context and empty calldata
+            initial_call_frame.bytecode = initial_call_frame.calldata.clone();
+            initial_call_frame.calldata = Bytes::new();
+        }
 
         // Maybe can be done in validate_transaction
         let sender = initial_call_frame.msg_sender;
