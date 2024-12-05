@@ -1,7 +1,8 @@
 use crate::{
     call_frame::CallFrame,
+    constants::WORD_SIZE_IN_BYTES_USIZE,
     errors::{OpcodeSuccess, VMError},
-    gas_cost,
+    gas_cost, memory,
     vm::VM,
 };
 use ethrex_core::U256;
@@ -26,19 +27,25 @@ impl VM {
             .try_into()
             .map_err(|_| VMError::VeryLargeNumber)?;
 
-        let gas_cost =
-            gas_cost::keccak256(current_call_frame, size, offset).map_err(VMError::OutOfGas)?;
-
-        self.increase_consumed_gas(current_call_frame, gas_cost)?;
-
-        let value_bytes = if size == 0 {
-            vec![]
-        } else {
-            current_call_frame.memory.load_range(offset, size)?
-        };
+        self.increase_consumed_gas(
+            current_call_frame,
+            gas_cost::keccak256(
+                offset
+                    .checked_add(size)
+                    .ok_or(VMError::OutOfOffset)?
+                    .checked_next_multiple_of(WORD_SIZE_IN_BYTES_USIZE)
+                    .ok_or(VMError::OutOfOffset)?,
+                current_call_frame.memory.len(),
+                size,
+            )?,
+        )?;
 
         let mut hasher = Keccak256::new();
-        hasher.update(value_bytes);
+        hasher.update(memory::load_range(
+            &mut current_call_frame.memory,
+            offset,
+            size,
+        )?);
         current_call_frame
             .stack
             .push(U256::from_big_endian(&hasher.finalize()))?;

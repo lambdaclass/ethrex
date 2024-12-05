@@ -1,7 +1,8 @@
 use crate::{
     call_frame::CallFrame,
+    constants::WORD_SIZE_IN_BYTES_USIZE,
     errors::{OpcodeSuccess, VMError},
-    gas_cost,
+    gas_cost, memory,
     opcodes::Opcode,
     vm::VM,
 };
@@ -44,16 +45,26 @@ impl VM {
             topics.push(H256::from_slice(&topic_bytes));
         }
 
-        let gas_cost = gas_cost::log(current_call_frame, size, offset, number_of_topics)
-            .map_err(VMError::OutOfGas)?;
+        self.increase_consumed_gas(
+            current_call_frame,
+            gas_cost::log(
+                offset
+                    .checked_add(size)
+                    .ok_or(VMError::OutOfOffset)?
+                    .checked_next_multiple_of(WORD_SIZE_IN_BYTES_USIZE)
+                    .ok_or(VMError::OutOfOffset)?,
+                current_call_frame.memory.len(),
+                size,
+                number_of_topics,
+            )?,
+        )?;
 
-        self.increase_consumed_gas(current_call_frame, gas_cost)?;
-
-        let data = current_call_frame.memory.load_range(offset, size)?;
         let log = Log {
             address: current_call_frame.msg_sender, // Should change the addr if we are on a Call/Create transaction (Call should be the contract we are calling, Create should be the original caller)
             topics,
-            data: Bytes::from(data),
+            data: Bytes::from(
+                memory::load_range(&mut current_call_frame.memory, offset, size)?.to_vec(),
+            ),
         };
         current_call_frame.logs.push(log);
 

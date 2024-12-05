@@ -1,245 +1,209 @@
 use crate::{
-    constants::{MEMORY_EXPANSION_QUOTIENT, WORD_SIZE, WORD_SIZE_IN_BYTES},
+    constants::{MEMORY_EXPANSION_QUOTIENT, WORD_SIZE_IN_BYTES_USIZE},
     errors::{InternalError, OutOfGasError, VMError},
 };
 use ethrex_core::U256;
 
-#[derive(Debug, Clone, Default, PartialEq)]
-pub struct Memory {
-    pub data: Vec<u8>,
+pub type Memory = Vec<u8>;
+
+pub fn try_resize(memory: &mut Memory, unchecked_new_size: usize) -> Result<(), VMError> {
+    if unchecked_new_size == 0 || unchecked_new_size <= memory.len() {
+        return Ok(());
+    }
+
+    let new_size = unchecked_new_size
+        .checked_next_multiple_of(WORD_SIZE_IN_BYTES_USIZE)
+        .ok_or(VMError::OutOfOffset)?;
+
+    if new_size > memory.len() {
+        let additional_size = new_size.checked_sub(memory.len()).ok_or(VMError::Internal(
+            InternalError::ArithmeticOperationUnderflow,
+        ))?;
+        memory
+            .try_reserve(additional_size)
+            .map_err(|_err| VMError::MemorySizeOverflow)?;
+        memory.resize(new_size, 0);
+    }
+
+    Ok(())
 }
 
-impl From<Vec<u8>> for Memory {
-    fn from(data: Vec<u8>) -> Self {
-        Memory { data }
-    }
+pub fn load_word(memory: &mut Memory, offset: usize) -> Result<U256, VMError> {
+    load_range(memory, offset, WORD_SIZE_IN_BYTES_USIZE).map(U256::from_big_endian)
 }
 
-impl Memory {
-    pub fn new() -> Self {
-        Self { data: Vec::new() }
+pub fn load_range(memory: &mut Memory, offset: usize, size: usize) -> Result<&[u8], VMError> {
+    if size == 0 {
+        return Ok(&[]);
     }
 
-    pub fn new_from_vec(data: Vec<u8>) -> Self {
-        Self { data }
+    try_resize(
+        memory,
+        offset.checked_add(size).ok_or(VMError::OutOfOffset)?,
+    )?;
+
+    memory
+        .get(offset..offset.checked_add(size).ok_or(VMError::OutOfOffset)?)
+        .ok_or(VMError::OutOfOffset)
+}
+
+pub fn try_store_word(memory: &mut Memory, offset: usize, word: U256) -> Result<(), VMError> {
+    try_resize(
+        memory,
+        offset
+            .checked_add(WORD_SIZE_IN_BYTES_USIZE)
+            .ok_or(VMError::OutOfOffset)?,
+    )?;
+    let mut word_bytes = [0u8; WORD_SIZE_IN_BYTES_USIZE];
+    word.to_big_endian(&mut word_bytes);
+    try_store(memory, &word_bytes, offset, WORD_SIZE_IN_BYTES_USIZE)
+}
+
+pub fn try_store_data(memory: &mut Memory, offset: usize, data: &[u8]) -> Result<(), VMError> {
+    try_resize(
+        memory,
+        offset.checked_add(data.len()).ok_or(VMError::OutOfOffset)?,
+    )?;
+    try_store(memory, data, offset, data.len())
+}
+
+pub fn try_store_range(
+    memory: &mut Memory,
+    offset: usize,
+    size: usize,
+    data: &[u8],
+) -> Result<(), VMError> {
+    try_resize(
+        memory,
+        offset.checked_add(size).ok_or(VMError::OutOfOffset)?,
+    )?;
+    try_store(memory, data, offset, size)
+}
+
+fn try_store(
+    memory: &mut Memory,
+    data: &[u8],
+    at_offset: usize,
+    data_size: usize,
+) -> Result<(), VMError> {
+    if data_size == 0 {
+        return Ok(());
     }
 
-    fn resize(&mut self, offset: usize) -> Result<(), VMError> {
-        let new_offset = offset
-            .checked_next_multiple_of(WORD_SIZE)
-            .ok_or(VMError::Internal(
-                InternalError::ArithmeticOperationOverflow,
-            ))?;
-        if new_offset > self.data.len() {
-            // Expand the size
-            let size_to_expand =
-                new_offset
-                    .checked_sub(self.data.len())
-                    .ok_or(VMError::Internal(
-                        InternalError::ArithmeticOperationUnderflow,
-                    ))?;
-            self.data
-                .try_reserve(size_to_expand)
-                .map_err(|_err| VMError::MemorySizeOverflow)?;
-
-            // Fill the new space with zeros
-            self.data.extend(std::iter::repeat(0).take(size_to_expand));
-        }
-        Ok(())
-    }
-
-    pub fn load(&mut self, offset: usize) -> Result<U256, VMError> {
-        self.resize(offset.checked_add(WORD_SIZE).ok_or(VMError::Internal(
-            InternalError::ArithmeticOperationOverflow, // MemoryLoadOutOfBounds?
-        ))?)?;
-        let value_bytes = self
-            .data
-            .get(
-                offset
-                    ..offset.checked_add(WORD_SIZE).ok_or(VMError::Internal(
-                        InternalError::ArithmeticOperationOverflow, // MemoryLoadOutOfBounds?
-                    ))?,
+    for (byte_to_store, memory_slot) in data.iter().zip(
+        memory
+            .get_mut(
+                at_offset
+                    ..at_offset
+                        .checked_add(data_size)
+                        .ok_or(VMError::OutOfOffset)?,
             )
-            .ok_or(VMError::MemoryLoadOutOfBounds)?;
-
-        Ok(U256::from_big_endian(value_bytes))
+            .ok_or(VMError::OutOfOffset)?
+            .iter_mut(),
+    ) {
+        *memory_slot = *byte_to_store;
     }
-
-    pub fn load_range(&mut self, offset: usize, size: usize) -> Result<Vec<u8>, VMError> {
-        if size == 0 {
-            return Ok(Vec::new());
-        }
-
-        let size_to_load = offset.checked_add(size).ok_or(VMError::Internal(
-            InternalError::ArithmeticOperationOverflow,
-        ))?;
-        self.resize(size_to_load)?;
-        self.data
-            .get(offset..size_to_load)
-            .ok_or(VMError::MemoryLoadOutOfBounds)
-            .map(|slice| slice.to_vec())
-    }
-
-    pub fn store_bytes(&mut self, offset: usize, value: &[u8]) -> Result<(), VMError> {
-        let len = value.len();
-        let size_to_store = offset.checked_add(len).ok_or(VMError::Internal(
-            InternalError::ArithmeticOperationOverflow,
-        ))?;
-        self.resize(size_to_store)?;
-        self.data
-            .splice(offset..size_to_store, value.iter().copied());
-
-        Ok(())
-    }
-
-    pub fn store_n_bytes(
-        &mut self,
-        offset: usize,
-        value: &[u8],
-        size: usize,
-    ) -> Result<(), VMError> {
-        let size_to_store = offset.checked_add(size).ok_or(VMError::Internal(
-            InternalError::ArithmeticOperationOverflow,
-        ))?;
-        self.resize(size_to_store)?;
-        self.data
-            .splice(offset..size_to_store, value.iter().copied());
-
-        Ok(())
-    }
-
-    pub fn size(&self) -> U256 {
-        U256::from(self.data.len())
-    }
-
-    pub fn copy(
-        &mut self,
-        src_offset: usize,
-        dest_offset: usize,
-        size: usize,
-    ) -> Result<(), VMError> {
-        let src_copy_size = src_offset.checked_add(size).ok_or(VMError::Internal(
-            InternalError::ArithmeticOperationOverflow,
-        ))?;
-        let dest_copy_size = dest_offset.checked_add(size).ok_or(VMError::Internal(
-            InternalError::ArithmeticOperationOverflow,
-        ))?;
-        let max_size = std::cmp::max(src_copy_size, dest_copy_size);
-
-        if max_size > self.data.len() {
-            self.resize(max_size)?;
-        }
-
-        let mut temp = vec![0u8; size];
-
-        temp.copy_from_slice(
-            self.data
-                .get(src_offset..src_copy_size)
-                .ok_or(VMError::Internal(InternalError::SlicingError))?,
-        );
-
-        for i in 0..size {
-            if let Some(temp_byte) = temp.get_mut(i) {
-                *temp_byte = *self
-                    .data
-                    .get(
-                        src_offset
-                            .checked_add(i)
-                            .ok_or(VMError::MemoryLoadOutOfBounds)?,
-                    )
-                    .unwrap_or(&0u8);
-            }
-        }
-
-        for i in 0..size {
-            if let Some(memory_byte) = self.data.get_mut(
-                dest_offset
-                    .checked_add(i)
-                    .ok_or(VMError::MemoryLoadOutOfBounds)?,
-            ) {
-                *memory_byte = *temp.get(i).unwrap_or(&0u8);
-            }
-        }
-        Ok(())
-    }
-
-    pub fn expansion_cost(&self, offset: usize, size: usize) -> Result<U256, OutOfGasError> {
-        if size == 0 {
-            return Ok(U256::zero());
-        }
-
-        let memory_byte_size = offset
-            .checked_add(size)
-            .ok_or(OutOfGasError::GasCostOverflow)?;
-        if memory_byte_size <= self.data.len() {
-            return Ok(U256::zero());
-        }
-
-        let new_memory_size_word = memory_byte_size
-            .checked_add(WORD_SIZE - 1)
-            .ok_or(OutOfGasError::GasCostOverflow)?
-            / WORD_SIZE;
-
-        let new_memory_cost = new_memory_size_word
-            .checked_mul(new_memory_size_word)
-            .map(|square| square / MEMORY_EXPANSION_QUOTIENT)
-            .and_then(|cost| cost.checked_add(new_memory_size_word.checked_mul(3)?))
-            .ok_or(OutOfGasError::GasCostOverflow)?;
-
-        let last_memory_size_word = self
-            .data
-            .len()
-            .checked_add(WORD_SIZE - 1)
-            .ok_or(OutOfGasError::GasCostOverflow)?
-            / WORD_SIZE;
-
-        let last_memory_cost = last_memory_size_word
-            .checked_mul(last_memory_size_word)
-            .map(|square| square / MEMORY_EXPANSION_QUOTIENT)
-            .and_then(|cost| cost.checked_add(last_memory_size_word.checked_mul(3)?))
-            .ok_or(OutOfGasError::GasCostOverflow)?;
-
-        Ok((new_memory_cost
-            .checked_sub(last_memory_cost)
-            .ok_or(OutOfGasError::GasCostOverflow)?)
-        .into())
-    }
+    Ok(())
 }
 
-/// The total cost for a given memory size.
-pub fn cost(memory_size: U256) -> Result<U256, VMError> {
-    let memory_size_word = memory_size
+pub fn try_copy_within(
+    memory: &mut Memory,
+    from_offset: usize,
+    to_offset: usize,
+    size: usize,
+) -> Result<(), VMError> {
+    if size == 0 {
+        return Ok(());
+    }
+
+    try_resize(
+        memory,
+        to_offset.checked_add(size).ok_or(VMError::OutOfOffset)?,
+    )?;
+
+    let mut temporary_buffer = vec![0u8; size];
+    for i in 0..size {
+        if let Some(temporary_buffer_byte) = temporary_buffer.get_mut(i) {
+            *temporary_buffer_byte = *memory
+                .get(from_offset.checked_add(i).ok_or(VMError::OutOfOffset)?)
+                .unwrap_or(&0u8);
+        }
+    }
+
+    for i in 0..size {
+        if let Some(memory_byte) =
+            memory.get_mut(to_offset.checked_add(i).ok_or(VMError::OutOfOffset)?)
+        {
+            *memory_byte = *temporary_buffer.get(i).unwrap_or(&0u8);
+        }
+    }
+
+    Ok(())
+}
+
+pub fn access_cost(
+    new_memory_size: usize,
+    current_memory_size: usize,
+    static_cost: U256,
+    dynamic_base_cost: U256,
+) -> Result<U256, VMError> {
+    let minimum_word_size = new_memory_size
         .checked_add(
-            WORD_SIZE_IN_BYTES
-                .checked_sub(U256::one())
+            WORD_SIZE_IN_BYTES_USIZE
+                .checked_sub(1)
                 .ok_or(InternalError::ArithmeticOperationUnderflow)?,
         )
         .ok_or(OutOfGasError::MemoryExpansionCostOverflow)?
-        .checked_div(WORD_SIZE_IN_BYTES)
+        / WORD_SIZE_IN_BYTES_USIZE;
+
+    let static_gas = static_cost;
+    let dynamic_cost = dynamic_base_cost
+        .checked_mul(minimum_word_size.into())
+        .ok_or(OutOfGasError::MemoryExpansionCostOverflow)?
+        .checked_add(expansion_cost(new_memory_size, current_memory_size)?.into())
         .ok_or(OutOfGasError::MemoryExpansionCostOverflow)?;
 
-    Ok(memory_size_word
-        .checked_pow(U256::from(2))
-        .ok_or(OutOfGasError::MemoryExpansionCostOverflow)?
-        .checked_div(U256::from(512))
-        .ok_or(OutOfGasError::MemoryExpansionCostOverflow)?
-        .checked_add(
-            U256::from(3)
-                .checked_mul(memory_size_word)
-                .ok_or(OutOfGasError::MemoryExpansionCostOverflow)?,
-        )
-        .ok_or(OutOfGasError::MemoryExpansionCostOverflow)?)
+    Ok(static_gas
+        .checked_add(dynamic_cost)
+        .ok_or(OutOfGasError::GasCostOverflow)?)
 }
 
 /// When a memory expansion is triggered, only the additional bytes of memory
 /// must be paid for.
-pub fn expansion_cost(new_memory_size: U256, old_memory_size: U256) -> Result<U256, VMError> {
-    let cost = if new_memory_size <= old_memory_size {
-        U256::zero()
+pub fn expansion_cost(
+    new_memory_size: usize,
+    current_memory_size: usize,
+) -> Result<usize, VMError> {
+    let cost = if new_memory_size <= current_memory_size {
+        0
     } else {
         cost(new_memory_size)?
-            .checked_sub(cost(old_memory_size)?)
+            .checked_sub(cost(current_memory_size)?)
             .ok_or(InternalError::ArithmeticOperationUnderflow)?
     };
     Ok(cost)
+}
+
+/// The total cost for a given memory size.
+fn cost(memory_size: usize) -> Result<usize, VMError> {
+    let memory_size_word = memory_size
+        .checked_add(
+            WORD_SIZE_IN_BYTES_USIZE
+                .checked_sub(1)
+                .ok_or(InternalError::ArithmeticOperationUnderflow)?,
+        )
+        .ok_or(OutOfGasError::MemoryExpansionCostOverflow)?
+        / WORD_SIZE_IN_BYTES_USIZE;
+
+    Ok(memory_size_word
+        .checked_pow(2)
+        .ok_or(OutOfGasError::MemoryExpansionCostOverflow)?
+        .checked_div(MEMORY_EXPANSION_QUOTIENT)
+        .ok_or(OutOfGasError::MemoryExpansionCostOverflow)?
+        .checked_add(
+            3usize
+                .checked_mul(memory_size_word)
+                .ok_or(OutOfGasError::MemoryExpansionCostOverflow)?,
+        )
+        .ok_or(OutOfGasError::MemoryExpansionCostOverflow)?)
 }

@@ -1,8 +1,8 @@
 use crate::{
     call_frame::CallFrame,
-    constants::WORD_SIZE,
+    constants::{WORD_SIZE, WORD_SIZE_IN_BYTES_USIZE},
     errors::{InternalError, OpcodeSuccess, OutOfGasError, VMError},
-    gas_cost,
+    gas_cost, memory,
     vm::VM,
 };
 use ethrex_core::{H256, U256};
@@ -63,12 +63,21 @@ impl VM {
             .try_into()
             .map_err(|_| VMError::VeryLargeNumber)?;
 
-        let gas_cost = gas_cost::mload(current_call_frame, offset).map_err(VMError::OutOfGas)?;
+        self.increase_consumed_gas(
+            current_call_frame,
+            gas_cost::mload(
+                offset
+                    .checked_add(WORD_SIZE_IN_BYTES_USIZE)
+                    .ok_or(VMError::OutOfOffset)?
+                    .checked_next_multiple_of(WORD_SIZE_IN_BYTES_USIZE)
+                    .ok_or(VMError::OutOfOffset)?,
+                current_call_frame.memory.len(),
+            )?,
+        )?;
 
-        self.increase_consumed_gas(current_call_frame, gas_cost)?;
-
-        let value = current_call_frame.memory.load(offset)?;
-        current_call_frame.stack.push(value)?;
+        current_call_frame
+            .stack
+            .push(memory::load_word(&mut current_call_frame.memory, offset)?)?;
 
         Ok(OpcodeSuccess::Continue)
     }
@@ -84,17 +93,23 @@ impl VM {
             .try_into()
             .map_err(|_err| VMError::VeryLargeNumber)?;
 
-        let gas_cost = gas_cost::mstore(current_call_frame, offset).map_err(VMError::OutOfGas)?;
-
-        self.increase_consumed_gas(current_call_frame, gas_cost)?;
+        self.increase_consumed_gas(
+            current_call_frame,
+            gas_cost::mstore(
+                offset
+                    .checked_add(WORD_SIZE_IN_BYTES_USIZE)
+                    .ok_or(VMError::OutOfOffset)?
+                    .checked_next_multiple_of(WORD_SIZE_IN_BYTES_USIZE)
+                    .ok_or(VMError::OutOfOffset)?,
+                current_call_frame.memory.len(),
+            )?,
+        )?;
 
         let value = current_call_frame.stack.pop()?;
         let mut value_bytes = [0u8; WORD_SIZE];
         value.to_big_endian(&mut value_bytes);
 
-        current_call_frame
-            .memory
-            .store_bytes(offset, &value_bytes)?;
+        memory::try_store_data(&mut current_call_frame.memory, offset, &value_bytes)?;
 
         Ok(OpcodeSuccess::Continue)
     }
@@ -111,17 +126,27 @@ impl VM {
             .try_into()
             .map_err(|_| VMError::VeryLargeNumber)?;
 
-        let gas_cost = gas_cost::mstore8(current_call_frame, offset).map_err(VMError::OutOfGas)?;
-
-        self.increase_consumed_gas(current_call_frame, gas_cost)?;
+        self.increase_consumed_gas(
+            current_call_frame,
+            gas_cost::mstore8(
+                offset
+                    .checked_add(1)
+                    .ok_or(VMError::OutOfOffset)?
+                    .checked_next_multiple_of(WORD_SIZE_IN_BYTES_USIZE)
+                    .ok_or(VMError::OutOfOffset)?,
+                current_call_frame.memory.len(),
+            )?,
+        )?;
 
         let value = current_call_frame.stack.pop()?;
         let mut value_bytes = [0u8; WORD_SIZE];
         value.to_big_endian(&mut value_bytes);
 
-        current_call_frame
-            .memory
-            .store_bytes(offset, value_bytes[WORD_SIZE - 1..WORD_SIZE].as_ref())?;
+        memory::try_store_data(
+            &mut current_call_frame.memory,
+            offset,
+            &value_bytes[WORD_SIZE - 1..WORD_SIZE],
+        )?;
 
         Ok(OpcodeSuccess::Continue)
     }
@@ -225,7 +250,7 @@ impl VM {
         self.increase_consumed_gas(current_call_frame, gas_cost::MSIZE)?;
         current_call_frame
             .stack
-            .push(current_call_frame.memory.size())?;
+            .push(current_call_frame.memory.len().into())?;
         Ok(OpcodeSuccess::Continue)
     }
 
@@ -265,16 +290,33 @@ impl VM {
             .try_into()
             .map_err(|_| VMError::VeryLargeNumber)?;
 
-        let gas_cost = gas_cost::mcopy(current_call_frame, size, src_offset, dest_offset)
-            .map_err(VMError::OutOfGas)?;
+        let new_memory_size_for_dest = dest_offset
+            .checked_add(size)
+            .ok_or(VMError::OutOfOffset)?
+            .checked_next_multiple_of(WORD_SIZE_IN_BYTES_USIZE)
+            .ok_or(VMError::OutOfOffset)?;
 
-        self.increase_consumed_gas(current_call_frame, gas_cost)?;
+        let new_memory_size_for_src = src_offset
+            .checked_add(size)
+            .ok_or(VMError::OutOfOffset)?
+            .checked_next_multiple_of(WORD_SIZE_IN_BYTES_USIZE)
+            .ok_or(VMError::OutOfOffset)?;
 
-        if size > 0 {
-            current_call_frame
-                .memory
-                .copy(src_offset, dest_offset, size)?;
-        }
+        self.increase_consumed_gas(
+            current_call_frame,
+            gas_cost::mcopy(
+                new_memory_size_for_dest.max(new_memory_size_for_src),
+                current_call_frame.memory.len(),
+                size,
+            )?,
+        )?;
+
+        memory::try_copy_within(
+            &mut current_call_frame.memory,
+            src_offset,
+            dest_offset,
+            size,
+        )?;
 
         Ok(OpcodeSuccess::Continue)
     }

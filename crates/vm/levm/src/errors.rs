@@ -78,6 +78,8 @@ pub enum VMError {
     Internal(#[from] InternalError),
     #[error("Transaction validation error: {0}")]
     TxValidation(#[from] TxValidationError),
+    #[error("Offset out of bounds")]
+    OutOfOffset,
 }
 
 impl VMError {

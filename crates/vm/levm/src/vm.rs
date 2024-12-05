@@ -12,6 +12,7 @@ use crate::{
         TxValidationError, VMError,
     },
     gas_cost::{self, fake_exponential, BLOB_GAS_PER_BLOB, CREATE_BASE_COST},
+    memory,
     opcodes::Opcode,
     AccountInfo,
 };
@@ -740,10 +741,8 @@ impl VM {
 
         // self.cache.increment_account_nonce(&code_address); // Internal call doesn't increment account nonce.
 
-        let calldata = current_call_frame
-            .memory
-            .load_range(args_offset, args_size)?
-            .into();
+        let calldata =
+            memory::load_range(&mut current_call_frame.memory, args_offset, args_size)?.to_vec();
 
         // I don't know if this gas limit should be calculated before or after consuming gas
         let mut potential_remaining_gas = current_call_frame
@@ -768,7 +767,7 @@ impl VM {
             code_address,
             code_account_info.bytecode,
             value,
-            calldata,
+            calldata.into(),
             is_static,
             gas_limit,
             U256::zero(),
@@ -793,9 +792,12 @@ impl VM {
             .checked_add(tx_report.gas_used.into())
             .ok_or(VMError::OutOfGas(OutOfGasError::ConsumedGasOverflow))?;
         current_call_frame.logs.extend(tx_report.logs);
-        current_call_frame
-            .memory
-            .store_n_bytes(ret_offset, &tx_report.output, ret_size)?;
+        memory::try_store_range(
+            &mut current_call_frame.memory,
+            ret_offset,
+            ret_size,
+            &tx_report.output,
+        )?;
         current_call_frame.sub_return_data = tx_report.output;
 
         // What to do, depending on TxResult
@@ -910,9 +912,12 @@ impl VM {
         };
 
         let code = Bytes::from(
-            current_call_frame
-                .memory
-                .load_range(code_offset_in_memory, code_size_in_memory)?,
+            memory::load_range(
+                &mut current_call_frame.memory,
+                code_offset_in_memory,
+                code_size_in_memory,
+            )?
+            .to_vec(),
         );
 
         let new_address = match salt {
