@@ -237,9 +237,7 @@ impl VM {
             .env
             .gas_limit
             .checked_sub(self.env.consumed_gas)
-            .ok_or(VMError::OutOfGas(OutOfGasError::ConsumedGasOverflow))?
-            .checked_sub(gas_cost::GAS)
-            .ok_or(VMError::OutOfGas(OutOfGasError::ConsumedGasOverflow))?;
+            .ok_or(OutOfGasError::ConsumedGasOverflow)?;
         // Note: These are not consumed gas calculations, but are related, so I used this wrapping here
         current_call_frame.stack.push(remaining_gas)?;
 
