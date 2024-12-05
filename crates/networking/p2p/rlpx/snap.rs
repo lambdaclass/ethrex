@@ -434,7 +434,7 @@ impl RLPEncode for StorageSlot {
     fn encode(&self, buf: &mut dyn BufMut) {
         Encoder::new(buf)
             .encode_field(&self.hash)
-            .encode_field(&self.data)
+            .encode_bytes(&self.data.encode_to_vec())
             .finish();
     }
 }
@@ -443,7 +443,8 @@ impl RLPDecode for StorageSlot {
     fn decode_unfinished(rlp: &[u8]) -> Result<(Self, &[u8]), RLPDecodeError> {
         let decoder = Decoder::new(rlp)?;
         let (hash, decoder) = decoder.decode_field("hash")?;
-        let (data, decoder) = decoder.decode_field("data")?;
+        let (data, decoder) = decoder.get_encoded_item()?;
+        let data = U256::decode(ethrex_rlp::decode::decode_bytes(&data)?.0)?;
         Ok((Self { hash, data }, decoder.finish()?))
     }
 }
