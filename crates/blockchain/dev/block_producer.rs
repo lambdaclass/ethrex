@@ -62,6 +62,7 @@ pub async fn start_block_producer(
                 execution_payload_response.execution_payload,
                 execution_payload_response
                     .blobs_bundle
+                    .unwrap_or_default()
                     .commitments
                     .iter()
                     .map(|commitment| {

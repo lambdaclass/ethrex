@@ -20,7 +20,7 @@ pub struct PayloadAttributesV3 {
     pub prev_randao: H256,
     pub suggested_fee_recipient: Address,
     pub withdrawals: Vec<Withdrawal>,
-    pub parent_beacon_block_root: H256,
+    pub parent_beacon_block_root: Option<H256>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]

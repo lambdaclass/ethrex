@@ -96,7 +96,9 @@ pub fn create_payload(args: &BuildPayloadArgs, storage: &Store) -> Result<Block,
         withdrawals_root: chain_config
             .is_shanghai_activated(args.timestamp)
             .then_some(compute_withdrawals_root(&args.withdrawals)),
-        blob_gas_used: Some(0),
+        blob_gas_used: chain_config
+            .is_cancun_activated(args.timestamp)
+            .then_some(0),
         excess_blob_gas: chain_config.is_cancun_activated(args.timestamp).then_some(
             calc_excess_blob_gas(
                 parent_block.excess_blob_gas.unwrap_or_default(),
