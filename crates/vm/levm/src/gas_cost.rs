@@ -159,15 +159,16 @@ pub const CALLDATA_COST_NON_ZERO_BYTE: U256 = U256([16, 0, 0, 0]);
 pub const BLOB_GAS_PER_BLOB: U256 = U256([131072, 0, 0, 0]);
 
 pub fn exp(exponent: U256) -> Result<U256, OutOfGasError> {
-    let exponent_byte_size = exponent
-        .checked_add(U256::from(7))
-        .ok_or(OutOfGasError::GasCostOverflow)?
-        .checked_div(U256::from(8))
-        .ok_or(OutOfGasError::ArithmeticOperationDividedByZero)?; // '8' will never be zero
+    let exponent_byte_size = (exponent
+        .bits()
+        .checked_add(7)
+        .ok_or(OutOfGasError::GasCostOverflow)?)
+        / 8;
 
     let exponent_byte_size_cost = EXP_DYNAMIC_BASE
-        .checked_mul(exponent_byte_size)
+        .checked_mul(exponent_byte_size.into())
         .ok_or(OutOfGasError::GasCostOverflow)?;
+
     EXP_STATIC
         .checked_add(exponent_byte_size_cost)
         .ok_or(OutOfGasError::GasCostOverflow)
