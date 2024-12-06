@@ -124,6 +124,10 @@ jobs:
           restore-keys: |
             loc-report-
 
+      - name: Check previous loc report
+        run: |
+          cat loc_report.json
+
       - name: Rename cached loc_report.json to loc_report.json.old
         if: steps.cache-loc-report.outputs.cache-hit == 'true'
         run: mv loc_report.json loc_report.json.old
@@ -141,7 +145,7 @@ jobs:
 
       - name: Post results in summary
         run: |
-          echo "# `ethrex` lines of code report" >> $GITHUB_STEP_SUMMARY
+          echo "# 'ethrex' lines of code report" >> $GITHUB_STEP_SUMMARY
           cat loc_report_github.txt >> $GITHUB_STEP_SUMMARY
 
       - name: Post results to ethrex L1 slack channel
@@ -158,6 +162,13 @@ jobs:
         env:
           url: ${{ secrets.LEVM_SLACK_WEBHOOK }}
         run: sh .github/scripts/publish_loc.sh
+
+      # This is left commented out to ease debugging later on.
+      # Comment out all the other "Post to * slack channel" directives
+      # - name: Post results to test slack channel
+      #   env:
+      #     url: ${{ secrets.TEST_CHANNEL_SLACK }}
+      #   run: sh .github/scripts/publish_loc.sh
 
   levm-test:
     name: Generate Report for LEVM EF Tests
