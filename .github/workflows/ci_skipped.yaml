@@ -15,6 +15,11 @@ on:
       - '!**/*.rlp'
       - '!**Dockefile'
       - '!**Makefile'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
+  cancel-in-progress: true
+
 jobs:
   lint:
     # "Lint" is a required check, don't change the name
