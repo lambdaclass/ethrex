@@ -271,9 +271,12 @@ pub fn ensure_post_state(
         Some(_expected_exception) => {}
         // We only want to compare account updates when no exception is expected.
         None => {
-            let (initial_state, _block_hash) = load_initial_state(test);
-            let levm_account_updates =
-                levm_runner::get_state_transitions(&initial_state, levm_execution_report);
+            let (initial_state, block_hash) = load_initial_state(test);
+            let levm_account_updates = levm_runner::get_state_transitions(
+                &initial_state,
+                block_hash,
+                levm_execution_report,
+            );
             let revm_account_updates = ethrex_vm::get_state_transitions(revm_state);
             let account_updates_report = compare_levm_revm_account_updates(
                 test,
@@ -355,7 +358,6 @@ pub fn compare_levm_revm_account_updates(
 }
 
 pub fn _run_ef_test_revm(test: &EFTest) -> Result<EFTestReport, EFTestRunnerError> {
-    dbg!(&test.name);
     let mut ef_test_report = EFTestReport::new(
         test.name.clone(),
         test.dir.clone(),

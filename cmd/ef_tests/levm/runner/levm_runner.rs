@@ -182,9 +182,9 @@ pub fn ensure_post_state(
                 }
                 // Execution result was successful and no exception was expected.
                 None => {
-                    let (initial_state, _block_hash) = utils::load_initial_state(test);
+                    let (initial_state, block_hash) = utils::load_initial_state(test);
                     let levm_account_updates =
-                        get_state_transitions(&initial_state, execution_report);
+                        get_state_transitions(&initial_state, block_hash, execution_report);
                     let pos_state_root = post_state_root(&levm_account_updates, test);
                     let expected_post_state_root_hash = test.post.vector_post_value(vector).hash;
                     if expected_post_state_root_hash != pos_state_root {
@@ -216,6 +216,7 @@ pub fn ensure_post_state(
 
 pub fn get_state_transitions(
     initial_state: &EvmState,
+    block_hash: H256,
     execution_report: &TransactionReport,
 ) -> Vec<AccountUpdate> {
     let current_db = match initial_state {
@@ -224,13 +225,17 @@ pub fn get_state_transitions(
     };
     let mut account_updates: Vec<AccountUpdate> = vec![];
     for (new_state_account_address, new_state_account) in &execution_report.new_state {
-        let mut added_storage = HashMap::new();
-
-        for (key, value) in &new_state_account.storage {
-            added_storage.insert(*key, value.current_value);
+        let initial_account_state = current_db
+            .get_account_info_by_hash(block_hash, *new_state_account_address)
+            .expect("Error getting account info by address")
+            .unwrap_or_default();
+        let mut updates = 0;
+        if initial_account_state.balance != new_state_account.info.balance {
+            updates += 1;
         }
-
-        // Check if the code has changed
+        if initial_account_state.nonce != new_state_account.info.nonce {
+            updates += 1;
+        }
         let code = if new_state_account.info.bytecode.is_empty() {
             // The new state account has no code
             None
@@ -257,6 +262,17 @@ pub fn get_state_transitions(
                 Some(code)
             }
         };
+        if code.is_some() {
+            updates += 1;
+        }
+        let mut added_storage = HashMap::new();
+        for (key, value) in &new_state_account.storage {
+            added_storage.insert(*key, value.current_value);
+            updates += 1;
+        }
+        if updates == 0 {
+            continue;
+        }
 
         let account_update = AccountUpdate {
             address: *new_state_account_address,
