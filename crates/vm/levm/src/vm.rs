@@ -602,7 +602,10 @@ impl VM {
 
         // 1. Undo value transfer if the transaction was reverted
         if let TxResult::Revert(_) = report.result {
-            self.decrease_account_balance(receiver_address, initial_call_frame.msg_value)?;
+            // msg_value was not increased in the receiver account when is a create transaction.
+            if !self.is_create() {
+                self.decrease_account_balance(receiver_address, initial_call_frame.msg_value)?;
+            }
             self.increase_account_balance(sender_address, initial_call_frame.msg_value)?;
         }
 
@@ -660,7 +663,6 @@ impl VM {
             .pop()
             .ok_or(VMError::Internal(InternalError::CouldNotPopCallframe))?;
 
-        let cache_before_execution = self.cache.clone();
         self.prepare_execution(&mut initial_call_frame)?;
 
         let mut report = self.execute(&mut initial_call_frame)?;
@@ -676,7 +678,6 @@ impl VM {
                         if report.result != TxResult::Revert(VMError::RevertOpcode) {
                             report.gas_used = self.env.gas_limit.low_u64(); // Consume all gas unless the error cause is revert opcode
                         }
-                        self.cache = cache_before_execution;
                         remove_account(&mut self.cache, &initial_call_frame.to);
                     }
                 }
