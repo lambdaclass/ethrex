@@ -2,7 +2,6 @@ use crate::{
     call_frame::CallFrame,
     errors::{OpcodeSuccess, VMError},
     gas_cost,
-    opcodes::Opcode,
     vm::VM,
 };
 
@@ -14,15 +13,10 @@ impl VM {
     pub fn op_swap(
         &mut self,
         current_call_frame: &mut CallFrame,
-        op: Opcode,
+        depth: usize,
     ) -> Result<OpcodeSuccess, VMError> {
         self.increase_consumed_gas(current_call_frame, gas_cost::SWAPN)?;
 
-        let depth = (usize::from(op))
-            .checked_sub(usize::from(Opcode::SWAP1))
-            .ok_or(VMError::InvalidOpcode)?
-            .checked_add(1)
-            .ok_or(VMError::InvalidOpcode)?;
         let stack_top_index = current_call_frame
             .stack
             .len()

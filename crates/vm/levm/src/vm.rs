@@ -223,11 +223,7 @@ impl VM {
                 Opcode::PUSH0 => self.op_push0(current_call_frame),
                 // PUSHn
                 op if (Opcode::PUSH1..=Opcode::PUSH32).contains(&op) => {
-                    let n_bytes = (usize::from(op))
-                        .checked_sub(usize::from(Opcode::PUSH1))
-                        .ok_or(VMError::InvalidOpcode)?
-                        .checked_add(1)
-                        .ok_or(VMError::InvalidOpcode)?;
+                    let n_bytes = get_n_value(op, Opcode::PUSH1)?;
                     self.op_push(current_call_frame, n_bytes)
                 }
                 Opcode::AND => self.op_and(current_call_frame),
@@ -240,15 +236,18 @@ impl VM {
                 Opcode::SAR => self.op_sar(current_call_frame),
                 // DUPn
                 op if (Opcode::DUP1..=Opcode::DUP16).contains(&op) => {
-                    self.op_dup(current_call_frame, op)
+                    let depth = get_n_value(op, Opcode::DUP1)?;
+                    self.op_dup(current_call_frame, depth)
                 }
                 // SWAPn
                 op if (Opcode::SWAP1..=Opcode::SWAP16).contains(&op) => {
-                    self.op_swap(current_call_frame, op)
+                    let depth = get_n_value(op, Opcode::SWAP1)?;
+                    self.op_swap(current_call_frame, depth)
                 }
                 Opcode::POP => self.op_pop(current_call_frame),
                 op if (Opcode::LOG0..=Opcode::LOG4).contains(&op) => {
-                    self.op_log(current_call_frame, op)
+                    let number_of_topics = get_number_of_topics(op)?;
+                    self.op_log(current_call_frame, number_of_topics)
                 }
                 Opcode::MLOAD => self.op_mload(current_call_frame),
                 Opcode::MSTORE => self.op_mstore(current_call_frame),
@@ -1190,4 +1189,22 @@ impl VM {
             }
         }
     }
+}
+
+fn get_n_value(op: Opcode, base_opcode: Opcode) -> Result<usize, VMError> {
+    let offset = (usize::from(op))
+        .checked_sub(usize::from(base_opcode))
+        .ok_or(VMError::InvalidOpcode)?
+        .checked_add(1)
+        .ok_or(VMError::InvalidOpcode)?;
+
+    Ok(offset)
+}
+
+fn get_number_of_topics(op: Opcode) -> Result<u8, VMError> {
+    let number_of_topics = (u8::from(op))
+        .checked_sub(u8::from(Opcode::LOG0))
+        .ok_or(VMError::InvalidOpcode)?;
+
+    Ok(number_of_topics)
 }

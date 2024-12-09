@@ -2,7 +2,6 @@ use crate::{
     call_frame::CallFrame,
     errors::{OpcodeSuccess, VMError},
     gas_cost,
-    opcodes::Opcode,
     vm::VM,
 };
 
@@ -14,15 +13,8 @@ impl VM {
     pub fn op_dup(
         &mut self,
         current_call_frame: &mut CallFrame,
-        op: Opcode,
+        depth: usize,
     ) -> Result<OpcodeSuccess, VMError> {
-        // Calculate the depth based on the opcode
-        let depth = (usize::from(op))
-            .checked_sub(usize::from(Opcode::DUP1))
-            .ok_or(VMError::InvalidOpcode)?
-            .checked_add(1)
-            .ok_or(VMError::InvalidOpcode)?;
-
         // Increase the consumed gas
         self.increase_consumed_gas(current_call_frame, gas_cost::DUPN)?;
 
