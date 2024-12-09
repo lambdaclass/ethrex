@@ -1,8 +1,8 @@
 use crate::{
     call_frame::CallFrame,
-    constants::WORD_SIZE_IN_BYTES_USIZE,
     errors::{OpcodeSuccess, VMError},
-    gas_cost, memory,
+    gas_cost,
+    memory::{self, calculate_memory_size},
     vm::VM,
 };
 use bytes::Bytes;
@@ -40,14 +40,12 @@ impl VM {
             topics.push(H256::from_slice(&topic_bytes));
         }
 
+        let new_memory_size = calculate_memory_size(offset, size)?;
+
         self.increase_consumed_gas(
             current_call_frame,
             gas_cost::log(
-                offset
-                    .checked_add(size)
-                    .ok_or(VMError::OutOfOffset)?
-                    .checked_next_multiple_of(WORD_SIZE_IN_BYTES_USIZE)
-                    .ok_or(VMError::OutOfOffset)?,
+                new_memory_size,
                 current_call_frame.memory.len(),
                 size,
                 number_of_topics,

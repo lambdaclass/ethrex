@@ -1,8 +1,9 @@
 use crate::{
     call_frame::CallFrame,
     constants::WORD_SIZE_IN_BYTES_USIZE,
-    errors::{InternalError, OpcodeSuccess, OutOfGasError, ResultReason, VMError},
-    gas_cost, memory,
+    errors::{InternalError, OpcodeSuccess, ResultReason, VMError},
+    gas_cost,
+    memory::{self, calculate_memory_size},
     vm::{word_to_address, VM},
 };
 use ethrex_core::{types::TxKind, Address, U256};
@@ -193,9 +194,7 @@ impl VM {
             .try_into()
             .map_err(|_| VMError::VeryLargeNumber)?;
 
-        let new_memory_size = offset
-            .checked_add(size)
-            .ok_or(VMError::OutOfGas(OutOfGasError::GasCostOverflow))?;
+        let new_memory_size = calculate_memory_size(offset, size)?;
         self.increase_consumed_gas(
             current_call_frame,
             memory::expansion_cost(new_memory_size, current_call_frame.memory.len())?.into(),
@@ -461,9 +460,7 @@ impl VM {
             .try_into()
             .map_err(|_err| VMError::VeryLargeNumber)?;
 
-        let new_memory_size = offset
-            .checked_add(size)
-            .ok_or(VMError::OutOfGas(OutOfGasError::GasCostOverflow))?;
+        let new_memory_size = calculate_memory_size(offset, size)?;
         self.increase_consumed_gas(
             current_call_frame,
             memory::expansion_cost(new_memory_size, current_call_frame.memory.len())?.into(),
