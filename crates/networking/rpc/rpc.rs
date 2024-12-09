@@ -52,6 +52,7 @@ mod admin;
 mod authentication;
 pub mod engine;
 mod eth;
+mod net;
 pub mod types;
 pub mod utils;
 mod web3;
@@ -181,6 +182,7 @@ pub fn map_http_requests(req: &RpcRequest, context: RpcApiContext) -> Result<Val
         Ok(RpcNamespace::Admin) => map_admin_requests(req, context),
         Ok(RpcNamespace::Debug) => map_debug_requests(req, context),
         Ok(RpcNamespace::Web3) => map_web3_requests(req, context),
+        Ok(RpcNamespace::Net) => map_net_requests(req, context),
         _ => Err(RpcErr::MethodNotFound(req.method.clone())),
     }
 }
@@ -277,6 +279,13 @@ pub fn map_web3_requests(req: &RpcRequest, context: RpcApiContext) -> Result<Val
     match req.method.as_str() {
         "web3_clientVersion" => web3::client_version(req, context.storage),
         unknown_web3_method => Err(RpcErr::MethodNotFound(unknown_web3_method.to_owned())),
+    }
+}
+
+pub fn map_net_requests(req: &RpcRequest, contex: RpcApiContext) -> Result<Value, RpcErr> {
+    match req.method.as_str() {
+        "net_version" => net::version(req, contex),
+        unknown_net_method => Err(RpcErr::MethodNotFound(unknown_net_method.to_owned())),
     }
 }
 
@@ -439,5 +448,35 @@ mod tests {
             terminal_total_difficulty_passed: true,
             ..Default::default()
         }
+    }
+
+    #[test]
+    fn net_version_test() {
+        let body = r#"{"jsonrpc":"2.0","method":"net_version","params":[],"id":67}"#;
+        let request: RpcRequest = serde_json::from_str(body).expect("serde serialization failed");
+        // Setup initial storage
+        let storage =
+            Store::new("temp.db", EngineType::InMemory).expect("Failed to create test DB");
+        storage.set_chain_config(&example_chain_config()).unwrap();
+        let chain_id = storage
+            .get_chain_config()
+            .expect("failed to get chain_id")
+            .chain_id
+            .to_string();
+        let local_p2p_node = example_p2p_node();
+        let context = RpcApiContext {
+            storage,
+            local_p2p_node,
+            jwt_secret: Default::default(),
+            active_filters: Default::default(),
+            syncer: Arc::new(TokioMutex::new(SyncManager::dummy())),
+        };
+        // Process request
+        let result = map_http_requests(&request, context);
+        let response = rpc_response(request.id, result);
+        let expected_response_string =
+            format!(r#"{{"id":67,"jsonrpc": "2.0","result": "{}"}}"#, chain_id);
+        let expected_response = to_rpc_response_success_value(&expected_response_string);
+        assert_eq!(response.to_string(), expected_response.to_string());
     }
 }
