@@ -2811,7 +2811,7 @@ fn gaslimit_op() {
     let operations = [Operation::Gaslimit, Operation::Stop];
 
     let mut vm = new_vm_with_ops(&operations).unwrap();
-    vm.env.gas_limit = gas_limit;
+    vm.env.block_gas_limit = gas_limit;
 
     let mut current_call_frame = vm.call_frames.pop().unwrap();
     vm.execute(&mut current_call_frame).unwrap();

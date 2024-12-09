@@ -259,10 +259,9 @@ impl VM {
     pub fn op_gas(&mut self, current_call_frame: &mut CallFrame) -> Result<OpcodeSuccess, VMError> {
         self.increase_consumed_gas(current_call_frame, gas_cost::GAS)?;
 
-        let remaining_gas = self
-            .env
+        let remaining_gas = current_call_frame
             .gas_limit
-            .checked_sub(self.env.consumed_gas)
+            .checked_sub(current_call_frame.gas_used)
             .ok_or(OutOfGasError::ConsumedGasOverflow)?;
         // Note: These are not consumed gas calculations, but are related, so I used this wrapping here
         current_call_frame.stack.push(remaining_gas)?;

@@ -776,7 +776,7 @@ impl VM {
             current_call_frame
                 .stack
                 .push(U256::from(SUCCESS_FOR_CALL))?;
-            return Ok(OpcodeSuccess::Result(ResultReason::Stop));
+            return Ok(OpcodeSuccess::Continue);
         }
 
         // self.cache.increment_account_nonce(&code_address); // Internal call doesn't increment account nonce.
@@ -799,7 +799,7 @@ impl VM {
         let new_depth = current_call_frame
             .depth
             .checked_add(1)
-            .ok_or(VMError::StackOverflow)?; // Maybe could be depthOverflow but in concept is quite similar
+            .ok_or(InternalError::ArithmeticOperationOverflow)?;
 
         let mut new_call_frame = CallFrame::new(
             msg_sender,
@@ -814,11 +814,9 @@ impl VM {
             new_depth,
         );
 
-        // TODO: Increase this to 1024
-        if new_call_frame.depth > 10 {
+        if new_call_frame.depth > 1024 {
             current_call_frame.stack.push(U256::from(REVERT_FOR_CALL))?;
-            // return Ok(OpcodeSuccess::Result(ResultReason::Revert));
-            return Err(VMError::StackOverflow); // This is wrong but it is for testing purposes.
+            return Ok(OpcodeSuccess::Continue);
         }
 
         current_call_frame.sub_return_data_offset = ret_offset;
