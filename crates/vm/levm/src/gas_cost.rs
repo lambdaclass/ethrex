@@ -8,6 +8,7 @@ use bytes::Bytes;
 use ethrex_core::U256;
 
 // Opcodes cost
+pub const STOP: U256 = U256::zero();
 pub const ADD: U256 = U256([3, 0, 0, 0]);
 pub const MUL: U256 = U256([5, 0, 0, 0]);
 pub const SUB: U256 = U256([3, 0, 0, 0]);
