@@ -196,7 +196,12 @@ impl VM {
 
         self.increase_consumed_gas(
             current_call_frame,
-            gas_cost::sstore(&storage_slot, new_storage_slot_value, storage_slot_was_cold)?,
+            gas_cost::sstore(
+                &storage_slot,
+                new_storage_slot_value,
+                storage_slot_was_cold,
+                current_call_frame,
+            )?,
         )?;
 
         // Gas Refunds
