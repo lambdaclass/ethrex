@@ -3017,7 +3017,8 @@ fn sstore_op() {
     key.to_big_endian(&mut bytes);
     let key = H256::from(bytes);
 
-    let (storage_slot, _storage_slot_was_cold) = vm.access_storage_slot(sender_address, key);
+    let (storage_slot, _storage_slot_was_cold) =
+        vm.access_storage_slot(sender_address, key).unwrap();
 
     assert_eq!(value, storage_slot.current_value);
 }

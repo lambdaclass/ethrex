@@ -3,10 +3,11 @@ use crate::{
     errors::{InternalError, VMError},
     memory::Memory,
     opcodes::Opcode,
+    vm::get_valid_jump_destinations,
 };
 use bytes::Bytes;
 use ethrex_core::{types::Log, Address, U256};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 /// [EIP-1153]: https://eips.ethereum.org/EIPS/eip-1153#reference-implementation
 pub type TransientStorage = HashMap<(Address, U256), U256>;
@@ -80,13 +81,16 @@ pub struct CallFrame {
     pub transient_storage: TransientStorage,
     pub logs: Vec<Log>,
     pub depth: usize,
+    pub valid_jump_destinations: HashSet<usize>,
 }
 
 impl CallFrame {
     pub fn new_from_bytecode(bytecode: Bytes) -> Self {
+        let valid_jump_destinations = get_valid_jump_destinations(&bytecode).unwrap_or_default();
         Self {
-            bytecode,
             gas_limit: U256::MAX,
+            bytecode,
+            valid_jump_destinations,
             ..Default::default()
         }
     }
@@ -104,6 +108,7 @@ impl CallFrame {
         gas_used: U256,
         depth: usize,
     ) -> Self {
+        let valid_jump_destinations = get_valid_jump_destinations(&bytecode).unwrap_or_default();
         Self {
             gas_limit,
             msg_sender,
@@ -115,6 +120,7 @@ impl CallFrame {
             is_static,
             depth,
             gas_used,
+            valid_jump_destinations,
             ..Default::default()
         }
     }

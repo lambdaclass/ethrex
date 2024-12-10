@@ -71,6 +71,40 @@ pub fn word_to_address(word: U256) -> Address {
     Address::from_slice(&bytes[12..])
 }
 
+pub fn get_valid_jump_destinations(code: &Bytes) -> Result<HashSet<usize>, VMError> {
+    let mut valid_jump_destinations = HashSet::new();
+    let mut pc = 0;
+
+    while let Some(&opcode_number) = code.get(pc) {
+        let current_opcode = Opcode::from(opcode_number);
+
+        if current_opcode == Opcode::JUMPDEST {
+            // If current opcode is jumpdest, add it to valid destinations set
+            valid_jump_destinations.insert(pc);
+        } else if (Opcode::PUSH1..=Opcode::PUSH32).contains(&current_opcode) {
+            // If current opcode is push, skip as many positions as the size of the push
+            let size_to_push =
+                opcode_number
+                    .checked_sub(u8::from(Opcode::PUSH1))
+                    .ok_or(VMError::Internal(
+                        InternalError::ArithmeticOperationUnderflow,
+                    ))?;
+            let skip_length = usize::from(size_to_push.checked_add(1).ok_or(VMError::Internal(
+                InternalError::ArithmeticOperationOverflow,
+            ))?);
+            pc = pc.checked_add(skip_length).ok_or(VMError::Internal(
+                InternalError::ArithmeticOperationOverflow, // to fail, pc should be at least usize max - 31
+            ))?;
+        }
+
+        pc = pc.checked_add(1).ok_or(VMError::Internal(
+            InternalError::ArithmeticOperationOverflow, // to fail, code len should be more than usize max
+        ))?;
+    }
+
+    Ok(valid_jump_destinations)
+}
+
 impl VM {
     // TODO: Refactor this.
     #[allow(clippy::too_many_arguments)]
@@ -1057,7 +1091,11 @@ impl VM {
     ///
     /// Accessed storage slots are stored in the `touched_storage_slots` set.
     /// Accessed storage slots take place in some gas cost computation.
-    pub fn access_storage_slot(&mut self, address: Address, key: H256) -> (StorageSlot, bool) {
+    pub fn access_storage_slot(
+        &mut self,
+        address: Address,
+        key: H256,
+    ) -> Result<(StorageSlot, bool), VMError> {
         let storage_slot_was_cold = self
             .touched_storage_slots
             .entry(address)
@@ -1082,7 +1120,13 @@ impl VM {
                 }
             }
         };
-        (storage_slot, storage_slot_was_cold)
+
+        // When updating account storage of an account that's not yet cached we need to store the StorageSlot in the account
+        // Note: We end up caching the account because it is the most straightforward way of doing it.
+        let account = self.get_account_mut(address)?;
+        account.storage.insert(key, storage_slot.clone());
+
+        Ok((storage_slot, storage_slot_was_cold))
     }
 
     pub fn increase_account_balance(

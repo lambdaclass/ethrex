@@ -4,7 +4,6 @@ use crate::{
     errors::{OpcodeSuccess, OutOfGasError, VMError},
     gas_cost,
     memory::{self, calculate_memory_size},
-    opcodes::Opcode,
     vm::VM,
 };
 use ethrex_core::{H256, U256};
@@ -151,7 +150,7 @@ impl VM {
         let storage_slot_key = H256::from(bytes);
 
         let (storage_slot, storage_slot_was_cold) =
-            self.access_storage_slot(address, storage_slot_key);
+            self.access_storage_slot(address, storage_slot_key)?;
 
         self.increase_consumed_gas(current_call_frame, gas_cost::sload(storage_slot_was_cold)?)?;
 
@@ -178,7 +177,7 @@ impl VM {
         let key = H256::from(bytes);
 
         let (storage_slot, storage_slot_was_cold) =
-            self.access_storage_slot(current_call_frame.to, key);
+            self.access_storage_slot(current_call_frame.to, key)?;
 
         self.increase_consumed_gas(
             current_call_frame,
@@ -322,14 +321,7 @@ impl VM {
     /// This function returns whether the `jump_address` is a valid JUMPDEST
     /// for the specified `call_frame` or not.
     fn is_valid_jump_addr(call_frame: &CallFrame, jump_address: usize) -> bool {
-        matches!(
-            call_frame
-                .bytecode
-                .get(jump_address)
-                .copied()
-                .map(Opcode::try_from),
-            Some(Ok(Opcode::JUMPDEST))
-        )
+        call_frame.valid_jump_destinations.contains(&jump_address)
     }
 
     /// JUMP* family (`JUMP` and `JUMP` ATTOW [DEC 2024]) helper
