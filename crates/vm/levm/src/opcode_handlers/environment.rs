@@ -93,11 +93,19 @@ impl VM {
     ) -> Result<OpcodeSuccess, VMError> {
         self.increase_consumed_gas(current_call_frame, gas_cost::CALLDATALOAD)?;
 
-        let offset: usize = current_call_frame
-            .stack
-            .pop()?
+        let calldata_size: U256 = current_call_frame.calldata.len().into();
+
+        let offset = current_call_frame.stack.pop()?;
+
+        // If the offset is larger than the actual calldata, then you
+        // have no data to return.
+        if offset > calldata_size {
+            current_call_frame.stack.push(U256::zero())?;
+            return Ok(OpcodeSuccess::Continue);
+        };
+        let offset: usize = offset
             .try_into()
-            .map_err(|_| VMError::VeryLargeNumber)?;
+            .map_err(|_| VMError::Internal(InternalError::ConversionError))?;
 
         // All bytes after the end of the calldata are set to 0.
         let mut data = [0u8; 32];
