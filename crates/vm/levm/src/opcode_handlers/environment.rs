@@ -319,6 +319,7 @@ impl VM {
         self.increase_consumed_gas(
             current_call_frame,
             gas_cost::extcodecopy(
+                size,
                 new_memory_size,
                 current_call_frame.memory.len(),
                 address_was_cold,

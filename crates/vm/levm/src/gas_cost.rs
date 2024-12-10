@@ -547,23 +547,28 @@ pub fn extcodesize(address_was_cold: bool) -> Result<U256, VMError> {
 }
 
 pub fn extcodecopy(
+    size: usize,
     new_memory_size: usize,
     current_memory_size: usize,
     address_was_cold: bool,
 ) -> Result<U256, VMError> {
-    Ok(memory::access_cost(
+    let base_access_cost = copy_behavior(
         new_memory_size,
         current_memory_size,
-        EXTCODECOPY_STATIC,
+        size,
         EXTCODECOPY_DYNAMIC_BASE,
-    )?
-    .checked_add(address_access_cost(
+        EXTCODECOPY_STATIC,
+    )?;
+    let expansion_access_cost = address_access_cost(
         address_was_cold,
         EXTCODECOPY_STATIC,
         EXTCODECOPY_COLD_DYNAMIC,
         EXTCODECOPY_WARM_DYNAMIC,
-    )?)
-    .ok_or(OutOfGasError::GasCostOverflow)?)
+    )?;
+
+    Ok(base_access_cost
+        .checked_add(expansion_access_cost)
+        .ok_or(OutOfGasError::GasCostOverflow)?)
 }
 
 pub fn extcodehash(address_was_cold: bool) -> Result<U256, VMError> {
