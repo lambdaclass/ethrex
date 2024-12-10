@@ -11,7 +11,10 @@ use crate::{
         InternalError, OpcodeSuccess, OutOfGasError, ResultReason, TransactionReport, TxResult,
         TxValidationError, VMError,
     },
-    gas_cost::{self, fake_exponential, BLOB_GAS_PER_BLOB, CREATE_BASE_COST},
+    gas_cost::{
+        self, fake_exponential, ACCESS_LIST_ADDRESS_COST, ACCESS_LIST_STORAGE_KEY_COST,
+        BLOB_GAS_PER_BLOB, CREATE_BASE_COST,
+    },
     memory,
     opcodes::Opcode,
     AccountInfo,
@@ -52,6 +55,7 @@ pub struct VM {
     pub db: Arc<dyn Database>,
     pub cache: CacheDB,
     pub tx_kind: TxKind,
+    pub access_list: AccessList,
 }
 
 pub fn address_to_word(address: Address) -> U256 {
@@ -70,6 +74,15 @@ pub fn word_to_address(word: U256) -> Address {
     word.to_big_endian(&mut bytes);
     Address::from_slice(&bytes[12..])
 }
+
+// Taken from cmd/ef_tests/ethrex/types.rs, didn't want to fight dependencies yet
+#[derive(Debug, PartialEq, Eq, Clone)]
+pub struct AccessListItem {
+    pub address: Address,
+    pub storage_keys: Vec<H256>,
+}
+
+type AccessList = Vec<(Address, Vec<H256>)>;
 
 pub fn get_valid_jump_destinations(code: &Bytes) -> Result<HashSet<usize>, VMError> {
     let mut valid_jump_destinations = HashSet::new();
@@ -115,12 +128,24 @@ impl VM {
         calldata: Bytes,
         db: Arc<dyn Database>,
         mut cache: CacheDB,
+        access_list: AccessList,
     ) -> Result<Self, VMError> {
         // Maybe this decision should be made in an upper layer
 
         // Add sender, coinbase and recipient (in the case of a Call) to cache [https://www.evm.codes/about#access_list]
         let mut default_touched_accounts =
             HashSet::from_iter([env.origin, env.coinbase].iter().cloned());
+
+        let mut default_touched_storage_slots: HashMap<Address, HashSet<H256>> = HashMap::new();
+
+        for (address, keys) in access_list.clone() {
+            default_touched_accounts.insert(address);
+            let mut warm_slots = HashSet::new();
+            for slot in keys {
+                warm_slots.insert(slot);
+            }
+            default_touched_storage_slots.insert(address, warm_slots);
+        }
 
         match to {
             TxKind::Call(address_to) => {
@@ -162,6 +187,7 @@ impl VM {
                     accrued_substate: substate,
                     cache,
                     tx_kind: to,
+                    access_list,
                 })
             }
             TxKind::Create => {
@@ -205,10 +231,10 @@ impl VM {
                     accrued_substate: substate,
                     cache,
                     tx_kind: TxKind::Create,
+                    access_list,
                 })
             }
         }
-        // TODO: https://github.com/lambdaclass/ethrex/issues/1088
     }
 
     pub fn execute(
@@ -435,7 +461,21 @@ impl VM {
         }
 
         // Access List Cost
-        // TODO: Implement access list cost.
+        let mut access_lists_cost = U256::zero();
+        for (_, keys) in self.access_list.clone() {
+            access_lists_cost = access_lists_cost
+                .checked_add(ACCESS_LIST_ADDRESS_COST)
+                .ok_or(OutOfGasError::ConsumedGasOverflow)?;
+            for _ in keys {
+                access_lists_cost = access_lists_cost
+                    .checked_add(ACCESS_LIST_STORAGE_KEY_COST)
+                    .ok_or(OutOfGasError::ConsumedGasOverflow)?;
+            }
+        }
+
+        intrinsic_gas = intrinsic_gas
+            .checked_add(access_lists_cost)
+            .ok_or(OutOfGasError::ConsumedGasOverflow)?;
 
         self.increase_consumed_gas(initial_call_frame, intrinsic_gas)
             .map_err(|_| TxValidationError::IntrinsicGasTooLow)?;

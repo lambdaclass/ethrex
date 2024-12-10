@@ -195,6 +195,7 @@ cfg_if::cfg_if! {
                 tx.data().clone(),
                 db,
                 CacheDB::default(),
+                tx.access_list(),
             )?;
 
             vm.transact()
