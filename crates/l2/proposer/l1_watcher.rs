@@ -2,7 +2,7 @@ use crate::{
     proposer::errors::L1WatcherError,
     utils::{
         config::{errors::ConfigError, eth::EthConfig, l1_watcher::L1WatcherConfig},
-        eth_client::{eth_sender::Overrides, EthClient},
+        eth_client::{errors::EthClientError, eth_sender::Overrides, EthClient},
     },
 };
 use bytes::Bytes;
@@ -21,15 +21,15 @@ use tracing::{debug, error, info, warn};
 pub async fn start_l1_watcher(store: Store) -> Result<(), ConfigError> {
     let eth_config = EthConfig::from_env()?;
     let watcher_config = L1WatcherConfig::from_env()?;
-    let mut l1_watcher = L1Watcher::new_from_config(watcher_config, eth_config);
+    let mut l1_watcher = L1Watcher::new_from_config(watcher_config, eth_config).await?;
     l1_watcher.run(&store).await;
     Ok(())
 }
 
 pub struct L1Watcher {
     eth_client: EthClient,
+    l2_client: EthClient,
     address: Address,
-    topics: Vec<H256>,
     max_block_step: U256,
     last_block_fetched: U256,
     l2_proposer_pk: SecretKey,
@@ -37,21 +37,30 @@ pub struct L1Watcher {
 }
 
 impl L1Watcher {
-    pub fn new_from_config(watcher_config: L1WatcherConfig, eth_config: EthConfig) -> Self {
-        Self {
-            eth_client: EthClient::new_from_config(eth_config),
+    pub async fn new_from_config(
+        watcher_config: L1WatcherConfig,
+        eth_config: EthConfig,
+    ) -> Result<Self, EthClientError> {
+        let eth_client = EthClient::new_from_config(eth_config);
+        let l2_client = EthClient::new("http://localhost:1729");
+        let last_block_fetched =
+            EthClient::get_last_fetched_l1_block(&eth_client, watcher_config.bridge_address)
+                .await?
+                .into();
+        Ok(Self {
+            eth_client,
+            l2_client,
             address: watcher_config.bridge_address,
-            topics: watcher_config.topics,
             max_block_step: watcher_config.max_block_step,
-            last_block_fetched: U256::zero(),
+            last_block_fetched,
             l2_proposer_pk: watcher_config.l2_proposer_private_key,
             check_interval: Duration::from_millis(watcher_config.check_interval_ms),
-        }
+        })
     }
 
     pub async fn run(&mut self, store: &Store) {
         loop {
-            if let Err(err) = self.main_logic(store.clone()).await {
+            if let Err(err) = self.main_logic(store).await {
                 error!("L1 Watcher Error: {}", err);
             }
 
@@ -59,7 +68,7 @@ impl L1Watcher {
         }
     }
 
-    async fn main_logic(&mut self, store: Store) -> Result<(), L1WatcherError> {
+    async fn main_logic(&mut self, store: &Store) -> Result<(), L1WatcherError> {
         loop {
             sleep(self.check_interval).await;
 
@@ -70,19 +79,25 @@ impl L1Watcher {
                 continue;
             }
 
-            let pending_deposits_logs = self.get_pending_deposit_logs().await?;
+            let pending_deposit_logs = self.get_pending_deposit_logs().await?;
             let _deposit_txs = self
-                .process_logs(logs, &pending_deposits_logs, &store)
+                .process_logs(logs, &pending_deposit_logs, store)
                 .await?;
         }
     }
 
     pub async fn get_pending_deposit_logs(&self) -> Result<Vec<H256>, L1WatcherError> {
+        let selector = keccak(b"getDepositLogs()")
+            .as_bytes()
+            .get(..4)
+            .ok_or(EthClientError::Custom("Failed to get selector.".to_owned()))?
+            .to_vec();
+
         Ok(hex::decode(
             self.eth_client
                 .call(
                     self.address,
-                    Bytes::copy_from_slice(&[0x35, 0x6d, 0xa2, 0x49]),
+                    Bytes::copy_from_slice(&selector),
                     Overrides::default(),
                 )
                 .await?
@@ -115,31 +130,31 @@ impl L1Watcher {
             self.last_block_fetched, new_last_block
         );
 
-        let logs;
-        if let Some(first_topic) = self.topics.first() {
-            logs = match self
-                .eth_client
-                .get_logs(
-                    self.last_block_fetched + 1,
-                    new_last_block,
-                    self.address,
-                    *first_topic,
-                )
-                .await
-            {
-                Ok(logs) => logs,
-                Err(error) => {
-                    warn!("Error when getting logs from L1: {error}");
-                    vec![]
-                }
-            };
-        } else {
-            warn!("Error when getting logs from L1: topics vector is empty");
-            logs = vec![];
-        }
+        // Matches the event DepositInitiated from ICommonBridge.sol
+        let topic = keccak(b"DepositInitiated(uint256,address,uint256,bytes32)");
+        let logs = match self
+            .eth_client
+            .get_logs(
+                self.last_block_fetched + 1,
+                new_last_block,
+                self.address,
+                topic,
+            )
+            .await
+        {
+            Ok(logs) => logs,
+            Err(error) => {
+                // We may get an error if the RPC doesn't has the logs for the requested
+                // block interval. For example, Light Nodes.
+                warn!("Error when getting logs from L1: {}", error);
+                vec![]
+            }
+        };
 
         debug!("Logs: {:#?}", logs);
 
+        // If we have an error adding the tx to the mempool we may assign it to the next
+        // block to fetch, but we may lose a deposit tx.
         self.last_block_fetched = new_last_block;
 
         Ok(logs)
@@ -148,23 +163,10 @@ impl L1Watcher {
     pub async fn process_logs(
         &self,
         logs: Vec<RpcLog>,
-        l1_deposit_logs: &[H256],
+        pending_deposit_logs: &[H256],
         store: &Store,
     ) -> Result<Vec<H256>, L1WatcherError> {
         let mut deposit_txs = Vec::new();
-        let mut operator_nonce = store
-            .get_account_info(
-                store
-                    .get_latest_block_number()
-                    .map_err(|e| L1WatcherError::FailedToRetrieveChainConfig(e.to_string()))?
-                    .ok_or(L1WatcherError::FailedToRetrieveChainConfig(
-                        "Last block is None".to_string(),
-                    ))?,
-                Address::zero(),
-            )
-            .map_err(|e| L1WatcherError::FailedToRetrieveDepositorAccountInfo(e.to_string()))?
-            .map(|info| info.nonce)
-            .unwrap_or_default();
 
         for log in logs {
             let mint_value = format!(
@@ -199,14 +201,42 @@ impl L1Watcher {
                     ))
                 })?;
 
+            let deposit_id =
+                log.log
+                    .topics
+                    .get(3)
+                    .ok_or(L1WatcherError::FailedToDeserializeLog(
+                        "Failed to parse beneficiary from log: log.topics[3] out of bounds"
+                            .to_owned(),
+                    ))?;
+
+            let deposit_id = format!("{deposit_id:#x}").parse::<U256>().map_err(|e| {
+                L1WatcherError::FailedToDeserializeLog(format!(
+                    "Failed to parse depositId value from log: {e:#?}"
+                ))
+            })?;
+
             let mut value_bytes = [0u8; 32];
             mint_value.to_big_endian(&mut value_bytes);
-            if !l1_deposit_logs.contains(&keccak([beneficiary.as_bytes(), &value_bytes].concat())) {
-                warn!("Deposit already processed (to: {beneficiary:#x}, value: {mint_value}), skipping.");
+
+            let mut id_bytes = [0u8; 32];
+            deposit_id.to_big_endian(&mut id_bytes);
+            if !pending_deposit_logs.contains(&keccak(
+                [beneficiary.as_bytes(), &value_bytes, &id_bytes].concat(),
+            )) {
+                warn!("Deposit already processed (to: {beneficiary:#x}, value: {mint_value}, depositId: {deposit_id}), skipping.");
                 continue;
             }
 
-            info!("Initiating mint transaction for {beneficiary:#x} with value {mint_value:#x}",);
+            info!("Initiating mint transaction for {beneficiary:#x} with value {mint_value:#x} and depositId: {deposit_id:#}",);
+
+            let gas_price = self.l2_client.get_gas_price().await?;
+            // Avoid panicking when using as_u64()
+            let gas_price = if gas_price > u64::MAX.into() {
+                u64::MAX
+            } else {
+                gas_price.as_u64()
+            };
 
             let mut mint_transaction = self
                 .eth_client
@@ -224,21 +254,27 @@ impl L1Watcher {
                                 })?
                                 .chain_id,
                         ),
-                        nonce: Some(operator_nonce),
+                        // Using the deposit_id as nonce.
+                        // If we make a transaction on the L2 with this address, we may break the
+                        // deposit workflow.
+                        nonce: Some(deposit_id.as_u64()),
                         value: Some(mint_value),
                         // TODO(IMPORTANT): gas_limit should come in the log and must
                         // not be calculated in here. The reason for this is that the
                         // gas_limit for this transaction is payed by the caller in
                         // the L1 as part of the deposited funds.
                         gas_limit: Some(TX_GAS_COST.mul(2)),
+                        // TODO(CHECK): Seems that when we start the L2, we need to set the gas.
+                        // Otherwise, the transaction is not included in the mempool.
+                        // We should override the blockchain to always include the transaction.
+                        priority_gas_price: Some(gas_price),
+                        gas_price: Some(gas_price),
                         ..Default::default()
                     },
                     10,
                 )
                 .await?;
             mint_transaction.sign_inplace(&self.l2_proposer_pk);
-
-            operator_nonce += 1;
 
             match mempool::add_transaction(
                 Transaction::PrivilegedL2Transaction(mint_transaction),
@@ -255,6 +291,7 @@ impl L1Watcher {
                 }
             }
         }
+
         Ok(deposit_txs)
     }
 }

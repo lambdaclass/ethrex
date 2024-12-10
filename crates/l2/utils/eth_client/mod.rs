@@ -986,6 +986,13 @@ impl EthClient {
         .await
     }
 
+    pub async fn get_last_fetched_l1_block(
+        eth_client: &EthClient,
+        common_bridge_address: Address,
+    ) -> Result<u64, EthClientError> {
+        Self::_call_block_variable(eth_client, b"lastFetchedL1Block()", common_bridge_address).await
+    }
+
     async fn _call_block_variable(
         eth_client: &EthClient,
         selector: &[u8],

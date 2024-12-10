@@ -17,8 +17,6 @@ pub enum L1WatcherError {
     FailedToDeserializeLog(String),
     #[error("L1Watcher failed to parse private key: {0}")]
     FailedToDeserializePrivateKey(String),
-    #[error("L1Watcher failed to retrieve depositor account info: {0}")]
-    FailedToRetrieveDepositorAccountInfo(String),
     #[error("L1Watcher failed to retrieve chain config: {0}")]
     FailedToRetrieveChainConfig(String),
     #[error("L1Watcher failed to get config: {0}")]

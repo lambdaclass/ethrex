@@ -28,6 +28,14 @@ contract CommonBridge is ICommonBridge, Ownable, ReentrancyGuard {
 
     address public ON_CHAIN_PROPOSER;
 
+    /// @notice Block in which the CommonBridge was initialized.
+    /// @dev Used by the L1Watcher to fetch logs starting from this block.
+    uint256 public lastFetchedL1Block;
+
+    /// @notice Global deposit identifier, it is incremented each time a new deposit is made.
+    /// @dev It is used as the nonce of the mint transaction created by the L1Watcher.
+    uint256 public depositId;
+
     modifier onlyOnChainProposer() {
         require(
             msg.sender == ON_CHAIN_PROPOSER,
@@ -53,6 +61,9 @@ contract CommonBridge is ICommonBridge, Ownable, ReentrancyGuard {
             "CommonBridge: onChainProposer is the contract address"
         );
         ON_CHAIN_PROPOSER = onChainProposer;
+
+        lastFetchedL1Block = block.number;
+        depositId = 0;
     }
 
     /// @inheritdoc ICommonBridge
@@ -67,9 +78,16 @@ contract CommonBridge is ICommonBridge, Ownable, ReentrancyGuard {
         // TODO: Build the tx.
         bytes32 l2MintTxHash = keccak256(abi.encodePacked("dummyl2MintTxHash"));
         depositLogs.push(
-            keccak256(bytes.concat(bytes20(to), bytes32(msg.value)))
+            keccak256(
+                bytes.concat(
+                    bytes20(to),
+                    bytes32(msg.value),
+                    bytes32(depositId)
+                )
+            )
         );
-        emit DepositInitiated(msg.value, to, l2MintTxHash);
+        emit DepositInitiated(msg.value, to, depositId, l2MintTxHash);
+        depositId += 1;
     }
 
     receive() external payable {
