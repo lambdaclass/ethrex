@@ -355,23 +355,45 @@ impl GetPayloadRequest {
 
     fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
         info!("Requested payload with id: {:#018x}", self.payload_id);
-        let Some(mut payload) = context.storage.get_payload(self.payload_id)? else {
+
+        let payload = context.storage.get_payload(self.payload_id)?;
+
+        let Some((mut payload_block, block_value, blobs_bundle, completed)) = payload else {
             return Err(RpcErr::UnknownPayload(format!(
                 "Payload with id {:#018x} not found",
                 self.payload_id
             )));
         };
+
         // Check timestamp matches valid fork
         let chain_config = &context.storage.get_chain_config()?;
-        let current_fork = chain_config.get_fork(payload.header.timestamp);
+        let current_fork = chain_config.get_fork(payload_block.header.timestamp);
         info!("Current Fork: {:?}", current_fork);
         if current_fork != self.valid_fork() {
             return Err(RpcErr::UnsuportedFork(format!("{current_fork:?}")));
         }
 
-        let (blobs_bundle, block_value) = build_payload(&mut payload, &context.storage)
+        if completed {
+            return serde_json::to_value(self.build_response(
+                ExecutionPayload::from_block(payload_block),
+                blobs_bundle,
+                block_value,
+            ))
+            .map_err(|error| RpcErr::Internal(error.to_string()));
+        }
+
+        let (blobs_bundle, block_value) = build_payload(&mut payload_block, &context.storage)
             .map_err(|err| RpcErr::Internal(err.to_string()))?;
-        let execution_payload = ExecutionPayload::from_block(payload);
+
+        context.storage.update_payload(
+            self.payload_id,
+            payload_block.clone(),
+            block_value,
+            blobs_bundle.clone(),
+            true,
+        )?;
+
+        let execution_payload = ExecutionPayload::from_block(payload_block);
 
         serde_json::to_value(self.build_response(execution_payload, blobs_bundle, block_value))
             .map_err(|error| RpcErr::Internal(error.to_string()))
