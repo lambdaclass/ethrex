@@ -355,6 +355,33 @@ impl StoreEngine for Store {
         Ok(self.inner().payloads.get(&payload_id).cloned())
     }
 
+    fn add_receipts(
+        &self,
+        block_hash: BlockHash,
+        receipts: Vec<Receipt>,
+    ) -> Result<(), StoreError> {
+        let mut store = self.inner();
+        let entry = store.receipts.entry(block_hash).or_default();
+        for (index, receipt) in receipts.into_iter().enumerate() {
+            entry.insert(index as u64, receipt);
+        }
+        Ok(())
+    }
+
+    fn add_transaction_locations(
+        &self,
+        locations: Vec<(H256, BlockNumber, BlockHash, Index)>,
+    ) -> Result<(), StoreError> {
+        for (transaction_hash, block_number, block_hash, index) in locations {
+            self.inner()
+                .transaction_locations
+                .entry(transaction_hash)
+                .or_default()
+                .push((block_number, block_hash, index));
+        }
+
+        Ok(())
+    }
     fn update_payload(
         &self,
         payload_id: u64,

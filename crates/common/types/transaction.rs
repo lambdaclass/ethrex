@@ -1151,7 +1151,7 @@ impl PrivilegedL2Transaction {
 
     /// Returns the formated hash of the deposit transaction,
     /// or None if the transaction is not a deposit.
-    /// The hash is computed as keccak256(to || value)
+    /// The hash is computed as keccak256(to || value || deposit_id == nonce)
     pub fn get_deposit_hash(&self) -> Option<H256> {
         match self.tx_type {
             PrivilegedTxType::Deposit => {
@@ -1163,7 +1163,13 @@ impl PrivilegedL2Transaction {
                 let value = &mut [0u8; 32];
                 self.value.to_big_endian(value);
 
-                Some(keccak_hash::keccak([to.as_bytes(), value].concat()))
+                // The nonce should be a U256,
+                // in solidity the depositId is a U256.
+                let u256_nonce = U256::from(self.nonce);
+                let nonce = &mut [0u8; 32];
+                u256_nonce.to_big_endian(nonce);
+
+                Some(keccak_hash::keccak([to.as_bytes(), value, nonce].concat()))
             }
             _ => None,
         }

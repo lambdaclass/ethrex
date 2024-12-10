@@ -207,3 +207,14 @@ fn cost(memory_size: usize) -> Result<usize, VMError> {
         )
         .ok_or(OutOfGasError::MemoryExpansionCostOverflow)?)
 }
+
+pub fn calculate_memory_size(offset: usize, size: usize) -> Result<usize, VMError> {
+    if size == 0 {
+        return Ok(0);
+    }
+
+    offset
+        .checked_add(size)
+        .and_then(|sum| sum.checked_next_multiple_of(WORD_SIZE_IN_BYTES_USIZE))
+        .ok_or(VMError::OutOfOffset)
+}

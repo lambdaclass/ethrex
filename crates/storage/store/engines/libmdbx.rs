@@ -48,6 +48,21 @@ impl Store {
         txn.commit().map_err(StoreError::LibmdbxError)
     }
 
+    // Helper method to write into a libmdbx table in batch
+    fn write_batch<T: Table>(&self, key_values: Vec<(T::Key, T::Value)>) -> Result<(), StoreError> {
+        let txn = self
+            .db
+            .begin_readwrite()
+            .map_err(StoreError::LibmdbxError)?;
+
+        for (key, value) in key_values {
+            txn.upsert::<T>(key, value)
+                .map_err(StoreError::LibmdbxError)?;
+        }
+
+        txn.commit().map_err(StoreError::LibmdbxError)
+    }
+
     // Helper method to read from a libmdbx table
     fn read<T: Table>(&self, key: T::Key) -> Result<Option<T::Value>, StoreError> {
         let txn = self.db.begin_read().map_err(StoreError::LibmdbxError)?;
@@ -441,6 +456,43 @@ impl StoreEngine for Store {
         Ok(self
             .read::<PendingBlocks>(block_hash.into())?
             .map(|b| b.to()))
+    }
+
+    fn add_transaction_locations(
+        &self,
+        locations: Vec<(H256, BlockNumber, BlockHash, Index)>,
+    ) -> std::result::Result<(), StoreError> {
+        #[allow(clippy::type_complexity)]
+        let key_values: Vec<(TransactionHashRLP, Rlp<(BlockNumber, BlockHash, Index)>)> = locations
+            .into_iter()
+            .map(|(tx_hash, block_number, block_hash, index)| {
+                (tx_hash.into(), (block_number, block_hash, index).into())
+            })
+            .collect();
+
+        self.write_batch::<TransactionLocations>(key_values)
+    }
+
+    fn add_receipts(
+        &self,
+        block_hash: BlockHash,
+        receipts: Vec<Receipt>,
+    ) -> std::result::Result<(), StoreError> {
+        let key_values = receipts
+            .into_iter()
+            .enumerate()
+            .map(|(index, receipt)| {
+                (
+                    <(H256, u64) as Into<TupleRLP<BlockHash, Index>>>::into((
+                        block_hash,
+                        index as u64,
+                    )),
+                    <Receipt as Into<ReceiptRLP>>::into(receipt),
+                )
+            })
+            .collect();
+
+        self.write_batch::<Receipts>(key_values)
     }
 }
 

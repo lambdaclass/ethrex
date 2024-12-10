@@ -169,8 +169,14 @@ impl RLPxMessage for GetStorageRanges {
         let (id, decoder) = decoder.decode_field("request-id")?;
         let (root_hash, decoder) = decoder.decode_field("rootHash")?;
         let (account_hashes, decoder) = decoder.decode_field("accountHashes")?;
-        let (starting_hash, decoder) = decoder.decode_field("startingHash")?;
-        let (limit_hash, decoder) = decoder.decode_field("limitHash")?;
+        let (starting_hash, decoder): (Bytes, _) = decoder.decode_field("startingHash")?;
+        let starting_hash = (!starting_hash.is_empty())
+            .then(|| H256::from_slice(&starting_hash))
+            .unwrap_or_default();
+        let (limit_hash, decoder): (Bytes, _) = decoder.decode_field("limitHash")?;
+        let limit_hash = (!limit_hash.is_empty())
+            .then(|| H256::from_slice(&limit_hash))
+            .unwrap_or(H256([0xFF; 32]));
         let (response_bytes, decoder) = decoder.decode_field("responseBytes")?;
         decoder.finish()?;
 

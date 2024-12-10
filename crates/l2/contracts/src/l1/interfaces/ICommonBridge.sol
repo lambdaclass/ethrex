@@ -14,10 +14,12 @@ interface ICommonBridge {
     /// deposit in L2. Could be used to track the status of the deposit finalization
     /// on L2. You can use this hash to retrive the tx data.
     /// It is the result of keccak(abi.encode(transaction)).
+    /// @param depositId Id used to differentiate deposits with same amount and recipient.
     event DepositInitiated(
         uint256 indexed amount,
         address indexed to,
-        bytes32 indexed l2MintTxHash
+        uint256 indexed depositId,
+        bytes32 l2MintTxHash
     );
 
     /// @notice L2 withdrawals have been published on L1.

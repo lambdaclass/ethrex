@@ -7,7 +7,7 @@ use ethrex_levm::{
     account::Account,
     constants::*,
     db::{cache, CacheDB, Db},
-    errors::{TxResult, VMError},
+    errors::{OutOfGasError, TxResult, VMError},
     gas_cost, memory,
     operations::Operation,
     utils::{new_vm_with_ops, new_vm_with_ops_addr_bal_db, new_vm_with_ops_db, ops_to_bytecode},
@@ -2811,7 +2811,7 @@ fn gaslimit_op() {
     let operations = [Operation::Gaslimit, Operation::Stop];
 
     let mut vm = new_vm_with_ops(&operations).unwrap();
-    vm.env.gas_limit = gas_limit;
+    vm.env.block_gas_limit = gas_limit;
 
     let mut current_call_frame = vm.call_frames.pop().unwrap();
     vm.execute(&mut current_call_frame).unwrap();
@@ -2821,6 +2821,32 @@ fn gaslimit_op() {
         gas_limit
     );
     assert_eq!(vm.env.consumed_gas, TX_BASE_COST + 2);
+}
+
+#[test]
+/// Test that the VM detects that it has no more gas.
+fn no_more_gas() {
+    let operations = [
+        Operation::Push((32, U256::one())),
+        Operation::Push((32, U256::from(100))),
+        Operation::Add,
+        Operation::Stop,
+    ];
+
+    let mut vm = new_vm_with_ops(&operations).unwrap();
+
+    // We are NOT gonna add the costs of the ADD operation; in order
+    // for the vm to run out of gas.
+    let not_enough_funds = gas_cost::PUSHN + gas_cost::PUSHN + gas_cost::STOP;
+
+    let mut current_call_frame = vm.call_frames.pop().unwrap();
+    current_call_frame.gas_limit = not_enough_funds;
+    let tx_report = vm.execute(&mut current_call_frame).unwrap();
+
+    assert_eq!(
+        tx_report.result,
+        TxResult::Revert(VMError::OutOfGas(OutOfGasError::MaxGasLimitExceeded))
+    );
 }
 
 #[test]
