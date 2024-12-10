@@ -10,7 +10,10 @@ participants:
     validator_count: 32
 
 additional_services:
+  # In the future we may want to run the blob spammer in this check if possible 
+  # through the tx_spammer addition service config.
   - assertoor
+  - dora
 
 assertoor_params:
   run_stability_check: false
