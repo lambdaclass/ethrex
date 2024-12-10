@@ -1,10 +1,9 @@
 use std::{borrow::Borrow, panic::RefUnwindSafe, sync::Arc};
 
 use ethrex_core::types::BlockBody;
-use ethrex_core::U256;
 use ethrex_core::{
-    types::{Block, BlockHash, BlockHeader, BlockNumber, ChainConfig, Index, Receipt},
-    H256,
+    types::{BlobsBundle, Block, BlockHash, BlockHeader, BlockNumber, ChainConfig, Index, Receipt},
+    H256, U256,
 };
 use ethrex_rlp::decode::RLPDecode;
 use ethrex_rlp::encode::RLPEncode;
@@ -45,7 +44,8 @@ pub const STORAGE_TRIE_NODES_TABLE: MultimapTableDefinition<([u8; 32], [u8; 33])
     MultimapTableDefinition::new("StorageTrieNodes");
 const CHAIN_DATA_TABLE: TableDefinition<ChainDataIndex, Vec<u8>> =
     TableDefinition::new("ChainData");
-const PAYLOADS_TABLE: TableDefinition<BlockNumber, BlockRLP> = TableDefinition::new("Payloads");
+const PAYLOADS_TABLE: TableDefinition<BlockNumber, Rlp<(Block, U256, BlobsBundle, bool)>> =
+    TableDefinition::new("Payloads");
 const PENDING_BLOCKS_TABLE: TableDefinition<BlockHashRLP, BlockRLP> =
     TableDefinition::new("PendingBlocks");
 const TRANSACTION_LOCATIONS_TABLE: MultimapTableDefinition<
@@ -532,14 +532,36 @@ impl StoreEngine for RedBStore {
         self.write(
             PAYLOADS_TABLE,
             payload_id,
-            <Block as Into<BlockRLP>>::into(block),
+            <(Block, U256, BlobsBundle, bool) as Into<Rlp<(Block, U256, BlobsBundle, bool)>>>::into(
+                (block, U256::zero(), BlobsBundle::empty(), false),
+            ),
         )
     }
 
-    fn get_payload(&self, payload_id: u64) -> Result<Option<Block>, StoreError> {
+    fn get_payload(
+        &self,
+        payload_id: u64,
+    ) -> Result<Option<(Block, U256, BlobsBundle, bool)>, StoreError> {
         Ok(self
             .read(PAYLOADS_TABLE, payload_id)?
             .map(|b| b.value().to()))
+    }
+
+    fn update_payload(
+        &self,
+        payload_id: u64,
+        block: Block,
+        block_value: U256,
+        blobs_bundle: BlobsBundle,
+        completed: bool,
+    ) -> Result<(), StoreError> {
+        self.write(
+            PAYLOADS_TABLE,
+            payload_id,
+            <(Block, U256, BlobsBundle, bool) as Into<Rlp<(Block, U256, BlobsBundle, bool)>>>::into(
+                (block, block_value, blobs_bundle, completed),
+            ),
+        )
     }
 }
 
