@@ -593,7 +593,7 @@ impl VM {
     fn post_execution_changes(
         &mut self,
         initial_call_frame: &CallFrame,
-        report: &TransactionReport,
+        report: &mut TransactionReport,
     ) -> Result<(), VMError> {
         // POST-EXECUTION Changes
         let sender_address = initial_call_frame.msg_sender;
@@ -617,6 +617,7 @@ impl VM {
                 .ok_or(VMError::Internal(InternalError::UndefinedState(-1)))?,
         );
         // "The max refundable proportion of gas was reduced from one half to one fifth by EIP-3529 by Buterin and Swende [2021] in the London release"
+        report.gas_refunded = refunded_gas;
 
         let gas_to_return = max_gas
             .checked_sub(consumed_gas)
@@ -683,7 +684,7 @@ impl VM {
             };
         }
 
-        self.post_execution_changes(&initial_call_frame, &report)?;
+        self.post_execution_changes(&initial_call_frame, &mut report)?;
         // There shouldn't be any errors here but I don't know what the desired behavior is if something goes wrong.
 
         report.new_state.clone_from(&self.cache);
