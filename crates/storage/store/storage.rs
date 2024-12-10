@@ -232,6 +232,26 @@ impl Store {
             .add_transaction_location(transaction_hash, block_number, block_hash, index)
     }
 
+    pub fn add_transaction_locations(
+        &self,
+        transactions: &[Transaction],
+        block_number: BlockNumber,
+        block_hash: BlockHash,
+    ) -> Result<(), StoreError> {
+        let mut locations = vec![];
+
+        for (index, transaction) in transactions.iter().enumerate() {
+            locations.push((
+                transaction.compute_hash(),
+                block_number,
+                block_hash,
+                index as Index,
+            ));
+        }
+
+        self.engine.add_transaction_locations(locations)
+    }
+
     pub fn get_transaction_location(
         &self,
         transaction_hash: H256,
@@ -484,6 +504,14 @@ impl Store {
         self.engine.add_receipt(block_hash, index, receipt)
     }
 
+    pub fn add_receipts(
+        &self,
+        block_hash: BlockHash,
+        receipts: Vec<Receipt>,
+    ) -> Result<(), StoreError> {
+        self.engine.add_receipts(block_hash, receipts)
+    }
+
     pub fn get_receipt(
         &self,
         block_number: BlockNumber,
@@ -506,23 +534,6 @@ impl Store {
         self.add_block_number(hash, number)?;
         self.add_block_total_difficulty(hash, block_total_difficulty)?;
         self.update_latest_total_difficulty(block_total_difficulty)
-    }
-
-    fn add_transaction_locations(
-        &self,
-        transactions: &[Transaction],
-        block_number: BlockNumber,
-        block_hash: BlockHash,
-    ) -> Result<(), StoreError> {
-        for (index, transaction) in transactions.iter().enumerate() {
-            self.add_transaction_location(
-                transaction.compute_hash(),
-                block_number,
-                block_hash,
-                index as Index,
-            )?;
-        }
-        Ok(())
     }
 
     pub fn add_initial_state(&self, genesis: Genesis) -> Result<(), StoreError> {

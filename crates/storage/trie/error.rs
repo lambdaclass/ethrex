@@ -27,4 +27,6 @@ pub enum TrieError {
     Verify(String),
     #[error("Inconsistent internal tree structure")]
     InconsistentTree,
+    #[error("Lock Error: Panicked when trying to acquire a lock")]
+    LockError,
 }
