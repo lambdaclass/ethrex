@@ -448,7 +448,11 @@ fn compute_gas_create(
         .ok_or(OutOfGasError::CreationCostIsTooHigh)?)
 }
 
-pub fn selfdestruct(address_was_cold: bool, account_is_empty: bool) -> Result<U256, OutOfGasError> {
+pub fn selfdestruct(
+    address_was_cold: bool,
+    account_is_empty: bool,
+    balance_to_transfer: U256,
+) -> Result<U256, OutOfGasError> {
     let mut gas_cost = SELFDESTRUCT_STATIC;
 
     if address_was_cold {
@@ -457,7 +461,8 @@ pub fn selfdestruct(address_was_cold: bool, account_is_empty: bool) -> Result<U2
             .ok_or(OutOfGasError::GasCostOverflow)?;
     }
 
-    if account_is_empty {
+    // If a positive balance is sent to an empty account, the dynamic gas is 25000
+    if account_is_empty && balance_to_transfer > U256::zero() {
         gas_cost = gas_cost
             .checked_add(SELFDESTRUCT_DYNAMIC)
             .ok_or(OutOfGasError::GasCostOverflow)?;

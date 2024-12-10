@@ -36,6 +36,9 @@ pub struct Substate {
     // pub accessed_addresses: HashSet<Address>,
     // pub accessed_storage_keys: HashSet<(Address, U256)>,
     pub selfdestrutct_set: HashSet<Address>,
+    pub touched_accounts: HashSet<Address>,
+    pub touched_storage_slots: HashMap<Address, HashSet<H256>>,
+    pub created_accounts: HashSet<Address>,
 }
 
 pub struct VM {
@@ -49,9 +52,6 @@ pub struct VM {
     pub db: Arc<dyn Database>,
     pub cache: CacheDB,
     pub tx_kind: TxKind,
-
-    pub touched_accounts: HashSet<Address>,
-    pub touched_storage_slots: HashMap<Address, HashSet<H256>>,
 }
 
 pub fn address_to_word(address: Address) -> U256 {
@@ -148,15 +148,20 @@ impl VM {
                     0,
                 );
 
+                let substate = Substate {
+                    selfdestrutct_set: HashSet::new(),
+                    touched_accounts: default_touched_accounts,
+                    touched_storage_slots: HashMap::new(),
+                    created_accounts: HashSet::new(),
+                };
+
                 Ok(Self {
                     call_frames: vec![initial_call_frame],
                     db,
                     env,
-                    accrued_substate: Substate::default(),
+                    accrued_substate: substate,
                     cache,
                     tx_kind: to,
-                    touched_accounts: default_touched_accounts,
-                    touched_storage_slots: HashMap::new(),
                 })
             }
             TxKind::Create => {
@@ -186,15 +191,20 @@ impl VM {
                     0,
                 );
 
+                let substate = Substate {
+                    selfdestrutct_set: HashSet::new(),
+                    touched_accounts: default_touched_accounts,
+                    touched_storage_slots: HashMap::new(),
+                    created_accounts: HashSet::new(),
+                };
+
                 Ok(Self {
                     call_frames: vec![initial_call_frame],
                     db,
                     env,
-                    accrued_substate: Substate::default(),
+                    accrued_substate: substate,
                     cache,
                     tx_kind: TxKind::Create,
-                    touched_accounts: default_touched_accounts,
-                    touched_storage_slots: HashMap::new(),
                 })
             }
         }
@@ -624,6 +634,7 @@ impl VM {
     /// 1. Undo value transfer if the transaction was reverted
     /// 2. Return unused gas + gas refunds to the sender.
     /// 3. Pay coinbase fee
+    /// 4. Destruct addresses in selfdestruct set.
     fn post_execution_changes(
         &mut self,
         initial_call_frame: &CallFrame,
@@ -687,6 +698,12 @@ impl VM {
         if coinbase_fee != 0 {
             self.increase_account_balance(coinbase_address, U256::from(coinbase_fee))?;
         };
+
+        // 4. Destruct addresses in selfdestruct set.
+        // In Cancun the only addresses destroyed are contracts created in this transaction, so we 'destroy' them by just removing them from the cache, as if they never existed.
+        for address in &self.accrued_substate.selfdestrutct_set {
+            remove_account(&mut self.cache, address);
+        }
 
         Ok(())
     }
@@ -1034,6 +1051,8 @@ impl VM {
             .pop()
             .map_err(|_| VMError::StackUnderflow)?;
 
+        self.accrued_substate.created_accounts.insert(new_address);
+
         Ok(OpcodeSuccess::Continue)
     }
 
@@ -1079,7 +1098,7 @@ impl VM {
     /// Accessed accounts take place in some gas cost computation.
     #[must_use]
     pub fn access_account(&mut self, address: Address) -> (AccountInfo, bool) {
-        let address_was_cold = self.touched_accounts.insert(address);
+        let address_was_cold = self.accrued_substate.touched_accounts.insert(address);
         let account = match cache::get_account(&self.cache, &address) {
             Some(account) => account.info.clone(),
             None => self.db.get_account_info(address),
@@ -1097,6 +1116,7 @@ impl VM {
         key: H256,
     ) -> Result<(StorageSlot, bool), VMError> {
         let storage_slot_was_cold = self
+            .accrued_substate
             .touched_storage_slots
             .entry(address)
             .or_default()

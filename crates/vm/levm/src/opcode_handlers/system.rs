@@ -6,7 +6,7 @@ use crate::{
     memory::{self, calculate_memory_size},
     vm::{word_to_address, VM},
 };
-use ethrex_core::{types::TxKind, Address, U256};
+use ethrex_core::{Address, U256};
 
 // System Operations (10)
 // Opcodes: CREATE, CALL, CALLCODE, RETURN, DELEGATECALL, CREATE2, STATICCALL, REVERT, INVALID, SELFDESTRUCT
@@ -503,19 +503,27 @@ impl VM {
 
         let (target_account_info, target_account_is_cold) = self.access_account(target_address);
 
-        self.increase_consumed_gas(
-            current_call_frame,
-            gas_cost::selfdestruct(target_account_is_cold, target_account_info.is_empty())
-                .map_err(VMError::OutOfGas)?,
-        )?;
-
         let (current_account_info, _current_account_is_cold) =
             self.access_account(current_call_frame.to);
+        let balance_to_transfer = current_account_info.balance;
 
-        self.increase_account_balance(target_address, current_account_info.balance)?;
-        self.decrease_account_balance(current_call_frame.to, current_account_info.balance)?;
+        self.increase_consumed_gas(
+            current_call_frame,
+            gas_cost::selfdestruct(
+                target_account_is_cold,
+                target_account_info.is_empty(),
+                balance_to_transfer,
+            )?,
+        )?;
 
-        if self.tx_kind == TxKind::Create {
+        self.increase_account_balance(target_address, balance_to_transfer)?;
+        self.decrease_account_balance(current_call_frame.to, balance_to_transfer)?;
+
+        if self
+            .accrued_substate
+            .created_accounts
+            .contains(&current_call_frame.to)
+        {
             self.accrued_substate
                 .selfdestrutct_set
                 .insert(current_call_frame.to);
