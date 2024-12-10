@@ -16,7 +16,7 @@ use keccak_hash::keccak;
 use secp256k1::SecretKey;
 use serde::{Deserialize, Serialize};
 use std::{
-    io::{BufReader, BufWriter},
+    io::{BufReader, BufWriter, Write},
     net::{IpAddr, Shutdown, TcpListener, TcpStream},
     sync::mpsc::{self, Receiver},
     thread,
@@ -76,6 +76,34 @@ pub enum ProofData {
     /// 4.
     /// The Server acknowledges the receipt of the proof and updates its state,
     SubmitAck { block_number: u64 },
+}
+
+impl ProofData {
+    /// Builder function for creating a Request
+    pub fn request() -> Self {
+        ProofData::Request
+    }
+
+    /// Builder function for creating a Response
+    pub fn response(block_number: Option<u64>, input: Option<ProverInputData>) -> Self {
+        ProofData::Response {
+            block_number,
+            input,
+        }
+    }
+
+    /// Builder function for creating a Submit
+    pub fn submit(block_number: u64, receipt: (risc0_zkvm::Receipt, Vec<u32>)) -> Self {
+        ProofData::Submit {
+            block_number,
+            receipt: Box::new(receipt),
+        }
+    }
+
+    /// Builder function for creating a SubmitAck
+    pub fn submit_ack(block_number: u64) -> Self {
+        ProofData::SubmitAck { block_number }
+    }
 }
 
 pub async fn start_prover_server(store: Store) -> Result<(), ConfigError> {
@@ -219,10 +247,7 @@ impl ProverServer {
         let data: Result<ProofData, _> = serde_json::de::from_reader(buf_reader);
         match data {
             Ok(ProofData::Request) => {
-                if let Err(e) = self
-                    .handle_request(&mut stream, last_verified_block + 1)
-                    .await
-                {
+                if let Err(e) = self.handle_request(&stream, last_verified_block + 1).await {
                     warn!("Failed to handle request: {e}");
                 }
             }
@@ -252,7 +277,7 @@ impl ProverServer {
 
     async fn handle_request(
         &self,
-        stream: &mut TcpStream,
+        stream: &TcpStream,
         block_number: u64,
     ) -> Result<(), ProverServerError> {
         debug!("Request received");
@@ -263,18 +288,12 @@ impl ProverServer {
             .ok_or(ProverServerError::StorageDataIsNone)?;
 
         let response = if block_number > latest_block_number {
-            let response = ProofData::Response {
-                block_number: None,
-                input: None,
-            };
+            let response = ProofData::response(None, None);
             warn!("Didn't send response");
             response
         } else {
             let input = self.create_prover_input(block_number)?;
-            let response = ProofData::Response {
-                block_number: Some(block_number),
-                input: Some(input),
-            };
+            let response = ProofData::response(Some(block_number), Some(input));
             info!("Sent Response for block_number: {block_number}");
             response
         };
@@ -291,10 +310,14 @@ impl ProverServer {
     ) -> Result<(), ProverServerError> {
         debug!("Submit received for BlockNumber: {block_number}");
 
-        let response = ProofData::SubmitAck { block_number };
-        let writer = BufWriter::new(stream);
-        serde_json::to_writer(writer, &response)
-            .map_err(|e| ProverServerError::ConnectionError(e.into()))
+        let response = ProofData::submit_ack(block_number);
+        let json_string = serde_json::to_string(&response)
+            .map_err(|e| ProverServerError::Custom(format!("serde_json::to_string(): {e}")))?;
+        stream
+            .write_all(json_string.as_bytes())
+            .map_err(ProverServerError::ConnectionError)?;
+
+        Ok(())
     }
 
     async fn handle_proof_submission(

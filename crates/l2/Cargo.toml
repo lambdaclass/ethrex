@@ -28,7 +28,6 @@ keccak-hash = "0.10.0"
 envy = "0.4.2"
 thiserror.workspace = true
 zkvm_interface = { path = "./prover/zkvm/interface/", default-features = false }
-
 # risc0
 risc0-zkvm = { version = "1.2.0" }
 
