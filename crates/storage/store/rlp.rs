@@ -71,11 +71,13 @@ impl<T: Send + Sync> Encodable for Rlp<T> {
 
 #[cfg(feature = "redb")]
 impl<T: Send + Sync + Debug> redb::Value for Rlp<T> {
-    type SelfType<'a> = Rlp<T>
+    type SelfType<'a>
+        = Rlp<T>
     where
         Self: 'a;
 
-    type AsBytes<'a> = Vec<u8>
+    type AsBytes<'a>
+        = Vec<u8>
     where
         Self: 'a;
 

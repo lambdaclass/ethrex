@@ -6,7 +6,10 @@ use ethrex_core::{
     H256,
 };
 use ethrex_net::{
-    bootnode::BootNode, node_id_from_signing_key, peer_table, sync::SyncManager, types::Node,
+    bootnode::BootNode,
+    node_id_from_signing_key, peer_table,
+    sync::{SyncManager, SyncMode},
+    types::Node,
 };
 use ethrex_rlp::decode::RLPDecode;
 use ethrex_storage::{EngineType, Store};
@@ -115,10 +118,7 @@ async fn main() {
         .get_one::<String>("datadir")
         .map_or(set_datadir(DEFAULT_DATADIR), |datadir| set_datadir(datadir));
 
-    let snap_sync = is_snap_sync(&matches);
-    if snap_sync {
-        info!("snap-sync not available, defaulting to full-sync");
-    }
+    let sync_mode = sync_mode(&matches);
 
     cfg_if::cfg_if! {
         if #[cfg(feature = "redb")] {
@@ -187,7 +187,7 @@ async fn main() {
     // Create Kademlia Table here so we can access it from rpc server (for syncing)
     let peer_table = peer_table(signer.clone());
     // Create SyncManager
-    let syncer = SyncManager::new(peer_table.clone(), snap_sync);
+    let syncer = SyncManager::new(peer_table.clone(), sync_mode);
 
     // TODO: Check every module starts properly.
     let tracker = TaskTracker::new();
@@ -299,16 +299,16 @@ fn parse_socket_addr(addr: &str, port: &str) -> io::Result<SocketAddr> {
         ))
 }
 
-fn is_snap_sync(matches: &clap::ArgMatches) -> bool {
+fn sync_mode(matches: &clap::ArgMatches) -> SyncMode {
     let syncmode = matches.get_one::<String>("syncmode");
     if let Some(syncmode) = syncmode {
         match &**syncmode {
-            "full" => false,
-            "snap" => true,
+            "full" => SyncMode::Full,
+            "snap" => SyncMode::Snap,
             other => panic!("Invalid syncmode {other} expected either snap or full"),
         }
     } else {
-        true
+        SyncMode::Snap
     }
 }
 

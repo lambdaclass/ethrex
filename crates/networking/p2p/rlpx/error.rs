@@ -41,10 +41,18 @@ pub(crate) enum RLPxError {
     BroadcastError(String),
     #[error(transparent)]
     RecvError(#[from] RecvError),
-    #[error(transparent)]
-    Send(#[from] tokio::sync::mpsc::error::SendError<Message>),
+    #[error("Failed to send msg: {0}")]
+    SendMessage(String),
     #[error("Error when inserting transaction in the mempool: {0}")]
     MempoolError(#[from] MempoolError),
+}
+
+// tokio::sync::mpsc::error::SendError<Message> is too large to be part of the RLPxError enum directly
+// so we will instead save the error's display message
+impl From<tokio::sync::mpsc::error::SendError<Message>> for RLPxError {
+    fn from(value: tokio::sync::mpsc::error::SendError<Message>) -> Self {
+        Self::SendMessage(value.to_string())
+    }
 }
 
 // Grouping all cryptographic related errors in a single CryptographicError variant

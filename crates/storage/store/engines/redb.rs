@@ -566,11 +566,13 @@ impl StoreEngine for RedBStore {
 }
 
 impl redb::Value for ChainDataIndex {
-    type SelfType<'a> = ChainDataIndex
+    type SelfType<'a>
+        = ChainDataIndex
     where
         Self: 'a;
 
-    type AsBytes<'a> = [u8; 1]
+    type AsBytes<'a>
+        = [u8; 1]
     where
         Self: 'a;
 
