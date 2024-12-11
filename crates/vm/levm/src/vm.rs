@@ -176,7 +176,7 @@ impl VM {
                 let substate = Substate {
                     selfdestrutct_set: HashSet::new(),
                     touched_accounts: default_touched_accounts,
-                    touched_storage_slots: HashMap::new(),
+                    touched_storage_slots: default_touched_storage_slots,
                     created_accounts: HashSet::new(),
                 };
 
@@ -220,7 +220,7 @@ impl VM {
                 let substate = Substate {
                     selfdestrutct_set: HashSet::new(),
                     touched_accounts: default_touched_accounts,
-                    touched_storage_slots: HashMap::new(),
+                    touched_storage_slots: default_touched_storage_slots,
                     created_accounts: HashSet::new(),
                 };
 
