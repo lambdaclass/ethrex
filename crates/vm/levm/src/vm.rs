@@ -709,14 +709,13 @@ impl VM {
             .and_then(|gas| gas.checked_add(refunded_gas))
             .ok_or(VMError::Internal(InternalError::UndefinedState(0)))?;
 
-        let gas_return_amount = self
+        let wei_return_amount = self
             .env
             .gas_price
-            .low_u64()
-            .checked_mul(gas_to_return)
+            .checked_mul(U256::from(gas_to_return))
             .ok_or(VMError::Internal(InternalError::UndefinedState(1)))?;
 
-        self.increase_account_balance(sender_address, U256::from(gas_return_amount))?;
+        self.increase_account_balance(sender_address, wei_return_amount)?;
 
         // 3. Pay coinbase fee
         let coinbase_address = self.env.coinbase;
@@ -728,15 +727,14 @@ impl VM {
         let priority_fee_per_gas = self
             .env
             .gas_price
-            .low_u64()
-            .checked_sub(self.env.base_fee_per_gas.low_u64())
+            .checked_sub(self.env.base_fee_per_gas)
             .ok_or(VMError::GasPriceIsLowerThanBaseFee)?;
-        let coinbase_fee = gas_to_pay_coinbase
+        let coinbase_fee = U256::from(gas_to_pay_coinbase)
             .checked_mul(priority_fee_per_gas)
             .ok_or(VMError::BalanceOverflow)?;
 
-        if coinbase_fee != 0 {
-            self.increase_account_balance(coinbase_address, U256::from(coinbase_fee))?;
+        if coinbase_fee != U256::zero() {
+            self.increase_account_balance(coinbase_address, coinbase_fee)?;
         };
 
         // 4. Destruct addresses in selfdestruct set.

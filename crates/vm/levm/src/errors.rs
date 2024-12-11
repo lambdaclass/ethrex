@@ -168,7 +168,7 @@ pub enum InternalError {
     UtilsError,
     #[error("PC out of bounds")]
     PCOutOfBounds,
-    #[error("Undefined state")]
+    #[error("Undefined state: {0}")]
     UndefinedState(i32), // This error is temporarily for things that cause an undefined state.
 }
 
