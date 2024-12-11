@@ -293,11 +293,7 @@ impl VM {
     ) -> Result<OpcodeSuccess, VMError> {
         let address = word_to_address(current_call_frame.stack.pop()?);
         let dest_offset = current_call_frame.stack.pop()?;
-        let offset: usize = current_call_frame
-            .stack
-            .pop()?
-            .try_into()
-            .map_err(|_| VMError::VeryLargeNumber)?;
+        let offset = current_call_frame.stack.pop()?;
         let size: usize = current_call_frame
             .stack
             .pop()?
@@ -323,15 +319,20 @@ impl VM {
         }
 
         let mut data = vec![0u8; size];
-        for (i, byte) in account_info
-            .bytecode
-            .iter()
-            .skip(offset)
-            .take(size)
-            .enumerate()
-        {
-            if let Some(data_byte) = data.get_mut(i) {
-                *data_byte = *byte;
+        if offset < account_info.bytecode.len().into() {
+            let offset: usize = offset
+                .try_into()
+                .map_err(|_| VMError::Internal(InternalError::ConversionError))?;
+            for (i, byte) in account_info
+                .bytecode
+                .iter()
+                .skip(offset)
+                .take(size)
+                .enumerate()
+            {
+                if let Some(data_byte) = data.get_mut(i) {
+                    *data_byte = *byte;
+                }
             }
         }
 
