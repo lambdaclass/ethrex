@@ -25,6 +25,8 @@ pub enum EFTestRunnerError {
     FailedToEnsurePostState(TransactionReport, String),
     #[error("VM run mismatch: {0}")]
     VMExecutionMismatch(String),
+    #[error("Exception does not match the expected: {0}")]
+    ExpectedExceptionDoesNotMatchReceived(String),
     #[error("This is a bug: {0}")]
     Internal(#[from] InternalError),
 }

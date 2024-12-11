@@ -1,10 +1,76 @@
-use crate::types::{EFTest, EFTestAccessListItem, EFTests};
+use crate::types::{EFTest, EFTestAccessListItem, EFTests, TransactionExpectedException};
 use bytes::Bytes;
 use ethrex_core::{H256, U256};
-use serde::Deserialize;
+use serde::{Deserialize, Deserializer};
 use std::{collections::HashMap, str::FromStr};
 
 use crate::types::{EFTestRawTransaction, EFTestTransaction};
+
+pub fn deserialize_transaction_expected_exception<'de, D>(
+    deserializer: D,
+) -> Result<Option<Vec<TransactionExpectedException>>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let option: Option<String> = Option::deserialize(deserializer)?;
+
+    if let Some(value) = option {
+        let exceptions = value
+            .split('|')
+            .map(|s| match s.trim() {
+                "TransactionException.INITCODE_SIZE_EXCEEDED" => {
+                    TransactionExpectedException::InitcodeSizeExceeded
+                }
+                "TransactionException.NONCE_IS_MAX" => TransactionExpectedException::NonceIsMax,
+                "TransactionException.TYPE_3_TX_BLOB_COUNT_EXCEEDED" => {
+                    TransactionExpectedException::Type3TxBlobCountExceeded
+                }
+                "TransactionException.TYPE_3_TX_ZERO_BLOBS" => {
+                    TransactionExpectedException::Type3TxZeroBlobs
+                }
+                "TransactionException.TYPE_3_TX_CONTRACT_CREATION" => {
+                    TransactionExpectedException::Type3TxContractCreation
+                }
+                "TransactionException.TYPE_3_TX_INVALID_BLOB_VERSIONED_HASH" => {
+                    TransactionExpectedException::Type3TxInvalidBlobVersionedHash
+                }
+                "TransactionException.INTRINSIC_GAS_TOO_LOW" => {
+                    TransactionExpectedException::IntrinsicGasTooLow
+                }
+                "TransactionException.INSUFFICIENT_ACCOUNT_FUNDS" => {
+                    TransactionExpectedException::InsufficientAccountFunds
+                }
+                "TransactionException.SENDER_NOT_EOA" => TransactionExpectedException::SenderNotEoa,
+                "TransactionException.PRIORITY_GREATER_THAN_MAX_FEE_PER_GAS" => {
+                    TransactionExpectedException::PriorityGreaterThanMaxFeePerGas
+                }
+                "TransactionException.GAS_ALLOWANCE_EXCEEDED" => {
+                    TransactionExpectedException::GasAllowanceExceeded
+                }
+                "TransactionException.INSUFFICIENT_MAX_FEE_PER_GAS" => {
+                    TransactionExpectedException::InsufficientMaxFeePerGas
+                }
+                "TransactionException.RLP_INVALID_VALUE" => {
+                    TransactionExpectedException::RlpInvalidValue
+                }
+                "TransactionException.GASLIMIT_PRICE_PRODUCT_OVERFLOW" => {
+                    TransactionExpectedException::GasLimitPriceProductOverflow
+                }
+                "TransactionException.TYPE_3_TX_PRE_FORK" => {
+                    TransactionExpectedException::Type3TxPreFork
+                }
+                "TransactionException.INSUFFICIENT_MAX_FEE_PER_BLOB_GAS" => {
+                    TransactionExpectedException::InsufficientMaxFeePerBlobGas
+                }
+                other => panic!("Unexpected error type: {}", other), // Should not fail, TODO is to return an error
+            })
+            .collect();
+
+        Ok(Some(exceptions))
+    } else {
+        Ok(None)
+    }
+}
 
 pub fn deserialize_ef_post_value_indexes<'de, D>(
     deserializer: D,
@@ -194,7 +260,7 @@ impl<'de> Deserialize<'de> for EFTests {
 
             let mut transactions = HashMap::new();
 
-            // Note that inthis order of iteration, in an example tx with 2 datas, 2 gasLimit and 2 values, order would be
+            // Note that in this order of iteration, in an example tx with 2 datas, 2 gasLimit and 2 values, order would be
             // 111, 112, 121, 122, 211, 212, 221, 222
             for (data_id, data) in raw_tx.data.iter().enumerate() {
                 for (gas_limit_id, gas_limit) in raw_tx.gas_limit.iter().enumerate() {

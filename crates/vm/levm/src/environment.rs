@@ -1,4 +1,3 @@
-use crate::constants::TX_BASE_COST;
 use ethrex_core::{Address, H256, U256};
 
 #[derive(Debug, Default, Clone)]
@@ -29,7 +28,7 @@ impl Environment {
     pub fn default_from_address(origin: Address) -> Self {
         Self {
             origin,
-            consumed_gas: TX_BASE_COST,
+            consumed_gas: U256::zero(),
             refunded_gas: U256::default(),
             gas_limit: U256::MAX,
             block_number: Default::default(),

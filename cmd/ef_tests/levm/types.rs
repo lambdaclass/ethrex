@@ -2,8 +2,8 @@ use crate::{
     deserialize::{
         deserialize_access_lists, deserialize_ef_post_value_indexes,
         deserialize_h256_vec_optional_safe, deserialize_hex_bytes, deserialize_hex_bytes_vec,
-        deserialize_u256_optional_safe, deserialize_u256_safe,
-        deserialize_u256_valued_hashmap_safe, deserialize_u256_vec_safe,
+        deserialize_transaction_expected_exception, deserialize_u256_optional_safe,
+        deserialize_u256_safe, deserialize_u256_valued_hashmap_safe, deserialize_u256_vec_safe,
     },
     report::TestVector,
 };
@@ -187,9 +187,33 @@ impl EFTestPost {
 }
 
 #[derive(Debug, Deserialize, Clone)]
+pub enum TransactionExpectedException {
+    InitcodeSizeExceeded,
+    NonceIsMax,
+    Type3TxBlobCountExceeded,
+    Type3TxZeroBlobs,
+    Type3TxContractCreation,
+    Type3TxInvalidBlobVersionedHash,
+    IntrinsicGasTooLow,
+    InsufficientAccountFunds,
+    SenderNotEoa,
+    PriorityGreaterThanMaxFeePerGas,
+    GasAllowanceExceeded,
+    InsufficientMaxFeePerGas,
+    RlpInvalidValue,
+    GasLimitPriceProductOverflow,
+    Type3TxPreFork,
+    InsufficientMaxFeePerBlobGas,
+}
+
+#[derive(Debug, Deserialize, Clone)]
 pub struct EFTestPostValue {
-    #[serde(rename = "expectException")]
-    pub expect_exception: Option<String>,
+    #[serde(
+        rename = "expectException",
+        default,
+        deserialize_with = "deserialize_transaction_expected_exception"
+    )]
+    pub expect_exception: Option<Vec<TransactionExpectedException>>,
     pub hash: H256,
     #[serde(deserialize_with = "deserialize_ef_post_value_indexes")]
     pub indexes: HashMap<String, U256>,

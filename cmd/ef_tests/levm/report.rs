@@ -449,6 +449,17 @@ impl EFTestReport {
         );
     }
 
+    pub fn register_post_state_validation_error_mismatch(
+        &mut self,
+        reason: String,
+        failed_vector: TestVector,
+    ) {
+        self.failed_vectors.insert(
+            failed_vector,
+            EFTestRunnerError::ExpectedExceptionDoesNotMatchReceived(reason),
+        );
+    }
+
     pub fn register_re_run_report(&mut self, re_run_report: TestReRunReport) {
         self.re_run_report = Some(re_run_report);
     }
