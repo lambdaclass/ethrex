@@ -1,10 +1,14 @@
 use crate::{
     call_frame::CallFrame,
-    errors::{OpcodeSuccess, ResultReason, VMError},
-    gas_cost,
+    constants::{CREATE_DEPLOYMENT_FAIL, INIT_CODE_MAX_SIZE},
+    db::cache,
+    errors::{InternalError, OpcodeSuccess, OutOfGasError, ResultReason, TxResult, VMError},
+    gas_cost::{self, max_message_call_gas},
     memory::{self, calculate_memory_size},
-    vm::{word_to_address, VM},
+    vm::{address_to_word, word_to_address, VM},
+    Account,
 };
+use bytes::Bytes;
 use ethrex_core::{Address, U256};
 
 // System Operations (10)
@@ -441,5 +445,129 @@ impl VM {
         }
 
         Ok(OpcodeSuccess::Result(ResultReason::SelfDestruct))
+    }
+
+    /// Common behavior for CREATE and CREATE2 opcodes
+    ///
+    /// Could be used for CREATE type transactions
+    // TODO: Improve and test REVERT behavior for CREATE. Issue: https://github.com/lambdaclass/ethrex/issues/1061
+    pub fn create(
+        &mut self,
+        value_in_wei_to_send: U256,
+        code_offset_in_memory: U256,
+        code_size_in_memory: usize,
+        salt: Option<U256>,
+        current_call_frame: &mut CallFrame,
+    ) -> Result<OpcodeSuccess, VMError> {
+        // 1. Cant be called in a static context
+        if current_call_frame.is_static {
+            return Err(VMError::OpcodeNotAllowedInStaticContext);
+        }
+
+        // 2. Cant exceed init code max size
+        if code_size_in_memory > INIT_CODE_MAX_SIZE {
+            return Err(VMError::OutOfGas(OutOfGasError::ConsumedGasOverflow));
+        }
+        let sender_address = current_call_frame.to;
+
+        let (sender_account_info, _sender_address_was_cold) = self.access_account(sender_address);
+
+        // Push 0 to stack if sender doesn't have enough value.
+        if sender_account_info.balance < value_in_wei_to_send {
+            current_call_frame
+                .stack
+                .push(U256::from(CREATE_DEPLOYMENT_FAIL))?;
+            return Ok(OpcodeSuccess::Continue);
+        }
+
+        self.decrease_account_balance(sender_address, value_in_wei_to_send)?;
+
+        let new_depth = current_call_frame
+            .depth
+            .checked_add(1)
+            .ok_or(InternalError::ArithmeticOperationOverflow)?;
+
+        if new_depth > 1024 {
+            // Push 0 to stack if depth limit has been reached.
+            current_call_frame
+                .stack
+                .push(U256::from(CREATE_DEPLOYMENT_FAIL))?;
+            return Ok(OpcodeSuccess::Continue);
+        }
+
+        let code = Bytes::from(
+            memory::load_range(
+                &mut current_call_frame.memory,
+                code_offset_in_memory,
+                code_size_in_memory,
+            )?
+            .to_vec(),
+        );
+
+        let new_address = match salt {
+            Some(salt) => Self::calculate_create2_address(sender_address, &code, salt)?,
+            None => Self::calculate_create_address(sender_address, sender_account_info.nonce)?,
+        };
+
+        // Note that nonce is incremented AFTER calculating create address.
+        if self.increment_account_nonce(sender_address).is_err() {
+            // Push 0 to stack if sender has max nonce
+            current_call_frame
+                .stack
+                .push(U256::from(CREATE_DEPLOYMENT_FAIL))?;
+            return Ok(OpcodeSuccess::Continue);
+        }
+
+        if self.get_account(new_address).has_code_or_nonce() {
+            // Push 0 to stack if account has code or nonce.
+            current_call_frame
+                .stack
+                .push(U256::from(CREATE_DEPLOYMENT_FAIL))?;
+            return Ok(OpcodeSuccess::Continue);
+        }
+
+        let new_account = Account::new(value_in_wei_to_send, code.clone(), 1, Default::default());
+        cache::insert_account(&mut self.cache, new_address, new_account);
+
+        let max_message_call_gas = max_message_call_gas(current_call_frame)?;
+
+        let mut new_call_frame = CallFrame::new(
+            sender_address,
+            new_address,
+            new_address,
+            code,
+            value_in_wei_to_send,
+            Bytes::new(),
+            false,
+            max_message_call_gas,
+            U256::zero(),
+            new_depth,
+        );
+
+        self.accrued_substate.created_accounts.insert(new_address);
+        let tx_report = self.execute(&mut new_call_frame)?;
+
+        current_call_frame.gas_used = current_call_frame
+            .gas_used
+            .checked_add(tx_report.gas_used.into())
+            .ok_or(VMError::OutOfGas(OutOfGasError::ConsumedGasOverflow))?;
+        current_call_frame.logs.extend(tx_report.logs);
+
+        match tx_report.result {
+            TxResult::Success => {
+                self.update_account_bytecode(new_address, tx_report.output)?;
+                current_call_frame
+                    .stack
+                    .push(address_to_word(new_address))?;
+            }
+            TxResult::Revert(_) => {
+                // Push 0 to stack
+                current_call_frame
+                    .stack
+                    .push(U256::from(CREATE_DEPLOYMENT_FAIL))?;
+            }
+        }
+
+        Ok(OpcodeSuccess::Continue)
     }
 }

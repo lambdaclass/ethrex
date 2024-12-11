@@ -24,6 +24,10 @@ impl AccountInfo {
     pub fn bytecode_hash(&self) -> H256 {
         keccak(self.bytecode.as_ref()).0.into()
     }
+
+    pub fn has_nonce(&self) -> bool {
+        self.nonce != 0
+    }
 }
 
 #[derive(Clone, Default, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -64,8 +68,16 @@ impl Account {
         }
     }
 
+    pub fn has_nonce(&self) -> bool {
+        self.info.has_nonce()
+    }
+
     pub fn has_code(&self) -> bool {
         self.info.has_code()
+    }
+
+    pub fn has_code_or_nonce(&self) -> bool {
+        self.has_code() || self.has_nonce()
     }
 
     pub fn bytecode_hash(&self) -> H256 {

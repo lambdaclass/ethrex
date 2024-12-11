@@ -747,3 +747,19 @@ pub fn fake_exponential(factor: u64, numerator: u64, denominator: u64) -> Result
             .ok_or(InternalError::ArithmeticOperationOverflow)?,
     ))
 }
+
+pub fn max_message_call_gas(current_call_frame: &CallFrame) -> Result<U256, VMError> {
+    let mut potential_remaining_gas = current_call_frame
+        .gas_limit
+        .checked_sub(current_call_frame.gas_used)
+        .ok_or(VMError::OutOfGas(OutOfGasError::MaxGasLimitExceeded))?;
+
+    potential_remaining_gas =
+        potential_remaining_gas
+            .checked_sub(potential_remaining_gas.checked_div(64.into()).ok_or(
+                VMError::Internal(InternalError::ArithmeticOperationOverflow),
+            )?)
+            .ok_or(VMError::OutOfGas(OutOfGasError::MaxGasLimitExceeded))?;
+
+    Ok(potential_remaining_gas)
+}
