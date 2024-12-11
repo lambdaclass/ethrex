@@ -13,6 +13,7 @@ use ethrex_core::{
     types::{
         BlobsBundle, EIP1559Transaction, EIP4844Transaction, GenericTransaction,
         PrivilegedL2Transaction, PrivilegedTxType, Signable, TxKind, TxType,
+        WrappedEIP4844Transaction,
     },
     H160,
 };
@@ -21,7 +22,6 @@ use ethrex_rpc::{
     types::{
         block::RpcBlock,
         receipt::{RpcLog, RpcReceipt},
-        transaction::WrappedEIP4844Transaction,
     },
     utils::{RpcErrorResponse, RpcRequest, RpcRequestId, RpcSuccessResponse},
 };

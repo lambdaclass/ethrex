@@ -17,6 +17,8 @@ use ethrex_rlp::{
     structs::{Decoder, Encoder},
 };
 
+use super::BlobsBundle;
+
 // The `#[serde(untagged)]` attribute allows the `Transaction` enum to be serialized without
 // a tag indicating the variant type. This means that Serde will serialize the enum's variants
 // directly according to the structure of the variant itself.
@@ -33,6 +35,116 @@ pub enum Transaction {
     EIP1559Transaction(EIP1559Transaction),
     EIP4844Transaction(EIP4844Transaction),
     PrivilegedL2Transaction(PrivilegedL2Transaction),
+}
+
+/// The same as a Transaction enum, only that blob transactions are in wrapped format, including
+/// the blobs bundle.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum P2PTransaction {
+    LegacyTransaction(LegacyTransaction),
+    EIP2930Transaction(EIP2930Transaction),
+    EIP1559Transaction(EIP1559Transaction),
+    WrappedEIP4844Transaction(WrappedEIP4844Transaction),
+    PrivilegedL2Transaction(PrivilegedL2Transaction),
+}
+
+impl TryInto<Transaction> for P2PTransaction {
+    type Error = String;
+
+    fn try_into(self) -> Result<Transaction, Self::Error> {
+        match self {
+            P2PTransaction::LegacyTransaction(itx) => Ok(Transaction::LegacyTransaction(itx)),
+            P2PTransaction::EIP2930Transaction(itx) => Ok(Transaction::EIP2930Transaction(itx)),
+            P2PTransaction::EIP1559Transaction(itx) => Ok(Transaction::EIP1559Transaction(itx)),
+            P2PTransaction::PrivilegedL2Transaction(itx) => {
+                Ok(Transaction::PrivilegedL2Transaction(itx))
+            }
+            _ => Err("Can't convert blob p2p transaction into regular transaction. Blob bundle would be lost.".to_string()),
+        }
+    }
+}
+
+impl RLPEncode for P2PTransaction {
+    fn encode(&self, buf: &mut dyn bytes::BufMut) {
+        match self {
+            P2PTransaction::LegacyTransaction(t) => t.encode(buf),
+            tx => Bytes::copy_from_slice(&tx.encode_canonical_to_vec()).encode(buf),
+        };
+    }
+}
+
+impl RLPDecode for P2PTransaction {
+    fn decode_unfinished(rlp: &[u8]) -> Result<(Self, &[u8]), RLPDecodeError> {
+        if is_encoded_as_bytes(rlp)? {
+            // Adjust the encoding to get the payload
+            let payload = get_rlp_bytes_item_payload(rlp);
+            let tx_type = payload.first().unwrap();
+            let tx_encoding = &payload[1..];
+            // Look at the first byte to check if it corresponds to a TransactionType
+            match *tx_type {
+                // Legacy
+                0x0 => LegacyTransaction::decode_unfinished(tx_encoding)
+                    .map(|(tx, rem)| (P2PTransaction::LegacyTransaction(tx), rem)), // TODO: check if this is a real case scenario
+                // EIP2930
+                0x1 => EIP2930Transaction::decode_unfinished(tx_encoding)
+                    .map(|(tx, rem)| (P2PTransaction::EIP2930Transaction(tx), rem)),
+                // EIP1559
+                0x2 => EIP1559Transaction::decode_unfinished(tx_encoding)
+                    .map(|(tx, rem)| (P2PTransaction::EIP1559Transaction(tx), rem)),
+                // EIP4844
+                0x3 => WrappedEIP4844Transaction::decode_unfinished(tx_encoding)
+                    .map(|(tx, rem)| (P2PTransaction::WrappedEIP4844Transaction(tx), rem)),
+                // PriviligedL2
+                0x7e => PrivilegedL2Transaction::decode_unfinished(tx_encoding)
+                    .map(|(tx, rem)| (P2PTransaction::PrivilegedL2Transaction(tx), rem)),
+                ty => Err(RLPDecodeError::Custom(format!(
+                    "Invalid transaction type: {ty}"
+                ))),
+            }
+        } else {
+            // LegacyTransaction
+            LegacyTransaction::decode_unfinished(rlp)
+                .map(|(tx, rem)| (P2PTransaction::LegacyTransaction(tx), rem))
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct WrappedEIP4844Transaction {
+    pub tx: EIP4844Transaction,
+    pub blobs_bundle: BlobsBundle,
+}
+
+impl RLPEncode for WrappedEIP4844Transaction {
+    fn encode(&self, buf: &mut dyn bytes::BufMut) {
+        let encoder = Encoder::new(buf);
+        encoder
+            .encode_field(&self.tx)
+            .encode_field(&self.blobs_bundle.blobs)
+            .encode_field(&self.blobs_bundle.commitments)
+            .encode_field(&self.blobs_bundle.proofs)
+            .finish();
+    }
+}
+
+impl RLPDecode for WrappedEIP4844Transaction {
+    fn decode_unfinished(rlp: &[u8]) -> Result<(WrappedEIP4844Transaction, &[u8]), RLPDecodeError> {
+        let decoder = Decoder::new(rlp)?;
+        let (tx, decoder) = decoder.decode_field("tx")?;
+        let (blobs, decoder) = decoder.decode_field("blobs")?;
+        let (commitments, decoder) = decoder.decode_field("commitments")?;
+        let (proofs, decoder) = decoder.decode_field("proofs")?;
+
+        let wrapped = WrappedEIP4844Transaction {
+            tx,
+            blobs_bundle: BlobsBundle {
+                blobs,
+                commitments,
+                proofs,
+            },
+        };
+        Ok((wrapped, decoder.finish()?))
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Default)]
@@ -1248,6 +1360,39 @@ mod canonic_encoding {
         /// Transactions can be encoded in the following formats:
         /// A) `TransactionType || Transaction` (Where Transaction type is an 8-bit number between 0 and 0x7f, and Transaction is an rlp encoded transaction of type TransactionType)
         /// B) `LegacyTransaction` (An rlp encoded LegacyTransaction)
+        pub fn encode_canonical_to_vec(&self) -> Vec<u8> {
+            let mut buf = Vec::new();
+            self.encode_canonical(&mut buf);
+            buf
+        }
+    }
+
+    impl P2PTransaction {
+        pub fn tx_type(&self) -> TxType {
+            match self {
+                P2PTransaction::LegacyTransaction(_) => TxType::Legacy,
+                P2PTransaction::EIP2930Transaction(_) => TxType::EIP2930,
+                P2PTransaction::EIP1559Transaction(_) => TxType::EIP1559,
+                P2PTransaction::WrappedEIP4844Transaction(_) => TxType::EIP4844,
+                P2PTransaction::PrivilegedL2Transaction(_) => TxType::Privileged,
+            }
+        }
+
+        pub fn encode_canonical(&self, buf: &mut dyn bytes::BufMut) {
+            match self {
+                // Legacy transactions don't have a prefix
+                P2PTransaction::LegacyTransaction(_) => {}
+                _ => buf.put_u8(self.tx_type() as u8),
+            }
+            match self {
+                P2PTransaction::LegacyTransaction(t) => t.encode(buf),
+                P2PTransaction::EIP2930Transaction(t) => t.encode(buf),
+                P2PTransaction::EIP1559Transaction(t) => t.encode(buf),
+                P2PTransaction::WrappedEIP4844Transaction(t) => t.encode(buf),
+                P2PTransaction::PrivilegedL2Transaction(t) => t.encode(buf),
+            };
+        }
+
         pub fn encode_canonical_to_vec(&self) -> Vec<u8> {
             let mut buf = Vec::new();
             self.encode_canonical(&mut buf);
