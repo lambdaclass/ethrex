@@ -598,8 +598,8 @@ pub fn call(
     )?;
     let positive_value_cost = if !value_to_transfer.is_zero() {
         CALL_POSITIVE_VALUE
-            .checked_add(CALL_POSITIVE_VALUE_STIPEND)
-            .ok_or(InternalError::ArithmeticOperationOverflow)?
+            .checked_sub(CALL_POSITIVE_VALUE_STIPEND)
+            .ok_or(InternalError::ArithmeticOperationUnderflow)?
     } else {
         U256::zero()
     };
@@ -640,8 +640,8 @@ pub fn callcode(
     )?;
     let positive_value_cost = if !value_to_transfer.is_zero() {
         CALLCODE_POSITIVE_VALUE
-            .checked_add(CALLCODE_POSITIVE_VALUE_STIPEND)
-            .ok_or(InternalError::ArithmeticOperationOverflow)?
+            .checked_sub(CALLCODE_POSITIVE_VALUE_STIPEND)
+            .ok_or(InternalError::ArithmeticOperationUnderflow)?
     } else {
         U256::zero()
     };

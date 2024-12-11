@@ -134,11 +134,7 @@ impl VM {
     ) -> Result<OpcodeSuccess, VMError> {
         self.increase_consumed_gas(current_call_frame, gas_cost::SELFBALANCE)?;
 
-        // the current account should have been cached when the contract was called
-        let balance = self
-            .get_account(current_call_frame.code_address)
-            .info
-            .balance;
+        let balance = self.get_account(current_call_frame.to).info.balance;
 
         current_call_frame.stack.push(balance)?;
         Ok(OpcodeSuccess::Continue)
