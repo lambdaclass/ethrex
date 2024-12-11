@@ -138,6 +138,7 @@ impl VM {
 
         let mut default_touched_storage_slots: HashMap<Address, HashSet<H256>> = HashMap::new();
 
+        // Add access lists contents to cache
         for (address, keys) in access_list.clone() {
             default_touched_accounts.insert(address);
             let mut warm_slots = HashSet::new();
@@ -145,6 +146,12 @@ impl VM {
                 warm_slots.insert(slot);
             }
             default_touched_storage_slots.insert(address, warm_slots);
+        }
+
+        // Add precompiled contracts addresses to cache.
+        // TODO: Use the addresses from precompiles.rs in a future
+        for i in 1..10 {
+            default_touched_accounts.insert(Address::from_low_u64_be(i));
         }
 
         match to {
