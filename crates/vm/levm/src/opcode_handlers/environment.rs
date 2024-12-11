@@ -384,20 +384,19 @@ impl VM {
 
         let sub_return_data_len = current_call_frame.sub_return_data.len();
 
-        if returndata_offset >= sub_return_data_len {
-            return Err(VMError::VeryLargeNumber); // Maybe can create a new error instead of using this one
-        }
 
         let mut data = vec![0u8; size];
-        for (i, byte) in current_call_frame
-            .sub_return_data
-            .iter()
-            .skip(returndata_offset)
-            .take(size)
-            .enumerate()
-        {
-            if let Some(data_byte) = data.get_mut(i) {
-                *data_byte = *byte;
+        if returndata_offset <= sub_return_data_len {
+            for (i, byte) in current_call_frame
+                .sub_return_data
+                .iter()
+                .skip(returndata_offset)
+                .take(size)
+                .enumerate()
+            {
+                if let Some(data_byte) = data.get_mut(i) {
+                    *data_byte = *byte;
+                }
             }
         }
 
