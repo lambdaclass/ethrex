@@ -22,11 +22,7 @@ impl VM {
             return Err(VMError::OpcodeNotAllowedInStaticContext);
         }
 
-        let offset: usize = current_call_frame
-            .stack
-            .pop()?
-            .try_into()
-            .map_err(|_| VMError::VeryLargeNumber)?;
+        let offset = current_call_frame.stack.pop()?;
         let size = current_call_frame
             .stack
             .pop()?

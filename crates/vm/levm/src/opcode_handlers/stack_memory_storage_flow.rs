@@ -58,11 +58,7 @@ impl VM {
         &mut self,
         current_call_frame: &mut CallFrame,
     ) -> Result<OpcodeSuccess, VMError> {
-        let offset: usize = current_call_frame
-            .stack
-            .pop()?
-            .try_into()
-            .map_err(|_| VMError::VeryLargeNumber)?;
+        let offset = current_call_frame.stack.pop()?;
 
         let new_memory_size = calculate_memory_size(offset, WORD_SIZE_IN_BYTES_USIZE)?;
 
@@ -83,11 +79,7 @@ impl VM {
         &mut self,
         current_call_frame: &mut CallFrame,
     ) -> Result<OpcodeSuccess, VMError> {
-        let offset: usize = current_call_frame
-            .stack
-            .pop()?
-            .try_into()
-            .map_err(|_err| VMError::VeryLargeNumber)?;
+        let offset = current_call_frame.stack.pop()?;
 
         let new_memory_size = calculate_memory_size(offset, WORD_SIZE_IN_BYTES_USIZE)?;
 
@@ -111,11 +103,7 @@ impl VM {
         current_call_frame: &mut CallFrame,
     ) -> Result<OpcodeSuccess, VMError> {
         // TODO: modify expansion cost to accept U256
-        let offset: usize = current_call_frame
-            .stack
-            .pop()?
-            .try_into()
-            .map_err(|_| VMError::VeryLargeNumber)?;
+        let offset = current_call_frame.stack.pop()?;
 
         let new_memory_size = calculate_memory_size(offset, 1)?;
 
@@ -264,16 +252,8 @@ impl VM {
         &mut self,
         current_call_frame: &mut CallFrame,
     ) -> Result<OpcodeSuccess, VMError> {
-        let dest_offset: usize = current_call_frame
-            .stack
-            .pop()?
-            .try_into()
-            .map_err(|_| VMError::VeryLargeNumber)?;
-        let src_offset: usize = current_call_frame
-            .stack
-            .pop()?
-            .try_into()
-            .map_err(|_| VMError::VeryLargeNumber)?;
+        let dest_offset = current_call_frame.stack.pop()?;
+        let src_offset = current_call_frame.stack.pop()?;
         let size: usize = current_call_frame
             .stack
             .pop()?

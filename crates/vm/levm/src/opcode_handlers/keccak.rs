@@ -16,11 +16,7 @@ impl VM {
         &mut self,
         current_call_frame: &mut CallFrame,
     ) -> Result<OpcodeSuccess, VMError> {
-        let offset: usize = current_call_frame
-            .stack
-            .pop()?
-            .try_into()
-            .map_err(|_| VMError::VeryLargeNumber)?;
+        let offset = current_call_frame.stack.pop()?;
         let size: usize = current_call_frame
             .stack
             .pop()?
