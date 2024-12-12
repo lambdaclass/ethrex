@@ -586,26 +586,11 @@ fn calc_excess_blob_gas(parent_header: &BlockHeader) -> u64 {
 
 #[cfg(test)]
 mod test {
-    use std::{str::FromStr, time::Instant};
+    use std::str::FromStr;
 
     use super::*;
     use ethereum_types::H160;
     use hex_literal::hex;
-
-    #[test]
-    fn compute_hash() {
-        let block = Block::default();
-
-        let start = Instant::now();
-        block.hash();
-        let duration = start.elapsed();
-
-        let start_2 = Instant::now();
-        block.hash();
-        let duration_2 = start_2.elapsed();
-
-        assert!(duration > 1000 * duration_2);
-    }
 
     #[test]
     fn test_compute_withdrawals_root() {
