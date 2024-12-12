@@ -201,11 +201,21 @@ impl VM {
             return Ok(OpcodeSuccess::Continue);
         }
 
-        let multiplicand = multiplicand.checked_rem(modulus).unwrap_or_default();
-        let multiplier = multiplier.checked_rem(modulus).unwrap_or_default();
+        let multiplicand: U512 = multiplicand.into();
+        let multiplier: U512 = multiplier.into();
 
-        let (product, _overflowed) = multiplicand.overflowing_mul(multiplier);
-        let product_mod = product.checked_rem(modulus).unwrap_or_default();
+        let product = multiplicand
+            .checked_mul(multiplier)
+            .ok_or(VMError::Internal(
+                InternalError::ArithmeticOperationOverflow,
+            ))?;
+        let product_mod: U256 = product
+            .checked_rem(modulus.into())
+            .ok_or(VMError::Internal(
+                InternalError::ArithmeticOperationOverflow,
+            ))?
+            .try_into()
+            .map_err(|_err| VMError::Internal(InternalError::ArithmeticOperationOverflow))?;
 
         current_call_frame.stack.push(product_mod)?;
 
