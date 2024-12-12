@@ -940,6 +940,11 @@ impl VM {
                     .push(U256::from(SUCCESS_FOR_CALL))?;
             }
             TxResult::Revert(_) => {
+                // Revert value transfer
+                if should_transfer_value {
+                    self.decrease_account_balance(to, value)?;
+                    self.increase_account_balance(msg_sender, value)?;
+                }
                 // Push 0 to stack
                 current_call_frame.stack.push(U256::from(REVERT_FOR_CALL))?;
             }
