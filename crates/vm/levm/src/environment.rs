@@ -5,7 +5,6 @@ pub struct Environment {
     /// The sender address of the transaction that originated
     /// this execution.
     pub origin: Address,
-    pub consumed_gas: U256,
     pub refunded_gas: U256,
     pub gas_limit: U256,
     pub block_number: U256,
@@ -28,7 +27,6 @@ impl Environment {
     pub fn default_from_address(origin: Address) -> Self {
         Self {
             origin,
-            consumed_gas: U256::zero(),
             refunded_gas: U256::default(),
             gas_limit: U256::MAX,
             block_number: Default::default(),

@@ -396,7 +396,6 @@ impl VM {
                             .saturating_sub(current_call_frame.gas_used);
                         current_call_frame.gas_used =
                             current_call_frame.gas_used.saturating_add(left_gas);
-                        self.env.consumed_gas = self.env.consumed_gas.saturating_add(left_gas);
                     }
 
                     self.restore_state(backup_db, backup_substate, backup_refunded_gas);
@@ -1115,11 +1114,6 @@ impl VM {
         }
 
         current_call_frame.gas_used = potential_consumed_gas;
-        self.env.consumed_gas = self
-            .env
-            .consumed_gas
-            .checked_add(gas)
-            .ok_or(OutOfGasError::ConsumedGasOverflow)?;
 
         Ok(())
     }
