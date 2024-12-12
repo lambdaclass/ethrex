@@ -520,7 +520,12 @@ impl fmt::Display for ComparisonReport {
                 .iter()
                 .map(|(key, value)| {
                     let storage_slot = StorageSlot {
-                        original_value: *value,
+                        original_value: initial_account
+                            .storage
+                            .get(key)
+                            .cloned()
+                            .unwrap_or_default()
+                            .original_value,
                         current_value: *value,
                     };
                     (*key, storage_slot)
@@ -556,7 +561,11 @@ impl fmt::Display for ComparisonReport {
                 writeln!(
                     f,
                     "      Code updated: {initial_code}, {updated_code}",
-                    initial_code = hex::encode(&initial_account.info.bytecode),
+                    initial_code = if initial_account.info.bytecode.is_empty() {
+                        "was empty".to_string()
+                    } else {
+                        hex::encode(&initial_account.info.bytecode)
+                    },
                     updated_code = hex::encode(&updated_account.info.bytecode)
                 )?;
                 updates += 1;
@@ -576,6 +585,84 @@ impl fmt::Display for ComparisonReport {
         for revm_updated_account_only in self.revm_updated_accounts_only.iter() {
             writeln!(f, "  {revm_updated_account_only:#x}:")?;
             writeln!(f, "    Was updated in REVM but not in LEVM")?;
+            let initial_account = self
+                .initial_accounts
+                .get(revm_updated_account_only)
+                .cloned()
+                .unwrap_or_default();
+            let updated_account_update = self
+                .revm_account_updates
+                .iter()
+                .find(|account_update| &account_update.address == revm_updated_account_only)
+                .unwrap();
+            let updated_account_storage = updated_account_update
+                .added_storage
+                .iter()
+                .map(|(key, value)| {
+                    let storage_slot = StorageSlot {
+                        original_value: initial_account
+                            .storage
+                            .get(key)
+                            .cloned()
+                            .unwrap_or_default()
+                            .original_value,
+                        current_value: *value,
+                    };
+                    (*key, storage_slot)
+                })
+                .collect();
+            let Some(updated_account_info) = updated_account_update.info.clone() else {
+                continue;
+            };
+            let updated_account = Account::new(
+                updated_account_info.balance,
+                updated_account_update.code.clone().unwrap_or_default(),
+                updated_account_info.nonce,
+                updated_account_storage,
+            );
+            let mut updates = 0;
+            if initial_account.info.balance != updated_account.info.balance {
+                writeln!(
+                    f,
+                    "      Balance updated: {initial_balance} -> {updated_balance}",
+                    initial_balance = initial_account.info.balance,
+                    updated_balance = updated_account.info.balance
+                )?;
+                updates += 1;
+            }
+            if initial_account.info.nonce != updated_account.info.nonce {
+                writeln!(
+                    f,
+                    "      Nonce updated: {initial_nonce} -> {updated_nonce}",
+                    initial_nonce = initial_account.info.nonce,
+                    updated_nonce = updated_account.info.nonce
+                )?;
+                updates += 1;
+            }
+            if initial_account.info.bytecode != updated_account.info.bytecode {
+                writeln!(
+                    f,
+                    "      Code updated: {initial_code}, {updated_code}",
+                    initial_code = if initial_account.info.bytecode.is_empty() {
+                        "was empty".to_string()
+                    } else {
+                        hex::encode(&initial_account.info.bytecode)
+                    },
+                    updated_code = hex::encode(&updated_account.info.bytecode)
+                )?;
+                updates += 1;
+            }
+            for (added_storage_address, added_storage_slot) in updated_account.storage.iter() {
+                writeln!(
+                    f,
+                    "      Storage slot added: {added_storage_address}: {} -> {}",
+                    added_storage_slot.original_value, added_storage_slot.current_value
+                )?;
+                updates += 1;
+            }
+            if updates == 0 {
+                writeln!(f, "      No changes")?;
+            }
         }
         for shared_updated_account in self.shared_updated_accounts.iter() {
             writeln!(f, "  {shared_updated_account:#x}:")?;
@@ -656,6 +743,27 @@ impl fmt::Display for ComparisonReport {
                 }
                 // We ignore the case (Some(_), None) because we always add the account info to the account update.
                 (Some(_), None) | (None, None) => {}
+            }
+
+            for (levm_key, levm_value) in levm_updated_account.added_storage.iter() {
+                if let Some(revm_value) = revm_updated_account.added_storage.get(levm_key) {
+                    if revm_value != levm_value {
+                        writeln!(f, "      Storage slot added {levm_key} -> value mismatch REVM: {revm_value} LEVM: {levm_value}")?;
+                        diffs += 1;
+                    }
+                } else {
+                    writeln!(f, "      Storage slot added key is in LEVM but not in REVM {levm_key} -> {levm_value}")?;
+                    diffs += 1;
+                }
+            }
+            for (revm_key, revm_value) in revm_updated_account.added_storage.iter() {
+                if !levm_updated_account.added_storage.contains_key(revm_key) {
+                    writeln!(
+                        f,
+                        "      Storage slot added key is in REVM but not in LEVM: {revm_key} -> {revm_value}"
+                    )?;
+                    diffs += 1;
+                }
             }
 
             if diffs == 0 {
