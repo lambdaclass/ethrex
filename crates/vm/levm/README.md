@@ -29,6 +29,7 @@ Features:
 
 ### Documentation
 [CallFrame](./docs/callframe.md)
+[FAQ](./docs/faq.md)
 
 ### Testing
 To run the project's tests, do `make test`.
