@@ -95,6 +95,12 @@ impl CallFrame {
         }
     }
 
+    pub fn assign_bytecode(&mut self, bytecode: Bytes) {
+        self.bytecode = bytecode;
+        self.valid_jump_destinations =
+            get_valid_jump_destinations(&self.bytecode).unwrap_or_default();
+    }
+
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         msg_sender: Address,
