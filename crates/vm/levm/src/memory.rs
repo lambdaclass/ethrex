@@ -13,7 +13,7 @@ pub fn try_resize(memory: &mut Memory, unchecked_new_size: usize) -> Result<(), 
 
     let new_size = unchecked_new_size
         .checked_next_multiple_of(WORD_SIZE_IN_BYTES_USIZE)
-        .ok_or(VMError::OutOfOffset)?;
+        .ok_or(VMError::OutOfBounds)?;
 
     if new_size > memory.len() {
         let additional_size = new_size.checked_sub(memory.len()).ok_or(VMError::Internal(
@@ -41,18 +41,18 @@ pub fn load_range(memory: &mut Memory, offset: U256, size: usize) -> Result<&[u8
 
     try_resize(
         memory,
-        offset.checked_add(size).ok_or(VMError::OutOfOffset)?,
+        offset.checked_add(size).ok_or(VMError::OutOfBounds)?,
     )?;
 
     memory
-        .get(offset..offset.checked_add(size).ok_or(VMError::OutOfOffset)?)
-        .ok_or(VMError::OutOfOffset)
+        .get(offset..offset.checked_add(size).ok_or(VMError::OutOfBounds)?)
+        .ok_or(VMError::OutOfBounds)
 }
 
 pub fn try_store_word(memory: &mut Memory, offset: U256, word: U256) -> Result<(), VMError> {
     let new_size: usize = offset
         .checked_add(WORD_SIZE_IN_BYTES_USIZE.into())
-        .ok_or(VMError::OutOfOffset)?
+        .ok_or(VMError::OutOfBounds)?
         .try_into()
         .map_err(|_err| VMError::VeryLargeNumber)?;
 
@@ -65,7 +65,7 @@ pub fn try_store_word(memory: &mut Memory, offset: U256, word: U256) -> Result<(
 pub fn try_store_data(memory: &mut Memory, offset: U256, data: &[u8]) -> Result<(), VMError> {
     let new_size = offset
         .checked_add(data.len().into())
-        .ok_or(VMError::OutOfOffset)?
+        .ok_or(VMError::OutOfBounds)?
         .try_into()
         .map_err(|_err| VMError::VeryLargeNumber)?;
     try_resize(memory, new_size)?;
@@ -84,7 +84,7 @@ pub fn try_store_range(
 
     let new_size = offset
         .checked_add(size.into())
-        .ok_or(VMError::OutOfOffset)?
+        .ok_or(VMError::OutOfBounds)?
         .try_into()
         .map_err(|_err| VMError::VeryLargeNumber)?;
     try_resize(memory, new_size)?;
@@ -111,9 +111,9 @@ fn try_store(
                 at_offset
                     ..at_offset
                         .checked_add(data_size)
-                        .ok_or(VMError::OutOfOffset)?,
+                        .ok_or(VMError::OutOfBounds)?,
             )
-            .ok_or(VMError::OutOfOffset)?
+            .ok_or(VMError::OutOfBounds)?
             .iter_mut(),
     ) {
         *memory_slot = *byte_to_store;
@@ -139,21 +139,21 @@ pub fn try_copy_within(
         .map_err(|_err| VMError::VeryLargeNumber)?;
     try_resize(
         memory,
-        to_offset.checked_add(size).ok_or(VMError::OutOfOffset)?,
+        to_offset.checked_add(size).ok_or(VMError::OutOfBounds)?,
     )?;
 
     let mut temporary_buffer = vec![0u8; size];
     for i in 0..size {
         if let Some(temporary_buffer_byte) = temporary_buffer.get_mut(i) {
             *temporary_buffer_byte = *memory
-                .get(from_offset.checked_add(i).ok_or(VMError::OutOfOffset)?)
+                .get(from_offset.checked_add(i).ok_or(VMError::OutOfBounds)?)
                 .unwrap_or(&0u8);
         }
     }
 
     for i in 0..size {
         if let Some(memory_byte) =
-            memory.get_mut(to_offset.checked_add(i).ok_or(VMError::OutOfOffset)?)
+            memory.get_mut(to_offset.checked_add(i).ok_or(VMError::OutOfBounds)?)
         {
             *memory_byte = *temporary_buffer.get(i).unwrap_or(&0u8);
         }
@@ -214,5 +214,5 @@ pub fn calculate_memory_size(offset: U256, size: usize) -> Result<usize, VMError
     offset
         .checked_add(size)
         .and_then(|sum| sum.checked_next_multiple_of(WORD_SIZE_IN_BYTES_USIZE))
-        .ok_or(VMError::OutOfOffset)
+        .ok_or(VMError::OutOfBounds)
 }

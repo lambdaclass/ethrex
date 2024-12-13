@@ -154,7 +154,7 @@ fn test_non_compliance_returndatacopy() {
         new_vm_with_bytecode(Bytes::copy_from_slice(&[56, 56, 56, 56, 56, 56, 62, 56])).unwrap();
     let mut current_call_frame = vm.call_frames.pop().unwrap();
     let txreport = vm.execute(&mut current_call_frame).unwrap();
-    assert_eq!(txreport.result, TxResult::Revert(VMError::VeryLargeNumber));
+    assert_eq!(txreport.result, TxResult::Revert(VMError::OutOfBounds));
 }
 
 #[test]

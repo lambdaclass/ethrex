@@ -1,7 +1,7 @@
 use crate::{
     call_frame::CallFrame,
     errors::{InternalError, OpcodeSuccess, VMError},
-    gas_cost,
+    gas_cost::{self},
     memory::{self, calculate_memory_size},
     vm::{word_to_address, VM},
 };
@@ -385,10 +385,16 @@ impl VM {
 
         let sub_return_data_len = current_call_frame.sub_return_data.len();
 
-        if returndata_offset >= sub_return_data_len {
-            return Err(VMError::VeryLargeNumber); // Maybe can create a new error instead of using this one
+        let copy_limit = returndata_offset
+            .checked_add(size)
+            .ok_or(VMError::VeryLargeNumber)?;
+
+        if copy_limit > sub_return_data_len {
+            return Err(VMError::OutOfBounds);
         }
 
+        // Actually we don't need to fill with zeros for out of bounds bytes, this works but is overkill because of the previous validations.
+        // I would've used copy_from_slice but it can panic.
         let mut data = vec![0u8; size];
         for (i, byte) in current_call_frame
             .sub_return_data
