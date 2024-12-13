@@ -12,8 +12,8 @@ use crate::{
         TxValidationError, VMError,
     },
     gas_cost::{
-        self, fake_exponential, ACCESS_LIST_ADDRESS_COST, ACCESS_LIST_STORAGE_KEY_COST,
-        BLOB_GAS_PER_BLOB, CREATE_BASE_COST,
+        self, fake_exponential, max_message_call_gas, ACCESS_LIST_ADDRESS_COST,
+        ACCESS_LIST_STORAGE_KEY_COST, BLOB_GAS_PER_BLOB, CREATE_BASE_COST,
     },
     memory,
     opcodes::Opcode,
@@ -880,16 +880,8 @@ impl VM {
             memory::load_range(&mut current_call_frame.memory, args_offset, args_size)?.to_vec();
 
         // I don't know if this gas limit should be calculated before or after consuming gas
-        let mut potential_remaining_gas = current_call_frame
-            .gas_limit
-            .checked_sub(current_call_frame.gas_used)
-            .ok_or(VMError::OutOfGas(OutOfGasError::MaxGasLimitExceeded))?;
-        potential_remaining_gas = potential_remaining_gas
-            .checked_sub(potential_remaining_gas.checked_div(64.into()).ok_or(
-                VMError::Internal(InternalError::ArithmeticOperationOverflow),
-            )?)
-            .ok_or(VMError::OutOfGas(OutOfGasError::MaxGasLimitExceeded))?;
-        let gas_limit = std::cmp::min(gas_limit, potential_remaining_gas);
+        let potential_remaining_gas = max_message_call_gas(current_call_frame)?;
+        let gas_limit = std::cmp::min(gas_limit.low_u64(), potential_remaining_gas);
 
         let new_depth = current_call_frame
             .depth
@@ -904,7 +896,7 @@ impl VM {
             value,
             calldata.into(),
             is_static,
-            gas_limit,
+            U256::from(gas_limit),
             U256::zero(),
             new_depth,
         );
@@ -1001,107 +993,6 @@ impl VM {
             ))?,
         );
         Ok(generated_address)
-    }
-
-    /// Common behavior for CREATE and CREATE2 opcodes
-    ///
-    /// Could be used for CREATE type transactions
-    // TODO: Improve and test REVERT behavior for CREATE. Issue: https://github.com/lambdaclass/ethrex/issues/1061
-    pub fn create(
-        &mut self,
-        value_in_wei_to_send: U256,
-        code_offset_in_memory: U256,
-        code_size_in_memory: usize,
-        salt: Option<U256>,
-        current_call_frame: &mut CallFrame,
-    ) -> Result<OpcodeSuccess, VMError> {
-        if code_size_in_memory > MAX_CODE_SIZE * 2 {
-            current_call_frame
-                .stack
-                .push(U256::from(REVERT_FOR_CREATE))?;
-            return Ok(OpcodeSuccess::Result(ResultReason::Revert));
-        }
-        if current_call_frame.is_static {
-            current_call_frame
-                .stack
-                .push(U256::from(REVERT_FOR_CREATE))?;
-            return Ok(OpcodeSuccess::Result(ResultReason::Revert));
-        }
-
-        let (sender_account_info, _sender_address_was_cold) =
-            self.access_account(current_call_frame.msg_sender);
-
-        if sender_account_info.balance < value_in_wei_to_send {
-            current_call_frame
-                .stack
-                .push(U256::from(REVERT_FOR_CREATE))?;
-            return Ok(OpcodeSuccess::Result(ResultReason::Revert));
-        }
-
-        let new_nonce = match self.increment_account_nonce(current_call_frame.msg_sender) {
-            Ok(nonce) => nonce,
-            Err(_) => {
-                current_call_frame
-                    .stack
-                    .push(U256::from(REVERT_FOR_CREATE))?;
-                return Ok(OpcodeSuccess::Result(ResultReason::Revert));
-            }
-        };
-
-        let code = Bytes::from(
-            memory::load_range(
-                &mut current_call_frame.memory,
-                code_offset_in_memory,
-                code_size_in_memory,
-            )?
-            .to_vec(),
-        );
-
-        let new_address = match salt {
-            Some(salt) => Self::calculate_create2_address(current_call_frame.to, &code, salt)?,
-            None => Self::calculate_create_address(current_call_frame.msg_sender, new_nonce)?,
-        };
-
-        // FIXME: Shouldn't we check against the db?
-        if cache::is_account_cached(&self.cache, &new_address) {
-            current_call_frame
-                .stack
-                .push(U256::from(REVERT_FOR_CREATE))?;
-            return Ok(OpcodeSuccess::Result(ResultReason::Revert));
-        }
-
-        let new_account = Account::new(U256::zero(), code.clone(), 0, Default::default());
-        cache::insert_account(&mut self.cache, new_address, new_account);
-
-        current_call_frame
-            .stack
-            .push(address_to_word(new_address))?;
-
-        self.generic_call(
-            current_call_frame,
-            U256::MAX, // FIXME: Why we send U256::MAX here?
-            value_in_wei_to_send,
-            current_call_frame.msg_sender,
-            new_address,
-            new_address,
-            true,
-            false,
-            code_offset_in_memory,
-            code_size_in_memory,
-            code_offset_in_memory,
-            code_size_in_memory,
-            true,
-        )?;
-
-        // Erases the success value in the stack result of calling generic call, probably this should be refactored soon...
-        current_call_frame
-            .stack
-            .pop()
-            .map_err(|_| VMError::StackUnderflow)?;
-
-        self.accrued_substate.created_accounts.insert(new_address);
-
-        Ok(OpcodeSuccess::Continue)
     }
 
     /// Increases gas consumption of CallFrame and Environment, returning an error if the callframe gas limit is reached.

@@ -747,3 +747,19 @@ pub fn fake_exponential(factor: u64, numerator: u64, denominator: u64) -> Result
             .ok_or(InternalError::ArithmeticOperationOverflow)?,
     ))
 }
+
+/// Max message call gas is all but one 64th of the remaining gas in the current context.
+/// https://eips.ethereum.org/EIPS/eip-150
+pub fn max_message_call_gas(current_call_frame: &CallFrame) -> Result<u64, VMError> {
+    let mut remaining_gas = current_call_frame
+        .gas_limit
+        .low_u64()
+        .checked_sub(current_call_frame.gas_used.low_u64())
+        .ok_or(InternalError::GasOverflow)?;
+
+    remaining_gas = remaining_gas
+        .checked_sub(remaining_gas / 64)
+        .ok_or(InternalError::GasOverflow)?;
+
+    Ok(remaining_gas)
+}
