@@ -1,6 +1,6 @@
 use crate::{
     call_frame::CallFrame,
-    errors::{InternalError, OpcodeSuccess, ResultReason, VMError},
+    errors::{OpcodeSuccess, ResultReason, VMError},
     gas_cost::{self, CALLCODE_POSITIVE_VALUE_STIPEND, CALL_POSITIVE_VALUE_STIPEND},
     memory::{self, calculate_memory_size},
     vm::{word_to_address, VM},
@@ -63,8 +63,7 @@ impl VM {
 
         // We add the stipend gas for the subcall. This ensures that the callee has enough gas to perform basic operations
         let gas_for_subcall = if !value_to_transfer.is_zero() {
-            gas.checked_add(CALL_POSITIVE_VALUE_STIPEND)
-                .ok_or(InternalError::ArithmeticOperationOverflow)?
+            gas.saturating_add(CALL_POSITIVE_VALUE_STIPEND)
         } else {
             gas
         };
@@ -134,8 +133,7 @@ impl VM {
 
         // We add the stipend gas for the subcall. This ensures that the callee has enough gas to perform basic operations
         let gas_for_subcall = if !value_to_transfer.is_zero() {
-            gas.checked_add(CALLCODE_POSITIVE_VALUE_STIPEND)
-                .ok_or(InternalError::ArithmeticOperationOverflow)?
+            gas.saturating_add(CALLCODE_POSITIVE_VALUE_STIPEND)
         } else {
             gas
         };
