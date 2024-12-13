@@ -489,12 +489,6 @@ impl VM {
         Ok(())
     }
 
-    /// To get the maximum fee per gas that the user is willing to pay, independently of the actual gas price
-    /// For legacy transactions the max fee per gas is the gas price
-    fn max_fee_per_gas_or_gasprice(&self) -> U256 {
-        self.env.tx_max_fee_per_gas.unwrap_or(self.env.gas_price)
-    }
-
     /// Gets the max blob gas cost for a transaction that a user is willing to pay.
     fn get_max_blob_gas_cost(&self) -> Result<U256, VMError> {
         let blob_gas_used = U256::from(self.env.tx_blob_hashes.len())
@@ -540,12 +534,13 @@ impl VM {
         let sender_account = self.get_account(sender_address);
 
         // (1) GASLIMIT_PRICE_PRODUCT_OVERFLOW
-        let gaslimit_price_product = self
-            .max_fee_per_gas_or_gasprice()
-            .checked_mul(self.env.gas_limit)
-            .ok_or(VMError::TxValidation(
-                TxValidationError::GasLimitPriceProductOverflow,
-            ))?;
+        let gaslimit_price_product =
+            self.env
+                .gas_price
+                .checked_mul(self.env.gas_limit)
+                .ok_or(VMError::TxValidation(
+                    TxValidationError::GasLimitPriceProductOverflow,
+                ))?;
 
         // Up front cost is the maximum amount of wei that a user is willing to pay for. Gaslimit * gasprice + value + blob_gas_cost
         let value = initial_call_frame.msg_value;
@@ -554,11 +549,42 @@ impl VM {
         // https://eips.ethereum.org/EIPS/eip-4844
         let blob_gas_cost = self.get_max_blob_gas_cost()?;
 
+        // For the transaction to be valid the sender account has to have a balance >= gas_price * gas_limit + value if tx is type 0 and 1
+        // balance >= max_fee_per_gas * gas_limit + value + blob_gas_cost if tx is type 2 or 3
+        let gas_fee_for_valid_tx = self
+            .env
+            .tx_max_fee_per_gas
+            .unwrap_or(self.env.gas_price)
+            .checked_mul(self.env.gas_limit)
+            .ok_or(VMError::TxValidation(
+                TxValidationError::GasLimitPriceProductOverflow,
+            ))?;
+
+        let balance_for_valid_tx = gas_fee_for_valid_tx
+            .checked_add(value)
+            .ok_or(VMError::TxValidation(
+                TxValidationError::InsufficientAccountFunds,
+            ))?
+            .checked_add(blob_gas_cost)
+            .ok_or(VMError::TxValidation(
+                TxValidationError::InsufficientAccountFunds,
+            ))?;
+        if sender_account.info.balance < balance_for_valid_tx {
+            return Err(VMError::TxValidation(
+                TxValidationError::InsufficientAccountFunds,
+            ));
+        }
+
+        // The real cost to deduct is calculated as effective_gas_price * gas_limit + value + blob_gas_cost
         let up_front_cost = gaslimit_price_product
             .checked_add(value)
-            .ok_or(InternalError::UndefinedState(1))?
+            .ok_or(VMError::TxValidation(
+                TxValidationError::InsufficientAccountFunds,
+            ))?
             .checked_add(blob_gas_cost)
-            .ok_or(InternalError::UndefinedState(1))?;
+            .ok_or(VMError::TxValidation(
+                TxValidationError::InsufficientAccountFunds,
+            ))?;
         // There is no error specified for overflow in up_front_cost in ef_tests. Maybe we can go with GasLimitPriceProductOverflow or InsufficientAccountFunds.
 
         // (2) INSUFFICIENT_ACCOUNT_FUNDS
@@ -573,7 +599,7 @@ impl VM {
         }
 
         // (3) INSUFFICIENT_MAX_FEE_PER_GAS
-        if self.max_fee_per_gas_or_gasprice() < self.env.base_fee_per_gas {
+        if self.env.tx_max_fee_per_gas.unwrap_or(self.env.gas_price) < self.env.base_fee_per_gas {
             return Err(VMError::TxValidation(
                 TxValidationError::InsufficientMaxFeePerGas,
             ));
