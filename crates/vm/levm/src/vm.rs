@@ -16,6 +16,7 @@ use crate::{
         BLOB_GAS_PER_BLOB, CREATE_BASE_COST,
     },
     opcodes::Opcode,
+    precompiles::{execute_precompile, is_precompile},
     AccountInfo,
 };
 use bytes::Bytes;
@@ -253,6 +254,45 @@ impl VM {
             self.accrued_substate.clone(),
             self.env.refunded_gas,
         );
+
+        if is_precompile(&current_call_frame.code_address) {
+            let precompile_result = execute_precompile(current_call_frame);
+
+            match precompile_result {
+                Ok(output) => {
+                    self.call_frames.push(current_call_frame.clone());
+
+                    return Ok(TransactionReport {
+                        result: TxResult::Success,
+                        new_state: self.cache.clone(),
+                        gas_used: current_call_frame.gas_used.low_u64(),
+                        gas_refunded: 0,
+                        output,
+                        logs: current_call_frame.logs.clone(),
+                        created_address: None,
+                    });
+                }
+                Err(error) => {
+                    if error.is_internal() {
+                        return Err(error);
+                    }
+
+                    self.call_frames.push(current_call_frame.clone());
+
+                    self.restore_state(backup_db, backup_substate, backup_refunded_gas);
+
+                    return Ok(TransactionReport {
+                        result: TxResult::Revert(error),
+                        new_state: self.cache.clone(),
+                        gas_used: current_call_frame.gas_limit.low_u64(),
+                        gas_refunded: 0,
+                        output: Bytes::new(),
+                        logs: current_call_frame.logs.clone(),
+                        created_address: None,
+                    });
+                }
+            }
+        }
 
         loop {
             let opcode = current_call_frame.next_opcode();

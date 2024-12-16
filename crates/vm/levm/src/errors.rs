@@ -72,6 +72,8 @@ pub enum VMError {
     TxValidation(#[from] TxValidationError),
     #[error("Offset out of bounds")]
     OutOfBounds,
+    #[error("Precompile execution error: {0}")]
+    PrecompileError(#[from] PrecompileError),
 }
 
 impl VMError {
@@ -172,6 +174,14 @@ pub enum InternalError {
     GasOverflow,
     #[error("Undefined state: {0}")]
     UndefinedState(i32), // This error is temporarily for things that cause an undefined state.
+    #[error("Invalid precompile address. Tried to execute a precompile that does not exist.")]
+    InvalidPrecompileAddress,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error, Serialize, Deserialize)]
+pub enum PrecompileError {
+    #[error("This is a default error")]
+    DefaultError,
 }
 
 #[derive(Debug, Clone)]

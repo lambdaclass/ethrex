@@ -1749,8 +1749,8 @@ fn call_returns_if_bytecode_empty() {
 fn call_changes_callframe_and_stores() {
     let callee_return_value = U256::from(0xAAAAAAA);
     let callee_bytecode = callee_return_bytecode(callee_return_value);
-    let callee_address = Address::from_low_u64_be(U256::from(2).low_u64());
-    let callee_address_u256 = U256::from(2);
+    let callee_address = Address::from_low_u64_be(U256::from(22).low_u64());
+    let callee_address_u256 = U256::from(22);
     let callee_account = Account::default()
         .with_balance(50000.into())
         .with_bytecode(callee_bytecode);
@@ -1775,7 +1775,7 @@ fn call_changes_callframe_and_stores() {
 
     let mut vm = new_vm_with_ops_addr_bal_db(
         ops_to_bytecode(&caller_ops).unwrap(),
-        Address::from_low_u64_be(U256::from(1).low_u64()),
+        Address::from_low_u64_be(U256::from(21).low_u64()),
         U256::zero(),
         db,
         cache,
@@ -1805,8 +1805,8 @@ fn call_changes_callframe_and_stores() {
 fn nested_calls() {
     let callee3_return_value = U256::from(0xAAAAAAA);
     let callee3_bytecode = callee_return_bytecode(callee3_return_value);
-    let callee3_address = Address::from_low_u64_be(U256::from(3).low_u64());
-    let callee3_address_u256 = U256::from(3);
+    let callee3_address = Address::from_low_u64_be(U256::from(23).low_u64());
+    let callee3_address_u256 = U256::from(23);
     let callee3_account = Account::default()
         .with_balance(50_000.into())
         .with_bytecode(callee3_bytecode);
@@ -1841,8 +1841,8 @@ fn nested_calls() {
 
     let callee2_bytecode = ops_to_bytecode(&callee2_ops).unwrap();
 
-    let callee2_address = Address::from_low_u64_be(U256::from(2).low_u64());
-    let callee2_address_u256 = U256::from(2);
+    let callee2_address = Address::from_low_u64_be(U256::from(22).low_u64());
+    let callee2_address_u256 = U256::from(22);
 
     let callee2_account = Account::default()
         .with_balance(50000.into())
@@ -1860,7 +1860,7 @@ fn nested_calls() {
         Operation::Stop,
     ];
 
-    let caller_address = Address::from_low_u64_be(U256::from(1).low_u64());
+    let caller_address = Address::from_low_u64_be(U256::from(21).low_u64());
     let caller_balance = U256::from(1_000_000);
 
     let mut db = Db::new();
@@ -1922,8 +1922,8 @@ fn staticcall_changes_callframe_is_static() {
 
     let callee_bytecode = ops_to_bytecode(&callee_ops).unwrap();
 
-    let callee_address = Address::from_low_u64_be(U256::from(2).low_u64());
-    let callee_address_u256 = U256::from(2);
+    let callee_address = Address::from_low_u64_be(U256::from(22).low_u64());
+    let callee_address_u256 = U256::from(22);
     let callee_account = Account::default()
         .with_balance(50000.into())
         .with_bytecode(callee_bytecode);
@@ -1947,7 +1947,7 @@ fn staticcall_changes_callframe_is_static() {
 
     let mut vm = new_vm_with_ops_addr_bal_db(
         ops_to_bytecode(&caller_ops).unwrap(),
-        Address::from_low_u64_be(U256::from(1).low_u64()),
+        Address::from_low_u64_be(U256::from(21).low_u64()),
         U256::zero(),
         db,
         cache,
@@ -2585,7 +2585,7 @@ fn returndatacopy() {
 fn returndatacopy_being_set_by_parent() {
     let callee_bytecode = callee_return_bytecode(U256::from(0xAAAAAAA));
 
-    let callee_address = Address::from_low_u64_be(U256::from(2).low_u64());
+    let callee_address = Address::from_low_u64_be(U256::from(22).low_u64());
     let callee_account = Account::default()
         .with_balance(50000.into())
         .with_bytecode(callee_bytecode);
@@ -2596,7 +2596,7 @@ fn returndatacopy_being_set_by_parent() {
         Operation::Push((32, U256::from(0))),       // args_size
         Operation::Push((32, U256::from(0))),       // args_offset
         Operation::Push((32, U256::zero())),        // value
-        Operation::Push((32, U256::from(2))),       // callee address
+        Operation::Push((32, U256::from(22))),      // callee address
         Operation::Push((32, U256::from(100_000))), // gas
         Operation::Call,
         Operation::Push((32, U256::from(32))), // size
@@ -2614,7 +2614,7 @@ fn returndatacopy_being_set_by_parent() {
 
     let mut vm = new_vm_with_ops_addr_bal_db(
         ops_to_bytecode(&caller_ops).unwrap(),
-        Address::from_low_u64_be(U256::from(1).low_u64()),
+        Address::from_low_u64_be(U256::from(21).low_u64()),
         U256::zero(),
         db,
         cache,
@@ -3417,8 +3417,8 @@ fn multiple_logs_of_different_types() {
 
 #[test]
 fn logs_from_multiple_callers() {
-    let callee_address = Address::from_low_u64_be(U256::from(2).low_u64());
-    let callee_address_u256 = U256::from(2);
+    let callee_address = Address::from_low_u64_be(U256::from(22).low_u64());
+    let callee_address_u256 = U256::from(22);
 
     let data: [u8; 32] = [0xff; 32];
     let size = 32_u8;
@@ -3455,7 +3455,7 @@ fn logs_from_multiple_callers() {
 
     let mut vm = new_vm_with_ops_addr_bal_db(
         ops_to_bytecode(&caller_ops).unwrap(),
-        Address::from_low_u64_be(U256::from(1).low_u64()),
+        Address::from_low_u64_be(U256::from(21).low_u64()),
         U256::zero(),
         db,
         cache,

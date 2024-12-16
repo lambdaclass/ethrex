@@ -2,10 +2,10 @@ use ethrex_core::{H256, U256};
 
 pub const WORD_SIZE_IN_BYTES: U256 = U256([32, 0, 0, 0]);
 pub const WORD_SIZE_IN_BYTES_USIZE: usize = 32;
+pub const WORD_SIZE_IN_BYTES_U64: u64 = 32;
 
 pub const SUCCESS_FOR_CALL: U256 = U256::one();
 pub const REVERT_FOR_CALL: U256 = U256::zero();
-pub const SUCCESS_FOR_RETURN: U256 = U256::one();
 pub const CREATE_DEPLOYMENT_FAIL: U256 = U256::zero();
 pub const WORD_SIZE: usize = 32;
 
