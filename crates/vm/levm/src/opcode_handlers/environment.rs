@@ -379,7 +379,7 @@ impl VM {
             gas_cost::returndatacopy(new_memory_size, current_call_frame.memory.len(), size)?,
         )?;
 
-        if size == 0 {
+        if size == 0 && returndata_offset == 0 {
             return Ok(OpcodeSuccess::Continue);
         }
 
