@@ -1,6 +1,6 @@
 use crate::{
     call_frame::CallFrame,
-    constants::{CREATE_DEPLOYMENT_FAIL, INIT_CODE_MAX_SIZE},
+    constants::{CREATE_DEPLOYMENT_FAIL, INIT_CODE_MAX_SIZE, REVERT_FOR_CALL, SUCCESS_FOR_CALL},
     db::cache,
     errors::{InternalError, OpcodeSuccess, OutOfGasError, ResultReason, TxResult, VMError},
     gas_cost::{
@@ -22,14 +22,10 @@ impl VM {
         &mut self,
         current_call_frame: &mut CallFrame,
     ) -> Result<OpcodeSuccess, VMError> {
+        // STACK
         let gas = current_call_frame.stack.pop()?;
         let callee: Address = word_to_address(current_call_frame.stack.pop()?);
         let value_to_transfer: U256 = current_call_frame.stack.pop()?;
-
-        if current_call_frame.is_static && !value_to_transfer.is_zero() {
-            return Err(VMError::OpcodeNotAllowedInStaticContext);
-        }
-
         let args_start_offset = current_call_frame.stack.pop()?;
         let args_size = current_call_frame
             .stack
@@ -43,8 +39,13 @@ impl VM {
             .try_into()
             .map_err(|_| VMError::VeryLargeNumber)?;
 
-        let current_memory_size = current_call_frame.memory.len();
+        // VALIDATIONS
+        if current_call_frame.is_static && !value_to_transfer.is_zero() {
+            return Err(VMError::OpcodeNotAllowedInStaticContext);
+        }
 
+        // GAS
+        let current_memory_size = current_call_frame.memory.len();
         let new_memory_size_for_args = calculate_memory_size(args_start_offset, args_size)?;
         let new_memory_size_for_return_data =
             calculate_memory_size(return_data_start_offset, return_data_size)?;
@@ -63,6 +64,7 @@ impl VM {
             )?,
         )?;
 
+        // OPERATION
         let msg_sender = current_call_frame.to; // The new sender will be the current contract.
         let to = callee; // In this case code_address and the sub-context account are the same. Unlike CALLCODE or DELEGATECODE.
         let is_static = current_call_frame.is_static;
@@ -81,13 +83,12 @@ impl VM {
             msg_sender,
             to,
             callee,
-            false,
+            true,
             is_static,
             args_start_offset,
             args_size,
             return_data_start_offset,
             return_data_size,
-            true,
         )
     }
 
@@ -97,6 +98,7 @@ impl VM {
         &mut self,
         current_call_frame: &mut CallFrame,
     ) -> Result<OpcodeSuccess, VMError> {
+        // STACK
         let gas = current_call_frame.stack.pop()?;
         let code_address = word_to_address(current_call_frame.stack.pop()?);
         let value_to_transfer = current_call_frame.stack.pop()?;
@@ -113,6 +115,7 @@ impl VM {
             .try_into()
             .map_err(|_err| VMError::VeryLargeNumber)?;
 
+        // GAS
         let current_memory_size = current_call_frame.memory.len();
         let new_memory_size_for_args = calculate_memory_size(args_start_offset, args_size)?;
 
@@ -151,13 +154,12 @@ impl VM {
             msg_sender,
             to,
             code_address,
-            false,
+            true,
             is_static,
             args_start_offset,
             args_size,
             return_data_start_offset,
             return_data_size,
-            true,
         )
     }
 
@@ -197,6 +199,7 @@ impl VM {
         &mut self,
         current_call_frame: &mut CallFrame,
     ) -> Result<OpcodeSuccess, VMError> {
+        // STACK
         let gas = current_call_frame.stack.pop()?;
         let code_address = word_to_address(current_call_frame.stack.pop()?);
         let args_start_offset = current_call_frame.stack.pop()?;
@@ -212,11 +215,7 @@ impl VM {
             .try_into()
             .map_err(|_err| VMError::VeryLargeNumber)?;
 
-        let msg_sender = current_call_frame.msg_sender;
-        let value = current_call_frame.msg_value;
-        let to = current_call_frame.to;
-        let is_static = current_call_frame.is_static;
-
+        // GAS
         let (_account_info, address_was_cold) = self.access_account(code_address);
 
         let current_memory_size = current_call_frame.memory.len();
@@ -229,6 +228,12 @@ impl VM {
             current_call_frame,
             gas_cost::delegatecall(new_memory_size, current_memory_size, address_was_cold)?,
         )?;
+
+        // OPERATION
+        let msg_sender = current_call_frame.msg_sender;
+        let value = current_call_frame.msg_value;
+        let to = current_call_frame.to;
+        let is_static = current_call_frame.is_static;
 
         self.generic_call(
             current_call_frame,
@@ -243,7 +248,6 @@ impl VM {
             args_size,
             return_data_start_offset,
             return_data_size,
-            false,
         )
     }
 
@@ -253,23 +257,23 @@ impl VM {
         &mut self,
         current_call_frame: &mut CallFrame,
     ) -> Result<OpcodeSuccess, VMError> {
+        // STACK
         let gas = current_call_frame.stack.pop()?;
         let code_address = word_to_address(current_call_frame.stack.pop()?);
         let args_start_offset = current_call_frame.stack.pop()?;
-
         let args_size = current_call_frame
             .stack
             .pop()?
             .try_into()
             .map_err(|_err| VMError::VeryLargeNumber)?;
         let return_data_start_offset = current_call_frame.stack.pop()?;
-
         let return_data_size = current_call_frame
             .stack
             .pop()?
             .try_into()
             .map_err(|_err| VMError::VeryLargeNumber)?;
 
+        // GAS
         let (_account_info, address_was_cold) = self.access_account(code_address);
 
         let current_memory_size = current_call_frame.memory.len();
@@ -283,6 +287,7 @@ impl VM {
             gas_cost::staticcall(new_memory_size, current_memory_size, address_was_cold)?,
         )?;
 
+        // OPERATION
         let value = U256::zero();
         let msg_sender = current_call_frame.to; // The new sender will be the current contract.
         let to = code_address; // In this case code_address and the sub-context account are the same. Unlike CALLCODE or DELEGATECODE.
@@ -294,13 +299,12 @@ impl VM {
             msg_sender,
             to,
             code_address,
-            false,
+            true,
             true,
             args_start_offset,
             args_size,
             return_data_start_offset,
             return_data_size,
-            true,
         )
     }
 
@@ -583,6 +587,104 @@ impl VM {
                 self.accrued_substate.touched_accounts.remove(&new_address);
 
                 current_call_frame.stack.push(CREATE_DEPLOYMENT_FAIL)?;
+            }
+        }
+
+        Ok(OpcodeSuccess::Continue)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn generic_call(
+        &mut self,
+        current_call_frame: &mut CallFrame,
+        gas_limit: U256,
+        value: U256,
+        msg_sender: Address,
+        to: Address,
+        code_address: Address,
+        should_transfer_value: bool,
+        is_static: bool,
+        args_offset: U256,
+        args_size: usize,
+        ret_offset: U256,
+        ret_size: usize,
+    ) -> Result<OpcodeSuccess, VMError> {
+        // 1. Validate sender has enough value
+        let sender_account_info = self.access_account(msg_sender).0;
+        if should_transfer_value && sender_account_info.balance < value {
+            current_call_frame.stack.push(REVERT_FOR_CALL)?;
+            return Ok(OpcodeSuccess::Continue);
+        }
+
+        // 2. Validate max depth has not been reached yet.
+        let new_depth = current_call_frame
+            .depth
+            .checked_add(1)
+            .ok_or(InternalError::ArithmeticOperationOverflow)?;
+
+        if new_depth > 1024 {
+            current_call_frame.stack.push(REVERT_FOR_CALL)?;
+            return Ok(OpcodeSuccess::Continue);
+        }
+
+        let recipient_bytecode = self.access_account(code_address).0.bytecode;
+        let calldata =
+            memory::load_range(&mut current_call_frame.memory, args_offset, args_size)?.to_vec();
+        // Gas Limit for the child context is capped.
+        let gas_cap = max_message_call_gas(current_call_frame)?;
+        let gas_limit = std::cmp::min(gas_limit, gas_cap.into());
+
+        let mut new_call_frame = CallFrame::new(
+            msg_sender,
+            to,
+            code_address,
+            recipient_bytecode,
+            value,
+            calldata.into(),
+            is_static,
+            gas_limit,
+            U256::zero(),
+            new_depth,
+        );
+
+        current_call_frame.sub_return_data_offset = ret_offset;
+        current_call_frame.sub_return_data_size = ret_size;
+
+        // Transfer value from caller to callee.
+        if should_transfer_value {
+            self.decrease_account_balance(msg_sender, value)?;
+            self.increase_account_balance(to, value)?;
+        }
+
+        let tx_report = self.execute(&mut new_call_frame)?;
+
+        // Add gas used by the sub-context to the current one after it's execution.
+        current_call_frame.gas_used = current_call_frame
+            .gas_used
+            .checked_add(tx_report.gas_used.into())
+            .ok_or(VMError::OutOfGas(OutOfGasError::ConsumedGasOverflow))?;
+        current_call_frame.logs.extend(tx_report.logs);
+        memory::try_store_range(
+            &mut current_call_frame.memory,
+            ret_offset,
+            ret_size,
+            &tx_report.output,
+        )?;
+        current_call_frame.sub_return_data = tx_report.output;
+
+        // What to do, depending on TxResult
+        match tx_report.result {
+            TxResult::Success => {
+                current_call_frame.stack.push(SUCCESS_FOR_CALL)?;
+            }
+            TxResult::Revert(_) => {
+                // Revert value transfer
+                if should_transfer_value {
+                    self.decrease_account_balance(to, value)?;
+                    self.increase_account_balance(msg_sender, value)?;
+                }
+                // Push 0 to stack
+                current_call_frame.stack.push(REVERT_FOR_CALL)?;
             }
         }
 
