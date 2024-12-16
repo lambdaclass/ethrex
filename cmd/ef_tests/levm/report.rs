@@ -695,13 +695,19 @@ impl fmt::Display for ComparisonReport {
             }
 
             match (&levm_updated_account.code, &revm_updated_account.code) {
-                (None, Some(_)) => {
-                    writeln!(f, "      Has code in REVM but not in LEVM")?;
-                    diffs += 1;
+                (None, Some(revm_account_code)) => {
+                    if **revm_account_code != *b"" {
+                        writeln!(f, "      Has code in REVM but not in LEVM")?;
+                        writeln!(f, "      REVM code: {}", hex::encode(revm_account_code))?;
+                        diffs += 1;
+                    }
                 }
-                (Some(_), None) => {
-                    writeln!(f, "      Has code in LEVM but not in REVM")?;
-                    diffs += 1;
+                (Some(levm_account_code), None) => {
+                    if **levm_account_code != *b"" {
+                        writeln!(f, "      Has code in LEVM but not in REVM")?;
+                        writeln!(f, "      LEVM code: {}", hex::encode(levm_account_code))?;
+                        diffs += 1;
+                    }
                 }
                 (Some(levm_account_code), Some(revm_account_code)) => {
                     if levm_account_code != revm_account_code {
