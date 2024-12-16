@@ -34,7 +34,7 @@ pub fn run_with_levm(program: &str, runs: usize, number_of_iterations: u32) {
 
     match tx_report.result {
         TxResult::Success => {
-            println!("\t\t0x{}", hex::encode(current_call_frame.returndata));
+            println!("\t\t0x{}", hex::encode(current_call_frame.output));
         }
         TxResult::Revert(error) => panic!("Execution failed: {:?}", error),
     }

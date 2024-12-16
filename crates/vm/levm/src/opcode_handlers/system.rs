@@ -185,7 +185,7 @@ impl VM {
             memory::expansion_cost(new_memory_size, current_call_frame.memory.len())?.into(),
         )?;
 
-        current_call_frame.returndata =
+        current_call_frame.output =
             memory::load_range(&mut current_call_frame.memory, offset, size)?
                 .to_vec()
                 .into();
@@ -401,7 +401,7 @@ impl VM {
             memory::expansion_cost(new_memory_size, current_call_frame.memory.len())?.into(),
         )?;
 
-        current_call_frame.returndata =
+        current_call_frame.output =
             memory::load_range(&mut current_call_frame.memory, offset, size)?
                 .to_vec()
                 .into();
@@ -646,9 +646,6 @@ impl VM {
             U256::zero(),
             new_depth,
         );
-
-        current_call_frame.sub_return_data_offset = ret_offset;
-        current_call_frame.sub_return_data_size = ret_size;
 
         // Transfer value from caller to callee.
         if should_transfer_value {
