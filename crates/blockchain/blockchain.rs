@@ -8,8 +8,9 @@ mod smoke_test;
 use constants::{GAS_PER_BLOB, MAX_BLOB_GAS_PER_BLOCK, MAX_BLOB_NUMBER_PER_BLOCK};
 use error::{ChainError, InvalidBlockError};
 use ethrex_core::types::{
-    validate_block_header, validate_cancun_header_fields, validate_no_cancun_header_fields, Block,
-    BlockHash, BlockHeader, BlockNumber, EIP4844Transaction, Receipt, Transaction,
+    compute_receipts_root, validate_block_header, validate_cancun_header_fields,
+    validate_no_cancun_header_fields, Block, BlockHash, BlockHeader, BlockNumber,
+    EIP4844Transaction, Receipt, Transaction,
 };
 use ethrex_core::H256;
 
@@ -58,6 +59,9 @@ pub fn add_block(block: &Block, storage: &Store) -> Result<(), ChainError> {
     // Check state root matches the one in block header after execution
     validate_state_root(&block.header, new_state_root)?;
 
+    // Check receipts root matches the one in block header after execution
+    validate_receipts_root(&block.header, &receipts)?;
+
     store_block(storage, block.clone())?;
     store_receipts(storage, receipts, block_hash)?;
 
@@ -101,6 +105,9 @@ pub fn add_block(block: &Block, storage: &Store) -> Result<(), ChainError> {
     // Check state root matches the one in block header after execution
     validate_state_root(&block.header, new_state_root)?;
 
+    // Check receipts root matches the one in block header after execution
+    validate_receipts_root(&block.header, &receipts)?;
+
     store_block(storage, block.clone())?;
     store_receipts(storage, receipts, block_hash)?;
 
@@ -133,6 +140,21 @@ pub fn validate_state_root(
     } else {
         Err(ChainError::InvalidBlock(
             InvalidBlockError::StateRootMismatch,
+        ))
+    }
+}
+
+pub fn validate_receipts_root(
+    block_header: &BlockHeader,
+    receipts: &[Receipt],
+) -> Result<(), ChainError> {
+    let receipts_root = compute_receipts_root(receipts);
+
+    if receipts_root == block_header.receipts_root {
+        Ok(())
+    } else {
+        Err(ChainError::InvalidBlock(
+            InvalidBlockError::ReceiptsRootMismatch,
         ))
     }
 }

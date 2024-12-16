@@ -22,6 +22,8 @@ pub enum ChainError {
 pub enum InvalidBlockError {
     #[error("World State Root does not match the one in the header after executing")]
     StateRootMismatch,
+    #[error("Receipts Root does not match the one in the header after executing")]
+    ReceiptsRootMismatch,
     #[error("Invalid Header, validation failed pre-execution: {0}")]
     InvalidHeader(#[from] InvalidBlockHeaderError),
     #[error("Exceeded MAX_BLOB_GAS_PER_BLOCK")]
