@@ -443,10 +443,6 @@ fn compute_gas_create(
         .checked_mul(INIT_CODE_WORD_COST.as_usize()) // will not panic since it's 2
         .ok_or(OutOfGasError::GasCostOverflow)?;
 
-    let code_deposit_cost = code_size_in_memory
-        .checked_mul(CODE_DEPOSIT_COST.as_usize()) // will not panic since it's 200
-        .ok_or(OutOfGasError::GasCostOverflow)?;
-
     let memory_expansion_cost = memory::expansion_cost(new_memory_size, current_memory_size)?;
 
     let hash_cost = if is_create_2 {
@@ -459,8 +455,6 @@ fn compute_gas_create(
 
     Ok(U256::from(memory_expansion_cost)
         .checked_add(init_code_cost.into())
-        .ok_or(OutOfGasError::CreationCostIsTooHigh)?
-        .checked_add(code_deposit_cost.into())
         .ok_or(OutOfGasError::CreationCostIsTooHigh)?
         .checked_add(CREATE_BASE_COST)
         .ok_or(OutOfGasError::CreationCostIsTooHigh)?

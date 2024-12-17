@@ -87,6 +87,8 @@ pub struct CallFrame {
     pub depth: usize,
     /// Set of valid jump destinations (where a JUMP or JUMPI can jump to)
     pub valid_jump_destinations: HashSet<usize>,
+    /// This is set to true if the function that created this callframe is CREATE or CREATE2
+    pub create_op_called: bool,
 }
 
 impl CallFrame {
@@ -118,6 +120,7 @@ impl CallFrame {
         gas_limit: U256,
         gas_used: U256,
         depth: usize,
+        create_op_called: bool,
     ) -> Self {
         let valid_jump_destinations = get_valid_jump_destinations(&bytecode).unwrap_or_default();
         Self {
@@ -132,6 +135,7 @@ impl CallFrame {
             depth,
             gas_used,
             valid_jump_destinations,
+            create_op_called,
             ..Default::default()
         }
     }

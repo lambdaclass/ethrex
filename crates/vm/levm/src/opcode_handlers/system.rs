@@ -1,10 +1,14 @@
 use crate::{
     call_frame::CallFrame,
-    constants::{CREATE_DEPLOYMENT_FAIL, INIT_CODE_MAX_SIZE, REVERT_FOR_CALL, SUCCESS_FOR_CALL},
+    constants::{
+        CREATE_DEPLOYMENT_FAIL, INIT_CODE_MAX_SIZE, INVALID_CONTRACT_PREFIX, REVERT_FOR_CALL,
+        SUCCESS_FOR_CALL,
+    },
     db::cache,
     errors::{InternalError, OpcodeSuccess, OutOfGasError, ResultReason, TxResult, VMError},
     gas_cost::{
         self, max_message_call_gas, CALLCODE_POSITIVE_VALUE_STIPEND, CALL_POSITIVE_VALUE_STIPEND,
+        CODE_DEPOSIT_COST,
     },
     memory::{self, calculate_memory_size},
     vm::{address_to_word, word_to_address, VM},
@@ -189,6 +193,12 @@ impl VM {
             memory::load_range(&mut current_call_frame.memory, offset, size)?
                 .to_vec()
                 .into();
+        if current_call_frame.create_op_called {
+            let code_deposit_cost = U256::from(current_call_frame.output.len())
+                .checked_mul(CODE_DEPOSIT_COST)
+                .ok_or(InternalError::ArithmeticOperationOverflow)?;
+            self.increase_consumed_gas(current_call_frame, code_deposit_cost)?;
+        }
 
         Ok(OpcodeSuccess::Result(ResultReason::Return))
     }
@@ -333,7 +343,7 @@ impl VM {
             )?,
         )?;
 
-        self.create(
+        self.generic_create(
             value_in_wei_to_send,
             code_offset_in_memory,
             code_size_in_memory,
@@ -368,7 +378,7 @@ impl VM {
             )?,
         )?;
 
-        self.create(
+        self.generic_create(
             value_in_wei_to_send,
             code_offset_in_memory,
             code_size_in_memory,
@@ -468,7 +478,7 @@ impl VM {
     }
 
     /// Common behavior for CREATE and CREATE2 opcodes
-    pub fn create(
+    pub fn generic_create(
         &mut self,
         value_in_wei_to_send: U256,
         code_offset_in_memory: U256,
@@ -535,7 +545,7 @@ impl VM {
 
         // THIRD: Changes to the state
         // 1. Creating contract.
-        let new_account = Account::new(value_in_wei_to_send, code.clone(), 1, Default::default());
+        let new_account = Account::new(value_in_wei_to_send, Bytes::new(), 1, Default::default());
         cache::insert_account(&mut self.cache, new_address, new_account);
 
         // 2. Increment sender's nonce.
@@ -556,6 +566,7 @@ impl VM {
             U256::from(max_message_call_gas),
             U256::zero(),
             new_depth,
+            true,
         );
 
         self.accrued_substate.created_accounts.insert(new_address); // Mostly for SELFDESTRUCT during initcode.
@@ -571,8 +582,15 @@ impl VM {
 
         match tx_report.result {
             TxResult::Success => {
+                let deployed_code = tx_report.output;
+
+                if !deployed_code.is_empty() {
+                    if let Some(&INVALID_CONTRACT_PREFIX) = deployed_code.first() {
+                        return Err(VMError::InvalidContractPrefix);
+                    }
+                }
                 // New account's bytecode is going to be the output of initcode exec.
-                self.update_account_bytecode(new_address, tx_report.output)?;
+                self.update_account_bytecode(new_address, deployed_code)?;
                 current_call_frame
                     .stack
                     .push(address_to_word(new_address))?;
@@ -645,6 +663,7 @@ impl VM {
             gas_limit,
             U256::zero(),
             new_depth,
+            false,
         );
 
         // Transfer value from caller to callee.

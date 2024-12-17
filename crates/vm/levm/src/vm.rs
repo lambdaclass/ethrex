@@ -178,6 +178,7 @@ impl VM {
                     env.gas_limit,
                     U256::zero(),
                     0,
+                    false,
                 );
 
                 let substate = Substate {
@@ -208,7 +209,8 @@ impl VM {
 
                 default_touched_accounts.insert(new_contract_address);
 
-                let created_contract = Account::new(value, calldata.clone(), 1, HashMap::new());
+                let created_contract = Account::new(value, Bytes::new(), 1, HashMap::new());
+
                 cache::insert_account(&mut cache, new_contract_address, created_contract);
 
                 let initial_call_frame = CallFrame::new(
@@ -222,6 +224,7 @@ impl VM {
                     env.gas_limit,
                     U256::zero(),
                     0,
+                    false,
                 );
 
                 let substate = Substate {
@@ -874,8 +877,8 @@ impl VM {
         }
 
         // If contract code is not empty then the first byte should not be 0xef
-        if *contract_code.first().unwrap_or(&0) == INVALID_CONTRACT_PREFIX {
-            return Err(VMError::InvalidInitialByte);
+        if let Some(&INVALID_CONTRACT_PREFIX) = contract_code.first() {
+            return Err(VMError::InvalidContractPrefix);
         }
 
         let max_gas = self.env.gas_limit.low_u64();
