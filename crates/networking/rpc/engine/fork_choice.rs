@@ -18,6 +18,35 @@ use crate::{
 };
 
 #[derive(Debug)]
+pub struct ForkChoiceUpdatedV1 {
+    pub fork_choice_state: ForkChoiceState,
+    pub payload_attributes: Option<PayloadAttributesV3>,
+}
+
+impl RpcHandler for ForkChoiceUpdatedV1 {
+    fn parse(params: &Option<Vec<Value>>) -> Result<Self, RpcErr> {
+        let (fork_choice_state, payload_attributes) = parse(params)?;
+
+        Ok(ForkChoiceUpdatedV1 {
+            fork_choice_state,
+            payload_attributes,
+        })
+    }
+
+    fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
+        let (head_block_opt, mut response) =
+            handle_forkchoice(&self.fork_choice_state, context.clone(), 1)?;
+        if let (Some(head_block), Some(attributes)) = (head_block_opt, &self.payload_attributes) {
+            validate_v1(attributes, head_block)?;
+            let payload_id = build_payload(attributes, context, &self.fork_choice_state, 1)?;
+            response.set_id(payload_id);
+        }
+
+        serde_json::to_value(response).map_err(|error| RpcErr::Internal(error.to_string()))
+    }
+}
+
+#[derive(Debug)]
 pub struct ForkChoiceUpdatedV2 {
     pub fork_choice_state: ForkChoiceState,
     pub payload_attributes: Option<PayloadAttributesV3>,
@@ -101,10 +130,12 @@ fn parse(
     let forkchoice_state: ForkChoiceState = serde_json::from_value(params[0].clone())?;
     // if there is an error when parsing, set to None
     let payload_attributes: Option<PayloadAttributesV3> =
-        if let Ok(attributes) = serde_json::from_value::<PayloadAttributesV3>(params[1].clone()) {
-            Some(attributes)
-        } else {
-            None
+        match serde_json::from_value::<PayloadAttributesV3>(params[1].clone()) {
+            Ok(attributes) => Some(attributes),
+            Err(error) => {
+                info!("Could not parse params {}", error);
+                None
+            }
         };
 
     Ok((forkchoice_state, payload_attributes))
@@ -173,28 +204,8 @@ fn handle_forkchoice(
     }
 }
 
-fn validate_v3(
-    attributes: &PayloadAttributesV3,
-    head_block: BlockHeader,
-    context: &RpcApiContext,
-) -> Result<(), RpcErr> {
-    let chain_config = context.storage.get_chain_config()?;
-    if attributes.parent_beacon_block_root.is_none() {
-        return Err(RpcErr::InvalidPayloadAttributes(
-            "Null Parent Beacon Root".to_string(),
-        ));
-    }
-    if !chain_config.is_cancun_activated(attributes.timestamp) {
-        return Err(RpcErr::UnsuportedFork(
-            "forkChoiceV3 used to build pre-Cancun payload".to_string(),
-        ));
-    }
-    if attributes.timestamp <= head_block.timestamp {
-        return Err(RpcErr::InvalidPayloadAttributes(
-            "invalid timestamp".to_string(),
-        ));
-    }
-    Ok(())
+fn validate_v1(attributes: &PayloadAttributesV3, head_block: BlockHeader) -> Result<(), RpcErr> {
+    validate_timestamp(attributes, head_block)
 }
 
 fn validate_v2(
@@ -218,6 +229,32 @@ fn validate_v2(
             "forkChoiceV2 used to build Cancun payload".to_string(),
         ));
     }
+    validate_timestamp(attributes, head_block)
+}
+
+fn validate_v3(
+    attributes: &PayloadAttributesV3,
+    head_block: BlockHeader,
+    context: &RpcApiContext,
+) -> Result<(), RpcErr> {
+    let chain_config = context.storage.get_chain_config()?;
+    if attributes.parent_beacon_block_root.is_none() {
+        return Err(RpcErr::InvalidPayloadAttributes(
+            "Null Parent Beacon Root".to_string(),
+        ));
+    }
+    if !chain_config.is_cancun_activated(attributes.timestamp) {
+        return Err(RpcErr::UnsuportedFork(
+            "forkChoiceV3 used to build pre-Cancun payload".to_string(),
+        ));
+    }
+    validate_timestamp(attributes, head_block)
+}
+
+fn validate_timestamp(
+    attributes: &PayloadAttributesV3,
+    head_block: BlockHeader,
+) -> Result<(), RpcErr> {
     if attributes.timestamp <= head_block.timestamp {
         return Err(RpcErr::InvalidPayloadAttributes(
             "invalid timestamp".to_string(),

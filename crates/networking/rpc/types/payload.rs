@@ -34,7 +34,8 @@ pub struct ExecutionPayload {
     base_fee_per_gas: u64,
     pub block_hash: H256,
     transactions: Vec<EncodedTransaction>,
-    withdrawals: Vec<Withdrawal>,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    withdrawals: Option<Vec<Withdrawal>>,
     // ExecutionPayloadV3 fields. Optional since we support V2 too
     #[serde(
         skip_serializing_if = "Option::is_none",
@@ -101,7 +102,7 @@ impl ExecutionPayload {
                 .map(|encoded_tx| encoded_tx.decode())
                 .collect::<Result<Vec<_>, RLPDecodeError>>()?,
             ommers: vec![],
-            withdrawals: Some(self.withdrawals),
+            withdrawals: self.withdrawals,
         };
 
         let header = BlockHeader {
@@ -121,9 +122,10 @@ impl ExecutionPayload {
             prev_randao: self.prev_randao,
             nonce: 0,
             base_fee_per_gas: Some(self.base_fee_per_gas),
-            withdrawals_root: Some(compute_withdrawals_root(
-                &body.withdrawals.clone().unwrap_or_default(),
-            )),
+            withdrawals_root: body
+                .withdrawals
+                .clone()
+                .map(|w| compute_withdrawals_root(&w)),
             blob_gas_used: self.blob_gas_used,
             excess_blob_gas: self.excess_blob_gas,
             parent_beacon_block_root,
@@ -153,7 +155,7 @@ impl ExecutionPayload {
                 .iter()
                 .map(EncodedTransaction::encode)
                 .collect(),
-            withdrawals: block.body.withdrawals.unwrap_or_default(),
+            withdrawals: block.body.withdrawals,
             blob_gas_used: block.header.blob_gas_used,
             excess_blob_gas: block.header.excess_blob_gas,
         }

@@ -236,7 +236,7 @@ mod blockchain_integration_test {
             timestamp: parent.timestamp + 12,
             fee_recipient: H160::random(),
             random: H256::random(),
-            withdrawals: Vec::new(),
+            withdrawals: Some(Vec::new()),
             beacon_root: Some(H256::random()),
             version: 1,
         };
