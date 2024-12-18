@@ -2191,6 +2191,7 @@ dependencies = [
  "hex",
  "keccak-hash 0.11.0",
  "libsecp256k1",
+ "ripemd",
  "serde",
  "serde_json",
  "sha2 0.10.8",

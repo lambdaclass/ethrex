@@ -7,7 +7,7 @@ use sha3::Digest;
 use crate::{
     call_frame::CallFrame,
     errors::{InternalError, PrecompileError, VMError},
-    gas_cost::{sha2_256 as sha2_256_cost, ECRECOVER_COST},
+    gas_cost::{ripemd_160 as ripemd_160_cost, sha2_256 as sha2_256_cost, ECRECOVER_COST},
 };
 
 pub const ECRECOVER_ADDRESS: H160 = H160([
@@ -199,7 +199,7 @@ fn identity(
     Ok(Bytes::new())
 }
 
-fn sha2_256(
+pub fn sha2_256(
     calldata: &Bytes,
     gas_for_call: U256,
     consumed_gas: &mut U256,
@@ -213,12 +213,23 @@ fn sha2_256(
     Ok(Bytes::from(result))
 }
 
-fn ripemd_160(
-    _calldata: &Bytes,
-    _gas_for_call: U256,
-    _consumed_gas: &mut U256,
+pub fn ripemd_160(
+    calldata: &Bytes,
+    gas_for_call: U256,
+    consumed_gas: &mut U256,
 ) -> Result<Bytes, VMError> {
-    Ok(Bytes::new())
+    let gas_cost = ripemd_160_cost(calldata.len())?;
+
+    increase_precompile_consumed_gas(gas_for_call, gas_cost, consumed_gas)?;
+
+    let mut hasher = ripemd::Ripemd160::new();
+    hasher.update(calldata);
+    let result = hasher.finalize();
+
+    let mut output = vec![0; 12];
+    output.extend_from_slice(&result);
+
+    Ok(Bytes::from(output))
 }
 
 fn modexp(
