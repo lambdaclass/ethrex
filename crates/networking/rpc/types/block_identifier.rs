@@ -35,10 +35,10 @@ impl BlockIdentifier {
         match self {
             BlockIdentifier::Number(num) => Ok(Some(*num)),
             BlockIdentifier::Tag(tag) => match tag {
-                BlockTag::Earliest => storage.get_earliest_block_number(),
+                BlockTag::Earliest => Ok(Some(storage.get_earliest_block_number()?)),
                 BlockTag::Finalized => storage.get_finalized_block_number(),
                 BlockTag::Safe => storage.get_safe_block_number(),
-                BlockTag::Latest => storage.get_latest_block_number(),
+                BlockTag::Latest => Ok(Some(storage.get_latest_block_number()?)),
                 BlockTag::Pending => {
                     // TODO(#1112): We need to check individual intrincacies of the pending tag for
                     // each RPC method that uses it.
@@ -47,7 +47,7 @@ impl BlockIdentifier {
                         // If there are no pending blocks, we return the latest block number
                         .and_then(|pending_block_number| match pending_block_number {
                             Some(block_number) => Ok(Some(block_number)),
-                            None => storage.get_latest_block_number(),
+                            None => Ok(Some(storage.get_latest_block_number()?)),
                         })
                 }
             },
@@ -114,10 +114,8 @@ impl BlockIdentifierOrHash {
 
         let result = self.resolve_block_number(storage)?;
         let latest = storage.get_latest_block_number()?;
-        match (result, latest) {
-            (Some(result), Some(latest)) => Ok(result == latest),
-            _ => Ok(false),
-        }
+
+        Ok(result.is_some_and(|res| res == latest))
     }
 }
 

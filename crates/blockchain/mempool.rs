@@ -173,9 +173,7 @@ fn validate_transaction(
 ) -> Result<(), MempoolError> {
     // TODO: Add validations here
 
-    let header_no = store
-        .get_latest_block_number()?
-        .ok_or(MempoolError::NoBlockHeaderError)?;
+    let header_no = store.get_latest_block_number()?;
     let header = store
         .get_block_header(header_no)?
         .ok_or(MempoolError::NoBlockHeaderError)?;

@@ -157,16 +157,10 @@ impl FeeHistoryRequest {
         // TODO: We should probably restrict how many blocks we are fetching to a certain limit
 
         // Get earliest block
-        let earliest_block_num = storage
-            .get_earliest_block_number()?
-            .ok_or(RpcErr::Internal(
-                "Could not get earliest block number".to_owned(),
-            ))?;
+        let earliest_block_num = storage.get_earliest_block_number()?;
 
         // Get latest block
-        let latest_block_num = storage.get_latest_block_number()?.ok_or(RpcErr::Internal(
-            "Could not get latest block number".to_owned(),
-        ))?;
+        let latest_block_num = storage.get_latest_block_number()?;
 
         // Get finish_block number
         let finish_block = finish_block

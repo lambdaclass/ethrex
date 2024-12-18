@@ -90,9 +90,7 @@ impl Proposer {
 
     pub async fn main_logic(&self, store: Store) -> Result<(), ProposerError> {
         let head_block_hash = {
-            let current_block_number = store
-                .get_latest_block_number()?
-                .ok_or(ProposerError::StorageDataIsNone)?;
+            let current_block_number = store.get_latest_block_number()?;
             store
                 .get_canonical_block_hash(current_block_number)?
                 .ok_or(ProposerError::StorageDataIsNone)?

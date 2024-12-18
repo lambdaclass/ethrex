@@ -175,7 +175,7 @@ fn handle_forkchoice(
                 }
                 InvalidForkChoice::Syncing => {
                     // Start sync
-                    let current_number = context.storage.get_latest_block_number()?.unwrap();
+                    let current_number = context.storage.get_latest_block_number()?;
                     let Some(current_head) =
                         context.storage.get_canonical_block_hash(current_number)?
                     else {

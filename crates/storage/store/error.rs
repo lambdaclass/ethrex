@@ -38,4 +38,8 @@ pub enum StoreError {
     Trie(#[from] TrieError),
     #[error("missing store: is an execution DB being used instead?")]
     MissingStore,
+    #[error("Missing latest block number")]
+    MissingLatestBlockNumber,
+    #[error("Missing earliest block number")]
+    MissingEarliestBlockNumber,
 }

@@ -310,12 +310,8 @@ impl RpcHandler for BlockNumberRequest {
 
     fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
         info!("Requested latest block number");
-        match context.storage.get_latest_block_number() {
-            Ok(Some(block_number)) => serde_json::to_value(format!("{:#x}", block_number))
-                .map_err(|error| RpcErr::Internal(error.to_string())),
-            Ok(None) => Err(RpcErr::Internal("No blocks found".to_owned())),
-            Err(error) => Err(RpcErr::Internal(error.to_string())),
-        }
+        serde_json::to_value(format!("{:#x}", context.storage.get_latest_block_number()?))
+            .map_err(|error| RpcErr::Internal(error.to_string()))
     }
 }
 
@@ -326,25 +322,19 @@ impl RpcHandler for GetBlobBaseFee {
 
     fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
         info!("Requested blob gas price");
-        match context.storage.get_latest_block_number() {
-            Ok(Some(block_number)) => {
-                let header = match context.storage.get_block_header(block_number)? {
-                    Some(header) => header,
-                    _ => return Err(RpcErr::Internal("Could not get block header".to_owned())),
-                };
-                let parent_header = match find_parent_header(&header, &context.storage) {
-                    Ok(header) => header,
-                    Err(error) => return Err(RpcErr::Internal(error.to_string())),
-                };
-                let blob_base_fee = calculate_base_fee_per_blob_gas(
-                    parent_header.excess_blob_gas.unwrap_or_default(),
-                );
-                serde_json::to_value(format!("{:#x}", blob_base_fee))
-                    .map_err(|error| RpcErr::Internal(error.to_string()))
-            }
-            Ok(None) => Err(RpcErr::Internal("No blocks found".to_owned())),
-            Err(error) => Err(RpcErr::Internal(error.to_string())),
-        }
+        let block_number = context.storage.get_latest_block_number()?;
+        let header = match context.storage.get_block_header(block_number)? {
+            Some(header) => header,
+            _ => return Err(RpcErr::Internal("Could not get block header".to_owned())),
+        };
+        let parent_header = match find_parent_header(&header, &context.storage) {
+            Ok(header) => header,
+            Err(error) => return Err(RpcErr::Internal(error.to_string())),
+        };
+        let blob_base_fee =
+            calculate_base_fee_per_blob_gas(parent_header.excess_blob_gas.unwrap_or_default());
+        serde_json::to_value(format!("{:#x}", blob_base_fee))
+            .map_err(|error| RpcErr::Internal(error.to_string()))
     }
 }
 
