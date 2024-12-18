@@ -231,7 +231,7 @@ impl VM {
                     selfdestrutct_set: HashSet::new(),
                     touched_accounts: default_touched_accounts,
                     touched_storage_slots: default_touched_storage_slots,
-                    created_accounts: HashSet::new(),
+                    created_accounts: HashSet::from([new_contract_address]),
                 };
 
                 Ok(Self {
