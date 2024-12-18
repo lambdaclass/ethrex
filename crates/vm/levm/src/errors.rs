@@ -180,6 +180,12 @@ pub enum InternalError {
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error, Serialize, Deserialize)]
 pub enum PrecompileError {
+    #[error("Error while parsing the calldata")]
+    ParsingInputError,
+    #[error("Error while increasing consumed gas")]
+    GasConsumedOverflow,
+    #[error("There is not enough gas to execute precompiled contract")]
+    NotEnoughGas,
     #[error("This is a default error")]
     DefaultError,
 }

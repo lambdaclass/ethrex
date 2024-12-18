@@ -1,9 +1,12 @@
 use bytes::Bytes;
 use ethrex_core::{Address, H160, U256};
+use keccak_hash::keccak256;
+use libsecp256k1::{self, Message, RecoveryId, Signature};
 
 use crate::{
     call_frame::CallFrame,
-    errors::{InternalError, VMError},
+    errors::{InternalError, PrecompileError, VMError},
+    gas_cost::ECRECOVER_COST,
 };
 
 pub const ECRECOVER_ADDRESS: H160 = H160([
@@ -95,12 +98,84 @@ pub fn execute_precompile(current_call_frame: &mut CallFrame) -> Result<Bytes, V
     Ok(result)
 }
 
-fn ecrecover(
-    _calldata: &Bytes,
-    _gas_for_call: U256,
-    _consumed_gas: &mut U256,
+/// When slice length is less than 128, the rest is filled with zeros. If slice length is
+/// more than 128 the excess bytes are discarded.
+fn fill_with_zeros(slice: &[u8]) -> Result<[u8; 128], VMError> {
+    let mut result = [0; 128];
+
+    let n = slice.len().min(128);
+
+    let trimmed_slice: &[u8] = slice.get(..n).unwrap_or_default();
+
+    for i in 0..n {
+        let byte: &mut u8 = result.get_mut(i).ok_or(InternalError::SlicingError)?;
+        *byte = *trimmed_slice.get(i).ok_or(InternalError::SlicingError)?;
+    }
+
+    Ok(result)
+}
+
+pub fn ecrecover(
+    calldata: &Bytes,
+    gas_for_call: U256,
+    consumed_gas: &mut U256,
 ) -> Result<Bytes, VMError> {
-    Ok(Bytes::new())
+    // Consume gas
+    *consumed_gas = consumed_gas
+        .checked_add(ECRECOVER_COST.into())
+        .ok_or(PrecompileError::GasConsumedOverflow)?;
+
+    if gas_for_call < *consumed_gas {
+        return Err(VMError::PrecompileError(PrecompileError::NotEnoughGas));
+    }
+
+    // If calldata does not reach the required length, we should fill the rest with zeros
+    let calldata = fill_with_zeros(calldata)?;
+
+    // Parse the input elements, first as a slice of bytes and then as an specific type of the crate
+    let hash = calldata.get(0..32).ok_or(InternalError::SlicingError)?;
+    let message = Message::parse_slice(hash).map_err(|_| PrecompileError::ParsingInputError)?;
+
+    let v: U256 = calldata
+        .get(32..64)
+        .ok_or(InternalError::SlicingError)?
+        .into();
+
+    // The Recovery identifier is expected to be 27 or 28, any other value is invalid
+    if !(v == U256::from(27) || v == U256::from(28)) {
+        return Ok(Bytes::new());
+    }
+
+    let v = u8::try_from(v).map_err(|_| InternalError::ConversionError)?;
+    let recovery_id = match RecoveryId::parse_rpc(v) {
+        Ok(id) => id,
+        Err(_) => {
+            return Ok(Bytes::new());
+        }
+    };
+
+    // signature is made up of the parameters r and s
+    let sig = calldata.get(64..128).ok_or(InternalError::SlicingError)?;
+    let signature =
+        Signature::parse_standard_slice(sig).map_err(|_| PrecompileError::ParsingInputError)?;
+
+    // Recover the address using secp256k1
+    let mut public_key = match libsecp256k1::recover(&message, &signature, &recovery_id) {
+        Ok(id) => id,
+        Err(_) => {
+            return Ok(Bytes::new());
+        }
+    }
+    .serialize();
+
+    // We need to take the 64 bytes from the public key (discarding the first pos of the slice)
+    keccak256(&mut public_key[1..65]);
+
+    // The output is 32 bytes: the initial 12 bytes with 0s, and the remaining 20 with the recovered address
+    let mut output = vec![0u8; 12];
+    output.extend_from_slice(public_key.get(13..33).ok_or(InternalError::SlicingError)?);
+
+    Ok(Bytes::from(output.to_vec()))
 }
 
 fn identity(
