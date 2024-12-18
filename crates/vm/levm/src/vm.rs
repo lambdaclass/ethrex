@@ -209,9 +209,17 @@ impl VM {
 
                 default_touched_accounts.insert(new_contract_address);
 
-                let created_contract = Account::new(value, Bytes::new(), 1, HashMap::new());
+                // Since we are in a CREATE transaction, we need to check if the address is already occupied.
+                // If it is, we should not continue with the transaction. We will handle the revert in the next step.
+                let new_account = db.get_account_info(new_contract_address);
+                let balance = value
+                    .checked_add(new_account.balance)
+                    .ok_or(VMError::BalanceOverflow)?;
 
-                cache::insert_account(&mut cache, new_contract_address, created_contract);
+                if !new_account.has_code() && !new_account.has_nonce() {
+                    let created_contract = Account::new(balance, Bytes::new(), 1, HashMap::new());
+                    cache::insert_account(&mut cache, new_contract_address, created_contract);
+                }
 
                 let initial_call_frame = CallFrame::new(
                     env.origin,
@@ -616,14 +624,6 @@ impl VM {
     /// - It calculates and adds intrinsic gas to the 'gas used' of callframe and environment.
     ///   See 'docs' for more information about validations.
     fn prepare_execution(&mut self, initial_call_frame: &mut CallFrame) -> Result<(), VMError> {
-        //TODO: This should revert the transaction, not throw an error. And I don't know if it should be done here...
-        // if self.is_create() {
-        //     // If address is already in db, there's an error
-        //     let new_address_acc = self.db.get_account_info(call_frame.to);
-        //     if !new_address_acc.is_empty() {
-        //         return Err(VMError::AddressAlreadyOccupied);
-        //     }
-        // }
         let sender_address = self.env.origin;
         let sender_account = self.get_account(sender_address);
 
@@ -879,6 +879,17 @@ impl VM {
             .ok_or(VMError::Internal(InternalError::CouldNotPopCallframe))?;
 
         self.prepare_execution(&mut initial_call_frame)?;
+
+        // The transaction should be reverted if:
+        // - The transaction is a CREATE transaction and
+        // - The address is already in the database and
+        // - The address is not empty
+        if self.is_create() {
+            let new_address_acc = self.db.get_account_info(initial_call_frame.to);
+            if new_address_acc.has_code() || new_address_acc.has_nonce() {
+                return self.handle_create_non_empty_account(&initial_call_frame);
+            }
+        }
 
         let mut report = self.execute(&mut initial_call_frame)?;
         if self.is_create() && !report.is_success() {
@@ -1141,6 +1152,26 @@ impl VM {
                 account
             }
         }
+    }
+
+    fn handle_create_non_empty_account(
+        &mut self,
+        initial_call_frame: &CallFrame,
+    ) -> Result<TransactionReport, VMError> {
+        let mut report = TransactionReport {
+            result: TxResult::Revert(VMError::AddressAlreadyOccupied),
+            gas_used: self.env.gas_limit.low_u64(),
+            gas_refunded: 0,
+            logs: vec![],
+            new_state: self.cache.clone(),
+            output: Bytes::new(),
+            created_address: None,
+        };
+
+        self.post_execution_changes(initial_call_frame, &mut report)?;
+        report.new_state.clone_from(&self.cache);
+
+        Ok(report)
     }
 }
 
