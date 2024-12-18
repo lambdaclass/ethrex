@@ -2,11 +2,12 @@ use bytes::Bytes;
 use ethrex_core::{Address, H160, U256};
 use keccak_hash::keccak256;
 use libsecp256k1::{self, Message, RecoveryId, Signature};
+use sha3::Digest;
 
 use crate::{
     call_frame::CallFrame,
     errors::{InternalError, PrecompileError, VMError},
-    gas_cost::ECRECOVER_COST,
+    gas_cost::{sha2_256 as sha2_256_cost, ECRECOVER_COST},
 };
 
 pub const ECRECOVER_ADDRESS: H160 = H160([
@@ -98,6 +99,23 @@ pub fn execute_precompile(current_call_frame: &mut CallFrame) -> Result<Bytes, V
     Ok(result)
 }
 
+/// Verifies if the gas cost is higher than the gas limit and consumes the gas cost if it is not
+fn increase_precompile_consumed_gas(
+    gas_for_call: U256,
+    gas_cost: U256,
+    consumed_gas: &mut U256,
+) -> Result<(), VMError> {
+    if gas_for_call < gas_cost {
+        return Err(VMError::PrecompileError(PrecompileError::NotEnoughGas));
+    }
+
+    *consumed_gas = consumed_gas
+        .checked_add(gas_cost)
+        .ok_or(PrecompileError::GasConsumedOverflow)?;
+
+    Ok(())
+}
+
 /// When slice length is less than 128, the rest is filled with zeros. If slice length is
 /// more than 128 the excess bytes are discarded.
 fn fill_with_zeros(slice: &[u8]) -> Result<[u8; 128], VMError> {
@@ -120,14 +138,9 @@ pub fn ecrecover(
     gas_for_call: U256,
     consumed_gas: &mut U256,
 ) -> Result<Bytes, VMError> {
-    // Consume gas
-    *consumed_gas = consumed_gas
-        .checked_add(ECRECOVER_COST.into())
-        .ok_or(PrecompileError::GasConsumedOverflow)?;
+    let gas_cost = ECRECOVER_COST.into();
 
-    if gas_for_call < *consumed_gas {
-        return Err(VMError::PrecompileError(PrecompileError::NotEnoughGas));
-    }
+    increase_precompile_consumed_gas(gas_for_call, gas_cost, consumed_gas)?;
 
     // If calldata does not reach the required length, we should fill the rest with zeros
     let calldata = fill_with_zeros(calldata)?;
@@ -187,11 +200,17 @@ fn identity(
 }
 
 fn sha2_256(
-    _calldata: &Bytes,
-    _gas_for_call: U256,
-    _consumed_gas: &mut U256,
+    calldata: &Bytes,
+    gas_for_call: U256,
+    consumed_gas: &mut U256,
 ) -> Result<Bytes, VMError> {
-    Ok(Bytes::new())
+    let gas_cost = sha2_256_cost(calldata.len())?;
+
+    increase_precompile_consumed_gas(gas_for_call, gas_cost, consumed_gas)?;
+
+    let result = sha2::Sha256::digest(calldata).to_vec();
+
+    Ok(Bytes::from(result))
 }
 
 fn ripemd_160(

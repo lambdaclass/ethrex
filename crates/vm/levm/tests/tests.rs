@@ -2436,8 +2436,8 @@ fn calldataload_being_set_by_parent() {
 
     let callee_bytecode = ops_to_bytecode(&ops).unwrap();
 
-    let callee_address = Address::from_low_u64_be(U256::from(2).low_u64());
-    let callee_address_u256 = U256::from(2);
+    let callee_address = Address::from_low_u64_be(U256::from(22).low_u64());
+    let callee_address_u256 = U256::from(22);
     let callee_account = Account::default()
         .with_balance(50000.into())
         .with_bytecode(callee_bytecode);

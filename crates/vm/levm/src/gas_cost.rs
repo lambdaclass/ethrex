@@ -1,7 +1,7 @@
 use crate::{
     call_frame::CallFrame,
     constants::{WORD_SIZE, WORD_SIZE_IN_BYTES_U64},
-    errors::{InternalError, OutOfGasError, VMError},
+    errors::{InternalError, OutOfGasError, PrecompileError, VMError},
     memory, StorageSlot,
 };
 use bytes::Bytes;
@@ -758,15 +758,15 @@ pub fn fake_exponential(factor: u64, numerator: u64, denominator: u64) -> Result
     ))
 }
 
-pub fn sha2_256(data_size: u64) -> Result<U256, OutOfGasError> {
+pub fn sha2_256(data_size: usize) -> Result<U256, VMError> {
     precompile(data_size, SHA2_256_STATIC_COST, SHA2_256_DYNAMIC_BASE)
 }
 
-pub fn ripemd_160(data_size: u64) -> Result<U256, OutOfGasError> {
+pub fn ripemd_160(data_size: usize) -> Result<U256, VMError> {
     precompile(data_size, RIPEMD_160_STATIC_COST, RIPEMD_160_DYNAMIC_BASE)
 }
 
-pub fn identity(data_size: u64) -> Result<U256, OutOfGasError> {
+pub fn identity(data_size: usize) -> Result<U256, VMError> {
     precompile(data_size, IDENTITY_STATIC_COST, IDENTITY_DYNAMIC_BASE)
 }
 
@@ -834,7 +834,11 @@ pub fn modexp(
         .ok_or(OutOfGasError::GasCostOverflow)?)
 }
 
-fn precompile(data_size: u64, static_cost: u64, dynamic_base: u64) -> Result<U256, OutOfGasError> {
+fn precompile(data_size: usize, static_cost: u64, dynamic_base: u64) -> Result<U256, VMError> {
+    let data_size: u64 = data_size
+        .try_into()
+        .map_err(|_| PrecompileError::ParsingInputError)?;
+
     let data_word_cost = data_size
         .checked_add(WORD_SIZE_IN_BYTES_U64 - 1)
         .ok_or(OutOfGasError::GasCostOverflow)?
