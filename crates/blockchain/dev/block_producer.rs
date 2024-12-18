@@ -29,9 +29,10 @@ pub async fn start_block_producer(
 
         let payload_attributes = PayloadAttributesV3 {
             timestamp: SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs(),
+            prev_randao: H256::zero(),
             suggested_fee_recipient: coinbase_address,
             parent_beacon_block_root: Some(parent_beacon_block_root),
-            ..Default::default()
+            withdrawals: Some(Vec::new()),
         };
         let fork_choice_response = match engine_client
             .engine_forkchoice_updated_v3(fork_choice_state, Some(payload_attributes))
@@ -78,6 +79,7 @@ pub async fn start_block_producer(
                         let mut hasher = Sha256::new();
                         hasher.update(commitment);
                         let mut hash = hasher.finalize();
+                        // https://eips.ethereum.org/EIPS/eip-4844 -> kzg_to_versioned_hash
                         hash[0] = 0x01;
                         H256::from_slice(&hash)
                     })
