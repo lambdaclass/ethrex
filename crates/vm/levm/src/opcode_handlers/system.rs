@@ -1,14 +1,10 @@
 use crate::{
     call_frame::CallFrame,
-    constants::{
-        CREATE_DEPLOYMENT_FAIL, INIT_CODE_MAX_SIZE, INVALID_CONTRACT_PREFIX, REVERT_FOR_CALL,
-        SUCCESS_FOR_CALL,
-    },
+    constants::{CREATE_DEPLOYMENT_FAIL, INIT_CODE_MAX_SIZE, REVERT_FOR_CALL, SUCCESS_FOR_CALL},
     db::cache,
     errors::{InternalError, OpcodeSuccess, OutOfGasError, ResultReason, TxResult, VMError},
     gas_cost::{
         self, max_message_call_gas, CALLCODE_POSITIVE_VALUE_STIPEND, CALL_POSITIVE_VALUE_STIPEND,
-        CODE_DEPOSIT_COST,
     },
     memory::{self, calculate_memory_size},
     vm::{address_to_word, word_to_address, VM},
@@ -193,12 +189,6 @@ impl VM {
             memory::load_range(&mut current_call_frame.memory, offset, size)?
                 .to_vec()
                 .into();
-        if current_call_frame.create_op_called {
-            let code_deposit_cost = U256::from(current_call_frame.output.len())
-                .checked_mul(CODE_DEPOSIT_COST)
-                .ok_or(InternalError::ArithmeticOperationOverflow)?;
-            self.increase_consumed_gas(current_call_frame, code_deposit_cost)?;
-        }
 
         Ok(OpcodeSuccess::Result(ResultReason::Return))
     }
@@ -582,15 +572,6 @@ impl VM {
 
         match tx_report.result {
             TxResult::Success => {
-                let deployed_code = tx_report.output;
-
-                if !deployed_code.is_empty() {
-                    if let Some(&INVALID_CONTRACT_PREFIX) = deployed_code.first() {
-                        return Err(VMError::InvalidContractPrefix);
-                    }
-                }
-                // New account's bytecode is going to be the output of initcode exec.
-                self.update_account_bytecode(new_address, deployed_code)?;
                 current_call_frame
                     .stack
                     .push(address_to_word(new_address))?;
