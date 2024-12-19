@@ -486,32 +486,16 @@ impl VM {
             return Err(VMError::OutOfGas(OutOfGasError::ConsumedGasOverflow));
         }
 
-        // SECOND: Validations that push 0 to the stack
+        // Reserve gas for subcall
+        let max_message_call_gas = max_message_call_gas(current_call_frame)?;
+        self.increase_consumed_gas(current_call_frame, max_message_call_gas.into())?;
+
+        // Clear callframe subreturn data
+        current_call_frame.sub_return_data = Bytes::new();
+
         let deployer_address = current_call_frame.to;
 
         let deployer_account_info = self.access_account(deployer_address).0;
-
-        // 1. Sender doesn't have enough balance to send value.
-        if deployer_account_info.balance < value_in_wei_to_send {
-            current_call_frame.stack.push(CREATE_DEPLOYMENT_FAIL)?;
-            return Ok(OpcodeSuccess::Continue);
-        }
-
-        // 2. Depth limit has been reached
-        let new_depth = current_call_frame
-            .depth
-            .checked_add(1)
-            .ok_or(InternalError::ArithmeticOperationOverflow)?;
-        if new_depth > 1024 {
-            current_call_frame.stack.push(CREATE_DEPLOYMENT_FAIL)?;
-            return Ok(OpcodeSuccess::Continue);
-        }
-
-        // 3. Sender nonce is max.
-        if deployer_account_info.nonce == u64::MAX {
-            current_call_frame.stack.push(CREATE_DEPLOYMENT_FAIL)?;
-            return Ok(OpcodeSuccess::Continue);
-        }
 
         let code = Bytes::from(
             memory::load_range(
@@ -527,7 +511,32 @@ impl VM {
             None => Self::calculate_create_address(deployer_address, deployer_account_info.nonce)?,
         };
 
-        // 3. Account has nonce or code.
+        // touch account
+        self.accrued_substate.touched_accounts.insert(new_address);
+
+        let new_depth = current_call_frame
+            .depth
+            .checked_add(1)
+            .ok_or(InternalError::ArithmeticOperationOverflow)?;
+        // SECOND: Validations that push 0 to the stack and return reserved_gas
+        // 1. Sender doesn't have enough balance to send value.
+        // 2. Depth limit has been reached
+        // 3. Sender nonce is max.
+        if deployer_account_info.balance < value_in_wei_to_send
+            || new_depth > 1024
+            || deployer_account_info.nonce == u64::MAX
+        {
+            // Return reserved gas
+            current_call_frame.gas_used = current_call_frame
+                .gas_used
+                .checked_sub(max_message_call_gas.into())
+                .ok_or(VMError::Internal(InternalError::GasOverflow))?;
+            // Push 0
+            current_call_frame.stack.push(CREATE_DEPLOYMENT_FAIL)?;
+            return Ok(OpcodeSuccess::Continue);
+        }
+
+        // THIRD: Validations that push 0 to the stack without returning reserved gas but incrementing deployer's nonce
         let new_account = self.get_account(new_address);
         if new_account.has_code_or_nonce() {
             self.increment_account_nonce(deployer_address)?;
@@ -535,7 +544,7 @@ impl VM {
             return Ok(OpcodeSuccess::Continue);
         }
 
-        // THIRD: Changes to the state
+        // FOURTH: Changes to the state
         // 1. Creating contract.
 
         // If the address has balance but there is no account associated with it, we need to add the value to it
@@ -552,7 +561,6 @@ impl VM {
         // 3. Decrease sender's balance.
         self.decrease_account_balance(deployer_address, value_in_wei_to_send)?;
 
-        let max_message_call_gas = max_message_call_gas(current_call_frame)?;
         let mut new_call_frame = CallFrame::new(
             deployer_address,
             new_address,
@@ -568,14 +576,17 @@ impl VM {
         );
 
         self.accrued_substate.created_accounts.insert(new_address); // Mostly for SELFDESTRUCT during initcode.
-        self.accrued_substate.touched_accounts.insert(new_address);
 
         let tx_report = self.execute(&mut new_call_frame)?;
+        let unused_gas = max_message_call_gas
+            .checked_sub(tx_report.gas_used)
+            .ok_or(InternalError::GasOverflow)?;
 
+        // Return reserved gas
         current_call_frame.gas_used = current_call_frame
             .gas_used
-            .checked_add(tx_report.gas_used.into())
-            .ok_or(VMError::OutOfGas(OutOfGasError::ConsumedGasOverflow))?;
+            .checked_sub(unused_gas.into())
+            .ok_or(InternalError::GasOverflow)?;
         current_call_frame.logs.extend(tx_report.logs);
 
         match tx_report.result {
