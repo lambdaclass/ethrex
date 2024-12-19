@@ -56,9 +56,9 @@ impl Stack {
 /// the EVM is currently executing.
 pub struct CallFrame {
     /// Max gas a callframe can use
-    pub gas_limit: U256,
+    pub gas_limit: u64,
     /// Keeps track of the gas that's been used in current context
-    pub gas_used: U256,
+    pub gas_used: u64,
     /// Program Counter
     pub pc: usize,
     /// Address of the account that sent the message
@@ -95,7 +95,7 @@ impl CallFrame {
     pub fn new_from_bytecode(bytecode: Bytes) -> Self {
         let valid_jump_destinations = get_valid_jump_destinations(&bytecode).unwrap_or_default();
         Self {
-            gas_limit: U256::MAX,
+            gas_limit: u64::MAX,
             bytecode,
             valid_jump_destinations,
             ..Default::default()
@@ -117,8 +117,8 @@ impl CallFrame {
         msg_value: U256,
         calldata: Bytes,
         is_static: bool,
-        gas_limit: U256,
-        gas_used: U256,
+        gas_limit: u64,
+        gas_used: u64,
         depth: usize,
         create_op_called: bool,
     ) -> Self {

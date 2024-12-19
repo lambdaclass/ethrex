@@ -8,7 +8,7 @@ use crate::{
     utils::{effective_gas_price, load_initial_state},
 };
 use bytes::Bytes;
-use ethrex_core::{types::TxKind, Address, H256};
+use ethrex_core::{types::TxKind, Address, H256, U256};
 use ethrex_levm::{
     errors::{TransactionReport, TxResult},
     Account, StorageSlot,
@@ -101,11 +101,13 @@ pub fn prepare_revm_for_tx<'state>(
     let chain_spec = initial_state
         .chain_config()
         .map_err(|err| EFTestRunnerError::VMInitializationFailed(err.to_string()))?;
+
+    let gas_limit: U256 = test.env.current_gas_limit;
     let block_env = RevmBlockEnv {
         number: RevmU256::from_limbs(test.env.current_number.0),
         coinbase: RevmAddress(test.env.current_coinbase.0.into()),
         timestamp: RevmU256::from_limbs(test.env.current_timestamp.0),
-        gas_limit: RevmU256::from_limbs(test.env.current_gas_limit.0),
+        gas_limit: RevmU256::from_limbs(gas_limit.0),
         basefee: RevmU256::from_limbs(test.env.current_base_fee.unwrap_or_default().0),
         difficulty: RevmU256::from_limbs(test.env.current_difficulty.0),
         prevrandao: test.env.current_random.map(|v| v.0.into()),
@@ -137,7 +139,7 @@ pub fn prepare_revm_for_tx<'state>(
 
     let tx_env = RevmTxEnv {
         caller: tx.sender.0.into(),
-        gas_limit: tx.gas_limit.as_u64(),
+        gas_limit: tx.gas_limit,
         gas_price: RevmU256::from_limbs(effective_gas_price(test, tx)?.0),
         transact_to: match tx.to {
             TxKind::Call(to) => RevmTxKind::Call(to.0.into()),

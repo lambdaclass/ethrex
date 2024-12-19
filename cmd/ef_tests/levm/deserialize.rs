@@ -264,10 +264,11 @@ impl<'de> Deserialize<'de> for EFTests {
             // 111, 112, 121, 122, 211, 212, 221, 222
             for (data_id, data) in raw_tx.data.iter().enumerate() {
                 for (gas_limit_id, gas_limit) in raw_tx.gas_limit.iter().enumerate() {
+                    let gas_limit_u64: u64 = (*gas_limit).as_u64();
                     for (value_id, value) in raw_tx.value.iter().enumerate() {
                         let tx = EFTestTransaction {
                             data: data.clone(),
-                            gas_limit: *gas_limit,
+                            gas_limit: gas_limit_u64,
                             gas_price: raw_tx.gas_price,
                             nonce: raw_tx.nonce,
                             secret_key: raw_tx.secret_key,

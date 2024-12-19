@@ -295,7 +295,7 @@ pub struct EFTestRawTransaction {
 #[serde(rename_all = "camelCase")]
 pub struct EFTestTransaction {
     pub data: Bytes,
-    pub gas_limit: U256,
+    pub gas_limit: u64,
     pub gas_price: Option<U256>,
     #[serde(deserialize_with = "deserialize_u256_safe")]
     pub nonce: U256,
