@@ -1,17 +1,12 @@
 use ethrex_core::{
     serde_utils,
     types::{
-        BlobsBundle, BlockHash, BlockNumber, EIP1559Transaction, EIP2930Transaction,
-        EIP4844Transaction, LegacyTransaction, PrivilegedL2Transaction, Transaction,
+        BlockHash, BlockNumber, EIP1559Transaction, EIP2930Transaction, LegacyTransaction,
+        PrivilegedL2Transaction, Transaction, WrappedEIP4844Transaction,
     },
     Address, H256,
 };
-use ethrex_rlp::{
-    decode::RLPDecode,
-    encode::RLPEncode,
-    error::RLPDecodeError,
-    structs::{Decoder, Encoder},
-};
+use ethrex_rlp::{decode::RLPDecode, error::RLPDecodeError};
 use serde::{Deserialize, Serialize};
 
 #[allow(unused)]
@@ -56,46 +51,6 @@ pub enum SendRawTransactionRequest {
     EIP1559(EIP1559Transaction),
     EIP4844(WrappedEIP4844Transaction),
     PriviligedL2(PrivilegedL2Transaction),
-}
-
-// NOTE: We might move this transaction definitions to `core/types/transactions.rs` later on.
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct WrappedEIP4844Transaction {
-    pub tx: EIP4844Transaction,
-    pub blobs_bundle: BlobsBundle,
-}
-
-impl RLPEncode for WrappedEIP4844Transaction {
-    fn encode(&self, buf: &mut dyn bytes::BufMut) {
-        let encoder = Encoder::new(buf);
-        encoder
-            .encode_field(&self.tx)
-            .encode_field(&self.blobs_bundle.blobs)
-            .encode_field(&self.blobs_bundle.commitments)
-            .encode_field(&self.blobs_bundle.proofs)
-            .finish();
-    }
-}
-
-impl RLPDecode for WrappedEIP4844Transaction {
-    fn decode_unfinished(rlp: &[u8]) -> Result<(WrappedEIP4844Transaction, &[u8]), RLPDecodeError> {
-        let decoder = Decoder::new(rlp)?;
-        let (tx, decoder) = decoder.decode_field("tx")?;
-        let (blobs, decoder) = decoder.decode_field("blobs")?;
-        let (commitments, decoder) = decoder.decode_field("commitments")?;
-        let (proofs, decoder) = decoder.decode_field("proofs")?;
-
-        let wrapped = WrappedEIP4844Transaction {
-            tx,
-            blobs_bundle: BlobsBundle {
-                blobs,
-                commitments,
-                proofs,
-            },
-        };
-        Ok((wrapped, decoder.finish()?))
-    }
 }
 
 impl SendRawTransactionRequest {

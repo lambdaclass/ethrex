@@ -1,5 +1,9 @@
 use bytes::BufMut;
 use bytes::Bytes;
+use ethrex_blockchain::error::MempoolError;
+use ethrex_blockchain::mempool;
+use ethrex_core::types::P2PTransaction;
+use ethrex_core::types::WrappedEIP4844Transaction;
 use ethrex_core::{types::Transaction, H256};
 use ethrex_rlp::{
     error::{RLPDecodeError, RLPEncodeError},
@@ -156,6 +160,59 @@ impl GetPooledTransactions {
             id,
         }
     }
+
+    pub fn handle(&self, store: &Store) -> Result<PooledTransactions, StoreError> {
+        let txs = self
+            .transaction_hashes
+            .iter()
+            .map(|hash| Self::get_p2p_transaction(hash, store))
+            // Return an error in case anything failed.
+            .collect::<Result<Vec<_>, _>>()?
+            .into_iter()
+            // As per the spec, Nones are perfectly acceptable, for example if a transaction was
+            // taken out of the mempool due to payload building after being advertised.
+            .flatten()
+            .collect();
+
+        // TODO: add getting of the blob bundle, as we'll implement this as a p2p transaction.
+        Ok(PooledTransactions {
+            id: self.id,
+            pooled_transactions: txs,
+        })
+    }
+
+    /// Gets a p2p transaction given a hash.
+    fn get_p2p_transaction(
+        hash: &H256,
+        store: &Store,
+    ) -> Result<Option<P2PTransaction>, StoreError> {
+        let Some(tx) = store.get_transaction_by_hash(*hash)? else {
+            return Ok(None);
+        };
+        let result = match tx {
+            Transaction::LegacyTransaction(itx) => P2PTransaction::LegacyTransaction(itx),
+            Transaction::EIP2930Transaction(itx) => P2PTransaction::EIP2930Transaction(itx),
+            Transaction::EIP1559Transaction(itx) => P2PTransaction::EIP1559Transaction(itx),
+            Transaction::EIP4844Transaction(itx) => {
+                let Some(bundle) = store.get_blobs_bundle_from_pool(*hash)? else {
+                    return Err(StoreError::Custom(format!(
+                        "Blob transaction present without its bundle: hash {}",
+                        hash
+                    )));
+                };
+
+                P2PTransaction::WrappedEIP4844Transaction(WrappedEIP4844Transaction {
+                    tx: itx,
+                    blobs_bundle: bundle,
+                })
+            }
+            Transaction::PrivilegedL2Transaction(itx) => {
+                P2PTransaction::PrivilegedL2Transaction(itx)
+            }
+        };
+
+        Ok(Some(result))
+    }
 }
 
 impl RLPxMessage for GetPooledTransactions {
@@ -182,19 +239,36 @@ impl RLPxMessage for GetPooledTransactions {
 }
 
 // https://github.com/ethereum/devp2p/blob/master/caps/eth.md#pooledtransactions-0x0a
+#[derive(Debug)]
 pub(crate) struct PooledTransactions {
     // id is a u64 chosen by the requesting peer, the responding peer must mirror the value for the response
     // https://github.com/ethereum/devp2p/blob/master/caps/eth.md#protocol-messages
     id: u64,
-    pooled_transactions: Vec<Transaction>,
+    pooled_transactions: Vec<P2PTransaction>,
 }
 
 impl PooledTransactions {
-    pub fn new(id: u64, pooled_transactions: Vec<Transaction>) -> Self {
+    pub fn new(id: u64, pooled_transactions: Vec<P2PTransaction>) -> Self {
         Self {
             pooled_transactions,
             id,
         }
+    }
+
+    /// Saves every incoming pooled transaction to the mempool.
+    pub fn handle(&self, store: &Store) -> Result<(), MempoolError> {
+        for tx in &self.pooled_transactions {
+            if let P2PTransaction::WrappedEIP4844Transaction(itx) = tx.clone() {
+                mempool::add_blob_transaction(itx.tx, itx.blobs_bundle, store)?;
+            } else {
+                let regular_tx = tx
+                    .clone()
+                    .try_into()
+                    .map_err(|error| MempoolError::StoreError(StoreError::Custom(error)))?;
+                mempool::add_transaction(regular_tx, store)?;
+            }
+        }
+        Ok(())
     }
 }
 
@@ -214,7 +288,7 @@ impl RLPxMessage for PooledTransactions {
         let decompressed_data = snappy_decompress(msg_data)?;
         let decoder = Decoder::new(&decompressed_data)?;
         let (id, decoder): (u64, _) = decoder.decode_field("request-id")?;
-        let (pooled_transactions, _): (Vec<Transaction>, _) =
+        let (pooled_transactions, _): (Vec<P2PTransaction>, _) =
             decoder.decode_field("pooledTransactions")?;
 
         Ok(Self::new(id, pooled_transactions))
@@ -223,7 +297,7 @@ impl RLPxMessage for PooledTransactions {
 
 #[cfg(test)]
 mod tests {
-    use ethrex_core::{types::Transaction, H256};
+    use ethrex_core::{types::P2PTransaction, H256};
 
     use crate::rlpx::{
         eth::transactions::{GetPooledTransactions, PooledTransactions},
@@ -262,7 +336,7 @@ mod tests {
 
     #[test]
     fn pooled_transactions_of_one_type() {
-        let transaction1 = Transaction::LegacyTransaction(Default::default());
+        let transaction1 = P2PTransaction::LegacyTransaction(Default::default());
         let pooled_transactions = vec![transaction1.clone()];
         let pooled_transactions = PooledTransactions::new(1, pooled_transactions);
 

@@ -592,7 +592,7 @@ impl RpcHandler for SendRawTransactionRequest {
             mempool::add_blob_transaction(
                 wrapped_blob_tx.tx.clone(),
                 wrapped_blob_tx.blobs_bundle.clone(),
-                context.storage,
+                &context.storage,
             )
         } else {
             mempool::add_transaction(self.to_transaction(), &context.storage)
