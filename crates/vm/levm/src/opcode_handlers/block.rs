@@ -160,21 +160,26 @@ impl VM {
     ) -> Result<OpcodeSuccess, VMError> {
         self.increase_consumed_gas(current_call_frame, gas_cost::BLOBHASH)?;
 
-        let Ok(index) = TryInto::<usize>::try_into(current_call_frame.stack.pop()?) else {
-            current_call_frame.stack.push(U256::zero())?;
-            return Ok(OpcodeSuccess::Continue);
-        };
+        let index = current_call_frame.stack.pop()?;
 
         let blob_hashes = &self.env.tx_blob_hashes;
+        if index > blob_hashes.len().into() {
+            current_call_frame.stack.push(U256::zero())?;
+            return Ok(OpcodeSuccess::Continue);
+        }
 
-        blob_hashes
+        let index: usize = index
+            .try_into()
+            .map_err(|_| VMError::Internal(InternalError::ConversionError))?;
+
+        //This should never fail because we check if the index fits above
+        let blob_hash = blob_hashes
             .get(index)
-            .map(|el| {
-                current_call_frame
-                    .stack
-                    .push(U256::from_big_endian(el.as_bytes()))
-            })
-            .unwrap_or_else(|| current_call_frame.stack.push(U256::zero()))?;
+            .ok_or(VMError::Internal(InternalError::BlobHashOutOfRange))?;
+
+        current_call_frame
+            .stack
+            .push(U256::from_big_endian(blob_hash.as_bytes()))?;
 
         Ok(OpcodeSuccess::Continue)
     }

@@ -157,7 +157,7 @@ pub const CREATE_BASE_COST: U256 = U256([32000, 0, 0, 0]);
 pub const CALLDATA_COST_ZERO_BYTE: U256 = U256([4, 0, 0, 0]);
 pub const CALLDATA_COST_NON_ZERO_BYTE: U256 = U256([16, 0, 0, 0]);
 
-// Blob gas costs
+// Blob gas costs                          2^17
 pub const BLOB_GAS_PER_BLOB: U256 = U256([131072, 0, 0, 0]);
 
 // Access lists costs

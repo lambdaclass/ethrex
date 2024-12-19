@@ -152,6 +152,8 @@ pub enum InternalError {
     DivisionError,
     #[error("Tried to access last call frame but found none")]
     CouldNotAccessLastCallframe, // Last callframe before execution is the same as the first, but after execution the last callframe is actually the initial CF
+    #[error("Tried to access blobhash but was out of range")]
+    BlobHashOutOfRange,
     #[error("Tried to read from empty code")]
     TriedToIndexEmptyCode,
     #[error("Failed computing CREATE address")]
