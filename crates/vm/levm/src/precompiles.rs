@@ -343,11 +343,38 @@ pub fn increase_left_pad(result: &Bytes, m_size: usize) -> Result<Bytes, VMError
     }
 }
 
-fn ecadd(
-    _calldata: &Bytes,
-    _gas_for_call: U256,
-    _consumed_gas: &mut U256,
-) -> Result<Bytes, VMError> {
+fn ecadd(calldata: &Bytes, gas_for_call: U256, consumed_gas: &mut U256) -> Result<Bytes, VMError> {
+    // If calldata does not reach the required length, we should fill the rest with zeros
+    let calldata = fill_with_zeros(calldata, 128)?;
+
+    let first_point_x: U256 = calldata
+        .get(0..32)
+        .ok_or(PrecompileError::ParsingInputError)?
+        .into();
+
+    let first_point_y: U256 = calldata
+        .get(32..64)
+        .ok_or(PrecompileError::ParsingInputError)?
+        .into();
+
+    let second_point_x: U256 = calldata
+        .get(64..96)
+        .ok_or(PrecompileError::ParsingInputError)?
+        .into();
+
+    let second_point_y: U256 = calldata
+        .get(96..128)
+        .ok_or(PrecompileError::ParsingInputError)?
+        .into();
+
+    let gas_cost = U256::from(150);
+    increase_precompile_consumed_gas(gas_for_call, gas_cost, consumed_gas)?;
+
+    println!(
+        "1: (x {}, y {}) and 2: (x {}, y {})",
+        first_point_x, first_point_y, second_point_x, second_point_y
+    );
+
     Ok(Bytes::new())
 }
 
