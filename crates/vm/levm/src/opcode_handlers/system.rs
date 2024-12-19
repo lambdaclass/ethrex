@@ -595,7 +595,7 @@ impl VM {
                     .stack
                     .push(address_to_word(new_address))?;
             }
-            TxResult::Revert(_) => {
+            TxResult::Revert(err) => {
                 // Return value to sender
                 self.increase_account_balance(deployer_address, value_in_wei_to_send)?;
 
@@ -603,6 +603,10 @@ impl VM {
                 cache::remove_account(&mut self.cache, &new_address);
                 self.accrued_substate.created_accounts.remove(&new_address);
 
+                // If revert we have to copy the return_data
+                if err == VMError::RevertOpcode {
+                    current_call_frame.sub_return_data = tx_report.output;
+                }
                 current_call_frame.stack.push(CREATE_DEPLOYMENT_FAIL)?;
             }
         }
