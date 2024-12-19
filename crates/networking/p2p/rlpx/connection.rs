@@ -167,7 +167,11 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
                     )
                     .await;
             };
-            table.lock().await.set_channels(node_id, peer_channels);
+            let capabilities = self.capabilities.iter().map(|(cap, _)| *cap).collect();
+            table
+                .lock()
+                .await
+                .init_backend_communication(node_id, peer_channels, capabilities);
             if let Err(e) = self.handle_peer_conn(sender, receiver).await {
                 self.peer_conn_failed("Error during RLPx connection", e, table)
                     .await;
