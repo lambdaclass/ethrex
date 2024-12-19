@@ -240,4 +240,6 @@ pub trait StoreEngine: Debug + Send + Sync + RefUnwindSafe {
         blobs_bundle: BlobsBundle,
         completed: bool,
     ) -> Result<(), StoreError>;
+
+    fn get_receipts_for_block(&self, block_hash: &BlockHash) -> Result<Vec<Receipt>, StoreError>;
 }

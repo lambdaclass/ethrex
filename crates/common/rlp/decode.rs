@@ -492,10 +492,10 @@ pub fn is_encoded_as_bytes(rlp: &[u8]) -> Result<bool, RLPDecodeError> {
 }
 
 /// Receives an RLP bytes item (prefix between 0xb8 and 0xbf) and returns its payload
-pub fn get_rlp_bytes_item_payload(rlp: &[u8]) -> &[u8] {
-    let prefix = rlp.first().unwrap();
+pub fn get_rlp_bytes_item_payload(rlp: &[u8]) -> Result<&[u8], RLPDecodeError> {
+    let prefix = rlp.first().ok_or(RLPDecodeError::InvalidLength)?;
     let offset: usize = (prefix - 0xb8 + 1).into();
-    &rlp[offset + 1..]
+    rlp.get(offset + 1..).ok_or(RLPDecodeError::InvalidLength)
 }
 
 /// Decodes the payload of an RLP item from a slice of bytes.

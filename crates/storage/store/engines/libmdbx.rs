@@ -494,6 +494,34 @@ impl StoreEngine for Store {
 
         self.write_batch::<Receipts>(key_values)
     }
+
+    fn get_receipts_for_block(
+        &self,
+        block_hash: &BlockHash,
+    ) -> std::result::Result<Vec<Receipt>, StoreError> {
+        let mut receipts = vec![];
+        let mut receipt_index = 0;
+        let mut key: TupleRLP<BlockHash, Index> = (*block_hash, 0).into();
+        let txn = self.db.begin_read().map_err(|_| StoreError::ReadError)?;
+        let mut cursor = txn
+            .cursor::<Receipts>()
+            .map_err(|_| StoreError::CursorError("Receipts".to_owned()))?;
+
+        // We're searching receipts for a block, the keys
+        // for the receipt table are of the kind: rlp((BlockHash, Index)).
+        // So we search for values in the db that match with this kind
+        // of key, until we reach an Index that returns None
+        // and we stop the search.
+        while let Some((_, encoded_receipt)) =
+            cursor.seek_exact(key).map_err(|_| StoreError::ReadError)?
+        {
+            receipts.push(encoded_receipt);
+            receipt_index += 1;
+            key = (*block_hash, receipt_index).into();
+        }
+
+        Ok(receipts.into_iter().map(|receipt| receipt.to()).collect())
+    }
 }
 
 impl Debug for Store {

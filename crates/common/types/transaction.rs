@@ -230,9 +230,9 @@ impl RLPDecode for Transaction {
     fn decode_unfinished(rlp: &[u8]) -> Result<(Self, &[u8]), RLPDecodeError> {
         if is_encoded_as_bytes(rlp)? {
             // Adjust the encoding to get the payload
-            let payload = get_rlp_bytes_item_payload(rlp);
-            let tx_type = payload.first().unwrap();
-            let tx_encoding = &payload[1..];
+            let payload = get_rlp_bytes_item_payload(rlp)?;
+            let tx_type = payload.first().ok_or(RLPDecodeError::InvalidLength)?;
+            let tx_encoding = &payload.get(1..).ok_or(RLPDecodeError::InvalidLength)?;
             // Look at the first byte to check if it corresponds to a TransactionType
             match *tx_type {
                 // Legacy

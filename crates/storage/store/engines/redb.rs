@@ -650,6 +650,35 @@ impl StoreEngine for RedBStore {
             ),
         )
     }
+
+    fn get_receipts_for_block(
+        &self,
+        block_hash: &BlockHash,
+    ) -> std::result::Result<Vec<Receipt>, StoreError> {
+        let mut encoded_receipts = vec![];
+        let mut receipt_index = 0;
+        let read_tx = self.db.begin_read()?;
+        let mut expected_key: TupleRLP<BlockHash, Index> = (*block_hash, 0).into();
+        let table = read_tx.open_table(RECEIPTS_TABLE)?;
+        // We're searching receipts for a block, the keys
+        // for the receipt table are of the kind: rlp((BlockHash, Index)).
+        // So we search for values in the db that match with this kind
+        // of key, until we reach an Index that returns None
+        // and we stop the search.
+        // TODO(#1436): Make sure this if this is the proper way of
+        // doing a search for each key, libmdbx has cursors
+        // for this purpose, we should do the equal here,
+        // if this approach is not correct.
+        while let Some(access_guard) = table.get(&expected_key)? {
+            encoded_receipts.push(access_guard.value());
+            receipt_index += 1;
+            expected_key = (*block_hash, receipt_index).into()
+        }
+        Ok(encoded_receipts
+            .into_iter()
+            .map(|receipt| receipt.to())
+            .collect())
+    }
 }
 
 impl redb::Value for ChainDataIndex {

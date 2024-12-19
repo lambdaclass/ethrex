@@ -958,6 +958,13 @@ impl Store {
     pub fn open_storage_trie(&self, account_hash: H256, storage_root: H256) -> Trie {
         self.engine.open_storage_trie(account_hash, storage_root)
     }
+
+    pub fn get_receipts_for_block(
+        &self,
+        block_hash: &BlockHash,
+    ) -> Result<Vec<Receipt>, StoreError> {
+        self.engine.get_receipts_for_block(block_hash)
+    }
 }
 
 pub fn hash_address(address: &Address) -> Vec<u8> {

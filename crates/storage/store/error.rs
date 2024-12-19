@@ -38,6 +38,10 @@ pub enum StoreError {
     Trie(#[from] TrieError),
     #[error("missing store: is an execution DB being used instead?")]
     MissingStore,
+    #[error("Could not open DB for reading")]
+    ReadError,
+    #[error("Could not instantiate cursor for table {0}")]
+    CursorError(String),
     #[error("Missing latest block number")]
     MissingLatestBlockNumber,
     #[error("Missing earliest block number")]
