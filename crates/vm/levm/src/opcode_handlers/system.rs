@@ -490,6 +490,9 @@ impl VM {
         let max_message_call_gas = max_message_call_gas(current_call_frame)?;
         self.increase_consumed_gas(current_call_frame, max_message_call_gas.into())?;
 
+        // Clear callframe subreturn data
+        current_call_frame.sub_return_data = Bytes::new();
+
         let deployer_address = current_call_frame.to;
 
         let deployer_account_info = self.access_account(deployer_address).0;
