@@ -9,12 +9,13 @@ use ethrex_levm::{
     db::{cache, CacheDB, Db},
     errors::{OutOfGasError, TxResult, VMError},
     gas_cost::{
-        self, ECRECOVER_COST, RIPEMD_160_DYNAMIC_BASE, RIPEMD_160_STATIC_COST,
-        SHA2_256_DYNAMIC_BASE, SHA2_256_STATIC_COST,
+        self, ECRECOVER_COST, IDENTITY_DYNAMIC_BASE, IDENTITY_STATIC_COST, MODEXP_STATIC_COST,
+        RIPEMD_160_DYNAMIC_BASE, RIPEMD_160_STATIC_COST, SHA2_256_DYNAMIC_BASE,
+        SHA2_256_STATIC_COST,
     },
     memory,
     operations::Operation,
-    precompiles::{ecrecover, ripemd_160, sha2_256},
+    precompiles::{ecrecover, identity, modexp, ripemd_160, sha2_256},
     utils::{new_vm_with_ops, new_vm_with_ops_addr_bal_db, new_vm_with_ops_db, ops_to_bytecode},
     vm::{word_to_address, Storage, VM},
     Environment,
@@ -4548,4 +4549,35 @@ fn ripemd_160_test() {
         consumed_gas,
         (RIPEMD_160_STATIC_COST + RIPEMD_160_DYNAMIC_BASE).into()
     );
+}
+
+#[test]
+fn identity_test() {
+    let calldata = hex::decode("ff").unwrap();
+    let calldata = Bytes::from(calldata);
+
+    let mut consumed_gas = U256::zero();
+    let result = identity(&calldata, 10000.into(), &mut consumed_gas).unwrap();
+
+    let expected_result = Bytes::from(hex::decode("ff").unwrap());
+
+    assert_eq!(result, expected_result);
+    assert_eq!(
+        consumed_gas,
+        (IDENTITY_STATIC_COST + IDENTITY_DYNAMIC_BASE).into()
+    );
+}
+
+#[test]
+fn modexp_test() {
+    let calldata = hex::decode("00000000000000000000000000000000000000000000000000000000000000010000000000000000000000000000000000000000000000000000000000000001000000000000000000000000000000000000000000000000000000000000000108090a").unwrap();
+    let calldata = Bytes::from(calldata);
+
+    let mut consumed_gas = U256::zero();
+    let result = modexp(&calldata, 10000.into(), &mut consumed_gas).unwrap();
+
+    let expected_result = Bytes::from(hex::decode("08").unwrap());
+
+    assert_eq!(result, expected_result);
+    assert_eq!(consumed_gas, MODEXP_STATIC_COST.into());
 }
