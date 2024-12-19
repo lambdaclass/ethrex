@@ -91,4 +91,13 @@ impl TrieState {
 
         Ok(())
     }
+
+    /// Writes a node directly to the DB bypassing the cache
+    pub fn write_node(&mut self, node: Node, hash: NodeHash) -> Result<(), TrieError> {
+        // Don't insert the node if it is already inlined on the parent
+        if matches!(hash, NodeHash::Hashed(_)) {
+            self.db.put(hash.into(), node.encode_to_vec())?;
+        }
+        Ok(())
+    }
 }
