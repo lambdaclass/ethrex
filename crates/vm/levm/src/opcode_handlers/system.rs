@@ -602,7 +602,6 @@ impl VM {
                 // Deployment failed so account shouldn't exist
                 cache::remove_account(&mut self.cache, &new_address);
                 self.accrued_substate.created_accounts.remove(&new_address);
-                self.accrued_substate.touched_accounts.remove(&new_address);
 
                 current_call_frame.stack.push(CREATE_DEPLOYMENT_FAIL)?;
             }
