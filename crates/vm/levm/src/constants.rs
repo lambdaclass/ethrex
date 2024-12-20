@@ -21,7 +21,7 @@ pub const EMPTY_CODE_HASH: H256 = H256([
 pub const MEMORY_EXPANSION_QUOTIENT: usize = 512;
 
 // Transaction costs in gas (in wei)
-pub const TX_BASE_COST: U256 = U256([21000, 0, 0, 0]);
+pub const TX_BASE_COST: u64 = 21000;
 
 pub const MAX_CODE_SIZE: usize = 0x6000;
 pub const INIT_CODE_MAX_SIZE: usize = 49152;

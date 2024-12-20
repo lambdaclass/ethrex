@@ -94,7 +94,7 @@ pub fn prepare_vm_for_tx(vector: &TestVector, test: &EFTest) -> Result<VM, EFTes
         tx.to.clone(),
         Environment {
             origin: tx.sender,
-            refunded_gas: U256::default(),
+            refunded_gas: 0,
             gas_limit: tx.gas_limit,
             block_number: test.env.current_number,
             coinbase: test.env.current_coinbase,
