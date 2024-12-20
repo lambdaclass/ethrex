@@ -630,6 +630,9 @@ impl VM {
         ret_offset: U256,
         ret_size: usize,
     ) -> Result<OpcodeSuccess, VMError> {
+        // Clear callframe subreturn data
+        current_call_frame.sub_return_data = Bytes::new();
+
         // 1. Validate sender has enough value
         let sender_account_info = self.access_account(msg_sender).0;
         if should_transfer_value && sender_account_info.balance < value {
