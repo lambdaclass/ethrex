@@ -27,7 +27,8 @@ impl VM {
         self.increase_consumed_gas(current_call_frame, gas_cost::TLOAD)?;
 
         let key = current_call_frame.stack.pop()?;
-        let value = current_call_frame
+        let value = self
+            .env
             .transient_storage
             .get(&(current_call_frame.msg_sender, key))
             .cloned()
@@ -44,9 +45,13 @@ impl VM {
     ) -> Result<OpcodeSuccess, VMError> {
         self.increase_consumed_gas(current_call_frame, gas_cost::TSTORE)?;
 
+        if current_call_frame.is_static {
+            return Err(VMError::OpcodeNotAllowedInStaticContext);
+        }
+
         let key = current_call_frame.stack.pop()?;
         let value = current_call_frame.stack.pop()?;
-        current_call_frame
+        self.env
             .transient_storage
             .insert((current_call_frame.msg_sender, key), value);
 

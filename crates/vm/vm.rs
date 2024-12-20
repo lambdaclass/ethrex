@@ -185,6 +185,7 @@ cfg_if::cfg_if! {
                 tx_max_fee_per_gas: tx.max_fee_per_gas().map(U256::from),
                 tx_max_fee_per_blob_gas: tx.max_fee_per_blob_gas().map(U256::from),
                 block_gas_limit: block_header.gas_limit.into(),
+                transient_storage: HashMap::new(),
             };
 
             let mut vm = VM::new(

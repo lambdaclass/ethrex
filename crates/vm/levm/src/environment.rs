@@ -1,4 +1,9 @@
+use std::collections::HashMap;
+
 use ethrex_core::{Address, H256, U256};
+
+/// [EIP-1153]: https://eips.ethereum.org/EIPS/eip-1153#reference-implementation
+pub type TransientStorage = HashMap<(Address, U256), U256>;
 
 #[derive(Debug, Default, Clone)]
 pub struct Environment {
@@ -21,6 +26,7 @@ pub struct Environment {
     pub tx_max_fee_per_gas: Option<U256>,
     pub tx_max_fee_per_blob_gas: Option<U256>,
     pub block_gas_limit: U256,
+    pub transient_storage: TransientStorage,
 }
 
 impl Environment {
@@ -43,6 +49,7 @@ impl Environment {
             tx_max_fee_per_gas: Default::default(),
             tx_max_fee_per_blob_gas: Default::default(),
             block_gas_limit: Default::default(),
+            transient_storage: Default::default(),
         }
     }
 }

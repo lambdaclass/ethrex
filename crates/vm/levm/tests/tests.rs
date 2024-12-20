@@ -19,7 +19,7 @@ use ethrex_levm::{
     vm::{word_to_address, Storage, VM},
     Environment,
 };
-use std::{collections::HashMap, sync::Arc};
+use std::{borrow::BorrowMut, collections::HashMap, sync::Arc};
 
 fn create_opcodes(size: usize, offset: usize, value_to_transfer: usize) -> Vec<Operation> {
     vec![
@@ -3728,20 +3728,18 @@ fn transient_store() {
 
     let mut vm = new_vm_with_ops(&operations).unwrap();
 
-    let current_call_frame = vm.current_call_frame_mut().unwrap();
-
-    assert!(current_call_frame.transient_storage.is_empty());
+    {
+        let env_mut = vm.env.borrow_mut();
+        assert!(env_mut.transient_storage.is_empty());
+    }
 
     let mut current_call_frame = vm.call_frames.pop().unwrap();
     vm.execute(&mut current_call_frame).unwrap();
 
-    let current_call_frame = vm.current_call_frame_mut().unwrap();
+    let msg_sender = current_call_frame.msg_sender;
 
     assert_eq!(
-        *current_call_frame
-            .transient_storage
-            .get(&(current_call_frame.msg_sender, key))
-            .unwrap(),
+        *vm.env.transient_storage.get(&(msg_sender, key)).unwrap(),
         value
     )
 }
@@ -3751,11 +3749,7 @@ fn transient_store_stack_underflow() {
     let operations = [Operation::Tstore, Operation::Stop];
 
     let mut vm = new_vm_with_ops(&operations).unwrap();
-    assert!(vm
-        .current_call_frame_mut()
-        .unwrap()
-        .transient_storage
-        .is_empty());
+    assert!(vm.env.transient_storage.is_empty());
 
     let mut current_call_frame = vm.call_frames.pop().unwrap();
     let tx_report = vm.execute(&mut current_call_frame).unwrap();
@@ -3781,10 +3775,7 @@ fn transient_load() {
 
     let caller = vm.current_call_frame_mut().unwrap().msg_sender;
 
-    vm.current_call_frame_mut()
-        .unwrap()
-        .transient_storage
-        .insert((caller, key), value);
+    vm.env.transient_storage.insert((caller, key), value);
 
     let mut current_call_frame = vm.call_frames.pop().unwrap();
     vm.execute(&mut current_call_frame).unwrap();
