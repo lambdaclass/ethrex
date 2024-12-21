@@ -158,20 +158,14 @@ impl VM {
             TxKind::Call(address_to) => {
                 default_touched_accounts.insert(address_to);
 
-                // add address_to to cache
-                let recipient_account_info = db.get_account_info(address_to);
-                cache::insert_account(
-                    &mut cache,
-                    address_to,
-                    Account::from(recipient_account_info.clone()),
-                );
+                let bytecode = get_account(&mut cache, &db, address_to).info.bytecode;
 
                 // CALL tx
                 let initial_call_frame = CallFrame::new(
                     env.origin,
                     address_to,
                     address_to,
-                    recipient_account_info.bytecode,
+                    bytecode,
                     value,
                     calldata.clone(),
                     false,
@@ -201,25 +195,13 @@ impl VM {
             TxKind::Create => {
                 // CREATE tx
 
-                let new_contract_address =
-                    VM::calculate_create_address(env.origin, db.get_account_info(env.origin).nonce)
-                        .map_err(|_| {
-                            VMError::Internal(InternalError::CouldNotComputeCreateAddress)
-                        })?;
+                let sender_nonce = get_account(&mut cache, &db, env.origin).info.nonce;
+                let new_contract_address = VM::calculate_create_address(env.origin, sender_nonce)
+                    .map_err(|_| {
+                    VMError::Internal(InternalError::CouldNotComputeCreateAddress)
+                })?;
 
                 default_touched_accounts.insert(new_contract_address);
-
-                // Since we are in a CREATE transaction, we need to check if the address is already occupied.
-                // If it is, we should not continue with the transaction. We will handle the revert in the next step.
-                let new_account = db.get_account_info(new_contract_address);
-                let balance = value
-                    .checked_add(new_account.balance)
-                    .ok_or(VMError::BalanceOverflow)?;
-
-                if !new_account.has_code() && !new_account.has_nonce() {
-                    let created_contract = Account::new(balance, Bytes::new(), 1, HashMap::new());
-                    cache::insert_account(&mut cache, new_contract_address, created_contract);
-                }
 
                 let initial_call_frame = CallFrame::new(
                     env.origin,
@@ -871,10 +853,8 @@ impl VM {
 
         // 1. Undo value transfer if the transaction was reverted
         if let TxResult::Revert(_) = report.result {
-            // msg_value was not increased in the receiver account when is a create transaction.
-            if !self.is_create() {
-                self.decrease_account_balance(receiver_address, initial_call_frame.msg_value)?;
-            }
+            // We remove the receiver account from the cache, like nothing changed in it's state.
+            remove_account(&mut self.cache, &receiver_address);
             self.increase_account_balance(sender_address, initial_call_frame.msg_value)?;
         }
 
@@ -939,21 +919,28 @@ impl VM {
 
         self.prepare_execution(&mut initial_call_frame)?;
 
-        // The transaction should be reverted if:
-        // - The transaction is a CREATE transaction and
-        // - The address is already in the database and
-        // - The address is not empty
+        // In CREATE type transactions:
+        //  Add created contract to cache, reverting transaction if the address is already occupied
         if self.is_create() {
-            let new_address_acc = self.db.get_account_info(initial_call_frame.to);
-            if new_address_acc.has_code() || new_address_acc.has_nonce() {
+            let new_contract_address = initial_call_frame.to;
+            let new_account = self.get_account(new_contract_address);
+
+            let value = initial_call_frame.msg_value;
+            let balance = new_account
+                .info
+                .balance
+                .checked_add(value)
+                .ok_or(InternalError::ArithmeticOperationOverflow)?;
+
+            if new_account.has_code_or_nonce() {
                 return self.handle_create_non_empty_account(&initial_call_frame);
             }
+
+            let created_contract = Account::new(balance, Bytes::new(), 1, HashMap::new());
+            cache::insert_account(&mut self.cache, new_contract_address, created_contract);
         }
 
         let mut report = self.execute(&mut initial_call_frame)?;
-        if self.is_create() && !report.is_success() {
-            remove_account(&mut self.cache, &initial_call_frame.to);
-        }
 
         self.post_execution_changes(&initial_call_frame, &mut report)?;
         // There shouldn't be any errors here but I don't know what the desired behavior is if something goes wrong.
@@ -1036,18 +1023,6 @@ impl VM {
         current_call_frame.gas_used = potential_consumed_gas;
 
         Ok(())
-    }
-
-    pub fn cache_from_db(&mut self, address: Address) {
-        let acc_info = self.db.get_account_info(address);
-        cache::insert_account(
-            &mut self.cache,
-            address,
-            Account {
-                info: acc_info.clone(),
-                storage: HashMap::new(),
-            },
-        );
     }
 
     /// Accesses to an account's information.
@@ -1199,18 +1174,7 @@ impl VM {
 
     /// Gets account, first checking the cache and then the database (caching in the second case)
     pub fn get_account(&mut self, address: Address) -> Account {
-        match cache::get_account(&self.cache, &address) {
-            Some(acc) => acc.clone(),
-            None => {
-                let account_info = self.db.get_account_info(address);
-                let account = Account {
-                    info: account_info,
-                    storage: HashMap::new(),
-                };
-                cache::insert_account(&mut self.cache, address, account.clone());
-                account
-            }
-        }
+        get_account(&mut self.cache, &self.db, address)
     }
 
     fn handle_create_non_empty_account(
@@ -1250,4 +1214,20 @@ fn get_number_of_topics(op: Opcode) -> Result<u8, VMError> {
         .ok_or(VMError::InvalidOpcode)?;
 
     Ok(number_of_topics)
+}
+
+/// Gets account, first checking the cache and then the database (caching in the second case)
+pub fn get_account(cache: &mut CacheDB, db: &Arc<dyn Database>, address: Address) -> Account {
+    match cache::get_account(cache, &address) {
+        Some(acc) => acc.clone(),
+        None => {
+            let account_info = db.get_account_info(address);
+            let account = Account {
+                info: account_info,
+                storage: HashMap::new(),
+            };
+            cache::insert_account(cache, address, account.clone());
+            account
+        }
+    }
 }
