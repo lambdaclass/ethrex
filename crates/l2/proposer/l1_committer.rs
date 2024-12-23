@@ -77,17 +77,11 @@ impl Committer {
 
     async fn main_logic(&self) -> Result<(), CommitterError> {
         loop {
-            let last_committed_block = EthClient::get_last_committed_block(
+            let block_number_to_fetch = EthClient::get_next_block_to_commit(
                 &self.eth_client,
                 self.on_chain_proposer_address,
             )
             .await?;
-
-            let block_number_to_fetch = if last_committed_block == u64::MAX {
-                0
-            } else {
-                last_committed_block + 1
-            };
 
             if let Some(block_to_commit_body) = self
                 .store

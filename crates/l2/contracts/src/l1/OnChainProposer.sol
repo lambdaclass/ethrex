@@ -35,8 +35,14 @@ contract OnChainProposer is IOnChainProposer, ReentrancyGuard {
     /// @dev All blocks with a block number less than or equal to `lastCommittedBlock` are considered committed.
     /// @dev Blocks with a block number greater than `lastCommittedBlock` have not been committed yet.
     /// @dev This is crucial for ensuring that only subsequents blocks are committed in the contract.
-    /// @dev In the initialize function, `lastCommittedBlock` is set to u64::MAX == 0xFFFFFFFFFFFFFFFF, this value is used to allow the block 0 to be committed.
     uint256 public lastCommittedBlock;
+
+    /// @notice The next block to commit.
+    /// @dev This variable holds the block number of the next block to commit.
+    /// @dev `nextBlockToCommit` should be equal to `lastCommittedBlock` + 1.
+    /// @dev Only the block with the block number equal to `nextBlockToCommit` will be committed.
+    /// @dev This variable is called by the `l1_committer.rs`.
+    uint256 public nextBlockToCommit;
 
     /// @dev The sequencer addresses that are authorized to commit and verify blocks.
     mapping(address _authorizedAddress => bool)
@@ -115,8 +121,6 @@ contract OnChainProposer is IOnChainProposer, ReentrancyGuard {
         for (uint256 i = 0; i < sequencerAddresses.length; i++) {
             authorizedSequencerAddresses[sequencerAddresses[i]] = true;
         }
-
-        lastCommittedBlock = 0xFFFFFFFFFFFFFFFF;
     }
 
     /// @inheritdoc IOnChainProposer
@@ -127,8 +131,10 @@ contract OnChainProposer is IOnChainProposer, ReentrancyGuard {
         bytes32 depositLogs
     ) external override onlySequencer {
         require(
-            blockNumber == lastCommittedBlock + 1 ||
-                (blockNumber == 0 && lastCommittedBlock == 0xFFFFFFFFFFFFFFFF),
+            blockNumber == nextBlockToCommit ||
+                (blockNumber == 0 &&
+                    lastCommittedBlock == 0 &&
+                    nextBlockToCommit == 0),
             "OnChainProposer: blockNumber is not the immediate successor of lastCommittedBlock"
         );
         require(
@@ -156,6 +162,7 @@ contract OnChainProposer is IOnChainProposer, ReentrancyGuard {
             depositLogs
         );
         lastCommittedBlock = blockNumber;
+        nextBlockToCommit = blockNumber + 1;
         emit BlockCommitted(commitment);
     }
 
