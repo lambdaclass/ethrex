@@ -4,9 +4,15 @@ use keccak_hash::keccak256;
 use lambdaworks_math::{
     cyclic_group::IsGroup,
     elliptic_curve::{
-        short_weierstrass::curves::bn_254::curve::{BN254Curve, BN254FieldElement},
-        traits::IsEllipticCurve,
+        short_weierstrass::curves::bn_254::{
+            curve::{BN254Curve, BN254FieldElement, BN254TwistCurveFieldElement},
+            field_extension::Degree12ExtensionField,
+            pairing::BN254AtePairing,
+            twist::BN254TwistCurve,
+        },
+        traits::{IsEllipticCurve, IsPairing},
     },
+    field::{element::FieldElement, extensions::quadratic::QuadraticExtensionFieldElement},
     traits::ByteConversion,
     unsigned_integer::element,
 };
@@ -18,7 +24,7 @@ use crate::{
     call_frame::CallFrame,
     errors::{InternalError, OutOfGasError, PrecompileError, VMError},
     gas_cost::{
-        identity as identity_cost, modexp as modexp_cost, ripemd_160 as ripemd_160_cost,
+        self, identity as identity_cost, modexp as modexp_cost, ripemd_160 as ripemd_160_cost,
         sha2_256 as sha2_256_cost, ECADD_COST, ECMUL_COST, ECRECOVER_COST, MODEXP_STATIC_COST,
     },
 };
@@ -495,7 +501,72 @@ pub fn ecpairing(
     let gas_cost = gas_cost::ecpairing(groups_number)?;
     increase_precompile_consumed_gas(gas_for_call, gas_cost.into(), consumed_gas)?;
 
-    Ok(Bytes::new())
+    let mut mul: FieldElement<Degree12ExtensionField> = QuadraticExtensionFieldElement::one();
+    for group_number in 0..groups_number {
+        // Define the group indexes and slice calldata to get the group data
+        let group_start = group_number
+            .checked_mul(192)
+            .ok_or(InternalError::ArithmeticOperationOverflow)?;
+        let next_group_start = (group_number
+            .checked_add(1)
+            .ok_or(InternalError::ArithmeticOperationOverflow)?)
+        .checked_mul(192)
+        .ok_or(InternalError::ArithmeticOperationOverflow)?;
+
+        let group_data = calldata
+            .get(group_start..next_group_start)
+            .ok_or(InternalError::SlicingError)?;
+
+        let first_point_x = group_data.get(..32).ok_or(InternalError::SlicingError)?;
+        let first_point_y = group_data.get(32..64).ok_or(InternalError::SlicingError)?;
+
+        let first_point_y = BN254FieldElement::from_bytes_be(first_point_y)
+            .map_err(|_| PrecompileError::DefaultError)?;
+        let first_point_x = BN254FieldElement::from_bytes_be(first_point_x)
+            .map_err(|_| PrecompileError::DefaultError)?;
+
+        let second_point_x_first_part =
+            group_data.get(96..128).ok_or(InternalError::SlicingError)?;
+        let second_point_x_second_part =
+            group_data.get(64..96).ok_or(InternalError::SlicingError)?;
+
+        let second_point_y_first_part = group_data
+            .get(160..192)
+            .ok_or(InternalError::SlicingError)?;
+        let second_point_y_second_part = group_data
+            .get(128..160)
+            .ok_or(InternalError::SlicingError)?;
+
+        let second_point_x_bytes = [second_point_x_first_part, second_point_x_second_part].concat();
+        let second_point_y_bytes = [second_point_y_first_part, second_point_y_second_part].concat();
+
+        let second_point_x: FieldElement<lambdaworks_math::elliptic_curve::short_weierstrass::curves::bn_254::field_extension::Degree2ExtensionField> = BN254TwistCurveFieldElement::from_bytes_be(&second_point_x_bytes)
+            .map_err(|_| PrecompileError::DefaultError)?;
+        let second_point_y = BN254TwistCurveFieldElement::from_bytes_be(&second_point_y_bytes)
+            .map_err(|_| PrecompileError::DefaultError)?;
+
+        // Define the pairing points
+        let first_point = BN254Curve::create_point_from_affine(first_point_x, first_point_y)
+            .map_err(|_| PrecompileError::DefaultError)?;
+
+        let second_point =
+            BN254TwistCurve::create_point_from_affine(second_point_x, second_point_y)
+                .map_err(|_| PrecompileError::DefaultError)?;
+        if !second_point.is_in_subgroup() {
+            return Err(VMError::PrecompileError(PrecompileError::DefaultError));
+        }
+
+        let pairing_result = BN254AtePairing::compute_batch(&[(&first_point, &second_point)])
+            .map_err(|_| PrecompileError::DefaultError)?;
+
+        mul *= pairing_result;
+    }
+
+    // Generate the result from the variable mul
+    let success = mul.eq(&QuadraticExtensionFieldElement::one());
+    let mut result = [0; 32];
+    result[31] = u8::from(success);
+    Ok(Bytes::from(result.to_vec()))
 }
 
 fn blake2f(
