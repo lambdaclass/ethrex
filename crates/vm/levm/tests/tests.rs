@@ -9,13 +9,13 @@ use ethrex_levm::{
     db::{cache, CacheDB, Db},
     errors::{OutOfGasError, TxResult, VMError},
     gas_cost::{
-        self, ECADD_COST, ECRECOVER_COST, IDENTITY_DYNAMIC_BASE, IDENTITY_STATIC_COST,
+        self, ECADD_COST, ECMUL_COST, ECRECOVER_COST, IDENTITY_DYNAMIC_BASE, IDENTITY_STATIC_COST,
         MODEXP_DYNAMIC_BASE, RIPEMD_160_DYNAMIC_BASE, RIPEMD_160_STATIC_COST,
         SHA2_256_DYNAMIC_BASE, SHA2_256_STATIC_COST,
     },
     memory,
     operations::Operation,
-    precompiles::{ecadd, ecrecover, identity, modexp, ripemd_160, sha2_256},
+    precompiles::{ecadd, ecmul, ecrecover, identity, modexp, ripemd_160, sha2_256},
     utils::{new_vm_with_ops, new_vm_with_ops_addr_bal_db, new_vm_with_ops_db, ops_to_bytecode},
     vm::{word_to_address, Storage, VM},
     Environment,
@@ -4594,4 +4594,33 @@ fn ecadd_test() {
 
     assert_eq!(result, expected_result);
     assert_eq!(consumed_gas, ECADD_COST.into());
+}
+
+#[test]
+fn ecmul_test() {
+    let calldata = hex::decode("000000000000000000000000000000000000000000000000000000000000000100000000000000000000000000000000000000000000000000000000000000020000000000000000000000000000000000000000000000000000000000000002").unwrap();
+    let calldata = Bytes::from(calldata);
+
+    let mut consumed_gas = U256::zero();
+    let result = ecmul(&calldata, 10000.into(), &mut consumed_gas).unwrap();
+
+    let expected_result = Bytes::from(hex::decode("030644e72e131a029b85045b68181585d97816a916871ca8d3c208c16d87cfd315ed738c0e0a7c92e7845f96b2ae9c0a68a6a449e3538fc7ff3ebf7a5a18a2c4").unwrap());
+
+    assert_eq!(result, expected_result);
+    assert_eq!(consumed_gas, ECMUL_COST.into());
+}
+
+#[test]
+fn ecmul_test_2() {
+    // This tests that an infinite in one coordinate implies a zero result
+    let calldata = hex::decode("0000000000000000000000000000000000000000000000000000000000000001000000000000000000000000000000000000000000000000000000000000000230644e72e131a029b85045b68181585d2833e84879b9709143e1f593f00000010000000000000000000000000000000000000000000000000000000000000000").unwrap();
+    let calldata = Bytes::from(calldata);
+
+    let mut consumed_gas = U256::zero();
+    let result = ecmul(&calldata, 10000.into(), &mut consumed_gas).unwrap();
+
+    let expected_result = Bytes::from(hex::decode("00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000").unwrap());
+
+    assert_eq!(result, expected_result);
+    assert_eq!(consumed_gas, ECMUL_COST.into());
 }
