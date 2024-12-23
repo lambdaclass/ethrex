@@ -139,7 +139,10 @@ pub fn try_copy_within(
         .map_err(|_err| VMError::VeryLargeNumber)?;
     try_resize(
         memory,
-        to_offset.checked_add(size).ok_or(VMError::OutOfBounds)?,
+        to_offset
+            .max(from_offset)
+            .checked_add(size)
+            .ok_or(VMError::OutOfBounds)?,
     )?;
 
     let mut temporary_buffer = vec![0u8; size];
