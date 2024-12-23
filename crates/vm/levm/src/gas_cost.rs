@@ -7,6 +7,7 @@ use crate::{
 use bytes::Bytes;
 /// Contains the gas costs of the EVM instructions
 use ethrex_core::U256;
+use num_bigint::BigUint;
 
 // Opcodes cost
 pub const STOP: u64 = 0;
@@ -176,8 +177,7 @@ pub const RIPEMD_160_DYNAMIC_BASE: u64 = 120;
 pub const IDENTITY_STATIC_COST: u64 = 15;
 pub const IDENTITY_DYNAMIC_BASE: u64 = 3;
 
-pub const MODEXP_STATIC_COST: u64 = 0;
-pub const MODEXP_DYNAMIC_BASE: u64 = 200;
+pub const MODEXP_STATIC_COST: u64 = 200;
 pub const MODEXP_DYNAMIC_QUOTIENT: u64 = 3;
 
 pub fn exp(exponent: U256) -> Result<u64, VMError> {
@@ -823,67 +823,59 @@ pub fn identity(data_size: usize) -> Result<u64, VMError> {
 }
 
 pub fn modexp(
-    exponent: U256,
-    base_size: u64,
-    exponent_size: u64,
-    modulus_size: u64,
+    exponent: &BigUint,
+    base_size: usize,
+    exponent_size: usize,
+    modulus_size: usize,
 ) -> Result<u64, VMError> {
+    let base_size: u64 = base_size
+        .try_into()
+        .map_err(|_| PrecompileError::ParsingInputError)?;
+    let exponent_size: u64 = exponent_size
+        .try_into()
+        .map_err(|_| PrecompileError::ParsingInputError)?;
+    let modulus_size: u64 = modulus_size
+        .try_into()
+        .map_err(|_| PrecompileError::ParsingInputError)?;
+
     let max_length = base_size.max(modulus_size);
     let words = (max_length
         .checked_add(7)
         .ok_or(OutOfGasError::GasCostOverflow)?)
-        / WORD_SIZE_IN_BYTES_U64;
+    .checked_div(8)
+    .ok_or(InternalError::DivisionError)?;
+
     let multiplication_complexity = words.checked_pow(2).ok_or(OutOfGasError::GasCostOverflow)?;
 
-    let mut iteration_count: u64 = 0;
-    if exponent_size <= WORD_SIZE_IN_BYTES_U64 && exponent.is_zero() {
-        iteration_count = 0;
-    } else if exponent_size <= WORD_SIZE_IN_BYTES_U64 {
-        iteration_count = exponent
+    let iteration_count = if exponent_size <= 32 && *exponent != BigUint::ZERO {
+        exponent
             .bits()
             .checked_sub(1)
             .ok_or(InternalError::ArithmeticOperationUnderflow)?
-            .try_into()
-            .map_err(|_| InternalError::ConversionError)?;
-    } else if exponent_size > WORD_SIZE_IN_BYTES_U64 {
-        iteration_count = 8u64
-            .checked_mul(
-                exponent_size
-                    .checked_sub(WORD_SIZE_IN_BYTES_U64)
-                    .ok_or(InternalError::ArithmeticOperationUnderflow)?,
-            )
-            .ok_or(InternalError::ArithmeticOperationOverflow)?
-            .checked_add(
-                (exponent
-                    & (2usize
-                        .checked_pow(256)
-                        .ok_or(InternalError::ArithmeticOperationOverflow)?)
-                    .checked_sub(1)
-                    .ok_or(InternalError::ArithmeticOperationOverflow)?
-                    .into())
-                .bits()
-                .checked_sub(1)
-                .ok_or(InternalError::ArithmeticOperationUnderflow)?
-                .try_into()
-                .map_err(|_| InternalError::ConversionError)?,
-            )
-            .ok_or(InternalError::ArithmeticOperationOverflow)?;
-    }
-
+    } else if exponent_size > 32 {
+        let extra_size = (exponent_size
+            .checked_sub(32)
+            .ok_or(InternalError::ArithmeticOperationUnderflow)?)
+        .checked_mul(8)
+        .ok_or(OutOfGasError::GasCostOverflow)?;
+        extra_size
+            .checked_add(exponent.bits().max(1))
+            .ok_or(OutOfGasError::GasCostOverflow)?
+            .checked_sub(1)
+            .ok_or(InternalError::ArithmeticOperationUnderflow)?
+    } else {
+        0
+    };
     let calculate_iteration_count = iteration_count.max(1);
 
-    let static_gas = MODEXP_STATIC_COST;
-
-    let dynamic_gas = MODEXP_DYNAMIC_BASE.max(
+    let cost = MODEXP_STATIC_COST.max(
         multiplication_complexity
             .checked_mul(calculate_iteration_count)
             .ok_or(OutOfGasError::GasCostOverflow)?
             / MODEXP_DYNAMIC_QUOTIENT,
     );
 
-    Ok(static_gas
-        .checked_add(dynamic_gas)
-        .ok_or(OutOfGasError::GasCostOverflow)?)
+    Ok(cost)
 }
 
 fn precompile(data_size: usize, static_cost: u64, dynamic_base: u64) -> Result<u64, VMError> {

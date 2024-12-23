@@ -9,12 +9,13 @@ use ethrex_levm::{
     db::{cache, CacheDB, Db},
     errors::{OutOfGasError, TxResult, VMError},
     gas_cost::{
-        self, ECRECOVER_COST, RIPEMD_160_DYNAMIC_BASE, RIPEMD_160_STATIC_COST,
-        SHA2_256_DYNAMIC_BASE, SHA2_256_STATIC_COST,
+        self, ECRECOVER_COST, IDENTITY_DYNAMIC_BASE, IDENTITY_STATIC_COST, MODEXP_STATIC_COST,
+        RIPEMD_160_DYNAMIC_BASE, RIPEMD_160_STATIC_COST, SHA2_256_DYNAMIC_BASE,
+        SHA2_256_STATIC_COST,
     },
     memory,
     operations::Operation,
-    precompiles::{ecrecover, ripemd_160, sha2_256},
+    precompiles::{ecrecover, identity, modexp, ripemd_160, sha2_256},
     utils::{new_vm_with_ops, new_vm_with_ops_addr_bal_db, new_vm_with_ops_db, ops_to_bytecode},
     vm::{word_to_address, Storage, VM},
     Environment,
@@ -4533,4 +4534,49 @@ fn ripemd_160_test() {
         consumed_gas,
         (RIPEMD_160_STATIC_COST + RIPEMD_160_DYNAMIC_BASE)
     );
+}
+
+#[test]
+fn identity_test() {
+    let calldata = hex::decode("ff").unwrap();
+    let calldata = Bytes::from(calldata);
+
+    let mut consumed_gas = 0;
+    let result = identity(&calldata, 10000, &mut consumed_gas).unwrap();
+
+    let expected_result = Bytes::from(hex::decode("ff").unwrap());
+
+    assert_eq!(result, expected_result);
+    assert_eq!(consumed_gas, IDENTITY_STATIC_COST + IDENTITY_DYNAMIC_BASE);
+}
+
+#[test]
+fn modexp_test() {
+    let calldata = hex::decode("00000000000000000000000000000000000000000000000000000000000000010000000000000000000000000000000000000000000000000000000000000001000000000000000000000000000000000000000000000000000000000000000108090a").unwrap();
+    let calldata = Bytes::from(calldata);
+
+    let mut consumed_gas = 0;
+    let result = modexp(&calldata, 10000, &mut consumed_gas).unwrap();
+
+    let expected_result = Bytes::from(hex::decode("08").unwrap());
+
+    assert_eq!(result, expected_result);
+    assert_eq!(consumed_gas, MODEXP_STATIC_COST);
+}
+
+#[test]
+fn modexp_test_2() {
+    // This tests that in case of the sizes read first are bigger than the calldata len then the calldata is filled with zeros
+    let calldata = hex::decode("00000000000000000000000000000000000000000000000000000000000000010000000000000000000000000000000000000000000000000000000000000002000000000000000000000000000000000000000000000000000000000000002003ffff80").unwrap();
+    let calldata = Bytes::from(calldata);
+
+    let mut consumed_gas = 0;
+    let result = modexp(&calldata, 10000, &mut consumed_gas).unwrap();
+
+    let expected_result = Bytes::from(
+        hex::decode("3b01b01ac41f2d6e917c6d6a221ce793802469026d9ab7578fa2e79e4da6aaab").unwrap(),
+    );
+
+    assert_eq!(result, expected_result);
+    assert_eq!(consumed_gas, MODEXP_STATIC_COST);
 }
