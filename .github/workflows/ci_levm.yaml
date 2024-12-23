@@ -41,7 +41,12 @@ jobs:
       - name: Run tests
         run: |
           cd crates/vm/levm
-          make run-evm-ef-tests-ci
+          make run-evm-ef-tests-ci | tee test_result.txt
+
+      - name: Show test summary
+        run: |
+          cd crates/vm/levm
+          grep --color=never -A 11 "Summary: " test_summary.txt
   test:
     # "Test" is a required check, don't change the name
     name: Test
