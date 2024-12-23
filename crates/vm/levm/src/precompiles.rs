@@ -518,14 +518,14 @@ pub fn ecpairing(
         return Err(VMError::PrecompileError(PrecompileError::ParsingInputError));
     }
 
-    let inputs_number = calldata.len() / 192;
+    let inputs_amount = calldata.len() / 192;
 
     // Consume gas
-    let gas_cost = gas_cost::ecpairing(inputs_number)?;
+    let gas_cost = gas_cost::ecpairing(inputs_amount)?;
     increase_precompile_consumed_gas(gas_for_call, gas_cost, consumed_gas)?;
 
     let mut mul: FieldElement<Degree12ExtensionField> = QuadraticExtensionFieldElement::one();
-    for input_index in 0..inputs_number {
+    for input_index in 0..inputs_amount {
         // Define the input indexes and slice calldata to get the input data
         let input_start = input_index
             .checked_mul(192)
