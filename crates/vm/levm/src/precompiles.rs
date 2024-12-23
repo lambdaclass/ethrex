@@ -585,7 +585,7 @@ pub fn ecpairing(
         )
         .map_err(|_| InternalError::ConversionError)?;
 
-        // Check if the curve belongs to the curve (this happens if it's lower than the prime)
+        // Check if the second point belongs to the curve (this happens if it's lower than the prime)
         if U256::from_big_endian(second_point_x_first_part) >= alt_bn128_prime
             || U256::from_big_endian(second_point_x_second_part) >= alt_bn128_prime
             || U256::from_big_endian(second_point_y_first_part) >= alt_bn128_prime
