@@ -367,17 +367,7 @@ pub fn sstore(
     storage_slot: &StorageSlot,
     new_value: U256,
     storage_slot_was_cold: bool,
-    current_call_frame: &CallFrame,
 ) -> Result<u64, VMError> {
-    // EIP-2200
-    let gas_left = current_call_frame
-        .gas_limit
-        .checked_sub(current_call_frame.gas_used)
-        .ok_or(OutOfGasError::ConsumedGasOverflow)?;
-    if gas_left <= SSTORE_STIPEND {
-        return Err(VMError::OutOfGas(OutOfGasError::MaxGasLimitExceeded));
-    }
-
     let static_gas = SSTORE_STATIC;
 
     let mut base_dynamic_gas = if new_value == storage_slot.current_value {
