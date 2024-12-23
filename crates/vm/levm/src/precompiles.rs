@@ -509,11 +509,19 @@ fn ecpairing(
     Ok(Bytes::new())
 }
 
-fn blake2f(
-    _calldata: &Bytes,
-    _gas_for_call: u64,
-    _consumed_gas: &mut u64,
-) -> Result<Bytes, VMError> {
+fn blake2f(calldata: &Bytes, gas_for_call: u64, consumed_gas: &mut u64) -> Result<Bytes, VMError> {
+    let rounds: U256 = calldata
+        .get(0..4)
+        .ok_or(InternalError::SlicingError)?
+        .into();
+
+    let rounds: usize = rounds
+        .try_into()
+        .map_err(|_| PrecompileError::ParsingInputError)?;
+
+    let gas_cost = u64::try_from(rounds).map_err(|_| InternalError::ConversionError)? * 1;
+    increase_precompile_consumed_gas(gas_for_call, gas_cost, consumed_gas)?;
+
     Ok(Bytes::new())
 }
 
