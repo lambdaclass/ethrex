@@ -479,11 +479,22 @@ pub fn ecmul(
     }
 }
 
-fn ecpairing(
-    _calldata: &Bytes,
-    _gas_for_call: U256,
-    _consumed_gas: &mut U256,
+pub fn ecpairing(
+    calldata: &Bytes,
+    gas_for_call: U256,
+    consumed_gas: &mut U256,
 ) -> Result<Bytes, VMError> {
+    // The input must always be a multiple of 192 (6 32-byte values)
+    if calldata.len() % 192 != 0 {
+        return Err(VMError::PrecompileError(PrecompileError::ParsingInputError));
+    }
+
+    let groups_number = calldata.len() / 192;
+
+    // Consume gas
+    let gas_cost = gas_cost::ecpairing(groups_number)?;
+    increase_precompile_consumed_gas(gas_for_call, gas_cost.into(), consumed_gas)?;
+
     Ok(Bytes::new())
 }
 
