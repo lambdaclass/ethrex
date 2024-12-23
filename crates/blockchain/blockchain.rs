@@ -96,8 +96,8 @@ pub fn add_block(block: &Block, storage: &Store) -> Result<(), ChainError> {
     let (receipts, account_updates) = execute_block(block, &mut state)?;
 
     // Note: these is commented because it is still being used in development.
-    dbg!(&receipts);
-    dbg!(&account_updates);
+    // dbg!(&receipts);
+    // dbg!(&account_updates);
 
     validate_gas_used(&receipts, &block.header)?;
 
