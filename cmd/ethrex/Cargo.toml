@@ -13,7 +13,7 @@ ethrex-net.workspace = true
 ethrex-storage = { workspace = true, optional = true }
 ethrex-vm.workspace = true
 ethrex-rlp.workspace = true
-ethrex-l2.workspace = true
+ethrex-l2 = { workspace = true, optional = true }
 
 bytes.workspace = true
 hex.workspace = true
@@ -44,5 +44,5 @@ default = ["dep:ethrex-storage", "libmdbx"]
 dev = ["dep:ethrex-dev"]
 libmdbx = ["dep:libmdbx", "ethrex-storage/libmdbx"]
 redb = ["dep:redb", "ethrex-storage/redb"]
-l2 = ["ethrex-vm/l2"]
+l2 = ["dep:ethrex-l2", "ethrex-vm/l2"]
 levm = ["ethrex-vm/levm", "ethrex-blockchain/levm"]

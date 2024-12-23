@@ -2,18 +2,17 @@
 
 ## ToC
 
-- [ethrex L2 Prover](#ethrex-l2-prover)
-  - [ToC](#toc)
-  - [What](#what)
-  - [Workflow](#workflow)
-  - [How](#how)
-    - [Dev Mode](#dev-mode)
-      - [Quick Test](#quick-test)
-      - [Run the whole system with the prover](#run-the-whole-system-with-the-prover)
-    - [GPU mode](#gpu-mode)
-      - [Proving Process Test](#proving-process-test)
-      - [Run the whole system with the prover in Sepolia](#run-the-whole-system-with-the-prover-in-sepolia)
-  - [Configuration](#configuration)
+- [ToC](#toc)
+- [What](#what)
+- [Workflow](#workflow)
+- [How](#how)
+  - [Dev Mode](#dev-mode)
+    - [Quick Test](#quick-test)
+    - [Run the whole system with the prover](#run-the-whole-system-with-the-prover)
+  - [GPU mode](#gpu-mode)
+    - [Proving Process Test](#proving-process-test)
+    - [Run the whole system with a GPU Prover](#run-the-whole-system-with-a-gpu-prover)
+- [Configuration](#configuration)
 
 >[!NOTE]
 > The shipping/deploying process and the `Prover` itself are under development.
@@ -48,16 +47,21 @@ sequenceDiagram
 
 **Dependencies:**
 - [RISC0](https://dev.risczero.com/api/zkvm/install)
+- [SP1](https://docs.succinct.xyz/docs/getting-started/install)
 
-To run the blockchain (`proposer`) and prover in conjunction in a development environment, set the following environment variable: `RISC0_DEV_MODE=1` [(docs)](https://dev.risczero.com/api/generating-proofs/dev-mode). If you are in the `crates/l2` directory, you will need to set the environment variable for `dev_mode`. The `.env.example` file should suffice.
+To run the blockchain (`proposer`) and prover in conjunction in a development environment, set the following environment variables in the `.env` file:
+- `PROVER_SERVER_DEV_MODE=false`
+- Depending on the Proving System:
+  - RISC0: `RISC0_DEV_MODE=1` [(docs)](https://dev.risczero.com/api/generating-proofs/dev-mode)
+  - SP1: `SP1_PROVER=local`
 
 To start the `prover_client`, use the following command:
 
 ```sh
-make init-l2-prover
+make init-prover T="prover_type (risc0 or sp1) G=true"
 ```
 
-The `build_zkvm` flag is used, if you don't have the risc0's "sdk", you can build the prover without the feature to check if all the surrounding components of the `zkvm` can be compiled.
+If neither `risc0` nor `sp1` is installed on the system, the prover can be built without the "build" features to check whether all the surrounding components of the prover (except for the RISC-V zkVMs) can be compiled.
 
 #### Quick Test
 
@@ -65,22 +69,25 @@ To test the `zkvm` execution quickly, the following test can be run:
 
 ```sh
 cd crates/l2/prover
-make perf_test_proving
 ```
+
+Then run any of the targets:
+- `make perf-risc0`
+- `make perf-sp1`
 
 #### Run the whole system with the prover
 
 1. `cd crates/l2`
-2. `make rm_dev_libmdbx_l2 && make down`
+2. `make rm-db-l2 && make down`
    - It will remove any old database, if present, stored in your computer. The absolute path of libmdbx is defined by [data_dir](https://docs.rs/dirs/latest/dirs/fn.data_dir.html).
 3. `cp .env.example .env` &rarr; check if you want to change any config.
 4. `make init`
    - Init the L1 in a docker container on port `8545`.
    - Deploy the needed contracts for the L2 on the L1.
    - Start the L2 locally on port `1729`.
-5. In a new terminal &rarr; `make init-l2-prover`.
+5. In a new terminal &rarr; `make init-prover T=(risc0 or sp1)`.
 
-After this initialization the system has to be running in `dev-mode` &rarr; No proof verification.
+After this initialization we should have the prover running in `dev_mode` &rarr; No real proofs.
 
 ### GPU mode
 
@@ -108,42 +115,47 @@ To test the `zkvm` proving process using a `gpu` quickly, the following test can
 
 ```sh
 cd crates/l2/prover
-make perf_gpu
 ```
 
-#### Run the whole system with the prover in Sepolia
+Then run any of the targets:
+- `make perf-risc0-gpu`
+- `make perf-sp1-gpu`
+
+#### Run the whole system with a GPU Prover
 
 Two servers are required: one for the `prover` and another for the `proposer`. If you run both components on the same machine, the `prover` may consume all available resources, leading to potential stuttering or performance issues for the `proposer`/`node`.
 
-1. `prover`/`zkvm` &rarr; prover with gpu, make sure to have all the required dependencies described at the beginning of [Gpu Mode](#gpu-mode) section.
+1. `prover_client`/`zkvm` &rarr; prover with gpu, make sure to have all the required dependencies described at the beginning of [Gpu Mode](#gpu-mode) section.
     1. `cd ethrex/crates/l2`
     2. `cp .example.env` and change the `PROVER_CLIENT_PROVER_SERVER_ENDPOINT` with the ip of the other server.
 
-The env variables needed are:
+The important variables are:
 
 ```sh
 PROVER_CLIENT_PROVER_SERVER_ENDPOINT=<ip-address>:3000
 RISC0_DEV_MODE=0
+SP1_PROVER=local
 ```
 
-Finally, to start the `prover_client`/`zkvm`, run:
+- `Finally`, to start the `prover_client`/`zkvm`, run:
+   - `make init-prover T=(risc0 or sp1) G=true`
 
-- `make init-l2-prover-gpu`
-
-2.  `proposer` &rarr; this server just needs rust installed.
+2. `prover_server`/`proposer` &rarr; this server just needs rust installed.
     1. `cd ethrex/crates/l2`
     2. `cp .example.env` and change the addresses and the following fields:
        - `PROVER_SERVER_LISTEN_IP=0.0.0.0` &rarr; used to handle the tcp communication with the other server.
-       - The `COMMITTER` and `PROVER_SERVER_VERIFIER` must be different accounts, the `DEPLOYER_ADDRESS` as well as the `L1_WATCHER` may be the same account used by the `COMMITTER`
-       - `DEPLOYER_CONTRACT_VERIFIER=0xd9b0d07CeCd808a8172F21fA7C97992168f045CA` &rarr; risc0’s verifier contract deployed on Sepolia.
-       - Set the `ETH_RPC_URL` to any Sepolia's endpoint.
+       - The `COMMITTER` and `PROVER_SERVER_VERIFIER` must be different accounts, the `DEPLOYER_ADDRESS` as well as the `L1_WATCHER` may be the same account used by the `COMMITTER`.
+       - `DEPLOYER_SALT_IS_ZERO=false` &rarr; set to false to randomize the salt.
+       - `DEPLOYER_SP1_DEPLOY_VERIFIER=true` overwrites `DEPLOYER_SP1_CONTRACT_VERIFIER`. Check if the contract is deployed in your preferred network or set to `true` to deploy it.
+       - `DEPLOYER_CONTRACT_VERIFIER=0xd9b0d07CeCd808a8172F21fA7C97992168f045CA` &rarr; risc0’s verifier contract deployed on Sepolia. (Check the if the contract is deployed in your preferred network).
+       - Set the `ETH_RPC_URL` to any L1 endpoint.
 
 >[!NOTE]
 > Make sure to have funds, if you want to perform a quick test `0.2[ether]` on each account should be enough.
 
-Finally, to start the `proposer`/`l2 node`, run:
-    - `make rm_dev_libmdbx_l2 && make down`
-    - `make init`
+- `Finally`, to start the `proposer`/`l2 node`, run:
+   - `make rm-db-l2 && make down`
+   - `make deploy-l1 && make init-l2`
 
 ## Configuration
 

@@ -22,9 +22,11 @@ struct SetupResult {
     deployer_private_key: SecretKey,
     committer_address: Address,
     verifier_address: Address,
-    contract_verifier_address: Address,
+    risc0_contract_verifier_address: Address,
     eth_client: EthClient,
     contracts_path: PathBuf,
+    sp1_contract_verifier_address: Address,
+    sp1_deploy_verifier_on_l1: bool,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -65,13 +67,19 @@ async fn main() -> Result<(), DeployError> {
     download_contract_deps(&setup_result.contracts_path)?;
     compile_contracts(&setup_result.contracts_path)?;
 
-    let (on_chain_proposer, bridge_address) = deploy_contracts(
+    let (on_chain_proposer, bridge_address, sp1_verifier_address) = deploy_contracts(
         setup_result.deployer_address,
         setup_result.deployer_private_key,
         &setup_result.eth_client,
         &setup_result.contracts_path,
+        setup_result.sp1_deploy_verifier_on_l1,
     )
     .await?;
+
+    let sp1_contract_verifier_address = match sp1_verifier_address {
+        Some(address) => address,
+        None => setup_result.sp1_contract_verifier_address,
+    };
 
     initialize_contracts(
         setup_result.deployer_address,
@@ -80,7 +88,8 @@ async fn main() -> Result<(), DeployError> {
         setup_result.verifier_address,
         on_chain_proposer,
         bridge_address,
-        setup_result.contract_verifier_address,
+        setup_result.risc0_contract_verifier_address,
+        sp1_contract_verifier_address,
         &setup_result.eth_client,
     )
     .await?;
@@ -98,6 +107,9 @@ async fn main() -> Result<(), DeployError> {
                 }
                 "L1_WATCHER_BRIDGE_ADDRESS" => {
                     format!("{envar}={bridge_address:#x}")
+                }
+                "DEPLOYER_SP1_CONTRACT_VERIFIER" => {
+                    format!("{envar}={sp1_contract_verifier_address:#x}")
                 }
                 _ => line,
             };
@@ -162,15 +174,30 @@ fn setup() -> Result<SetupResult, DeployError> {
             )));
         }
     };
-    let contract_verifier_address = parse_env_var("DEPLOYER_CONTRACT_VERIFIER")?;
+    let risc0_contract_verifier_address = parse_env_var("DEPLOYER_RISC0_CONTRACT_VERIFIER")?;
+
+    let input = std::env::var("DEPLOYER_SP1_DEPLOY_VERIFIER").unwrap_or("false".to_owned());
+    let sp1_deploy_verifier_on_l1 = match input.trim().to_lowercase().as_str() {
+        "true" | "1" => true,
+        "false" | "0" => false,
+        _ => {
+            return Err(DeployError::ParseError(format!(
+                "Invalid boolean string: {input}"
+            )));
+        }
+    };
+    let sp1_contract_verifier_address = parse_env_var("DEPLOYER_SP1_CONTRACT_VERIFIER")?;
+
     Ok(SetupResult {
         deployer_address,
         deployer_private_key,
         committer_address,
         verifier_address,
-        contract_verifier_address,
+        risc0_contract_verifier_address,
         eth_client,
         contracts_path,
+        sp1_deploy_verifier_on_l1,
+        sp1_contract_verifier_address,
     })
 }
 
@@ -194,6 +221,20 @@ fn download_contract_deps(contracts_path: &Path) -> Result<(), DeployError> {
         .arg(
             contracts_path
                 .join("lib/openzeppelin-contracts")
+                .to_str()
+                .ok_or(DeployError::FailedToGetStringFromPath)?,
+        )
+        .spawn()
+        .map_err(|err| DeployError::DependencyError(format!("Failed to spawn git: {err}")))?
+        .wait()
+        .map_err(|err| DeployError::DependencyError(format!("Failed to wait for git: {err}")))?;
+
+    Command::new("git")
+        .arg("clone")
+        .arg("https://github.com/succinctlabs/sp1-contracts.git")
+        .arg(
+            contracts_path
+                .join("lib/sp1-contracts")
                 .to_str()
                 .ok_or(DeployError::FailedToGetStringFromPath)?,
         )
@@ -271,6 +312,39 @@ fn compile_contracts(contracts_path: &Path) -> Result<(), DeployError> {
             "Failed to compile CommonBridge.sol".to_owned(),
         ));
     }
+
+    if !Command::new("solc")
+        .arg("--bin")
+        .arg(
+            contracts_path
+                .join("lib/sp1-contracts/contracts/src/v3.0.0/SP1VerifierGroth16.sol")
+                .to_str()
+                .ok_or(DeployError::FailedToGetStringFromPath)?,
+        )
+        .arg("-o")
+        .arg(
+            contracts_path
+                .join("solc_out")
+                .to_str()
+                .ok_or(DeployError::FailedToGetStringFromPath)?,
+        )
+        .arg("--overwrite")
+        .arg("--allow-paths")
+        .arg(
+            contracts_path
+                .to_str()
+                .ok_or(DeployError::FailedToGetStringFromPath)?,
+        )
+        .spawn()
+        .map_err(|err| DeployError::CompilationError(format!("Failed to spawn solc: {err}")))?
+        .wait()
+        .map_err(|err| DeployError::CompilationError(format!("Failed to wait for solc: {err}")))?
+        .success()
+    {
+        return Err(DeployError::CompilationError(
+            "Failed to compile SP1VerifierGroth16.sol".to_owned(),
+        ));
+    }
     Ok(())
 }
 
@@ -279,7 +353,8 @@ async fn deploy_contracts(
     deployer_private_key: SecretKey,
     eth_client: &EthClient,
     contracts_path: &Path,
-) -> Result<(Address, Address), DeployError> {
+    deploy_verifier: bool,
+) -> Result<(Address, Address, Option<Address>), DeployError> {
     let deploy_frames = spinner!(["📭❱❱", "❱📬❱", "❱❱📫"], 220);
 
     let mut spinner = Spinner::new(
@@ -288,46 +363,74 @@ async fn deploy_contracts(
         Color::Cyan,
     );
 
-    let (on_chain_proposer_deployment_tx_hash, on_chain_proposer_address) =
-        deploy_on_chain_proposer(deployer, deployer_private_key, eth_client, contracts_path)
-            .await?;
+    let (on_chain_proposer_deployment_tx_hash, on_chain_proposer_address) = deploy_contract(
+        deployer,
+        deployer_private_key,
+        eth_client,
+        &contracts_path.join("solc_out/OnChainProposer.bin"),
+    )
+    .await?;
 
     let msg = format!(
-        "OnChainProposer:\n\tDeployed at address {} with tx hash {}",
+        "OnChainProposer:\n\tDeployed at address {}\n\tWith tx hash {}",
         format!("{on_chain_proposer_address:#x}").bright_green(),
         format!("{on_chain_proposer_deployment_tx_hash:#x}").bright_cyan()
     );
     spinner.success(&msg);
 
-    let mut spinner = Spinner::new(deploy_frames, "Deploying CommonBridge", Color::Cyan);
-    let (bridge_deployment_tx_hash, bridge_address) =
-        deploy_bridge(deployer, deployer_private_key, eth_client, contracts_path).await?;
+    let mut spinner = Spinner::new(deploy_frames.clone(), "Deploying CommonBridge", Color::Cyan);
+    let (bridge_deployment_tx_hash, bridge_address) = deploy_bridge(
+        deployer,
+        deployer_private_key,
+        eth_client,
+        &contracts_path.join("solc_out/CommonBridge.bin"),
+    )
+    .await?;
 
     let msg = format!(
-        "CommonBridge:\n\tDeployed at address {} with tx hash {}",
+        "CommonBridge:\n\tDeployed at address {}\n\tWith tx hash {}",
         format!("{bridge_address:#x}").bright_green(),
         format!("{bridge_deployment_tx_hash:#x}").bright_cyan(),
     );
     spinner.success(&msg);
 
-    Ok((on_chain_proposer_address, bridge_address))
+    let sp1_verifier_address = if deploy_verifier {
+        let mut spinner = Spinner::new(deploy_frames, "Deploying SP1Verifier", Color::Cyan);
+        let (verifier_deployment_tx_hash, sp1_verifier_address) = deploy_contract(
+            deployer,
+            deployer_private_key,
+            eth_client,
+            &contracts_path.join("solc_out/SP1Verifier.bin"),
+        )
+        .await?;
+
+        let msg = format!(
+            "SP1Groth16Verifier:\n\tDeployed at address {}\n\tWith tx hash {}",
+            format!("{sp1_verifier_address:#x}").bright_green(),
+            format!("{verifier_deployment_tx_hash:#x}").bright_cyan(),
+        );
+        spinner.success(&msg);
+        Some(sp1_verifier_address)
+    } else {
+        None
+    };
+
+    Ok((
+        on_chain_proposer_address,
+        bridge_address,
+        sp1_verifier_address,
+    ))
 }
 
-async fn deploy_on_chain_proposer(
+async fn deploy_contract(
     deployer: Address,
     deployer_private_key: SecretKey,
     eth_client: &EthClient,
-    contracts_path: &Path,
+    contract_path: &Path,
 ) -> Result<(H256, Address), DeployError> {
-    let on_chain_proposer_init_code = hex::decode(
-        std::fs::read_to_string(contracts_path.join("solc_out/OnChainProposer.bin")).map_err(
-            |err| {
-                DeployError::DecodingError(format!(
-                    "Failed to read on_chain_proposer_init_code: {err}"
-                ))
-            },
-        )?,
-    )
+    let init_code = hex::decode(std::fs::read_to_string(contract_path).map_err(|err| {
+        DeployError::DecodingError(format!("Failed to read on_chain_proposer_init_code: {err}"))
+    })?)
     .map_err(|err| {
         DeployError::DecodingError(format!(
             "Failed to decode on_chain_proposer_init_code: {err}"
@@ -335,32 +438,27 @@ async fn deploy_on_chain_proposer(
     })?
     .into();
 
-    let (deploy_tx_hash, on_chain_proposer) = create2_deploy(
-        deployer,
-        deployer_private_key,
-        &on_chain_proposer_init_code,
-        eth_client,
-    )
-    .await
-    .map_err(DeployError::from)?;
+    let (deploy_tx_hash, contract_address) =
+        create2_deploy(deployer, deployer_private_key, &init_code, eth_client)
+            .await
+            .map_err(DeployError::from)?;
 
-    Ok((deploy_tx_hash, on_chain_proposer))
+    Ok((deploy_tx_hash, contract_address))
 }
 
 async fn deploy_bridge(
     deployer: Address,
     deployer_private_key: SecretKey,
     eth_client: &EthClient,
-    contracts_path: &Path,
+    contract_path: &Path,
 ) -> Result<(H256, Address), DeployError> {
-    let mut bridge_init_code = hex::decode(
-        std::fs::read_to_string(contracts_path.join("solc_out/CommonBridge.bin")).map_err(
-            |err| DeployError::DecodingError(format!("Failed to read bridge_init_code: {err}")),
-        )?,
-    )
-    .map_err(|err| {
-        DeployError::DecodingError(format!("Failed to decode bridge_init_code: {err}"))
-    })?;
+    let mut bridge_init_code =
+        hex::decode(std::fs::read_to_string(contract_path).map_err(|err| {
+            DeployError::DecodingError(format!("Failed to read bridge_init_code: {err}"))
+        })?)
+        .map_err(|err| {
+            DeployError::DecodingError(format!("Failed to decode bridge_init_code: {err}"))
+        })?;
 
     let encoded_owner = {
         let offset = 32 - deployer.as_bytes().len() % 32;
@@ -448,7 +546,8 @@ async fn initialize_contracts(
     verifier: Address,
     on_chain_proposer: Address,
     bridge: Address,
-    contract_verifier_address: Address,
+    risc0_verifier_address: Address,
+    sp1_verifier_address: Address,
     eth_client: &EthClient,
 ) -> Result<(), DeployError> {
     let initialize_frames = spinner!(["🪄❱❱", "❱🪄❱", "❱❱🪄"], 200);
@@ -462,7 +561,8 @@ async fn initialize_contracts(
     let initialize_tx_hash = initialize_on_chain_proposer(
         on_chain_proposer,
         bridge,
-        contract_verifier_address,
+        risc0_verifier_address,
+        sp1_verifier_address,
         deployer,
         deployer_private_key,
         committer,
@@ -503,20 +603,22 @@ async fn initialize_contracts(
 async fn initialize_on_chain_proposer(
     on_chain_proposer: Address,
     bridge: Address,
-    contract_verifier_address: Address,
+    risc0_verifier_address: Address,
+    sp1_verifier_address: Address,
     deployer: Address,
     deployer_private_key: SecretKey,
     committer: Address,
     verifier: Address,
     eth_client: &EthClient,
 ) -> Result<H256, DeployError> {
-    let on_chain_proposer_initialize_selector = keccak(b"initialize(address,address,address[])")
-        .as_bytes()
-        .get(..4)
-        .ok_or(DeployError::DecodingError(
-            "Failed to get initialize selector".to_owned(),
-        ))?
-        .to_vec();
+    let on_chain_proposer_initialize_selector =
+        keccak(b"initialize(address,address,address,address[])")
+            .as_bytes()
+            .get(..4)
+            .ok_or(DeployError::DecodingError(
+                "Failed to get initialize selector".to_owned(),
+            ))?
+            .to_vec();
     let encoded_bridge = {
         let offset = 32 - bridge.as_bytes().len() % 32;
         let mut encoded_bridge = vec![0; offset];
@@ -524,10 +626,17 @@ async fn initialize_on_chain_proposer(
         encoded_bridge
     };
 
-    let encoded_contract_verifier = {
-        let offset = 32 - contract_verifier_address.as_bytes().len() % 32;
+    let encoded_risc0_contract_verifier = {
+        let offset = 32 - risc0_verifier_address.as_bytes().len() % 32;
         let mut encoded_contract_verifier = vec![0; offset];
-        encoded_contract_verifier.extend_from_slice(contract_verifier_address.as_bytes());
+        encoded_contract_verifier.extend_from_slice(risc0_verifier_address.as_bytes());
+        encoded_contract_verifier
+    };
+
+    let encoded_sp1_contract_verifier = {
+        let offset = 32 - sp1_verifier_address.as_bytes().len() % 32;
+        let mut encoded_contract_verifier = vec![0; offset];
+        encoded_contract_verifier.extend_from_slice(sp1_verifier_address.as_bytes());
         encoded_contract_verifier
     };
 
@@ -535,10 +644,12 @@ async fn initialize_on_chain_proposer(
     on_chain_proposer_initialization_calldata
         .extend_from_slice(&on_chain_proposer_initialize_selector);
     on_chain_proposer_initialization_calldata.extend_from_slice(&encoded_bridge);
-    on_chain_proposer_initialization_calldata.extend_from_slice(&encoded_contract_verifier);
+    on_chain_proposer_initialization_calldata.extend_from_slice(&encoded_risc0_contract_verifier);
+    on_chain_proposer_initialization_calldata.extend_from_slice(&encoded_sp1_contract_verifier);
 
     let mut encoded_offset = [0; 32];
-    U256::from(32 * 3).to_big_endian(&mut encoded_offset);
+    // offset of 3 addresses before the address[] + address[]
+    U256::from(32 * (3 + 1)).to_big_endian(&mut encoded_offset);
     on_chain_proposer_initialization_calldata.extend_from_slice(&encoded_offset);
     let mut allowed_addresses = [0; 32];
     U256::from(2).to_big_endian(&mut allowed_addresses);
@@ -563,7 +674,6 @@ async fn initialize_on_chain_proposer(
         .await?;
 
     wait_for_transaction_receipt(initialize_tx_hash, eth_client).await?;
-
     Ok(initialize_tx_hash)
 }
 

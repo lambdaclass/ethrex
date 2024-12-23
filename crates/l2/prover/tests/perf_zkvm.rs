@@ -1,9 +1,11 @@
 #![allow(clippy::expect_used)]
+#![allow(clippy::unwrap_used)]
+use ethrex_core::types::Block;
 use std::path::Path;
 use tracing::info;
 
 use ethrex_blockchain::add_block;
-use ethrex_prover_lib::prover::Prover;
+use ethrex_prover_lib::prover::{Prover, Risc0Prover, Sp1Prover};
 use ethrex_storage::{EngineType, Store};
 use ethrex_vm::execution_db::ExecutionDB;
 use zkvm_interface::io::ProgramInput;
@@ -12,6 +14,51 @@ use zkvm_interface::io::ProgramInput;
 async fn test_performance_zkvm() {
     tracing_subscriber::fmt::init();
 
+    let (input, block_to_prove) = setup().await;
+
+    let mut prover = Risc0Prover::new();
+
+    let start = std::time::Instant::now();
+
+    let receipt = prover.prove(input).unwrap();
+
+    let duration = start.elapsed();
+    info!(
+        "Number of EIP1559 transactions in the proven block: {}",
+        block_to_prove.body.transactions.len()
+    );
+    info!("[SECONDS] Proving Took: {:?}", duration);
+    info!("[MINUTES] Proving Took: {}[m]", duration.as_secs() / 60);
+
+    prover.verify(&receipt).unwrap();
+
+    let _program_output = prover.get_commitment(&receipt).unwrap();
+}
+
+#[tokio::test]
+async fn test_performance_sp1_zkvm() {
+    tracing_subscriber::fmt::init();
+
+    let (input, block_to_prove) = setup().await;
+
+    let mut prover = Sp1Prover::new();
+
+    let start = std::time::Instant::now();
+
+    let output = prover.prove(input).unwrap();
+
+    let duration = start.elapsed();
+    info!(
+        "Number of EIP1559 transactions in the proven block: {}",
+        block_to_prove.body.transactions.len()
+    );
+    info!("[SECONDS] Proving Took: {:?}", duration);
+    info!("[MINUTES] Proving Took: {}[m]", duration.as_secs() / 60);
+
+    prover.verify(&output).unwrap();
+}
+
+async fn setup() -> (ProgramInput, Block) {
     let path = Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../../../test_data"));
 
     // Another use is genesis-execution-api.json in conjunction with chain.rlp(20 blocks not too loaded).
@@ -45,22 +92,5 @@ async fn test_performance_zkvm() {
         parent_block_header,
         db,
     };
-
-    let mut prover = Prover::new();
-
-    let start = std::time::Instant::now();
-
-    let receipt = prover.prove(input).unwrap();
-
-    let duration = start.elapsed();
-    info!(
-        "Number of EIP1559 transactions in the proven block: {}",
-        block_to_prove.body.transactions.len()
-    );
-    info!("[SECONDS] Proving Took: {:?}", duration);
-    info!("[MINUTES] Proving Took: {}[m]", duration.as_secs() / 60);
-
-    prover.verify(&receipt).unwrap();
-
-    let _program_output = Prover::get_commitment(&receipt).unwrap();
+    (input, block_to_prove.clone())
 }
