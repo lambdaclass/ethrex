@@ -44,7 +44,7 @@ pub enum EngineType {
     RedB,
 }
 
-#[derive(Default, Debug, Clone, Serialize, Deserialize)]
+#[derive(Default, Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct AccountUpdate {
     pub address: Address,
     pub removed: bool,
