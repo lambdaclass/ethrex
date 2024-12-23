@@ -520,6 +520,15 @@ pub fn ecpairing(
         let first_point_x = group_data.get(..32).ok_or(InternalError::SlicingError)?;
         let first_point_y = group_data.get(32..64).ok_or(InternalError::SlicingError)?;
 
+        // Infinite is defined by (0,0). Any other zero-combination is invalid
+        if (U256::from_big_endian(first_point_x) == U256::zero()
+            && U256::from_big_endian(first_point_y) != U256::zero())
+            || (U256::from_big_endian(first_point_x) != U256::zero()
+                && U256::from_big_endian(first_point_y) == U256::zero())
+        {
+            return Err(VMError::PrecompileError(PrecompileError::DefaultError));
+        }
+
         let first_point_y = BN254FieldElement::from_bytes_be(first_point_y)
             .map_err(|_| PrecompileError::DefaultError)?;
         let first_point_x = BN254FieldElement::from_bytes_be(first_point_x)
@@ -530,12 +539,30 @@ pub fn ecpairing(
         let second_point_x_second_part =
             group_data.get(64..96).ok_or(InternalError::SlicingError)?;
 
+        // Infinite is defined by (0,0). Any other zero-combination is invalid
+        if (U256::from_big_endian(second_point_x_first_part) == U256::zero()
+            && U256::from_big_endian(second_point_x_second_part) != U256::zero())
+            || (U256::from_big_endian(second_point_x_first_part) != U256::zero()
+                && U256::from_big_endian(second_point_x_second_part) == U256::zero())
+        {
+            return Err(VMError::PrecompileError(PrecompileError::DefaultError));
+        }
+
         let second_point_y_first_part = group_data
             .get(160..192)
             .ok_or(InternalError::SlicingError)?;
         let second_point_y_second_part = group_data
             .get(128..160)
             .ok_or(InternalError::SlicingError)?;
+
+        // Infinite is defined by (0,0). Any other zero-combination is invalid
+        if (U256::from_big_endian(second_point_y_first_part) == U256::zero()
+            && U256::from_big_endian(second_point_y_second_part) != U256::zero())
+            || (U256::from_big_endian(second_point_y_first_part) != U256::zero()
+                && U256::from_big_endian(second_point_y_second_part) == U256::zero())
+        {
+            return Err(VMError::PrecompileError(PrecompileError::DefaultError));
+        }
 
         let second_point_x_bytes = [second_point_x_first_part, second_point_x_second_part].concat();
         let second_point_y_bytes = [second_point_y_first_part, second_point_y_second_part].concat();
