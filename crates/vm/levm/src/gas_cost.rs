@@ -178,7 +178,11 @@ pub const IDENTITY_STATIC_COST: u64 = 15;
 pub const IDENTITY_DYNAMIC_BASE: u64 = 3;
 
 pub const MODEXP_STATIC_COST: u64 = 200;
+pub const MODEXP_DYNAMIC_BASE: u64 = 200;
 pub const MODEXP_DYNAMIC_QUOTIENT: u64 = 3;
+
+pub const ECADD_COST: u64 = 150;
+pub const ECMUL_COST: u64 = 6000;
 
 pub fn exp(exponent: U256) -> Result<u64, VMError> {
     let exponent_byte_size = (exponent

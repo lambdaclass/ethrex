@@ -2190,6 +2190,7 @@ dependencies = [
  "ethrex-rlp",
  "hex",
  "keccak-hash 0.11.0",
+ "lambdaworks-math",
  "libsecp256k1",
  "num-bigint 0.4.6",
  "ripemd",
@@ -3532,6 +3533,17 @@ checksum = "3e1b8590eb6148af2ea2d75f38e7d29f5ca970d5a4df456b3ef19b8b415d0264"
 dependencies = [
  "primitive-types 0.13.1",
  "tiny-keccak",
+]
+
+[[package]]
+name = "lambdaworks-math"
+version = "0.11.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "708d148956bcdc21ae5c432b4e20bbaa26fd68d5376a3a6c461f41095abea0ba"
+dependencies = [
+ "rayon",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
