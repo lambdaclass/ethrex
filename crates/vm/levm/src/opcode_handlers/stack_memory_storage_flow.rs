@@ -2,7 +2,7 @@ use crate::{
     call_frame::CallFrame,
     constants::{WORD_SIZE, WORD_SIZE_IN_BYTES_USIZE},
     errors::{OpcodeSuccess, OutOfGasError, VMError},
-    gas_cost,
+    gas_cost::{self, SSTORE_STIPEND},
     memory::{self, calculate_memory_size},
     vm::VM,
 };
@@ -164,6 +164,15 @@ impl VM {
         let storage_slot_key = current_call_frame.stack.pop()?;
         let new_storage_slot_value = current_call_frame.stack.pop()?;
 
+        // EIP-2200
+        let gas_left = current_call_frame
+            .gas_limit
+            .checked_sub(current_call_frame.gas_used)
+            .ok_or(OutOfGasError::ConsumedGasOverflow)?;
+        if gas_left <= SSTORE_STIPEND {
+            return Err(VMError::OutOfGas(OutOfGasError::MaxGasLimitExceeded));
+        }
+
         // Convert key from U256 to H256
         let mut bytes = [0u8; 32];
         storage_slot_key.to_big_endian(&mut bytes);
@@ -172,38 +181,27 @@ impl VM {
         let (storage_slot, storage_slot_was_cold) =
             self.access_storage_slot(current_call_frame.to, key)?;
 
-        self.increase_consumed_gas(
-            current_call_frame,
-            gas_cost::sstore(
-                &storage_slot,
-                new_storage_slot_value,
-                storage_slot_was_cold,
-                current_call_frame,
-            )?,
-        )?;
-
         // Gas Refunds
         // Sync gas refund with global env, ensuring consistency accross contexts.
         let mut gas_refunds = self.env.refunded_gas;
 
         if new_storage_slot_value != storage_slot.current_value {
-            if storage_slot.current_value == storage_slot.original_value {
-                if !storage_slot.original_value.is_zero() && new_storage_slot_value.is_zero() {
-                    gas_refunds = gas_refunds
-                        .checked_add(4800)
-                        .ok_or(VMError::GasRefundsOverflow)?;
-                }
-            } else if !storage_slot.original_value.is_zero() {
-                if storage_slot.current_value.is_zero() {
-                    gas_refunds = gas_refunds
-                        .checked_sub(4800)
-                        .ok_or(VMError::GasRefundsUnderflow)?;
-                } else if new_storage_slot_value.is_zero() {
-                    gas_refunds = gas_refunds
-                        .checked_add(4800)
-                        .ok_or(VMError::GasRefundsOverflow)?;
-                }
-            } else if new_storage_slot_value == storage_slot.original_value {
+            if !storage_slot.original_value.is_zero()
+                && !storage_slot.current_value.is_zero()
+                && new_storage_slot_value.is_zero()
+            {
+                gas_refunds = gas_refunds
+                    .checked_add(4800)
+                    .ok_or(VMError::GasRefundsOverflow)?;
+            }
+
+            if !storage_slot.original_value.is_zero() && storage_slot.current_value.is_zero() {
+                gas_refunds = gas_refunds
+                    .checked_sub(4800)
+                    .ok_or(VMError::GasRefundsUnderflow)?;
+            }
+
+            if new_storage_slot_value == storage_slot.original_value {
                 if storage_slot.original_value.is_zero() {
                     gas_refunds = gas_refunds
                         .checked_add(19900)
@@ -214,9 +212,14 @@ impl VM {
                         .ok_or(VMError::GasRefundsOverflow)?;
                 }
             }
-        };
+        }
 
         self.env.refunded_gas = gas_refunds;
+
+        self.increase_consumed_gas(
+            current_call_frame,
+            gas_cost::sstore(&storage_slot, new_storage_slot_value, storage_slot_was_cold)?,
+        )?;
 
         self.update_account_storage(current_call_frame.to, key, new_storage_slot_value)?;
         Ok(OpcodeSuccess::Continue)
