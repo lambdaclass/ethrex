@@ -241,7 +241,7 @@ pub fn compute_receipts_root(receipts: &[Receipt]) -> H256 {
     let iter = receipts
         .iter()
         .enumerate()
-        .map(|(idx, receipt)| (idx.encode_to_vec(), receipt.encode_to_vec()));
+        .map(|(idx, receipt)| (idx.encode_to_vec(), receipt.encode_inner()));
     Trie::compute_hash_from_unsorted_iter(iter)
 }
 
