@@ -172,6 +172,39 @@ impl VM {
         let (storage_slot, storage_slot_was_cold) =
             self.access_storage_slot(current_call_frame.to, key)?;
 
+        // Gas Refunds
+        // Sync gas refund with global env, ensuring consistency accross contexts.
+        let mut gas_refunds = self.env.refunded_gas;
+
+        if new_storage_slot_value != storage_slot.current_value {
+            if !storage_slot.original_value.is_zero() && new_storage_slot_value.is_zero() {
+                gas_refunds = gas_refunds
+                    .checked_add(4800)
+                    .ok_or(VMError::GasRefundsOverflow)?;
+            }
+
+            if !storage_slot.original_value.is_zero() && storage_slot.current_value.is_zero() {
+                gas_refunds = gas_refunds
+                    .checked_sub(4800)
+                    .ok_or(VMError::GasRefundsUnderflow)?;
+            }
+
+            if new_storage_slot_value == storage_slot.original_value {
+                if storage_slot.original_value.is_zero() {
+                    gas_refunds = gas_refunds
+                        .checked_add(19900)
+                        .ok_or(VMError::GasRefundsOverflow)?;
+                } else {
+                    // Slot originalmente no vacío y ahora lo estás actualizando nuevamente
+                    gas_refunds = gas_refunds
+                        .checked_add(2800)
+                        .ok_or(VMError::GasRefundsOverflow)?;
+                }
+            }
+        }
+
+        self.env.refunded_gas = gas_refunds;
+
         self.increase_consumed_gas(
             current_call_frame,
             gas_cost::sstore(
@@ -181,42 +214,6 @@ impl VM {
                 current_call_frame,
             )?,
         )?;
-
-        // Gas Refunds
-        // Sync gas refund with global env, ensuring consistency accross contexts.
-        let mut gas_refunds = self.env.refunded_gas;
-
-        if new_storage_slot_value != storage_slot.current_value {
-            if storage_slot.current_value == storage_slot.original_value {
-                if !storage_slot.original_value.is_zero() && new_storage_slot_value.is_zero() {
-                    gas_refunds = gas_refunds
-                        .checked_add(4800)
-                        .ok_or(VMError::GasRefundsOverflow)?;
-                }
-            } else if !storage_slot.original_value.is_zero() {
-                if storage_slot.current_value.is_zero() {
-                    gas_refunds = gas_refunds
-                        .checked_sub(4800)
-                        .ok_or(VMError::GasRefundsUnderflow)?;
-                } else if new_storage_slot_value.is_zero() {
-                    gas_refunds = gas_refunds
-                        .checked_add(4800)
-                        .ok_or(VMError::GasRefundsOverflow)?;
-                }
-            } else if new_storage_slot_value == storage_slot.original_value {
-                if storage_slot.original_value.is_zero() {
-                    gas_refunds = gas_refunds
-                        .checked_add(19900)
-                        .ok_or(VMError::GasRefundsOverflow)?;
-                } else {
-                    gas_refunds = gas_refunds
-                        .checked_add(2800)
-                        .ok_or(VMError::GasRefundsOverflow)?;
-                }
-            }
-        };
-
-        self.env.refunded_gas = gas_refunds;
 
         self.update_account_storage(current_call_frame.to, key, new_storage_slot_value)?;
         Ok(OpcodeSuccess::Continue)
