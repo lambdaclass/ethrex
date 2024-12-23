@@ -378,32 +378,34 @@ pub fn ecadd(
     let first_point_x = calldata
         .get(0..32)
         .ok_or(PrecompileError::ParsingInputError)?;
-    let first_point_x = BN254FieldElement::from_bytes_be(first_point_x)
-        .map_err(|_| PrecompileError::ParsingInputError)?;
 
     let first_point_y = calldata
         .get(32..64)
         .ok_or(PrecompileError::ParsingInputError)?;
-    let first_point_y = BN254FieldElement::from_bytes_be(first_point_y)
-        .map_err(|_| PrecompileError::ParsingInputError)?;
 
     let second_point_x = calldata
         .get(64..96)
         .ok_or(PrecompileError::ParsingInputError)?;
-    let second_point_x = BN254FieldElement::from_bytes_be(second_point_x)
-        .map_err(|_| PrecompileError::ParsingInputError)?;
 
     let second_point_y = calldata
         .get(96..128)
         .ok_or(PrecompileError::ParsingInputError)?;
-    let second_point_y = BN254FieldElement::from_bytes_be(second_point_y)
-        .map_err(|_| PrecompileError::ParsingInputError)?;
 
     // If points are zero the precompile should not fail, but the conversion in
     // BN254Curve::create_point_from_affine will, so we verify it before the conversion
-    let point_zero = BN254FieldElement::from(0);
-    let first_point_is_zero = first_point_x.eq(&point_zero) && first_point_y.eq(&point_zero);
-    let second_point_is_zero = second_point_x.eq(&point_zero) && second_point_y.eq(&point_zero);
+    let first_point_is_zero = U256::from_big_endian(first_point_x).is_zero()
+        && U256::from_big_endian(first_point_y).is_zero();
+    let second_point_is_zero = U256::from_big_endian(second_point_x).is_zero()
+        && U256::from_big_endian(second_point_y).is_zero();
+
+    let first_point_x = BN254FieldElement::from_bytes_be(first_point_x)
+        .map_err(|_| PrecompileError::ParsingInputError)?;
+    let first_point_y = BN254FieldElement::from_bytes_be(first_point_y)
+        .map_err(|_| PrecompileError::ParsingInputError)?;
+    let second_point_x = BN254FieldElement::from_bytes_be(second_point_x)
+        .map_err(|_| PrecompileError::ParsingInputError)?;
+    let second_point_y = BN254FieldElement::from_bytes_be(second_point_y)
+        .map_err(|_| PrecompileError::ParsingInputError)?;
 
     if first_point_is_zero && second_point_is_zero {
         // If both points are zero, return zero
