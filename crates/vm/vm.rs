@@ -157,17 +157,17 @@ cfg_if::cfg_if! {
                     }
                 }
             }
-            let mut receipts = Vec::new();
-            let mut cumulative_gas_used = 0;
 
             let store_wrapper = Arc::new(StoreWrapper {
                 store: state.database().unwrap().clone(),
                 block_hash: block.header.parent_hash,
             });
 
-            // Account updates are initialized like this because of the beacon_root_contract_call
+            // Account updates are initialized like this because of the beacon_root_contract_call, it is going to be empty if it wasn't called.
             let mut account_updates = get_state_transitions(state);
 
+            let mut receipts = Vec::new();
+            let mut cumulative_gas_used = 0;
             let mut temporary_cache: CacheDB = HashMap::new();
 
             for tx in block.body.transactions.iter() {
@@ -184,7 +184,6 @@ cfg_if::cfg_if! {
                 }
 
                 temporary_cache.extend(new_state);
-                // dbg!(&report);
 
                 // Currently, in LEVM, we don't substract refunded gas to used gas, but that can change in the future.
                 let gas_used = report.gas_used - report.gas_refunded;
@@ -197,8 +196,6 @@ cfg_if::cfg_if! {
                 );
 
                 receipts.push(receipt);
-
-                dbg!(&temporary_cache);
             }
 
             account_updates.extend(get_state_transitions_levm(state, block.header.parent_hash, &temporary_cache));
