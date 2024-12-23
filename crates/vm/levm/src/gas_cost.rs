@@ -184,7 +184,8 @@ pub const MODEXP_DYNAMIC_QUOTIENT: u64 = 3;
 pub const ECADD_COST: u64 = 150;
 pub const ECMUL_COST: u64 = 6000;
 
-pub const ECPAIRING_GROUP_COST: u64 = 45000;
+pub const ECPAIRING_BASE_COST: u64 = 45000;
+pub const ECPAIRING_GROUP_COST: u64 = 34000;
 
 pub fn exp(exponent: U256) -> Result<u64, VMError> {
     let exponent_byte_size = (exponent
@@ -908,10 +909,10 @@ pub fn ecpairing(groups_number: usize) -> Result<u64, VMError> {
     let groups_number = u64::try_from(groups_number).map_err(|_| InternalError::ConversionError)?;
 
     let groups_cost = groups_number
-        .checked_mul(34000)
+        .checked_mul(ECPAIRING_GROUP_COST)
         .ok_or(OutOfGasError::GasCostOverflow)?;
     groups_cost
-        .checked_add(45000)
+        .checked_add(ECPAIRING_BASE_COST)
         .ok_or(VMError::OutOfGas(OutOfGasError::GasCostOverflow))
 }
 

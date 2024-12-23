@@ -9,9 +9,9 @@ use ethrex_levm::{
     db::{cache, CacheDB, Db},
     errors::{OutOfGasError, TxResult, VMError},
     gas_cost::{
-        self, ECADD_COST, ECMUL_COST, ECRECOVER_COST, IDENTITY_DYNAMIC_BASE, IDENTITY_STATIC_COST,
-        MODEXP_STATIC_COST, RIPEMD_160_DYNAMIC_BASE, RIPEMD_160_STATIC_COST, SHA2_256_DYNAMIC_BASE,
-        SHA2_256_STATIC_COST,
+        self, ECADD_COST, ECMUL_COST, ECPAIRING_BASE_COST, ECPAIRING_GROUP_COST, ECRECOVER_COST,
+        IDENTITY_DYNAMIC_BASE, IDENTITY_STATIC_COST, MODEXP_STATIC_COST, RIPEMD_160_DYNAMIC_BASE,
+        RIPEMD_160_STATIC_COST, SHA2_256_DYNAMIC_BASE, SHA2_256_STATIC_COST,
     },
     memory,
     operations::Operation,
@@ -4636,5 +4636,8 @@ fn ecpairing_test() {
     );
 
     assert_eq!(result, expected_result);
-    assert_eq!(consumed_gas, (45000 + 34000 * 2));
+    assert_eq!(
+        consumed_gas,
+        (ECPAIRING_BASE_COST + ECPAIRING_GROUP_COST * 2)
+    );
 }
