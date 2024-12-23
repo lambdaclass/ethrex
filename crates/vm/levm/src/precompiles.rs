@@ -542,10 +542,8 @@ pub fn ecpairing(
         let first_point_y = group_data.get(32..64).ok_or(InternalError::SlicingError)?;
 
         // Infinite is defined by (0,0). Any other zero-combination is invalid
-        if (U256::from_big_endian(first_point_x) == U256::zero()
-            && U256::from_big_endian(first_point_y) != U256::zero())
-            || (U256::from_big_endian(first_point_x) != U256::zero()
-                && U256::from_big_endian(first_point_y) == U256::zero())
+        if (U256::from_big_endian(first_point_x) == U256::zero())
+            ^ (U256::from_big_endian(first_point_y) == U256::zero())
         {
             return Err(VMError::PrecompileError(PrecompileError::DefaultError));
         }
@@ -561,10 +559,8 @@ pub fn ecpairing(
             group_data.get(64..96).ok_or(InternalError::SlicingError)?;
 
         // Infinite is defined by (0,0). Any other zero-combination is invalid
-        if (U256::from_big_endian(second_point_x_first_part) == U256::zero()
-            && U256::from_big_endian(second_point_x_second_part) != U256::zero())
-            || (U256::from_big_endian(second_point_x_first_part) != U256::zero()
-                && U256::from_big_endian(second_point_x_second_part) == U256::zero())
+        if (U256::from_big_endian(second_point_x_first_part) == U256::zero())
+            ^ (U256::from_big_endian(second_point_x_second_part) == U256::zero())
         {
             return Err(VMError::PrecompileError(PrecompileError::DefaultError));
         }
@@ -577,10 +573,8 @@ pub fn ecpairing(
             .ok_or(InternalError::SlicingError)?;
 
         // Infinite is defined by (0,0). Any other zero-combination is invalid
-        if (U256::from_big_endian(second_point_y_first_part) == U256::zero()
-            && U256::from_big_endian(second_point_y_second_part) != U256::zero())
-            || (U256::from_big_endian(second_point_y_first_part) != U256::zero()
-                && U256::from_big_endian(second_point_y_second_part) == U256::zero())
+        if (U256::from_big_endian(second_point_y_first_part) == U256::zero())
+            ^ (U256::from_big_endian(second_point_y_second_part) == U256::zero())
         {
             return Err(VMError::PrecompileError(PrecompileError::DefaultError));
         }
