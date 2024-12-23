@@ -1,7 +1,7 @@
 use crate::config::EthrexL2Config;
 use bytes::Bytes;
 use clap::Subcommand;
-use ethereum_types::{Address, H160, H256, U256};
+use ethereum_types::{Address, H256, U256};
 use ethrex_blockchain::constants::TX_GAS_COST;
 use ethrex_l2::utils::eth_client::{eth_sender::Overrides, EthClient};
 use keccak_hash::keccak;
@@ -72,11 +72,15 @@ async fn transfer_from(
     let client = EthClient::new(&cfg.network.l2_rpc_url);
     let private_key = SecretKey::from_slice(pk.parse::<H256>().unwrap().as_bytes()).unwrap();
 
-    let mut buffer = [0u8; 32];
-    let public_key = private_key.public_key(secp256k1::SECP256K1).serialize();
-    buffer.copy_from_slice(&public_key[1..]);
+    let public_key = private_key
+        .public_key(secp256k1::SECP256K1)
+        .serialize_uncompressed();
+    let hash = keccak(&public_key[1..]);
 
-    let address = H160::from(keccak(buffer));
+    // Get the last 20 bytes of the hash
+    let address_bytes: [u8; 20] = hash.as_ref().get(12..32).unwrap().try_into().unwrap();
+
+    let address = Address::from(address_bytes);
     let nonce = client.get_nonce(address).await.unwrap();
 
     let mut retries = 0;
