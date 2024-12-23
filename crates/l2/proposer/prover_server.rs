@@ -16,6 +16,8 @@ use keccak_hash::keccak;
 use secp256k1::SecretKey;
 use serde::{Deserialize, Serialize};
 use std::{
+    collections::HashMap,
+    fmt::Debug,
     io::{BufReader, BufWriter, Write},
     net::{IpAddr, Shutdown, TcpListener, TcpStream},
     sync::mpsc::{self, Receiver},
@@ -47,16 +49,17 @@ struct ProverServer {
     on_chain_proposer_address: Address,
     verifier_address: Address,
     verifier_private_key: SecretKey,
+    proving_output_per_block: HashMap<u64, HashMap<ProverType, ProvingOutput>>,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Hash, PartialEq, Eq)]
 /// Enum used to identify the different proving systems.
 pub enum ProverType {
     RISC0,
     SP1,
 }
 
-#[derive(Serialize, Deserialize, Clone)]
+#[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct Risc0Proof {
     pub receipt: Box<risc0_zkvm::Receipt>,
     pub prover_id: Vec<u32>,
@@ -119,20 +122,21 @@ impl Risc0Proof {
             journal_digest,
         })
     }
-
-    pub fn contract_data_empty() -> Risc0ContractData {
-        Risc0ContractData {
-            block_proof: vec![0; 32],
-            image_id: vec![0; 32],
-            journal_digest: vec![0; 32],
-        }
-    }
 }
 
 #[derive(Serialize, Deserialize, Clone)]
 pub struct Sp1Proof {
     pub proof: Box<sp1_sdk::SP1ProofWithPublicValues>,
     pub vk: sp1_sdk::SP1VerifyingKey,
+}
+
+impl Debug for Sp1Proof {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Sp1Proof")
+            .field("proof", &self.proof)
+            .field("vk", &self.vk.bytes32())
+            .finish()
+    }
 }
 
 pub struct Sp1ContractData {
@@ -170,18 +174,9 @@ impl Sp1Proof {
             proof_bytes: self.proof.bytes(),
         })
     }
-
-    // TODO: better way of giving empty information
-    pub fn contract_data_empty() -> Sp1ContractData {
-        Sp1ContractData {
-            public_values: vec![0; 32],
-            vk: vec![0; 32],
-            proof_bytes: vec![0; 32],
-        }
-    }
 }
 
-#[derive(Serialize, Deserialize, Clone)]
+#[derive(Serialize, Deserialize, Clone, Debug)]
 pub enum ProvingOutput {
     RISC0(Risc0Proof),
     SP1(Sp1Proof),
@@ -274,6 +269,7 @@ impl ProverServer {
             on_chain_proposer_address,
             verifier_address: config.verifier_address,
             verifier_private_key: config.verifier_private_key,
+            proving_output_per_block: HashMap::new(),
         })
     }
 
@@ -382,10 +378,29 @@ impl ProverServer {
             last_verified_block
         };
 
+        let block_to_verify = last_verified_block + 1;
+
+        let mut tx_submitted = false;
+
+        if let Some(inner_hmap) = self.proving_output_per_block.get(&block_to_verify) {
+            // If we have all the proofs send a transaction to verify them on chain
+            if inner_hmap.contains_key(&ProverType::RISC0)
+                && inner_hmap.contains_key(&ProverType::SP1)
+            {
+                self.handle_proof_submission(block_to_verify).await?;
+                // Remove the Proofs for the block_number
+                self.proving_output_per_block.remove(&block_to_verify);
+                tx_submitted = true;
+            }
+        }
+
         let data: Result<ProofData, _> = serde_json::de::from_reader(buf_reader);
         match data {
             Ok(ProofData::Request) => {
-                if let Err(e) = self.handle_request(&stream, last_verified_block + 1).await {
+                if let Err(e) = self
+                    .handle_request(&stream, block_to_verify, tx_submitted)
+                    .await
+                {
                     warn!("Failed to handle request: {e}");
                 }
             }
@@ -395,12 +410,36 @@ impl ProverServer {
             }) => {
                 self.handle_submit(&mut stream, block_number)?;
 
-                if block_number != (last_verified_block + 1) {
-                    return Err(ProverServerError::Custom(format!("Prover Client submitted an invalid block_number: {block_number}. The last_proved_block is: {}", last_verified_block)));
+                // Avoid storing a proof of a future block_number
+                // CHECK: maybe we would like to store all the proofs given the case in which
+                // the provers generate them fast enough. In this way, we will avoid unneeded reexecution.
+                if block_number != block_to_verify {
+                    return Err(ProverServerError::Custom(format!("Prover Client submitted an invalid block_number: {block_number}. The last_proved_block is: {last_verified_block}")));
                 }
 
-                self.handle_proof_submission(block_number, proving_output)
-                    .await?;
+                // If the transaction was submitted for the block_to_verify
+                // avoid storing already used proofs.
+                if tx_submitted {
+                    return Ok(());
+                }
+
+                // The proof is stored,
+                // then if we have all the proofs, we send it in the loop's next iteration.
+                // Check if we have an entry for the block_number
+                let inner_hmap = self
+                    .proving_output_per_block
+                    .entry(block_number)
+                    .or_default();
+
+                // Get the ProverType, implicitly set by the ProvingOutput
+                let proving_type = match proving_output {
+                    ProvingOutput::RISC0(_) => ProverType::RISC0,
+                    ProvingOutput::SP1(_) => ProverType::SP1,
+                };
+
+                // Check if we have the proof for that ProverType
+                // If we don't have it, insert it.
+                inner_hmap.entry(proving_type).or_insert(proving_output);
             }
             Err(e) => {
                 warn!("Failed to parse request: {e}");
@@ -418,6 +457,7 @@ impl ProverServer {
         &self,
         stream: &TcpStream,
         block_number: u64,
+        tx_submitted: bool,
     ) -> Result<(), ProverServerError> {
         debug!("Request received");
 
@@ -425,7 +465,11 @@ impl ProverServer {
 
         let response = if block_number > latest_block_number {
             let response = ProofData::response(None, None);
-            warn!("Didn't send response");
+            debug!("Didn't send response");
+            response
+        } else if tx_submitted {
+            let response = ProofData::response(None, None);
+            debug!("Block: {block_number} has been submitted.");
             response
         } else {
             let input = self.create_prover_input(block_number)?;
@@ -487,21 +531,29 @@ impl ProverServer {
     pub async fn handle_proof_submission(
         &self,
         block_number: u64,
-        proving_output: ProvingOutput,
     ) -> Result<H256, ProverServerError> {
-        // TODO:
-        // Ideally we should wait to have both proofs
-        // We will have to send them in the same transaction.
-        let (sp1_contract_data, risc0_contract_data) = match proving_output {
-            ProvingOutput::RISC0(risc0_proof) => {
-                let risc0_contract_data = risc0_proof.contract_data()?;
-                let sp1_contract_data = Sp1Proof::contract_data_empty();
-                (sp1_contract_data, risc0_contract_data)
+        let proving_data =
+            self.proving_output_per_block
+                .get(&block_number)
+                .ok_or(ProverServerError::Custom(format!(
+                    "Entry for {block_number} isn't present"
+                )))?;
+
+        let risc0_contract_data = match proving_data.get(&ProverType::RISC0) {
+            Some(ProvingOutput::RISC0(risc0_proof)) => risc0_proof.contract_data()?,
+            _ => {
+                return Err(ProverServerError::Custom(
+                    "RISC0 Proof isn't present".to_string(),
+                ))
             }
-            ProvingOutput::SP1(sp1_proof) => {
-                let risc0_contract_data = Risc0Proof::contract_data_empty();
-                let sp1_contract_data = sp1_proof.contract_data()?;
-                (sp1_contract_data, risc0_contract_data)
+        };
+
+        let sp1_contract_data = match proving_data.get(&ProverType::SP1) {
+            Some(ProvingOutput::SP1(sp1_proof)) => sp1_proof.contract_data()?,
+            _ => {
+                return Err(ProverServerError::Custom(
+                    "SP1 Proof isn't present".to_string(),
+                ))
             }
         };
 

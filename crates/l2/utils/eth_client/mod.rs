@@ -371,15 +371,14 @@ impl EthClient {
         };
 
         match self.send_request(request).await {
-            Ok(RpcResponse::Success(result)) => u64::from_str_radix(
-                serde_json::from_value::<String>(result.result)
-                    .map_err(EstimateGasPriceError::SerdeJSONError)?
-                    .get(2..)
-                    .ok_or(EstimateGasPriceError::Custom(
-                        "Failed to slice index response in estimate_gas".to_owned(),
-                    ))?,
-                16,
-            )
+            Ok(RpcResponse::Success(result)) => {
+                let res = serde_json::from_value::<String>(result.result)
+                    .map_err(EstimateGasPriceError::SerdeJSONError)?;
+                let res = res.get(2..).ok_or(EstimateGasPriceError::Custom(
+                    "Failed to slice index response in estimate_gas".to_owned(),
+                ))?;
+                u64::from_str_radix(res, 16)
+            }
             .map_err(EstimateGasPriceError::ParseIntError)
             .map_err(EthClientError::from),
             Ok(RpcResponse::Error(error_response)) => {
@@ -405,12 +404,21 @@ impl EthClient {
                                         .to_owned(),
                                 ))?,
                         );
-                        let string_data = abi_decoded_error_data
-                            .get(68..68 + string_length.as_usize())
-                            .ok_or(EthClientError::Custom(
+
+                        let string_len = if string_length > usize::MAX.into() {
+                            return Err(EthClientError::Custom(
+                                "Failed to convert string_length to usize in estimate_gas"
+                                    .to_owned(),
+                            ));
+                        } else {
+                            string_length.as_usize()
+                        };
+                        let string_data = abi_decoded_error_data.get(68..68 + string_len).ok_or(
+                            EthClientError::Custom(
                                 "Failed to slice index abi_decoded_error_data in estimate_gas"
                                     .to_owned(),
-                            ))?;
+                            ),
+                        )?;
                         String::from_utf8(string_data.to_vec()).map_err(|_| {
                             EthClientError::Custom(
                                 "Failed to String::from_utf8 in estimate_gas".to_owned(),
@@ -722,6 +730,7 @@ impl EthClient {
             chain_id: if let Some(chain_id) = overrides.chain_id {
                 chain_id
             } else {
+                // Should never panic, the chain_id should be smaller than u64::MAX
                 self.get_chain_id().await?.as_u64()
             },
             nonce: self
@@ -731,7 +740,12 @@ impl EthClient {
                 get_gas_price = gas_price;
                 gas_price
             } else {
-                get_gas_price = self.get_gas_price().await?.as_u64();
+                let gas_price = self.get_gas_price().await?;
+                get_gas_price = if gas_price > u64::MAX.into() {
+                    u64::MAX
+                } else {
+                    gas_price.as_u64()
+                };
                 get_gas_price
             },
             max_fee_per_gas: if let Some(gas_price) = overrides.gas_price {
@@ -805,6 +819,7 @@ impl EthClient {
             chain_id: if let Some(chain_id) = overrides.chain_id {
                 chain_id
             } else {
+                // Should never panic, the chain_id should be smaller than u64::MAX
                 self.get_chain_id().await?.as_u64()
             },
             nonce: self
@@ -814,7 +829,12 @@ impl EthClient {
                 get_gas_price = gas_price;
                 gas_price
             } else {
-                get_gas_price = self.get_gas_price().await?.as_u64();
+                let gas_price = self.get_gas_price().await?;
+                get_gas_price = if gas_price > u64::MAX.into() {
+                    u64::MAX
+                } else {
+                    gas_price.as_u64()
+                };
                 get_gas_price
             },
             max_fee_per_gas: if let Some(gas_price) = overrides.gas_price {
@@ -890,6 +910,7 @@ impl EthClient {
             chain_id: if let Some(chain_id) = overrides.chain_id {
                 chain_id
             } else {
+                // Should never panic, the chain_id should be smaller than u64::MAX
                 self.get_chain_id().await?.as_u64()
             },
             nonce: self
@@ -899,7 +920,12 @@ impl EthClient {
                 get_gas_price = gas_price;
                 gas_price
             } else {
-                get_gas_price = self.get_gas_price().await?.as_u64();
+                let gas_price = self.get_gas_price().await?;
+                get_gas_price = if gas_price > u64::MAX.into() {
+                    u64::MAX
+                } else {
+                    gas_price.as_u64()
+                };
                 get_gas_price
             },
             max_fee_per_gas: if let Some(gas_price) = overrides.gas_price {

@@ -61,6 +61,7 @@ impl ProverClient {
                     warn!("Failed to request new data: {e}");
                 }
             }
+            sleep(Duration::from_millis(self.interval_ms)).await;
         }
     }
 
