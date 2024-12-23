@@ -587,21 +587,66 @@ pub fn ecpairing(
         let second_point_y = BN254TwistCurveFieldElement::from_bytes_be(&second_point_y_bytes)
             .map_err(|_| PrecompileError::DefaultError)?;
 
-        // Define the pairing points
-        let first_point = BN254Curve::create_point_from_affine(first_point_x, first_point_y)
-            .map_err(|_| PrecompileError::DefaultError)?;
+        let zero_element = BN254FieldElement::from(0);
+        let twcurve_zero_element = BN254TwistCurveFieldElement::from(0);
+        let first_point_is_infinity =
+            first_point_x.eq(&zero_element) && first_point_y.eq(&zero_element);
+        let second_point_is_infinity =
+            second_point_x.eq(&twcurve_zero_element) && second_point_y.eq(&twcurve_zero_element);
 
-        let second_point =
-            BN254TwistCurve::create_point_from_affine(second_point_x, second_point_y)
-                .map_err(|_| PrecompileError::DefaultError)?;
-        if !second_point.is_in_subgroup() {
-            return Err(VMError::PrecompileError(PrecompileError::DefaultError));
+        match (first_point_is_infinity, second_point_is_infinity) {
+            (true, true) => {
+                // If both points are infinity, then continue to the next group
+                continue;
+            }
+            (true, false) => {
+                // If the first point is infinity, then do the checks for the second
+                if let Ok(p2) = BN254TwistCurve::create_point_from_affine(
+                    second_point_x.clone(),
+                    second_point_y.clone(),
+                ) {
+                    if !p2.is_in_subgroup() {
+                        return Err(VMError::PrecompileError(PrecompileError::DefaultError));
+                    } else {
+                        continue;
+                    }
+                } else {
+                    return Err(VMError::PrecompileError(PrecompileError::DefaultError));
+                }
+            }
+            (false, true) => {
+                // If the second point is infinity, then do the checks for the first
+                if BN254Curve::create_point_from_affine(
+                    first_point_x.clone(),
+                    first_point_y.clone(),
+                )
+                .is_err()
+                {
+                    return Err(VMError::PrecompileError(PrecompileError::DefaultError));
+                }
+                continue;
+            }
+            (false, false) => {
+                // Define the pairing points
+                let first_point =
+                    BN254Curve::create_point_from_affine(first_point_x, first_point_y)
+                        .map_err(|_| PrecompileError::DefaultError)?;
+
+                let second_point =
+                    BN254TwistCurve::create_point_from_affine(second_point_x, second_point_y)
+                        .map_err(|_| PrecompileError::DefaultError)?;
+                if !second_point.is_in_subgroup() {
+                    return Err(VMError::PrecompileError(PrecompileError::DefaultError));
+                }
+
+                // Get the result of the pairing and affect the mul value with it
+                let pairing_result =
+                    BN254AtePairing::compute_batch(&[(&first_point, &second_point)])
+                        .map_err(|_| PrecompileError::DefaultError)?;
+
+                mul *= pairing_result;
+            }
         }
-
-        let pairing_result = BN254AtePairing::compute_batch(&[(&first_point, &second_point)])
-            .map_err(|_| PrecompileError::DefaultError)?;
-
-        mul *= pairing_result;
     }
 
     // Generate the result from the variable mul
