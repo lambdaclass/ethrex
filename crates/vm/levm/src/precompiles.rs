@@ -522,6 +522,36 @@ fn blake2f(calldata: &Bytes, gas_for_call: u64, consumed_gas: &mut u64) -> Resul
     let gas_cost = u64::try_from(rounds).map_err(|_| InternalError::ConversionError)? * 1;
     increase_precompile_consumed_gas(gas_for_call, gas_cost, consumed_gas)?;
 
+    let h = calldata.get(4..67).ok_or(InternalError::SlicingError)?;
+    let mut state_vec = Vec::new();
+    for i in 0..8_usize {
+        let var1 = i * 8;
+        let var2 = (i.checked_add(1).ok_or(PrecompileError::ParsingInputError)?) * 8;
+        let slice_pos = h.get(var1..var2).ok_or(PrecompileError::DefaultError)?;
+        state_vec.push(U256::from_little_endian(slice_pos));
+    }
+
+    let m = calldata.get(68..195).ok_or(InternalError::SlicingError)?;
+    let mut message_block_vec = Vec::new();
+    for i in 0..16_usize {
+        let var1 = i * 16;
+        let var2 = (i.checked_add(1).ok_or(PrecompileError::ParsingInputError)?) * 16;
+        let slice_pos = m.get(var1..var2).ok_or(PrecompileError::DefaultError)?;
+        message_block_vec.push(U256::from_little_endian(slice_pos));
+    }
+
+    let t = calldata.get(196..211).ok_or(InternalError::SlicingError)?;
+    let mut offset_counters_vec = Vec::new();
+    for i in 0..8_usize {
+        let var1 = i * 8;
+        let var2 = (i.checked_add(1).ok_or(PrecompileError::ParsingInputError)?) * 8;
+        let slice_pos = t.get(var1..var2).ok_or(InternalError::SlicingError)?;
+        offset_counters_vec.push(U256::from_little_endian(slice_pos));
+    }
+
+    let f = calldata.get(212).ok_or(InternalError::SlicingError)?;
+    let _is_final_block = *f == 1;
+
     Ok(Bytes::new())
 }
 
