@@ -108,69 +108,63 @@ cfg_if::cfg_if! {
                     balance: new_state_account.info.balance,
                     nonce: new_state_account.info.nonce,
                 };
-                //TODO: REFACTOR IN PROGRESS
-                let mut updates = 0;
+                //TODO: Modify account_update with changes and if something change then return it, otherwise discard the account_update. WIP
+                let mut account_update = AccountUpdate::new(*new_state_account_address);
+
                 // Compare account info
                 if initial_account_state != new_state_acc_info {
-                    updates += 1;
+                    account_update.info = Some(new_state_acc_info);
                 }
 
+                // let code = if new_state_account.info.bytecode.is_empty() {
+                //     // The new state account has no code
+                //     None
+                // } else {
+                //     // Get the code hash of the new state account bytecode
+                //     let potential_new_bytecode_hash = code_hash(&new_state_account.info.bytecode);
+                //     // Look into the current database to see if the bytecode hash is already present
+                //     let current_bytecode = current_db
+                //         .get_account_code(potential_new_bytecode_hash)
+                //         .expect("Error getting account code by hash");
+                //     let code = new_state_account.info.bytecode.clone();
+                //     // The code is present in the current database
+                //     if let Some(current_bytecode) = current_bytecode {
+                //         if current_bytecode != code {
+                //             // The code has changed
+                //             Some(code)
+                //         } else {
+                //             // The code has not changed
+                //             None
+                //         }
+                //     } else {
+                //         // The new state account code is not present in the current
+                //         // database, then it must be new
+                //         Some(code)
+                //     }
+                // };
+                // if code.is_some() {
+                //     updates += 1;
+                // }
+                // let mut added_storage = HashMap::new();
+                // for (key, value) in &new_state_account.storage {
+                //     added_storage.insert(*key, value.current_value);
+                //     updates += 1;
+                // }
+                // if updates == 0 {
+                //     continue;
+                // }
 
-                if initial_account_state.balance != new_state_account.info.balance {
-                    updates += 1;
-                }
-                if initial_account_state.nonce != new_state_account.info.nonce {
-                    updates += 1;
-                }
-                let code = if new_state_account.info.bytecode.is_empty() {
-                    // The new state account has no code
-                    None
-                } else {
-                    // Get the code hash of the new state account bytecode
-                    let potential_new_bytecode_hash = code_hash(&new_state_account.info.bytecode);
-                    // Look into the current database to see if the bytecode hash is already present
-                    let current_bytecode = current_db
-                        .get_account_code(potential_new_bytecode_hash)
-                        .expect("Error getting account code by hash");
-                    let code = new_state_account.info.bytecode.clone();
-                    // The code is present in the current database
-                    if let Some(current_bytecode) = current_bytecode {
-                        if current_bytecode != code {
-                            // The code has changed
-                            Some(code)
-                        } else {
-                            // The code has not changed
-                            None
-                        }
-                    } else {
-                        // The new state account code is not present in the current
-                        // database, then it must be new
-                        Some(code)
-                    }
-                };
-                if code.is_some() {
-                    updates += 1;
-                }
-                let mut added_storage = HashMap::new();
-                for (key, value) in &new_state_account.storage {
-                    added_storage.insert(*key, value.current_value);
-                    updates += 1;
-                }
-                if updates == 0 {
-                    continue;
-                }
-
-                let account_update = AccountUpdate {
-                    address: *new_state_account_address,
-                    removed: false,
-                    info: Some(AccountInfo {
-                        code_hash: code_hash(&new_state_account.info.bytecode),
-                        balance: new_state_account.info.balance,
-                        nonce: new_state_account.info.nonce,
-                    }),
-                    code,
-                    added_storage,
-                };
+                // let account_update = AccountUpdate {
+                //     address: *new_state_account_address,
+                //     removed: false,
+                //     info: Some(AccountInfo {
+                //         code_hash: code_hash(&new_state_account.info.bytecode),
+                //         balance: new_state_account.info.balance,
+                //         nonce: new_state_account.info.nonce,
+                //     }),
+                //     code,
+                //     added_storage,
+                // };
 
                 account_updates.push(account_update);
             }
