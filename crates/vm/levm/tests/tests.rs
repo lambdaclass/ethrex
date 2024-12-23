@@ -3737,10 +3737,10 @@ fn transient_store() {
     let mut current_call_frame = vm.call_frames.pop().unwrap();
     vm.execute(&mut current_call_frame).unwrap();
 
-    let msg_sender = current_call_frame.msg_sender;
+    let callee = current_call_frame.to;
 
     assert_eq!(
-        *vm.env.transient_storage.get(&(msg_sender, key)).unwrap(),
+        *vm.env.transient_storage.get(&(callee, key)).unwrap(),
         value
     )
 }
@@ -3774,9 +3774,9 @@ fn transient_load() {
 
     let mut vm = new_vm_with_ops(&operations).unwrap();
 
-    let caller = vm.current_call_frame_mut().unwrap().msg_sender;
+    let callee = vm.current_call_frame_mut().unwrap().to;
 
-    vm.env.transient_storage.insert((caller, key), value);
+    vm.env.transient_storage.insert((callee, key), value);
 
     let mut current_call_frame = vm.call_frames.pop().unwrap();
     vm.execute(&mut current_call_frame).unwrap();
