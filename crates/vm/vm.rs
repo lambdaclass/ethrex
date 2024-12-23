@@ -99,74 +99,44 @@ cfg_if::cfg_if! {
             };
             let mut account_updates: Vec<AccountUpdate> = vec![];
             for (new_state_account_address, new_state_account) in new_state {
+                // This stores things that have changed in the account.
+                let mut account_update = AccountUpdate::new(*new_state_account_address);
+
+                // Account state before block execution.
                 let initial_account_state = current_db
                     .get_account_info_by_hash(block_hash, *new_state_account_address)
                     .expect("Error getting account info by address")
                     .unwrap_or_default();
+                // Account state after block execution.
                 let new_state_acc_info = AccountInfo {
                     code_hash: code_hash(&new_state_account.info.bytecode),
                     balance: new_state_account.info.balance,
                     nonce: new_state_account.info.nonce,
                 };
-                //TODO: Modify account_update with changes and if something change then return it, otherwise discard the account_update. WIP
-                let mut account_update = AccountUpdate::new(*new_state_account_address);
 
-                // Compare account info
+                // Compare Account Info
                 if initial_account_state != new_state_acc_info {
-                    account_update.info = Some(new_state_acc_info);
+                    account_update.info = Some(new_state_acc_info.clone());
                 }
 
-                // let code = if new_state_account.info.bytecode.is_empty() {
-                //     // The new state account has no code
-                //     None
-                // } else {
-                //     // Get the code hash of the new state account bytecode
-                //     let potential_new_bytecode_hash = code_hash(&new_state_account.info.bytecode);
-                //     // Look into the current database to see if the bytecode hash is already present
-                //     let current_bytecode = current_db
-                //         .get_account_code(potential_new_bytecode_hash)
-                //         .expect("Error getting account code by hash");
-                //     let code = new_state_account.info.bytecode.clone();
-                //     // The code is present in the current database
-                //     if let Some(current_bytecode) = current_bytecode {
-                //         if current_bytecode != code {
-                //             // The code has changed
-                //             Some(code)
-                //         } else {
-                //             // The code has not changed
-                //             None
-                //         }
-                //     } else {
-                //         // The new state account code is not present in the current
-                //         // database, then it must be new
-                //         Some(code)
-                //     }
-                // };
-                // if code.is_some() {
-                //     updates += 1;
-                // }
-                // let mut added_storage = HashMap::new();
-                // for (key, value) in &new_state_account.storage {
-                //     added_storage.insert(*key, value.current_value);
-                //     updates += 1;
-                // }
-                // if updates == 0 {
-                //     continue;
-                // }
+                // If code hash is different it means the code is different too.
+                if initial_account_state.code_hash != new_state_acc_info.code_hash {
+                    account_update.code = Some(new_state_account.info.bytecode.clone());
+                }
 
-                // let account_update = AccountUpdate {
-                //     address: *new_state_account_address,
-                //     removed: false,
-                //     info: Some(AccountInfo {
-                //         code_hash: code_hash(&new_state_account.info.bytecode),
-                //         balance: new_state_account.info.balance,
-                //         nonce: new_state_account.info.nonce,
-                //     }),
-                //     code,
-                //     added_storage,
-                // };
+                let mut updated_storage = HashMap::new();
+                for (key, storage_slot) in &new_state_account.storage {
+                    // original_value in storage_slot is not the original_value on the DB, be careful.
+                    let original_value = current_db.get_storage_at_hash(block_hash, *new_state_account_address, *key).unwrap().unwrap_or_default(); // Option inside result, I guess I have to assume it is zero.
 
-                account_updates.push(account_update);
+                    if original_value != storage_slot.current_value {
+                        updated_storage.insert(*key, storage_slot.current_value);
+                    }
+                }
+
+                if account_update != AccountUpdate::new(*new_state_account_address) && !updated_storage.is_empty() {
+                    account_updates.push(account_update);
+                }
             }
             account_updates
         }
