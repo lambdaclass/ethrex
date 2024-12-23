@@ -6,7 +6,7 @@ use crate::{
     gas_cost::{
         self, max_message_call_gas, CALLCODE_POSITIVE_VALUE_STIPEND, CALL_POSITIVE_VALUE_STIPEND,
     },
-    memory::{self, calculate_memory_size},
+    memory::{self, calculate_memory_size, try_resize},
     vm::{address_to_word, word_to_address, VM},
     Account,
 };
@@ -134,6 +134,8 @@ impl VM {
                 value_to_transfer,
             )?,
         )?;
+
+        try_resize(&mut current_call_frame.memory, new_memory_size)?;
 
         // Sender and recipient are the same in this case. But the code executed is from another account.
         let msg_sender = current_call_frame.to;
