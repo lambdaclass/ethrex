@@ -15,7 +15,7 @@ use ethrex_levm::{
     },
     memory,
     operations::Operation,
-    precompiles::{ecadd, ecmul, ecrecover, identity, modexp, ripemd_160, sha2_256},
+    precompiles::{ecadd, ecmul, ecpairing, ecrecover, identity, modexp, ripemd_160, sha2_256},
     utils::{new_vm_with_ops, new_vm_with_ops_addr_bal_db, new_vm_with_ops_db, ops_to_bytecode},
     vm::{word_to_address, Storage, VM},
     Environment,
@@ -4623,4 +4623,20 @@ fn ecmul_test_2() {
 
     assert_eq!(result, expected_result);
     assert_eq!(consumed_gas, ECMUL_COST.into());
+}
+
+#[test]
+fn ecpairing_test() {
+    let calldata = hex::decode("2cf44499d5d27bb186308b7af7af02ac5bc9eeb6a3d147c186b21fb1b76e18da2c0f001f52110ccfe69108924926e45f0b0c868df0e7bde1fe16d3242dc715f61fb19bb476f6b9e44e2a32234da8212f61cd63919354bc06aef31e3cfaff3ebc22606845ff186793914e03e21df544c34ffe2f2f3504de8a79d9159eca2d98d92bd368e28381e8eccb5fa81fc26cf3f048eea9abfdd85d7ed3ab3698d63e4f902fe02e47887507adf0ff1743cbac6ba291e66f59be6bd763950bb16041a0a85e000000000000000000000000000000000000000000000000000000000000000130644e72e131a029b85045b68181585d97816a916871ca8d3c208c16d87cfd451971ff0471b09fa93caaf13cbf443c1aede09cc4328f5a62aad45f40ec133eb4091058a3141822985733cbdddfed0fd8d6c104e9e9eff40bf5abfef9ab163bc72a23af9a5ce2ba2796c1f4e453a370eb0af8c212d9dc9acd8fc02c2e907baea223a8eb0b0996252cb548a4487da97b02422ebc0e834613f954de6c7e0afdc1fc").unwrap();
+    let calldata = Bytes::from(calldata);
+
+    let mut consumed_gas = U256::zero();
+    let result = ecpairing(&calldata, 10000000.into(), &mut consumed_gas).unwrap();
+
+    let expected_result = Bytes::from(
+        hex::decode("0000000000000000000000000000000000000000000000000000000000000001").unwrap(),
+    );
+
+    assert_eq!(result, expected_result);
+    assert_eq!(consumed_gas, (45000 + 34000 * 2).into());
 }
