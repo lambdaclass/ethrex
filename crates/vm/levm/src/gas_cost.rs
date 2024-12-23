@@ -367,7 +367,6 @@ pub fn sstore(
     storage_slot: &StorageSlot,
     new_value: U256,
     storage_slot_was_cold: bool,
-    current_call_frame: &CallFrame,
 ) -> Result<u64, VMError> {
     let static_gas = SSTORE_STATIC;
 
