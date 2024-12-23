@@ -408,10 +408,10 @@ pub fn ecadd(
         .map_err(|_| PrecompileError::ParsingInputError)?;
 
     if first_point_is_zero && second_point_is_zero {
-        // If both points are zero, return zero
+        // If both points are zero, return is zero
         Ok(Bytes::from([0u8; 64].to_vec()))
     } else if first_point_is_zero {
-        // If first point is zero, response is second point
+        // If first point is zero, return is second point
         let second_point = BN254Curve::create_point_from_affine(second_point_x, second_point_y)
             .map_err(|_| PrecompileError::ParsingInputError)?;
         let res = [
@@ -421,13 +421,13 @@ pub fn ecadd(
         .concat();
         Ok(Bytes::from(res))
     } else if second_point_is_zero {
-        // If second point is zero, response is first point
+        // If second point is zero, return is first point
         let first_point = BN254Curve::create_point_from_affine(first_point_x, first_point_y)
             .map_err(|_| PrecompileError::ParsingInputError)?;
         let res = [first_point.x().to_bytes_be(), first_point.y().to_bytes_be()].concat();
         Ok(Bytes::from(res))
     } else {
-        // If none of the points is zero, response is the sum of both in the EC
+        // If none of the points is zero, return is the sum of both in the EC
         let first_point = BN254Curve::create_point_from_affine(first_point_x, first_point_y)
             .map_err(|_| PrecompileError::ParsingInputError)?;
         let second_point = BN254Curve::create_point_from_affine(second_point_x, second_point_y)
