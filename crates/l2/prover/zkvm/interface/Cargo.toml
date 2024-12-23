@@ -16,13 +16,16 @@ ethrex-trie = { path = "../../../../storage/trie", default-features = false }
 
 [build-dependencies]
 risc0-build = { version = "1.2.0" }
+sp1-build = "3.4.0"
 
 [package.metadata.risc0]
-methods = ["guest"]
+methods = ["risc0"]
 
 [features]
 default = []
-build_zkvm = []
+build_risc0 = []
+build_sp1 = []
+
 
 [lib]
 path = "./src/lib.rs"

@@ -43,17 +43,29 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
       # Use cargo-risczero v1.2.0
       # The risc0-zkvm crate should match this version
-      - name: RISC-V zkVM toolchain install
+      - name: RISC-V RISC0 toolchain install
         run: |
           curl -L https://risczero.com/install | bash
           ~/.risc0/bin/rzup install
           ~/.risc0/bin/rzup extension install cargo-risczero v1.2.0
           ~/.risc0/bin/rzup extension use cargo-risczero v1.2.0
-      - name: Build prover and zkVM
+      - name: Build prover and RISC0's zkVM
         run: |
           cd crates/l2/prover
-          cargo build --release --features build_zkvm
+          cargo build --release --features build_risc0
       - name: Test Prover Execution
         run: |
           cd crates/l2/prover
-          RUST_LOG=info make perf_test_proving
+          RUST_LOG=info make perf-risc0
+      - name: RISC-V SP1 toolchain install
+        run: |
+          curl -L https://sp1.succinct.xyz | bash
+          ~/.sp1/bin/sp1up
+      - name: Build prover and SP1's zkVM
+        run: |
+          cd crates/l2/prover
+          cargo build --release --features build_sp1
+      - name: Test Prover Execution
+        run: |
+          cd crates/l2/prover
+          RUST_LOG=info make perf-sp1

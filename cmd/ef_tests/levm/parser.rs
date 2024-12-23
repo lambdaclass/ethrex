@@ -20,6 +20,15 @@ pub enum EFTestParseError {
     FailedToParseTestFile(String),
 }
 
+const IGNORED_TESTS: [&str; 6] = [
+    "ValueOverflowParis.json",                 // Skip because of errors
+    "loopMul.json",                            // Skip because it takes too long to run
+    "dynamicAccountOverwriteEmpty_Paris.json", // Skip because it fails on REVM
+    "RevertInCreateInInitCreate2Paris.json",   // Skip because it fails on REVM
+    "create2collisionStorageParis.json",       // Skip because it fails on REVM
+    "InitCollisionParis.json",                 // Skip because it fails on REVM
+];
+
 pub fn parse_ef_tests(opts: &EFTestRunnerOptions) -> Result<Vec<EFTest>, EFTestParseError> {
     let parsing_time = std::time::Instant::now();
     let cargo_manifest_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
@@ -87,11 +96,11 @@ pub fn parse_ef_test_dir(
         {
             continue;
         }
-        // Skip the ValueOverflowParis.json file because of errors, and loopMul.json because it takes too long to run.
+        // Skip ignored tests
         if test
             .path()
             .file_name()
-            .is_some_and(|name| name == "ValueOverflowParis.json" || name == "loopMul.json")
+            .is_some_and(|name| IGNORED_TESTS.contains(&name.to_str().unwrap_or("")))
         {
             continue;
         }
