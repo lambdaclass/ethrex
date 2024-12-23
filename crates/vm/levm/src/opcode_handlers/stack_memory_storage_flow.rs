@@ -177,7 +177,10 @@ impl VM {
         let mut gas_refunds = self.env.refunded_gas;
 
         if new_storage_slot_value != storage_slot.current_value {
-            if !storage_slot.original_value.is_zero() && new_storage_slot_value.is_zero() {
+            if !storage_slot.original_value.is_zero()
+                && !storage_slot.current_value.is_zero()
+                && new_storage_slot_value.is_zero()
+            {
                 gas_refunds = gas_refunds
                     .checked_add(4800)
                     .ok_or(VMError::GasRefundsOverflow)?;
@@ -195,7 +198,6 @@ impl VM {
                         .checked_add(19900)
                         .ok_or(VMError::GasRefundsOverflow)?;
                 } else {
-                    // Slot originalmente no vacío y ahora lo estás actualizando nuevamente
                     gas_refunds = gas_refunds
                         .checked_add(2800)
                         .ok_or(VMError::GasRefundsOverflow)?;
