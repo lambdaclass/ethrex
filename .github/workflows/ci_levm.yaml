@@ -46,7 +46,7 @@ jobs:
       - name: Show test summary
         run: |
           cd crates/vm/levm
-          grep --color=never -A 11 "Summary: " test_result.txt
+          awk '/Summary: /,0' test_result.txt
   test:
     # "Test" is a required check, don't change the name
     name: Test
