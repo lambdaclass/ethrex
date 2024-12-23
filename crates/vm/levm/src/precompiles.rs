@@ -564,6 +564,21 @@ pub fn ecpairing(
             return Err(VMError::PrecompileError(PrecompileError::DefaultError));
         }
 
+        let alt_bn128_prime = U256::from_str_radix(
+            "30644e72e131a029b85045b68181585d97816a916871ca8d3c208c16d87cfd47",
+            16,
+        )
+        .map_err(|_| InternalError::ConversionError)?;
+
+        // Check if the curve belongs to the curve (this happens if it's lower than the prime)
+        if U256::from_big_endian(second_point_x_first_part) >= alt_bn128_prime
+            || U256::from_big_endian(second_point_x_second_part) >= alt_bn128_prime
+            || U256::from_big_endian(second_point_y_first_part) >= alt_bn128_prime
+            || U256::from_big_endian(second_point_y_second_part) >= alt_bn128_prime
+        {
+            return Err(VMError::PrecompileError(PrecompileError::DefaultError));
+        }
+
         let second_point_x_bytes = [second_point_x_first_part, second_point_x_second_part].concat();
         let second_point_y_bytes = [second_point_y_first_part, second_point_y_second_part].concat();
 
