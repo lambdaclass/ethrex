@@ -1,9 +1,10 @@
 .DEFAULT_GOAL := help
 
-.PHONY: help init down clean init-local-l1 down-local-l1 clean-local-l1 init-l2 down-l2 deploy-l1 deploy-block-executor deploy-inbox setup-prover test ci_test update-cli-contracts
-
 L2_GENESIS_FILE_PATH=../../test_data/genesis-l2.json
 L1_GENESIS_FILE_PATH=../../test_data/genesis-l1.json
+
+# Basic
+.PHONY: help init down clean restart
 
 help: ## 📚 Show help for each of the Makefile recipes
 	@grep -E '^[a-zA-Z0-9_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-30s\033[0m %s\n", $$1, $$2}'
@@ -16,8 +17,21 @@ clean: clean-contract-deps ## 🧹 Cleans the localnet
 
 restart: restart-local-l1 deploy-l1 restart-l2 ## 🔄 Restarts the localnet
 
+# CLI
+.PHONY: cli update-cli-contracts
+
 cli: ## 🛠️ Installs the L2 Lambda ethrex CLI
 	cargo install --path ${ethrex_PATH}/cmd/ethrex_l2/ --force
+
+update-cli-contracts: ## 📜 Update the CLI's config contracts
+	@if [ -z "$$C" ]; then \
+		echo "Error: CONFIG_NAME (C) is missing.\nPlease provide it as an argument:\nmake update-cli-contracts C=<config_name>."; \
+		exit 1; \
+	fi && \
+	CB=$$(grep 'L1_WATCHER_BRIDGE_ADDRESS' .env | cut -d= -f2) && \
+	ethrex_l2 config edit --common-bridge $$CB $$C && \
+	OP=$$(grep 'COMMITTER_ON_CHAIN_PROPOSER_ADDRESS' .env | cut -d= -f2) && \
+	ethrex_l2 config edit --on-chain-proposer $$OP $$C
 
 # Variables
 
@@ -39,6 +53,7 @@ L1_AUTH_PORT=8551
 L2_AUTH_PORT=8552
 
 # Local L1
+.PHONY: init-local-l1 init-l1 down-local-l1 restart-local-l1 rm-db-l1
 
 init-local-l1: ## 🚀 Initializes an L1 Lambda ethrex Client with Docker (Used with make init)
 	docker compose -f ${ethrex_DEV_DOCKER_COMPOSE_PATH} up -d
@@ -57,10 +72,11 @@ down-local-l1: ## 🛑 Shuts down the L1 Lambda ethrex Client
 
 restart-local-l1: down-local-l1 init-local-l1 ## 🔄 Restarts the L1 Lambda ethrex Client
 
-rm_db_l1: ## 🛑 Removes the DB used by the L1
+rm-db-l1: ## 🛑 Removes the DB used by the L1
 	cargo run --release --manifest-path ../../Cargo.toml --bin ethrex -- removedb --datadir ${ethrex_L1_DEV_LIBMDBX}
 
 # Contracts
+PHONY: clean-contract-deps restart-contract-deps deploy-l1
 
 clean-contract-deps: ## 🧹 Cleans the dependencies for the L1 contracts.
 	rm -rf contracts/solc_out
@@ -72,6 +88,7 @@ deploy-l1: ## 📜 Deploys the L1 contracts
 	DEPLOYER_CONTRACTS_PATH=contracts cargo run --release --bin ethrex_l2_l1_deployer --manifest-path ${ethrex_L2_CONTRACTS_PATH}/Cargo.toml
 
 # L2
+PHONY: init-l2 down-l2 restart-l2 init-prover rm-db-l2
 
 init-l2: ## 🚀 Initializes an L2 Lambda ethrex Client
 	cargo run --release --manifest-path ../../Cargo.toml --bin ethrex --features l2 -- \
@@ -86,26 +103,27 @@ down-l2: ## 🛑 Shuts down the L2 Lambda ethrex Client
 
 restart-l2: down-l2 init-l2 ## 🔄 Restarts the L2 Lambda ethrex Client
 
-init-l2-prover: ## 🚀 Initializes the Prover
-	cargo run --release --features build_zkvm --manifest-path ../../Cargo.toml --bin ethrex_prover
+init-prover: ## 🚀 Initializes the Prover
+	@if [ -z "$$T" ]; then \
+		echo "Error: ProverType (T) is missing."; \
+		echo "Please provide it as an argument:"; \
+		echo "make init-prover T=<prover_type: (risc0, sp1)> <G=true>."; \
+		echo "The prover can also be run with GPU (G)"; \
+		exit 1; \
+	fi; \
 
-init-l2-prover-gpu: ## 🚀 Initializes the Prover with GPU support
-	cargo run --release --features "build_zkvm,gpu" --manifest-path ../../Cargo.toml --bin ethrex_prover
+	@if [ -z "$$G" ]; then \
+		GPU=""; \
+	else \
+		GPU=",gpu"; \
+	fi; \
+	cargo run --release --features "build_$$T$$GPU" --manifest-path ../../Cargo.toml --bin ethrex_prover -- $$T
 
-rm_db_l2: ## 🛑 Removes the DB used by the L2
+rm-db-l2: ## 🛑 Removes the DB used by the L2
 	cargo run --release --manifest-path ../../Cargo.toml --bin ethrex -- removedb --datadir ${ethrex_L2_DEV_LIBMDBX}
 
-update-cli-contracts: ## 📜 Update the CLI's config contracts
-	@if [ -z "$$C" ]; then \
-		echo "Error: CONFIG_NAME (C) is missing.\nPlease provide it as an argument:\nmake update-cli-contracts C=<config_name>."; \
-		exit 1; \
-	fi && \
-	CB=$$(grep 'L1_WATCHER_BRIDGE_ADDRESS' .env | cut -d= -f2) && \
-	ethrex_l2 config edit --common-bridge $$CB $$C && \
-	OP=$$(grep 'COMMITTER_ON_CHAIN_PROPOSER_ADDRESS' .env | cut -d= -f2) && \
-	ethrex_l2 config edit --on-chain-proposer $$OP $$C
-
 # Testing
+PHONY: ci_test test
 
 ci_test: ## 🚧 Runs the L2's integration test, used by the github's CI
 	docker compose -f ${ethrex_L2_DOCKER_COMPOSE_PATH} down
