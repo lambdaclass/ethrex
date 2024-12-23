@@ -71,7 +71,7 @@ impl VM {
 
         // We add the stipend gas for the subcall. This ensures that the callee has enough gas to perform basic operations
         let gas_for_subcall = if !value_to_transfer.is_zero() {
-            gas.saturating_add(CALL_POSITIVE_VALUE_STIPEND)
+            gas.saturating_add(CALL_POSITIVE_VALUE_STIPEND.into())
         } else {
             gas
         };
@@ -142,7 +142,7 @@ impl VM {
 
         // We add the stipend gas for the subcall. This ensures that the callee has enough gas to perform basic operations
         let gas_for_subcall = if !value_to_transfer.is_zero() {
-            gas.saturating_add(CALLCODE_POSITIVE_VALUE_STIPEND)
+            gas.saturating_add(CALLCODE_POSITIVE_VALUE_STIPEND.into())
         } else {
             gas
         };
@@ -180,10 +180,13 @@ impl VM {
         }
 
         let new_memory_size = calculate_memory_size(offset, size)?;
-        self.increase_consumed_gas(
-            current_call_frame,
-            memory::expansion_cost(new_memory_size, current_call_frame.memory.len())?.into(),
-        )?;
+
+        let memory_expansion_cost: u64 =
+            memory::expansion_cost(new_memory_size, current_call_frame.memory.len())?
+                .try_into()
+                .map_err(|_err| VMError::Internal(InternalError::ConversionError))?;
+
+        self.increase_consumed_gas(current_call_frame, memory_expansion_cost)?;
 
         current_call_frame.output =
             memory::load_range(&mut current_call_frame.memory, offset, size)?
@@ -396,10 +399,13 @@ impl VM {
             .map_err(|_err| VMError::VeryLargeNumber)?;
 
         let new_memory_size = calculate_memory_size(offset, size)?;
-        self.increase_consumed_gas(
-            current_call_frame,
-            memory::expansion_cost(new_memory_size, current_call_frame.memory.len())?.into(),
-        )?;
+
+        let memory_expansion_cost: u64 =
+            memory::expansion_cost(new_memory_size, current_call_frame.memory.len())?
+                .try_into()
+                .map_err(|_err| VMError::Internal(InternalError::ConversionError))?;
+
+        self.increase_consumed_gas(current_call_frame, memory_expansion_cost)?;
 
         current_call_frame.output =
             memory::load_range(&mut current_call_frame.memory, offset, size)?
@@ -486,32 +492,16 @@ impl VM {
             return Err(VMError::OutOfGas(OutOfGasError::ConsumedGasOverflow));
         }
 
-        // SECOND: Validations that push 0 to the stack
+        // Reserve gas for subcall
+        let max_message_call_gas = max_message_call_gas(current_call_frame)?;
+        self.increase_consumed_gas(current_call_frame, max_message_call_gas)?;
+
+        // Clear callframe subreturn data
+        current_call_frame.sub_return_data = Bytes::new();
+
         let deployer_address = current_call_frame.to;
 
         let deployer_account_info = self.access_account(deployer_address).0;
-
-        // 1. Sender doesn't have enough balance to send value.
-        if deployer_account_info.balance < value_in_wei_to_send {
-            current_call_frame.stack.push(CREATE_DEPLOYMENT_FAIL)?;
-            return Ok(OpcodeSuccess::Continue);
-        }
-
-        // 2. Depth limit has been reached
-        let new_depth = current_call_frame
-            .depth
-            .checked_add(1)
-            .ok_or(InternalError::ArithmeticOperationOverflow)?;
-        if new_depth > 1024 {
-            current_call_frame.stack.push(CREATE_DEPLOYMENT_FAIL)?;
-            return Ok(OpcodeSuccess::Continue);
-        }
-
-        // 3. Sender nonce is max.
-        if deployer_account_info.nonce == u64::MAX {
-            current_call_frame.stack.push(CREATE_DEPLOYMENT_FAIL)?;
-            return Ok(OpcodeSuccess::Continue);
-        }
 
         let code = Bytes::from(
             memory::load_range(
@@ -527,15 +517,48 @@ impl VM {
             None => Self::calculate_create_address(deployer_address, deployer_account_info.nonce)?,
         };
 
-        // 3. Account has nonce or code.
-        if self.get_account(new_address).has_code_or_nonce() {
+        // touch account
+        self.accrued_substate.touched_accounts.insert(new_address);
+
+        let new_depth = current_call_frame
+            .depth
+            .checked_add(1)
+            .ok_or(InternalError::ArithmeticOperationOverflow)?;
+        // SECOND: Validations that push 0 to the stack and return reserved_gas
+        // 1. Sender doesn't have enough balance to send value.
+        // 2. Depth limit has been reached
+        // 3. Sender nonce is max.
+        if deployer_account_info.balance < value_in_wei_to_send
+            || new_depth > 1024
+            || deployer_account_info.nonce == u64::MAX
+        {
+            // Return reserved gas
+            current_call_frame.gas_used = current_call_frame
+                .gas_used
+                .checked_sub(max_message_call_gas)
+                .ok_or(VMError::Internal(InternalError::GasOverflow))?;
+            // Push 0
             current_call_frame.stack.push(CREATE_DEPLOYMENT_FAIL)?;
             return Ok(OpcodeSuccess::Continue);
         }
 
-        // THIRD: Changes to the state
+        // THIRD: Validations that push 0 to the stack without returning reserved gas but incrementing deployer's nonce
+        let new_account = self.get_account(new_address);
+        if new_account.has_code_or_nonce() {
+            self.increment_account_nonce(deployer_address)?;
+            current_call_frame.stack.push(CREATE_DEPLOYMENT_FAIL)?;
+            return Ok(OpcodeSuccess::Continue);
+        }
+
+        // FOURTH: Changes to the state
         // 1. Creating contract.
-        let new_account = Account::new(value_in_wei_to_send, Bytes::new(), 1, Default::default());
+
+        // If the address has balance but there is no account associated with it, we need to add the value to it
+        let new_balance = value_in_wei_to_send
+            .checked_add(new_account.info.balance)
+            .ok_or(VMError::BalanceOverflow)?;
+
+        let new_account = Account::new(new_balance, Bytes::new(), 1, Default::default());
         cache::insert_account(&mut self.cache, new_address, new_account);
 
         // 2. Increment sender's nonce.
@@ -544,7 +567,6 @@ impl VM {
         // 3. Decrease sender's balance.
         self.decrease_account_balance(deployer_address, value_in_wei_to_send)?;
 
-        let max_message_call_gas = max_message_call_gas(current_call_frame)?;
         let mut new_call_frame = CallFrame::new(
             deployer_address,
             new_address,
@@ -553,21 +575,25 @@ impl VM {
             value_in_wei_to_send,
             Bytes::new(),
             false,
-            U256::from(max_message_call_gas),
-            U256::zero(),
+            max_message_call_gas,
+            0,
             new_depth,
             true,
         );
 
         self.accrued_substate.created_accounts.insert(new_address); // Mostly for SELFDESTRUCT during initcode.
-        self.accrued_substate.touched_accounts.insert(new_address);
 
         let tx_report = self.execute(&mut new_call_frame)?;
+        let unused_gas = max_message_call_gas
+            .checked_sub(tx_report.gas_used)
+            .ok_or(InternalError::GasOverflow)?;
 
+        // Return reserved gas
         current_call_frame.gas_used = current_call_frame
             .gas_used
-            .checked_add(tx_report.gas_used.into())
-            .ok_or(VMError::OutOfGas(OutOfGasError::ConsumedGasOverflow))?;
+            .checked_sub(unused_gas)
+            .ok_or(InternalError::GasOverflow)?;
+
         current_call_frame.logs.extend(tx_report.logs);
 
         match tx_report.result {
@@ -576,15 +602,18 @@ impl VM {
                     .stack
                     .push(address_to_word(new_address))?;
             }
-            TxResult::Revert(_) => {
+            TxResult::Revert(err) => {
                 // Return value to sender
                 self.increase_account_balance(deployer_address, value_in_wei_to_send)?;
 
                 // Deployment failed so account shouldn't exist
                 cache::remove_account(&mut self.cache, &new_address);
                 self.accrued_substate.created_accounts.remove(&new_address);
-                self.accrued_substate.touched_accounts.remove(&new_address);
 
+                // If revert we have to copy the return_data
+                if err == VMError::RevertOpcode {
+                    current_call_frame.sub_return_data = tx_report.output;
+                }
                 current_call_frame.stack.push(CREATE_DEPLOYMENT_FAIL)?;
             }
         }
@@ -593,6 +622,9 @@ impl VM {
     }
 
     #[allow(clippy::too_many_arguments)]
+    /// This (should) be the only function where gas is used as a
+    /// U256. This is because we have to use the values that are
+    /// pushed to the stack.
     pub fn generic_call(
         &mut self,
         current_call_frame: &mut CallFrame,
@@ -608,6 +640,12 @@ impl VM {
         ret_offset: U256,
         ret_size: usize,
     ) -> Result<OpcodeSuccess, VMError> {
+        // Clear callframe subreturn data
+        current_call_frame.sub_return_data = Bytes::new();
+
+        let calldata =
+            memory::load_range(&mut current_call_frame.memory, args_offset, args_size)?.to_vec();
+
         // 1. Validate sender has enough value
         let sender_account_info = self.access_account(msg_sender).0;
         if should_transfer_value && sender_account_info.balance < value {
@@ -627,11 +665,15 @@ impl VM {
         }
 
         let recipient_bytecode = self.access_account(code_address).0.bytecode;
-        let calldata =
-            memory::load_range(&mut current_call_frame.memory, args_offset, args_size)?.to_vec();
         // Gas Limit for the child context is capped.
         let gas_cap = max_message_call_gas(current_call_frame)?;
         let gas_limit = std::cmp::min(gas_limit, gas_cap.into());
+
+        // This should always cast correcly because the gas_cap is in
+        // u64; therefore, at most, it will be u64::MAX
+        let gas_limit: u64 = gas_limit
+            .try_into()
+            .map_err(|_| VMError::Internal(InternalError::ConversionError))?;
 
         let mut new_call_frame = CallFrame::new(
             msg_sender,
@@ -642,7 +684,7 @@ impl VM {
             calldata.into(),
             is_static,
             gas_limit,
-            U256::zero(),
+            0,
             new_depth,
             false,
         );
@@ -658,7 +700,7 @@ impl VM {
         // Add gas used by the sub-context to the current one after it's execution.
         current_call_frame.gas_used = current_call_frame
             .gas_used
-            .checked_add(tx_report.gas_used.into())
+            .checked_add(tx_report.gas_used)
             .ok_or(VMError::OutOfGas(OutOfGasError::ConsumedGasOverflow))?;
         current_call_frame.logs.extend(tx_report.logs);
         memory::try_store_range(

@@ -355,6 +355,23 @@ impl StoreEngine for Store {
         Ok(self.inner().payloads.get(&payload_id).cloned())
     }
 
+    fn get_receipts_for_block(&self, block_hash: &BlockHash) -> Result<Vec<Receipt>, StoreError> {
+        let store = self.inner();
+        let Some(receipts_for_block) = store.receipts.get(block_hash) else {
+            return Ok(vec![]);
+        };
+        let mut receipts = receipts_for_block
+            .iter()
+            .collect::<Vec<(&Index, &Receipt)>>();
+
+        receipts.sort_by_key(|(index, _receipt)| **index);
+
+        Ok(receipts
+            .into_iter()
+            .map(|(_index, receipt)| receipt.clone())
+            .collect())
+    }
+
     fn add_receipts(
         &self,
         block_hash: BlockHash,

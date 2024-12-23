@@ -635,9 +635,10 @@ impl Store {
         self.engine.update_earliest_block_number(block_number)
     }
 
-    // TODO(#790): This should not return an option.
-    pub fn get_earliest_block_number(&self) -> Result<Option<BlockNumber>, StoreError> {
-        self.engine.get_earliest_block_number()
+    pub fn get_earliest_block_number(&self) -> Result<BlockNumber, StoreError> {
+        self.engine
+            .get_earliest_block_number()?
+            .ok_or(StoreError::MissingEarliestBlockNumber)
     }
 
     pub fn update_finalized_block_number(
@@ -663,9 +664,10 @@ impl Store {
         self.engine.update_latest_block_number(block_number)
     }
 
-    // TODO(#790): This should not return an option.
-    pub fn get_latest_block_number(&self) -> Result<Option<BlockNumber>, StoreError> {
-        self.engine.get_latest_block_number()
+    pub fn get_latest_block_number(&self) -> Result<BlockNumber, StoreError> {
+        self.engine
+            .get_latest_block_number()?
+            .ok_or(StoreError::MissingLatestBlockNumber)
     }
 
     pub fn update_latest_total_difficulty(&self, block_difficulty: U256) -> Result<(), StoreError> {
@@ -956,6 +958,13 @@ impl Store {
     pub fn open_storage_trie(&self, account_hash: H256, storage_root: H256) -> Trie {
         self.engine.open_storage_trie(account_hash, storage_root)
     }
+
+    pub fn get_receipts_for_block(
+        &self,
+        block_hash: &BlockHash,
+    ) -> Result<Vec<Receipt>, StoreError> {
+        self.engine.get_receipts_for_block(block_hash)
+    }
 }
 
 pub fn hash_address(address: &Address) -> Vec<u8> {
@@ -1239,10 +1248,10 @@ mod tests {
             .update_pending_block_number(pending_block_number)
             .unwrap();
 
-        let stored_earliest_block_number = store.get_earliest_block_number().unwrap().unwrap();
+        let stored_earliest_block_number = store.get_earliest_block_number().unwrap();
         let stored_finalized_block_number = store.get_finalized_block_number().unwrap().unwrap();
         let stored_safe_block_number = store.get_safe_block_number().unwrap().unwrap();
-        let stored_latest_block_number = store.get_latest_block_number().unwrap().unwrap();
+        let stored_latest_block_number = store.get_latest_block_number().unwrap();
         let stored_pending_block_number = store.get_pending_block_number().unwrap().unwrap();
 
         assert_eq!(earliest_block_number, stored_earliest_block_number);

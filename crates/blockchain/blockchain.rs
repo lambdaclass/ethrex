@@ -161,11 +161,10 @@ pub fn validate_receipts_root(
 
 // Returns the hash of the head of the canonical chain (the latest valid hash).
 pub fn latest_canonical_block_hash(storage: &Store) -> Result<H256, ChainError> {
-    if let Some(latest_block_number) = storage.get_latest_block_number()? {
-        if let Some(latest_valid_header) = storage.get_block_header(latest_block_number)? {
-            let latest_valid_hash = latest_valid_header.compute_block_hash();
-            return Ok(latest_valid_hash);
-        }
+    let latest_block_number = storage.get_latest_block_number()?;
+    if let Some(latest_valid_header) = storage.get_block_header(latest_block_number)? {
+        let latest_valid_hash = latest_valid_header.compute_block_hash();
+        return Ok(latest_valid_hash);
     }
     Err(ChainError::StoreError(StoreError::Custom(
         "Could not find latest valid hash".to_string(),
