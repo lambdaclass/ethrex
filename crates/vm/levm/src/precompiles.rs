@@ -101,9 +101,9 @@ pub fn execute_precompile(current_call_frame: &mut CallFrame) -> Result<Bytes, V
 
 /// Verifies if the gas cost is higher than the gas limit and consumes the gas cost if it is not
 fn increase_precompile_consumed_gas(
-    gas_for_call: U256,
-    gas_cost: U256,
-    consumed_gas: &mut U256,
+    gas_for_call: u64,
+    gas_cost: u64,
+    consumed_gas: &mut u64,
 ) -> Result<(), VMError> {
     if gas_for_call < gas_cost {
         return Err(VMError::PrecompileError(PrecompileError::NotEnoughGas));
@@ -135,10 +135,10 @@ fn fill_with_zeros(slice: &[u8]) -> Result<[u8; 128], VMError> {
 
 pub fn ecrecover(
     calldata: &Bytes,
-    gas_for_call: U256,
-    consumed_gas: &mut U256,
+    gas_for_call: u64,
+    consumed_gas: &mut u64,
 ) -> Result<Bytes, VMError> {
-    let gas_cost = ECRECOVER_COST.into();
+    let gas_cost = ECRECOVER_COST;
 
     increase_precompile_consumed_gas(gas_for_call, gas_cost, consumed_gas)?;
 
@@ -193,16 +193,16 @@ pub fn ecrecover(
 
 fn identity(
     _calldata: &Bytes,
-    _gas_for_call: U256,
-    _consumed_gas: &mut U256,
+    _gas_for_call: u64,
+    _consumed_gas: &mut u64,
 ) -> Result<Bytes, VMError> {
     Ok(Bytes::new())
 }
 
 pub fn sha2_256(
     calldata: &Bytes,
-    gas_for_call: U256,
-    consumed_gas: &mut U256,
+    gas_for_call: u64,
+    consumed_gas: &mut u64,
 ) -> Result<Bytes, VMError> {
     let gas_cost = sha2_256_cost(calldata.len())?;
 
@@ -215,8 +215,8 @@ pub fn sha2_256(
 
 pub fn ripemd_160(
     calldata: &Bytes,
-    gas_for_call: U256,
-    consumed_gas: &mut U256,
+    gas_for_call: u64,
+    consumed_gas: &mut u64,
 ) -> Result<Bytes, VMError> {
     let gas_cost = ripemd_160_cost(calldata.len())?;
 
@@ -234,48 +234,40 @@ pub fn ripemd_160(
 
 fn modexp(
     _calldata: &Bytes,
-    _gas_for_call: U256,
-    _consumed_gas: &mut U256,
+    _gas_for_call: u64,
+    _consumed_gas: &mut u64,
 ) -> Result<Bytes, VMError> {
     Ok(Bytes::new())
 }
 
-fn ecadd(
-    _calldata: &Bytes,
-    _gas_for_call: U256,
-    _consumed_gas: &mut U256,
-) -> Result<Bytes, VMError> {
+fn ecadd(_calldata: &Bytes, _gas_for_call: u64, _consumed_gas: &mut u64) -> Result<Bytes, VMError> {
     Ok(Bytes::new())
 }
 
-fn ecmul(
-    _calldata: &Bytes,
-    _gas_for_call: U256,
-    _consumed_gas: &mut U256,
-) -> Result<Bytes, VMError> {
+fn ecmul(_calldata: &Bytes, _gas_for_call: u64, _consumed_gas: &mut u64) -> Result<Bytes, VMError> {
     Ok(Bytes::new())
 }
 
 fn ecpairing(
     _calldata: &Bytes,
-    _gas_for_call: U256,
-    _consumed_gas: &mut U256,
+    _gas_for_call: u64,
+    _consumed_gas: &mut u64,
 ) -> Result<Bytes, VMError> {
     Ok(Bytes::new())
 }
 
 fn blake2f(
     _calldata: &Bytes,
-    _gas_for_call: U256,
-    _consumed_gas: &mut U256,
+    _gas_for_call: u64,
+    _consumed_gas: &mut u64,
 ) -> Result<Bytes, VMError> {
     Ok(Bytes::new())
 }
 
 fn point_evaluation(
     _calldata: &Bytes,
-    _gas_for_call: U256,
-    _consumed_gas: &mut U256,
+    _gas_for_call: u64,
+    _consumed_gas: &mut u64,
 ) -> Result<Bytes, VMError> {
     Ok(Bytes::new())
 }

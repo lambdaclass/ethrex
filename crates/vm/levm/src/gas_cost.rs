@@ -5,164 +5,164 @@ use crate::{
     memory, StorageSlot,
 };
 use bytes::Bytes;
-/// Contains the gas costs of the EVM instructions (in wei)
+/// Contains the gas costs of the EVM instructions
 use ethrex_core::U256;
 
 // Opcodes cost
-pub const STOP: U256 = U256::zero();
-pub const ADD: U256 = U256([3, 0, 0, 0]);
-pub const MUL: U256 = U256([5, 0, 0, 0]);
-pub const SUB: U256 = U256([3, 0, 0, 0]);
-pub const DIV: U256 = U256([5, 0, 0, 0]);
-pub const SDIV: U256 = U256([5, 0, 0, 0]);
-pub const MOD: U256 = U256([5, 0, 0, 0]);
-pub const SMOD: U256 = U256([5, 0, 0, 0]);
-pub const ADDMOD: U256 = U256([8, 0, 0, 0]);
-pub const MULMOD: U256 = U256([8, 0, 0, 0]);
-pub const EXP_STATIC: U256 = U256([10, 0, 0, 0]);
-pub const EXP_DYNAMIC_BASE: U256 = U256([50, 0, 0, 0]);
-pub const SIGNEXTEND: U256 = U256([5, 0, 0, 0]);
-pub const LT: U256 = U256([3, 0, 0, 0]);
-pub const GT: U256 = U256([3, 0, 0, 0]);
-pub const SLT: U256 = U256([3, 0, 0, 0]);
-pub const SGT: U256 = U256([3, 0, 0, 0]);
-pub const EQ: U256 = U256([3, 0, 0, 0]);
-pub const ISZERO: U256 = U256([3, 0, 0, 0]);
-pub const AND: U256 = U256([3, 0, 0, 0]);
-pub const OR: U256 = U256([3, 0, 0, 0]);
-pub const XOR: U256 = U256([3, 0, 0, 0]);
-pub const NOT: U256 = U256([3, 0, 0, 0]);
-pub const BYTE: U256 = U256([3, 0, 0, 0]);
-pub const SHL: U256 = U256([3, 0, 0, 0]);
-pub const SHR: U256 = U256([3, 0, 0, 0]);
-pub const SAR: U256 = U256([3, 0, 0, 0]);
-pub const KECCAK25_STATIC: U256 = U256([30, 0, 0, 0]);
-pub const KECCAK25_DYNAMIC_BASE: U256 = U256([6, 0, 0, 0]);
-pub const CALLDATALOAD: U256 = U256([3, 0, 0, 0]);
-pub const CALLDATASIZE: U256 = U256([2, 0, 0, 0]);
-pub const CALLDATACOPY_STATIC: U256 = U256([3, 0, 0, 0]);
-pub const CALLDATACOPY_DYNAMIC_BASE: U256 = U256([3, 0, 0, 0]);
-pub const RETURNDATASIZE: U256 = U256([2, 0, 0, 0]);
-pub const RETURNDATACOPY_STATIC: U256 = U256([3, 0, 0, 0]);
-pub const RETURNDATACOPY_DYNAMIC_BASE: U256 = U256([3, 0, 0, 0]);
-pub const ADDRESS: U256 = U256([2, 0, 0, 0]);
-pub const ORIGIN: U256 = U256([2, 0, 0, 0]);
-pub const CALLER: U256 = U256([2, 0, 0, 0]);
-pub const BLOCKHASH: U256 = U256([20, 0, 0, 0]);
-pub const COINBASE: U256 = U256([2, 0, 0, 0]);
-pub const TIMESTAMP: U256 = U256([2, 0, 0, 0]);
-pub const NUMBER: U256 = U256([2, 0, 0, 0]);
-pub const PREVRANDAO: U256 = U256([2, 0, 0, 0]);
-pub const GASLIMIT: U256 = U256([2, 0, 0, 0]);
-pub const CHAINID: U256 = U256([2, 0, 0, 0]);
-pub const SELFBALANCE: U256 = U256([5, 0, 0, 0]);
-pub const BASEFEE: U256 = U256([2, 0, 0, 0]);
-pub const BLOBHASH: U256 = U256([3, 0, 0, 0]);
-pub const BLOBBASEFEE: U256 = U256([2, 0, 0, 0]);
-pub const POP: U256 = U256([2, 0, 0, 0]);
-pub const MLOAD_STATIC: U256 = U256([3, 0, 0, 0]);
-pub const MSTORE_STATIC: U256 = U256([3, 0, 0, 0]);
-pub const MSTORE8_STATIC: U256 = U256([3, 0, 0, 0]);
-pub const JUMP: U256 = U256([8, 0, 0, 0]);
-pub const JUMPI: U256 = U256([10, 0, 0, 0]);
-pub const PC: U256 = U256([2, 0, 0, 0]);
-pub const MSIZE: U256 = U256([2, 0, 0, 0]);
-pub const GAS: U256 = U256([2, 0, 0, 0]);
-pub const JUMPDEST: U256 = U256([1, 0, 0, 0]);
-pub const TLOAD: U256 = U256([100, 0, 0, 0]);
-pub const TSTORE: U256 = U256([100, 0, 0, 0]);
-pub const MCOPY_STATIC: U256 = U256([3, 0, 0, 0]);
-pub const MCOPY_DYNAMIC_BASE: U256 = U256([3, 0, 0, 0]);
-pub const PUSH0: U256 = U256([2, 0, 0, 0]);
-pub const PUSHN: U256 = U256([3, 0, 0, 0]);
-pub const DUPN: U256 = U256([3, 0, 0, 0]);
-pub const SWAPN: U256 = U256([3, 0, 0, 0]);
-pub const LOGN_STATIC: U256 = U256([375, 0, 0, 0]);
-pub const LOGN_DYNAMIC_BASE: U256 = U256([375, 0, 0, 0]);
-pub const LOGN_DYNAMIC_BYTE_BASE: U256 = U256([8, 0, 0, 0]);
-pub const CALLVALUE: U256 = U256([2, 0, 0, 0]);
-pub const CODESIZE: U256 = U256([2, 0, 0, 0]);
-pub const CODECOPY_STATIC: U256 = U256([3, 0, 0, 0]);
-pub const CODECOPY_DYNAMIC_BASE: U256 = U256([3, 0, 0, 0]);
-pub const GASPRICE: U256 = U256([2, 0, 0, 0]);
-pub const SELFDESTRUCT_STATIC: U256 = U256([5000, 0, 0, 0]);
-pub const SELFDESTRUCT_DYNAMIC: U256 = U256([25000, 0, 0, 0]);
+pub const STOP: u64 = 0;
+pub const ADD: u64 = 3;
+pub const MUL: u64 = 5;
+pub const SUB: u64 = 3;
+pub const DIV: u64 = 5;
+pub const SDIV: u64 = 5;
+pub const MOD: u64 = 5;
+pub const SMOD: u64 = 5;
+pub const ADDMOD: u64 = 8;
+pub const MULMOD: u64 = 8;
+pub const EXP_STATIC: u64 = 10;
+pub const EXP_DYNAMIC_BASE: u64 = 50;
+pub const SIGNEXTEND: u64 = 5;
+pub const LT: u64 = 3;
+pub const GT: u64 = 3;
+pub const SLT: u64 = 3;
+pub const SGT: u64 = 3;
+pub const EQ: u64 = 3;
+pub const ISZERO: u64 = 3;
+pub const AND: u64 = 3;
+pub const OR: u64 = 3;
+pub const XOR: u64 = 3;
+pub const NOT: u64 = 3;
+pub const BYTE: u64 = 3;
+pub const SHL: u64 = 3;
+pub const SHR: u64 = 3;
+pub const SAR: u64 = 3;
+pub const KECCAK25_STATIC: u64 = 30;
+pub const KECCAK25_DYNAMIC_BASE: u64 = 6;
+pub const CALLDATALOAD: u64 = 3;
+pub const CALLDATASIZE: u64 = 2;
+pub const CALLDATACOPY_STATIC: u64 = 3;
+pub const CALLDATACOPY_DYNAMIC_BASE: u64 = 3;
+pub const RETURNDATASIZE: u64 = 2;
+pub const RETURNDATACOPY_STATIC: u64 = 3;
+pub const RETURNDATACOPY_DYNAMIC_BASE: u64 = 3;
+pub const ADDRESS: u64 = 2;
+pub const ORIGIN: u64 = 2;
+pub const CALLER: u64 = 2;
+pub const BLOCKHASH: u64 = 20;
+pub const COINBASE: u64 = 2;
+pub const TIMESTAMP: u64 = 2;
+pub const NUMBER: u64 = 2;
+pub const PREVRANDAO: u64 = 2;
+pub const GASLIMIT: u64 = 2;
+pub const CHAINID: u64 = 2;
+pub const SELFBALANCE: u64 = 5;
+pub const BASEFEE: u64 = 2;
+pub const BLOBHASH: u64 = 3;
+pub const BLOBBASEFEE: u64 = 2;
+pub const POP: u64 = 2;
+pub const MLOAD_STATIC: u64 = 3;
+pub const MSTORE_STATIC: u64 = 3;
+pub const MSTORE8_STATIC: u64 = 3;
+pub const JUMP: u64 = 8;
+pub const JUMPI: u64 = 10;
+pub const PC: u64 = 2;
+pub const MSIZE: u64 = 2;
+pub const GAS: u64 = 2;
+pub const JUMPDEST: u64 = 1;
+pub const TLOAD: u64 = 100;
+pub const TSTORE: u64 = 100;
+pub const MCOPY_STATIC: u64 = 3;
+pub const MCOPY_DYNAMIC_BASE: u64 = 3;
+pub const PUSH0: u64 = 2;
+pub const PUSHN: u64 = 3;
+pub const DUPN: u64 = 3;
+pub const SWAPN: u64 = 3;
+pub const LOGN_STATIC: u64 = 375;
+pub const LOGN_DYNAMIC_BASE: u64 = 375;
+pub const LOGN_DYNAMIC_BYTE_BASE: u64 = 8;
+pub const CALLVALUE: u64 = 2;
+pub const CODESIZE: u64 = 2;
+pub const CODECOPY_STATIC: u64 = 3;
+pub const CODECOPY_DYNAMIC_BASE: u64 = 3;
+pub const GASPRICE: u64 = 2;
+pub const SELFDESTRUCT_STATIC: u64 = 5000;
+pub const SELFDESTRUCT_DYNAMIC: u64 = 25000;
 
-pub const DEFAULT_STATIC: U256 = U256::zero();
-pub const DEFAULT_COLD_DYNAMIC: U256 = U256([2600, 0, 0, 0]);
-pub const DEFAULT_WARM_DYNAMIC: U256 = U256([100, 0, 0, 0]);
+pub const DEFAULT_STATIC: u64 = 0;
+pub const DEFAULT_COLD_DYNAMIC: u64 = 2600;
+pub const DEFAULT_WARM_DYNAMIC: u64 = 100;
 
-pub const SLOAD_STATIC: U256 = U256::zero();
-pub const SLOAD_COLD_DYNAMIC: U256 = U256([2100, 0, 0, 0]);
-pub const SLOAD_WARM_DYNAMIC: U256 = U256([100, 0, 0, 0]);
+pub const SLOAD_STATIC: u64 = 0;
+pub const SLOAD_COLD_DYNAMIC: u64 = 2100;
+pub const SLOAD_WARM_DYNAMIC: u64 = 100;
 
-pub const SSTORE_STATIC: U256 = U256::zero();
-pub const SSTORE_COLD_DYNAMIC: U256 = U256([2100, 0, 0, 0]);
-pub const SSTORE_DEFAULT_DYNAMIC: U256 = U256([100, 0, 0, 0]);
-pub const SSTORE_STORAGE_CREATION: U256 = U256([20000, 0, 0, 0]);
-pub const SSTORE_STORAGE_MODIFICATION: U256 = U256([2900, 0, 0, 0]);
-pub const SSTORE_STIPEND: U256 = U256([2300, 0, 0, 0]);
+pub const SSTORE_STATIC: u64 = 0;
+pub const SSTORE_COLD_DYNAMIC: u64 = 2100;
+pub const SSTORE_DEFAULT_DYNAMIC: u64 = 100;
+pub const SSTORE_STORAGE_CREATION: u64 = 20000;
+pub const SSTORE_STORAGE_MODIFICATION: u64 = 2900;
+pub const SSTORE_STIPEND: u64 = 2300;
 
-pub const BALANCE_STATIC: U256 = DEFAULT_STATIC;
-pub const BALANCE_COLD_DYNAMIC: U256 = DEFAULT_COLD_DYNAMIC;
-pub const BALANCE_WARM_DYNAMIC: U256 = DEFAULT_WARM_DYNAMIC;
+pub const BALANCE_STATIC: u64 = DEFAULT_STATIC;
+pub const BALANCE_COLD_DYNAMIC: u64 = DEFAULT_COLD_DYNAMIC;
+pub const BALANCE_WARM_DYNAMIC: u64 = DEFAULT_WARM_DYNAMIC;
 
-pub const EXTCODESIZE_STATIC: U256 = DEFAULT_STATIC;
-pub const EXTCODESIZE_COLD_DYNAMIC: U256 = DEFAULT_COLD_DYNAMIC;
-pub const EXTCODESIZE_WARM_DYNAMIC: U256 = DEFAULT_WARM_DYNAMIC;
+pub const EXTCODESIZE_STATIC: u64 = DEFAULT_STATIC;
+pub const EXTCODESIZE_COLD_DYNAMIC: u64 = DEFAULT_COLD_DYNAMIC;
+pub const EXTCODESIZE_WARM_DYNAMIC: u64 = DEFAULT_WARM_DYNAMIC;
 
-pub const EXTCODEHASH_STATIC: U256 = DEFAULT_STATIC;
-pub const EXTCODEHASH_COLD_DYNAMIC: U256 = DEFAULT_COLD_DYNAMIC;
-pub const EXTCODEHASH_WARM_DYNAMIC: U256 = DEFAULT_WARM_DYNAMIC;
+pub const EXTCODEHASH_STATIC: u64 = DEFAULT_STATIC;
+pub const EXTCODEHASH_COLD_DYNAMIC: u64 = DEFAULT_COLD_DYNAMIC;
+pub const EXTCODEHASH_WARM_DYNAMIC: u64 = DEFAULT_WARM_DYNAMIC;
 
-pub const EXTCODECOPY_STATIC: U256 = U256::zero();
-pub const EXTCODECOPY_DYNAMIC_BASE: U256 = U256([3, 0, 0, 0]);
-pub const EXTCODECOPY_COLD_DYNAMIC: U256 = DEFAULT_COLD_DYNAMIC;
-pub const EXTCODECOPY_WARM_DYNAMIC: U256 = DEFAULT_WARM_DYNAMIC;
+pub const EXTCODECOPY_STATIC: u64 = 0;
+pub const EXTCODECOPY_DYNAMIC_BASE: u64 = 3;
+pub const EXTCODECOPY_COLD_DYNAMIC: u64 = DEFAULT_COLD_DYNAMIC;
+pub const EXTCODECOPY_WARM_DYNAMIC: u64 = DEFAULT_WARM_DYNAMIC;
 
-pub const CALL_STATIC: U256 = DEFAULT_STATIC;
-pub const CALL_COLD_DYNAMIC: U256 = DEFAULT_COLD_DYNAMIC;
-pub const CALL_WARM_DYNAMIC: U256 = DEFAULT_WARM_DYNAMIC;
-pub const CALL_POSITIVE_VALUE: U256 = U256([9000, 0, 0, 0]);
-pub const CALL_POSITIVE_VALUE_STIPEND: U256 = U256([2300, 0, 0, 0]);
-pub const CALL_TO_EMPTY_ACCOUNT: U256 = U256([25000, 0, 0, 0]);
+pub const CALL_STATIC: u64 = DEFAULT_STATIC;
+pub const CALL_COLD_DYNAMIC: u64 = DEFAULT_COLD_DYNAMIC;
+pub const CALL_WARM_DYNAMIC: u64 = DEFAULT_WARM_DYNAMIC;
+pub const CALL_POSITIVE_VALUE: u64 = 9000;
+pub const CALL_POSITIVE_VALUE_STIPEND: u64 = 2300;
+pub const CALL_TO_EMPTY_ACCOUNT: u64 = 25000;
 
-pub const CALLCODE_STATIC: U256 = DEFAULT_STATIC;
-pub const CALLCODE_COLD_DYNAMIC: U256 = DEFAULT_COLD_DYNAMIC;
-pub const CALLCODE_WARM_DYNAMIC: U256 = DEFAULT_WARM_DYNAMIC;
-pub const CALLCODE_POSITIVE_VALUE: U256 = U256([9000, 0, 0, 0]);
-pub const CALLCODE_POSITIVE_VALUE_STIPEND: U256 = U256([2300, 0, 0, 0]);
+pub const CALLCODE_STATIC: u64 = DEFAULT_STATIC;
+pub const CALLCODE_COLD_DYNAMIC: u64 = DEFAULT_COLD_DYNAMIC;
+pub const CALLCODE_WARM_DYNAMIC: u64 = DEFAULT_WARM_DYNAMIC;
+pub const CALLCODE_POSITIVE_VALUE: u64 = 9000;
+pub const CALLCODE_POSITIVE_VALUE_STIPEND: u64 = 2300;
 
-pub const DELEGATECALL_STATIC: U256 = DEFAULT_STATIC;
-pub const DELEGATECALL_COLD_DYNAMIC: U256 = DEFAULT_COLD_DYNAMIC;
-pub const DELEGATECALL_WARM_DYNAMIC: U256 = DEFAULT_WARM_DYNAMIC;
+pub const DELEGATECALL_STATIC: u64 = DEFAULT_STATIC;
+pub const DELEGATECALL_COLD_DYNAMIC: u64 = DEFAULT_COLD_DYNAMIC;
+pub const DELEGATECALL_WARM_DYNAMIC: u64 = DEFAULT_WARM_DYNAMIC;
 
-pub const STATICCALL_STATIC: U256 = DEFAULT_STATIC;
-pub const STATICCALL_COLD_DYNAMIC: U256 = DEFAULT_COLD_DYNAMIC;
-pub const STATICCALL_WARM_DYNAMIC: U256 = DEFAULT_WARM_DYNAMIC;
+pub const STATICCALL_STATIC: u64 = DEFAULT_STATIC;
+pub const STATICCALL_COLD_DYNAMIC: u64 = DEFAULT_COLD_DYNAMIC;
+pub const STATICCALL_WARM_DYNAMIC: u64 = DEFAULT_WARM_DYNAMIC;
 
-// Costs in gas for call opcodes (in wei)
-pub const WARM_ADDRESS_ACCESS_COST: U256 = U256([100, 0, 0, 0]);
-pub const COLD_ADDRESS_ACCESS_COST: U256 = U256([2600, 0, 0, 0]);
-pub const NON_ZERO_VALUE_COST: U256 = U256([9000, 0, 0, 0]);
-pub const BASIC_FALLBACK_FUNCTION_STIPEND: U256 = U256([2300, 0, 0, 0]);
-pub const VALUE_TO_EMPTY_ACCOUNT_COST: U256 = U256([25000, 0, 0, 0]);
+// Costs in gas for call opcodes
+pub const WARM_ADDRESS_ACCESS_COST: u64 = 100;
+pub const COLD_ADDRESS_ACCESS_COST: u64 = 2600;
+pub const NON_ZERO_VALUE_COST: u64 = 9000;
+pub const BASIC_FALLBACK_FUNCTION_STIPEND: u64 = 2300;
+pub const VALUE_TO_EMPTY_ACCOUNT_COST: u64 = 25000;
 
-// Costs in gas for create opcodes (in wei)
-pub const INIT_CODE_WORD_COST: U256 = U256([2, 0, 0, 0]);
-pub const CODE_DEPOSIT_COST: U256 = U256([200, 0, 0, 0]);
-pub const CREATE_BASE_COST: U256 = U256([32000, 0, 0, 0]);
+// Costs in gas for create opcodes
+pub const INIT_CODE_WORD_COST: u64 = 2;
+pub const CODE_DEPOSIT_COST: u64 = 200;
+pub const CREATE_BASE_COST: u64 = 32000;
 
 // Calldata costs
-pub const CALLDATA_COST_ZERO_BYTE: U256 = U256([4, 0, 0, 0]);
-pub const CALLDATA_COST_NON_ZERO_BYTE: U256 = U256([16, 0, 0, 0]);
+pub const CALLDATA_COST_ZERO_BYTE: u64 = 4;
+pub const CALLDATA_COST_NON_ZERO_BYTE: u64 = 16;
 
-// Blob gas costs                          2^17
-pub const BLOB_GAS_PER_BLOB: U256 = U256([131072, 0, 0, 0]);
+// Blob gas costs
+pub const BLOB_GAS_PER_BLOB: u64 = 131072;
 
 // Access lists costs
-pub const ACCESS_LIST_STORAGE_KEY_COST: U256 = U256([1900, 0, 0, 0]);
-pub const ACCESS_LIST_ADDRESS_COST: U256 = U256([2400, 0, 0, 0]);
+pub const ACCESS_LIST_STORAGE_KEY_COST: u64 = 1900;
+pub const ACCESS_LIST_ADDRESS_COST: u64 = 2400;
 
 // Precompile costs
 pub const ECRECOVER_COST: u64 = 3000;
@@ -180,27 +180,31 @@ pub const MODEXP_STATIC_COST: u64 = 0;
 pub const MODEXP_DYNAMIC_BASE: u64 = 200;
 pub const MODEXP_DYNAMIC_QUOTIENT: u64 = 3;
 
-pub fn exp(exponent: U256) -> Result<U256, OutOfGasError> {
+pub fn exp(exponent: U256) -> Result<u64, VMError> {
     let exponent_byte_size = (exponent
         .bits()
         .checked_add(7)
-        .ok_or(OutOfGasError::GasCostOverflow)?)
+        .ok_or(VMError::OutOfGas(OutOfGasError::GasCostOverflow))?)
         / 8;
 
+    let exponent_byte_size: u64 = exponent_byte_size
+        .try_into()
+        .map_err(|_| VMError::VeryLargeNumber)?;
+
     let exponent_byte_size_cost = EXP_DYNAMIC_BASE
-        .checked_mul(exponent_byte_size.into())
-        .ok_or(OutOfGasError::GasCostOverflow)?;
+        .checked_mul(exponent_byte_size)
+        .ok_or(VMError::OutOfGas(OutOfGasError::GasCostOverflow))?;
 
     EXP_STATIC
         .checked_add(exponent_byte_size_cost)
-        .ok_or(OutOfGasError::GasCostOverflow)
+        .ok_or(VMError::OutOfGas(OutOfGasError::GasCostOverflow))
 }
 
 pub fn calldatacopy(
     new_memory_size: usize,
     current_memory_size: usize,
     size: usize,
-) -> Result<U256, VMError> {
+) -> Result<u64, VMError> {
     copy_behavior(
         new_memory_size,
         current_memory_size,
@@ -214,7 +218,7 @@ pub fn codecopy(
     new_memory_size: usize,
     current_memory_size: usize,
     size: usize,
-) -> Result<U256, VMError> {
+) -> Result<u64, VMError> {
     copy_behavior(
         new_memory_size,
         current_memory_size,
@@ -228,7 +232,7 @@ pub fn returndatacopy(
     new_memory_size: usize,
     current_memory_size: usize,
     size: usize,
-) -> Result<U256, VMError> {
+) -> Result<u64, VMError> {
     copy_behavior(
         new_memory_size,
         current_memory_size,
@@ -242,24 +246,31 @@ fn copy_behavior(
     new_memory_size: usize,
     current_memory_size: usize,
     size: usize,
-    dynamic_base: U256,
-    static_cost: U256,
-) -> Result<U256, VMError> {
+    dynamic_base: u64,
+    static_cost: u64,
+) -> Result<u64, VMError> {
     let minimum_word_size = (size
         .checked_add(WORD_SIZE)
         .ok_or(OutOfGasError::GasCostOverflow)?
         .saturating_sub(1))
         / WORD_SIZE;
 
+    let minimum_word_size: u64 = minimum_word_size
+        .try_into()
+        .map_err(|_| VMError::VeryLargeNumber)?;
+
     let memory_expansion_cost = memory::expansion_cost(new_memory_size, current_memory_size)?;
+    let memory_expansion_cost: u64 = memory_expansion_cost
+        .try_into()
+        .map_err(|_| VMError::VeryLargeNumber)?;
 
     let minimum_word_size_cost = dynamic_base
-        .checked_mul(minimum_word_size.into())
+        .checked_mul(minimum_word_size)
         .ok_or(OutOfGasError::GasCostOverflow)?;
     Ok(static_cost
         .checked_add(minimum_word_size_cost)
         .ok_or(OutOfGasError::GasCostOverflow)?
-        .checked_add(memory_expansion_cost.into())
+        .checked_add(memory_expansion_cost)
         .ok_or(OutOfGasError::GasCostOverflow)?)
 }
 
@@ -267,7 +278,7 @@ pub fn keccak256(
     new_memory_size: usize,
     current_memory_size: usize,
     size: usize,
-) -> Result<U256, VMError> {
+) -> Result<u64, VMError> {
     copy_behavior(
         new_memory_size,
         current_memory_size,
@@ -282,48 +293,59 @@ pub fn log(
     current_memory_size: usize,
     size: usize,
     number_of_topics: u8,
-) -> Result<U256, VMError> {
+) -> Result<u64, VMError> {
     let memory_expansion_cost = memory::expansion_cost(new_memory_size, current_memory_size)?;
 
     let topics_cost = LOGN_DYNAMIC_BASE
         .checked_mul(number_of_topics.into())
         .ok_or(OutOfGasError::GasCostOverflow)?;
+
+    let size: u64 = size.try_into().map_err(|_| VMError::VeryLargeNumber)?;
     let bytes_cost = LOGN_DYNAMIC_BYTE_BASE
-        .checked_mul(size.into())
+        .checked_mul(size)
         .ok_or(OutOfGasError::GasCostOverflow)?;
+
+    let memory_expansion_cost: u64 = memory_expansion_cost
+        .try_into()
+        .map_err(|_| VMError::VeryLargeNumber)?;
+
     Ok(topics_cost
         .checked_add(LOGN_STATIC)
         .ok_or(OutOfGasError::GasCostOverflow)?
         .checked_add(bytes_cost)
         .ok_or(OutOfGasError::GasCostOverflow)?
-        .checked_add(memory_expansion_cost.into())
+        .checked_add(memory_expansion_cost)
         .ok_or(OutOfGasError::GasCostOverflow)?)
 }
 
-pub fn mload(new_memory_size: usize, current_memory_size: usize) -> Result<U256, VMError> {
+pub fn mload(new_memory_size: usize, current_memory_size: usize) -> Result<u64, VMError> {
     mem_expansion_behavior(new_memory_size, current_memory_size, MLOAD_STATIC)
 }
 
-pub fn mstore(new_memory_size: usize, current_memory_size: usize) -> Result<U256, VMError> {
+pub fn mstore(new_memory_size: usize, current_memory_size: usize) -> Result<u64, VMError> {
     mem_expansion_behavior(new_memory_size, current_memory_size, MSTORE_STATIC)
 }
 
-pub fn mstore8(new_memory_size: usize, current_memory_size: usize) -> Result<U256, VMError> {
+pub fn mstore8(new_memory_size: usize, current_memory_size: usize) -> Result<u64, VMError> {
     mem_expansion_behavior(new_memory_size, current_memory_size, MSTORE8_STATIC)
 }
 
 fn mem_expansion_behavior(
     new_memory_size: usize,
     current_memory_size: usize,
-    static_cost: U256,
-) -> Result<U256, VMError> {
+    static_cost: u64,
+) -> Result<u64, VMError> {
     let memory_expansion_cost = memory::expansion_cost(new_memory_size, current_memory_size)?;
+    let memory_expansion_cost: u64 = memory_expansion_cost
+        .try_into()
+        .map_err(|_| VMError::RevertOpcode)?;
+
     Ok(static_cost
-        .checked_add(memory_expansion_cost.into())
+        .checked_add(memory_expansion_cost)
         .ok_or(OutOfGasError::GasCostOverflow)?)
 }
 
-pub fn sload(storage_slot_was_cold: bool) -> Result<U256, VMError> {
+pub fn sload(storage_slot_was_cold: bool) -> Result<u64, VMError> {
     let static_gas = SLOAD_STATIC;
 
     let dynamic_cost = if storage_slot_was_cold {
@@ -342,7 +364,7 @@ pub fn sstore(
     new_value: U256,
     storage_slot_was_cold: bool,
     current_call_frame: &CallFrame,
-) -> Result<U256, VMError> {
+) -> Result<u64, VMError> {
     // EIP-2200
     let gas_left = current_call_frame
         .gas_limit
@@ -381,7 +403,7 @@ pub fn mcopy(
     new_memory_size: usize,
     current_memory_size: usize,
     size: usize,
-) -> Result<U256, VMError> {
+) -> Result<u64, VMError> {
     let words_copied = (size
         .checked_add(WORD_SIZE)
         .ok_or(OutOfGasError::GasCostOverflow)?
@@ -389,15 +411,22 @@ pub fn mcopy(
         / WORD_SIZE;
 
     let memory_expansion_cost = memory::expansion_cost(new_memory_size, current_memory_size)?;
+    let memory_expansion_cost: u64 = memory_expansion_cost
+        .try_into()
+        .map_err(|_| VMError::VeryLargeNumber)?;
+
+    let words_copied: u64 = words_copied
+        .try_into()
+        .map_err(|_| VMError::VeryLargeNumber)?;
 
     let copied_words_cost = MCOPY_DYNAMIC_BASE
-        .checked_mul(words_copied.into())
+        .checked_mul(words_copied)
         .ok_or(OutOfGasError::GasCostOverflow)?;
 
     Ok(MCOPY_STATIC
         .checked_add(copied_words_cost)
         .ok_or(OutOfGasError::GasCostOverflow)?
-        .checked_add(memory_expansion_cost.into())
+        .checked_add(memory_expansion_cost)
         .ok_or(OutOfGasError::GasCostOverflow)?)
 }
 
@@ -405,7 +434,7 @@ pub fn create(
     new_memory_size: usize,
     current_memory_size: usize,
     code_size_in_memory: usize,
-) -> Result<U256, VMError> {
+) -> Result<u64, VMError> {
     compute_gas_create(
         new_memory_size,
         current_memory_size,
@@ -418,7 +447,7 @@ pub fn create_2(
     new_memory_size: usize,
     current_memory_size: usize,
     code_size_in_memory: usize,
-) -> Result<U256, VMError> {
+) -> Result<u64, VMError> {
     compute_gas_create(
         new_memory_size,
         current_memory_size,
@@ -432,41 +461,50 @@ fn compute_gas_create(
     current_memory_size: usize,
     code_size_in_memory: usize,
     is_create_2: bool,
-) -> Result<U256, VMError> {
+) -> Result<u64, VMError> {
     let minimum_word_size = (code_size_in_memory
         .checked_add(31)
         .ok_or(OutOfGasError::GasCostOverflow)?)
     .checked_div(32)
     .ok_or(OutOfGasError::ArithmeticOperationDividedByZero)?; // '32' will never be zero
 
+    let minimum_word_size: u64 = minimum_word_size
+        .try_into()
+        .map_err(|_| VMError::VeryLargeNumber)?;
+
     let init_code_cost = minimum_word_size
-        .checked_mul(INIT_CODE_WORD_COST.as_usize()) // will not panic since it's 2
-        .ok_or(OutOfGasError::GasCostOverflow)?;
+        .checked_mul(INIT_CODE_WORD_COST)
+        .ok_or(OutOfGasError::GasCostOverflow)?; // will not panic since it's 2
 
     let memory_expansion_cost = memory::expansion_cost(new_memory_size, current_memory_size)?;
+    let memory_expansion_cost: u64 = memory_expansion_cost
+        .try_into()
+        .map_err(|_| VMError::VeryLargeNumber)?;
 
     let hash_cost = if is_create_2 {
         minimum_word_size
-            .checked_mul(KECCAK25_DYNAMIC_BASE.as_usize()) // will not panic since it's 6
-            .ok_or(OutOfGasError::GasCostOverflow)?
+            .checked_mul(KECCAK25_DYNAMIC_BASE)
+            .ok_or(OutOfGasError::GasCostOverflow)? // will not panic since it's 6
     } else {
         0
     };
 
-    Ok(U256::from(memory_expansion_cost)
-        .checked_add(init_code_cost.into())
+    let gas_create_cost = memory_expansion_cost
+        .checked_add(init_code_cost)
         .ok_or(OutOfGasError::CreationCostIsTooHigh)?
         .checked_add(CREATE_BASE_COST)
         .ok_or(OutOfGasError::CreationCostIsTooHigh)?
-        .checked_add(hash_cost.into())
-        .ok_or(OutOfGasError::CreationCostIsTooHigh)?)
+        .checked_add(hash_cost)
+        .ok_or(OutOfGasError::CreationCostIsTooHigh)?;
+
+    Ok(gas_create_cost)
 }
 
 pub fn selfdestruct(
     address_was_cold: bool,
     account_is_empty: bool,
     balance_to_transfer: U256,
-) -> Result<U256, OutOfGasError> {
+) -> Result<u64, OutOfGasError> {
     let mut gas_cost = SELFDESTRUCT_STATIC;
 
     if address_was_cold {
@@ -485,10 +523,10 @@ pub fn selfdestruct(
     Ok(gas_cost)
 }
 
-pub fn tx_calldata(calldata: &Bytes) -> Result<U256, OutOfGasError> {
+pub fn tx_calldata(calldata: &Bytes) -> Result<u64, OutOfGasError> {
     // This cost applies both for call and create
     // 4 gas for each zero byte in the transaction data 16 gas for each non-zero byte in the transaction.
-    let mut calldata_cost: U256 = U256::zero();
+    let mut calldata_cost: u64 = 0;
     for byte in calldata {
         if *byte != 0 {
             calldata_cost = calldata_cost
@@ -522,12 +560,12 @@ pub fn tx_creation(code_length: u64, number_of_words: u64) -> Result<u64, OutOfG
 
 fn address_access_cost(
     address_was_cold: bool,
-    static_cost: U256,
-    cold_dynamic_cost: U256,
-    warm_dynamic_cost: U256,
-) -> Result<U256, VMError> {
+    static_cost: u64,
+    cold_dynamic_cost: u64,
+    warm_dynamic_cost: u64,
+) -> Result<u64, VMError> {
     let static_gas = static_cost;
-    let dynamic_cost: U256 = if address_was_cold {
+    let dynamic_cost: u64 = if address_was_cold {
         cold_dynamic_cost
     } else {
         warm_dynamic_cost
@@ -538,7 +576,7 @@ fn address_access_cost(
         .ok_or(OutOfGasError::GasCostOverflow)?)
 }
 
-pub fn balance(address_was_cold: bool) -> Result<U256, VMError> {
+pub fn balance(address_was_cold: bool) -> Result<u64, VMError> {
     address_access_cost(
         address_was_cold,
         BALANCE_STATIC,
@@ -547,7 +585,7 @@ pub fn balance(address_was_cold: bool) -> Result<U256, VMError> {
     )
 }
 
-pub fn extcodesize(address_was_cold: bool) -> Result<U256, VMError> {
+pub fn extcodesize(address_was_cold: bool) -> Result<u64, VMError> {
     address_access_cost(
         address_was_cold,
         EXTCODESIZE_STATIC,
@@ -561,7 +599,7 @@ pub fn extcodecopy(
     new_memory_size: usize,
     current_memory_size: usize,
     address_was_cold: bool,
-) -> Result<U256, VMError> {
+) -> Result<u64, VMError> {
     let base_access_cost = copy_behavior(
         new_memory_size,
         current_memory_size,
@@ -581,7 +619,7 @@ pub fn extcodecopy(
         .ok_or(OutOfGasError::GasCostOverflow)?)
 }
 
-pub fn extcodehash(address_was_cold: bool) -> Result<U256, VMError> {
+pub fn extcodehash(address_was_cold: bool) -> Result<u64, VMError> {
     address_access_cost(
         address_was_cold,
         EXTCODEHASH_STATIC,
@@ -596,10 +634,14 @@ pub fn call(
     address_was_cold: bool,
     address_is_empty: bool,
     value_to_transfer: U256,
-) -> Result<U256, VMError> {
+) -> Result<u64, VMError> {
     let static_gas = CALL_STATIC;
 
     let memory_expansion_cost = memory::expansion_cost(new_memory_size, current_memory_size)?;
+    let memory_expansion_cost: u64 = memory_expansion_cost
+        .try_into()
+        .map_err(|_| VMError::VeryLargeNumber)?;
+
     let address_access_cost = address_access_cost(
         address_was_cold,
         CALL_STATIC,
@@ -611,16 +653,16 @@ pub fn call(
             .checked_sub(CALL_POSITIVE_VALUE_STIPEND)
             .ok_or(InternalError::ArithmeticOperationUnderflow)?
     } else {
-        U256::zero()
+        0
     };
     let value_to_empty_account = if address_is_empty && !value_to_transfer.is_zero() {
         CALL_TO_EMPTY_ACCOUNT
     } else {
-        U256::zero()
+        0
     };
 
     // Note: code_execution_cost will be charged from the sub context post-state.
-    let dynamic_gas = U256::from(memory_expansion_cost)
+    let dynamic_gas = memory_expansion_cost
         .checked_add(address_access_cost)
         .ok_or(OutOfGasError::GasCostOverflow)?
         .checked_add(positive_value_cost)
@@ -638,10 +680,14 @@ pub fn callcode(
     current_memory_size: usize,
     address_was_cold: bool,
     value_to_transfer: U256,
-) -> Result<U256, VMError> {
+) -> Result<u64, VMError> {
     let static_gas = CALLCODE_STATIC;
 
     let memory_expansion_cost = memory::expansion_cost(new_memory_size, current_memory_size)?;
+    let memory_expansion_cost: u64 = memory_expansion_cost
+        .try_into()
+        .map_err(|_| VMError::VeryLargeNumber)?;
+
     let address_access_cost = address_access_cost(
         address_was_cold,
         CALLCODE_STATIC,
@@ -653,11 +699,11 @@ pub fn callcode(
             .checked_sub(CALLCODE_POSITIVE_VALUE_STIPEND)
             .ok_or(InternalError::ArithmeticOperationUnderflow)?
     } else {
-        U256::zero()
+        0
     };
 
     // Note: code_execution_cost will be charged from the sub context post-state.
-    let dynamic_gas = U256::from(memory_expansion_cost)
+    let dynamic_gas = memory_expansion_cost
         .checked_add(address_access_cost)
         .ok_or(OutOfGasError::GasCostOverflow)?
         .checked_add(positive_value_cost)
@@ -672,10 +718,14 @@ pub fn delegatecall(
     new_memory_size: usize,
     current_memory_size: usize,
     address_was_cold: bool,
-) -> Result<U256, VMError> {
+) -> Result<u64, VMError> {
     let static_gas = DELEGATECALL_STATIC;
 
     let memory_expansion_cost = memory::expansion_cost(new_memory_size, current_memory_size)?;
+    let memory_expansion_cost: u64 = memory_expansion_cost
+        .try_into()
+        .map_err(|_| VMError::VeryLargeNumber)?;
+
     let address_access_cost = address_access_cost(
         address_was_cold,
         DELEGATECALL_STATIC,
@@ -684,7 +734,7 @@ pub fn delegatecall(
     )?;
 
     // Note: code_execution_cost will be charged from the sub context post-state.
-    let dynamic_gas = U256::from(memory_expansion_cost)
+    let dynamic_gas = memory_expansion_cost
         .checked_add(address_access_cost)
         .ok_or(OutOfGasError::GasCostOverflow)?;
 
@@ -697,10 +747,14 @@ pub fn staticcall(
     new_memory_size: usize,
     current_memory_size: usize,
     address_was_cold: bool,
-) -> Result<U256, VMError> {
+) -> Result<u64, VMError> {
     let static_gas = STATICCALL_STATIC;
 
     let memory_expansion_cost = memory::expansion_cost(new_memory_size, current_memory_size)?;
+    let memory_expansion_cost: u64 = memory_expansion_cost
+        .try_into()
+        .map_err(|_| VMError::VeryLargeNumber)?;
+
     let address_access_cost = address_access_cost(
         address_was_cold,
         STATICCALL_STATIC,
@@ -709,7 +763,7 @@ pub fn staticcall(
     )?;
 
     // Note: code_execution_cost will be charged from the sub context post-state.
-    let dynamic_gas = U256::from(memory_expansion_cost)
+    let dynamic_gas = memory_expansion_cost
         .checked_add(address_access_cost)
         .ok_or(OutOfGasError::GasCostOverflow)?;
 
@@ -718,7 +772,7 @@ pub fn staticcall(
         .ok_or(OutOfGasError::GasCostOverflow)?)
 }
 
-pub fn fake_exponential(factor: u64, numerator: u64, denominator: u64) -> Result<U256, VMError> {
+pub fn fake_exponential(factor: u64, numerator: u64, denominator: u64) -> Result<u64, VMError> {
     let mut i = 1;
     let mut output: u64 = 0;
 
@@ -751,22 +805,20 @@ pub fn fake_exponential(factor: u64, numerator: u64, denominator: u64) -> Result
             .ok_or(InternalError::ArithmeticOperationOverflow)?;
     }
 
-    Ok(U256::from(
-        output
-            .checked_div(denominator)
-            .ok_or(InternalError::ArithmeticOperationOverflow)?,
-    ))
+    Ok(output
+        .checked_div(denominator)
+        .ok_or(InternalError::ArithmeticOperationOverflow)?)
 }
 
-pub fn sha2_256(data_size: usize) -> Result<U256, VMError> {
+pub fn sha2_256(data_size: usize) -> Result<u64, VMError> {
     precompile(data_size, SHA2_256_STATIC_COST, SHA2_256_DYNAMIC_BASE)
 }
 
-pub fn ripemd_160(data_size: usize) -> Result<U256, VMError> {
+pub fn ripemd_160(data_size: usize) -> Result<u64, VMError> {
     precompile(data_size, RIPEMD_160_STATIC_COST, RIPEMD_160_DYNAMIC_BASE)
 }
 
-pub fn identity(data_size: usize) -> Result<U256, VMError> {
+pub fn identity(data_size: usize) -> Result<u64, VMError> {
     precompile(data_size, IDENTITY_STATIC_COST, IDENTITY_DYNAMIC_BASE)
 }
 
@@ -834,7 +886,7 @@ pub fn modexp(
         .ok_or(OutOfGasError::GasCostOverflow)?)
 }
 
-fn precompile(data_size: usize, static_cost: u64, dynamic_base: u64) -> Result<U256, VMError> {
+fn precompile(data_size: usize, static_cost: u64, dynamic_base: u64) -> Result<u64, VMError> {
     let data_size: u64 = data_size
         .try_into()
         .map_err(|_| PrecompileError::ParsingInputError)?;
@@ -851,8 +903,7 @@ fn precompile(data_size: usize, static_cost: u64, dynamic_base: u64) -> Result<U
 
     Ok(static_gas
         .checked_add(dynamic_gas)
-        .ok_or(OutOfGasError::GasCostOverflow)?
-        .into())
+        .ok_or(OutOfGasError::GasCostOverflow)?)
 }
 
 /// Max message call gas is all but one 64th of the remaining gas in the current context.
@@ -860,8 +911,7 @@ fn precompile(data_size: usize, static_cost: u64, dynamic_base: u64) -> Result<U
 pub fn max_message_call_gas(current_call_frame: &CallFrame) -> Result<u64, VMError> {
     let mut remaining_gas = current_call_frame
         .gas_limit
-        .low_u64()
-        .checked_sub(current_call_frame.gas_used.low_u64())
+        .checked_sub(current_call_frame.gas_used)
         .ok_or(InternalError::GasOverflow)?;
 
     remaining_gas = remaining_gas
