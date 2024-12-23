@@ -184,6 +184,8 @@ pub const MODEXP_DYNAMIC_QUOTIENT: u64 = 3;
 pub const ECADD_COST: u64 = 150;
 pub const ECMUL_COST: u64 = 6000;
 
+pub const BLAKE2F_ROUND_COST: u64 = 1;
+
 pub fn exp(exponent: U256) -> Result<u64, VMError> {
     let exponent_byte_size = (exponent
         .bits()
