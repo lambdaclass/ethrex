@@ -4,11 +4,14 @@ use keccak_hash::keccak256;
 use lambdaworks_math::{
     cyclic_group::IsGroup,
     elliptic_curve::{
-        short_weierstrass::curves::bn_254::{
-            curve::{BN254Curve, BN254FieldElement, BN254TwistCurveFieldElement},
-            field_extension::Degree12ExtensionField,
-            pairing::BN254AtePairing,
-            twist::BN254TwistCurve,
+        short_weierstrass::{
+            curves::bn_254::{
+                curve::{BN254Curve, BN254FieldElement, BN254TwistCurveFieldElement},
+                field_extension::Degree12ExtensionField,
+                pairing::BN254AtePairing,
+                twist::BN254TwistCurve,
+            },
+            point::ShortWeierstrassProjectivePoint,
         },
         traits::{IsEllipticCurve, IsPairing},
     },
@@ -640,11 +643,7 @@ pub fn ecpairing(
                 }
 
                 // Get the result of the pairing and affect the mul value with it
-                let pairing_result =
-                    BN254AtePairing::compute_batch(&[(&first_point, &second_point)])
-                        .map_err(|_| PrecompileError::DefaultError)?;
-
-                mul *= pairing_result;
+                update_pairing_result(&mut mul, first_point, second_point)?;
             }
         }
     }
@@ -654,6 +653,21 @@ pub fn ecpairing(
     let mut result = [0; 32];
     result[31] = u8::from(success);
     Ok(Bytes::from(result.to_vec()))
+}
+
+/// I allow this clippy alert because lib handles mul for the type and will not panic in case of overflow
+#[allow(clippy::arithmetic_side_effects)]
+fn update_pairing_result(
+    mul: &mut FieldElement<Degree12ExtensionField>,
+    first_point: ShortWeierstrassProjectivePoint<BN254Curve>,
+    second_point: ShortWeierstrassProjectivePoint<BN254TwistCurve>,
+) -> Result<(), VMError> {
+    let pairing_result = BN254AtePairing::compute_batch(&[(&first_point, &second_point)])
+        .map_err(|_| PrecompileError::DefaultError)?;
+
+    *mul *= pairing_result;
+
+    Ok(())
 }
 
 fn blake2f(
