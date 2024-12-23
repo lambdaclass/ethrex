@@ -133,8 +133,9 @@ cfg_if::cfg_if! {
                         updated_storage.insert(*key, storage_slot.current_value);
                     }
                 }
+                account_update.added_storage = updated_storage;
 
-                if account_update != AccountUpdate::new(*new_state_account_address) && !updated_storage.is_empty() {
+                if account_update != AccountUpdate::new(*new_state_account_address) || !account_update.added_storage.is_empty() {
                     account_updates.push(account_update);
                 }
             }
