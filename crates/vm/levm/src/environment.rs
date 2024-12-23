@@ -10,8 +10,8 @@ pub struct Environment {
     /// The sender address of the transaction that originated
     /// this execution.
     pub origin: Address,
-    pub refunded_gas: U256,
-    pub gas_limit: U256,
+    pub refunded_gas: u64,
+    pub gas_limit: u64,
     pub block_number: U256,
     pub coinbase: Address,
     pub timestamp: U256,
@@ -25,7 +25,7 @@ pub struct Environment {
     pub tx_max_priority_fee_per_gas: Option<U256>,
     pub tx_max_fee_per_gas: Option<U256>,
     pub tx_max_fee_per_blob_gas: Option<U256>,
-    pub block_gas_limit: U256,
+    pub block_gas_limit: u64,
     pub transient_storage: TransientStorage,
 }
 
@@ -33,8 +33,8 @@ impl Environment {
     pub fn default_from_address(origin: Address) -> Self {
         Self {
             origin,
-            refunded_gas: U256::default(),
-            gas_limit: U256::MAX,
+            refunded_gas: 0,
+            gas_limit: u64::MAX,
             block_number: Default::default(),
             coinbase: Default::default(),
             timestamp: Default::default(),

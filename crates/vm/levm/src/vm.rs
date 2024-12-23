@@ -170,7 +170,7 @@ impl VM {
                     calldata.clone(),
                     false,
                     env.gas_limit,
-                    U256::zero(),
+                    0,
                     0,
                     false,
                 );
@@ -212,7 +212,7 @@ impl VM {
                     calldata, // Calldata is removed after passing validations.
                     false,
                     env.gas_limit,
-                    U256::zero(),
+                    0,
                     0,
                     false,
                 );
@@ -259,7 +259,7 @@ impl VM {
                     return Ok(TransactionReport {
                         result: TxResult::Success,
                         new_state: self.cache.clone(),
-                        gas_used: current_call_frame.gas_used.low_u64(),
+                        gas_used: current_call_frame.gas_used,
                         gas_refunded: 0,
                         output,
                         logs: current_call_frame.logs.clone(),
@@ -283,7 +283,7 @@ impl VM {
                     return Ok(TransactionReport {
                         result: TxResult::Revert(error),
                         new_state: self.cache.clone(),
-                        gas_used: current_call_frame.gas_limit.low_u64(),
+                        gas_used: current_call_frame.gas_limit,
                         gas_refunded: 0,
                         output: Bytes::new(),
                         logs: current_call_frame.logs.clone(),
@@ -416,11 +416,15 @@ impl VM {
                     {
                         let contract_code = current_call_frame.output.clone();
                         let code_length = contract_code.len();
-                        let code_deposit_cost = U256::from(code_length)
-                            .checked_mul(CODE_DEPOSIT_COST)
-                            .ok_or(VMError::Internal(
-                                InternalError::ArithmeticOperationOverflow,
-                            ))?;
+
+                        let code_length_u64: u64 = code_length
+                            .try_into()
+                            .map_err(|_| VMError::Internal(InternalError::ConversionError))?;
+
+                        let code_deposit_cost: u64 =
+                            code_length_u64.checked_mul(CODE_DEPOSIT_COST).ok_or(
+                                VMError::Internal(InternalError::ArithmeticOperationOverflow),
+                            )?;
 
                         // Revert
                         // If the first byte of code is 0xef
@@ -457,8 +461,8 @@ impl VM {
                                 return Ok(TransactionReport {
                                     result: TxResult::Revert(error),
                                     new_state: self.cache.clone(),
-                                    gas_used: current_call_frame.gas_used.low_u64(),
-                                    gas_refunded: self.env.refunded_gas.low_u64(),
+                                    gas_used: current_call_frame.gas_used,
+                                    gas_refunded: self.env.refunded_gas,
                                     output: current_call_frame.output.clone(),
                                     logs: current_call_frame.logs.clone(),
                                     created_address: None,
@@ -470,8 +474,8 @@ impl VM {
                     return Ok(TransactionReport {
                         result: TxResult::Success,
                         new_state: self.cache.clone(),
-                        gas_used: current_call_frame.gas_used.low_u64(),
-                        gas_refunded: self.env.refunded_gas.low_u64(),
+                        gas_used: current_call_frame.gas_used,
+                        gas_refunded: self.env.refunded_gas,
                         output: current_call_frame.output.clone(),
                         logs: current_call_frame.logs.clone(),
                         created_address: None,
@@ -503,8 +507,8 @@ impl VM {
                     return Ok(TransactionReport {
                         result: TxResult::Revert(error),
                         new_state: self.cache.clone(),
-                        gas_used: current_call_frame.gas_used.low_u64(),
-                        gas_refunded: self.env.refunded_gas.low_u64(),
+                        gas_used: current_call_frame.gas_used,
+                        gas_refunded: self.env.refunded_gas,
                         output: current_call_frame.output.clone(), // Bytes::new() if error is not RevertOpcode
                         logs: current_call_frame.logs.clone(),
                         created_address: None,
@@ -518,7 +522,7 @@ impl VM {
         &mut self,
         backup_cache: CacheDB,
         backup_substate: Substate,
-        backup_refunded_gas: U256,
+        backup_refunded_gas: u64,
         backup_transient_storage: TransientStorage,
     ) {
         self.cache = backup_cache;
@@ -535,7 +539,7 @@ impl VM {
         // Intrinsic gas is the gas consumed by the transaction before the execution of the opcodes. Section 6.2 in the Yellow Paper.
 
         // Intrinsic Gas = Calldata cost + Create cost + Base cost + Access list cost
-        let mut intrinsic_gas = U256::zero();
+        let mut intrinsic_gas: u64 = 0;
 
         // Calldata Cost
         // 4 gas for each zero byte in the transaction data 16 gas for each non-zero byte in the transaction.
@@ -558,18 +562,19 @@ impl VM {
                 .ok_or(OutOfGasError::ConsumedGasOverflow)?;
 
             let number_of_words = initial_call_frame.calldata.len().div_ceil(WORD_SIZE);
+            let double_number_of_words: u64 = number_of_words
+                .checked_mul(2)
+                .ok_or(OutOfGasError::ConsumedGasOverflow)?
+                .try_into()
+                .map_err(|_| VMError::Internal(InternalError::ConversionError))?;
 
             intrinsic_gas = intrinsic_gas
-                .checked_add(
-                    U256::from(number_of_words)
-                        .checked_mul(U256::from(2))
-                        .ok_or(OutOfGasError::ConsumedGasOverflow)?,
-                )
+                .checked_add(double_number_of_words)
                 .ok_or(OutOfGasError::ConsumedGasOverflow)?;
         }
 
         // Access List Cost
-        let mut access_lists_cost = U256::zero();
+        let mut access_lists_cost: u64 = 0;
         for (_, keys) in self.access_list.clone() {
             access_lists_cost = access_lists_cost
                 .checked_add(ACCESS_LIST_ADDRESS_COST)
@@ -592,8 +597,15 @@ impl VM {
     }
 
     /// Gets the max blob gas cost for a transaction that a user is willing to pay.
-    fn get_max_blob_gas_cost(&self) -> Result<U256, VMError> {
-        let blob_gas_used = U256::from(self.env.tx_blob_hashes.len())
+    fn get_max_blob_gas_price(&self) -> Result<U256, VMError> {
+        let blobhash_amount: u64 = self
+            .env
+            .tx_blob_hashes
+            .len()
+            .try_into()
+            .map_err(|_| VMError::Internal(InternalError::ConversionError))?;
+
+        let blob_gas_used: u64 = blobhash_amount
             .checked_mul(BLOB_GAS_PER_BLOB)
             .unwrap_or_default();
 
@@ -601,23 +613,31 @@ impl VM {
             .env
             .tx_max_fee_per_blob_gas
             .unwrap_or_default()
-            .checked_mul(blob_gas_used)
+            .checked_mul(blob_gas_used.into())
             .ok_or(InternalError::UndefinedState(1))?;
 
         Ok(max_blob_gas_cost)
     }
 
     /// Gets the actual blob gas cost.
-    fn get_blob_gas_cost(&self) -> Result<U256, VMError> {
-        let blob_gas_used = U256::from(self.env.tx_blob_hashes.len())
+    fn get_blob_gas_price(&self) -> Result<U256, VMError> {
+        let blobhash_amount: u64 = self
+            .env
+            .tx_blob_hashes
+            .len()
+            .try_into()
+            .map_err(|_| VMError::Internal(InternalError::ConversionError))?;
+
+        let blob_gas_price: u64 = blobhash_amount
             .checked_mul(BLOB_GAS_PER_BLOB)
             .unwrap_or_default();
 
         let base_fee_per_blob_gas = self.get_base_fee_per_blob_gas()?;
 
-        let blob_fee = blob_gas_used
+        let blob_gas_price: U256 = blob_gas_price.into();
+        let blob_fee: U256 = blob_gas_price
             .checked_mul(base_fee_per_blob_gas)
-            .ok_or(InternalError::UndefinedState(1))?;
+            .ok_or(VMError::Internal(InternalError::UndefinedState(1)))?;
 
         Ok(blob_fee)
     }
@@ -625,9 +645,14 @@ impl VM {
     pub fn get_base_fee_per_blob_gas(&self) -> Result<U256, VMError> {
         fake_exponential(
             MIN_BASE_FEE_PER_BLOB_GAS,
-            self.env.block_excess_blob_gas.unwrap_or_default().low_u64(), //Maybe replace unwrap_or_default for sth else later.
+            self.env
+                .block_excess_blob_gas
+                .unwrap_or_default()
+                .try_into()
+                .map_err(|_| VMError::VeryLargeNumber)?, //Maybe replace unwrap_or_default for sth else later.
             BLOB_BASE_FEE_UPDATE_FRACTION,
         )
+        .map(|ok_value| ok_value.into())
     }
 
     /// ## Description
@@ -643,20 +668,20 @@ impl VM {
         let sender_account = self.get_account(sender_address);
 
         // (1) GASLIMIT_PRICE_PRODUCT_OVERFLOW
-        let gaslimit_price_product =
-            self.env
-                .gas_price
-                .checked_mul(self.env.gas_limit)
-                .ok_or(VMError::TxValidation(
-                    TxValidationError::GasLimitPriceProductOverflow,
-                ))?;
+        let gaslimit_price_product = self
+            .env
+            .gas_price
+            .checked_mul(self.env.gas_limit.into())
+            .ok_or(VMError::TxValidation(
+                TxValidationError::GasLimitPriceProductOverflow,
+            ))?;
 
         // Up front cost is the maximum amount of wei that a user is willing to pay for. Gaslimit * gasprice + value + blob_gas_cost
         let value = initial_call_frame.msg_value;
 
         // blob gas cost = max fee per blob gas * blob gas used
         // https://eips.ethereum.org/EIPS/eip-4844
-        let max_blob_gas_cost = self.get_max_blob_gas_cost()?;
+        let max_blob_gas_cost = self.get_max_blob_gas_price()?;
 
         // For the transaction to be valid the sender account has to have a balance >= gas_price * gas_limit + value if tx is type 0 and 1
         // balance >= max_fee_per_gas * gas_limit + value + blob_gas_cost if tx is type 2 or 3
@@ -664,7 +689,7 @@ impl VM {
             .env
             .tx_max_fee_per_gas
             .unwrap_or(self.env.gas_price)
-            .checked_mul(self.env.gas_limit)
+            .checked_mul(self.env.gas_limit.into())
             .ok_or(VMError::TxValidation(
                 TxValidationError::GasLimitPriceProductOverflow,
             ))?;
@@ -684,7 +709,7 @@ impl VM {
             ));
         }
 
-        let blob_gas_cost = self.get_blob_gas_cost()?;
+        let blob_gas_cost = self.get_blob_gas_price()?;
 
         // The real cost to deduct is calculated as effective_gas_price * gas_limit + value + blob_gas_cost
         let up_front_cost = gaslimit_price_product
@@ -834,7 +859,7 @@ impl VM {
         }
 
         // 2. Return unused gas + gas refunds to the sender.
-        let max_gas = self.env.gas_limit.low_u64();
+        let max_gas = self.env.gas_limit;
         let consumed_gas = report.gas_used;
         let refunded_gas = report.gas_refunded.min(
             consumed_gas
@@ -985,7 +1010,7 @@ impl VM {
     pub fn increase_consumed_gas(
         &mut self,
         current_call_frame: &mut CallFrame,
-        gas: U256,
+        gas: u64,
     ) -> Result<(), VMError> {
         let potential_consumed_gas = current_call_frame
             .gas_used
@@ -1158,7 +1183,7 @@ impl VM {
     ) -> Result<TransactionReport, VMError> {
         let mut report = TransactionReport {
             result: TxResult::Revert(VMError::AddressAlreadyOccupied),
-            gas_used: self.env.gas_limit.low_u64(),
+            gas_used: self.env.gas_limit,
             gas_refunded: 0,
             logs: vec![],
             new_state: self.cache.clone(),
