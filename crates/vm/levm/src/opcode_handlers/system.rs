@@ -71,7 +71,7 @@ impl VM {
 
         // We add the stipend gas for the subcall. This ensures that the callee has enough gas to perform basic operations
         let gas_for_subcall = if !value_to_transfer.is_zero() {
-            gas.saturating_add(CALL_POSITIVE_VALUE_STIPEND)
+            gas.saturating_add(CALL_POSITIVE_VALUE_STIPEND.into())
         } else {
             gas
         };
@@ -142,7 +142,7 @@ impl VM {
 
         // We add the stipend gas for the subcall. This ensures that the callee has enough gas to perform basic operations
         let gas_for_subcall = if !value_to_transfer.is_zero() {
-            gas.saturating_add(CALLCODE_POSITIVE_VALUE_STIPEND)
+            gas.saturating_add(CALLCODE_POSITIVE_VALUE_STIPEND.into())
         } else {
             gas
         };
@@ -180,10 +180,13 @@ impl VM {
         }
 
         let new_memory_size = calculate_memory_size(offset, size)?;
-        self.increase_consumed_gas(
-            current_call_frame,
-            memory::expansion_cost(new_memory_size, current_call_frame.memory.len())?.into(),
-        )?;
+
+        let memory_expansion_cost: u64 =
+            memory::expansion_cost(new_memory_size, current_call_frame.memory.len())?
+                .try_into()
+                .map_err(|_err| VMError::Internal(InternalError::ConversionError))?;
+
+        self.increase_consumed_gas(current_call_frame, memory_expansion_cost)?;
 
         current_call_frame.output =
             memory::load_range(&mut current_call_frame.memory, offset, size)?
@@ -396,10 +399,13 @@ impl VM {
             .map_err(|_err| VMError::VeryLargeNumber)?;
 
         let new_memory_size = calculate_memory_size(offset, size)?;
-        self.increase_consumed_gas(
-            current_call_frame,
-            memory::expansion_cost(new_memory_size, current_call_frame.memory.len())?.into(),
-        )?;
+
+        let memory_expansion_cost: u64 =
+            memory::expansion_cost(new_memory_size, current_call_frame.memory.len())?
+                .try_into()
+                .map_err(|_err| VMError::Internal(InternalError::ConversionError))?;
+
+        self.increase_consumed_gas(current_call_frame, memory_expansion_cost)?;
 
         current_call_frame.output =
             memory::load_range(&mut current_call_frame.memory, offset, size)?
@@ -488,7 +494,7 @@ impl VM {
 
         // Reserve gas for subcall
         let max_message_call_gas = max_message_call_gas(current_call_frame)?;
-        self.increase_consumed_gas(current_call_frame, max_message_call_gas.into())?;
+        self.increase_consumed_gas(current_call_frame, max_message_call_gas)?;
 
         // Clear callframe subreturn data
         current_call_frame.sub_return_data = Bytes::new();
@@ -529,7 +535,7 @@ impl VM {
             // Return reserved gas
             current_call_frame.gas_used = current_call_frame
                 .gas_used
-                .checked_sub(max_message_call_gas.into())
+                .checked_sub(max_message_call_gas)
                 .ok_or(VMError::Internal(InternalError::GasOverflow))?;
             // Push 0
             current_call_frame.stack.push(CREATE_DEPLOYMENT_FAIL)?;
@@ -569,8 +575,8 @@ impl VM {
             value_in_wei_to_send,
             Bytes::new(),
             false,
-            U256::from(max_message_call_gas),
-            U256::zero(),
+            max_message_call_gas,
+            0,
             new_depth,
             true,
         );
@@ -585,8 +591,9 @@ impl VM {
         // Return reserved gas
         current_call_frame.gas_used = current_call_frame
             .gas_used
-            .checked_sub(unused_gas.into())
+            .checked_sub(unused_gas)
             .ok_or(InternalError::GasOverflow)?;
+
         current_call_frame.logs.extend(tx_report.logs);
 
         match tx_report.result {
@@ -615,6 +622,9 @@ impl VM {
     }
 
     #[allow(clippy::too_many_arguments)]
+    /// This (should) be the only function where gas is used as a
+    /// U256. This is because we have to use the values that are
+    /// pushed to the stack.
     pub fn generic_call(
         &mut self,
         current_call_frame: &mut CallFrame,
@@ -630,6 +640,9 @@ impl VM {
         ret_offset: U256,
         ret_size: usize,
     ) -> Result<OpcodeSuccess, VMError> {
+        // Clear callframe subreturn data
+        current_call_frame.sub_return_data = Bytes::new();
+
         // 1. Validate sender has enough value
         let sender_account_info = self.access_account(msg_sender).0;
         if should_transfer_value && sender_account_info.balance < value {
@@ -655,6 +668,12 @@ impl VM {
         let gas_cap = max_message_call_gas(current_call_frame)?;
         let gas_limit = std::cmp::min(gas_limit, gas_cap.into());
 
+        // This should always cast correcly because the gas_cap is in
+        // u64; therefore, at most, it will be u64::MAX
+        let gas_limit: u64 = gas_limit
+            .try_into()
+            .map_err(|_| VMError::Internal(InternalError::ConversionError))?;
+
         let mut new_call_frame = CallFrame::new(
             msg_sender,
             to,
@@ -664,7 +683,7 @@ impl VM {
             calldata.into(),
             is_static,
             gas_limit,
-            U256::zero(),
+            0,
             new_depth,
             false,
         );
@@ -680,7 +699,7 @@ impl VM {
         // Add gas used by the sub-context to the current one after it's execution.
         current_call_frame.gas_used = current_call_frame
             .gas_used
-            .checked_add(tx_report.gas_used.into())
+            .checked_add(tx_report.gas_used)
             .ok_or(VMError::OutOfGas(OutOfGasError::ConsumedGasOverflow))?;
         current_call_frame.logs.extend(tx_report.logs);
         memory::try_store_range(
