@@ -184,6 +184,8 @@ pub const MODEXP_DYNAMIC_QUOTIENT: u64 = 3;
 pub const ECADD_COST: u64 = 150;
 pub const ECMUL_COST: u64 = 6000;
 
+pub const ECPAIRING_GROUP_COST: u64 = 45000;
+
 pub fn exp(exponent: U256) -> Result<U256, OutOfGasError> {
     let exponent_byte_size = (exponent
         .bits()
@@ -849,6 +851,17 @@ fn precompile(data_size: usize, static_cost: u64, dynamic_base: u64) -> Result<U
         .checked_add(dynamic_gas)
         .ok_or(OutOfGasError::GasCostOverflow)?
         .into())
+}
+
+pub fn ecpairing(groups_number: usize) -> Result<u64, VMError> {
+    let groups_number = u64::try_from(groups_number).map_err(|_| InternalError::ConversionError)?;
+
+    let groups_cost = groups_number
+        .checked_mul(34000)
+        .ok_or(OutOfGasError::GasCostOverflow)?;
+    groups_cost
+        .checked_add(45000)
+        .ok_or(VMError::OutOfGas(OutOfGasError::GasCostOverflow))
 }
 
 /// Max message call gas is all but one 64th of the remaining gas in the current context.
