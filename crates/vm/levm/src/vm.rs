@@ -59,6 +59,7 @@ pub struct VM {
 }
 
 pub fn address_to_word(address: Address) -> U256 {
+    // This unwrap can't panic, as Address are 20 bytes long and U256 use 32 bytes
     let mut word = [0u8; 32];
 
     for (word_byte, address_byte) in word.iter_mut().skip(12).zip(address.as_bytes().iter()) {
