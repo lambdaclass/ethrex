@@ -114,6 +114,8 @@ pub fn apply_fork_choice(
     }
 
     // Finished all validations.
+
+    // Make all ancestors to head canonical.
     for (number, hash) in new_canonical_blocks {
         store.set_canonical_block(number, hash)?;
     }

@@ -95,7 +95,7 @@ setup-hive: hive ## 🐝 Set up Hive testing framework
 	if [ "$$(cd hive && git rev-parse HEAD)" != "$(HIVE_REVISION)" ]; then \
 		cd hive && \
 		git checkout master && \
-		git fetch && \
+		git fetch --shallow-since=$(HIVE_SHALLOW_SINCE) && \
 		git checkout --detach $(HIVE_REVISION) && go build . ;\
 	fi
 
