@@ -455,17 +455,13 @@ pub fn ecmul(
 
     increase_precompile_consumed_gas(gas_for_call, ECMUL_COST, consumed_gas)?;
 
-    let first_point_x = calldata
+    let point_x = calldata
         .get(0..32)
         .ok_or(PrecompileError::ParsingInputError)?;
-    let first_point_x = BN254FieldElement::from_bytes_be(first_point_x)
-        .map_err(|_| PrecompileError::ParsingInputError)?;
 
-    let first_point_y = calldata
+    let point_y = calldata
         .get(32..64)
         .ok_or(PrecompileError::ParsingInputError)?;
-    let first_point_y = BN254FieldElement::from_bytes_be(first_point_y)
-        .map_err(|_| PrecompileError::ParsingInputError)?;
 
     let scalar = calldata
         .get(64..96)
@@ -475,21 +471,25 @@ pub fn ecmul(
 
     // If point is zero the precompile should not fail, but the conversion in
     // BN254Curve::create_point_from_affine will, so we verify it before the conversion
-    let point_zero = BN254FieldElement::from(0);
-    let point_is_zero = first_point_x.eq(&point_zero) && first_point_y.eq(&point_zero);
-
+    let point_is_zero =
+        U256::from_big_endian(point_x).is_zero() && U256::from_big_endian(point_y).is_zero();
     if point_is_zero {
         return Ok(Bytes::from([0u8; 64].to_vec()));
     }
 
-    let first_point = BN254Curve::create_point_from_affine(first_point_x, first_point_y)
+    let point_x = BN254FieldElement::from_bytes_be(point_x)
+        .map_err(|_| PrecompileError::ParsingInputError)?;
+    let point_y = BN254FieldElement::from_bytes_be(point_y)
+        .map_err(|_| PrecompileError::ParsingInputError)?;
+
+    let point = BN254Curve::create_point_from_affine(point_x, point_y)
         .map_err(|_| PrecompileError::ParsingInputError)?;
 
     let zero_u256 = element::U256::from(0_u16);
     if scalar.eq(&zero_u256) {
         Ok(Bytes::from([0u8; 64].to_vec()))
     } else {
-        let mul = first_point.operate_with_self(scalar).to_affine();
+        let mul = point.operate_with_self(scalar).to_affine();
         if U256::from_big_endian(&mul.x().to_bytes_be()) == U256::zero()
             || U256::from_big_endian(&mul.y().to_bytes_be()) == U256::zero()
         {
