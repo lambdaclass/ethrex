@@ -4,7 +4,10 @@ use crate::{
     db::cache,
     errors::{InternalError, OpcodeSuccess, OutOfGasError, ResultReason, TxResult, VMError},
     gas_cost::{
-        self, max_message_call_gas, CALLCODE_POSITIVE_VALUE_STIPEND, CALL_POSITIVE_VALUE_STIPEND,
+        self, max_message_call_gas, CALLCODE_COLD_DYNAMIC, CALLCODE_POSITIVE_VALUE,
+        CALLCODE_POSITIVE_VALUE_STIPEND, CALLCODE_STATIC, CALLCODE_WARM_DYNAMIC, CALL_COLD_DYNAMIC,
+        CALL_POSITIVE_VALUE, CALL_POSITIVE_VALUE_STIPEND, CALL_STATIC, CALL_TO_EMPTY_ACCOUNT,
+        CALL_WARM_DYNAMIC,
     },
     memory::{self, calculate_memory_size},
     vm::{address_to_word, word_to_address, VM},
@@ -53,15 +56,52 @@ impl VM {
 
         let (account_info, address_was_cold) = self.access_account(callee);
 
+        let gas_left = current_call_frame
+            .gas_limit
+            .checked_sub(current_call_frame.gas_used)
+            .ok_or(InternalError::GasOverflow)?;
+
+        let memory_cost = memory::expansion_cost(new_memory_size, current_memory_size)?
+            .try_into()
+            .map_err(|_err| OutOfGasError::MemoryExpansionCostOverflow)?;
+        let mut access_gas_cost = CALL_STATIC;
+        let dynamic_cost: u64 = if address_was_cold {
+            CALL_COLD_DYNAMIC
+        } else {
+            CALL_WARM_DYNAMIC
+        };
+        access_gas_cost = access_gas_cost
+            .checked_add(dynamic_cost)
+            .ok_or(OutOfGasError::GasCostOverflow)?;
+        let transfer_gas_cost = if !value_to_transfer.is_zero() {
+            CALL_POSITIVE_VALUE
+        } else {
+            0
+        };
+
+        let create_gas_cost = if account_info.is_empty() {
+            CALL_TO_EMPTY_ACCOUNT
+        } else {
+            0
+        };
+
+        let extra_gas = access_gas_cost
+            .checked_add(transfer_gas_cost)
+            .ok_or(OutOfGasError::MaxGasLimitExceeded)?
+            .checked_add(create_gas_cost)
+            .ok_or(OutOfGasError::MaxGasLimitExceeded)?;
+        let (cost, stipend) = calculate_cost_stipend(
+            value_to_transfer.is_zero(),
+            gas,
+            gas_left,
+            memory_cost,
+            extra_gas,
+            CALL_POSITIVE_VALUE_STIPEND,
+        )?;
         self.increase_consumed_gas(
             current_call_frame,
-            gas_cost::call(
-                new_memory_size,
-                current_memory_size,
-                address_was_cold,
-                account_info.is_empty(),
-                value_to_transfer,
-            )?,
+            cost.checked_add(memory_cost)
+                .ok_or(OutOfGasError::GasUsedOverflow)?,
         )?;
 
         // OPERATION
@@ -69,16 +109,9 @@ impl VM {
         let to = callee; // In this case code_address and the sub-context account are the same. Unlike CALLCODE or DELEGATECODE.
         let is_static = current_call_frame.is_static;
 
-        // We add the stipend gas for the subcall. This ensures that the callee has enough gas to perform basic operations
-        let gas_for_subcall = if !value_to_transfer.is_zero() {
-            gas.saturating_add(CALL_POSITIVE_VALUE_STIPEND.into())
-        } else {
-            gas
-        };
-
         self.generic_call(
             current_call_frame,
-            gas_for_subcall,
+            stipend.into(),
             value_to_transfer,
             msg_sender,
             to,
@@ -125,14 +158,43 @@ impl VM {
 
         let (_account_info, address_was_cold) = self.access_account(code_address);
 
+        let gas_left = current_call_frame
+            .gas_limit
+            .checked_sub(current_call_frame.gas_used)
+            .ok_or(InternalError::GasOverflow)?;
+
+        let memory_cost = memory::expansion_cost(new_memory_size, current_memory_size)?
+            .try_into()
+            .map_err(|_err| OutOfGasError::MemoryExpansionCostOverflow)?;
+        let mut access_gas_cost = CALLCODE_STATIC;
+        let dynamic_cost: u64 = if address_was_cold {
+            CALLCODE_COLD_DYNAMIC
+        } else {
+            CALLCODE_WARM_DYNAMIC
+        };
+        access_gas_cost = access_gas_cost
+            .checked_add(dynamic_cost)
+            .ok_or(OutOfGasError::GasCostOverflow)?;
+        let transfer_gas_cost = if !value_to_transfer.is_zero() {
+            CALLCODE_POSITIVE_VALUE
+        } else {
+            0
+        };
+        let extra_gas = access_gas_cost
+            .checked_add(transfer_gas_cost)
+            .ok_or(VMError::OutOfGas(OutOfGasError::MaxGasLimitExceeded))?;
+        let (cost, stipend) = calculate_cost_stipend(
+            value_to_transfer.is_zero(),
+            gas,
+            gas_left,
+            memory_cost,
+            extra_gas,
+            CALLCODE_POSITIVE_VALUE_STIPEND,
+        )?;
         self.increase_consumed_gas(
             current_call_frame,
-            gas_cost::callcode(
-                new_memory_size,
-                current_memory_size,
-                address_was_cold,
-                value_to_transfer,
-            )?,
+            cost.checked_add(memory_cost)
+                .ok_or(OutOfGasError::GasUsedOverflow)?,
         )?;
 
         // Sender and recipient are the same in this case. But the code executed is from another account.
@@ -140,16 +202,9 @@ impl VM {
         let to = current_call_frame.to;
         let is_static = current_call_frame.is_static;
 
-        // We add the stipend gas for the subcall. This ensures that the callee has enough gas to perform basic operations
-        let gas_for_subcall = if !value_to_transfer.is_zero() {
-            gas.saturating_add(CALLCODE_POSITIVE_VALUE_STIPEND.into())
-        } else {
-            gas
-        };
-
         self.generic_call(
             current_call_frame,
-            gas_for_subcall,
+            stipend.into(),
             value_to_transfer,
             msg_sender,
             to,
@@ -231,6 +286,12 @@ impl VM {
             current_call_frame,
             gas_cost::delegatecall(new_memory_size, current_memory_size, address_was_cold)?,
         )?;
+        let max_gas = max_message_call_gas(current_call_frame)?;
+        let gas = max_gas.min(
+            gas.try_into()
+                .map_err(|_err| OutOfGasError::MaxGasLimitExceeded)?,
+        );
+        self.increase_consumed_gas(current_call_frame, gas)?;
 
         // OPERATION
         let msg_sender = current_call_frame.msg_sender;
@@ -240,7 +301,7 @@ impl VM {
 
         self.generic_call(
             current_call_frame,
-            gas,
+            gas.into(),
             value,
             msg_sender,
             to,
@@ -289,6 +350,12 @@ impl VM {
             current_call_frame,
             gas_cost::staticcall(new_memory_size, current_memory_size, address_was_cold)?,
         )?;
+        let max_gas = max_message_call_gas(current_call_frame)?;
+        let gas = max_gas.min(
+            gas.try_into()
+                .map_err(|_err| OutOfGasError::MaxGasLimitExceeded)?,
+        );
+        self.increase_consumed_gas(current_call_frame, gas)?;
 
         // OPERATION
         let value = U256::zero();
@@ -297,7 +364,7 @@ impl VM {
 
         self.generic_call(
             current_call_frame,
-            gas,
+            gas.into(),
             value,
             msg_sender,
             to,
@@ -665,14 +732,14 @@ impl VM {
         let calldata =
             memory::load_range(&mut current_call_frame.memory, args_offset, args_size)?.to_vec();
         // Gas Limit for the child context is capped.
-        let gas_cap = max_message_call_gas(current_call_frame)?;
-        let gas_limit = std::cmp::min(gas_limit, gas_cap.into());
+        // let gas_cap = max_message_call_gas(current_call_frame)?;
+        // let gas_limit = std::cmp::min(gas_limit, gas_cap.into());
 
-        // This should always cast correcly because the gas_cap is in
-        // u64; therefore, at most, it will be u64::MAX
-        let gas_limit: u64 = gas_limit
-            .try_into()
-            .map_err(|_| VMError::Internal(InternalError::ConversionError))?;
+        // // This should always cast correcly because the gas_cap is in
+        // // u64; therefore, at most, it will be u64::MAX
+        // let gas_limit: u64 = gas_limit
+        //     .try_into()
+        //     .map_err(|_| VMError::Internal(InternalError::ConversionError))?;
 
         let mut new_call_frame = CallFrame::new(
             msg_sender,
@@ -682,7 +749,9 @@ impl VM {
             value,
             calldata.into(),
             is_static,
-            gas_limit,
+            gas_limit
+                .try_into()
+                .map_err(|_err| InternalError::GasOverflow)?,
             0,
             new_depth,
             false,
@@ -697,10 +766,20 @@ impl VM {
         let tx_report = self.execute(&mut new_call_frame)?;
 
         // Add gas used by the sub-context to the current one after it's execution.
+        let gas_left_from_new_call_frame = new_call_frame
+            .gas_limit
+            .checked_sub(tx_report.gas_used)
+            .ok_or(InternalError::GasOverflow)?;
+
         current_call_frame.gas_used = current_call_frame
             .gas_used
-            .checked_add(tx_report.gas_used)
-            .ok_or(VMError::OutOfGas(OutOfGasError::ConsumedGasOverflow))?;
+            .checked_sub(gas_left_from_new_call_frame)
+            .ok_or(InternalError::GasOverflow)?;
+
+        // current_call_frame.gas_used = dbg!(current_call_frame
+        //     .gas_used
+        //     .checked_add(tx_report.gas_used)
+        //     .ok_or(VMError::OutOfGas(OutOfGasError::ConsumedGasOverflow))?);
         current_call_frame.logs.extend(tx_report.logs);
         memory::try_store_range(
             &mut current_call_frame.memory,
@@ -728,4 +807,52 @@ impl VM {
 
         Ok(OpcodeSuccess::Continue)
     }
+}
+
+fn calculate_cost_stipend(
+    value_is_zero: bool,
+    gas_from_stack: U256,
+    gas_left: u64,
+    memory_cost: u64,
+    extra_gas: u64,
+    stipend: u64,
+) -> Result<(u64, u64), VMError> {
+    let gas_stipend = if value_is_zero { 0 } else { stipend };
+    let rhs = extra_gas
+        .checked_sub(memory_cost)
+        .ok_or(OutOfGasError::GasUsedOverflow)?;
+    if gas_left < rhs {
+        let gas_from_stack: u64 = gas_from_stack
+            .try_into()
+            .map_err(|_err| OutOfGasError::MaxGasLimitExceeded)?;
+        return Ok((
+            gas_from_stack
+                .checked_add(extra_gas)
+                .ok_or(OutOfGasError::MaxGasLimitExceeded)?,
+            gas_from_stack
+                .checked_add(gas_stipend)
+                .ok_or(OutOfGasError::MaxGasLimitExceeded)?,
+        ));
+    }
+
+    let gas_left = gas_left
+        .checked_sub(memory_cost)
+        .ok_or(OutOfGasError::GasUsedOverflow)?
+        .checked_sub(extra_gas)
+        .ok_or(OutOfGasError::GasUsedOverflow)?;
+    let max_gas_for_call = gas_left
+        .checked_sub(gas_left / 64)
+        .ok_or(OutOfGasError::GasUsedOverflow)?;
+
+    let gas: u64 = gas_from_stack
+        .min(max_gas_for_call.into())
+        .try_into()
+        .map_err(|_err| OutOfGasError::MaxGasLimitExceeded)?;
+
+    Ok((
+        gas.checked_add(extra_gas)
+            .ok_or(OutOfGasError::MaxGasLimitExceeded)?,
+        gas.checked_add(gas_stipend)
+            .ok_or(OutOfGasError::MaxGasLimitExceeded)?,
+    ))
 }
