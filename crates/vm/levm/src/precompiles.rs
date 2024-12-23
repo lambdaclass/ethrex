@@ -530,14 +530,12 @@ pub fn ecpairing(
         let group_start = group_number
             .checked_mul(192)
             .ok_or(InternalError::ArithmeticOperationOverflow)?;
-        let next_group_start = (group_number
-            .checked_add(1)
-            .ok_or(InternalError::ArithmeticOperationOverflow)?)
-        .checked_mul(192)
-        .ok_or(InternalError::ArithmeticOperationOverflow)?;
+        let group_end = group_start
+            .checked_add(192)
+            .ok_or(InternalError::ArithmeticOperationOverflow)?;
 
         let group_data = calldata
-            .get(group_start..next_group_start)
+            .get(group_start..group_end)
             .ok_or(InternalError::SlicingError)?;
 
         let first_point_x = group_data.get(..32).ok_or(InternalError::SlicingError)?;
