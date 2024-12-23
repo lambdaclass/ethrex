@@ -518,28 +518,28 @@ pub fn ecpairing(
         return Err(VMError::PrecompileError(PrecompileError::ParsingInputError));
     }
 
-    let groups_number = calldata.len() / 192;
+    let inputs_number = calldata.len() / 192;
 
     // Consume gas
-    let gas_cost = gas_cost::ecpairing(groups_number)?;
+    let gas_cost = gas_cost::ecpairing(inputs_number)?;
     increase_precompile_consumed_gas(gas_for_call, gas_cost, consumed_gas)?;
 
     let mut mul: FieldElement<Degree12ExtensionField> = QuadraticExtensionFieldElement::one();
-    for group_number in 0..groups_number {
-        // Define the group indexes and slice calldata to get the group data
-        let group_start = group_number
+    for input_index in 0..inputs_number {
+        // Define the input indexes and slice calldata to get the input data
+        let input_start = input_index
             .checked_mul(192)
             .ok_or(InternalError::ArithmeticOperationOverflow)?;
-        let group_end = group_start
+        let input_end = input_start
             .checked_add(192)
             .ok_or(InternalError::ArithmeticOperationOverflow)?;
 
-        let group_data = calldata
-            .get(group_start..group_end)
+        let input_data = calldata
+            .get(input_start..input_end)
             .ok_or(InternalError::SlicingError)?;
 
-        let first_point_x = group_data.get(..32).ok_or(InternalError::SlicingError)?;
-        let first_point_y = group_data.get(32..64).ok_or(InternalError::SlicingError)?;
+        let first_point_x = input_data.get(..32).ok_or(InternalError::SlicingError)?;
+        let first_point_y = input_data.get(32..64).ok_or(InternalError::SlicingError)?;
 
         // Infinite is defined by (0,0). Any other zero-combination is invalid
         if (U256::from_big_endian(first_point_x) == U256::zero())
@@ -554,9 +554,9 @@ pub fn ecpairing(
             .map_err(|_| PrecompileError::DefaultError)?;
 
         let second_point_x_first_part =
-            group_data.get(96..128).ok_or(InternalError::SlicingError)?;
+            input_data.get(96..128).ok_or(InternalError::SlicingError)?;
         let second_point_x_second_part =
-            group_data.get(64..96).ok_or(InternalError::SlicingError)?;
+            input_data.get(64..96).ok_or(InternalError::SlicingError)?;
 
         // Infinite is defined by (0,0). Any other zero-combination is invalid
         if (U256::from_big_endian(second_point_x_first_part) == U256::zero())
@@ -565,10 +565,10 @@ pub fn ecpairing(
             return Err(VMError::PrecompileError(PrecompileError::DefaultError));
         }
 
-        let second_point_y_first_part = group_data
+        let second_point_y_first_part = input_data
             .get(160..192)
             .ok_or(InternalError::SlicingError)?;
-        let second_point_y_second_part = group_data
+        let second_point_y_second_part = input_data
             .get(128..160)
             .ok_or(InternalError::SlicingError)?;
 
@@ -611,7 +611,7 @@ pub fn ecpairing(
 
         match (first_point_is_infinity, second_point_is_infinity) {
             (true, true) => {
-                // If both points are infinity, then continue to the next group
+                // If both points are infinity, then continue to the next input
                 continue;
             }
             (true, false) => {
