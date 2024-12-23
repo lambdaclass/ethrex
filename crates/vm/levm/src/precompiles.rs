@@ -17,10 +17,7 @@ use sha3::Digest;
 use crate::{
     call_frame::CallFrame,
     errors::{InternalError, OutOfGasError, PrecompileError, VMError},
-    gas_cost::{
-        identity as identity_cost, modexp as modexp_cost, ripemd_160 as ripemd_160_cost,
-        sha2_256 as sha2_256_cost, ECADD_COST, ECMUL_COST, ECRECOVER_COST, MODEXP_STATIC_COST,
-    },
+    gas_cost::{self, ECADD_COST, ECMUL_COST, ECRECOVER_COST, MODEXP_STATIC_COST},
 };
 
 pub const ECRECOVER_ADDRESS: H160 = H160([
@@ -114,9 +111,9 @@ pub fn execute_precompile(current_call_frame: &mut CallFrame) -> Result<Bytes, V
 
 /// Verifies if the gas cost is higher than the gas limit and consumes the gas cost if it is not
 fn increase_precompile_consumed_gas(
-    gas_for_call: U256,
-    gas_cost: U256,
-    consumed_gas: &mut U256,
+    gas_for_call: u64,
+    gas_cost: u64,
+    consumed_gas: &mut u64,
 ) -> Result<(), VMError> {
     if gas_for_call < gas_cost {
         return Err(VMError::PrecompileError(PrecompileError::NotEnoughGas));
@@ -146,10 +143,10 @@ fn fill_with_zeros(calldata: &Bytes, target_len: usize) -> Result<Bytes, VMError
 /// Given a hash, a Signature and a recovery Id, returns the public key recovered by secp256k1
 pub fn ecrecover(
     calldata: &Bytes,
-    gas_for_call: U256,
-    consumed_gas: &mut U256,
+    gas_for_call: u64,
+    consumed_gas: &mut u64,
 ) -> Result<Bytes, VMError> {
-    let gas_cost = ECRECOVER_COST.into();
+    let gas_cost = ECRECOVER_COST;
 
     increase_precompile_consumed_gas(gas_for_call, gas_cost, consumed_gas)?;
 
@@ -202,13 +199,12 @@ pub fn ecrecover(
     Ok(Bytes::from(output.to_vec()))
 }
 
-/// Returns the receivred input
 pub fn identity(
     calldata: &Bytes,
-    gas_for_call: U256,
-    consumed_gas: &mut U256,
+    gas_for_call: u64,
+    consumed_gas: &mut u64,
 ) -> Result<Bytes, VMError> {
-    let gas_cost = identity_cost(calldata.len())?;
+    let gas_cost = gas_cost::identity(calldata.len())?;
 
     increase_precompile_consumed_gas(gas_for_call, gas_cost, consumed_gas)?;
 
@@ -218,10 +214,10 @@ pub fn identity(
 /// Returns the calldata hashed by sha2-256 algorithm
 pub fn sha2_256(
     calldata: &Bytes,
-    gas_for_call: U256,
-    consumed_gas: &mut U256,
+    gas_for_call: u64,
+    consumed_gas: &mut u64,
 ) -> Result<Bytes, VMError> {
-    let gas_cost = sha2_256_cost(calldata.len())?;
+    let gas_cost = gas_cost::sha2_256(calldata.len())?;
 
     increase_precompile_consumed_gas(gas_for_call, gas_cost, consumed_gas)?;
 
@@ -233,10 +229,10 @@ pub fn sha2_256(
 /// Returns the calldata hashed by ripemd-160 algorithm, padded by zeros at left
 pub fn ripemd_160(
     calldata: &Bytes,
-    gas_for_call: U256,
-    consumed_gas: &mut U256,
+    gas_for_call: u64,
+    consumed_gas: &mut u64,
 ) -> Result<Bytes, VMError> {
-    let gas_cost = ripemd_160_cost(calldata.len())?;
+    let gas_cost = gas_cost::ripemd_160(calldata.len())?;
 
     increase_precompile_consumed_gas(gas_for_call, gas_cost, consumed_gas)?;
 
@@ -250,11 +246,10 @@ pub fn ripemd_160(
     Ok(Bytes::from(output))
 }
 
-/// Returns the result of the modexp operation given the input parameters
 pub fn modexp(
     calldata: &Bytes,
-    gas_for_call: U256,
-    consumed_gas: &mut U256,
+    gas_for_call: u64,
+    consumed_gas: &mut u64,
 ) -> Result<Bytes, VMError> {
     // If calldata does not reach the required length, we should fill the rest with zeros
     let calldata = fill_with_zeros(calldata, 96)?;
@@ -276,12 +271,12 @@ pub fn modexp(
 
     if b_size == U256::zero() && m_size == U256::zero() {
         *consumed_gas = consumed_gas
-            .checked_add(U256::from(MODEXP_STATIC_COST))
+            .checked_add(MODEXP_STATIC_COST)
             .ok_or(OutOfGasError::ConsumedGasOverflow)?;
         return Ok(Bytes::new());
     }
 
-    // Because on some cases conversions exploded before the if above
+    // Because on some cases conversions to usize exploded before the check of the zero value could be done
     let b_size = usize::try_from(b_size).map_err(|_| PrecompileError::ParsingInputError)?;
     let e_size = usize::try_from(e_size).map_err(|_| PrecompileError::ParsingInputError)?;
     let m_size = usize::try_from(m_size).map_err(|_| PrecompileError::ParsingInputError)?;
@@ -296,11 +291,11 @@ pub fn modexp(
 
     // The reason I use unwrap_or_default is to cover the case where calldata does not reach the required
     // length, so then we should fill the rest with zeros. The same is done in modulus parsing
-    let b = calldata.get(96..base_limit).unwrap_or_default();
-    let base = BigUint::from_bytes_be(b);
+    let b = get_slice_or_default(&calldata, 96, base_limit, b_size)?;
+    let base = BigUint::from_bytes_be(&b);
 
-    let e = calldata.get(base_limit..exponent_limit).unwrap_or_default();
-    let exponent = BigUint::from_bytes_be(e);
+    let e = get_slice_or_default(&calldata, base_limit, exponent_limit, e_size)?;
+    let exponent = BigUint::from_bytes_be(&e);
 
     let m = match calldata.get(exponent_limit..) {
         Some(m) => {
@@ -311,7 +306,7 @@ pub fn modexp(
     };
     let modulus = BigUint::from_bytes_be(&m);
 
-    let gas_cost = modexp_cost(&exponent, b_size, e_size, m_size)?;
+    let gas_cost = gas_cost::modexp(&exponent, b_size, e_size, m_size)?;
     increase_precompile_consumed_gas(gas_for_call, gas_cost, consumed_gas)?;
 
     let result = mod_exp(base, exponent, modulus);
@@ -320,6 +315,24 @@ pub fn modexp(
     let res_bytes = increase_left_pad(&Bytes::from(res_bytes), m_size)?;
 
     Ok(res_bytes.slice(..m_size))
+}
+
+fn get_slice_or_default(
+    calldata: &Bytes,
+    lower_limit: usize,
+    upper_limit: usize,
+    size_to_expand: usize,
+) -> Result<Vec<u8>, VMError> {
+    match calldata.get(lower_limit..upper_limit) {
+        Some(e) => {
+            let e_extended = fill_with_zeros(&Bytes::from(e.to_vec()), size_to_expand)?;
+            Ok(e_extended
+                .get(..size_to_expand)
+                .unwrap_or_default()
+                .to_vec())
+        }
+        None => Ok(Default::default()),
+    }
 }
 
 /// I allow this clippy alert because in the code modulus could never be
@@ -354,13 +367,13 @@ pub fn increase_left_pad(result: &Bytes, m_size: usize) -> Result<Bytes, VMError
 
 pub fn ecadd(
     calldata: &Bytes,
-    gas_for_call: U256,
-    consumed_gas: &mut U256,
+    gas_for_call: u64,
+    consumed_gas: &mut u64,
 ) -> Result<Bytes, VMError> {
     // If calldata does not reach the required length, we should fill the rest with zeros
     let calldata = fill_with_zeros(calldata, 128)?;
 
-    increase_precompile_consumed_gas(gas_for_call, ECADD_COST.into(), consumed_gas)?;
+    increase_precompile_consumed_gas(gas_for_call, ECADD_COST, consumed_gas)?;
 
     let first_point_x = calldata
         .get(0..32)
@@ -432,13 +445,13 @@ pub fn ecadd(
 
 pub fn ecmul(
     calldata: &Bytes,
-    gas_for_call: U256,
-    consumed_gas: &mut U256,
+    gas_for_call: u64,
+    consumed_gas: &mut u64,
 ) -> Result<Bytes, VMError> {
     // If calldata does not reach the required length, we should fill the rest with zeros
     let calldata = fill_with_zeros(calldata, 96)?;
 
-    increase_precompile_consumed_gas(gas_for_call, ECMUL_COST.into(), consumed_gas)?;
+    increase_precompile_consumed_gas(gas_for_call, ECMUL_COST, consumed_gas)?;
 
     let first_point_x = calldata
         .get(0..32)
@@ -488,24 +501,24 @@ pub fn ecmul(
 
 fn ecpairing(
     _calldata: &Bytes,
-    _gas_for_call: U256,
-    _consumed_gas: &mut U256,
+    _gas_for_call: u64,
+    _consumed_gas: &mut u64,
 ) -> Result<Bytes, VMError> {
     Ok(Bytes::new())
 }
 
 fn blake2f(
     _calldata: &Bytes,
-    _gas_for_call: U256,
-    _consumed_gas: &mut U256,
+    _gas_for_call: u64,
+    _consumed_gas: &mut u64,
 ) -> Result<Bytes, VMError> {
     Ok(Bytes::new())
 }
 
 fn point_evaluation(
     _calldata: &Bytes,
-    _gas_for_call: U256,
-    _consumed_gas: &mut U256,
+    _gas_for_call: u64,
+    _consumed_gas: &mut u64,
 ) -> Result<Bytes, VMError> {
     Ok(Bytes::new())
 }

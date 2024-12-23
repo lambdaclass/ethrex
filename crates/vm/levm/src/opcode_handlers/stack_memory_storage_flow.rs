@@ -27,7 +27,8 @@ impl VM {
         self.increase_consumed_gas(current_call_frame, gas_cost::TLOAD)?;
 
         let key = current_call_frame.stack.pop()?;
-        let value = current_call_frame
+        let value = self
+            .env
             .transient_storage
             .get(&(current_call_frame.msg_sender, key))
             .cloned()
@@ -44,9 +45,13 @@ impl VM {
     ) -> Result<OpcodeSuccess, VMError> {
         self.increase_consumed_gas(current_call_frame, gas_cost::TSTORE)?;
 
+        if current_call_frame.is_static {
+            return Err(VMError::OpcodeNotAllowedInStaticContext);
+        }
+
         let key = current_call_frame.stack.pop()?;
         let value = current_call_frame.stack.pop()?;
-        current_call_frame
+        self.env
             .transient_storage
             .insert((current_call_frame.msg_sender, key), value);
 
@@ -180,31 +185,32 @@ impl VM {
         // Gas Refunds
         // Sync gas refund with global env, ensuring consistency accross contexts.
         let mut gas_refunds = self.env.refunded_gas;
+
         if new_storage_slot_value != storage_slot.current_value {
             if storage_slot.current_value == storage_slot.original_value {
                 if !storage_slot.original_value.is_zero() && new_storage_slot_value.is_zero() {
                     gas_refunds = gas_refunds
-                        .checked_add(U256::from(4800))
+                        .checked_add(4800)
                         .ok_or(VMError::GasRefundsOverflow)?;
                 }
             } else if !storage_slot.original_value.is_zero() {
                 if storage_slot.current_value.is_zero() {
                     gas_refunds = gas_refunds
-                        .checked_sub(U256::from(4800))
+                        .checked_sub(4800)
                         .ok_or(VMError::GasRefundsUnderflow)?;
                 } else if new_storage_slot_value.is_zero() {
                     gas_refunds = gas_refunds
-                        .checked_add(U256::from(4800))
+                        .checked_add(4800)
                         .ok_or(VMError::GasRefundsOverflow)?;
                 }
             } else if new_storage_slot_value == storage_slot.original_value {
                 if storage_slot.original_value.is_zero() {
                     gas_refunds = gas_refunds
-                        .checked_add(U256::from(19900))
+                        .checked_add(19900)
                         .ok_or(VMError::GasRefundsOverflow)?;
                 } else {
                     gas_refunds = gas_refunds
-                        .checked_add(U256::from(2800))
+                        .checked_add(2800)
                         .ok_or(VMError::GasRefundsOverflow)?;
                 }
             }
@@ -237,7 +243,7 @@ impl VM {
             .checked_sub(current_call_frame.gas_used)
             .ok_or(OutOfGasError::ConsumedGasOverflow)?;
         // Note: These are not consumed gas calculations, but are related, so I used this wrapping here
-        current_call_frame.stack.push(remaining_gas)?;
+        current_call_frame.stack.push(remaining_gas.into())?;
 
         Ok(OpcodeSuccess::Continue)
     }
