@@ -2,7 +2,7 @@ use crate::{
     call_frame::CallFrame,
     constants::{WORD_SIZE, WORD_SIZE_IN_BYTES_USIZE},
     errors::{OpcodeSuccess, OutOfGasError, VMError},
-    gas_cost,
+    gas_cost::{self, SSTORE_STIPEND},
     memory::{self, calculate_memory_size},
     vm::VM,
 };
@@ -163,6 +163,15 @@ impl VM {
 
         let storage_slot_key = current_call_frame.stack.pop()?;
         let new_storage_slot_value = current_call_frame.stack.pop()?;
+
+        // EIP-2200
+        let gas_left = current_call_frame
+            .gas_limit
+            .checked_sub(current_call_frame.gas_used)
+            .ok_or(OutOfGasError::ConsumedGasOverflow)?;
+        if gas_left <= SSTORE_STIPEND {
+            return Err(VMError::OutOfGas(OutOfGasError::MaxGasLimitExceeded));
+        }
 
         // Convert key from U256 to H256
         let mut bytes = [0u8; 32];
