@@ -11,7 +11,7 @@ env:
 
 jobs:
   run-hive:
-    name: Run engine hive simulator to gather coverage information.
+    name: Hive - ${{ matrix.name }}
     runs-on: ubuntu-latest
     strategy:
       matrix:
@@ -45,7 +45,7 @@ jobs:
         run: make setup-hive
 
       - name: Run Hive Simulation
-        run: cd hive && ./hive --client ethrex --sim ${{ matrix.simulation }} --sim.parallelism 4
+        run: cd hive && ./hive --client ethrex --sim ${{ matrix.simulation }} --sim.parallelism 16
         continue-on-error: true
 
       - name: Upload results
@@ -124,12 +124,8 @@ jobs:
           restore-keys: |
             loc-report-
 
-      - name: Check previous loc report
-        run: |
-          cat loc_report.json
-
       - name: Rename cached loc_report.json to loc_report.json.old
-        if: steps.cache-loc-report.outputs.cache-hit == 'true'
+        if: steps.cache-loc-report.outputs.cache-hit != ''
         run: mv loc_report.json loc_report.json.old
 
       - name: Generate the loc report

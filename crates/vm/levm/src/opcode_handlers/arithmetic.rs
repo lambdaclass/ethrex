@@ -5,7 +5,7 @@ use crate::{
     opcode_handlers::bitwise_comparison::checked_shift_left,
     vm::VM,
 };
-use ethrex_core::U256;
+use ethrex_core::{U256, U512};
 
 use super::bitwise_comparison::checked_shift_right;
 
@@ -165,12 +165,20 @@ impl VM {
             return Ok(OpcodeSuccess::Continue);
         }
 
-        let new_augend = augend.checked_rem(modulus).unwrap_or_default();
-        let new_addend = addend.checked_rem(modulus).unwrap_or_default();
+        let new_augend: U512 = augend.into();
+        let new_addend: U512 = addend.into();
 
-        let (sum, _overflowed) = new_augend.overflowing_add(new_addend);
+        let sum = new_augend.checked_add(new_addend).ok_or(VMError::Internal(
+            InternalError::ArithmeticOperationOverflow,
+        ))?;
 
-        let sum_mod = sum.checked_rem(modulus).unwrap_or_default();
+        let sum_mod = sum
+            .checked_rem(modulus.into())
+            .ok_or(VMError::Internal(
+                InternalError::ArithmeticOperationOverflow,
+            ))?
+            .try_into()
+            .map_err(|_err| VMError::Internal(InternalError::ArithmeticOperationOverflow))?;
 
         current_call_frame.stack.push(sum_mod)?;
 
@@ -193,11 +201,21 @@ impl VM {
             return Ok(OpcodeSuccess::Continue);
         }
 
-        let multiplicand = multiplicand.checked_rem(modulus).unwrap_or_default();
-        let multiplier = multiplier.checked_rem(modulus).unwrap_or_default();
+        let multiplicand: U512 = multiplicand.into();
+        let multiplier: U512 = multiplier.into();
 
-        let (product, _overflowed) = multiplicand.overflowing_mul(multiplier);
-        let product_mod = product.checked_rem(modulus).unwrap_or_default();
+        let product = multiplicand
+            .checked_mul(multiplier)
+            .ok_or(VMError::Internal(
+                InternalError::ArithmeticOperationOverflow,
+            ))?;
+        let product_mod: U256 = product
+            .checked_rem(modulus.into())
+            .ok_or(VMError::Internal(
+                InternalError::ArithmeticOperationOverflow,
+            ))?
+            .try_into()
+            .map_err(|_err| VMError::Internal(InternalError::ArithmeticOperationOverflow))?;
 
         current_call_frame.stack.push(product_mod)?;
 

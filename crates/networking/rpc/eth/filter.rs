@@ -85,10 +85,7 @@ impl NewFilterRequest {
             return Err(RpcErr::BadParams("Invalid block range".to_string()));
         }
 
-        let Some(last_block_number) = storage.get_latest_block_number()? else {
-            error!("Latest block number was requested but it does not exist");
-            return Err(RpcErr::Internal("Failed to create filter".to_string()));
-        };
+        let last_block_number = storage.get_latest_block_number()?;
         let id: u64 = random();
         let timestamp = Instant::now();
         let mut active_filters_guard = filters.lock().unwrap_or_else(|mut poisoned_guard| {
@@ -188,10 +185,7 @@ impl FilterChangesRequest {
         storage: ethrex_storage::Store,
         filters: ActiveFilters,
     ) -> Result<serde_json::Value, crate::utils::RpcErr> {
-        let Some(latest_block_num) = storage.get_latest_block_number()? else {
-            error!("Latest block number was requested but it does not exist");
-            return Err(RpcErr::Internal("Failed to create filter".to_string()));
-        };
+        let latest_block_num = storage.get_latest_block_number()?;
         let mut active_filters_guard = filters.lock().unwrap_or_else(|mut poisoned_guard| {
             error!("THREAD CRASHED WITH MUTEX TAKEN; SYSTEM MIGHT BE UNSTABLE");
             **poisoned_guard.get_mut() = HashMap::new();

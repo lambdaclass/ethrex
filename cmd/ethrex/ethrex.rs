@@ -218,7 +218,7 @@ async fn main() {
 
             let authrpc_jwtsecret = std::fs::read(authrpc_jwtsecret).expect("Failed to read JWT secret");
             let head_block_hash = {
-                let current_block_number = store.get_latest_block_number().unwrap().unwrap();
+                let current_block_number = store.get_latest_block_number().unwrap();
                 store.get_canonical_block_hash(current_block_number).unwrap().unwrap()
             };
             let max_tries = 3;

@@ -53,6 +53,9 @@ pub fn re_run_failed_ef_test(
                     }
                 }
             },
+            // Currently, we decided not to re-execute the test when the Expected exception does not match 
+            // with the received. This can change in the future.
+            EFTestRunnerError::ExpectedExceptionDoesNotMatchReceived(_) => continue,
             EFTestRunnerError::VMInitializationFailed(_)
             | EFTestRunnerError::ExecutionFailedUnexpectedly(_)
             | EFTestRunnerError::FailedToEnsurePreState(_) => continue,
@@ -392,6 +395,12 @@ pub fn _run_ef_test_revm(test: &EFTest) -> Result<EFTestReport, EFTestRunnerErro
             Err(EFTestRunnerError::Internal(reason)) => {
                 return Err(EFTestRunnerError::Internal(reason));
             }
+            Err(EFTestRunnerError::ExpectedExceptionDoesNotMatchReceived(_)) => {
+                return Err(EFTestRunnerError::Internal(InternalError::MainRunnerInternal(
+                    "The ExpectedExceptionDoesNotMatchReceived error should only happen when executing Levm, the errors matching is not implemented in Revm"
+                        .to_owned(),
+                )));
+            }
         }
     }
     Ok(ef_test_report)
@@ -420,8 +429,7 @@ pub fn _ensure_post_state_revm(
             match test.post.vector_post_value(vector).expect_exception {
                 // Execution result was successful but an exception was expected.
                 Some(expected_exception) => {
-                    let error_reason = format!("Expected exception: {expected_exception}");
-                    println!("Expected exception: {expected_exception}");
+                    let error_reason = format!("Expected exception: {expected_exception:?}");
                     return Err(EFTestRunnerError::FailedToEnsurePostState(
                         TransactionReport {
                             result: TxResult::Success,

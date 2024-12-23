@@ -169,7 +169,6 @@ cfg_if::cfg_if! {
 
             let env = Environment {
                 origin: tx.sender(),
-                consumed_gas: U256::zero(),
                 refunded_gas: U256::zero(),
                 gas_limit: tx.gas_limit().into(),
                 block_number: block_header.number.into(),
@@ -195,6 +194,7 @@ cfg_if::cfg_if! {
                 tx.data().clone(),
                 db,
                 CacheDB::default(),
+                tx.access_list(),
             )?;
 
             vm.transact()

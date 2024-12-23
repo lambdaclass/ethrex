@@ -1,4 +1,3 @@
-use crate::constants::TX_BASE_COST;
 use ethrex_core::{Address, H256, U256};
 
 #[derive(Debug, Default, Clone)]
@@ -6,7 +5,6 @@ pub struct Environment {
     /// The sender address of the transaction that originated
     /// this execution.
     pub origin: Address,
-    pub consumed_gas: U256,
     pub refunded_gas: U256,
     pub gas_limit: U256,
     pub block_number: U256,
@@ -29,7 +27,6 @@ impl Environment {
     pub fn default_from_address(origin: Address) -> Self {
         Self {
             origin,
-            consumed_gas: TX_BASE_COST,
             refunded_gas: U256::default(),
             gas_limit: U256::MAX,
             block_number: Default::default(),

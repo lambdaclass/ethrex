@@ -17,6 +17,7 @@ participants:
 additional_services:
   - assertoor
   - tx_spammer
+  - dora
 
 assertoor_params:
   run_stability_check: false
