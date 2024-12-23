@@ -7,7 +7,7 @@ pub type TransientStorage = HashMap<(Address, U256), U256>;
 
 #[derive(Debug, Default, Clone)]
 pub struct Environment {
-    /// The sender address of the transaction that originated
+    /// The sender address of the transaction  that originated
     /// this execution.
     pub origin: Address,
     pub refunded_gas: U256,
