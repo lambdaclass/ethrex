@@ -92,7 +92,7 @@ impl VM {
             .ok_or(OutOfGasError::MaxGasLimitExceeded)?
             .checked_add(create_gas_cost)
             .ok_or(OutOfGasError::MaxGasLimitExceeded)?;
-        let (cost, stipend) = calculate_cost_stipend(
+        let (cost, stipend) = gas_cost::calculate_cost_stipend(
             value_to_transfer.is_zero(),
             gas,
             gas_left,
@@ -185,7 +185,7 @@ impl VM {
         let extra_gas = access_gas_cost
             .checked_add(transfer_gas_cost)
             .ok_or(VMError::OutOfGas(OutOfGasError::MaxGasLimitExceeded))?;
-        let (cost, stipend) = calculate_cost_stipend(
+        let (cost, stipend) = gas_cost::calculate_cost_stipend(
             value_to_transfer.is_zero(),
             gas,
             gas_left,
@@ -310,7 +310,7 @@ impl VM {
             .checked_add(dynamic_cost)
             .ok_or(OutOfGasError::GasCostOverflow)?;
         let (cost, stipend) =
-            calculate_cost_stipend(true, gas, gas_left, memory_cost, access_gas_cost, 0)?;
+            gas_cost::calculate_cost_stipend(true, gas, gas_left, memory_cost, access_gas_cost, 0)?;
 
         self.increase_consumed_gas(
             current_call_frame,
@@ -398,7 +398,7 @@ impl VM {
             .checked_add(dynamic_cost)
             .ok_or(OutOfGasError::GasCostOverflow)?;
         let (cost, stipend) =
-            calculate_cost_stipend(true, gas, gas_left, memory_cost, access_gas_cost, 0)?;
+            gas_cost::calculate_cost_stipend(true, gas, gas_left, memory_cost, access_gas_cost, 0)?;
 
         self.increase_consumed_gas(
             current_call_frame,
@@ -873,52 +873,4 @@ impl VM {
 
         Ok(OpcodeSuccess::Continue)
     }
-}
-
-fn calculate_cost_stipend(
-    value_is_zero: bool,
-    gas_from_stack: U256,
-    gas_left: u64,
-    memory_cost: u64,
-    extra_gas: u64,
-    stipend: u64,
-) -> Result<(u64, u64), VMError> {
-    let gas_stipend = if value_is_zero { 0 } else { stipend };
-    let rhs = extra_gas
-        .checked_add(memory_cost)
-        .ok_or(OutOfGasError::GasUsedOverflow)?;
-    if gas_left < rhs {
-        let gas_from_stack: u64 = gas_from_stack
-            .try_into()
-            .map_err(|_err| OutOfGasError::MaxGasLimitExceeded)?;
-        return Ok((
-            gas_from_stack
-                .checked_add(extra_gas)
-                .ok_or(OutOfGasError::MaxGasLimitExceeded)?,
-            gas_from_stack
-                .checked_add(gas_stipend)
-                .ok_or(OutOfGasError::MaxGasLimitExceeded)?,
-        ));
-    }
-
-    let gas_left = gas_left
-        .checked_sub(memory_cost)
-        .ok_or(OutOfGasError::GasUsedOverflow)?
-        .checked_sub(extra_gas)
-        .ok_or(OutOfGasError::GasUsedOverflow)?;
-    let max_gas_for_call = gas_left
-        .checked_sub(gas_left / 64)
-        .ok_or(OutOfGasError::GasUsedOverflow)?;
-
-    let gas: u64 = gas_from_stack
-        .min(max_gas_for_call.into())
-        .try_into()
-        .map_err(|_err| OutOfGasError::MaxGasLimitExceeded)?;
-
-    Ok((
-        gas.checked_add(extra_gas)
-            .ok_or(OutOfGasError::MaxGasLimitExceeded)?,
-        gas.checked_add(gas_stipend)
-            .ok_or(OutOfGasError::MaxGasLimitExceeded)?,
-    ))
 }
