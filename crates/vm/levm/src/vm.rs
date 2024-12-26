@@ -730,7 +730,10 @@ impl VM {
             .ok_or(VMError::TxValidation(
                 TxValidationError::InsufficientAccountFunds,
             ))?;
-        // There is no error specified for overflow in up_front_cost in ef_tests. Maybe we can go with GasLimitPriceProductOverflow or InsufficientAccountFunds.
+        // There is no error specified for overflow in up_front_cost
+        // in ef_tests. We went for "InsufficientAccountFunds" simply
+        // because if the upfront cost is bigger than U256, then,
+        // technically, the sender will not be able to pay it.
 
         // (3) INSUFFICIENT_ACCOUNT_FUNDS
         self.decrease_account_balance(sender_address, up_front_cost)
