@@ -371,16 +371,40 @@ impl VM {
             calculate_memory_size(return_data_start_offset, return_data_size)?;
         let new_memory_size = new_memory_size_for_args.max(new_memory_size_for_return_data);
 
+        // self.increase_consumed_gas(
+        //     current_call_frame,
+        //     gas_cost::staticcall(new_memory_size, current_memory_size, address_was_cold)?,
+        // )?;
+        // let max_gas = max_message_call_gas(current_call_frame)?;
+        // let gas = max_gas.min(
+        //     gas.try_into()
+        //         .map_err(|_err| OutOfGasError::MaxGasLimitExceeded)?,
+        // );
+        // self.increase_consumed_gas(current_call_frame, gas)?;
+        let gas_left = current_call_frame
+            .gas_limit
+            .checked_sub(current_call_frame.gas_used)
+            .ok_or(InternalError::GasOverflow)?;
+        let memory_cost = memory::expansion_cost(new_memory_size, current_memory_size)?
+            .try_into()
+            .map_err(|_err| OutOfGasError::MemoryExpansionCostOverflow)?;
+        let mut access_gas_cost = STATICCALL_STATIC;
+        let dynamic_cost: u64 = if address_was_cold {
+            STATICCALL_COLD_DYNAMIC
+        } else {
+            STATICCALL_WARM_DYNAMIC
+        };
+        access_gas_cost = access_gas_cost
+            .checked_add(dynamic_cost)
+            .ok_or(OutOfGasError::GasCostOverflow)?;
+        let (cost, stipend) =
+            calculate_cost_stipend(true, gas, gas_left, memory_cost, access_gas_cost, 0)?;
+
         self.increase_consumed_gas(
             current_call_frame,
-            gas_cost::staticcall(new_memory_size, current_memory_size, address_was_cold)?,
+            cost.checked_add(memory_cost)
+                .ok_or(OutOfGasError::GasUsedOverflow)?,
         )?;
-        let max_gas = max_message_call_gas(current_call_frame)?;
-        let gas = max_gas.min(
-            gas.try_into()
-                .map_err(|_err| OutOfGasError::MaxGasLimitExceeded)?,
-        );
-        self.increase_consumed_gas(current_call_frame, gas)?;
 
         // OPERATION
         let value = U256::zero();
@@ -389,7 +413,7 @@ impl VM {
 
         self.generic_call(
             current_call_frame,
-            gas.into(),
+            stipend.into(),
             value,
             msg_sender,
             to,
