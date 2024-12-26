@@ -25,7 +25,7 @@ use sha3::Digest;
 
 use crate::{
     call_frame::CallFrame,
-    errors::{InternalError, OutOfGasError, PrecompileError, VMError},
+    errors::{InternalError, PrecompileError, VMError},
     gas_cost::{self, ECADD_COST, ECMUL_COST, ECRECOVER_COST, MODEXP_STATIC_COST},
 };
 
@@ -279,9 +279,7 @@ pub fn modexp(
         .into();
 
     if b_size == U256::zero() && m_size == U256::zero() {
-        *consumed_gas = consumed_gas
-            .checked_add(MODEXP_STATIC_COST)
-            .ok_or(OutOfGasError::ConsumedGasOverflow)?;
+        increase_precompile_consumed_gas(gas_for_call, MODEXP_STATIC_COST, consumed_gas)?;
         return Ok(Bytes::new());
     }
 

@@ -631,9 +631,9 @@ pub fn call(
     address_was_cold: bool,
     address_is_empty: bool,
     value_to_transfer: U256,
-) -> Result<u64, VMError> {
-    let static_gas = CALL_STATIC;
-
+    gas_from_stack: U256,
+    gas_left: u64,
+) -> Result<(u64, u64), VMError> {
     let memory_expansion_cost = memory::expansion_cost(new_memory_size, current_memory_size)?;
     let memory_expansion_cost: u64 = memory_expansion_cost
         .try_into()
@@ -647,8 +647,6 @@ pub fn call(
     )?;
     let positive_value_cost = if !value_to_transfer.is_zero() {
         CALL_POSITIVE_VALUE
-            .checked_sub(CALL_POSITIVE_VALUE_STIPEND)
-            .ok_or(InternalError::ArithmeticOperationUnderflow)?
     } else {
         0
     };
@@ -657,9 +655,7 @@ pub fn call(
     } else {
         0
     };
-
-    // Note: code_execution_cost will be charged from the sub context post-state.
-    let dynamic_gas = memory_expansion_cost
+    let call_gas_costs = memory_expansion_cost
         .checked_add(address_access_cost)
         .ok_or(OutOfGasError::GasCostOverflow)?
         .checked_add(positive_value_cost)
@@ -667,9 +663,13 @@ pub fn call(
         .checked_add(value_to_empty_account)
         .ok_or(OutOfGasError::GasCostOverflow)?;
 
-    Ok(static_gas
-        .checked_add(dynamic_gas)
-        .ok_or(OutOfGasError::GasCostOverflow)?)
+    calculate_cost_and_gas_limit_call(
+        value_to_transfer.is_zero(),
+        gas_from_stack,
+        gas_left,
+        call_gas_costs,
+        CALL_POSITIVE_VALUE_STIPEND,
+    )
 }
 
 pub fn callcode(
@@ -677,9 +677,9 @@ pub fn callcode(
     current_memory_size: usize,
     address_was_cold: bool,
     value_to_transfer: U256,
-) -> Result<u64, VMError> {
-    let static_gas = CALLCODE_STATIC;
-
+    gas_from_stack: U256,
+    gas_left: u64,
+) -> Result<(u64, u64), VMError> {
     let memory_expansion_cost = memory::expansion_cost(new_memory_size, current_memory_size)?;
     let memory_expansion_cost: u64 = memory_expansion_cost
         .try_into()
@@ -693,31 +693,31 @@ pub fn callcode(
     )?;
     let positive_value_cost = if !value_to_transfer.is_zero() {
         CALLCODE_POSITIVE_VALUE
-            .checked_sub(CALLCODE_POSITIVE_VALUE_STIPEND)
-            .ok_or(InternalError::ArithmeticOperationUnderflow)?
     } else {
         0
     };
-
-    // Note: code_execution_cost will be charged from the sub context post-state.
-    let dynamic_gas = memory_expansion_cost
+    let call_gas_costs = memory_expansion_cost
         .checked_add(address_access_cost)
         .ok_or(OutOfGasError::GasCostOverflow)?
         .checked_add(positive_value_cost)
         .ok_or(OutOfGasError::GasCostOverflow)?;
 
-    Ok(static_gas
-        .checked_add(dynamic_gas)
-        .ok_or(OutOfGasError::GasCostOverflow)?)
+    calculate_cost_and_gas_limit_call(
+        value_to_transfer.is_zero(),
+        gas_from_stack,
+        gas_left,
+        call_gas_costs,
+        CALLCODE_POSITIVE_VALUE_STIPEND,
+    )
 }
 
 pub fn delegatecall(
     new_memory_size: usize,
     current_memory_size: usize,
     address_was_cold: bool,
-) -> Result<u64, VMError> {
-    let static_gas = DELEGATECALL_STATIC;
-
+    gas_from_stack: U256,
+    gas_left: u64,
+) -> Result<(u64, u64), VMError> {
     let memory_expansion_cost = memory::expansion_cost(new_memory_size, current_memory_size)?;
     let memory_expansion_cost: u64 = memory_expansion_cost
         .try_into()
@@ -729,24 +729,20 @@ pub fn delegatecall(
         DELEGATECALL_COLD_DYNAMIC,
         DELEGATECALL_WARM_DYNAMIC,
     )?;
-
-    // Note: code_execution_cost will be charged from the sub context post-state.
-    let dynamic_gas = memory_expansion_cost
+    let call_gas_costs = memory_expansion_cost
         .checked_add(address_access_cost)
         .ok_or(OutOfGasError::GasCostOverflow)?;
 
-    Ok(static_gas
-        .checked_add(dynamic_gas)
-        .ok_or(OutOfGasError::GasCostOverflow)?)
+    calculate_cost_and_gas_limit_call(true, gas_from_stack, gas_left, call_gas_costs, 0)
 }
 
 pub fn staticcall(
     new_memory_size: usize,
     current_memory_size: usize,
     address_was_cold: bool,
-) -> Result<u64, VMError> {
-    let static_gas = STATICCALL_STATIC;
-
+    gas_from_stack: U256,
+    gas_left: u64,
+) -> Result<(u64, u64), VMError> {
     let memory_expansion_cost = memory::expansion_cost(new_memory_size, current_memory_size)?;
     let memory_expansion_cost: u64 = memory_expansion_cost
         .try_into()
@@ -758,15 +754,11 @@ pub fn staticcall(
         STATICCALL_COLD_DYNAMIC,
         STATICCALL_WARM_DYNAMIC,
     )?;
-
-    // Note: code_execution_cost will be charged from the sub context post-state.
-    let dynamic_gas = memory_expansion_cost
+    let call_gas_costs = memory_expansion_cost
         .checked_add(address_access_cost)
         .ok_or(OutOfGasError::GasCostOverflow)?;
 
-    Ok(static_gas
-        .checked_add(dynamic_gas)
-        .ok_or(OutOfGasError::GasCostOverflow)?)
+    calculate_cost_and_gas_limit_call(true, gas_from_stack, gas_left, call_gas_costs, 0)
 }
 
 pub fn fake_exponential(factor: u64, numerator: u64, denominator: u64) -> Result<u64, VMError> {
@@ -919,4 +911,32 @@ pub fn max_message_call_gas(current_call_frame: &CallFrame) -> Result<u64, VMErr
         .ok_or(InternalError::GasOverflow)?;
 
     Ok(remaining_gas)
+}
+
+fn calculate_cost_and_gas_limit_call(
+    value_is_zero: bool,
+    gas_from_stack: U256,
+    gas_left: u64,
+    call_gas_costs: u64,
+    stipend: u64,
+) -> Result<(u64, u64), VMError> {
+    let gas_stipend = if value_is_zero { 0 } else { stipend };
+    let gas_left = gas_left
+        .checked_sub(call_gas_costs)
+        .ok_or(OutOfGasError::GasUsedOverflow)?;
+    let max_gas_for_call = gas_left
+        .checked_sub(gas_left / 64)
+        .ok_or(OutOfGasError::GasUsedOverflow)?;
+
+    let gas: u64 = gas_from_stack
+        .min(max_gas_for_call.into())
+        .try_into()
+        .map_err(|_err| OutOfGasError::MaxGasLimitExceeded)?;
+
+    Ok((
+        gas.checked_add(call_gas_costs)
+            .ok_or(OutOfGasError::MaxGasLimitExceeded)?,
+        gas.checked_add(gas_stipend)
+            .ok_or(OutOfGasError::MaxGasLimitExceeded)?,
+    ))
 }
