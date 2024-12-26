@@ -710,6 +710,9 @@ impl VM {
         // Clear callframe subreturn data
         current_call_frame.sub_return_data = Bytes::new();
 
+        let calldata =
+            memory::load_range(&mut current_call_frame.memory, args_offset, args_size)?.to_vec();
+
         // 1. Validate sender has enough value
         let sender_account_info = self.access_account(msg_sender).0;
         if should_transfer_value && sender_account_info.balance < value {
@@ -745,8 +748,6 @@ impl VM {
         }
 
         let recipient_bytecode = self.access_account(code_address).0.bytecode;
-        let calldata =
-            memory::load_range(&mut current_call_frame.memory, args_offset, args_size)?.to_vec();
         // Gas Limit for the child context is capped.
         // let gas_cap = max_message_call_gas(current_call_frame)?;
         // let gas_limit = std::cmp::min(gas_limit, gas_cap.into());

@@ -184,6 +184,9 @@ pub const MODEXP_DYNAMIC_QUOTIENT: u64 = 3;
 pub const ECADD_COST: u64 = 150;
 pub const ECMUL_COST: u64 = 6000;
 
+pub const ECPAIRING_BASE_COST: u64 = 45000;
+pub const ECPAIRING_GROUP_COST: u64 = 34000;
+
 pub fn exp(exponent: U256) -> Result<u64, VMError> {
     let exponent_byte_size = (exponent
         .bits()
@@ -367,17 +370,7 @@ pub fn sstore(
     storage_slot: &StorageSlot,
     new_value: U256,
     storage_slot_was_cold: bool,
-    current_call_frame: &CallFrame,
 ) -> Result<u64, VMError> {
-    // EIP-2200
-    let gas_left = current_call_frame
-        .gas_limit
-        .checked_sub(current_call_frame.gas_used)
-        .ok_or(OutOfGasError::ConsumedGasOverflow)?;
-    if gas_left <= SSTORE_STIPEND {
-        return Err(VMError::OutOfGas(OutOfGasError::MaxGasLimitExceeded));
-    }
-
     let static_gas = SSTORE_STATIC;
 
     let mut base_dynamic_gas = if new_value == storage_slot.current_value {
@@ -900,6 +893,17 @@ fn precompile(data_size: usize, static_cost: u64, dynamic_base: u64) -> Result<u
     Ok(static_gas
         .checked_add(dynamic_gas)
         .ok_or(OutOfGasError::GasCostOverflow)?)
+}
+
+pub fn ecpairing(groups_number: usize) -> Result<u64, VMError> {
+    let groups_number = u64::try_from(groups_number).map_err(|_| InternalError::ConversionError)?;
+
+    let groups_cost = groups_number
+        .checked_mul(ECPAIRING_GROUP_COST)
+        .ok_or(OutOfGasError::GasCostOverflow)?;
+    groups_cost
+        .checked_add(ECPAIRING_BASE_COST)
+        .ok_or(VMError::OutOfGas(OutOfGasError::GasCostOverflow))
 }
 
 /// Max message call gas is all but one 64th of the remaining gas in the current context.
