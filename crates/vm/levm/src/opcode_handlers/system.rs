@@ -819,7 +819,7 @@ fn calculate_cost_stipend(
 ) -> Result<(u64, u64), VMError> {
     let gas_stipend = if value_is_zero { 0 } else { stipend };
     let rhs = extra_gas
-        .checked_sub(memory_cost)
+        .checked_add(memory_cost)
         .ok_or(OutOfGasError::GasUsedOverflow)?;
     if gas_left < rhs {
         let gas_from_stack: u64 = gas_from_stack
