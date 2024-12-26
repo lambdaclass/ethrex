@@ -631,7 +631,9 @@ pub fn call(
     address_was_cold: bool,
     address_is_empty: bool,
     value_to_transfer: U256,
-) -> Result<u64, VMError> {
+    gas_from_stack: U256,
+    gas_left: u64,
+) -> Result<(u64, u64), VMError> {
     let static_gas = CALL_STATIC;
 
     let memory_expansion_cost = memory::expansion_cost(new_memory_size, current_memory_size)?;
@@ -641,14 +643,12 @@ pub fn call(
 
     let address_access_cost = address_access_cost(
         address_was_cold,
-        CALL_STATIC,
+        static_gas,
         CALL_COLD_DYNAMIC,
         CALL_WARM_DYNAMIC,
     )?;
     let positive_value_cost = if !value_to_transfer.is_zero() {
         CALL_POSITIVE_VALUE
-            .checked_sub(CALL_POSITIVE_VALUE_STIPEND)
-            .ok_or(InternalError::ArithmeticOperationUnderflow)?
     } else {
         0
     };
@@ -657,19 +657,20 @@ pub fn call(
     } else {
         0
     };
-
-    // Note: code_execution_cost will be charged from the sub context post-state.
-    let dynamic_gas = memory_expansion_cost
-        .checked_add(address_access_cost)
-        .ok_or(OutOfGasError::GasCostOverflow)?
+    let extra_gas = address_access_cost
         .checked_add(positive_value_cost)
         .ok_or(OutOfGasError::GasCostOverflow)?
         .checked_add(value_to_empty_account)
         .ok_or(OutOfGasError::GasCostOverflow)?;
 
-    Ok(static_gas
-        .checked_add(dynamic_gas)
-        .ok_or(OutOfGasError::GasCostOverflow)?)
+    calculate_cost_stipend(
+        value_to_transfer.is_zero(),
+        gas_from_stack,
+        gas_left,
+        memory_expansion_cost,
+        extra_gas,
+        CALL_POSITIVE_VALUE_STIPEND,
+    )
 }
 
 pub fn callcode(
@@ -930,23 +931,6 @@ pub fn calculate_cost_stipend(
     stipend: u64,
 ) -> Result<(u64, u64), VMError> {
     let gas_stipend = if value_is_zero { 0 } else { stipend };
-    let rhs = extra_gas
-        .checked_add(memory_cost)
-        .ok_or(OutOfGasError::GasUsedOverflow)?;
-    if gas_left < rhs {
-        let gas_from_stack: u64 = gas_from_stack
-            .try_into()
-            .map_err(|_err| OutOfGasError::MaxGasLimitExceeded)?;
-        return Ok((
-            gas_from_stack
-                .checked_add(extra_gas)
-                .ok_or(OutOfGasError::MaxGasLimitExceeded)?,
-            gas_from_stack
-                .checked_add(gas_stipend)
-                .ok_or(OutOfGasError::MaxGasLimitExceeded)?,
-        ));
-    }
-
     let gas_left = gas_left
         .checked_sub(memory_cost)
         .ok_or(OutOfGasError::GasUsedOverflow)?
@@ -963,6 +947,8 @@ pub fn calculate_cost_stipend(
 
     Ok((
         gas.checked_add(extra_gas)
+            .ok_or(OutOfGasError::MaxGasLimitExceeded)?
+            .checked_add(memory_cost)
             .ok_or(OutOfGasError::MaxGasLimitExceeded)?,
         gas.checked_add(gas_stipend)
             .ok_or(OutOfGasError::MaxGasLimitExceeded)?,

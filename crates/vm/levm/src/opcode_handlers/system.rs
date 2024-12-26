@@ -5,11 +5,9 @@ use crate::{
     errors::{InternalError, OpcodeSuccess, OutOfGasError, ResultReason, TxResult, VMError},
     gas_cost::{
         self, max_message_call_gas, CALLCODE_COLD_DYNAMIC, CALLCODE_POSITIVE_VALUE,
-        CALLCODE_POSITIVE_VALUE_STIPEND, CALLCODE_STATIC, CALLCODE_WARM_DYNAMIC, CALL_COLD_DYNAMIC,
-        CALL_POSITIVE_VALUE, CALL_POSITIVE_VALUE_STIPEND, CALL_STATIC, CALL_TO_EMPTY_ACCOUNT,
-        CALL_WARM_DYNAMIC, DELEGATECALL_COLD_DYNAMIC, DELEGATECALL_STATIC,
-        DELEGATECALL_WARM_DYNAMIC, STATICCALL_COLD_DYNAMIC, STATICCALL_STATIC,
-        STATICCALL_WARM_DYNAMIC,
+        CALLCODE_POSITIVE_VALUE_STIPEND, CALLCODE_STATIC, CALLCODE_WARM_DYNAMIC,
+        DELEGATECALL_COLD_DYNAMIC, DELEGATECALL_STATIC, DELEGATECALL_WARM_DYNAMIC,
+        STATICCALL_COLD_DYNAMIC, STATICCALL_STATIC, STATICCALL_WARM_DYNAMIC,
     },
     memory::{self, calculate_memory_size},
     vm::{address_to_word, word_to_address, VM},
@@ -62,49 +60,16 @@ impl VM {
             .gas_limit
             .checked_sub(current_call_frame.gas_used)
             .ok_or(InternalError::GasOverflow)?;
-
-        let memory_cost = memory::expansion_cost(new_memory_size, current_memory_size)?
-            .try_into()
-            .map_err(|_err| OutOfGasError::MemoryExpansionCostOverflow)?;
-        let mut access_gas_cost = CALL_STATIC;
-        let dynamic_cost: u64 = if address_was_cold {
-            CALL_COLD_DYNAMIC
-        } else {
-            CALL_WARM_DYNAMIC
-        };
-        access_gas_cost = access_gas_cost
-            .checked_add(dynamic_cost)
-            .ok_or(OutOfGasError::GasCostOverflow)?;
-        let transfer_gas_cost = if !value_to_transfer.is_zero() {
-            CALL_POSITIVE_VALUE
-        } else {
-            0
-        };
-
-        let create_gas_cost = if !value_to_transfer.is_zero() && account_info.is_empty() {
-            CALL_TO_EMPTY_ACCOUNT
-        } else {
-            0
-        };
-
-        let extra_gas = access_gas_cost
-            .checked_add(transfer_gas_cost)
-            .ok_or(OutOfGasError::MaxGasLimitExceeded)?
-            .checked_add(create_gas_cost)
-            .ok_or(OutOfGasError::MaxGasLimitExceeded)?;
-        let (cost, stipend) = gas_cost::calculate_cost_stipend(
-            value_to_transfer.is_zero(),
+        let (cost, stipend) = gas_cost::call(
+            new_memory_size,
+            current_memory_size,
+            address_was_cold,
+            account_info.is_empty(),
+            value_to_transfer,
             gas,
             gas_left,
-            memory_cost,
-            extra_gas,
-            CALL_POSITIVE_VALUE_STIPEND,
         )?;
-        self.increase_consumed_gas(
-            current_call_frame,
-            cost.checked_add(memory_cost)
-                .ok_or(OutOfGasError::GasUsedOverflow)?,
-        )?;
+        self.increase_consumed_gas(current_call_frame, cost)?;
 
         // OPERATION
         let msg_sender = current_call_frame.to; // The new sender will be the current contract.
@@ -193,11 +158,7 @@ impl VM {
             extra_gas,
             CALLCODE_POSITIVE_VALUE_STIPEND,
         )?;
-        self.increase_consumed_gas(
-            current_call_frame,
-            cost.checked_add(memory_cost)
-                .ok_or(OutOfGasError::GasUsedOverflow)?,
-        )?;
+        self.increase_consumed_gas(current_call_frame, cost)?;
 
         // Sender and recipient are the same in this case. But the code executed is from another account.
         let msg_sender = current_call_frame.to;
@@ -312,11 +273,7 @@ impl VM {
         let (cost, stipend) =
             gas_cost::calculate_cost_stipend(true, gas, gas_left, memory_cost, access_gas_cost, 0)?;
 
-        self.increase_consumed_gas(
-            current_call_frame,
-            cost.checked_add(memory_cost)
-                .ok_or(OutOfGasError::GasUsedOverflow)?,
-        )?;
+        self.increase_consumed_gas(current_call_frame, cost)?;
 
         // OPERATION
         let msg_sender = current_call_frame.msg_sender;
@@ -400,11 +357,7 @@ impl VM {
         let (cost, stipend) =
             gas_cost::calculate_cost_stipend(true, gas, gas_left, memory_cost, access_gas_cost, 0)?;
 
-        self.increase_consumed_gas(
-            current_call_frame,
-            cost.checked_add(memory_cost)
-                .ok_or(OutOfGasError::GasUsedOverflow)?,
-        )?;
+        self.increase_consumed_gas(current_call_frame, cost)?;
 
         // OPERATION
         let value = U256::zero();
