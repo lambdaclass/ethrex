@@ -655,7 +655,9 @@ pub fn call(
     } else {
         0
     };
-    let extra_gas = address_access_cost
+    let call_gas_costs = memory_expansion_cost
+        .checked_add(address_access_cost)
+        .ok_or(OutOfGasError::GasCostOverflow)?
         .checked_add(positive_value_cost)
         .ok_or(OutOfGasError::GasCostOverflow)?
         .checked_add(value_to_empty_account)
@@ -665,8 +667,7 @@ pub fn call(
         value_to_transfer.is_zero(),
         gas_from_stack,
         gas_left,
-        memory_expansion_cost,
-        extra_gas,
+        call_gas_costs,
         CALL_POSITIVE_VALUE_STIPEND,
     )
 }
@@ -695,7 +696,9 @@ pub fn callcode(
     } else {
         0
     };
-    let extra_gas = address_access_cost
+    let call_gas_costs = memory_expansion_cost
+        .checked_add(address_access_cost)
+        .ok_or(OutOfGasError::GasCostOverflow)?
         .checked_add(positive_value_cost)
         .ok_or(OutOfGasError::GasCostOverflow)?;
 
@@ -703,8 +706,7 @@ pub fn callcode(
         value_to_transfer.is_zero(),
         gas_from_stack,
         gas_left,
-        memory_expansion_cost,
-        extra_gas,
+        call_gas_costs,
         CALLCODE_POSITIVE_VALUE_STIPEND,
     )
 }
@@ -727,15 +729,11 @@ pub fn delegatecall(
         DELEGATECALL_COLD_DYNAMIC,
         DELEGATECALL_WARM_DYNAMIC,
     )?;
+    let call_gas_costs = memory_expansion_cost
+        .checked_add(address_access_cost)
+        .ok_or(OutOfGasError::GasCostOverflow)?;
 
-    calculate_cost_gas_limit_call(
-        true,
-        gas_from_stack,
-        gas_left,
-        memory_expansion_cost,
-        address_access_cost,
-        0,
-    )
+    calculate_cost_gas_limit_call(true, gas_from_stack, gas_left, call_gas_costs, 0)
 }
 
 pub fn staticcall(
@@ -756,15 +754,11 @@ pub fn staticcall(
         STATICCALL_COLD_DYNAMIC,
         STATICCALL_WARM_DYNAMIC,
     )?;
+    let call_gas_costs = memory_expansion_cost
+        .checked_add(address_access_cost)
+        .ok_or(OutOfGasError::GasCostOverflow)?;
 
-    calculate_cost_gas_limit_call(
-        true,
-        gas_from_stack,
-        gas_left,
-        memory_expansion_cost,
-        address_access_cost,
-        0,
-    )
+    calculate_cost_gas_limit_call(true, gas_from_stack, gas_left, call_gas_costs, 0)
 }
 
 pub fn fake_exponential(factor: u64, numerator: u64, denominator: u64) -> Result<u64, VMError> {
@@ -923,15 +917,12 @@ fn calculate_cost_gas_limit_call(
     value_is_zero: bool,
     gas_from_stack: U256,
     gas_left: u64,
-    memory_cost: u64,
-    extra_gas: u64,
+    call_gas_costs: u64,
     stipend: u64,
 ) -> Result<(u64, u64), VMError> {
     let gas_stipend = if value_is_zero { 0 } else { stipend };
     let gas_left = gas_left
-        .checked_sub(memory_cost)
-        .ok_or(OutOfGasError::GasUsedOverflow)?
-        .checked_sub(extra_gas)
+        .checked_sub(call_gas_costs)
         .ok_or(OutOfGasError::GasUsedOverflow)?;
     let max_gas_for_call = gas_left
         .checked_sub(gas_left / 64)
@@ -943,9 +934,7 @@ fn calculate_cost_gas_limit_call(
         .map_err(|_err| OutOfGasError::MaxGasLimitExceeded)?;
 
     Ok((
-        gas.checked_add(extra_gas)
-            .ok_or(OutOfGasError::MaxGasLimitExceeded)?
-            .checked_add(memory_cost)
+        gas.checked_add(call_gas_costs)
             .ok_or(OutOfGasError::MaxGasLimitExceeded)?,
         gas.checked_add(gas_stipend)
             .ok_or(OutOfGasError::MaxGasLimitExceeded)?,
