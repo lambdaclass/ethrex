@@ -663,7 +663,7 @@ pub fn call(
         .checked_add(value_to_empty_account)
         .ok_or(OutOfGasError::GasCostOverflow)?;
 
-    calculate_cost_stipend(
+    calculate_cost_gas_limit_call(
         value_to_transfer.is_zero(),
         gas_from_stack,
         gas_left,
@@ -703,7 +703,7 @@ pub fn callcode(
         .checked_add(positive_value_cost)
         .ok_or(OutOfGasError::GasCostOverflow)?;
 
-    calculate_cost_stipend(
+    calculate_cost_gas_limit_call(
         value_to_transfer.is_zero(),
         gas_from_stack,
         gas_left,
@@ -734,7 +734,7 @@ pub fn delegatecall(
         DELEGATECALL_WARM_DYNAMIC,
     )?;
 
-    calculate_cost_stipend(
+    calculate_cost_gas_limit_call(
         true,
         gas_from_stack,
         gas_left,
@@ -765,7 +765,7 @@ pub fn staticcall(
         STATICCALL_WARM_DYNAMIC,
     )?;
 
-    calculate_cost_stipend(
+    calculate_cost_gas_limit_call(
         true,
         gas_from_stack,
         gas_left,
@@ -927,7 +927,7 @@ pub fn max_message_call_gas(current_call_frame: &CallFrame) -> Result<u64, VMErr
     Ok(remaining_gas)
 }
 
-pub fn calculate_cost_stipend(
+fn calculate_cost_gas_limit_call(
     value_is_zero: bool,
     gas_from_stack: U256,
     gas_left: u64,

@@ -55,7 +55,7 @@ impl VM {
             .gas_limit
             .checked_sub(current_call_frame.gas_used)
             .ok_or(InternalError::GasOverflow)?;
-        let (cost, stipend) = gas_cost::call(
+        let (cost, gas_limit) = gas_cost::call(
             new_memory_size,
             current_memory_size,
             address_was_cold,
@@ -73,7 +73,7 @@ impl VM {
 
         self.generic_call(
             current_call_frame,
-            stipend.into(),
+            gas_limit.into(),
             value_to_transfer,
             msg_sender,
             to,
@@ -124,7 +124,7 @@ impl VM {
             .gas_limit
             .checked_sub(current_call_frame.gas_used)
             .ok_or(InternalError::GasOverflow)?;
-        let (cost, stipend) = gas_cost::callcode(
+        let (cost, gas_limit) = gas_cost::callcode(
             new_memory_size,
             current_memory_size,
             address_was_cold,
@@ -141,7 +141,7 @@ impl VM {
 
         self.generic_call(
             current_call_frame,
-            stipend.into(),
+            gas_limit.into(),
             value_to_transfer,
             msg_sender,
             to,
@@ -223,7 +223,7 @@ impl VM {
             .gas_limit
             .checked_sub(current_call_frame.gas_used)
             .ok_or(InternalError::GasOverflow)?;
-        let (cost, stipend) = gas_cost::delegatecall(
+        let (cost, gas_limit) = gas_cost::delegatecall(
             new_memory_size,
             current_memory_size,
             address_was_cold,
@@ -240,7 +240,7 @@ impl VM {
 
         self.generic_call(
             current_call_frame,
-            stipend.into(),
+            gas_limit.into(),
             value,
             msg_sender,
             to,
@@ -289,7 +289,7 @@ impl VM {
             .gas_limit
             .checked_sub(current_call_frame.gas_used)
             .ok_or(InternalError::GasOverflow)?;
-        let (cost, stipend) = gas_cost::staticcall(
+        let (cost, gas_limit) = gas_cost::staticcall(
             new_memory_size,
             current_memory_size,
             address_was_cold,
@@ -305,7 +305,7 @@ impl VM {
 
         self.generic_call(
             current_call_frame,
-            stipend.into(),
+            gas_limit.into(),
             value,
             msg_sender,
             to,
