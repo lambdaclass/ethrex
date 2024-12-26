@@ -691,9 +691,29 @@ fn blake2f(
 }
 
 fn point_evaluation(
-    _calldata: &Bytes,
-    _gas_for_call: u64,
-    _consumed_gas: &mut u64,
+    calldata: &Bytes,
+    gas_for_call: u64,
+    consumed_gas: &mut u64,
 ) -> Result<Bytes, VMError> {
+    let versioned_hash = calldata
+        .get(..32)
+        .ok_or(PrecompileError::ParsingInputError)?;
+
+    let x = calldata
+        .get(32..64)
+        .ok_or(PrecompileError::ParsingInputError)?;
+
+    let y = calldata
+        .get(64..96)
+        .ok_or(PrecompileError::ParsingInputError)?;
+
+    let commitment = calldata
+        .get(96..144)
+        .ok_or(PrecompileError::ParsingInputError)?;
+
+    let proof = calldata
+        .get(144..192)
+        .ok_or(PrecompileError::ParsingInputError)?;
+
     Ok(Bytes::new())
 }
