@@ -28,6 +28,7 @@ use ethrex_vm::{evm_state, execute_block, spec_id, EvmState, SpecId};
 /// Performs pre and post execution validation, and updates the database with the post state.
 #[cfg(not(feature = "levm"))]
 pub fn add_block(block: &Block, storage: &Store) -> Result<(), ChainError> {
+    println!("This is REVM add_block");
     use ethrex_vm::get_state_transitions;
 
     let block_hash = block.header.compute_block_hash();
@@ -75,6 +76,7 @@ pub fn add_block(block: &Block, storage: &Store) -> Result<(), ChainError> {
 /// Performs pre and post execution validation, and updates the database with the post state.
 #[cfg(feature = "levm")]
 pub fn add_block(block: &Block, storage: &Store) -> Result<(), ChainError> {
+    println!("This is LEVM add_block");
     let block_hash = block.header.compute_block_hash();
 
     // Validate if it can be the new head and find the parent
