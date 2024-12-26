@@ -634,8 +634,6 @@ pub fn call(
     gas_from_stack: U256,
     gas_left: u64,
 ) -> Result<(u64, u64), VMError> {
-    let static_gas = CALL_STATIC;
-
     let memory_expansion_cost = memory::expansion_cost(new_memory_size, current_memory_size)?;
     let memory_expansion_cost: u64 = memory_expansion_cost
         .try_into()
@@ -643,7 +641,7 @@ pub fn call(
 
     let address_access_cost = address_access_cost(
         address_was_cold,
-        static_gas,
+        CALL_STATIC,
         CALL_COLD_DYNAMIC,
         CALL_WARM_DYNAMIC,
     )?;
@@ -681,8 +679,6 @@ pub fn callcode(
     gas_from_stack: U256,
     gas_left: u64,
 ) -> Result<(u64, u64), VMError> {
-    let static_gas = CALLCODE_STATIC;
-
     let memory_expansion_cost = memory::expansion_cost(new_memory_size, current_memory_size)?;
     let memory_expansion_cost: u64 = memory_expansion_cost
         .try_into()
@@ -690,7 +686,7 @@ pub fn callcode(
 
     let address_access_cost = address_access_cost(
         address_was_cold,
-        static_gas,
+        CALLCODE_STATIC,
         CALLCODE_COLD_DYNAMIC,
         CALLCODE_WARM_DYNAMIC,
     )?;
@@ -720,8 +716,6 @@ pub fn delegatecall(
     gas_from_stack: U256,
     gas_left: u64,
 ) -> Result<(u64, u64), VMError> {
-    let static_gas = DELEGATECALL_STATIC;
-
     let memory_expansion_cost = memory::expansion_cost(new_memory_size, current_memory_size)?;
     let memory_expansion_cost: u64 = memory_expansion_cost
         .try_into()
@@ -729,7 +723,7 @@ pub fn delegatecall(
 
     let address_access_cost = address_access_cost(
         address_was_cold,
-        static_gas,
+        DELEGATECALL_STATIC,
         DELEGATECALL_COLD_DYNAMIC,
         DELEGATECALL_WARM_DYNAMIC,
     )?;
@@ -751,8 +745,6 @@ pub fn staticcall(
     gas_from_stack: U256,
     gas_left: u64,
 ) -> Result<(u64, u64), VMError> {
-    let static_gas = STATICCALL_STATIC;
-
     let memory_expansion_cost = memory::expansion_cost(new_memory_size, current_memory_size)?;
     let memory_expansion_cost: u64 = memory_expansion_cost
         .try_into()
@@ -760,7 +752,7 @@ pub fn staticcall(
 
     let address_access_cost = address_access_cost(
         address_was_cold,
-        static_gas,
+        STATICCALL_STATIC,
         STATICCALL_COLD_DYNAMIC,
         STATICCALL_WARM_DYNAMIC,
     )?;
