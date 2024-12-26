@@ -4,10 +4,9 @@ use crate::{
     db::cache,
     errors::{InternalError, OpcodeSuccess, OutOfGasError, ResultReason, TxResult, VMError},
     gas_cost::{
-        self, max_message_call_gas, CALLCODE_COLD_DYNAMIC, CALLCODE_POSITIVE_VALUE,
-        CALLCODE_POSITIVE_VALUE_STIPEND, CALLCODE_STATIC, CALLCODE_WARM_DYNAMIC,
-        DELEGATECALL_COLD_DYNAMIC, DELEGATECALL_STATIC, DELEGATECALL_WARM_DYNAMIC,
-        STATICCALL_COLD_DYNAMIC, STATICCALL_STATIC, STATICCALL_WARM_DYNAMIC,
+        self, max_message_call_gas, DELEGATECALL_COLD_DYNAMIC, DELEGATECALL_STATIC,
+        DELEGATECALL_WARM_DYNAMIC, STATICCALL_COLD_DYNAMIC, STATICCALL_STATIC,
+        STATICCALL_WARM_DYNAMIC,
     },
     memory::{self, calculate_memory_size},
     vm::{address_to_word, word_to_address, VM},
@@ -129,34 +128,13 @@ impl VM {
             .gas_limit
             .checked_sub(current_call_frame.gas_used)
             .ok_or(InternalError::GasOverflow)?;
-
-        let memory_cost = memory::expansion_cost(new_memory_size, current_memory_size)?
-            .try_into()
-            .map_err(|_err| OutOfGasError::MemoryExpansionCostOverflow)?;
-        let mut access_gas_cost = CALLCODE_STATIC;
-        let dynamic_cost: u64 = if address_was_cold {
-            CALLCODE_COLD_DYNAMIC
-        } else {
-            CALLCODE_WARM_DYNAMIC
-        };
-        access_gas_cost = access_gas_cost
-            .checked_add(dynamic_cost)
-            .ok_or(OutOfGasError::GasCostOverflow)?;
-        let transfer_gas_cost = if !value_to_transfer.is_zero() {
-            CALLCODE_POSITIVE_VALUE
-        } else {
-            0
-        };
-        let extra_gas = access_gas_cost
-            .checked_add(transfer_gas_cost)
-            .ok_or(VMError::OutOfGas(OutOfGasError::MaxGasLimitExceeded))?;
-        let (cost, stipend) = gas_cost::calculate_cost_stipend(
-            value_to_transfer.is_zero(),
+        let (cost, stipend) = gas_cost::callcode(
+            new_memory_size,
+            current_memory_size,
+            address_was_cold,
+            value_to_transfer,
             gas,
             gas_left,
-            memory_cost,
-            extra_gas,
-            CALLCODE_POSITIVE_VALUE_STIPEND,
         )?;
         self.increase_consumed_gas(current_call_frame, cost)?;
 

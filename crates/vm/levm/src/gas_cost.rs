@@ -678,7 +678,9 @@ pub fn callcode(
     current_memory_size: usize,
     address_was_cold: bool,
     value_to_transfer: U256,
-) -> Result<u64, VMError> {
+    gas_from_stack: U256,
+    gas_left: u64,
+) -> Result<(u64, u64), VMError> {
     let static_gas = CALLCODE_STATIC;
 
     let memory_expansion_cost = memory::expansion_cost(new_memory_size, current_memory_size)?;
@@ -688,28 +690,27 @@ pub fn callcode(
 
     let address_access_cost = address_access_cost(
         address_was_cold,
-        CALLCODE_STATIC,
+        static_gas,
         CALLCODE_COLD_DYNAMIC,
         CALLCODE_WARM_DYNAMIC,
     )?;
     let positive_value_cost = if !value_to_transfer.is_zero() {
         CALLCODE_POSITIVE_VALUE
-            .checked_sub(CALLCODE_POSITIVE_VALUE_STIPEND)
-            .ok_or(InternalError::ArithmeticOperationUnderflow)?
     } else {
         0
     };
-
-    // Note: code_execution_cost will be charged from the sub context post-state.
-    let dynamic_gas = memory_expansion_cost
-        .checked_add(address_access_cost)
-        .ok_or(OutOfGasError::GasCostOverflow)?
+    let extra_gas = address_access_cost
         .checked_add(positive_value_cost)
         .ok_or(OutOfGasError::GasCostOverflow)?;
 
-    Ok(static_gas
-        .checked_add(dynamic_gas)
-        .ok_or(OutOfGasError::GasCostOverflow)?)
+    calculate_cost_stipend(
+        value_to_transfer.is_zero(),
+        gas_from_stack,
+        gas_left,
+        memory_expansion_cost,
+        extra_gas,
+        CALLCODE_POSITIVE_VALUE_STIPEND,
+    )
 }
 
 pub fn delegatecall(
