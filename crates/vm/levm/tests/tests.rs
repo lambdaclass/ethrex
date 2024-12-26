@@ -9,13 +9,13 @@ use ethrex_levm::{
     db::{cache, CacheDB, Db},
     errors::{OutOfGasError, TxResult, VMError},
     gas_cost::{
-        self, ECADD_COST, ECMUL_COST, ECRECOVER_COST, IDENTITY_DYNAMIC_BASE, IDENTITY_STATIC_COST,
-        MODEXP_STATIC_COST, RIPEMD_160_DYNAMIC_BASE, RIPEMD_160_STATIC_COST, SHA2_256_DYNAMIC_BASE,
-        SHA2_256_STATIC_COST,
+        self, BLAKE2F_ROUND_COST, ECADD_COST, ECMUL_COST, ECRECOVER_COST, IDENTITY_DYNAMIC_BASE,
+        IDENTITY_STATIC_COST, MODEXP_STATIC_COST, RIPEMD_160_DYNAMIC_BASE, RIPEMD_160_STATIC_COST,
+        SHA2_256_DYNAMIC_BASE, SHA2_256_STATIC_COST,
     },
     memory,
     operations::Operation,
-    precompiles::{ecadd, ecmul, ecrecover, identity, modexp, ripemd_160, sha2_256},
+    precompiles::{blake2f, ecadd, ecmul, ecrecover, identity, modexp, ripemd_160, sha2_256},
     utils::{new_vm_with_ops, new_vm_with_ops_addr_bal_db, new_vm_with_ops_db, ops_to_bytecode},
     vm::{word_to_address, Storage, VM},
     Environment,
@@ -4621,4 +4621,18 @@ fn ecmul_test_2() {
 
     assert_eq!(result, expected_result);
     assert_eq!(consumed_gas, ECMUL_COST);
+}
+
+#[test]
+fn blake2f_test() {
+    let calldata = hex::decode("0000000c48c9bdf267e6096a3ba7ca8485ae67bb2bf894fe72f36e3cf1361d5f3af54fa5d182e6ad7f520e511f6c3e2b8c68059b6bbd41fbabd9831f79217e1319cde05b61626300000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000300000000000000000000000000000001").unwrap();
+    let calldata = Bytes::from(calldata);
+
+    let mut consumed_gas = 0;
+    let result = blake2f(&calldata, 10000, &mut consumed_gas).unwrap();
+
+    let expected_result = Bytes::from(hex::decode("ba80a53f981c4d0d6a2797b69f12f6e94c212f14685ac4b74b12bb6fdbffa2d17d87c5392aab792dc252d5de4533cc9518d38aa8dbf1925ab92386edd4009923").unwrap());
+
+    assert_eq!(result, expected_result);
+    assert_eq!(consumed_gas, BLAKE2F_ROUND_COST);
 }
