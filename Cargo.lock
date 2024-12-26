@@ -2748,6 +2748,7 @@ dependencies = [
  "ethrex-core",
  "ethrex-rlp",
  "hex",
+ "k256",
  "keccak-hash 0.11.0",
  "lambdaworks-math",
  "libsecp256k1",
