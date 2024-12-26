@@ -717,7 +717,9 @@ pub fn delegatecall(
     new_memory_size: usize,
     current_memory_size: usize,
     address_was_cold: bool,
-) -> Result<u64, VMError> {
+    gas_from_stack: U256,
+    gas_left: u64,
+) -> Result<(u64, u64), VMError> {
     let static_gas = DELEGATECALL_STATIC;
 
     let memory_expansion_cost = memory::expansion_cost(new_memory_size, current_memory_size)?;
@@ -727,19 +729,19 @@ pub fn delegatecall(
 
     let address_access_cost = address_access_cost(
         address_was_cold,
-        DELEGATECALL_STATIC,
+        static_gas,
         DELEGATECALL_COLD_DYNAMIC,
         DELEGATECALL_WARM_DYNAMIC,
     )?;
 
-    // Note: code_execution_cost will be charged from the sub context post-state.
-    let dynamic_gas = memory_expansion_cost
-        .checked_add(address_access_cost)
-        .ok_or(OutOfGasError::GasCostOverflow)?;
-
-    Ok(static_gas
-        .checked_add(dynamic_gas)
-        .ok_or(OutOfGasError::GasCostOverflow)?)
+    calculate_cost_stipend(
+        true,
+        gas_from_stack,
+        gas_left,
+        memory_expansion_cost,
+        address_access_cost,
+        0,
+    )
 }
 
 pub fn staticcall(

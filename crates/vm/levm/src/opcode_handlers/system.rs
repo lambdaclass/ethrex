@@ -4,8 +4,7 @@ use crate::{
     db::cache,
     errors::{InternalError, OpcodeSuccess, OutOfGasError, ResultReason, TxResult, VMError},
     gas_cost::{
-        self, max_message_call_gas, DELEGATECALL_COLD_DYNAMIC, DELEGATECALL_STATIC,
-        DELEGATECALL_WARM_DYNAMIC, STATICCALL_COLD_DYNAMIC, STATICCALL_STATIC,
+        self, max_message_call_gas, STATICCALL_COLD_DYNAMIC, STATICCALL_STATIC,
         STATICCALL_WARM_DYNAMIC,
     },
     memory::{self, calculate_memory_size},
@@ -223,34 +222,17 @@ impl VM {
             calculate_memory_size(return_data_start_offset, return_data_size)?;
         let new_memory_size = new_memory_size_for_args.max(new_memory_size_for_return_data);
 
-        // self.increase_consumed_gas(
-        //     current_call_frame,
-        //     gas_cost::delegatecall(new_memory_size, current_memory_size, address_was_cold)?,
-        // )?;
-        // let max_gas = max_message_call_gas(current_call_frame)?;
-        // let gas = max_gas.min(
-        //     gas.try_into()
-        //         .map_err(|_err| OutOfGasError::MaxGasLimitExceeded)?,
-        // );
         let gas_left = current_call_frame
             .gas_limit
             .checked_sub(current_call_frame.gas_used)
             .ok_or(InternalError::GasOverflow)?;
-        let memory_cost = memory::expansion_cost(new_memory_size, current_memory_size)?
-            .try_into()
-            .map_err(|_err| OutOfGasError::MemoryExpansionCostOverflow)?;
-        let mut access_gas_cost = DELEGATECALL_STATIC;
-        let dynamic_cost: u64 = if address_was_cold {
-            DELEGATECALL_COLD_DYNAMIC
-        } else {
-            DELEGATECALL_WARM_DYNAMIC
-        };
-        access_gas_cost = access_gas_cost
-            .checked_add(dynamic_cost)
-            .ok_or(OutOfGasError::GasCostOverflow)?;
-        let (cost, stipend) =
-            gas_cost::calculate_cost_stipend(true, gas, gas_left, memory_cost, access_gas_cost, 0)?;
-
+        let (cost, stipend) = gas_cost::delegatecall(
+            new_memory_size,
+            current_memory_size,
+            address_was_cold,
+            gas,
+            gas_left,
+        )?;
         self.increase_consumed_gas(current_call_frame, cost)?;
 
         // OPERATION
