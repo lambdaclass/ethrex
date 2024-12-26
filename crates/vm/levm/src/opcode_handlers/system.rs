@@ -468,6 +468,10 @@ impl VM {
         self.increase_account_balance(target_address, balance_to_transfer)?;
         self.decrease_account_balance(current_call_frame.to, balance_to_transfer)?;
 
+        if target_address == current_call_frame.to {
+            self.get_account_mut(current_call_frame.to)?.info.balance = U256::zero();
+        }
+
         if self
             .accrued_substate
             .created_accounts
