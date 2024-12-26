@@ -1,5 +1,5 @@
 use bytes::Bytes;
-use ethrex_core::{Address, H160, U256};
+use ethrex_core::{Address, H160, H256, U256};
 use keccak_hash::keccak256;
 use lambdaworks_math::{
     cyclic_group::IsGroup,
@@ -24,9 +24,7 @@ use num_bigint::BigUint;
 use sha3::Digest;
 
 use crate::{
-    call_frame::CallFrame,
-    errors::{InternalError, OutOfGasError, PrecompileError, VMError},
-    gas_cost::{self, ECADD_COST, ECMUL_COST, ECRECOVER_COST, MODEXP_STATIC_COST},
+    call_frame::CallFrame, constants::VERSIONED_HASH_VERSION_KZG, errors::{InternalError, OutOfGasError, PrecompileError, VMError}, gas_cost::{self, ECADD_COST, ECMUL_COST, ECRECOVER_COST, MODEXP_STATIC_COST}
 };
 
 pub const ECRECOVER_ADDRESS: H160 = H160([
@@ -690,6 +688,14 @@ fn blake2f(
     Ok(Bytes::new())
 }
 
+// Taken from the same name function from crates/common/types/blobs_bundle.rs
+fn kzg_commitment_to_versioned_hash(data: &[u8; 48]) -> H256 {
+    use k256::sha2::Digest;
+    let mut versioned_hash: [u8; 32] = k256::sha2::Sha256::digest(data).into();
+    versioned_hash[0] = VERSIONED_HASH_VERSION_KZG;
+    versioned_hash.into()
+}
+
 fn point_evaluation(
     calldata: &Bytes,
     gas_for_call: u64,
@@ -698,9 +704,12 @@ fn point_evaluation(
     let gas_cost = 50000;
     increase_precompile_consumed_gas(gas_for_call, gas_cost, consumed_gas)?;
 
-    let versioned_hash = calldata
+    let hash = calldata
         .get(..32)
         .ok_or(PrecompileError::ParsingInputError)?;
+    let mut hash_bytes = [0_u8;32];
+    hash_bytes.copy_from_slice(hash);
+    let versioned_hash = H256::from(hash_bytes);
 
     let x = calldata
         .get(32..64)
@@ -713,10 +722,16 @@ fn point_evaluation(
     let commitment = calldata
         .get(96..144)
         .ok_or(PrecompileError::ParsingInputError)?;
+    let mut commitment_bytes = [0_u8;48];
+    commitment_bytes.copy_from_slice(commitment);
 
     let proof = calldata
         .get(144..192)
         .ok_or(PrecompileError::ParsingInputError)?;
+
+    if kzg_commitment_to_versioned_hash(&commitment_bytes) != versioned_hash {
+        return Err(VMError::PrecompileError(PrecompileError::ParsingInputError));
+    }
 
     let mut output: Vec<u8> = Vec::new();
 
