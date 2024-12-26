@@ -3,9 +3,7 @@ use crate::{
     constants::{CREATE_DEPLOYMENT_FAIL, INIT_CODE_MAX_SIZE, REVERT_FOR_CALL, SUCCESS_FOR_CALL},
     db::cache,
     errors::{InternalError, OpcodeSuccess, OutOfGasError, ResultReason, TxResult, VMError},
-    gas_cost::{
-        self, max_message_call_gas, CALLCODE_POSITIVE_VALUE_STIPEND, CALL_POSITIVE_VALUE_STIPEND,
-    },
+    gas_cost::{self, max_message_call_gas},
     memory::{self, calculate_memory_size},
     vm::{address_to_word, word_to_address, VM},
     Account,
@@ -53,32 +51,29 @@ impl VM {
 
         let (account_info, address_was_cold) = self.access_account(callee);
 
-        self.increase_consumed_gas(
-            current_call_frame,
-            gas_cost::call(
-                new_memory_size,
-                current_memory_size,
-                address_was_cold,
-                account_info.is_empty(),
-                value_to_transfer,
-            )?,
+        let gas_left = current_call_frame
+            .gas_limit
+            .checked_sub(current_call_frame.gas_used)
+            .ok_or(InternalError::GasOverflow)?;
+        let (cost, gas_limit) = gas_cost::call(
+            new_memory_size,
+            current_memory_size,
+            address_was_cold,
+            account_info.is_empty(),
+            value_to_transfer,
+            gas,
+            gas_left,
         )?;
+        self.increase_consumed_gas(current_call_frame, cost)?;
 
         // OPERATION
         let msg_sender = current_call_frame.to; // The new sender will be the current contract.
         let to = callee; // In this case code_address and the sub-context account are the same. Unlike CALLCODE or DELEGATECODE.
         let is_static = current_call_frame.is_static;
 
-        // We add the stipend gas for the subcall. This ensures that the callee has enough gas to perform basic operations
-        let gas_for_subcall = if !value_to_transfer.is_zero() {
-            gas.saturating_add(CALL_POSITIVE_VALUE_STIPEND.into())
-        } else {
-            gas
-        };
-
         self.generic_call(
             current_call_frame,
-            gas_for_subcall,
+            gas_limit,
             value_to_transfer,
             msg_sender,
             to,
@@ -125,31 +120,28 @@ impl VM {
 
         let (_account_info, address_was_cold) = self.access_account(code_address);
 
-        self.increase_consumed_gas(
-            current_call_frame,
-            gas_cost::callcode(
-                new_memory_size,
-                current_memory_size,
-                address_was_cold,
-                value_to_transfer,
-            )?,
+        let gas_left = current_call_frame
+            .gas_limit
+            .checked_sub(current_call_frame.gas_used)
+            .ok_or(InternalError::GasOverflow)?;
+        let (cost, gas_limit) = gas_cost::callcode(
+            new_memory_size,
+            current_memory_size,
+            address_was_cold,
+            value_to_transfer,
+            gas,
+            gas_left,
         )?;
+        self.increase_consumed_gas(current_call_frame, cost)?;
 
         // Sender and recipient are the same in this case. But the code executed is from another account.
         let msg_sender = current_call_frame.to;
         let to = current_call_frame.to;
         let is_static = current_call_frame.is_static;
 
-        // We add the stipend gas for the subcall. This ensures that the callee has enough gas to perform basic operations
-        let gas_for_subcall = if !value_to_transfer.is_zero() {
-            gas.saturating_add(CALLCODE_POSITIVE_VALUE_STIPEND.into())
-        } else {
-            gas
-        };
-
         self.generic_call(
             current_call_frame,
-            gas_for_subcall,
+            gas_limit,
             value_to_transfer,
             msg_sender,
             to,
@@ -227,10 +219,18 @@ impl VM {
             calculate_memory_size(return_data_start_offset, return_data_size)?;
         let new_memory_size = new_memory_size_for_args.max(new_memory_size_for_return_data);
 
-        self.increase_consumed_gas(
-            current_call_frame,
-            gas_cost::delegatecall(new_memory_size, current_memory_size, address_was_cold)?,
+        let gas_left = current_call_frame
+            .gas_limit
+            .checked_sub(current_call_frame.gas_used)
+            .ok_or(InternalError::GasOverflow)?;
+        let (cost, gas_limit) = gas_cost::delegatecall(
+            new_memory_size,
+            current_memory_size,
+            address_was_cold,
+            gas,
+            gas_left,
         )?;
+        self.increase_consumed_gas(current_call_frame, cost)?;
 
         // OPERATION
         let msg_sender = current_call_frame.msg_sender;
@@ -240,7 +240,7 @@ impl VM {
 
         self.generic_call(
             current_call_frame,
-            gas,
+            gas_limit,
             value,
             msg_sender,
             to,
@@ -285,10 +285,18 @@ impl VM {
             calculate_memory_size(return_data_start_offset, return_data_size)?;
         let new_memory_size = new_memory_size_for_args.max(new_memory_size_for_return_data);
 
-        self.increase_consumed_gas(
-            current_call_frame,
-            gas_cost::staticcall(new_memory_size, current_memory_size, address_was_cold)?,
+        let gas_left = current_call_frame
+            .gas_limit
+            .checked_sub(current_call_frame.gas_used)
+            .ok_or(InternalError::GasOverflow)?;
+        let (cost, gas_limit) = gas_cost::staticcall(
+            new_memory_size,
+            current_memory_size,
+            address_was_cold,
+            gas,
+            gas_left,
         )?;
+        self.increase_consumed_gas(current_call_frame, cost)?;
 
         // OPERATION
         let value = U256::zero();
@@ -297,7 +305,7 @@ impl VM {
 
         self.generic_call(
             current_call_frame,
-            gas,
+            gas_limit,
             value,
             msg_sender,
             to,
@@ -628,7 +636,7 @@ impl VM {
     pub fn generic_call(
         &mut self,
         current_call_frame: &mut CallFrame,
-        gas_limit: U256,
+        gas_limit: u64,
         value: U256,
         msg_sender: Address,
         to: Address,
@@ -649,6 +657,10 @@ impl VM {
         // 1. Validate sender has enough value
         let sender_account_info = self.access_account(msg_sender).0;
         if should_transfer_value && sender_account_info.balance < value {
+            current_call_frame.gas_used = current_call_frame
+                .gas_used
+                .checked_sub(gas_limit)
+                .ok_or(InternalError::GasOverflow)?;
             current_call_frame.stack.push(REVERT_FOR_CALL)?;
             return Ok(OpcodeSuccess::Continue);
         }
@@ -660,20 +672,15 @@ impl VM {
             .ok_or(InternalError::ArithmeticOperationOverflow)?;
 
         if new_depth > 1024 {
+            current_call_frame.gas_used = current_call_frame
+                .gas_used
+                .checked_sub(gas_limit)
+                .ok_or(InternalError::GasOverflow)?;
             current_call_frame.stack.push(REVERT_FOR_CALL)?;
             return Ok(OpcodeSuccess::Continue);
         }
 
         let recipient_bytecode = self.access_account(code_address).0.bytecode;
-        // Gas Limit for the child context is capped.
-        let gas_cap = max_message_call_gas(current_call_frame)?;
-        let gas_limit = std::cmp::min(gas_limit, gas_cap.into());
-
-        // This should always cast correcly because the gas_cap is in
-        // u64; therefore, at most, it will be u64::MAX
-        let gas_limit: u64 = gas_limit
-            .try_into()
-            .map_err(|_| VMError::Internal(InternalError::ConversionError))?;
 
         let mut new_call_frame = CallFrame::new(
             msg_sender,
@@ -697,11 +704,17 @@ impl VM {
 
         let tx_report = self.execute(&mut new_call_frame)?;
 
-        // Add gas used by the sub-context to the current one after it's execution.
+        // Return gas left from subcontext
+        let gas_left_from_new_call_frame = new_call_frame
+            .gas_limit
+            .checked_sub(tx_report.gas_used)
+            .ok_or(InternalError::GasOverflow)?;
+
         current_call_frame.gas_used = current_call_frame
             .gas_used
-            .checked_add(tx_report.gas_used)
-            .ok_or(VMError::OutOfGas(OutOfGasError::ConsumedGasOverflow))?;
+            .checked_sub(gas_left_from_new_call_frame)
+            .ok_or(InternalError::GasOverflow)?;
+
         current_call_frame.logs.extend(tx_report.logs);
         memory::try_store_range(
             &mut current_call_frame.memory,
