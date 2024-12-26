@@ -717,15 +717,19 @@ impl VM {
             .ok_or(VMError::TxValidation(
                 TxValidationError::InsufficientAccountFunds,
             ))?
-            .checked_add(blob_gas_cost)
-            .ok_or(VMError::TxValidation(
-                TxValidationError::InsufficientAccountFunds,
-            ))?;
+            // .checked_add(blob_gas_cost)
+            // .ok_or(VMError::TxValidation(
+            //     TxValidationError::InsufficientAccountFunds,
+            // ))?
+            ;
         // There is no error specified for overflow in up_front_cost in ef_tests. Maybe we can go with GasLimitPriceProductOverflow or InsufficientAccountFunds.
 
         // (2) INSUFFICIENT_ACCOUNT_FUNDS
         self.decrease_account_balance(sender_address, up_front_cost)
             .map_err(|_| TxValidationError::InsufficientAccountFunds)?;
+
+        self.decrease_account_balance(sender_address, blob_gas_cost)
+            .map_err(|_| TxValidationError::InsufficientMaxFeePerBlobGas)?;
 
         // Transfer value to receiver
         let receiver_address = initial_call_frame.to;
