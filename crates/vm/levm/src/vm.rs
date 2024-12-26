@@ -711,7 +711,7 @@ impl VM {
 
         let blob_gas_cost = self.get_blob_gas_price()?;
 
-        // (10) INSUFFICIENT_MAX_FEE_PER_BLOB_GAS
+        // (2) INSUFFICIENT_MAX_FEE_PER_BLOB_GAS
         if let Some(tx_max_fee_per_blob_gas) = self.env.tx_max_fee_per_blob_gas {
             if tx_max_fee_per_blob_gas < self.get_base_fee_per_blob_gas()? {
                 return Err(VMError::TxValidation(
@@ -732,7 +732,7 @@ impl VM {
             ))?;
         // There is no error specified for overflow in up_front_cost in ef_tests. Maybe we can go with GasLimitPriceProductOverflow or InsufficientAccountFunds.
 
-        // (2) INSUFFICIENT_ACCOUNT_FUNDS
+        // (3) INSUFFICIENT_ACCOUNT_FUNDS
         self.decrease_account_balance(sender_address, up_front_cost)
             .map_err(|_| TxValidationError::InsufficientAccountFunds)?;
 
@@ -743,14 +743,14 @@ impl VM {
             self.increase_account_balance(receiver_address, initial_call_frame.msg_value)?;
         }
 
-        // (3) INSUFFICIENT_MAX_FEE_PER_GAS
+        // (4) INSUFFICIENT_MAX_FEE_PER_GAS
         if self.env.tx_max_fee_per_gas.unwrap_or(self.env.gas_price) < self.env.base_fee_per_gas {
             return Err(VMError::TxValidation(
                 TxValidationError::InsufficientMaxFeePerGas,
             ));
         }
 
-        // (4) INITCODE_SIZE_EXCEEDED
+        // (5) INITCODE_SIZE_EXCEEDED
         if self.is_create() {
             // INITCODE_SIZE_EXCEEDED
             if initial_call_frame.calldata.len() > INIT_CODE_MAX_SIZE {
@@ -760,14 +760,14 @@ impl VM {
             }
         }
 
-        // (5) INTRINSIC_GAS_TOO_LOW
+        // (6) INTRINSIC_GAS_TOO_LOW
         self.add_intrinsic_gas(initial_call_frame)?;
 
-        // (6) NONCE_IS_MAX
+        // (7) NONCE_IS_MAX
         self.increment_account_nonce(sender_address)
             .map_err(|_| VMError::TxValidation(TxValidationError::NonceIsMax))?;
 
-        // (7) PRIORITY_GREATER_THAN_MAX_FEE_PER_GAS
+        // (8) PRIORITY_GREATER_THAN_MAX_FEE_PER_GAS
         if let (Some(tx_max_priority_fee), Some(tx_max_fee_per_gas)) = (
             self.env.tx_max_priority_fee_per_gas,
             self.env.tx_max_fee_per_gas,
@@ -779,25 +779,16 @@ impl VM {
             }
         }
 
-        // (8) SENDER_NOT_EOA
+        // (9) SENDER_NOT_EOA
         if sender_account.has_code() {
             return Err(VMError::TxValidation(TxValidationError::SenderNotEOA));
         }
 
-        // (9) GAS_ALLOWANCE_EXCEEDED
+        // (10) GAS_ALLOWANCE_EXCEEDED
         if self.env.gas_limit > self.env.block_gas_limit {
             return Err(VMError::TxValidation(
                 TxValidationError::GasAllowanceExceeded,
             ));
-        }
-
-        // (10) INSUFFICIENT_MAX_FEE_PER_BLOB_GAS
-        if let Some(tx_max_fee_per_blob_gas) = self.env.tx_max_fee_per_blob_gas {
-            if tx_max_fee_per_blob_gas < self.get_base_fee_per_blob_gas()? {
-                return Err(VMError::TxValidation(
-                    TxValidationError::InsufficientMaxFeePerBlobGas,
-                ));
-            }
         }
 
         // Transaction is type 3 if tx_max_fee_per_blob_gas is Some
