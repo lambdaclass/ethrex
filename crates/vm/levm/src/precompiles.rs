@@ -24,7 +24,10 @@ use num_bigint::BigUint;
 use sha3::Digest;
 
 use crate::{
-    call_frame::CallFrame, constants::VERSIONED_HASH_VERSION_KZG, errors::{InternalError, OutOfGasError, PrecompileError, VMError}, gas_cost::{self, ECADD_COST, ECMUL_COST, ECRECOVER_COST, MODEXP_STATIC_COST}
+    call_frame::CallFrame,
+    constants::VERSIONED_HASH_VERSION_KZG,
+    errors::{InternalError, OutOfGasError, PrecompileError, VMError},
+    gas_cost::{self, ECADD_COST, ECMUL_COST, ECRECOVER_COST, MODEXP_STATIC_COST},
 };
 
 pub const ECRECOVER_ADDRESS: H160 = H160([
@@ -696,6 +699,15 @@ fn kzg_commitment_to_versioned_hash(data: &[u8; 48]) -> H256 {
     versioned_hash.into()
 }
 
+fn verify_kzg_proof(
+    _commitment_bytes: &[u8; 48],
+    _x: &[u8; 32],
+    _y: &[u8; 32],
+    _proof_bytes: &[u8; 48],
+) -> bool {
+    true
+}
+
 fn point_evaluation(
     calldata: &Bytes,
     gas_for_call: u64,
@@ -707,29 +719,39 @@ fn point_evaluation(
     let hash = calldata
         .get(..32)
         .ok_or(PrecompileError::ParsingInputError)?;
-    let mut hash_bytes = [0_u8;32];
+    let mut hash_bytes = [0_u8; 32];
     hash_bytes.copy_from_slice(hash);
     let versioned_hash = H256::from(hash_bytes);
 
     let x = calldata
         .get(32..64)
         .ok_or(PrecompileError::ParsingInputError)?;
+    let mut x_bytes = [0_u8; 32];
+    x_bytes.copy_from_slice(x);
 
     let y = calldata
         .get(64..96)
         .ok_or(PrecompileError::ParsingInputError)?;
+    let mut y_bytes = [0_u8; 32];
+    y_bytes.copy_from_slice(y);
 
     let commitment = calldata
         .get(96..144)
         .ok_or(PrecompileError::ParsingInputError)?;
-    let mut commitment_bytes = [0_u8;48];
+    let mut commitment_bytes = [0_u8; 48];
     commitment_bytes.copy_from_slice(commitment);
 
     let proof = calldata
         .get(144..192)
         .ok_or(PrecompileError::ParsingInputError)?;
+    let mut proof_bytes = [0_u8; 48];
+    proof_bytes.copy_from_slice(proof);
 
     if kzg_commitment_to_versioned_hash(&commitment_bytes) != versioned_hash {
+        return Err(VMError::PrecompileError(PrecompileError::ParsingInputError));
+    }
+
+    if !verify_kzg_proof(&commitment_bytes, &x_bytes, &y_bytes, &proof_bytes) {
         return Err(VMError::PrecompileError(PrecompileError::ParsingInputError));
     }
 
@@ -737,7 +759,10 @@ fn point_evaluation(
 
     let field_elems_per_blob = [0_u8; 32];
 
-    let number = U256::from_dec_str("52435875175126190479447740508185965837690552500527637822603658699938581184513").unwrap();
+    let number = U256::from_dec_str(
+        "52435875175126190479447740508185965837690552500527637822603658699938581184513",
+    )
+    .unwrap_or_default();
     let mut bls_modulus = [0u8; 32];
     number.to_big_endian(&mut bls_modulus);
 
