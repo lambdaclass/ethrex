@@ -25,7 +25,7 @@ use sha3::Digest;
 
 use crate::{
     call_frame::CallFrame,
-    errors::{InternalError, OutOfGasError, PrecompileError, VMError},
+    errors::{InternalError, PrecompileError, VMError},
     gas_cost::{self, ECADD_COST, ECMUL_COST, ECRECOVER_COST, MODEXP_STATIC_COST},
 };
 
