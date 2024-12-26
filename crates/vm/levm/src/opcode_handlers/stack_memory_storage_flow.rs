@@ -30,7 +30,7 @@ impl VM {
         let value = self
             .env
             .transient_storage
-            .get(&(current_call_frame.msg_sender, key))
+            .get(&(current_call_frame.to, key))
             .cloned()
             .unwrap_or(U256::zero());
 
@@ -53,7 +53,7 @@ impl VM {
         let value = current_call_frame.stack.pop()?;
         self.env
             .transient_storage
-            .insert((current_call_frame.msg_sender, key), value);
+            .insert((current_call_frame.to, key), value);
 
         Ok(OpcodeSuccess::Continue)
     }
