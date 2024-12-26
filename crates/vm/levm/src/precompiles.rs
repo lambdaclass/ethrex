@@ -715,5 +715,20 @@ fn point_evaluation(
         .get(144..192)
         .ok_or(PrecompileError::ParsingInputError)?;
 
-    Ok(Bytes::new())
+    let mut output: Vec<u8> = Vec::new();
+
+    let field_elems_per_blob = [0_u8; 32];
+
+    let number = U256::from_dec_str("52435875175126190479447740508185965837690552500527637822603658699938581184513").unwrap();
+    let mut bls_modulus = [0u8; 32];
+    number.to_big_endian(&mut bls_modulus);
+
+    if U256::from_big_endian(&field_elems_per_blob) >= U256::from_big_endian(&bls_modulus) {
+        return Err(VMError::PrecompileError(PrecompileError::ParsingInputError));
+    }
+
+    output.extend_from_slice(&field_elems_per_blob);
+    output.extend_from_slice(&bls_modulus);
+
+    Ok(Bytes::from(output))
 }
