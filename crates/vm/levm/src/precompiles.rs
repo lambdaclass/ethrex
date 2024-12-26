@@ -533,47 +533,68 @@ pub fn blake2f(
         u64::try_from(rounds).map_err(|_| InternalError::ConversionError)? * BLAKE2F_ROUND_COST;
     increase_precompile_consumed_gas(gas_for_call, gas_cost, consumed_gas)?;
 
-    let h = calldata.get(4..68).ok_or(InternalError::SlicingError)?;
-    let mut state_vec = Vec::new();
+    let mut h = [0; 8];
     for i in 0..8_usize {
-        let var1 = i
-            .checked_mul(8)
-            .ok_or(InternalError::ArithmeticOperationOverflow)?;
-        let var2 = (i.checked_add(1).ok_or(PrecompileError::ParsingInputError)?)
-            .checked_mul(8)
-            .ok_or(InternalError::ArithmeticOperationOverflow)?;
-        let slice_pos = h.get(var1..var2).ok_or(PrecompileError::DefaultError)?;
-        state_vec.push(U256::from_little_endian(slice_pos));
+        let index_start = (i.checked_mul(8).ok_or(PrecompileError::ParsingInputError)?)
+            .checked_add(4)
+            .ok_or(PrecompileError::ParsingInputError)?;
+        let index_end = index_start
+            .checked_add(8)
+            .ok_or(PrecompileError::ParsingInputError)?;
+
+        let read_slice = h.get_mut(i).ok_or(InternalError::SlicingError)?;
+        *read_slice = u64::from_le_bytes(
+            calldata
+                .get(index_start..index_end)
+                .ok_or(InternalError::SlicingError)?
+                .try_into()
+                .map_err(|_| PrecompileError::ParsingInputError)?,
+        );
     }
 
-    let m = calldata.get(68..196).ok_or(InternalError::SlicingError)?;
-    let mut message_block_vec = Vec::new();
+    let mut m = [0; 16];
     for i in 0..8_usize {
-        let var1 = i
-            .checked_mul(16)
-            .ok_or(InternalError::ArithmeticOperationOverflow)?;
-        let var2 = (i.checked_add(1).ok_or(PrecompileError::ParsingInputError)?)
-            .checked_mul(16)
-            .ok_or(InternalError::ArithmeticOperationOverflow)?;
-        let slice_pos = m.get(var1..var2).ok_or(PrecompileError::DefaultError)?;
-        message_block_vec.push(U256::from_little_endian(slice_pos));
+        let index_start = (i.checked_mul(8).ok_or(PrecompileError::ParsingInputError)?)
+            .checked_add(68)
+            .ok_or(PrecompileError::ParsingInputError)?;
+        let index_end = index_start
+            .checked_add(8)
+            .ok_or(PrecompileError::ParsingInputError)?;
+
+        let read_slice = m.get_mut(i).ok_or(InternalError::SlicingError)?;
+        *read_slice = u64::from_le_bytes(
+            calldata
+                .get(index_start..index_end)
+                .ok_or(InternalError::SlicingError)?
+                .try_into()
+                .map_err(|_| PrecompileError::ParsingInputError)?,
+        );
     }
 
-    let t = calldata.get(196..212).ok_or(InternalError::SlicingError)?;
-    let mut offset_counters_vec = Vec::new();
+    let mut t = [0; 2];
     for i in 0..2_usize {
-        let var1 = i
-            .checked_mul(8)
-            .ok_or(InternalError::ArithmeticOperationOverflow)?;
-        let var2 = (i.checked_add(1).ok_or(PrecompileError::ParsingInputError)?)
-            .checked_mul(8)
-            .ok_or(InternalError::ArithmeticOperationOverflow)?;
-        let slice_pos = t.get(var1..var2).ok_or(InternalError::SlicingError)?;
-        offset_counters_vec.push(U256::from_little_endian(slice_pos));
+        let index_start = (i.checked_mul(8).ok_or(PrecompileError::ParsingInputError)?)
+            .checked_add(196)
+            .ok_or(PrecompileError::ParsingInputError)?;
+        let index_end = index_start
+            .checked_add(8)
+            .ok_or(PrecompileError::ParsingInputError)?;
+
+        let read_slice = t.get_mut(i).ok_or(InternalError::SlicingError)?;
+        *read_slice = u64::from_le_bytes(
+            calldata
+                .get(index_start..index_end)
+                .ok_or(InternalError::SlicingError)?
+                .try_into()
+                .map_err(|_| PrecompileError::ParsingInputError)?,
+        );
     }
 
     let f = calldata.get(212).ok_or(InternalError::SlicingError)?;
-    let _is_final_block = *f == 1;
+    if *f != 0 && *f != 1 {
+        return Err(VMError::PrecompileError(PrecompileError::ParsingInputError));
+    }
+    let f = *f == 1;
 
     Ok(Bytes::new())
 }
