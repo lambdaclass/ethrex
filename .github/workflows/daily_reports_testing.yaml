@@ -19,8 +19,7 @@ env:
 
 jobs:
   run-hive:
-    name: Hive - ${{ matrix.name }}
-    # needs: docker_build
+    name: Hive
     runs-on: ubuntu-latest
 
     steps:
@@ -52,7 +51,7 @@ jobs:
       - name: Upload results
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.file_name }}_logs
+          name: testing_logs
           path: hive/workspace/logs/*-*.json
 
   hive-report:
