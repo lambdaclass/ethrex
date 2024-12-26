@@ -336,9 +336,6 @@ fn mem_expansion_behavior(
     static_cost: u64,
 ) -> Result<u64, VMError> {
     let memory_expansion_cost = memory::expansion_cost(new_memory_size, current_memory_size)?;
-    let memory_expansion_cost: u64 = memory_expansion_cost
-        .try_into()
-        .map_err(|_| VMError::RevertOpcode)?;
 
     Ok(static_cost
         .checked_add(memory_expansion_cost)
