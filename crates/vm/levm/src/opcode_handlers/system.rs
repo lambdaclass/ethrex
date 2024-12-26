@@ -73,7 +73,7 @@ impl VM {
 
         self.generic_call(
             current_call_frame,
-            gas_limit.into(),
+            gas_limit,
             value_to_transfer,
             msg_sender,
             to,
@@ -141,7 +141,7 @@ impl VM {
 
         self.generic_call(
             current_call_frame,
-            gas_limit.into(),
+            gas_limit,
             value_to_transfer,
             msg_sender,
             to,
@@ -240,7 +240,7 @@ impl VM {
 
         self.generic_call(
             current_call_frame,
-            gas_limit.into(),
+            gas_limit,
             value,
             msg_sender,
             to,
@@ -305,7 +305,7 @@ impl VM {
 
         self.generic_call(
             current_call_frame,
-            gas_limit.into(),
+            gas_limit,
             value,
             msg_sender,
             to,
@@ -636,7 +636,7 @@ impl VM {
     pub fn generic_call(
         &mut self,
         current_call_frame: &mut CallFrame,
-        gas_limit: U256,
+        gas_limit: u64,
         value: U256,
         msg_sender: Address,
         to: Address,
@@ -659,11 +659,7 @@ impl VM {
         if should_transfer_value && sender_account_info.balance < value {
             current_call_frame.gas_used = current_call_frame
                 .gas_used
-                .checked_sub(
-                    gas_limit
-                        .try_into()
-                        .map_err(|_err| InternalError::ConversionError)?,
-                )
+                .checked_sub(gas_limit)
                 .ok_or(InternalError::GasOverflow)?;
             current_call_frame.stack.push(REVERT_FOR_CALL)?;
             return Ok(OpcodeSuccess::Continue);
@@ -678,11 +674,7 @@ impl VM {
         if new_depth > 1024 {
             current_call_frame.gas_used = current_call_frame
                 .gas_used
-                .checked_sub(
-                    gas_limit
-                        .try_into()
-                        .map_err(|_err| InternalError::ConversionError)?,
-                )
+                .checked_sub(gas_limit)
                 .ok_or(InternalError::GasOverflow)?;
             current_call_frame.stack.push(REVERT_FOR_CALL)?;
             return Ok(OpcodeSuccess::Continue);
@@ -698,9 +690,7 @@ impl VM {
             value,
             calldata.into(),
             is_static,
-            gas_limit
-                .try_into()
-                .map_err(|_err| InternalError::GasOverflow)?,
+            gas_limit,
             0,
             new_depth,
             false,
