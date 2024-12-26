@@ -189,7 +189,7 @@ fn cost(memory_size: usize) -> Result<u64, VMError> {
         .ok_or(OutOfGasError::MemoryExpansionCostOverflow)?
         / WORD_SIZE_IN_BYTES_USIZE;
 
-    let a = memory_size_word
+    let gas_cost = memory_size_word
         .checked_pow(2)
         .ok_or(OutOfGasError::MemoryExpansionCostOverflow)?
         .checked_div(MEMORY_EXPANSION_QUOTIENT)
@@ -201,8 +201,9 @@ fn cost(memory_size: usize) -> Result<u64, VMError> {
         )
         .ok_or(OutOfGasError::MemoryExpansionCostOverflow)?;
 
-    Ok(a.try_into()
-        .map_err(|_| VMError::Internal(InternalError::ConversionError))?)
+    gas_cost
+        .try_into()
+        .map_err(|_| VMError::Internal(InternalError::ConversionError))
 }
 
 pub fn calculate_memory_size(offset: U256, size: usize) -> Result<usize, VMError> {
