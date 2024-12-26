@@ -79,7 +79,7 @@ impl VM {
             0
         };
 
-        let create_gas_cost = if account_info.is_empty() {
+        let create_gas_cost = if !value_to_transfer.is_zero() && account_info.is_empty() {
             CALL_TO_EMPTY_ACCOUNT
         } else {
             0
