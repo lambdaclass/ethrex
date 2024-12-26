@@ -711,21 +711,21 @@ impl VM {
 
         let blob_gas_cost = self.get_blob_gas_price()?;
 
-        // The real cost to deduct is calculated as effective_gas_price * gas_limit + value + blob_gas_cost
-        let up_front_cost = gaslimit_price_product
-            .checked_add(value)
-            .ok_or(VMError::TxValidation(
-                TxValidationError::InsufficientAccountFunds,
-            ))?
-            // .checked_add(blob_gas_cost)
-            // .ok_or(VMError::TxValidation(
-            //     TxValidationError::InsufficientAccountFunds,
-            // ))?
-            ;
+        // The real cost to deduct is calculated as:
+        // effective_gas_price * gas_limit + value + blob_gas_cost
+        let up_front_cost_without_blobgas =
+            gaslimit_price_product
+                .checked_add(value)
+                .ok_or(VMError::TxValidation(
+                    TxValidationError::InsufficientAccountFunds,
+                ))?;
         // There is no error specified for overflow in up_front_cost in ef_tests. Maybe we can go with GasLimitPriceProductOverflow or InsufficientAccountFunds.
 
         // (2) INSUFFICIENT_ACCOUNT_FUNDS
-        self.decrease_account_balance(sender_address, up_front_cost)
+        // We deduct the upfront costs in two different steps because
+        // we need to differentiate which cost the sender was not able
+        // to pay.
+        self.decrease_account_balance(sender_address, up_front_cost_without_blobgas)
             .map_err(|_| TxValidationError::InsufficientAccountFunds)?;
 
         self.decrease_account_balance(sender_address, blob_gas_cost)
