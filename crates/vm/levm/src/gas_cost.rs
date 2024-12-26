@@ -663,7 +663,7 @@ pub fn call(
         .checked_add(value_to_empty_account)
         .ok_or(OutOfGasError::GasCostOverflow)?;
 
-    calculate_cost_gas_limit_call(
+    calculate_cost_and_gas_limit_call(
         value_to_transfer.is_zero(),
         gas_from_stack,
         gas_left,
@@ -702,7 +702,7 @@ pub fn callcode(
         .checked_add(positive_value_cost)
         .ok_or(OutOfGasError::GasCostOverflow)?;
 
-    calculate_cost_gas_limit_call(
+    calculate_cost_and_gas_limit_call(
         value_to_transfer.is_zero(),
         gas_from_stack,
         gas_left,
@@ -733,7 +733,7 @@ pub fn delegatecall(
         .checked_add(address_access_cost)
         .ok_or(OutOfGasError::GasCostOverflow)?;
 
-    calculate_cost_gas_limit_call(true, gas_from_stack, gas_left, call_gas_costs, 0)
+    calculate_cost_and_gas_limit_call(true, gas_from_stack, gas_left, call_gas_costs, 0)
 }
 
 pub fn staticcall(
@@ -758,7 +758,7 @@ pub fn staticcall(
         .checked_add(address_access_cost)
         .ok_or(OutOfGasError::GasCostOverflow)?;
 
-    calculate_cost_gas_limit_call(true, gas_from_stack, gas_left, call_gas_costs, 0)
+    calculate_cost_and_gas_limit_call(true, gas_from_stack, gas_left, call_gas_costs, 0)
 }
 
 pub fn fake_exponential(factor: u64, numerator: u64, denominator: u64) -> Result<u64, VMError> {
@@ -913,7 +913,7 @@ pub fn max_message_call_gas(current_call_frame: &CallFrame) -> Result<u64, VMErr
     Ok(remaining_gas)
 }
 
-fn calculate_cost_gas_limit_call(
+fn calculate_cost_and_gas_limit_call(
     value_is_zero: bool,
     gas_from_stack: U256,
     gas_left: u64,
