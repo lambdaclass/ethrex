@@ -689,15 +689,6 @@ impl VM {
         }
 
         let recipient_bytecode = self.access_account(code_address).0.bytecode;
-        // Gas Limit for the child context is capped.
-        // let gas_cap = max_message_call_gas(current_call_frame)?;
-        // let gas_limit = std::cmp::min(gas_limit, gas_cap.into());
-
-        // // This should always cast correcly because the gas_cap is in
-        // // u64; therefore, at most, it will be u64::MAX
-        // let gas_limit: u64 = gas_limit
-        //     .try_into()
-        //     .map_err(|_| VMError::Internal(InternalError::ConversionError))?;
 
         let mut new_call_frame = CallFrame::new(
             msg_sender,
@@ -723,7 +714,7 @@ impl VM {
 
         let tx_report = self.execute(&mut new_call_frame)?;
 
-        // Add gas used by the sub-context to the current one after it's execution.
+        // Return gas left from subcontext
         let gas_left_from_new_call_frame = new_call_frame
             .gas_limit
             .checked_sub(tx_report.gas_used)
@@ -734,10 +725,6 @@ impl VM {
             .checked_sub(gas_left_from_new_call_frame)
             .ok_or(InternalError::GasOverflow)?;
 
-        // current_call_frame.gas_used = dbg!(current_call_frame
-        //     .gas_used
-        //     .checked_add(tx_report.gas_used)
-        //     .ok_or(VMError::OutOfGas(OutOfGasError::ConsumedGasOverflow))?);
         current_call_frame.logs.extend(tx_report.logs);
         memory::try_store_range(
             &mut current_call_frame.memory,
