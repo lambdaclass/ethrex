@@ -38,7 +38,7 @@ pub struct Substate {
     // accessed addresses and storage keys are considered WARM
     // pub accessed_addresses: HashSet<Address>,
     // pub accessed_storage_keys: HashSet<(Address, U256)>,
-    pub selfdestrutct_set: HashSet<Address>,
+    pub selfdestruct_set: HashSet<Address>,
     pub touched_accounts: HashSet<Address>,
     pub touched_storage_slots: HashMap<Address, HashSet<H256>>,
     pub created_accounts: HashSet<Address>,
@@ -176,7 +176,7 @@ impl VM {
                 );
 
                 let substate = Substate {
-                    selfdestrutct_set: HashSet::new(),
+                    selfdestruct_set: HashSet::new(),
                     touched_accounts: default_touched_accounts,
                     touched_storage_slots: default_touched_storage_slots,
                     created_accounts: HashSet::new(),
@@ -218,7 +218,7 @@ impl VM {
                 );
 
                 let substate = Substate {
-                    selfdestrutct_set: HashSet::new(),
+                    selfdestruct_set: HashSet::new(),
                     touched_accounts: default_touched_accounts,
                     touched_storage_slots: default_touched_storage_slots,
                     created_accounts: HashSet::from([new_contract_address]),
@@ -903,9 +903,11 @@ impl VM {
         };
 
         // 4. Destruct addresses in selfdestruct set.
-        // In Cancun the only addresses destroyed are contracts created in this transaction, so we 'destroy' them by just removing them from the cache, as if they never existed.
-        for address in &self.accrued_substate.selfdestrutct_set {
-            remove_account(&mut self.cache, address);
+        // In Cancun the only addresses destroyed are contracts created in this transaction
+        let selfdestruct_set = self.accrued_substate.selfdestruct_set.clone();
+        for address in selfdestruct_set {
+            let account_to_remove = self.get_account_mut(address)?;
+            *account_to_remove = Account::default();
         }
 
         Ok(())

@@ -466,7 +466,7 @@ impl VM {
             .contains(&current_call_frame.to)
         {
             self.accrued_substate
-                .selfdestrutct_set
+                .selfdestruct_set
                 .insert(current_call_frame.to);
         }
 
