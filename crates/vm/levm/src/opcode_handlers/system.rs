@@ -464,13 +464,17 @@ impl VM {
         self.increase_account_balance(target_address, balance_to_transfer)?;
         self.decrease_account_balance(current_call_frame.to, balance_to_transfer)?;
 
+        // Selfdestruct is executed in the same transaction as the contract was created
         if self
             .accrued_substate
             .created_accounts
             .contains(&current_call_frame.to)
         {
+            // If target is the same as the contract calling, Ether will be burnt.
+            self.get_account_mut(current_call_frame.to)?.info.balance = U256::zero();
+
             self.accrued_substate
-                .selfdestrutct_set
+                .selfdestruct_set
                 .insert(current_call_frame.to);
         }
 
