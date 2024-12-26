@@ -45,6 +45,7 @@ jobs:
 
   run-hive:
     name: Hive - ${{ matrix.name }}
+    needs: docker_build
     runs-on: ubuntu-latest
     strategy:
       matrix:
