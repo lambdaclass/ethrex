@@ -267,9 +267,6 @@ fn copy_behavior(
         .map_err(|_| VMError::VeryLargeNumber)?;
 
     let memory_expansion_cost = memory::expansion_cost(new_memory_size, current_memory_size)?;
-    let memory_expansion_cost: u64 = memory_expansion_cost
-        .try_into()
-        .map_err(|_| VMError::VeryLargeNumber)?;
 
     let minimum_word_size_cost = dynamic_base
         .checked_mul(minimum_word_size)
@@ -311,10 +308,6 @@ pub fn log(
     let bytes_cost = LOGN_DYNAMIC_BYTE_BASE
         .checked_mul(size)
         .ok_or(OutOfGasError::GasCostOverflow)?;
-
-    let memory_expansion_cost: u64 = memory_expansion_cost
-        .try_into()
-        .map_err(|_| VMError::VeryLargeNumber)?;
 
     Ok(topics_cost
         .checked_add(LOGN_STATIC)
@@ -408,9 +401,6 @@ pub fn mcopy(
         / WORD_SIZE;
 
     let memory_expansion_cost = memory::expansion_cost(new_memory_size, current_memory_size)?;
-    let memory_expansion_cost: u64 = memory_expansion_cost
-        .try_into()
-        .map_err(|_| VMError::VeryLargeNumber)?;
 
     let words_copied: u64 = words_copied
         .try_into()
@@ -474,9 +464,6 @@ fn compute_gas_create(
         .ok_or(OutOfGasError::GasCostOverflow)?; // will not panic since it's 2
 
     let memory_expansion_cost = memory::expansion_cost(new_memory_size, current_memory_size)?;
-    let memory_expansion_cost: u64 = memory_expansion_cost
-        .try_into()
-        .map_err(|_| VMError::VeryLargeNumber)?;
 
     let hash_cost = if is_create_2 {
         minimum_word_size
@@ -635,9 +622,6 @@ pub fn call(
     gas_left: u64,
 ) -> Result<(u64, u64), VMError> {
     let memory_expansion_cost = memory::expansion_cost(new_memory_size, current_memory_size)?;
-    let memory_expansion_cost: u64 = memory_expansion_cost
-        .try_into()
-        .map_err(|_| VMError::VeryLargeNumber)?;
 
     let address_access_cost = address_access_cost(
         address_was_cold,
@@ -681,9 +665,6 @@ pub fn callcode(
     gas_left: u64,
 ) -> Result<(u64, u64), VMError> {
     let memory_expansion_cost = memory::expansion_cost(new_memory_size, current_memory_size)?;
-    let memory_expansion_cost: u64 = memory_expansion_cost
-        .try_into()
-        .map_err(|_| VMError::VeryLargeNumber)?;
 
     let address_access_cost = address_access_cost(
         address_was_cold,
@@ -719,9 +700,6 @@ pub fn delegatecall(
     gas_left: u64,
 ) -> Result<(u64, u64), VMError> {
     let memory_expansion_cost = memory::expansion_cost(new_memory_size, current_memory_size)?;
-    let memory_expansion_cost: u64 = memory_expansion_cost
-        .try_into()
-        .map_err(|_| VMError::VeryLargeNumber)?;
 
     let address_access_cost = address_access_cost(
         address_was_cold,
@@ -744,9 +722,6 @@ pub fn staticcall(
     gas_left: u64,
 ) -> Result<(u64, u64), VMError> {
     let memory_expansion_cost = memory::expansion_cost(new_memory_size, current_memory_size)?;
-    let memory_expansion_cost: u64 = memory_expansion_cost
-        .try_into()
-        .map_err(|_| VMError::VeryLargeNumber)?;
 
     let address_access_cost = address_access_cost(
         address_was_cold,
