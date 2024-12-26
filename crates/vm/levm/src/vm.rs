@@ -711,6 +711,15 @@ impl VM {
 
         let blob_gas_cost = self.get_blob_gas_price()?;
 
+        // (10) INSUFFICIENT_MAX_FEE_PER_BLOB_GAS
+        if let Some(tx_max_fee_per_blob_gas) = self.env.tx_max_fee_per_blob_gas {
+            if tx_max_fee_per_blob_gas < self.get_base_fee_per_blob_gas()? {
+                return Err(VMError::TxValidation(
+                    TxValidationError::InsufficientMaxFeePerBlobGas,
+                ));
+            }
+        }
+
         // The real cost to deduct is calculated as effective_gas_price * gas_limit + value + blob_gas_cost
         let up_front_cost = gaslimit_price_product
             .checked_add(value)
