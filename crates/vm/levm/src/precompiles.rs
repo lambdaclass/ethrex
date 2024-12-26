@@ -533,7 +533,7 @@ pub fn blake2f(
         u64::try_from(rounds).map_err(|_| InternalError::ConversionError)? * BLAKE2F_ROUND_COST;
     increase_precompile_consumed_gas(gas_for_call, gas_cost, consumed_gas)?;
 
-    let h = calldata.get(4..67).ok_or(InternalError::SlicingError)?;
+    let h = calldata.get(4..68).ok_or(InternalError::SlicingError)?;
     let mut state_vec = Vec::new();
     for i in 0..8_usize {
         let var1 = i
@@ -546,9 +546,9 @@ pub fn blake2f(
         state_vec.push(U256::from_little_endian(slice_pos));
     }
 
-    let m = calldata.get(68..195).ok_or(InternalError::SlicingError)?;
+    let m = calldata.get(68..196).ok_or(InternalError::SlicingError)?;
     let mut message_block_vec = Vec::new();
-    for i in 0..16_usize {
+    for i in 0..8_usize {
         let var1 = i
             .checked_mul(16)
             .ok_or(InternalError::ArithmeticOperationOverflow)?;
@@ -559,9 +559,9 @@ pub fn blake2f(
         message_block_vec.push(U256::from_little_endian(slice_pos));
     }
 
-    let t = calldata.get(196..211).ok_or(InternalError::SlicingError)?;
+    let t = calldata.get(196..212).ok_or(InternalError::SlicingError)?;
     let mut offset_counters_vec = Vec::new();
-    for i in 0..8_usize {
+    for i in 0..2_usize {
         let var1 = i
             .checked_mul(8)
             .ok_or(InternalError::ArithmeticOperationOverflow)?;
