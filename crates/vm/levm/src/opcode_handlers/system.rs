@@ -713,6 +713,14 @@ impl VM {
         // 1. Validate sender has enough value
         let sender_account_info = self.access_account(msg_sender).0;
         if should_transfer_value && sender_account_info.balance < value {
+            current_call_frame.gas_used = current_call_frame
+                .gas_used
+                .checked_sub(
+                    gas_limit
+                        .try_into()
+                        .map_err(|_err| InternalError::ConversionError)?,
+                )
+                .ok_or(InternalError::GasOverflow)?;
             current_call_frame.stack.push(REVERT_FOR_CALL)?;
             return Ok(OpcodeSuccess::Continue);
         }
@@ -724,6 +732,14 @@ impl VM {
             .ok_or(InternalError::ArithmeticOperationOverflow)?;
 
         if new_depth > 1024 {
+            current_call_frame.gas_used = current_call_frame
+                .gas_used
+                .checked_sub(
+                    gas_limit
+                        .try_into()
+                        .map_err(|_err| InternalError::ConversionError)?,
+                )
+                .ok_or(InternalError::GasOverflow)?;
             current_call_frame.stack.push(REVERT_FOR_CALL)?;
             return Ok(OpcodeSuccess::Continue);
         }
