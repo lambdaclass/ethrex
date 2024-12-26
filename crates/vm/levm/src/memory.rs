@@ -201,9 +201,7 @@ fn cost(memory_size: usize) -> Result<u64, VMError> {
         )
         .ok_or(OutOfGasError::MemoryExpansionCostOverflow)?;
 
-    gas_cost
-        .try_into()
-        .map_err(|_| VMError::Internal(InternalError::ConversionError))
+    gas_cost.try_into().map_err(|_| VMError::VeryLargeNumber)
 }
 
 pub fn calculate_memory_size(offset: U256, size: usize) -> Result<usize, VMError> {
