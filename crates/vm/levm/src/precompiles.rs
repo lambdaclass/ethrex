@@ -511,7 +511,15 @@ fn ecpairing(
     Ok(Bytes::new())
 }
 
-fn blake2f(calldata: &Bytes, gas_for_call: u64, consumed_gas: &mut u64) -> Result<Bytes, VMError> {
+pub fn blake2f(
+    calldata: &Bytes,
+    gas_for_call: u64,
+    consumed_gas: &mut u64,
+) -> Result<Bytes, VMError> {
+    if calldata.len() != 213 {
+        return Err(VMError::PrecompileError(PrecompileError::ParsingInputError));
+    }
+
     let rounds: U256 = calldata
         .get(0..4)
         .ok_or(InternalError::SlicingError)?
