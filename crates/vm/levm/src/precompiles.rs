@@ -695,6 +695,9 @@ fn point_evaluation(
     gas_for_call: u64,
     consumed_gas: &mut u64,
 ) -> Result<Bytes, VMError> {
+    let gas_cost = 50000;
+    increase_precompile_consumed_gas(gas_for_call, gas_cost, consumed_gas)?;
+
     let versioned_hash = calldata
         .get(..32)
         .ok_or(PrecompileError::ParsingInputError)?;
