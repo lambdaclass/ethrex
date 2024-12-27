@@ -36,19 +36,19 @@ jobs:
         run: make setup-hive
 
       - name: Run Hive RPC Simulation
-        run: cd hive && ./hive --sim ethereum/rpc-compat --client ethrex --sim.limit "*" --sim.paralellism 16
+        run: cd hive && ./hive --sim ethereum/rpc-compat --client ethrex --sim.limit "*" --sim.parallelism 16
         continue-on-error: true
 
       - name: Run Hive Sync Simulation
-        run: cd hive && ./hive --sim ethereum/sync --client ethrex --sim.limit "*" --sim.paralellism 16
+        run: cd hive && ./hive --sim ethereum/sync --client ethrex --sim.limit "*" --sim.parallelism 16
         continue-on-error: true
 
       - name: Run Hive Engine Simulation
-        run: cd hive && ./hive --sim ethereum/engine --client ethrex --sim.limit "*" --sim.paralellism 16
+        run: cd hive && ./hive --sim ethereum/engine --client ethrex --sim.limit "*" --sim.parallelism 16
         continue-on-error: true
 
       - name: Run Hive P2P Simulation
-        run: cd hive && ./hive --sim devp2p --client ethrex --sim.limit "*" --sim.paralellism 16
+        run: cd hive && ./hive --sim devp2p --client ethrex --sim.limit "*" --sim.parallelism 16
         continue-on-error: true
 
       - name: Upload results
