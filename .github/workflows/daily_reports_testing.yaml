@@ -29,23 +29,26 @@ jobs:
       - name: Setup Go
         uses: actions/setup-go@v5
 
+      - name: Build image
+        run: make build-image
+
       - name: Setup Hive
         run: make setup-hive
 
       - name: Run Hive RPC Simulation
-        run: make run-hive SIMULATION=ethereum/rpc-compat TEST_PATTERN="*"
+        run: cd hive && ./hive --sim ethereum/rpc-compat --client ethrex --sim.limit "*" --sim.paralellism 16
         continue-on-error: true
 
       - name: Run Hive Sync Simulation
-        run: make run-hive SIMULATION=ethereum/sync TEST_PATTERN="*"
+        run: cd hive && ./hive --sim ethereum/sync --client ethrex --sim.limit "*" --sim.paralellism 16
         continue-on-error: true
 
       - name: Run Hive Engine Simulation
-        run: make run-hive SIMULATION=ethereum/engine TEST_PATTERN="*"
+        run: cd hive && ./hive --sim ethereum/engine --client ethrex --sim.limit "*" --sim.paralellism 16
         continue-on-error: true
 
       - name: Run Hive P2P Simulation
-        run: make run-hive SIMULATION=devp2p TEST_PATTERN="*"
+        run: cd hive && ./hive --sim devp2p --client ethrex --sim.limit "*" --sim.paralellism 16
         continue-on-error: true
 
       - name: Upload results
