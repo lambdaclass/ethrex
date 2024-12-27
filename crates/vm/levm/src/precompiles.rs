@@ -336,14 +336,10 @@ fn get_slice_or_default(
     if let Some(data) = calldata.get(lower_limit..upper_limit) {
         if !data.is_empty() {
             let mut extended = vec![0u8; size_to_expand];
-            if let Some(extend) = extended.get_mut(
-                0..upper_limit
-                    .checked_sub(lower_limit)
-                    .ok_or(InternalError::SlicingError)?,
-            ) {
-                extend.copy_from_slice(data);
-                return Ok(extended);
+            for (dest, data) in extended.iter_mut().zip(data.iter()) {
+                *dest = *data;
             }
+            return Ok(extended);
         }
     }
     Ok(Default::default())
