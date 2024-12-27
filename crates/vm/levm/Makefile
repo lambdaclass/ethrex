@@ -79,8 +79,8 @@ build-revm-comparison:
 
 ###### Build Client with LEVM ######
 
-FEATURES := "--features ethrex-blockchain/default-levm,ethrex-vm/default-levm"
+FLAGS := "--features ethrex-blockchain/default-levm,ethrex-vm/default-levm"
 
 build-image-levm: ## 🐳 Build the Docker image with LEVM features
 	cd ../../../ && \
-	docker build -t ethrex --build-arg CARGO_FEATURES=$(FEATURES) .
+	docker build -t ethrex --build-arg BUILD_FLAGS=$(FLAGS) .

@@ -21,10 +21,10 @@ COPY --from=planner /ethrex/recipe.json recipe.json
 # Build dependencies only, these remained cached
 RUN cargo chef cook --release --recipe-path recipe.json
 
-# Set up a build argument for optional features
-ARG CARGO_FEATURES=""
+# Optional build flags
+ARG BUILD_FLAGS=""
 COPY . .
-RUN cargo build --release $CARGO_FEATURES
+RUN cargo build --release $BUILD_FLAGS
 
 FROM ubuntu:24.04
 WORKDIR /usr/local/bin
