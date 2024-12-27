@@ -709,6 +709,9 @@ fn point_evaluation(
     gas_for_call: u64,
     consumed_gas: &mut u64,
 ) -> Result<Bytes, VMError> {
+    if calldata.len() != 192 {
+        return Err(VMError::PrecompileError(PrecompileError::ParsingInputError));
+    }
     let gas_cost = 50000;
     increase_precompile_consumed_gas(gas_for_call, gas_cost, consumed_gas)?;
 
