@@ -170,10 +170,10 @@ cfg_if::cfg_if! {
 
             let mut receipts = Vec::new();
             let mut cumulative_gas_used = 0;
-            let mut temporary_cache: CacheDB = HashMap::new();
+            let block_cache: CacheDB = HashMap::new();
 
             for tx in block.body.transactions.iter() {
-                let report = execute_tx_levm(tx, block_header, store_wrapper.clone(), temporary_cache.clone()).unwrap();
+                let report = execute_tx_levm(tx, block_header, store_wrapper.clone(), block_cache.clone()).unwrap();
 
                 let mut new_state = report.new_state.clone();
 
@@ -185,7 +185,7 @@ cfg_if::cfg_if! {
                     }
                 }
 
-                temporary_cache.extend(new_state);
+                block_cache.extend(new_state);
 
                 // Currently, in LEVM, we don't substract refunded gas to used gas, but that can change in the future.
                 let gas_used = report.gas_used - report.gas_refunded;
@@ -200,7 +200,7 @@ cfg_if::cfg_if! {
                 receipts.push(receipt);
             }
 
-            account_updates.extend(get_state_transitions_levm(state, block.header.parent_hash, &temporary_cache));
+            account_updates.extend(get_state_transitions_levm(state, block.header.parent_hash, &block_cache));
 
             if let Some(withdrawals) = &block.body.withdrawals {
                 process_withdrawals(state, withdrawals)?;
@@ -213,7 +213,7 @@ cfg_if::cfg_if! {
             tx: &Transaction,
             block_header: &BlockHeader,
             db: Arc<dyn LevmDatabase>,
-            temporary_cache: CacheDB
+            block_cache: CacheDB
         ) -> Result<TransactionReport, VMError> {
             let gas_price : U256 = tx.effective_gas_price(block_header.base_fee_per_gas).ok_or(VMError::InvalidTransaction)?.into();
 
@@ -244,7 +244,7 @@ cfg_if::cfg_if! {
                 tx.value(),
                 tx.data().clone(),
                 db,
-                temporary_cache,
+                block_cache,
                 tx.access_list(),
             )?;
 
