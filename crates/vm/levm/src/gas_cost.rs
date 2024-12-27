@@ -235,6 +235,7 @@ pub fn codecopy(
     )
 }
 
+// Used in return and revert opcodes
 pub fn exit_opcode(new_memory_size: usize, current_memory_size: usize) -> Result<u64, VMError> {
     memory::expansion_cost(new_memory_size, current_memory_size)
 }
