@@ -172,11 +172,12 @@ impl VM {
         }
 
         let new_memory_size = calculate_memory_size(offset, size)?;
+        let current_memory_size = current_call_frame.memory.len();
 
-        let memory_expansion_cost =
-            memory::expansion_cost(new_memory_size, current_call_frame.memory.len())?;
-
-        self.increase_consumed_gas(current_call_frame, memory_expansion_cost)?;
+        self.increase_consumed_gas(
+            current_call_frame,
+            gas_cost::exit_opcode(new_memory_size, current_memory_size)?,
+        )?;
 
         current_call_frame.output =
             memory::load_range(&mut current_call_frame.memory, offset, size)?
@@ -405,11 +406,12 @@ impl VM {
             .map_err(|_err| VMError::VeryLargeNumber)?;
 
         let new_memory_size = calculate_memory_size(offset, size)?;
+        let current_memory_size = current_call_frame.memory.len();
 
-        let memory_expansion_cost: u64 =
-            memory::expansion_cost(new_memory_size, current_call_frame.memory.len())?;
-
-        self.increase_consumed_gas(current_call_frame, memory_expansion_cost)?;
+        self.increase_consumed_gas(
+            current_call_frame,
+            gas_cost::exit_opcode(new_memory_size, current_memory_size)?,
+        )?;
 
         current_call_frame.output =
             memory::load_range(&mut current_call_frame.memory, offset, size)?
