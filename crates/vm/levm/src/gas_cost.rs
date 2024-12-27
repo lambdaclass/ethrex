@@ -235,6 +235,10 @@ pub fn codecopy(
     )
 }
 
+pub fn returnn(new_memory_size: usize, current_memory_size: usize) -> Result<u64, VMError> {
+    memory::expansion_cost(new_memory_size, current_memory_size)
+}
+
 pub fn returndatacopy(
     new_memory_size: usize,
     current_memory_size: usize,
