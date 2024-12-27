@@ -137,7 +137,7 @@ cfg_if::cfg_if! {
 
                 account_update.removed = new_state_account.is_empty();
 
-                if account_update != AccountUpdate::new(*new_state_account_address) || !account_update.added_storage.is_empty() {
+                if account_update != AccountUpdate::new(*new_state_account_address) {
                     account_updates.push(account_update);
                 }
             }
