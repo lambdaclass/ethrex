@@ -38,7 +38,7 @@ pub struct Substate {
     // accessed addresses and storage keys are considered WARM
     // pub accessed_addresses: HashSet<Address>,
     // pub accessed_storage_keys: HashSet<(Address, U256)>,
-    pub selfdestrutct_set: HashSet<Address>,
+    pub selfdestruct_set: HashSet<Address>,
     pub touched_accounts: HashSet<Address>,
     pub touched_storage_slots: HashMap<Address, HashSet<H256>>,
     pub created_accounts: HashSet<Address>,
@@ -176,7 +176,7 @@ impl VM {
                 );
 
                 let substate = Substate {
-                    selfdestrutct_set: HashSet::new(),
+                    selfdestruct_set: HashSet::new(),
                     touched_accounts: default_touched_accounts,
                     touched_storage_slots: default_touched_storage_slots,
                     created_accounts: HashSet::new(),
@@ -218,7 +218,7 @@ impl VM {
                 );
 
                 let substate = Substate {
-                    selfdestrutct_set: HashSet::new(),
+                    selfdestruct_set: HashSet::new(),
                     touched_accounts: default_touched_accounts,
                     touched_storage_slots: default_touched_storage_slots,
                     created_accounts: HashSet::from([new_contract_address]),
@@ -711,6 +711,15 @@ impl VM {
 
         let blob_gas_cost = self.get_blob_gas_price()?;
 
+        // (2) INSUFFICIENT_MAX_FEE_PER_BLOB_GAS
+        if let Some(tx_max_fee_per_blob_gas) = self.env.tx_max_fee_per_blob_gas {
+            if tx_max_fee_per_blob_gas < self.get_base_fee_per_blob_gas()? {
+                return Err(VMError::TxValidation(
+                    TxValidationError::InsufficientMaxFeePerBlobGas,
+                ));
+            }
+        }
+
         // The real cost to deduct is calculated as effective_gas_price * gas_limit + value + blob_gas_cost
         let up_front_cost = gaslimit_price_product
             .checked_add(value)
@@ -721,9 +730,12 @@ impl VM {
             .ok_or(VMError::TxValidation(
                 TxValidationError::InsufficientAccountFunds,
             ))?;
-        // There is no error specified for overflow in up_front_cost in ef_tests. Maybe we can go with GasLimitPriceProductOverflow or InsufficientAccountFunds.
+        // There is no error specified for overflow in up_front_cost
+        // in ef_tests. We went for "InsufficientAccountFunds" simply
+        // because if the upfront cost is bigger than U256, then,
+        // technically, the sender will not be able to pay it.
 
-        // (2) INSUFFICIENT_ACCOUNT_FUNDS
+        // (3) INSUFFICIENT_ACCOUNT_FUNDS
         self.decrease_account_balance(sender_address, up_front_cost)
             .map_err(|_| TxValidationError::InsufficientAccountFunds)?;
 
@@ -734,14 +746,14 @@ impl VM {
             self.increase_account_balance(receiver_address, initial_call_frame.msg_value)?;
         }
 
-        // (3) INSUFFICIENT_MAX_FEE_PER_GAS
+        // (4) INSUFFICIENT_MAX_FEE_PER_GAS
         if self.env.tx_max_fee_per_gas.unwrap_or(self.env.gas_price) < self.env.base_fee_per_gas {
             return Err(VMError::TxValidation(
                 TxValidationError::InsufficientMaxFeePerGas,
             ));
         }
 
-        // (4) INITCODE_SIZE_EXCEEDED
+        // (5) INITCODE_SIZE_EXCEEDED
         if self.is_create() {
             // INITCODE_SIZE_EXCEEDED
             if initial_call_frame.calldata.len() > INIT_CODE_MAX_SIZE {
@@ -751,14 +763,14 @@ impl VM {
             }
         }
 
-        // (5) INTRINSIC_GAS_TOO_LOW
+        // (6) INTRINSIC_GAS_TOO_LOW
         self.add_intrinsic_gas(initial_call_frame)?;
 
-        // (6) NONCE_IS_MAX
+        // (7) NONCE_IS_MAX
         self.increment_account_nonce(sender_address)
             .map_err(|_| VMError::TxValidation(TxValidationError::NonceIsMax))?;
 
-        // (7) PRIORITY_GREATER_THAN_MAX_FEE_PER_GAS
+        // (8) PRIORITY_GREATER_THAN_MAX_FEE_PER_GAS
         if let (Some(tx_max_priority_fee), Some(tx_max_fee_per_gas)) = (
             self.env.tx_max_priority_fee_per_gas,
             self.env.tx_max_fee_per_gas,
@@ -770,25 +782,16 @@ impl VM {
             }
         }
 
-        // (8) SENDER_NOT_EOA
+        // (9) SENDER_NOT_EOA
         if sender_account.has_code() {
             return Err(VMError::TxValidation(TxValidationError::SenderNotEOA));
         }
 
-        // (9) GAS_ALLOWANCE_EXCEEDED
+        // (10) GAS_ALLOWANCE_EXCEEDED
         if self.env.gas_limit > self.env.block_gas_limit {
             return Err(VMError::TxValidation(
                 TxValidationError::GasAllowanceExceeded,
             ));
-        }
-
-        // (10) INSUFFICIENT_MAX_FEE_PER_BLOB_GAS
-        if let Some(tx_max_fee_per_blob_gas) = self.env.tx_max_fee_per_blob_gas {
-            if tx_max_fee_per_blob_gas < self.get_base_fee_per_blob_gas()? {
-                return Err(VMError::TxValidation(
-                    TxValidationError::InsufficientMaxFeePerBlobGas,
-                ));
-            }
         }
 
         // Transaction is type 3 if tx_max_fee_per_blob_gas is Some
@@ -903,9 +906,11 @@ impl VM {
         };
 
         // 4. Destruct addresses in selfdestruct set.
-        // In Cancun the only addresses destroyed are contracts created in this transaction, so we 'destroy' them by just removing them from the cache, as if they never existed.
-        for address in &self.accrued_substate.selfdestrutct_set {
-            remove_account(&mut self.cache, address);
+        // In Cancun the only addresses destroyed are contracts created in this transaction
+        let selfdestruct_set = self.accrued_substate.selfdestruct_set.clone();
+        for address in selfdestruct_set {
+            let account_to_remove = self.get_account_mut(address)?;
+            *account_to_remove = Account::default();
         }
 
         Ok(())

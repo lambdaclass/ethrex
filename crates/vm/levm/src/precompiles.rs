@@ -4,9 +4,18 @@ use keccak_hash::keccak256;
 use lambdaworks_math::{
     cyclic_group::IsGroup,
     elliptic_curve::{
-        short_weierstrass::curves::bn_254::curve::{BN254Curve, BN254FieldElement},
-        traits::IsEllipticCurve,
+        short_weierstrass::{
+            curves::bn_254::{
+                curve::{BN254Curve, BN254FieldElement, BN254TwistCurveFieldElement},
+                field_extension::Degree12ExtensionField,
+                pairing::BN254AtePairing,
+                twist::BN254TwistCurve,
+            },
+            point::ShortWeierstrassProjectivePoint,
+        },
+        traits::{IsEllipticCurve, IsPairing},
     },
+    field::{element::FieldElement, extensions::quadratic::QuadraticExtensionFieldElement},
     traits::ByteConversion,
     unsigned_integer::element,
 };
@@ -16,7 +25,7 @@ use sha3::Digest;
 
 use crate::{
     call_frame::CallFrame,
-    errors::{InternalError, OutOfGasError, PrecompileError, VMError},
+    errors::{InternalError, PrecompileError, VMError},
     gas_cost::{
         self, BLAKE2F_ROUND_COST, ECADD_COST, ECMUL_COST, ECRECOVER_COST, MODEXP_STATIC_COST,
     },
@@ -157,7 +166,9 @@ pub fn ecrecover(
 
     // Parse the input elements, first as a slice of bytes and then as an specific type of the crate
     let hash = calldata.get(0..32).ok_or(InternalError::SlicingError)?;
-    let message = Message::parse_slice(hash).map_err(|_| PrecompileError::ParsingInputError)?;
+    let Ok(message) = Message::parse_slice(hash) else {
+        return Ok(Bytes::new());
+    };
 
     let v: U256 = calldata
         .get(32..64)
@@ -170,26 +181,22 @@ pub fn ecrecover(
     }
 
     let v = u8::try_from(v).map_err(|_| InternalError::ConversionError)?;
-    let recovery_id = match RecoveryId::parse_rpc(v) {
-        Ok(id) => id,
-        Err(_) => {
-            return Ok(Bytes::new());
-        }
+    let Ok(recovery_id) = RecoveryId::parse_rpc(v) else {
+        return Ok(Bytes::new());
     };
 
     // signature is made up of the parameters r and s
     let sig = calldata.get(64..128).ok_or(InternalError::SlicingError)?;
-    let signature =
-        Signature::parse_standard_slice(sig).map_err(|_| PrecompileError::ParsingInputError)?;
+    let Ok(signature) = Signature::parse_standard_slice(sig) else {
+        return Ok(Bytes::new());
+    };
 
     // Recover the address using secp256k1
-    let mut public_key = match libsecp256k1::recover(&message, &signature, &recovery_id) {
-        Ok(id) => id,
-        Err(_) => {
-            return Ok(Bytes::new());
-        }
-    }
-    .serialize();
+    let Ok(public_key) = libsecp256k1::recover(&message, &signature, &recovery_id) else {
+        return Ok(Bytes::new());
+    };
+
+    let mut public_key = public_key.serialize();
 
     // We need to take the 64 bytes from the public key (discarding the first pos of the slice)
     keccak256(&mut public_key[1..65]);
@@ -272,9 +279,7 @@ pub fn modexp(
         .into();
 
     if b_size == U256::zero() && m_size == U256::zero() {
-        *consumed_gas = consumed_gas
-            .checked_add(MODEXP_STATIC_COST)
-            .ok_or(OutOfGasError::ConsumedGasOverflow)?;
+        increase_precompile_consumed_gas(gas_for_call, MODEXP_STATIC_COST, consumed_gas)?;
         return Ok(Bytes::new());
     }
 
@@ -374,9 +379,7 @@ pub fn ecadd(
 ) -> Result<Bytes, VMError> {
     // If calldata does not reach the required length, we should fill the rest with zeros
     let calldata = fill_with_zeros(calldata, 128)?;
-
     increase_precompile_consumed_gas(gas_for_call, ECADD_COST, consumed_gas)?;
-
     let first_point_x = calldata
         .get(0..32)
         .ok_or(PrecompileError::ParsingInputError)?;
@@ -503,12 +506,178 @@ pub fn ecmul(
     }
 }
 
-fn ecpairing(
-    _calldata: &Bytes,
-    _gas_for_call: u64,
-    _consumed_gas: &mut u64,
+pub fn ecpairing(
+    calldata: &Bytes,
+    gas_for_call: u64,
+    consumed_gas: &mut u64,
 ) -> Result<Bytes, VMError> {
-    Ok(Bytes::new())
+    // The input must always be a multiple of 192 (6 32-byte values)
+    if calldata.len() % 192 != 0 {
+        return Err(VMError::PrecompileError(PrecompileError::ParsingInputError));
+    }
+
+    let inputs_amount = calldata.len() / 192;
+
+    // Consume gas
+    let gas_cost = gas_cost::ecpairing(inputs_amount)?;
+    increase_precompile_consumed_gas(gas_for_call, gas_cost, consumed_gas)?;
+
+    let mut mul: FieldElement<Degree12ExtensionField> = QuadraticExtensionFieldElement::one();
+    for input_index in 0..inputs_amount {
+        // Define the input indexes and slice calldata to get the input data
+        let input_start = input_index
+            .checked_mul(192)
+            .ok_or(InternalError::ArithmeticOperationOverflow)?;
+        let input_end = input_start
+            .checked_add(192)
+            .ok_or(InternalError::ArithmeticOperationOverflow)?;
+
+        let input_data = calldata
+            .get(input_start..input_end)
+            .ok_or(InternalError::SlicingError)?;
+
+        let first_point_x = input_data.get(..32).ok_or(InternalError::SlicingError)?;
+        let first_point_y = input_data.get(32..64).ok_or(InternalError::SlicingError)?;
+
+        // Infinite is defined by (0,0). Any other zero-combination is invalid
+        if (U256::from_big_endian(first_point_x) == U256::zero())
+            ^ (U256::from_big_endian(first_point_y) == U256::zero())
+        {
+            return Err(VMError::PrecompileError(PrecompileError::DefaultError));
+        }
+
+        let first_point_y = BN254FieldElement::from_bytes_be(first_point_y)
+            .map_err(|_| PrecompileError::DefaultError)?;
+        let first_point_x = BN254FieldElement::from_bytes_be(first_point_x)
+            .map_err(|_| PrecompileError::DefaultError)?;
+
+        let second_point_x_first_part =
+            input_data.get(96..128).ok_or(InternalError::SlicingError)?;
+        let second_point_x_second_part =
+            input_data.get(64..96).ok_or(InternalError::SlicingError)?;
+
+        // Infinite is defined by (0,0). Any other zero-combination is invalid
+        if (U256::from_big_endian(second_point_x_first_part) == U256::zero())
+            ^ (U256::from_big_endian(second_point_x_second_part) == U256::zero())
+        {
+            return Err(VMError::PrecompileError(PrecompileError::DefaultError));
+        }
+
+        let second_point_y_first_part = input_data
+            .get(160..192)
+            .ok_or(InternalError::SlicingError)?;
+        let second_point_y_second_part = input_data
+            .get(128..160)
+            .ok_or(InternalError::SlicingError)?;
+
+        // Infinite is defined by (0,0). Any other zero-combination is invalid
+        if (U256::from_big_endian(second_point_y_first_part) == U256::zero())
+            ^ (U256::from_big_endian(second_point_y_second_part) == U256::zero())
+        {
+            return Err(VMError::PrecompileError(PrecompileError::DefaultError));
+        }
+
+        let alt_bn128_prime = U256::from_str_radix(
+            "30644e72e131a029b85045b68181585d97816a916871ca8d3c208c16d87cfd47",
+            16,
+        )
+        .map_err(|_| InternalError::ConversionError)?;
+
+        // Check if the second point belongs to the curve (this happens if it's lower than the prime)
+        if U256::from_big_endian(second_point_x_first_part) >= alt_bn128_prime
+            || U256::from_big_endian(second_point_x_second_part) >= alt_bn128_prime
+            || U256::from_big_endian(second_point_y_first_part) >= alt_bn128_prime
+            || U256::from_big_endian(second_point_y_second_part) >= alt_bn128_prime
+        {
+            return Err(VMError::PrecompileError(PrecompileError::DefaultError));
+        }
+
+        let second_point_x_bytes = [second_point_x_first_part, second_point_x_second_part].concat();
+        let second_point_y_bytes = [second_point_y_first_part, second_point_y_second_part].concat();
+
+        let second_point_x: FieldElement<lambdaworks_math::elliptic_curve::short_weierstrass::curves::bn_254::field_extension::Degree2ExtensionField> = BN254TwistCurveFieldElement::from_bytes_be(&second_point_x_bytes)
+            .map_err(|_| PrecompileError::DefaultError)?;
+        let second_point_y = BN254TwistCurveFieldElement::from_bytes_be(&second_point_y_bytes)
+            .map_err(|_| PrecompileError::DefaultError)?;
+
+        let zero_element = BN254FieldElement::from(0);
+        let twcurve_zero_element = BN254TwistCurveFieldElement::from(0);
+        let first_point_is_infinity =
+            first_point_x.eq(&zero_element) && first_point_y.eq(&zero_element);
+        let second_point_is_infinity =
+            second_point_x.eq(&twcurve_zero_element) && second_point_y.eq(&twcurve_zero_element);
+
+        match (first_point_is_infinity, second_point_is_infinity) {
+            (true, true) => {
+                // If both points are infinity, then continue to the next input
+                continue;
+            }
+            (true, false) => {
+                // If the first point is infinity, then do the checks for the second
+                if let Ok(p2) = BN254TwistCurve::create_point_from_affine(
+                    second_point_x.clone(),
+                    second_point_y.clone(),
+                ) {
+                    if !p2.is_in_subgroup() {
+                        return Err(VMError::PrecompileError(PrecompileError::DefaultError));
+                    } else {
+                        continue;
+                    }
+                } else {
+                    return Err(VMError::PrecompileError(PrecompileError::DefaultError));
+                }
+            }
+            (false, true) => {
+                // If the second point is infinity, then do the checks for the first
+                if BN254Curve::create_point_from_affine(
+                    first_point_x.clone(),
+                    first_point_y.clone(),
+                )
+                .is_err()
+                {
+                    return Err(VMError::PrecompileError(PrecompileError::DefaultError));
+                }
+                continue;
+            }
+            (false, false) => {
+                // Define the pairing points
+                let first_point =
+                    BN254Curve::create_point_from_affine(first_point_x, first_point_y)
+                        .map_err(|_| PrecompileError::DefaultError)?;
+
+                let second_point =
+                    BN254TwistCurve::create_point_from_affine(second_point_x, second_point_y)
+                        .map_err(|_| PrecompileError::DefaultError)?;
+                if !second_point.is_in_subgroup() {
+                    return Err(VMError::PrecompileError(PrecompileError::DefaultError));
+                }
+
+                // Get the result of the pairing and affect the mul value with it
+                update_pairing_result(&mut mul, first_point, second_point)?;
+            }
+        }
+    }
+
+    // Generate the result from the variable mul
+    let success = mul.eq(&QuadraticExtensionFieldElement::one());
+    let mut result = [0; 32];
+    result[31] = u8::from(success);
+    Ok(Bytes::from(result.to_vec()))
+}
+
+/// I allow this clippy alert because lib handles mul for the type and will not panic in case of overflow
+#[allow(clippy::arithmetic_side_effects)]
+fn update_pairing_result(
+    mul: &mut FieldElement<Degree12ExtensionField>,
+    first_point: ShortWeierstrassProjectivePoint<BN254Curve>,
+    second_point: ShortWeierstrassProjectivePoint<BN254TwistCurve>,
+) -> Result<(), VMError> {
+    let pairing_result = BN254AtePairing::compute_batch(&[(&first_point, &second_point)])
+        .map_err(|_| PrecompileError::DefaultError)?;
+
+    *mul *= pairing_result;
+
+    Ok(())
 }
 
 // Message word schedule permutations for each round are defined by SIGMA constant.
