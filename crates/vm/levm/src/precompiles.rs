@@ -299,6 +299,9 @@ pub fn modexp(
         .checked_add(base_limit)
         .ok_or(InternalError::ArithmeticOperationOverflow)?;
 
+    let modulus_limit = m_size
+        .checked_add(exponent_limit)
+        .ok_or(InternalError::ArithmeticOperationOverflow)?;
     // The reason I use unwrap_or_default is to cover the case where calldata does not reach the required
     // length, so then we should fill the rest with zeros. The same is done in modulus parsing
     let b = get_slice_or_default(&calldata, 96, base_limit, b_size)?;
@@ -307,16 +310,15 @@ pub fn modexp(
     let e = get_slice_or_default(&calldata, base_limit, exponent_limit, e_size)?;
     let exponent = BigUint::from_bytes_be(&e);
 
-    let m = match calldata.get(exponent_limit..) {
-        Some(m) => {
-            let m_extended = fill_with_zeros(&Bytes::from(m.to_vec()), m_size)?;
-            m_extended.get(..m_size).unwrap_or_default().to_vec()
-        }
-        None => Default::default(),
-    };
+    let m = get_slice_or_default(&calldata, exponent_limit, modulus_limit, m_size)?;
     let modulus = BigUint::from_bytes_be(&m);
 
-    let gas_cost = gas_cost::modexp(&exponent, b_size, e_size, m_size)?;
+    // first 32 bytes of exponent or exponent if e_size < 32
+    let bytes_to_take = 32.min(e_size);
+    // Use of unwrap_or_default because if e == 0 get_slice_or_default returns an empty vec
+    let exp_first_32 = BigUint::from_bytes_be(e.get(0..bytes_to_take).unwrap_or_default());
+
+    let gas_cost = gas_cost::modexp(&exp_first_32, b_size, e_size, m_size)?;
     increase_precompile_consumed_gas(gas_for_call, gas_cost, consumed_gas)?;
 
     let result = mod_exp(base, exponent, modulus);
@@ -333,16 +335,17 @@ fn get_slice_or_default(
     upper_limit: usize,
     size_to_expand: usize,
 ) -> Result<Vec<u8>, VMError> {
-    match calldata.get(lower_limit..upper_limit) {
-        Some(e) => {
-            let e_extended = fill_with_zeros(&Bytes::from(e.to_vec()), size_to_expand)?;
-            Ok(e_extended
-                .get(..size_to_expand)
-                .unwrap_or_default()
-                .to_vec())
+    let upper_limit = calldata.len().min(upper_limit);
+    if let Some(data) = calldata.get(lower_limit..upper_limit) {
+        if !data.is_empty() {
+            let mut extended = vec![0u8; size_to_expand];
+            for (dest, data) in extended.iter_mut().zip(data.iter()) {
+                *dest = *data;
+            }
+            return Ok(extended);
         }
-        None => Ok(Default::default()),
     }
+    Ok(Default::default())
 }
 
 /// I allow this clippy alert because in the code modulus could never be
