@@ -332,16 +332,21 @@ fn get_slice_or_default(
     upper_limit: usize,
     size_to_expand: usize,
 ) -> Result<Vec<u8>, VMError> {
-    match calldata.get(lower_limit..upper_limit) {
-        Some(e) => {
-            let e_extended = fill_with_zeros(&Bytes::from(e.to_vec()), size_to_expand)?;
-            Ok(e_extended
-                .get(..size_to_expand)
-                .unwrap_or_default()
-                .to_vec())
+    let upper_limit = calldata.len().min(upper_limit);
+    if let Some(data) = calldata.get(lower_limit..upper_limit) {
+        if !data.is_empty() {
+            let mut extended = vec![0u8; size_to_expand];
+            if let Some(extend) = extended.get_mut(
+                0..upper_limit
+                    .checked_sub(lower_limit)
+                    .ok_or(InternalError::SlicingError)?,
+            ) {
+                extend.copy_from_slice(data);
+                return Ok(extended);
+            }
         }
-        None => Ok(Default::default()),
     }
+    Ok(Default::default())
 }
 
 /// I allow this clippy alert because in the code modulus could never be
