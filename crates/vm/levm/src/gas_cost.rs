@@ -812,7 +812,7 @@ pub fn identity(data_size: usize) -> Result<u64, VMError> {
 }
 
 pub fn modexp(
-    exponent: &BigUint,
+    exponent_first_32_bytes: &BigUint,
     base_size: usize,
     exponent_size: usize,
     modulus_size: usize,
@@ -836,8 +836,8 @@ pub fn modexp(
 
     let multiplication_complexity = words.checked_pow(2).ok_or(OutOfGasError::GasCostOverflow)?;
 
-    let iteration_count = if exponent_size <= 32 && *exponent != BigUint::ZERO {
-        exponent
+    let iteration_count = if exponent_size <= 32 && *exponent_first_32_bytes != BigUint::ZERO {
+        exponent_first_32_bytes
             .bits()
             .checked_sub(1)
             .ok_or(InternalError::ArithmeticOperationUnderflow)?
@@ -848,7 +848,7 @@ pub fn modexp(
         .checked_mul(8)
         .ok_or(OutOfGasError::GasCostOverflow)?;
         extra_size
-            .checked_add(exponent.bits().max(1))
+            .checked_add(exponent_first_32_bytes.bits().max(1))
             .ok_or(OutOfGasError::GasCostOverflow)?
             .checked_sub(1)
             .ok_or(InternalError::ArithmeticOperationUnderflow)?
