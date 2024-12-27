@@ -1,6 +1,7 @@
 use bytes::Bytes;
 use ethrex_core::{Address, H160, H256, U256};
 use keccak_hash::keccak256;
+use kzg_rs::{Bytes32, Bytes48, KzgSettings};
 use lambdaworks_math::{
     cyclic_group::IsGroup,
     elliptic_curve::{
@@ -696,12 +697,28 @@ fn kzg_commitment_to_versioned_hash(data: &[u8; 48]) -> H256 {
 }
 
 fn verify_kzg_proof(
-    _commitment_bytes: &[u8; 48],
-    _x: &[u8; 32],
-    _y: &[u8; 32],
-    _proof_bytes: &[u8; 48],
-) -> bool {
-    true
+    commitment_bytes: &[u8; 48],
+    x: &[u8; 32],
+    y: &[u8; 32],
+    proof_bytes: &[u8; 48],
+) -> Result<bool, VMError> {
+    let commitment_bytes =
+        Bytes48::from_slice(commitment_bytes).map_err(|_| PrecompileError::DefaultError)?;
+    let z_bytes = Bytes32::from_slice(x).map_err(|_| PrecompileError::DefaultError)?;
+    let y_bytes = Bytes32::from_slice(y).map_err(|_| PrecompileError::DefaultError)?;
+    let proof_bytes =
+        Bytes48::from_slice(proof_bytes).map_err(|_| PrecompileError::DefaultError)?;
+
+    let settings =
+        KzgSettings::load_trusted_setup_file().map_err(|_| PrecompileError::DefaultError)?;
+
+    kzg_rs::kzg_proof::KzgProof::verify_kzg_proof(
+        &commitment_bytes,
+        &z_bytes,
+        &y_bytes,
+        &proof_bytes,
+        &settings,
+    ).map_err(|_| VMError::PrecompileError(PrecompileError::DefaultError))
 }
 
 fn point_evaluation(
@@ -750,7 +767,7 @@ fn point_evaluation(
         return Err(VMError::PrecompileError(PrecompileError::ParsingInputError));
     }
 
-    if !verify_kzg_proof(&commitment_bytes, &x_bytes, &y_bytes, &proof_bytes) {
+    if !verify_kzg_proof(&commitment_bytes, &x_bytes, &y_bytes, &proof_bytes).unwrap_or(false) {
         return Err(VMError::PrecompileError(PrecompileError::ParsingInputError));
     }
 
