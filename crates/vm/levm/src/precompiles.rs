@@ -164,7 +164,12 @@ pub fn ecrecover(
 
     // Parse the input elements, first as a slice of bytes and then as an specific type of the crate
     let hash = calldata.get(0..32).ok_or(InternalError::SlicingError)?;
-    let message = Message::parse_slice(hash).map_err(|_| PrecompileError::ParsingInputError)?;
+    let message = match Message::parse_slice(hash) {
+        Ok(msg) => msg,
+        Err(_) => {
+            return Ok(Bytes::new());
+        }
+    };
 
     let v: U256 = calldata
         .get(32..64)
