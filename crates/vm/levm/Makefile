@@ -76,3 +76,11 @@ build-revm-comparison:
 		--bin levm_factorial \
 		--bin revm_fibonacci \
 		--bin levm_fibonacci
+
+###### Build Client with LEVM ######
+
+FEATURES := "--features ethrex-blockchain/default-levm,ethrex-vm/default-levm"
+
+build-image-levm: ## 🐳 Build the Docker image with LEVM features
+	cd ../../../ && \
+	docker build -t ethrex --build-arg CARGO_FEATURES=$(FEATURES) .
