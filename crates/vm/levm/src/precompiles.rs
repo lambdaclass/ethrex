@@ -794,6 +794,53 @@ fn blake2f_compress_f(
     Ok(output)
 }
 
+fn read_bytes_from_offset(calldata: &Bytes, offset: usize, index: usize) -> Result<u64, VMError> {
+    let index_start = (index
+        .checked_mul(8)
+        .ok_or(PrecompileError::ParsingInputError)?)
+    .checked_add(offset)
+    .ok_or(PrecompileError::ParsingInputError)?;
+    let index_end = index_start
+        .checked_add(8)
+        .ok_or(PrecompileError::ParsingInputError)?;
+
+    Ok(u64::from_le_bytes(
+        calldata
+            .get(index_start..index_end)
+            .ok_or(InternalError::SlicingError)?
+            .try_into()
+            .map_err(|_| PrecompileError::ParsingInputError)?,
+    ))
+}
+
+fn parse_slice_arguments(calldata: &Bytes) -> Result<([u64; 8], [u64; 16], [u64; 2]), VMError> {
+    let mut h = [0; 8];
+    for i in 0..8_usize {
+        let data_read = read_bytes_from_offset(calldata, 4, i)?;
+
+        let read_slice = h.get_mut(i).ok_or(InternalError::SlicingError)?;
+        *read_slice = data_read;
+    }
+
+    let mut m = [0; 16];
+    for i in 0..8_usize {
+        let data_read = read_bytes_from_offset(calldata, 68, i)?;
+
+        let read_slice = m.get_mut(i).ok_or(InternalError::SlicingError)?;
+        *read_slice = data_read;
+    }
+
+    let mut t = [0; 2];
+    for i in 0..2_usize {
+        let data_read = read_bytes_from_offset(calldata, 196, i)?;
+
+        let read_slice = t.get_mut(i).ok_or(InternalError::SlicingError)?;
+        *read_slice = data_read;
+    }
+    
+    Ok((h, m, t))
+}
+
 pub fn blake2f(
     calldata: &Bytes,
     gas_for_call: u64,
@@ -816,62 +863,7 @@ pub fn blake2f(
         u64::try_from(rounds).map_err(|_| InternalError::ConversionError)? * BLAKE2F_ROUND_COST;
     increase_precompile_consumed_gas(gas_for_call, gas_cost, consumed_gas)?;
 
-    let mut h = [0; 8];
-    for i in 0..8_usize {
-        let index_start = (i.checked_mul(8).ok_or(PrecompileError::ParsingInputError)?)
-            .checked_add(4)
-            .ok_or(PrecompileError::ParsingInputError)?;
-        let index_end = index_start
-            .checked_add(8)
-            .ok_or(PrecompileError::ParsingInputError)?;
-
-        let read_slice = h.get_mut(i).ok_or(InternalError::SlicingError)?;
-        *read_slice = u64::from_le_bytes(
-            calldata
-                .get(index_start..index_end)
-                .ok_or(InternalError::SlicingError)?
-                .try_into()
-                .map_err(|_| PrecompileError::ParsingInputError)?,
-        );
-    }
-
-    let mut m = [0; 16];
-    for i in 0..8_usize {
-        let index_start = (i.checked_mul(8).ok_or(PrecompileError::ParsingInputError)?)
-            .checked_add(68)
-            .ok_or(PrecompileError::ParsingInputError)?;
-        let index_end = index_start
-            .checked_add(8)
-            .ok_or(PrecompileError::ParsingInputError)?;
-
-        let read_slice = m.get_mut(i).ok_or(InternalError::SlicingError)?;
-        *read_slice = u64::from_le_bytes(
-            calldata
-                .get(index_start..index_end)
-                .ok_or(InternalError::SlicingError)?
-                .try_into()
-                .map_err(|_| PrecompileError::ParsingInputError)?,
-        );
-    }
-
-    let mut t = [0; 2];
-    for i in 0..2_usize {
-        let index_start = (i.checked_mul(8).ok_or(PrecompileError::ParsingInputError)?)
-            .checked_add(196)
-            .ok_or(PrecompileError::ParsingInputError)?;
-        let index_end = index_start
-            .checked_add(8)
-            .ok_or(PrecompileError::ParsingInputError)?;
-
-        let read_slice = t.get_mut(i).ok_or(InternalError::SlicingError)?;
-        *read_slice = u64::from_le_bytes(
-            calldata
-                .get(index_start..index_end)
-                .ok_or(InternalError::SlicingError)?
-                .try_into()
-                .map_err(|_| PrecompileError::ParsingInputError)?,
-        );
-    }
+    let (h, m, t) = parse_slice_arguments(calldata)?;
 
     let f = calldata.get(212).ok_or(InternalError::SlicingError)?;
     if *f != 0 && *f != 1 {
