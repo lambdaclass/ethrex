@@ -191,8 +191,12 @@ pub fn ecrecover(
 
     // signature is made up of the parameters r and s
     let sig = calldata.get(64..128).ok_or(InternalError::SlicingError)?;
-    let signature =
-        Signature::parse_standard_slice(sig).map_err(|_| PrecompileError::ParsingInputError)?;
+    let signature = match Signature::parse_standard_slice(sig) {
+        Ok(sig) => sig,
+        Err(_) => {
+            return Ok(Bytes::new());
+        }
+    };
 
     // Recover the address using secp256k1
     let mut public_key = match libsecp256k1::recover(&message, &signature, &recovery_id) {
