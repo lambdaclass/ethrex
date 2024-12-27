@@ -170,7 +170,7 @@ cfg_if::cfg_if! {
 
             let mut receipts = Vec::new();
             let mut cumulative_gas_used = 0;
-            let block_cache: CacheDB = HashMap::new();
+            let mut block_cache: CacheDB = HashMap::new();
 
             for tx in block.body.transactions.iter() {
                 let report = execute_tx_levm(tx, block_header, store_wrapper.clone(), block_cache.clone()).unwrap();
