@@ -29,11 +29,6 @@ $(STAMP_FILE): $(shell find crates cmd -type f -name '*.rs') Cargo.toml Dockerfi
 
 build-image: $(STAMP_FILE) ## 🐳 Build the Docker image
 
-FEATURES := "--features ethrex-blockchain/default-levm,ethrex-vm/default-levm"
-
-build-image-levm: ## 🐳 Build the Docker image with LEVM features
-	docker build -t ethrex --build-arg CARGO_FEATURES=$(FEATURES) .
-
 run-image: build-image ## 🏃 Run the Docker image
 	docker run --rm -p 127.0.0.1:8545:8545 ethrex --http.addr 0.0.0.0
 
@@ -114,7 +109,7 @@ run-hive: build-image setup-hive ## 🧪 Run Hive testing suite
 	cd hive && ./hive --sim $(SIMULATION) --client ethrex --sim.limit "$(TEST_PATTERN)"
 
 run-hive-debug: build-image setup-hive ## 🐞 Run Hive testing suite in debug mode
-	cd hive && ./hive --sim $(SIMULATION) --client ethrex --sim.parallelism 16 --sim.limit "$(TEST_PATTERN)" --docker.output
+	cd hive && ./hive --sim $(SIMULATION) --client ethrex --sim.limit "$(TEST_PATTERN)" --docker.output
 
 clean-hive-logs: ## 🧹 Clean Hive logs
 	rm -rf ./hive/workspace/logs
