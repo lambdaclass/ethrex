@@ -187,6 +187,8 @@ pub const ECMUL_COST: u64 = 6000;
 pub const ECPAIRING_BASE_COST: u64 = 45000;
 pub const ECPAIRING_GROUP_COST: u64 = 34000;
 
+pub const BLAKE2F_ROUND_COST: u64 = 1;
+
 pub fn exp(exponent: U256) -> Result<u64, VMError> {
     let exponent_byte_size = (exponent
         .bits()
