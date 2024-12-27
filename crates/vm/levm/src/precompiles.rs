@@ -709,14 +709,14 @@ fn verify_kzg_proof(
     proof_bytes: &[u8; 48],
 ) -> Result<bool, VMError> {
     let commitment_bytes =
-        Bytes48::from_slice(commitment_bytes).map_err(|_| PrecompileError::DefaultError)?;
-    let z_bytes = Bytes32::from_slice(x).map_err(|_| PrecompileError::DefaultError)?;
-    let y_bytes = Bytes32::from_slice(y).map_err(|_| PrecompileError::DefaultError)?;
+        Bytes48::from_slice(commitment_bytes).map_err(|_| PrecompileError::EvaluationError)?; // Could be ParsingInputError
+    let z_bytes = Bytes32::from_slice(x).map_err(|_| PrecompileError::EvaluationError)?;
+    let y_bytes = Bytes32::from_slice(y).map_err(|_| PrecompileError::EvaluationError)?;
     let proof_bytes =
-        Bytes48::from_slice(proof_bytes).map_err(|_| PrecompileError::DefaultError)?;
+        Bytes48::from_slice(proof_bytes).map_err(|_| PrecompileError::EvaluationError)?;
 
     let settings =
-        KzgSettings::load_trusted_setup_file().map_err(|_| PrecompileError::DefaultError)?;
+        KzgSettings::load_trusted_setup_file().map_err(|_| PrecompileError::EvaluationError)?;
 
     kzg_rs::kzg_proof::KzgProof::verify_kzg_proof(
         &commitment_bytes,
@@ -725,7 +725,7 @@ fn verify_kzg_proof(
         &proof_bytes,
         &settings,
     )
-    .map_err(|_| VMError::PrecompileError(PrecompileError::DefaultError))
+    .map_err(|_| VMError::PrecompileError(PrecompileError::EvaluationError))
 }
 
 fn point_evaluation(
