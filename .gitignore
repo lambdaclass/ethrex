@@ -49,7 +49,7 @@ levm_ef_tests_summary_github.txt
 levm_ef_tests_summary.txt
 
 results.md
-loc_report
+loc_report.md
 loc_report_slack.txt
 loc_report_github.txt
 loc_report.json
