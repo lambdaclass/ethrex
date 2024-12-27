@@ -358,7 +358,7 @@ fn import_blocks(store: &Store, blocks: &Vec<Block>) {
         let hash = last_block.hash();
         cfg_if::cfg_if! {
             if #[cfg(feature = "levm")] {
-                // We are allowing this not to unwrap so that execution doesn't panic if a block is not executed correctly and the tests run anyway
+                // We are allowing this not to unwrap so that tests can run even if block execution results in the wrong root hash with LEVM.
                 let _ = apply_fork_choice(store, hash, hash, hash);
             }
             else {
