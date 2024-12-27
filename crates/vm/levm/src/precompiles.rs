@@ -733,48 +733,56 @@ fn point_evaluation(
     if calldata.len() != 192 {
         return Err(VMError::PrecompileError(PrecompileError::ParsingInputError));
     }
+
+    // Consume gas
     let gas_cost = 50000;
     increase_precompile_consumed_gas(gas_for_call, gas_cost, consumed_gas)?;
 
+    // Parse inputs
     let hash = calldata
         .get(..32)
         .ok_or(PrecompileError::ParsingInputError)?;
-    let mut hash_bytes = [0_u8; 32];
+    let mut hash_bytes = [0; 32];
     hash_bytes.copy_from_slice(hash);
     let versioned_hash = H256::from(hash_bytes);
 
     let x = calldata
         .get(32..64)
         .ok_or(PrecompileError::ParsingInputError)?;
-    let mut x_bytes = [0_u8; 32];
+    let mut x_bytes = [0; 32];
     x_bytes.copy_from_slice(x);
 
     let y = calldata
         .get(64..96)
         .ok_or(PrecompileError::ParsingInputError)?;
-    let mut y_bytes = [0_u8; 32];
+    let mut y_bytes = [0; 32];
     y_bytes.copy_from_slice(y);
 
     let commitment = calldata
         .get(96..144)
         .ok_or(PrecompileError::ParsingInputError)?;
-    let mut commitment_bytes = [0_u8; 48];
+    let mut commitment_bytes = [0; 48];
     commitment_bytes.copy_from_slice(commitment);
 
     let proof = calldata
         .get(144..192)
         .ok_or(PrecompileError::ParsingInputError)?;
-    let mut proof_bytes = [0_u8; 48];
+    let mut proof_bytes = [0; 48];
     proof_bytes.copy_from_slice(proof);
 
+    // Perform the evaluation
+
+    // This checks if the commitment is equal to the versioned hash
     if kzg_commitment_to_versioned_hash(&commitment_bytes) != versioned_hash {
         return Err(VMError::PrecompileError(PrecompileError::ParsingInputError));
     }
 
+    // This verifies the proof from a point (x, y) and a commitment
     if !verify_kzg_proof(&commitment_bytes, &x_bytes, &y_bytes, &proof_bytes).unwrap_or(false) {
         return Err(VMError::PrecompileError(PrecompileError::ParsingInputError));
     }
 
+    // Create the output (it's always the same)
     let mut output: Vec<u8> = Vec::new();
 
     let field_elem_u256 = U256::from_dec_str("4096").unwrap_or_default();
