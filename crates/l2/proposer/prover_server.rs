@@ -646,7 +646,7 @@ impl ProverServer {
 
     pub async fn main_logic_dev(&self) -> Result<(), ProverServerError> {
         loop {
-            thread::sleep(Duration::from_millis(200));
+            thread::sleep(Duration::from_millis(1000));
 
             let last_committed_block = EthClient::get_last_committed_block(
                 &self.eth_client,
@@ -660,17 +660,12 @@ impl ProverServer {
             )
             .await?;
 
-            if last_committed_block == u64::MAX {
-                debug!("No blocks commited yet");
-                continue;
-            }
+            info!("Last committed: {last_committed_block} - Last verified: {last_verified_block}");
 
             if last_committed_block == last_verified_block {
-                debug!("No new blocks to prove");
+                warn!("No new blocks to prove");
                 continue;
             }
-
-            info!("Last committed: {last_committed_block} - Last verified: {last_verified_block}");
 
             // IOnChainProposer
             // function verify(uint256,bytes,bytes32,bytes32,bytes32,bytes,bytes)
@@ -702,14 +697,18 @@ impl ProverServer {
             // offset of first bytes parameter
             calldata.extend(H256::from_low_u64_be(7 * 32).as_bytes());
             // extend with bytes32, bytes32, bytes32
-            for _ in 0..=3 {
-                calldata.extend(H256::zero().as_bytes());
-            }
+            calldata.extend(H256::zero().as_bytes());
+            calldata.extend(H256::zero().as_bytes());
+            calldata.extend(H256::zero().as_bytes());
             // offset of second bytes parameter
-            calldata.extend(H256::zero().as_bytes());
+            calldata.extend(H256::from_low_u64_be(9 * 32).as_bytes());
             // offset of third bytes parameter
+            calldata.extend(H256::from_low_u64_be(11 * 32).as_bytes());
+            // extend with size and bytes
+            calldata.extend(H256::from_low_u64_be(32).as_bytes());
             calldata.extend(H256::zero().as_bytes());
-            // extend with size of the third bytes variable -> 32bytes
+            calldata.extend(H256::from_low_u64_be(32).as_bytes());
+            calldata.extend(H256::zero().as_bytes());
             calldata.extend(H256::from_low_u64_be(32).as_bytes());
             calldata.extend(H256::zero().as_bytes());
 

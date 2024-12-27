@@ -219,11 +219,21 @@ async fn main() {
             let authrpc_jwtsecret = std::fs::read(authrpc_jwtsecret).expect("Failed to read JWT secret");
             let head_block_hash = {
                 let current_block_number = store.get_latest_block_number().unwrap();
-                store.get_canonical_block_hash(current_block_number).unwrap().unwrap()
+                store
+                    .get_canonical_block_hash(current_block_number)
+                    .unwrap()
+                    .unwrap()
             };
             let max_tries = 3;
             let url = format!("http://{authrpc_socket_addr}");
-            let block_producer_engine = ethrex_dev::block_producer::start_block_producer(url, authrpc_jwtsecret.into(), head_block_hash, max_tries, 1000, ethrex_core::Address::default());
+            let block_producer_engine = ethrex_dev::block_producer::start_block_producer(
+                url,
+                authrpc_jwtsecret.into(),
+                head_block_hash,
+                max_tries,
+                1000,
+                ethrex_core::Address::default(),
+            );
             tracker.spawn(block_producer_engine);
         } else {
             let networking = ethrex_net::start_network(

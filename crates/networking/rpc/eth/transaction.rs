@@ -474,6 +474,7 @@ impl RpcHandler for EstimateGasRequest {
 
         // Prepare binary search
         let mut highest_gas_limit = match transaction.gas {
+            Some(0) => block_header.gas_limit,
             Some(gas) => gas.min(block_header.gas_limit),
             None => block_header.gas_limit,
         };
@@ -539,7 +540,12 @@ fn recap_with_account_balances(
         .unwrap_or_default();
     let account_gas =
         account_balance.saturating_sub(transaction.value) / U256::from(transaction.gas_price);
-    Ok(highest_gas_limit.min(account_gas.as_u64()))
+    let account_gas = if account_gas > u64::MAX.into() {
+        u64::MAX
+    } else {
+        account_gas.as_u64()
+    };
+    Ok(highest_gas_limit.min(account_gas))
 }
 
 fn simulate_tx(
