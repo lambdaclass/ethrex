@@ -1,18 +1,10 @@
 name: Daily Reports Hive LEVM
 
 on:
-  push:
-    branches: ["main"]
-  merge_group:
-  pull_request:
-    branches: ["**"]
-
-# Uncomment this after testing
-# on:
-#   schedule:
-#     # Every day at UTC midnight
-#     - cron: "0 0 * * 1,2,3,4,5"
-#   workflow_dispatch:
+  schedule:
+    # Every day at UTC midnight
+    - cron: "0 0 * * 1,2,3,4,5"
+  workflow_dispatch:
 
 env:
   RUST_VERSION: 1.81.0
@@ -88,12 +80,13 @@ jobs:
           echo "# LEVM Hive coverage report" >> $GITHUB_STEP_SUMMARY
           cat results.md >> $GITHUB_STEP_SUMMARY
 
-      # - name: Post results to levm slack channel
-      #   env:
-      #     url: ${{ secrets.LEVM_SLACK_WEBHOOK }}
-      #   run: sh .github/scripts/publish_levm_hive.sh
-
-      - name: Post results to test channel for debugging
+      - name: Post results to levm slack channel
         env:
-          url: ${{ secrets.TEST_CHANNEL_SLACK }}
+          url: ${{ secrets.LEVM_SLACK_WEBHOOK }}
         run: sh .github/scripts/publish_levm_hive.sh
+
+      # Note: Leave this commented, as it is for testing purposes.
+      # - name: Post results to test channel for debugging
+      #   env:
+      #     url: ${{ secrets.TEST_CHANNEL_SLACK }}
+      #   run: sh .github/scripts/publish_levm_hive.sh
