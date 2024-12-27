@@ -21,6 +21,7 @@ ripemd = "0.1.3"
 num-bigint = "0.4.5"
 lambdaworks-math = "0.11.0"
 k256 = { version = "0.13.3", features = ["ecdh"] }
+kzg-rs = "0.2.3"
 
 [dev-dependencies]
 hex = "0.4.3"
