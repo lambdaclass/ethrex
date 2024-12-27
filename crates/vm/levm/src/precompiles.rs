@@ -85,6 +85,8 @@ pub const PRECOMPILES: [H160; 10] = [
     POINT_EVALUATION_ADDRESS,
 ];
 
+pub const BLAKE2F_ELEMENT_SIZE: usize = 8;
+
 pub fn is_precompile(callee_address: &Address) -> bool {
     PRECOMPILES.contains(callee_address)
 }
@@ -794,14 +796,15 @@ fn blake2f_compress_f(
     Ok(output)
 }
 
+// Reads a part of the calldata and returns what is read as u64 or an error
 fn read_bytes_from_offset(calldata: &Bytes, offset: usize, index: usize) -> Result<u64, VMError> {
     let index_start = (index
-        .checked_mul(8)
+        .checked_mul(BLAKE2F_ELEMENT_SIZE)
         .ok_or(PrecompileError::ParsingInputError)?)
     .checked_add(offset)
     .ok_or(PrecompileError::ParsingInputError)?;
     let index_end = index_start
-        .checked_add(8)
+        .checked_add(BLAKE2F_ELEMENT_SIZE)
         .ok_or(PrecompileError::ParsingInputError)?;
 
     Ok(u64::from_le_bytes(
@@ -813,7 +816,9 @@ fn read_bytes_from_offset(calldata: &Bytes, offset: usize, index: usize) -> Resu
     ))
 }
 
-fn parse_slice_arguments(calldata: &Bytes) -> Result<([u64; 8], [u64; 16], [u64; 2]), VMError> {
+type SliceArguments = ([u64; 8], [u64; 16], [u64; 2]);
+
+fn parse_slice_arguments(calldata: &Bytes) -> Result<SliceArguments, VMError> {
     let mut h = [0; 8];
     for i in 0..8_usize {
         let data_read = read_bytes_from_offset(calldata, 4, i)?;
@@ -837,7 +842,7 @@ fn parse_slice_arguments(calldata: &Bytes) -> Result<([u64; 8], [u64; 16], [u64;
         let read_slice = t.get_mut(i).ok_or(InternalError::SlicingError)?;
         *read_slice = data_read;
     }
-    
+
     Ok((h, m, t))
 }
 
