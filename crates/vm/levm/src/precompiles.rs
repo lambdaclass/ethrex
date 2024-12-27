@@ -828,7 +828,7 @@ fn parse_slice_arguments(calldata: &Bytes) -> Result<SliceArguments, VMError> {
     }
 
     let mut m = [0; 16];
-    for i in 0..8_usize {
+    for i in 0..16_usize {
         let data_read = read_bytes_from_offset(calldata, 68, i)?;
 
         let read_slice = m.get_mut(i).ok_or(InternalError::SlicingError)?;
