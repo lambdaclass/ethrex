@@ -203,6 +203,25 @@ impl StoreEngine for RedBStore {
         )
     }
 
+    fn add_block_headers(
+        &self,
+        block_hashes: Vec<BlockHash>,
+        block_headers: Vec<BlockHeader>,
+    ) -> Result<(), StoreError> {
+        let key_values = block_hashes
+            .into_iter()
+            .zip(block_bodies.into_iter())
+            .enumerate()
+            .map(|(hash, header)| {
+                (
+                    <H256 as Into<BlockHashRLP>>::into(hash),
+                    <BlockHeader as Into<BlockHeaderRLP>>::into(header),
+                )
+            })
+            .collect();
+        self.write_batch(HEADERS_TABLE, key_values)
+    }
+
     fn get_block_header(
         &self,
         block_number: BlockNumber,

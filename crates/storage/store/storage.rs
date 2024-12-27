@@ -139,6 +139,14 @@ impl Store {
         self.engine.add_block_header(block_hash, block_header)
     }
 
+    pub fn add_block_headers(
+        &self,
+        block_hashes: Vec<BlockHash>,
+        block_headers: Vec<BlockHeader>,
+    ) -> Result<(), StoreError> {
+        self.engine.add_block_headers(block_hashes, block_headers)
+    }
+
     pub fn get_block_header(
         &self,
         block_number: BlockNumber,

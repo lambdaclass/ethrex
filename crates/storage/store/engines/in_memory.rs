@@ -100,6 +100,17 @@ impl StoreEngine for Store {
         Ok(())
     }
 
+    fn add_block_headers(
+        &self,
+        block_hashes: Vec<BlockHash>,
+        block_headers: Vec<BlockHeader>,
+    ) -> Result<(), StoreError> {
+        self.inner()
+            .headers
+            .extend(block_hashes.into_iter().zip(block_headers.into_iter()));
+        Ok(())
+    }
+
     fn add_block_body(
         &self,
         block_hash: BlockHash,
