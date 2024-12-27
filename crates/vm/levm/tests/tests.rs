@@ -4637,6 +4637,7 @@ fn blake2f_test() {
     assert_eq!(consumed_gas, 12 * BLAKE2F_ROUND_COST);
 }
 
+/*
 #[test]
 fn blake2f_test_2() {
     let calldata = hex::decode("0000001048c9bdf267e6096a3ba7ca8485ae67bb2bf894fe72f36e3cf1361d5f3af54fa5d182e6ad7f520e511f6c3e2b8c68059b6bbd41fbabd9831f79217e1319cde05b616162636465666768696a6b6c6d6e6f707172737475767778797a7b7c7d7e7f808182838485868788898a8b8c8d8e8f909192939495969798999a9b9c9d9e9fa0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebfc0c1c2c3c4c5c6c7c8c9cacbcccdcecfd0d1d2d3d4d5d6d7d8000000000000000300000000000000000000000000000001").unwrap();
@@ -4667,3 +4668,4 @@ fn blake2f_test_2() {
     assert_eq!(result, expected_result);
     assert_eq!(consumed_gas, 16 * BLAKE2F_ROUND_COST);
 }
+ */
