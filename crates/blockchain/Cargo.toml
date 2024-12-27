@@ -28,10 +28,10 @@ path = "./blockchain.rs"
 
 [features]
 default = ["c-kzg"]
+levm = ["default", "ethrex-vm/levm"]
 libmdbx = [
     "ethrex-core/libmdbx",
     "ethrex-storage/default",
     "ethrex-vm/libmdbx",
 ]
-levm = ["ethrex-vm/levm"]
 c-kzg =["ethrex-core/c-kzg"]
