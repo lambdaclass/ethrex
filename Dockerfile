@@ -21,8 +21,10 @@ COPY --from=planner /ethrex/recipe.json recipe.json
 # Build dependencies only, these remained cached
 RUN cargo chef cook --release --recipe-path recipe.json
 
+# Set up a build argument for optional features
+ARG CARGO_FEATURES=""
 COPY . .
-RUN cargo build --release --features "ethrex-blockchain/default-levm,ethrex-vm/default-levm"
+RUN cargo build --release $CARGO_FEATURES
 
 FROM ubuntu:24.04
 WORKDIR /usr/local/bin

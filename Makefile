@@ -29,6 +29,11 @@ $(STAMP_FILE): $(shell find crates cmd -type f -name '*.rs') Cargo.toml Dockerfi
 
 build-image: $(STAMP_FILE) ## 🐳 Build the Docker image
 
+FEATURES := "--features ethrex-blockchain/default-levm,ethrex-vm/default-levm"
+
+build-image-levm: ## 🐳 Build the Docker image with LEVM features
+	docker build -t ethrex-levm --build-arg CARGO_FEATURES=$(FEATURES) .
+
 run-image: build-image ## 🏃 Run the Docker image
 	docker run --rm -p 127.0.0.1:8545:8545 ethrex --http.addr 0.0.0.0
 

@@ -29,8 +29,8 @@ jobs:
       - name: Setup Go
         uses: actions/setup-go@v5
 
-      - name: Build image
-        run: make build-image
+      - name: Build Image with LEVM
+        run: make build-image-levm
 
       - name: Setup Hive
         run: make setup-hive
