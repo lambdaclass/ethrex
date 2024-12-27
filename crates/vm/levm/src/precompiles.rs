@@ -26,7 +26,7 @@ use sha3::Digest;
 use crate::{
     call_frame::CallFrame,
     constants::VERSIONED_HASH_VERSION_KZG,
-    errors::{InternalError, OutOfGasError, PrecompileError, VMError},
+    errors::{InternalError, PrecompileError, VMError},
     gas_cost::{self, ECADD_COST, ECMUL_COST, ECRECOVER_COST, MODEXP_STATIC_COST},
 };
 
@@ -165,7 +165,9 @@ pub fn ecrecover(
 
     // Parse the input elements, first as a slice of bytes and then as an specific type of the crate
     let hash = calldata.get(0..32).ok_or(InternalError::SlicingError)?;
-    let message = Message::parse_slice(hash).map_err(|_| PrecompileError::ParsingInputError)?;
+    let Ok(message) = Message::parse_slice(hash) else {
+        return Ok(Bytes::new());
+    };
 
     let v: U256 = calldata
         .get(32..64)
@@ -178,26 +180,22 @@ pub fn ecrecover(
     }
 
     let v = u8::try_from(v).map_err(|_| InternalError::ConversionError)?;
-    let recovery_id = match RecoveryId::parse_rpc(v) {
-        Ok(id) => id,
-        Err(_) => {
-            return Ok(Bytes::new());
-        }
+    let Ok(recovery_id) = RecoveryId::parse_rpc(v) else {
+        return Ok(Bytes::new());
     };
 
     // signature is made up of the parameters r and s
     let sig = calldata.get(64..128).ok_or(InternalError::SlicingError)?;
-    let signature =
-        Signature::parse_standard_slice(sig).map_err(|_| PrecompileError::ParsingInputError)?;
+    let Ok(signature) = Signature::parse_standard_slice(sig) else {
+        return Ok(Bytes::new());
+    };
 
     // Recover the address using secp256k1
-    let mut public_key = match libsecp256k1::recover(&message, &signature, &recovery_id) {
-        Ok(id) => id,
-        Err(_) => {
-            return Ok(Bytes::new());
-        }
-    }
-    .serialize();
+    let Ok(public_key) = libsecp256k1::recover(&message, &signature, &recovery_id) else {
+        return Ok(Bytes::new());
+    };
+
+    let mut public_key = public_key.serialize();
 
     // We need to take the 64 bytes from the public key (discarding the first pos of the slice)
     keccak256(&mut public_key[1..65]);
@@ -280,9 +278,7 @@ pub fn modexp(
         .into();
 
     if b_size == U256::zero() && m_size == U256::zero() {
-        *consumed_gas = consumed_gas
-            .checked_add(MODEXP_STATIC_COST)
-            .ok_or(OutOfGasError::ConsumedGasOverflow)?;
+        increase_precompile_consumed_gas(gas_for_call, MODEXP_STATIC_COST, consumed_gas)?;
         return Ok(Bytes::new());
     }
 

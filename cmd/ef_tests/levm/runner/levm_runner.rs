@@ -381,7 +381,7 @@ pub fn get_state_transitions(
 
         let account_update = AccountUpdate {
             address: *new_state_account_address,
-            removed: false,
+            removed: new_state_account.is_empty(),
             info: Some(AccountInfo {
                 code_hash: code_hash(&new_state_account.info.bytecode),
                 balance: new_state_account.info.balance,
