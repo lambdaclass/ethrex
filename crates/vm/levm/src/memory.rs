@@ -167,10 +167,7 @@ pub fn try_copy_within(
 
 /// When a memory expansion is triggered, only the additional bytes of memory
 /// must be paid for.
-pub fn expansion_cost(
-    new_memory_size: usize,
-    current_memory_size: usize,
-) -> Result<usize, VMError> {
+pub fn expansion_cost(new_memory_size: usize, current_memory_size: usize) -> Result<u64, VMError> {
     let cost = if new_memory_size <= current_memory_size {
         0
     } else {
@@ -182,7 +179,7 @@ pub fn expansion_cost(
 }
 
 /// The total cost for a given memory size.
-fn cost(memory_size: usize) -> Result<usize, VMError> {
+fn cost(memory_size: usize) -> Result<u64, VMError> {
     let memory_size_word = memory_size
         .checked_add(
             WORD_SIZE_IN_BYTES_USIZE
@@ -192,7 +189,7 @@ fn cost(memory_size: usize) -> Result<usize, VMError> {
         .ok_or(OutOfGasError::MemoryExpansionCostOverflow)?
         / WORD_SIZE_IN_BYTES_USIZE;
 
-    Ok(memory_size_word
+    let gas_cost = memory_size_word
         .checked_pow(2)
         .ok_or(OutOfGasError::MemoryExpansionCostOverflow)?
         .checked_div(MEMORY_EXPANSION_QUOTIENT)
@@ -202,7 +199,9 @@ fn cost(memory_size: usize) -> Result<usize, VMError> {
                 .checked_mul(memory_size_word)
                 .ok_or(OutOfGasError::MemoryExpansionCostOverflow)?,
         )
-        .ok_or(OutOfGasError::MemoryExpansionCostOverflow)?)
+        .ok_or(OutOfGasError::MemoryExpansionCostOverflow)?;
+
+    gas_cost.try_into().map_err(|_| VMError::VeryLargeNumber)
 }
 
 pub fn calculate_memory_size(offset: U256, size: usize) -> Result<usize, VMError> {

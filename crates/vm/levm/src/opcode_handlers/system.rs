@@ -173,10 +173,8 @@ impl VM {
 
         let new_memory_size = calculate_memory_size(offset, size)?;
 
-        let memory_expansion_cost: u64 =
-            memory::expansion_cost(new_memory_size, current_call_frame.memory.len())?
-                .try_into()
-                .map_err(|_err| VMError::Internal(InternalError::ConversionError))?;
+        let memory_expansion_cost =
+            memory::expansion_cost(new_memory_size, current_call_frame.memory.len())?;
 
         self.increase_consumed_gas(current_call_frame, memory_expansion_cost)?;
 
@@ -409,9 +407,7 @@ impl VM {
         let new_memory_size = calculate_memory_size(offset, size)?;
 
         let memory_expansion_cost: u64 =
-            memory::expansion_cost(new_memory_size, current_call_frame.memory.len())?
-                .try_into()
-                .map_err(|_err| VMError::Internal(InternalError::ConversionError))?;
+            memory::expansion_cost(new_memory_size, current_call_frame.memory.len())?;
 
         self.increase_consumed_gas(current_call_frame, memory_expansion_cost)?;
 
