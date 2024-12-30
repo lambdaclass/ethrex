@@ -96,7 +96,7 @@ flamegraph-run-ef-tests:
 	mkdir -p levm_ef_test_flamegraph/flamegraph ||:
 	@for dir in $(SUBDIRS); do\
 		CARGO_PROFILE_RELEASE_DEBUG=true cargo flamegraph --root \
-		--output ../../../cmd/ef_tests/levm/levm_ef_test_flamegraph/$$dir.svg\
+		--output ../../../cmd/ef_tests/levm/levm_ef_test_flamegraph/flamegraph/$$dir.svg\
 		-p ef_tests-levm --test ef_tests_levm -- --summary --tests $$dir;\
 	done
 
