@@ -32,6 +32,10 @@ pub struct Risc0ContractData {
 }
 
 impl Risc0Proof {
+    // 8 times u32
+    const IMAGE_ID_SIZE: usize = 8;
+    // 4 times u8
+    const SELECTOR_SIZE: usize = 4;
     pub fn new(receipt: risc0_zkvm::Receipt, prover_id: Vec<u32>) -> Self {
         Risc0Proof {
             receipt: Box::new(receipt),
@@ -47,22 +51,25 @@ impl Risc0Proof {
         let block_proof = match self.receipt.inner.groth16() {
             Ok(inner) => {
                 // The SELECTOR is used to perform an extra check inside the groth16 verifier contract.
-                let mut selector =
-                    hex::encode(inner.verifier_parameters.as_bytes().get(..4).ok_or(
-                        ProverServerError::Custom(
+                let mut selector = hex::encode(
+                    inner
+                        .verifier_parameters
+                        .as_bytes()
+                        .get(..Self::SELECTOR_SIZE)
+                        .ok_or(ProverServerError::Custom(
                             "Failed to get verify_proof_selector in send_proof()".to_owned(),
-                        ),
-                    )?);
+                        ))?,
+                );
                 let seal = hex::encode(inner.clone().seal);
                 selector.push_str(&seal);
                 hex::decode(selector).map_err(|e| {
                     ProverServerError::Custom(format!("Failed to hex::decode(selector): {e}"))
                 })?
             }
-            Err(_) => vec![32; 0],
+            Err(_) => vec![0u8; 4],
         };
 
-        let mut image_id: [u32; 8] = [0; 8];
+        let mut image_id = [0_u32; Self::SELECTOR_SIZE];
         for (i, b) in image_id.iter_mut().enumerate() {
             *b = *self.prover_id.get(i).ok_or(ProverServerError::Custom(
                 "Failed to get image_id in handle_proof_submission()".to_owned(),

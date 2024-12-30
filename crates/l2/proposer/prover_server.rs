@@ -350,10 +350,7 @@ impl ProverServer {
     ) -> Result<(), ProverServerError> {
         debug!("Request received");
 
-        let latest_block_number = self
-            .store
-            .get_latest_block_number()?
-            .ok_or(ProverServerError::StorageDataIsNone)?;
+        let latest_block_number = self.store.get_latest_block_number()?;
 
         let response = if block_number > latest_block_number {
             let response = ProofData::response(None, None);
@@ -504,7 +501,7 @@ impl ProverServer {
                 })?;
 
         let calldata_len: u64 = (calldata.len()).try_into().map_err(|err| {
-            ProverServerError::Custom(format!("calldata length does not fit in u64: {}", err))
+            ProverServerError::Custom(format!("calldata length does not fit in u64: {err}"))
         })?;
 
         let leading_zeros_after_block_proof: u64 =
@@ -512,8 +509,7 @@ impl ProverServer {
                 .try_into()
                 .map_err(|err| {
                     ProverServerError::Custom(format!(
-                        "calculate_padding length does not fit in u64: {}",
-                        err
+                        "calculate_padding length does not fit in u64: {err}"
                     ))
                 })?;
 
@@ -532,8 +528,7 @@ impl ProverServer {
                 .try_into()
                 .map_err(|err| {
                     ProverServerError::Custom(format!(
-                        "public_values length does not fit in u64: {}",
-                        err
+                        "public_values length does not fit in u64: {err}"
                     ))
                 })?;
 
@@ -541,8 +536,7 @@ impl ProverServer {
             .try_into()
             .map_err(|err| {
                 ProverServerError::Custom(format!(
-                    "calculate_padding length does not fit in u64: {}",
-                    err
+                    "calculate_padding length does not fit in u64: {err}"
                 ))
             })?;
 

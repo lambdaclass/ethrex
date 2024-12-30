@@ -234,6 +234,26 @@ make run-hive-debug SIMULATION=ethereum/rpc-compat TEST_PATTERN="*"
 ```
 This example runs **every** test under rpc, with debug output
 
+###### Assertoor
+
+We run some assertoot checks on our CI, to execute them locally you can run the following:
+```bash
+make localnet-assertoor-tx
+# or
+make localnet-assertoor-blob
+```
+
+Those are two different set of assertoor checks the details are as follows:
+
+*assertoor-tx*
+- [eoa-transaction-test](https://raw.githubusercontent.com/ethpandaops/assertoor/refs/heads/master/playbooks/stable/eoa-transactions-test.yaml)
+
+*assertoor-blob*
+- [blob-transaction-test](https://raw.githubusercontent.com/ethpandaops/assertoor/refs/heads/master/playbooks/stable/blob-transactions-test.yaml)
+- _Custom_ [el-stability-check](https://raw.githubusercontent.com/lambdaclass/ethrex/refs/heads/main/.github/config/assertoor/el-stability-check.yaml)
+
+For reference on each individual check see the [assertoor-wiki](https://github.com/ethpandaops/assertoor/wiki#supported-tasks-in-assertoor)
+
 ### Run
 
 Example run:

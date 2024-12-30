@@ -2,8 +2,9 @@ use crate::{
     deserialize::{
         deserialize_access_lists, deserialize_ef_post_value_indexes,
         deserialize_h256_vec_optional_safe, deserialize_hex_bytes, deserialize_hex_bytes_vec,
-        deserialize_u256_optional_safe, deserialize_u256_safe,
-        deserialize_u256_valued_hashmap_safe, deserialize_u256_vec_safe,
+        deserialize_transaction_expected_exception, deserialize_u256_optional_safe,
+        deserialize_u256_safe, deserialize_u256_valued_hashmap_safe, deserialize_u256_vec_safe,
+        deserialize_u64_safe, deserialize_u64_vec_safe,
     },
     report::TestVector,
 };
@@ -61,7 +62,7 @@ impl From<&EFTest> for Genesis {
             },
             coinbase: test.env.current_coinbase,
             difficulty: test.env.current_difficulty,
-            gas_limit: test.env.current_gas_limit.as_u64(),
+            gas_limit: test.env.current_gas_limit,
             mix_hash: test.env.current_random.unwrap_or_default(),
             timestamp: test.env.current_timestamp.as_u64(),
             base_fee_per_gas: test.env.current_base_fee.map(|v| v.as_u64()),
@@ -99,8 +100,8 @@ pub struct EFTestEnv {
     pub current_difficulty: U256,
     #[serde(default, deserialize_with = "deserialize_u256_optional_safe")]
     pub current_excess_blob_gas: Option<U256>,
-    #[serde(deserialize_with = "deserialize_u256_safe")]
-    pub current_gas_limit: U256,
+    #[serde(deserialize_with = "deserialize_u64_safe")]
+    pub current_gas_limit: u64,
     #[serde(deserialize_with = "deserialize_u256_safe")]
     pub current_number: U256,
     pub current_random: Option<H256>,
@@ -187,9 +188,33 @@ impl EFTestPost {
 }
 
 #[derive(Debug, Deserialize, Clone)]
+pub enum TransactionExpectedException {
+    InitcodeSizeExceeded,
+    NonceIsMax,
+    Type3TxBlobCountExceeded,
+    Type3TxZeroBlobs,
+    Type3TxContractCreation,
+    Type3TxInvalidBlobVersionedHash,
+    IntrinsicGasTooLow,
+    InsufficientAccountFunds,
+    SenderNotEoa,
+    PriorityGreaterThanMaxFeePerGas,
+    GasAllowanceExceeded,
+    InsufficientMaxFeePerGas,
+    RlpInvalidValue,
+    GasLimitPriceProductOverflow,
+    Type3TxPreFork,
+    InsufficientMaxFeePerBlobGas,
+}
+
+#[derive(Debug, Deserialize, Clone)]
 pub struct EFTestPostValue {
-    #[serde(rename = "expectException")]
-    pub expect_exception: Option<String>,
+    #[serde(
+        rename = "expectException",
+        default,
+        deserialize_with = "deserialize_transaction_expected_exception"
+    )]
+    pub expect_exception: Option<Vec<TransactionExpectedException>>,
     pub hash: H256,
     #[serde(deserialize_with = "deserialize_ef_post_value_indexes")]
     pub indexes: HashMap<String, U256>,
@@ -244,8 +269,8 @@ pub struct EFTestAccessListItem {
 pub struct EFTestRawTransaction {
     #[serde(deserialize_with = "deserialize_hex_bytes_vec")]
     pub data: Vec<Bytes>,
-    #[serde(deserialize_with = "deserialize_u256_vec_safe")]
-    pub gas_limit: Vec<U256>,
+    #[serde(deserialize_with = "deserialize_u64_vec_safe")]
+    pub gas_limit: Vec<u64>,
     #[serde(default, deserialize_with = "deserialize_u256_optional_safe")]
     pub gas_price: Option<U256>,
     #[serde(deserialize_with = "deserialize_u256_safe")]
@@ -271,7 +296,7 @@ pub struct EFTestRawTransaction {
 #[serde(rename_all = "camelCase")]
 pub struct EFTestTransaction {
     pub data: Bytes,
-    pub gas_limit: U256,
+    pub gas_limit: u64,
     pub gas_price: Option<U256>,
     #[serde(deserialize_with = "deserialize_u256_safe")]
     pub nonce: U256,

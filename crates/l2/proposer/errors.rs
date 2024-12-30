@@ -22,6 +22,8 @@ pub enum L1WatcherError {
     FailedToRetrieveChainConfig(String),
     #[error("L1Watcher failed to get config: {0}")]
     FailedToGetConfig(#[from] ConfigError),
+    #[error("{0}")]
+    Custom(String),
 }
 
 #[derive(Debug, thiserror::Error)]

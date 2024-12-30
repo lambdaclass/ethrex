@@ -232,11 +232,9 @@ impl L1Watcher {
 
             let gas_price = self.l2_client.get_gas_price().await?;
             // Avoid panicking when using as_u64()
-            let gas_price = if gas_price > u64::MAX.into() {
-                u64::MAX
-            } else {
-                gas_price.as_u64()
-            };
+            let gas_price: u64 = gas_price
+                .try_into()
+                .map_err(|_| L1WatcherError::Custom("Failed at gas_price.try_into()".to_owned()))?;
 
             let mut mint_transaction = self
                 .eth_client
