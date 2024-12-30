@@ -100,7 +100,7 @@ pub fn prepare_vm_for_tx(vector: &TestVector, test: &EFTest) -> Result<VM, EFTes
             coinbase: test.env.current_coinbase,
             timestamp: test.env.current_timestamp,
             prev_randao: test.env.current_random,
-            chain_id: U256::from(1729),
+            chain_id: U256::from(1),
             base_fee_per_gas: test.env.current_base_fee.unwrap_or_default(),
             gas_price: effective_gas_price(test, &tx)?,
             block_excess_blob_gas: test.env.current_excess_blob_gas,
@@ -381,7 +381,7 @@ pub fn get_state_transitions(
 
         let account_update = AccountUpdate {
             address: *new_state_account_address,
-            removed: false,
+            removed: new_state_account.is_empty(),
             info: Some(AccountInfo {
                 code_hash: code_hash(&new_state_account.info.bytecode),
                 balance: new_state_account.info.balance,

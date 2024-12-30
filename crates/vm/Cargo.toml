@@ -39,11 +39,11 @@ path = "./vm.rs"
 
 [features]
 default = ["c-kzg", "blst"]
+levm = ["default", "ethrex-levm"]
 l2 = []
 c-kzg = ["revm/c-kzg"]
 blst = ["revm/blst"]
 libmdbx = ["ethrex-storage/default", "ethrex-core/libmdbx"]
-levm = ["ethrex-levm"]
 
 [profile.test]
 opt-level = 3
