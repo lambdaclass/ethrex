@@ -295,7 +295,7 @@ async fn testito() -> Result<(), Box<dyn std::error::Error>> {
     let total_locked_l2_value =
         deposit_value - withdraw_value - fees_transfer.total_fees - fees_withdraw.total_fees;
     let total_locked_l2_value_with_recoverable_fees =
-        total_locked_l2_value + fees_transfer.recoverable_fees + fees_transfer.recoverable_fees;
+        total_locked_l2_value + fees_transfer.recoverable_fees + fees_withdraw.recoverable_fees;
 
     let total_burned_fees = fees_transfer.burned_fees + fees_withdraw.burned_fees;
     println!("TOTAL Locked L2 value: {total_locked_l2_value}");
@@ -303,6 +303,8 @@ async fn testito() -> Result<(), Box<dyn std::error::Error>> {
         "TOTAL Locked L2 value with recoverable fees: {total_locked_l2_value_with_recoverable_fees}"
     );
     println!("BURNED FEES L2: {total_burned_fees}");
+
+    println!("The total locked value by the CommonBridge contract doesn't take burned fees into account, also the deposit transactions \"gives\" some tokens (from fees) to the coinbase address. This behavior shouldn't happen.");
 
     // Check that we only have the amount left after the withdrawal
     assert_eq!(common_bridge_locked_balance, deposit_value - withdraw_value);
