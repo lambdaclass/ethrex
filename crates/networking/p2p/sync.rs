@@ -68,6 +68,7 @@ impl SyncManager {
     /// In snap mode, blocks and receipts will be fetched and stored in parallel while the state is fetched via p2p snap requests
     /// After the sync cycle is complete, the sync mode will be set to full
     /// If the sync fails, no error will be returned but a warning will be emitted
+    /// [WARNING] Sync is done optimistically, so headers and bodies may be stored even if their data has not been fully synced if the sync is aborted halfway
     pub async fn start_sync(&mut self, current_head: H256, sync_head: H256, store: Store) {
         info!("Syncing from current head {current_head} to sync_head {sync_head}");
         let start_time = Instant::now();
