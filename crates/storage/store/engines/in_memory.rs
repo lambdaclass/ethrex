@@ -107,7 +107,7 @@ impl StoreEngine for Store {
     ) -> Result<(), StoreError> {
         self.inner()
             .headers
-            .extend(block_hashes.into_iter().zip(block_headers.into_iter()));
+            .extend(block_hashes.into_iter().zip(block_headers));
         Ok(())
     }
 

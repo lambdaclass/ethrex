@@ -210,8 +210,7 @@ impl StoreEngine for RedBStore {
     ) -> Result<(), StoreError> {
         let key_values = block_hashes
             .into_iter()
-            .zip(block_bodies.into_iter())
-            .enumerate()
+            .zip(block_headers)
             .map(|(hash, header)| {
                 (
                     <H256 as Into<BlockHashRLP>>::into(hash),

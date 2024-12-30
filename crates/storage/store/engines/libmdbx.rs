@@ -96,7 +96,7 @@ impl StoreEngine for Store {
     ) -> Result<(), StoreError> {
         let hashes_and_headers = block_hashes
             .into_iter()
-            .zip(block_headers.into_iter())
+            .zip(block_headers)
             .map(|(hash, header)| (hash.into(), header.into()));
         self.write_batch::<Headers>(hashes_and_headers)
     }
