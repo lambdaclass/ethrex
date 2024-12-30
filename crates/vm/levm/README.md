@@ -37,7 +37,7 @@ To run the project's tests, do `make test`.
 Run `make help` to see available commands
 
 ### Performance metrics
-To run Flamegraph on the Ethereum Fundation tests
+#### To run Flamegraph on the Ethereum Fundation tests
 
 First install Flamegraph
 ```Shell
@@ -49,7 +49,9 @@ Run the tests
 make flamegraph-run-ef-tests
 ```
 
-To run Samply on the Ethereum Fundation tests
+The output `flamegraph.svg` should be located at `crates/vm/levm/flamegraph.svg`
+
+#### To run Samply on the Ethereum Fundation tests
 
 First install Samply
 ```Shell
