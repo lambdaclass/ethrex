@@ -49,7 +49,7 @@ Run the tests
 make flamegraph-run-ef-tests
 ```
 
-The output `flamegraph.svg` should be located at `crates/vm/levm/flamegraph.svg`
+This will create a folder inside `cmd/ef_tests/levm/` named `levm_ef_test_perfgraphs` you can find the flamegraphs inside the folder `levm_ef_test_perfgraphs/flamegraph` open them with your preferred browser.
 
 #### To run Samply on the Ethereum Fundation tests
 
@@ -62,4 +62,9 @@ Run the tests
 ```Shell
 make samply-run-ef-tests
 ```
-Samply should open Firefox automatically
+
+This will create a folder inside `cmd/ef_tests/levm/` named `levm_ef_test_perfgraphs` you can find the flamegraphs inside the folder `levm_ef_test_perfgraphs/samply` run
+```Shell
+samply load <path-to-perf-file.json>
+```
+samply will open Firefox with the desired profile file.
