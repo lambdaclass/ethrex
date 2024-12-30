@@ -202,24 +202,23 @@ cfg_if::cfg_if! {
         }
 
         /// Executes all transactions in a block and returns their receipts.
-        pub fn execute_block(
+        pub fn execute_block_levm(
             block: &Block,
-            state: &mut EvmState,
+            store: &Store,
         ) -> Result<(Vec<Receipt>, Vec<AccountUpdate>), EvmError> {
-
             let mut block_cache: CacheDB = HashMap::new();
 
             let block_header = &block.header;
 
             let store_wrapper = Arc::new(StoreWrapper {
-                store: state.database().unwrap().clone(),
+                store: store.clone(),
                 block_hash: block.header.parent_hash,
             });
 
             //eip 4788: execute beacon_root_contract_call before block transactions
             cfg_if::cfg_if! {
                 if #[cfg(not(feature = "l2"))] {
-                    let spec_id = spec_id(&state.database().unwrap().get_chain_config()?, block_header.timestamp);
+                    let spec_id = spec_id(&store.get_chain_config()?, block_header.timestamp);
                     if block_header.parent_beacon_block_root.is_some() && spec_id == SpecId::CANCUN {
                         let report = beacon_root_contract_call_levm(store_wrapper.clone(), block_header)?;
                         block_cache.extend(report.new_state);
@@ -286,7 +285,7 @@ cfg_if::cfg_if! {
                 }
             }
 
-            let account_updates = get_state_transitions_levm(state.database().unwrap(), block.header.parent_hash, &block_cache);
+            let account_updates = get_state_transitions_levm(store, block.header.parent_hash, &block_cache);
 
             Ok((receipts, account_updates))
         }
@@ -332,42 +331,42 @@ cfg_if::cfg_if! {
 
             vm.transact()
         }
-    } else if #[cfg(not(feature = "levm"))] {
-        /// Executes all transactions in a block and returns their receipts.
-        pub fn execute_block(block: &Block, state: &mut EvmState) -> Result<Vec<Receipt>, EvmError> {
-            let block_header = &block.header;
-            let spec_id = spec_id(&state.chain_config()?, block_header.timestamp);
+    }
+}
+
+/// Executes all transactions in a block and returns their receipts. (REVM)
+pub fn execute_block(block: &Block, state: &mut EvmState) -> Result<Vec<Receipt>, EvmError> {
+    let block_header = &block.header;
+    let spec_id = spec_id(&state.chain_config()?, block_header.timestamp);
+    //eip 4788: execute beacon_root_contract_call before block transactions
+    cfg_if::cfg_if! {
+        if #[cfg(not(feature = "l2"))] {
             //eip 4788: execute beacon_root_contract_call before block transactions
-            cfg_if::cfg_if! {
-                if #[cfg(not(feature = "l2"))] {
-                    //eip 4788: execute beacon_root_contract_call before block transactions
-                    if block_header.parent_beacon_block_root.is_some() && spec_id == SpecId::CANCUN {
-                        beacon_root_contract_call(state, block_header, spec_id)?;
-                    }
-                }
+            if block_header.parent_beacon_block_root.is_some() && spec_id == SpecId::CANCUN {
+                beacon_root_contract_call(state, block_header, spec_id)?;
             }
-            let mut receipts = Vec::new();
-            let mut cumulative_gas_used = 0;
-
-            for transaction in block.body.transactions.iter() {
-                let result = execute_tx(transaction, block_header, state, spec_id)?;
-                cumulative_gas_used += result.gas_used();
-                let receipt = Receipt::new(
-                    transaction.tx_type(),
-                    result.is_success(),
-                    cumulative_gas_used,
-                    result.logs(),
-                );
-                receipts.push(receipt);
-            }
-
-            if let Some(withdrawals) = &block.body.withdrawals {
-                process_withdrawals(state, withdrawals)?;
-            }
-
-            Ok(receipts)
         }
     }
+    let mut receipts = Vec::new();
+    let mut cumulative_gas_used = 0;
+
+    for transaction in block.body.transactions.iter() {
+        let result = execute_tx(transaction, block_header, state, spec_id)?;
+        cumulative_gas_used += result.gas_used();
+        let receipt = Receipt::new(
+            transaction.tx_type(),
+            result.is_success(),
+            cumulative_gas_used,
+            result.logs(),
+        );
+        receipts.push(receipt);
+    }
+
+    if let Some(withdrawals) = &block.body.withdrawals {
+        process_withdrawals(state, withdrawals)?;
+    }
+
+    Ok(receipts)
 }
 
 // Executes a single tx, doesn't perform state transitions

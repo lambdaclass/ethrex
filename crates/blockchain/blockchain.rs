@@ -77,6 +77,8 @@ pub fn add_block(block: &Block, storage: &Store) -> Result<(), ChainError> {
 /// Performs pre and post execution validation, and updates the database with the post state.
 #[cfg(feature = "levm")]
 pub fn add_block(block: &Block, storage: &Store) -> Result<(), ChainError> {
+    use ethrex_vm::execute_block_levm;
+
     let block_hash = block.header.compute_block_hash();
 
     // Validate if it can be the new head and find the parent
@@ -85,12 +87,11 @@ pub fn add_block(block: &Block, storage: &Store) -> Result<(), ChainError> {
         storage.add_pending_block(block.clone())?;
         return Err(ChainError::ParentNotFound);
     };
-    let mut state = evm_state(storage.clone(), block.header.parent_hash);
 
     // Validate the block pre-execution
-    validate_block(block, &parent_header, &state)?;
+    validate_block(block, &parent_header, &storage)?;
 
-    let (receipts, account_updates) = execute_block(block, &mut state)?;
+    let (receipts, account_updates) = execute_block_levm(block, storage)?;
 
     // Note: these is commented because it is still being used in development.
     // dbg!(&account_updates);
@@ -98,9 +99,7 @@ pub fn add_block(block: &Block, storage: &Store) -> Result<(), ChainError> {
     validate_gas_used(&receipts, &block.header)?;
 
     // Apply the account updates over the last block's state and compute the new state root
-    let new_state_root = state
-        .database()
-        .ok_or(ChainError::StoreError(StoreError::MissingStore))?
+    let new_state_root = storage
         .apply_account_updates(block.header.parent_hash, &account_updates)?
         .ok_or(ChainError::ParentStateNotFound)?;
 
@@ -191,10 +190,10 @@ pub fn find_parent_header(
 pub fn validate_block(
     block: &Block,
     parent_header: &BlockHeader,
-    state: &EvmState,
+    store: &Store,
 ) -> Result<(), ChainError> {
     let spec = spec_id(
-        &state.chain_config().map_err(ChainError::from)?,
+        &store.get_chain_config().map_err(ChainError::from)?,
         block.header.timestamp,
     );
 
