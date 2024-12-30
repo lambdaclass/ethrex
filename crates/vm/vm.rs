@@ -7,7 +7,6 @@ mod mods;
 
 // use bytes::Bytes;
 use db::StoreWrapper;
-use ethrex_levm::Account;
 use execution_db::ExecutionDB;
 use std::cmp::min;
 
@@ -89,6 +88,74 @@ cfg_if::cfg_if! {
         };
         use std::{collections::HashMap, sync::Arc};
         use ethrex_core::types::code_hash;
+        use ethrex_levm::Account;
+
+        pub fn beacon_root_contract_call_levm(
+            state: &mut EvmState,
+            block_header: &BlockHeader,
+        ) -> Result<TransactionReport, EvmError> {
+            // TODO: Change REVM for LEVM
+            lazy_static! {
+                static ref SYSTEM_ADDRESS: Address =
+                    Address::from_slice(&hex::decode("fffffffffffffffffffffffffffffffffffffffe").unwrap());
+                static ref CONTRACT_ADDRESS: Address =
+                    Address::from_slice(&hex::decode("000F3df6D732807Ef1319fB7B8bB8522d0Beac02").unwrap(),);
+            };
+            // This is OK
+            let beacon_root = match block_header.parent_beacon_block_root {
+                None => {
+                    return Err(EvmError::Header(
+                        "parent_beacon_block_root field is missing".to_string(),
+                    ))
+                }
+                Some(beacon_root) => beacon_root,
+            };
+
+            let env = Environment {
+                origin: *SYSTEM_ADDRESS,
+                gas_limit: 30_000_000,
+                block_number: block_header.number.into(),
+                coinbase: block_header.coinbase,
+                timestamp: block_header.timestamp.into(),
+                prev_randao: Some(block_header.prev_randao),
+                base_fee_per_gas: U256::zero(),
+                gas_price: U256::zero(),
+                block_excess_blob_gas: block_header.excess_blob_gas.map(U256::from),
+                block_blob_gas_used: block_header.blob_gas_used.map(U256::from),
+                block_gas_limit: 30_000_000,
+                transient_storage: HashMap::new(),
+                ..Default::default()
+            };
+
+            let calldata = Bytes::copy_from_slice(beacon_root.as_bytes()).into();
+
+            match state {
+                EvmState::Store(db) => {
+                    // Here execute with LEVM but just return transaction report. And I will handle it in the calling place.
+
+                    let mut vm = VM::new(
+                        TxKind::Call(*CONTRACT_ADDRESS),
+                        env,
+                        U256::zero(),
+                        calldata,
+                        Arc::from(db.database.clone()),
+                        CacheDB::new(),
+                        vec![],
+                    )
+                    .unwrap(); //TODO: Replace this unwrap
+
+                    let mut report = vm.transact().unwrap();
+
+                    report.new_state.remove(&*SYSTEM_ADDRESS);
+
+                    Ok(report)
+                }
+                EvmState::Execution(db) => {
+                    // I don't think I care about this.
+                    Err(EvmError::Custom("Shouldnt be here".to_string()))
+                }
+            }
+        }
 
         pub fn get_state_transitions_levm(
             initial_state: &EvmState,
@@ -688,73 +755,6 @@ pub fn evm_state(store: Store, block_hash: BlockHash) -> EvmState {
             .without_state_clear()
             .build(),
     )
-}
-
-pub fn beacon_root_contract_call_levm(
-    state: &mut EvmState,
-    block_header: &BlockHeader,
-) -> Result<TransactionReport, EvmError> {
-    // TODO: Change REVM for LEVM
-    lazy_static! {
-        static ref SYSTEM_ADDRESS: Address =
-            Address::from_slice(&hex::decode("fffffffffffffffffffffffffffffffffffffffe").unwrap());
-        static ref CONTRACT_ADDRESS: Address =
-            Address::from_slice(&hex::decode("000F3df6D732807Ef1319fB7B8bB8522d0Beac02").unwrap(),);
-    };
-    // This is OK
-    let beacon_root = match block_header.parent_beacon_block_root {
-        None => {
-            return Err(EvmError::Header(
-                "parent_beacon_block_root field is missing".to_string(),
-            ))
-        }
-        Some(beacon_root) => beacon_root,
-    };
-
-    let env = Environment {
-        origin: *SYSTEM_ADDRESS,
-        gas_limit: 30_000_000,
-        block_number: block_header.number.into(),
-        coinbase: block_header.coinbase,
-        timestamp: block_header.timestamp.into(),
-        prev_randao: Some(block_header.prev_randao),
-        base_fee_per_gas: U256::zero(),
-        gas_price: U256::zero(),
-        block_excess_blob_gas: block_header.excess_blob_gas.map(U256::from),
-        block_blob_gas_used: block_header.blob_gas_used.map(U256::from),
-        block_gas_limit: 30_000_000,
-        transient_storage: HashMap::new(),
-        ..Default::default()
-    };
-
-    let calldata = Bytes::copy_from_slice(beacon_root.as_bytes()).into();
-
-    match state {
-        EvmState::Store(db) => {
-            // Here execute with LEVM but just return transaction report. And I will handle it in the calling place.
-
-            let mut vm = VM::new(
-                TxKind::Call(*CONTRACT_ADDRESS),
-                env,
-                U256::zero(),
-                calldata,
-                Arc::from(db.database.clone()),
-                CacheDB::new(),
-                vec![],
-            )
-            .unwrap(); //TODO: Replace this unwrap
-
-            let mut report = vm.transact().unwrap();
-
-            report.new_state.remove(&*SYSTEM_ADDRESS);
-
-            Ok(report)
-        }
-        EvmState::Execution(db) => {
-            // I don't think I care about this.
-            Err(EvmError::Custom("Shouldnt be here".to_string()))
-        }
-    }
 }
 
 /// Calls the eip4788 beacon block root system call contract
