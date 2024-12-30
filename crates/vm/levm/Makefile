@@ -93,5 +93,4 @@ flamegraph-run-ef-tests:
 	CARGO_PROFILE_RELEASE_DEBUG=true cargo flamegraph --root -p ef_tests-levm --test ef_tests_levm -- --summary
 
 samply-run-ef-tests:
-	CARGO_PROFILE_RELEASE_DEBUG=true cargo test --no-run --release -p ef_tests-levm --test ef_tests_levm
 	CARGO_PROFILE_RELEASE_DEBUG=true samply record cargo test --release -p ef_tests-levm --test ef_tests_levm -- --summary
