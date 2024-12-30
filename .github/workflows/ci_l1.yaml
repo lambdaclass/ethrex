@@ -6,10 +6,6 @@ on:
   pull_request:
     branches: ["**"]
     paths-ignore:
-      - "README.md"
-      - "LICENSE"
-      - "**/README.md"
-      - "**/docs/**"
       - "crates/vm/levm/**" # We run this in a separate workflow
 
 concurrency:
