@@ -165,6 +165,15 @@ impl Node {
             }
         })
     }
+
+    /// Computes the node's hash
+    pub fn compute_hash(&self) -> NodeHash {
+        match self {
+            Node::Branch(n) => n.compute_hash(),
+            Node::Extension(n) => n.compute_hash(),
+            Node::Leaf(n) => n.compute_hash(),
+        }
+    }
 }
 
 fn decode_child(rlp: &[u8]) -> NodeHash {

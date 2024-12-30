@@ -89,6 +89,6 @@ build-image-levm: ## 🐳 Build the Docker image with LEVM features
 	cd ../../../ && \
 	docker build -t ethrex --build-arg BUILD_FLAGS=$(FLAGS) .
 
-run-hive-debug-levm: build-image-levm 
+run-hive-debug-levm: build-image-levm ## 🐝 Run Hive with LEVM in debug mode
 	$(MAKE) -C ../../../ setup-hive
 	cd ../../../hive && ./hive --sim $(SIMULATION) --client ethrex --sim.limit "$(TEST_PATTERN)" --docker.output

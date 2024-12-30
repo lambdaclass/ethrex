@@ -188,6 +188,8 @@ pub enum PrecompileError {
     GasConsumedOverflow,
     #[error("There is not enough gas to execute precompiled contract")]
     NotEnoughGas,
+    #[error("There was an error evaluating the point")]
+    EvaluationError,
     #[error("This is a default error")]
     DefaultError,
 }

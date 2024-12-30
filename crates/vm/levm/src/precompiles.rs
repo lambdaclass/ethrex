@@ -1,6 +1,7 @@
 use bytes::Bytes;
-use ethrex_core::{Address, H160, U256};
+use ethrex_core::{Address, H160, H256, U256};
 use keccak_hash::keccak256;
+use kzg_rs::{Bytes32, Bytes48, KzgSettings};
 use lambdaworks_math::{
     cyclic_group::IsGroup,
     elliptic_curve::{
@@ -25,9 +26,11 @@ use sha3::Digest;
 
 use crate::{
     call_frame::CallFrame,
+    constants::VERSIONED_HASH_VERSION_KZG,
     errors::{InternalError, PrecompileError, VMError},
     gas_cost::{
         self, BLAKE2F_ROUND_COST, ECADD_COST, ECMUL_COST, ECRECOVER_COST, MODEXP_STATIC_COST,
+        POINT_EVALUATION_COST,
     },
 };
 
@@ -94,7 +97,10 @@ pub fn is_precompile(callee_address: &Address) -> bool {
 pub fn execute_precompile(current_call_frame: &mut CallFrame) -> Result<Bytes, VMError> {
     let callee_address = current_call_frame.code_address;
     let calldata = current_call_frame.calldata.clone();
-    let gas_for_call = current_call_frame.gas_limit;
+    let gas_for_call = current_call_frame
+        .gas_limit
+        .checked_sub(current_call_frame.gas_used)
+        .ok_or(InternalError::ArithmeticOperationUnderflow)?;
     let consumed_gas = &mut current_call_frame.gas_used;
 
     let result = match callee_address {
@@ -887,10 +893,108 @@ pub fn blake2f(
     Ok(Bytes::from(output))
 }
 
+// Taken from the same name function from crates/common/types/blobs_bundle.rs
+fn kzg_commitment_to_versioned_hash(data: &[u8; 48]) -> H256 {
+    use k256::sha2::Digest;
+    let mut versioned_hash: [u8; 32] = k256::sha2::Sha256::digest(data).into();
+    versioned_hash[0] = VERSIONED_HASH_VERSION_KZG;
+    versioned_hash.into()
+}
+
+fn verify_kzg_proof(
+    commitment_bytes: &[u8; 48],
+    x: &[u8; 32],
+    y: &[u8; 32],
+    proof_bytes: &[u8; 48],
+) -> Result<bool, VMError> {
+    let commitment_bytes =
+        Bytes48::from_slice(commitment_bytes).map_err(|_| PrecompileError::EvaluationError)?; // Could be ParsingInputError
+    let z_bytes = Bytes32::from_slice(x).map_err(|_| PrecompileError::EvaluationError)?;
+    let y_bytes = Bytes32::from_slice(y).map_err(|_| PrecompileError::EvaluationError)?;
+    let proof_bytes =
+        Bytes48::from_slice(proof_bytes).map_err(|_| PrecompileError::EvaluationError)?;
+
+    let settings =
+        KzgSettings::load_trusted_setup_file().map_err(|_| PrecompileError::EvaluationError)?;
+
+    kzg_rs::kzg_proof::KzgProof::verify_kzg_proof(
+        &commitment_bytes,
+        &z_bytes,
+        &y_bytes,
+        &proof_bytes,
+        &settings,
+    )
+    .map_err(|_| VMError::PrecompileError(PrecompileError::EvaluationError))
+}
+
+const POINT_EVALUATION_OUTPUT_BYTES: [u8; 64] = [
+    // Big endian FIELD_ELEMENTS_PER_BLOB bytes
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x10, 0x00,
+    // Big endian BLS_MODULUS bytes
+    0x73, 0xED, 0xA7, 0x53, 0x29, 0x9D, 0x7D, 0x48, 0x33, 0x39, 0xD8, 0x08, 0x09, 0xA1, 0xD8, 0x05,
+    0x53, 0xBD, 0xA4, 0x02, 0xFF, 0xFE, 0x5B, 0xFE, 0xFF, 0xFF, 0xFF, 0xFF, 0x00, 0x00, 0x00, 0x01,
+];
+
 fn point_evaluation(
-    _calldata: &Bytes,
-    _gas_for_call: u64,
-    _consumed_gas: &mut u64,
+    calldata: &Bytes,
+    gas_for_call: u64,
+    consumed_gas: &mut u64,
 ) -> Result<Bytes, VMError> {
-    Ok(Bytes::new())
+    if calldata.len() != 192 {
+        return Err(VMError::PrecompileError(PrecompileError::ParsingInputError));
+    }
+
+    // Consume gas
+    let gas_cost = POINT_EVALUATION_COST;
+    increase_precompile_consumed_gas(gas_for_call, gas_cost, consumed_gas)?;
+
+    // Parse inputs
+    let versioned_hash: [u8; 32] = calldata
+        .get(..32)
+        .ok_or(PrecompileError::ParsingInputError)?
+        .try_into()
+        .map_err(|_| PrecompileError::ParsingInputError)?;
+
+    let x: [u8; 32] = calldata
+        .get(32..64)
+        .ok_or(PrecompileError::ParsingInputError)?
+        .try_into()
+        .map_err(|_| PrecompileError::ParsingInputError)?;
+
+    let y: [u8; 32] = calldata
+        .get(64..96)
+        .ok_or(PrecompileError::ParsingInputError)?
+        .try_into()
+        .map_err(|_| PrecompileError::ParsingInputError)?;
+
+    let commitment: [u8; 48] = calldata
+        .get(96..144)
+        .ok_or(PrecompileError::ParsingInputError)?
+        .try_into()
+        .map_err(|_| PrecompileError::ParsingInputError)?;
+
+    let proof: [u8; 48] = calldata
+        .get(144..192)
+        .ok_or(PrecompileError::ParsingInputError)?
+        .try_into()
+        .map_err(|_| PrecompileError::ParsingInputError)?;
+
+    // Perform the evaluation
+
+    // This checks if the commitment is equal to the versioned hash
+    if kzg_commitment_to_versioned_hash(&commitment) != H256::from(versioned_hash) {
+        return Err(VMError::PrecompileError(PrecompileError::ParsingInputError));
+    }
+
+    // This verifies the proof from a point (x, y) and a commitment
+    if !verify_kzg_proof(&commitment, &x, &y, &proof).unwrap_or(false) {
+        return Err(VMError::PrecompileError(PrecompileError::ParsingInputError));
+    }
+
+    // The first 32 bytes consist of the number of field elements in the blob, and the
+    // other 32 bytes consist of the modulus used in the BLS signature scheme.
+    let output = POINT_EVALUATION_OUTPUT_BYTES.to_vec();
+
+    Ok(Bytes::from(output))
 }
