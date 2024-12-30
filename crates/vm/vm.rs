@@ -30,7 +30,7 @@ use revm::{
 use revm_inspectors::access_list::AccessListInspector;
 // Rename imported types for clarity
 use revm_primitives::{
-    ruint::Uint, AccessList as RevmAccessList, AccessListItem, Bytes, FixedBytes,
+    bitvec::store, ruint::Uint, AccessList as RevmAccessList, AccessListItem, Bytes, FixedBytes,
     TxKind as RevmTxKind,
 };
 // Export needed types
@@ -91,7 +91,7 @@ cfg_if::cfg_if! {
         use ethrex_levm::Account;
 
         pub fn beacon_root_contract_call_levm(
-            state: &mut EvmState,
+            store_wrapper: Arc<StoreWrapper>,
             block_header: &BlockHeader,
         ) -> Result<TransactionReport, EvmError> {
             lazy_static! {
@@ -128,50 +128,39 @@ cfg_if::cfg_if! {
 
             let calldata = Bytes::copy_from_slice(beacon_root.as_bytes()).into();
 
-            match state {
-                EvmState::Store(db) => {
-                    // Here execute with LEVM but just return transaction report. And I will handle it in the calling place.
+            // Here execute with LEVM but just return transaction report. And I will handle it in the calling place.
 
-                    let mut vm = VM::new(
-                        TxKind::Call(*CONTRACT_ADDRESS),
-                        env,
-                        U256::zero(),
-                        calldata,
-                        Arc::from(db.database.clone()),
-                        CacheDB::new(),
-                        vec![],
-                    )
-                    .map_err(|_| EvmError::Custom("Cannot instantiate vm".to_string()))?;
+            let mut vm = VM::new(
+                TxKind::Call(*CONTRACT_ADDRESS),
+                env,
+                U256::zero(),
+                calldata,
+                store_wrapper,
+                CacheDB::new(),
+                vec![],
+            )
+            .map_err(|_| EvmError::Custom("Cannot instantiate vm".to_string()))?;
 
-                    let mut report = vm.transact().map_err(|e| EvmError::Custom("Transaction execution failed".to_string()))?;
+            let mut report = vm.transact().map_err(|e| EvmError::Custom("Transaction execution failed".to_string()))?;
 
-                    report.new_state.remove(&*SYSTEM_ADDRESS);
+            report.new_state.remove(&*SYSTEM_ADDRESS);
 
-                    Ok(report)
-                }
-                EvmState::Execution(db) => {
-                    // I don't think I care about this.
-                    Err(EvmError::Custom("Shouldnt be here".to_string()))
-                }
-            }
+            Ok(report)
+
         }
 
         pub fn get_state_transitions_levm(
-            initial_state: &EvmState,
+            initial_state: &Store,
             block_hash: H256,
             new_state: &CacheDB,
         ) -> Vec<AccountUpdate> {
-            let current_db = match initial_state {
-                EvmState::Store(state) => state.database.store.clone(),
-                EvmState::Execution(_cache_db) => unreachable!("Execution state should not be passed here"),
-            };
             let mut account_updates: Vec<AccountUpdate> = vec![];
             for (new_state_account_address, new_state_account) in new_state {
                 // This stores things that have changed in the account.
                 let mut account_update = AccountUpdate::new(*new_state_account_address);
 
                 // Account state before block execution.
-                let initial_account_state = current_db
+                let initial_account_state = initial_state
                     .get_account_info_by_hash(block_hash, *new_state_account_address)
                     .expect("Error getting account info by address")
                     .unwrap_or_default();
@@ -195,7 +184,7 @@ cfg_if::cfg_if! {
                 let mut updated_storage = HashMap::new();
                 for (key, storage_slot) in &new_state_account.storage {
                     // original_value in storage_slot is not the original_value on the DB, be careful.
-                    let original_value = current_db.get_storage_at_hash(block_hash, *new_state_account_address, *key).unwrap().unwrap_or_default(); // Option inside result, I guess I have to assume it is zero.
+                    let original_value = initial_state.get_storage_at_hash(block_hash, *new_state_account_address, *key).unwrap().unwrap_or_default(); // Option inside result, I guess I have to assume it is zero.
 
                     if original_value != storage_slot.current_value {
                         updated_storage.insert(*key, storage_slot.current_value);
@@ -221,22 +210,22 @@ cfg_if::cfg_if! {
             let mut block_cache: CacheDB = HashMap::new();
 
             let block_header = &block.header;
-            //eip 4788: execute beacon_root_contract_call before block transactions
-            cfg_if::cfg_if! {
-                if #[cfg(not(feature = "l2"))] {
-                    let spec_id = spec_id(&state.chain_config()?, block_header.timestamp);
-                    if block_header.parent_beacon_block_root.is_some() && spec_id == SpecId::CANCUN {
-                        let report = beacon_root_contract_call_levm(state, block_header)?;
-                        block_cache.extend(report.new_state);
-                    }
-                }
-            }
 
             let store_wrapper = Arc::new(StoreWrapper {
                 store: state.database().unwrap().clone(),
                 block_hash: block.header.parent_hash,
             });
 
+            //eip 4788: execute beacon_root_contract_call before block transactions
+            cfg_if::cfg_if! {
+                if #[cfg(not(feature = "l2"))] {
+                    let spec_id = spec_id(&state.database().unwrap().get_chain_config()?, block_header.timestamp);
+                    if block_header.parent_beacon_block_root.is_some() && spec_id == SpecId::CANCUN {
+                        let report = beacon_root_contract_call_levm(store_wrapper.clone(), block_header)?;
+                        block_cache.extend(report.new_state);
+                    }
+                }
+            }
 
             let mut receipts = Vec::new();
             let mut cumulative_gas_used = 0;
@@ -297,7 +286,7 @@ cfg_if::cfg_if! {
                 }
             }
 
-            let account_updates = get_state_transitions_levm(state, block.header.parent_hash, &block_cache);
+            let account_updates = get_state_transitions_levm(state.database().unwrap(), block.header.parent_hash, &block_cache);
 
             Ok((receipts, account_updates))
         }
