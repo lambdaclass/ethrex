@@ -94,7 +94,6 @@ cfg_if::cfg_if! {
             state: &mut EvmState,
             block_header: &BlockHeader,
         ) -> Result<TransactionReport, EvmError> {
-            // TODO: Change REVM for LEVM
             lazy_static! {
                 static ref SYSTEM_ADDRESS: Address =
                     Address::from_slice(&hex::decode("fffffffffffffffffffffffffffffffffffffffe").unwrap());
@@ -142,9 +141,9 @@ cfg_if::cfg_if! {
                         CacheDB::new(),
                         vec![],
                     )
-                    .unwrap(); //TODO: Replace this unwrap
+                    .map_err(|_| EvmError::Custom("Cannot instantiate vm".to_string()))?;
 
-                    let mut report = vm.transact().unwrap();
+                    let mut report = vm.transact().map_err(|e| EvmError::Custom("Transaction execution failed".to_string()))?;
 
                     report.new_state.remove(&*SYSTEM_ADDRESS);
 
