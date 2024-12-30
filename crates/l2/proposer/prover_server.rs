@@ -99,10 +99,10 @@ impl Risc0Proof {
                     ProverServerError::Custom(format!("Failed to hex::decode(selector): {e}"))
                 })?
             }
-            Err(_) => vec![32; 0],
+            Err(_) => vec![0_u8; 32],
         };
 
-        let mut image_id: [u32; 8] = [0; 8];
+        let mut image_id = [0_u32; 8];
         for (i, b) in image_id.iter_mut().enumerate() {
             *b = *self.prover_id.get(i).ok_or(ProverServerError::Custom(
                 "Failed to get image_id in handle_proof_submission()".to_owned(),
@@ -618,7 +618,7 @@ impl ProverServer {
                 })?;
 
         let calldata_len: u64 = (calldata.len()).try_into().map_err(|err| {
-            ProverServerError::Custom(format!("calldata length does not fit in u64: {}", err))
+            ProverServerError::Custom(format!("calldata length does not fit in u64: {err}"))
         })?;
 
         let leading_zeros_after_block_proof: u64 =
@@ -626,8 +626,7 @@ impl ProverServer {
                 .try_into()
                 .map_err(|err| {
                     ProverServerError::Custom(format!(
-                        "calculate_padding length does not fit in u64: {}",
-                        err
+                        "calculate_padding length does not fit in u64: {err}"
                     ))
                 })?;
 
@@ -646,8 +645,7 @@ impl ProverServer {
                 .try_into()
                 .map_err(|err| {
                     ProverServerError::Custom(format!(
-                        "public_values length does not fit in u64: {}",
-                        err
+                        "public_values length does not fit in u64: {err}"
                     ))
                 })?;
 
@@ -655,8 +653,7 @@ impl ProverServer {
             .try_into()
             .map_err(|err| {
                 ProverServerError::Custom(format!(
-                    "calculate_padding length does not fit in u64: {}",
-                    err
+                    "calculate_padding length does not fit in u64: {err}"
                 ))
             })?;
 
