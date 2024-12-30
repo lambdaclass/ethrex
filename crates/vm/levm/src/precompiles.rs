@@ -528,6 +528,13 @@ pub fn ecmul(
     }
 }
 
+const ALT_BN128_PRIME: U256 = U256([
+    0x3c208c16d87cfd47,
+    0x97816a916871ca8d,
+    0xb85045b68181585d,
+    0x30644e72e131a029,
+]);
+
 /// Handles pairing given a certain elements, and depending on if elements represent infinity, then
 /// continues, verifies errors on the other point or calculates the pairing
 fn handle_pairing_from_coordinates(
@@ -665,17 +672,11 @@ pub fn ecpairing(
             return Err(VMError::PrecompileError(PrecompileError::DefaultError));
         }
 
-        let alt_bn128_prime = U256::from_str_radix(
-            "30644e72e131a029b85045b68181585d97816a916871ca8d3c208c16d87cfd47",
-            16,
-        )
-        .map_err(|_| InternalError::ConversionError)?;
-
         // Check if the second point belongs to the curve (this happens if it's lower than the prime)
-        if U256::from_big_endian(second_point_x_first_part) >= alt_bn128_prime
-            || U256::from_big_endian(second_point_x_second_part) >= alt_bn128_prime
-            || U256::from_big_endian(second_point_y_first_part) >= alt_bn128_prime
-            || U256::from_big_endian(second_point_y_second_part) >= alt_bn128_prime
+        if U256::from_big_endian(second_point_x_first_part) >= ALT_BN128_PRIME
+            || U256::from_big_endian(second_point_x_second_part) >= ALT_BN128_PRIME
+            || U256::from_big_endian(second_point_y_first_part) >= ALT_BN128_PRIME
+            || U256::from_big_endian(second_point_y_second_part) >= ALT_BN128_PRIME
         {
             return Err(VMError::PrecompileError(PrecompileError::DefaultError));
         }
