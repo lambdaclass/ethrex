@@ -834,8 +834,9 @@ impl VM {
 
         if self.is_create() {
             // Assign bytecode to context and empty calldata
-            initial_call_frame.assign_bytecode(initial_call_frame.calldata.clone());
-            initial_call_frame.calldata = Bytes::new();
+            initial_call_frame.bytecode = std::mem::take(&mut initial_call_frame.calldata);
+            initial_call_frame.valid_jump_destinations =
+                get_valid_jump_destinations(&initial_call_frame.bytecode).unwrap_or_default();
         }
         Ok(())
     }
