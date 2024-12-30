@@ -35,3 +35,17 @@ Features:
 To run the project's tests, do `make test`.
 
 Run `make help` to see available commands
+
+### Performance metrics
+To run Samply on the Ethereum Fundation tests
+
+First install Samply
+```Shell
+cargo install --locked samply
+```
+
+Run the tests
+```Shell
+make samply-run-ef-tests
+```
+Samply should open Firefox automatically

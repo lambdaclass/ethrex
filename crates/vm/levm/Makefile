@@ -88,3 +88,11 @@ build-image-levm: ## 🐳 Build the Docker image with LEVM features
 run-hive-debug-levm: build-image-levm ## 🐝 Run Hive with LEVM in debug mode
 	$(MAKE) -C ../../../ setup-hive
 	cd ../../../hive && ./hive --sim $(SIMULATION) --client ethrex --sim.limit "$(TEST_PATTERN)" --docker.output
+
+flamegraph-run-ef-tests:
+	cargo test --message-format=json-render-diagnostics --release --no-run -p ef_tests-levm --test ef_tests_levm -- --summary| \
+	jq '.executable | select(. != null)'
+
+samply-run-ef-tests:
+	cargo test --no-run --release -p ef_tests-levm --test ef_tests_levm
+	samply record cargo test --release -p ef_tests-levm --test ef_tests_levm
