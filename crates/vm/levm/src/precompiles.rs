@@ -956,39 +956,39 @@ fn point_evaluation(
         .try_into()
         .map_err(|_| PrecompileError::ParsingInputError)?;
 
-    let x = calldata
+    let x: [u8; 32] = calldata
         .get(32..64)
-        .ok_or(PrecompileError::ParsingInputError)?;
-    let mut x_bytes = [0; 32];
-    x_bytes.copy_from_slice(x);
+        .ok_or(PrecompileError::ParsingInputError)?
+        .try_into()
+        .map_err(|_| PrecompileError::ParsingInputError)?;
 
-    let y = calldata
+    let y: [u8; 32] = calldata
         .get(64..96)
-        .ok_or(PrecompileError::ParsingInputError)?;
-    let mut y_bytes = [0; 32];
-    y_bytes.copy_from_slice(y);
+        .ok_or(PrecompileError::ParsingInputError)?
+        .try_into()
+        .map_err(|_| PrecompileError::ParsingInputError)?;
 
-    let commitment = calldata
+    let commitment: [u8; 48] = calldata
         .get(96..144)
-        .ok_or(PrecompileError::ParsingInputError)?;
-    let mut commitment_bytes = [0; 48];
-    commitment_bytes.copy_from_slice(commitment);
+        .ok_or(PrecompileError::ParsingInputError)?
+        .try_into()
+        .map_err(|_| PrecompileError::ParsingInputError)?;
 
-    let proof = calldata
+    let proof: [u8; 48] = calldata
         .get(144..192)
-        .ok_or(PrecompileError::ParsingInputError)?;
-    let mut proof_bytes = [0; 48];
-    proof_bytes.copy_from_slice(proof);
+        .ok_or(PrecompileError::ParsingInputError)?
+        .try_into()
+        .map_err(|_| PrecompileError::ParsingInputError)?;
 
     // Perform the evaluation
 
     // This checks if the commitment is equal to the versioned hash
-    if kzg_commitment_to_versioned_hash(&commitment_bytes) != H256::from(versioned_hash) {
+    if kzg_commitment_to_versioned_hash(&commitment) != H256::from(versioned_hash) {
         return Err(VMError::PrecompileError(PrecompileError::ParsingInputError));
     }
 
     // This verifies the proof from a point (x, y) and a commitment
-    if !verify_kzg_proof(&commitment_bytes, &x_bytes, &y_bytes, &proof_bytes).unwrap_or(false) {
+    if !verify_kzg_proof(&commitment, &x, &y, &proof).unwrap_or(false) {
         return Err(VMError::PrecompileError(PrecompileError::ParsingInputError));
     }
 
