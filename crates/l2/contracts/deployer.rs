@@ -3,11 +3,9 @@ use colored::Colorize;
 use ethereum_types::{Address, H160, H256};
 use ethrex_core::U256;
 use ethrex_l2::utils::config::errors;
-use ethrex_l2::utils::eth_client::errors::EthClientError;
-use ethrex_l2::utils::{
-    config::{read_env_as_lines, read_env_file, write_env},
-    eth_client::{eth_sender::Overrides, EthClient},
-};
+use ethrex_l2_sdk::eth_client::errors::EthClientError;
+use ethrex_l2_sdk::eth_client::{eth_sender::Overrides, EthClient};
+use ethrex_l2::utils::config::{read_env_as_lines, read_env_file, write_env};
 use keccak_hash::keccak;
 use secp256k1::SecretKey;
 use spinoff::{spinner, spinners, Color, Spinner};

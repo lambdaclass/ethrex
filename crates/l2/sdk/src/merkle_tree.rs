@@ -1,4 +1,5 @@
-use keccak_hash::{keccak, H256};
+use ethrex_core::H256;
+use keccak_hash::keccak;
 use serde::{Deserialize, Serialize};
 use tracing::info;
 
@@ -21,7 +22,7 @@ pub fn merkelize(data: Vec<H256>) -> Result<H256, MerkleError> {
             .flat_map(|chunk| -> Result<H256, MerkleError> {
                 let left = chunk.first().ok_or(MerkleError::LeftElementIsNone())?;
                 let right = *chunk.get(1).unwrap_or(left);
-                Ok(keccak([left.as_bytes(), right.as_bytes()].concat()))
+                Ok(keccak([left.as_bytes(), right.as_bytes()].concat()).as_fixed_bytes().into())
             })
             .collect();
     }
@@ -51,7 +52,7 @@ pub fn merkle_proof(data: Vec<H256>, base_element: H256) -> Result<Option<Vec<H2
                     .copied()
                     .ok_or(MerkleError::LeftElementIsNone())?;
                 let right = chunk.get(1).copied().unwrap_or(left);
-                let result = keccak([left.as_bytes(), right.as_bytes()].concat());
+                let result = keccak([left.as_bytes(), right.as_bytes()].concat()).as_fixed_bytes().into();
                 if left == current_target {
                     proof.push(right);
                     target_hash = result;

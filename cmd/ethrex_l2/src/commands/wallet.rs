@@ -1,16 +1,15 @@
-use crate::{commands::utils::encode_calldata, config::EthrexL2Config};
+use crate::config::EthrexL2Config;
 use bytes::Bytes;
 use clap::Subcommand;
 use ethereum_types::{Address, H256, U256};
 use ethrex_core::types::{PrivilegedTxType, Transaction};
-use ethrex_l2::utils::{
-    eth_client::{eth_sender::Overrides, EthClient},
-    merkle_tree::merkle_proof,
-};
+use ethrex_l2_sdk::eth_client::{eth_sender::Overrides, EthClient};
+use ethrex_l2_sdk::merkle_tree::merkle_proof;
 use ethrex_rpc::types::block::BlockBodyWrapper;
 use eyre::OptionExt;
 use hex::FromHexError;
 use itertools::Itertools;
+use ethrex_l2_sdk::calldata::encode_calldata;
 
 const CLAIM_WITHDRAWAL_SIGNATURE: &str =
     "claimWithdrawal(bytes32,uint256,uint256,uint256,bytes32[])";

@@ -1,17 +1,23 @@
+use eth_client::{errors::{EthClientError, GetTransactionReceiptError}, eth_sender::Overrides, EthClient};
 use ethereum_types::{Address, H160, H256, U256};
 use ethrex_core::types::{PrivilegedTxType, Transaction};
-use ethrex_l2::utils::{
-    eth_client::{
-        errors::{EthClientError, GetTransactionReceiptError},
-        eth_sender::Overrides,
-        EthClient,
-    },
-    merkle_tree::merkle_proof,
-};
+// use ethrex_l2::utils::{
+//     eth_client::{
+//         errors::{EthClientError, GetTransactionReceiptError},
+//         eth_sender::Overrides,
+//         EthClient,
+//     },
+//     merkle_tree::merkle_proof,
+// };
 use ethrex_rpc::types::{block::BlockBodyWrapper, receipt::RpcReceipt};
 use itertools::Itertools;
 use keccak_hash::keccak;
+use merkle_tree::merkle_proof;
 use secp256k1::SecretKey;
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
+pub mod calldata;
+pub mod eth_client;
+pub mod merkle_tree;
 
 // 0x6bf26397c5676a208d5c4e5f35cb479bacbbe454
 pub const DEFAULT_BRIDGE_ADDRESS: Address = H160([
@@ -291,4 +297,41 @@ pub async fn get_withdraw_merkle_proof(
             .map_err(|err| EthClientError::Custom(format!("index does not fit in u64: {}", err)))?,
         path,
     ))
+}
+
+pub fn secret_key_deserializer<'de, D>(deserializer: D) -> Result<SecretKey, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let hex = H256::deserialize(deserializer)?;
+    SecretKey::from_slice(hex.as_bytes()).map_err(serde::de::Error::custom)
+}
+
+pub fn secret_key_serializer<S>(secret_key: &SecretKey, serializer: S) -> Result<S::Ok, S::Error>
+where
+    S: Serializer,
+{
+    let hex = H256::from_slice(&secret_key.secret_bytes());
+    hex.serialize(serializer)
+}
+
+pub fn get_address_from_secret_key(secret_key: &SecretKey) -> Result<Address, EthClientError> {
+    let public_key = secret_key
+        .public_key(secp256k1::SECP256K1)
+        .serialize_uncompressed();
+    let hash = keccak(&public_key[1..]);
+
+    // Get the last 20 bytes of the hash
+    let address_bytes: [u8; 20] = hash
+        .as_ref()
+        .get(12..32)
+        .ok_or(EthClientError::Custom(
+            "Failed to get_address_from_secret_key: error slicing address_bytes".to_owned(),
+        ))?
+        .try_into()
+        .map_err(|err| {
+            EthClientError::Custom(format!("Failed to get_address_from_secret_key: {err}"))
+        })?;
+
+    Ok(Address::from(address_bytes))
 }

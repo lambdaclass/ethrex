@@ -3,12 +3,9 @@ use crate::{
         errors::CommitterError,
         state_diff::{AccountStateDiff, DepositLog, StateDiff, WithdrawalLog},
     },
-    utils::{
-        config::{committer::CommitterConfig, errors::ConfigError, eth::EthConfig},
-        eth_client::{eth_sender::Overrides, BlockByNumber, EthClient, WrappedTransaction},
-        merkle_tree::merkelize,
-    },
+    utils::config::{committer::CommitterConfig, errors::ConfigError, eth::EthConfig},
 };
+
 use bytes::Bytes;
 use ethrex_core::{
     types::{
@@ -18,6 +15,10 @@ use ethrex_core::{
     },
     Address, H256, U256,
 };
+use ethrex_l2_sdk::eth_client::{
+    eth_sender::Overrides, BlockByNumber, EthClient, WrappedTransaction,
+};
+use ethrex_l2_sdk::merkle_tree::merkelize;
 use ethrex_storage::{error::StoreError, Store};
 use ethrex_vm::{evm_state, execute_block, get_state_transitions};
 use keccak_hash::keccak;

@@ -1,15 +1,13 @@
 use super::errors::{ProverServerError, SigIntError};
-use crate::utils::{
-    config::{
-        committer::CommitterConfig, errors::ConfigError, eth::EthConfig,
-        prover_server::ProverServerConfig,
-    },
-    eth_client::{eth_sender::Overrides, EthClient, WrappedTransaction},
+use crate::utils::config::{
+    committer::CommitterConfig, errors::ConfigError, eth::EthConfig,
+    prover_server::ProverServerConfig,
 };
 use ethrex_core::{
     types::{Block, BlockHeader},
     Address, H256,
 };
+use ethrex_l2_sdk::eth_client::{eth_sender::Overrides, EthClient, WrappedTransaction};
 use ethrex_storage::Store;
 use ethrex_vm::{execution_db::ExecutionDB, EvmError};
 use keccak_hash::keccak;
