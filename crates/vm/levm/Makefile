@@ -15,7 +15,6 @@ fmt: ## 📄 Runs rustfmt
 	cargo fmt --all
 
 ###### EF Tests ######
-
 SPECTEST_VERSION := v14.1
 SPECTEST_ARTIFACT := tests_$(SPECTEST_VERSION).tar.gz
 SPECTEST_VECTORS_DIR := ../../../cmd/ef_tests/levm/vectors
@@ -32,8 +31,13 @@ $(SPECTEST_VECTORS_DIR): $(SPECTEST_ARTIFACT)
 download-evm-ef-tests: $(SPECTEST_VECTORS_DIR) ## 📥 Download EF Tests
 
 run-evm-ef-tests: ## 🏃‍♂️ Run EF Tests
-	cd ../../../ && \
-	time cargo test -p ef_tests-levm --test ef_tests_levm --release -- $(flags)
+	if [ "$(QUIET)" = "true" ]; then \
+		cd ../../../ && \
+		time cargo test --quiet -p ef_tests-levm --test ef_tests_levm --release -- $(flags) --summary;\
+	else \
+		cd ../../../ && \
+		time cargo test -p ef_tests-levm --test ef_tests_levm --release -- $(flags);\
+	fi
 
 run-evm-ef-tests-ci: ## 🏃‍♂️ Run EF Tests only with LEVM and without spinner, for CI.
 	cd ../../../ && \
