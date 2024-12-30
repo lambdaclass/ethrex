@@ -11,6 +11,20 @@ For more detailed documentation on each part of the system:
 - [Proposer](./proposer.md)
 - [Prover](./prover.md)
 
+## Quick HandsOn
+
+1. `cd crates/l2`
+2. `make rm-db-l2 && make down`
+   - It will remove any old database, if present, stored in your computer. The absolute path of libmdbx is defined by [data_dir](https://docs.rs/dirs/latest/dirs/fn.data_dir.html).
+3. `cp .env.example .env` &rarr; check if you want to change any config.
+4. `make init`
+   - Init the L1 in a docker container on port `8545`.
+   - Deploy the needed contracts for the L2 on the L1.
+   - Start the L2 locally on port `1729`.
+
+
+For more information on how to run the L2 node with the prover attached to it, the [Prover Docs](./prover.md) provides more insight.
+
 ## Configuration
 
 Configuration is done through env vars. A detailed list is available in each part documentation.

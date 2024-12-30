@@ -14,4 +14,6 @@ pub enum ConfigError {
     BuildProposerEngineServerFromConfigError(#[from] engine_client::errors::ConfigError),
     #[error("Error building Prover server from config: {0}")]
     BuildProverServerFromConfigError(#[from] EthClientError),
+    #[error("{0}")]
+    Custom(String),
 }

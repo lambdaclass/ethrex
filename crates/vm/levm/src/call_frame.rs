@@ -7,10 +7,7 @@ use crate::{
 };
 use bytes::Bytes;
 use ethrex_core::{types::Log, Address, U256};
-use std::collections::{HashMap, HashSet};
-
-/// [EIP-1153]: https://eips.ethereum.org/EIPS/eip-1153#reference-implementation
-pub type TransientStorage = HashMap<(Address, U256), U256>;
+use std::collections::HashSet;
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Stack {
@@ -56,9 +53,9 @@ impl Stack {
 /// the EVM is currently executing.
 pub struct CallFrame {
     /// Max gas a callframe can use
-    pub gas_limit: U256,
+    pub gas_limit: u64,
     /// Keeps track of the gas that's been used in current context
-    pub gas_used: U256,
+    pub gas_used: u64,
     /// Program Counter
     pub pc: usize,
     /// Address of the account that sent the message
@@ -81,7 +78,6 @@ pub struct CallFrame {
     pub sub_return_data: Bytes,
     /// Indicates if current context is static (if it is, it can't change state)
     pub is_static: bool,
-    pub transient_storage: TransientStorage,
     pub logs: Vec<Log>,
     /// Call stack current depth
     pub depth: usize,
@@ -95,7 +91,7 @@ impl CallFrame {
     pub fn new_from_bytecode(bytecode: Bytes) -> Self {
         let valid_jump_destinations = get_valid_jump_destinations(&bytecode).unwrap_or_default();
         Self {
-            gas_limit: U256::MAX,
+            gas_limit: u64::MAX,
             bytecode,
             valid_jump_destinations,
             ..Default::default()
@@ -117,8 +113,8 @@ impl CallFrame {
         msg_value: U256,
         calldata: Bytes,
         is_static: bool,
-        gas_limit: U256,
-        gas_used: U256,
+        gas_limit: u64,
+        gas_used: u64,
         depth: usize,
         create_op_called: bool,
     ) -> Self {
