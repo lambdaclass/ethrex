@@ -24,6 +24,7 @@ use ethrex_core::{types::TxKind, Address, H256, U256};
 use ethrex_rlp;
 use ethrex_rlp::encode::RLPEncode;
 use keccak_hash::keccak;
+use revm_primitives::SpecId;
 use sha3::{Digest, Keccak256};
 use std::{
     collections::{HashMap, HashSet},
@@ -133,8 +134,11 @@ impl VM {
         // Maybe this decision should be made in an upper layer
 
         // Add sender, coinbase and recipient (in the case of a Call) to cache [https://www.evm.codes/about#access_list]
-        let mut default_touched_accounts =
-            HashSet::from_iter([env.origin, env.coinbase].iter().cloned());
+        let mut default_touched_accounts = HashSet::from_iter([env.origin].iter().cloned());
+        // Add coinbase to cache if the spec is SHANGHAI or higher
+        if env.spec_id >= SpecId::SHANGHAI {
+            default_touched_accounts.insert(env.coinbase);
+        }
 
         let mut default_touched_storage_slots: HashMap<Address, HashSet<H256>> = HashMap::new();
 
