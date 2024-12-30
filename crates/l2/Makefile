@@ -1,4 +1,4 @@
-.PHONY: help init down clean restart cli update-cli-contracts init-local-l1 init-l1 down-local-l1 restart-local-l1 rm-db-l1 clean-contract-deps restart-contract-deps deploy-l1 init-l2 down-l2 restart-l2 init-prover rm-db-l2 ci_test test
+.PHONY: help init down clean restart cli update-cli-contracts init-local-l1 init-l1 down-local-l1 restart-local-l1 rm-db-l1 clean-contract-deps restart-contract-deps deploy-l1 init-l2 down-l2 restart-l2 init-prover rm-db-l2 purge_prover_state ci_test test
 .DEFAULT_GOAL := help
 
 L2_GENESIS_FILE_PATH=../../test_data/genesis-l2.json
@@ -136,8 +136,8 @@ test: ## 🚧 Runs the L2's integration test, run `make init` and in a new termi
 
 
 # Purge L2's state
-
 UNAME_S:=$(shell uname -s)
+# This directory is set by crates/l2/utils/prover/save_state.rs -> const DEFAULT_DATADIR
 PROJECT_NAME:=ethrex_l2_state
 
 ifeq ($(UNAME_S),Linux)
