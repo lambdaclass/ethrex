@@ -130,8 +130,8 @@ fn parse(
     let forkchoice_state: ForkChoiceState = serde_json::from_value(params[0].clone())?;
     // if there is an error when parsing, set to None
     let payload_attributes: Option<PayloadAttributesV3> =
-        match serde_json::from_value::<PayloadAttributesV3>(params[1].clone()) {
-            Ok(attributes) => Some(attributes),
+        match serde_json::from_value::<Option<PayloadAttributesV3>>(params[1].clone()) {
+            Ok(attributes) => attributes,
             Err(error) => {
                 info!("Could not parse params {}", error);
                 None
@@ -175,7 +175,7 @@ fn handle_forkchoice(
                 }
                 InvalidForkChoice::Syncing => {
                     // Start sync
-                    let current_number = context.storage.get_latest_block_number()?.unwrap();
+                    let current_number = context.storage.get_latest_block_number()?;
                     let Some(current_head) =
                         context.storage.get_canonical_block_hash(current_number)?
                     else {

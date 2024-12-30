@@ -186,7 +186,7 @@ mod blockchain_integration_test {
         // Important blocks should still be the same as before.
         assert!(store.get_finalized_block_number().unwrap() == Some(0));
         assert!(store.get_safe_block_number().unwrap() == Some(0));
-        assert!(store.get_latest_block_number().unwrap() == Some(2));
+        assert!(store.get_latest_block_number().unwrap() == 2);
     }
 
     #[test]
