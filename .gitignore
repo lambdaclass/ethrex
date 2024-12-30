@@ -56,5 +56,6 @@ loc_report.json
 ethrex.redb
 
 # used by Flamegraph and Samply
+cmd/ef_tests/levm/levm_ef_test_perfgraphs
 *.svg
 prof_*.json
