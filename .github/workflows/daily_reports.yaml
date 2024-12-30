@@ -205,3 +205,22 @@ jobs:
         env:
           url: ${{ secrets.LEVM_SLACK_WEBHOOK }}
         run: sh .github/scripts/publish_levm_ef_tests_summary.sh
+
+  flamegraphs-page:
+    name: Post to Slack link to Flamegraphs Page
+    runs-on: ubuntu-latest
+    steps:
+      - name: Post results to ethrex L1 slack channel
+        env:
+          url: ${{ secrets.ETHREX_L1_SLACK_WEBHOOK }}
+        run: sh .github/scripts/publish_link_flamegraphs.sh
+
+      - name: Post results to ethrex L2 slack channel
+        env:
+          url: ${{ secrets.ETHREX_L2_SLACK_WEBHOOK }}
+        run: sh .github/scripts/publish_link_flamegraphs.sh
+
+      - name: Post results to levm slack channel
+        env:
+          url: ${{ secrets.LEVM_SLACK_WEBHOOK }}
+        run: sh .github/scripts/publish_link_flamegraphs.sh

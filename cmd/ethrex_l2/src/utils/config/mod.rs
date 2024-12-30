@@ -135,13 +135,46 @@ pub fn prompt_config() -> eyre::Result<EthrexL2Config> {
     Ok(prompted_config)
 }
 
-pub async fn confirm_config_creation(config_name: String) -> eyre::Result<()> {
+pub fn default_config() -> eyre::Result<EthrexL2Config> {
+    let prompted_config = EthrexL2Config {
+        network: NetworkConfig {
+            l1_rpc_url: DEFAULT_L1_RPC_URL.into(),
+            l1_chain_id: DEFAULT_L1_CHAIN_ID,
+            l2_rpc_url: DEFAULT_L2_RPC_URL.into(),
+            l2_chain_id: DEFAULT_L2_CHAIN_ID,
+            l2_explorer_url: DEFAULT_L2_EXPLORER_URL.into(),
+            l1_explorer_url: DEFAULT_L1_EXPLORER_URL.into(),
+        },
+        wallet: WalletConfig {
+            private_key: {
+                let prompted_private_key = format!(
+                    "0x{}",
+                    hex::encode(
+                        SecretKey::from_slice(DEFAULT_PRIVATE_KEY.as_bytes())?.secret_bytes(),
+                    )
+                );
+                SecretKey::from_slice(H256::from_str(&prompted_private_key[2..])?.as_fixed_bytes())?
+            },
+            address: DEFAULT_ADDRESS,
+        },
+        contracts: ContractsConfig {
+            common_bridge: DEFAULT_CONTRACTS_COMMON_BRIDGE_ADDRESS,
+            on_chain_proposer: DEFAULT_CONTRACTS_ON_CHAIN_PROPOSER_ADDRESS,
+        },
+    };
+    Ok(prompted_config)
+}
+
+pub async fn confirm_config_creation(config_name: String, default: bool) -> eyre::Result<()> {
     let create_confirmation = confirm(CONFIG_CREATE_PROMPT_MSG)?;
     if create_confirmation {
         Box::pin(async {
-            commands::config::Command::Create { config_name }
-                .run()
-                .await
+            commands::config::Command::Create {
+                config_name,
+                default,
+            }
+            .run()
+            .await
         })
         .await
     } else {

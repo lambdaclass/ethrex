@@ -1,0 +1,200 @@
+name: Daily Flamegraph Reporter
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "**" ]
+  workflow_dispatch:
+
+env:
+  RUST_VERSION: 1.81.0
+  RUST_RETH_VERSION: 1.82.0
+
+jobs:
+  flamegraph-ethrex:
+    name: Generate Flamegraph for Ethrex
+    runs-on: ubuntu-latest
+    env:
+      PROGRAM: ethrex
+    outputs:
+      time: ${{steps.generate-flamegraph-ethrex.outputs.time}}
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v4
+
+      - name: Rustup toolchain install
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: ${{ env.RUST_VERSION }}
+
+      - name: Caching
+        uses: Swatinem/rust-cache@v2
+
+      - name: Change perf settings
+        run: |
+          sudo sysctl kernel.perf_event_paranoid=-1
+          sudo perf list hw
+
+      - name: Install flamegraph
+        run: |
+          cargo install flamegraph
+          cargo install inferno
+
+      - name: Install Foundry
+        uses: foundry-rs/foundry-toolchain@v1
+
+      - name: Install ethrex_l2 cli
+        run: |
+          cargo install --path cmd/ethrex_l2
+          ethrex_l2 config create default --default
+          ethrex_l2 config set default
+
+      - name: Build ethrex
+        run: CARGO_PROFILE_RELEASE_DEBUG=true cargo build --release --bin ethrex --features dev
+
+      - id: generate-flamegraph-ethrex
+        name: Generate Flamegraph data for Ethrex
+        shell: bash
+        run: |
+          CARGO_PROFILE_RELEASE_DEBUG=true cargo flamegraph -c "record -o perf.data -F997 --call-graph dwarf,16384 -g" \
+          --bin ethrex --features dev  --  --network /home/runner/work/ethrex/ethrex/test_data/genesis-l2.json --http.port 1729 &
+          echo "waiting to execute load test..."
+          sleep 30 &&
+          echo "executing load test..."
+          bash /home/runner/work/ethrex/ethrex/.github/scripts/flamegraph_watcher.sh &&
+          echo "Load test finished"
+
+      - name: Generate SVG
+        shell: bash
+        run: |
+          perf script -v -i perf.data --no-inline > stack.data
+          inferno-collapse-perf -q < stack.data > collapsed.data
+          inferno-flamegraph --title "Ethrex Flamegraph" < collapsed.data > flamegraph_ethrex.svg
+
+      - name: Upload artifacts - flamegraph_ethrex.svg
+        uses: actions/upload-artifact@v4
+        with:
+          name: flamegraph_ethrex.svg
+          path: ./flamegraph_ethrex.svg
+
+  flamegraph-reth:
+    name: Generate Flamegraph for Reth
+    runs-on: ubuntu-latest
+    env:
+      PROGRAM: reth
+    outputs:
+      time: ${{steps.generate-flamegraph-reth.outputs.time}}
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v4
+
+      - name: Rustup toolchain install
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: ${{ env.RUST_RETH_VERSION }}
+
+      - name: Caching
+        uses: Swatinem/rust-cache@v2
+
+      - name: Change perf settings
+        run: |
+          sudo sysctl kernel.perf_event_paranoid=-1
+          sudo perf list hw
+
+      - name: Install flamegraph
+        run: |
+          cargo install flamegraph
+          cargo install inferno
+
+      - name: Install Foundry
+        uses: foundry-rs/foundry-toolchain@v1
+
+      - name: Install ethrex_l2 cli
+        run: |
+          cargo install --path cmd/ethrex_l2
+          ethrex_l2 config create default --default
+          ethrex_l2 config set default
+
+      - name: Checkout reth
+        uses: actions/checkout@v4
+        with:
+          repository: paradigmxyz/reth
+          path: 'reth'
+
+      - id: generate-flamegraph-reth
+        name: Build and test reth
+        shell: bash
+        run: |
+          cd ./reth
+          cargo flamegraph -c "record -o perf.data -F997 --call-graph dwarf,16384 -g" --bin reth --profile profiling \
+          -- node --chain /home/runner/work/ethrex/ethrex/test_data/genesis-load-test.json --dev \
+          --dev.block-time 5000ms --http.port 1729  --txpool.max-pending-txns 100000000 --txpool.max-new-txns 1000000000 \
+          --txpool.pending-max-count 100000000 --txpool.pending-max-size 10000000000 --txpool.basefee-max-count 100000000000 \
+          --txpool.basefee-max-size 1000000000000 --txpool.queued-max-count 1000000000 &
+          echo "waiting to execute load test..."
+          sleep 180 &&
+          bash /home/runner/work/ethrex/ethrex/.github/scripts/flamegraph_watcher.sh &&
+          echo "Load test finished"
+
+      - name: Generate SVG
+        shell: bash
+        run: |
+          perf script -v -i /home/runner/work/ethrex/ethrex/reth/perf.data --no-inline > stack.data
+          inferno-collapse-perf -q < stack.data > collapsed.data
+          inferno-flamegraph --title "Reth Flamegraph" < collapsed.data > flamegraph_reth.svg
+
+      - name: Upload artifacts - flamegraph_reth.svg
+        uses: actions/upload-artifact@v4
+        with:
+          name: flamegraph_reth.svg
+          path: ./flamegraph_reth.svg
+
+  upload-static-page:
+    name: Upload artifacts for static page
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    needs: [ flamegraph-ethrex, flamegraph-reth ]
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v4
+
+      - name: Download ethrex flamegraph artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: flamegraph_ethrex.svg
+          path: flamegraph_ethrex.svg
+
+      - name: Download reth flamegraph artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: flamegraph_reth.svg
+          path: flamegraph_reth.svg
+
+      - name: Update static page locally with new data
+        shell: bash
+        run: |
+          cp -r flamegraph_ethrex.svg pages/
+          cp -r flamegraph_reth.svg pages/
+          sed -i "s/{{LAST_UPDATE}}/$(date +'%Y-%m-%dT%H:%M:%S')/g" pages/index.html
+          sed -i "s/{{ETHREX_TIME}}/${{ needs.flamegraph-ethrex.outputs.time }}/g" pages/index.html
+          sed -i "s/{{RETH_TIME}}/${{ needs.flamegraph-reth.outputs.time }}/g" pages/index.html
+
+      - name: Setup Pages
+        uses: actions/configure-pages@v5
+
+      - name: Upload artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: 'pages/'
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
