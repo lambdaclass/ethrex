@@ -96,7 +96,6 @@ pub fn is_precompile(callee_address: &Address) -> bool {
 
 pub fn execute_precompile(current_call_frame: &mut CallFrame) -> Result<Bytes, VMError> {
     let callee_address = current_call_frame.code_address;
-    let calldata = current_call_frame.calldata.clone();
     let gas_for_call = current_call_frame
         .gas_limit
         .checked_sub(current_call_frame.gas_used)
@@ -105,22 +104,34 @@ pub fn execute_precompile(current_call_frame: &mut CallFrame) -> Result<Bytes, V
 
     let result = match callee_address {
         address if address == ECRECOVER_ADDRESS => {
-            ecrecover(&calldata, gas_for_call, consumed_gas)?
+            ecrecover(&current_call_frame.calldata, gas_for_call, consumed_gas)?
         }
-        address if address == IDENTITY_ADDRESS => identity(&calldata, gas_for_call, consumed_gas)?,
-        address if address == SHA2_256_ADDRESS => sha2_256(&calldata, gas_for_call, consumed_gas)?,
+        address if address == IDENTITY_ADDRESS => {
+            identity(&current_call_frame.calldata, gas_for_call, consumed_gas)?
+        }
+        address if address == SHA2_256_ADDRESS => {
+            sha2_256(&current_call_frame.calldata, gas_for_call, consumed_gas)?
+        }
         address if address == RIPEMD_160_ADDRESS => {
-            ripemd_160(&calldata, gas_for_call, consumed_gas)?
+            ripemd_160(&current_call_frame.calldata, gas_for_call, consumed_gas)?
         }
-        address if address == MODEXP_ADDRESS => modexp(&calldata, gas_for_call, consumed_gas)?,
-        address if address == ECADD_ADDRESS => ecadd(&calldata, gas_for_call, consumed_gas)?,
-        address if address == ECMUL_ADDRESS => ecmul(&calldata, gas_for_call, consumed_gas)?,
+        address if address == MODEXP_ADDRESS => {
+            modexp(&current_call_frame.calldata, gas_for_call, consumed_gas)?
+        }
+        address if address == ECADD_ADDRESS => {
+            ecadd(&current_call_frame.calldata, gas_for_call, consumed_gas)?
+        }
+        address if address == ECMUL_ADDRESS => {
+            ecmul(&current_call_frame.calldata, gas_for_call, consumed_gas)?
+        }
         address if address == ECPAIRING_ADDRESS => {
-            ecpairing(&calldata, gas_for_call, consumed_gas)?
+            ecpairing(&current_call_frame.calldata, gas_for_call, consumed_gas)?
         }
-        address if address == BLAKE2F_ADDRESS => blake2f(&calldata, gas_for_call, consumed_gas)?,
+        address if address == BLAKE2F_ADDRESS => {
+            blake2f(&current_call_frame.calldata, gas_for_call, consumed_gas)?
+        }
         address if address == POINT_EVALUATION_ADDRESS => {
-            point_evaluation(&calldata, gas_for_call, consumed_gas)?
+            point_evaluation(&current_call_frame.calldata, gas_for_call, consumed_gas)?
         }
         _ => return Err(VMError::Internal(InternalError::InvalidPrecompileAddress)),
     };
@@ -625,10 +636,9 @@ pub fn ecpairing(
             }
             (true, false) => {
                 // If the first point is infinity, then do the checks for the second
-                if let Ok(p2) = BN254TwistCurve::create_point_from_affine(
-                    second_point_x.clone(),
-                    second_point_y.clone(),
-                ) {
+                if let Ok(p2) =
+                    BN254TwistCurve::create_point_from_affine(second_point_x, second_point_y)
+                {
                     if !p2.is_in_subgroup() {
                         return Err(VMError::PrecompileError(PrecompileError::DefaultError));
                     } else {
@@ -640,12 +650,7 @@ pub fn ecpairing(
             }
             (false, true) => {
                 // If the second point is infinity, then do the checks for the first
-                if BN254Curve::create_point_from_affine(
-                    first_point_x.clone(),
-                    first_point_y.clone(),
-                )
-                .is_err()
-                {
+                if BN254Curve::create_point_from_affine(first_point_x, first_point_y).is_err() {
                     return Err(VMError::PrecompileError(PrecompileError::DefaultError));
                 }
                 continue;
