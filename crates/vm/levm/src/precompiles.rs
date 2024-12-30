@@ -30,6 +30,7 @@ use crate::{
     errors::{InternalError, PrecompileError, VMError},
     gas_cost::{
         self, BLAKE2F_ROUND_COST, ECADD_COST, ECMUL_COST, ECRECOVER_COST, MODEXP_STATIC_COST,
+        POINT_EVALUATION_COST,
     },
 };
 
@@ -926,6 +927,14 @@ fn verify_kzg_proof(
     .map_err(|_| VMError::PrecompileError(PrecompileError::EvaluationError))
 }
 
+const FIELD_ELEMENTS_PER_BLOB: U256 = U256([4096, 0, 0, 0]);
+pub const BLS_MODULUS: U256 = U256([
+    0xFFFFFFFF00000001,
+    0x53BDA402FFFE5BFE,
+    0x3339D80809A1D805,
+    0x73EDA753299D7D48,
+]);
+
 fn point_evaluation(
     calldata: &Bytes,
     gas_for_call: u64,
@@ -936,7 +945,7 @@ fn point_evaluation(
     }
 
     // Consume gas
-    let gas_cost = 50000;
+    let gas_cost = POINT_EVALUATION_COST;
     increase_precompile_consumed_gas(gas_for_call, gas_cost, consumed_gas)?;
 
     // Parse inputs
@@ -986,19 +995,14 @@ fn point_evaluation(
     // Create the output (it's always the same)
     let mut output: Vec<u8> = Vec::new();
 
-    let field_elem_u256 = U256::from_dec_str("4096").unwrap_or_default();
-    let mut field_elems_per_blob = [0_u8; 32];
-    field_elem_u256.to_big_endian(&mut field_elems_per_blob);
+    let mut field_elems_per_blob_bytes = [0_u8; 32];
+    FIELD_ELEMENTS_PER_BLOB.to_big_endian(&mut field_elems_per_blob_bytes);
 
-    let number = U256::from_dec_str(
-        "52435875175126190479447740508185965837690552500527637822603658699938581184513",
-    )
-    .unwrap_or_default();
-    let mut bls_modulus = [0u8; 32];
-    number.to_big_endian(&mut bls_modulus);
+    let mut bls_modulus_bytes = [0u8; 32];
+    BLS_MODULUS.to_big_endian(&mut bls_modulus_bytes);
 
-    output.extend_from_slice(&field_elems_per_blob);
-    output.extend_from_slice(&bls_modulus);
+    output.extend_from_slice(&field_elems_per_blob_bytes);
+    output.extend_from_slice(&bls_modulus_bytes);
 
     Ok(Bytes::from(output))
 }
