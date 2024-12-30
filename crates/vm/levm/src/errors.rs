@@ -1,6 +1,6 @@
 use crate::account::Account;
 use bytes::Bytes;
-use ethrex_core::{types::Log, Address};
+use ethrex_core::{types::Log, Address, H160};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use thiserror;
@@ -178,6 +178,8 @@ pub enum InternalError {
     UndefinedState(i32), // This error is temporarily for things that cause an undefined state.
     #[error("Invalid precompile address. Tried to execute a precompile that does not exist.")]
     InvalidPrecompileAddress,
+    #[error("Precompile not implemented: {0}")]
+    PrecompileNotImplemented(u64),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error, Serialize, Deserialize)]

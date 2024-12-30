@@ -5,6 +5,7 @@ use crate::{
     errors::{InternalError, OpcodeSuccess, OutOfGasError, ResultReason, TxResult, VMError},
     gas_cost::{self, max_message_call_gas},
     memory::{self, calculate_memory_size},
+    precompiles::is_precompile,
     vm::{address_to_word, word_to_address, VM},
     Account,
 };

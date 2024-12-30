@@ -250,6 +250,11 @@ impl VM {
         );
 
         if is_precompile(&current_call_frame.code_address) {
+            //TODO: Remove this when implementing precompiles
+            return Err(VMError::Internal(InternalError::PrecompileNotImplemented(
+                current_call_frame.code_address.to_low_u64_be(),
+            )));
+
             let precompile_result = execute_precompile(current_call_frame);
 
             match precompile_result {
