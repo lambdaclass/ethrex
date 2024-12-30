@@ -181,6 +181,9 @@ jobs:
           - name: "Paris Engine tests"
             simulation: ethereum/engine
             test_pattern: "engine-api/RPC|Re-Org Back to Canonical Chain From Syncing Chain|Re-org to Previously Validated Sidechain Payload|Re-Org Back into Canonical Chain, Depth=5|Safe Re-Org|Transaction Re-Org|Inconsistent|Suggested Fee|PrevRandao|Fork ID|Unknown|Invalid PayloadAttributes|Bad Hash|Unique Payload ID|Re-Execute Payload|In-Order|Multiple New Payloads|Valid NewPayload|NewPayload with|Invalid NewPayload|Payload Build|Invalid NewPayload, Transaction|ParentHash equals|Build Payload|Invalid Missing Ancestor ReOrg"
+          - name: "Sync"
+            simulation: ethereum/sync
+            test_pattern: ""
     steps:
       - name: Checkout sources
         uses: actions/checkout@v4
