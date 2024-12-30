@@ -222,7 +222,6 @@ async fn download_and_run_blocks(
                 .drain(..block_bodies_len)
                 .zip(block_bodies.into_iter())
             {
-                // We already validated that there are no more block bodies than the ones requested
                 let header = store
                     .get_block_header_by_hash(hash)?
                     .ok_or(SyncError::CorruptDB)?;
