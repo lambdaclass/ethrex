@@ -269,7 +269,7 @@ pub fn ripemd_160(
     Ok(Bytes::from(output))
 }
 
-// Returns the result of the module-exponentiation operation
+/// Returns the result of the module-exponentiation operation
 pub fn modexp(
     calldata: &Bytes,
     gas_for_call: u64,
@@ -392,7 +392,7 @@ pub fn increase_left_pad(result: &Bytes, m_size: usize) -> Result<Bytes, VMError
     }
 }
 
-// Makes a point addition on the elliptic curve 'alt_bn128'
+/// Makes a point addition on the elliptic curve 'alt_bn128'
 pub fn ecadd(
     calldata: &Bytes,
     gas_for_call: u64,
@@ -471,7 +471,7 @@ pub fn ecadd(
     }
 }
 
-// Makes a scalar multiplication on the elliptic curve 'alt_bn128'
+/// Makes a scalar multiplication on the elliptic curve 'alt_bn128'
 pub fn ecmul(
     calldata: &Bytes,
     gas_for_call: u64,
@@ -679,7 +679,7 @@ fn handle_pairing_from_coordinates(
     }
 }
 
-// Performs a bilinear pairing on points on the elliptic curve 'alt_bn128', returns 1 on success and 0 on failure
+/// Performs a bilinear pairing on points on the elliptic curve 'alt_bn128', returns 1 on success and 0 on failure
 pub fn ecpairing(
     calldata: &Bytes,
     gas_for_call: u64,
@@ -783,10 +783,10 @@ const R2: u32 = 24;
 const R3: u32 = 16;
 const R4: u32 = 63;
 
-// The G primitive function mixes two input words, "x" and "y", into
-// four words indexed by "a", "b", "c", and "d" in the working vector
-// v[0..15].  The full modified vector is returned.
-// Based on https://datatracker.ietf.org/doc/html/rfc7693#section-3.1
+/// The G primitive function mixes two input words, "x" and "y", into
+/// four words indexed by "a", "b", "c", and "d" in the working vector
+/// v[0..15].  The full modified vector is returned.
+/// Based on https://datatracker.ietf.org/doc/html/rfc7693#section-3.1
 #[allow(clippy::indexing_slicing)]
 fn g(v: [u64; 16], a: usize, b: usize, c: usize, d: usize, x: u64, y: u64) -> [u64; 16] {
     let mut ret = v;
@@ -802,7 +802,7 @@ fn g(v: [u64; 16], a: usize, b: usize, c: usize, d: usize, x: u64, y: u64) -> [u
     ret
 }
 
-// Perform the permutations on the work vector
+/// Perform the permutations on the work vector given the rounds to permute and the message block
 #[allow(clippy::indexing_slicing)]
 fn word_permutation(rounds_to_permute: usize, v: [u64; 16], m: &[u64; 16]) -> [u64; 16] {
     let mut ret = v;
@@ -826,7 +826,7 @@ fn word_permutation(rounds_to_permute: usize, v: [u64; 16], m: &[u64; 16]) -> [u
     ret
 }
 
-// Based on https://datatracker.ietf.org/doc/html/rfc7693#section-3.2
+/// Based on https://datatracker.ietf.org/doc/html/rfc7693#section-3.2
 fn blake2f_compress_f(
     rounds: usize, // Specifies the rounds to permute
     h: [u64; 8],   // State vector, defines the work vector (v) and affects the XOR process
@@ -862,7 +862,7 @@ fn blake2f_compress_f(
     Ok(output)
 }
 
-// Reads a part of the calldata and returns what is read as u64 or an error
+/// Reads a part of the calldata and returns what is read as u64 or an error
 fn read_bytes_from_offset(calldata: &Bytes, offset: usize, index: usize) -> Result<u64, VMError> {
     let index_start = (index
         .checked_mul(BLAKE2F_ELEMENT_SIZE)
@@ -912,7 +912,7 @@ fn parse_slice_arguments(calldata: &Bytes) -> Result<SliceArguments, VMError> {
     Ok((h, m, t))
 }
 
-// Returns the result of Blake2 hashing algorithm given a certain parameters from the calldata.
+/// Returns the result of Blake2 hashing algorithm given a certain parameters from the calldata.
 pub fn blake2f(
     calldata: &Bytes,
     gas_for_call: u64,
@@ -951,15 +951,16 @@ pub fn blake2f(
     Ok(Bytes::from(output))
 }
 
-// Taken from the same name function from crates/common/types/blobs_bundle.rs
-fn kzg_commitment_to_versioned_hash(data: &[u8; 48]) -> H256 {
+/// Converts the provided commitment to match the provided versioned_hash.
+/// Taken from the same name function from crates/common/types/blobs_bundle.rs
+fn kzg_commitment_to_versioned_hash(commitment_bytes: &[u8; 48]) -> H256 {
     use k256::sha2::Digest;
-    let mut versioned_hash: [u8; 32] = k256::sha2::Sha256::digest(data).into();
+    let mut versioned_hash: [u8; 32] = k256::sha2::Sha256::digest(commitment_bytes).into();
     versioned_hash[0] = VERSIONED_HASH_VERSION_KZG;
     versioned_hash.into()
 }
 
-// Veifies that p(z) = y given a commitment that corresponds to the polynomial p(x) and a KZG proof
+/// Verifies that p(z) = y given a commitment that corresponds to the polynomial p(x) and a KZG proof
 fn verify_kzg_proof(
     commitment_bytes: &[u8; 48],
     z: &[u8; 32],
@@ -995,7 +996,7 @@ const POINT_EVALUATION_OUTPUT_BYTES: [u8; 64] = [
     0x53, 0xBD, 0xA4, 0x02, 0xFF, 0xFE, 0x5B, 0xFE, 0xFF, 0xFF, 0xFF, 0xFF, 0x00, 0x00, 0x00, 0x01,
 ];
 
-// Makes verifications on the received point, proof and commitment, if true returns a constant value
+/// Makes verifications on the received point, proof and commitment, if true returns a constant value
 fn point_evaluation(
     calldata: &Bytes,
     gas_for_call: u64,
