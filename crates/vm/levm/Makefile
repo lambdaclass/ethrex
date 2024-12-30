@@ -90,9 +90,8 @@ run-hive-debug-levm: build-image-levm ## 🐝 Run Hive with LEVM in debug mode
 	cd ../../../hive && ./hive --sim $(SIMULATION) --client ethrex --sim.limit "$(TEST_PATTERN)" --docker.output
 
 flamegraph-run-ef-tests:
-	cargo test --message-format=json-render-diagnostics --release --no-run -p ef_tests-levm --test ef_tests_levm -- --summary| \
-	jq '.executable | select(. != null)'
+	CARGO_PROFILE_RELEASE_DEBUG=true cargo flamegraph --root -p ef_tests-levm --test ef_tests_levm -- --summary
 
 samply-run-ef-tests:
-	cargo test --no-run --release -p ef_tests-levm --test ef_tests_levm
-	samply record cargo test --release -p ef_tests-levm --test ef_tests_levm
+	CARGO_PROFILE_RELEASE_DEBUG=true cargo test --no-run --release -p ef_tests-levm --test ef_tests_levm
+	CARGO_PROFILE_RELEASE_DEBUG=true samply record cargo test --release -p ef_tests-levm --test ef_tests_levm -- --summary
