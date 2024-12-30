@@ -56,5 +56,5 @@ loc_report.json
 ethrex.redb
 
 # used by Flamegraph and Samply
-flamegraph.svg
+*.svg
 profile.json

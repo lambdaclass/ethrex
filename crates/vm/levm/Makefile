@@ -89,8 +89,16 @@ run-hive-debug-levm: build-image-levm ## 🐝 Run Hive with LEVM in debug mode
 	$(MAKE) -C ../../../ setup-hive
 	cd ../../../hive && ./hive --sim $(SIMULATION) --client ethrex --sim.limit "$(TEST_PATTERN)" --docker.output
 
+SUBDIRS := $(shell find $(SPECTEST_VECTORS_DIR)/GeneralStateTests -maxdepth 1 -type d ! -path "$(SPECTEST_VECTORS_DIR)/GeneralStateTests" -exec basename {} \;)
+
 flamegraph-run-ef-tests:
-	CARGO_PROFILE_RELEASE_DEBUG=true cargo flamegraph --root -p ef_tests-levm --test ef_tests_levm -- --summary
+	cd ../../../cmd/ef_tests/levm &&\
+	mkdir -p levm_ef_test_flamegraph/flamegraph ||:
+	@for dir in $(SUBDIRS); do\
+		CARGO_PROFILE_RELEASE_DEBUG=true cargo flamegraph --root \
+		--output ../../../cmd/ef_tests/levm/levm_ef_test_flamegraph/$$dir.svg\
+		-p ef_tests-levm --test ef_tests_levm -- --summary --tests $$dir;\
+	done
 
 samply-run-ef-tests:
 	CARGO_PROFILE_RELEASE_DEBUG=true samply record cargo test --release -p ef_tests-levm --test ef_tests_levm -- --summary
