@@ -949,12 +949,11 @@ fn point_evaluation(
     increase_precompile_consumed_gas(gas_for_call, gas_cost, consumed_gas)?;
 
     // Parse inputs
-    let hash = calldata
+    let versioned_hash: [u8; 32] = calldata
         .get(..32)
-        .ok_or(PrecompileError::ParsingInputError)?;
-    let mut hash_bytes = [0; 32];
-    hash_bytes.copy_from_slice(hash);
-    let versioned_hash = H256::from(hash_bytes);
+        .ok_or(PrecompileError::ParsingInputError)?
+        .try_into()
+        .map_err(|_| PrecompileError::ParsingInputError)?;
 
     let x = calldata
         .get(32..64)
@@ -983,7 +982,7 @@ fn point_evaluation(
     // Perform the evaluation
 
     // This checks if the commitment is equal to the versioned hash
-    if kzg_commitment_to_versioned_hash(&commitment_bytes) != versioned_hash {
+    if kzg_commitment_to_versioned_hash(&commitment_bytes) != H256::from(versioned_hash) {
         return Err(VMError::PrecompileError(PrecompileError::ParsingInputError));
     }
 
