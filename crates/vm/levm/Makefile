@@ -93,18 +93,18 @@ SUBDIRS := $(shell find $(SPECTEST_VECTORS_DIR)/GeneralStateTests -maxdepth 1 -t
 
 flamegraph-run-ef-tests:
 	cd ../../../cmd/ef_tests/levm &&\
-	mkdir -p levm_ef_test_flamegraph/flamegraph ||:
+	mkdir -p levm_ef_test_perfgraphs/flamegraph ||:
 	@for dir in $(SUBDIRS); do\
 		CARGO_PROFILE_RELEASE_DEBUG=true cargo flamegraph --root \
-		--output ../../../cmd/ef_tests/levm/levm_ef_test_flamegraph/flamegraph/$$dir.svg\
+		--output ../../../cmd/ef_tests/levm/levm_ef_test_perfgraphs/flamegraph/$$dir.svg\
 		-p ef_tests-levm --test ef_tests_levm -- --summary --tests $$dir;\
 	done
 
 samply-run-ef-tests:
 	cd ../../../cmd/ef_tests/levm &&\
-	mkdir -p levm_ef_test_flamegraph/samply ||:
+	mkdir -p levm_ef_test_perfgraphs/samply ||:
 	@for dir in $(SUBDIRS); do\
 		CARGO_PROFILE_RELEASE_DEBUG=true samply record --save-only \
-		-o ../../../cmd/ef_tests/levm/levm_ef_test_flamegraph/samply/prof_$$dir.json \
+		-o ../../../cmd/ef_tests/levm/levm_ef_test_perfgraphs/samply/prof_$$dir.json \
 		cargo test --release -p ef_tests-levm --test ef_tests_levm -- --summary --tests $$dir;\
 	done
