@@ -927,13 +927,14 @@ fn verify_kzg_proof(
     .map_err(|_| VMError::PrecompileError(PrecompileError::EvaluationError))
 }
 
-const FIELD_ELEMENTS_PER_BLOB: U256 = U256([4096, 0, 0, 0]);
-pub const BLS_MODULUS: U256 = U256([
-    0xFFFFFFFF00000001,
-    0x53BDA402FFFE5BFE,
-    0x3339D80809A1D805,
-    0x73EDA753299D7D48,
-]);
+const POINT_EVALUATION_OUTPUT_BYTES: [u8; 64] = [
+    // Big endian FIELD_ELEMENTS_PER_BLOB bytes
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x10, 0x00,
+    // Big endian BLS_MODULUS bytes
+    0x73, 0xED, 0xA7, 0x53, 0x29, 0x9D, 0x7D, 0x48, 0x33, 0x39, 0xD8, 0x08, 0x09, 0xA1, 0xD8, 0x05,
+    0x53, 0xBD, 0xA4, 0x02, 0xFF, 0xFE, 0x5B, 0xFE, 0xFF, 0xFF, 0xFF, 0xFF, 0x00, 0x00, 0x00, 0x01,
+];
 
 fn point_evaluation(
     calldata: &Bytes,
@@ -991,17 +992,9 @@ fn point_evaluation(
         return Err(VMError::PrecompileError(PrecompileError::ParsingInputError));
     }
 
-    // Create the output (it's always the same)
-    let mut output: Vec<u8> = Vec::new();
-
-    let mut field_elems_per_blob_bytes = [0_u8; 32];
-    FIELD_ELEMENTS_PER_BLOB.to_big_endian(&mut field_elems_per_blob_bytes);
-
-    let mut bls_modulus_bytes = [0u8; 32];
-    BLS_MODULUS.to_big_endian(&mut bls_modulus_bytes);
-
-    output.extend_from_slice(&field_elems_per_blob_bytes);
-    output.extend_from_slice(&bls_modulus_bytes);
+    // The first 32 bytes consist of the number of field elements in the blob, and the
+    // other 32 bytes consist of the modulus used in the BLS signature scheme.
+    let output = POINT_EVALUATION_OUTPUT_BYTES.to_vec();
 
     Ok(Bytes::from(output))
 }
