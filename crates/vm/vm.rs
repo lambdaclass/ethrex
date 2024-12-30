@@ -6,6 +6,7 @@ mod execution_result;
 mod mods;
 
 use db::StoreWrapper;
+use ethrex_levm::Account;
 use execution_db::ExecutionDB;
 use std::cmp::min;
 
@@ -200,11 +201,35 @@ cfg_if::cfg_if! {
                 receipts.push(receipt);
             }
 
-            account_updates.extend(get_state_transitions_levm(state, block.header.parent_hash, &block_cache));
-
+            // Here we update block_cache with balance increments caused by withdrawals.
             if let Some(withdrawals) = &block.body.withdrawals {
-                process_withdrawals(state, withdrawals)?;
+                // Vec of (address, increment)
+                let balance_increments = withdrawals
+                    .iter()
+                    .filter(|withdrawal| withdrawal.amount > 0)
+                    .map(|withdrawal| {
+                        (
+                            withdrawal.address,
+                            (withdrawal.amount as u128 * GWEI_TO_WEI as u128),
+                        )
+                    })
+                    .collect::<Vec<_>>();
+
+                // For every withdrawal we increment the target account's balance
+                for (address, increment) in balance_increments {
+                    // We check if it was in block_cache, if not, we get it from DB.
+                    let mut account = block_cache.get(&address).cloned().unwrap_or({
+                        let acc_info = store_wrapper.get_account_info(address);
+                        Account::from(acc_info)
+                    });
+
+                    account.info.balance += increment.into();
+
+                    block_cache.insert(address, account);
+                }
             }
+
+            account_updates.extend(get_state_transitions_levm(state, block.header.parent_hash, &block_cache));
 
             Ok((receipts, account_updates))
         }
