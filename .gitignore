@@ -57,4 +57,4 @@ ethrex.redb
 
 # used by Flamegraph and Samply
 *.svg
-profile.json
+prof_*.json

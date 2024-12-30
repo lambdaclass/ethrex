@@ -101,4 +101,10 @@ flamegraph-run-ef-tests:
 	done
 
 samply-run-ef-tests:
-	CARGO_PROFILE_RELEASE_DEBUG=true samply record cargo test --release -p ef_tests-levm --test ef_tests_levm -- --summary
+	cd ../../../cmd/ef_tests/levm &&\
+	mkdir -p levm_ef_test_flamegraph/samply ||:
+	@for dir in $(SUBDIRS); do\
+		CARGO_PROFILE_RELEASE_DEBUG=true samply record --save-only \
+		-o ../../../cmd/ef_tests/levm/levm_ef_test_flamegraph/samply/prof_$$dir.json \
+		cargo test --release -p ef_tests-levm --test ef_tests_levm -- --summary --tests $$dir;\
+	done
