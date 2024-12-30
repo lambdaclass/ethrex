@@ -8,7 +8,9 @@ use lambdaworks_math::{
         short_weierstrass::{
             curves::bn_254::{
                 curve::{BN254Curve, BN254FieldElement, BN254TwistCurveFieldElement},
-                field_extension::Degree12ExtensionField,
+                field_extension::{
+                    BN254FieldModulus, Degree12ExtensionField, Degree2ExtensionField,
+                },
                 pairing::BN254AtePairing,
                 twist::BN254TwistCurve,
             },
@@ -16,7 +18,10 @@ use lambdaworks_math::{
         },
         traits::{IsEllipticCurve, IsPairing},
     },
-    field::{element::FieldElement, extensions::quadratic::QuadraticExtensionFieldElement},
+    field::{
+        element::FieldElement, extensions::quadratic::QuadraticExtensionFieldElement,
+        fields::montgomery_backed_prime_fields::MontgomeryBackendPrimeField,
+    },
     traits::ByteConversion,
     unsigned_integer::element,
 };
@@ -523,6 +528,71 @@ pub fn ecmul(
     }
 }
 
+/// Handles pairing given a certain elements, and depending on if elements represent infinity, then
+/// continues, verifies errors on the other point or calculates the pairing
+fn handle_pairing_from_coordinates(
+    first_point_x: FieldElement<MontgomeryBackendPrimeField<BN254FieldModulus, 4>>,
+    first_point_y: FieldElement<MontgomeryBackendPrimeField<BN254FieldModulus, 4>>,
+    second_point_x: FieldElement<Degree2ExtensionField>,
+    second_point_y: FieldElement<Degree2ExtensionField>,
+    mul: &mut FieldElement<Degree12ExtensionField>,
+) -> Result<bool, VMError> {
+    let zero_element = BN254FieldElement::from(0);
+    let twcurve_zero_element = BN254TwistCurveFieldElement::from(0);
+    let first_point_is_infinity =
+        first_point_x.eq(&zero_element) && first_point_y.eq(&zero_element);
+    let second_point_is_infinity =
+        second_point_x.eq(&twcurve_zero_element) && second_point_y.eq(&twcurve_zero_element);
+
+    match (first_point_is_infinity, second_point_is_infinity) {
+        (true, true) => {
+            // If both points are infinity, then continue to the next input
+            Ok(true)
+        }
+        (true, false) => {
+            // If the first point is infinity, then do the checks for the second
+            if let Ok(p2) = BN254TwistCurve::create_point_from_affine(
+                second_point_x.clone(),
+                second_point_y.clone(),
+            ) {
+                if !p2.is_in_subgroup() {
+                    Err(VMError::PrecompileError(PrecompileError::DefaultError))
+                } else {
+                    Ok(true)
+                }
+            } else {
+                Err(VMError::PrecompileError(PrecompileError::DefaultError))
+            }
+        }
+        (false, true) => {
+            // If the second point is infinity, then do the checks for the first
+            if BN254Curve::create_point_from_affine(first_point_x.clone(), first_point_y.clone())
+                .is_err()
+            {
+                Err(VMError::PrecompileError(PrecompileError::DefaultError))
+            } else {
+                Ok(true)
+            }
+        }
+        (false, false) => {
+            // Define the pairing points
+            let first_point = BN254Curve::create_point_from_affine(first_point_x, first_point_y)
+                .map_err(|_| PrecompileError::DefaultError)?;
+
+            let second_point =
+                BN254TwistCurve::create_point_from_affine(second_point_x, second_point_y)
+                    .map_err(|_| PrecompileError::DefaultError)?;
+            if !second_point.is_in_subgroup() {
+                return Err(VMError::PrecompileError(PrecompileError::DefaultError));
+            }
+
+            // Get the result of the pairing and affect the mul value with it
+            update_pairing_result(mul, first_point, second_point)?;
+            Ok(false)
+        }
+    }
+}
+
 // Performs a bilinear pairing on points on the elliptic curve 'alt_bn128', returns 1 on success and 0 on failure
 pub fn ecpairing(
     calldata: &Bytes,
@@ -613,66 +683,19 @@ pub fn ecpairing(
         let second_point_x_bytes = [second_point_x_first_part, second_point_x_second_part].concat();
         let second_point_y_bytes = [second_point_y_first_part, second_point_y_second_part].concat();
 
-        let second_point_x: FieldElement<lambdaworks_math::elliptic_curve::short_weierstrass::curves::bn_254::field_extension::Degree2ExtensionField> = BN254TwistCurveFieldElement::from_bytes_be(&second_point_x_bytes)
+        let second_point_x = BN254TwistCurveFieldElement::from_bytes_be(&second_point_x_bytes)
             .map_err(|_| PrecompileError::DefaultError)?;
         let second_point_y = BN254TwistCurveFieldElement::from_bytes_be(&second_point_y_bytes)
             .map_err(|_| PrecompileError::DefaultError)?;
 
-        let zero_element = BN254FieldElement::from(0);
-        let twcurve_zero_element = BN254TwistCurveFieldElement::from(0);
-        let first_point_is_infinity =
-            first_point_x.eq(&zero_element) && first_point_y.eq(&zero_element);
-        let second_point_is_infinity =
-            second_point_x.eq(&twcurve_zero_element) && second_point_y.eq(&twcurve_zero_element);
-
-        match (first_point_is_infinity, second_point_is_infinity) {
-            (true, true) => {
-                // If both points are infinity, then continue to the next input
-                continue;
-            }
-            (true, false) => {
-                // If the first point is infinity, then do the checks for the second
-                if let Ok(p2) = BN254TwistCurve::create_point_from_affine(
-                    second_point_x.clone(),
-                    second_point_y.clone(),
-                ) {
-                    if !p2.is_in_subgroup() {
-                        return Err(VMError::PrecompileError(PrecompileError::DefaultError));
-                    } else {
-                        continue;
-                    }
-                } else {
-                    return Err(VMError::PrecompileError(PrecompileError::DefaultError));
-                }
-            }
-            (false, true) => {
-                // If the second point is infinity, then do the checks for the first
-                if BN254Curve::create_point_from_affine(
-                    first_point_x.clone(),
-                    first_point_y.clone(),
-                )
-                .is_err()
-                {
-                    return Err(VMError::PrecompileError(PrecompileError::DefaultError));
-                }
-                continue;
-            }
-            (false, false) => {
-                // Define the pairing points
-                let first_point =
-                    BN254Curve::create_point_from_affine(first_point_x, first_point_y)
-                        .map_err(|_| PrecompileError::DefaultError)?;
-
-                let second_point =
-                    BN254TwistCurve::create_point_from_affine(second_point_x, second_point_y)
-                        .map_err(|_| PrecompileError::DefaultError)?;
-                if !second_point.is_in_subgroup() {
-                    return Err(VMError::PrecompileError(PrecompileError::DefaultError));
-                }
-
-                // Get the result of the pairing and affect the mul value with it
-                update_pairing_result(&mut mul, first_point, second_point)?;
-            }
+        if handle_pairing_from_coordinates(
+            first_point_x,
+            first_point_y,
+            second_point_x,
+            second_point_y,
+            &mut mul,
+        )? {
+            continue;
         }
     }
 
