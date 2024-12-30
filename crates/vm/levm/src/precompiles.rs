@@ -93,7 +93,7 @@ pub const BLAKE2F_ELEMENT_SIZE: usize = 8;
 
 pub fn is_precompile(callee_address: &Address, spec_id: SpecId) -> bool {
     // Cancun specs is the only one that allows point evaluation precompile
-    if *callee_address == POINT_EVALUATION_ADDRESS && spec_id <= SpecId::CANCUN {
+    if *callee_address == POINT_EVALUATION_ADDRESS && spec_id < SpecId::CANCUN {
         return false;
     }
 
