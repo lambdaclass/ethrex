@@ -1,4 +1,4 @@
-use risc0_zkvm::guest::env;
+#![no_main]
 
 use ethrex_blockchain::{validate_block, validate_gas_used};
 use ethrex_vm::{execute_block, get_state_transitions, EvmState};
@@ -7,12 +7,15 @@ use zkvm_interface::{
     trie::update_tries,
 };
 
-fn main() {
+sp1_zkvm::entrypoint!(main);
+
+pub fn main() {
     let ProgramInput {
         block,
         parent_block_header,
         db,
-    } = env::read();
+    } = sp1_zkvm::io::read::<ProgramInput>();
+
     let mut state = EvmState::from(db.clone());
 
     // Validate the block pre-execution
@@ -31,12 +34,12 @@ fn main() {
     let receipts = execute_block(&block, &mut state).expect("failed to execute block");
     validate_gas_used(&receipts, &block.header).expect("invalid gas used");
 
-    env::write(
-        &receipts
-            .last()
-            .expect("no receipts found")
-            .cumulative_gas_used,
-    );
+    let cumulative_gas_used = match receipts.last() {
+        Some(last_receipt) => last_receipt.cumulative_gas_used,
+        None => 0_u64,
+    };
+
+    sp1_zkvm::io::commit(&cumulative_gas_used);
 
     let account_updates = get_state_transitions(&mut state);
 
@@ -49,7 +52,7 @@ fn main() {
         panic!("invalid final state trie");
     }
 
-    env::commit(&ProgramOutput {
+    sp1_zkvm::io::commit(&ProgramOutput {
         initial_state_hash,
         final_state_hash,
     });
