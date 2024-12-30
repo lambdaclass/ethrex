@@ -535,6 +535,85 @@ const ALT_BN128_PRIME: U256 = U256([
     0x30644e72e131a029,
 ]);
 
+type FirstPointCoordinates = (
+    FieldElement<MontgomeryBackendPrimeField<BN254FieldModulus, 4>>,
+    FieldElement<MontgomeryBackendPrimeField<BN254FieldModulus, 4>>,
+);
+
+/// Parses first point coordinates and makes verification of invalid infinite
+fn parse_first_point_coordinates(input_data: &[u8]) -> Result<FirstPointCoordinates, VMError> {
+    let first_point_x = input_data.get(..32).ok_or(InternalError::SlicingError)?;
+    let first_point_y = input_data.get(32..64).ok_or(InternalError::SlicingError)?;
+
+    // Infinite is defined by (0,0). Any other zero-combination is invalid
+    if (U256::from_big_endian(first_point_x) == U256::zero())
+        ^ (U256::from_big_endian(first_point_y) == U256::zero())
+    {
+        return Err(VMError::PrecompileError(PrecompileError::DefaultError));
+    }
+
+    let first_point_y = BN254FieldElement::from_bytes_be(first_point_y)
+        .map_err(|_| PrecompileError::DefaultError)?;
+    let first_point_x = BN254FieldElement::from_bytes_be(first_point_x)
+        .map_err(|_| PrecompileError::DefaultError)?;
+
+    Ok((first_point_x, first_point_y))
+}
+
+/// Parses second point coordinates and makes verification of invalid infinite and curve belonging.
+fn parse_second_point_coordinates(
+    input_data: &[u8],
+) -> Result<
+    (
+        FieldElement<Degree2ExtensionField>,
+        FieldElement<Degree2ExtensionField>,
+    ),
+    VMError,
+> {
+    let second_point_x_first_part = input_data.get(96..128).ok_or(InternalError::SlicingError)?;
+    let second_point_x_second_part = input_data.get(64..96).ok_or(InternalError::SlicingError)?;
+
+    // Infinite is defined by (0,0). Any other zero-combination is invalid
+    if (U256::from_big_endian(second_point_x_first_part) == U256::zero())
+        ^ (U256::from_big_endian(second_point_x_second_part) == U256::zero())
+    {
+        return Err(VMError::PrecompileError(PrecompileError::DefaultError));
+    }
+
+    let second_point_y_first_part = input_data
+        .get(160..192)
+        .ok_or(InternalError::SlicingError)?;
+    let second_point_y_second_part = input_data
+        .get(128..160)
+        .ok_or(InternalError::SlicingError)?;
+
+    // Infinite is defined by (0,0). Any other zero-combination is invalid
+    if (U256::from_big_endian(second_point_y_first_part) == U256::zero())
+        ^ (U256::from_big_endian(second_point_y_second_part) == U256::zero())
+    {
+        return Err(VMError::PrecompileError(PrecompileError::DefaultError));
+    }
+
+    // Check if the second point belongs to the curve (this happens if it's lower than the prime)
+    if U256::from_big_endian(second_point_x_first_part) >= ALT_BN128_PRIME
+        || U256::from_big_endian(second_point_x_second_part) >= ALT_BN128_PRIME
+        || U256::from_big_endian(second_point_y_first_part) >= ALT_BN128_PRIME
+        || U256::from_big_endian(second_point_y_second_part) >= ALT_BN128_PRIME
+    {
+        return Err(VMError::PrecompileError(PrecompileError::DefaultError));
+    }
+
+    let second_point_x_bytes = [second_point_x_first_part, second_point_x_second_part].concat();
+    let second_point_y_bytes = [second_point_y_first_part, second_point_y_second_part].concat();
+
+    let second_point_x = BN254TwistCurveFieldElement::from_bytes_be(&second_point_x_bytes)
+        .map_err(|_| PrecompileError::DefaultError)?;
+    let second_point_y = BN254TwistCurveFieldElement::from_bytes_be(&second_point_y_bytes)
+        .map_err(|_| PrecompileError::DefaultError)?;
+
+    Ok((second_point_x, second_point_y))
+}
+
 /// Handles pairing given a certain elements, and depending on if elements represent infinity, then
 /// continues, verifies errors on the other point or calculates the pairing
 fn handle_pairing_from_coordinates(
@@ -631,63 +710,9 @@ pub fn ecpairing(
             .get(input_start..input_end)
             .ok_or(InternalError::SlicingError)?;
 
-        let first_point_x = input_data.get(..32).ok_or(InternalError::SlicingError)?;
-        let first_point_y = input_data.get(32..64).ok_or(InternalError::SlicingError)?;
+        let (first_point_x, first_point_y) = parse_first_point_coordinates(input_data)?;
 
-        // Infinite is defined by (0,0). Any other zero-combination is invalid
-        if (U256::from_big_endian(first_point_x) == U256::zero())
-            ^ (U256::from_big_endian(first_point_y) == U256::zero())
-        {
-            return Err(VMError::PrecompileError(PrecompileError::DefaultError));
-        }
-
-        let first_point_y = BN254FieldElement::from_bytes_be(first_point_y)
-            .map_err(|_| PrecompileError::DefaultError)?;
-        let first_point_x = BN254FieldElement::from_bytes_be(first_point_x)
-            .map_err(|_| PrecompileError::DefaultError)?;
-
-        let second_point_x_first_part =
-            input_data.get(96..128).ok_or(InternalError::SlicingError)?;
-        let second_point_x_second_part =
-            input_data.get(64..96).ok_or(InternalError::SlicingError)?;
-
-        // Infinite is defined by (0,0). Any other zero-combination is invalid
-        if (U256::from_big_endian(second_point_x_first_part) == U256::zero())
-            ^ (U256::from_big_endian(second_point_x_second_part) == U256::zero())
-        {
-            return Err(VMError::PrecompileError(PrecompileError::DefaultError));
-        }
-
-        let second_point_y_first_part = input_data
-            .get(160..192)
-            .ok_or(InternalError::SlicingError)?;
-        let second_point_y_second_part = input_data
-            .get(128..160)
-            .ok_or(InternalError::SlicingError)?;
-
-        // Infinite is defined by (0,0). Any other zero-combination is invalid
-        if (U256::from_big_endian(second_point_y_first_part) == U256::zero())
-            ^ (U256::from_big_endian(second_point_y_second_part) == U256::zero())
-        {
-            return Err(VMError::PrecompileError(PrecompileError::DefaultError));
-        }
-
-        // Check if the second point belongs to the curve (this happens if it's lower than the prime)
-        if U256::from_big_endian(second_point_x_first_part) >= ALT_BN128_PRIME
-            || U256::from_big_endian(second_point_x_second_part) >= ALT_BN128_PRIME
-            || U256::from_big_endian(second_point_y_first_part) >= ALT_BN128_PRIME
-            || U256::from_big_endian(second_point_y_second_part) >= ALT_BN128_PRIME
-        {
-            return Err(VMError::PrecompileError(PrecompileError::DefaultError));
-        }
-
-        let second_point_x_bytes = [second_point_x_first_part, second_point_x_second_part].concat();
-        let second_point_y_bytes = [second_point_y_first_part, second_point_y_second_part].concat();
-
-        let second_point_x = BN254TwistCurveFieldElement::from_bytes_be(&second_point_x_bytes)
-            .map_err(|_| PrecompileError::DefaultError)?;
-        let second_point_y = BN254TwistCurveFieldElement::from_bytes_be(&second_point_y_bytes)
-            .map_err(|_| PrecompileError::DefaultError)?;
+        let (second_point_x, second_point_y) = parse_second_point_coordinates(input_data)?;
 
         if handle_pairing_from_coordinates(
             first_point_x,
