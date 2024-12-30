@@ -10,6 +10,7 @@ use crate::{
 };
 use bytes::Bytes;
 use ethrex_core::{Address, U256};
+use revm_primitives::SpecId;
 
 // System Operations (10)
 // Opcodes: CREATE, CALL, CALLCODE, RETURN, DELEGATECALL, CREATE2, STATICCALL, REVERT, INVALID, SELFDESTRUCT
@@ -463,16 +464,25 @@ impl VM {
             )?,
         )?;
 
-        self.increase_account_balance(target_address, balance_to_transfer)?;
-        self.decrease_account_balance(current_call_frame.to, balance_to_transfer)?;
+        if self.env.spec_id >= SpecId::CANCUN {
+            self.increase_account_balance(target_address, balance_to_transfer)?;
+            self.decrease_account_balance(current_call_frame.to, balance_to_transfer)?;
 
-        // Selfdestruct is executed in the same transaction as the contract was created
-        if self
-            .accrued_substate
-            .created_accounts
-            .contains(&current_call_frame.to)
-        {
-            // If target is the same as the contract calling, Ether will be burnt.
+            // Selfdestruct is executed in the same transaction as the contract was created
+            if self
+                .accrued_substate
+                .created_accounts
+                .contains(&current_call_frame.to)
+            {
+                // If target is the same as the contract calling, Ether will be burnt.
+                self.get_account_mut(current_call_frame.to)?.info.balance = U256::zero();
+
+                self.accrued_substate
+                    .selfdestruct_set
+                    .insert(current_call_frame.to);
+            }
+        } else {
+            self.increase_account_balance(target_address, balance_to_transfer)?;
             self.get_account_mut(current_call_frame.to)?.info.balance = U256::zero();
 
             self.accrued_substate
