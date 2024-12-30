@@ -5,6 +5,7 @@ mod execution_result;
 #[cfg(feature = "l2")]
 mod mods;
 
+// use bytes::Bytes;
 use db::StoreWrapper;
 use ethrex_levm::Account;
 use execution_db::ExecutionDB;
@@ -150,13 +151,17 @@ cfg_if::cfg_if! {
             block: &Block,
             state: &mut EvmState,
         ) -> Result<(Vec<Receipt>, Vec<AccountUpdate>), EvmError> {
+
+            let mut block_cache: CacheDB = HashMap::new();
+
             let block_header = &block.header;
             //eip 4788: execute beacon_root_contract_call before block transactions
             cfg_if::cfg_if! {
                 if #[cfg(not(feature = "l2"))] {
                     let spec_id = spec_id(&state.chain_config()?, block_header.timestamp);
                     if block_header.parent_beacon_block_root.is_some() && spec_id == SpecId::CANCUN {
-                        beacon_root_contract_call(state, block_header, spec_id)?;
+                        let report = beacon_root_contract_call_levm(state, block_header)?;
+                        block_cache.extend(report.new_state);
                     }
                 }
             }
@@ -166,12 +171,9 @@ cfg_if::cfg_if! {
                 block_hash: block.header.parent_hash,
             });
 
-            // Account updates are initialized like this because of the beacon_root_contract_call, it is going to be empty if it wasn't called.
-            let mut account_updates = get_state_transitions(state);
 
             let mut receipts = Vec::new();
             let mut cumulative_gas_used = 0;
-            let mut block_cache: CacheDB = HashMap::new();
 
             for tx in block.body.transactions.iter() {
                 let report = execute_tx_levm(tx, block_header, store_wrapper.clone(), block_cache.clone()).unwrap();
@@ -179,7 +181,7 @@ cfg_if::cfg_if! {
                 let mut new_state = report.new_state.clone();
 
                 // Now original_value is going to be the same as the current_value, for the next transaction.
-                // It should have only one value but it is convenient to keep on using our CacheDB structure
+                // It should only have one value but it is convenient to keep on using our CacheDB structure
                 for account in new_state.values_mut() {
                     for storage_slot in account.storage.values_mut() {
                         storage_slot.original_value = storage_slot.current_value;
@@ -229,7 +231,7 @@ cfg_if::cfg_if! {
                 }
             }
 
-            account_updates.extend(get_state_transitions_levm(state, block.header.parent_hash, &block_cache));
+            let account_updates = get_state_transitions_levm(state, block.header.parent_hash, &block_cache);
 
             Ok((receipts, account_updates))
         }
@@ -686,6 +688,73 @@ pub fn evm_state(store: Store, block_hash: BlockHash) -> EvmState {
             .without_state_clear()
             .build(),
     )
+}
+
+pub fn beacon_root_contract_call_levm(
+    state: &mut EvmState,
+    block_header: &BlockHeader,
+) -> Result<TransactionReport, EvmError> {
+    // TODO: Change REVM for LEVM
+    lazy_static! {
+        static ref SYSTEM_ADDRESS: Address =
+            Address::from_slice(&hex::decode("fffffffffffffffffffffffffffffffffffffffe").unwrap());
+        static ref CONTRACT_ADDRESS: Address =
+            Address::from_slice(&hex::decode("000F3df6D732807Ef1319fB7B8bB8522d0Beac02").unwrap(),);
+    };
+    // This is OK
+    let beacon_root = match block_header.parent_beacon_block_root {
+        None => {
+            return Err(EvmError::Header(
+                "parent_beacon_block_root field is missing".to_string(),
+            ))
+        }
+        Some(beacon_root) => beacon_root,
+    };
+
+    let env = Environment {
+        origin: *SYSTEM_ADDRESS,
+        gas_limit: 30_000_000,
+        block_number: block_header.number.into(),
+        coinbase: block_header.coinbase,
+        timestamp: block_header.timestamp.into(),
+        prev_randao: Some(block_header.prev_randao),
+        base_fee_per_gas: U256::zero(),
+        gas_price: U256::zero(),
+        block_excess_blob_gas: block_header.excess_blob_gas.map(U256::from),
+        block_blob_gas_used: block_header.blob_gas_used.map(U256::from),
+        block_gas_limit: 30_000_000,
+        transient_storage: HashMap::new(),
+        ..Default::default()
+    };
+
+    let calldata = Bytes::copy_from_slice(beacon_root.as_bytes()).into();
+
+    match state {
+        EvmState::Store(db) => {
+            // Here execute with LEVM but just return transaction report. And I will handle it in the calling place.
+
+            let mut vm = VM::new(
+                TxKind::Call(*CONTRACT_ADDRESS),
+                env,
+                U256::zero(),
+                calldata,
+                Arc::from(db.database.clone()),
+                CacheDB::new(),
+                vec![],
+            )
+            .unwrap(); //TODO: Replace this unwrap
+
+            let mut report = vm.transact().unwrap();
+
+            report.new_state.remove(&*SYSTEM_ADDRESS);
+
+            Ok(report)
+        }
+        EvmState::Execution(db) => {
+            // I don't think I care about this.
+            Err(EvmError::Custom("Shouldnt be here".to_string()))
+        }
+    }
 }
 
 /// Calls the eip4788 beacon block root system call contract

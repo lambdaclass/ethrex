@@ -49,6 +49,8 @@ pub fn add_block(block: &Block, storage: &Store) -> Result<(), ChainError> {
 
     let account_updates = get_state_transitions(&mut state);
 
+    dbg!(&account_updates);
+
     // Apply the account updates over the last block's state and compute the new state root
     let new_state_root = state
         .database()
