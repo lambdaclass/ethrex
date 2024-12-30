@@ -9,7 +9,7 @@ on:
       - "crates/vm/levm/**"
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
   cancel-in-progress: true
 
 env:
@@ -41,7 +41,12 @@ jobs:
       - name: Run tests
         run: |
           cd crates/vm/levm
-          make run-evm-ef-tests-ci
+          make run-evm-ef-tests-ci | tee test_result.txt
+
+      - name: Show test summary
+        run: |
+          cd crates/vm/levm
+          awk '/Summary: /,0' test_result.txt
   test:
     # "Test" is a required check, don't change the name
     name: Test

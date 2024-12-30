@@ -6,6 +6,7 @@ use crate::{
         eth::{
             backend,
             blocks::{BlockBodies, BlockHeaders},
+            receipts::Receipts,
             transactions::Transactions,
         },
         handshake::encode_ack_message,
@@ -22,6 +23,8 @@ use crate::{
 
 use super::{
     error::RLPxError,
+    eth::receipts::GetReceipts,
+    eth::transactions::GetPooledTransactions,
     frame,
     handshake::{decode_ack_message, decode_auth_message, encode_auth_message},
     message::{self as rlpx},
@@ -29,7 +32,7 @@ use super::{
     utils::{ecdh_xchng, pubkey2id},
 };
 use aes::cipher::KeyIvInit;
-use ethrex_blockchain::mempool;
+use ethrex_blockchain::mempool::{self};
 use ethrex_core::{H256, H512};
 use ethrex_rlp::decode::RLPDecode;
 use ethrex_storage::Store;
@@ -37,6 +40,7 @@ use k256::{
     ecdsa::{RecoveryId, Signature, SigningKey, VerifyingKey},
     PublicKey, SecretKey,
 };
+use rand::random;
 use sha3::{Digest, Keccak256};
 use tokio::{
     io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt},
@@ -337,7 +341,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
         match message {
             Message::Disconnect(msg_data) => {
                 debug!("Received Disconnect: {:?}", msg_data.reason);
-                // Returning a Disonnect error to be handled later at the call stack
+                // Returning a Disconnect error to be handled later at the call stack
                 return Err(RLPxError::Disconnect());
             }
             Message::Ping(_) => {
@@ -376,6 +380,28 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
                     block_bodies: msg_data.fetch_blocks(&self.storage),
                 };
                 self.send(Message::BlockBodies(response)).await?;
+            }
+            Message::GetReceipts(GetReceipts { id, block_hashes }) if peer_supports_eth => {
+                let receipts: Result<_, _> = block_hashes
+                    .iter()
+                    .map(|hash| self.storage.get_receipts_for_block(hash))
+                    .collect();
+                let response = Receipts {
+                    id,
+                    receipts: receipts?,
+                };
+                self.send(Message::Receipts(response)).await?;
+            }
+            Message::NewPooledTransactionHashes(new_pooled_transaction_hashes)
+                if peer_supports_eth =>
+            {
+                //TODO(#1415): evaluate keeping track of requests to avoid sending the same twice.
+                let hashes =
+                    new_pooled_transaction_hashes.get_transactions_to_request(&self.storage)?;
+
+                //TODO(#1416): Evaluate keeping track of the request-id.
+                let request = GetPooledTransactions::new(random(), hashes);
+                self.send(Message::GetPooledTransactions(request)).await?;
             }
             Message::GetStorageRanges(req) => {
                 let response = process_storage_ranges_request(req, self.storage.clone())?;

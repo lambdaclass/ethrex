@@ -3,7 +3,7 @@ use std::sync::mpsc::SendError;
 use crate::utils::merkle_tree::MerkleError;
 use crate::utils::{config::errors::ConfigError, eth_client::errors::EthClientError};
 use ethereum_types::FromStrRadixErr;
-use ethrex_core::types::BlobsBundleError;
+use ethrex_core::types::{BlobsBundleError, FakeExponentialError};
 use ethrex_dev::utils::engine_client::errors::EngineClientError;
 use ethrex_storage::error::StoreError;
 use ethrex_vm::EvmError;
@@ -17,8 +17,6 @@ pub enum L1WatcherError {
     FailedToDeserializeLog(String),
     #[error("L1Watcher failed to parse private key: {0}")]
     FailedToDeserializePrivateKey(String),
-    #[error("L1Watcher failed to retrieve depositor account info: {0}")]
-    FailedToRetrieveDepositorAccountInfo(String),
     #[error("L1Watcher failed to retrieve chain config: {0}")]
     FailedToRetrieveChainConfig(String),
     #[error("L1Watcher failed to get config: {0}")]
@@ -115,6 +113,8 @@ pub enum BlobEstimationError {
     CalculationError,
     #[error("Blob gas estimation resulted in an infinite or undefined value. Outside valid or expected ranges")]
     NonFiniteResult,
+    #[error("{0}")]
+    FakeExponentialError(#[from] FakeExponentialError),
 }
 
 #[derive(Debug, thiserror::Error)]

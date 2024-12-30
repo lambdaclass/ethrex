@@ -33,6 +33,7 @@ pub struct WithdrawalLog {
 pub struct DepositLog {
     pub address: Address,
     pub amount: U256,
+    pub nonce: u64,
 }
 
 #[derive(Clone)]

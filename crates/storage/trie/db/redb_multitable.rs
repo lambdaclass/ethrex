@@ -54,4 +54,17 @@ impl TrieDB for RedBMultiTableTrieDB {
 
         Ok(())
     }
+
+    fn put_batch(&self, key_values: Vec<(Vec<u8>, Vec<u8>)>) -> Result<(), TrieError> {
+        let write_txn = self.db.begin_write()?;
+        {
+            let mut table = write_txn.open_multimap_table(STORAGE_TRIE_NODES_TABLE)?;
+            for (key, value) in key_values {
+                table.insert((self.fixed_key, node_hash_to_fixed_size(key)), &*value)?;
+            }
+        }
+        write_txn.commit()?;
+
+        Ok(())
+    }
 }

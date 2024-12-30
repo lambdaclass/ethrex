@@ -1,8 +1,8 @@
 use crate::{
     call_frame::CallFrame,
-    constants::{WORD_SIZE, WORD_SIZE_IN_BYTES_USIZE},
-    errors::{InternalError, OpcodeSuccess, OutOfGasError, VMError},
-    gas_cost,
+    errors::{InternalError, OpcodeSuccess, VMError},
+    gas_cost::{self},
+    memory::{self, calculate_memory_size},
     vm::{word_to_address, VM},
 };
 use ethrex_core::U256;
@@ -93,11 +93,19 @@ impl VM {
     ) -> Result<OpcodeSuccess, VMError> {
         self.increase_consumed_gas(current_call_frame, gas_cost::CALLDATALOAD)?;
 
-        let offset: usize = current_call_frame
-            .stack
-            .pop()?
+        let calldata_size: U256 = current_call_frame.calldata.len().into();
+
+        let offset = current_call_frame.stack.pop()?;
+
+        // If the offset is larger than the actual calldata, then you
+        // have no data to return.
+        if offset > calldata_size {
+            current_call_frame.stack.push(U256::zero())?;
+            return Ok(OpcodeSuccess::Continue);
+        };
+        let offset: usize = offset
             .try_into()
-            .map_err(|_| VMError::VeryLargeNumber)?;
+            .map_err(|_| VMError::Internal(InternalError::ConversionError))?;
 
         // All bytes after the end of the calldata are set to 0.
         let mut data = [0u8; 32];
@@ -138,32 +146,35 @@ impl VM {
         &mut self,
         current_call_frame: &mut CallFrame,
     ) -> Result<OpcodeSuccess, VMError> {
-        let dest_offset: usize = current_call_frame
-            .stack
-            .pop()?
-            .try_into()
-            .map_err(|_err| VMError::VeryLargeNumber)?;
-        let calldata_offset: usize = current_call_frame
-            .stack
-            .pop()?
-            .try_into()
-            .map_err(|_err| VMError::VeryLargeNumber)?;
+        let dest_offset = current_call_frame.stack.pop()?;
+        let calldata_offset = current_call_frame.stack.pop()?;
         let size: usize = current_call_frame
             .stack
             .pop()?
             .try_into()
             .map_err(|_err| VMError::VeryLargeNumber)?;
 
-        let gas_cost = gas_cost::calldatacopy(current_call_frame, size, dest_offset)
-            .map_err(VMError::OutOfGas)?;
+        let new_memory_size = calculate_memory_size(dest_offset, size)?;
 
-        self.increase_consumed_gas(current_call_frame, gas_cost)?;
+        self.increase_consumed_gas(
+            current_call_frame,
+            gas_cost::calldatacopy(new_memory_size, current_call_frame.memory.len(), size)?,
+        )?;
 
         if size == 0 {
             return Ok(OpcodeSuccess::Continue);
         }
 
         let mut data = vec![0u8; size];
+        if calldata_offset > current_call_frame.calldata.len().into() {
+            memory::try_store_data(&mut current_call_frame.memory, dest_offset, &data)?;
+            return Ok(OpcodeSuccess::Continue);
+        }
+
+        let calldata_offset: usize = calldata_offset
+            .try_into()
+            .map_err(|_err| VMError::Internal(InternalError::ConversionError))?;
+
         for (i, byte) in current_call_frame
             .calldata
             .iter()
@@ -176,7 +187,7 @@ impl VM {
             }
         }
 
-        current_call_frame.memory.store_bytes(dest_offset, &data)?;
+        memory::try_store_data(&mut current_call_frame.memory, dest_offset, &data)?;
 
         Ok(OpcodeSuccess::Continue)
     }
@@ -186,21 +197,11 @@ impl VM {
         &mut self,
         current_call_frame: &mut CallFrame,
     ) -> Result<OpcodeSuccess, VMError> {
-        if self
-            .env
-            .consumed_gas
-            .checked_add(gas_cost::CODESIZE)
-            .ok_or(VMError::OutOfGas(OutOfGasError::ConsumedGasOverflow))?
-            > self.env.gas_limit
-        {
-            return Err(VMError::OutOfGas(OutOfGasError::MaxGasLimitExceeded));
-        }
+        self.increase_consumed_gas(current_call_frame, gas_cost::CODESIZE)?;
 
         current_call_frame
             .stack
             .push(U256::from(current_call_frame.bytecode.len()))?;
-
-        self.increase_consumed_gas(current_call_frame, gas_cost::CODESIZE)?;
 
         Ok(OpcodeSuccess::Continue)
     }
@@ -210,68 +211,47 @@ impl VM {
         &mut self,
         current_call_frame: &mut CallFrame,
     ) -> Result<OpcodeSuccess, VMError> {
-        let destination_offset: usize = current_call_frame
-            .stack
-            .pop()?
-            .try_into()
-            .map_err(|_| VMError::VeryLargeNumber)?;
-        let code_offset: usize = current_call_frame
-            .stack
-            .pop()?
-            .try_into()
-            .map_err(|_| VMError::VeryLargeNumber)?;
+        let destination_offset = current_call_frame.stack.pop()?;
+
+        let code_offset = current_call_frame.stack.pop()?;
+
         let size: usize = current_call_frame
             .stack
             .pop()?
             .try_into()
             .map_err(|_| VMError::VeryLargeNumber)?;
 
-        let gas_cost = gas_cost::codecopy(current_call_frame, size, destination_offset)
-            .map_err(VMError::OutOfGas)?;
+        let new_memory_size = calculate_memory_size(destination_offset, size)?;
 
-        self.increase_consumed_gas(current_call_frame, gas_cost)?;
+        self.increase_consumed_gas(
+            current_call_frame,
+            gas_cost::codecopy(new_memory_size, current_call_frame.memory.len(), size)?,
+        )?;
 
         if size == 0 {
             return Ok(OpcodeSuccess::Continue);
         }
 
-        let new_memory_size = (destination_offset
-            .checked_add(size)
-            .ok_or(VMError::Internal(
-                InternalError::ArithmeticOperationOverflow,
-            ))?)
-        .checked_next_multiple_of(WORD_SIZE)
-        .ok_or(VMError::Internal(
-            InternalError::ArithmeticOperationOverflow,
-        ))?;
-        let current_memory_size = current_call_frame.memory.data.len();
+        let mut data = vec![0u8; size];
+        if code_offset < current_call_frame.bytecode.len().into() {
+            let code_offset: usize = code_offset
+                .try_into()
+                .map_err(|_| VMError::Internal(InternalError::ConversionError))?;
 
-        if current_memory_size < new_memory_size {
-            current_call_frame
-                .memory
-                .data
-                .try_reserve(new_memory_size)
-                .map_err(|_err| VMError::MemorySizeOverflow)?;
-            current_call_frame.memory.data.resize(new_memory_size, 0);
-        }
-
-        for i in 0..size {
-            if let Some(memory_byte) =
-                current_call_frame
-                    .memory
-                    .data
-                    .get_mut(destination_offset.checked_add(i).ok_or(VMError::Internal(
-                        InternalError::ArithmeticOperationOverflow,
-                    ))?)
+            for (i, byte) in current_call_frame
+                .bytecode
+                .iter()
+                .skip(code_offset)
+                .take(size)
+                .enumerate()
             {
-                *memory_byte = *current_call_frame
-                    .bytecode
-                    .get(code_offset.checked_add(i).ok_or(VMError::Internal(
-                        InternalError::ArithmeticOperationOverflow,
-                    ))?)
-                    .unwrap_or(&0u8);
+                if let Some(data_byte) = data.get_mut(i) {
+                    *data_byte = *byte;
+                }
             }
         }
+
+        memory::try_store_data(&mut current_call_frame.memory, destination_offset, &data)?;
 
         Ok(OpcodeSuccess::Continue)
     }
@@ -312,16 +292,8 @@ impl VM {
         current_call_frame: &mut CallFrame,
     ) -> Result<OpcodeSuccess, VMError> {
         let address = word_to_address(current_call_frame.stack.pop()?);
-        let dest_offset: usize = current_call_frame
-            .stack
-            .pop()?
-            .try_into()
-            .map_err(|_| VMError::VeryLargeNumber)?;
-        let offset: usize = current_call_frame
-            .stack
-            .pop()?
-            .try_into()
-            .map_err(|_| VMError::VeryLargeNumber)?;
+        let dest_offset = current_call_frame.stack.pop()?;
+        let offset = current_call_frame.stack.pop()?;
         let size: usize = current_call_frame
             .stack
             .pop()?
@@ -330,22 +302,14 @@ impl VM {
 
         let (account_info, address_was_cold) = self.access_account(address);
 
-        let new_memory_size = dest_offset
-            .checked_add(size)
-            .ok_or(VMError::Internal(
-                InternalError::ArithmeticOperationOverflow,
-            ))?
-            .checked_next_multiple_of(WORD_SIZE_IN_BYTES_USIZE)
-            .ok_or(VMError::Internal(
-                InternalError::ArithmeticOperationOverflow,
-            ))?;
-        let current_memory_size = current_call_frame.memory.data.len();
+        let new_memory_size = calculate_memory_size(dest_offset, size)?;
 
         self.increase_consumed_gas(
             current_call_frame,
             gas_cost::extcodecopy(
-                new_memory_size.into(),
-                current_memory_size.into(),
+                size,
+                new_memory_size,
+                current_call_frame.memory.len(),
                 address_was_cold,
             )?,
         )?;
@@ -354,35 +318,25 @@ impl VM {
             return Ok(OpcodeSuccess::Continue);
         }
 
-        if current_memory_size < new_memory_size {
-            current_call_frame
-                .memory
-                .data
-                .try_reserve(new_memory_size)
-                .map_err(|_err| VMError::MemorySizeOverflow)?;
-            current_call_frame
-                .memory
-                .data
-                .extend(std::iter::repeat(0).take(new_memory_size));
-        }
-
-        for i in 0..size {
-            if let Some(memory_byte) =
-                current_call_frame
-                    .memory
-                    .data
-                    .get_mut(dest_offset.checked_add(i).ok_or(VMError::Internal(
-                        InternalError::ArithmeticOperationOverflow,
-                    ))?)
+        let mut data = vec![0u8; size];
+        if offset < account_info.bytecode.len().into() {
+            let offset: usize = offset
+                .try_into()
+                .map_err(|_| VMError::Internal(InternalError::ConversionError))?;
+            for (i, byte) in account_info
+                .bytecode
+                .iter()
+                .skip(offset)
+                .take(size)
+                .enumerate()
             {
-                *memory_byte = *account_info
-                    .bytecode
-                    .get(offset.checked_add(i).ok_or(VMError::Internal(
-                        InternalError::ArithmeticOperationOverflow,
-                    ))?)
-                    .unwrap_or(&0u8);
+                if let Some(data_byte) = data.get_mut(i) {
+                    *data_byte = *byte;
+                }
             }
         }
+
+        memory::try_store_data(&mut current_call_frame.memory, dest_offset, &data)?;
 
         Ok(OpcodeSuccess::Continue)
     }
@@ -406,11 +360,7 @@ impl VM {
         &mut self,
         current_call_frame: &mut CallFrame,
     ) -> Result<OpcodeSuccess, VMError> {
-        let dest_offset: usize = current_call_frame
-            .stack
-            .pop()?
-            .try_into()
-            .map_err(|_| VMError::VeryLargeNumber)?;
+        let dest_offset = current_call_frame.stack.pop()?;
         let returndata_offset: usize = current_call_frame
             .stack
             .pop()?
@@ -422,31 +372,43 @@ impl VM {
             .try_into()
             .map_err(|_| VMError::VeryLargeNumber)?;
 
-        let gas_cost = gas_cost::returndatacopy(current_call_frame, size, dest_offset)
-            .map_err(VMError::OutOfGas)?;
+        let new_memory_size = calculate_memory_size(dest_offset, size)?;
 
-        self.increase_consumed_gas(current_call_frame, gas_cost)?;
+        self.increase_consumed_gas(
+            current_call_frame,
+            gas_cost::returndatacopy(new_memory_size, current_call_frame.memory.len(), size)?,
+        )?;
 
-        if size == 0 {
+        if size == 0 && returndata_offset == 0 {
             return Ok(OpcodeSuccess::Continue);
         }
 
         let sub_return_data_len = current_call_frame.sub_return_data.len();
 
-        if returndata_offset >= sub_return_data_len {
-            return Err(VMError::VeryLargeNumber); // Maybe can create a new error instead of using this one
-        }
-        let data = current_call_frame.sub_return_data.slice(
-            returndata_offset
-                ..(returndata_offset
-                    .checked_add(size)
-                    .ok_or(VMError::Internal(
-                        InternalError::ArithmeticOperationOverflow,
-                    ))?)
-                .min(sub_return_data_len),
-        );
+        let copy_limit = returndata_offset
+            .checked_add(size)
+            .ok_or(VMError::VeryLargeNumber)?;
 
-        current_call_frame.memory.store_bytes(dest_offset, &data)?;
+        if copy_limit > sub_return_data_len {
+            return Err(VMError::OutOfBounds);
+        }
+
+        // Actually we don't need to fill with zeros for out of bounds bytes, this works but is overkill because of the previous validations.
+        // I would've used copy_from_slice but it can panic.
+        let mut data = vec![0u8; size];
+        for (i, byte) in current_call_frame
+            .sub_return_data
+            .iter()
+            .skip(returndata_offset)
+            .take(size)
+            .enumerate()
+        {
+            if let Some(data_byte) = data.get_mut(i) {
+                *data_byte = *byte;
+            }
+        }
+
+        memory::try_store_data(&mut current_call_frame.memory, dest_offset, &data)?;
 
         Ok(OpcodeSuccess::Continue)
     }
@@ -462,10 +424,14 @@ impl VM {
 
         self.increase_consumed_gas(current_call_frame, gas_cost::extcodehash(address_was_cold)?)?;
 
-        current_call_frame.stack.push(U256::from_big_endian(
-            keccak(account_info.bytecode).as_fixed_bytes(),
-        ))?;
+        // An account is considered empty when it has no code and zero nonce and zero balance. [EIP-161]
+        if account_info.is_empty() {
+            current_call_frame.stack.push(U256::zero())?;
+            return Ok(OpcodeSuccess::Continue);
+        }
 
+        let hash = U256::from_big_endian(keccak(account_info.bytecode).as_fixed_bytes());
+        current_call_frame.stack.push(hash)?;
         Ok(OpcodeSuccess::Continue)
     }
 }

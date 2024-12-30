@@ -9,7 +9,8 @@ use anyhow::Result;
 use bytes::Bytes;
 use ethereum_types::{H256, U256};
 use ethrex_core::types::{
-    Block, BlockBody, BlockHash, BlockHeader, BlockNumber, ChainConfig, Index, Receipt, Transaction,
+    BlobsBundle, Block, BlockBody, BlockHash, BlockHeader, BlockNumber, ChainConfig, Index,
+    Receipt, Transaction,
 };
 use ethrex_rlp::decode::RLPDecode;
 use ethrex_rlp::encode::RLPEncode;
@@ -44,6 +45,21 @@ impl Store {
             .map_err(StoreError::LibmdbxError)?;
         txn.upsert::<T>(key, value)
             .map_err(StoreError::LibmdbxError)?;
+        txn.commit().map_err(StoreError::LibmdbxError)
+    }
+
+    // Helper method to write into a libmdbx table in batch
+    fn write_batch<T: Table>(&self, key_values: Vec<(T::Key, T::Value)>) -> Result<(), StoreError> {
+        let txn = self
+            .db
+            .begin_readwrite()
+            .map_err(StoreError::LibmdbxError)?;
+
+        for (key, value) in key_values {
+            txn.upsert::<T>(key, value)
+                .map_err(StoreError::LibmdbxError)?;
+        }
+
         txn.commit().map_err(StoreError::LibmdbxError)
     }
 
@@ -351,11 +367,31 @@ impl StoreEngine for Store {
     }
 
     fn add_payload(&self, payload_id: u64, block: Block) -> Result<(), StoreError> {
-        self.write::<Payloads>(payload_id, block.into())
+        self.write::<Payloads>(
+            payload_id,
+            (block, U256::zero(), BlobsBundle::empty(), false).into(),
+        )
     }
 
-    fn get_payload(&self, payload_id: u64) -> Result<Option<Block>, StoreError> {
+    fn get_payload(
+        &self,
+        payload_id: u64,
+    ) -> Result<Option<(Block, U256, BlobsBundle, bool)>, StoreError> {
         Ok(self.read::<Payloads>(payload_id)?.map(|b| b.to()))
+    }
+
+    fn update_payload(
+        &self,
+        payload_id: u64,
+        block: Block,
+        block_value: U256,
+        blobs_bundle: BlobsBundle,
+        completed: bool,
+    ) -> std::result::Result<(), StoreError> {
+        self.write::<Payloads>(
+            payload_id,
+            (block, block_value, blobs_bundle, completed).into(),
+        )
     }
 
     fn get_transaction_by_hash(
@@ -420,6 +456,71 @@ impl StoreEngine for Store {
         Ok(self
             .read::<PendingBlocks>(block_hash.into())?
             .map(|b| b.to()))
+    }
+
+    fn add_transaction_locations(
+        &self,
+        locations: Vec<(H256, BlockNumber, BlockHash, Index)>,
+    ) -> std::result::Result<(), StoreError> {
+        #[allow(clippy::type_complexity)]
+        let key_values: Vec<(TransactionHashRLP, Rlp<(BlockNumber, BlockHash, Index)>)> = locations
+            .into_iter()
+            .map(|(tx_hash, block_number, block_hash, index)| {
+                (tx_hash.into(), (block_number, block_hash, index).into())
+            })
+            .collect();
+
+        self.write_batch::<TransactionLocations>(key_values)
+    }
+
+    fn add_receipts(
+        &self,
+        block_hash: BlockHash,
+        receipts: Vec<Receipt>,
+    ) -> std::result::Result<(), StoreError> {
+        let key_values = receipts
+            .into_iter()
+            .enumerate()
+            .map(|(index, receipt)| {
+                (
+                    <(H256, u64) as Into<TupleRLP<BlockHash, Index>>>::into((
+                        block_hash,
+                        index as u64,
+                    )),
+                    <Receipt as Into<ReceiptRLP>>::into(receipt),
+                )
+            })
+            .collect();
+
+        self.write_batch::<Receipts>(key_values)
+    }
+
+    fn get_receipts_for_block(
+        &self,
+        block_hash: &BlockHash,
+    ) -> std::result::Result<Vec<Receipt>, StoreError> {
+        let mut receipts = vec![];
+        let mut receipt_index = 0;
+        let mut key: TupleRLP<BlockHash, Index> = (*block_hash, 0).into();
+        let txn = self.db.begin_read().map_err(|_| StoreError::ReadError)?;
+        let mut cursor = txn
+            .cursor::<Receipts>()
+            .map_err(|_| StoreError::CursorError("Receipts".to_owned()))?;
+
+        // We're searching receipts for a block, the keys
+        // for the receipt table are of the kind: rlp((BlockHash, Index)).
+        // So we search for values in the db that match with this kind
+        // of key, until we reach an Index that returns None
+        // and we stop the search.
+        while let Some((_, encoded_receipt)) =
+            cursor.seek_exact(key).map_err(|_| StoreError::ReadError)?
+        {
+            receipts.push(encoded_receipt);
+            receipt_index += 1;
+            key = (*block_hash, receipt_index).into();
+        }
+
+        Ok(receipts.into_iter().map(|receipt| receipt.to()).collect())
     }
 }
 
@@ -492,8 +593,8 @@ table!(
 // Local Blocks
 
 table!(
-    /// payload id to payload block table
-    ( Payloads ) u64 => BlockRLP
+    /// payload id to payload table
+    ( Payloads ) u64 => Rlp<(Block, U256, BlobsBundle, bool)>
 );
 
 table!(

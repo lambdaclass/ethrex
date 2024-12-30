@@ -1,7 +1,7 @@
 use crate::{
     report::{EFTestReport, TestVector},
     runner::{EFTestRunnerError, InternalError},
-    types::EFTest,
+    types::{EFTest, TransactionExpectedException},
     utils::{self, effective_gas_price},
 };
 use ethrex_core::{
@@ -10,7 +10,7 @@ use ethrex_core::{
 };
 use ethrex_levm::{
     db::CacheDB,
-    errors::{TransactionReport, VMError},
+    errors::{TransactionReport, TxValidationError, VMError},
     vm::VM,
     Environment,
 };
@@ -51,6 +51,9 @@ pub fn run_ef_test(test: &EFTest) -> Result<EFTestReport, EFTestRunnerError> {
                         .to_owned(),
                 )));
             }
+            Err(EFTestRunnerError::ExpectedExceptionDoesNotMatchReceived(reason)) => {
+                ef_test_report.register_post_state_validation_error_mismatch(reason, *vector);
+            }
             Err(EFTestRunnerError::Internal(reason)) => {
                 return Err(EFTestRunnerError::Internal(reason));
             }
@@ -81,12 +84,17 @@ pub fn prepare_vm_for_tx(vector: &TestVector, test: &EFTest) -> Result<VM, EFTes
             InternalError::FirstRunInternal("Failed to get transaction".to_owned()),
         ))?;
 
+    let access_lists = tx
+        .access_list
+        .iter()
+        .map(|arg| (arg.address, arg.storage_keys.clone()))
+        .collect();
+
     VM::new(
         tx.to.clone(),
         Environment {
             origin: tx.sender,
-            consumed_gas: U256::default(),
-            refunded_gas: U256::default(),
+            refunded_gas: 0,
             gas_limit: tx.gas_limit,
             block_number: test.env.current_number,
             coinbase: test.env.current_coinbase,
@@ -102,11 +110,13 @@ pub fn prepare_vm_for_tx(vector: &TestVector, test: &EFTest) -> Result<VM, EFTes
             tx_max_fee_per_gas: tx.max_fee_per_gas,
             tx_max_fee_per_blob_gas: tx.max_fee_per_blob_gas,
             block_gas_limit: test.env.current_gas_limit,
+            transient_storage: HashMap::new(),
         },
         tx.value,
         tx.data.clone(),
         db,
         CacheDB::default(),
+        access_lists,
     )
     .map_err(|err| EFTestRunnerError::VMInitializationFailed(err.to_string()))
 }
@@ -164,6 +174,61 @@ fn ensure_pre_state_condition(
     Ok(())
 }
 
+// Exceptions not covered: RlpInvalidValue and Type3TxPreFork
+fn exception_is_expected(
+    expected_exceptions: Vec<TransactionExpectedException>,
+    returned_error: VMError,
+) -> bool {
+    expected_exceptions.iter().any(|exception| {
+        matches!(
+            (exception, &returned_error),
+            (
+                TransactionExpectedException::IntrinsicGasTooLow,
+                VMError::TxValidation(TxValidationError::IntrinsicGasTooLow)
+            ) | (
+                TransactionExpectedException::InsufficientAccountFunds,
+                VMError::TxValidation(TxValidationError::InsufficientAccountFunds)
+            ) | (
+                TransactionExpectedException::PriorityGreaterThanMaxFeePerGas,
+                VMError::TxValidation(TxValidationError::PriorityGreaterThanMaxFeePerGas)
+            ) | (
+                TransactionExpectedException::GasLimitPriceProductOverflow,
+                VMError::TxValidation(TxValidationError::GasLimitPriceProductOverflow)
+            ) | (
+                TransactionExpectedException::SenderNotEoa,
+                VMError::TxValidation(TxValidationError::SenderNotEOA)
+            ) | (
+                TransactionExpectedException::InsufficientMaxFeePerGas,
+                VMError::TxValidation(TxValidationError::InsufficientMaxFeePerGas)
+            ) | (
+                TransactionExpectedException::NonceIsMax,
+                VMError::TxValidation(TxValidationError::NonceIsMax)
+            ) | (
+                TransactionExpectedException::GasAllowanceExceeded,
+                VMError::TxValidation(TxValidationError::GasAllowanceExceeded)
+            ) | (
+                TransactionExpectedException::Type3TxBlobCountExceeded,
+                VMError::TxValidation(TxValidationError::Type3TxBlobCountExceeded)
+            ) | (
+                TransactionExpectedException::Type3TxZeroBlobs,
+                VMError::TxValidation(TxValidationError::Type3TxZeroBlobs)
+            ) | (
+                TransactionExpectedException::Type3TxContractCreation,
+                VMError::TxValidation(TxValidationError::Type3TxContractCreation)
+            ) | (
+                TransactionExpectedException::Type3TxInvalidBlobVersionedHash,
+                VMError::TxValidation(TxValidationError::Type3TxInvalidBlobVersionedHash)
+            ) | (
+                TransactionExpectedException::InsufficientMaxFeePerBlobGas,
+                VMError::TxValidation(TxValidationError::InsufficientMaxFeePerBlobGas)
+            ) | (
+                TransactionExpectedException::InitcodeSizeExceeded,
+                VMError::TxValidation(TxValidationError::InitcodeSizeExceeded)
+            )
+        )
+    })
+}
+
 pub fn ensure_post_state(
     levm_execution_result: &Result<TransactionReport, VMError>,
     vector: &TestVector,
@@ -173,8 +238,24 @@ pub fn ensure_post_state(
         Ok(execution_report) => {
             match test.post.vector_post_value(vector).expect_exception {
                 // Execution result was successful but an exception was expected.
-                Some(expected_exception) => {
-                    let error_reason = format!("Expected exception: {expected_exception}");
+                Some(expected_exceptions) => {
+                    // Note: expected_exceptions is a vector because can only have 1 or 2 expected errors.
+                    // Here I use a match bc if there is no second position I just print the first one.
+                    let error_reason = match expected_exceptions.get(1) {
+                        Some(second_exception) => {
+                            format!(
+                                "Expected exception: {:?} or {:?}",
+                                expected_exceptions.first().unwrap(),
+                                second_exception
+                            )
+                        }
+                        None => {
+                            format!(
+                                "Expected exception: {:?}",
+                                expected_exceptions.first().unwrap()
+                            )
+                        }
+                    };
                     return Err(EFTestRunnerError::FailedToEnsurePostState(
                         execution_report.clone(),
                         error_reason,
@@ -182,9 +263,9 @@ pub fn ensure_post_state(
                 }
                 // Execution result was successful and no exception was expected.
                 None => {
-                    let (initial_state, _block_hash) = utils::load_initial_state(test);
+                    let (initial_state, block_hash) = utils::load_initial_state(test);
                     let levm_account_updates =
-                        get_state_transitions(&initial_state, execution_report);
+                        get_state_transitions(&initial_state, block_hash, execution_report);
                     let pos_state_root = post_state_root(&levm_account_updates, test);
                     let expected_post_state_root_hash = test.post.vector_post_value(vector).hash;
                     if expected_post_state_root_hash != pos_state_root {
@@ -202,8 +283,32 @@ pub fn ensure_post_state(
         Err(err) => {
             match test.post.vector_post_value(vector).expect_exception {
                 // Execution result was unsuccessful and an exception was expected.
-                // TODO: Check that the exception matches the expected exception.
-                Some(_expected_exception) => {}
+                Some(expected_exceptions) => {
+                    // Note: expected_exceptions is a vector because can only have 1 or 2 expected errors.
+                    // So in exception_is_expected we find out if the obtained error matches one of the expected
+                    if !exception_is_expected(expected_exceptions.clone(), err.clone()) {
+                        let error_reason = match expected_exceptions.get(1) {
+                            Some(second_exception) => {
+                                format!(
+                                    "Returned exception is not the expected: Returned {:?} but expected {:?} or {:?}",
+                                    err,
+                                    expected_exceptions.first().unwrap(),
+                                    second_exception
+                                )
+                            }
+                            None => {
+                                format!(
+                                    "Returned exception is not the expected: Returned {:?} but expected {:?}",
+                                    err,
+                                    expected_exceptions.first().unwrap()
+                                )
+                            }
+                        };
+                        return Err(EFTestRunnerError::ExpectedExceptionDoesNotMatchReceived(
+                            format!("Post-state condition failed: {error_reason}"),
+                        ));
+                    }
+                }
                 // Execution result was unsuccessful but no exception was expected.
                 None => {
                     return Err(EFTestRunnerError::ExecutionFailedUnexpectedly(err.clone()));
@@ -216,6 +321,7 @@ pub fn ensure_post_state(
 
 pub fn get_state_transitions(
     initial_state: &EvmState,
+    block_hash: H256,
     execution_report: &TransactionReport,
 ) -> Vec<AccountUpdate> {
     let current_db = match initial_state {
@@ -224,13 +330,17 @@ pub fn get_state_transitions(
     };
     let mut account_updates: Vec<AccountUpdate> = vec![];
     for (new_state_account_address, new_state_account) in &execution_report.new_state {
-        let mut added_storage = HashMap::new();
-
-        for (key, value) in &new_state_account.storage {
-            added_storage.insert(*key, value.current_value);
+        let initial_account_state = current_db
+            .get_account_info_by_hash(block_hash, *new_state_account_address)
+            .expect("Error getting account info by address")
+            .unwrap_or_default();
+        let mut updates = 0;
+        if initial_account_state.balance != new_state_account.info.balance {
+            updates += 1;
         }
-
-        // Check if the code has changed
+        if initial_account_state.nonce != new_state_account.info.nonce {
+            updates += 1;
+        }
         let code = if new_state_account.info.bytecode.is_empty() {
             // The new state account has no code
             None
@@ -257,10 +367,21 @@ pub fn get_state_transitions(
                 Some(code)
             }
         };
+        if code.is_some() {
+            updates += 1;
+        }
+        let mut added_storage = HashMap::new();
+        for (key, value) in &new_state_account.storage {
+            added_storage.insert(*key, value.current_value);
+            updates += 1;
+        }
+        if updates == 0 {
+            continue;
+        }
 
         let account_update = AccountUpdate {
             address: *new_state_account_address,
-            removed: false,
+            removed: new_state_account.is_empty(),
             info: Some(AccountInfo {
                 code_hash: code_hash(&new_state_account.info.bytecode),
                 balance: new_state_account.info.balance,

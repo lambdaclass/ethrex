@@ -17,7 +17,7 @@ use ethrex_rlp::encode::RLPEncode;
 use ethrex_trie::Trie;
 use serde::{Deserialize, Serialize};
 use sha3::{Digest as _, Keccak256};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fmt::Debug;
 use std::sync::{Arc, Mutex};
 use tracing::info;
@@ -44,7 +44,7 @@ pub enum EngineType {
     RedB,
 }
 
-#[derive(Default, Debug, Clone, Serialize, Deserialize)]
+#[derive(Default, Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct AccountUpdate {
     pub address: Address,
     pub removed: bool,
@@ -232,6 +232,26 @@ impl Store {
             .add_transaction_location(transaction_hash, block_number, block_hash, index)
     }
 
+    pub fn add_transaction_locations(
+        &self,
+        transactions: &[Transaction],
+        block_number: BlockNumber,
+        block_hash: BlockHash,
+    ) -> Result<(), StoreError> {
+        let mut locations = vec![];
+
+        for (index, transaction) in transactions.iter().enumerate() {
+            locations.push((
+                transaction.compute_hash(),
+                block_number,
+                block_hash,
+                index as Index,
+            ));
+        }
+
+        self.engine.add_transaction_locations(locations)
+    }
+
     pub fn get_transaction_location(
         &self,
         transaction_hash: H256,
@@ -325,7 +345,25 @@ impl Store {
         Ok(txs_by_sender)
     }
 
-    fn add_account_code(&self, code_hash: H256, code: Bytes) -> Result<(), StoreError> {
+    /// Gets hashes from possible_hashes that are not already known in the mempool.
+    pub fn filter_unknown_transactions(
+        &self,
+        possible_hashes: &[H256],
+    ) -> Result<Vec<H256>, StoreError> {
+        let mempool = self
+            .mempool
+            .lock()
+            .map_err(|error| StoreError::Custom(error.to_string()))?;
+
+        let tx_set: HashSet<_> = mempool.iter().map(|(hash, _)| hash).collect();
+        Ok(possible_hashes
+            .iter()
+            .filter(|hash| !tx_set.contains(hash))
+            .copied()
+            .collect())
+    }
+
+    pub fn add_account_code(&self, code_hash: H256, code: Bytes) -> Result<(), StoreError> {
         self.engine.add_account_code(code_hash, code)
     }
 
@@ -466,6 +504,14 @@ impl Store {
         self.engine.add_receipt(block_hash, index, receipt)
     }
 
+    pub fn add_receipts(
+        &self,
+        block_hash: BlockHash,
+        receipts: Vec<Receipt>,
+    ) -> Result<(), StoreError> {
+        self.engine.add_receipts(block_hash, receipts)
+    }
+
     pub fn get_receipt(
         &self,
         block_number: BlockNumber,
@@ -488,23 +534,6 @@ impl Store {
         self.add_block_number(hash, number)?;
         self.add_block_total_difficulty(hash, block_total_difficulty)?;
         self.update_latest_total_difficulty(block_total_difficulty)
-    }
-
-    fn add_transaction_locations(
-        &self,
-        transactions: &[Transaction],
-        block_number: BlockNumber,
-        block_hash: BlockHash,
-    ) -> Result<(), StoreError> {
-        for (index, transaction) in transactions.iter().enumerate() {
-            self.add_transaction_location(
-                transaction.compute_hash(),
-                block_number,
-                block_hash,
-                index as Index,
-            )?;
-        }
-        Ok(())
     }
 
     pub fn add_initial_state(&self, genesis: Genesis) -> Result<(), StoreError> {
@@ -606,9 +635,10 @@ impl Store {
         self.engine.update_earliest_block_number(block_number)
     }
 
-    // TODO(#790): This should not return an option.
-    pub fn get_earliest_block_number(&self) -> Result<Option<BlockNumber>, StoreError> {
-        self.engine.get_earliest_block_number()
+    pub fn get_earliest_block_number(&self) -> Result<BlockNumber, StoreError> {
+        self.engine
+            .get_earliest_block_number()?
+            .ok_or(StoreError::MissingEarliestBlockNumber)
     }
 
     pub fn update_finalized_block_number(
@@ -634,9 +664,10 @@ impl Store {
         self.engine.update_latest_block_number(block_number)
     }
 
-    // TODO(#790): This should not return an option.
-    pub fn get_latest_block_number(&self) -> Result<Option<BlockNumber>, StoreError> {
-        self.engine.get_latest_block_number()
+    pub fn get_latest_block_number(&self) -> Result<BlockNumber, StoreError> {
+        self.engine
+            .get_latest_block_number()?
+            .ok_or(StoreError::MissingLatestBlockNumber)
     }
 
     pub fn update_latest_total_difficulty(&self, block_difficulty: U256) -> Result<(), StoreError> {
@@ -892,13 +923,47 @@ impl Store {
         self.engine.add_payload(payload_id, block)
     }
 
-    pub fn get_payload(&self, payload_id: u64) -> Result<Option<Block>, StoreError> {
+    pub fn get_payload(
+        &self,
+        payload_id: u64,
+    ) -> Result<Option<(Block, U256, BlobsBundle, bool)>, StoreError> {
         self.engine.get_payload(payload_id)
+    }
+
+    pub fn update_payload(
+        &self,
+        payload_id: u64,
+        block: Block,
+        block_value: U256,
+        blobs_bundle: BlobsBundle,
+        completed: bool,
+    ) -> Result<(), StoreError> {
+        self.engine
+            .update_payload(payload_id, block, block_value, blobs_bundle, completed)
     }
 
     /// Creates a new state trie with an empty state root, for testing purposes only
     pub fn new_state_trie_for_test(&self) -> Trie {
         self.engine.open_state_trie(*EMPTY_TRIE_HASH)
+    }
+
+    // Obtain a state trie from the given state root
+    // Doesn't check if the state root is valid
+    pub fn open_state_trie(&self, state_root: H256) -> Trie {
+        self.engine.open_state_trie(state_root)
+    }
+
+    // Obtain a storage trie from the given address and storage_root
+    // Doesn't check if the account is stored
+    pub fn open_storage_trie(&self, account_hash: H256, storage_root: H256) -> Trie {
+        self.engine.open_storage_trie(account_hash, storage_root)
+    }
+
+    pub fn get_receipts_for_block(
+        &self,
+        block_hash: &BlockHash,
+    ) -> Result<Vec<Receipt>, StoreError> {
+        self.engine.get_receipts_for_block(block_hash)
     }
 }
 
@@ -1183,10 +1248,10 @@ mod tests {
             .update_pending_block_number(pending_block_number)
             .unwrap();
 
-        let stored_earliest_block_number = store.get_earliest_block_number().unwrap().unwrap();
+        let stored_earliest_block_number = store.get_earliest_block_number().unwrap();
         let stored_finalized_block_number = store.get_finalized_block_number().unwrap().unwrap();
         let stored_safe_block_number = store.get_safe_block_number().unwrap().unwrap();
-        let stored_latest_block_number = store.get_latest_block_number().unwrap().unwrap();
+        let stored_latest_block_number = store.get_latest_block_number().unwrap();
         let stored_pending_block_number = store.get_pending_block_number().unwrap().unwrap();
 
         assert_eq!(earliest_block_number, stored_earliest_block_number);

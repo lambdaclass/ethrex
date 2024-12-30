@@ -58,20 +58,31 @@ checkout-ethereum-package: ethereum-package ## 📦 Checkout specific Ethereum p
 		git fetch && \
 		git checkout $(ETHEREUM_PACKAGE_REVISION)
 
+ENCLAVE ?= lambdanet
+
 localnet: stop-localnet-silent build-image checkout-ethereum-package ## 🌐 Start local network
-	kurtosis run --enclave lambdanet ethereum-package --args-file test_data/network_params.yaml
+	kurtosis run --enclave $(ENCLAVE) ethereum-package --args-file test_data/network_params.yaml
+	docker logs -f $$(docker ps -q --filter ancestor=ethrex)
+
+localnet-assertoor-blob: stop-localnet-silent build-image checkout-ethereum-package ## 🌐 Start local network with assertoor test
+	kurtosis run --enclave $(ENCLAVE) ethereum-package --args-file .github/config/assertoor/network_params_blob.yaml
+	docker logs -f $$(docker ps -q --filter ancestor=ethrex)
+
+
+localnet-assertoor-tx: stop-localnet-silent build-image checkout-ethereum-package ## 🌐 Start local network with assertoor test
+	kurtosis run --enclave $(ENCLAVE) ethereum-package --args-file .github/config/assertoor/network_params_tx.yaml
 	docker logs -f $$(docker ps -q --filter ancestor=ethrex)
 
 stop-localnet: ## 🛑 Stop local network
-	kurtosis enclave stop lambdanet
-	kurtosis enclave rm lambdanet --force
+	kurtosis enclave stop $(ENCLAVE)
+	kurtosis enclave rm $(ENCLAVE) --force
 
 stop-localnet-silent:
 	@echo "Double checking local net is not already started..."
-	@kurtosis enclave stop lambdanet >/dev/null 2>&1 || true
-	@kurtosis enclave rm lambdanet --force >/dev/null 2>&1 || true
+	@kurtosis enclave stop $(ENCLAVE) >/dev/null 2>&1 || true
+	@kurtosis enclave rm $(ENCLAVE) --force >/dev/null 2>&1 || true
 
-HIVE_REVISION := f220e0c55fb222aaaffdf17d66aa0537cd16a67a
+HIVE_REVISION := df7d5103d4ddc772307f9947be4ad1f20ce03ed0
 # Shallow clones can't specify a single revision, but at least we avoid working
 # the whole history by making it shallow since a given date (one day before our
 # target revision).

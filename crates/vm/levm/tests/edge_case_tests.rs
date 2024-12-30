@@ -1,3 +1,5 @@
+// Here add #![allow(clippy::<lint_name>)] if necessary, we don't want to lint the test code.
+
 use std::str::FromStr;
 
 use bytes::Bytes;
@@ -15,7 +17,7 @@ fn test_extcodecopy_memory_allocation() {
     ]))
     .unwrap();
     let mut current_call_frame = vm.call_frames.pop().unwrap();
-    current_call_frame.gas_limit = U256::from(100_000_000);
+    current_call_frame.gas_limit = 100_000_000;
     vm.env.gas_price = U256::from(10_000);
     vm.execute(&mut current_call_frame).unwrap();
 }
@@ -85,17 +87,29 @@ fn test_usize_overflow_blobhash() {
 }
 
 #[test]
-fn add_op() {
+fn push_with_overflow() {
     let mut vm = new_vm_with_ops(&[
+        // This PUSH instruction is 33 bytes long.
+        // 1 byte for the Opcode and 32 bytes for the argument.
+        // The program counter starts at 0, so this instruction will
+        // start at byte 0 and go up until byte 32 ([0:32])
         Operation::Push((32, U256::MAX)),
+        // Now the program counter will be 33. It's the PC from the
+        // last instruction + 1.
+        // This instruction will try to jump to the destination in the
+        // stack. That destination is 32 bytes, all containing the
+        // maximum 256bit value. That is invalid, so JUMP will stop
+        // the VM's execution
         Operation::Jump,
-        Operation::Stop,
+        // Because JUMP instruction never got to jump to the specified
+        // instruction, the PC is never changed, so it maintains its
+        // last value. That is 33.
     ])
     .unwrap();
     let mut current_call_frame = vm.call_frames.pop().unwrap();
     vm.execute(&mut current_call_frame).unwrap();
 
-    assert_eq!(vm.current_call_frame_mut().unwrap().pc(), 34);
+    assert_eq!(vm.current_call_frame_mut().unwrap().pc(), 33);
 }
 
 #[test]
@@ -140,7 +154,7 @@ fn test_non_compliance_returndatacopy() {
         new_vm_with_bytecode(Bytes::copy_from_slice(&[56, 56, 56, 56, 56, 56, 62, 56])).unwrap();
     let mut current_call_frame = vm.call_frames.pop().unwrap();
     let txreport = vm.execute(&mut current_call_frame).unwrap();
-    assert_eq!(txreport.result, TxResult::Revert(VMError::VeryLargeNumber));
+    assert_eq!(txreport.result, TxResult::Revert(VMError::OutOfBounds));
 }
 
 #[test]
@@ -273,4 +287,14 @@ fn test_non_compliance_codecopy_memory_resize() {
         current_call_frame.stack.stack.first().unwrap(),
         &U256::from(14400)
     );
+}
+
+#[test]
+fn test_non_compliance_log_gas_cost() {
+    let mut vm = new_vm_with_bytecode(Bytes::copy_from_slice(&[56, 68, 68, 68, 131, 163])).unwrap();
+    vm.env.gas_price = U256::zero();
+    vm.env.gas_limit = 100_000_000;
+    vm.env.block_gas_limit = 100_000_001;
+    let res = vm.transact().unwrap();
+    assert_eq!(res.gas_used, 22511);
 }

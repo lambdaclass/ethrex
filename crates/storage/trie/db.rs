@@ -14,4 +14,6 @@ use crate::error::TrieError;
 pub trait TrieDB {
     fn get(&self, key: Vec<u8>) -> Result<Option<Vec<u8>>, TrieError>;
     fn put(&self, key: Vec<u8>, value: Vec<u8>) -> Result<(), TrieError>;
+    // fn put_batch(&self, key: Vec<u8>, value: Vec<u8>) -> Result<(), TrieError>;
+    fn put_batch(&self, key_values: Vec<(Vec<u8>, Vec<u8>)>) -> Result<(), TrieError>;
 }

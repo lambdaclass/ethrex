@@ -247,6 +247,10 @@ impl Trie {
             fn put(&self, _key: Vec<u8>, _value: Vec<u8>) -> Result<(), TrieError> {
                 Ok(())
             }
+
+            fn put_batch(&self, _key_values: Vec<(Vec<u8>, Vec<u8>)>) -> Result<(), TrieError> {
+                Ok(())
+            }
         }
 
         Trie::new(Box::new(NullTrieDB))

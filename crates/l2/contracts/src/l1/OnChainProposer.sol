@@ -7,6 +7,7 @@ import "./interfaces/IOnChainProposer.sol";
 import {CommonBridge} from "./CommonBridge.sol";
 import {ICommonBridge} from "./interfaces/ICommonBridge.sol";
 import {IRiscZeroVerifier} from "./interfaces/IRiscZeroVerifier.sol";
+import {ISP1Verifier} from "./interfaces/ISP1Verifier.sol";
 
 /// @title OnChainProposer contract.
 /// @author LambdaClass
@@ -34,8 +35,14 @@ contract OnChainProposer is IOnChainProposer, ReentrancyGuard {
     /// @dev All blocks with a block number less than or equal to `lastCommittedBlock` are considered committed.
     /// @dev Blocks with a block number greater than `lastCommittedBlock` have not been committed yet.
     /// @dev This is crucial for ensuring that only subsequents blocks are committed in the contract.
-    /// @dev In the initialize function, `lastCommittedBlock` is set to u64::MAX == 0xFFFFFFFFFFFFFFFF, this value is used to allow the block 0 to be committed.
     uint256 public lastCommittedBlock;
+
+    /// @notice The next block to commit.
+    /// @dev This variable holds the block number of the next block to commit.
+    /// @dev `nextBlockToCommit` should be equal to `lastCommittedBlock` + 1.
+    /// @dev Only the block with the block number equal to `nextBlockToCommit` will be committed.
+    /// @dev This variable is called by the `l1_committer.rs`.
+    uint256 public nextBlockToCommit;
 
     /// @dev The sequencer addresses that are authorized to commit and verify blocks.
     mapping(address _authorizedAddress => bool)
@@ -43,9 +50,11 @@ contract OnChainProposer is IOnChainProposer, ReentrancyGuard {
 
     address public BRIDGE;
     address public R0VERIFIER;
+    address public SP1VERIFIER;
 
     /// @notice Address used to avoid the verification process.
-    /// @dev If the `R0VERIFIER` contract address is set to this address, the verification process will not happen.
+    /// @dev If the `R0VERIFIER` or the `SP1VERIFIER` contract address is set to this address,
+    /// the verification process will not happen.
     /// @dev Used only in dev mode.
     address public constant DEV_MODE = address(0xAA);
 
@@ -61,8 +70,10 @@ contract OnChainProposer is IOnChainProposer, ReentrancyGuard {
     function initialize(
         address bridge,
         address r0verifier,
+        address sp1verifier,
         address[] calldata sequencerAddresses
     ) public nonReentrant {
+        // Set the CommonBridge address
         require(
             BRIDGE == address(0),
             "OnChainProposer: contract already initialized"
@@ -77,6 +88,7 @@ contract OnChainProposer is IOnChainProposer, ReentrancyGuard {
         );
         BRIDGE = bridge;
 
+        // Set the Risc0Groth16Verifier address
         require(
             R0VERIFIER == address(0),
             "OnChainProposer: contract already initialized"
@@ -91,11 +103,24 @@ contract OnChainProposer is IOnChainProposer, ReentrancyGuard {
         );
         R0VERIFIER = r0verifier;
 
+        // Set the SP1Groth16Verifier address
+        require(
+            SP1VERIFIER == address(0),
+            "OnChainProposer: contract already initialized"
+        );
+        require(
+            sp1verifier != address(0),
+            "OnChainProposer: sp1verifier is the zero address"
+        );
+        require(
+            sp1verifier != address(this),
+            "OnChainProposer: sp1verifier is the contract address"
+        );
+        SP1VERIFIER = sp1verifier;
+
         for (uint256 i = 0; i < sequencerAddresses.length; i++) {
             authorizedSequencerAddresses[sequencerAddresses[i]] = true;
         }
-
-        lastCommittedBlock = 0xFFFFFFFFFFFFFFFF;
     }
 
     /// @inheritdoc IOnChainProposer
@@ -106,9 +131,11 @@ contract OnChainProposer is IOnChainProposer, ReentrancyGuard {
         bytes32 depositLogs
     ) external override onlySequencer {
         require(
-            blockNumber == lastCommittedBlock + 1 ||
-                (blockNumber == 0 && lastCommittedBlock == 0xFFFFFFFFFFFFFFFF),
-            "OnChainProposer: blockNumber is not the immediate succesor of lastCommittedBlock"
+            blockNumber == nextBlockToCommit ||
+                (blockNumber == 0 &&
+                    lastCommittedBlock == 0 &&
+                    nextBlockToCommit == 0),
+            "OnChainProposer: blockNumber is not the immediate successor of lastCommittedBlock"
         );
         require(
             blockCommitments[blockNumber].commitmentHash == bytes32(0),
@@ -135,6 +162,7 @@ contract OnChainProposer is IOnChainProposer, ReentrancyGuard {
             depositLogs
         );
         lastCommittedBlock = blockNumber;
+        nextBlockToCommit = blockNumber + 1;
         emit BlockCommitted(commitment);
     }
 
@@ -148,7 +176,10 @@ contract OnChainProposer is IOnChainProposer, ReentrancyGuard {
         uint256 blockNumber,
         bytes calldata blockProof,
         bytes32 imageId,
-        bytes32 journalDigest
+        bytes32 journalDigest,
+        bytes32 programVKey,
+        bytes calldata publicValues,
+        bytes calldata proofBytes
     ) external override onlySequencer {
         require(
             blockNumber == lastVerifiedBlock + 1,
@@ -166,6 +197,15 @@ contract OnChainProposer is IOnChainProposer, ReentrancyGuard {
                 blockProof,
                 imageId,
                 journalDigest
+            );
+        }
+
+        if (SP1VERIFIER != DEV_MODE) {
+            // If the verification fails, it will revert.
+            ISP1Verifier(SP1VERIFIER).verifyProof(
+                programVKey,
+                publicValues,
+                proofBytes
             );
         }
 

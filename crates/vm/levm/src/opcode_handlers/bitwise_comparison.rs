@@ -226,7 +226,7 @@ impl VM {
     }
 }
 
-pub fn arithmetic_shift_right(value: U256, shift: U256) -> Result<U256, VMError> {
+fn arithmetic_shift_right(value: U256, shift: U256) -> Result<U256, VMError> {
     if value.bit(255) {
         // if negative fill with 1s
         let shifted = checked_shift_right(value, shift)?;
@@ -282,7 +282,7 @@ pub fn checked_shift_left(value: U256, shift: U256) -> Result<U256, VMError> {
 }
 
 // Instead of using unsafe >>, uses checked_div n times, replicating n shifts
-fn checked_shift_right(value: U256, shift: U256) -> Result<U256, VMError> {
+pub fn checked_shift_right(value: U256, shift: U256) -> Result<U256, VMError> {
     let mut result = value;
     let mut shifts_left = shift;
 

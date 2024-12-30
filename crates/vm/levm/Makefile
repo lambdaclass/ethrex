@@ -1,4 +1,4 @@
-.PHONY: all test clippy fmt usage lint eth-tests
+.PHONY: all test clippy fmt usage lint eth-tests run-evm-ef-tests
 
 all: test clippy fmt ## 🚀 Runs all tests, linter and formatter
 
@@ -33,19 +33,19 @@ download-evm-ef-tests: $(SPECTEST_VECTORS_DIR) ## 📥 Download EF Tests
 run-evm-ef-tests: ## 🏃‍♂️ Run EF Tests
 	if [ "$(QUIET)" = "true" ]; then \
 		cd ../../../ && \
-		time cargo test --quiet -p ef_tests-levm --test ef_tests_levm -- --summary;\
+		time cargo test --quiet -p ef_tests-levm --test ef_tests_levm --release -- $(flags) --summary;\
 	else \
 		cd ../../../ && \
-		time cargo test -p ef_tests-levm --test ef_tests_levm;\
+		time cargo test -p ef_tests-levm --test ef_tests_levm --release -- $(flags);\
 	fi
 
 run-evm-ef-tests-ci: ## 🏃‍♂️ Run EF Tests only with LEVM and without spinner, for CI.
 	cd ../../../ && \
-	time cargo test -p ef_tests-levm --test ef_tests_levm -- --disable-spinner --summary
+	time cargo test -p ef_tests-levm --test ef_tests_levm --release -- --summary
 
 generate-evm-ef-tests-report: ## 📊 Generate EF Tests Report
 	cd ../../../ && \
-	cargo test -p ef_tests-levm --test ef_tests_levm -- --summary
+	cargo test -p ef_tests-levm --test ef_tests_levm --release -- --summary
 
 clean-evm-ef-tests: ## 🗑️  Clean test vectors
 	rm -rf $(SPECTEST_VECTORS_DIR)
@@ -80,3 +80,15 @@ build-revm-comparison:
 		--bin levm_factorial \
 		--bin revm_fibonacci \
 		--bin levm_fibonacci
+
+###### Build Client with LEVM ######
+
+FLAGS := "--features ethrex-blockchain/levm,ethrex-vm/levm,ethrex/levm"
+
+build-image-levm: ## 🐳 Build the Docker image with LEVM features
+	cd ../../../ && \
+	docker build -t ethrex --build-arg BUILD_FLAGS=$(FLAGS) .
+
+run-hive-debug-levm: build-image-levm 
+	$(MAKE) -C ../../../ setup-hive
+	cd ../../../hive && ./hive --sim $(SIMULATION) --client ethrex --sim.limit "$(TEST_PATTERN)" --docker.output

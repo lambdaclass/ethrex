@@ -7,10 +7,7 @@ use ethereum_types::H256;
 use ethrex_rpc::{
     engine::{
         fork_choice::ForkChoiceUpdatedV3,
-        payload::{
-            GetPayloadRequest, GetPayloadRequestVersion, GetPayloadV3Request, NewPayloadRequest,
-            NewPayloadRequestVersion, NewPayloadV3Request,
-        },
+        payload::{GetPayloadV3Request, NewPayloadV3Request},
         ExchangeCapabilitiesRequest,
     },
     types::{
@@ -71,7 +68,11 @@ impl EngineClient {
                 .map_err(ExchangeCapabilitiesError::SerdeJSONError)
                 .map_err(EngineClientError::from),
             Ok(RpcResponse::Error(error_response)) => {
-                Err(ExchangeCapabilitiesError::RPCError(error_response.error.message).into())
+                Err(ExchangeCapabilitiesError::RPCError(format!(
+                    "{}: {:?}",
+                    error_response.error.message, error_response.error.data
+                ))
+                .into())
             }
             Err(error) => Err(error),
         }
@@ -92,7 +93,11 @@ impl EngineClient {
                 .map_err(ForkChoiceUpdateError::SerdeJSONError)
                 .map_err(EngineClientError::from),
             Ok(RpcResponse::Error(error_response)) => {
-                Err(ForkChoiceUpdateError::RPCError(error_response.error.message).into())
+                Err(ForkChoiceUpdateError::RPCError(format!(
+                    "{}: {:?}",
+                    error_response.error.message, error_response.error.data
+                ))
+                .into())
             }
             Err(error) => Err(error),
         }
@@ -102,19 +107,17 @@ impl EngineClient {
         &self,
         payload_id: u64,
     ) -> Result<ExecutionPayloadResponse, EngineClientError> {
-        let request = GetPayloadV3Request(GetPayloadRequest {
-            payload_id,
-            version: GetPayloadRequestVersion::V3,
-        })
-        .into();
+        let request = GetPayloadV3Request { payload_id }.into();
 
         match self.send_request(request).await {
             Ok(RpcResponse::Success(result)) => serde_json::from_value(result.result)
                 .map_err(GetPayloadError::SerdeJSONError)
                 .map_err(EngineClientError::from),
-            Ok(RpcResponse::Error(error_response)) => {
-                Err(GetPayloadError::RPCError(error_response.error.message).into())
-            }
+            Ok(RpcResponse::Error(error_response)) => Err(GetPayloadError::RPCError(format!(
+                "{}: {:?}",
+                error_response.error.message, error_response.error.data
+            ))
+            .into()),
             Err(error) => Err(error),
         }
     }
@@ -126,13 +129,9 @@ impl EngineClient {
         parent_beacon_block_root: H256,
     ) -> Result<PayloadStatus, EngineClientError> {
         let request = NewPayloadV3Request {
-            new_payload_request: NewPayloadRequest {
-                payload: execution_payload,
-                version: NewPayloadRequestVersion::V3 {
-                    expected_blob_versioned_hashes,
-                    parent_beacon_block_root,
-                },
-            },
+            payload: execution_payload,
+            expected_blob_versioned_hashes,
+            parent_beacon_block_root,
         }
         .into();
 
@@ -140,9 +139,11 @@ impl EngineClient {
             Ok(RpcResponse::Success(result)) => serde_json::from_value(result.result)
                 .map_err(NewPayloadError::SerdeJSONError)
                 .map_err(EngineClientError::from),
-            Ok(RpcResponse::Error(error_response)) => {
-                Err(NewPayloadError::RPCError(error_response.error.message).into())
-            }
+            Ok(RpcResponse::Error(error_response)) => Err(NewPayloadError::RPCError(format!(
+                "{}: {:?}",
+                error_response.error.message, error_response.error.data
+            ))
+            .into()),
             Err(error) => Err(error),
         }
     }
