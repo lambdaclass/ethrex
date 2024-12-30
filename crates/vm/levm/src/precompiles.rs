@@ -210,6 +210,7 @@ pub fn ecrecover(
     Ok(Bytes::from(output.to_vec()))
 }
 
+/// Returns the calldata received
 pub fn identity(
     calldata: &Bytes,
     gas_for_call: u64,
@@ -257,6 +258,7 @@ pub fn ripemd_160(
     Ok(Bytes::from(output))
 }
 
+// Returns the result of the module-exponentiation operation
 pub fn modexp(
     calldata: &Bytes,
     gas_for_call: u64,
@@ -301,8 +303,7 @@ pub fn modexp(
     let modulus_limit = m_size
         .checked_add(exponent_limit)
         .ok_or(InternalError::ArithmeticOperationOverflow)?;
-    // The reason I use unwrap_or_default is to cover the case where calldata does not reach the required
-    // length, so then we should fill the rest with zeros. The same is done in modulus parsing
+
     let b = get_slice_or_default(&calldata, 96, base_limit, b_size)?;
     let base = BigUint::from_bytes_be(&b);
 
@@ -312,7 +313,7 @@ pub fn modexp(
     let m = get_slice_or_default(&calldata, exponent_limit, modulus_limit, m_size)?;
     let modulus = BigUint::from_bytes_be(&m);
 
-    // first 32 bytes of exponent or exponent if e_size < 32
+    // First 32 bytes of exponent or exponent if e_size < 32
     let bytes_to_take = 32.min(e_size);
     // Use of unwrap_or_default because if e == 0 get_slice_or_default returns an empty vec
     let exp_first_32 = BigUint::from_bytes_be(e.get(0..bytes_to_take).unwrap_or_default());
@@ -328,6 +329,8 @@ pub fn modexp(
     Ok(res_bytes.slice(..m_size))
 }
 
+/// This function returns the slice defined by the limits converted to a vec. If the size to expand the
+/// slice are not covered by the calldata size, then the missing space needed is filled with zeros.
 fn get_slice_or_default(
     calldata: &Bytes,
     lower_limit: usize,
@@ -360,6 +363,7 @@ fn mod_exp(base: BigUint, exponent: BigUint, modulus: BigUint) -> BigUint {
     }
 }
 
+/// If the result size is lower than the needed, then pads the result to right filling with zeros at left.
 pub fn increase_left_pad(result: &Bytes, m_size: usize) -> Result<Bytes, VMError> {
     let mut padded_result = vec![0u8; m_size];
     if result.len() < m_size {
@@ -377,6 +381,7 @@ pub fn increase_left_pad(result: &Bytes, m_size: usize) -> Result<Bytes, VMError
     }
 }
 
+// Makes a point addition on the elliptic curve 'alt_bn128'
 pub fn ecadd(
     calldata: &Bytes,
     gas_for_call: u64,
@@ -455,6 +460,7 @@ pub fn ecadd(
     }
 }
 
+// Makes a scalar multiplication on the elliptic curve 'alt_bn128'
 pub fn ecmul(
     calldata: &Bytes,
     gas_for_call: u64,
@@ -511,6 +517,7 @@ pub fn ecmul(
     }
 }
 
+// Performs a bilinear pairing on points on the elliptic curve 'alt_bn128', returns 1 on success and 0 on failure
 pub fn ecpairing(
     calldata: &Bytes,
     gas_for_call: u64,
@@ -670,7 +677,8 @@ pub fn ecpairing(
     Ok(Bytes::from(result.to_vec()))
 }
 
-/// I allow this clippy alert because lib handles mul for the type and will not panic in case of overflow
+/// Updates the success variable with the pairing result. I allow this clippy alert because lib handles
+/// mul for the type and will not panic in case of overflow
 #[allow(clippy::arithmetic_side_effects)]
 fn update_pairing_result(
     mul: &mut FieldElement<Degree12ExtensionField>,
@@ -765,11 +773,11 @@ fn word_permutation(rounds_to_permute: usize, v: [u64; 16], m: &[u64; 16]) -> [u
 
 // Based on https://datatracker.ietf.org/doc/html/rfc7693#section-3.2
 fn blake2f_compress_f(
-    rounds: usize,
-    h: [u64; 8],
-    m: &[u64; 16],
-    t: &[u64; 2],
-    f: bool,
+    rounds: usize, // Specifies the rounds to permute
+    h: [u64; 8],   // State vector, defines the work vector (v) and affects the XOR process
+    m: &[u64; 16], // The message block to compress
+    t: &[u64; 2],  // Affects the work vector (v) before permutations
+    f: bool,       // If set as true, inverts all bits
 ) -> Result<[u64; 8], InternalError> {
     // Initialize local work vector v[0..15], takes first half from state and second half from IV.
     let mut v: [u64; 16] = [0; 16];
@@ -849,6 +857,7 @@ fn parse_slice_arguments(calldata: &Bytes) -> Result<SliceArguments, VMError> {
     Ok((h, m, t))
 }
 
+// Returns the result of Blake2 hashing algorithm given a certain parameters from the calldata.
 pub fn blake2f(
     calldata: &Bytes,
     gas_for_call: u64,
@@ -887,6 +896,7 @@ pub fn blake2f(
     Ok(Bytes::from(output))
 }
 
+// Makes verifications on the received point, proof and commitment, if true returns a constant value
 fn point_evaluation(
     _calldata: &Bytes,
     _gas_for_call: u64,
