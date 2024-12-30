@@ -1,7 +1,4 @@
-use std::{
-    fmt::{self, format},
-    time::Duration,
-};
+use std::{fmt, time::Duration};
 
 use crate::utils::config::eth::EthConfig;
 use bytes::Bytes;
@@ -741,9 +738,9 @@ impl EthClient {
                 gas_price
             } else {
                 let gas_price = self.get_gas_price().await?;
-                get_gas_price = gas_price
-                    .try_into()
-                    .map_err(|e| EthClientError::Custom(format!("{e}")))?;
+                get_gas_price = gas_price.try_into().map_err(|_| {
+                    EthClientError::Custom("Failed at gas_price.try_into()".to_owned())
+                })?;
                 get_gas_price
             },
             max_fee_per_gas: if let Some(gas_price) = overrides.gas_price {
@@ -828,9 +825,9 @@ impl EthClient {
                 gas_price
             } else {
                 let gas_price = self.get_gas_price().await?;
-                get_gas_price = gas_price
-                    .try_into()
-                    .map_err(|e| EthClientError::Custom(format!("{e}")))?;
+                get_gas_price = gas_price.try_into().map_err(|_| {
+                    EthClientError::Custom("Failed at gas_price.try_into()".to_owned())
+                })?;
                 get_gas_price
             },
             max_fee_per_gas: if let Some(gas_price) = overrides.gas_price {
@@ -917,9 +914,9 @@ impl EthClient {
                 gas_price
             } else {
                 let gas_price = self.get_gas_price().await?;
-                get_gas_price = gas_price
-                    .try_into()
-                    .map_err(|e| EthClientError::Custom(format!("{e}")))?;
+                get_gas_price = gas_price.try_into().map_err(|_| {
+                    EthClientError::Custom("Failed at gas_price.try_into()".to_owned())
+                })?;
                 get_gas_price
             },
             max_fee_per_gas: if let Some(gas_price) = overrides.gas_price {
@@ -989,6 +986,18 @@ impl EthClient {
         Self::_call_block_variable(
             eth_client,
             b"lastCommittedBlock()",
+            on_chain_proposer_address,
+        )
+        .await
+    }
+
+    pub async fn get_next_block_to_commit(
+        eth_client: &EthClient,
+        on_chain_proposer_address: Address,
+    ) -> Result<u64, EthClientError> {
+        Self::_call_block_variable(
+            eth_client,
+            b"nextBlockToCommit()",
             on_chain_proposer_address,
         )
         .await

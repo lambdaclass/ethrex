@@ -8,13 +8,14 @@ mod smoke_test;
 use constants::{GAS_PER_BLOB, MAX_BLOB_GAS_PER_BLOCK, MAX_BLOB_NUMBER_PER_BLOCK};
 use error::{ChainError, InvalidBlockError};
 use ethrex_core::types::{
-    validate_block_header, validate_cancun_header_fields, validate_no_cancun_header_fields, Block,
-    BlockHash, BlockHeader, BlockNumber, EIP4844Transaction, Receipt, Transaction,
+    compute_receipts_root, validate_block_header, validate_cancun_header_fields,
+    validate_no_cancun_header_fields, Block, BlockHash, BlockHeader, BlockNumber,
+    EIP4844Transaction, Receipt, Transaction,
 };
 use ethrex_core::H256;
 
 use ethrex_storage::error::StoreError;
-use ethrex_storage::Store;
+use ethrex_storage::{AccountUpdate, Store};
 use ethrex_vm::{evm_state, execute_block, spec_id, EvmState, SpecId};
 
 //TODO: Implement a struct Chain or BlockChain to encapsulate
@@ -25,51 +26,6 @@ use ethrex_vm::{evm_state, execute_block, spec_id, EvmState, SpecId};
 /// canonical chain/head. Fork choice needs to be updated for that in a separate step.
 ///
 /// Performs pre and post execution validation, and updates the database with the post state.
-#[cfg(not(feature = "levm"))]
-pub fn add_block(block: &Block, storage: &Store) -> Result<(), ChainError> {
-    use ethrex_vm::get_state_transitions;
-
-    let block_hash = block.header.compute_block_hash();
-
-    // Validate if it can be the new head and find the parent
-    let Ok(parent_header) = find_parent_header(&block.header, storage) else {
-        // If the parent is not present, we store it as pending.
-        storage.add_pending_block(block.clone())?;
-        return Err(ChainError::ParentNotFound);
-    };
-    let mut state = evm_state(storage.clone(), block.header.parent_hash);
-
-    // Validate the block pre-execution
-    validate_block(block, &parent_header, &state)?;
-
-    let receipts = execute_block(block, &mut state)?;
-
-    validate_gas_used(&receipts, &block.header)?;
-
-    let account_updates = get_state_transitions(&mut state);
-
-    // Apply the account updates over the last block's state and compute the new state root
-    let new_state_root = state
-        .database()
-        .ok_or(ChainError::StoreError(StoreError::MissingStore))?
-        .apply_account_updates(block.header.parent_hash, &account_updates)?
-        .ok_or(ChainError::ParentStateNotFound)?;
-
-    // Check state root matches the one in block header after execution
-    validate_state_root(&block.header, new_state_root)?;
-
-    store_block(storage, block.clone())?;
-    store_receipts(storage, receipts, block_hash)?;
-
-    Ok(())
-}
-
-/// Adds a new block to the store. It may or may not be canonical, as long as its ancestry links
-/// with the canonical chain and its parent's post-state is calculated. It doesn't modify the
-/// canonical chain/head. Fork choice needs to be updated for that in a separate step.
-///
-/// Performs pre and post execution validation, and updates the database with the post state.
-#[cfg(feature = "levm")]
 pub fn add_block(block: &Block, storage: &Store) -> Result<(), ChainError> {
     let block_hash = block.header.compute_block_hash();
 
@@ -83,11 +39,19 @@ pub fn add_block(block: &Block, storage: &Store) -> Result<(), ChainError> {
 
     // Validate the block pre-execution
     validate_block(block, &parent_header, &state)?;
-
-    let (receipts, account_updates) = execute_block(block, &mut state)?;
-
-    // Note: these is commented because it is still being used in development.
-    // dbg!(&account_updates);
+    let (receipts, account_updates): (Vec<Receipt>, Vec<AccountUpdate>) = {
+        // TODO: Consider refactoring both implementations so that they have the same signature
+        #[cfg(feature = "levm")]
+        {
+            execute_block(block, &mut state)?
+        }
+        #[cfg(not(feature = "levm"))]
+        {
+            let receipts = execute_block(block, &mut state)?;
+            let account_updates = ethrex_vm::get_state_transitions(&mut state);
+            (receipts, account_updates)
+        }
+    };
 
     validate_gas_used(&receipts, &block.header)?;
 
@@ -100,6 +64,9 @@ pub fn add_block(block: &Block, storage: &Store) -> Result<(), ChainError> {
 
     // Check state root matches the one in block header after execution
     validate_state_root(&block.header, new_state_root)?;
+
+    // Check receipts root matches the one in block header after execution
+    validate_receipts_root(&block.header, &receipts)?;
 
     store_block(storage, block.clone())?;
     store_receipts(storage, receipts, block_hash)?;
@@ -137,13 +104,27 @@ pub fn validate_state_root(
     }
 }
 
+pub fn validate_receipts_root(
+    block_header: &BlockHeader,
+    receipts: &[Receipt],
+) -> Result<(), ChainError> {
+    let receipts_root = compute_receipts_root(receipts);
+
+    if receipts_root == block_header.receipts_root {
+        Ok(())
+    } else {
+        Err(ChainError::InvalidBlock(
+            InvalidBlockError::ReceiptsRootMismatch,
+        ))
+    }
+}
+
 // Returns the hash of the head of the canonical chain (the latest valid hash).
 pub fn latest_canonical_block_hash(storage: &Store) -> Result<H256, ChainError> {
-    if let Some(latest_block_number) = storage.get_latest_block_number()? {
-        if let Some(latest_valid_header) = storage.get_block_header(latest_block_number)? {
-            let latest_valid_hash = latest_valid_header.compute_block_hash();
-            return Ok(latest_valid_hash);
-        }
+    let latest_block_number = storage.get_latest_block_number()?;
+    if let Some(latest_valid_header) = storage.get_block_header(latest_block_number)? {
+        let latest_valid_hash = latest_valid_header.compute_block_hash();
+        return Ok(latest_valid_hash);
     }
     Err(ChainError::StoreError(StoreError::Custom(
         "Could not find latest valid hash".to_string(),
