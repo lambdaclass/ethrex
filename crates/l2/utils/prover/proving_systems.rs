@@ -69,7 +69,7 @@ impl Risc0Proof {
             Err(_) => vec![0u8; 4],
         };
 
-        let mut image_id = [0_u32; Self::SELECTOR_SIZE];
+        let mut image_id = [0_u32; Self::IMAGE_ID_SIZE];
         for (i, b) in image_id.iter_mut().enumerate() {
             *b = *self.prover_id.get(i).ok_or(ProverServerError::Custom(
                 "Failed to get image_id in handle_proof_submission()".to_owned(),
