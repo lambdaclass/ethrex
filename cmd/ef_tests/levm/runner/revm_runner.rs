@@ -53,6 +53,9 @@ pub fn re_run_failed_ef_test(
                     }
                 }
             },
+            // Currently, we decided not to re-execute the test when the Expected exception does not match 
+            // with the received. This can change in the future.
+            EFTestRunnerError::ExpectedExceptionDoesNotMatchReceived(_) => continue,
             EFTestRunnerError::VMInitializationFailed(_)
             | EFTestRunnerError::ExecutionFailedUnexpectedly(_)
             | EFTestRunnerError::FailedToEnsurePreState(_) => continue,
@@ -98,11 +101,12 @@ pub fn prepare_revm_for_tx<'state>(
     let chain_spec = initial_state
         .chain_config()
         .map_err(|err| EFTestRunnerError::VMInitializationFailed(err.to_string()))?;
+
     let block_env = RevmBlockEnv {
         number: RevmU256::from_limbs(test.env.current_number.0),
         coinbase: RevmAddress(test.env.current_coinbase.0.into()),
         timestamp: RevmU256::from_limbs(test.env.current_timestamp.0),
-        gas_limit: RevmU256::from_limbs(test.env.current_gas_limit.0),
+        gas_limit: RevmU256::from(test.env.current_gas_limit),
         basefee: RevmU256::from_limbs(test.env.current_base_fee.unwrap_or_default().0),
         difficulty: RevmU256::from_limbs(test.env.current_difficulty.0),
         prevrandao: test.env.current_random.map(|v| v.0.into()),
@@ -134,7 +138,7 @@ pub fn prepare_revm_for_tx<'state>(
 
     let tx_env = RevmTxEnv {
         caller: tx.sender.0.into(),
-        gas_limit: tx.gas_limit.as_u64(),
+        gas_limit: tx.gas_limit,
         gas_price: RevmU256::from_limbs(effective_gas_price(test, tx)?.0),
         transact_to: match tx.to {
             TxKind::Call(to) => RevmTxKind::Call(to.0.into()),
@@ -392,6 +396,12 @@ pub fn _run_ef_test_revm(test: &EFTest) -> Result<EFTestReport, EFTestRunnerErro
             Err(EFTestRunnerError::Internal(reason)) => {
                 return Err(EFTestRunnerError::Internal(reason));
             }
+            Err(EFTestRunnerError::ExpectedExceptionDoesNotMatchReceived(_)) => {
+                return Err(EFTestRunnerError::Internal(InternalError::MainRunnerInternal(
+                    "The ExpectedExceptionDoesNotMatchReceived error should only happen when executing Levm, the errors matching is not implemented in Revm"
+                        .to_owned(),
+                )));
+            }
         }
     }
     Ok(ef_test_report)
@@ -420,8 +430,7 @@ pub fn _ensure_post_state_revm(
             match test.post.vector_post_value(vector).expect_exception {
                 // Execution result was successful but an exception was expected.
                 Some(expected_exception) => {
-                    let error_reason = format!("Expected exception: {expected_exception}");
-                    println!("Expected exception: {expected_exception}");
+                    let error_reason = format!("Expected exception: {expected_exception:?}");
                     return Err(EFTestRunnerError::FailedToEnsurePostState(
                         TransactionReport {
                             result: TxResult::Success,

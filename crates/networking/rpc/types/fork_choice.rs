@@ -19,7 +19,7 @@ pub struct PayloadAttributesV3 {
     pub timestamp: u64,
     pub prev_randao: H256,
     pub suggested_fee_recipient: Address,
-    pub withdrawals: Vec<Withdrawal>,
+    pub withdrawals: Option<Vec<Withdrawal>>,
     pub parent_beacon_block_root: Option<H256>,
 }
 

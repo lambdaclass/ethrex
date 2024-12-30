@@ -22,11 +22,7 @@ impl VM {
             return Err(VMError::OpcodeNotAllowedInStaticContext);
         }
 
-        let offset: usize = current_call_frame
-            .stack
-            .pop()?
-            .try_into()
-            .map_err(|_| VMError::VeryLargeNumber)?;
+        let offset = current_call_frame.stack.pop()?;
         let size = current_call_frame
             .stack
             .pop()?
@@ -53,7 +49,7 @@ impl VM {
         )?;
 
         let log = Log {
-            address: current_call_frame.msg_sender, // Should change the addr if we are on a Call/Create transaction (Call should be the contract we are calling, Create should be the original caller)
+            address: current_call_frame.to,
             topics,
             data: Bytes::from(
                 memory::load_range(&mut current_call_frame.memory, offset, size)?.to_vec(),

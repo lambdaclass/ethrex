@@ -13,6 +13,7 @@ tokio-util.workspace = true
 tracing-subscriber = { workspace = true, features = ["env-filter"] }
 tracing.workspace = true
 hex.workspace = true
+thiserror.workspace = true
 
 # ethrex
 ethrex-core.workspace = true
@@ -22,9 +23,13 @@ ethrex-rlp.workspace = true
 # l2
 ethrex-l2.workspace = true
 
-# risc0
 zkvm_interface = { path = "./zkvm/interface", default-features = false }
+
+# risc0
 risc0-zkvm = { version = "1.2.0" }
+
+# sp1
+sp1-sdk = "3.4.0"
 
 [dev-dependencies]
 ethrex-vm.workspace = true
@@ -41,8 +46,12 @@ path = "src/main.rs"
 
 [features]
 default = []
-build_zkvm = ["zkvm_interface/build_zkvm"]
-gpu = ["risc0-zkvm/cuda"]
+## risc0
+build_risc0 = ["zkvm_interface/build_risc0"]
+gpu = ["risc0-zkvm/cuda", "sp1-sdk/cuda"]
+## sp1
+build_sp1 = ["zkvm_interface/build_sp1"]
+
 
 [lints.clippy]
 unwrap_used = "deny"
