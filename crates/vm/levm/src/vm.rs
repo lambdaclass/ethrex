@@ -253,7 +253,7 @@ impl VM {
             self.env.transient_storage.clone(),
         );
 
-        if is_precompile(&current_call_frame.code_address) {
+        if is_precompile(&current_call_frame.code_address, self.env.spec_id) {
             let precompile_result = execute_precompile(current_call_frame);
 
             match precompile_result {
