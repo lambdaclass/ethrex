@@ -428,13 +428,14 @@ pub fn create(
     new_memory_size: usize,
     current_memory_size: usize,
     code_size_in_memory: usize,
+    spec_id: SpecId,
 ) -> Result<u64, VMError> {
     compute_gas_create(
         new_memory_size,
         current_memory_size,
         code_size_in_memory,
         false,
-        SpecId::CANCUN,
+        spec_id,
     )
 }
 
