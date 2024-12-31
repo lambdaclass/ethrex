@@ -8,6 +8,7 @@ use bytes::Bytes;
 /// Contains the gas costs of the EVM instructions
 use ethrex_core::U256;
 use num_bigint::BigUint;
+use revm_primitives::SpecId;
 
 // Opcodes cost
 pub const STOP: u64 = 0;
@@ -433,6 +434,7 @@ pub fn create(
         current_memory_size,
         code_size_in_memory,
         false,
+        SpecId::CANCUN,
     )
 }
 
@@ -440,12 +442,14 @@ pub fn create_2(
     new_memory_size: usize,
     current_memory_size: usize,
     code_size_in_memory: usize,
+    spec_id: SpecId,
 ) -> Result<u64, VMError> {
     compute_gas_create(
         new_memory_size,
         current_memory_size,
         code_size_in_memory,
         true,
+        spec_id,
     )
 }
 
@@ -454,6 +458,7 @@ fn compute_gas_create(
     current_memory_size: usize,
     code_size_in_memory: usize,
     is_create_2: bool,
+    spec_id: SpecId,
 ) -> Result<u64, VMError> {
     let minimum_word_size = (code_size_in_memory
         .checked_add(31)
@@ -465,9 +470,13 @@ fn compute_gas_create(
         .try_into()
         .map_err(|_| VMError::VeryLargeNumber)?;
 
-    let init_code_cost = minimum_word_size
-        .checked_mul(INIT_CODE_WORD_COST)
-        .ok_or(OutOfGasError::GasCostOverflow)?; // will not panic since it's 2
+    let init_code_cost = if spec_id >= SpecId::CANCUN {
+        minimum_word_size
+            .checked_mul(INIT_CODE_WORD_COST)
+            .ok_or(OutOfGasError::GasCostOverflow)? // will not panic since it's 2
+    } else {
+        0
+    };
 
     let memory_expansion_cost = memory::expansion_cost(new_memory_size, current_memory_size)?;
 

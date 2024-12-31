@@ -376,6 +376,7 @@ impl VM {
                 new_size,
                 current_call_frame.memory.len(),
                 code_size_in_memory,
+                self.env.spec_id,
             )?,
         )?;
 
