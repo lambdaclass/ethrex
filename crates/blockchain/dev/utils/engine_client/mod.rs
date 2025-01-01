@@ -6,9 +6,9 @@ use errors::{
 use ethereum_types::H256;
 use ethrex_rpc::{
     engine::{
+        exchange_capabilities::ExchangeCapabilitiesRequest,
         fork_choice::ForkChoiceUpdatedV3,
         payload::{GetPayloadV3Request, NewPayloadV3Request},
-        ExchangeCapabilitiesRequest,
     },
     types::{
         fork_choice::{ForkChoiceResponse, ForkChoiceState, PayloadAttributesV3},

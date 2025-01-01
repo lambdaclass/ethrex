@@ -6,13 +6,13 @@ use axum_extra::{
 };
 use bytes::Bytes;
 use engine::{
+    exchange_capabilities::ExchangeCapabilitiesRequest,
     exchange_transition_config::ExchangeTransitionConfigV1Req,
     fork_choice::{ForkChoiceUpdatedV1, ForkChoiceUpdatedV2, ForkChoiceUpdatedV3},
     payload::{
         GetPayloadV1Request, GetPayloadV2Request, GetPayloadV3Request, NewPayloadV1Request,
         NewPayloadV2Request, NewPayloadV3Request,
     },
-    ExchangeCapabilitiesRequest,
 };
 use eth::{
     account::{
