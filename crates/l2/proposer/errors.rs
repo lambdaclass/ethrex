@@ -1,10 +1,11 @@
 use std::sync::mpsc::SendError;
 
-use crate::utils::merkle_tree::MerkleError;
-use crate::utils::{config::errors::ConfigError, eth_client::errors::EthClientError};
+use crate::utils::config::errors::ConfigError;
 use ethereum_types::FromStrRadixErr;
 use ethrex_core::types::{BlobsBundleError, FakeExponentialError};
 use ethrex_dev::utils::engine_client::errors::EngineClientError;
+use ethrex_l2_sdk::eth_client::errors::{CalldataEncodeError, EthClientError};
+use ethrex_l2_sdk::merkle_tree::MerkleError;
 use ethrex_storage::error::StoreError;
 use ethrex_vm::EvmError;
 use tokio::task::JoinError;
@@ -45,6 +46,8 @@ pub enum ProverServerError {
     JoinError(#[from] JoinError),
     #[error("ProverServer failed: {0}")]
     Custom(String),
+    #[error("Failed to encode calldata: {0}")]
+    CalldataEncodeError(#[from] CalldataEncodeError),
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -105,6 +108,8 @@ pub enum CommitterError {
     BlobEstimationError(#[from] BlobEstimationError),
     #[error("length does not fit in u16")]
     TryIntoError(#[from] std::num::TryFromIntError),
+    #[error("Failed to encode calldata: {0}")]
+    CalldataEncodeError(#[from] CalldataEncodeError),
 }
 
 #[derive(Debug, thiserror::Error)]
