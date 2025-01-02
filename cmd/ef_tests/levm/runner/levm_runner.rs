@@ -175,7 +175,7 @@ fn ensure_pre_state_condition(
     Ok(())
 }
 
-// Exceptions not covered: RlpInvalidValue and Type3TxPreFork
+// Exceptions not covered: RlpInvalidValue
 fn exception_is_expected(
     expected_exceptions: Vec<TransactionExpectedException>,
     returned_error: VMError,
@@ -207,6 +207,9 @@ fn exception_is_expected(
             ) | (
                 TransactionExpectedException::GasAllowanceExceeded,
                 VMError::TxValidation(TxValidationError::GasAllowanceExceeded)
+            ) | (
+                TransactionExpectedException::Type3TxPreFork,
+                VMError::TxValidation(TxValidationError::Type3TxPreFork)
             ) | (
                 TransactionExpectedException::Type3TxBlobCountExceeded,
                 VMError::TxValidation(TxValidationError::Type3TxBlobCountExceeded)
