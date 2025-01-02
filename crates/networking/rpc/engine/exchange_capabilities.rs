@@ -41,10 +41,9 @@ impl RpcHandler for ExchangeCapabilitiesRequest {
     }
 
     fn handle(&self, _context: RpcApiContext) -> Result<Value, RpcErr> {
-        // Return only the capabilities that are supported by both client and server
+        // Return only the capabilities that are supported.
         let supported: Vec<String> = SUPPORTED_CAPABILITIES
             .iter()
-            .filter(|cap| self.contains(&cap.to_string()))
             .map(|s| s.to_string())
             .collect();
 
