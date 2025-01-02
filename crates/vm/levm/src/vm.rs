@@ -1,6 +1,6 @@
 use crate::{
     account::{Account, StorageSlot},
-    call_frame::CallFrame,
+    call_frame::{BytecodeType, CallFrame},
     constants::*,
     db::{
         cache::{self, remove_account},
@@ -56,6 +56,218 @@ pub struct VM {
     pub cache: CacheDB,
     pub tx_kind: TxKind,
     pub access_list: AccessList,
+}
+/*
+#[derive(Debug, Clone, Default)]
+struct ContainersData {
+    container_sections_num: u64,
+    container_sizes: Vec<u64>,
+}
+
+#[derive(Debug, Clone, Default)]
+struct BytecodeHeader {
+    types_size: u64,
+    code_sections_num: u64,
+    code_sizes: Vec<u64>,
+    containers_data: Vec<ContainersData>, // Can be just Vec<Vec<u64>>
+    data_size: u64,
+}
+
+struct Container {
+    header: BytecodeHeader,
+    body: BytecodeBody,
+}
+
+ */
+
+#[derive(Debug, Clone, Default, PartialEq)]
+struct TypesSection {
+    inputs: u8,
+    outputs: u8,
+    max_stack_height: u16,
+}
+
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct BytecodeBody {
+    types_sections: Vec<TypesSection>,
+    pub code_sections: Vec<Bytes>,
+    container_sections: Vec<Bytes>, // Should be containers?
+    data_section: Bytes,
+}
+
+impl BytecodeBody {
+    fn from_raw_bytecode(bytecode: Bytes) -> Result<Self, VMError> {
+        if bytecode.len() < 15 {
+            return Err(VMError::InvalidBytecode);
+        }
+
+        // Parse header
+
+        // Magic
+        if bytecode[..2] != [0xEF, 0x00] {
+            return Err(VMError::InvalidBytecode);
+        }
+
+        // Version
+        if bytecode[2] != 0x01 {
+            return Err(VMError::InvalidBytecode);
+        }
+
+        // Kind types
+        if bytecode[3] != 0x01 {
+            return Err(VMError::InvalidBytecode);
+        }
+
+        //Falla esto
+        let types_size = u16::from_be_bytes(
+            bytecode[4..6]
+                .try_into()
+                .map_err(|_| VMError::InvalidBytecode)?,
+        );
+
+        // Kind code
+        if bytecode[6] != 0x02 {
+            return Err(VMError::InvalidBytecode);
+        }
+
+        // Num code sections
+        let num_code_sections = u16::from_be_bytes(
+            bytecode[7..9]
+                .try_into()
+                .map_err(|_| VMError::InvalidBytecode)?,
+        );
+
+        // Code sizes
+        let mut code_sizes = Vec::new();
+        for i in 0..num_code_sections {
+            let code_size = u16::from_be_bytes(
+                bytecode[(9 + i * 2) as usize..(9 + (i + 1) * 2) as usize]
+                    .try_into()
+                    .map_err(|_| VMError::InvalidBytecode)?,
+            );
+            code_sizes.push(code_size);
+        }
+
+        let mut container_section_start = (9 + num_code_sections * 2) as usize;
+        let mut container_sizes = Vec::new();
+        // Kind container
+        if bytecode[container_section_start] == 0x03 {
+            // Num container sections
+            let num_container_sections = u16::from_be_bytes(
+                bytecode[container_section_start + 1..container_section_start + 3]
+                    .try_into()
+                    .map_err(|_| VMError::InvalidBytecode)?,
+            );
+
+            // Container size
+            for i in 0..(num_container_sections as usize) {
+                let container_size = u16::from_be_bytes(
+                    bytecode[container_section_start + 3 + i * 2
+                        ..container_section_start + 3 + (i + 1) * 2]
+                        .try_into()
+                        .map_err(|_| VMError::InvalidBytecode)?,
+                );
+                container_sizes.push(container_size);
+            }
+            container_section_start =
+                container_section_start + 3 + num_container_sections as usize * 2;
+        }
+
+        let data_section_start = container_section_start;
+
+        // Kind data
+        if bytecode[data_section_start] != 0x04 {
+            return Err(VMError::InvalidBytecode);
+        }
+
+        // Data size
+        let data_size = u16::from_be_bytes(
+            bytecode[data_section_start + 1..data_section_start + 3]
+                .try_into()
+                .map_err(|_| VMError::InvalidBytecode)?,
+        );
+
+        // Terminator
+        if bytecode[data_section_start + 3] != 0x00 {
+            return Err(VMError::InvalidBytecode);
+        }
+
+        let body_start = data_section_start + 4;
+
+        println!("Body parsing with params: body start {body_start} types_size {types_size}, ");
+        println!("Bytecode raw: {:?}", bytecode.to_vec());
+
+        // Types sections
+        let mut types_sections = Vec::new();
+
+        // types_size should be multiple of 4
+        for i in 0..(types_size as usize / 4) {
+            let idx = i * 4;
+            let inputs = bytecode[body_start + idx];
+            let outputs = bytecode[body_start + idx + 1];
+            println!("inputs {inputs}, outputs {outputs}");
+            println!(
+                "a: {:?}",
+                bytecode[body_start + idx + 2..body_start + idx + 4].to_vec()
+            );
+            let max_stack_height = u16::from_be_bytes(
+                bytecode[body_start + idx + 2..body_start + idx + 4]
+                    .try_into()
+                    .map_err(|_| VMError::InvalidBytecode)?,
+            );
+            println!("Max stack height: {}", max_stack_height);
+
+            let types_section = TypesSection {
+                inputs,
+                outputs,
+                max_stack_height,
+            };
+
+            types_sections.push(types_section);
+        }
+
+        // Code sections
+        let mut code_sections_start = body_start + types_size as usize;
+        println!(
+            "code sect start {code_sections_start}, len {}",
+            bytecode.len()
+        );
+        println!("lefting: {:?}", bytecode[code_sections_start..].to_vec());
+
+        let mut code_sections = Vec::new();
+        for code_size in code_sizes {
+            let code_end = code_sections_start + code_size as usize;
+            let code = Bytes::from(bytecode[code_sections_start..code_end].to_vec());
+            code_sections.push(code);
+            code_sections_start = code_end;
+        }
+
+        // Container sections
+        let mut container_sections_start = code_sections_start;
+        let container_sections = Vec::new();
+
+        for container_size in container_sizes {
+            let container_end = container_sections_start + container_size as usize;
+            let code = Bytes::from(bytecode[container_sections_start..container_end].to_vec());
+            code_sections.push(code);
+            container_sections_start = container_end;
+        }
+
+        // Data section
+        let data_section_start = container_section_start;
+        let data_section = Bytes::from(
+            bytecode[data_section_start..data_section_start + data_size as usize].to_vec(),
+        );
+
+        let body = BytecodeBody {
+            types_sections,
+            code_sections,
+            container_sections,
+            data_section,
+        };
+
+        Ok(body)
+    }
 }
 
 pub fn address_to_word(address: Address) -> U256 {
@@ -118,6 +330,13 @@ pub fn get_valid_jump_destinations(code: &Bytes) -> Result<HashSet<usize>, VMErr
     Ok(valid_jump_destinations)
 }
 
+fn bytecode_is_eof(bytecode: &Bytes) -> bool {
+    match bytecode.get(..2) {
+        Some(magic) => magic == [0xEF, 0x00],
+        None => false,
+    }
+}
+
 impl VM {
     // TODO: Refactor this.
     #[allow(clippy::too_many_arguments)]
@@ -158,7 +377,13 @@ impl VM {
             TxKind::Call(address_to) => {
                 default_touched_accounts.insert(address_to);
 
-                let bytecode = get_account(&mut cache, &db, address_to).info.bytecode;
+                let bytecode_raw = get_account(&mut cache, &db, address_to).info.bytecode;
+
+                let bytecode = if bytecode_is_eof(&bytecode_raw) {
+                    BytecodeType::Structured(BytecodeBody::from_raw_bytecode(bytecode_raw.clone())?)
+                } else {
+                    BytecodeType::Legacy(bytecode_raw)
+                };
 
                 // CALL tx
                 let initial_call_frame = CallFrame::new(
@@ -207,7 +432,7 @@ impl VM {
                     env.origin,
                     new_contract_address,
                     new_contract_address,
-                    Bytes::new(), // Bytecode is assigned after passing validations.
+                    Default::default(), // Bytecode is assigned after passing validations.
                     value,
                     calldata, // Calldata is removed after passing validations.
                     false,
@@ -834,7 +1059,14 @@ impl VM {
 
         if self.is_create() {
             // Assign bytecode to context and empty calldata
-            initial_call_frame.assign_bytecode(initial_call_frame.calldata.clone());
+            let bytecode = if bytecode_is_eof(&initial_call_frame.calldata) {
+                BytecodeType::Structured(BytecodeBody::from_raw_bytecode(
+                    initial_call_frame.calldata.clone(),
+                )?)
+            } else {
+                BytecodeType::Legacy(initial_call_frame.calldata.clone())
+            };
+            initial_call_frame.assign_bytecode(bytecode);
             initial_call_frame.calldata = Bytes::new();
         }
         Ok(())
