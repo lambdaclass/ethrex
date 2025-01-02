@@ -66,7 +66,7 @@ fn read_bytcode_slice(current_call_frame: &CallFrame, n_bytes: usize) -> Result<
     let bytecode = match &current_call_frame.bytecode {
         BytecodeType::Legacy(code) => code,
         BytecodeType::Structured(code) => {
-            &code.code_sections.get(0).cloned().unwrap_or(Bytes::new())
+            &code.code_sections.first().cloned().unwrap_or(Bytes::new()) // This should be current_code_idx
         }
     };
 

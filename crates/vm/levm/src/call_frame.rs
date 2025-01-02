@@ -102,9 +102,9 @@ pub struct CallFrame {
 impl CallFrame {
     pub fn new_from_bytecode(bytecode: BytecodeType) -> Self {
         let valid_jump_destinations = match &bytecode {
-            BytecodeType::Legacy(code) => get_valid_jump_destinations(&code).unwrap_or_default(),
+            BytecodeType::Legacy(code) => get_valid_jump_destinations(code).unwrap_or_default(),
             BytecodeType::Structured(structured_code) => get_valid_jump_destinations(
-                &structured_code
+                structured_code
                     .code_sections
                     .first()
                     .unwrap_or(&Bytes::new()),
@@ -122,9 +122,9 @@ impl CallFrame {
 
     pub fn assign_bytecode(&mut self, bytecode: BytecodeType) {
         self.valid_jump_destinations = match &bytecode {
-            BytecodeType::Legacy(code) => get_valid_jump_destinations(&code).unwrap_or_default(),
+            BytecodeType::Legacy(code) => get_valid_jump_destinations(code).unwrap_or_default(),
             BytecodeType::Structured(structured_code) => get_valid_jump_destinations(
-                &structured_code
+                structured_code
                     .code_sections
                     .first()
                     .unwrap_or(&Bytes::new()),
@@ -149,9 +149,9 @@ impl CallFrame {
         create_op_called: bool,
     ) -> Self {
         let valid_jump_destinations = match &bytecode {
-            BytecodeType::Legacy(code) => get_valid_jump_destinations(&code).unwrap_or_default(),
+            BytecodeType::Legacy(code) => get_valid_jump_destinations(code).unwrap_or_default(),
             BytecodeType::Structured(structured_code) => get_valid_jump_destinations(
-                &structured_code
+                structured_code
                     .code_sections
                     .first()
                     .unwrap_or(&Bytes::new()),
@@ -184,7 +184,7 @@ impl CallFrame {
             BytecodeType::Structured(structured_code) => {
                 match structured_code
                     .code_sections
-                    .get(0) // This should be current_code_idx
+                    .first() // This should be current_code_idx
                     .unwrap_or(&Bytes::new())
                     .get(self.pc)
                     .copied()

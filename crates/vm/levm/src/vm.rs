@@ -107,35 +107,39 @@ impl BytecodeBody {
         // Parse header
 
         // Magic
-        if bytecode[..2] != [0xEF, 0x00] {
+        if bytecode.get(..2).ok_or(InternalError::SlicingError)? != [0xEF, 0x00] {
             return Err(VMError::InvalidBytecode);
         }
 
         // Version
-        if bytecode[2] != 0x01 {
+        if *bytecode.get(2).ok_or(InternalError::SlicingError)? != 0x01 {
             return Err(VMError::InvalidBytecode);
         }
 
         // Kind types
-        if bytecode[3] != 0x01 {
+        if *bytecode.get(3).ok_or(InternalError::SlicingError)? != 0x01 {
             return Err(VMError::InvalidBytecode);
         }
 
         //Falla esto
         let types_size = u16::from_be_bytes(
-            bytecode[4..6]
+            bytecode
+                .get(4..6)
+                .ok_or(InternalError::SlicingError)?
                 .try_into()
                 .map_err(|_| VMError::InvalidBytecode)?,
         );
 
         // Kind code
-        if bytecode[6] != 0x02 {
+        if *bytecode.get(6).ok_or(InternalError::SlicingError)? != 0x02 {
             return Err(VMError::InvalidBytecode);
         }
 
         // Num code sections
         let num_code_sections = u16::from_be_bytes(
-            bytecode[7..9]
+            bytecode
+                .get(7..9)
+                .ok_or(InternalError::SlicingError)?
                 .try_into()
                 .map_err(|_| VMError::InvalidBytecode)?,
         );
@@ -143,21 +147,50 @@ impl BytecodeBody {
         // Code sizes
         let mut code_sizes = Vec::new();
         for i in 0..num_code_sections {
-            let code_size = u16::from_be_bytes(
-                bytecode[(9 + i * 2) as usize..(9 + (i + 1) * 2) as usize]
-                    .try_into()
-                    .map_err(|_| VMError::InvalidBytecode)?,
-            );
+            let code_start_idx = (i
+                .checked_mul(2)
+                .ok_or(InternalError::ArithmeticOperationOverflow)?)
+            .checked_add(9)
+            .ok_or(InternalError::ArithmeticOperationOverflow)?;
+            let code_end_idx = code_start_idx
+                .checked_add(2)
+                .ok_or(InternalError::ArithmeticOperationOverflow)?;
+            let code_size_bytes = bytecode
+                .get(usize::from(code_start_idx)..usize::from(code_end_idx))
+                .ok_or(InternalError::SlicingError)?
+                .try_into()
+                .map_err(|_| VMError::InvalidBytecode)?;
+            let code_size = u16::from_be_bytes(code_size_bytes);
             code_sizes.push(code_size);
         }
 
-        let mut container_section_start = (9 + num_code_sections * 2) as usize;
+        let mut container_section_start = usize::from(
+            num_code_sections
+                .checked_mul(2)
+                .ok_or(InternalError::ArithmeticOperationOverflow)?
+                .checked_add(9)
+                .ok_or(InternalError::ArithmeticOperationOverflow)?,
+        );
         let mut container_sizes = Vec::new();
         // Kind container
-        if bytecode[container_section_start] == 0x03 {
+        if *bytecode
+            .get(container_section_start)
+            .ok_or(InternalError::SlicingError)?
+            == 0x03
+        {
             // Num container sections
+            let num_container_data = bytecode
+                .get(
+                    container_section_start
+                        .checked_add(1)
+                        .ok_or(InternalError::ArithmeticOperationOverflow)?
+                        ..container_section_start
+                            .checked_add(3)
+                            .ok_or(InternalError::ArithmeticOperationOverflow)?,
+                )
+                .ok_or(InternalError::SlicingError)?;
             let num_container_sections = u16::from_be_bytes(
-                bytecode[container_section_start + 1..container_section_start + 3]
+                num_container_data
                     .try_into()
                     .map_err(|_| VMError::InvalidBytecode)?,
             );
