@@ -173,13 +173,14 @@ fn static_offset_value(value: &Value) -> usize {
     let mut ret = 0;
 
     match value {
-        Value::Address(_) => ret += 32,
-        Value::Uint(_) => ret += 32,
-        Value::Int(_) => ret += 32,
-        Value::Bool(_) => ret += 32,
-        Value::Bytes(_) => ret += 32,
-        Value::String(_) => ret += 32,
-        Value::Array(_) => ret += 32,
+        Value::Address(_)
+        | Value::Uint(_)
+        | Value::Int(_)
+        | Value::Bool(_)
+        | Value::Bytes(_)
+        | Value::String(_)
+        | Value::Array(_)
+        | Value::FixedBytes(_) => ret += 32,
         Value::Tuple(vec) => {
             if is_dynamic(value) {
                 ret += 32;
@@ -202,34 +203,24 @@ fn static_offset_value(value: &Value) -> usize {
                 }
             }
         }
-        Value::FixedBytes(_) => ret += 32,
     }
 
     ret
 }
 
 fn is_dynamic(value: &Value) -> bool {
-    let mut result = false;
     match value {
-        Value::Bytes(_) => result = true,
-        Value::String(_) => result = true,
-        Value::Array(_) => result = true,
-        Value::Tuple(vec) => {
-            for value in vec {
-                if is_dynamic(value) {
-                    result = true;
-                }
-            }
-        }
+        Value::Bytes(_) | Value::String(_) | Value::Array(_) => true,
+        Value::Tuple(vec) => vec.iter().any(is_dynamic),
         Value::FixedArray(vec) => {
             if let Some(first_elem) = vec.first() {
-                result = is_dynamic(first_elem)
+                is_dynamic(first_elem)
+            } else {
+                false
             }
         }
-        _ => {}
+        _ => false,
     }
-
-    result
 }
 
 fn encode_array(values: &[Value]) -> Result<Vec<u8>, CalldataEncodeError> {
