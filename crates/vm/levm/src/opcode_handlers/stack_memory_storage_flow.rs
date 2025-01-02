@@ -1,7 +1,7 @@
 use crate::{
-    call_frame::CallFrame,
+    call_frame::{BytecodeType, CallFrame},
     constants::{WORD_SIZE, WORD_SIZE_IN_BYTES_USIZE},
-    errors::{OpcodeSuccess, OutOfGasError, VMError},
+    errors::{InternalError, OpcodeSuccess, OutOfGasError, VMError},
     gas_cost::{self, SSTORE_STIPEND},
     memory::{self, calculate_memory_size},
     vm::VM,
@@ -368,6 +368,52 @@ impl VM {
     ) -> Result<OpcodeSuccess, VMError> {
         self.increase_consumed_gas(current_call_frame, gas_cost::JUMPDEST)?;
         Ok(OpcodeSuccess::Continue)
+    }
+
+    pub fn op_rjump(
+        &mut self,
+        current_call_frame: &mut CallFrame,
+    ) -> Result<OpcodeSuccess, VMError> {
+        match current_call_frame.bytecode.clone() {
+            BytecodeType::Legacy(_) => Err(VMError::OpcodeNotFound), // Should be something like opcode not available
+            BytecodeType::Structured(bytecode) => {
+                self.increase_consumed_gas(current_call_frame, gas_cost::RJUMP)?;
+
+                let code = bytecode
+                    .code_sections
+                    .first()
+                    .ok_or(VMError::StackUnderflow)?;
+
+                let offset = code
+                    .get(
+                        current_call_frame
+                            .pc
+                            .checked_add(1)
+                            .ok_or(VMError::OutOfBounds)?
+                            ..current_call_frame
+                                .pc
+                                .checked_add(3)
+                                .ok_or(VMError::OutOfBounds)?,
+                    )
+                    .unwrap_or_default();
+
+                // This code should loop until it reaches an out of gas, but this not happens because we should
+                // cast this offset to an integer (i16?), is 65533 and should be -3
+                let offset = U256::from(offset)
+                    .checked_add(3.into())
+                    .ok_or(VMError::OutOfBounds)?;
+                let offset = u64::try_from(offset).map_err(|_| InternalError::ConversionError)?;
+
+                current_call_frame.pc = current_call_frame
+                    .pc
+                    .checked_add(
+                        usize::try_from(offset).map_err(|_| InternalError::ConversionError)?,
+                    )
+                    .ok_or(VMError::OutOfBounds)?;
+
+                Ok(OpcodeSuccess::Continue)
+            }
+        }
     }
 
     // PC operation

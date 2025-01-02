@@ -157,6 +157,9 @@ pub enum Opcode {
     LOG2 = 0xA2,
     LOG3 = 0xA3,
     LOG4 = 0xA4,
+    // EOF new operations
+    RJUMP = 0xE0,
+
     // // System Operations
     CREATE = 0xF0,
     CALL = 0xF1,
@@ -314,6 +317,7 @@ impl From<u8> for Opcode {
             0x5E => Opcode::MCOPY,
             0x5C => Opcode::TLOAD,
             0x5D => Opcode::TSTORE,
+            0xE0 => Opcode::RJUMP,
             0xF0 => Opcode::CREATE,
             0xF1 => Opcode::CALL,
             0xF2 => Opcode::CALLCODE,

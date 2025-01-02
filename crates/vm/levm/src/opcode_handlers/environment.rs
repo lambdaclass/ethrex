@@ -1,5 +1,5 @@
 use crate::{
-    call_frame::CallFrame,
+    call_frame::{BytecodeType, CallFrame},
     errors::{InternalError, OpcodeSuccess, VMError},
     gas_cost::{self},
     memory::{self, calculate_memory_size},
@@ -197,13 +197,16 @@ impl VM {
         &mut self,
         current_call_frame: &mut CallFrame,
     ) -> Result<OpcodeSuccess, VMError> {
-        self.increase_consumed_gas(current_call_frame, gas_cost::CODESIZE)?;
+        match current_call_frame.bytecode.clone() {
+            BytecodeType::Structured(_) => Err(VMError::OpcodeNotFound), // Should be something like opcode not available
+            BytecodeType::Legacy(bytecode) => {
+                self.increase_consumed_gas(current_call_frame, gas_cost::CODESIZE)?;
 
-        current_call_frame
-            .stack
-            .push(U256::from(current_call_frame.bytecode.len()))?;
+                current_call_frame.stack.push(U256::from(bytecode.len()))?;
 
-        Ok(OpcodeSuccess::Continue)
+                Ok(OpcodeSuccess::Continue)
+            }
+        }
     }
 
     // CODECOPY operation
@@ -211,49 +214,48 @@ impl VM {
         &mut self,
         current_call_frame: &mut CallFrame,
     ) -> Result<OpcodeSuccess, VMError> {
-        let destination_offset = current_call_frame.stack.pop()?;
+        match current_call_frame.bytecode.clone() {
+            BytecodeType::Structured(_) => Err(VMError::OpcodeNotFound), // Should be something like opcode not available
+            BytecodeType::Legacy(bytecode) => {
+                let destination_offset = current_call_frame.stack.pop()?;
 
-        let code_offset = current_call_frame.stack.pop()?;
+                let code_offset = current_call_frame.stack.pop()?;
 
-        let size: usize = current_call_frame
-            .stack
-            .pop()?
-            .try_into()
-            .map_err(|_| VMError::VeryLargeNumber)?;
+                let size: usize = current_call_frame
+                    .stack
+                    .pop()?
+                    .try_into()
+                    .map_err(|_| VMError::VeryLargeNumber)?;
 
-        let new_memory_size = calculate_memory_size(destination_offset, size)?;
+                let new_memory_size = calculate_memory_size(destination_offset, size)?;
 
-        self.increase_consumed_gas(
-            current_call_frame,
-            gas_cost::codecopy(new_memory_size, current_call_frame.memory.len(), size)?,
-        )?;
+                self.increase_consumed_gas(
+                    current_call_frame,
+                    gas_cost::codecopy(new_memory_size, current_call_frame.memory.len(), size)?,
+                )?;
 
-        if size == 0 {
-            return Ok(OpcodeSuccess::Continue);
-        }
-
-        let mut data = vec![0u8; size];
-        if code_offset < current_call_frame.bytecode.len().into() {
-            let code_offset: usize = code_offset
-                .try_into()
-                .map_err(|_| VMError::Internal(InternalError::ConversionError))?;
-
-            for (i, byte) in current_call_frame
-                .bytecode
-                .iter()
-                .skip(code_offset)
-                .take(size)
-                .enumerate()
-            {
-                if let Some(data_byte) = data.get_mut(i) {
-                    *data_byte = *byte;
+                if size == 0 {
+                    return Ok(OpcodeSuccess::Continue);
                 }
+
+                let mut data = vec![0u8; size];
+                if code_offset < bytecode.len().into() {
+                    let code_offset: usize = code_offset
+                        .try_into()
+                        .map_err(|_| VMError::Internal(InternalError::ConversionError))?;
+
+                    for (i, byte) in bytecode.iter().skip(code_offset).take(size).enumerate() {
+                        if let Some(data_byte) = data.get_mut(i) {
+                            *data_byte = *byte;
+                        }
+                    }
+                }
+
+                memory::try_store_data(&mut current_call_frame.memory, destination_offset, &data)?;
+
+                Ok(OpcodeSuccess::Continue)
             }
         }
-
-        memory::try_store_data(&mut current_call_frame.memory, destination_offset, &data)?;
-
-        Ok(OpcodeSuccess::Continue)
     }
 
     // GASPRICE operation
