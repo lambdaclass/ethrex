@@ -340,8 +340,8 @@ pub fn modexp(
     Ok(res_bytes.slice(..m_size))
 }
 
-/// This function returns the slice defined by the limits converted to a vec. If the size to expand the
-/// slice are not covered by the calldata size, then the missing space needed is filled with zeros.
+/// This function returns the slice between the lower and upper limit of the calldata (as a vector),
+/// padding with zeros at the end if necessary.
 fn get_slice_or_default(
     calldata: &Bytes,
     lower_limit: usize,
@@ -374,7 +374,7 @@ fn mod_exp(base: BigUint, exponent: BigUint, modulus: BigUint) -> BigUint {
     }
 }
 
-/// If the result size is lower than the needed, then pads the result to right filling with zeros at left.
+/// If the result size is less than needed, pads left with zeros.
 pub fn increase_left_pad(result: &Bytes, m_size: usize) -> Result<Bytes, VMError> {
     let mut padded_result = vec![0u8; m_size];
     if result.len() < m_size {
@@ -862,7 +862,8 @@ fn blake2f_compress_f(
     Ok(output)
 }
 
-/// Reads a part of the calldata and returns what is read as u64 or an error
+/// Reads part of the calldata and returns what is read as u64 or an error
+/// in the case where the calculated indexes don't match the calldata
 fn read_bytes_from_offset(calldata: &Bytes, offset: usize, index: usize) -> Result<u64, VMError> {
     let index_start = (index
         .checked_mul(BLAKE2F_ELEMENT_SIZE)
