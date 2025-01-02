@@ -84,6 +84,7 @@ cfg_if::cfg_if! {
             errors::{TransactionReport, TxResult, VMError},
             vm::VM,
             Environment,
+            Account
         };
         use std::{collections::HashMap, sync::Arc};
         use ethrex_core::types::code_hash;
@@ -200,11 +201,23 @@ cfg_if::cfg_if! {
                 receipts.push(receipt);
             }
 
-            account_updates.extend(get_state_transitions_levm(state, block.header.parent_hash, &block_cache));
-
+            // Here we update block_cache with balance increments caused by withdrawals.
             if let Some(withdrawals) = &block.body.withdrawals {
-                process_withdrawals(state, withdrawals)?;
+                // For every withdrawal we increment the target account's balance
+                for (address, increment) in withdrawals.iter().filter(|withdrawal| withdrawal.amount > 0).map(|w| (w.address, u128::from(w.amount) * u128::from(GWEI_TO_WEI))) {
+                    // We check if it was in block_cache, if not, we get it from DB.
+                    let mut account = block_cache.get(&address).cloned().unwrap_or({
+                        let acc_info = store_wrapper.get_account_info(address);
+                        Account::from(acc_info)
+                    });
+
+                    account.info.balance += increment.into();
+
+                    block_cache.insert(address, account);
+                }
             }
+
+            account_updates.extend(get_state_transitions_levm(state, block.header.parent_hash, &block_cache));
 
             Ok((receipts, account_updates))
         }
