@@ -6,7 +6,6 @@ use ethrex_levm::{
     account::Account,
     db::{cache, CacheDB, Db},
     errors::{OutOfGasError, VMError},
-    utils::new_vm_with_bytecode,
     vm::VM,
     AccountInfo, Environment,
 };
@@ -41,6 +40,70 @@ pub fn new_vm_create(contract_bytecode: Bytes) -> Result<VM, VMError> {
         env,
         Default::default(),
         contract_bytecode,
+        Arc::new(db),
+        cache,
+        Vec::new(),
+    )
+}
+
+pub fn new_vm_with_bytecode(bytecode: Bytes) -> Result<VM, VMError> {
+    new_vm_with_ops_addr_bal_db(
+        bytecode,
+        Address::from_low_u64_be(100),
+        U256::MAX,
+        Db::new(),
+        CacheDB::default(),
+    )
+}
+
+/// This function is for testing purposes only.
+pub fn new_vm_with_ops_addr_bal_db(
+    contract_bytecode: Bytes,
+    sender_address: Address,
+    sender_balance: U256,
+    mut db: Db,
+    mut cache: CacheDB,
+) -> Result<VM, VMError> {
+    let accounts = [
+        // This is the contract account that is going to be executed
+        (
+            Address::from_low_u64_be(42),
+            Account {
+                info: AccountInfo {
+                    nonce: 0,
+                    balance: U256::MAX,
+                    bytecode: contract_bytecode,
+                },
+                storage: HashMap::new(),
+            },
+        ),
+        (
+            // This is the sender account
+            sender_address,
+            Account {
+                info: AccountInfo {
+                    nonce: 0,
+                    balance: sender_balance,
+                    bytecode: Bytes::default(),
+                },
+                storage: HashMap::new(),
+            },
+        ),
+    ];
+
+    db.add_accounts(accounts.to_vec());
+
+    // add to cache accounts from list accounts
+    cache::insert_account(&mut cache, accounts[0].0, accounts[0].1.clone());
+    cache::insert_account(&mut cache, accounts[1].0, accounts[1].1.clone());
+
+    let env = Environment::default_from_address(sender_address);
+
+    VM::new(
+        TxKind::Call(Address::from_low_u64_be(42)),
+        env,
+        Default::default(),
+        Default::default(),
         Arc::new(db),
         cache,
         Vec::new(),
