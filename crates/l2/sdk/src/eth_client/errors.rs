@@ -36,6 +36,9 @@ pub enum EthClientError {
     UnrecheableNonce,
     #[error("Error: {0}")]
     Custom(String),
+    #[error("Failed to encode calldata: {0}")]
+    CalldataEncodeError(#[from] CalldataEncodeError)
+
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -178,4 +181,12 @@ pub enum GetTransactionByHashError {
     RPCError(String),
     #[error("{0}")]
     ParseIntError(#[from] std::num::ParseIntError),
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum CalldataEncodeError {
+    #[error("Failed to parse function signature: {0}")]
+    ParseError(String),
+    #[error("Wrong number of arguments provided for calldata: {0}")]
+    WrongArgumentLength(String)
 }

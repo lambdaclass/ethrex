@@ -178,7 +178,7 @@ pub async fn claim_withdraw(
     ];
 
     let claim_withdrawal_data =
-        encode_calldata(CLAIM_WITHDRAWAL_SIGNATURE, &calldata_values).unwrap();
+        encode_calldata(CLAIM_WITHDRAWAL_SIGNATURE, &calldata_values)?;
 
     println!(
         "Claiming withdrawal with calldata: {}",
