@@ -208,7 +208,7 @@ impl VM {
         &mut self,
         current_call_frame: &mut CallFrame,
     ) -> Result<OpcodeSuccess, VMError> {
-        // [EIP-4844] - BLOBBASEFEE is only available from CANCUN
+        // [EIP-7516] - BLOBBASEFEE is only available from CANCUN
         if self.env.spec_id < SpecId::CANCUN {
             return Err(VMError::InvalidOpcode);
         }
