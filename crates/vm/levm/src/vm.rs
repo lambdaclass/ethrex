@@ -804,14 +804,19 @@ impl VM {
 
         // Transaction is type 3 if tx_max_fee_per_blob_gas is Some
         if self.env.tx_max_fee_per_blob_gas.is_some() {
+            // (11) TYPE_3_TX_PRE_FORK
+            if self.env.spec_id < SpecId::CANCUN {
+                return Err(VMError::TxValidation(TxValidationError::Type3TxPreFork));
+            }
+
             let blob_hashes = &self.env.tx_blob_hashes;
 
-            // (11) TYPE_3_TX_ZERO_BLOBS
+            // (12) TYPE_3_TX_ZERO_BLOBS
             if blob_hashes.is_empty() {
                 return Err(VMError::TxValidation(TxValidationError::Type3TxZeroBlobs));
             }
 
-            // (12) TYPE_3_TX_INVALID_BLOB_VERSIONED_HASH
+            // (13) TYPE_3_TX_INVALID_BLOB_VERSIONED_HASH
             for blob_hash in blob_hashes {
                 let blob_hash = blob_hash.as_bytes();
                 if let Some(first_byte) = blob_hash.first() {
@@ -822,8 +827,6 @@ impl VM {
                     }
                 }
             }
-
-            // (13) TYPE_3_TX_PRE_FORK -> This is not necessary for now because we are not supporting pre-cancun transactions yet. But we should somehow be able to tell the current context.
 
             // (14) TYPE_3_TX_BLOB_COUNT_EXCEEDED
             if blob_hashes.len() > MAX_BLOB_COUNT {
@@ -930,7 +933,7 @@ impl VM {
             .pop()
             .ok_or(VMError::Internal(InternalError::CouldNotPopCallframe))?;
 
-        self.prepare_execution(&mut initial_call_frame)?;
+        dbg!(self.prepare_execution(&mut initial_call_frame))?;
 
         // In CREATE type transactions:
         //  Add created contract to cache, reverting transaction if the address is already occupied
