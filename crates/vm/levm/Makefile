@@ -93,20 +93,28 @@ SUBDIRS := $(shell find $(SPECTEST_VECTORS_DIR)/GeneralStateTests -maxdepth 1 -t
 
 flamegraph-run-ef-tests: ## 🔥 Run EF tests and create a flamegraph per test folder
 	cd ../../../cmd/ef_tests/levm &&\
-	mkdir -p levm_perfgraphs/flamegraph ||:
+	mkdir -p levm_perfgraphs/flamegraph/ef_tests/levm ||: && \
+	mkdir -p levm_perfgraphs/flamegraph/ef_tests/revm ||:
 	@for dir in $(SUBDIRS); do\
 		CARGO_PROFILE_RELEASE_DEBUG=true cargo flamegraph --root \
-		--output ../../../cmd/ef_tests/levm/levm_perfgraphs/flamegraph/$$dir.svg\
+		--output ../../../cmd/ef_tests/levm/levm_perfgraphs/flamegraph/ef_tests/levm/$$dir.svg\
 		-p ef_tests-levm --test ef_tests_levm -- --summary --tests $$dir;\
+		CARGO_PROFILE_RELEASE_DEBUG=true cargo flamegraph --root \
+		--output ../../../cmd/ef_tests/levm/levm_perfgraphs/flamegraph/ef_tests/revm/$$dir.svg\
+		-p ef_tests-levm --test ef_tests_levm -- --summary --revm --tests $$dir;\
 	done
 
 samply-run-ef-tests: ## ⚡️ Run EF tests and create a samply profiling file per test folder
-	cd ../../../cmd/ef_tests/levm &&\
-	mkdir -p levm_perfgraphs/samply ||:
+	cd ../../../cmd/ef_tests/levm && \
+	mkdir -p levm_perfgraphs/samply/ef_tests/levm ||: && \
+	mkdir -p levm_perfgraphs/samply/ef_tests/revm ||:
 	@for dir in $(SUBDIRS); do\
 		CARGO_PROFILE_RELEASE_DEBUG=true samply record --save-only \
-		-o ../../../cmd/ef_tests/levm/levm_perfgraphs/samply/prof_$$dir.json \
+		-o ../../../cmd/ef_tests/levm/levm_perfgraphs/samply/ef_tests/levm/prof_$$dir.json \
 		cargo test --release -p ef_tests-levm --test ef_tests_levm -- --summary --tests $$dir;\
+		CARGO_PROFILE_RELEASE_DEBUG=true samply record --save-only \
+		-o ../../../cmd/ef_tests/levm/levm_perfgraphs/samply/ef_tests/revm/prof_$$dir.json \
+		cargo test --release -p ef_tests-levm --test ef_tests_levm -- --summary --revm --tests $$dir;\
 	done
 
 flamegraph-benchmarks: ## 🔥 Run benchmarks and create flamegraph
