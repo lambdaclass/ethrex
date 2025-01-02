@@ -24,6 +24,7 @@ use ethrex_core::{types::TxKind, Address, H256, U256};
 use ethrex_rlp;
 use ethrex_rlp::encode::RLPEncode;
 use keccak_hash::keccak;
+use revm_primitives::SpecId;
 use sha3::{Digest, Keccak256};
 use std::{
     collections::{HashMap, HashSet},
@@ -38,7 +39,7 @@ pub struct Substate {
     // accessed addresses and storage keys are considered WARM
     // pub accessed_addresses: HashSet<Address>,
     // pub accessed_storage_keys: HashSet<(Address, U256)>,
-    pub selfdestrutct_set: HashSet<Address>,
+    pub selfdestruct_set: HashSet<Address>,
     pub touched_accounts: HashSet<Address>,
     pub touched_storage_slots: HashMap<Address, HashSet<H256>>,
     pub created_accounts: HashSet<Address>,
@@ -132,9 +133,13 @@ impl VM {
     ) -> Result<Self, VMError> {
         // Maybe this decision should be made in an upper layer
 
-        // Add sender, coinbase and recipient (in the case of a Call) to cache [https://www.evm.codes/about#access_list]
-        let mut default_touched_accounts =
-            HashSet::from_iter([env.origin, env.coinbase].iter().cloned());
+        // Add sender and recipient (in the case of a Call) to cache [https://www.evm.codes/about#access_list]
+        let mut default_touched_accounts = HashSet::from_iter([env.origin].iter().cloned());
+
+        // [EIP-3651] - Add coinbase to cache if the spec is SHANGHAI or higher
+        if env.spec_id >= SpecId::SHANGHAI {
+            default_touched_accounts.insert(env.coinbase);
+        }
 
         let mut default_touched_storage_slots: HashMap<Address, HashSet<H256>> = HashMap::new();
 
@@ -176,7 +181,7 @@ impl VM {
                 );
 
                 let substate = Substate {
-                    selfdestrutct_set: HashSet::new(),
+                    selfdestruct_set: HashSet::new(),
                     touched_accounts: default_touched_accounts,
                     touched_storage_slots: default_touched_storage_slots,
                     created_accounts: HashSet::new(),
@@ -218,7 +223,7 @@ impl VM {
                 );
 
                 let substate = Substate {
-                    selfdestrutct_set: HashSet::new(),
+                    selfdestruct_set: HashSet::new(),
                     touched_accounts: default_touched_accounts,
                     touched_storage_slots: default_touched_storage_slots,
                     created_accounts: HashSet::from([new_contract_address]),
@@ -249,7 +254,7 @@ impl VM {
             self.env.transient_storage.clone(),
         );
 
-        if is_precompile(&current_call_frame.code_address) {
+        if is_precompile(&current_call_frame.code_address, self.env.spec_id) {
             let precompile_result = execute_precompile(current_call_frame);
 
             match precompile_result {
@@ -755,8 +760,10 @@ impl VM {
 
         // (5) INITCODE_SIZE_EXCEEDED
         if self.is_create() {
-            // INITCODE_SIZE_EXCEEDED
-            if initial_call_frame.calldata.len() > INIT_CODE_MAX_SIZE {
+            // [EIP-3860] - INITCODE_SIZE_EXCEEDED
+            if initial_call_frame.calldata.len() > INIT_CODE_MAX_SIZE
+                && self.env.spec_id >= SpecId::SHANGHAI
+            {
                 return Err(VMError::TxValidation(
                     TxValidationError::InitcodeSizeExceeded,
                 ));
@@ -906,9 +913,11 @@ impl VM {
         };
 
         // 4. Destruct addresses in selfdestruct set.
-        // In Cancun the only addresses destroyed are contracts created in this transaction, so we 'destroy' them by just removing them from the cache, as if they never existed.
-        for address in &self.accrued_substate.selfdestrutct_set {
-            remove_account(&mut self.cache, address);
+        // In Cancun the only addresses destroyed are contracts created in this transaction
+        let selfdestruct_set = self.accrued_substate.selfdestruct_set.clone();
+        for address in selfdestruct_set {
+            let account_to_remove = self.get_account_mut(address)?;
+            *account_to_remove = Account::default();
         }
 
         Ok(())

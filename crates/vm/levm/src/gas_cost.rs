@@ -8,6 +8,7 @@ use bytes::Bytes;
 /// Contains the gas costs of the EVM instructions
 use ethrex_core::U256;
 use num_bigint::BigUint;
+use revm_primitives::SpecId;
 
 // Opcodes cost
 pub const STOP: u64 = 0;
@@ -187,6 +188,10 @@ pub const ECMUL_COST: u64 = 6000;
 pub const ECPAIRING_BASE_COST: u64 = 45000;
 pub const ECPAIRING_GROUP_COST: u64 = 34000;
 
+pub const POINT_EVALUATION_COST: u64 = 50000;
+
+pub const BLAKE2F_ROUND_COST: u64 = 1;
+
 pub fn exp(exponent: U256) -> Result<u64, VMError> {
     let exponent_byte_size = (exponent
         .bits()
@@ -235,6 +240,11 @@ pub fn codecopy(
     )
 }
 
+// Used in return and revert opcodes
+pub fn exit_opcode(new_memory_size: usize, current_memory_size: usize) -> Result<u64, VMError> {
+    memory::expansion_cost(new_memory_size, current_memory_size)
+}
+
 pub fn returndatacopy(
     new_memory_size: usize,
     current_memory_size: usize,
@@ -267,9 +277,6 @@ fn copy_behavior(
         .map_err(|_| VMError::VeryLargeNumber)?;
 
     let memory_expansion_cost = memory::expansion_cost(new_memory_size, current_memory_size)?;
-    let memory_expansion_cost: u64 = memory_expansion_cost
-        .try_into()
-        .map_err(|_| VMError::VeryLargeNumber)?;
 
     let minimum_word_size_cost = dynamic_base
         .checked_mul(minimum_word_size)
@@ -312,10 +319,6 @@ pub fn log(
         .checked_mul(size)
         .ok_or(OutOfGasError::GasCostOverflow)?;
 
-    let memory_expansion_cost: u64 = memory_expansion_cost
-        .try_into()
-        .map_err(|_| VMError::VeryLargeNumber)?;
-
     Ok(topics_cost
         .checked_add(LOGN_STATIC)
         .ok_or(OutOfGasError::GasCostOverflow)?
@@ -343,9 +346,6 @@ fn mem_expansion_behavior(
     static_cost: u64,
 ) -> Result<u64, VMError> {
     let memory_expansion_cost = memory::expansion_cost(new_memory_size, current_memory_size)?;
-    let memory_expansion_cost: u64 = memory_expansion_cost
-        .try_into()
-        .map_err(|_| VMError::RevertOpcode)?;
 
     Ok(static_cost
         .checked_add(memory_expansion_cost)
@@ -408,9 +408,6 @@ pub fn mcopy(
         / WORD_SIZE;
 
     let memory_expansion_cost = memory::expansion_cost(new_memory_size, current_memory_size)?;
-    let memory_expansion_cost: u64 = memory_expansion_cost
-        .try_into()
-        .map_err(|_| VMError::VeryLargeNumber)?;
 
     let words_copied: u64 = words_copied
         .try_into()
@@ -431,12 +428,14 @@ pub fn create(
     new_memory_size: usize,
     current_memory_size: usize,
     code_size_in_memory: usize,
+    spec_id: SpecId,
 ) -> Result<u64, VMError> {
     compute_gas_create(
         new_memory_size,
         current_memory_size,
         code_size_in_memory,
         false,
+        spec_id,
     )
 }
 
@@ -444,12 +443,14 @@ pub fn create_2(
     new_memory_size: usize,
     current_memory_size: usize,
     code_size_in_memory: usize,
+    spec_id: SpecId,
 ) -> Result<u64, VMError> {
     compute_gas_create(
         new_memory_size,
         current_memory_size,
         code_size_in_memory,
         true,
+        spec_id,
     )
 }
 
@@ -458,6 +459,7 @@ fn compute_gas_create(
     current_memory_size: usize,
     code_size_in_memory: usize,
     is_create_2: bool,
+    spec_id: SpecId,
 ) -> Result<u64, VMError> {
     let minimum_word_size = (code_size_in_memory
         .checked_add(31)
@@ -469,14 +471,16 @@ fn compute_gas_create(
         .try_into()
         .map_err(|_| VMError::VeryLargeNumber)?;
 
-    let init_code_cost = minimum_word_size
-        .checked_mul(INIT_CODE_WORD_COST)
-        .ok_or(OutOfGasError::GasCostOverflow)?; // will not panic since it's 2
+    // [EIP-3860] - Apply extra gas cost of 2 for every 32-byte chunk of initcode
+    let init_code_cost = if spec_id >= SpecId::SHANGHAI {
+        minimum_word_size
+            .checked_mul(INIT_CODE_WORD_COST)
+            .ok_or(OutOfGasError::GasCostOverflow)? // will not panic since it's 2
+    } else {
+        0
+    };
 
     let memory_expansion_cost = memory::expansion_cost(new_memory_size, current_memory_size)?;
-    let memory_expansion_cost: u64 = memory_expansion_cost
-        .try_into()
-        .map_err(|_| VMError::VeryLargeNumber)?;
 
     let hash_cost = if is_create_2 {
         minimum_word_size
@@ -635,9 +639,6 @@ pub fn call(
     gas_left: u64,
 ) -> Result<(u64, u64), VMError> {
     let memory_expansion_cost = memory::expansion_cost(new_memory_size, current_memory_size)?;
-    let memory_expansion_cost: u64 = memory_expansion_cost
-        .try_into()
-        .map_err(|_| VMError::VeryLargeNumber)?;
 
     let address_access_cost = address_access_cost(
         address_was_cold,
@@ -681,9 +682,6 @@ pub fn callcode(
     gas_left: u64,
 ) -> Result<(u64, u64), VMError> {
     let memory_expansion_cost = memory::expansion_cost(new_memory_size, current_memory_size)?;
-    let memory_expansion_cost: u64 = memory_expansion_cost
-        .try_into()
-        .map_err(|_| VMError::VeryLargeNumber)?;
 
     let address_access_cost = address_access_cost(
         address_was_cold,
@@ -719,9 +717,6 @@ pub fn delegatecall(
     gas_left: u64,
 ) -> Result<(u64, u64), VMError> {
     let memory_expansion_cost = memory::expansion_cost(new_memory_size, current_memory_size)?;
-    let memory_expansion_cost: u64 = memory_expansion_cost
-        .try_into()
-        .map_err(|_| VMError::VeryLargeNumber)?;
 
     let address_access_cost = address_access_cost(
         address_was_cold,
@@ -744,9 +739,6 @@ pub fn staticcall(
     gas_left: u64,
 ) -> Result<(u64, u64), VMError> {
     let memory_expansion_cost = memory::expansion_cost(new_memory_size, current_memory_size)?;
-    let memory_expansion_cost: u64 = memory_expansion_cost
-        .try_into()
-        .map_err(|_| VMError::VeryLargeNumber)?;
 
     let address_access_cost = address_access_cost(
         address_was_cold,
@@ -812,7 +804,7 @@ pub fn identity(data_size: usize) -> Result<u64, VMError> {
 }
 
 pub fn modexp(
-    exponent: &BigUint,
+    exponent_first_32_bytes: &BigUint,
     base_size: usize,
     exponent_size: usize,
     modulus_size: usize,
@@ -836,8 +828,8 @@ pub fn modexp(
 
     let multiplication_complexity = words.checked_pow(2).ok_or(OutOfGasError::GasCostOverflow)?;
 
-    let iteration_count = if exponent_size <= 32 && *exponent != BigUint::ZERO {
-        exponent
+    let iteration_count = if exponent_size <= 32 && *exponent_first_32_bytes != BigUint::ZERO {
+        exponent_first_32_bytes
             .bits()
             .checked_sub(1)
             .ok_or(InternalError::ArithmeticOperationUnderflow)?
@@ -848,7 +840,7 @@ pub fn modexp(
         .checked_mul(8)
         .ok_or(OutOfGasError::GasCostOverflow)?;
         extra_size
-            .checked_add(exponent.bits().max(1))
+            .checked_add(exponent_first_32_bytes.bits().max(1))
             .ok_or(OutOfGasError::GasCostOverflow)?
             .checked_sub(1)
             .ok_or(InternalError::ArithmeticOperationUnderflow)?

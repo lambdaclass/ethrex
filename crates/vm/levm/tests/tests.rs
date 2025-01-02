@@ -9,13 +9,16 @@ use ethrex_levm::{
     db::{cache, CacheDB, Db},
     errors::{OutOfGasError, TxResult, VMError},
     gas_cost::{
-        self, ECADD_COST, ECMUL_COST, ECPAIRING_BASE_COST, ECPAIRING_GROUP_COST, ECRECOVER_COST,
-        IDENTITY_DYNAMIC_BASE, IDENTITY_STATIC_COST, MODEXP_STATIC_COST, RIPEMD_160_DYNAMIC_BASE,
-        RIPEMD_160_STATIC_COST, SHA2_256_DYNAMIC_BASE, SHA2_256_STATIC_COST,
+        self, BLAKE2F_ROUND_COST, ECADD_COST, ECMUL_COST, ECPAIRING_BASE_COST,
+        ECPAIRING_GROUP_COST, ECRECOVER_COST, IDENTITY_DYNAMIC_BASE, IDENTITY_STATIC_COST,
+        MODEXP_STATIC_COST, RIPEMD_160_DYNAMIC_BASE, RIPEMD_160_STATIC_COST, SHA2_256_DYNAMIC_BASE,
+        SHA2_256_STATIC_COST,
     },
     memory,
     operations::Operation,
-    precompiles::{ecadd, ecmul, ecpairing, ecrecover, identity, modexp, ripemd_160, sha2_256},
+    precompiles::{
+        blake2f, ecadd, ecmul, ecpairing, ecrecover, identity, modexp, ripemd_160, sha2_256,
+    },
     utils::{new_vm_with_ops, new_vm_with_ops_addr_bal_db, new_vm_with_ops_db, ops_to_bytecode},
     vm::{word_to_address, Storage, VM},
     Environment,
@@ -4642,4 +4645,34 @@ fn ecpairing_test() {
         consumed_gas,
         (ECPAIRING_BASE_COST + ECPAIRING_GROUP_COST * 2)
     );
+}
+
+#[test]
+fn blake2f_test() {
+    // Source: https://eips.ethereum.org/EIPS/eip-152#test-vector-5
+    let calldata = hex::decode("0000000c48c9bdf267e6096a3ba7ca8485ae67bb2bf894fe72f36e3cf1361d5f3af54fa5d182e6ad7f520e511f6c3e2b8c68059b6bbd41fbabd9831f79217e1319cde05b61626300000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000300000000000000000000000000000001").unwrap();
+    let calldata = Bytes::from(calldata);
+
+    let mut consumed_gas = 0;
+    let result = blake2f(&calldata, 10000, &mut consumed_gas).unwrap();
+
+    let expected_result = Bytes::from(hex::decode("ba80a53f981c4d0d6a2797b69f12f6e94c212f14685ac4b74b12bb6fdbffa2d17d87c5392aab792dc252d5de4533cc9518d38aa8dbf1925ab92386edd4009923").unwrap());
+
+    assert_eq!(result, expected_result);
+    assert_eq!(consumed_gas, 12 * BLAKE2F_ROUND_COST);
+}
+
+#[test]
+fn blake2f_test_2() {
+    // Inspired in tuple (23, 0, 0) of GeneralStateTests/stPreCompiledContracts/blake2B.json
+    let calldata = hex::decode("0000001048c9bdf267e6096a3ba7ca8485ae67bb2bf894fe72f36e3cf1361d5f3af54fa5d182e6ad7f520e511f6c3e2b8c68059b6bbd41fbabd9831f79217e1319cde05b616162636465666768696a6b6c6d6e6f707172737475767778797a7b7c7d7e7f808182838485868788898a8b8c8d8e8f909192939495969798999a9b9c9d9e9fa0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebfc0c1c2c3c4c5c6c7c8c9cacbcccdcecfd0d1d2d3d4d5d6d7d8000000000000000300000000000000000000000000000001").unwrap();
+    let calldata = Bytes::from(calldata);
+
+    let mut consumed_gas = 0;
+    let result = blake2f(&calldata, 10000, &mut consumed_gas).unwrap();
+
+    let expected_result = Bytes::from(hex::decode("7df6f69476a03ae29e944814846460b058d1762fffe77f938ea723d1033de0d5bb1f8234bd73afaf955622fa2cdde95594577a8d53191908eb69b316a53c985b").unwrap());
+
+    assert_eq!(result, expected_result);
+    assert_eq!(consumed_gas, 16 * BLAKE2F_ROUND_COST);
 }
