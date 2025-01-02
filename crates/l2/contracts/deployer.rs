@@ -557,7 +557,7 @@ async fn initialize_contracts(
 
     let mut spinner = Spinner::new(
         initialize_frames.clone(),
-        "Initilazing OnChainProposer",
+        "Initializing OnChainProposer",
         Color::Cyan,
     );
 
@@ -582,7 +582,7 @@ async fn initialize_contracts(
 
     let mut spinner = Spinner::new(
         initialize_frames.clone(),
-        "Initilazing CommonBridge",
+        "Initializing CommonBridge",
         Color::Cyan,
     );
     let initialize_tx_hash = initialize_bridge(
