@@ -688,8 +688,8 @@ impl Signable for LegacyTransaction {
         r.copy_from_slice(&signature[..32]);
         s.copy_from_slice(&signature[32..]);
 
-        self.r = U256::from(&r);
-        self.s = U256::from(&s);
+        self.r = U256::from_big_endian(&r);
+        self.s = U256::from_big_endian(&s);
         self.v = U256::from(recovery_id.to_i32());
     }
 }
@@ -710,8 +710,8 @@ impl Signable for EIP1559Transaction {
         s.copy_from_slice(&signature[32..]);
         let parity = recovery_id.to_i32() != 0;
 
-        self.signature_r = U256::from(&r);
-        self.signature_s = U256::from(&s);
+        self.signature_r = U256::from_big_endian(&r);
+        self.signature_s = U256::from_big_endian(&s);
         self.signature_y_parity = parity;
     }
 }
@@ -732,8 +732,8 @@ impl Signable for EIP2930Transaction {
         s.copy_from_slice(&signature[32..]);
         let parity = recovery_id.to_i32() != 0;
 
-        self.signature_r = U256::from(&r);
-        self.signature_s = U256::from(&s);
+        self.signature_r = U256::from_big_endian(&r);
+        self.signature_s = U256::from_big_endian(&s);
         self.signature_y_parity = parity;
     }
 }
@@ -754,8 +754,8 @@ impl Signable for EIP4844Transaction {
         s.copy_from_slice(&signature[32..]);
         let parity = recovery_id.to_i32() != 0;
 
-        self.signature_r = U256::from(&r);
-        self.signature_s = U256::from(&s);
+        self.signature_r = U256::from_big_endian(&r);
+        self.signature_s = U256::from_big_endian(&s);
         self.signature_y_parity = parity;
     }
 }
@@ -776,8 +776,8 @@ impl Signable for PrivilegedL2Transaction {
         s.copy_from_slice(&signature[32..]);
         let parity = recovery_id.to_i32() != 0;
 
-        self.signature_r = U256::from(&r);
-        self.signature_s = U256::from(&s);
+        self.signature_r = U256::from_big_endian(&r);
+        self.signature_s = U256::from_big_endian(&s);
         self.signature_y_parity = parity;
     }
 }
@@ -1070,9 +1070,7 @@ fn recover_address(
     message: &Bytes,
 ) -> Address {
     // Create signature
-    let mut signature_bytes = [0; 64];
-    signature_r.to_big_endian(&mut signature_bytes[0..32]);
-    signature_s.to_big_endian(&mut signature_bytes[32..]);
+    let signature_bytes = [signature_r.to_big_endian(), signature_s.to_big_endian()].concat();
     let signature = secp256k1::ecdsa::RecoverableSignature::from_compact(
         &signature_bytes,
         RecoveryId::from_i32(signature_y_parity as i32).unwrap(), // cannot fail
@@ -1135,14 +1133,13 @@ impl PrivilegedL2Transaction {
                     _ => return None,
                 };
 
-                let value = &mut [0u8; 32];
-                self.value.to_big_endian(value);
+                let value = self.value.to_big_endian();
 
                 let mut encoded = self.encode_to_vec();
                 encoded.insert(0, TxType::Privileged as u8);
                 let tx_hash = keccak_hash::keccak(encoded);
                 Some(keccak_hash::keccak(
-                    [to.as_bytes(), value, tx_hash.as_bytes()].concat(),
+                    [to.as_bytes(), &value, tx_hash.as_bytes()].concat(),
                 ))
             }
             _ => None,
@@ -1160,16 +1157,16 @@ impl PrivilegedL2Transaction {
                     _ => return None,
                 };
 
-                let value = &mut [0u8; 32];
-                self.value.to_big_endian(value);
+                let value = self.value.to_big_endian();
 
                 // The nonce should be a U256,
                 // in solidity the depositId is a U256.
                 let u256_nonce = U256::from(self.nonce);
-                let nonce = &mut [0u8; 32];
-                u256_nonce.to_big_endian(nonce);
+                let nonce = u256_nonce.to_big_endian();
 
-                Some(keccak_hash::keccak([to.as_bytes(), value, nonce].concat()))
+                Some(keccak_hash::keccak(
+                    [to.as_bytes(), &value, &nonce].concat(),
+                ))
             }
             _ => None,
         }
@@ -2242,10 +2239,10 @@ mod tests {
             value: 0.into(),
             data: Default::default(),
             v: U256::from(0x1b),
-            r: U256::from(hex!(
+            r: U256::from_big_endian(&hex!(
                 "7e09e26678ed4fac08a249ebe8ed680bf9051a5e14ad223e4b2b9d26e0208f37"
             )),
-            s: U256::from(hex!(
+            s: U256::from_big_endian(&hex!(
                 "5f6e3f188e3e6eab7d7d3b6568f5eac7d687b08d307d3154ccd8c87b4630509b"
             )),
         };
