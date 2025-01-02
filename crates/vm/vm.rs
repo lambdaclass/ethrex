@@ -203,20 +203,8 @@ cfg_if::cfg_if! {
 
             // Here we update block_cache with balance increments caused by withdrawals.
             if let Some(withdrawals) = &block.body.withdrawals {
-                // Vec of (address, increment)
-                let balance_increments = withdrawals
-                    .iter()
-                    .filter(|withdrawal| withdrawal.amount > 0)
-                    .map(|withdrawal| {
-                        (
-                            withdrawal.address,
-                            (withdrawal.amount as u128 * GWEI_TO_WEI as u128),
-                        )
-                    })
-                    .collect::<Vec<_>>();
-
                 // For every withdrawal we increment the target account's balance
-                for (address, increment) in balance_increments {
+                for (address, increment) in withdrawals.iter().filter(|withdrawal| withdrawal.amount > 0).map(|w| (w.address, u128::from(w.amount) * u128::from(GWEI_TO_WEI))) {
                     // We check if it was in block_cache, if not, we get it from DB.
                     let mut account = block_cache.get(&address).cloned().unwrap_or({
                         let acc_info = store_wrapper.get_account_info(address);
