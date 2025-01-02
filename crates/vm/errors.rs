@@ -104,3 +104,15 @@ impl From<RevmError<ExecutionDBError>> for EvmError {
         }
     }
 }
+
+impl From<ethrex_levm::errors::VMError> for EvmError {
+    fn from(value: ethrex_levm::errors::VMError) -> Self {
+        if value.is_internal() {
+            // We don't categorize our internal errors yet, so we label them as "Custom"
+            EvmError::Custom(value.to_string())
+        } else {
+            // If an error is not internal it means it is a transaction validation error.
+            EvmError::Transaction(value.to_string())
+        }
+    }
+}
