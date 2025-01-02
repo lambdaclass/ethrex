@@ -64,12 +64,7 @@ fn read_bytcode_slice(current_call_frame: &CallFrame, n_bytes: usize) -> Result<
 
     Ok(current_call_frame
         .bytecode
-        .get(
-            pc_offset
-                ..pc_offset
-                    .checked_add(n_bytes)
-                    .ok_or(InternalError::SlicingError)?,
-        )
+        .get(pc_offset..pc_offset.checked_add(n_bytes).ok_or(VMError::OutOfBounds)?)
         .unwrap_or_default())
 }
 
