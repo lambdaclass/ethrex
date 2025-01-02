@@ -1,5 +1,5 @@
-use crate::utils::secret_key_deserializer;
 use ethereum_types::{Address, U256};
+use ethrex_l2_sdk::secret_key_deserializer;
 use secp256k1::SecretKey;
 use serde::Deserialize;
 

@@ -1,5 +1,5 @@
 use std::{
-    cmp::{min, Ordering},
+    cmp::{max, Ordering},
     collections::HashMap,
 };
 
@@ -125,7 +125,7 @@ pub fn create_payload(args: &BuildPayloadArgs, storage: &Store) -> Result<Block,
 fn calc_gas_limit(parent_gas_limit: u64, desired_limit: u64) -> u64 {
     let delta = parent_gas_limit / GAS_LIMIT_BOUND_DIVISOR - 1;
     let mut limit = parent_gas_limit;
-    let desired_limit = min(desired_limit, MIN_GAS_LIMIT);
+    let desired_limit = max(desired_limit, MIN_GAS_LIMIT);
     if limit < desired_limit {
         limit = parent_gas_limit + delta;
         if limit > desired_limit {

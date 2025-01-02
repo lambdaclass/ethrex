@@ -1,7 +1,7 @@
-use std::collections::HashMap;
-
 use ethrex_core::{Address, H256, U256};
+pub use revm_primitives::SpecId;
 
+use std::collections::HashMap;
 /// [EIP-1153]: https://eips.ethereum.org/EIPS/eip-1153#reference-implementation
 pub type TransientStorage = HashMap<(Address, U256), U256>;
 
@@ -12,6 +12,7 @@ pub struct Environment {
     pub origin: Address,
     pub refunded_gas: u64,
     pub gas_limit: u64,
+    pub spec_id: SpecId,
     pub block_number: U256,
     pub coinbase: Address,
     pub timestamp: U256,
@@ -35,6 +36,7 @@ impl Environment {
             origin,
             refunded_gas: 0,
             gas_limit: u64::MAX,
+            spec_id: Default::default(),
             block_number: Default::default(),
             coinbase: Default::default(),
             timestamp: Default::default(),

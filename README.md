@@ -527,5 +527,6 @@ The following links, repos, companies and projects have been important in the de
 - [Neptune](https://neptune.cash/)
 - [Mina](https://minaprotocol.com/)
 - [Nethermind](https://www.nethermind.io/)
+- [Commonware](https://commonware.xyz/)
 
 If we forgot to include anyone, please file an issue so we can add you. We always strive to reference the inspirations and code we use, but as an organization with multiple people, mistakes can happen, and someone might forget to include a reference.
