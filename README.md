@@ -67,7 +67,7 @@ In a bit more detail:
 |  Add `libmdbx` bindings and basic API, create tables for state (blocks, transactions, etc)                                               | ✅
 |   EVM wrapper for block execution                                                       | ✅     |
 |    JSON RPC API server setup                                                      | ✅     |
-|    RPC State-serving endpoints                                                     | 🏗️  (almost done, a few endpoints are left)   |
+|    RPC State-serving endpoints                                                     | ✅   |
 |    Basic Engine API implementation. Set new chain head (`forkchoiceUpdated`) and new block (`newPayload`).                                                   | ✅
 
 See detailed issues and progress for this milestone [here](https://github.com/lambdaclass/ethrex/milestone/1).
@@ -79,7 +79,7 @@ Implement support for block reorganizations and historical state queries. This m
 |  Task Description      | Status                                                                 |
 | --------- |  --------------------------------------------------------------------------- |
 |   Persist data on an on-disk Merkle Patricia Tree using `libmdbx`                                       | ✅
-|   Engine API `forkchoiceUpdated` implementation (without `payloadAttributes`)                                                     | 🏗️
+|   Engine API `forkchoiceUpdated` implementation (without `payloadAttributes`)                                                     | ✅
 |    Support for RPC historical queries, i.e. queries (`eth_call`, `eth_getBalance`, etc) at any block                                       | ✅
 
 Detailed issues and progress [here](https://github.com/lambdaclass/ethrex/milestone/4).
@@ -90,8 +90,8 @@ Add the ability to build new payloads (blocks), so the consensus client can prop
 
 |  Task Description      | Status                                                                 |
 | --------- |  --------------------------------------------------------------------------- |
-|   `engine_forkchoiceUpdated` implementation with a non-null `payloadAttributes`                                      | 🏗️
-|   `engine_getPayload` endpoint implementation that builds blocks.                                                     | 🏗️
+|   `engine_forkchoiceUpdated` implementation with a non-null `payloadAttributes`                                      | ✅
+|   `engine_getPayload` endpoint implementation that builds blocks.                                                     | ✅
 |    Implement a mempool and the `eth_sendRawTransaction` endpoint where users can send transactions                                      | ✅
 
 Detailed issues and progress [here](https://github.com/lambdaclass/ethrex/milestone/5).
@@ -114,7 +114,7 @@ Add support for the `SNAP` protocol, which lets us get a recent copy of the bloc
 
 |  Task Description      | Status                                                                 |
 | --------- |  --------------------------------------------------------------------------- |
-|   Implement `SNAP` protocol for snap syncing                                    | ❌
+|   Implement `SNAP` protocol for snap syncing                                    | 🏗️
 
 Detailed issues and progress [here](https://github.com/lambdaclass/ethrex/milestone/3).
 
@@ -527,5 +527,6 @@ The following links, repos, companies and projects have been important in the de
 - [Neptune](https://neptune.cash/)
 - [Mina](https://minaprotocol.com/)
 - [Nethermind](https://www.nethermind.io/)
+- [Commonware](https://commonware.xyz/)
 
 If we forgot to include anyone, please file an issue so we can add you. We always strive to reference the inspirations and code we use, but as an organization with multiple people, mistakes can happen, and someone might forget to include a reference.
