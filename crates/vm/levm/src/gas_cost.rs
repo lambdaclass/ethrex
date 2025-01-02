@@ -89,6 +89,7 @@ pub const CODECOPY_DYNAMIC_BASE: u64 = 3;
 pub const GASPRICE: u64 = 2;
 pub const SELFDESTRUCT_STATIC: u64 = 5000;
 pub const SELFDESTRUCT_DYNAMIC: u64 = 25000;
+pub const RJUMP: u64 = 2;
 
 pub const DEFAULT_STATIC: u64 = 0;
 pub const DEFAULT_COLD_DYNAMIC: u64 = 2600;

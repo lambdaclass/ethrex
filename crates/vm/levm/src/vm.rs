@@ -554,6 +554,7 @@ impl VM {
                 Opcode::JUMP => self.op_jump(current_call_frame),
                 Opcode::JUMPI => self.op_jumpi(current_call_frame),
                 Opcode::JUMPDEST => self.op_jumpdest(current_call_frame),
+                Opcode::RJUMP => self.op_rjump(current_call_frame),
                 Opcode::PC => self.op_pc(current_call_frame),
                 Opcode::BLOCKHASH => self.op_blockhash(current_call_frame),
                 Opcode::COINBASE => self.op_coinbase(current_call_frame),
@@ -630,7 +631,7 @@ impl VM {
                 _ => Err(VMError::OpcodeNotFound),
             };
 
-            if opcode != Opcode::JUMP && opcode != Opcode::JUMPI {
+            if opcode != Opcode::JUMP && opcode != Opcode::JUMPI && opcode != Opcode::RJUMP {
                 current_call_frame.increment_pc()?;
             }
 
