@@ -268,7 +268,7 @@ fn copy_into(
     values
         .get_mut(offset..(size + offset))
         .ok_or(CalldataEncodeError::InternalError)?
-        .copy_from_slice(&to_copy_slice);
+        .copy_from_slice(to_copy_slice);
 
     Ok(())
 }
