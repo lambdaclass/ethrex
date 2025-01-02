@@ -25,6 +25,11 @@ impl VM {
         &mut self,
         current_call_frame: &mut CallFrame,
     ) -> Result<OpcodeSuccess, VMError> {
+        // [EIP-1153] - TLOAD is only available from CANCUN
+        if self.env.spec_id < SpecId::CANCUN {
+            return Err(VMError::InvalidOpcode);
+        }
+
         self.increase_consumed_gas(current_call_frame, gas_cost::TLOAD)?;
 
         let key = current_call_frame.stack.pop()?;
@@ -44,6 +49,11 @@ impl VM {
         &mut self,
         current_call_frame: &mut CallFrame,
     ) -> Result<OpcodeSuccess, VMError> {
+        // [EIP-1153] - TLOAD is only available from CANCUN
+        if self.env.spec_id < SpecId::CANCUN {
+            return Err(VMError::InvalidOpcode);
+        }
+
         self.increase_consumed_gas(current_call_frame, gas_cost::TSTORE)?;
 
         if current_call_frame.is_static {
