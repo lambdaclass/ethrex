@@ -22,8 +22,9 @@ impl Command {
                 args,
                 only_args,
             } => {
-                let calldata = encode_calldata(&signature, &args, only_args)?;
-                println!("0x{}", hex::encode(calldata));
+                // let calldata = encode_calldata(&signature, &args, only_args)?;
+                // println!("0x{}", hex::encode(calldata));
+                println!("TODO");
             }
         };
         Ok(())

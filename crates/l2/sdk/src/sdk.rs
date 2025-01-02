@@ -1,14 +1,11 @@
-use eth_client::{errors::{EthClientError, GetTransactionReceiptError}, eth_sender::Overrides, EthClient};
+use calldata::{encode_calldata, Value};
+use eth_client::{
+    errors::{EthClientError, GetTransactionReceiptError},
+    eth_sender::Overrides,
+    EthClient,
+};
 use ethereum_types::{Address, H160, H256, U256};
 use ethrex_core::types::{PrivilegedTxType, Transaction};
-// use ethrex_l2::utils::{
-//     eth_client::{
-//         errors::{EthClientError, GetTransactionReceiptError},
-//         eth_sender::Overrides,
-//         EthClient,
-//     },
-//     merkle_tree::merkle_proof,
-// };
 use ethrex_rpc::types::{block::BlockBodyWrapper, receipt::RpcReceipt};
 use itertools::Itertools;
 use keccak_hash::keccak;
@@ -167,50 +164,21 @@ pub async fn claim_withdraw(
 
     let (index, proof) = get_withdraw_merkle_proof(proposer_client, l2_withdrawal_tx_hash).await?;
 
-    let claim_withdrawal_data = {
-        let mut calldata = Vec::new();
+    let calldata_values = vec![
+        Value::Uint(U256::from(l2_withdrawal_tx_hash.as_fixed_bytes())),
+        Value::Uint(claimed_amount),
+        Value::Uint(withdrawal_l2_block_number),
+        Value::Uint(U256::from(index)),
+        Value::Array(
+            proof
+                .iter()
+                .map(|hash| Value::FixedBytes(hash.as_fixed_bytes().to_vec().into()))
+                .collect(),
+        ),
+    ];
 
-        // Function selector
-        calldata.extend_from_slice(
-            keccak(CLAIM_WITHDRAWAL_SIGNATURE)
-                .as_bytes()
-                .get(..4)
-                .ok_or(EthClientError::Custom(
-                    "failed to slice into the claim withdrawal signature".to_owned(),
-                ))?,
-        );
-
-        // bytes32 l2WithdrawalTxHash
-        calldata.extend_from_slice(l2_withdrawal_tx_hash.as_fixed_bytes());
-
-        // uint256 claimedAmount
-        let mut encoded_amount = [0; 32];
-        claimed_amount.to_big_endian(&mut encoded_amount);
-        calldata.extend_from_slice(&encoded_amount);
-
-        // uint256 withdrawalBlockNumber
-        let mut encoded_block_number = [0; 32];
-        withdrawal_l2_block_number.to_big_endian(&mut encoded_block_number);
-        calldata.extend_from_slice(&encoded_block_number);
-
-        // uint256 withdrawalLogIndex
-        let mut encoded_idx = [0; 32];
-        U256::from(index).to_big_endian(&mut encoded_idx);
-        calldata.extend_from_slice(&encoded_idx);
-
-        // bytes32[] withdrawalProof
-        let mut encoded_offset = [0; 32];
-        U256::from(32 * 5).to_big_endian(&mut encoded_offset);
-        calldata.extend_from_slice(&encoded_offset);
-        let mut encoded_proof_len = [0; 32];
-        U256::from(proof.len()).to_big_endian(&mut encoded_proof_len);
-        calldata.extend_from_slice(&encoded_proof_len);
-        for hash in proof {
-            calldata.extend_from_slice(hash.as_fixed_bytes());
-        }
-
-        calldata
-    };
+    let claim_withdrawal_data =
+        encode_calldata(CLAIM_WITHDRAWAL_SIGNATURE, &calldata_values).unwrap();
 
     println!(
         "Claiming withdrawal with calldata: {}",

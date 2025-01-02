@@ -5,12 +5,14 @@ use crate::utils::config::{
 };
 use ethrex_core::{
     types::{Block, BlockHeader},
-    Address, H256,
+    Address, H256, U256,
 };
-use ethrex_l2_sdk::eth_client::{eth_sender::Overrides, EthClient, WrappedTransaction};
+use ethrex_l2_sdk::{
+    calldata::{encode_calldata, Value},
+    eth_client::{eth_sender::Overrides, EthClient, WrappedTransaction},
+};
 use ethrex_storage::Store;
 use ethrex_vm::{execution_db::ExecutionDB, EvmError};
-use keccak_hash::keccak;
 use secp256k1::SecretKey;
 use serde::{Deserialize, Serialize};
 use std::{
@@ -28,6 +30,9 @@ use tracing::{debug, error, info, warn};
 
 use risc0_zkvm::sha::Digestible;
 use sp1_sdk::HashableKey;
+
+const VERIFY_FUNCTION_SIGNATURE: &'static str =
+    "verify(uint256,bytes,bytes32,bytes32,bytes32,bytes,bytes)";
 
 #[derive(Debug, Serialize, Deserialize, Default)]
 pub struct ProverInputData {
@@ -505,116 +510,17 @@ impl ProverServer {
 
         debug!("Sending proof for {block_number}");
 
-        // IOnChainProposer
-        // function verify(uint256,bytes,bytes32,bytes32,bytes32,bytes,bytes)
-        // blockNumber, blockProof, imageId, journalDigest, programVKey, publicValues, proofBytes
-        // From crates/l2/contracts/l1/interfaces/IOnChainProposer.sol
-        let mut calldata = keccak(b"verify(uint256,bytes,bytes32,bytes32,bytes32,bytes,bytes)")
-            .as_bytes()
-            .get(..4)
-            .ok_or(ProverServerError::Custom(
-                "Failed to get verify_proof_selector in send_proof()".to_owned(),
-            ))?
-            .to_vec();
+        let calldata_values = vec![
+            Value::Uint(U256::from(block_number)),
+            Value::Bytes(risc0_contract_data.block_proof.into()),
+            Value::FixedBytes(risc0_contract_data.image_id.into()),
+            Value::FixedBytes(risc0_contract_data.journal_digest.into()),
+            Value::FixedBytes(sp1_contract_data.vk.into()),
+            Value::Bytes(sp1_contract_data.public_values.into()),
+            Value::Bytes(sp1_contract_data.proof_bytes.into()),
+        ];
 
-        // The calldata has to be structured in the following way:
-        // block_number
-        // offset of first bytes parameter
-        // image_id
-        // journal
-        // programVKey
-        // offset of second bytes parameter
-        // offset of third bytes parameter
-        // size of block_proof
-        // block_proof
-        // size of publicValues
-        // publicValues
-        // size of proofBytes
-        // proofBytes
-
-        // extend with block_number
-        calldata.extend(H256::from_low_u64_be(block_number).as_bytes());
-
-        // extend with offset in bytes
-        calldata.extend(H256::from_low_u64_be(7 * 32).as_bytes());
-
-        // extend with image_id
-        calldata.extend(risc0_contract_data.image_id);
-
-        // extend with journal_digest
-        calldata.extend(risc0_contract_data.journal_digest);
-
-        // extend with program_vkey
-        calldata.extend(sp1_contract_data.vk);
-
-        // extend with offset in bytes of second bytes parameter
-        let block_proof_len: u64 =
-            risc0_contract_data
-                .block_proof
-                .len()
-                .try_into()
-                .map_err(|err| {
-                    ProverServerError::Custom(format!(
-                        "calldata length does not fit in u64: {}",
-                        err
-                    ))
-                })?;
-
-        let calldata_len: u64 = (calldata.len()).try_into().map_err(|err| {
-            ProverServerError::Custom(format!("calldata length does not fit in u64: {}", err))
-        })?;
-
-        let leading_zeros_after_block_proof: u64 =
-            calculate_padding(calldata_len + 64 + block_proof_len)?
-                .try_into()
-                .map_err(|err| {
-                    ProverServerError::Custom(format!(
-                        "calculate_padding length does not fit in u64: {}",
-                        err
-                    ))
-                })?;
-
-        // 2 * 32 bytes are the offset of the second and third bytes offsets
-        // and then 32 bytes more for the len of block_proof
-        let bytes = 32 * 3;
-        let offset = calldata_len + block_proof_len + leading_zeros_after_block_proof + bytes;
-        calldata.extend(H256::from_low_u64_be(offset - 4).as_bytes());
-
-        // add 32 bytes to reflect the last extend()
-        let offset = offset + 32;
-        let public_values_len: u64 =
-            sp1_contract_data
-                .public_values
-                .len()
-                .try_into()
-                .map_err(|err| {
-                    ProverServerError::Custom(format!(
-                        "public_values length does not fit in u64: {}",
-                        err
-                    ))
-                })?;
-
-        let leading_zeros_after_public_values: u64 = calculate_padding(offset + public_values_len)?
-            .try_into()
-            .map_err(|err| {
-                ProverServerError::Custom(format!(
-                    "calculate_padding length does not fit in u64: {}",
-                    err
-                ))
-            })?;
-
-        let offset = offset + public_values_len + leading_zeros_after_public_values - 4;
-        // extend with offset in bytes of third bytes parameter
-        calldata.extend(H256::from_low_u64_be(offset).as_bytes());
-
-        // extend with size of block_proof and block_proof
-        extend_calldata_with_bytes(&mut calldata, &risc0_contract_data.block_proof)?;
-
-        // extend with size of public_values and public_values
-        extend_calldata_with_bytes(&mut calldata, &sp1_contract_data.public_values)?;
-
-        // extend with size of proof_bytes and proof_bytes
-        extend_calldata_with_bytes(&mut calldata, &sp1_contract_data.proof_bytes)?;
+        let calldata = encode_calldata(VERIFY_FUNCTION_SIGNATURE, &calldata_values).unwrap();
 
         let verify_tx = self
             .eth_client
@@ -670,46 +576,24 @@ impl ProverServer {
 
             info!("Last committed: {last_committed_block} - Last verified: {last_verified_block}");
 
-            // IOnChainProposer
-            // function verify(uint256,bytes,bytes32,bytes32,bytes32,bytes,bytes)
-            // blockNumber, blockProof, imageId, journalDigest, programVKey, publicValues, proofBytes
-            // From crates/l2/contracts/l1/interfaces/IOnChainProposer.sol
+            let calldata_values = vec![
+                // blockNumber
+                Value::Uint(U256::from(last_verified_block + 1)),
+                // blockProof
+                Value::Bytes(vec![].into()),
+                // imageId
+                Value::FixedBytes(H256::zero().as_bytes().to_vec().into()),
+                // journalDigest
+                Value::FixedBytes(H256::zero().as_bytes().to_vec().into()),
+                // programVKey
+                Value::FixedBytes(H256::zero().as_bytes().to_vec().into()),
+                // publicValues
+                Value::Bytes(vec![].into()),
+                // proofBytes
+                Value::Bytes(vec![].into()),
+            ];
 
-            // The calldata has to be structured in the following way:
-            // block_number
-            // offset of first bytes parameter
-            // image_id
-            // journal
-            // programVKey
-            // offset of second bytes parameter
-            // offset of third bytes parameter
-            // size of block_proof
-            // block_proof
-            // size of publicValues
-            // publicValues
-            // size of proofBytes
-            // proofBytes
-            let mut calldata = keccak(b"verify(uint256,bytes,bytes32,bytes32,bytes32,bytes,bytes)")
-                .as_bytes()
-                .get(..4)
-                .ok_or(ProverServerError::Custom(
-                    "Failed to get verify_proof_selector in send_proof()".to_owned(),
-                ))?
-                .to_vec();
-            calldata.extend(H256::from_low_u64_be(last_verified_block + 1).as_bytes());
-            // offset of first bytes parameter
-            calldata.extend(H256::from_low_u64_be(7 * 32).as_bytes());
-            // extend with bytes32, bytes32, bytes32
-            for _ in 0..=3 {
-                calldata.extend(H256::zero().as_bytes());
-            }
-            // offset of second bytes parameter
-            calldata.extend(H256::zero().as_bytes());
-            // offset of third bytes parameter
-            calldata.extend(H256::zero().as_bytes());
-            // extend with size of the third bytes variable -> 32bytes
-            calldata.extend(H256::from_low_u64_be(32).as_bytes());
-            calldata.extend(H256::zero().as_bytes());
+            let calldata = encode_calldata(VERIFY_FUNCTION_SIGNATURE, &calldata_values).unwrap();
 
             let verify_tx = self
                 .eth_client
@@ -744,47 +628,4 @@ impl ProverServer {
             );
         }
     }
-}
-
-pub fn extend_calldata_with_bytes(
-    calldata: &mut Vec<u8>,
-    bytes: &[u8],
-) -> Result<(), ProverServerError> {
-    // extend with size of bytes
-    calldata.extend(
-        H256::from_low_u64_be(bytes.len().try_into().map_err(|err| {
-            ProverServerError::Custom(format!("bytes length does not fit in u64: {}", err))
-        })?)
-        .as_bytes(),
-    );
-    // extend with bytes
-    calldata.extend(bytes);
-    // extend with zero padding
-    let calldata_len: u64 = calldata.len().try_into().map_err(|err| {
-        ProverServerError::Custom(format!("calldata length does not fit in u64: {}", err))
-    })?;
-    let leading_zeros = calculate_padding(calldata_len)?;
-    calldata.extend(vec![0; leading_zeros]);
-
-    Ok(())
-}
-
-fn calculate_padding(calldata_len: u64) -> Result<usize, ProverServerError> {
-    let len = calldata_len - 4;
-
-    // Calculate leading zeros needed for alignment to 32 bytes
-    let leading_zeros = if len % 32 == 0 { 0 } else { 32 - (len % 32) };
-    leading_zeros
-        .try_into()
-        .map_err(|_| ProverServerError::Custom("Failed to calculate padding".to_owned()))
-}
-
-// used for debugging purposes
-#[allow(unused)]
-fn print_calldata(calldata: Vec<u8>) {
-    let mut hex_string = String::new();
-    for byte in calldata {
-        hex_string.push_str(&format!("{:02x}", byte));
-    }
-    println!("CALLDATA: {}", hex_string);
 }
