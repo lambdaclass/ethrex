@@ -35,9 +35,9 @@ zkvm_interface = { path = "./prover/zkvm/interface/", default-features = false }
 risc0-zkvm = { version = "1.2.0" }
 # sp1
 sp1-sdk = { version = "3.4.0" }
+ethrex-sdk = { path = "./sdk" }
 
 [dev-dependencies]
-ethrex-sdk = { path = "./sdk" }
 rand = "0.8.5"
 
 

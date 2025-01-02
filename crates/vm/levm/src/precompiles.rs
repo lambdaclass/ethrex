@@ -22,6 +22,7 @@ use lambdaworks_math::{
 };
 use libsecp256k1::{self, Message, RecoveryId, Signature};
 use num_bigint::BigUint;
+use revm_primitives::SpecId;
 use sha3::Digest;
 
 use crate::{
@@ -90,7 +91,12 @@ pub const PRECOMPILES: [H160; 10] = [
 
 pub const BLAKE2F_ELEMENT_SIZE: usize = 8;
 
-pub fn is_precompile(callee_address: &Address) -> bool {
+pub fn is_precompile(callee_address: &Address, spec_id: SpecId) -> bool {
+    // Cancun specs is the only one that allows point evaluation precompile
+    if *callee_address == POINT_EVALUATION_ADDRESS && spec_id < SpecId::CANCUN {
+        return false;
+    }
+
     PRECOMPILES.contains(callee_address)
 }
 

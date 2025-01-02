@@ -2755,6 +2755,7 @@ dependencies = [
  "lambdaworks-math",
  "libsecp256k1",
  "num-bigint 0.4.6",
+ "revm-primitives 10.0.0",
  "ripemd",
  "serde",
  "serde_json",
@@ -2861,16 +2862,22 @@ dependencies = [
 name = "ethrex-sdk"
 version = "0.1.0"
 dependencies = [
+ "bytes",
  "ethereum-types",
  "ethrex-core",
- "ethrex-l2",
+ "ethrex-rlp",
  "ethrex-rpc",
+ "eyre",
  "hex",
  "itertools 0.13.0",
  "keccak-hash 0.11.0",
+ "reqwest 0.12.9",
  "secp256k1",
+ "serde",
+ "serde_json",
  "thiserror 1.0.69",
  "tokio",
+ "tracing",
 ]
 
 [[package]]
@@ -2952,6 +2959,7 @@ dependencies = [
  "ethereum-types",
  "ethrex-core",
  "ethrex-l2",
+ "ethrex-sdk",
  "hex",
  "keccak-hash 0.10.0",
  "lazy_static",
@@ -2979,6 +2987,7 @@ dependencies = [
  "ethrex-prover",
  "ethrex-rlp",
  "ethrex-rpc",
+ "ethrex-sdk",
  "eyre",
  "hex",
  "itertools 0.13.0",
@@ -4564,8 +4573,12 @@ checksum = "4ee93343901ab17bd981295f2cf0026d4ad018c7c31ba84549a4ddbb47a45104"
 name = "loc"
 version = "0.1.0"
 dependencies = [
+ "clap 4.5.21",
+ "clap_complete",
+ "colored",
  "serde",
  "serde_json",
+ "spinoff",
  "tokei",
 ]
 

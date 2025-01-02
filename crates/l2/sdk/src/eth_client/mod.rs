@@ -1,6 +1,5 @@
 use std::{fmt, time::Duration};
 
-use crate::utils::config::eth::EthConfig;
 use bytes::Bytes;
 use errors::{
     EstimateGasPriceError, EthClientError, GetBalanceError, GetBlockByHashError,
@@ -74,13 +73,6 @@ impl EthClient {
         Self {
             client: Client::new(),
             url: url.to_string(),
-        }
-    }
-
-    pub fn new_from_config(config: EthConfig) -> Self {
-        Self {
-            client: Client::new(),
-            url: config.rpc_url,
         }
     }
 
@@ -404,12 +396,15 @@ impl EthClient {
                                         .to_owned(),
                                 ))?,
                         );
-                        let string_len: usize = string_length.try_into().map_err(|_| {
-                            EthClientError::Custom(
+
+                        let string_len = if string_length > usize::MAX.into() {
+                            return Err(EthClientError::Custom(
                                 "Failed to convert string_length to usize in estimate_gas"
                                     .to_owned(),
-                            )
-                        })?;
+                            ));
+                        } else {
+                            string_length.as_usize()
+                        };
                         let string_data = abi_decoded_error_data.get(68..68 + string_len).ok_or(
                             EthClientError::Custom(
                                 "Failed to slice index abi_decoded_error_data in estimate_gas"
@@ -517,6 +512,18 @@ impl EthClient {
             }
             Err(error) => Err(error),
         }
+    }
+
+    pub async fn get_next_block_to_commit(
+        eth_client: &EthClient,
+        on_chain_proposer_address: Address,
+    ) -> Result<u64, EthClientError> {
+        Self::_call_block_variable(
+            eth_client,
+            b"nextBlockToCommit()",
+            on_chain_proposer_address,
+        )
+        .await
     }
 
     /// Fetches a block from the Ethereum blockchain by its number or the latest/earliest/pending block.
@@ -721,14 +728,15 @@ impl EthClient {
         overrides: Overrides,
         bump_retries: u64,
     ) -> Result<EIP1559Transaction, EthClientError> {
-        let get_gas_price: u64;
+        let get_gas_price;
         let mut tx = EIP1559Transaction {
             to: TxKind::Call(to),
             chain_id: if let Some(chain_id) = overrides.chain_id {
                 chain_id
             } else {
-                // Should never panic, the chain_id should be smaller than u64::MAX
-                self.get_chain_id().await?.as_u64()
+                self.get_chain_id().await?.try_into().map_err(|_| {
+                    EthClientError::Custom("Failed at get_chain_id().try_into()".to_owned())
+                })?
             },
             nonce: self
                 .get_nonce_from_overrides_or_rpc(&overrides, from)
@@ -737,10 +745,10 @@ impl EthClient {
                 get_gas_price = gas_price;
                 gas_price
             } else {
-                let gas_price = self.get_gas_price().await?;
-                get_gas_price = gas_price.try_into().map_err(|_| {
+                let gas_price: u64 = self.get_gas_price().await?.try_into().map_err(|_| {
                     EthClientError::Custom("Failed at gas_price.try_into()".to_owned())
                 })?;
+                get_gas_price = gas_price;
                 get_gas_price
             },
             max_fee_per_gas: if let Some(gas_price) = overrides.gas_price {
@@ -808,14 +816,15 @@ impl EthClient {
     ) -> Result<WrappedEIP4844Transaction, EthClientError> {
         let blob_versioned_hashes = blobs_bundle.generate_versioned_hashes();
 
-        let get_gas_price: u64;
+        let get_gas_price;
         let tx = EIP4844Transaction {
             to,
             chain_id: if let Some(chain_id) = overrides.chain_id {
                 chain_id
             } else {
-                // Should never panic, the chain_id should be smaller than u64::MAX
-                self.get_chain_id().await?.as_u64()
+                self.get_chain_id().await?.try_into().map_err(|_| {
+                    EthClientError::Custom("Failed at get_chain_id().try_into()".to_owned())
+                })?
             },
             nonce: self
                 .get_nonce_from_overrides_or_rpc(&overrides, from)
@@ -824,10 +833,10 @@ impl EthClient {
                 get_gas_price = gas_price;
                 gas_price
             } else {
-                let gas_price = self.get_gas_price().await?;
-                get_gas_price = gas_price.try_into().map_err(|_| {
+                let gas_price: u64 = self.get_gas_price().await?.try_into().map_err(|_| {
                     EthClientError::Custom("Failed at gas_price.try_into()".to_owned())
                 })?;
+                get_gas_price = gas_price;
                 get_gas_price
             },
             max_fee_per_gas: if let Some(gas_price) = overrides.gas_price {
@@ -896,15 +905,16 @@ impl EthClient {
         overrides: Overrides,
         bump_retries: u64,
     ) -> Result<PrivilegedL2Transaction, EthClientError> {
-        let get_gas_price: u64;
+        let get_gas_price;
         let mut tx = PrivilegedL2Transaction {
             tx_type,
             to: TxKind::Call(to),
             chain_id: if let Some(chain_id) = overrides.chain_id {
                 chain_id
             } else {
-                // Should never panic, the chain_id should be smaller than u64::MAX
-                self.get_chain_id().await?.as_u64()
+                self.get_chain_id().await?.try_into().map_err(|_| {
+                    EthClientError::Custom("Failed at get_chain_id().try_into()".to_owned())
+                })?
             },
             nonce: self
                 .get_nonce_from_overrides_or_rpc(&overrides, from)
@@ -913,10 +923,10 @@ impl EthClient {
                 get_gas_price = gas_price;
                 gas_price
             } else {
-                let gas_price = self.get_gas_price().await?;
-                get_gas_price = gas_price.try_into().map_err(|_| {
+                let gas_price: u64 = self.get_gas_price().await?.try_into().map_err(|_| {
                     EthClientError::Custom("Failed at gas_price.try_into()".to_owned())
                 })?;
+                get_gas_price = gas_price;
                 get_gas_price
             },
             max_fee_per_gas: if let Some(gas_price) = overrides.gas_price {
@@ -986,18 +996,6 @@ impl EthClient {
         Self::_call_block_variable(
             eth_client,
             b"lastCommittedBlock()",
-            on_chain_proposer_address,
-        )
-        .await
-    }
-
-    pub async fn get_next_block_to_commit(
-        eth_client: &EthClient,
-        on_chain_proposer_address: Address,
-    ) -> Result<u64, EthClientError> {
-        Self::_call_block_variable(
-            eth_client,
-            b"nextBlockToCommit()",
             on_chain_proposer_address,
         )
         .await
