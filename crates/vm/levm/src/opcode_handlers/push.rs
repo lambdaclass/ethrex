@@ -1,10 +1,11 @@
 use crate::{
-    call_frame::CallFrame,
+    call_frame::{BytecodeType, CallFrame},
     constants::WORD_SIZE,
     errors::{InternalError, OpcodeSuccess, VMError},
     gas_cost,
     vm::VM,
 };
+use bytes::Bytes;
 use ethrex_core::U256;
 
 // Push Operations
@@ -56,14 +57,17 @@ fn read_bytcode_slice(current_call_frame: &CallFrame, n_bytes: usize) -> Result<
             InternalError::ArithmeticOperationOverflow,
         ))?;
 
-    Ok(current_call_frame
-        .bytecode
-        .get(pc_offset..)
+    let bytecode = match &current_call_frame.bytecode {
+        BytecodeType::Legacy(code) => code,
+        BytecodeType::Structured(code) => {
+            &code.code_sections.get(0).cloned().unwrap_or(Bytes::new())
+        }
+    };
+
+    Ok(bytecode
+        .get(pc_offset..pc_offset.checked_add(n_bytes).ok_or(VMError::OutOfBounds)?)
         .unwrap_or_default()
-        .iter()
-        .take(n_bytes)
-        .cloned()
-        .collect())
+        .to_vec())
 }
 
 fn bytes_to_word(read_n_bytes: &[u8], n_bytes: usize) -> Result<[u8; WORD_SIZE], VMError> {
