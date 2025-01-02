@@ -9,6 +9,7 @@ use ethrex_core::{
     types::{BLOB_BASE_FEE_UPDATE_FRACTION, MIN_BASE_FEE_PER_BLOB_GAS},
     U256,
 };
+use revm_primitives::SpecId;
 
 // Block Information (11)
 // Opcodes: BLOCKHASH, COINBASE, TIMESTAMP, NUMBER, PREVRANDAO, GASLIMIT, CHAINID, SELFBALANCE, BASEFEE, BLOBHASH, BLOBBASEFEE
@@ -160,6 +161,11 @@ impl VM {
         &mut self,
         current_call_frame: &mut CallFrame,
     ) -> Result<OpcodeSuccess, VMError> {
+        // [EIP-4844] - BLOBHASH is only available from CANCUN
+        if self.env.spec_id < SpecId::CANCUN {
+            return Err(VMError::InvalidOpcode);
+        }
+
         self.increase_consumed_gas(current_call_frame, gas_cost::BLOBHASH)?;
 
         let index = current_call_frame.stack.pop()?;
@@ -202,6 +208,10 @@ impl VM {
         &mut self,
         current_call_frame: &mut CallFrame,
     ) -> Result<OpcodeSuccess, VMError> {
+        // [EIP-4844] - BLOBBASEFEE is only available from CANCUN
+        if self.env.spec_id < SpecId::CANCUN {
+            return Err(VMError::InvalidOpcode);
+        }
         self.increase_consumed_gas(current_call_frame, gas_cost::BLOBBASEFEE)?;
 
         let blob_base_fee = self.get_blob_gasprice()?;
