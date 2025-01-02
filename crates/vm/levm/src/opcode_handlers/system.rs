@@ -10,6 +10,7 @@ use crate::{
 };
 use bytes::Bytes;
 use ethrex_core::{Address, U256};
+use revm_primitives::SpecId;
 
 // System Operations (10)
 // Opcodes: CREATE, CALL, CALLCODE, RETURN, DELEGATECALL, CREATE2, STATICCALL, REVERT, INVALID, SELFDESTRUCT
@@ -340,6 +341,7 @@ impl VM {
                 new_size,
                 current_call_frame.memory.len(),
                 code_size_in_memory,
+                self.env.spec_id,
             )?,
         )?;
 
@@ -375,6 +377,7 @@ impl VM {
                 new_size,
                 current_call_frame.memory.len(),
                 code_size_in_memory,
+                self.env.spec_id,
             )?,
         )?;
 
@@ -463,16 +466,26 @@ impl VM {
             )?,
         )?;
 
-        self.increase_account_balance(target_address, balance_to_transfer)?;
-        self.decrease_account_balance(current_call_frame.to, balance_to_transfer)?;
+        // [EIP-6780] - SELFDESTRUCT only in same transaction from CANCUN
+        if self.env.spec_id >= SpecId::CANCUN {
+            self.increase_account_balance(target_address, balance_to_transfer)?;
+            self.decrease_account_balance(current_call_frame.to, balance_to_transfer)?;
 
-        // Selfdestruct is executed in the same transaction as the contract was created
-        if self
-            .accrued_substate
-            .created_accounts
-            .contains(&current_call_frame.to)
-        {
-            // If target is the same as the contract calling, Ether will be burnt.
+            // Selfdestruct is executed in the same transaction as the contract was created
+            if self
+                .accrued_substate
+                .created_accounts
+                .contains(&current_call_frame.to)
+            {
+                // If target is the same as the contract calling, Ether will be burnt.
+                self.get_account_mut(current_call_frame.to)?.info.balance = U256::zero();
+
+                self.accrued_substate
+                    .selfdestruct_set
+                    .insert(current_call_frame.to);
+            }
+        } else {
+            self.increase_account_balance(target_address, balance_to_transfer)?;
             self.get_account_mut(current_call_frame.to)?.info.balance = U256::zero();
 
             self.accrued_substate
@@ -497,8 +510,8 @@ impl VM {
         if current_call_frame.is_static {
             return Err(VMError::OpcodeNotAllowedInStaticContext);
         }
-        // 2. Cant exceed init code max size
-        if code_size_in_memory > INIT_CODE_MAX_SIZE {
+        // 2. [EIP-3860] - Cant exceed init code max size
+        if code_size_in_memory > INIT_CODE_MAX_SIZE && self.env.spec_id >= SpecId::SHANGHAI {
             return Err(VMError::OutOfGas(OutOfGasError::ConsumedGasOverflow));
         }
 

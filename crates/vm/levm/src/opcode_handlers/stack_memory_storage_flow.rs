@@ -7,6 +7,7 @@ use crate::{
     vm::VM,
 };
 use ethrex_core::{H256, U256};
+use revm_primitives::SpecId;
 
 // Stack, Memory, Storage and Flow Operations (15)
 // Opcodes: POP, MLOAD, MSTORE, MSTORE8, SLOAD, SSTORE, JUMP, JUMPI, PC, MSIZE, GAS, JUMPDEST, TLOAD, TSTORE, MCOPY
@@ -24,6 +25,11 @@ impl VM {
         &mut self,
         current_call_frame: &mut CallFrame,
     ) -> Result<OpcodeSuccess, VMError> {
+        // [EIP-1153] - TLOAD is only available from CANCUN
+        if self.env.spec_id < SpecId::CANCUN {
+            return Err(VMError::InvalidOpcode);
+        }
+
         self.increase_consumed_gas(current_call_frame, gas_cost::TLOAD)?;
 
         let key = current_call_frame.stack.pop()?;
@@ -43,6 +49,11 @@ impl VM {
         &mut self,
         current_call_frame: &mut CallFrame,
     ) -> Result<OpcodeSuccess, VMError> {
+        // [EIP-1153] - TLOAD is only available from CANCUN
+        if self.env.spec_id < SpecId::CANCUN {
+            return Err(VMError::InvalidOpcode);
+        }
+
         self.increase_consumed_gas(current_call_frame, gas_cost::TSTORE)?;
 
         if current_call_frame.is_static {
@@ -256,6 +267,11 @@ impl VM {
         &mut self,
         current_call_frame: &mut CallFrame,
     ) -> Result<OpcodeSuccess, VMError> {
+        // [EIP-5656] - MCOPY is only available from CANCUN
+        if self.env.spec_id < SpecId::CANCUN {
+            return Err(VMError::InvalidOpcode);
+        }
+
         let dest_offset = current_call_frame.stack.pop()?;
         let src_offset = current_call_frame.stack.pop()?;
         let size: usize = current_call_frame
