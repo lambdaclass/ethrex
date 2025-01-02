@@ -509,8 +509,8 @@ impl VM {
         if current_call_frame.is_static {
             return Err(VMError::OpcodeNotAllowedInStaticContext);
         }
-        // 2. Cant exceed init code max size
-        if code_size_in_memory > INIT_CODE_MAX_SIZE {
+        // 2. [EIP-3860] - Cant exceed init code max size
+        if code_size_in_memory > INIT_CODE_MAX_SIZE && self.env.spec_id >= SpecId::SHANGHAI {
             return Err(VMError::OutOfGas(OutOfGasError::ConsumedGasOverflow));
         }
 
