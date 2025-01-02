@@ -54,11 +54,13 @@ pub fn encode_calldata(signature: &str, values: &[Value]) -> Result<Vec<u8>, Cal
     let (name, params) = parse_signature(signature)?;
 
     if params.len() != values.len() {
-        return Err(CalldataEncodeError::WrongArgumentLength(signature.to_owned()));
+        return Err(CalldataEncodeError::WrongArgumentLength(
+            signature.to_owned(),
+        ));
     }
 
     let function_selector = compute_function_selector(&name, &params)?;
-    let calldata = encode_tuple(values);
+    let calldata = encode_tuple(values)?;
     let mut with_selector = function_selector.as_bytes().to_vec();
 
     with_selector.extend_from_slice(&calldata);
@@ -73,7 +75,7 @@ pub fn encode_calldata(signature: &str, values: &[Value]) -> Result<Vec<u8>, Cal
 // The dynamic part always follows at the end of the static one.
 // Arguments are encoded in order. If the argument is static, it is encoded in place, i.e, there's no dynamic part.
 // If the argument is dynamic, only its offset to the dynamic part is recorded on the static sector.
-fn encode_tuple(values: &[Value]) -> Vec<u8> {
+fn encode_tuple(values: &[Value]) -> Result<Vec<u8>, CalldataEncodeError> {
     let mut current_offset = 0;
     let mut current_dynamic_offset = 0;
     for value in values {
@@ -85,26 +87,26 @@ fn encode_tuple(values: &[Value]) -> Vec<u8> {
     for value in values {
         match value {
             Value::Address(h160) => {
-                write_u256(&mut ret, address_to_word(*h160), current_offset);
+                write_u256(&mut ret, address_to_word(*h160), current_offset)?;
             }
             Value::Uint(u256) => {
-                write_u256(&mut ret, *u256, current_offset);
+                write_u256(&mut ret, *u256, current_offset)?;
             }
             Value::Int(u256) => {
-                write_u256(&mut ret, *u256, current_offset);
+                write_u256(&mut ret, *u256, current_offset)?;
             }
             Value::Bool(boolean) => {
-                write_u256(&mut ret, U256::from(u8::from(*boolean)), current_offset);
+                write_u256(&mut ret, U256::from(u8::from(*boolean)), current_offset)?;
             }
             Value::Bytes(bytes) => {
-                write_u256(&mut ret, U256::from(current_dynamic_offset), current_offset);
+                write_u256(&mut ret, U256::from(current_dynamic_offset), current_offset)?;
 
                 let bytes_encoding = encode_bytes(bytes);
                 ret.extend_from_slice(&bytes_encoding);
                 current_dynamic_offset += bytes_encoding.len();
             }
             Value::String(string_value) => {
-                write_u256(&mut ret, U256::from(current_dynamic_offset), current_offset);
+                write_u256(&mut ret, U256::from(current_dynamic_offset), current_offset)?;
 
                 let utf8_encoded = Bytes::copy_from_slice(string_value.as_bytes());
                 let bytes_encoding = encode_bytes(&utf8_encoded);
@@ -112,53 +114,55 @@ fn encode_tuple(values: &[Value]) -> Vec<u8> {
                 current_dynamic_offset += bytes_encoding.len();
             }
             Value::Array(array_values) => {
-                write_u256(&mut ret, U256::from(current_dynamic_offset), current_offset);
+                write_u256(&mut ret, U256::from(current_dynamic_offset), current_offset)?;
 
-                let array_encoding = encode_array(array_values);
+                let array_encoding = encode_array(array_values)?;
                 ret.extend_from_slice(&array_encoding);
                 current_dynamic_offset += array_encoding.len();
             }
             Value::Tuple(tuple_values) => {
                 if !is_dynamic(value) {
-                    let tuple_encoding = encode_tuple(tuple_values);
+                    let tuple_encoding = encode_tuple(tuple_values)?;
                     ret.extend_from_slice(&tuple_encoding);
                 } else {
-                    write_u256(&mut ret, U256::from(current_dynamic_offset), current_offset);
+                    write_u256(&mut ret, U256::from(current_dynamic_offset), current_offset)?;
 
-                    let tuple_encoding = encode_tuple(tuple_values);
+                    let tuple_encoding = encode_tuple(tuple_values)?;
                     ret.extend_from_slice(&tuple_encoding);
                     current_dynamic_offset += tuple_encoding.len();
                 }
             }
             Value::FixedArray(fixed_array_values) => {
                 if !is_dynamic(value) {
-                    let fixed_array_encoding = encode_tuple(fixed_array_values);
+                    let fixed_array_encoding = encode_tuple(fixed_array_values)?;
                     ret.extend_from_slice(&fixed_array_encoding);
                 } else {
-                    write_u256(&mut ret, U256::from(current_dynamic_offset), current_offset);
+                    write_u256(&mut ret, U256::from(current_dynamic_offset), current_offset)?;
 
-                    let tuple_encoding = encode_tuple(fixed_array_values);
+                    let tuple_encoding = encode_tuple(fixed_array_values)?;
                     ret.extend_from_slice(&tuple_encoding);
                     current_dynamic_offset += tuple_encoding.len();
                 }
             }
             Value::FixedBytes(bytes) => {
                 let mut to_copy = [0; 32];
-                to_copy.copy_from_slice(&bytes);
-                copy_into(&mut ret, &to_copy, current_offset, 32);
+                to_copy.copy_from_slice(bytes);
+                copy_into(&mut ret, &to_copy, current_offset, 32)?;
             }
         }
 
         current_offset += static_offset_value(value);
     }
 
-    ret
+    Ok(ret)
 }
 
-fn write_u256(values: &mut [u8], number: U256, offset: usize) {
+fn write_u256(values: &mut [u8], number: U256, offset: usize) -> Result<(), CalldataEncodeError> {
     let mut to_copy = [0; 32];
     number.to_big_endian(&mut to_copy);
-    copy_into(values, &to_copy, offset, 32);
+    copy_into(values, &to_copy, offset, 32)?;
+
+    Ok(())
 }
 
 // Returns the size that the value occupies in the static sector of the abi encoding.
@@ -217,26 +221,27 @@ fn is_dynamic(value: &Value) -> bool {
                 }
             }
         }
-        Value::FixedArray(vec) => match vec.first() {
-            Some(first_elem) => result = is_dynamic(first_elem),
-            None => {}
-        },
+        Value::FixedArray(vec) => {
+            if let Some(first_elem) = vec.first() {
+                result = is_dynamic(first_elem)
+            }
+        }
         _ => {}
     }
 
     result
 }
 
-fn encode_array(values: &[Value]) -> Vec<u8> {
+fn encode_array(values: &[Value]) -> Result<Vec<u8>, CalldataEncodeError> {
     let mut ret = vec![];
     let mut to_copy = [0; 32];
     U256::from(values.len()).to_big_endian(&mut to_copy);
     ret.extend_from_slice(&to_copy);
 
-    let tuple_encoding = encode_tuple(values);
+    let tuple_encoding = encode_tuple(values)?;
     ret.extend_from_slice(&tuple_encoding);
 
-    ret
+    Ok(ret)
 }
 
 fn encode_bytes(values: &Bytes) -> Vec<u8> {
@@ -250,8 +255,22 @@ fn encode_bytes(values: &Bytes) -> Vec<u8> {
     ret
 }
 
-fn copy_into(values: &mut [u8], to_copy: &[u8], offset: usize, size: usize) {
-    values[offset..(size + offset)].copy_from_slice(&to_copy[..size]);
+fn copy_into(
+    values: &mut [u8],
+    to_copy: &[u8],
+    offset: usize,
+    size: usize,
+) -> Result<(), CalldataEncodeError> {
+    let to_copy_slice = to_copy
+        .get(..size)
+        .ok_or(CalldataEncodeError::InternalError)?;
+
+    values
+        .get_mut(offset..(size + offset))
+        .ok_or(CalldataEncodeError::InternalError)?
+        .copy_from_slice(&to_copy_slice);
+
+    Ok(())
 }
 
 fn address_to_word(address: Address) -> U256 {

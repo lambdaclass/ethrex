@@ -37,8 +37,7 @@ pub enum EthClientError {
     #[error("Error: {0}")]
     Custom(String),
     #[error("Failed to encode calldata: {0}")]
-    CalldataEncodeError(#[from] CalldataEncodeError)
-
+    CalldataEncodeError(#[from] CalldataEncodeError),
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -188,5 +187,7 @@ pub enum CalldataEncodeError {
     #[error("Failed to parse function signature: {0}")]
     ParseError(String),
     #[error("Wrong number of arguments provided for calldata: {0}")]
-    WrongArgumentLength(String)
+    WrongArgumentLength(String),
+    #[error("Internal Calldata encoding error. This is most likely a bug")]
+    InternalError,
 }
