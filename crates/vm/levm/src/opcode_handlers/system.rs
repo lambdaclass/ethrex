@@ -466,6 +466,7 @@ impl VM {
             )?,
         )?;
 
+        // [EIP-6780] - SELFDESTRUCT only in same transaction from CANCUN
         if self.env.spec_id >= SpecId::CANCUN {
             self.increase_account_balance(target_address, balance_to_transfer)?;
             self.decrease_account_balance(current_call_frame.to, balance_to_transfer)?;
