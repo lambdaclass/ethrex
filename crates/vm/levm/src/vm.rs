@@ -933,7 +933,7 @@ impl VM {
             .pop()
             .ok_or(VMError::Internal(InternalError::CouldNotPopCallframe))?;
 
-        dbg!(self.prepare_execution(&mut initial_call_frame))?;
+        self.prepare_execution(&mut initial_call_frame)?;
 
         // In CREATE type transactions:
         //  Add created contract to cache, reverting transaction if the address is already occupied
