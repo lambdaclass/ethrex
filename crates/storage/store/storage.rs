@@ -942,10 +942,19 @@ impl Store {
             .update_payload(payload_id, block, block_value, blobs_bundle, completed)
     }
 
+    pub fn get_receipts_for_block(
+        &self,
+        block_hash: &BlockHash,
+    ) -> Result<Vec<Receipt>, StoreError> {
+        self.engine.get_receipts_for_block(block_hash)
+    }
+
     /// Creates a new state trie with an empty state root, for testing purposes only
     pub fn new_state_trie_for_test(&self) -> Trie {
         self.engine.open_state_trie(*EMPTY_TRIE_HASH)
     }
+
+    /// Methods exclusive for trie management during snap-syncing
 
     // Obtain a state trie from the given state root
     // Doesn't check if the state root is valid
@@ -959,11 +968,28 @@ impl Store {
         self.engine.open_storage_trie(account_hash, storage_root)
     }
 
-    pub fn get_receipts_for_block(
+    /// Returns true if the given node is part of the state trie's internal storage
+    pub fn contains_state_node(&self, node_hash: H256) -> Result<bool, StoreError> {
+        // Root is irrelevant, we only care about the internal state
+        Ok(self
+            .open_state_trie(*EMPTY_TRIE_HASH)
+            .state()
+            .get_node(node_hash.into())?
+            .is_some())
+    }
+
+    /// Returns true if the given node is part of the given storage trie's internal storage
+    pub fn contains_storage_node(
         &self,
-        block_hash: &BlockHash,
-    ) -> Result<Vec<Receipt>, StoreError> {
-        self.engine.get_receipts_for_block(block_hash)
+        hashed_address: H256,
+        node_hash: H256,
+    ) -> Result<bool, StoreError> {
+        // Root is irrelevant, we only care about the internal state
+        Ok(self
+            .open_storage_trie(hashed_address, *EMPTY_TRIE_HASH)
+            .state()
+            .get_node(node_hash.into())?
+            .is_some())
     }
 }
 

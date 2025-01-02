@@ -11,8 +11,6 @@ mod trie_iter;
 mod verify_range;
 use ethereum_types::H256;
 use ethrex_rlp::constants::RLP_NULL;
-use nibbles::Nibbles;
-use node::Node;
 use node_hash::NodeHash;
 use sha3::{Digest, Keccak256};
 use std::collections::HashSet;
@@ -21,10 +19,12 @@ use std::collections::HashSet;
 pub use self::db::{libmdbx::LibmdbxTrieDB, libmdbx_dupsort::LibmdbxDupsortTrieDB};
 
 pub use self::db::{in_memory::InMemoryTrieDB, TrieDB};
+pub use self::nibbles::Nibbles;
 pub use self::verify_range::verify_range;
+pub use self::{node::Node, state::TrieState};
 
 pub use self::error::TrieError;
-use self::{node::LeafNode, state::TrieState, trie_iter::TrieIterator};
+use self::{node::LeafNode, trie_iter::TrieIterator};
 
 use lazy_static::lazy_static;
 
@@ -318,6 +318,18 @@ impl Trie {
             }
             Node::Leaf(_) => Ok(vec![]),
         }
+    }
+
+    /// Returns a mutable reference to the trie's internal node state
+    /// [WARNING] This will allow directly manipulating the trie's state and
+    /// may lead to inconsistent trie structures if not used resposibly
+    pub fn state_mut(&mut self) -> &mut TrieState {
+        &mut self.state
+    }
+
+    /// Returns a reference to the trie's internal node state
+    pub fn state(&mut self) -> &TrieState {
+        &self.state
     }
 
     #[cfg(all(test, feature = "libmdbx"))]

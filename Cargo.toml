@@ -40,6 +40,7 @@ ethrex-vm = { path = "./crates/vm" }
 ethrex-trie = { path = "./crates/storage/trie" }
 ethrex-rlp = { path = "./crates/common/rlp" }
 ethrex-l2 = { path = "./crates/l2" }
+ethrex-sdk = { path = "./crates/l2/sdk" }
 ethrex-prover = { path = "./crates/l2/prover" }
 
 tracing = { version = "0.1", features = ["log"] }
