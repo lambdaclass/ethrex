@@ -117,7 +117,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
         )
     }
 
-    pub async fn initiator(
+    pub fn initiator(
         signer: SigningKey,
         msg: &[u8],
         stream: S,
