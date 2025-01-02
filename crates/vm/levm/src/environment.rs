@@ -48,7 +48,7 @@ impl Environment {
             tx_max_priority_fee_per_gas: Default::default(),
             tx_max_fee_per_gas: Default::default(),
             tx_max_fee_per_blob_gas: Default::default(),
-            block_gas_limit: Default::default(),
+            block_gas_limit: u64::MAX,
             transient_storage: Default::default(),
         }
     }
