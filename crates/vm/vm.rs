@@ -150,10 +150,10 @@ cfg_if::cfg_if! {
             state: &mut EvmState,
         ) -> Result<(Vec<Receipt>, Vec<AccountUpdate>), EvmError> {
             let block_header = &block.header;
+            let spec_id = spec_id(&state.chain_config()?, block_header.timestamp);
             //eip 4788: execute beacon_root_contract_call before block transactions
             cfg_if::cfg_if! {
                 if #[cfg(not(feature = "l2"))] {
-                    let spec_id = spec_id(&state.chain_config()?, block_header.timestamp);
                     if block_header.parent_beacon_block_root.is_some() && spec_id == SpecId::CANCUN {
                         beacon_root_contract_call(state, block_header, spec_id)?;
                     }
