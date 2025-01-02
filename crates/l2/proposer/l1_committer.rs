@@ -14,11 +14,11 @@ use ethrex_core::{
     },
     Address, H256, U256,
 };
-use ethrex_l2_sdk::merkle_tree::merkelize;
 use ethrex_l2_sdk::{
     calldata::{encode_calldata, Value},
     eth_client::{eth_sender::Overrides, BlockByNumber, EthClient, WrappedTransaction},
 };
+use ethrex_l2_sdk::{eth_client::errors::CalldataEncodeError, merkle_tree::merkelize};
 use ethrex_storage::{error::StoreError, Store};
 use ethrex_vm::{evm_state, execute_block, get_state_transitions};
 use keccak_hash::keccak;
@@ -29,7 +29,7 @@ use tracing::{error, info};
 
 use super::errors::BlobEstimationError;
 
-const COMMIT_FUNCTION_SIGNATURE: &'static str = "commit(uint256,bytes32,bytes32,bytes32)";
+const COMMIT_FUNCTION_SIGNATURE: &str = "commit(uint256,bytes32,bytes32,bytes32)";
 
 pub struct Committer {
     eth_client: EthClient,
@@ -331,12 +331,19 @@ impl Committer {
         let blob_versioned_hashes = blobs_bundle.generate_versioned_hashes();
         let calldata_values = vec![
             Value::Uint(U256::from(block_number)),
-            Value::FixedBytes(blob_versioned_hashes[0].as_fixed_bytes().to_vec().into()),
+            Value::FixedBytes(
+                blob_versioned_hashes
+                    .get(0)
+                    .ok_or(CalldataEncodeError::InternalError)?
+                    .as_fixed_bytes()
+                    .to_vec()
+                    .into(),
+            ),
             Value::FixedBytes(withdrawal_logs_merkle_root.0.to_vec().into()),
             Value::FixedBytes(deposit_logs_hash.0.to_vec().into()),
         ];
 
-        let calldata = encode_calldata(&COMMIT_FUNCTION_SIGNATURE, &calldata_values).unwrap();
+        let calldata = encode_calldata(COMMIT_FUNCTION_SIGNATURE, &calldata_values)?;
 
         let le_bytes = estimate_blob_gas(
             &self.eth_client,

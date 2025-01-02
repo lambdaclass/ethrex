@@ -31,8 +31,7 @@ use tracing::{debug, error, info, warn};
 use risc0_zkvm::sha::Digestible;
 use sp1_sdk::HashableKey;
 
-const VERIFY_FUNCTION_SIGNATURE: &'static str =
-    "verify(uint256,bytes,bytes32,bytes32,bytes32,bytes,bytes)";
+const VERIFY_FUNCTION_SIGNATURE: &str = "verify(uint256,bytes,bytes32,bytes32,bytes32,bytes,bytes)";
 
 #[derive(Debug, Serialize, Deserialize, Default)]
 pub struct ProverInputData {
@@ -520,7 +519,7 @@ impl ProverServer {
             Value::Bytes(sp1_contract_data.proof_bytes.into()),
         ];
 
-        let calldata = encode_calldata(VERIFY_FUNCTION_SIGNATURE, &calldata_values).unwrap();
+        let calldata = encode_calldata(VERIFY_FUNCTION_SIGNATURE, &calldata_values)?;
 
         let verify_tx = self
             .eth_client
@@ -593,7 +592,7 @@ impl ProverServer {
                 Value::Bytes(vec![].into()),
             ];
 
-            let calldata = encode_calldata(VERIFY_FUNCTION_SIGNATURE, &calldata_values).unwrap();
+            let calldata = encode_calldata(VERIFY_FUNCTION_SIGNATURE, &calldata_values)?;
 
             let verify_tx = self
                 .eth_client
