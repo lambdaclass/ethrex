@@ -1,9 +1,7 @@
 use std::sync::mpsc::SendError;
 
 use crate::utils::config::errors::ConfigError;
-use crate::utils::merkle_tree::MerkleError;
 use crate::utils::prover::errors::SaveStateError;
-use crate::utils::{config::errors::ConfigError, eth_client::errors::EthClientError};
 use ethereum_types::FromStrRadixErr;
 use ethrex_core::types::{BlobsBundleError, FakeExponentialError};
 use ethrex_dev::utils::engine_client::errors::EngineClientError;

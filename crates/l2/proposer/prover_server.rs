@@ -1,7 +1,14 @@
-use super::errors::{ProverServerError, SigIntError};
-use crate::utils::config::{
-    committer::CommitterConfig, errors::ConfigError, eth::EthConfig,
-    prover_server::ProverServerConfig,
+use crate::proposer::errors::{ProverServerError, SigIntError};
+use crate::utils::{
+    config::{
+        committer::CommitterConfig, errors::ConfigError, eth::EthConfig,
+        prover_server::ProverServerConfig,
+    },
+    prover::{
+        errors::SaveStateError,
+        proving_systems::{ProverType, ProvingOutput},
+        save_state::{StateFileType, StateType, *},
+    },
 };
 use ethrex_core::{
     types::{Block, BlockHeader},
@@ -28,9 +35,6 @@ use tokio::{
     time::sleep,
 };
 use tracing::{debug, error, info, warn};
-
-use risc0_zkvm::sha::Digestible;
-use sp1_sdk::HashableKey;
 
 const VERIFY_FUNCTION_SIGNATURE: &str = "verify(uint256,bytes,bytes32,bytes32,bytes32,bytes,bytes)";
 
