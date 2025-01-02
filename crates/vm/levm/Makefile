@@ -108,3 +108,35 @@ samply-run-ef-tests: ## ⚡️ Run EF tests and create a samply profiling file p
 		-o ../../../cmd/ef_tests/levm/levm_perfgraphs/samply/prof_$$dir.json \
 		cargo test --release -p ef_tests-levm --test ef_tests_levm -- --summary --tests $$dir;\
 	done
+
+flamegraph-benchmarks: ## 🔥 Run benchmarks and create flamegraph
+	cd ../../../cmd/ef_tests/levm &&\
+	mkdir -p levm_perfgraphs/flamegraph/bench ||:
+	CARGO_PROFILE_RELEASE_DEBUG=true cargo flamegraph \
+	--root --output ../../../cmd/ef_tests/levm/levm_perfgraphs/flamegraph/bench/revm_fibonacci.svg \
+	-p revm_comparison --bin revm_fibonacci -- 100000 1000
+	CARGO_PROFILE_RELEASE_DEBUG=true cargo flamegraph \
+	--root --output ../../../cmd/ef_tests/levm/levm_perfgraphs/flamegraph/bench/levm_fibonacci.svg \
+	-p revm_comparison --bin levm_fibonacci -- 100000 1000
+	CARGO_PROFILE_RELEASE_DEBUG=true cargo flamegraph \
+	--root --output ../../../cmd/ef_tests/levm/levm_perfgraphs/flamegraph/bench/revm_factorial.svg \
+	-p revm_comparison --bin revm_factorial -- 100000 1000
+	CARGO_PROFILE_RELEASE_DEBUG=true cargo flamegraph \
+	--root --output ../../../cmd/ef_tests/levm/levm_perfgraphs/flamegraph/bench/levm_factorial.svg \
+	-p revm_comparison --bin levm_factorial -- 100000 1000
+
+samply-benchmarks: ## ⚡️ Run benchmarks and create samply profiling file
+	cd ../../../cmd/ef_tests/levm &&\
+	mkdir -p levm_perfgraphs/samply/bench ||:
+	CARGO_PROFILE_RELEASE_DEBUG=true samply record --save-only \
+	-o ../../../cmd/ef_tests/levm/levm_perfgraphs/samply/bench/prof_revm_fibonacci.json \
+	cargo run --release -p revm_comparison --bin revm_fibonacci -- 100000 1000
+	CARGO_PROFILE_RELEASE_DEBUG=true samply record --save-only \
+	-o ../../../cmd/ef_tests/levm/levm_perfgraphs/samply/bench/prof_levm_fibonacci.json \
+	cargo run --release -p revm_comparison --bin levm_fibonacci -- 100000 1000
+	CARGO_PROFILE_RELEASE_DEBUG=true samply record --save-only \
+	-o ../../../cmd/ef_tests/levm/levm_perfgraphs/samply/bench/prof_revm_factorial.json \
+	cargo run --release -p revm_comparison --bin revm_factorial -- 100000 1000
+	CARGO_PROFILE_RELEASE_DEBUG=true samply record --save-only \
+	-o ../../../cmd/ef_tests/levm/levm_perfgraphs/samply/bench/prof_levm_factorial.json \
+	cargo run --release -p revm_comparison --bin levm_factorial -- 100000 1000
