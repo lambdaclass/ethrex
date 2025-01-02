@@ -471,6 +471,7 @@ fn compute_gas_create(
         .try_into()
         .map_err(|_| VMError::VeryLargeNumber)?;
 
+    // [EIP-3860] - Apply extra gas cost of 2 for every 32-byte chunk of initcode
     let init_code_cost = if spec_id >= SpecId::SHANGHAI {
         minimum_word_size
             .checked_mul(INIT_CODE_WORD_COST)
