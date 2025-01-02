@@ -8,9 +8,9 @@ use crate::{
 
 use ethrex_core::{
     types::{
-        blobs_bundle, fake_exponential_checked, BlobsBundle, Block, PrivilegedL2Transaction,
-        PrivilegedTxType, Transaction, TxKind, BLOB_BASE_FEE_UPDATE_FRACTION,
-        MIN_BASE_FEE_PER_BLOB_GAS,
+        blobs_bundle, fake_exponential_checked, BlobsBundle, BlobsBundleError, Block,
+        PrivilegedL2Transaction, PrivilegedTxType, Transaction, TxKind,
+        BLOB_BASE_FEE_UPDATE_FRACTION, MIN_BASE_FEE_PER_BLOB_GAS,
     },
     Address, H256, U256,
 };
@@ -333,8 +333,9 @@ impl Committer {
             Value::Uint(U256::from(block_number)),
             Value::FixedBytes(
                 blob_versioned_hashes
-                    .get(0)
-                    .ok_or(CalldataEncodeError::InternalError)?
+                    .first()
+                    .ok_or(BlobsBundleError::BlobBundleEmptyError)
+                    .map_err(CommitterError::from)?
                     .as_fixed_bytes()
                     .to_vec()
                     .into(),
