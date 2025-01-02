@@ -19,6 +19,7 @@ tracing.workspace = true
 thiserror.workspace = true
 
 ethrex-l2 = { path = "../../l2" }
+ethrex-sdk = { path = "../../l2/sdk" }
 ethrex-core = { path = "../../common" }
 
 [[bin]]

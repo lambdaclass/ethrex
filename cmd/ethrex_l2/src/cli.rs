@@ -1,5 +1,5 @@
 use crate::{
-    commands::{autocomplete, config, info, prove, stack, test, utils, wallet},
+    commands::{autocomplete, config, info, prove, stack, test, wallet},
     config::load_selected_config,
 };
 use clap::{Parser, Subcommand};
@@ -23,12 +23,6 @@ enum EthrexL2Command {
         visible_alias = "w"
     )]
     Wallet(wallet::Command),
-    #[clap(
-        subcommand,
-        about = "Different utilities for developers.",
-        visible_alias = "u"
-    )]
-    Utils(utils::Command),
     #[clap(subcommand, about = "CLI config commands.")]
     Config(config::Command),
     #[clap(subcommand, about = "Run tests.")]
@@ -54,7 +48,6 @@ pub async fn start() -> eyre::Result<()> {
     match command {
         EthrexL2Command::Stack(cmd) => cmd.run(cfg).await?,
         EthrexL2Command::Wallet(cmd) => cmd.run(cfg).await?,
-        EthrexL2Command::Utils(cmd) => cmd.run().await?,
         EthrexL2Command::Autocomplete(cmd) => cmd.run()?,
         EthrexL2Command::Config(_) => unreachable!(),
         EthrexL2Command::Test(cmd) => cmd.run(cfg).await?,

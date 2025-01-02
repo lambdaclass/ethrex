@@ -2,7 +2,7 @@
 #![allow(clippy::expect_used)]
 use bytes::Bytes;
 use ethereum_types::{Address, H160, U256};
-use ethrex_l2::utils::eth_client::{eth_sender::Overrides, EthClient};
+use ethrex_l2_sdk::eth_client::{eth_sender::Overrides, EthClient};
 use keccak_hash::H256;
 use secp256k1::SecretKey;
 use std::{str::FromStr, time::Duration};

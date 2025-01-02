@@ -1,15 +1,17 @@
-use crate::utils::eth_client::{
-    errors::{CallError, EthClientError},
-    EthClient, RpcResponse,
-};
 use bytes::Bytes;
 use ethereum_types::{Address, U256};
 use ethrex_core::types::{GenericTransaction, TxKind};
+use ethrex_core::H256;
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_rpc::utils::{RpcRequest, RpcRequestId};
-use keccak_hash::{keccak, H256};
+use keccak_hash::keccak;
 use secp256k1::SecretKey;
 use serde_json::json;
+
+use super::{
+    errors::{CallError, EthClientError},
+    EthClient, RpcResponse,
+};
 
 #[derive(Default, Clone)]
 pub struct Overrides {
@@ -97,7 +99,7 @@ impl EthClient {
             })?];
         encoded.extend(encoded_from.clone());
         encoded.extend(encoded_nonce.clone());
-        let deployed_address = Address::from(keccak(encoded));
+        let deployed_address = Address::from_slice(keccak(encoded).as_fixed_bytes());
 
         Ok((deploy_tx_hash, deployed_address))
     }

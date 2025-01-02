@@ -1,13 +1,11 @@
 use bytes::Bytes;
 use colored::Colorize;
 use ethereum_types::{Address, H160, H256};
-use ethrex_core::U256;
 use ethrex_l2::utils::config::errors;
-use ethrex_l2::utils::eth_client::errors::EthClientError;
-use ethrex_l2::utils::{
-    config::{read_env_as_lines, read_env_file, write_env},
-    eth_client::{eth_sender::Overrides, EthClient},
-};
+use ethrex_l2::utils::config::{read_env_as_lines, read_env_file, write_env};
+use ethrex_l2_sdk::calldata::{encode_calldata, Value};
+use ethrex_l2_sdk::eth_client::errors::{CalldataEncodeError, EthClientError};
+use ethrex_l2_sdk::eth_client::{eth_sender::Overrides, EthClient};
 use keccak_hash::keccak;
 use secp256k1::SecretKey;
 use spinoff::{spinner, spinners, Color, Spinner};
@@ -49,6 +47,8 @@ pub enum DeployError {
     DecodingError(String),
     #[error("Failed to interact with .env file, error: {0}")]
     EnvFileError(#[from] errors::ConfigError),
+    #[error("Failed to encode calldata: {0}")]
+    CalldataEncodeError(#[from] CalldataEncodeError),
 }
 
 // 0x4e59b44847b379578588920cA78FbF26c0B4956C
@@ -60,6 +60,11 @@ const DETERMINISTIC_CREATE2_ADDRESS: Address = H160([
 lazy_static::lazy_static! {
     static ref SALT: std::sync::Mutex<H256> = std::sync::Mutex::new(H256::zero());
 }
+
+const INITIALIZE_ON_CHAIN_PROPOSER_SIGNATURE: &str =
+    "initialize(address,address,address,address[])";
+
+const BRIDGE_INITIALIZER_SIGNATURE: &str = "initialize(address)";
 
 #[tokio::main]
 async fn main() -> Result<(), DeployError> {
@@ -554,7 +559,7 @@ async fn initialize_contracts(
 
     let mut spinner = Spinner::new(
         initialize_frames.clone(),
-        "Initilazing OnChainProposer",
+        "Initializing OnChainProposer",
         Color::Cyan,
     );
 
@@ -579,7 +584,7 @@ async fn initialize_contracts(
 
     let mut spinner = Spinner::new(
         initialize_frames.clone(),
-        "Initilazing CommonBridge",
+        "Initializing CommonBridge",
         Color::Cyan,
     );
     let initialize_tx_hash = initialize_bridge(
@@ -611,54 +616,15 @@ async fn initialize_on_chain_proposer(
     verifier: Address,
     eth_client: &EthClient,
 ) -> Result<H256, DeployError> {
-    let on_chain_proposer_initialize_selector =
-        keccak(b"initialize(address,address,address,address[])")
-            .as_bytes()
-            .get(..4)
-            .ok_or(DeployError::DecodingError(
-                "Failed to get initialize selector".to_owned(),
-            ))?
-            .to_vec();
-    let encoded_bridge = {
-        let offset = 32 - bridge.as_bytes().len() % 32;
-        let mut encoded_bridge = vec![0; offset];
-        encoded_bridge.extend_from_slice(bridge.as_bytes());
-        encoded_bridge
-    };
+    let calldata_values = vec![
+        Value::Address(bridge),
+        Value::Address(risc0_verifier_address),
+        Value::Address(sp1_verifier_address),
+        Value::Array(vec![Value::Address(committer), Value::Address(verifier)]),
+    ];
 
-    let encoded_risc0_contract_verifier = {
-        let offset = 32 - risc0_verifier_address.as_bytes().len() % 32;
-        let mut encoded_contract_verifier = vec![0; offset];
-        encoded_contract_verifier.extend_from_slice(risc0_verifier_address.as_bytes());
-        encoded_contract_verifier
-    };
-
-    let encoded_sp1_contract_verifier = {
-        let offset = 32 - sp1_verifier_address.as_bytes().len() % 32;
-        let mut encoded_contract_verifier = vec![0; offset];
-        encoded_contract_verifier.extend_from_slice(sp1_verifier_address.as_bytes());
-        encoded_contract_verifier
-    };
-
-    let mut on_chain_proposer_initialization_calldata = Vec::new();
-    on_chain_proposer_initialization_calldata
-        .extend_from_slice(&on_chain_proposer_initialize_selector);
-    on_chain_proposer_initialization_calldata.extend_from_slice(&encoded_bridge);
-    on_chain_proposer_initialization_calldata.extend_from_slice(&encoded_risc0_contract_verifier);
-    on_chain_proposer_initialization_calldata.extend_from_slice(&encoded_sp1_contract_verifier);
-
-    let mut encoded_offset = [0; 32];
-    // offset of 3 addresses before the address[] + address[]
-    U256::from(32 * (3 + 1)).to_big_endian(&mut encoded_offset);
-    on_chain_proposer_initialization_calldata.extend_from_slice(&encoded_offset);
-    let mut allowed_addresses = [0; 32];
-    U256::from(2).to_big_endian(&mut allowed_addresses);
-    on_chain_proposer_initialization_calldata.extend_from_slice(&allowed_addresses);
-
-    let committer_h256: H256 = committer.into();
-    let verifier_h256: H256 = verifier.into();
-    on_chain_proposer_initialization_calldata.extend_from_slice(committer_h256.as_fixed_bytes());
-    on_chain_proposer_initialization_calldata.extend_from_slice(verifier_h256.as_fixed_bytes());
+    let on_chain_proposer_initialization_calldata =
+        encode_calldata(INITIALIZE_ON_CHAIN_PROPOSER_SIGNATURE, &calldata_values)?;
 
     let initialize_tx = eth_client
         .build_eip1559_transaction(
@@ -684,23 +650,9 @@ async fn initialize_bridge(
     deployer_private_key: SecretKey,
     eth_client: &EthClient,
 ) -> Result<H256, DeployError> {
-    let bridge_initialize_selector = keccak(b"initialize(address)")
-        .as_bytes()
-        .get(..4)
-        .ok_or(DeployError::DecodingError(
-            "Failed to get initialize selector".to_owned(),
-        ))?
-        .to_vec();
-    let encoded_on_chain_proposer = {
-        let offset = 32 - on_chain_proposer.as_bytes().len() % 32;
-        let mut encoded_owner = vec![0; offset];
-        encoded_owner.extend_from_slice(on_chain_proposer.as_bytes());
-        encoded_owner
-    };
-
-    let mut bridge_initialization_calldata = Vec::new();
-    bridge_initialization_calldata.extend_from_slice(&bridge_initialize_selector);
-    bridge_initialization_calldata.extend_from_slice(&encoded_on_chain_proposer);
+    let calldata_values = vec![Value::Address(on_chain_proposer)];
+    let bridge_initialization_calldata =
+        encode_calldata(BRIDGE_INITIALIZER_SIGNATURE, &calldata_values)?;
 
     let initialize_tx = eth_client
         .build_eip1559_transaction(
