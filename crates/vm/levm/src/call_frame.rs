@@ -3,7 +3,7 @@ use crate::{
     errors::{InternalError, VMError},
     memory::Memory,
     opcodes::Opcode,
-    vm::get_valid_jump_destinations,
+    vm::{get_valid_jump_destinations, BytecodeBody},
 };
 use bytes::Bytes;
 use ethrex_core::{types::Log, Address, U256};
@@ -48,6 +48,18 @@ impl Stack {
     }
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub enum BytecodeType {
+    Legacy(Bytes),
+    Structured(BytecodeBody),
+}
+
+impl Default for BytecodeType {
+    fn default() -> Self {
+        BytecodeType::Legacy(Bytes::default())
+    }
+}
+
 #[derive(Debug, Clone, Default, PartialEq)]
 /// A call frame, or execution environment, is the context in which
 /// the EVM is currently executing.
@@ -65,7 +77,7 @@ pub struct CallFrame {
     /// Address of the code to execute. Usually the same as `to`, but can be different
     pub code_address: Address,
     /// Bytecode to execute
-    pub bytecode: Bytes,
+    pub bytecode: BytecodeType,
     /// Value sent along the transaction
     pub msg_value: U256,
     pub stack: Stack,
@@ -88,8 +100,18 @@ pub struct CallFrame {
 }
 
 impl CallFrame {
-    pub fn new_from_bytecode(bytecode: Bytes) -> Self {
-        let valid_jump_destinations = get_valid_jump_destinations(&bytecode).unwrap_or_default();
+    pub fn new_from_bytecode(bytecode: BytecodeType) -> Self {
+        let valid_jump_destinations = match &bytecode {
+            BytecodeType::Legacy(code) => get_valid_jump_destinations(&code).unwrap_or_default(),
+            BytecodeType::Structured(structured_code) => get_valid_jump_destinations(
+                &structured_code
+                    .code_sections
+                    .first()
+                    .unwrap_or(&Bytes::new()),
+            )
+            .unwrap_or_default(),
+        };
+
         Self {
             gas_limit: u64::MAX,
             bytecode,
@@ -98,10 +120,18 @@ impl CallFrame {
         }
     }
 
-    pub fn assign_bytecode(&mut self, bytecode: Bytes) {
+    pub fn assign_bytecode(&mut self, bytecode: BytecodeType) {
+        self.valid_jump_destinations = match &bytecode {
+            BytecodeType::Legacy(code) => get_valid_jump_destinations(&code).unwrap_or_default(),
+            BytecodeType::Structured(structured_code) => get_valid_jump_destinations(
+                &structured_code
+                    .code_sections
+                    .first()
+                    .unwrap_or(&Bytes::new()),
+            )
+            .unwrap_or_default(),
+        };
         self.bytecode = bytecode;
-        self.valid_jump_destinations =
-            get_valid_jump_destinations(&self.bytecode).unwrap_or_default();
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -109,7 +139,7 @@ impl CallFrame {
         msg_sender: Address,
         to: Address,
         code_address: Address,
-        bytecode: Bytes,
+        bytecode: BytecodeType,
         msg_value: U256,
         calldata: Bytes,
         is_static: bool,
@@ -118,7 +148,16 @@ impl CallFrame {
         depth: usize,
         create_op_called: bool,
     ) -> Self {
-        let valid_jump_destinations = get_valid_jump_destinations(&bytecode).unwrap_or_default();
+        let valid_jump_destinations = match &bytecode {
+            BytecodeType::Legacy(code) => get_valid_jump_destinations(&code).unwrap_or_default(),
+            BytecodeType::Structured(structured_code) => get_valid_jump_destinations(
+                &structured_code
+                    .code_sections
+                    .first()
+                    .unwrap_or(&Bytes::new()),
+            )
+            .unwrap_or_default(),
+        };
         Self {
             gas_limit,
             msg_sender,
@@ -137,9 +176,24 @@ impl CallFrame {
     }
 
     pub fn next_opcode(&mut self) -> Opcode {
-        match self.bytecode.get(self.pc).copied().map(Opcode::from) {
-            Some(opcode) => opcode,
-            None => Opcode::STOP,
+        match &self.bytecode {
+            BytecodeType::Legacy(code) => match code.get(self.pc).copied().map(Opcode::from) {
+                Some(opcode) => opcode,
+                None => Opcode::STOP,
+            },
+            BytecodeType::Structured(structured_code) => {
+                match structured_code
+                    .code_sections
+                    .first()
+                    .unwrap_or(&Bytes::new())
+                    .get(self.pc)
+                    .copied()
+                    .map(Opcode::from)
+                {
+                    Some(opcode) => opcode,
+                    None => Opcode::STOP,
+                }
+            }
         }
     }
 
