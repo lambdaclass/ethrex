@@ -91,7 +91,7 @@ run-hive-debug-levm: build-image-levm ## 🐝 Run Hive with LEVM in debug mode
 
 SUBDIRS := $(shell find $(SPECTEST_VECTORS_DIR)/GeneralStateTests -maxdepth 1 -type d ! -path "$(SPECTEST_VECTORS_DIR)/GeneralStateTests" -exec basename {} \;)
 
-flamegraph-run-ef-tests:
+flamegraph-run-ef-tests: ## 🔥 Run EF tests and create a flamegraph per test folder
 	cd ../../../cmd/ef_tests/levm &&\
 	mkdir -p levm_ef_test_perfgraphs/flamegraph ||:
 	@for dir in $(SUBDIRS); do\
@@ -100,7 +100,7 @@ flamegraph-run-ef-tests:
 		-p ef_tests-levm --test ef_tests_levm -- --summary --tests $$dir;\
 	done
 
-samply-run-ef-tests:
+samply-run-ef-tests: ## ⚡️ Run EF tests and create a samply profiling file per test folder
 	cd ../../../cmd/ef_tests/levm &&\
 	mkdir -p levm_ef_test_perfgraphs/samply ||:
 	@for dir in $(SUBDIRS); do\
