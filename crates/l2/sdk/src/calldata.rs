@@ -289,7 +289,7 @@ fn calldata_test() {
         Value::Bytes(bytes_calldata.into()),
     ];
 
-    let calldata = encode_calldata(&raw_function_signature, &arguments).unwrap();
+    let calldata = encode_calldata(raw_function_signature, &arguments).unwrap();
 
     assert_eq!(
         calldata,
