@@ -35,3 +35,36 @@ Features:
 To run the project's tests, do `make test`.
 
 Run `make help` to see available commands
+
+### Performance metrics
+#### To run Flamegraph on the Ethereum Fundation tests
+
+First install Flamegraph
+```Shell
+cargo install flamegraph
+```
+
+Run the tests
+```Shell
+make flamegraph-run-ef-tests
+```
+
+This will create a folder inside `cmd/ef_tests/levm/` named `levm_ef_test_perfgraphs` you can find the flamegraphs inside the folder `levm_ef_test_perfgraphs/flamegraph` open them with your preferred browser.
+
+#### To run Samply on the Ethereum Fundation tests
+
+First install Samply
+```Shell
+cargo install --locked samply
+```
+
+Run the tests
+```Shell
+make samply-run-ef-tests
+```
+
+This will create a folder inside `cmd/ef_tests/levm/` named `levm_ef_test_perfgraphs` you can find the flamegraphs inside the folder `levm_ef_test_perfgraphs/samply` run
+```Shell
+samply load <path-to-perf-file.json>
+```
+samply will open Firefox with the desired profile file.

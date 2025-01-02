@@ -54,3 +54,9 @@ loc_report_slack.txt
 loc_report_github.txt
 loc_report.json
 ethrex.redb
+
+# used by Flamegraph and Samply
+cmd/ef_tests/levm/levm_perfgraphs
+*.svg
+prof_*.json
+prof.json
