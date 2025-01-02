@@ -758,7 +758,7 @@ impl VM {
         }
 
         // (5) INITCODE_SIZE_EXCEEDED
-        if self.is_create() {
+        if self.is_create() && self.env.spec_id >= SpecId::SHANGHAI {
             // INITCODE_SIZE_EXCEEDED
             if initial_call_frame.calldata.len() > INIT_CODE_MAX_SIZE {
                 return Err(VMError::TxValidation(

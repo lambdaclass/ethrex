@@ -471,7 +471,7 @@ fn compute_gas_create(
         .try_into()
         .map_err(|_| VMError::VeryLargeNumber)?;
 
-    let init_code_cost = if spec_id >= SpecId::CANCUN {
+    let init_code_cost = if spec_id >= SpecId::SHANGHAI {
         minimum_word_size
             .checked_mul(INIT_CODE_WORD_COST)
             .ok_or(OutOfGasError::GasCostOverflow)? // will not panic since it's 2
