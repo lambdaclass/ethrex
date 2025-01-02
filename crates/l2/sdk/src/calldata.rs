@@ -1,9 +1,18 @@
 use ethrex_core::Bytes;
-use ethrex_core::{Address, H256, H32, U256};
+use ethrex_core::{Address, H32, U256};
 use eyre::eyre;
 use keccak_hash::keccak;
-use std::str::FromStr;
 
+/// Struct representing the possible solidity types for function arguments
+/// - `Uint` -> `uint256`
+/// - `Address` -> `address`
+/// - `Bool` -> `bool`
+/// - `Bytes` -> `bytes`
+/// - `String` -> `string`
+/// - `Array` -> `T[]`
+/// - `Tuple` -> `(X_1, ..., X_k)`
+/// - `FixedArray` -> `T[k]`
+/// - `FixedBytes` -> `bytesN`
 #[derive(Debug, PartialEq, Clone)]
 pub enum Value {
     Address(Address),
@@ -56,9 +65,13 @@ pub fn encode_calldata(signature: &str, values: &[Value]) -> Result<Vec<u8>, eyr
     Ok(with_selector)
 }
 
-/*
-    TODO: Explain this function.
-*/
+// This is the main entrypoint for ABI encoding solidity function arguments, as the list of arguments themselves are
+// considered a tuple. Before going through this function, read the solidity ABI spec first
+// https://docs.soliditylang.org/en/develop/abi-spec.html.
+// The encoding of a tuple consists of two parts: a static and a dynamic one (what the spec calls the head and tail of the encoding).
+// The dynamic part always follows at the end of the static one.
+// Arguments are encoded in order. If the argument is static, it is encoded in place, i.e, there's no dynamic part.
+// If the argument is dynamic, only its offset to the dynamic part is recorded on the static sector.
 fn encode_tuple(values: &[Value]) -> Vec<u8> {
     let mut current_offset = 0;
     let mut current_dynamic_offset = 0;
@@ -147,6 +160,10 @@ fn write_u256(values: &mut [u8], number: U256, offset: usize) {
     copy_into(values, &to_copy, offset, 32);
 }
 
+// Returns the size that the value occupies in the static sector of the abi encoding.
+// For dynamic types, this is always 32 (the offset to the dynamic sector).
+// For static types, it's 32 unless the value is a static tuple or a fixed array, in which case
+// it's the sum of the sizes of their elements.
 fn static_offset_value(value: &Value) -> usize {
     let mut ret = 0;
 
