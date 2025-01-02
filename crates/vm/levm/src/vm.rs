@@ -135,7 +135,7 @@ impl VM {
 
         // Add sender, coinbase and recipient (in the case of a Call) to cache [https://www.evm.codes/about#access_list]
         let mut default_touched_accounts = HashSet::from_iter([env.origin].iter().cloned());
-        // Add coinbase to cache if the spec is SHANGHAI or higher
+        // [EIP-3651] - Add coinbase to WARM if the spec is SHANGHAI or higher
         if env.spec_id >= SpecId::SHANGHAI {
             default_touched_accounts.insert(env.coinbase);
         }
