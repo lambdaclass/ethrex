@@ -503,13 +503,8 @@ impl ProverServer {
             )
             .await?;
 
-            if last_committed_block == u64::MAX {
-                debug!("No blocks commited yet");
-                continue;
-            }
-
             if last_committed_block == last_verified_block {
-                debug!("No new blocks to prove");
+                warn!("No new blocks to prove");
                 continue;
             }
 
