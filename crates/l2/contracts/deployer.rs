@@ -4,7 +4,7 @@ use ethereum_types::{Address, H160, H256};
 use ethrex_l2::utils::config::errors;
 use ethrex_l2::utils::config::{read_env_as_lines, read_env_file, write_env};
 use ethrex_l2_sdk::calldata::{encode_calldata, Value};
-use ethrex_l2_sdk::eth_client::errors::EthClientError;
+use ethrex_l2_sdk::eth_client::errors::{CalldataEncodeError, EthClientError};
 use ethrex_l2_sdk::eth_client::{eth_sender::Overrides, EthClient};
 use keccak_hash::keccak;
 use secp256k1::SecretKey;
@@ -47,6 +47,8 @@ pub enum DeployError {
     DecodingError(String),
     #[error("Failed to interact with .env file, error: {0}")]
     EnvFileError(#[from] errors::ConfigError),
+    #[error("Failed to encode calldata: {0}")]
+    CalldataEncodeError(#[from] CalldataEncodeError),
 }
 
 // 0x4e59b44847b379578588920cA78FbF26c0B4956C
@@ -59,10 +61,10 @@ lazy_static::lazy_static! {
     static ref SALT: std::sync::Mutex<H256> = std::sync::Mutex::new(H256::zero());
 }
 
-const INITIALIZE_ON_CHAIN_PROPOSER_SIGNATURE: &'static str =
+const INITIALIZE_ON_CHAIN_PROPOSER_SIGNATURE: &str =
     "initialize(address,address,address,address[])";
 
-const BRIDGE_INITIALIZER_SIGNATURE: &'static str = "initialize(address)";
+const BRIDGE_INITIALIZER_SIGNATURE: &str = "initialize(address)";
 
 #[tokio::main]
 async fn main() -> Result<(), DeployError> {
@@ -622,7 +624,7 @@ async fn initialize_on_chain_proposer(
     ];
 
     let on_chain_proposer_initialization_calldata =
-        encode_calldata(INITIALIZE_ON_CHAIN_PROPOSER_SIGNATURE, &calldata_values).unwrap();
+        encode_calldata(INITIALIZE_ON_CHAIN_PROPOSER_SIGNATURE, &calldata_values)?;
 
     let initialize_tx = eth_client
         .build_eip1559_transaction(
@@ -650,7 +652,7 @@ async fn initialize_bridge(
 ) -> Result<H256, DeployError> {
     let calldata_values = vec![Value::Address(on_chain_proposer)];
     let bridge_initialization_calldata =
-        encode_calldata(&BRIDGE_INITIALIZER_SIGNATURE, &calldata_values).unwrap();
+        encode_calldata(BRIDGE_INITIALIZER_SIGNATURE, &calldata_values)?;
 
     let initialize_tx = eth_client
         .build_eip1559_transaction(
