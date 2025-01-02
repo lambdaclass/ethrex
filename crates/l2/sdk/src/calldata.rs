@@ -291,11 +291,11 @@ fn calldata_test() {
 
     bytes_calldata.extend_from_slice(&bytes);
     U256::one().to_big_endian(&mut bytes);
-    bytes_calldata.extend_from_slice(&mut bytes);
+    bytes_calldata.extend_from_slice(&bytes);
 
     let arguments = vec![
         Value::Uint(U256::from(902)),
-        Value::Bytes(bytes_calldata.into()).into(),
+        Value::Bytes(bytes_calldata.into()),
     ];
 
     let calldata = encode_calldata(&raw_function_signature, &arguments).unwrap();

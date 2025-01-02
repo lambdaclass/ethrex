@@ -14,11 +14,11 @@ use ethrex_core::{
     },
     Address, H256, U256,
 };
+use ethrex_l2_sdk::merkle_tree::merkelize;
 use ethrex_l2_sdk::{
     calldata::{encode_calldata, Value},
     eth_client::{eth_sender::Overrides, BlockByNumber, EthClient, WrappedTransaction},
 };
-use ethrex_l2_sdk::{eth_client::errors::CalldataEncodeError, merkle_tree::merkelize};
 use ethrex_storage::{error::StoreError, Store};
 use ethrex_vm::{evm_state, execute_block, get_state_transitions};
 use keccak_hash::keccak;
