@@ -6,7 +6,6 @@ mod execution_result;
 mod mods;
 
 use db::StoreWrapper;
-use ethrex_levm::Account;
 use execution_db::ExecutionDB;
 use std::cmp::min;
 
@@ -85,6 +84,7 @@ cfg_if::cfg_if! {
             errors::{TransactionReport, TxResult, VMError},
             vm::VM,
             Environment,
+            Account
         };
         use std::{collections::HashMap, sync::Arc};
         use ethrex_core::types::code_hash;
