@@ -184,7 +184,7 @@ impl CallFrame {
             BytecodeType::Structured(structured_code) => {
                 match structured_code
                     .code_sections
-                    .first()
+                    .get(0) // This should be current_code_idx
                     .unwrap_or(&Bytes::new())
                     .get(self.pc)
                     .copied()

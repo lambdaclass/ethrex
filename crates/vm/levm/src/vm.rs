@@ -97,6 +97,8 @@ pub struct BytecodeBody {
 }
 
 impl BytecodeBody {
+    // This parsing function could return a container, but could not find a utility for having
+    // a container instead of a BytecodeBody
     fn from_raw_bytecode(bytecode: Bytes) -> Result<Self, VMError> {
         if bytecode.len() < 15 {
             return Err(VMError::InvalidBytecode);
@@ -195,9 +197,6 @@ impl BytecodeBody {
 
         let body_start = data_section_start + 4;
 
-        println!("Body parsing with params: body start {body_start} types_size {types_size}, ");
-        println!("Bytecode raw: {:?}", bytecode.to_vec());
-
         // Types sections
         let mut types_sections = Vec::new();
 
@@ -206,17 +205,12 @@ impl BytecodeBody {
             let idx = i * 4;
             let inputs = bytecode[body_start + idx];
             let outputs = bytecode[body_start + idx + 1];
-            println!("inputs {inputs}, outputs {outputs}");
-            println!(
-                "a: {:?}",
-                bytecode[body_start + idx + 2..body_start + idx + 4].to_vec()
-            );
+
             let max_stack_height = u16::from_be_bytes(
                 bytecode[body_start + idx + 2..body_start + idx + 4]
                     .try_into()
                     .map_err(|_| VMError::InvalidBytecode)?,
             );
-            println!("Max stack height: {}", max_stack_height);
 
             let types_section = TypesSection {
                 inputs,
@@ -229,11 +223,6 @@ impl BytecodeBody {
 
         // Code sections
         let mut code_sections_start = body_start + types_size as usize;
-        println!(
-            "code sect start {code_sections_start}, len {}",
-            bytecode.len()
-        );
-        println!("lefting: {:?}", bytecode[code_sections_start..].to_vec());
 
         let mut code_sections = Vec::new();
         for code_size in code_sizes {
