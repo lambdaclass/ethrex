@@ -211,6 +211,7 @@ cfg_if::cfg_if! {
                 store: store.clone(),
                 block_hash: block.header.parent_hash,
             });
+            let mut block_cache: CacheDB = HashMap::new();
 
             let block_header = &block.header;
             let spec_id = spec_id(&store.get_chain_config()?, block_header.timestamp);
@@ -218,14 +219,14 @@ cfg_if::cfg_if! {
             cfg_if::cfg_if! {
                 if #[cfg(not(feature = "l2"))] {
                     if block_header.parent_beacon_block_root.is_some() && spec_id == SpecId::CANCUN {
-                        beacon_root_contract_call_levm(store_wrapper.clone(), block_header, spec_id)?;
+                        let report = beacon_root_contract_call_levm(store_wrapper.clone(), block_header, spec_id)?;
+                        block_cache.extend(report.new_state);
                     }
                 }
             }
 
             let mut receipts = Vec::new();
             let mut cumulative_gas_used = 0;
-            let mut block_cache: CacheDB = HashMap::new();
 
             for tx in block.body.transactions.iter() {
                 let report = execute_tx_levm(tx, block_header, store_wrapper.clone(), block_cache.clone(), spec_id).map_err(EvmError::from)?;
@@ -272,7 +273,6 @@ cfg_if::cfg_if! {
             }
 
             let account_updates = get_state_transitions_levm(store, block.header.parent_hash, &block_cache);
-
 
             Ok((receipts, account_updates))
         }
