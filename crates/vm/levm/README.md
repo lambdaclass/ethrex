@@ -64,6 +64,47 @@ make download-evm-ef-tests run-evm-ef-tests QUIET=true
 make revm-comparison
 ```
 
+## LEVM as the backend VM for `ethrex`
+
+This section covers how to run `ethrex`'s Hive tests using LEVM as the backend VM
+
+### Status
+
+> [!NOTE]
+> This is updated as of this README's last update. For the most up-to-date status, please run the tests locally.
+
+**Engine**
+
+- **Cancun**: 192/227 (84.58%)
+- **Paris**: 103/129 (79.84%)
+- **Auth**: 8/8 (100.00%)
+- **Exchange Capabilities**: 5/5 (100.00%)
+- **Shanghai**: 5/36 (13.89%)
+
+**P2P**
+
+- **Discovery V4**: 15/15 (100.00%)
+- **Eth capability**: 13/15 (86.67%)
+- **Snap capability**: 6/6 (100.00%)
+
+**RPC**
+
+- **RPC API Compatibility**: 89/90 (98.89%)
+
+**Sync**
+
+- **Node Syncing**: 2/2 (100.00%)
+- **Total**: 438/533 (82.18%)
+
+### How to run
+
+> [!IMPORTANT]
+> You need to have `go` installed to run the Hive tests.
+
+```
+make run-hive-debug-levm
+```
+
 ## Useful Links
 
 [Ethereum Yellowpaper](https://ethereum.github.io/yellowpaper/paper.pdf) - Formal definition of Ethereum protocol.  
