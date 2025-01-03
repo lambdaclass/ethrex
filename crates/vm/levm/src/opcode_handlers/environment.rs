@@ -1,7 +1,7 @@
 use crate::{
     call_frame::CallFrame,
     errors::{InternalError, OpcodeSuccess, VMError},
-    gas_cost,
+    gas_cost::{self},
     memory::{self, calculate_memory_size},
     vm::{word_to_address, VM},
 };
@@ -21,7 +21,9 @@ impl VM {
 
         let addr = current_call_frame.to; // The recipient of the current call.
 
-        current_call_frame.stack.push(U256::from(addr.as_bytes()))?;
+        current_call_frame
+            .stack
+            .push(U256::from_big_endian(addr.as_bytes()))?;
 
         Ok(OpcodeSuccess::Continue)
     }
@@ -52,7 +54,7 @@ impl VM {
         let origin = self.env.origin;
         current_call_frame
             .stack
-            .push(U256::from(origin.as_bytes()))?;
+            .push(U256::from_big_endian(origin.as_bytes()))?;
 
         Ok(OpcodeSuccess::Continue)
     }
@@ -67,7 +69,7 @@ impl VM {
         let caller = current_call_frame.msg_sender;
         current_call_frame
             .stack
-            .push(U256::from(caller.as_bytes()))?;
+            .push(U256::from_big_endian(caller.as_bytes()))?;
 
         Ok(OpcodeSuccess::Continue)
     }
@@ -293,11 +295,7 @@ impl VM {
     ) -> Result<OpcodeSuccess, VMError> {
         let address = word_to_address(current_call_frame.stack.pop()?);
         let dest_offset = current_call_frame.stack.pop()?;
-        let offset: usize = current_call_frame
-            .stack
-            .pop()?
-            .try_into()
-            .map_err(|_| VMError::VeryLargeNumber)?;
+        let offset = current_call_frame.stack.pop()?;
         let size: usize = current_call_frame
             .stack
             .pop()?
@@ -323,15 +321,20 @@ impl VM {
         }
 
         let mut data = vec![0u8; size];
-        for (i, byte) in account_info
-            .bytecode
-            .iter()
-            .skip(offset)
-            .take(size)
-            .enumerate()
-        {
-            if let Some(data_byte) = data.get_mut(i) {
-                *data_byte = *byte;
+        if offset < account_info.bytecode.len().into() {
+            let offset: usize = offset
+                .try_into()
+                .map_err(|_| VMError::Internal(InternalError::ConversionError))?;
+            for (i, byte) in account_info
+                .bytecode
+                .iter()
+                .skip(offset)
+                .take(size)
+                .enumerate()
+            {
+                if let Some(data_byte) = data.get_mut(i) {
+                    *data_byte = *byte;
+                }
             }
         }
 
@@ -378,16 +381,22 @@ impl VM {
             gas_cost::returndatacopy(new_memory_size, current_call_frame.memory.len(), size)?,
         )?;
 
-        if size == 0 {
+        if size == 0 && returndata_offset == 0 {
             return Ok(OpcodeSuccess::Continue);
         }
 
         let sub_return_data_len = current_call_frame.sub_return_data.len();
 
-        if returndata_offset >= sub_return_data_len {
-            return Err(VMError::VeryLargeNumber); // Maybe can create a new error instead of using this one
+        let copy_limit = returndata_offset
+            .checked_add(size)
+            .ok_or(VMError::VeryLargeNumber)?;
+
+        if copy_limit > sub_return_data_len {
+            return Err(VMError::OutOfBounds);
         }
 
+        // Actually we don't need to fill with zeros for out of bounds bytes, this works but is overkill because of the previous validations.
+        // I would've used copy_from_slice but it can panic.
         let mut data = vec![0u8; size];
         for (i, byte) in current_call_frame
             .sub_return_data
@@ -417,10 +426,14 @@ impl VM {
 
         self.increase_consumed_gas(current_call_frame, gas_cost::extcodehash(address_was_cold)?)?;
 
-        current_call_frame.stack.push(U256::from_big_endian(
-            keccak(account_info.bytecode).as_fixed_bytes(),
-        ))?;
+        // An account is considered empty when it has no code and zero nonce and zero balance. [EIP-161]
+        if account_info.is_empty() {
+            current_call_frame.stack.push(U256::zero())?;
+            return Ok(OpcodeSuccess::Continue);
+        }
 
+        let hash = U256::from_big_endian(keccak(account_info.bytecode).as_fixed_bytes());
+        current_call_frame.stack.push(hash)?;
         Ok(OpcodeSuccess::Continue)
     }
 }

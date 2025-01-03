@@ -94,14 +94,14 @@ pub fn prepare_vm_for_tx(vector: &TestVector, test: &EFTest) -> Result<VM, EFTes
         tx.to.clone(),
         Environment {
             origin: tx.sender,
-            consumed_gas: U256::default(),
-            refunded_gas: U256::default(),
+            refunded_gas: 0,
             gas_limit: tx.gas_limit,
+            spec_id: test.fork(),
             block_number: test.env.current_number,
             coinbase: test.env.current_coinbase,
             timestamp: test.env.current_timestamp,
             prev_randao: test.env.current_random,
-            chain_id: U256::from(1729),
+            chain_id: U256::from(1),
             base_fee_per_gas: test.env.current_base_fee.unwrap_or_default(),
             gas_price: effective_gas_price(test, &tx)?,
             block_excess_blob_gas: test.env.current_excess_blob_gas,
@@ -111,6 +111,7 @@ pub fn prepare_vm_for_tx(vector: &TestVector, test: &EFTest) -> Result<VM, EFTes
             tx_max_fee_per_gas: tx.max_fee_per_gas,
             tx_max_fee_per_blob_gas: tx.max_fee_per_blob_gas,
             block_gas_limit: test.env.current_gas_limit,
+            transient_storage: HashMap::new(),
         },
         tx.value,
         tx.data.clone(),
@@ -140,9 +141,8 @@ pub fn ensure_pre_state(evm: &VM, test: &EFTest) -> Result<(), EFTestRunnerError
             ),
         )?;
         for (k, v) in &pre_value.storage {
-            let mut key_bytes = [0u8; 32];
-            k.to_big_endian(&mut key_bytes);
-            let storage_slot = world_state.get_storage_slot(*address, H256::from_slice(&key_bytes));
+            let storage_slot =
+                world_state.get_storage_slot(*address, H256::from_slice(&k.to_big_endian()));
             ensure_pre_state_condition(
                 &storage_slot == v,
                 format!(
@@ -174,7 +174,7 @@ fn ensure_pre_state_condition(
     Ok(())
 }
 
-// Exceptions not covered: RlpInvalidValue and Type3TxPreFork
+// Exceptions not covered: RlpInvalidValue
 fn exception_is_expected(
     expected_exceptions: Vec<TransactionExpectedException>,
     returned_error: VMError,
@@ -206,6 +206,9 @@ fn exception_is_expected(
             ) | (
                 TransactionExpectedException::GasAllowanceExceeded,
                 VMError::TxValidation(TxValidationError::GasAllowanceExceeded)
+            ) | (
+                TransactionExpectedException::Type3TxPreFork,
+                VMError::TxValidation(TxValidationError::Type3TxPreFork)
             ) | (
                 TransactionExpectedException::Type3TxBlobCountExceeded,
                 VMError::TxValidation(TxValidationError::Type3TxBlobCountExceeded)
@@ -375,13 +378,14 @@ pub fn get_state_transitions(
             added_storage.insert(*key, value.current_value);
             updates += 1;
         }
-        if updates == 0 {
+
+        if updates == 0 && !new_state_account.is_empty() {
             continue;
         }
 
         let account_update = AccountUpdate {
             address: *new_state_account_address,
-            removed: false,
+            removed: new_state_account.is_empty(),
             info: Some(AccountInfo {
                 code_hash: code_hash(&new_state_account.info.bytecode),
                 balance: new_state_account.info.balance,

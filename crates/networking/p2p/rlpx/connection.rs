@@ -6,6 +6,7 @@ use crate::{
         eth::{
             backend,
             blocks::{BlockBodies, BlockHeaders},
+            receipts::Receipts,
             transactions::Transactions,
         },
         handshake::encode_ack_message,
@@ -22,6 +23,7 @@ use crate::{
 
 use super::{
     error::RLPxError,
+    eth::receipts::GetReceipts,
     eth::transactions::GetPooledTransactions,
     frame,
     handshake::{decode_ack_message, decode_auth_message, encode_auth_message},
@@ -378,6 +380,17 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
                     block_bodies: msg_data.fetch_blocks(&self.storage),
                 };
                 self.send(Message::BlockBodies(response)).await?;
+            }
+            Message::GetReceipts(GetReceipts { id, block_hashes }) if peer_supports_eth => {
+                let receipts: Result<_, _> = block_hashes
+                    .iter()
+                    .map(|hash| self.storage.get_receipts_for_block(hash))
+                    .collect();
+                let response = Receipts {
+                    id,
+                    receipts: receipts?,
+                };
+                self.send(Message::Receipts(response)).await?;
             }
             Message::NewPooledTransactionHashes(new_pooled_transaction_hashes)
                 if peer_supports_eth =>

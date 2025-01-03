@@ -20,6 +20,8 @@ pub enum VMError {
     OpcodeNotFound,
     #[error("Invalid Bytecode")]
     InvalidBytecode,
+    #[error("Invalid Contract Prefix")]
+    InvalidContractPrefix,
     #[error("Very Large Number")]
     VeryLargeNumber,
     #[error("Fatal Error")]
@@ -44,8 +46,6 @@ pub enum VMError {
     AddressAlreadyOccupied,
     #[error("Contract Output Too Big")]
     ContractOutputTooBig,
-    #[error("Invalid Initial Byte")]
-    InvalidInitialByte,
     #[error("Gas limit price product overflow")]
     GasLimitPriceProductOverflow,
     #[error("Balance Overflow")]
@@ -71,7 +71,9 @@ pub enum VMError {
     #[error("Transaction validation error: {0}")]
     TxValidation(#[from] TxValidationError),
     #[error("Offset out of bounds")]
-    OutOfOffset,
+    OutOfBounds,
+    #[error("Precompile execution error: {0}")]
+    PrecompileError(#[from] PrecompileError),
 }
 
 impl VMError {
@@ -100,6 +102,8 @@ pub enum TxValidationError {
     InsufficientMaxFeePerGas,
     #[error("Insufficient max fee per blob gas")]
     InsufficientMaxFeePerBlobGas,
+    #[error("Type 3 transactions are not supported before the Cancun fork")]
+    Type3TxPreFork,
     #[error("Type3TxZeroBlobs")]
     Type3TxZeroBlobs,
     #[error("Type3TxInvalidBlobVersionedHash")]
@@ -150,6 +154,8 @@ pub enum InternalError {
     DivisionError,
     #[error("Tried to access last call frame but found none")]
     CouldNotAccessLastCallframe, // Last callframe before execution is the same as the first, but after execution the last callframe is actually the initial CF
+    #[error("Tried to access blobhash but was out of range")]
+    BlobHashOutOfRange,
     #[error("Tried to read from empty code")]
     TriedToIndexEmptyCode,
     #[error("Failed computing CREATE address")]
@@ -168,8 +174,26 @@ pub enum InternalError {
     UtilsError,
     #[error("PC out of bounds")]
     PCOutOfBounds,
+    #[error("Unexpected overflow in gas operation")]
+    GasOverflow,
     #[error("Undefined state: {0}")]
     UndefinedState(i32), // This error is temporarily for things that cause an undefined state.
+    #[error("Invalid precompile address. Tried to execute a precompile that does not exist.")]
+    InvalidPrecompileAddress,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error, Serialize, Deserialize)]
+pub enum PrecompileError {
+    #[error("Error while parsing the calldata")]
+    ParsingInputError,
+    #[error("Error while increasing consumed gas")]
+    GasConsumedOverflow,
+    #[error("There is not enough gas to execute precompiled contract")]
+    NotEnoughGas,
+    #[error("There was an error evaluating the point")]
+    EvaluationError,
+    #[error("This is a default error")]
+    DefaultError,
 }
 
 #[derive(Debug, Clone)]

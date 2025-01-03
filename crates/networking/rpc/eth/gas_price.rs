@@ -41,10 +41,7 @@ impl RpcHandler for GasPrice {
     /// Estimate Gas Price based on already accepted transactions,
     /// as per the spec, this will be returned in wei.
     fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
-        let Some(latest_block_number) = context.storage.get_latest_block_number()? else {
-            error!("FATAL: LATEST BLOCK NUMBER IS MISSING");
-            return Err(RpcErr::Internal("Error calculating gas price".to_string()));
-        };
+        let latest_block_number = context.storage.get_latest_block_number()?;
         let block_range_lower_bound =
             latest_block_number.saturating_sub(BLOCK_RANGE_LOWER_BOUND_DEC);
         // These are the blocks we'll use to estimate the price.
@@ -175,10 +172,10 @@ mod tests {
             value: 100.into(),
             data: Default::default(),
             v: U256::from(0x1b),
-            r: U256::from(hex!(
+            r: U256::from_big_endian(&hex!(
                 "7e09e26678ed4fac08a249ebe8ed680bf9051a5e14ad223e4b2b9d26e0208f37"
             )),
-            s: U256::from(hex!(
+            s: U256::from_big_endian(&hex!(
                 "5f6e3f188e3e6eab7d7d3b6568f5eac7d687b08d307d3154ccd8c87b4630509b"
             )),
         })

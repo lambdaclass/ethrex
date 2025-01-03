@@ -6,6 +6,7 @@ use crate::{
     vm::VM,
 };
 use ethrex_core::U256;
+use revm_primitives::SpecId;
 
 // Push Operations
 // Opcodes: PUSH0, PUSH1 ... PUSH32
@@ -24,7 +25,7 @@ impl VM {
 
         current_call_frame
             .stack
-            .push(U256::from(value_to_push.as_slice()))?;
+            .push(U256::from_big_endian(value_to_push.as_slice()))?;
 
         current_call_frame.increment_pc_by(n_bytes)?;
 
@@ -36,6 +37,11 @@ impl VM {
         &mut self,
         current_call_frame: &mut CallFrame,
     ) -> Result<OpcodeSuccess, VMError> {
+        // [EIP-3855] - PUSH0 is only available from SHANGHAI
+        if self.env.spec_id < SpecId::SHANGHAI {
+            return Err(VMError::InvalidOpcode);
+        }
+
         self.increase_consumed_gas(current_call_frame, gas_cost::PUSH0)?;
 
         current_call_frame.stack.push(U256::zero())?;
