@@ -125,7 +125,7 @@ fn connect_to_prover_server_wr(
 ) -> Result<ProofData, Box<dyn std::error::Error>> {
     let stream = TcpStream::connect(addr)?;
     let buf_writer = BufWriter::new(&stream);
-    debug!("Connection established!");
+    info!("Connection established!");
     serde_json::ser::to_writer(buf_writer, write)?;
     stream.shutdown(std::net::Shutdown::Write)?;
 

@@ -9,7 +9,7 @@ use tracing::{self, debug, error, warn, Level};
 #[tokio::main]
 async fn main() {
     let subscriber = tracing_subscriber::FmtSubscriber::builder()
-        // Hiding debug!() logs.
+        // Hiding info!() logs.
         .with_max_level(Level::INFO)
         .finish();
     if let Err(e) = tracing::subscriber::set_global_default(subscriber) {
@@ -46,6 +46,6 @@ async fn main() {
         }
     };
 
-    debug!("Prover Client has started");
+    info!("Prover Client has started");
     init_client(config, prover_type).await;
 }

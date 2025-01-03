@@ -144,22 +144,22 @@ async fn discover_peers_server(
 
     loop {
         let (read, from) = udp_socket.recv_from(&mut buf).await.unwrap();
-        debug!("Received {read} bytes from {from}");
+        info!("Received {read} bytes from {from}");
 
         let packet = Packet::decode(&buf[..read]);
         if packet.is_err() {
-            debug!("Could not decode packet: {:?}", packet.err().unwrap());
+            info!("Could not decode packet: {:?}", packet.err().unwrap());
             continue;
         }
         let packet = packet.unwrap();
 
         let msg = packet.get_message();
-        debug!("Message: {:?} from {}", msg, packet.get_node_id());
+        info!("Message: {:?} from {}", msg, packet.get_node_id());
 
         match msg {
             Message::Ping(msg) => {
                 if is_expired(msg.expiration) {
-                    debug!("Ignoring ping as it is expired.");
+                    info!("Ignoring ping as it is expired.");
                     continue;
                 };
                 let ping_hash = packet.get_hash();
@@ -205,7 +205,7 @@ async fn discover_peers_server(
             Message::Pong(msg) => {
                 let table = table.clone();
                 if is_expired(msg.expiration) {
-                    debug!("Ignoring pong as it is expired.");
+                    info!("Ignoring pong as it is expired.");
                     continue;
                 }
                 let peer = {
@@ -214,7 +214,7 @@ async fn discover_peers_server(
                 };
                 if let Some(peer) = peer {
                     if peer.last_ping_hash.is_none() {
-                        debug!("Discarding pong as the node did not send a previous ping");
+                        info!("Discarding pong as the node did not send a previous ping");
                         continue;
                     }
                     if peer.last_ping_hash.unwrap() == msg.ping_hash {
@@ -237,17 +237,17 @@ async fn discover_peers_server(
                             .await;
                         });
                     } else {
-                        debug!(
+                        info!(
                             "Discarding pong as the hash did not match the last corresponding ping"
                         );
                     }
                 } else {
-                    debug!("Discarding pong as it is not a known node");
+                    info!("Discarding pong as it is not a known node");
                 }
             }
             Message::FindNode(msg) => {
                 if is_expired(msg.expiration) {
-                    debug!("Ignoring find node msg as it is expired.");
+                    info!("Ignoring find node msg as it is expired.");
                     continue;
                 };
                 let node = {
@@ -262,7 +262,7 @@ async fn discover_peers_server(
                         };
                         let nodes_chunks = nodes.chunks(4);
                         let expiration = get_expiration(20);
-                        debug!("Sending neighbors!");
+                        info!("Sending neighbors!");
                         // we are sending the neighbors in 4 different messages as not to exceed the
                         // maximum packet size
                         for nodes in nodes_chunks {
@@ -275,15 +275,15 @@ async fn discover_peers_server(
                             udp_socket.send_to(&buf, from).await.unwrap();
                         }
                     } else {
-                        debug!("Ignoring find node message as the node isn't proven!");
+                        info!("Ignoring find node message as the node isn't proven!");
                     }
                 } else {
-                    debug!("Ignoring find node message as it is not a known node");
+                    info!("Ignoring find node message as it is not a known node");
                 }
             }
             Message::Neighbors(neighbors_msg) => {
                 if is_expired(neighbors_msg.expiration) {
-                    debug!("Ignoring neighbor msg as it is expired.");
+                    info!("Ignoring neighbor msg as it is expired.");
                     continue;
                 };
 
@@ -292,7 +292,7 @@ async fn discover_peers_server(
                 if let Some(node) = table.get_by_node_id_mut(packet.get_node_id()) {
                     if let Some(req) = &mut node.find_node_request {
                         if time_now_unix().saturating_sub(req.sent_at) >= 60 {
-                            debug!("Ignoring neighbors message as the find_node request expires after one minute");
+                            info!("Ignoring neighbors message as the find_node request expires after one minute");
                             node.find_node_request = None;
                             continue;
                         }
@@ -300,23 +300,23 @@ async fn discover_peers_server(
                         let nodes_sent = req.nodes_sent + nodes.len();
 
                         if nodes_sent <= MAX_NODES_PER_BUCKET {
-                            debug!("Storing neighbors in our table!");
+                            info!("Storing neighbors in our table!");
                             req.nodes_sent = nodes_sent;
                             nodes_to_insert = Some(nodes.clone());
                             if let Some(tx) = &req.tx {
                                 let _ = tx.send(nodes.clone());
                             }
                         } else {
-                            debug!("Ignoring neighbors message as the client sent more than the allowed nodes");
+                            info!("Ignoring neighbors message as the client sent more than the allowed nodes");
                         }
 
                         if nodes_sent == MAX_NODES_PER_BUCKET {
-                            debug!("Neighbors request has been fulfilled");
+                            info!("Neighbors request has been fulfilled");
                             node.find_node_request = None;
                         }
                     }
                 } else {
-                    debug!("Ignoring neighbor msg as it is not a known node");
+                    info!("Ignoring neighbor msg as it is not a known node");
                 }
 
                 if let Some(nodes) = nodes_to_insert {
@@ -396,12 +396,15 @@ async fn peers_revalidation(
 
     loop {
         interval.tick().await;
-        debug!("Running peer revalidation");
+        info!("Running peer revalidation");
 
         // first check that the peers we ping have responded
         for node_id in previously_pinged_peers {
             let mut table = table.lock().await;
-            let peer = table.get_by_node_id_mut(node_id).unwrap();
+            let Some(peer) = table.get_by_node_id_mut(node_id) else {
+                continue;
+            };
+            
 
             if let Some(has_answered) = peer.revalidation {
                 if has_answered {
@@ -445,10 +448,10 @@ async fn peers_revalidation(
             table.update_peer_ping_with_revalidation(peer.node.node_id, ping_hash);
             previously_pinged_peers.insert(peer.node.node_id);
 
-            debug!("Pinging peer {:?} to re-validate!", peer.node.node_id);
+            info!("Pinging peer {:?} to re-validate!", peer.node.node_id);
         }
 
-        debug!("Peer revalidation finished");
+        info!("Peer revalidation finished");
     }
 }
 
@@ -488,7 +491,7 @@ async fn peers_lookup(
         // so as soon as the server starts we'll do a lookup with the seeder nodes.
         interval.tick().await;
 
-        debug!("Starting lookup");
+        info!("Starting lookup");
 
         let mut handlers = vec![];
 
@@ -517,7 +520,7 @@ async fn peers_lookup(
             let _ = try_join!(handle);
         }
 
-        debug!("Lookup finished");
+        info!("Lookup finished");
     }
 }
 
@@ -801,7 +804,7 @@ async fn handle_peer_as_initiator(
     table: Arc<Mutex<KademliaTable>>,
     connection_broadcast: broadcast::Sender<(tokio::task::Id, Arc<RLPxMessage>)>,
 ) {
-    debug!("Trying RLPx connection with {node:?}");
+    info!("Trying RLPx connection with {node:?}");
     let stream = TcpSocket::new_v4()
         .unwrap()
         .connect(SocketAddr::new(node.ip, node.tcp_port))

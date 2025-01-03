@@ -131,6 +131,7 @@ impl RLPxMessage for DisconnectMessage {
         let decompressed_data = snappy_decompress(msg_data)?;
         // It seems that disconnect reason can be encoded in different ways:
         // TODO: it may be not compressed at all. We should check that case
+        dbg!(&decompressed_data);
         let reason = match decompressed_data.len() {
             0 => None,
             // As a single u8

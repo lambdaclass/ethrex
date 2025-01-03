@@ -71,7 +71,7 @@ impl PeerChannels {
             skip: 0,
             reverse: false,
         });
-        self.sender.send(request).await.ok()?;
+        self.sender.send(request).await.unwrap();
         let mut receiver = self.receiver.lock().await;
         let block_headers = tokio::time::timeout(PEER_REPLY_TIMOUT, async move {
             loop {
@@ -87,8 +87,9 @@ impl PeerChannels {
                 }
             }
         })
-        .await
-        .ok()??;
+        .await;
+    tracing::info!("BlockHeadersRequest Response: {block_headers:?}");
+    let block_headers = block_headers.ok()??;
         (!block_headers.is_empty()).then_some(block_headers)
     }
 

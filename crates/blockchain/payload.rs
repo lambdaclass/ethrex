@@ -29,7 +29,7 @@ use crate::{
     mempool::{self, PendingTxFilter},
 };
 
-use tracing::debug;
+use tracing::{debug, info};
 
 pub struct BuildPayloadArgs {
     pub parent: BlockHash,
@@ -204,7 +204,7 @@ pub fn build_payload(
     payload: &mut Block,
     store: &Store,
 ) -> Result<(BlobsBundle, U256), ChainError> {
-    debug!("Building payload");
+    info!("Building payload");
     let mut evm_state = evm_state(store.clone(), payload.header.parent_hash);
     let mut context = PayloadBuildContext::new(payload, &mut evm_state);
     apply_withdrawals(&mut context)?;
@@ -264,20 +264,20 @@ fn fetch_mempool_transactions(
 /// Returns the block value
 pub fn fill_transactions(context: &mut PayloadBuildContext) -> Result<(), ChainError> {
     let chain_config = context.chain_config()?;
-    debug!("Fetching transactions from mempool");
+    info!("Fetching transactions from mempool");
     // Fetch mempool transactions
     let (mut plain_txs, mut blob_txs) = fetch_mempool_transactions(context)?;
     // Execute and add transactions to payload (if suitable)
     loop {
         // Check if we have enough gas to run more transactions
         if context.remaining_gas < TX_GAS_COST {
-            debug!("No more gas to run transactions");
+            info!("No more gas to run transactions");
             break;
         };
         if !blob_txs.is_empty()
             && context.blobs_bundle.blobs.len() as u64 * GAS_PER_BLOB >= MAX_BLOB_GAS_PER_BLOCK
         {
-            debug!("No more blob gas to run blob transactions");
+            info!("No more blob gas to run blob transactions");
             blob_txs.clear();
         }
         // Fetch the next transactions
@@ -297,7 +297,7 @@ pub fn fill_transactions(context: &mut PayloadBuildContext) -> Result<(), ChainE
 
         // Check if we have enough gas to run the transaction
         if context.remaining_gas < head_tx.tx.gas_limit() {
-            debug!(
+            info!(
                 "Skipping transaction: {}, no gas left",
                 head_tx.tx.compute_hash()
             );
@@ -313,7 +313,7 @@ pub fn fill_transactions(context: &mut PayloadBuildContext) -> Result<(), ChainE
         if head_tx.tx.protected() && !chain_config.is_eip155_activated(context.block_number()) {
             // Ignore replay protected tx & all txs from the sender
             // Pull transaction from the mempool
-            debug!("Ignoring replay-protected transaction: {}", tx_hash);
+            info!("Ignoring replay-protected transaction: {}", tx_hash);
             txs.pop();
             mempool::remove_transaction(
                 &head_tx.tx.compute_hash(),
@@ -338,13 +338,13 @@ pub fn fill_transactions(context: &mut PayloadBuildContext) -> Result<(), ChainE
             }
             // Ignore following txs from sender
             Err(e) => {
-                debug!("Failed to execute transaction: {}, {e}", tx_hash);
+                info!("Failed to execute transaction: {}, {e}", tx_hash);
                 txs.pop();
                 continue;
             }
         };
         // Add transaction to block
-        debug!("Adding transaction: {} to payload", tx_hash);
+        info!("Adding transaction: {} to payload", tx_hash);
         context.payload.body.transactions.push(head_tx.into());
         // Save receipt for hash calculation
         context.receipts.push(receipt);

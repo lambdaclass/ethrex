@@ -101,10 +101,10 @@ impl SyncManager {
         let mut all_block_hashes = vec![];
         loop {
             let peer = self.peers.lock().await.get_peer_channels().await;
-            debug!("Requesting Block Headers from {current_head}");
+            info!("Requesting Block Headers from {current_head}");
             // Request Block Headers from Peer
             if let Some(block_headers) = peer.request_block_headers(current_head).await {
-                debug!("Received {} block headers", block_headers.len());
+                info!("Received {} block headers", block_headers.len());
                 let block_hashes = block_headers
                     .iter()
                     .map(|header| header.compute_block_hash())
@@ -122,6 +122,8 @@ impl SyncManager {
                     // No more headers to request
                     break;
                 }
+            } else {
+                info!("Failed to receive headers");
             }
         }
         // We finished fetching all headers, now we can process them
@@ -209,10 +211,10 @@ async fn download_and_run_blocks(
 ) -> Result<(), ChainError> {
     loop {
         let peer = peers.lock().await.get_peer_channels().await;
-        debug!("Requesting Block Bodies ");
+        info!("Requesting Block Bodies ");
         if let Some(block_bodies) = peer.request_block_bodies(block_hashes.clone()).await {
             let block_bodies_len = block_bodies.len();
-            debug!("Received {} Block Bodies", block_bodies_len);
+            info!("Received {} Block Bodies", block_bodies_len);
             // Execute and store blocks
             for body in block_bodies.into_iter() {
                 // We already validated that there are no more block bodies than the ones requested
@@ -227,7 +229,7 @@ async fn download_and_run_blocks(
                 store.set_canonical_block(number, hash)?;
                 store.update_latest_block_number(number)?;
             }
-            debug!("Executed & stored {} blocks", block_bodies_len);
+            info!("Executed & stored {} blocks", block_bodies_len);
             // Check if we need to ask for another batch
             if block_hashes.is_empty() {
                 break;
@@ -245,9 +247,9 @@ async fn fetch_block_bodies(
     let mut all_block_bodies = Vec::new();
     loop {
         let peer = peers.lock().await.get_peer_channels().await;
-        debug!("Requesting Block Headers ");
+        info!("Requesting Block Headers ");
         if let Some(block_bodies) = peer.request_block_bodies(block_hashes.clone()).await {
-            debug!(" Received {} Block Bodies", block_bodies.len());
+            info!(" Received {} Block Bodies", block_bodies.len());
             // Track which bodies we have already fetched
             block_hashes.drain(0..block_bodies.len());
             all_block_bodies.extend(block_bodies);
@@ -268,9 +270,9 @@ async fn store_receipts(
 ) -> Result<(), SyncError> {
     loop {
         let peer = peers.lock().await.get_peer_channels().await;
-        debug!("Requesting Block Headers ");
+        info!("Requesting Block Headers ");
         if let Some(receipts) = peer.request_receipts(block_hashes.clone()).await {
-            debug!(" Received {} Receipts", receipts.len());
+            info!(" Received {} Receipts", receipts.len());
             // Track which blocks we have already fetched receipts for
             for (block_hash, receipts) in block_hashes.drain(0..receipts.len()).zip(receipts) {
                 store.add_receipts(block_hash, receipts)?;
@@ -313,7 +315,7 @@ async fn rebuild_state_trie(
     // If we reached the maximum amount of retries then it means the state we are requesting is probably old and no longer available
     for _ in 0..MAX_RETRIES {
         let peer = peers.clone().lock().await.get_peer_channels().await;
-        debug!("Requesting Account Range for state root {state_root}, starting hash: {start_account_hash}");
+        info!("Requesting Account Range for state root {state_root}, starting hash: {start_account_hash}");
         if let Some((account_hashes, accounts, should_continue)) = peer
             .request_account_range(state_root, start_account_hash)
             .await
@@ -368,7 +370,7 @@ async fn rebuild_state_trie(
     storage_sender.send(vec![]).await?;
     storage_fetcher_handle.await??;
     let sync_complete = if current_state_root == state_root {
-        debug!("Completed state sync for state root {state_root}");
+        info!("Completed state sync for state root {state_root}");
         true
     } else {
         // Perform state healing to fix any potential inconsistency in the rebuilt tries
@@ -422,7 +424,7 @@ async fn fetch_bytecode_batch(
     loop {
         let peer = peers.lock().await.get_peer_channels().await;
         if let Some(bytecodes) = peer.request_bytecodes(batch.clone()).await {
-            debug!("Received {} bytecodes", bytecodes.len());
+            info!("Received {} bytecodes", bytecodes.len());
             // Store the bytecodes
             for code in bytecodes.into_iter() {
                 store.add_account_code(batch.remove(0), code)?;
@@ -484,7 +486,7 @@ async fn fetch_storage_batch(
             .request_storage_ranges(state_root, batch_roots, batch_hahses, H256::zero())
             .await
         {
-            debug!("Received {} storage ranges", keys.len());
+            info!("Received {} storage ranges", keys.len());
             let mut _last_range;
             // Hold on to the last batch (if incomplete)
             if incomplete {
@@ -655,7 +657,7 @@ async fn heal_storage_batch(
             .request_storage_trienodes(state_root, batch.clone())
             .await
         {
-            debug!("Received {} nodes", nodes.len());
+            info!("Received {} nodes", nodes.len());
             // Process the nodes for each account path
             for (acc_path, paths) in batch.iter_mut() {
                 let mut trie = store.open_storage_trie(*acc_path, *EMPTY_TRIE_HASH);

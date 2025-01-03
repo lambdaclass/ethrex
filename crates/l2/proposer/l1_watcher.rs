@@ -116,14 +116,14 @@ impl L1Watcher {
     pub async fn get_logs(&mut self) -> Result<Vec<RpcLog>, L1WatcherError> {
         let current_block = self.eth_client.get_block_number().await?;
 
-        debug!(
+        info!(
             "Current block number: {} ({:#x})",
             current_block, current_block
         );
 
         let new_last_block = min(self.last_block_fetched + self.max_block_step, current_block);
 
-        debug!(
+        info!(
             "Looking logs from block {:#x} to {:#x}",
             self.last_block_fetched, new_last_block
         );
@@ -149,7 +149,7 @@ impl L1Watcher {
             }
         };
 
-        debug!("Logs: {:#?}", logs);
+        info!("Logs: {:#?}", logs);
 
         // If we have an error adding the tx to the mempool we may assign it to the next
         // block to fetch, but we may lose a deposit tx.

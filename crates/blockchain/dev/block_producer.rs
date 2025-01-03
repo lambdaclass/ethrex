@@ -20,7 +20,7 @@ pub async fn start_block_producer(
     let mut tries = 0;
     while tries < max_tries {
         tracing::info!("Producing block");
-        tracing::debug!("Head block hash: {head_block_hash:#x}");
+        tracing::info!("Head block hash: {head_block_hash:#x}");
         let fork_choice_state = ForkChoiceState {
             head_block_hash,
             safe_block_hash: head_block_hash,
@@ -39,7 +39,7 @@ pub async fn start_block_producer(
             .await
         {
             Ok(response) => {
-                tracing::debug!("ForkChoiceV3 response: {response:?}");
+                tracing::info!("ForkChoiceV3 response: {response:?}");
                 response
             }
             Err(error) => {
@@ -56,7 +56,7 @@ pub async fn start_block_producer(
         let execution_payload_response = match engine_client.engine_get_payload_v3(payload_id).await
         {
             Ok(response) => {
-                tracing::debug!("GetPayloadV3 response: {response:?}");
+                tracing::info!("GetPayloadV3 response: {response:?}");
                 response
             }
             Err(error) => {
@@ -89,7 +89,7 @@ pub async fn start_block_producer(
             .await
         {
             Ok(response) => {
-                tracing::debug!("NewPayloadV3 response: {response:?}");
+                tracing::info!("NewPayloadV3 response: {response:?}");
                 response
             }
             Err(error) => {

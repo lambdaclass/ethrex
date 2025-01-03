@@ -352,7 +352,7 @@ impl ProverServer {
         for stream in listener.incoming() {
             match stream {
                 Ok(stream) => {
-                    debug!("Connection established!");
+                    info!("Connection established!");
 
                     if let Ok(()) = rx.try_recv() {
                         info!("Shutting down Prover Server");
@@ -412,7 +412,7 @@ impl ProverServer {
             }
         }
 
-        debug!("Connection closed");
+        info!("Connection closed");
         Ok(())
     }
 
@@ -421,7 +421,7 @@ impl ProverServer {
         stream: &TcpStream,
         block_number: u64,
     ) -> Result<(), ProverServerError> {
-        debug!("Request received");
+        info!("Request received");
 
         let latest_block_number = self.store.get_latest_block_number()?;
 
@@ -446,7 +446,7 @@ impl ProverServer {
         stream: &mut TcpStream,
         block_number: u64,
     ) -> Result<(), ProverServerError> {
-        debug!("Submit received for BlockNumber: {block_number}");
+        info!("Submit received for BlockNumber: {block_number}");
 
         let response = ProofData::submit_ack(block_number);
         let json_string = serde_json::to_string(&response)
@@ -477,7 +477,7 @@ impl ProverServer {
             .get_block_header_by_hash(block.header.parent_hash)?
             .ok_or(ProverServerError::StorageDataIsNone)?;
 
-        debug!("Created prover input for block {block_number}");
+        info!("Created prover input for block {block_number}");
 
         Ok(ProverInputData {
             db,
@@ -507,7 +507,7 @@ impl ProverServer {
             }
         };
 
-        debug!("Sending proof for {block_number}");
+        info!("Sending proof for {block_number}");
 
         let calldata_values = vec![
             Value::Uint(U256::from(block_number)),
@@ -564,12 +564,12 @@ impl ProverServer {
             .await?;
 
             if last_committed_block == u64::MAX {
-                debug!("No blocks commited yet");
+                info!("No blocks commited yet");
                 continue;
             }
 
             if last_committed_block == last_verified_block {
-                debug!("No new blocks to prove");
+                info!("No new blocks to prove");
                 continue;
             }
 
