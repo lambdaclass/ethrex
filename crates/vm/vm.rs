@@ -89,6 +89,8 @@ cfg_if::cfg_if! {
         use std::{collections::HashMap, sync::Arc};
         use ethrex_core::types::code_hash;
 
+        /// Calls the eip4788 beacon block root system call contract
+        /// More info on https://eips.ethereum.org/EIPS/eip-4788
         pub fn beacon_root_contract_call_levm(
             store_wrapper: Arc<StoreWrapper>,
             block_header: &BlockHeader,
