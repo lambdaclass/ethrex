@@ -31,8 +31,4 @@ jobs:
       - name: Run PR benchmarks
         run: |
           cd crates/vm/levm
-          make revm-comparison > result_pr.txt
-
-      - name: Print results
-        run: |
-          cat result_pr.txt
+          make revm-comparison
