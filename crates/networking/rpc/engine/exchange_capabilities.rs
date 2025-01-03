@@ -47,6 +47,6 @@ impl RpcHandler for ExchangeCapabilitiesRequest {
             .map(|s| s.to_string())
             .collect();
 
-        Ok(json!(supported))
+        Ok(json!(SUPPORTED_CAPABILITIES))
     }
 }
