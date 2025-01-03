@@ -1,0 +1,6 @@
+[package]
+name = "hive_comparison"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]

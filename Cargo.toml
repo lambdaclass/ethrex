@@ -20,7 +20,7 @@ members = [
     "crates/l2/prover",
     "crates/l2/contracts",
     "crates/l2/sdk",
-    "cmd/loc",
+    "cmd/loc", "cmd/hive_comparison",
 ]
 resolver = "2"
 
