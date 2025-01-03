@@ -162,6 +162,7 @@ impl GetPooledTransactions {
     }
 
     pub fn handle(&self, store: &Store) -> Result<PooledTransactions, StoreError> {
+        // TODO(#1615): get transactions in batch instead of iterating over them.
         let txs = self
             .transaction_hashes
             .iter()
@@ -174,7 +175,6 @@ impl GetPooledTransactions {
             .flatten()
             .collect();
 
-        // TODO: add getting of the blob bundle, as we'll implement this as a p2p transaction.
         Ok(PooledTransactions {
             id: self.id,
             pooled_transactions: txs,
@@ -201,7 +201,7 @@ impl GetPooledTransactions {
                     )));
                 };
 
-                P2PTransaction::WrappedEIP4844Transaction(WrappedEIP4844Transaction {
+                P2PTransaction::EIP4844TransactionWithBlobs(WrappedEIP4844Transaction {
                     tx: itx,
                     blobs_bundle: bundle,
                 })
@@ -256,13 +256,12 @@ impl PooledTransactions {
     }
 
     /// Saves every incoming pooled transaction to the mempool.
-    pub fn handle(&self, store: &Store) -> Result<(), MempoolError> {
-        for tx in &self.pooled_transactions {
-            if let P2PTransaction::WrappedEIP4844Transaction(itx) = tx.clone() {
+    pub fn handle(self, store: &Store) -> Result<(), MempoolError> {
+        for tx in self.pooled_transactions {
+            if let P2PTransaction::EIP4844TransactionWithBlobs(itx) = tx {
                 mempool::add_blob_transaction(itx.tx, itx.blobs_bundle, store)?;
             } else {
                 let regular_tx = tx
-                    .clone()
                     .try_into()
                     .map_err(|error| MempoolError::StoreError(StoreError::Custom(error)))?;
                 mempool::add_transaction(regular_tx, store)?;

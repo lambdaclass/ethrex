@@ -403,7 +403,6 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
                 let request = GetPooledTransactions::new(random(), hashes);
                 self.send(Message::GetPooledTransactions(request)).await?;
             }
-            // TODO: Also add handler for get pooled transactions.
             Message::GetPooledTransactions(msg) => {
                 let response = msg.handle(&self.storage)?;
                 self.send(Message::PooledTransactions(response)).await?;
