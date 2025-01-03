@@ -123,7 +123,7 @@ cfg_if::cfg_if! {
                 block_blob_gas_used: block_header.blob_gas_used.map(U256::from),
                 block_gas_limit: 30_000_000,
                 transient_storage: HashMap::new(),
-                spec_id: spec_id,
+                spec_id,
                 ..Default::default()
             };
 
