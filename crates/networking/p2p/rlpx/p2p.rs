@@ -127,6 +127,7 @@ impl RLPxMessage for DisconnectMessage {
     }
 
     fn decode(msg_data: &[u8]) -> Result<Self, RLPDecodeError> {
+        dbg!(msg_data);
         // decode disconnect message: [reason (optional)]
         let decompressed_data = snappy_decompress(msg_data)?;
         // It seems that disconnect reason can be encoded in different ways:
