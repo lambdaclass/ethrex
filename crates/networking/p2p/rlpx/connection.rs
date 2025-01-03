@@ -279,7 +279,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
                 tokio::select! {
                     // TODO check if this is cancel safe, and fix it if not.
                     message = self.receive() => {
-                        self.handle_message(message.unwrap(), sender.clone()).await.unwrap();
+                        self.handle_message(message.unwrap(), sender.clone()).await?;
                     }
                     // This is not ideal, but using the receiver without
                     // this function call, causes the loop to take ownwership
@@ -364,7 +364,8 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
             // TODO(#1129) Add the transaction to the mempool once received.
             Message::Transactions(txs) if peer_supports_eth => {
                 for tx in &txs.transactions {
-                    mempool::add_transaction(tx.clone(), &self.storage)?;
+                    // TODO: should we really cut off the execution loop just because of this?
+                    mempool::add_transaction(tx.clone(), &self.storage);
                 }
                 self.broadcast_message(Message::Transactions(txs)).await?;
             }
