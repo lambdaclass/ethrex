@@ -12,7 +12,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout PR
-        uses: actions/checkout@v2
+        uses: actions/checkout@v4
         with:
           ref: ${{ github.head_ref }}
 
@@ -32,20 +32,24 @@ jobs:
       - name: Run PR benchmarks
         run: |
           cd crates/vm/levm
-          make revm-comparison > pr_result.md
+          make revm-comparison > pr_raw_result.md
+
+      - name: Parse PR benchmark results
+        run: |
+          bash .github/scripts/format_benchmark.sh crates/vm/levm/pr_raw_result.md pr_parsed_result.md
 
       - name: Upload PR results
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: pr-result
-          path: crates/vm/levm/pr_result.md
+          path: pr_parsed_result.md
 
   benchmark-main:
     name: Benchmark for Main
     runs-on: ubuntu-latest
     steps:
       - name: Checkout main branch
-        uses: actions/checkout@v2
+        uses: actions/checkout@v4
         with:
           ref: main
 
@@ -65,13 +69,17 @@ jobs:
       - name: Run Main benchmarks
         run: |
           cd crates/vm/levm
-          make revm-comparison > main_result.md
+          make revm-comparison > main_raw_result.md
+
+      - name: Parse Main benchmark results
+        run: |
+          bash .github/scripts/format_benchmark.sh crates/vm/levm/main_raw_result.md main_parsed_result.md
 
       - name: Upload Main results
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: main-result
-          path: crates/vm/levm/main_result.md
+          path: main_parsed_result.md
 
   combine-results:
     name: Combine Benchmark Results
@@ -79,13 +87,13 @@ jobs:
     needs: [benchmark-pr, benchmark-main]
     steps:
       - name: Download PR results
-        uses: actions/download-artifact@v3
+        uses: actions/download-artifact@v4
         with:
           name: pr-result
           path: .
 
       - name: Download Main results
-        uses: actions/download-artifact@v3
+        uses: actions/download-artifact@v4
         with:
           name: main-result
           path: .
@@ -94,13 +102,10 @@ jobs:
         run: |
           echo "### Benchmark Results Comparison" > combined_result.md
           echo "#### PR Benchmark Results:" >> combined_result.md
-          echo '```' >> combined_result.md
-          cat pr_result.md >> combined_result.md
-          echo '```' >> combined_result.md
+          cat pr_parsed_result.md >> combined_result.md
+          echo >> combined_result.md
           echo "#### Main Benchmark Results:" >> combined_result.md
-          echo '```' >> combined_result.md
-          cat main_result.md >> combined_result.md
-          echo '```' >> combined_result.md
+          cat main_parsed_result.md >> combined_result.md
 
       - name: Find comment
         uses: peter-evans/find-comment@v2
@@ -108,7 +113,7 @@ jobs:
         with:
           issue-number: ${{ github.event.pull_request.number }}
           comment-author: "github-actions[bot]"
-          body-includes: "make build-revm-comparison"
+          body-includes: "Benchmark Results Comparison"
 
       - name: Create or update comment
         if: steps.fc.outputs.comment-id != ''
