@@ -187,7 +187,7 @@ cfg_if::cfg_if! {
                 let mut updated_storage = HashMap::new();
                 for (key, storage_slot) in &new_state_account.storage {
                     // original_value in storage_slot is not the original_value on the DB, be careful.
-                    let original_value = initial_state.get_storage_at_hash(block_hash, *new_state_account_address, *key).unwrap().unwrap_or_default(); // Option inside result, I guess I have to assume it is zero.
+                    let original_value = initial_state.get_storage_at_hash(block_hash, *new_state_account_address, *key).expect("Error when trying to access the storage slot of an account in the database").unwrap_or_default(); // Option inside result, I guess I have to assume it is zero.
 
                     if original_value != storage_slot.current_value {
                         updated_storage.insert(*key, storage_slot.current_value);
