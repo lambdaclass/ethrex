@@ -3461,9 +3461,9 @@ fn logs_from_multiple_callers() {
     .unwrap();
 
     let mut current_call_frame = vm.call_frames.pop().unwrap();
-    vm.execute(&mut current_call_frame).unwrap();
+    let report = vm.execute(&mut current_call_frame).unwrap();
 
-    assert_eq!(current_call_frame.logs.len(), 2)
+    assert_eq!(report.logs.len(), 2)
 }
 
 // #[test]
