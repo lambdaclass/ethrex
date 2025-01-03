@@ -31,4 +31,10 @@ jobs:
       - name: Run PR benchmarks
         run: |
           cd crates/vm/levm
-          make revm-comparison
+          make revm-comparison > result_pr.txt
+
+      - name: Create comment
+        uses: peter-evans/create-or-update-comment@v3
+        with:
+          issue-number: ${{ github.event.pull_request.number }}
+          body-path: result_pr.txt
