@@ -31,14 +31,17 @@ jobs:
       - name: Run PR benchmarks
         run: |
           cd crates/vm/levm
-          make revm-comparison > result_pr.txt
+          make revm-comparison > result.md
 
-      - name: Print the result
+      - name: Format results for comment
         run: |
-          cat crates/vm/levm/result_pr.txt
+          echo '```' > formatted_result.md
+          cat crates/vm/levm/result.md >> formatted_result.md
+          echo '```' >> formatted_result.md
+          mv formatted_result.md crates/vm/levm/result.md
 
       - name: Create comment
         uses: peter-evans/create-or-update-comment@v3
         with:
           issue-number: ${{ github.event.pull_request.number }}
-          body-path: crates/vm/levm/result_pr.txt
+          body-path: crates/vm/levm/result.md
