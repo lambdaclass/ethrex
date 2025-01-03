@@ -111,6 +111,7 @@ impl DisconnectMessage {
     }
 
     /// Returns the meaning of the disconnect reason's error code
+    /// The meaning of each error code is defined by the spec: https://github.com/ethereum/devp2p/blob/master/rlpx.md#disconnect-0x01
     pub fn reason(&self) -> &str {
         if let Some(reason) = self.reason {
             match reason {
