@@ -124,7 +124,7 @@ pub(crate) async fn read<S: AsyncRead + std::marker::Unpin>(
             .map_err(|_| RLPxError::CryptographyError("Invalid header mac".to_owned()))?,
     );
 
-    if header_mac !=  expected_header_mac.0 {
+    if header_mac != expected_header_mac.0 {
         warn!("Mismatched mac");
     }
 

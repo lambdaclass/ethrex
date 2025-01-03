@@ -294,7 +294,7 @@ impl KademliaTable {
         &'a self,
         filter: &'a dyn Fn(&'a PeerData) -> bool,
     ) -> Option<&'a PeerData> {
-        let peer_idx = rand::random::<usize>() % self.filter_peers(filter).count();
+        let peer_idx = rand::random::<usize>().rem_euclid(self.filter_peers(filter).count());
         self.filter_peers(filter).nth(peer_idx)
     }
 
@@ -319,6 +319,17 @@ impl KademliaTable {
             // This is the unlikely case where we just started the node and don't have peers, wait a bit and try again
             tokio::time::sleep(tokio::time::Duration::from_secs(10)).await;
         }
+    }
+
+    pub fn show_peer_stats(&self) {
+        let total_peers = self.iter_peers().count();
+        let active_filter = |peer: &PeerData| -> bool {
+            peer.channels
+                .as_ref()
+                .is_some_and(|ch| !ch.sender.is_closed())
+        };
+        let active_peers = self.filter_peers(&active_filter).count();
+        info!("Active Peers / Total Peers: {active_peers} / {total_peers}")
     }
 }
 

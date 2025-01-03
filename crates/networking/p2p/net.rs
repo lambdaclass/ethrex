@@ -772,6 +772,7 @@ async fn serve_requests(
     tcp_socket.bind(tcp_addr).unwrap();
     let listener = tcp_socket.listen(50).unwrap();
     loop {
+        table.lock().await.show_peer_stats();
         let (stream, _peer_addr) = listener.accept().await.unwrap();
 
         tokio::spawn(handle_peer_as_receiver(
