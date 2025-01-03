@@ -22,9 +22,6 @@ use crate::rlpx::{
 pub(crate) struct Transactions {
     pub(crate) transactions: Vec<Transaction>,
 }
-// TODO(#1132): Also limit transactions by message byte-size.
-// Limit taken from here: https://github.com/ethereum/go-ethereum/blob/df182a742cec68adcc034d4747afa5182fc75ca3/eth/fetcher/tx_fetcher.go#L49
-pub const TRANSACTION_LIMIT: usize = 256;
 
 impl Transactions {
     pub fn new(transactions: Vec<Transaction>) -> Self {
