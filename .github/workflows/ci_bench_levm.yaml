@@ -48,13 +48,7 @@ jobs:
           comment-author: "github-actions[bot]"
           body-includes: "make build-revm-comparison"
 
-      - name: Create comment
-        uses: peter-evans/create-or-update-comment@v3
-        with:
-          issue-number: ${{ github.event.pull_request.number }}
-          body-path: crates/vm/levm/result.md
-
-      - name: Update comment
+      - name: Create or update comment
         if: steps.fc.outputs.comment-id != ''
         uses: peter-evans/create-or-update-comment@v3
         with:
