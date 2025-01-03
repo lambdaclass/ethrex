@@ -25,7 +25,7 @@ impl VM {
 
         current_call_frame
             .stack
-            .push(U256::from(value_to_push.as_slice()))?;
+            .push(U256::from_big_endian(value_to_push.as_slice()))?;
 
         current_call_frame.increment_pc_by(n_bytes)?;
 

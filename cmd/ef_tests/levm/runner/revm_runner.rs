@@ -310,13 +310,11 @@ pub fn compare_levm_revm_account_updates(
                 .storage
                 .iter()
                 .map(|(key, value)| {
-                    let mut temp = [0u8; 32];
-                    key.to_big_endian(&mut temp);
                     let storage_slot = StorageSlot {
                         original_value: *value,
                         current_value: *value,
                     };
-                    (H256::from_slice(&temp), storage_slot)
+                    (H256::from_slice(&key.to_big_endian()), storage_slot)
                 })
                 .collect();
             let account = Account::new(

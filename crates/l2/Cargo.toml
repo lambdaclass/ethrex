@@ -24,7 +24,7 @@ hex.workspace = true
 bytes.workspace = true
 jsonwebtoken.workspace = true
 secp256k1.workspace = true
-keccak-hash = "0.10.0"
+keccak-hash.workspace = true
 envy = "0.4.2"
 thiserror.workspace = true
 zkvm_interface = { path = "./prover/zkvm/interface/", default-features = false }

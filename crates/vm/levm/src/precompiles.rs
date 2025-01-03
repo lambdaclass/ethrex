@@ -184,10 +184,7 @@ pub fn ecrecover(
         return Ok(Bytes::new());
     };
 
-    let v: U256 = calldata
-        .get(32..64)
-        .ok_or(InternalError::SlicingError)?
-        .into();
+    let v = U256::from_big_endian(calldata.get(32..64).ok_or(InternalError::SlicingError)?);
 
     // The Recovery identifier is expected to be 27 or 28, any other value is invalid
     if !(v == U256::from(27) || v == U256::from(28)) {
@@ -277,20 +274,23 @@ pub fn modexp(
     // If calldata does not reach the required length, we should fill the rest with zeros
     let calldata = fill_with_zeros(calldata, 96)?;
 
-    let b_size: U256 = calldata
-        .get(0..32)
-        .ok_or(PrecompileError::ParsingInputError)?
-        .into();
+    let b_size = U256::from_big_endian(
+        calldata
+            .get(0..32)
+            .ok_or(PrecompileError::ParsingInputError)?,
+    );
 
-    let e_size: U256 = calldata
-        .get(32..64)
-        .ok_or(PrecompileError::ParsingInputError)?
-        .into();
+    let e_size = U256::from_big_endian(
+        calldata
+            .get(32..64)
+            .ok_or(PrecompileError::ParsingInputError)?,
+    );
 
-    let m_size: U256 = calldata
-        .get(64..96)
-        .ok_or(PrecompileError::ParsingInputError)?
-        .into();
+    let m_size = U256::from_big_endian(
+        calldata
+            .get(64..96)
+            .ok_or(PrecompileError::ParsingInputError)?,
+    );
 
     if b_size == U256::zero() && m_size == U256::zero() {
         increase_precompile_consumed_gas(gas_for_call, MODEXP_STATIC_COST, consumed_gas)?;
@@ -870,10 +870,7 @@ pub fn blake2f(
         return Err(VMError::PrecompileError(PrecompileError::ParsingInputError));
     }
 
-    let rounds: U256 = calldata
-        .get(0..4)
-        .ok_or(InternalError::SlicingError)?
-        .into();
+    let rounds = U256::from_big_endian(calldata.get(0..4).ok_or(InternalError::SlicingError)?);
 
     let rounds: usize = rounds
         .try_into()

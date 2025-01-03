@@ -106,17 +106,13 @@ impl StateDiff {
 
         for withdrawal in self.withdrawal_logs.iter() {
             encoded.extend(withdrawal.address.0);
-            let buf = &mut [0u8; 32];
-            withdrawal.amount.to_big_endian(buf);
-            encoded.extend_from_slice(buf);
+            encoded.extend_from_slice(&withdrawal.amount.to_big_endian());
             encoded.extend(&withdrawal.tx_hash.0);
         }
 
         for deposit in self.deposit_logs.iter() {
             encoded.extend(deposit.address.0);
-            let buf = &mut [0u8; 32];
-            deposit.amount.to_big_endian(buf);
-            encoded.extend_from_slice(buf);
+            encoded.extend_from_slice(&deposit.amount.to_big_endian());
         }
 
         Ok(Bytes::from(encoded))
@@ -139,9 +135,7 @@ impl AccountStateDiff {
         if let Some(new_balance) = self.new_balance {
             let r_type: u8 = AccountStateDiffType::NewBalance.into();
             r#type += r_type;
-            let buf = &mut [0u8; 32];
-            new_balance.to_big_endian(buf);
-            encoded.extend_from_slice(buf);
+            encoded.extend_from_slice(&new_balance.to_big_endian());
         }
 
         if self.nonce_diff != 0 {
@@ -161,9 +155,7 @@ impl AccountStateDiff {
             encoded.extend(storage_len.to_be_bytes());
             for (key, value) in &self.storage {
                 encoded.extend_from_slice(&key.0);
-                let buf = &mut [0u8; 32];
-                value.to_big_endian(buf);
-                encoded.extend_from_slice(buf);
+                encoded.extend_from_slice(&value.to_big_endian());
             }
         }
 

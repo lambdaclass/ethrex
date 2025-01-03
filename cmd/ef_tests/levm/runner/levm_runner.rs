@@ -141,9 +141,8 @@ pub fn ensure_pre_state(evm: &VM, test: &EFTest) -> Result<(), EFTestRunnerError
             ),
         )?;
         for (k, v) in &pre_value.storage {
-            let mut key_bytes = [0u8; 32];
-            k.to_big_endian(&mut key_bytes);
-            let storage_slot = world_state.get_storage_slot(*address, H256::from_slice(&key_bytes));
+            let storage_slot =
+                world_state.get_storage_slot(*address, H256::from_slice(&k.to_big_endian()));
             ensure_pre_state_condition(
                 &storage_slot == v,
                 format!(

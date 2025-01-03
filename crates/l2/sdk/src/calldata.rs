@@ -158,8 +158,7 @@ fn encode_tuple(values: &[Value]) -> Result<Vec<u8>, CalldataEncodeError> {
 }
 
 fn write_u256(values: &mut [u8], number: U256, offset: usize) -> Result<(), CalldataEncodeError> {
-    let mut to_copy = [0; 32];
-    number.to_big_endian(&mut to_copy);
+    let to_copy = number.to_big_endian();
     copy_into(values, &to_copy, offset, 32)?;
 
     Ok(())
@@ -225,8 +224,7 @@ fn is_dynamic(value: &Value) -> bool {
 
 fn encode_array(values: &[Value]) -> Result<Vec<u8>, CalldataEncodeError> {
     let mut ret = vec![];
-    let mut to_copy = [0; 32];
-    U256::from(values.len()).to_big_endian(&mut to_copy);
+    let to_copy = U256::from(values.len()).to_big_endian();
     ret.extend_from_slice(&to_copy);
 
     let tuple_encoding = encode_tuple(values)?;
@@ -237,8 +235,7 @@ fn encode_array(values: &[Value]) -> Result<Vec<u8>, CalldataEncodeError> {
 
 fn encode_bytes(values: &Bytes) -> Vec<u8> {
     let mut ret = vec![];
-    let mut to_copy = [0; 32];
-    U256::from(values.len()).to_big_endian(&mut to_copy);
+    let to_copy = U256::from(values.len()).to_big_endian();
 
     ret.extend_from_slice(&to_copy);
     ret.extend_from_slice(values);
@@ -277,12 +274,8 @@ fn calldata_test() {
     let raw_function_signature = "blockWithdrawalsLogs(uint256,bytes)";
     let mut bytes_calldata = vec![];
 
-    let mut bytes: [u8; 32] = [0; 32];
-    U256::zero().to_big_endian(&mut bytes);
-
-    bytes_calldata.extend_from_slice(&bytes);
-    U256::one().to_big_endian(&mut bytes);
-    bytes_calldata.extend_from_slice(&bytes);
+    bytes_calldata.extend_from_slice(&U256::zero().to_big_endian());
+    bytes_calldata.extend_from_slice(&U256::one().to_big_endian());
 
     let arguments = vec![
         Value::Uint(U256::from(902)),

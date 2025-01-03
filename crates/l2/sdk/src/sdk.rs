@@ -165,7 +165,9 @@ pub async fn claim_withdraw(
     let (index, proof) = get_withdraw_merkle_proof(proposer_client, l2_withdrawal_tx_hash).await?;
 
     let calldata_values = vec![
-        Value::Uint(U256::from(l2_withdrawal_tx_hash.as_fixed_bytes())),
+        Value::Uint(U256::from_big_endian(
+            l2_withdrawal_tx_hash.as_fixed_bytes(),
+        )),
         Value::Uint(claimed_amount),
         Value::Uint(withdrawal_l2_block_number),
         Value::Uint(U256::from(index)),
