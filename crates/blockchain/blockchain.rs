@@ -36,8 +36,9 @@ pub fn add_block(block: &Block, storage: &Store) -> Result<(), ChainError> {
         return Err(ChainError::ParentNotFound);
     };
     // Validate the block pre-execution
-    validate_block(block, &parent_header, &storage)?;
-    let (receipts, account_updates) = execute_block(block, &storage)?;
+    validate_block(block, &parent_header, storage)?;
+
+    let (receipts, account_updates) = execute_block(block, storage)?;
 
     validate_gas_used(&receipts, &block.header)?;
 
