@@ -433,7 +433,7 @@ async fn deploy_contract(
     eth_client: &EthClient,
     contract_path: &Path,
 ) -> Result<(H256, Address), DeployError> {
-    let init_code = hex::decode(std::fs::read_to_string(contract_path).map_err(|err| {
+    let init_code: Bytes = hex::decode(std::fs::read_to_string(contract_path).map_err(|err| {
         DeployError::DecodingError(format!("Failed to read on_chain_proposer_init_code: {err}"))
     })?)
     .map_err(|err| {
@@ -442,6 +442,21 @@ async fn deploy_contract(
         ))
     })?
     .into();
+
+    let init_deploy: Bytes = hex::decode("6080604052348015600e575f80fd5b50603e80601a5f395ff3fe60806040525f80fdfea26469706673582212200f0ab21ab0fb10efa7ec9ad069c52a7e4993a29653f5f9ca2776e0ee0bb11d4a64736f6c634300081a0033").map_err(|err| {
+        DeployError::DecodingError(format!("Failed to read on_chain_proposer_init_code: {err}"))
+    })?.into();
+
+    let res = eth_client
+        .deploy(
+            deployer,
+            deployer_private_key,
+            init_deploy,
+            Overrides::default(),
+        )
+        .await?;
+
+    println!("{res:?}");
 
     let (deploy_tx_hash, contract_address) =
         create2_deploy(deployer, deployer_private_key, &init_code, eth_client)
