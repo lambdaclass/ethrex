@@ -404,7 +404,6 @@ async fn peers_revalidation(
             let Some(peer) = table.get_by_node_id_mut(node_id) else {
                 continue;
             };
-            
 
             if let Some(has_answered) = peer.revalidation {
                 if has_answered {

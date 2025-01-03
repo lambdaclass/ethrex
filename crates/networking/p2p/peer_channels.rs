@@ -36,7 +36,7 @@ pub const HASH_MAX: H256 = H256([0xFF; 32]);
 #[derive(Debug, Clone)]
 /// Holds the respective sender and receiver ends of the communication channels bewteen the peer data and its active connection
 pub struct PeerChannels {
-    sender: mpsc::Sender<RLPxMessage>,
+    pub(crate) sender: mpsc::Sender<RLPxMessage>,
     receiver: Arc<Mutex<mpsc::Receiver<RLPxMessage>>>,
 }
 
