@@ -211,10 +211,10 @@ async fn main() {
     // Check if the metrics.port is present, else set it to 0
     let metrics_port = matches
         .get_one::<String>("metrics.port")
-        .map_or("0".to_string(), |v| v.clone());
+        .map_or("0".to_owned(), |v| v.clone());
 
     // Start the metrics_api with the given metrics.port if it's != 0
-    if metrics_port != *"0" {
+    if metrics_port != "0".to_owned() {
         let metrics_api = ethrex_metrics::api::start_prometheus_metrics_api(metrics_port);
         tracker.spawn(metrics_api);
     }
