@@ -40,8 +40,24 @@ jobs:
           echo '```' >> formatted_result.md
           mv formatted_result.md crates/vm/levm/result.md
 
+      - name: Find comment
+        uses: peter-evans/find-comment@v2
+        id: fc
+        with:
+          issue-number: ${{ github.event.pull_request.number }}
+          comment-author: "github-actions[bot]"
+          body-includes: "make build-revm-comparison"
+
       - name: Create comment
         uses: peter-evans/create-or-update-comment@v3
         with:
           issue-number: ${{ github.event.pull_request.number }}
           body-path: crates/vm/levm/result.md
+
+      - name: Update comment
+        if: steps.fc.outputs.comment-id != ''
+        uses: peter-evans/create-or-update-comment@v3
+        with:
+          comment-id: ${{ steps.fc.outputs.comment-id }}
+          body-path: result.md
+          edit-mode: replace
