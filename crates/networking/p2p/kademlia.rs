@@ -235,7 +235,9 @@ impl KademliaTable {
         &'a self,
         filter: &'a dyn Fn(&'a PeerData) -> bool,
     ) -> Option<&'a PeerData> {
-        let peer_idx = random::<usize>() % self.filter_peers(filter).count();
+        let peer_idx = rand::random::<usize>()
+            .checked_rem(self.filter_peers(filter).count())
+            .unwrap_or_default();
         self.filter_peers(filter).nth(peer_idx)
     }
 
