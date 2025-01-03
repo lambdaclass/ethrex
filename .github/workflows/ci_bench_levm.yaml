@@ -33,8 +33,12 @@ jobs:
           cd crates/vm/levm
           make revm-comparison > result_pr.txt
 
+      - name: Print the result
+        run: |
+          cat crates/vm/levm/result_pr.txt
+
       - name: Create comment
         uses: peter-evans/create-or-update-comment@v3
         with:
           issue-number: ${{ github.event.pull_request.number }}
-          body-path: result_pr.txt
+          body-path: crates/vm/levm/result_pr.txt
