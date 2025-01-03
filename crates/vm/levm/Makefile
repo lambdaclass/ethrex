@@ -52,7 +52,7 @@ clean-evm-ef-tests: ## 🗑️  Clean test vectors
 
 ###### Benchmarks ######
 
-revm-comparison: ## 📊 Run benchmarks of Factorial and
+revm-comparison: ## 📊 Run factorial and fibonacci b
 	$(MAKE) build-revm-comparison
 	@echo
 	@printf "%s" "revm_factorial result: "
