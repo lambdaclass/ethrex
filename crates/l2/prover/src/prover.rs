@@ -1,5 +1,5 @@
 use crate::errors::ProverError;
-use ethrex_l2::proposer::prover_server::{ProverType, ProvingOutput, Risc0Proof, Sp1Proof};
+use ethrex_l2::utils::prover::proving_systems::{ProverType, ProvingOutput, Risc0Proof, Sp1Proof};
 use tracing::info;
 
 // risc0
