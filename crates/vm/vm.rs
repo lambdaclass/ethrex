@@ -174,7 +174,7 @@ cfg_if::cfg_if! {
             let mut block_cache: CacheDB = HashMap::new();
 
             for tx in block.body.transactions.iter() {
-                let report = execute_tx_levm(tx, block_header, store_wrapper.clone(), block_cache.clone(), spec_id).unwrap();
+                let report = execute_tx_levm(tx, block_header, store_wrapper.clone(), block_cache.clone(), spec_id).map_err(EvmError::from)?;
 
                 let mut new_state = report.new_state.clone();
 
