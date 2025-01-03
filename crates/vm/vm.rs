@@ -821,14 +821,9 @@ pub fn block_env(header: &BlockHeader) -> BlockEnv {
 }
 
 pub fn tx_env(tx: &Transaction) -> TxEnv {
-    let mut max_fee_per_blob_gas_bytes: [u8; 32] = [0; 32];
-    let max_fee_per_blob_gas = match tx.max_fee_per_blob_gas() {
-        Some(x) => {
-            x.to_big_endian(&mut max_fee_per_blob_gas_bytes);
-            Some(RevmU256::from_be_bytes(max_fee_per_blob_gas_bytes))
-        }
-        None => None,
-    };
+    let max_fee_per_blob_gas = tx
+        .max_fee_per_blob_gas()
+        .map(|x| RevmU256::from_be_bytes(x.to_big_endian()));
     TxEnv {
         caller: match tx {
             Transaction::PrivilegedL2Transaction(tx) if tx.tx_type == PrivilegedTxType::Deposit => {

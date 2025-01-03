@@ -71,9 +71,7 @@ pub fn address_to_word(address: Address) -> U256 {
 }
 
 pub fn word_to_address(word: U256) -> Address {
-    let mut bytes = [0u8; WORD_SIZE];
-    word.to_big_endian(&mut bytes);
-    Address::from_slice(&bytes[12..])
+    Address::from_slice(&word.to_big_endian()[12..])
 }
 
 // Taken from cmd/ef_tests/ethrex/types.rs, didn't want to fight dependencies yet
@@ -155,7 +153,8 @@ impl VM {
 
         // Add precompiled contracts addresses to cache.
         // TODO: Use the addresses from precompiles.rs in a future
-        for i in 1..=10 {
+        let max_precompile_address = if env.spec_id >= SpecId::CANCUN { 10 } else { 9 };
+        for i in 1..=max_precompile_address {
             default_touched_accounts.insert(Address::from_low_u64_be(i));
         }
 
@@ -803,14 +802,19 @@ impl VM {
 
         // Transaction is type 3 if tx_max_fee_per_blob_gas is Some
         if self.env.tx_max_fee_per_blob_gas.is_some() {
+            // (11) TYPE_3_TX_PRE_FORK
+            if self.env.spec_id < SpecId::CANCUN {
+                return Err(VMError::TxValidation(TxValidationError::Type3TxPreFork));
+            }
+
             let blob_hashes = &self.env.tx_blob_hashes;
 
-            // (11) TYPE_3_TX_ZERO_BLOBS
+            // (12) TYPE_3_TX_ZERO_BLOBS
             if blob_hashes.is_empty() {
                 return Err(VMError::TxValidation(TxValidationError::Type3TxZeroBlobs));
             }
 
-            // (12) TYPE_3_TX_INVALID_BLOB_VERSIONED_HASH
+            // (13) TYPE_3_TX_INVALID_BLOB_VERSIONED_HASH
             for blob_hash in blob_hashes {
                 let blob_hash = blob_hash.as_bytes();
                 if let Some(first_byte) = blob_hash.first() {
@@ -821,8 +825,6 @@ impl VM {
                     }
                 }
             }
-
-            // (13) TYPE_3_TX_PRE_FORK -> This is not necessary for now because we are not supporting pre-cancun transactions yet. But we should somehow be able to tell the current context.
 
             // (14) TYPE_3_TX_BLOB_COUNT_EXCEEDED
             if blob_hashes.len() > MAX_BLOB_COUNT {
@@ -996,15 +998,13 @@ impl VM {
         salt: U256,
     ) -> Result<Address, VMError> {
         let init_code_hash = keccak(initialization_code);
-        let mut salt_bytes = [0; 32];
-        salt.to_big_endian(&mut salt_bytes);
 
         let generated_address = Address::from_slice(
             keccak(
                 [
                     &[0xff],
                     sender_address.as_bytes(),
-                    &salt_bytes,
+                    &salt.to_big_endian(),
                     init_code_hash.as_bytes(),
                 ]
                 .concat(),

@@ -377,11 +377,7 @@ impl From<Account> for ethrexAccount {
             storage: val
                 .storage
                 .into_iter()
-                .map(|(k, v)| {
-                    let mut k_bytes = [0; 32];
-                    k.to_big_endian(&mut k_bytes);
-                    (H256(k_bytes), v)
-                })
+                .map(|(k, v)| (H256(k.to_big_endian()), v))
                 .collect(),
         }
     }
@@ -394,11 +390,7 @@ impl From<Account> for GenesisAccount {
             storage: val
                 .storage
                 .into_iter()
-                .map(|(k, v)| {
-                    let mut k_bytes = [0; 32];
-                    k.to_big_endian(&mut k_bytes);
-                    (H256(k_bytes), v)
-                })
+                .map(|(k, v)| (H256(k.to_big_endian()), v))
                 .collect(),
             balance: val.balance,
             nonce: val.nonce.as_u64(),
