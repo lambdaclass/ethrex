@@ -49,7 +49,7 @@ pub const DEPOSIT_MAGIC_DATA: &[u8] = b"mint";
 /// Encapsulates state behaviour to be agnostic to the evm implementation for crate users.
 pub enum EvmState {
     Store(revm::db::State<StoreWrapper>),
-    Execution(revm::db::CacheDB<ExecutionDB>),
+    Execution(Box<revm::db::CacheDB<ExecutionDB>>),
 }
 
 impl EvmState {
@@ -73,7 +73,7 @@ impl EvmState {
 
 impl From<ExecutionDB> for EvmState {
     fn from(value: ExecutionDB) -> Self {
-        EvmState::Execution(revm::db::CacheDB::new(value))
+        EvmState::Execution(Box::new(revm::db::CacheDB::new(value)))
     }
 }
 
