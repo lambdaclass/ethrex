@@ -9,6 +9,7 @@ use ethrex_rlp::encode::RLPEncode;
 use ethrex_trie::Nibbles;
 use ethrex_trie::{verify_range, Node};
 use tokio::sync::{mpsc, Mutex};
+use tracing::warn;
 
 use crate::{
     rlpx::{
@@ -71,7 +72,10 @@ impl PeerChannels {
             skip: 0,
             reverse: false,
         });
-        self.sender.send(request).await.unwrap();
+        if self.sender.is_closed() {
+            warn!("Peer channel closed");
+        }
+        self.sender.send(request).await.ok()?;
         let mut receiver = self.receiver.lock().await;
         let block_headers = tokio::time::timeout(PEER_REPLY_TIMOUT, async move {
             loop {

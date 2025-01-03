@@ -99,7 +99,7 @@ impl SyncManager {
         // This step is not parallelized
         let mut all_block_headers = vec![];
         let mut all_block_hashes = vec![];
-        loop {
+        for _ in 0..3 {
             let peer = self.peers.lock().await.get_peer_channels().await;
             info!("Requesting Block Headers from {current_head}");
             // Request Block Headers from Peer
@@ -124,6 +124,7 @@ impl SyncManager {
                 }
             } else {
                 info!("Failed to receive headers");
+                break;
             }
         }
         // We finished fetching all headers, now we can process them
@@ -245,9 +246,9 @@ async fn fetch_block_bodies(
     peers: Arc<Mutex<KademliaTable>>,
 ) -> Result<Vec<BlockBody>, SyncError> {
     let mut all_block_bodies = Vec::new();
-    loop {
+    for _ in 0..3 {
         let peer = peers.lock().await.get_peer_channels().await;
-        info!("Requesting Block Headers ");
+        info!("Requesting Block Bodies ");
         if let Some(block_bodies) = peer.request_block_bodies(block_hashes.clone()).await {
             info!(" Received {} Block Bodies", block_bodies.len());
             // Track which bodies we have already fetched
