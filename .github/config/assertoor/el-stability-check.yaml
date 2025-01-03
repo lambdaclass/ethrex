@@ -26,7 +26,7 @@ tasks:
       config:
         minTransactionCount: 50
       configVars:
-        clientPattern: "1-ethrex-lighthouse"
+        clientPattern: "2-ethrex-lighthouse"
 
 - name: run_task_matrix
   title: "Check block proposals from all client pairs"
