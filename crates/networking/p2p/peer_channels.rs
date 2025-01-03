@@ -92,7 +92,6 @@ impl PeerChannels {
             }
         })
         .await;
-        tracing::info!("BlockHeadersRequest Response: {block_headers:?}");
         let block_headers = block_headers.ok()??;
         (!block_headers.is_empty()).then_some(block_headers)
     }
