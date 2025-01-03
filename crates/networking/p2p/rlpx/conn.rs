@@ -43,8 +43,7 @@ use k256::{
 use rand::random;
 use sha3::{Digest, Keccak256};
 use tokio::{
-    io::{AsyncReadExt, AsyncWriteExt},
-    net::TcpStream,
+    io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt},
     sync::{
         broadcast::{self, error::RecvError},
         mpsc, Mutex,
@@ -62,10 +61,12 @@ const PERIODIC_TASKS_CHECK_INTERVAL: std::time::Duration = std::time::Duration::
 pub(crate) type Aes256Ctr64BE = ctr::Ctr64BE<aes::Aes256>;
 
 /// Fully working RLPx connection.
-pub(crate) struct RLPxConnection {
+pub(crate) struct RLPxConnection<S> {
     signer: SigningKey,
     state: RLPxConnectionState,
-    stream: TcpStream,
+    pub stream: S,
+    in_channel: mpsc::Receiver<Message>,
+    out_channel: mpsc::Sender<Message>,
     storage: Store,
     capabilities: Vec<(Capability, u8)>,
     next_periodic_task_check: Instant,
@@ -80,10 +81,12 @@ pub(crate) struct RLPxConnection {
     connection_broadcast_send: broadcast::Sender<(task::Id, Arc<Message>)>,
 }
 
-impl RLPxConnection {
+impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
     fn new(
         signer: SigningKey,
-        stream: TcpStream,
+        stream: S,
+        in_channel: mpsc::Receiver<Message>,
+        out_channel: mpsc::Sender<Message>,
         state: RLPxConnectionState,
         storage: Store,
         connection_broadcast: broadcast::Sender<(task::Id, Arc<Message>)>,
@@ -92,6 +95,8 @@ impl RLPxConnection {
             signer,
             state,
             stream,
+            in_channel,
+            out_channel,
             storage,
             capabilities: vec![],
             next_periodic_task_check: Instant::now() + PERIODIC_TASKS_CHECK_INTERVAL,
@@ -101,7 +106,9 @@ impl RLPxConnection {
 
     pub fn receiver(
         signer: SigningKey,
-        stream: TcpStream,
+        stream: S,
+        in_channel: mpsc::Receiver<Message>,
+        out_channel: mpsc::Sender<Message>,
         storage: Store,
         connection_broadcast: broadcast::Sender<(task::Id, Arc<Message>)>,
     ) -> Self {
@@ -109,6 +116,8 @@ impl RLPxConnection {
         Self::new(
             signer,
             stream,
+            in_channel,
+            out_channel,
             RLPxConnectionState::Receiver(Receiver::new(
                 H256::random_using(&mut rng),
                 SecretKey::random(&mut rng),
@@ -121,7 +130,9 @@ impl RLPxConnection {
     pub fn initiator(
         signer: SigningKey,
         msg: &[u8],
-        stream: TcpStream,
+        stream: S,
+        in_channel: mpsc::Receiver<Message>,
+        out_channel: mpsc::Sender<Message>,
         storage: Store,
         connection_broadcast_send: broadcast::Sender<(task::Id, Arc<Message>)>,
     ) -> Result<Self, RLPxError> {
@@ -143,6 +154,8 @@ impl RLPxConnection {
         Ok(RLPxConnection::new(
             signer,
             stream,
+            in_channel,
+            out_channel,
             state,
             storage,
             connection_broadcast_send,
@@ -272,48 +285,9 @@ impl RLPxConnection {
                     None
                 }
             };
-
-            // Status message received, start listening for connections,
-            // and subscribe this connection to the broadcasting.
             loop {
-                tokio::select! {
-                    // stream.readable() is cancel safe
-                    _ = self.stream.readable() => {
-                        match self.receive().await {
-                            Ok(message) => {
-                                self.handle_message(message, sender.clone()).await?;
-                            }
-                            // WouldBlock is a false-positive in stream.readable()
-                            // documentation tells to ignore it and continue with loop
-                            // see https://docs.rs/tokio/latest/tokio/net/struct.TcpStream.html#method.readable
-                            Err(RLPxError::WouldBlockError()) => {
-                                continue;
-                            }
-                            Err(e) => {
-                                return Err(e);
-                            }
-                        }
-                    }
-                    // This is not ideal, but using the receiver without
-                    // this function call, causes the loop to take ownwership
-                    // of the variable and the compiler will complain about it,
-                    // with this function, we avoid that.
-                    // If the broadcaster is Some (i.e. we're connected to a peer that supports an eth protocol),
-                    // we'll receive broadcasted messages from another connections through a channel, otherwise
-                    // the function below will yield immediately but the select will not match and
-                    // ignore the returned value.
-                    Some(broadcasted_msg) = Self::maybe_wait_for_broadcaster(&mut broadcaster_receive) => {
-                        self.handle_broadcast(broadcasted_msg?).await?
-                    }
-                    Some(message) = receiver.recv() => {
-                        self.send(message).await?;
-                    }
-                    _ = sleep(PERIODIC_TASKS_CHECK_INTERVAL) => {
-                        // no progress on other tasks, yield control to check
-                        // periodic tasks
-                    }
-                }
-                self.check_periodic_tasks().await?;
+                let message = self.receive().await?;
+                self.out_channel.send(message).await?;
             }
         } else {
             Err(RLPxError::InvalidState())

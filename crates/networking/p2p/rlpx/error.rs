@@ -1,3 +1,5 @@
+use std::io;
+
 use ethrex_blockchain::error::MempoolError;
 use ethrex_rlp::error::{RLPDecodeError, RLPEncodeError};
 use ethrex_storage::error::StoreError;
@@ -45,6 +47,10 @@ pub(crate) enum RLPxError {
     SendMessage(String),
     #[error("Error when inserting transaction in the mempool: {0}")]
     MempoolError(#[from] MempoolError),
+    #[error("WouldBlockError from socket")]
+    WouldBlockError(),
+    #[error("IoError: {0}")]
+    IoError(io::Error),
 }
 
 // tokio::sync::mpsc::error::SendError<Message> is too large to be part of the RLPxError enum directly
@@ -78,5 +84,15 @@ impl From<sha3::digest::InvalidLength> for RLPxError {
 impl From<aes::cipher::StreamCipherError> for RLPxError {
     fn from(e: aes::cipher::StreamCipherError) -> Self {
         RLPxError::CryptographyError(e.to_string())
+    }
+}
+
+impl From<io::Error> for RLPxError {
+    fn from(e: io::Error) -> Self {
+        if e.kind() == io::ErrorKind::WouldBlock {
+            RLPxError::WouldBlockError()
+        } else {
+            RLPxError::IoError(e)
+        }
     }
 }
