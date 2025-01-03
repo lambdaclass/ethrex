@@ -179,7 +179,16 @@ fn parse_execution_payload(params: &Option<Vec<Value>>) -> Result<ExecutionPaylo
     if params.len() != 1 {
         return Err(RpcErr::BadParams("Expected 1 params".to_owned()));
     }
-    serde_json::from_value(params[0].clone()).map_err(|_| RpcErr::WrongParam("payload".to_string()))
+    let payload: ExecutionPayload = serde_json::from_value(params[0].clone())
+        .map_err(|_| RpcErr::WrongParam("payload".to_string()))?;
+
+    if payload.withdrawals.is_none() {
+        return Err(RpcErr::WrongParam(
+            "forkChoiceV2 withdrawals is null".to_string(),
+        ));
+    } else {
+        return Ok(payload);
+    }
 }
 
 fn handle_new_payload_v1_v2(
