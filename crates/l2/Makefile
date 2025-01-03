@@ -1,11 +1,11 @@
+.PHONY: help init down clean restart init-local-l1 init-l1 down-local-l1 restart-local-l1 rm-db-l1 clean-contract-deps restart-contract-deps deploy-l1 init-l2 down-l2 restart-l2 init-prover rm-db-l2 ci_test test
+
 .DEFAULT_GOAL := help
 
 L2_GENESIS_FILE_PATH=../../test_data/genesis-l2.json
 L1_GENESIS_FILE_PATH=../../test_data/genesis-l1.json
 
 # Basic
-.PHONY: help init down clean restart
-
 help: ## 📚 Show help for each of the Makefile recipes
 	@grep -E '^[a-zA-Z0-9_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-30s\033[0m %s\n", $$1, $$2}'
 
@@ -60,8 +60,6 @@ L2_AUTH_PORT=8552
 L2_PROMETHEUS_METRICS_PORT = 3702
 
 # Local L1
-.PHONY: init-local-l1 init-l1 down-local-l1 restart-local-l1 rm-db-l1
-
 init-local-l1: ## 🚀 Initializes an L1 Lambda ethrex Client with Docker (Used with make init)
 	docker compose -f ${ethrex_DEV_DOCKER_COMPOSE_PATH} -f ${ethrex_METRICS_OVERRIDES_L1_DOCKER_COMPOSE_PATH} up -d
 
@@ -94,8 +92,6 @@ rm-db-l1: ## 🛑 Removes the DB used by the L1
 	cargo run --release --manifest-path ../../Cargo.toml --bin ethrex -- removedb --datadir ${ethrex_L1_DEV_LIBMDBX}
 
 # Contracts
-PHONY: clean-contract-deps restart-contract-deps deploy-l1
-
 clean-contract-deps: ## 🧹 Cleans the dependencies for the L1 contracts.
 	rm -rf contracts/solc_out
 	rm -rf contracts/lib
@@ -106,8 +102,6 @@ deploy-l1: ## 📜 Deploys the L1 contracts
 	DEPLOYER_CONTRACTS_PATH=contracts cargo run --release --bin ethrex_l2_l1_deployer --manifest-path ${ethrex_L2_CONTRACTS_PATH}/Cargo.toml
 
 # L2
-PHONY: init-l2 down-l2 restart-l2 init-prover rm-db-l2
-
 init-l2: init-metrics ## 🚀 Initializes an L2 Lambda ethrex Client
 	cargo run --release --manifest-path ../../Cargo.toml --bin ethrex --features "l2,metrics" -- \
 	--network ${L2_GENESIS_FILE_PATH} \
@@ -148,8 +142,6 @@ rm-db-l2: ## 🛑 Removes the DB used by the L2
 	cargo run --release --manifest-path ../../Cargo.toml --bin ethrex -- removedb --datadir ${ethrex_L2_DEV_LIBMDBX}
 
 # Testing
-PHONY: ci_test test
-
 ci_test: ## 🚧 Runs the L2's integration test, used by the github's CI
 	docker compose -f ${ethrex_L2_DOCKER_COMPOSE_PATH} down
 	docker compose -f ${ethrex_L2_DOCKER_COMPOSE_PATH} up -d --build

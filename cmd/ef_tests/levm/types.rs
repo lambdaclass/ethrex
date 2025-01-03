@@ -245,11 +245,7 @@ impl From<&EFTestPreValue> for GenesisAccount {
             storage: value
                 .storage
                 .iter()
-                .map(|(k, v)| {
-                    let mut key_bytes = [0u8; 32];
-                    k.to_big_endian(&mut key_bytes);
-                    (H256::from_slice(&key_bytes), *v)
-                })
+                .map(|(k, v)| (H256::from_slice(&k.to_big_endian()), *v))
                 .collect(),
             balance: value.balance,
             nonce: value.nonce.as_u64(),

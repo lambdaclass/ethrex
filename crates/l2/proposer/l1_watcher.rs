@@ -1,15 +1,13 @@
 use crate::{
     proposer::errors::L1WatcherError,
-    utils::{
-        config::{errors::ConfigError, eth::EthConfig, l1_watcher::L1WatcherConfig},
-        eth_client::{errors::EthClientError, eth_sender::Overrides, EthClient},
-    },
+    utils::config::{errors::ConfigError, eth::EthConfig, l1_watcher::L1WatcherConfig},
 };
 use bytes::Bytes;
 use ethereum_types::{Address, BigEndianHash, H256, U256};
 use ethrex_blockchain::{constants::TX_GAS_COST, mempool};
 use ethrex_core::types::PrivilegedTxType;
 use ethrex_core::types::{Signable, Transaction};
+use ethrex_l2_sdk::eth_client::{errors::EthClientError, eth_sender::Overrides, EthClient};
 use ethrex_rpc::types::receipt::RpcLog;
 use ethrex_storage::Store;
 use keccak_hash::keccak;
@@ -41,7 +39,7 @@ impl L1Watcher {
         watcher_config: L1WatcherConfig,
         eth_config: EthConfig,
     ) -> Result<Self, EthClientError> {
-        let eth_client = EthClient::new_from_config(eth_config);
+        let eth_client = EthClient::new(&eth_config.rpc_url);
         let l2_client = EthClient::new("http://localhost:1729");
         let last_block_fetched =
             EthClient::get_last_fetched_l1_block(&eth_client, watcher_config.bridge_address)
@@ -216,11 +214,8 @@ impl L1Watcher {
                 ))
             })?;
 
-            let mut value_bytes = [0u8; 32];
-            mint_value.to_big_endian(&mut value_bytes);
-
-            let mut id_bytes = [0u8; 32];
-            deposit_id.to_big_endian(&mut id_bytes);
+            let value_bytes = mint_value.to_big_endian();
+            let id_bytes = deposit_id.to_big_endian();
             if !pending_deposit_logs.contains(&keccak(
                 [beneficiary.as_bytes(), &value_bytes, &id_bytes].concat(),
             )) {

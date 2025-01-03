@@ -228,8 +228,7 @@ impl RLPEncode for String {
 impl RLPEncode for U256 {
     fn encode(&self, buf: &mut dyn BufMut) {
         let leading_zeros_in_bytes: usize = (self.leading_zeros() / 8) as usize;
-        let mut bytes: [u8; 32] = [0; 32];
-        self.to_big_endian(&mut bytes);
+        let bytes = self.to_big_endian();
         bytes[leading_zeros_in_bytes..].encode(buf)
     }
 }

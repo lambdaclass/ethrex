@@ -16,8 +16,7 @@ ethrex-core = { path = "../../common", default-features = false }
 
 prometheus = "0.13.4"
 
-# TODO: remove?
-axum = "0.7.9"
+axum = "0.8.1"
 
 
 [lib]

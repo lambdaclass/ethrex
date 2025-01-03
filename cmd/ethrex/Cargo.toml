@@ -43,7 +43,7 @@ path = "./ethrex.rs"
 [features]
 default = ["dep:ethrex-storage", "libmdbx"]
 dev = ["dep:ethrex-dev"]
-metrics = ["ethrex-blockchain/metrics", "ethrex-l2/metrics"]
+metrics = ["ethrex-blockchain/metrics"]
 libmdbx = ["dep:libmdbx", "ethrex-storage/libmdbx"]
 redb = ["dep:redb", "ethrex-storage/redb"]
 l2 = ["dep:ethrex-l2", "ethrex-vm/l2"]

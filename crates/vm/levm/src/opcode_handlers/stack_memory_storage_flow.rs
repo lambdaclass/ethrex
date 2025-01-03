@@ -7,6 +7,7 @@ use crate::{
     vm::VM,
 };
 use ethrex_core::{H256, U256};
+use revm_primitives::SpecId;
 
 // Stack, Memory, Storage and Flow Operations (15)
 // Opcodes: POP, MLOAD, MSTORE, MSTORE8, SLOAD, SSTORE, JUMP, JUMPI, PC, MSIZE, GAS, JUMPDEST, TLOAD, TSTORE, MCOPY
@@ -24,6 +25,11 @@ impl VM {
         &mut self,
         current_call_frame: &mut CallFrame,
     ) -> Result<OpcodeSuccess, VMError> {
+        // [EIP-1153] - TLOAD is only available from CANCUN
+        if self.env.spec_id < SpecId::CANCUN {
+            return Err(VMError::InvalidOpcode);
+        }
+
         self.increase_consumed_gas(current_call_frame, gas_cost::TLOAD)?;
 
         let key = current_call_frame.stack.pop()?;
@@ -43,6 +49,11 @@ impl VM {
         &mut self,
         current_call_frame: &mut CallFrame,
     ) -> Result<OpcodeSuccess, VMError> {
+        // [EIP-1153] - TLOAD is only available from CANCUN
+        if self.env.spec_id < SpecId::CANCUN {
+            return Err(VMError::InvalidOpcode);
+        }
+
         self.increase_consumed_gas(current_call_frame, gas_cost::TSTORE)?;
 
         if current_call_frame.is_static {
@@ -94,10 +105,12 @@ impl VM {
         )?;
 
         let value = current_call_frame.stack.pop()?;
-        let mut value_bytes = [0u8; WORD_SIZE];
-        value.to_big_endian(&mut value_bytes);
 
-        memory::try_store_data(&mut current_call_frame.memory, offset, &value_bytes)?;
+        memory::try_store_data(
+            &mut current_call_frame.memory,
+            offset,
+            &value.to_big_endian(),
+        )?;
 
         Ok(OpcodeSuccess::Continue)
     }
@@ -118,13 +131,11 @@ impl VM {
         )?;
 
         let value = current_call_frame.stack.pop()?;
-        let mut value_bytes = [0u8; WORD_SIZE];
-        value.to_big_endian(&mut value_bytes);
 
         memory::try_store_data(
             &mut current_call_frame.memory,
             offset,
-            &value_bytes[WORD_SIZE - 1..WORD_SIZE],
+            &value.to_big_endian()[WORD_SIZE - 1..WORD_SIZE],
         )?;
 
         Ok(OpcodeSuccess::Continue)
@@ -138,9 +149,7 @@ impl VM {
         let storage_slot_key = current_call_frame.stack.pop()?;
         let address = current_call_frame.to;
 
-        let mut bytes = [0u8; 32];
-        storage_slot_key.to_big_endian(&mut bytes);
-        let storage_slot_key = H256::from(bytes);
+        let storage_slot_key = H256::from(storage_slot_key.to_big_endian());
 
         let (storage_slot, storage_slot_was_cold) =
             self.access_storage_slot(address, storage_slot_key)?;
@@ -174,9 +183,7 @@ impl VM {
         }
 
         // Convert key from U256 to H256
-        let mut bytes = [0u8; 32];
-        storage_slot_key.to_big_endian(&mut bytes);
-        let key = H256::from(bytes);
+        let key = H256::from(storage_slot_key.to_big_endian());
 
         let (storage_slot, storage_slot_was_cold) =
             self.access_storage_slot(current_call_frame.to, key)?;
@@ -256,6 +263,11 @@ impl VM {
         &mut self,
         current_call_frame: &mut CallFrame,
     ) -> Result<OpcodeSuccess, VMError> {
+        // [EIP-5656] - MCOPY is only available from CANCUN
+        if self.env.spec_id < SpecId::CANCUN {
+            return Err(VMError::InvalidOpcode);
+        }
+
         let dest_offset = current_call_frame.stack.pop()?;
         let src_offset = current_call_frame.stack.pop()?;
         let size: usize = current_call_frame

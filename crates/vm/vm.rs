@@ -49,7 +49,7 @@ pub const DEPOSIT_MAGIC_DATA: &[u8] = b"mint";
 /// Encapsulates state behaviour to be agnostic to the evm implementation for crate users.
 pub enum EvmState {
     Store(revm::db::State<StoreWrapper>),
-    Execution(revm::db::CacheDB<ExecutionDB>),
+    Execution(Box<revm::db::CacheDB<ExecutionDB>>),
 }
 
 impl EvmState {
@@ -73,7 +73,7 @@ impl EvmState {
 
 impl From<ExecutionDB> for EvmState {
     fn from(value: ExecutionDB) -> Self {
-        EvmState::Execution(revm::db::CacheDB::new(value))
+        EvmState::Execution(Box::new(revm::db::CacheDB::new(value)))
     }
 }
 
@@ -84,6 +84,7 @@ cfg_if::cfg_if! {
             errors::{TransactionReport, TxResult, VMError},
             vm::VM,
             Environment,
+            Account
         };
         use std::{collections::HashMap, sync::Arc};
         use ethrex_core::types::code_hash;
@@ -150,10 +151,10 @@ cfg_if::cfg_if! {
             state: &mut EvmState,
         ) -> Result<(Vec<Receipt>, Vec<AccountUpdate>), EvmError> {
             let block_header = &block.header;
+            let spec_id = spec_id(&state.chain_config()?, block_header.timestamp);
             //eip 4788: execute beacon_root_contract_call before block transactions
             cfg_if::cfg_if! {
                 if #[cfg(not(feature = "l2"))] {
-                    let spec_id = spec_id(&state.chain_config()?, block_header.timestamp);
                     if block_header.parent_beacon_block_root.is_some() && spec_id == SpecId::CANCUN {
                         beacon_root_contract_call(state, block_header, spec_id)?;
                     }
@@ -173,7 +174,7 @@ cfg_if::cfg_if! {
             let mut block_cache: CacheDB = HashMap::new();
 
             for tx in block.body.transactions.iter() {
-                let report = execute_tx_levm(tx, block_header, store_wrapper.clone(), block_cache.clone()).unwrap();
+                let report = execute_tx_levm(tx, block_header, store_wrapper.clone(), block_cache.clone(), spec_id).map_err(EvmError::from)?;
 
                 let mut new_state = report.new_state.clone();
 
@@ -200,11 +201,23 @@ cfg_if::cfg_if! {
                 receipts.push(receipt);
             }
 
-            account_updates.extend(get_state_transitions_levm(state, block.header.parent_hash, &block_cache));
-
+            // Here we update block_cache with balance increments caused by withdrawals.
             if let Some(withdrawals) = &block.body.withdrawals {
-                process_withdrawals(state, withdrawals)?;
+                // For every withdrawal we increment the target account's balance
+                for (address, increment) in withdrawals.iter().filter(|withdrawal| withdrawal.amount > 0).map(|w| (w.address, u128::from(w.amount) * u128::from(GWEI_TO_WEI))) {
+                    // We check if it was in block_cache, if not, we get it from DB.
+                    let mut account = block_cache.get(&address).cloned().unwrap_or({
+                        let acc_info = store_wrapper.get_account_info(address);
+                        Account::from(acc_info)
+                    });
+
+                    account.info.balance += increment.into();
+
+                    block_cache.insert(address, account);
+                }
             }
+
+            account_updates.extend(get_state_transitions_levm(state, block.header.parent_hash, &block_cache));
 
             Ok((receipts, account_updates))
         }
@@ -213,7 +226,8 @@ cfg_if::cfg_if! {
             tx: &Transaction,
             block_header: &BlockHeader,
             db: Arc<dyn LevmDatabase>,
-            block_cache: CacheDB
+            block_cache: CacheDB,
+            spec_id: SpecId
         ) -> Result<TransactionReport, VMError> {
             let gas_price : U256 = tx.effective_gas_price(block_header.base_fee_per_gas).ok_or(VMError::InvalidTransaction)?.into();
 
@@ -221,6 +235,7 @@ cfg_if::cfg_if! {
                 origin: tx.sender(),
                 refunded_gas: 0,
                 gas_limit: tx.gas_limit(),
+                spec_id,
                 block_number: block_header.number.into(),
                 coinbase: block_header.coinbase,
                 timestamp: block_header.timestamp.into(),
@@ -747,14 +762,9 @@ pub fn block_env(header: &BlockHeader) -> BlockEnv {
 }
 
 pub fn tx_env(tx: &Transaction) -> TxEnv {
-    let mut max_fee_per_blob_gas_bytes: [u8; 32] = [0; 32];
-    let max_fee_per_blob_gas = match tx.max_fee_per_blob_gas() {
-        Some(x) => {
-            x.to_big_endian(&mut max_fee_per_blob_gas_bytes);
-            Some(RevmU256::from_be_bytes(max_fee_per_blob_gas_bytes))
-        }
-        None => None,
-    };
+    let max_fee_per_blob_gas = tx
+        .max_fee_per_blob_gas()
+        .map(|x| RevmU256::from_be_bytes(x.to_big_endian()));
     TxEnv {
         caller: match tx {
             Transaction::PrivilegedL2Transaction(tx) if tx.tx_type == PrivilegedTxType::Deposit => {
