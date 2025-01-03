@@ -379,7 +379,8 @@ pub fn get_state_transitions(
             added_storage.insert(*key, value.current_value);
             updates += 1;
         }
-        if updates == 0 {
+
+        if updates == 0 && !new_state_account.is_empty() {
             continue;
         }
 
