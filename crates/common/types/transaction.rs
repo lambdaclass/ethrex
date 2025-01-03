@@ -44,7 +44,7 @@ pub enum P2PTransaction {
     LegacyTransaction(LegacyTransaction),
     EIP2930Transaction(EIP2930Transaction),
     EIP1559Transaction(EIP1559Transaction),
-    WrappedEIP4844Transaction(WrappedEIP4844Transaction),
+    EIP4844TransactionWithBlobs(WrappedEIP4844Transaction),
     PrivilegedL2Transaction(PrivilegedL2Transaction),
 }
 
@@ -77,9 +77,9 @@ impl RLPDecode for P2PTransaction {
     fn decode_unfinished(rlp: &[u8]) -> Result<(Self, &[u8]), RLPDecodeError> {
         if is_encoded_as_bytes(rlp)? {
             // Adjust the encoding to get the payload
-            let payload = get_rlp_bytes_item_payload(rlp);
-            let tx_type = payload.first().unwrap();
-            let tx_encoding = &payload[1..];
+            let payload = get_rlp_bytes_item_payload(rlp)?;
+            let tx_type = payload.first().ok_or(RLPDecodeError::InvalidLength)?;
+            let tx_encoding = &payload.get(1..).ok_or(RLPDecodeError::InvalidLength)?;
             // Look at the first byte to check if it corresponds to a TransactionType
             match *tx_type {
                 // Legacy
@@ -93,7 +93,8 @@ impl RLPDecode for P2PTransaction {
                     .map(|(tx, rem)| (P2PTransaction::EIP1559Transaction(tx), rem)),
                 // EIP4844
                 0x3 => WrappedEIP4844Transaction::decode_unfinished(tx_encoding)
-                    .map(|(tx, rem)| (P2PTransaction::WrappedEIP4844Transaction(tx), rem)),
+                    .map(|(tx, rem)| (P2PTransaction::EIP4844TransactionWithBlobs(tx), rem)),
+
                 // PriviligedL2
                 0x7e => PrivilegedL2Transaction::decode_unfinished(tx_encoding)
                     .map(|(tx, rem)| (P2PTransaction::PrivilegedL2Transaction(tx), rem)),
@@ -1370,7 +1371,7 @@ mod canonic_encoding {
                 P2PTransaction::LegacyTransaction(_) => TxType::Legacy,
                 P2PTransaction::EIP2930Transaction(_) => TxType::EIP2930,
                 P2PTransaction::EIP1559Transaction(_) => TxType::EIP1559,
-                P2PTransaction::WrappedEIP4844Transaction(_) => TxType::EIP4844,
+                P2PTransaction::EIP4844TransactionWithBlobs(_) => TxType::EIP4844,
                 P2PTransaction::PrivilegedL2Transaction(_) => TxType::Privileged,
             }
         }
@@ -1385,7 +1386,7 @@ mod canonic_encoding {
                 P2PTransaction::LegacyTransaction(t) => t.encode(buf),
                 P2PTransaction::EIP2930Transaction(t) => t.encode(buf),
                 P2PTransaction::EIP1559Transaction(t) => t.encode(buf),
-                P2PTransaction::WrappedEIP4844Transaction(t) => t.encode(buf),
+                P2PTransaction::EIP4844TransactionWithBlobs(t) => t.encode(buf),
                 P2PTransaction::PrivilegedL2Transaction(t) => t.encode(buf),
             };
         }

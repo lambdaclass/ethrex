@@ -1,0 +1,28 @@
+[package]
+name = "ethrex-metrics"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+tokio.workspace = true
+tracing.workspace = true
+thiserror.workspace = true
+serde_json.workspace = true
+serde.workspace = true
+
+ethrex-core = { path = "../../common", default-features = false }
+
+prometheus = "0.13.4"
+
+# TODO: remove?
+axum = "0.7.9"
+
+
+[lib]
+path = "./mod.rs"
+
+[features]
+default = ["api"]
+api = []

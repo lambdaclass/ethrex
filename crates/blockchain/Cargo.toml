@@ -19,6 +19,8 @@ ethrex-vm = { path = "../vm", default-features = false }
 
 k256 = { version = "0.13.3", features = ["ecdh"] }
 
+ethrex-metrics = { path = "./metrics", default-features = false }
+
 [dev-dependencies]
 serde_json.workspace = true
 hex = "0.4.3"
@@ -35,3 +37,4 @@ libmdbx = [
     "ethrex-vm/libmdbx",
 ]
 c-kzg =["ethrex-core/c-kzg"]
+metrics = ["ethrex-metrics/api"]

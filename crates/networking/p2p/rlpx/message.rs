@@ -39,7 +39,6 @@ pub(crate) enum Message {
     NewPooledTransactionHashes(NewPooledTransactionHashes),
     GetPooledTransactions(GetPooledTransactions),
     PooledTransactions(PooledTransactions),
-    Receipts(Receipts),
     // snap capability
     GetAccountRange(GetAccountRange),
     AccountRange(AccountRange),
