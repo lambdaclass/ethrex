@@ -8,7 +8,7 @@ services:
   grafana:
     image: grafana/grafana
     volumes:
-      - ./provisioning/grafana_provisioning/dashboards:/etc/grafana/provisioning/dashboards
+      - ./provisioning/grafana_provisioning/dashboards/common_dashboards:/etc/grafana/provisioning/dashboards/common_dashboards
       - ./provisioning/grafana_provisioning/datasources:/etc/grafana/provisioning/datasources
     #ports: defined in the .overrides file
     depends_on:
