@@ -13,7 +13,7 @@ tasks:
   timeout: 1m
 
 - name: run_tasks_concurrent
-  title: "Check if all EL & CL clients are synced and the tx spammer is working"
+  title: "Check if all EL & CL clients are synced"
   timeout: 5m
   config:
     tasks:
@@ -41,7 +41,7 @@ tasks:
   config:
     minTransactionCount: 50
   configVars:
-    clientPattern: "*-ethrex-lighthouse"
+    validatorNamePattern: "*-ethrex-lighthouse"
 
 - name: run_tasks_concurrent
   title: "Check chain stability (reorgs and forks)"
