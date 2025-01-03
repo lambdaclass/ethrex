@@ -4,6 +4,15 @@ use std::io::BufReader;
 use hive_report::{HiveResult, JsonFile};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // 1. Clear logs, build image with LEVM and run
+    // 2. Store results_by_category in results_levm variable
+    // 1. Clear logs, build image with REVM and run
+    // 4. Store results_by_category in results_revm variable
+    // 5. Compare results_levm with results_revm. (They should have the same tests ran)
+    //    For now we can just compare the amount of test passed on each category and see if it is the same.
+
+    // Warning: The code down below is copy-pasted just for testing purposes, progress has not been made yet :)
+
     let mut results = Vec::new();
 
     for entry in fs::read_dir("hive/workspace/logs")? {
@@ -55,22 +64,23 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             })
     });
 
+    dbg!(&results);
     let results_by_category = results.chunk_by(|a, b| a.category == b.category);
 
-    for results in results_by_category {
-        // print category
-        println!("*{}*", results[0].category);
-        for result in results {
-            println!("\t{}", result);
-        }
-        println!();
-    }
+    dbg!(&results_by_category);
 
-    println!();
-    let total_passed = results.iter().map(|r| r.passed_tests).sum::<usize>();
-    let total_tests = results.iter().map(|r| r.total_tests).sum::<usize>();
-    let total_percentage = (total_passed as f64 / total_tests as f64) * 100.0;
-    println!("*Total: {total_passed}/{total_tests} ({total_percentage:.02}%)*");
+    // for results in results_by_category {
+    //     // print category
+    //     println!("*{}*", results[0].category);
+    //     for result in results {
+    //         println!("\t{}", result);
+    //     }
+    //     println!();
+    // }
 
     Ok(())
 }
+
+// fn generate_results_by_category() {
+
+// }
