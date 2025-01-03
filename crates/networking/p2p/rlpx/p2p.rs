@@ -127,24 +127,23 @@ impl RLPxMessage for DisconnectMessage {
     }
 
     fn decode(msg_data: &[u8]) -> Result<Self, RLPDecodeError> {
-        dbg!(msg_data);
         // decode disconnect message: [reason (optional)]
-        let decompressed_data = snappy_decompress(msg_data)?;
+        // The msg data may be compressed or not
+        let msg_data = if let Ok(decompressed) = snappy_decompress(msg_data) {
+            decompressed
+        } else {
+            msg_data.to_vec()
+        };
         // It seems that disconnect reason can be encoded in different ways:
-        // TODO: it may be not compressed at all. We should check that case
-        dbg!(&decompressed_data);
-        let reason = match decompressed_data.len() {
+        dbg!(&msg_data);
+        let reason = match msg_data.len() {
             0 => None,
             // As a single u8
-            1 => Some(decompressed_data[0]),
+            1 => Some(msg_data[0]),
             // As an RLP encoded Vec<u8>
             _ => {
-                let (reason, decoder) = Decoder::new(&decompressed_data)
-                    .map(|decoder| decoder.decode_optional_field())
-                    .or_else(|_| {
-                        Decoder::new(&msg_data).map(|decoder| decoder.decode_optional_field())
-                    })?;
-                decoder.finish()?;
+                let decoder = Decoder::new(&msg_data)?;
+                let (reason, _): (Option<u8>, _) = decoder.decode_optional_field();
                 reason
             }
         };
