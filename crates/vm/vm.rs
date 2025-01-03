@@ -49,7 +49,7 @@ pub const DEPOSIT_MAGIC_DATA: &[u8] = b"mint";
 /// Encapsulates state behaviour to be agnostic to the evm implementation for crate users.
 pub enum EvmState {
     Store(revm::db::State<StoreWrapper>),
-    Execution(revm::db::CacheDB<ExecutionDB>),
+    Execution(Box<revm::db::CacheDB<ExecutionDB>>),
 }
 
 impl EvmState {
@@ -73,7 +73,7 @@ impl EvmState {
 
 impl From<ExecutionDB> for EvmState {
     fn from(value: ExecutionDB) -> Self {
-        EvmState::Execution(revm::db::CacheDB::new(value))
+        EvmState::Execution(Box::new(revm::db::CacheDB::new(value)))
     }
 }
 
@@ -174,7 +174,7 @@ cfg_if::cfg_if! {
             let mut block_cache: CacheDB = HashMap::new();
 
             for tx in block.body.transactions.iter() {
-                let report = execute_tx_levm(tx, block_header, store_wrapper.clone(), block_cache.clone(), spec_id).unwrap();
+                let report = execute_tx_levm(tx, block_header, store_wrapper.clone(), block_cache.clone(), spec_id).map_err(EvmError::from)?;
 
                 let mut new_state = report.new_state.clone();
 
