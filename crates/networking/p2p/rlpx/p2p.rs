@@ -138,8 +138,12 @@ impl RLPxMessage for DisconnectMessage {
             1 => Some(decompressed_data[0]),
             // As an RLP encoded Vec<u8>
             _ => {
-                let decoder = Decoder::new(&decompressed_data)?;
-                let (reason, _): (Option<u8>, _) = decoder.decode_optional_field();
+                let (reason, decoder) = Decoder::new(&decompressed_data)
+                    .map(|decoder| decoder.decode_optional_field())
+                    .or_else(|_| {
+                        Decoder::new(&msg_data).map(|decoder| decoder.decode_optional_field())
+                    })?;
+                decoder.finish()?;
                 reason
             }
         };
