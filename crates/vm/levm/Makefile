@@ -52,7 +52,7 @@ clean-evm-ef-tests: ## 🗑️  Clean test vectors
 
 ###### Benchmarks ######
 
-revm-comparison: ## 📊 Run factorial and fibonacci b
+revm-comparison: ## 📊 Run benchmarks of fibonacci and factorial for both REVM and LEVM
 	$(MAKE) build-revm-comparison
 	@echo
 	@printf "%s" "revm_factorial result: "
