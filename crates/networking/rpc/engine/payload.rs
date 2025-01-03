@@ -39,7 +39,13 @@ impl RpcHandler for NewPayloadV2Request {
     }
 
     fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
-        handle_new_payload_v1_v2(&self.payload, Fork::Shanghai, context)
+        if self.payload.withdrawals.is_none() {
+            Err(RpcErr::WrongParam(
+                "forkChoiceV2 withdrawals is null".to_string(),
+            ))
+        } else {
+            handle_new_payload_v1_v2(&self.payload, Fork::Shanghai, context)
+        }
     }
 }
 
@@ -179,20 +185,7 @@ fn parse_execution_payload(params: &Option<Vec<Value>>) -> Result<ExecutionPaylo
     if params.len() != 1 {
         return Err(RpcErr::BadParams("Expected 1 params".to_owned()));
     }
-    let payload: ExecutionPayload = serde_json::from_value(params[0].clone())
-        .map_err(|_| RpcErr::WrongParam("payload".to_string()))?;
-
-    match payload {
-        ExecutionPayload {
-            withdrawals: None, ..
-        } => Err(RpcErr::WrongParam(
-            "forkChoiceV2 withdrawals is null".to_string(),
-        )),
-        ExecutionPayload {
-            withdrawals: Some(_),
-            ..
-        } => Ok(payload),
-    }
+    serde_json::from_value(params[0].clone()).map_err(|_| RpcErr::WrongParam("payload".to_string()))
 }
 
 fn handle_new_payload_v1_v2(
