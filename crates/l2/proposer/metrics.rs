@@ -1,14 +1,12 @@
 use crate::{
     proposer::errors::MetricsGathererError,
-    utils::{
-        config::{
-            committer::CommitterConfig, errors::ConfigError, eth::EthConfig,
-            l1_watcher::L1WatcherConfig,
-        },
-        eth_client::{errors::EthClientError, EthClient},
+    utils::config::{
+        committer::CommitterConfig, errors::ConfigError, eth::EthConfig,
+        l1_watcher::L1WatcherConfig,
     },
 };
 use ethereum_types::Address;
+use ethrex_l2_sdk::eth_client::{errors::EthClientError, EthClient};
 use ethrex_metrics::metrics_l2::{MetricsL2BlockType, METRICS_L2};
 use std::time::Duration;
 use tokio::time::sleep;
@@ -39,7 +37,7 @@ impl MetricsGatherer {
         committer_config: CommitterConfig,
         eth_config: EthConfig,
     ) -> Result<Self, EthClientError> {
-        let eth_client = EthClient::new_from_config(eth_config);
+        let eth_client = EthClient::new(&eth_config.rpc_url);
         //let l2_client = EthClient::new("http://localhost:1729");
         Ok(Self {
             eth_client,
