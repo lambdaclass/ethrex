@@ -135,7 +135,6 @@ impl RLPxMessage for DisconnectMessage {
             msg_data.to_vec()
         };
         // It seems that disconnect reason can be encoded in different ways:
-        dbg!(&msg_data);
         let reason = match msg_data.len() {
             0 => None,
             // As a single u8
@@ -147,6 +146,7 @@ impl RLPxMessage for DisconnectMessage {
                 reason
             }
         };
+        dbg!(&reason);
 
         Ok(Self::new(reason))
     }
