@@ -9,6 +9,7 @@ use ethrex_core::{
     types::{BLOB_BASE_FEE_UPDATE_FRACTION, MIN_BASE_FEE_PER_BLOB_GAS},
     U256,
 };
+use revm_primitives::SpecId;
 
 // Block Information (11)
 // Opcodes: BLOCKHASH, COINBASE, TIMESTAMP, NUMBER, PREVRANDAO, GASLIMIT, CHAINID, SELFBALANCE, BASEFEE, BLOBHASH, BLOBBASEFEE
@@ -110,7 +111,9 @@ impl VM {
     ) -> Result<OpcodeSuccess, VMError> {
         self.increase_consumed_gas(current_call_frame, gas_cost::GASLIMIT)?;
 
-        current_call_frame.stack.push(self.env.gas_limit)?;
+        current_call_frame
+            .stack
+            .push(self.env.block_gas_limit.into())?;
 
         Ok(OpcodeSuccess::Continue)
     }
@@ -134,11 +137,7 @@ impl VM {
     ) -> Result<OpcodeSuccess, VMError> {
         self.increase_consumed_gas(current_call_frame, gas_cost::SELFBALANCE)?;
 
-        // the current account should have been cached when the contract was called
-        let balance = self
-            .get_account(current_call_frame.code_address)
-            .info
-            .balance;
+        let balance = self.get_account(current_call_frame.to).info.balance;
 
         current_call_frame.stack.push(balance)?;
         Ok(OpcodeSuccess::Continue)
@@ -162,24 +161,33 @@ impl VM {
         &mut self,
         current_call_frame: &mut CallFrame,
     ) -> Result<OpcodeSuccess, VMError> {
+        // [EIP-4844] - BLOBHASH is only available from CANCUN
+        if self.env.spec_id < SpecId::CANCUN {
+            return Err(VMError::InvalidOpcode);
+        }
+
         self.increase_consumed_gas(current_call_frame, gas_cost::BLOBHASH)?;
 
-        let index: usize = current_call_frame
-            .stack
-            .pop()?
-            .try_into()
-            .map_err(|_err| VMError::VeryLargeNumber)?;
+        let index = current_call_frame.stack.pop()?;
 
         let blob_hashes = &self.env.tx_blob_hashes;
+        if index > blob_hashes.len().into() {
+            current_call_frame.stack.push(U256::zero())?;
+            return Ok(OpcodeSuccess::Continue);
+        }
 
-        blob_hashes
+        let index: usize = index
+            .try_into()
+            .map_err(|_| VMError::Internal(InternalError::ConversionError))?;
+
+        //This should never fail because we check if the index fits above
+        let blob_hash = blob_hashes
             .get(index)
-            .map(|el| {
-                current_call_frame
-                    .stack
-                    .push(U256::from_big_endian(el.as_bytes()))
-            })
-            .unwrap_or_else(|| current_call_frame.stack.push(U256::zero()))?;
+            .ok_or(VMError::Internal(InternalError::BlobHashOutOfRange))?;
+
+        current_call_frame
+            .stack
+            .push(U256::from_big_endian(blob_hash.as_bytes()))?;
 
         Ok(OpcodeSuccess::Continue)
     }
@@ -200,6 +208,10 @@ impl VM {
         &mut self,
         current_call_frame: &mut CallFrame,
     ) -> Result<OpcodeSuccess, VMError> {
+        // [EIP-7516] - BLOBBASEFEE is only available from CANCUN
+        if self.env.spec_id < SpecId::CANCUN {
+            return Err(VMError::InvalidOpcode);
+        }
         self.increase_consumed_gas(current_call_frame, gas_cost::BLOBBASEFEE)?;
 
         let blob_base_fee = self.get_blob_gasprice()?;

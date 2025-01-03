@@ -3,20 +3,21 @@ use crate::{
         errors::CommitterError,
         state_diff::{AccountStateDiff, DepositLog, StateDiff, WithdrawalLog},
     },
-    utils::{
-        config::{committer::CommitterConfig, errors::ConfigError, eth::EthConfig},
-        eth_client::{eth_sender::Overrides, BlockByNumber, EthClient, WrappedTransaction},
-        merkle_tree::merkelize,
-    },
+    utils::config::{committer::CommitterConfig, errors::ConfigError, eth::EthConfig},
 };
-use bytes::Bytes;
+
 use ethrex_core::{
     types::{
-        blobs_bundle, fake_exponential, BlobsBundle, Block, PrivilegedL2Transaction,
-        PrivilegedTxType, Transaction, TxKind, BLOB_BASE_FEE_UPDATE_FRACTION,
-        MIN_BASE_FEE_PER_BLOB_GAS,
+        blobs_bundle, fake_exponential_checked, BlobsBundle, BlobsBundleError, Block,
+        PrivilegedL2Transaction, PrivilegedTxType, Transaction, TxKind,
+        BLOB_BASE_FEE_UPDATE_FRACTION, MIN_BASE_FEE_PER_BLOB_GAS,
     },
     Address, H256, U256,
+};
+use ethrex_l2_sdk::merkle_tree::merkelize;
+use ethrex_l2_sdk::{
+    calldata::{encode_calldata, Value},
+    eth_client::{eth_sender::Overrides, BlockByNumber, EthClient, WrappedTransaction},
 };
 use ethrex_storage::{error::StoreError, Store};
 use ethrex_vm::{evm_state, execute_block, get_state_transitions};
@@ -28,7 +29,7 @@ use tracing::{error, info};
 
 use super::errors::BlobEstimationError;
 
-const COMMIT_FUNCTION_SELECTOR: [u8; 4] = [132, 97, 12, 179];
+const COMMIT_FUNCTION_SIGNATURE: &str = "commit(uint256,bytes32,bytes32,bytes32)";
 
 pub struct Committer {
     eth_client: EthClient,
@@ -77,17 +78,11 @@ impl Committer {
 
     async fn main_logic(&self) -> Result<(), CommitterError> {
         loop {
-            let last_committed_block = EthClient::get_last_committed_block(
+            let block_number_to_fetch = EthClient::get_next_block_to_commit(
                 &self.eth_client,
                 self.on_chain_proposer_address,
             )
             .await?;
-
-            let block_number_to_fetch = if last_committed_block == u64::MAX {
-                0
-            } else {
-                last_committed_block + 1
-            };
 
             if let Some(block_to_commit_body) = self
                 .store
@@ -159,7 +154,7 @@ impl Committer {
         }
     }
 
-    pub fn get_block_withdrawals(
+    fn get_block_withdrawals(
         &self,
         block: &Block,
     ) -> Result<Vec<(H256, PrivilegedL2Transaction)>, CommitterError> {
@@ -180,7 +175,7 @@ impl Committer {
         Ok(withdrawals)
     }
 
-    pub fn get_withdrawals_merkle_root(
+    fn get_withdrawals_merkle_root(
         &self,
         withdrawals_hashes: Vec<H256>,
     ) -> Result<H256, CommitterError> {
@@ -191,7 +186,7 @@ impl Committer {
         }
     }
 
-    pub fn get_block_deposits(&self, block: &Block) -> Vec<PrivilegedL2Transaction> {
+    fn get_block_deposits(&self, block: &Block) -> Vec<PrivilegedL2Transaction> {
         let deposits = block
             .body
             .transactions
@@ -209,7 +204,7 @@ impl Committer {
         deposits
     }
 
-    pub fn get_deposit_hash(&self, deposit_hashes: Vec<H256>) -> Result<H256, CommitterError> {
+    fn get_deposit_hash(&self, deposit_hashes: Vec<H256>) -> Result<H256, CommitterError> {
         if !deposit_hashes.is_empty() {
             let deposit_hashes_len: u16 = deposit_hashes
                 .len()
@@ -236,8 +231,9 @@ impl Committer {
             Ok(H256::zero())
         }
     }
+
     /// Prepare the state diff for the block.
-    pub fn prepare_state_diff(
+    fn prepare_state_diff(
         &self,
         block: &Block,
         store: Store,
@@ -306,6 +302,7 @@ impl Committer {
                         TxKind::Create => Address::zero(),
                     },
                     amount: tx.value,
+                    nonce: tx.nonce,
                 })
                 .collect(),
         };
@@ -314,10 +311,7 @@ impl Committer {
     }
 
     /// Generate the blob bundle necessary for the EIP-4844 transaction.
-    pub fn generate_blobs_bundle(
-        &self,
-        state_diff: &StateDiff,
-    ) -> Result<BlobsBundle, CommitterError> {
+    fn generate_blobs_bundle(&self, state_diff: &StateDiff) -> Result<BlobsBundle, CommitterError> {
         let blob_data = state_diff.encode().map_err(CommitterError::from)?;
 
         let blob = blobs_bundle::blob_from_bytes(blob_data).map_err(CommitterError::from)?;
@@ -325,7 +319,7 @@ impl Committer {
         BlobsBundle::create_from_blobs(&vec![blob]).map_err(CommitterError::from)
     }
 
-    pub async fn send_commitment(
+    async fn send_commitment(
         &self,
         block_number: u64,
         withdrawal_logs_merkle_root: H256,
@@ -334,21 +328,23 @@ impl Committer {
     ) -> Result<H256, CommitterError> {
         info!("Sending commitment for block {block_number}");
 
-        let mut calldata = Vec::with_capacity(132);
-        calldata.extend(COMMIT_FUNCTION_SELECTOR);
-        let mut block_number_bytes = [0_u8; 32];
-        U256::from(block_number).to_big_endian(&mut block_number_bytes);
-        calldata.extend(block_number_bytes);
-
         let blob_versioned_hashes = blobs_bundle.generate_versioned_hashes();
-        // We only actually support one versioned hash on the onChainProposer for now,
-        // but eventually this should work if we start sending multiple blobs per commit operation.
-        for blob_versioned_hash in blob_versioned_hashes {
-            let blob_versioned_hash_bytes = blob_versioned_hash.to_fixed_bytes();
-            calldata.extend(blob_versioned_hash_bytes);
-        }
-        calldata.extend(withdrawal_logs_merkle_root.0);
-        calldata.extend(deposit_logs_hash.0);
+        let calldata_values = vec![
+            Value::Uint(U256::from(block_number)),
+            Value::FixedBytes(
+                blob_versioned_hashes
+                    .first()
+                    .ok_or(BlobsBundleError::BlobBundleEmptyError)
+                    .map_err(CommitterError::from)?
+                    .as_fixed_bytes()
+                    .to_vec()
+                    .into(),
+            ),
+            Value::FixedBytes(withdrawal_logs_merkle_root.0.to_vec().into()),
+            Value::FixedBytes(deposit_logs_hash.0.to_vec().into()),
+        ];
+
+        let calldata = encode_calldata(COMMIT_FUNCTION_SIGNATURE, &calldata_values)?;
 
         let le_bytes = estimate_blob_gas(
             &self.eth_client,
@@ -365,7 +361,7 @@ impl Committer {
             .build_eip4844_transaction(
                 self.on_chain_proposer_address,
                 self.l1_address,
-                Bytes::from(calldata),
+                calldata.into(),
                 Overrides {
                     from: Some(self.l1_address),
                     gas_price_per_blob,
@@ -438,11 +434,13 @@ async fn estimate_blob_gas(
     };
 
     // If the blob's market is in high demand, the equation may give a really big number.
-    let blob_gas = fake_exponential(
+    // This function doesn't panic, it performs checked/saturating operations.
+    let blob_gas = fake_exponential_checked(
         MIN_BASE_FEE_PER_BLOB_GAS,
         total_blob_gas,
         BLOB_BASE_FEE_UPDATE_FRACTION,
-    );
+    )
+    .map_err(BlobEstimationError::FakeExponentialError)?;
 
     let gas_with_headroom = (blob_gas * (100 + headroom)) / 100;
 

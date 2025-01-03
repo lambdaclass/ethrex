@@ -17,7 +17,7 @@ fn test_extcodecopy_memory_allocation() {
     ]))
     .unwrap();
     let mut current_call_frame = vm.call_frames.pop().unwrap();
-    current_call_frame.gas_limit = U256::from(100_000_000);
+    current_call_frame.gas_limit = 100_000_000;
     vm.env.gas_price = U256::from(10_000);
     vm.execute(&mut current_call_frame).unwrap();
 }
@@ -154,7 +154,7 @@ fn test_non_compliance_returndatacopy() {
         new_vm_with_bytecode(Bytes::copy_from_slice(&[56, 56, 56, 56, 56, 56, 62, 56])).unwrap();
     let mut current_call_frame = vm.call_frames.pop().unwrap();
     let txreport = vm.execute(&mut current_call_frame).unwrap();
-    assert_eq!(txreport.result, TxResult::Revert(VMError::VeryLargeNumber));
+    assert_eq!(txreport.result, TxResult::Revert(VMError::OutOfBounds));
 }
 
 #[test]
@@ -287,4 +287,14 @@ fn test_non_compliance_codecopy_memory_resize() {
         current_call_frame.stack.stack.first().unwrap(),
         &U256::from(14400)
     );
+}
+
+#[test]
+fn test_non_compliance_log_gas_cost() {
+    let mut vm = new_vm_with_bytecode(Bytes::copy_from_slice(&[56, 68, 68, 68, 131, 163])).unwrap();
+    vm.env.gas_price = U256::zero();
+    vm.env.gas_limit = 100_000_000;
+    vm.env.block_gas_limit = 100_000_001;
+    let res = vm.transact().unwrap();
+    assert_eq!(res.gas_used, 22511);
 }

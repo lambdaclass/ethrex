@@ -1,7 +1,8 @@
 use bytes::Bytes;
 use ethereum_types::{H256, U256};
 use ethrex_core::types::{
-    Block, BlockBody, BlockHash, BlockHeader, BlockNumber, ChainConfig, Index, Receipt, Transaction,
+    BlobsBundle, Block, BlockBody, BlockHash, BlockHeader, BlockNumber, ChainConfig, Index,
+    Receipt, Transaction,
 };
 use std::{fmt::Debug, panic::RefUnwindSafe};
 
@@ -78,6 +79,12 @@ pub trait StoreEngine: Debug + Send + Sync + RefUnwindSafe {
         index: Index,
     ) -> Result<(), StoreError>;
 
+    /// Store transaction locations in batch (one db transaction for all)
+    fn add_transaction_locations(
+        &self,
+        locations: Vec<(H256, BlockNumber, BlockHash, Index)>,
+    ) -> Result<(), StoreError>;
+
     /// Obtain transaction location (block hash and index)
     fn get_transaction_location(
         &self,
@@ -91,6 +98,10 @@ pub trait StoreEngine: Debug + Send + Sync + RefUnwindSafe {
         index: Index,
         receipt: Receipt,
     ) -> Result<(), StoreError>;
+
+    /// Add receipt
+    fn add_receipts(&self, block_hash: BlockHash, receipts: Vec<Receipt>)
+        -> Result<(), StoreError>;
 
     /// Obtain receipt for a canonical block represented by the block number.
     fn get_receipt(
@@ -216,5 +227,19 @@ pub trait StoreEngine: Debug + Send + Sync + RefUnwindSafe {
 
     fn add_payload(&self, payload_id: u64, block: Block) -> Result<(), StoreError>;
 
-    fn get_payload(&self, payload_id: u64) -> Result<Option<Block>, StoreError>;
+    fn get_payload(
+        &self,
+        payload_id: u64,
+    ) -> Result<Option<(Block, U256, BlobsBundle, bool)>, StoreError>;
+
+    fn update_payload(
+        &self,
+        payload_id: u64,
+        block: Block,
+        block_value: U256,
+        blobs_bundle: BlobsBundle,
+        completed: bool,
+    ) -> Result<(), StoreError>;
+
+    fn get_receipts_for_block(&self, block_hash: &BlockHash) -> Result<Vec<Receipt>, StoreError>;
 }

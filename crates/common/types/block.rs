@@ -241,7 +241,7 @@ pub fn compute_receipts_root(receipts: &[Receipt]) -> H256 {
     let iter = receipts
         .iter()
         .enumerate()
-        .map(|(idx, receipt)| (idx.encode_to_vec(), receipt.encode_to_vec()));
+        .map(|(idx, receipt)| (idx.encode_to_vec(), receipt.encode_inner()));
     Trie::compute_hash_from_unsorted_iter(iter)
 }
 
@@ -360,6 +360,48 @@ pub fn fake_exponential(factor: u64, numerator: u64, denominator: u64) -> u64 {
         i += 1;
     }
     output / denominator
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum FakeExponentialError {
+    #[error("Denominator cannot be zero.")]
+    DenominatorIsZero,
+    #[error("Checked div failed is None.")]
+    CheckedDiv,
+    #[error("Checked mul failed is None.")]
+    CheckedMul,
+}
+
+pub fn fake_exponential_checked(
+    factor: u64,
+    numerator: u64,
+    denominator: u64,
+) -> Result<u64, FakeExponentialError> {
+    let mut i = 1_u64;
+    let mut output = 0_u64;
+    let mut numerator_accum = factor * denominator;
+    if denominator == 0 {
+        return Err(FakeExponentialError::DenominatorIsZero);
+    }
+
+    while numerator_accum > 0 {
+        output = output.saturating_add(numerator_accum);
+
+        let denominator_i = denominator
+            .checked_mul(i)
+            .ok_or(FakeExponentialError::CheckedMul)?;
+
+        if denominator_i == 0 {
+            return Err(FakeExponentialError::DenominatorIsZero);
+        }
+
+        numerator_accum = numerator_accum * numerator / denominator_i;
+        i += 1;
+    }
+
+    output
+        .checked_div(denominator)
+        .ok_or(FakeExponentialError::CheckedDiv)
 }
 
 // Calculates the base fee for the current block based on its gas_limit and parent's gas and fee
@@ -544,26 +586,11 @@ fn calc_excess_blob_gas(parent_header: &BlockHeader) -> u64 {
 
 #[cfg(test)]
 mod test {
-    use std::{str::FromStr, time::Instant};
+    use std::str::FromStr;
 
     use super::*;
     use ethereum_types::H160;
     use hex_literal::hex;
-
-    #[test]
-    fn compute_hash() {
-        let block = Block::default();
-
-        let start = Instant::now();
-        block.hash();
-        let duration = start.elapsed();
-
-        let start_2 = Instant::now();
-        block.hash();
-        let duration_2 = start_2.elapsed();
-
-        assert!(duration > 1000 * duration_2);
-    }
 
     #[test]
     fn test_compute_withdrawals_root() {

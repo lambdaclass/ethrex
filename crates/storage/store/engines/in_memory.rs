@@ -2,7 +2,7 @@ use crate::error::StoreError;
 use bytes::Bytes;
 use ethereum_types::{H256, U256};
 use ethrex_core::types::{
-    Block, BlockBody, BlockHash, BlockHeader, BlockNumber, ChainConfig, Index, Receipt,
+    BlobsBundle, Block, BlockBody, BlockHash, BlockHeader, BlockNumber, ChainConfig, Index, Receipt,
 };
 use ethrex_trie::{InMemoryTrieDB, Trie};
 use std::{
@@ -36,7 +36,7 @@ struct StoreInner {
     // TODO (#307): Remove TotalDifficulty.
     block_total_difficulties: HashMap<BlockHash, U256>,
     // Stores local blocks by payload id
-    payloads: HashMap<u64, Block>,
+    payloads: HashMap<u64, (Block, U256, BlobsBundle, bool)>,
     pending_blocks: HashMap<BlockHash, Block>,
 }
 
@@ -341,12 +341,76 @@ impl StoreEngine for Store {
     }
 
     fn add_payload(&self, payload_id: u64, block: Block) -> Result<(), StoreError> {
-        self.inner().payloads.insert(payload_id, block);
+        self.inner().payloads.insert(
+            payload_id,
+            (block, U256::zero(), BlobsBundle::empty(), false),
+        );
         Ok(())
     }
 
-    fn get_payload(&self, payload_id: u64) -> Result<Option<Block>, StoreError> {
+    fn get_payload(
+        &self,
+        payload_id: u64,
+    ) -> Result<Option<(Block, U256, BlobsBundle, bool)>, StoreError> {
         Ok(self.inner().payloads.get(&payload_id).cloned())
+    }
+
+    fn get_receipts_for_block(&self, block_hash: &BlockHash) -> Result<Vec<Receipt>, StoreError> {
+        let store = self.inner();
+        let Some(receipts_for_block) = store.receipts.get(block_hash) else {
+            return Ok(vec![]);
+        };
+        let mut receipts = receipts_for_block
+            .iter()
+            .collect::<Vec<(&Index, &Receipt)>>();
+
+        receipts.sort_by_key(|(index, _receipt)| **index);
+
+        Ok(receipts
+            .into_iter()
+            .map(|(_index, receipt)| receipt.clone())
+            .collect())
+    }
+
+    fn add_receipts(
+        &self,
+        block_hash: BlockHash,
+        receipts: Vec<Receipt>,
+    ) -> Result<(), StoreError> {
+        let mut store = self.inner();
+        let entry = store.receipts.entry(block_hash).or_default();
+        for (index, receipt) in receipts.into_iter().enumerate() {
+            entry.insert(index as u64, receipt);
+        }
+        Ok(())
+    }
+
+    fn add_transaction_locations(
+        &self,
+        locations: Vec<(H256, BlockNumber, BlockHash, Index)>,
+    ) -> Result<(), StoreError> {
+        for (transaction_hash, block_number, block_hash, index) in locations {
+            self.inner()
+                .transaction_locations
+                .entry(transaction_hash)
+                .or_default()
+                .push((block_number, block_hash, index));
+        }
+
+        Ok(())
+    }
+    fn update_payload(
+        &self,
+        payload_id: u64,
+        block: Block,
+        block_value: U256,
+        blobs_bundle: BlobsBundle,
+        completed: bool,
+    ) -> Result<(), StoreError> {
+        self.inner()
+            .payloads
+            .insert(payload_id, (block, block_value, blobs_bundle, completed));
+        Ok(())
     }
 }
 
