@@ -188,7 +188,10 @@ fn parse_execution_payload(params: &Option<Vec<Value>>) -> Result<ExecutionPaylo
         } => Err(RpcErr::WrongParam(
             "forkChoiceV2 withdrawals is null".to_string(),
         )),
-        ExecutionPayload { withdrawals: Some(_), .. } => Ok(payload),
+        ExecutionPayload {
+            withdrawals: Some(_),
+            ..
+        } => Ok(payload),
     }
 }
 
