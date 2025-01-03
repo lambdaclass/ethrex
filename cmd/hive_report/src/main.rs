@@ -1,78 +1,7 @@
-use serde::Deserialize;
 use std::fs::{self, File};
 use std::io::BufReader;
 
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct TestCase {
-    summary_result: SummaryResult,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct SummaryResult {
-    pass: bool,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct JsonFile {
-    name: String,
-    test_cases: std::collections::HashMap<String, TestCase>,
-}
-
-struct HiveResult {
-    category: String,
-    display_name: String,
-    passed_tests: usize,
-    total_tests: usize,
-    success_percentage: f64,
-}
-
-impl HiveResult {
-    fn new(suite: String, passed_tests: usize, total_tests: usize) -> Self {
-        let success_percentage = (passed_tests as f64 / total_tests as f64) * 100.0;
-
-        let (category, display_name) = match suite.as_str() {
-            "engine-api" => ("Engine", "Paris"),
-            "engine-auth" => ("Engine", "Auth"),
-            "engine-cancun" => ("Engine", "Cancun"),
-            "engine-exchange-capabilities" => ("Engine", "Exchange Capabilities"),
-            "engine-withdrawals" => ("Engine", "Shanghai"),
-            "discv4" => ("P2P", "Discovery V4"),
-            "eth" => ("P2P", "Eth capability"),
-            "snap" => ("P2P", "Snap capability"),
-            "rpc-compat" => ("RPC", "RPC API Compatibility"),
-            "sync" => ("Sync", "Node Syncing"),
-            other => {
-                eprintln!("Warn: Unknown suite: {}. Skipping", other);
-                ("", "")
-            }
-        };
-
-        HiveResult {
-            category: category.to_string(),
-            display_name: display_name.to_string(),
-            passed_tests,
-            total_tests,
-            success_percentage,
-        }
-    }
-
-    fn should_skip(&self) -> bool {
-        self.category.is_empty()
-    }
-}
-
-impl std::fmt::Display for HiveResult {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "{}: {}/{} ({:.02}%)",
-            self.display_name, self.passed_tests, self.total_tests, self.success_percentage
-        )
-    }
-}
+use hive_report::{HiveResult, JsonFile};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut results = Vec::new();

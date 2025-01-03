@@ -4,3 +4,6 @@ version.workspace = true
 edition.workspace = true
 
 [dependencies]
+serde_json.workspace = true
+serde.workspace = true
+hive_report = { path = "../hive_report" }

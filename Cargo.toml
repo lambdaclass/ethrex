@@ -14,13 +14,14 @@ members = [
     "cmd/ef_tests/levm",
     "cmd/ethrex_l2",
     "cmd/hive_report",
+    "cmd/hive_comparison",
     "crates/vm/levm",
     "crates/vm/levm/bench/revm_comparison",
     "crates/l2/",
     "crates/l2/prover",
     "crates/l2/contracts",
     "crates/l2/sdk",
-    "cmd/loc", "cmd/hive_comparison",
+    "cmd/loc",
 ]
 resolver = "2"
 
