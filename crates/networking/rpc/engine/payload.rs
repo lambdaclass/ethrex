@@ -39,7 +39,13 @@ impl RpcHandler for NewPayloadV2Request {
     }
 
     fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
-        handle_new_payload_v1_v2(&self.payload, Fork::Shanghai, context)
+        if self.payload.withdrawals.is_none() {
+            Err(RpcErr::WrongParam(
+                "forkChoiceV2 withdrawals is null".to_string(),
+            ))
+        } else {
+            handle_new_payload_v1_v2(&self.payload, Fork::Shanghai, context)
+        }
     }
 }
 

@@ -85,11 +85,9 @@ impl ExecutionDB {
                 .added_storage
                 .iter()
                 .map(|(key, value)| {
-                    let mut value_bytes = [0u8; 32];
-                    value.to_big_endian(&mut value_bytes);
                     (
                         RevmU256::from_be_bytes(key.to_fixed_bytes()),
-                        RevmU256::from_be_slice(&value_bytes),
+                        RevmU256::from_be_slice(&value.to_big_endian()),
                     )
                 })
                 .collect();
@@ -220,11 +218,7 @@ impl DatabaseRef for ExecutionDB {
         };
 
         Ok(Some(RevmAccountInfo {
-            balance: {
-                let mut balance_bytes = [0; 32];
-                account_state.balance.to_big_endian(&mut balance_bytes);
-                RevmU256::from_be_bytes(balance_bytes)
-            },
+            balance: RevmU256::from_be_bytes(account_state.balance.to_big_endian()),
             nonce: account_state.nonce,
             code_hash: RevmB256::from_slice(account_state.code_hash.as_bytes()),
             code: None,
