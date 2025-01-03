@@ -214,7 +214,7 @@ async fn main() {
         .map_or("0".to_owned(), |v| v.clone());
 
     // Start the metrics_api with the given metrics.port if it's != 0
-    if metrics_port != "0".to_owned() {
+    if metrics_port != *"0" {
         let metrics_api = ethrex_metrics::api::start_prometheus_metrics_api(metrics_port);
         tracker.spawn(metrics_api);
     }
