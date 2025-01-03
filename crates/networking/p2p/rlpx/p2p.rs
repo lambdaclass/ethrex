@@ -7,6 +7,7 @@ use ethrex_rlp::{
     structs::{Decoder, Encoder},
 };
 use k256::PublicKey;
+use tracing::info;
 
 use crate::rlpx::utils::{id2pubkey, snappy_decompress};
 
@@ -146,7 +147,25 @@ impl RLPxMessage for DisconnectMessage {
                 reason
             }
         };
-        dbg!(&reason);
+        if let Some(r) = reason {
+            let reason = match r {
+                0x00 =>	"Disconnect requested",
+                0x01 =>	"TCP sub-system error",
+                0x02 =>	"Breach of protocol, e.g. a malformed message, bad RLP, ...",
+                0x03 =>	"Useless peer",
+                0x04 =>	"Too many peers",
+                0x05 =>	"Already connected",
+                0x06 =>	"Incompatible P2P protocol version",
+                0x07 =>	"Null node identity received - this is automatically invalid",
+                0x08 =>	"Client quitting",
+                0x09 =>	"Unexpected identity in handshake",
+                0x0a =>	"Identity is the same as this node (i.e. connected to itself)",
+                0x0b =>	"Ping timeout",
+                0x10 =>	"Some other reason specific to a subprotocol",
+                _ => "Unknown Reason"
+            };
+            info!("Received Disconnect with reason: {reason}")
+        }
 
         Ok(Self::new(reason))
     }
