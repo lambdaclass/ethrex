@@ -57,8 +57,11 @@ make download-evm-ef-tests run-evm-ef-tests
 
 ### How to run benchmarks locally
 
+> [!IMPORTANT]
+> You need to have `hyperfine` installed to run the benchmarks.
+
 ```
-make build-revm-comparison revm-comparison
+make revm-comparison
 ```
 
 ## Useful Links
