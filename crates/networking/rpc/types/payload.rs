@@ -35,7 +35,7 @@ pub struct ExecutionPayload {
     pub block_hash: H256,
     transactions: Vec<EncodedTransaction>,
     #[serde(skip_serializing_if = "Option::is_none", default)]
-    withdrawals: Option<Vec<Withdrawal>>,
+    pub withdrawals: Option<Vec<Withdrawal>>,
     // ExecutionPayloadV3 fields. Optional since we support V2 too
     #[serde(
         skip_serializing_if = "Option::is_none",
@@ -104,7 +104,6 @@ impl ExecutionPayload {
             ommers: vec![],
             withdrawals: self.withdrawals,
         };
-
         let header = BlockHeader {
             parent_hash: self.parent_hash,
             ommers_hash: *DEFAULT_OMMERS_HASH,
