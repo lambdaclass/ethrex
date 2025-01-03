@@ -55,12 +55,8 @@ impl RLPxMessage for Transactions {
         // or so it seems.
         while let Ok((tx, updated_decoder)) = decoder.decode_field::<Transaction>("p2p transaction")
         {
-            if transactions.len() > TRANSACTION_LIMIT {
-                break;
-            } else {
-                decoder = updated_decoder;
-                transactions.push(tx);
-            }
+            decoder = updated_decoder;
+            transactions.push(tx);
         }
         Ok(Self::new(transactions))
     }
