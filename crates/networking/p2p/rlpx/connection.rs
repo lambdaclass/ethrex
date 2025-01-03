@@ -280,7 +280,9 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
                     // TODO check if this is cancel safe, and fix it if not.
                     message = self.receive() => {
                         // TODO: Ignoring errors
-                        self.handle_message(message.unwrap(), sender.clone()).await;
+                        if let Err(e) = self.handle_message(message.unwrap(), sender.clone()).await {
+                            info!("Handle Message error: {e}");
+                        }
                     }
                     // This is not ideal, but using the receiver without
                     // this function call, causes the loop to take ownwership
