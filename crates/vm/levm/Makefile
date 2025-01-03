@@ -52,6 +52,7 @@ clean-evm-ef-tests: ## 🗑️  Clean test vectors
 
 ###### Benchmarks ######
 
+# TODO: CHANGE PARAMS BENCHMARKS - TESTING PURPOSES
 revm-comparison:
 	$(MAKE) build-revm-comparison
 	@echo
@@ -60,16 +61,16 @@ revm-comparison:
 	@printf "%s" "levm_factorial result: "
 	@target/release/levm_factorial 1 1000
 	hyperfine -w 5 -r 10 -N \
-		-n "revm_factorial" "target/release/revm_factorial 100000 1000" \
-		-n "levm_factorial" "target/release/levm_factorial 100000 1000"
+		-n "revm_factorial" "target/release/revm_factorial 500 1" \
+		-n "levm_factorial" "target/release/levm_factorial 500 1"
 	@echo
 	@printf "%s" "revm_fibonacci result: "
 	@target/release/revm_fibonacci 1 1000
 	@printf "%s" "levm_fibonacci result: "
 	@target/release/levm_fibonacci 1 1000
 	hyperfine -w 5 -r 10 -N \
-		-n "revm_fibonacci" "target/release/revm_fibonacci 100000 1000" \
-		-n "levm_fibonacci" "target/release/levm_fibonacci 100000 1000"
+		-n "revm_fibonacci" "target/release/revm_fibonacci 500 1" \
+		-n "levm_fibonacci" "target/release/levm_fibonacci 500 1"
 	@echo
 
 build-revm-comparison:
