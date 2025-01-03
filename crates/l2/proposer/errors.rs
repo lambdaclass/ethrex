@@ -1,6 +1,7 @@
 use std::sync::mpsc::SendError;
 
 use crate::utils::config::errors::ConfigError;
+use crate::utils::prover::errors::SaveStateError;
 use ethereum_types::FromStrRadixErr;
 use ethrex_core::types::{BlobsBundleError, FakeExponentialError};
 use ethrex_dev::utils::engine_client::errors::EngineClientError;
@@ -34,9 +35,9 @@ pub enum ProverServerError {
     EthClientError(#[from] EthClientError),
     #[error("ProverServer failed to send transaction: {0}")]
     FailedToVerifyProofOnChain(String),
-    #[error("ProverServer failed retrieve block from storage: {0}")]
-    FailedToRetrieveBlockFromStorage(#[from] StoreError),
-    #[error("ProverServer failed retrieve block from storaga, data is None.")]
+    #[error("ProverServer failed to access Store: {0}")]
+    FailedAccessingStore(#[from] StoreError),
+    #[error("ProverServer failed to retrieve block from storaga, data is None.")]
     StorageDataIsNone,
     #[error("ProverServer failed to create ProverInputs: {0}")]
     FailedToCreateProverInputs(#[from] EvmError),
@@ -46,6 +47,12 @@ pub enum ProverServerError {
     JoinError(#[from] JoinError),
     #[error("ProverServer failed: {0}")]
     Custom(String),
+    #[error("ProverServer failed to write to TcpStream: {0}")]
+    WriteError(String),
+    #[error("ProverServer failed to get data from Store: {0}")]
+    ItemNotFoundInStore(String),
+    #[error("ProverServer encountered a SaveStateError: {0}")]
+    SaveStateError(#[from] SaveStateError),
     #[error("Failed to encode calldata: {0}")]
     CalldataEncodeError(#[from] CalldataEncodeError),
 }

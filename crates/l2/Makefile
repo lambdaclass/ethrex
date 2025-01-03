@@ -1,4 +1,4 @@
-.PHONY: help init down clean restart cli update-cli-contracts init-local-l1 init-l1 down-local-l1 restart-local-l1 rm-db-l1 clean-contract-deps restart-contract-deps deploy-l1 init-l2 down-l2 restart-l2 init-prover rm-db-l2 ci_test test
+.PHONY: help init down clean restart cli update-cli-contracts init-local-l1 init-l1 down-local-l1 restart-local-l1 rm-db-l1 clean-contract-deps restart-contract-deps deploy-l1 init-l2 down-l2 restart-l2 init-prover rm-db-l2 purge_prover_state ci_test test
 .DEFAULT_GOAL := help
 
 L2_GENESIS_FILE_PATH=../../test_data/genesis-l2.json
@@ -133,3 +133,26 @@ ci_test: ## 🚧 Runs the L2's integration test, used by the github's CI
 
 test: ## 🚧 Runs the L2's integration test, run `make init` and in a new terminal make test
 	BRIDGE_ADDRESS=$$(grep 'L1_WATCHER_BRIDGE_ADDRESS' .env | cut -d= -f2) ON_CHAIN_PROPOSER_ADDRESS=$$(grep 'COMMITTER_ON_CHAIN_PROPOSER_ADDRESS' .env | cut -d= -f2) cargo test --release testito -- --nocapture
+
+
+# Purge L2's state
+UNAME_S:=$(shell uname -s)
+# This directory is set by crates/l2/utils/prover/save_state.rs -> const DEFAULT_DATADIR
+PROJECT_NAME:=ethrex_l2_state
+
+ifeq ($(UNAME_S),Linux)
+    PROJECT_PATH := $(HOME)/.local/share/${PROJECT_NAME}
+else ifeq ($(UNAME_S),Darwin)
+    PROJECT_PATH := $(HOME)/Library/Application\ Support/${PROJECT_NAME}
+else
+    $(error Unsupported platform: $(UNAME_S))
+endif
+
+purge_prover_state: ## 🧹 Removes the L2 state, only use to start fresh.
+	@echo "Are you sure you want to delete the directory: $(PROJECT_PATH) ? [y/n]"
+	@read answer; \
+	if [ "$$answer" != "y" ]; then \
+		echo "Operation canceled."; \
+	fi; \
+	rm -rf $(PROJECT_PATH); \
+	echo "Directory deleted."
