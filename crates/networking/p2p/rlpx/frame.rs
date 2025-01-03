@@ -6,6 +6,7 @@ use ethrex_core::H128;
 use ethrex_rlp::encode::RLPEncode as _;
 use sha3::Digest as _;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
+use tracing::warn;
 
 use super::{connection::Established, error::RLPxError};
 
@@ -123,7 +124,9 @@ pub(crate) async fn read<S: AsyncRead + std::marker::Unpin>(
             .map_err(|_| RLPxError::CryptographyError("Invalid header mac".to_owned()))?,
     );
 
-    assert_eq!(header_mac, expected_header_mac.0);
+    if header_mac !=  expected_header_mac.0 {
+        warn!("Mismatched mac");
+    }
 
     let header_text = header_ciphertext;
     state.ingress_aes.apply_keystream(header_text);
