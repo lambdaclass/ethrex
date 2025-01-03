@@ -331,14 +331,16 @@ impl Command {
                     get_withdraw_merkle_proof(&rollup_client, l2_withdrawal_tx_hash).await?;
 
                 let mut values = vec![
-                    Value::Uint(U256::from(l2_withdrawal_tx_hash.as_fixed_bytes())),
+                    Value::Uint(U256::from_big_endian(
+                        l2_withdrawal_tx_hash.as_fixed_bytes(),
+                    )),
                     Value::Uint(claimed_amount),
                     Value::Uint(withdrawal_l2_block_number),
                     Value::Uint(U256::from(index)),
                 ];
 
                 for hash in proof {
-                    values.push(Value::Uint(U256::from(hash.as_fixed_bytes())));
+                    values.push(Value::Uint(U256::from_big_endian(hash.as_fixed_bytes())));
                 }
 
                 let claim_withdrawal_data =

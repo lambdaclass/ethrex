@@ -105,10 +105,12 @@ impl VM {
         )?;
 
         let value = current_call_frame.stack.pop()?;
-        let mut value_bytes = [0u8; WORD_SIZE];
-        value.to_big_endian(&mut value_bytes);
 
-        memory::try_store_data(&mut current_call_frame.memory, offset, &value_bytes)?;
+        memory::try_store_data(
+            &mut current_call_frame.memory,
+            offset,
+            &value.to_big_endian(),
+        )?;
 
         Ok(OpcodeSuccess::Continue)
     }
@@ -129,13 +131,11 @@ impl VM {
         )?;
 
         let value = current_call_frame.stack.pop()?;
-        let mut value_bytes = [0u8; WORD_SIZE];
-        value.to_big_endian(&mut value_bytes);
 
         memory::try_store_data(
             &mut current_call_frame.memory,
             offset,
-            &value_bytes[WORD_SIZE - 1..WORD_SIZE],
+            &value.to_big_endian()[WORD_SIZE - 1..WORD_SIZE],
         )?;
 
         Ok(OpcodeSuccess::Continue)
@@ -149,9 +149,7 @@ impl VM {
         let storage_slot_key = current_call_frame.stack.pop()?;
         let address = current_call_frame.to;
 
-        let mut bytes = [0u8; 32];
-        storage_slot_key.to_big_endian(&mut bytes);
-        let storage_slot_key = H256::from(bytes);
+        let storage_slot_key = H256::from(storage_slot_key.to_big_endian());
 
         let (storage_slot, storage_slot_was_cold) =
             self.access_storage_slot(address, storage_slot_key)?;
@@ -185,9 +183,7 @@ impl VM {
         }
 
         // Convert key from U256 to H256
-        let mut bytes = [0u8; 32];
-        storage_slot_key.to_big_endian(&mut bytes);
-        let key = H256::from(bytes);
+        let key = H256::from(storage_slot_key.to_big_endian());
 
         let (storage_slot, storage_slot_was_cold) =
             self.access_storage_slot(current_call_frame.to, key)?;
