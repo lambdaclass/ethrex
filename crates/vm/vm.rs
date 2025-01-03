@@ -202,7 +202,7 @@ cfg_if::cfg_if! {
             account_updates
         }
 
-        /// Executes all transactions in a block and returns their receipts.
+        /// Executes all transactions in a block and returns their receipts and account updates.
         pub fn execute_block(
             block: &Block,
             store: &Store,
@@ -321,7 +321,7 @@ cfg_if::cfg_if! {
             vm.transact()
         }
     } else if #[cfg(not(feature = "levm"))] {
-        /// Executes all transactions in a block and returns their receipts.
+        /// Executes all transactions in a block and returns their receipts and account updates.
         pub fn execute_block(block: &Block, store: &Store) -> Result<(Vec<Receipt>, Vec<AccountUpdate>), EvmError> {
             let mut state = evm_state(store.clone(), block.header.parent_hash);
 
