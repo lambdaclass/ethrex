@@ -135,13 +135,13 @@ impl RLPxMessage for DisconnectMessage {
             msg_data.to_vec()
         };
         // It seems that disconnect reason can be encoded in different ways:
-        let reason = match decompressed_data.len() {
+        let reason = match msg_data.len() {
             0 => None,
             // As a single u8
-            1 => Some(decompressed_data[0]),
+            1 => Some(msg_data[0]),
             // As an RLP encoded Vec<u8>
             _ => {
-                let decoder = Decoder::new(&decompressed_data)?;
+                let decoder = Decoder::new(&msg_data)?;
                 let (reason, _): (Option<u8>, _) = decoder.decode_optional_field();
                 reason
             }
