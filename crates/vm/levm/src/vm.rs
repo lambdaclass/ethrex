@@ -296,7 +296,7 @@ impl VM {
                 }
             }
         }
-        dbg!("Testing CI");
+        dbg!("Testing CII");
 
         loop {
             let opcode = current_call_frame.next_opcode();
