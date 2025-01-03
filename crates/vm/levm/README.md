@@ -40,7 +40,7 @@ Features:
 ### How to run EF tests locally
 
 ```
-make download-evm-ef-tests run-evm-ef-tests
+make download-evm-ef-tests run-evm-ef-tests QUIET=true
 ```
 
 ## Benchmarks
