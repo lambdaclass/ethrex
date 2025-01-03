@@ -20,6 +20,11 @@ use ethrex_vm::{
 };
 use sha3::{Digest, Keccak256};
 
+use ethrex_metrics::metrics;
+
+#[cfg(feature = "metrics")]
+use ethrex_metrics::metrics_transactions::{MetricsTxStatus, MetricsTxType, METRICS_TX};
+
 use crate::{
     constants::{
         GAS_LIMIT_BOUND_DIVISOR, GAS_PER_BLOB, MAX_BLOB_GAS_PER_BLOCK, MIN_GAS_LIMIT,
@@ -323,6 +328,12 @@ pub fn fill_transactions(context: &mut PayloadBuildContext) -> Result<(), ChainE
             )?;
             continue;
         }
+
+        // Increment the total transaction counter
+        // CHECK: do we want it here to count every processed transaction
+        // or we want it before the return?
+        metrics!(METRICS_TX.inc_tx());
+
         // Execute tx
         let receipt = match apply_transaction(&head_tx, context) {
             Ok(receipt) => {
@@ -334,11 +345,20 @@ pub fn fill_transactions(context: &mut PayloadBuildContext) -> Result<(), ChainE
                         .store()
                         .ok_or(ChainError::StoreError(StoreError::MissingStore))?,
                 )?;
+
+                metrics!(METRICS_TX.inc_tx_with_status_and_type(
+                    MetricsTxStatus::Succeeded,
+                    MetricsTxType(head_tx.tx_type())
+                ));
                 receipt
             }
             // Ignore following txs from sender
             Err(e) => {
                 debug!("Failed to execute transaction: {}, {e}", tx_hash);
+                metrics!(METRICS_TX.inc_tx_with_status_and_type(
+                    MetricsTxStatus::Failed,
+                    MetricsTxType(head_tx.tx_type())
+                ));
                 txs.pop();
                 continue;
             }
