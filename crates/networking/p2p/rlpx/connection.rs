@@ -343,7 +343,6 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
                 return Err(RLPxError::Disconnect());
             }
             Message::Ping(_) => {
-                debug!("Received Ping");
                 self.send(Message::Pong(PongMessage {})).await?;
                 debug!("Pong sent");
             }
@@ -351,7 +350,6 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
                 // We ignore received Pong messages
             }
             Message::Status(msg_data) if !peer_supports_eth => {
-                debug!("Received Status");
                 backend::validate_status(msg_data, &self.storage)?
             }
             Message::GetAccountRange(req) => {
@@ -360,7 +358,6 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
             }
             // TODO(#1129) Add the transaction to the mempool once received.
             Message::Transactions(txs) if peer_supports_eth => {
-                debug!("Received Transactions");
                 for tx in &txs.transactions {
                     mempool::add_transaction(tx.clone(), &self.storage)?;
                 }
@@ -383,14 +380,9 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
             Message::NewPooledTransactionHashes(new_pooled_transaction_hashes)
                 if peer_supports_eth =>
             {
-                debug!("Received new pooled transaction hashes");
                 //TODO(#1415): evaluate keeping track of requests to avoid sending the same twice.
                 let hashes =
                     new_pooled_transaction_hashes.get_transactions_to_request(&self.storage)?;
-                debug!(
-                    "About to request {} transactions with GetPooledTransactions",
-                    hashes.len()
-                );
 
                 //TODO(#1416): Evaluate keeping track of the request-id.
                 let request = GetPooledTransactions::new(random(), hashes);
@@ -398,12 +390,10 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
             }
             // TODO: Also add handler for get pooled transactions.
             Message::GetPooledTransactions(msg) => {
-                debug!("Received a request for pooled transactions.");
                 let response = msg.handle(&self.storage)?;
                 self.send(Message::PooledTransactions(response)).await?;
             }
             Message::PooledTransactions(msg) if peer_supports_eth => {
-                debug!("Received pooled transaction.");
                 msg.handle(&self.storage)?;
             }
             Message::GetStorageRanges(req) => {
