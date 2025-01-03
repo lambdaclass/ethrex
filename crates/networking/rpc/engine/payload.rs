@@ -182,12 +182,13 @@ fn parse_execution_payload(params: &Option<Vec<Value>>) -> Result<ExecutionPaylo
     let payload: ExecutionPayload = serde_json::from_value(params[0].clone())
         .map_err(|_| RpcErr::WrongParam("payload".to_string()))?;
 
-    if payload.withdrawals.is_none() {
-        return Err(RpcErr::WrongParam(
+    match payload {
+        ExecutionPayload {
+            withdrawals: None, ..
+        } => Err(RpcErr::WrongParam(
             "forkChoiceV2 withdrawals is null".to_string(),
-        ));
-    } else {
-        return Ok(payload);
+        )),
+        ExecutionPayload { withdrawals: Some(_), .. } => Ok(payload),
     }
 }
 
