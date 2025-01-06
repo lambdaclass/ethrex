@@ -340,7 +340,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
         let peer_supports_eth = self.capabilities.contains(&CAP_ETH);
         match message {
             Message::Disconnect(msg_data) => {
-                debug!("Received Disconnect: {:?}", msg_data.reason);
+                debug!("Received Disconnect: {}", msg_data.reason());
                 // Returning a Disconnect error to be handled later at the call stack
                 return Err(RLPxError::Disconnect());
             }
