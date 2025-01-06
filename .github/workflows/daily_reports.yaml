@@ -31,12 +31,13 @@ jobs:
             simulation: ethereum/sync
 
     steps:
+      - name: Checkout sources
+        uses: actions/checkout@v4
+
       - name: Build image
         run: |
           docker build -t ethrex --build-arg BUILD_FLAGS="--features ${{ matrix.image }}" .
 
-      - name: Checkout sources
-        uses: actions/checkout@v4
 
       - name: Setup Go
         uses: actions/setup-go@v5
