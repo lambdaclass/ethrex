@@ -89,12 +89,7 @@ async fn main() -> Result<(), DeployError> {
             setup_result.deployer_address,
             setup_result.deployer_private_key,
             init_deploy,
-            Overrides {
-                max_fee_per_gas: Some(526151157),
-                max_priority_fee_per_gas: Some(1),
-                gas_limit: Some(200000),
-                ..Default::default()
-            },
+            Overrides::default(),
         )
         .await?;
 

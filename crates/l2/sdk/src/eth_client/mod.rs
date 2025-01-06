@@ -730,7 +730,7 @@ impl EthClient {
         bump_retries: u64,
     ) -> Result<EIP1559Transaction, EthClientError> {
         let mut tx = EIP1559Transaction {
-            to: TxKind::Call(to),
+            to: overrides.to.clone().unwrap_or(TxKind::Call(to)),
             chain_id: if let Some(chain_id) = overrides.chain_id {
                 chain_id
             } else {

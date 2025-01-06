@@ -18,6 +18,7 @@ use super::{
 #[derive(Default, Clone)]
 pub struct Overrides {
     pub from: Option<Address>,
+    pub to: Option<TxKind>,
     pub value: Option<U256>,
     pub nonce: Option<u64>,
     pub chain_id: Option<u64>,
@@ -84,10 +85,11 @@ impl EthClient {
         init_code: Bytes,
         overrides: Overrides,
     ) -> Result<(H256, Address), EthClientError> {
-        let mut deploy_tx = self
-            .build_eip1559_transaction(Address::zero(), deployer, init_code, overrides, 10)
+        let mut deploy_overrides = overrides;
+        deploy_overrides.to = Some(TxKind::Create);
+        let deploy_tx = self
+            .build_eip1559_transaction(Address::zero(), deployer, init_code, deploy_overrides, 10)
             .await?;
-        deploy_tx.to = TxKind::Create;
         let deploy_tx_hash = self
             .send_eip1559_transaction(&deploy_tx, &deployer_private_key)
             .await?;
