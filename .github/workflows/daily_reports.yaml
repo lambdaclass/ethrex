@@ -10,11 +10,55 @@ env:
   RUST_VERSION: 1.81.0
 
 jobs:
+  build-images:
+    name: Build images
+    runs-on: ubuntu-latest
+    outputs:
+      image1-hash: ${{ steps.build1.outputs.digest }}
+      image2-hash: ${{ setps.build2.outputs.digest }}
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v4
+
+      - name: Set up docker buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to the Container registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+    - name: Build and cache levm iamge
+        id: build2
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: true
+          tags: ghcr.io/${{ github.repository }}/ethrex:levm
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          build-args: |
+            BUILD_FLAGS="--features levm"
+
+    - name: Build and cache default features imaage
+        id: build2
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: true
+          tags: ghcr.io/${{ github.repository }}/ethrex:default
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
   run-hive:
     name: Hive - ${{ matrix.name }}
     runs-on: ubuntu-latest
+    needs: build-images
     strategy:
       matrix:
+        image: ["default", "levm"]
         include:
           - name: "Rpc Compat tests"
             file_name: rpc-compat
@@ -32,9 +76,7 @@ jobs:
     steps:
       - name: Pull image
         run: |
-          docker pull ghcr.io/lambdaclass/ethrex:latest
-          docker tag ghcr.io/lambdaclass/ethrex:latest ethrex:latest
-
+          docker pull ghcr.io/${{ github.repository }}/ehtrex:${{matrix.image}}
       - name: Checkout sources
         uses: actions/checkout@v4
 
@@ -51,13 +93,16 @@ jobs:
       - name: Upload results
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.file_name }}_logs
+          name: ${{ matrix.file_name }}_${{ matrix.image}}_logs
           path: hive/workspace/logs/*-*.json
 
-  hive-report:
+  hive-generate-report:
     name: Generate report and upload to summary and slack
     needs: run-hive
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        image: ["default", "levm"]
     steps:
       - name: Checkout sources
         uses: actions/checkout@v4
@@ -71,34 +116,81 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           path: hive/workspace/logs
-          pattern: "*_logs"
+          pattern: "*_${{ matrix.image }}_logs"
           merge-multiple: true
 
       - name: Caching
         uses: Swatinem/rust-cache@v2
 
       - name: Generate the hive report
-        run: cargo run -p hive_report > results.md
+        run: cargo run -p hive_report > results_${{matrix.image}}.md
+
+      - name: Upload result artifact (${{matrix.image}})
+        uses: actions/upload-artifact@v4
+        with:
+          name: results_${{matrix.image}}.md
+          path: ./results_${{matrix.image}}.md
+
+  hive-report-default-features:
+    name: Post hive reports
+    runs-on: ubuntu-latest
+    needs: generate-hive-report
+    steps:
+      - name: Fetch results markdown
+        uses: actions/download-artifact@v4
+        with:
+          pattern: "results_default.md"
 
       - name: Post results in summary
         run: |
-          echo "# Hive coverage report" >> $GITHUB_STEP_SUMMARY
-          cat results.md >> $GITHUB_STEP_SUMMARY
+          echo "# Hive coverage report (default features build)" >> $GITHUB_STEP_SUMMARY
+          cat results_default.md >> $GITHUB_STEP_SUMMARY
 
-      - name: Post results to ethrex L1 slack channel
+      # Note: Leave this commented, as it is for testing purposes.
+      - name: Post results to test channel for debugging
         env:
-          url: ${{ secrets.ETHREX_L1_SLACK_WEBHOOK }}
+          url: ${{ secrets.TEST_CHANNEL_SLACK }}
         run: sh .github/scripts/publish.sh
+      # - name: Post results to ethrex L1 slack channel
+      #   env:
+      #     url: ${{ secrets.ETHREX_L1_SLACK_WEBHOOK }}
+      #   run: sh .github/scripts/publish.sh
 
-      - name: Post results to ethrex L2 slack channel
-        env:
-          url: ${{ secrets.ETHREX_L2_SLACK_WEBHOOK }}
-        run: sh .github/scripts/publish.sh
+      # - name: Post results to ethrex L2 slack channel
+      #   env:
+      #     url: ${{ secrets.ETHREX_L2_SLACK_WEBHOOK }}
+      #   run: sh .github/scripts/publish.sh
 
-      - name: Post results to levm slack channel
+      # - name: Post results to levm slack channel
+      #   env:
+      #     url: ${{ secrets.LEVM_SLACK_WEBHOOK }}
+      #   run: sh .github/scripts/publish.sh
+
+  hive-report-levm:
+    name: Post hive reports
+    runs-on: ubuntu-latest
+    needs: generate-hive-report
+    steps:
+      - name: Fetch results markdown
+        uses: actions/download-artifact@v4
+        with:
+          pattern: "results_*.md"
+
+      - name: Post results in summary
+        run: |
+          echo "# LEVM coverage report" >> $GITHUB_STEP_SUMMARY
+          cat results_levm.md >> $GITHUB_STEP_SUMMARY
+          echo "# Diff between default and LEVM" >> $GITHUB_STEP_SUMMARY
+          diff results_default.md results_levm.md >> $GITHUB_STEP_SUMMARY
+
+      - name: Post results to test channel for debugging
         env:
-          url: ${{ secrets.LEVM_SLACK_WEBHOOK }}
-        run: sh .github/scripts/publish.sh
+          url: ${{ secrets.TEST_CHANNEL_SLACK }}
+        run: sh .github/scripts/publish_levm_hive.sh
+      # - name: Post results to levm slack channel
+      #   env:
+      #     url: ${{ secrets.LEVM_SLACK_WEBHOOK }}
+      #   run: sh .github/scripts/publish.sh
 
   loc:
     name: Count ethrex loc and generate report
