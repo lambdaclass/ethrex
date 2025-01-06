@@ -35,7 +35,7 @@ jobs:
           make revm-comparison-ci
           echo "#### Benchmark Results: Factorial" > pr_result.md
           cat factorial.md >> pr_result.md
-          echo "\n#### Benchmark Results: Fibonacci" >> pr_result.md
+          echo "#### Benchmark Results: Fibonacci" >> pr_result.md
           cat fibonacci.md >> pr_result.md
 
       - name: Upload PR results
