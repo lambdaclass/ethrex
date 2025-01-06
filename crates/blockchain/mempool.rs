@@ -22,7 +22,7 @@ use ethrex_storage::{error::StoreError, Store};
 pub fn add_blob_transaction(
     transaction: EIP4844Transaction,
     blobs_bundle: BlobsBundle,
-    store: Store,
+    store: &Store,
 ) -> Result<H256, MempoolError> {
     // Validate blobs bundle
     blobs_bundle.validate(&transaction)?;
