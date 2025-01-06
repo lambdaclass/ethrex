@@ -13,9 +13,6 @@ jobs:
   build-images:
     name: Build images
     runs-on: ubuntu-latest
-    outputs:
-      image1-hash: ${{ steps.build1.outputs.digest }}
-      image2-hash: ${{ setps.build2.outputs.digest }}
     steps:
       - name: Checkout sources
         uses: actions/checkout@v4
@@ -30,7 +27,7 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-    - name: Build and cache levm iamge
+      - name: Build and cache levm image
         id: build2
         uses: docker/build-push-action@v5
         with:
@@ -42,7 +39,7 @@ jobs:
           build-args: |
             BUILD_FLAGS="--features levm"
 
-    - name: Build and cache default features imaage
+      - name: Build and cache default features imaage
         id: build2
         uses: docker/build-push-action@v5
         with:
