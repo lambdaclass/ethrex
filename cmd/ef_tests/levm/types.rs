@@ -34,6 +34,7 @@ pub struct EFTest {
 impl EFTest {
     pub fn fork(&self) -> SpecId {
         match &self.post {
+            EFTestPost::Prague(_) => SpecId::PRAGUE,
             EFTestPost::Cancun(_) => SpecId::CANCUN,
             EFTestPost::Shanghai(_) => SpecId::SHANGHAI,
             EFTestPost::Homestead(_) => SpecId::HOMESTEAD,
@@ -111,6 +112,7 @@ pub struct EFTestEnv {
 
 #[derive(Debug, Deserialize, Clone)]
 pub enum EFTestPost {
+    Prague(Vec<EFTestPostValue>),
     Cancun(Vec<EFTestPostValue>),
     Shanghai(Vec<EFTestPostValue>),
     Homestead(Vec<EFTestPostValue>),
@@ -127,6 +129,7 @@ pub enum EFTestPost {
 impl EFTestPost {
     pub fn values(self) -> Vec<EFTestPostValue> {
         match self {
+            EFTestPost::Prague(v) => v,
             EFTestPost::Cancun(v) => v,
             EFTestPost::Shanghai(v) => v,
             EFTestPost::Homestead(v) => v,
@@ -143,6 +146,7 @@ impl EFTestPost {
 
     pub fn vector_post_value(&self, vector: &TestVector) -> EFTestPostValue {
         match self {
+            EFTestPost::Prague(v) => Self::find_vector_post_value(v, vector),
             EFTestPost::Cancun(v) => Self::find_vector_post_value(v, vector),
             EFTestPost::Shanghai(v) => Self::find_vector_post_value(v, vector),
             EFTestPost::Homestead(v) => Self::find_vector_post_value(v, vector),
@@ -172,6 +176,7 @@ impl EFTestPost {
 
     pub fn iter(&self) -> impl Iterator<Item = &EFTestPostValue> {
         match self {
+            EFTestPost::Prague(v) => v.iter(),
             EFTestPost::Cancun(v) => v.iter(),
             EFTestPost::Shanghai(v) => v.iter(),
             EFTestPost::Homestead(v) => v.iter(),

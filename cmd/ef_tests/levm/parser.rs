@@ -51,6 +51,30 @@ pub fn parse_ef_tests(opts: &EFTestRunnerOptions) -> Result<Vec<EFTest>, EFTestP
         let directory_tests = parse_ef_test_dir(test_dir, opts, &mut spinner)?;
         tests.extend(directory_tests);
     }
+
+    let ef_pectra_tests_path = cargo_manifest_dir.join("vectors/stEIP2537");
+    let mut spinner = Spinner::new(Dots, "Parsing Pectra Tests".bold().to_string(), Color::Cyan);
+    if !opts.spinner {
+        spinner.stop();
+    }
+    for test in std::fs::read_dir(ef_pectra_tests_path.clone())
+        .map_err(|err| {
+            EFTestParseError::FailedToReadDirectory(format!(
+                "{:?}: {err}",
+                ef_pectra_tests_path.file_name()
+            ))
+        })?
+        .flatten()
+    {
+        let test_file = std::fs::File::open(test.path()).map_err(|err| {
+            EFTestParseError::FailedToReadFile(format!("{:?}: {err}", test.path()))
+        })?;
+        let mut test: EFTests = serde_json::from_reader(test_file).map_err(|err| {
+            EFTestParseError::FailedToParseTestFile(format!("{:?} parse error: {err}", test.path()))
+        })?;
+        tests.extend(test.0);
+    }
+
     spinner_success_or_print(
         &mut spinner,
         format!(
@@ -74,6 +98,7 @@ pub fn parse_ef_test_dir(
     );
 
     let mut directory_tests = Vec::new();
+
     for test in std::fs::read_dir(test_dir.path())
         .map_err(|err| {
             EFTestParseError::FailedToReadDirectory(format!("{:?}: {err}", test_dir.file_name()))
