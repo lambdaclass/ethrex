@@ -403,6 +403,13 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
                 let request = GetPooledTransactions::new(random(), hashes);
                 self.send(Message::GetPooledTransactions(request)).await?;
             }
+            Message::GetPooledTransactions(msg) => {
+                let response = msg.handle(&self.storage)?;
+                self.send(Message::PooledTransactions(response)).await?;
+            }
+            Message::PooledTransactions(msg) if peer_supports_eth => {
+                msg.handle(&self.storage)?;
+            }
             Message::GetStorageRanges(req) => {
                 let response = process_storage_ranges_request(req, self.storage.clone())?;
                 self.send(Message::StorageRanges(response)).await?
