@@ -1,6 +1,7 @@
 use crate::{
     discv4::{time_now_unix, FindNodeRequest},
     peer_channels::PeerChannels,
+    rlpx::p2p::Capability,
     types::Node,
 };
 use ethrex_core::{H256, H512, U256};
@@ -257,9 +258,16 @@ impl KademliaTable {
         None
     }
 
+    /// Sets the necessary data for the peer to be usable from the node's backend
     /// Set the sender end of the channel between the kademlia table and the peer's active connection
+    /// Set the peer's supported capabilities
     /// This function should be called each time a connection is established so the backend can send requests to the peers
-    pub fn set_channels(&mut self, node_id: H512, channels: PeerChannels) {
+    pub fn init_backend_communication(
+        &mut self,
+        node_id: H512,
+        channels: PeerChannels,
+        capabilities: Vec<Capability>,
+    ) {
         let bucket_idx = bucket_number(self.local_node_id, node_id);
         if let Some(peer) = self.buckets.get_mut(bucket_idx).and_then(|bucket| {
             bucket
@@ -267,7 +275,8 @@ impl KademliaTable {
                 .iter_mut()
                 .find(|peer| peer.node.node_id == node_id)
         }) {
-            peer.channels = Some(channels)
+            peer.channels = Some(channels);
+            peer.supported_capabilities = capabilities;
         }
     }
 
@@ -355,6 +364,7 @@ pub struct PeerData {
     pub last_ping_hash: Option<H256>,
     pub is_proven: bool,
     pub find_node_request: Option<FindNodeRequest>,
+    pub supported_capabilities: Vec<Capability>,
     /// a ration to track the peers's ping responses
     pub liveness: u16,
     /// if a revalidation was sent to the peer, the bool marks if it has answered
@@ -375,6 +385,7 @@ impl PeerData {
             find_node_request: None,
             revalidation: None,
             channels: None,
+            supported_capabilities: vec![],
         }
     }
 
