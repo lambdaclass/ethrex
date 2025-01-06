@@ -1060,12 +1060,17 @@ impl VM {
         address: Address,
         key: H256,
     ) -> Result<(StorageSlot, bool), VMError> {
-        let storage_slot_was_cold = self
-            .accrued_substate
-            .touched_storage_slots
-            .entry(address)
-            .or_default()
-            .insert(key);
+        // [EIP-2929] - Introduced conditional tracking of accessed storage slots for Berlin and later specs.
+
+        let mut storage_slot_was_cold = false;
+        if self.env.spec_id >= SpecId::BERLIN {
+            storage_slot_was_cold = self
+                .accrued_substate
+                .touched_storage_slots
+                .entry(address)
+                .or_default()
+                .insert(key);
+        }
         let storage_slot = match cache::get_account(&self.cache, &address) {
             Some(account) => match account.storage.get(&key) {
                 Some(storage_slot) => storage_slot.clone(),
