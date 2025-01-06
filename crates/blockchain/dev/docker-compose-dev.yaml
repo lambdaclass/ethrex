@@ -1,3 +1,9 @@
+# If this dev container is run in the same machine as the L2 node
+# we have to run this docker-compose with the .overrides file too
+# example: docker compose -f docker-compose-dev.yaml -f docker-compose-metrics-l1.override.yaml up
+include:
+  - ../metrics/docker-compose-metrics.yaml
+
 services:
   ethrex:
     restart: always
@@ -10,4 +16,4 @@ services:
       - 127.0.0.1:8545:8545
     volumes:
       - ../../../test_data/genesis-l1.json:/genesis-l1.json
-    command: --network /genesis-l1.json --http.addr 0.0.0.0 --http.port 8545
+    command: --network /genesis-l1.json --http.addr 0.0.0.0 --http.port 8545 --metrics.port 3701

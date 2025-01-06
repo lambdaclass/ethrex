@@ -1,4 +1,4 @@
-.PHONY: all test clippy fmt usage lint eth-tests run-evm-ef-tests
+.PHONY: all test clippy fmt usage lint eth-tests run-evm-ef-tests flamegraph-run-ef-tests samply-run-ef-tests
 
 all: test clippy fmt ## 🚀 Runs all tests, linter and formatter
 
@@ -52,7 +52,7 @@ clean-evm-ef-tests: ## 🗑️  Clean test vectors
 
 ###### Benchmarks ######
 
-revm-comparison:
+revm-comparison: ## 📊 Run benchmarks of fibonacci and factorial for both REVM and LEVM
 	$(MAKE) build-revm-comparison
 	@echo
 	@printf "%s" "revm_factorial result: "
@@ -68,6 +68,26 @@ revm-comparison:
 	@printf "%s" "levm_fibonacci result: "
 	@target/release/levm_fibonacci 1 1000
 	hyperfine -w 5 -r 10 -N \
+		-n "revm_fibonacci" "target/release/revm_fibonacci 100000 1000" \
+		-n "levm_fibonacci" "target/release/levm_fibonacci 100000 1000"
+	@echo
+
+revm-comparison-ci:
+	$(MAKE) build-revm-comparison
+	@echo
+	@printf "%s" "revm_factorial result: "
+	@target/release/revm_factorial 1 1000
+	@printf "%s" "levm_factorial result: "
+	@target/release/levm_factorial 1 1000
+	hyperfine -w 5 -r 10 -N --export-markdown factorial.md \
+		-n "revm_factorial" "target/release/revm_factorial 100000 1000" \
+		-n "levm_factorial" "target/release/levm_factorial 100000 1000"
+	@echo
+	@printf "%s" "revm_fibonacci result: "
+	@target/release/revm_fibonacci 1 1000
+	@printf "%s" "levm_fibonacci result: "
+	@target/release/levm_fibonacci 1 1000
+	hyperfine -w 5 -r 10 -N --export-markdown fibonacci.md \
 		-n "revm_fibonacci" "target/release/revm_fibonacci 100000 1000" \
 		-n "levm_fibonacci" "target/release/levm_fibonacci 100000 1000"
 	@echo
@@ -91,4 +111,83 @@ build-image-levm: ## 🐳 Build the Docker image with LEVM features
 
 run-hive-debug-levm: build-image-levm ## 🐝 Run Hive with LEVM in debug mode
 	$(MAKE) -C ../../../ setup-hive
-	cd ../../../hive && ./hive --sim $(SIMULATION) --client ethrex --sim.limit "$(TEST_PATTERN)" --docker.output
+	cd ../../../hive && ./hive --sim ethereum/rpc-compat --client ethrex --sim.limit "$(TEST_PATTERN)" --docker.output || exit 0
+	cd ../../../hive && ./hive --sim devp2p --client ethrex --sim.limit "$(TEST_PATTERN)" --docker.output || exit 0
+	cd ../../../hive && ./hive --sim ethereum/engine --client ethrex --sim.limit "$(TEST_PATTERN)" --docker.output || exit 0
+	cd ../../../hive && ./hive --sim ethereum/sync --client ethrex --sim.limit "$(TEST_PATTERN)" --docker.output || exit 0
+	cargo run --release -p hive_report
+
+SUBDIRS := $(shell find $(SPECTEST_VECTORS_DIR)/GeneralStateTests -maxdepth 1 -type d ! -path "$(SPECTEST_VECTORS_DIR)/GeneralStateTests" -exec basename {} \;)
+
+flamegraph-run-ef-tests: ## 🔥 Run EF tests and create a flamegraph per test folder
+	cd ../../../cmd/ef_tests/levm &&\
+	mkdir -p levm_perfgraphs/flamegraph/ef_tests/levm ||: && \
+	mkdir -p levm_perfgraphs/flamegraph/ef_tests/revm ||:
+	$(MAKE) flamegraph-run-ef-tests-revm
+	$(MAKE) flamegraph-run-ef-tests-levm
+
+flamegraph-run-ef-tests-revm:
+	@for dir in $(SUBDIRS); do\
+		CARGO_PROFILE_RELEASE_DEBUG=true cargo flamegraph --root \
+		--output ../../../cmd/ef_tests/levm/levm_perfgraphs/flamegraph/ef_tests/revm/$$dir.svg\
+		-p ef_tests-levm --test ef_tests_levm -- --summary --revm --tests $$dir;\
+	done
+flamegraph-run-ef-tests-levm:
+	@for dir in $(SUBDIRS); do\
+		CARGO_PROFILE_RELEASE_DEBUG=true cargo flamegraph --root \
+		--output ../../../cmd/ef_tests/levm/levm_perfgraphs/flamegraph/ef_tests/levm/$$dir.svg\
+		-p ef_tests-levm --test ef_tests_levm -- --summary --tests $$dir;\
+	done
+
+samply-run-ef-tests: ## ⚡️ Run EF tests and create a samply profiling file per test folder
+	cd ../../../cmd/ef_tests/levm && \
+	mkdir -p levm_perfgraphs/samply/ef_tests/levm ||: && \
+	mkdir -p levm_perfgraphs/samply/ef_tests/revm ||:
+	$(MAKE) samply-run-ef-tests-revm
+	$(MAKE) samply-run-ef-tests-levm
+
+samply-run-ef-tests-revm:
+	@for dir in $(SUBDIRS); do\
+		CARGO_PROFILE_RELEASE_DEBUG=true samply record --save-only \
+		-o ../../../cmd/ef_tests/levm/levm_perfgraphs/samply/ef_tests/revm/prof_$$dir.json \
+		cargo test --release -p ef_tests-levm --test ef_tests_levm -- --summary --revm --tests $$dir;\
+	done
+
+samply-run-ef-tests-levm:
+	@for dir in $(SUBDIRS); do\
+		CARGO_PROFILE_RELEASE_DEBUG=true samply record --save-only \
+		-o ../../../cmd/ef_tests/levm/levm_perfgraphs/samply/ef_tests/levm/prof_$$dir.json \
+		cargo test --release -p ef_tests-levm --test ef_tests_levm -- --summary --tests $$dir;\
+	done
+
+flamegraph-benchmarks: ## 🔥 Run benchmarks and create flamegraph
+	cd ../../../cmd/ef_tests/levm &&\
+	mkdir -p levm_perfgraphs/flamegraph/bench ||:
+	CARGO_PROFILE_RELEASE_DEBUG=true cargo flamegraph \
+	--root --output ../../../cmd/ef_tests/levm/levm_perfgraphs/flamegraph/bench/revm_fibonacci.svg \
+	-p revm_comparison --bin revm_fibonacci -- 100000 1000
+	CARGO_PROFILE_RELEASE_DEBUG=true cargo flamegraph \
+	--root --output ../../../cmd/ef_tests/levm/levm_perfgraphs/flamegraph/bench/levm_fibonacci.svg \
+	-p revm_comparison --bin levm_fibonacci -- 100000 1000
+	CARGO_PROFILE_RELEASE_DEBUG=true cargo flamegraph \
+	--root --output ../../../cmd/ef_tests/levm/levm_perfgraphs/flamegraph/bench/revm_factorial.svg \
+	-p revm_comparison --bin revm_factorial -- 100000 1000
+	CARGO_PROFILE_RELEASE_DEBUG=true cargo flamegraph \
+	--root --output ../../../cmd/ef_tests/levm/levm_perfgraphs/flamegraph/bench/levm_factorial.svg \
+	-p revm_comparison --bin levm_factorial -- 100000 1000
+
+samply-benchmarks: ## ⚡️ Run benchmarks and create samply profiling file
+	cd ../../../cmd/ef_tests/levm &&\
+	mkdir -p levm_perfgraphs/samply/bench ||:
+	CARGO_PROFILE_RELEASE_DEBUG=true samply record --save-only \
+	-o ../../../cmd/ef_tests/levm/levm_perfgraphs/samply/bench/prof_revm_fibonacci.json \
+	cargo run --release -p revm_comparison --bin revm_fibonacci -- 100000 1000
+	CARGO_PROFILE_RELEASE_DEBUG=true samply record --save-only \
+	-o ../../../cmd/ef_tests/levm/levm_perfgraphs/samply/bench/prof_levm_fibonacci.json \
+	cargo run --release -p revm_comparison --bin levm_fibonacci -- 100000 1000
+	CARGO_PROFILE_RELEASE_DEBUG=true samply record --save-only \
+	-o ../../../cmd/ef_tests/levm/levm_perfgraphs/samply/bench/prof_revm_factorial.json \
+	cargo run --release -p revm_comparison --bin revm_factorial -- 100000 1000
+	CARGO_PROFILE_RELEASE_DEBUG=true samply record --save-only \
+	-o ../../../cmd/ef_tests/levm/levm_perfgraphs/samply/bench/prof_levm_factorial.json \
+	cargo run --release -p revm_comparison --bin levm_factorial -- 100000 1000
