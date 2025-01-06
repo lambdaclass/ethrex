@@ -105,11 +105,11 @@ jobs:
       - name: Create combined results
         run: |
           {
-            echo "### Benchmark Results Comparison" 
-            echo "#### PR Results"
-            cat pr_result.md
-            echo "#### Main Results"
-            cat main_result.md >>
+            echo "### Benchmark Results Comparison";
+            echo "#### PR Results";
+            cat pr_result.md;
+            echo "#### Main Results";
+            cat main_result.md;
           } > combined_result.md
 
       - name: Find comment
