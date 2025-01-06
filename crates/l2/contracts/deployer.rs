@@ -66,7 +66,6 @@ const INITIALIZE_ON_CHAIN_PROPOSER_SIGNATURE: &str =
 
 const BRIDGE_INITIALIZER_SIGNATURE: &str = "initialize(address)";
 
-#[allow(clippy::unwrap_used)]
 #[tokio::main]
 async fn main() -> Result<(), DeployError> {
     let setup_result = setup()?;
@@ -435,7 +434,7 @@ async fn deploy_contract(
     eth_client: &EthClient,
     contract_path: &Path,
 ) -> Result<(H256, Address), DeployError> {
-    let init_code: Bytes = hex::decode(std::fs::read_to_string(contract_path).map_err(|err| {
+    let init_code = hex::decode(std::fs::read_to_string(contract_path).map_err(|err| {
         DeployError::DecodingError(format!("Failed to read on_chain_proposer_init_code: {err}"))
     })?)
     .map_err(|err| {
