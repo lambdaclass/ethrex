@@ -113,28 +113,42 @@ make run-hive-debug-levm
 [EVM Playground](https://www.evm.codes/playground) - Useful for seeing opcodes in action  
 [EVM Deep Dives](https://noxx.substack.com/p/evm-deep-dives-the-path-to-shadowy) - Deep Dive into different aspects of the EVM
 
-## Getting Started
-
-### Dependencies
-
-- Rust
-- Git
-
-### Documentation
-
-[CallFrame](./docs/callframe.md)
-[FAQ](./docs/faq.md)
-
-### Testing
-
-To run the project's tests, do `make download-evm-ef-tests run-evm-ef-tests`.
-
-Run `make help` to see available commands
-
 ## Performance metrics
 
 ### To run Flamegraph on the Ethereum Foundation tests
 
-First, install Flamegraph
+First install Flamegraph
+
 ```Shell
 cargo install flamegraph
+```
+
+Run the tests
+
+```Shell
+make flamegraph-run-ef-tests
+```
+
+This will create a folder inside `cmd/ef_tests/levm/` named `levm_ef_test_perfgraphs` you can find the flamegraphs inside the folder `levm_ef_test_perfgraphs/flamegraph` open them with your preferred browser.
+
+### To run Samply on the Ethereum Foundation tests
+
+First install Samply
+
+```Shell
+cargo install --locked samply
+```
+
+Run the tests
+
+```Shell
+make samply-run-ef-tests
+```
+
+This will create a folder inside `cmd/ef_tests/levm/` named `levm_ef_test_perfgraphs` you can find the flamegraphs inside the folder `levm_ef_test_perfgraphs/samply` run
+
+```Shell
+samply load <path-to-perf-file.json>
+```
+
+samply will open Firefox with the desired profile file.
