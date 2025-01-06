@@ -237,12 +237,11 @@ impl PeerChannels {
             &account_hashes,
             &encoded_accounts,
             &proof,
-        )
-        .ok();
-        if should_continue.is_none() {
-            info!("Failed to verify proof for AccRange")
+        );
+        if let Err(err) = &should_continue {
+            info!("Failed to verify proof for AccRange: {err:?}")
         }
-        Some((account_hashes, accounts, should_continue?))
+        Some((account_hashes, accounts, should_continue.ok()?))
     }
 
     /// Requests bytecodes for the given code hashes
