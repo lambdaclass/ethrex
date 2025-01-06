@@ -15,7 +15,7 @@ use super::{
     EthClient, RpcResponse,
 };
 
-#[derive(Default, Clone)]
+#[derive(Default, Clone, Debug)]
 pub struct Overrides {
     pub from: Option<Address>,
     pub to: Option<TxKind>,
@@ -77,7 +77,6 @@ impl EthClient {
         }
     }
 
-    #[allow(clippy::unwrap_used)]
     pub async fn deploy(
         &self,
         deployer: Address,
@@ -99,11 +98,11 @@ impl EthClient {
         (deployer, nonce).encode(&mut encode);
 
         let deployed_address =
-            Address::from_slice(keccak(encode).as_fixed_bytes().get(12..).unwrap());
+            Address::from_slice(keccak(encode).as_fixed_bytes().get(12..).ok_or(
+                EthClientError::Custom("Failed to get deployed_address".to_owned()),
+            )?);
 
-        wait_for_transaction_receipt(deploy_tx_hash, self, 1000)
-            .await
-            .unwrap();
+        wait_for_transaction_receipt(deploy_tx_hash, self, 1000).await?;
 
         Ok((deploy_tx_hash, deployed_address))
     }
