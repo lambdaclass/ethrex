@@ -41,7 +41,7 @@ tasks:
   timeout: 3m
   config:
     minTransactionCount: 50
-    validatorNamePattern: "[\d]-ethrex-lighthouse"
+    validatorNamePattern: "[\\d]-ethrex-lighthouse"
 
 - name: run_tasks_concurrent
   title: "Check chain stability (reorgs and forks)"
