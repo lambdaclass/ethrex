@@ -213,7 +213,7 @@ impl PeerChannels {
         {
             Ok(Some(data)) => data,
             Ok(None) => {
-                info!("AccRange Request Timeout");
+                info!("AccRange Empty Response");
                 return None;
             }
             Err(e) => {
@@ -238,8 +238,11 @@ impl PeerChannels {
             &encoded_accounts,
             &proof,
         )
-        .ok()?;
-        Some((account_hashes, accounts, should_continue))
+        .ok();
+        if should_continue.is_none() {
+            info!("Failed to verify proof for AccRange")
+        }
+        Some((account_hashes, accounts, should_continue?))
     }
 
     /// Requests bytecodes for the given code hashes
