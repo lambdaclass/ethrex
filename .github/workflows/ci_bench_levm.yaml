@@ -121,7 +121,6 @@ jobs:
           body-includes: "Benchmark Results Comparison"
 
       - name: Create or update comment
-        if: steps.fc.outputs.comment-id != ''
         uses: peter-evans/create-or-update-comment@v3
         with:
           comment-id: ${{ steps.fc.outputs.comment-id }}
