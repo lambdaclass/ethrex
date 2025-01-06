@@ -32,7 +32,7 @@ tracing.workspace = true
 serde.workspace = true
 bincode = "1"
 
-ethereum-types = "0.14.1"
+ethereum-types.workspace = true
 
 [lib]
 path = "./vm.rs"

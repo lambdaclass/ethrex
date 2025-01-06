@@ -643,9 +643,7 @@ impl From<H256> for AccountStorageKeyBytes {
 
 impl From<U256> for AccountStorageValueBytes {
     fn from(value: U256) -> Self {
-        let mut value_bytes = [0; 32];
-        value.to_big_endian(&mut value_bytes);
-        AccountStorageValueBytes(value_bytes)
+        AccountStorageValueBytes(value.to_big_endian())
     }
 }
 

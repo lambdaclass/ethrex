@@ -21,7 +21,9 @@ impl VM {
 
         let addr = current_call_frame.to; // The recipient of the current call.
 
-        current_call_frame.stack.push(U256::from(addr.as_bytes()))?;
+        current_call_frame
+            .stack
+            .push(U256::from_big_endian(addr.as_bytes()))?;
 
         Ok(OpcodeSuccess::Continue)
     }
@@ -52,7 +54,7 @@ impl VM {
         let origin = self.env.origin;
         current_call_frame
             .stack
-            .push(U256::from(origin.as_bytes()))?;
+            .push(U256::from_big_endian(origin.as_bytes()))?;
 
         Ok(OpcodeSuccess::Continue)
     }
@@ -67,7 +69,7 @@ impl VM {
         let caller = current_call_frame.msg_sender;
         current_call_frame
             .stack
-            .push(U256::from(caller.as_bytes()))?;
+            .push(U256::from_big_endian(caller.as_bytes()))?;
 
         Ok(OpcodeSuccess::Continue)
     }

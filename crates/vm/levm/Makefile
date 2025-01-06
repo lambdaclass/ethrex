@@ -52,7 +52,7 @@ clean-evm-ef-tests: ## 🗑️  Clean test vectors
 
 ###### Benchmarks ######
 
-revm-comparison:
+revm-comparison: ## 📊 Run benchmarks of fibonacci and factorial for both REVM and LEVM
 	$(MAKE) build-revm-comparison
 	@echo
 	@printf "%s" "revm_factorial result: "
@@ -68,6 +68,26 @@ revm-comparison:
 	@printf "%s" "levm_fibonacci result: "
 	@target/release/levm_fibonacci 1 1000
 	hyperfine -w 5 -r 10 -N \
+		-n "revm_fibonacci" "target/release/revm_fibonacci 100000 1000" \
+		-n "levm_fibonacci" "target/release/levm_fibonacci 100000 1000"
+	@echo
+
+revm-comparison-ci:
+	$(MAKE) build-revm-comparison
+	@echo
+	@printf "%s" "revm_factorial result: "
+	@target/release/revm_factorial 1 1000
+	@printf "%s" "levm_factorial result: "
+	@target/release/levm_factorial 1 1000
+	hyperfine -w 5 -r 10 -N --export-markdown factorial.md \
+		-n "revm_factorial" "target/release/revm_factorial 100000 1000" \
+		-n "levm_factorial" "target/release/levm_factorial 100000 1000"
+	@echo
+	@printf "%s" "revm_fibonacci result: "
+	@target/release/revm_fibonacci 1 1000
+	@printf "%s" "levm_fibonacci result: "
+	@target/release/levm_fibonacci 1 1000
+	hyperfine -w 5 -r 10 -N --export-markdown fibonacci.md \
 		-n "revm_fibonacci" "target/release/revm_fibonacci 100000 1000" \
 		-n "levm_fibonacci" "target/release/levm_fibonacci 100000 1000"
 	@echo
@@ -91,7 +111,11 @@ build-image-levm: ## 🐳 Build the Docker image with LEVM features
 
 run-hive-debug-levm: build-image-levm ## 🐝 Run Hive with LEVM in debug mode
 	$(MAKE) -C ../../../ setup-hive
-	cd ../../../hive && ./hive --sim $(SIMULATION) --client ethrex --sim.limit "$(TEST_PATTERN)" --docker.output
+	cd ../../../hive && ./hive --sim ethereum/rpc-compat --client ethrex --sim.limit "$(TEST_PATTERN)" --docker.output || exit 0
+	cd ../../../hive && ./hive --sim devp2p --client ethrex --sim.limit "$(TEST_PATTERN)" --docker.output || exit 0
+	cd ../../../hive && ./hive --sim ethereum/engine --client ethrex --sim.limit "$(TEST_PATTERN)" --docker.output || exit 0
+	cd ../../../hive && ./hive --sim ethereum/sync --client ethrex --sim.limit "$(TEST_PATTERN)" --docker.output || exit 0
+	cargo run --release -p hive_report
 
 SUBDIRS := $(shell find $(SPECTEST_VECTORS_DIR)/GeneralStateTests -maxdepth 1 -type d ! -path "$(SPECTEST_VECTORS_DIR)/GeneralStateTests" -exec basename {} \;)
 
