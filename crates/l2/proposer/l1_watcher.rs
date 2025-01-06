@@ -214,11 +214,8 @@ impl L1Watcher {
                 ))
             })?;
 
-            let mut value_bytes = [0u8; 32];
-            mint_value.to_big_endian(&mut value_bytes);
-
-            let mut id_bytes = [0u8; 32];
-            deposit_id.to_big_endian(&mut id_bytes);
+            let value_bytes = mint_value.to_big_endian();
+            let id_bytes = deposit_id.to_big_endian();
             if !pending_deposit_logs.contains(&keccak(
                 [beneficiary.as_bytes(), &value_bytes, &id_bytes].concat(),
             )) {
@@ -265,8 +262,7 @@ impl L1Watcher {
                         // TODO(CHECK): Seems that when we start the L2, we need to set the gas.
                         // Otherwise, the transaction is not included in the mempool.
                         // We should override the blockchain to always include the transaction.
-                        priority_gas_price: Some(gas_price),
-                        gas_price: Some(gas_price),
+                        max_fee_per_gas: Some(gas_price),
                         ..Default::default()
                     },
                     10,

@@ -116,8 +116,8 @@ async fn transfer_from(
                     } else {
                         None
                     },
-                    gas_price: Some(3121115334),
-                    priority_gas_price: Some(3000000000),
+                    max_fee_per_gas: Some(3121115334),
+                    max_priority_fee_per_gas: Some(3000000000),
                     gas_limit: Some(TX_GAS_COST * 5),
                     ..Default::default()
                 },

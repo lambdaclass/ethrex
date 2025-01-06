@@ -1531,10 +1531,7 @@ fn mstore8() {
     )
     .unwrap();
 
-    let mut value_bytes = [0u8; 32];
-    stored_value.to_big_endian(&mut value_bytes);
-
-    assert_eq!(value_bytes[0..1], [0xAB]);
+    assert_eq!(stored_value.to_big_endian()[0..1], [0xAB]);
     assert_eq!(current_call_frame.gas_used, 12);
 }
 
@@ -1906,14 +1903,10 @@ fn nested_calls() {
 
     let mut expected_bytes = vec![0u8; 64];
     // place 0xAAAAAAA at 0..32
-    let mut callee3_return_value_bytes = [0u8; 32];
-    callee3_return_value.to_big_endian(&mut callee3_return_value_bytes);
-    expected_bytes[..32].copy_from_slice(&callee3_return_value_bytes);
+    expected_bytes[..32].copy_from_slice(&callee3_return_value.to_big_endian());
 
     // place 0xBBBBBBB at 32..64
-    let mut callee2_return_value_bytes = [0u8; 32];
-    callee2_return_value.to_big_endian(&mut callee2_return_value_bytes);
-    expected_bytes[32..].copy_from_slice(&callee2_return_value_bytes);
+    expected_bytes[32..].copy_from_slice(&callee2_return_value.to_big_endian());
 
     assert_eq!(return_data, expected_bytes);
 }
@@ -2363,8 +2356,7 @@ fn testing_bytes_u256_conversion() {
     println!("{:?}", result);
 
     // Convert from U256 to bytes
-    let mut temp_bytes = vec![0u8; 32];
-    result.to_big_endian(&mut temp_bytes);
+    let mut temp_bytes = result.to_big_endian().to_vec();
     println!("{:?}", temp_bytes);
 
     let mut i = 0;
@@ -3029,9 +3021,7 @@ fn sstore_op() {
     vm.execute(&mut current_call_frame).unwrap();
 
     // Convert key in U256 to H256
-    let mut bytes = [0u8; 32];
-    key.to_big_endian(&mut bytes);
-    let key = H256::from(bytes);
+    let key = H256::from(key.to_big_endian());
 
     let (storage_slot, _storage_slot_was_cold) =
         vm.access_storage_slot(sender_address, key).unwrap();
@@ -3908,7 +3898,7 @@ fn caller_op() {
 
     assert_eq!(
         vm.current_call_frame_mut().unwrap().stack.pop().unwrap(),
-        U256::from(caller.as_bytes())
+        U256::from_big_endian(caller.as_bytes())
     );
     assert_eq!(current_call_frame.gas_used, gas_cost::CALLER);
 }
@@ -3951,7 +3941,7 @@ fn origin_op() {
 
     assert_eq!(
         vm.current_call_frame_mut().unwrap().stack.pop().unwrap(),
-        U256::from(msg_sender.as_bytes())
+        U256::from_big_endian(msg_sender.as_bytes())
     );
     assert_eq!(current_call_frame.gas_used, gas_cost::ORIGIN);
 }
@@ -4021,7 +4011,7 @@ fn address_op() {
 
     assert_eq!(
         vm.current_call_frame_mut().unwrap().stack.pop().unwrap(),
-        U256::from(address_that_has_the_code.as_bytes())
+        U256::from_big_endian(address_that_has_the_code.as_bytes())
     );
     assert_eq!(current_call_frame.gas_used, gas_cost::ADDRESS);
 }
@@ -4268,7 +4258,7 @@ fn codecopy_op() {
 fn extcodesize_existing_account() {
     let address_with_code = Address::from_low_u64_be(123);
     let operations = [
-        Operation::Push((20, address_with_code.as_bytes().into())),
+        Operation::Push((20, U256::from_big_endian(address_with_code.as_bytes()))),
         Operation::ExtcodeSize,
         Operation::Stop,
     ];
@@ -4319,7 +4309,7 @@ fn extcodecopy_existing_account() {
         Operation::Push((1, size.into())),
         Operation::Push0, // offset
         Operation::Push0, // destOffset
-        Operation::Push((20, address_with_code.as_bytes().into())),
+        Operation::Push((20, U256::from_big_endian(address_with_code.as_bytes()))),
         Operation::ExtcodeCopy,
         Operation::Stop,
     ];
@@ -4380,7 +4370,7 @@ fn extcodecopy_non_existing_account() {
 fn extcodehash_account_with_zero_bytecode_but_not_empty() {
     let address = Address::from_low_u64_be(213);
     let operations = [
-        Operation::Push((20, address.as_bytes().into())),
+        Operation::Push((20, U256::from_big_endian(address.as_bytes()))),
         Operation::ExtcodeHash,
         Operation::Stop,
     ];
@@ -4405,7 +4395,7 @@ fn extcodehash_non_existing_account() {
     // EVM Playground: https://www.evm.codes/playground?fork=cancun&unit=Wei&codeType=Mnemonic&code='PUSH20%200x42%5CnEXTCODEHASH%5CnSTOP'_
     let random_address = Address::from_low_u64_be(12345);
     let operations = [
-        Operation::Push((20, random_address.as_bytes().into())),
+        Operation::Push((20, U256::from_big_endian(random_address.as_bytes()))),
         Operation::ExtcodeHash,
         Operation::Stop,
     ];

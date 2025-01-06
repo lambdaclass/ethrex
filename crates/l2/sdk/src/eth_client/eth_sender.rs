@@ -8,6 +8,8 @@ use keccak_hash::keccak;
 use secp256k1::SecretKey;
 use serde_json::json;
 
+use crate::wait_for_transaction_receipt;
+
 use super::{
     errors::{CallError, EthClientError},
     EthClient, RpcResponse,
@@ -16,12 +18,13 @@ use super::{
 #[derive(Default, Clone)]
 pub struct Overrides {
     pub from: Option<Address>,
+    pub to: Option<TxKind>,
     pub value: Option<U256>,
     pub nonce: Option<u64>,
     pub chain_id: Option<u64>,
     pub gas_limit: Option<u64>,
-    pub gas_price: Option<u64>,
-    pub priority_gas_price: Option<u64>,
+    pub max_fee_per_gas: Option<u64>,
+    pub max_priority_fee_per_gas: Option<u64>,
     pub access_list: Vec<(Address, Vec<H256>)>,
     pub gas_price_per_blob: Option<U256>,
 }
@@ -40,7 +43,7 @@ impl EthClient {
             from: overrides.from.unwrap_or_default(),
             gas: overrides.gas_limit,
             gas_price: overrides
-                .gas_price
+                .max_fee_per_gas
                 .unwrap_or(self.get_gas_price().await?.as_u64()),
             ..Default::default()
         };
@@ -74,6 +77,7 @@ impl EthClient {
         }
     }
 
+    #[allow(clippy::unwrap_used)]
     pub async fn deploy(
         &self,
         deployer: Address,
@@ -81,25 +85,25 @@ impl EthClient {
         init_code: Bytes,
         overrides: Overrides,
     ) -> Result<(H256, Address), EthClientError> {
-        let mut deploy_tx = self
-            .build_eip1559_transaction(Address::zero(), deployer, init_code, overrides, 10)
+        let mut deploy_overrides = overrides;
+        deploy_overrides.to = Some(TxKind::Create);
+        let deploy_tx = self
+            .build_eip1559_transaction(Address::zero(), deployer, init_code, deploy_overrides, 10)
             .await?;
-        deploy_tx.to = TxKind::Create;
         let deploy_tx_hash = self
             .send_eip1559_transaction(&deploy_tx, &deployer_private_key)
             .await?;
 
-        let encoded_from = deployer.encode_to_vec();
-        // FIXME: We'll probably need to use nonce - 1 since it was updated above.
-        let encoded_nonce = self.get_nonce(deployer).await?.encode_to_vec();
-        let mut encoded = vec![(0xc0 + encoded_from.len() + encoded_nonce.len())
-            .try_into()
-            .map_err(|err| {
-                EthClientError::Custom(format!("Failed to encode deployed_address {}", err))
-            })?];
-        encoded.extend(encoded_from.clone());
-        encoded.extend(encoded_nonce.clone());
-        let deployed_address = Address::from_slice(keccak(encoded).as_fixed_bytes());
+        let nonce = self.get_nonce(deployer).await?;
+        let mut encode = vec![];
+        (deployer, nonce).encode(&mut encode);
+
+        let deployed_address =
+            Address::from_slice(keccak(encode).as_fixed_bytes().get(12..).unwrap());
+
+        wait_for_transaction_receipt(deploy_tx_hash, self, 1000)
+            .await
+            .unwrap();
 
         Ok((deploy_tx_hash, deployed_address))
     }
