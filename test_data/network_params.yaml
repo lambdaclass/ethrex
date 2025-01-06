@@ -18,3 +18,8 @@ additional_services:
   - dora
   - el_forkmon
   - tx_spammer
+
+tx_spammer_params:
+  # A list of optional extra params that will be passed to the TX Spammer container for modifying its behaviour
+  tx_spammer_extra_args: ["--txcount=3", "--accounts=80"]
+  # Some taested seeds: 0x5a8e7b08fef94497, 0x6619e189b8a8b911, 0x52a0d7198393262e, use it as an extra argument for the tx_spammer, i.e: "--seed=0x5a8e7b08fef94497"
