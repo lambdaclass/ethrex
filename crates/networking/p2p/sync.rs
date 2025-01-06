@@ -134,10 +134,10 @@ impl SyncManager {
                 // - Fetch each block's body and its receipt via eth p2p requests
                 // - Fetch the pivot block's state via snap p2p requests
                 // - Execute blocks after the pivote (like in full-sync)
-                // let fetch_bodies_handle = tokio::spawn(fetch_block_bodies(
-                //     all_block_hashes.clone(),
-                //     self.peers.clone(),
-                // ));
+                let fetch_bodies_handle = tokio::spawn(fetch_block_bodies(
+                    all_block_hashes.clone(),
+                    self.peers.clone(),
+                ));
                 let mut pivot_idx = if all_block_headers.len() > MIN_FULL_BLOCKS {
                     all_block_headers.len() - MIN_FULL_BLOCKS
                 } else {
@@ -162,11 +162,6 @@ impl SyncManager {
                     return Ok(());
                 }
                 // Wait for all bodies to be downloaded
-                // TODO: Moved here to avoid two peers handling different requests and mixing up in few peer scenario
-                let fetch_bodies_handle = tokio::spawn(fetch_block_bodies(
-                    all_block_hashes.clone(),
-                    self.peers.clone(),
-                ));
                 let all_block_bodies = fetch_bodies_handle.await??;
                 // For all blocks before the pivot: Store the bodies and fetch the receipts
                 // For all blocks after the pivot: Process them fully
