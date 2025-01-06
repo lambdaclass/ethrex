@@ -1,5 +1,3 @@
-use std::str::FromStr;
-
 use bytes::Bytes;
 use ethereum_types::{Address, U256};
 use ethrex_core::types::{GenericTransaction, TxKind};
@@ -24,8 +22,8 @@ pub struct Overrides {
     pub nonce: Option<u64>,
     pub chain_id: Option<u64>,
     pub gas_limit: Option<u64>,
-    pub gas_price: Option<u64>,
-    pub priority_gas_price: Option<u64>,
+    pub max_fee_per_gas: Option<u64>,
+    pub max_priority_fee_per_gas: Option<u64>,
     pub access_list: Vec<(Address, Vec<H256>)>,
     pub gas_price_per_blob: Option<U256>,
 }
@@ -44,7 +42,7 @@ impl EthClient {
             from: overrides.from.unwrap_or_default(),
             gas: overrides.gas_limit,
             gas_price: overrides
-                .gas_price
+                .max_fee_per_gas
                 .unwrap_or(self.get_gas_price().await?.as_u64()),
             ..Default::default()
         };
@@ -86,9 +84,10 @@ impl EthClient {
         init_code: Bytes,
         overrides: Overrides,
     ) -> Result<(H256, Address), EthClientError> {
-        let deploy_tx = self
+        let mut deploy_tx = self
             .build_eip1559_transaction(Address::zero(), deployer, init_code, overrides, 10)
             .await?;
+        deploy_tx.to = TxKind::Create;
         let deploy_tx_hash = self
             .send_eip1559_transaction(&deploy_tx, &deployer_private_key)
             .await?;

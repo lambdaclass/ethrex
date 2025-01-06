@@ -121,7 +121,7 @@ pub async fn withdraw(
             Default::default(),
             Overrides {
                 value: Some(amount),
-                gas_price: Some(800000000),
+                max_fee_per_gas: Some(800000000),
                 gas_limit: Some(21000 * 2),
                 ..Default::default()
             },

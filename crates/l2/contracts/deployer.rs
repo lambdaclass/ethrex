@@ -66,11 +66,39 @@ const INITIALIZE_ON_CHAIN_PROPOSER_SIGNATURE: &str =
 
 const BRIDGE_INITIALIZER_SIGNATURE: &str = "initialize(address)";
 
+#[allow(clippy::unwrap_used)]
 #[tokio::main]
 async fn main() -> Result<(), DeployError> {
     let setup_result = setup()?;
     download_contract_deps(&setup_result.contracts_path)?;
     compile_contracts(&setup_result.contracts_path)?;
+
+    let init_deploy: Bytes = hex::decode(
+        std::fs::read_to_string(setup_result.contracts_path.join("solc_out/Test.bin")).unwrap(),
+    )
+    .map_err(|err| {
+        DeployError::DecodingError(format!("Failed to read on_chain_proposer_init_code: {err}"))
+    })?
+    .into();
+
+    println!("BYTECODE: {:?}", hex::encode(init_deploy.clone()));
+
+    let res = setup_result
+        .eth_client
+        .deploy(
+            setup_result.deployer_address,
+            setup_result.deployer_private_key,
+            init_deploy,
+            Overrides {
+                max_fee_per_gas: Some(526151157),
+                max_priority_fee_per_gas: Some(1),
+                gas_limit: Some(200000),
+                ..Default::default()
+            },
+        )
+        .await?;
+
+    println!("{res:?}");
 
     let (on_chain_proposer, bridge_address, sp1_verifier_address) = deploy_contracts(
         setup_result.deployer_address,
@@ -350,6 +378,39 @@ fn compile_contracts(contracts_path: &Path) -> Result<(), DeployError> {
             "Failed to compile SP1VerifierGroth16.sol".to_owned(),
         ));
     }
+
+    if !Command::new("solc")
+        .arg("--bin")
+        .arg(
+            contracts_path
+                .join("src/l1/Test.sol")
+                .to_str()
+                .ok_or(DeployError::FailedToGetStringFromPath)?,
+        )
+        .arg("-o")
+        .arg(
+            contracts_path
+                .join("solc_out")
+                .to_str()
+                .ok_or(DeployError::FailedToGetStringFromPath)?,
+        )
+        .arg("--overwrite")
+        .arg("--allow-paths")
+        .arg(
+            contracts_path
+                .to_str()
+                .ok_or(DeployError::FailedToGetStringFromPath)?,
+        )
+        .spawn()
+        .map_err(|err| DeployError::CompilationError(format!("Failed to spawn solc: {err}")))?
+        .wait()
+        .map_err(|err| DeployError::CompilationError(format!("Failed to wait for solc: {err}")))?
+        .success()
+    {
+        return Err(DeployError::CompilationError(
+            "Failed to compile Test.sol".to_owned(),
+        ));
+    }
     Ok(())
 }
 
@@ -442,21 +503,6 @@ async fn deploy_contract(
         ))
     })?
     .into();
-
-    let init_deploy: Bytes = hex::decode("6080604052348015600e575f80fd5b50603e80601a5f395ff3fe60806040525f80fdfea26469706673582212200f0ab21ab0fb10efa7ec9ad069c52a7e4993a29653f5f9ca2776e0ee0bb11d4a64736f6c634300081a0033").map_err(|err| {
-        DeployError::DecodingError(format!("Failed to read on_chain_proposer_init_code: {err}"))
-    })?.into();
-
-    let res = eth_client
-        .deploy(
-            deployer,
-            deployer_private_key,
-            init_deploy,
-            Overrides::default(),
-        )
-        .await?;
-
-    println!("{res:?}");
 
     let (deploy_tx_hash, contract_address) =
         create2_deploy(deployer, deployer_private_key, &init_code, eth_client)

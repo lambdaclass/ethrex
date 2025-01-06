@@ -441,7 +441,7 @@ impl Command {
                             from: Some(cfg.wallet.address),
                             value: Some(amount),
                             gas_limit: Some(21000 * 2),
-                            gas_price: Some(800000000),
+                            max_fee_per_gas: Some(800000000),
                             ..Default::default()
                         },
                         10,

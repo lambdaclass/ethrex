@@ -262,8 +262,7 @@ impl L1Watcher {
                         // TODO(CHECK): Seems that when we start the L2, we need to set the gas.
                         // Otherwise, the transaction is not included in the mempool.
                         // We should override the blockchain to always include the transaction.
-                        priority_gas_price: Some(gas_price),
-                        gas_price: Some(gas_price),
+                        max_fee_per_gas: Some(gas_price),
                         ..Default::default()
                     },
                     10,

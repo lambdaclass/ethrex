@@ -337,12 +337,13 @@ impl EthClient {
         &self,
         transaction: GenericTransaction,
     ) -> Result<u64, EthClientError> {
+        // GAS ESTIMATION FOR CREATE DOESNT WORK
         let to = match transaction.to {
-            TxKind::Call(addr) => addr,
-            TxKind::Create => Address::zero(),
+            TxKind::Call(addr) => format!("{addr:#x}"),
+            TxKind::Create => String::new(),
         };
         let mut data = json!({
-            "to": format!("{to:#x}"),
+            "to": to,
             "input": format!("0x{:#x}", transaction.input),
             "from": format!("{:#x}", transaction.from),
             "value": format!("{:#x}", transaction.value),
@@ -728,34 +729,27 @@ impl EthClient {
         overrides: Overrides,
         bump_retries: u64,
     ) -> Result<EIP1559Transaction, EthClientError> {
-        let get_gas_price;
         let mut tx = EIP1559Transaction {
             to: TxKind::Call(to),
             chain_id: if let Some(chain_id) = overrides.chain_id {
                 chain_id
             } else {
-                // Should never panic, the chain_id should be smaller than u64::MAX
-                self.get_chain_id().await?.as_u64()
+                self.get_chain_id()
+                    .await?
+                    .try_into()
+                    .map_err(|e| EthClientError::Custom(format!("{e}")))?
             },
             nonce: self
                 .get_nonce_from_overrides_or_rpc(&overrides, from)
                 .await?,
-            max_priority_fee_per_gas: if let Some(gas_price) = overrides.gas_price {
-                get_gas_price = gas_price;
+            max_priority_fee_per_gas: overrides.max_priority_fee_per_gas.unwrap_or(1),
+            max_fee_per_gas: if let Some(gas_price) = overrides.max_fee_per_gas {
                 gas_price
             } else {
-                let gas_price = self.get_gas_price().await?;
-                get_gas_price = if gas_price > u64::MAX.into() {
-                    u64::MAX
-                } else {
-                    gas_price.as_u64()
-                };
-                get_gas_price
-            },
-            max_fee_per_gas: if let Some(gas_price) = overrides.gas_price {
-                gas_price
-            } else {
-                get_gas_price
+                self.get_gas_price()
+                    .await?
+                    .try_into()
+                    .map_err(|e| EthClientError::Custom(format!("{e}")))?
             },
             value: overrides.value.unwrap_or_default(),
             data: calldata,
@@ -817,34 +811,27 @@ impl EthClient {
     ) -> Result<WrappedEIP4844Transaction, EthClientError> {
         let blob_versioned_hashes = blobs_bundle.generate_versioned_hashes();
 
-        let get_gas_price;
         let tx = EIP4844Transaction {
             to,
             chain_id: if let Some(chain_id) = overrides.chain_id {
                 chain_id
             } else {
-                // Should never panic, the chain_id should be smaller than u64::MAX
-                self.get_chain_id().await?.as_u64()
+                self.get_chain_id()
+                    .await?
+                    .try_into()
+                    .map_err(|e| EthClientError::Custom(format!("{e}")))?
             },
             nonce: self
                 .get_nonce_from_overrides_or_rpc(&overrides, from)
                 .await?,
-            max_priority_fee_per_gas: if let Some(gas_price) = overrides.gas_price {
-                get_gas_price = gas_price;
+            max_priority_fee_per_gas: overrides.max_priority_fee_per_gas.unwrap_or(1),
+            max_fee_per_gas: if let Some(gas_price) = overrides.max_fee_per_gas {
                 gas_price
             } else {
-                let gas_price = self.get_gas_price().await?;
-                get_gas_price = if gas_price > u64::MAX.into() {
-                    u64::MAX
-                } else {
-                    gas_price.as_u64()
-                };
-                get_gas_price
-            },
-            max_fee_per_gas: if let Some(gas_price) = overrides.gas_price {
-                gas_price
-            } else {
-                get_gas_price
+                self.get_gas_price()
+                    .await?
+                    .try_into()
+                    .map_err(|e| EthClientError::Custom(format!("{e}")))?
             },
             value: overrides.value.unwrap_or_default(),
             data: calldata,
@@ -907,35 +894,28 @@ impl EthClient {
         overrides: Overrides,
         bump_retries: u64,
     ) -> Result<PrivilegedL2Transaction, EthClientError> {
-        let get_gas_price;
         let mut tx = PrivilegedL2Transaction {
             tx_type,
             to: TxKind::Call(to),
             chain_id: if let Some(chain_id) = overrides.chain_id {
                 chain_id
             } else {
-                // Should never panic, the chain_id should be smaller than u64::MAX
-                self.get_chain_id().await?.as_u64()
+                self.get_chain_id()
+                    .await?
+                    .try_into()
+                    .map_err(|e| EthClientError::Custom(format!("{e}")))?
             },
             nonce: self
                 .get_nonce_from_overrides_or_rpc(&overrides, from)
                 .await?,
-            max_priority_fee_per_gas: if let Some(gas_price) = overrides.gas_price {
-                get_gas_price = gas_price;
+            max_priority_fee_per_gas: overrides.max_priority_fee_per_gas.unwrap_or(1),
+            max_fee_per_gas: if let Some(gas_price) = overrides.max_fee_per_gas {
                 gas_price
             } else {
-                let gas_price = self.get_gas_price().await?;
-                get_gas_price = if gas_price > u64::MAX.into() {
-                    u64::MAX
-                } else {
-                    gas_price.as_u64()
-                };
-                get_gas_price
-            },
-            max_fee_per_gas: if let Some(gas_price) = overrides.gas_price {
-                gas_price
-            } else {
-                get_gas_price
+                self.get_gas_price()
+                    .await?
+                    .try_into()
+                    .map_err(|e| EthClientError::Custom(format!("{e}")))?
             },
             value: overrides.value.unwrap_or_default(),
             data: calldata,
