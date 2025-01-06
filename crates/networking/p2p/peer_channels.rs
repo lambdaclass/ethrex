@@ -239,7 +239,8 @@ impl PeerChannels {
             &proof,
         );
         if let Err(err) = &should_continue {
-            info!("Failed to verify proof for AccRange: {err:?}")
+            info!("Failed to verify proof for AccRange: {err:?}");
+            info!("Response Provided: {accounts:?}, {proof:?}");
         }
         Some((account_hashes, accounts, should_continue.ok()?))
     }
