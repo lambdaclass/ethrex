@@ -1061,7 +1061,6 @@ impl VM {
         key: H256,
     ) -> Result<(StorageSlot, bool), VMError> {
         // [EIP-2929] - Introduced conditional tracking of accessed storage slots for Berlin and later specs.
-
         let mut storage_slot_was_cold = false;
         if self.env.spec_id >= SpecId::BERLIN {
             storage_slot_was_cold = self
