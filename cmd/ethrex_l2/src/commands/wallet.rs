@@ -128,9 +128,9 @@ pub(crate) enum Command {
         #[clap(long = "gas-limit", required = false)]
         gas_limit: Option<u64>,
         #[clap(long = "gas-price", required = false)]
-        gas_price: Option<u64>,
+        max_fee_per_gas: Option<u64>,
         #[clap(long = "priority-gas-price", required = false)]
-        priority_gas_price: Option<u64>,
+        max_priority_fee_per_gas: Option<u64>,
         #[clap(short = 'w', required = false)]
         wait_for_receipt: bool,
     },
@@ -159,7 +159,7 @@ pub(crate) enum Command {
         #[clap(long = "gas-limit", required = false)]
         gas_limit: Option<u64>,
         #[clap(long = "gas-price", required = false)]
-        gas_price: Option<u64>,
+        max_fee_per_gas: Option<u64>,
     },
     #[clap(about = "Deploy a contract")]
     Deploy {
@@ -186,9 +186,9 @@ pub(crate) enum Command {
         #[clap(long = "gas-limit", required = false)]
         gas_limit: Option<u64>,
         #[clap(long = "gas-price", required = false)]
-        gas_price: Option<u64>,
+        max_fee_per_gas: Option<u64>,
         #[clap(long = "priority-gas-price", required = false)]
-        priority_gas_price: Option<u64>,
+        max_priority_fee_per_gas: Option<u64>,
         #[clap(short = 'w', required = false)]
         wait_for_receipt: bool,
     },
@@ -476,8 +476,8 @@ impl Command {
                 chain_id,
                 nonce,
                 gas_limit,
-                gas_price,
-                priority_gas_price,
+                max_fee_per_gas,
+                max_priority_fee_per_gas,
                 wait_for_receipt,
             } => {
                 let client = match l1 {
@@ -501,8 +501,8 @@ impl Command {
                             },
                             nonce,
                             gas_limit,
-                            gas_price,
-                            priority_gas_price,
+                            max_fee_per_gas,
+                            max_priority_fee_per_gas,
                             from: Some(cfg.wallet.address),
                             ..Default::default()
                         },
@@ -529,7 +529,7 @@ impl Command {
                 value,
                 from,
                 gas_limit,
-                gas_price,
+                max_fee_per_gas,
             } => {
                 let client = match l1 {
                     true => eth_client,
@@ -544,7 +544,7 @@ impl Command {
                             from,
                             value: value.into(),
                             gas_limit,
-                            gas_price,
+                            max_fee_per_gas,
                             ..Default::default()
                         },
                     )
@@ -559,8 +559,8 @@ impl Command {
                 chain_id,
                 nonce,
                 gas_limit,
-                gas_price,
-                priority_gas_price,
+                max_fee_per_gas,
+                max_priority_fee_per_gas,
                 wait_for_receipt,
             } => {
                 let client = match l1 {
@@ -578,8 +578,8 @@ impl Command {
                             nonce,
                             chain_id,
                             gas_limit,
-                            gas_price,
-                            priority_gas_price,
+                            max_fee_per_gas,
+                            max_priority_fee_per_gas,
                             ..Default::default()
                         },
                     )
