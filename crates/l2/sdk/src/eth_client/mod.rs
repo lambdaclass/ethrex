@@ -12,6 +12,7 @@ use ethrex_core::{
     types::{
         BlobsBundle, EIP1559Transaction, EIP4844Transaction, GenericTransaction,
         PrivilegedL2Transaction, PrivilegedTxType, Signable, TxKind, TxType,
+        WrappedEIP4844Transaction,
     },
     H160,
 };
@@ -20,7 +21,6 @@ use ethrex_rpc::{
     types::{
         block::RpcBlock,
         receipt::{RpcLog, RpcReceipt},
-        transaction::WrappedEIP4844Transaction,
     },
     utils::{RpcErrorResponse, RpcRequest, RpcRequestId, RpcSuccessResponse},
 };
@@ -733,6 +733,7 @@ impl EthClient {
         overrides: Overrides,
         bump_retries: u64,
     ) -> Result<EIP1559Transaction, EthClientError> {
+        let mut get_gas_price = 1;
         let mut tx = EIP1559Transaction {
             to: overrides.to.clone().unwrap_or(TxKind::Call(to)),
             chain_id: if let Some(chain_id) = overrides.chain_id {
@@ -745,14 +746,16 @@ impl EthClient {
             nonce: self
                 .get_nonce_from_overrides_or_rpc(&overrides, from)
                 .await?,
-            max_priority_fee_per_gas: overrides.max_priority_fee_per_gas.unwrap_or(1),
             max_fee_per_gas: if let Some(gas_price) = overrides.max_fee_per_gas {
                 gas_price
             } else {
-                self.get_gas_price().await?.try_into().map_err(|_| {
+                get_gas_price = self.get_gas_price().await?.try_into().map_err(|_| {
                     EthClientError::Custom("Failed at gas_price.try_into()".to_owned())
-                })?
+                })?;
+
+                get_gas_price
             },
+            max_priority_fee_per_gas: overrides.max_priority_fee_per_gas.unwrap_or(get_gas_price),
             value: overrides.value.unwrap_or_default(),
             data: calldata,
             access_list: overrides.access_list,
@@ -812,7 +815,7 @@ impl EthClient {
         bump_retries: u64,
     ) -> Result<WrappedEIP4844Transaction, EthClientError> {
         let blob_versioned_hashes = blobs_bundle.generate_versioned_hashes();
-
+        let mut get_gas_price = 1;
         let tx = EIP4844Transaction {
             to,
             chain_id: if let Some(chain_id) = overrides.chain_id {
@@ -825,14 +828,16 @@ impl EthClient {
             nonce: self
                 .get_nonce_from_overrides_or_rpc(&overrides, from)
                 .await?,
-            max_priority_fee_per_gas: overrides.max_priority_fee_per_gas.unwrap_or(1),
             max_fee_per_gas: if let Some(gas_price) = overrides.max_fee_per_gas {
                 gas_price
             } else {
-                self.get_gas_price().await?.try_into().map_err(|_| {
+                get_gas_price = self.get_gas_price().await?.try_into().map_err(|_| {
                     EthClientError::Custom("Failed at gas_price.try_into()".to_owned())
-                })?
+                })?;
+
+                get_gas_price
             },
+            max_priority_fee_per_gas: overrides.max_priority_fee_per_gas.unwrap_or(get_gas_price),
             value: overrides.value.unwrap_or_default(),
             data: calldata,
             access_list: overrides.access_list,
@@ -894,6 +899,7 @@ impl EthClient {
         overrides: Overrides,
         bump_retries: u64,
     ) -> Result<PrivilegedL2Transaction, EthClientError> {
+        let mut get_gas_price = 1;
         let mut tx = PrivilegedL2Transaction {
             tx_type,
             to: TxKind::Call(to),
@@ -907,14 +913,16 @@ impl EthClient {
             nonce: self
                 .get_nonce_from_overrides_or_rpc(&overrides, from)
                 .await?,
-            max_priority_fee_per_gas: overrides.max_priority_fee_per_gas.unwrap_or(1),
             max_fee_per_gas: if let Some(gas_price) = overrides.max_fee_per_gas {
                 gas_price
             } else {
-                self.get_gas_price().await?.try_into().map_err(|_| {
+                get_gas_price = self.get_gas_price().await?.try_into().map_err(|_| {
                     EthClientError::Custom("Failed at gas_price.try_into()".to_owned())
-                })?
+                })?;
+
+                get_gas_price
             },
+            max_priority_fee_per_gas: overrides.max_priority_fee_per_gas.unwrap_or(get_gas_price),
             value: overrides.value.unwrap_or_default(),
             data: calldata,
             access_list: overrides.access_list,

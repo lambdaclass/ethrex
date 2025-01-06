@@ -21,7 +21,7 @@ impl VM {
         self.increase_consumed_gas(current_call_frame, gas_cost::PUSHN)?;
 
         let read_n_bytes = read_bytcode_slice(current_call_frame, n_bytes)?;
-        let value_to_push = bytes_to_word(&read_n_bytes, n_bytes)?;
+        let value_to_push = bytes_to_word(read_n_bytes, n_bytes)?;
 
         current_call_frame
             .stack
@@ -50,7 +50,7 @@ impl VM {
     }
 }
 
-fn read_bytcode_slice(current_call_frame: &CallFrame, n_bytes: usize) -> Result<Vec<u8>, VMError> {
+fn read_bytcode_slice(current_call_frame: &CallFrame, n_bytes: usize) -> Result<&[u8], VMError> {
     let pc_offset = current_call_frame
         .pc()
         // Add 1 to the PC because we don't want to include the
@@ -64,12 +64,8 @@ fn read_bytcode_slice(current_call_frame: &CallFrame, n_bytes: usize) -> Result<
 
     Ok(current_call_frame
         .bytecode
-        .get(pc_offset..)
-        .unwrap_or_default()
-        .iter()
-        .take(n_bytes)
-        .cloned()
-        .collect())
+        .get(pc_offset..pc_offset.checked_add(n_bytes).ok_or(VMError::OutOfBounds)?)
+        .unwrap_or_default())
 }
 
 fn bytes_to_word(read_n_bytes: &[u8], n_bytes: usize) -> Result<[u8; WORD_SIZE], VMError> {
