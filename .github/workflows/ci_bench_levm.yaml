@@ -32,59 +32,22 @@ jobs:
       - name: Run PR benchmarks
         run: |
           cd crates/vm/levm
-          make revm-comparison > pr_raw_result.md
-
-      - name: Parse PR benchmark results
-        run: |
-          bash .github/scripts/format_benchmark.sh crates/vm/levm/pr_raw_result.md pr_parsed_result.md
+          make revm-comparison-ci
+          echo "#### Benchmark Results: Factorial" > pr_result.md
+          cat factorial.md >> pr_result.md
+          echo "\n#### Benchmark Results: Fibonacci" >> pr_result.md
+          cat fibonacci.md >> pr_result.md
 
       - name: Upload PR results
         uses: actions/upload-artifact@v4
         with:
           name: pr-result
-          path: pr_parsed_result.md
-
-  benchmark-main:
-    name: Benchmark for Main
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout main branch
-        uses: actions/checkout@v4
-        with:
-          ref: main
-
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@1.81.0
-        with:
-          components: rustfmt, clippy
-
-      - name: Set up cargo cache
-        uses: Swatinem/rust-cache@v2
-
-      - name: Install hyperfine
-        uses: taiki-e/install-action@v2
-        with:
-          tool: hyperfine@1.16
-
-      - name: Run Main benchmarks
-        run: |
-          cd crates/vm/levm
-          make revm-comparison > main_raw_result.md
-
-      - name: Parse Main benchmark results
-        run: |
-          bash .github/scripts/format_benchmark.sh crates/vm/levm/main_raw_result.md main_parsed_result.md
-
-      - name: Upload Main results
-        uses: actions/upload-artifact@v4
-        with:
-          name: main-result
-          path: main_parsed_result.md
+          path: pr_result.md
 
   combine-results:
     name: Combine Benchmark Results
     runs-on: ubuntu-latest
-    needs: [benchmark-pr, benchmark-main]
+    needs: [benchmark-pr]
     steps:
       - name: Download PR results
         uses: actions/download-artifact@v4
@@ -92,20 +55,10 @@ jobs:
           name: pr-result
           path: .
 
-      - name: Download Main results
-        uses: actions/download-artifact@v4
-        with:
-          name: main-result
-          path: .
-
-      - name: Combine results
+      - name: Create combined results
         run: |
           echo "### Benchmark Results Comparison" > combined_result.md
-          echo "#### PR Benchmark Results:" >> combined_result.md
-          cat pr_parsed_result.md >> combined_result.md
-          echo >> combined_result.md
-          echo "#### Main Benchmark Results:" >> combined_result.md
-          cat main_parsed_result.md >> combined_result.md
+          cat pr_result.md >> combined_result.md
 
       - name: Find comment
         uses: peter-evans/find-comment@v2
