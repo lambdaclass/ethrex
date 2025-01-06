@@ -13,7 +13,6 @@ use k256::{
     PublicKey, SecretKey,
 };
 use rand::Rng;
-use tracing::warn;
 
 use super::error::RLPxError;
 
@@ -117,10 +116,7 @@ fn decrypt_message(
 
     // Verify the MAC.
     let expected_d = sha256_hmac(&mac_key, &[iv, c], size_data);
-    if expected_d != d {
-        warn!("Failed to verify mac");
-    }
-    //assert_eq!(d, expected_d);
+    assert_eq!(d, expected_d);
 
     // Decrypt the message with the AES key.
     let mut stream_cipher = Aes128Ctr64BE::new_from_slices(aes_key, iv)?;
