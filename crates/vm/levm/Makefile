@@ -18,6 +18,7 @@ fmt: ## 📄 Runs rustfmt
 SPECTEST_VERSION := v14.1
 SPECTEST_ARTIFACT := tests_$(SPECTEST_VERSION).tar.gz
 SPECTEST_VECTORS_DIR := ../../../cmd/ef_tests/levm/vectors
+SPECTEST_PECTRA_VECTOR_DIR := $(SPECTEST_VECTORS_DIR)/GeneralStateTests
 
 $(SPECTEST_ARTIFACT):
 	rm -f tests_*.tar.gz # Delete older versions
@@ -27,6 +28,7 @@ $(SPECTEST_VECTORS_DIR): $(SPECTEST_ARTIFACT)
 	mkdir -p $(SPECTEST_VECTORS_DIR) tmp
 	tar -xzf $(SPECTEST_ARTIFACT) -C tmp
 	mv tmp/tests-14.1/GeneralStateTests $(SPECTEST_VECTORS_DIR)
+	mv tmp/tests-14.1/EIPTests/StateTests/stEIP2537 $(SPECTEST_PECTRA_VECTOR_DIR)
 
 download-evm-ef-tests: $(SPECTEST_VECTORS_DIR) ## 📥 Download EF Tests
 
