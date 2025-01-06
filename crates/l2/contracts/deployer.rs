@@ -81,10 +81,8 @@ async fn main() -> Result<(), DeployError> {
     )
     .await?;
 
-    let sp1_contract_verifier_address = match sp1_verifier_address {
-        Some(address) => address,
-        None => setup_result.sp1_contract_verifier_address,
-    };
+    let sp1_contract_verifier_address =
+        sp1_verifier_address.unwrap_or(setup_result.sp1_contract_verifier_address);
 
     initialize_contracts(
         setup_result.deployer_address,

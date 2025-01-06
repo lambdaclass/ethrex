@@ -2,8 +2,8 @@ pub mod errors;
 pub mod prover;
 pub mod prover_client;
 
-use ethrex_l2::{
-    proposer::prover_server::ProverType, utils::config::prover_client::ProverClientConfig,
+use ethrex_l2::utils::{
+    config::prover_client::ProverClientConfig, prover::proving_systems::ProverType,
 };
 use tracing::warn;
 
