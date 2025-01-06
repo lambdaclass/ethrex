@@ -288,7 +288,9 @@ async fn testito() -> Result<(), Box<dyn std::error::Error>> {
     );
 
     let fees_transfer = get_fees_details_l2(transfer_tx_receipt, &proposer_client).await;
+    println!("transfer: {fees_transfer:?}");
     let fees_withdraw = get_fees_details_l2(withdraw_tx_receipt, &proposer_client).await;
+    println!("withdraw: {fees_withdraw:?}");
 
     println!("Common Bridge Locked Balance: {common_bridge_locked_balance}");
 
@@ -307,19 +309,25 @@ async fn testito() -> Result<(), Box<dyn std::error::Error>> {
     println!("The total locked value by the CommonBridge contract doesn't take burned fees into account, also the deposit transactions \"gives\" some tokens (from fees) to the coinbase address. This behavior shouldn't happen.");
 
     // Check that we only have the amount left after the withdrawal
-    assert_eq!(common_bridge_locked_balance, deposit_value - withdraw_value);
+    assert_eq!(
+        common_bridge_locked_balance,
+        deposit_value - withdraw_value,
+        "Amount after withdrawal differs"
+    );
 
     // Check that the total_locked_l2_value_with_recoverable_fees matches the common_bridge_locked_balance - burned_fees
     // Check that we only have the amount left after the withdrawal
     assert_eq!(
         common_bridge_locked_balance,
-        total_locked_l2_value_with_recoverable_fees + total_burned_fees
+        total_locked_l2_value_with_recoverable_fees + total_burned_fees,
+        "Amount calculated after withdrawal differs"
     );
 
     // Check that the recoverable fees matches
     assert_eq!(
         recoverable_fees_vault_balance - first_deposit_recoverable_fees_vault_balance,
-        fees_transfer.recoverable_fees + fees_withdraw.recoverable_fees
+        fees_transfer.recoverable_fees + fees_withdraw.recoverable_fees,
+        "Recoverable fees don't match"
     );
 
     assert!(
@@ -335,6 +343,7 @@ async fn testito() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
+#[derive(Debug)]
 struct FeesDetails {
     total_fees: U256,
     recoverable_fees: U256,

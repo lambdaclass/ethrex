@@ -261,6 +261,7 @@ impl L1Watcher {
                         // Otherwise, the transaction is not included in the mempool.
                         // We should override the blockchain to always include the transaction.
                         max_fee_per_gas: Some(gas_price),
+                        max_priority_fee_per_gas: Some(gas_price),
                         ..Default::default()
                     },
                     10,

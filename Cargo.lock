@@ -2741,7 +2741,7 @@ dependencies = [
  "k256",
  "serde_json",
  "sha3",
- "thiserror 1.0.69",
+ "thiserror 2.0.9",
  "tracing",
 ]
 
@@ -2765,7 +2765,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha3",
- "thiserror 1.0.69",
+ "thiserror 2.0.9",
  "tinyvec",
 ]
 
@@ -2784,7 +2784,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2 0.10.8",
- "thiserror 1.0.69",
+ "thiserror 2.0.9",
  "tokio",
  "tracing",
 ]
@@ -2815,7 +2815,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sp1-sdk",
- "thiserror 1.0.69",
+ "thiserror 2.0.9",
  "tokio",
  "tokio-util",
  "tracing",
@@ -2858,7 +2858,7 @@ dependencies = [
  "prometheus",
  "serde",
  "serde_json",
- "thiserror 1.0.69",
+ "thiserror 2.0.9",
  "tokio",
  "tracing",
 ]
@@ -2885,7 +2885,7 @@ dependencies = [
  "serde_json",
  "sha3",
  "snap",
- "thiserror 1.0.69",
+ "thiserror 2.0.9",
  "tokio",
  "tracing",
 ]
@@ -2907,7 +2907,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sp1-sdk",
- "thiserror 1.0.69",
+ "thiserror 2.0.9",
  "tokio",
  "tokio-util",
  "tracing",
@@ -2925,7 +2925,7 @@ dependencies = [
  "hex-literal",
  "lazy_static",
  "snap",
- "thiserror 1.0.69",
+ "thiserror 2.0.9",
  "tinyvec",
 ]
 
@@ -2972,7 +2972,7 @@ dependencies = [
  "secp256k1",
  "serde",
  "serde_json",
- "thiserror 1.0.69",
+ "thiserror 2.0.9",
  "tokio",
  "tracing",
 ]
@@ -2994,7 +2994,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha3",
- "thiserror 1.0.69",
+ "thiserror 2.0.9",
  "tracing",
 ]
 
@@ -3020,7 +3020,7 @@ dependencies = [
  "sha3",
  "smallvec",
  "tempdir",
- "thiserror 1.0.69",
+ "thiserror 2.0.9",
  "tracing",
 ]
 
@@ -3043,7 +3043,7 @@ dependencies = [
  "revm-inspectors",
  "revm-primitives 10.0.0",
  "serde",
- "thiserror 1.0.69",
+ "thiserror 2.0.9",
  "tracing",
 ]
 
@@ -3062,7 +3062,7 @@ dependencies = [
  "lazy_static",
  "secp256k1",
  "spinoff",
- "thiserror 1.0.69",
+ "thiserror 2.0.9",
  "tokio",
  "tracing",
 ]
