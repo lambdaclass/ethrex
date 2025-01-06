@@ -9780,7 +9780,7 @@ dependencies = [
  "serde",
  "serde_with",
  "sp1-build",
- "thiserror 1.0.69",
+ "thiserror 2.0.9",
 ]
 
 [[package]]
