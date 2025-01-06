@@ -348,7 +348,6 @@ fn compile_contracts(contracts_path: &Path) -> Result<(), DeployError> {
             "Failed to compile SP1VerifierGroth16.sol".to_owned(),
         ));
     }
-
     Ok(())
 }
 
