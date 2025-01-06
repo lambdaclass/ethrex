@@ -33,13 +33,10 @@ jobs:
         run: |
           cd crates/vm/levm
           make revm-comparison-ci
-          pwd
-          ls
-          echo "#### Benchmark Results: Factorial" > crates/vm/levm/pr_result.md
-          cat crates/vm/levm/factorial.md >> crates/vm/levm/pr_result.md
-          echo "\n#### Benchmark Results: Fibonacci" >> crates/vm/levm/pr_result.md
-          cat crates/vm/levm/fibonacci.md >> crates/vm/levm/pr_result.md
-          ls crates/vm/levm
+          echo "#### Benchmark Results: Factorial" > pr_result.md
+          cat factorial.md >> pr_result.md
+          echo "\n#### Benchmark Results: Fibonacci" >> pr_result.md
+          cat fibonacci.md >> pr_result.md
 
       - name: Upload PR results
         uses: actions/upload-artifact@v4
