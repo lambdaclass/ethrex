@@ -73,28 +73,6 @@ async fn main() -> Result<(), DeployError> {
     download_contract_deps(&setup_result.contracts_path)?;
     compile_contracts(&setup_result.contracts_path)?;
 
-    let init_deploy: Bytes = hex::decode(
-        std::fs::read_to_string(setup_result.contracts_path.join("solc_out/Test.bin")).unwrap(),
-    )
-    .map_err(|err| {
-        DeployError::DecodingError(format!("Failed to read on_chain_proposer_init_code: {err}"))
-    })?
-    .into();
-
-    println!("BYTECODE: {:?}", hex::encode(init_deploy.clone()));
-
-    let res = setup_result
-        .eth_client
-        .deploy(
-            setup_result.deployer_address,
-            setup_result.deployer_private_key,
-            init_deploy,
-            Overrides::default(),
-        )
-        .await?;
-
-    println!("{res:?}");
-
     let (on_chain_proposer, bridge_address, sp1_verifier_address) = deploy_contracts(
         setup_result.deployer_address,
         setup_result.deployer_private_key,

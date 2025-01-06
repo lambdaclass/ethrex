@@ -337,7 +337,11 @@ impl EthClient {
         &self,
         transaction: GenericTransaction,
     ) -> Result<u64, EthClientError> {
-        // GAS ESTIMATION FOR CREATE DOESNT WORK
+        // If the transaction.to field matches TxKind::Create, we use an empty string.
+        // In this way, when the blockchain receives the request, it deserializes the json into a GenericTransaction,
+        // with the 'to' field set to TxKind::Create.
+        // The TxKind has TxKind::Create as #[default]
+        // https://github.com/lambdaclass/ethrex/blob/41b124c39030ad5d0b2674d7369be3599c7a3008/crates/common/types/transaction.rs#L267
         let to = match transaction.to {
             TxKind::Call(addr) => format!("{addr:#x}"),
             TxKind::Create => String::new(),
@@ -734,10 +738,9 @@ impl EthClient {
             chain_id: if let Some(chain_id) = overrides.chain_id {
                 chain_id
             } else {
-                self.get_chain_id()
-                    .await?
-                    .try_into()
-                    .map_err(|e| EthClientError::Custom(format!("{e}")))?
+                self.get_chain_id().await?.try_into().map_err(|_| {
+                    EthClientError::Custom("Failed at get_chain_id().try_into()".to_owned())
+                })?
             },
             nonce: self
                 .get_nonce_from_overrides_or_rpc(&overrides, from)
@@ -746,10 +749,9 @@ impl EthClient {
             max_fee_per_gas: if let Some(gas_price) = overrides.max_fee_per_gas {
                 gas_price
             } else {
-                self.get_gas_price()
-                    .await?
-                    .try_into()
-                    .map_err(|e| EthClientError::Custom(format!("{e}")))?
+                self.get_gas_price().await?.try_into().map_err(|_| {
+                    EthClientError::Custom("Failed at gas_price.try_into()".to_owned())
+                })?
             },
             value: overrides.value.unwrap_or_default(),
             data: calldata,
@@ -816,10 +818,9 @@ impl EthClient {
             chain_id: if let Some(chain_id) = overrides.chain_id {
                 chain_id
             } else {
-                self.get_chain_id()
-                    .await?
-                    .try_into()
-                    .map_err(|e| EthClientError::Custom(format!("{e}")))?
+                self.get_chain_id().await?.try_into().map_err(|_| {
+                    EthClientError::Custom("Failed at get_chain_id().try_into()".to_owned())
+                })?
             },
             nonce: self
                 .get_nonce_from_overrides_or_rpc(&overrides, from)
@@ -828,10 +829,9 @@ impl EthClient {
             max_fee_per_gas: if let Some(gas_price) = overrides.max_fee_per_gas {
                 gas_price
             } else {
-                self.get_gas_price()
-                    .await?
-                    .try_into()
-                    .map_err(|e| EthClientError::Custom(format!("{e}")))?
+                self.get_gas_price().await?.try_into().map_err(|_| {
+                    EthClientError::Custom("Failed at gas_price.try_into()".to_owned())
+                })?
             },
             value: overrides.value.unwrap_or_default(),
             data: calldata,
@@ -900,10 +900,9 @@ impl EthClient {
             chain_id: if let Some(chain_id) = overrides.chain_id {
                 chain_id
             } else {
-                self.get_chain_id()
-                    .await?
-                    .try_into()
-                    .map_err(|e| EthClientError::Custom(format!("{e}")))?
+                self.get_chain_id().await?.try_into().map_err(|_| {
+                    EthClientError::Custom("Failed at get_chain_id().try_into()".to_owned())
+                })?
             },
             nonce: self
                 .get_nonce_from_overrides_or_rpc(&overrides, from)
@@ -912,10 +911,9 @@ impl EthClient {
             max_fee_per_gas: if let Some(gas_price) = overrides.max_fee_per_gas {
                 gas_price
             } else {
-                self.get_gas_price()
-                    .await?
-                    .try_into()
-                    .map_err(|e| EthClientError::Custom(format!("{e}")))?
+                self.get_gas_price().await?.try_into().map_err(|_| {
+                    EthClientError::Custom("Failed at gas_price.try_into()".to_owned())
+                })?
             },
             value: overrides.value.unwrap_or_default(),
             data: calldata,
