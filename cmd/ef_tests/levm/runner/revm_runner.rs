@@ -167,7 +167,7 @@ pub fn prepare_revm_for_tx<'state>(
         .with_block_env(block_env)
         .with_tx_env(tx_env)
         .modify_cfg_env(|cfg| cfg.chain_id = chain_spec.chain_id)
-        .with_spec_id(test.fork()) //TODO: In the future replace cancun for the actual spec id
+        .with_spec_id(test.fork())
         .with_external_context(
             RevmTracerEip3155::new(Box::new(std::io::stderr())).without_summary(),
         );
