@@ -45,7 +45,7 @@ use std::{
     time::Duration,
 };
 use tokio::{net::TcpListener, sync::Mutex as TokioMutex};
-use tracing::info;
+use tracing::{info, error};
 use types::transaction::SendRawTransactionRequest;
 use utils::{
     RpcErr, RpcErrorMetadata, RpcErrorResponse, RpcNamespace, RpcRequest, RpcRequestId,
@@ -78,7 +78,48 @@ trait RpcHandler: Sized {
 
     fn call(req: &RpcRequest, context: RpcApiContext) -> Result<Value, RpcErr> {
         let request = Self::parse(&req.params)?;
-        request.handle(context)
+        let result = request.handle(context);
+
+        match result {
+            Ok(res) => {
+                if ![
+                    "eth_getBlockByNumber",
+                    "eth_getTransactionReceipt",
+                    "eth_getBlockByHash",
+                ]
+                .contains(&req.method.as_str())
+                {
+                    // if req.method.as_str() == "engine_newPayloadV3" {
+                    //     info!(
+                    //         "RPC req method: {:?}, block_hash: {:?}",
+                    //         req.method,
+                    //         req.params.clone().unwrap()[0].get("blockHash")
+                    //     );
+                    // } else {
+                    //     info!(
+                    //         "RPC req method: {:?}, req params: {:?}",
+                    //         req.method, req.params
+                    //     );
+                    // }
+
+                    if req.method.as_str() == "engine_getPayloadV3" {
+                        info!(
+                            "RPC response parent hash: {:?}, blockhash: {:?}",
+                            res["executionPayload"]["parentHash"],
+                            res["executionPayload"]["blockHash"]
+                        );
+                    } else {
+                        info!("RPC response: {:?}", res);
+                    }
+                };
+
+                Ok(res)
+            }
+            Err(e) => {
+                error!("RPC error: {:?}", e);
+                Err(e)
+            }
+        }
     }
 
     fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr>;
@@ -241,6 +282,7 @@ pub fn map_eth_requests(req: &RpcRequest, context: RpcApiContext) -> Result<Valu
         "eth_sendRawTransaction" => SendRawTransactionRequest::call(req, context),
         "eth_getProof" => GetProofRequest::call(req, context),
         "eth_gasPrice" => GasPrice::call(req, context),
+        "eth_maxPriorityFeePerGas" => eth::max_priority_fee::MaxPriorityFee::call(req, context),
         unknown_eth_method => Err(RpcErr::MethodNotFound(unknown_eth_method.to_owned())),
     }
 }
