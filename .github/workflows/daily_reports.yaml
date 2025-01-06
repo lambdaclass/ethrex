@@ -166,7 +166,7 @@ jobs:
   hive-report-levm:
     name: Post hive reports
     runs-on: ubuntu-latest
-    needs: generate-hive-report
+    needs: hive-generate-report
     steps:
       - name: Fetch results markdown
         uses: actions/download-artifact@v4
