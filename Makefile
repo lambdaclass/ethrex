@@ -122,7 +122,7 @@ run-hive: build-image setup-hive ## 🧪 Run Hive testing suite
 	cd hive && ./hive --client ethrex --sim $(SIMULATION) --sim.limit "$(TEST_PATTERN)"
 
 run-hive-all: build-image setup-hive ## 🧪 Run all Hive testing suites
-	cd hive && ./hive --client ethrex --sim $(SIMULATION) --sim.parallelism 4
+	cd hive && ./hive --client ethrex --sim ".*" --sim.parallelism 4
 
 run-hive-debug: build-image setup-hive ## 🐞 Run Hive testing suite in debug mode
 	cd hive && ./hive --sim $(SIMULATION) --client ethrex --sim.limit "$(TEST_PATTERN)" --docker.output
