@@ -37,7 +37,7 @@ pub const HASH_MAX: H256 = H256([0xFF; 32]);
 /// Holds the respective sender and receiver ends of the communication channels bewteen the peer data and its active connection
 pub struct PeerChannels {
     pub(crate) sender: mpsc::Sender<RLPxMessage>,
-    receiver: Arc<Mutex<mpsc::Receiver<RLPxMessage>>>,
+    pub(crate) receiver: Arc<Mutex<mpsc::Receiver<RLPxMessage>>>,
 }
 
 impl PeerChannels {
@@ -86,7 +86,10 @@ impl PeerChannels {
                         return Some(block_headers)
                     }
                     // Ignore replies that don't match the expected id (such as late responses)
-                    Some(a) => {info!("Mismatched Response: {a}");continue},
+                    Some(a) => {
+                        info!("Mismatched Response: {a}");
+                        continue;
+                    }
                     None => return None,
                 }
             }
@@ -119,7 +122,10 @@ impl PeerChannels {
                         return Some(block_bodies)
                     }
                     // Ignore replies that don't match the expected id (such as late responses)
-                    Some(a) => {info!("Mismatched Response: {a}");continue},
+                    Some(a) => {
+                        info!("Mismatched Response: {a}");
+                        continue;
+                    }
                     None => return None,
                 }
             }
@@ -151,7 +157,10 @@ impl PeerChannels {
                         return Some(receipts)
                     }
                     // Ignore replies that don't match the expected id (such as late responses)
-                    Some(a) => {info!("Mismatched Response: {a}");continue},
+                    Some(a) => {
+                        info!("Mismatched Response: {a}");
+                        continue;
+                    }
                     None => return None,
                 }
             }
@@ -192,15 +201,25 @@ impl PeerChannels {
                         proof,
                     })) if id == request_id => return Some((accounts, proof)),
                     // Ignore replies that don't match the expected id (such as late responses)
-                    Some(a) => {info!("Mismatched Response: {a}");continue},
+                    Some(a) => {
+                        info!("Mismatched Response: {a}");
+                        continue;
+                    }
                     None => return None,
                 }
             }
         })
-        .await {
+        .await
+        {
             Ok(Some(data)) => data,
-            Ok(None) => {info!("AccRange Request Timeout"); return None},
-            Err(e) => {info!("AccRange Request Err: {e:?}"); return None},
+            Ok(None) => {
+                info!("AccRange Request Timeout");
+                return None;
+            }
+            Err(e) => {
+                info!("AccRange Request Err: {e:?}");
+                return None;
+            }
         };
         // Unzip & validate response
         let proof = encodable_to_proof(&proof);
@@ -245,7 +264,10 @@ impl PeerChannels {
                         return Some(codes)
                     }
                     // Ignore replies that don't match the expected id (such as late responses)
-                    Some(a) => {info!("Mismatched Response: {a}");continue},
+                    Some(a) => {
+                        info!("Mismatched Response: {a}");
+                        continue;
+                    }
                     None => return None,
                 }
             }
@@ -290,7 +312,10 @@ impl PeerChannels {
                         return Some((slots, proof))
                     }
                     // Ignore replies that don't match the expected id (such as late responses)
-                    Some(a) => {info!("Mismatched Response: {a}");continue},
+                    Some(a) => {
+                        info!("Mismatched Response: {a}");
+                        continue;
+                    }
                     None => return None,
                 }
             }
@@ -394,7 +419,10 @@ impl PeerChannels {
                         return Some(nodes)
                     }
                     // Ignore replies that don't match the expected id (such as late responses)
-                    Some(a) => {info!("Mismatched Response: {a}");continue},
+                    Some(a) => {
+                        info!("Mismatched Response: {a}");
+                        continue;
+                    }
                     None => return None,
                 }
             }
@@ -453,7 +481,10 @@ impl PeerChannels {
                         return Some(nodes)
                     }
                     // Ignore replies that don't match the expected id (such as late responses)
-                    Some(a) => {info!("Mismatched Response: {a}");continue},
+                    Some(a) => {
+                        info!("Mismatched Response: {a}");
+                        continue;
+                    }
                     None => return None,
                 }
             }

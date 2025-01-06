@@ -282,7 +282,12 @@ impl KademliaTable {
 
     /// TODO: Randomly select peer
     pub fn get_peer(&self) -> Option<PeerData> {
-        self.get_least_recently_pinged_peers(1).pop()
+        let filter = |peer: &PeerData| -> bool {
+            peer.channels
+                .as_ref()
+                .is_some_and(|ch| !ch.sender.is_closed() && ch.receiver.try_lock().is_ok())
+        };
+        self.get_random_peer_with_filter(&filter).cloned()
     }
 
     /// Returns an iterator for all peers in the table
