@@ -6,7 +6,7 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-axum = "0.7.5"
+axum.workspace = true
 serde = { version = "1.0.203", features = ["derive"] }
 serde_json = "1.0.117"
 tokio.workspace = true
@@ -20,7 +20,7 @@ ethrex-blockchain.workspace = true
 ethrex-net.workspace = true
 ethrex-rlp.workspace = true
 hex.workspace = true
-axum-extra = { version = "0.9.3", features = ["typed-header"] }
+axum-extra = { version = "0.10.0", features = ["typed-header"] }
 jsonwebtoken.workspace = true
 rand.workspace = true
 tokio-util.workspace = true
