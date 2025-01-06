@@ -297,6 +297,8 @@ impl VM {
             }
         }
 
+        dng!("TESTING CI");
+
         loop {
             let opcode = current_call_frame.next_opcode();
 
