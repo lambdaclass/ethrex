@@ -24,7 +24,6 @@ path = "./mod.rs"
 
 [features]
 default = ["api"]
-api = []
 transactions = []
 l2 = []
 api = ["dep:axum", "dep:prometheus", "dep:tokio", "dep:tracing"]
