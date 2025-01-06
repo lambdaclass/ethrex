@@ -340,8 +340,14 @@ impl KademliaTable {
                 .as_ref()
                 .is_some_and(|ch| !ch.sender.is_closed())
         };
+        let snap_active_filter = |peer: &PeerData| -> bool {
+            peer.channels
+                .as_ref()
+                .is_some_and(|ch| !ch.sender.is_closed() && peer.supported_capabilities.contains(&Capability::Snap))
+        };
         let active_peers = self.filter_peers(&active_filter).count();
-        info!("Active Peers / Total Peers: {active_peers} / {total_peers}")
+        let snap_active_peers = self.filter_peers(&snap_active_filter).count();
+        info!("Snap Peers: {snap_active_peers} / Active Peers {active_peers} / Total Peers: {total_peers}")
     }
 }
 
