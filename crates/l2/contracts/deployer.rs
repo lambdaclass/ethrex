@@ -352,38 +352,6 @@ fn compile_contracts(contracts_path: &Path) -> Result<(), DeployError> {
         ));
     }
 
-    if !Command::new("solc")
-        .arg("--bin")
-        .arg(
-            contracts_path
-                .join("src/l1/Test.sol")
-                .to_str()
-                .ok_or(DeployError::FailedToGetStringFromPath)?,
-        )
-        .arg("-o")
-        .arg(
-            contracts_path
-                .join("solc_out")
-                .to_str()
-                .ok_or(DeployError::FailedToGetStringFromPath)?,
-        )
-        .arg("--overwrite")
-        .arg("--allow-paths")
-        .arg(
-            contracts_path
-                .to_str()
-                .ok_or(DeployError::FailedToGetStringFromPath)?,
-        )
-        .spawn()
-        .map_err(|err| DeployError::CompilationError(format!("Failed to spawn solc: {err}")))?
-        .wait()
-        .map_err(|err| DeployError::CompilationError(format!("Failed to wait for solc: {err}")))?
-        .success()
-    {
-        return Err(DeployError::CompilationError(
-            "Failed to compile Test.sol".to_owned(),
-        ));
-    }
     Ok(())
 }
 
