@@ -2,10 +2,12 @@
 #![allow(clippy::expect_used)]
 use bytes::Bytes;
 use ethereum_types::{Address, H160, U256};
-use ethrex_l2::utils::eth_client::{eth_sender::Overrides, EthClient};
+use ethrex_l2::utils::config::read_env_file;
+use ethrex_l2_sdk::eth_client::{eth_sender::Overrides, BlockByNumber, EthClient};
+use ethrex_rpc::types::receipt::RpcReceipt;
 use keccak_hash::H256;
 use secp256k1::SecretKey;
-use std::{str::FromStr, time::Duration};
+use std::{ops::Mul, str::FromStr, time::Duration};
 
 const DEFAULT_ETH_URL: &str = "http://localhost:8545";
 const DEFAULT_PROPOSER_URL: &str = "http://localhost:1729";
@@ -36,25 +38,29 @@ const L2_GAS_COST_MAX_DELTA: U256 = U256([100_000_000_000_000, 0, 0, 0]);
 /// 8. Claim funds on L1
 /// 9. Check balances on L1 and L2
 #[tokio::test]
-async fn testito() {
+async fn testito() -> Result<(), Box<dyn std::error::Error>> {
     let eth_client = eth_client();
     let proposer_client = proposer_client();
+
+    read_env_file()?;
 
     // 1. Check balances on L1 and L2
 
     println!("Checking initial balances on L1 and L2");
 
-    let l1_initial_balance = eth_client
-        .get_balance(l1_rich_wallet_address())
-        .await
-        .unwrap();
+    let l1_initial_balance = eth_client.get_balance(l1_rich_wallet_address()).await?;
     let l2_initial_balance = proposer_client
         .get_balance(l1_rich_wallet_address())
-        .await
-        .unwrap();
+        .await?;
 
     println!("L1 initial balance: {l1_initial_balance}");
     println!("L2 initial balance: {l2_initial_balance}");
+
+    let recoverable_fees_vault_balance = proposer_client.get_balance(fees_vault()).await?;
+    println!(
+        "Recoverable Fees Balance: {}",
+        recoverable_fees_vault_balance
+    );
 
     // 2. Deposit from L1 to L2
 
@@ -67,28 +73,27 @@ async fn testito() {
         l1_rich_wallet_private_key(),
         &eth_client,
     )
-    .await
-    .unwrap();
+    .await?;
 
     println!("Waiting for deposit transaction receipt");
 
     let _deposit_tx_receipt =
-        ethrex_l2_sdk::wait_for_transaction_receipt(deposit_tx, &eth_client, 5)
-            .await
-            .unwrap();
+        ethrex_l2_sdk::wait_for_transaction_receipt(deposit_tx, &eth_client, 5).await?;
+
+    let recoverable_fees_vault_balance = proposer_client.get_balance(fees_vault()).await?;
+    println!(
+        "Recoverable Fees Balance: {}",
+        recoverable_fees_vault_balance
+    );
 
     // 3. Check balances on L1 and L2
 
     println!("Checking balances on L1 and L2 after deposit");
 
-    let l1_after_deposit_balance = eth_client
-        .get_balance(l1_rich_wallet_address())
-        .await
-        .unwrap();
+    let l1_after_deposit_balance = eth_client.get_balance(l1_rich_wallet_address()).await?;
     let mut l2_after_deposit_balance = proposer_client
         .get_balance(l1_rich_wallet_address())
-        .await
-        .unwrap();
+        .await?;
 
     println!("Waiting for L2 balance to update");
 
@@ -100,12 +105,15 @@ async fn testito() {
         println!("[{retries}/30] Waiting for L2 balance to update after deposit");
         l2_after_deposit_balance = proposer_client
             .get_balance(l1_rich_wallet_address())
-            .await
-            .unwrap();
+            .await?;
         retries += 1;
     }
 
     assert_ne!(retries, 30, "L2 balance did not update after deposit");
+
+    let common_bridge_locked_balance = eth_client.get_balance(common_bridge_address()).await?;
+    // Check that the deposit amount is the amount locked by the CommonBridge
+    assert_eq!(common_bridge_locked_balance, deposit_value);
 
     println!("L2 deposit received");
 
@@ -124,15 +132,19 @@ async fn testito() {
         (l1_initial_balance - deposit_value).abs_diff(l1_after_deposit_balance)
     );
 
+    let first_deposit_recoverable_fees_vault_balance =
+        proposer_client.get_balance(fees_vault()).await?;
+    println!(
+        "Recoverable Fees Balance: {}, This amount is given because of the L2 Privileged Transaction, a deposit shouldn't give a tip to the coinbase address if the gas sent as tip doesn't come from the L1.",
+        first_deposit_recoverable_fees_vault_balance
+    );
     // 4. Transfer funds on L2
 
     println!("Transferring funds on L2");
 
     let (random_account_address, _random_account_private_key) = random_account();
-    let l2_random_account_initial_balance = proposer_client
-        .get_balance(random_account_address)
-        .await
-        .unwrap();
+    let l2_random_account_initial_balance =
+        proposer_client.get_balance(random_account_address).await?;
     assert!(l2_random_account_initial_balance.is_zero());
     let transfer_value = U256::from(10000000000u128);
     let transfer_tx = ethrex_l2_sdk::transfer(
@@ -142,12 +154,15 @@ async fn testito() {
         l1_rich_wallet_private_key(),
         &proposer_client,
     )
-    .await
-    .unwrap();
-    let _transfer_tx_receipt =
-        ethrex_l2_sdk::wait_for_transaction_receipt(transfer_tx, &proposer_client, 30)
-            .await
-            .unwrap();
+    .await?;
+    let transfer_tx_receipt =
+        ethrex_l2_sdk::wait_for_transaction_receipt(transfer_tx, &proposer_client, 30).await?;
+
+    let recoverable_fees_vault_balance = proposer_client.get_balance(fees_vault()).await?;
+    println!(
+        "Recoverable Fees Balance: {}",
+        recoverable_fees_vault_balance
+    );
 
     // 5. Check balances on L2
 
@@ -155,12 +170,9 @@ async fn testito() {
 
     let l2_balance_after_transfer = proposer_client
         .get_balance(l1_rich_wallet_address())
-        .await
-        .unwrap();
-    let l2_random_account_balance_after_transfer = proposer_client
-        .get_balance(random_account_address)
-        .await
-        .unwrap();
+        .await?;
+    let l2_random_account_balance_after_transfer =
+        proposer_client.get_balance(random_account_address).await?;
 
     println!("L2 balance after transfer: {l2_balance_after_transfer}");
     println!("Random account balance after transfer: {l2_random_account_balance_after_transfer}");
@@ -180,7 +192,6 @@ async fn testito() {
     // 6. Withdraw funds from L2 to L1
 
     println!("Withdrawing funds from L2 to L1");
-
     let withdraw_value = U256::from(100000000000000000000u128);
     let withdraw_tx = ethrex_l2_sdk::withdraw(
         withdraw_value,
@@ -188,8 +199,7 @@ async fn testito() {
         l1_rich_wallet_private_key(),
         &proposer_client,
     )
-    .await
-    .unwrap();
+    .await?;
     let withdraw_tx_receipt =
         ethrex_l2_sdk::wait_for_transaction_receipt(withdraw_tx, &proposer_client, 30)
             .await
@@ -199,14 +209,10 @@ async fn testito() {
 
     println!("Checking balances on L1 and L2 after withdrawal");
 
-    let l1_after_withdrawal_balance = eth_client
-        .get_balance(l1_rich_wallet_address())
-        .await
-        .unwrap();
+    let l1_after_withdrawal_balance = eth_client.get_balance(l1_rich_wallet_address()).await?;
     let l2_after_withdrawal_balance = proposer_client
         .get_balance(l1_rich_wallet_address())
-        .await
-        .unwrap();
+        .await?;
 
     println!("L1 balance after withdrawal: {l1_after_withdrawal_balance}");
     println!("L2 balance after withdrawal: {l2_after_withdrawal_balance}");
@@ -237,8 +243,7 @@ async fn testito() {
                 Bytes::from_static(&[0x2f, 0xde, 0x80, 0xe5]),
                 Overrides::default(),
             )
-            .await
-            .unwrap()
+            .await?
             .get(2..)
             .unwrap(),
         16,
@@ -258,28 +263,64 @@ async fn testito() {
         &proposer_client,
         &eth_client,
     )
-    .await
-    .unwrap();
+    .await?;
 
-    let _claim_tx_receipt = ethrex_l2_sdk::wait_for_transaction_receipt(claim_tx, &eth_client, 15)
-        .await
-        .unwrap();
+    let _claim_tx_receipt =
+        ethrex_l2_sdk::wait_for_transaction_receipt(claim_tx, &eth_client, 15).await?;
 
     // 9. Check balances on L1 and L2
 
     println!("Checking balances on L1 and L2 after claim");
 
-    let l1_after_claim_balance = eth_client
-        .get_balance(l1_rich_wallet_address())
-        .await
-        .unwrap();
+    let l1_after_claim_balance = eth_client.get_balance(l1_rich_wallet_address()).await?;
     let l2_after_claim_balance = proposer_client
         .get_balance(l1_rich_wallet_address())
-        .await
-        .unwrap();
+        .await?;
 
     println!("L1 balance after claim: {l1_after_claim_balance}");
     println!("L2 balance after claim: {l2_after_claim_balance}");
+
+    let common_bridge_locked_balance = eth_client.get_balance(common_bridge_address()).await?;
+    let recoverable_fees_vault_balance = proposer_client.get_balance(fees_vault()).await?;
+    println!(
+        "Recoverable Fees Balance: {}",
+        recoverable_fees_vault_balance
+    );
+
+    let fees_transfer = get_fees_details_l2(transfer_tx_receipt, &proposer_client).await;
+    let fees_withdraw = get_fees_details_l2(withdraw_tx_receipt, &proposer_client).await;
+
+    println!("Common Bridge Locked Balance: {common_bridge_locked_balance}");
+
+    let total_locked_l2_value =
+        deposit_value - withdraw_value - fees_transfer.total_fees - fees_withdraw.total_fees;
+    let total_locked_l2_value_with_recoverable_fees =
+        total_locked_l2_value + fees_transfer.recoverable_fees + fees_withdraw.recoverable_fees;
+
+    let total_burned_fees = fees_transfer.burned_fees + fees_withdraw.burned_fees;
+    println!("TOTAL Locked L2 value: {total_locked_l2_value}");
+    println!(
+        "TOTAL Locked L2 value with recoverable fees: {total_locked_l2_value_with_recoverable_fees}"
+    );
+    println!("BURNED FEES L2: {total_burned_fees}");
+
+    println!("The total locked value by the CommonBridge contract doesn't take burned fees into account, also the deposit transactions \"gives\" some tokens (from fees) to the coinbase address. This behavior shouldn't happen.");
+
+    // Check that we only have the amount left after the withdrawal
+    assert_eq!(common_bridge_locked_balance, deposit_value - withdraw_value);
+
+    // Check that the total_locked_l2_value_with_recoverable_fees matches the common_bridge_locked_balance - burned_fees
+    // Check that we only have the amount left after the withdrawal
+    assert_eq!(
+        common_bridge_locked_balance,
+        total_locked_l2_value_with_recoverable_fees + total_burned_fees
+    );
+
+    // Check that the recoverable fees matches
+    assert_eq!(
+        recoverable_fees_vault_balance - first_deposit_recoverable_fees_vault_balance,
+        fees_transfer.recoverable_fees + fees_withdraw.recoverable_fees
+    );
 
     assert!(
         (l1_after_withdrawal_balance + withdraw_value).abs_diff(l1_after_claim_balance)
@@ -290,6 +331,38 @@ async fn testito() {
         l2_after_withdrawal_balance, l2_after_claim_balance,
         "L2 balance should not change after claim"
     );
+
+    Ok(())
+}
+
+struct FeesDetails {
+    total_fees: U256,
+    recoverable_fees: U256,
+    burned_fees: U256,
+}
+
+async fn get_fees_details_l2(tx_receipt: RpcReceipt, l2_client: &EthClient) -> FeesDetails {
+    let total_fees: U256 =
+        (tx_receipt.tx_info.gas_used * tx_receipt.tx_info.effective_gas_price).into();
+
+    let effective_gas_price = tx_receipt.tx_info.effective_gas_price;
+    let base_fee_per_gas = l2_client
+        .get_block_by_number(BlockByNumber::Number(tx_receipt.block_info.block_number))
+        .await
+        .unwrap()
+        .header
+        .base_fee_per_gas
+        .unwrap();
+
+    let max_priority_fee_per_gas_transfer: U256 = (effective_gas_price - base_fee_per_gas).into();
+
+    let recoverable_fees = max_priority_fee_per_gas_transfer.mul(tx_receipt.tx_info.gas_used);
+
+    FeesDetails {
+        total_fees,
+        recoverable_fees,
+        burned_fees: total_fees - recoverable_fees,
+    }
 }
 
 fn eth_client() -> EthClient {
@@ -304,6 +377,22 @@ fn proposer_client() -> EthClient {
 fn l1_rich_wallet_address() -> Address {
     std::env::var("L1_RICH_WALLET_ADDRESS")
         .unwrap_or(format!("{DEFAULT_L1_RICH_WALLET_ADDRESS:#x}"))
+        .parse()
+        .unwrap()
+}
+
+#[allow(clippy::unwrap_used)]
+fn common_bridge_address() -> Address {
+    std::env::var("L1_WATCHER_BRIDGE_ADDRESS")
+        .expect("L1_WATCHER_BRIDGE_ADDRESS env var not set")
+        .parse()
+        .unwrap()
+}
+
+#[allow(clippy::unwrap_used)]
+fn fees_vault() -> Address {
+    std::env::var("PROPOSER_COINBASE_ADDRESS")
+        .expect("PROPOSER_COINBASE_ADDRESS env var not set")
         .parse()
         .unwrap()
 }

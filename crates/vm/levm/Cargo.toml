@@ -6,6 +6,9 @@ edition.workspace = true
 [dependencies]
 ethrex-core.workspace = true
 ethrex-rlp.workspace = true
+revm-primitives = { version = "10.0.0", features = [
+  "std",
+], default-features = false }
 
 bytes.workspace = true
 sha3 = "0.10.8"
@@ -13,7 +16,7 @@ datatest-stable = "0.2.9"
 serde = { version = "1.0.203", features = ["derive", "rc"] }
 serde_json = { version = "1.0.117" }
 walkdir = "2.5.0"
-keccak-hash = "0.11.0"
+keccak-hash.workspace = true
 thiserror = "2.0.3"
 libsecp256k1 = "0.7.1"
 sha2 = "0.10.8"
@@ -28,8 +31,10 @@ hex = "0.4.3"
 colored = "2.1.0"
 spinoff = "0.8.0"
 
+
 [features]
 ethereum_foundation_tests = []
+
 
 [lints.rust]
 unsafe_code = "forbid"
