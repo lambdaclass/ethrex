@@ -12,6 +12,7 @@ use ethrex_core::{
     types::{
         BlobsBundle, EIP1559Transaction, EIP4844Transaction, GenericTransaction,
         PrivilegedL2Transaction, PrivilegedTxType, Signable, TxKind, TxType,
+        WrappedEIP4844Transaction,
     },
     H160,
 };
@@ -20,7 +21,6 @@ use ethrex_rpc::{
     types::{
         block::RpcBlock,
         receipt::{RpcLog, RpcReceipt},
-        transaction::WrappedEIP4844Transaction,
     },
     utils::{RpcErrorResponse, RpcRequest, RpcRequestId, RpcSuccessResponse},
 };
@@ -734,8 +734,9 @@ impl EthClient {
             chain_id: if let Some(chain_id) = overrides.chain_id {
                 chain_id
             } else {
-                // Should never panic, the chain_id should be smaller than u64::MAX
-                self.get_chain_id().await?.as_u64()
+                self.get_chain_id().await?.try_into().map_err(|_| {
+                    EthClientError::Custom("Failed at get_chain_id().try_into()".to_owned())
+                })?
             },
             nonce: self
                 .get_nonce_from_overrides_or_rpc(&overrides, from)
@@ -744,12 +745,10 @@ impl EthClient {
                 get_gas_price = gas_price;
                 gas_price
             } else {
-                let gas_price = self.get_gas_price().await?;
-                get_gas_price = if gas_price > u64::MAX.into() {
-                    u64::MAX
-                } else {
-                    gas_price.as_u64()
-                };
+                let gas_price: u64 = self.get_gas_price().await?.try_into().map_err(|_| {
+                    EthClientError::Custom("Failed at gas_price.try_into()".to_owned())
+                })?;
+                get_gas_price = gas_price;
                 get_gas_price
             },
             max_fee_per_gas: if let Some(gas_price) = overrides.gas_price {
@@ -823,8 +822,9 @@ impl EthClient {
             chain_id: if let Some(chain_id) = overrides.chain_id {
                 chain_id
             } else {
-                // Should never panic, the chain_id should be smaller than u64::MAX
-                self.get_chain_id().await?.as_u64()
+                self.get_chain_id().await?.try_into().map_err(|_| {
+                    EthClientError::Custom("Failed at get_chain_id().try_into()".to_owned())
+                })?
             },
             nonce: self
                 .get_nonce_from_overrides_or_rpc(&overrides, from)
@@ -833,12 +833,10 @@ impl EthClient {
                 get_gas_price = gas_price;
                 gas_price
             } else {
-                let gas_price = self.get_gas_price().await?;
-                get_gas_price = if gas_price > u64::MAX.into() {
-                    u64::MAX
-                } else {
-                    gas_price.as_u64()
-                };
+                let gas_price: u64 = self.get_gas_price().await?.try_into().map_err(|_| {
+                    EthClientError::Custom("Failed at gas_price.try_into()".to_owned())
+                })?;
+                get_gas_price = gas_price;
                 get_gas_price
             },
             max_fee_per_gas: if let Some(gas_price) = overrides.gas_price {
@@ -914,8 +912,9 @@ impl EthClient {
             chain_id: if let Some(chain_id) = overrides.chain_id {
                 chain_id
             } else {
-                // Should never panic, the chain_id should be smaller than u64::MAX
-                self.get_chain_id().await?.as_u64()
+                self.get_chain_id().await?.try_into().map_err(|_| {
+                    EthClientError::Custom("Failed at get_chain_id().try_into()".to_owned())
+                })?
             },
             nonce: self
                 .get_nonce_from_overrides_or_rpc(&overrides, from)
@@ -924,12 +923,10 @@ impl EthClient {
                 get_gas_price = gas_price;
                 gas_price
             } else {
-                let gas_price = self.get_gas_price().await?;
-                get_gas_price = if gas_price > u64::MAX.into() {
-                    u64::MAX
-                } else {
-                    gas_price.as_u64()
-                };
+                let gas_price: u64 = self.get_gas_price().await?.try_into().map_err(|_| {
+                    EthClientError::Custom("Failed at gas_price.try_into()".to_owned())
+                })?;
+                get_gas_price = gas_price;
                 get_gas_price
             },
             max_fee_per_gas: if let Some(gas_price) = overrides.gas_price {

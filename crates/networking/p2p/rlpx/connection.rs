@@ -340,7 +340,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
         let peer_supports_eth = self.capabilities.contains(&CAP_ETH);
         match message {
             Message::Disconnect(msg_data) => {
-                debug!("Received Disconnect: {:?}", msg_data.reason);
+                debug!("Received Disconnect: {}", msg_data.reason());
                 // Returning a Disconnect error to be handled later at the call stack
                 return Err(RLPxError::Disconnect());
             }
@@ -402,6 +402,13 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
                 //TODO(#1416): Evaluate keeping track of the request-id.
                 let request = GetPooledTransactions::new(random(), hashes);
                 self.send(Message::GetPooledTransactions(request)).await?;
+            }
+            Message::GetPooledTransactions(msg) => {
+                let response = msg.handle(&self.storage)?;
+                self.send(Message::PooledTransactions(response)).await?;
+            }
+            Message::PooledTransactions(msg) if peer_supports_eth => {
+                msg.handle(&self.storage)?;
             }
             Message::GetStorageRanges(req) => {
                 let response = process_storage_ranges_request(req, self.storage.clone())?;

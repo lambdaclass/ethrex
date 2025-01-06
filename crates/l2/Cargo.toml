@@ -24,10 +24,13 @@ hex.workspace = true
 bytes.workspace = true
 jsonwebtoken.workspace = true
 secp256k1.workspace = true
-keccak-hash = "0.10.0"
+keccak-hash.workspace = true
 envy = "0.4.2"
 thiserror.workspace = true
+directories = "5.0.1"
+
 zkvm_interface = { path = "./prover/zkvm/interface/", default-features = false }
+
 # risc0
 risc0-zkvm = { version = "1.2.0" }
 # sp1

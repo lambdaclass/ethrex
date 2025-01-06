@@ -214,11 +214,8 @@ impl L1Watcher {
                 ))
             })?;
 
-            let mut value_bytes = [0u8; 32];
-            mint_value.to_big_endian(&mut value_bytes);
-
-            let mut id_bytes = [0u8; 32];
-            deposit_id.to_big_endian(&mut id_bytes);
+            let value_bytes = mint_value.to_big_endian();
+            let id_bytes = deposit_id.to_big_endian();
             if !pending_deposit_logs.contains(&keccak(
                 [beneficiary.as_bytes(), &value_bytes, &id_bytes].concat(),
             )) {
@@ -230,11 +227,9 @@ impl L1Watcher {
 
             let gas_price = self.l2_client.get_gas_price().await?;
             // Avoid panicking when using as_u64()
-            let gas_price = if gas_price > u64::MAX.into() {
-                u64::MAX
-            } else {
-                gas_price.as_u64()
-            };
+            let gas_price: u64 = gas_price
+                .try_into()
+                .map_err(|_| L1WatcherError::Custom("Failed at gas_price.try_into()".to_owned()))?;
 
             let mut mint_transaction = self
                 .eth_client
