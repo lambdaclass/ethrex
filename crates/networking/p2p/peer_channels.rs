@@ -9,7 +9,7 @@ use ethrex_rlp::encode::RLPEncode;
 use ethrex_trie::Nibbles;
 use ethrex_trie::{verify_range, Node};
 use tokio::sync::{mpsc, Mutex};
-use tracing::warn;
+use tracing::{info, warn};
 
 use crate::{
     rlpx::{
@@ -86,7 +86,7 @@ impl PeerChannels {
                         return Some(block_headers)
                     }
                     // Ignore replies that don't match the expected id (such as late responses)
-                    Some(_) => continue,
+                    Some(a) => {info!("Mismatched Response: {a}");continue},
                     None => return None,
                 }
             }
@@ -119,7 +119,7 @@ impl PeerChannels {
                         return Some(block_bodies)
                     }
                     // Ignore replies that don't match the expected id (such as late responses)
-                    Some(_) => continue,
+                    Some(a) => {info!("Mismatched Response: {a}");continue},
                     None => return None,
                 }
             }
@@ -151,7 +151,7 @@ impl PeerChannels {
                         return Some(receipts)
                     }
                     // Ignore replies that don't match the expected id (such as late responses)
-                    Some(_) => continue,
+                    Some(a) => {info!("Mismatched Response: {a}");continue},
                     None => return None,
                 }
             }
@@ -183,7 +183,7 @@ impl PeerChannels {
         });
         self.sender.send(request).await.ok()?;
         let mut receiver = self.receiver.lock().await;
-        let (accounts, proof) = tokio::time::timeout(PEER_REPLY_TIMOUT, async move {
+        let (accounts, proof) = match tokio::time::timeout(PEER_REPLY_TIMOUT, async move {
             loop {
                 match receiver.recv().await {
                     Some(RLPxMessage::AccountRange(AccountRange {
@@ -192,13 +192,16 @@ impl PeerChannels {
                         proof,
                     })) if id == request_id => return Some((accounts, proof)),
                     // Ignore replies that don't match the expected id (such as late responses)
-                    Some(_) => continue,
+                    Some(a) => {info!("Mismatched Response: {a}");continue},
                     None => return None,
                 }
             }
         })
-        .await
-        .ok()??;
+        .await {
+            Ok(Some(data)) => data,
+            Ok(None) => {info!("AccRange Request Timeout"); return None},
+            Err(e) => {info!("AccRange Request Err: {e:?}"); return None},
+        };
         // Unzip & validate response
         let proof = encodable_to_proof(&proof);
         let (account_hashes, accounts): (Vec<_>, Vec<_>) = accounts
@@ -242,7 +245,7 @@ impl PeerChannels {
                         return Some(codes)
                     }
                     // Ignore replies that don't match the expected id (such as late responses)
-                    Some(_) => continue,
+                    Some(a) => {info!("Mismatched Response: {a}");continue},
                     None => return None,
                 }
             }
@@ -287,7 +290,7 @@ impl PeerChannels {
                         return Some((slots, proof))
                     }
                     // Ignore replies that don't match the expected id (such as late responses)
-                    Some(_) => continue,
+                    Some(a) => {info!("Mismatched Response: {a}");continue},
                     None => return None,
                 }
             }
@@ -391,7 +394,7 @@ impl PeerChannels {
                         return Some(nodes)
                     }
                     // Ignore replies that don't match the expected id (such as late responses)
-                    Some(_) => continue,
+                    Some(a) => {info!("Mismatched Response: {a}");continue},
                     None => return None,
                 }
             }
@@ -450,7 +453,7 @@ impl PeerChannels {
                         return Some(nodes)
                     }
                     // Ignore replies that don't match the expected id (such as late responses)
-                    Some(_) => continue,
+                    Some(a) => {info!("Mismatched Response: {a}");continue},
                     None => return None,
                 }
             }
