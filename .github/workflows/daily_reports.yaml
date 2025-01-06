@@ -87,7 +87,7 @@ jobs:
       - name: Upload result artifact (${{matrix.image}})
         uses: actions/upload-artifact@v4
         with:
-          name: results_${{matrix.image}}.md
+          name: results/results_${{matrix.image}}.md
           path: ./results_${{matrix.image}}.md
 
   hive-report-default-features:
