@@ -104,13 +104,13 @@ jobs:
 
       - name: Combine Results
         run: |
-        {
-          echo "### Benchmark Results Comparison";
-          echo "#### Main Benchmark Results:";
-          cat main_result.md;
-          echo "#### PR Benchmark Results:";
-          cat pr_result.md;
-        } > combined_results.md
+          {
+            echo "### Benchmark Results Comparison";
+            echo "#### Main Benchmark Results:";
+            cat main_result.md;
+            echo "#### PR Benchmark Results:";
+            cat pr_result.md;
+          } > combined_results.md
 
       - name: Find comment
         uses: peter-evans/find-comment@v2
