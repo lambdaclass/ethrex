@@ -123,6 +123,6 @@ jobs:
       - name: Create or update comment
         uses: peter-evans/create-or-update-comment@v3
         with:
-          comment-id: ${{ steps.fc.outputs.comment-id }}
+          comment-id: ${{ steps.fc.outputs.comment-id || '' }}
           body-path: combined_result.md
           edit-mode: replace
