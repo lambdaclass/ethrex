@@ -17,7 +17,7 @@ hex.workspace = true
 keccak-hash.workspace = true
 colored = "2.1.0"
 spinoff = "0.8.0"
-thiserror = "2.0.3"
+thiserror.workspace = true
 clap = { version = "4.3", features = ["derive"] }
 clap_complete = "4.5.17"
 itertools = "0.13.0"
