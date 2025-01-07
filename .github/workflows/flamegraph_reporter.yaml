@@ -7,9 +7,9 @@ permissions:
 
 on:
   push:
-    branches: [ "main" ]
+    branches: ["main"]
   pull_request:
-    branches: [ "**" ]
+    branches: ["**"]
   workflow_dispatch:
 
 env:
@@ -125,7 +125,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: paradigmxyz/reth
-          path: 'reth'
+          path: "reth"
 
       - id: generate-flamegraph-reth
         name: Build and test reth
@@ -161,7 +161,7 @@ jobs:
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
-    needs: [ flamegraph-ethrex, flamegraph-reth ]
+    needs: [flamegraph-ethrex, flamegraph-reth]
     steps:
       - name: Checkout sources
         uses: actions/checkout@v4
@@ -183,7 +183,7 @@ jobs:
         run: |
           cp -r flamegraph_ethrex.svg pages/
           cp -r flamegraph_reth.svg pages/
-          sed -i "s/{{LAST_UPDATE}}/$(date +'%Y-%m-%dT%H:%M:%S')/g" pages/index.html
+          sed -i "s/{{LAST_UPDATE}}/$(TZ='Etc/GMT+3' date +'%Y-%m-%dT%H:%M:%S')/g" pages/index.html
           sed -i "s/{{ETHREX_TIME}}/${{ needs.flamegraph-ethrex.outputs.time }}/g" pages/index.html
           sed -i "s/{{RETH_TIME}}/${{ needs.flamegraph-reth.outputs.time }}/g" pages/index.html
 
@@ -193,7 +193,7 @@ jobs:
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
         with:
-          path: 'pages/'
+          path: "pages/"
 
       - name: Deploy to GitHub Pages
         id: deployment

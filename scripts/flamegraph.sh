@@ -11,17 +11,17 @@ end_val=$((172 * $iterations * $value))
 
 ethrex_l2 test load --path ./test_data/private_keys.txt -i $iterations -v  --value $value --to $account
 
-output=$(cast balance $account --rpc-url=http://localhost:1729 2>&1)
+output=$(ethrex_l2 info -b -a $account 2>&1)
 while [[ $output -lt 1 ]]; do
     sleep 5
     echo "Balance is $output"
-    output=$(cast balance $account --rpc-url=http://localhost:1729 2>&1)
+    output=$(ethrex_l2 info -b -a $account 2>&1)
 done
 SECONDS=0 # Server is online since balance started, so start measuring time
 while [[ $output -lt $end_val ]]; do
     sleep 5
     echo "Balance is $output waiting for it to reach $end_val"
-    output=$(cast balance $account --rpc-url=http://localhost:1729 2>&1)
+    output=$(ethrex_l2 info -b -a $account 2>&1)
 done
 elapsed=$SECONDS
 minutes=$((elapsed / 60))
