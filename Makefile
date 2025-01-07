@@ -164,14 +164,14 @@ start-node-with-flamegraph: rm-test-db ## 🚀🔥 Starts an ethrex client used 
 	@if [ -z "$$L" ]; then \
 		LEVM=""; \
 		echo "Running the test-node without the LEVM feature"; \
-		echo "If you want to use levm, run the target with an L at the end: make <target> L"; \
+		echo "If you want to use levm, run the target with an L at the end: make <target> L=1"; \
 	else \
 		LEVM=",levm"; \
 		echo "Running the test-node with the LEVM feature"; \
 	fi; \
 	sudo CARGO_PROFILE_RELEASE_DEBUG=true cargo flamegraph \
 	--bin ethrex \
-	--features "dev$$L" \
+	--features "dev$$LEVM" \
 	--  \
 	--network test_data/genesis-l2.json \
 	--http.port 1729 \
@@ -181,7 +181,7 @@ load-node: install-cli ## 🚧 Runs a load-test. Run make start-node-with-flameg
 	@if [ -z "$$C" ]; then \
 		CONTRACT_INTERACTION=""; \
 		echo "Running the load-test without contract interaction"; \
-		echo "If you want to interact with contracts to load the evm, run the target with a C at the end: make <target> C"; \
+		echo "If you want to interact with contracts to load the evm, run the target with a C at the end: make <target> C=1"; \
 	else \
 		CONTRACT_INTERACTION="-c"; \
 		echo "Running the load-test with contract interaction"; \
