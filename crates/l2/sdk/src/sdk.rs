@@ -121,7 +121,7 @@ pub async fn withdraw(
             Default::default(),
             Overrides {
                 value: Some(amount),
-                // TODO: If we don't set max_fee_per_gas and max_priority_fee_per_gas
+                // CHECK: If we don't set max_fee_per_gas and max_priority_fee_per_gas
                 // The transaction is not included on the L2.
                 // Also we have some mismatches at the end of the L2 integration test.
                 max_fee_per_gas: Some(800000000),

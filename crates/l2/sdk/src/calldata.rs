@@ -53,6 +53,17 @@ fn compute_function_selector(name: &str, params: &[String]) -> Result<H32, Calld
 pub fn encode_calldata(signature: &str, values: &[Value]) -> Result<Vec<u8>, CalldataEncodeError> {
     let (name, params) = parse_signature(signature)?;
 
+    // Checks if params = [""]
+    // that case happen when we have a function selector as follows: function name()
+    let mut params = params;
+    if params
+        .first()
+        .ok_or(CalldataEncodeError::InternalError)?
+        .is_empty()
+    {
+        params = vec![];
+    }
+
     if params.len() != values.len() {
         return Err(CalldataEncodeError::WrongArgumentLength(
             signature.to_owned(),

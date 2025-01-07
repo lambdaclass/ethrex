@@ -1026,7 +1026,7 @@ impl EthClient {
         let leading_zeros = 32 - ((calldata.len() - 4) % 32);
         calldata.extend(vec![0; leading_zeros]);
 
-        let hex_string = eth_client
+        let hex_str = eth_client
             .call(
                 on_chain_proposer_address,
                 calldata.into(),
@@ -1034,26 +1034,31 @@ impl EthClient {
             )
             .await?;
 
-        let hex_string = hex_string.strip_prefix("0x").ok_or(EthClientError::Custom(
-            "Couldn't strip prefix from last_committed_block.".to_owned(),
-        ))?;
-
-        if hex_string.is_empty() {
-            return Err(EthClientError::Custom(
-                "Failed to fetch last_committed_block. Manual intervention required.".to_owned(),
-            ));
-        }
-
-        let value = U256::from_str_radix(hex_string, 16)
-            .map_err(|_| {
-                EthClientError::Custom(
-                    "Failed to parse after call, U256::from_str_radix failed.".to_owned(),
-                )
-            })?
-            .as_u64();
+        let value = from_hex_string_to_u256(&hex_str)?.try_into().map_err(|_| {
+            EthClientError::Custom("Failed to convert from_hex_string_to_u256()".to_owned())
+        })?;
 
         Ok(value)
     }
+}
+
+pub fn from_hex_string_to_u256(hex_str: &str) -> Result<U256, EthClientError> {
+    let hex_string = hex_str.strip_prefix("0x").ok_or(EthClientError::Custom(
+        "Couldn't strip prefix from last_committed_block.".to_owned(),
+    ))?;
+
+    if hex_string.is_empty() {
+        return Err(EthClientError::Custom(
+            "Failed to fetch last_committed_block. Manual intervention required.".to_owned(),
+        ));
+    }
+
+    let value = U256::from_str_radix(hex_string, 16).map_err(|_| {
+        EthClientError::Custom(
+            "Failed to parse after call, U256::from_str_radix failed.".to_owned(),
+        )
+    })?;
+    Ok(value)
 }
 
 #[derive(Serialize, Deserialize, Debug)]

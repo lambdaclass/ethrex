@@ -3,7 +3,10 @@
 use bytes::Bytes;
 use ethereum_types::{Address, H160, U256};
 use ethrex_l2::utils::config::read_env_file;
-use ethrex_l2_sdk::eth_client::{eth_sender::Overrides, BlockByNumber, EthClient};
+use ethrex_l2_sdk::{
+    calldata,
+    eth_client::{eth_sender::Overrides, from_hex_string_to_u256, BlockByNumber, EthClient},
+};
 use ethrex_rpc::types::receipt::RpcReceipt;
 use keccak_hash::H256;
 use secp256k1::SecretKey;
@@ -38,7 +41,7 @@ const L2_GAS_COST_MAX_DELTA: U256 = U256([100_000_000_000_000, 0, 0, 0]);
 /// 8. Claim funds on L1
 /// 9. Check balances on L1 and L2
 #[tokio::test]
-async fn testito() -> Result<(), Box<dyn std::error::Error>> {
+async fn l2_integration_test() -> Result<(), Box<dyn std::error::Error>> {
     let eth_client = eth_client();
     let proposer_client = proposer_client();
 
@@ -343,6 +346,36 @@ async fn testito() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
+#[tokio::test]
+async fn l2_sdk_deploy() -> Result<(), Box<dyn std::error::Error>> {
+    let eth_client = eth_client();
+
+    //pragma solidity ^0.8.27;
+    //contract Test {
+    //    uint256 public constant number = 37;
+    //}
+    let init_code = hex::decode("6080604052348015600e575f5ffd5b5060ac80601a5f395ff3fe6080604052348015600e575f5ffd5b50600436106026575f3560e01c80638381f58a14602a575b5f5ffd5b60306044565b604051603b9190605f565b60405180910390f35b602581565b5f819050919050565b6059816049565b82525050565b5f60208201905060705f8301846052565b9291505056fea2646970667358221220a6516c1bfca94ad11d1315b32cd08f115c050e098a0631d58ee55923e70bc36364736f6c634300081c0033")?;
+
+    let (_, contract_address) = eth_client
+        .deploy(
+            l1_rich_wallet_address(),
+            l1_rich_wallet_private_key(),
+            init_code.into(),
+            Overrides::default(),
+        )
+        .await?;
+
+    let calldata: Bytes = calldata::encode_calldata("number()", &[])?.into();
+
+    let hex_str = eth_client
+        .call(contract_address, calldata, Overrides::default())
+        .await?;
+    let number = from_hex_string_to_u256(&hex_str)?.as_u64();
+
+    assert_eq!(number, 37);
+    Ok(())
+}
+
 #[derive(Debug)]
 struct FeesDetails {
     total_fees: U256,
@@ -382,7 +415,6 @@ fn proposer_client() -> EthClient {
     EthClient::new(&std::env::var("PROPOSER_URL").unwrap_or(DEFAULT_PROPOSER_URL.to_owned()))
 }
 
-#[allow(clippy::unwrap_used)]
 fn l1_rich_wallet_address() -> Address {
     std::env::var("L1_RICH_WALLET_ADDRESS")
         .unwrap_or(format!("{DEFAULT_L1_RICH_WALLET_ADDRESS:#x}"))
@@ -390,7 +422,6 @@ fn l1_rich_wallet_address() -> Address {
         .unwrap()
 }
 
-#[allow(clippy::unwrap_used)]
 fn common_bridge_address() -> Address {
     std::env::var("L1_WATCHER_BRIDGE_ADDRESS")
         .expect("L1_WATCHER_BRIDGE_ADDRESS env var not set")
@@ -398,7 +429,6 @@ fn common_bridge_address() -> Address {
         .unwrap()
 }
 
-#[allow(clippy::unwrap_used)]
 fn fees_vault() -> Address {
     std::env::var("PROPOSER_COINBASE_ADDRESS")
         .expect("PROPOSER_COINBASE_ADDRESS env var not set")
@@ -406,7 +436,6 @@ fn fees_vault() -> Address {
         .unwrap()
 }
 
-#[allow(clippy::unwrap_used)]
 fn l1_rich_wallet_private_key() -> SecretKey {
     std::env::var("L1_RICH_WALLET_PRIVATE_KEY")
         .map(|s| SecretKey::from_slice(H256::from_str(&s).unwrap().as_bytes()).unwrap())
