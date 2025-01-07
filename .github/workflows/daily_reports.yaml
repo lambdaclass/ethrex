@@ -44,7 +44,10 @@ jobs:
         run: echo $(ls images)
 
       - name: Load image for ethrex build (${{ matrix.image }} feature set)
-        run: docker load < images/${{matrix.image}}-image.tar
+        run: |
+          docker load < images/${{matrix.image}}-image.tar
+          docker tag ethrex:${{ matrix.image }} ethrex
+
 
       - name: Checkout sources
         uses: actions/checkout@v4
