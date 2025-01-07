@@ -28,7 +28,7 @@ jobs:
           path: "${{ matrix.features }}-image.tar"
 
   run-hive:
-    name: Hive - ( ${{ matrix.image }} feature set)
+    name: Hive - (${{ matrix.image }} feature set)
     needs: build-images
     runs-on: ubuntu-latest
     strategy:
@@ -52,6 +52,9 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           name: ethrex-image-${{ matrix.image }}
+
+      - name: Checkout sources
+        uses: actions/checkout@v4
 
       - name: Load image for ethrex build ( ${{ matrix.image }} feature set )
         run: docker load < ${{ matrix.image }}-image.tar
