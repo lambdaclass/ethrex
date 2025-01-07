@@ -182,6 +182,8 @@ pub const MODEXP_STATIC_COST: u64 = 200;
 pub const MODEXP_DYNAMIC_BASE: u64 = 200;
 pub const MODEXP_DYNAMIC_QUOTIENT: u64 = 3;
 
+pub const MODEXP_DYNAMIC_QUOTIENT_PRE_BERLIN: u64 = 20;
+
 pub const ECADD_COST: u64 = 150;
 pub const ECMUL_COST: u64 = 6000;
 
@@ -808,6 +810,7 @@ pub fn modexp(
     base_size: usize,
     exponent_size: usize,
     modulus_size: usize,
+    spec_id: SpecId,
 ) -> Result<u64, VMError> {
     let base_size: u64 = base_size
         .try_into()
@@ -826,7 +829,47 @@ pub fn modexp(
     .checked_div(8)
     .ok_or(InternalError::DivisionError)?;
 
-    let multiplication_complexity = words.checked_pow(2).ok_or(OutOfGasError::GasCostOverflow)?;
+    // Here previous to berlin the complexit had a more complex formula.
+    // Should i implement it here and branch it?
+    //let multiplication_complexity = words.checked_pow(2).ok_or(OutOfGasError::GasCostOverflow)?;
+    let multiplication_complexity: u64 = if spec_id >= SpecId::BERLIN {
+        words.checked_pow(2).ok_or(OutOfGasError::GasCostOverflow)?
+    } else {
+        if max_length <= 64 {
+            max_length
+                .checked_pow(2)
+                .ok_or(OutOfGasError::GasCostOverflow)?
+        } else if max_length <= 1024 {
+            // (max_length^2 // 4) + 96 * max_length - 3072
+            max_length
+                .checked_pow(2)
+                .ok_or(OutOfGasError::GasCostOverflow)?
+                .checked_div(4)
+                .ok_or(OutOfGasError::GasCostOverflow)?
+                .checked_add(
+                    max_length
+                        .checked_mul(96)
+                        .ok_or(OutOfGasError::GasCostOverflow)?,
+                )
+                .ok_or(OutOfGasError::GasCostOverflow)?
+                .checked_sub(3072)
+                .ok_or(OutOfGasError::GasCostOverflow)?
+        } else {
+            max_length
+                .checked_pow(2)
+                .ok_or(OutOfGasError::GasCostOverflow)?
+                .checked_div(16)
+                .ok_or(OutOfGasError::GasCostOverflow)?
+                .checked_add(
+                    max_length
+                        .checked_mul(480)
+                        .ok_or(OutOfGasError::GasCostOverflow)?,
+                )
+                .ok_or(OutOfGasError::GasCostOverflow)?
+                .checked_sub(199680)
+                .ok_or(OutOfGasError::GasCostOverflow)?
+        }
+    };
 
     let iteration_count = if exponent_size <= 32 && *exponent_first_32_bytes != BigUint::ZERO {
         exponent_first_32_bytes
@@ -849,12 +892,19 @@ pub fn modexp(
     };
     let calculate_iteration_count = iteration_count.max(1);
 
-    let cost = MODEXP_STATIC_COST.max(
+    let cost = if spec_id >= SpecId::BERLIN {
+        MODEXP_STATIC_COST.max(
+            multiplication_complexity
+                .checked_mul(calculate_iteration_count)
+                .ok_or(OutOfGasError::GasCostOverflow)?
+                / MODEXP_DYNAMIC_QUOTIENT,
+        )
+    } else {
         multiplication_complexity
             .checked_mul(calculate_iteration_count)
             .ok_or(OutOfGasError::GasCostOverflow)?
-            / MODEXP_DYNAMIC_QUOTIENT,
-    );
+            / MODEXP_DYNAMIC_QUOTIENT_PRE_BERLIN
+    };
 
     Ok(cost)
 }

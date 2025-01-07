@@ -105,7 +105,11 @@ pub fn is_precompile(callee_address: &Address, spec_id: SpecId) -> bool {
     PRECOMPILES.contains(callee_address)
 }
 
-pub fn execute_precompile(current_call_frame: &mut CallFrame) -> Result<Bytes, VMError> {
+//Should i receive the environment here?
+pub fn execute_precompile(
+    current_call_frame: &mut CallFrame,
+    spec_id: SpecId,
+) -> Result<Bytes, VMError> {
     let callee_address = current_call_frame.code_address;
     let calldata = current_call_frame.calldata.clone();
     let gas_for_call = current_call_frame
@@ -123,7 +127,9 @@ pub fn execute_precompile(current_call_frame: &mut CallFrame) -> Result<Bytes, V
         address if address == RIPEMD_160_ADDRESS => {
             ripemd_160(&calldata, gas_for_call, consumed_gas)?
         }
-        address if address == MODEXP_ADDRESS => modexp(&calldata, gas_for_call, consumed_gas)?,
+        address if address == MODEXP_ADDRESS => {
+            modexp(&calldata, gas_for_call, consumed_gas, spec_id)?
+        }
         address if address == ECADD_ADDRESS => ecadd(&calldata, gas_for_call, consumed_gas)?,
         address if address == ECMUL_ADDRESS => ecmul(&calldata, gas_for_call, consumed_gas)?,
         address if address == ECPAIRING_ADDRESS => {
@@ -277,28 +283,33 @@ pub fn modexp(
     calldata: &Bytes,
     gas_for_call: u64,
     consumed_gas: &mut u64,
+    spec_id: SpecId,
 ) -> Result<Bytes, VMError> {
     // If calldata does not reach the required length, we should fill the rest with zeros
     let calldata = fill_with_zeros(calldata, 96)?;
 
+    //BASE
     let b_size = U256::from_big_endian(
         calldata
             .get(0..32)
             .ok_or(PrecompileError::ParsingInputError)?,
     );
 
+    //EXPONENT
     let e_size = U256::from_big_endian(
         calldata
             .get(32..64)
             .ok_or(PrecompileError::ParsingInputError)?,
     );
 
+    //MODULUS
     let m_size = U256::from_big_endian(
         calldata
             .get(64..96)
             .ok_or(PrecompileError::ParsingInputError)?,
     );
 
+    //dbg!(b_size, e_size, m_size);
     if b_size == U256::zero() && m_size == U256::zero() {
         increase_precompile_consumed_gas(gas_for_call, MODEXP_STATIC_COST, consumed_gas)?;
         return Ok(Bytes::new());
@@ -335,10 +346,12 @@ pub fn modexp(
     // Use of unwrap_or_default because if e == 0 get_slice_or_default returns an empty vec
     let exp_first_32 = BigUint::from_bytes_be(e.get(0..bytes_to_take).unwrap_or_default());
 
-    let gas_cost = gas_cost::modexp(&exp_first_32, b_size, e_size, m_size)?;
+    let gas_cost = gas_cost::modexp(&exp_first_32, b_size, e_size, m_size, spec_id)?;
+    //dbg!(gas_cost);
     increase_precompile_consumed_gas(gas_for_call, gas_cost, consumed_gas)?;
 
     let result = mod_exp(base, exponent, modulus);
+    //dbg!(&result);
 
     let res_bytes = result.to_bytes_be();
     let res_bytes = increase_left_pad(&Bytes::from(res_bytes), m_size)?;
