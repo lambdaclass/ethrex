@@ -33,19 +33,6 @@ jobs:
     strategy:
       matrix:
         image: ["default", "levm"]
-        test:
-          - name: "Rpc Compat tests"
-            file_name: rpc-compat
-            simulation: ethereum/rpc-compat
-          - name: "Devp2p eth tests"
-            file_name: devp2p
-            simulation: devp2p
-          - name: "Cancun Engine tests"
-            file_name: engine
-            simulation: ethereum/engine
-          - name: "Sync tests"
-            file_name: sync
-            simulation: ethereum/sync
 
     steps:
       - uses: actions/download-artifact@v4
@@ -68,14 +55,26 @@ jobs:
       - name: Setup Hive
         run: make setup-hive
 
-      - name: Run Hive Simulation
-        run: cd hive && ./hive --client ethrex --sim ${{ matrix.test.simulation }} --sim.parallelism 16
+      - name: Run Hive RPC Simulation
+        run: cd hive && ./hive --sim ethereum/rpc-compat --client ethrex --sim.limit "*" --sim.parallelism 16
+        continue-on-error: true
+
+      - name: Run Hive Sync Simulation
+        run: cd hive && ./hive --sim ethereum/sync --client ethrex --sim.limit "*" --sim.parallelism 16
+        continue-on-error: true
+
+      - name: Run Hive Engine Simulation
+        run: cd hive && ./hive --sim ethereum/engine --client ethrex --sim.limit "*" --sim.parallelism 16
+        continue-on-error: true
+
+      - name: Run Hive P2P Simulation
+        run: cd hive && ./hive --sim devp2p --client ethrex --sim.limit "*" --sim.parallelism 16
         continue-on-error: true
 
       - name: Upload results
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.file_name }}_${{ matrix.image}}_logs
+          name: ${{ matrix.image}}_logs
           path: hive/workspace/logs/*-*.json
           if-no-files-found: error
 
@@ -99,7 +98,7 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           path: hive/workspace/logs
-          pattern: "*_${{ matrix.image }}_logs"
+          pattern: "*${{ matrix.image }}_logs"
           merge-multiple: true
 
       - name: Caching
