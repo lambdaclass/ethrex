@@ -12,20 +12,20 @@ env:
 jobs:
   build-images:
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        features: ["default", "levm"]
     steps:
       - uses: actions/checkout@v4
-      - name: Build default image
-        run: docker build -t ethrex:default --build-arg BUILD_FLAGS="--features default" .
-      - name: Build levm image
-        run: docker build -t ethrex:levm --build-arg BUILD_FLAGS="--features levm" .
-      - name: Save images
+      - name: Build ethrex image with features ${{ matrix.featuers }}
+        run: docker build -t ethrex:default --build-arg BUILD_FLAGS="--features ${{ matrix.features }}" .
+      - name: Save image
         run: |
-          docker save ethrex:default > default-image.tar
-          docker save ethrex:levm > levm-image.tar
+          docker save ethrex:${{ matrix.features }} > ${{ matrix.features }}-image.tar
       - uses: actions/upload-artifact@v4
         with:
-          name: docker-images
-          path: "*-image.tar"
+          name: ethrex-image-${{matrix.features}}
+          path: "${{ matrix.features }}-image.tar"
 
   run-hive:
     name: Hive - ( ${{ matrix.image }} feature set)
@@ -51,7 +51,7 @@ jobs:
     steps:
       - uses: actions/download-artifact@v4
         with:
-          name: docker-images
+          name: ehtrex-image-${{ matrix.features }}
 
       - name: Load image for ethrex build ( ${{ matrix.image }} feature set )
         run: docker load < ${{ matrix.image }}-image.tar
