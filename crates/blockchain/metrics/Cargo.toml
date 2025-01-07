@@ -16,7 +16,7 @@ ethrex-core = { path = "../../common", default-features = false }
 
 
 prometheus = { version = "0.13.4", optional = true }
-axum = { version = "0.8.1", optional = true }
+axum = { workspace = true, optional = true }
 
 
 [lib]
