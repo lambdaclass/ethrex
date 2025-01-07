@@ -52,13 +52,13 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           name: ethrex-image-${{ matrix.image }}
-          path: .
+          path: images
 
       - name: Checkout sources
         uses: actions/checkout@v4
 
       - name: Load image for ethrex build (${{ matrix.image }} feature set)
-        run: docker load < ${{ matrix.image }}-image.tar
+        run: docker load < images/${{ matrix.image }}-image.tar
 
       - name: Setup Go
         uses: actions/setup-go@v5
