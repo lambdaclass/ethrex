@@ -18,7 +18,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Build ethrex image with features ${{ matrix.featuers }}
-        run: docker build -t ethrex:default --build-arg BUILD_FLAGS="--features ${{ matrix.features }}" .
+        run: docker build -t ethrex:${{ matrix.features }} --build-arg BUILD_FLAGS="--features ${{ matrix.features }}"
       - name: Save image
         run: |
           docker save ethrex:${{ matrix.features }} > ${{ matrix.features }}-image.tar
