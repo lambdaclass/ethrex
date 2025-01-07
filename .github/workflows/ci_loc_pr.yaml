@@ -78,6 +78,11 @@ jobs:
           name: main-loc-data
           path: .
 
+      - name: Checkout PR
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.head_ref }}
+
       - name: Compare Detailed Lines of Code Count
         run: make loc-compare-detailed
 
