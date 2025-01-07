@@ -15,21 +15,32 @@ fmt: ## 📄 Runs rustfmt
 	cargo fmt --all
 
 ###### EF Tests ######
+VECTORS_DIR := ../../../cmd/ef_tests/levm/vectors
+TMP_DIR := tmp
+
 SPECTEST_VERSION := v14.1
 SPECTEST_ARTIFACT := tests_$(SPECTEST_VERSION).tar.gz
-SPECTEST_VECTORS_DIR := ../../../cmd/ef_tests/levm/vectors
+SPECTEST_URL := https://github.com/ethereum/tests/archive/refs/tags/$(SPECTEST_VERSION).tar.gz
 
-$(SPECTEST_ARTIFACT):
-	rm -f tests_*.tar.gz # Delete older versions
-	curl -L -o $(SPECTEST_ARTIFACT) "https://github.com/ethereum/tests/archive/refs/tags/$(SPECTEST_VERSION).tar.gz"
+STATETEST_VERSION := pectra-devnet-5%40v1.1.0
+STATETEST_NET := pectra-devnet-5
+STATETEST_ARTIFACT := fixtures_$(STATETEST_NET).tar.gz
+STATETEST_URL := https://github.com/ethereum/execution-spec-tests/releases/download/$(STATETEST_VERSION)/fixtures_$(STATETEST_NET).tar.gz
 
-$(SPECTEST_VECTORS_DIR): $(SPECTEST_ARTIFACT)
-	mkdir -p $(SPECTEST_VECTORS_DIR) tmp
-	tar -xzf $(SPECTEST_ARTIFACT) -C tmp
-	mv tmp/tests-14.1/GeneralStateTests $(SPECTEST_VECTORS_DIR)
-	mv tmp/tests-14.1/EIPTests/StateTests/stEIP2537 $(SPECTEST_VECTORS_DIR)
-
-download-evm-ef-tests: $(SPECTEST_VECTORS_DIR) ## 📥 Download EF Tests
+download-evm-ef-tests:
+	mkdir -p $(TMP_DIR)
+	mkdir -p $(VECTORS_DIR)/GeneralStateTests
+	mkdir -p $(VECTORS_DIR)/stEIP2537
+	mkdir -p $(VECTORS_DIR)/state_tests
+	curl -L -o $(SPECTEST_ARTIFACT) $(SPECTEST_URL)
+	tar -xzf $(SPECTEST_ARTIFACT) -C $(TMP_DIR)
+	mv $(TMP_DIR)/tests-14.1/GeneralStateTests/* $(VECTORS_DIR)/GeneralStateTests/
+	mv $(TMP_DIR)/tests-14.1/EIPTests/StateTests/stEIP2537/* $(VECTORS_DIR)/stEIP2537/
+	curl -L -o $(STATETEST_ARTIFACT) $(STATETEST_URL)
+	tar -xzf $(STATETEST_ARTIFACT) -C $(TMP_DIR)
+	mv $(TMP_DIR)/fixtures/state_tests/* $(VECTORS_DIR)/state_tests/
+	rm -rf $(TMP_DIR) tests_*.tar.gz
+	rm -rf $(TMP_DIR) fixtures_*.tar.gz
 
 run-evm-ef-tests: ## 🏃‍♂️ Run EF Tests
 	if [ "$(QUIET)" = "true" ]; then \
@@ -49,7 +60,7 @@ generate-evm-ef-tests-report: ## 📊 Generate EF Tests Report
 	cargo test -p ef_tests-levm --test ef_tests_levm --release -- --summary
 
 clean-evm-ef-tests: ## 🗑️  Clean test vectors
-	rm -rf $(SPECTEST_VECTORS_DIR)
+	rm -rf $(VECTORS_DIR)
 
 ###### Benchmarks ######
 
