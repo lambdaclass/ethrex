@@ -269,7 +269,6 @@ pub fn test_dir_summary_for_shell(reports: &[EFTestReport]) -> String {
         .into_group_map_by(|report| report.dir.clone())
         .iter()
         .for_each(|(dir, reports)| {
-            dbg!(dir);
             let total_passed = reports.iter().filter(|report| report.passed()).count();
             let total_run = reports.len();
             let success_percentage = (total_passed as f64 / total_run as f64) * 100.0;
