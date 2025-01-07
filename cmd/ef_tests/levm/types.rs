@@ -75,20 +75,40 @@ impl From<&EFTest> for Genesis {
 
 #[derive(Debug, Deserialize)]
 pub struct EFTestInfo {
-    pub comment: String,
-    #[serde(rename = "filling-rpc-server")]
-    pub filling_rpc_server: String,
-    #[serde(rename = "filling-tool-version")]
-    pub filling_tool_version: String,
-    #[serde(rename = "generatedTestHash")]
-    pub generated_test_hash: H256,
+    #[serde(default)]
+    pub comment: Option<String>,
+    #[serde(rename = "filling-rpc-server", default)]
+    pub filling_rpc_server: Option<String>,
+    #[serde(rename = "filling-tool-version", default)]
+    pub filling_tool_version: Option<String>,
+    #[serde(rename = "generatedTestHash", default)]
+    pub generated_test_hash: Option<H256>,
     #[serde(default)]
     pub labels: Option<HashMap<u64, String>>,
-    pub lllcversion: String,
-    pub solidity: String,
-    pub source: String,
-    #[serde(rename = "sourceHash")]
-    pub source_hash: H256,
+    #[serde(default)]
+    pub lllcversion: Option<String>,
+    #[serde(default)]
+    pub solidity: Option<String>,
+    #[serde(default)]
+    pub source: Option<String>,
+    #[serde(rename = "sourceHash", default)]
+    pub source_hash: Option<H256>,
+
+    // These fields are implemented in the new version of the test vectors (Prague).
+    #[serde(rename = "hash", default)]
+    pub hash: Option<H256>,
+    #[serde(rename = "filling-transition-tool", default)]
+    pub filling_transition_tool: Option<String>,
+    #[serde(default)]
+    pub description: Option<String>,
+    #[serde(default)]
+    pub url: Option<String>,
+    #[serde(rename = "fixture_format", default)]
+    pub fixture_format: Option<String>,
+    #[serde(rename = "reference-spec", default)]
+    pub reference_spec: Option<String>,
+    #[serde(rename = "reference-spec-version", default)]
+    pub reference_spec_version: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
