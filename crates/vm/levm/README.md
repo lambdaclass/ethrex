@@ -2,20 +2,21 @@
 
 Implementation of a simple Ethereum Virtual Machine in Rust.
 
-## Status
+## Supported Forks
 
-> [!NOTE]
->
-> - ✅: Implemented
-> - 🏗️: Work in Progress
-> - ❌: Work not Started yet
-
-Features:
-
-- Opcodes ✅
-- Precompiles ✅
-- Transaction validation ✅
-- Pass all EF tests 🏗️
+| Fork           | Status |
+| -------------- | ------ |
+| Prague         | 🏗️     |
+| Cancun         | ✅     |
+| Shanghai       | ✅     |
+| Paris (Merge)  | ✅     |
+| London         | ✅     |
+| Berlin         | ✅     |
+| Istanbul       | 🏗️     |
+| Constantinople | 🏗️     |
+| Byzantium      | 🏗️     |
+| Homestead      | ✅     |
+| Frontier       | ✅     |
 
 ## Ethereum Foundation Tests (EF Tests)
 
