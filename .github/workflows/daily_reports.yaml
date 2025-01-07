@@ -53,14 +53,14 @@ jobs:
           name: ethrex-image-${{ matrix.image }}
           path: images
 
-      - name: Checkout sources
-        uses: actions/checkout@v4
-
       - name: Debug images folder
         run: echo $(ls images)
 
       - name: Load image for ethrex build (${{ matrix.image }} feature set)
         run: docker load < images/${{matrix.image}}-image.tar
+
+      - name: Checkout sources
+        uses: actions/checkout@v4
 
       - name: Setup Go
         uses: actions/setup-go@v5
