@@ -2,6 +2,8 @@ use ethrex_core::types::TxType;
 use prometheus::{Encoder, IntCounter, IntCounterVec, Opts, Registry, TextEncoder};
 use std::sync::{Arc, LazyLock, Mutex};
 
+use crate::MetricsError;
+
 pub static METRICS_TX: LazyLock<MetricsTx> = LazyLock::new(MetricsTx::default);
 
 pub struct MetricsTx {
@@ -71,49 +73,35 @@ impl MetricsTx {
         txs_lock.inc();
     }
 
-    pub fn gather_metrics(&self) -> String {
+    pub fn gather_metrics(&self) -> Result<String, MetricsError> {
         let r = Registry::new();
 
         let txs_tracker = self.transactions_tracker.clone();
-        let txs_tracker_lock = match txs_tracker.lock() {
-            Ok(lock) => lock,
-            Err(e) => {
-                tracing::error!("Failed to lock transactions_tracker mutex: {e}");
-                return String::new();
-            }
-        };
+        let txs_tracker_lock = txs_tracker
+            .lock()
+            .map_err(|e| MetricsError::MutexLockError(e.to_string()))?;
 
         let txs_lock = self.transactions_total.clone();
-        let txs_lock = match txs_lock.lock() {
-            Ok(lock) => lock,
-            Err(e) => {
-                tracing::error!("Failed to lock transactions_total mutex: {e}");
-                return String::new();
-            }
-        };
+        let txs_lock = txs_lock
+            .lock()
+            .map_err(|e| MetricsError::MutexLockError(e.to_string()))?;
 
-        if r.register(Box::new(txs_lock.clone())).is_err() {
-            tracing::error!("Failed to register metric");
-            return String::new();
-        }
-        if r.register(Box::new(txs_tracker_lock.clone())).is_err() {
-            tracing::error!("Failed to register metric");
-            return String::new();
-        }
+        r.register(Box::new(txs_lock.clone()))
+            .map_err(|e| MetricsError::PrometheusErr(e.to_string()))?;
+        r.register(Box::new(txs_tracker_lock.clone()))
+            .map_err(|e| MetricsError::PrometheusErr(e.to_string()))?;
 
         let encoder = TextEncoder::new();
         let metric_families = r.gather();
 
         let mut buffer = Vec::new();
-        if encoder.encode(&metric_families, &mut buffer).is_err() {
-            tracing::error!("Failed to encode metrics");
-            return String::new();
-        }
+        encoder
+            .encode(&metric_families, &mut buffer)
+            .map_err(|e| MetricsError::PrometheusErr(e.to_string()))?;
 
-        String::from_utf8(buffer).unwrap_or_else(|e| {
-            tracing::error!("Failed to convert buffer to String: {e}");
-            String::new()
-        })
+        let res = String::from_utf8(buffer)?;
+
+        Ok(res)
     }
 }
 
