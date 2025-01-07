@@ -6,7 +6,7 @@ use crate::{
 };
 use colored::Colorize;
 use spinoff::{spinners::Dots, Color, Spinner};
-use std::{fs::DirEntry, path::PathBuf};
+use std::fs::DirEntry;
 
 #[derive(Debug, thiserror::Error)]
 pub enum EFTestParseError {
@@ -32,18 +32,25 @@ const IGNORED_TESTS: [&str; 7] = [
 
 pub fn parse_ef_tests(opts: &EFTestRunnerOptions) -> Result<Vec<EFTest>, EFTestParseError> {
     let parsing_time = std::time::Instant::now();
-    let cargo_manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let general_tests_path = cargo_manifest_dir.join("vectors/GeneralStateTests");
-    let pectra_tests_path = cargo_manifest_dir.join("vectors/stEIP2537");
-
+    let cargo_manifest_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let ef_general_state_tests_path = cargo_manifest_dir.join("vectors");
     let mut spinner = Spinner::new(Dots, "Parsing EF Tests".bold().to_string(), Color::Cyan);
     if !opts.spinner {
         spinner.stop();
     }
-
-    let mut tests = parse_ef_test_dir(general_tests_path, opts, &mut spinner, true)?;
-    let pectra_tests = parse_ef_test_dir(pectra_tests_path, opts, &mut spinner, false)?;
-    tests.extend(pectra_tests);
+    let mut tests = Vec::new();
+    for test_dir in std::fs::read_dir(ef_general_state_tests_path.clone())
+        .map_err(|err| {
+            EFTestParseError::FailedToReadDirectory(format!(
+                "{:?}: {err}",
+                ef_general_state_tests_path.file_name()
+            ))
+        })?
+        .flatten()
+    {
+        let directory_tests = parse_ef_test_dir(test_dir, opts, &mut spinner)?;
+        tests.extend(directory_tests);
+    }
 
     spinner_success_or_print(
         &mut spinner,
@@ -58,75 +65,85 @@ pub fn parse_ef_tests(opts: &EFTestRunnerOptions) -> Result<Vec<EFTest>, EFTestP
 }
 
 pub fn parse_ef_test_dir(
-    path: PathBuf,
+    test_dir: DirEntry,
     opts: &EFTestRunnerOptions,
-    spinner: &mut Spinner,
-    recursive: bool,
+    directory_parsing_spinner: &mut Spinner,
 ) -> Result<Vec<EFTest>, EFTestParseError> {
     spinner_update_text_or_print(
-        spinner,
-        format!("Parsing directory {:?}", path.file_name().unwrap()),
+        directory_parsing_spinner,
+        format!("Parsing directory {:?}", test_dir.file_name()),
         opts.spinner,
     );
 
     let mut directory_tests = Vec::new();
-
-    for entry in std::fs::read_dir(&path)
-        .map_err(|err| EFTestParseError::FailedToReadDirectory(format!("{:?}: {err}", path)))?
+    for test in std::fs::read_dir(test_dir.path())
+        .map_err(|err| {
+            EFTestParseError::FailedToReadDirectory(format!("{:?}: {err}", test_dir.file_name()))
+        })?
         .flatten()
     {
-        // If the entry is a directory, parse it recursively
-        if entry
+        if test
             .file_type()
             .map_err(|err| {
-                EFTestParseError::FailedToGetFileType(format!("{:?}: {err}", entry.file_name()))
+                EFTestParseError::FailedToGetFileType(format!("{:?}: {err}", test.file_name()))
             })?
             .is_dir()
         {
-            if recursive {
-                let sub_tests = parse_ef_test_dir(entry.path(), opts, spinner, recursive)?;
-                directory_tests.extend(sub_tests);
-            }
+            let sub_directory_tests = parse_ef_test_dir(test, opts, directory_parsing_spinner)?;
+            directory_tests.extend(sub_directory_tests);
+            continue;
+        }
+        // Skip non-JSON files.
+        if test.path().extension().is_some_and(|ext| ext != "json")
+            | test.path().extension().is_none()
+        {
+            continue;
+        }
+        // Skip ignored tests
+        if test
+            .path()
+            .file_name()
+            .is_some_and(|name| IGNORED_TESTS.contains(&name.to_str().unwrap_or("")))
+        {
             continue;
         }
 
-        if let Some(mut tests) = process_test_file(&entry, opts, spinner)? {
-            for test in tests.0.iter_mut() {
-                test.dir = path.file_name().unwrap().to_str().unwrap().to_owned();
-            }
-            directory_tests.extend(tests.0);
+        // Skip tests that are not in the list of tests to run.
+        if !opts.tests.is_empty()
+            && !opts
+                .tests
+                .contains(&test_dir.file_name().to_str().unwrap().to_owned())
+            && !opts.tests.contains(
+                &test
+                    .path()
+                    .file_name()
+                    .unwrap()
+                    .to_str()
+                    .unwrap()
+                    .to_owned(),
+            )
+        {
+            continue;
         }
-    }
 
-    Ok(directory_tests)
-}
+        // Skips all tests in a particular directory.
+        if opts
+            .skip
+            .contains(&test_dir.file_name().to_str().unwrap().to_owned())
+        {
+            spinner_update_text_or_print(
+                directory_parsing_spinner,
+                format!(
+                    "Skipping test {:?} as it is in the folder of tests to skip",
+                    test.path().file_name().unwrap()
+                ),
+                opts.spinner,
+            );
+            continue;
+        }
 
-fn process_test_file(
-    test: &DirEntry,
-    opts: &EFTestRunnerOptions,
-    spinner: &mut Spinner,
-) -> Result<Option<EFTests>, EFTestParseError> {
-    // Skip non-JSON files
-    if test.path().extension().is_some_and(|ext| ext != "json") || test.path().extension().is_none()
-    {
-        return Ok(None);
-    }
-
-    // Skip ignored tests
-    if test
-        .path()
-        .file_name()
-        .is_some_and(|name| IGNORED_TESTS.contains(&name.to_str().unwrap_or("")))
-    {
-        return Ok(None);
-    }
-
-    // Skip tests not in the list to run
-    if !opts.tests.is_empty()
-        && !opts
-            .tests
-            .contains(&test.file_name().to_str().unwrap().to_owned())
-        && !opts.tests.contains(
+        // Skip tests by name (with .json extension)
+        if opts.skip.contains(
             &test
                 .path()
                 .file_name()
@@ -134,38 +151,28 @@ fn process_test_file(
                 .to_str()
                 .unwrap()
                 .to_owned(),
-        )
-    {
-        return Ok(None);
+        ) {
+            spinner_update_text_or_print(
+                directory_parsing_spinner,
+                format!(
+                    "Skipping test {:?} as it is in the list of tests to skip",
+                    test.path().file_name().unwrap()
+                ),
+                opts.spinner,
+            );
+            continue;
+        }
+
+        let test_file = std::fs::File::open(test.path()).map_err(|err| {
+            EFTestParseError::FailedToReadFile(format!("{:?}: {err}", test.path()))
+        })?;
+        let mut tests: EFTests = serde_json::from_reader(test_file).map_err(|err| {
+            EFTestParseError::FailedToParseTestFile(format!("{:?} parse error: {err}", test.path()))
+        })?;
+        for test in tests.0.iter_mut() {
+            test.dir = test_dir.file_name().into_string().unwrap();
+        }
+        directory_tests.extend(tests.0);
     }
-
-    // Skip tests in the skip list
-    if opts.skip.contains(
-        &test
-            .path()
-            .file_name()
-            .unwrap()
-            .to_str()
-            .unwrap()
-            .to_owned(),
-    ) {
-        spinner_update_text_or_print(
-            spinner,
-            format!(
-                "Skipping test {:?} as it is in the skip list",
-                test.path().file_name().unwrap()
-            ),
-            opts.spinner,
-        );
-        return Ok(None);
-    }
-
-    // Open and parse the JSON file
-    let test_file = std::fs::File::open(test.path())
-        .map_err(|err| EFTestParseError::FailedToReadFile(format!("{:?}: {err}", test.path())))?;
-    let tests: EFTests = serde_json::from_reader(test_file).map_err(|err| {
-        EFTestParseError::FailedToParseTestFile(format!("{:?} parse error: {err}", test.path()))
-    })?;
-
-    Ok(Some(tests))
+    Ok(directory_tests)
 }
