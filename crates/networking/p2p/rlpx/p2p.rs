@@ -73,6 +73,7 @@ impl RLPxMessage for HelloMessage {
     }
 
     fn decode(msg_data: &[u8]) -> Result<Self, RLPDecodeError> {
+        info!("Hello: {}", hex::encode(msg_data));
         // decode hello message: [protocolVersion: P, clientId: B, capabilities, listenPort: P, nodeId: B_64, ...]
         let decoder = Decoder::new(msg_data)?;
         let (protocol_version, decoder): (u64, _) = decoder.decode_field("protocolVersion")?;
