@@ -1,7 +1,7 @@
 use bytes::BufMut;
 use ethrex_rlp::error::{RLPDecodeError, RLPEncodeError};
-use tracing::warn;
 use std::fmt::Display;
+use tracing::warn;
 
 use super::eth::blocks::{BlockBodies, BlockHeaders, GetBlockBodies, GetBlockHeaders};
 use super::eth::receipts::{GetReceipts, Receipts};
@@ -59,7 +59,8 @@ impl Message {
                 if let Err(e) = &msg {
                     warn!("Decode error in Hello Message: {e:?}");
                 }
-                Ok(Message::Hello(msg?))},
+                Ok(Message::Hello(msg?))
+            }
             0x01 => Ok(Message::Disconnect(DisconnectMessage::decode(msg_data)?)),
             0x02 => Ok(Message::Ping(PingMessage::decode(msg_data)?)),
             0x03 => Ok(Message::Pong(PongMessage::decode(msg_data)?)),
