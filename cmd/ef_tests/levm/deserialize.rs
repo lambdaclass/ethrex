@@ -59,6 +59,9 @@ where
                 "TransactionException.TYPE_3_TX_PRE_FORK" => {
                     TransactionExpectedException::Type3TxPreFork
                 }
+                "TransactionException.TYPE_4_TX_CONTRACT_CREATION" => {
+                    TransactionExpectedException::Type4TxContractCreation
+                }
                 "TransactionException.INSUFFICIENT_MAX_FEE_PER_BLOB_GAS" => {
                     TransactionExpectedException::InsufficientMaxFeePerBlobGas
                 }
