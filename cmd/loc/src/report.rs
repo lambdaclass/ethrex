@@ -8,8 +8,10 @@ use std::collections::HashMap;
 pub struct LinesOfCodeReporterOptions {
     #[arg(short, long, value_name = "SUMMARY", default_value = "false")]
     pub summary: bool,
+    #[arg(short, long, value_name = "DETAILED", default_value = "false")]
+    pub detailed: bool,
     #[arg(short, long, value_name = "PR_SUMMARY", default_value = "false")]
-    pub pr: bool,
+    pub compare_detailed: bool,
 }
 
 #[derive(Default, Serialize, Deserialize, Clone, Copy)]

@@ -39,25 +39,30 @@ fn main() {
         levm: levm_loc.code,
     };
 
-    let mut current_detailed_loc_report = HashMap::new();
-    for report in ethrex_loc.reports {
-        let file_path = report.name;
-        // let file_name = file_path.file_name().unwrap().to_str().unwrap();
-        // let dir_path = file_path.parent().unwrap();
+    if opts.detailed {
+        let mut current_detailed_loc_report = HashMap::new();
+        for report in ethrex_loc.reports {
+            let file_path = report.name;
+            // let file_name = file_path.file_name().unwrap().to_str().unwrap();
+            // let dir_path = file_path.parent().unwrap();
 
-        current_detailed_loc_report
-            .entry(file_path.as_os_str().to_str().unwrap().to_owned())
-            .and_modify(|e: &mut usize| *e += report.stats.code)
-            .or_insert_with(|| report.stats.code);
-    }
+            current_detailed_loc_report
+                .entry(file_path.as_os_str().to_str().unwrap().to_owned())
+                .and_modify(|e: &mut usize| *e += report.stats.code)
+                .or_insert_with(|| report.stats.code);
+        }
 
-    std::fs::write(
-        "current_detailed_loc_report.json",
-        serde_json::to_string(&current_detailed_loc_report).unwrap(),
-    )
-    .expect("current_detailed_loc_report.json could not be written");
+        std::fs::write(
+            "current_detailed_loc_report.json",
+            serde_json::to_string(&current_detailed_loc_report).unwrap(),
+        )
+        .expect("current_detailed_loc_report.json could not be written");
+    } else if opts.compare_detailed {
+        let current_detailed_loc_report: HashMap<String, usize> =
+            std::fs::read_to_string("current_detailed_loc_report.json")
+                .map(|s| serde_json::from_str(&s).unwrap())
+                .expect("current_detailed_loc_report.json could not be read");
 
-    if opts.pr {
         let previous_detailed_loc_report: HashMap<String, usize> =
             std::fs::read_to_string("previous_detailed_loc_report.json")
                 .map(|s| serde_json::from_str(&s).unwrap())

@@ -1,5 +1,6 @@
 .PHONY: build lint test clean run-image build-image download-test-vectors clean-vectors \
-	setup-hive test-pattern-default run-hive run-hive-debug clean-hive-logs detailed-loc
+	setup-hive test-pattern-default run-hive run-hive-debug clean-hive-logs loc-detailed \
+	loc-compare-detailed
 
 help: ## 📚 Show help for each of the Makefile recipes
 	@grep -E '^[a-zA-Z0-9_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-30s\033[0m %s\n", $$1, $$2}'
@@ -140,6 +141,11 @@ loc-stats:
 		cargo run -p loc -- --summary;\
 	fi
 
+loc-detailed:
+	cargo run --release --bin loc -- --detailed
+
+loc-compare-detailed:
+	cargo run --release --bin loc -- --compare-detailed
 
 hive-stats:
 	make hive QUIET=true
@@ -156,6 +162,3 @@ stats:
 	cd crates/vm/levm && make run-evm-ef-tests QUIET=true && echo
 	make hive-stats
 	cargo run --quiet --release -p hive_report
-
-loc-pr:
-	cargo run --release --bin loc -- --pr
