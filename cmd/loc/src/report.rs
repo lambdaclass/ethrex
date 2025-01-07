@@ -66,7 +66,7 @@ pub fn pr_message(
 
     if total_lines_changed != 0 {
         format!(
-            "{table}\nTotal lines changed: {}",
+            "```\n{table}\nTotal lines changed: {}\n```",
             match total_lines_changed.cmp(&0) {
                 std::cmp::Ordering::Greater => format!("+{total_lines_changed}"),
                 std::cmp::Ordering::Less => format!("{total_lines_changed}"),
