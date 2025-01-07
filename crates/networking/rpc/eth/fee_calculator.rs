@@ -12,7 +12,6 @@ const BLOCK_RANGE_LOWER_BOUND_DEC: u64 = 20;
 // The following comment is taken from the implementation of gas_price and is still valid, the logic was just moved here.
 
 // Disclaimer:
-
 // This estimation is somewhat based on how currently go-ethereum does it.
 // Reference: https://github.com/ethereum/go-ethereum/blob/368e16f39d6c7e5cce72a92ec289adbfbaed4854/eth/gasprice/gasprice.go#L153
 // Although it will (probably) not yield the same result.
@@ -76,7 +75,7 @@ pub fn estimate_gas_tip(storage: &Store) -> Result<Option<u64>, RpcErr> {
     results.sort();
 
     match results.get(results.len() / 2) {
-        None => return Ok(None),
-        Some(gas) => return Ok(Some(*gas)),
+        None => Ok(None),
+        Some(gas) => Ok(Some(*gas)),
     }
 }

@@ -1,5 +1,7 @@
 // Use fee_calculator mod in crates/networking/rpc/eth/ as gas_price
 
+use std::cmp::max;
+
 use crate::eth::fee_calculator::estimate_gas_tip;
 use ethrex_blockchain::constants::MIN_GAS_LIMIT;
 
@@ -37,8 +39,9 @@ impl RpcHandler for GasPrice {
         // If we don't have the base fee, we'll use the minimum gas limit.
         let gas_price = match (estimated_gas_tip, base_fee) {
             (Some(gas_tip), Some(base_fee)) => gas_tip + base_fee,
-            (Some(gas_tip), None) => gas_tip,
             (None, Some(base_fee)) => base_fee,
+            // TODO: We might want to return null in this cases?
+            (Some(gas_tip), None) => max(gas_tip, MIN_GAS_LIMIT),
             (None, None) => MIN_GAS_LIMIT,
         };
 
