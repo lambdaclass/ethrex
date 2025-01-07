@@ -51,7 +51,7 @@ jobs:
     steps:
       - uses: actions/download-artifact@v4
         with:
-          name: ehtrex-image-${{ matrix.features }}
+          name: ethrex-image-${{ matrix.image }}
 
       - name: Load image for ethrex build ( ${{ matrix.image }} feature set )
         run: docker load < ${{ matrix.image }}-image.tar
