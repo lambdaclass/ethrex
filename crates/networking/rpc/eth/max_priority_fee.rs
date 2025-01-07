@@ -31,5 +31,4 @@ impl RpcHandler for MaxPriorityFee {
 }
 
 #[cfg(test)]
-mod tests {
-}
+mod tests {}

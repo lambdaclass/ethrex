@@ -29,8 +29,7 @@ const BLOCK_RANGE_LOWER_BOUND_DEC: u64 = 20;
 /// as per the spec, this will be returned in wei.
 pub fn estimate_gas_tip(storage: &Store) -> Result<Option<u64>, RpcErr> {
     let latest_block_number = storage.get_latest_block_number()?;
-    let block_range_lower_bound =
-        latest_block_number.saturating_sub(BLOCK_RANGE_LOWER_BOUND_DEC);
+    let block_range_lower_bound = latest_block_number.saturating_sub(BLOCK_RANGE_LOWER_BOUND_DEC);
     // These are the blocks we'll use to estimate the price.
     let block_range = block_range_lower_bound..=latest_block_number;
     if block_range.is_empty() {
@@ -54,12 +53,11 @@ pub fn estimate_gas_tip(storage: &Store) -> Result<Option<u64>, RpcErr> {
             ));
         };
 
-        let base_fee =
-            storage
-                .get_block_header(latest_block_number)
-                .ok()
-                .flatten()
-                .and_then(|header| header.base_fee_per_gas);
+        let base_fee = storage
+            .get_block_header(latest_block_number)
+            .ok()
+            .flatten()
+            .and_then(|header| header.base_fee_per_gas);
 
         // Previously we took the gas_price, now we take the effective_gas_tip and add the base_fee in the RPC
         // call if needed.
@@ -69,7 +67,7 @@ pub fn estimate_gas_tip(storage: &Store) -> Result<Option<u64>, RpcErr> {
             .filter_map(|tx| tx.effective_gas_tip(base_fee))
             .collect::<Vec<u64>>();
 
-            gas_tip_samples.sort();
+        gas_tip_samples.sort();
         results.extend(gas_tip_samples.into_iter().take(TXS_SAMPLE_SIZE));
     }
     results.sort();
