@@ -16,7 +16,7 @@ jobs:
     strategy:
       matrix:
         image: ["default", "levm"]
-        include:
+        test:
           - name: "Rpc Compat tests"
             file_name: rpc-compat
             simulation: ethereum/rpc-compat
@@ -151,7 +151,7 @@ jobs:
           echo "# LEVM coverage report" >> $GITHUB_STEP_SUMMARY
           cat results_levm.md >> $GITHUB_STEP_SUMMARY
           echo "# Diff between default and LEVM" >> $GITHUB_STEP_SUMMARY
-          diff results_default.md results_levm.md >> $GITHUB_STEP_SUMMARY
+          diff results_default.md results_levm.md >> diff.md
 
       - name: Post results to test channel for debugging
         env:
