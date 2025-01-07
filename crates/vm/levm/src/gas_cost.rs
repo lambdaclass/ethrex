@@ -8,7 +8,7 @@ use bytes::Bytes;
 /// Contains the gas costs of the EVM instructions
 use ethrex_core::U256;
 use num_bigint::BigUint;
-use revm_primitives::SpecId;
+use revm_primitives::SpecId::{self};
 
 // Opcodes cost
 pub const STOP: u64 = 0;
@@ -805,6 +805,7 @@ pub fn identity(data_size: usize) -> Result<u64, VMError> {
     precompile(data_size, IDENTITY_STATIC_COST, IDENTITY_DYNAMIC_BASE)
 }
 
+#[allow(clippy::collapsible_else_if)]
 pub fn modexp(
     exponent_first_32_bytes: &BigUint,
     base_size: usize,
@@ -833,8 +834,10 @@ pub fn modexp(
     // Should i implement it here and branch it?
     //let multiplication_complexity = words.checked_pow(2).ok_or(OutOfGasError::GasCostOverflow)?;
     let multiplication_complexity: u64 = if spec_id >= SpecId::BERLIN {
+        //dbg!("Berlin");
         words.checked_pow(2).ok_or(OutOfGasError::GasCostOverflow)?
     } else {
+        //dbg!("Pre-Berlin");
         if max_length <= 64 {
             max_length
                 .checked_pow(2)
@@ -871,28 +874,52 @@ pub fn modexp(
         }
     };
 
-    let iteration_count = if exponent_size <= 32 && *exponent_first_32_bytes != BigUint::ZERO {
-        exponent_first_32_bytes
-            .bits()
-            .checked_sub(1)
-            .ok_or(InternalError::ArithmeticOperationUnderflow)?
-    } else if exponent_size > 32 {
-        let extra_size = (exponent_size
-            .checked_sub(32)
-            .ok_or(InternalError::ArithmeticOperationUnderflow)?)
-        .checked_mul(8)
-        .ok_or(OutOfGasError::GasCostOverflow)?;
-        extra_size
-            .checked_add(exponent_first_32_bytes.bits().max(1))
-            .ok_or(OutOfGasError::GasCostOverflow)?
-            .checked_sub(1)
-            .ok_or(InternalError::ArithmeticOperationUnderflow)?
+    // Iteration count should be branched to use EIP-2565 or EIP-198
+    let calculate_iteration_count = if spec_id >= SpecId::BERLIN {
+        //dbg!("Berlin iteration count");
+        if exponent_size <= 32 && *exponent_first_32_bytes != BigUint::ZERO {
+            exponent_first_32_bytes
+                .bits()
+                .checked_sub(1)
+                .ok_or(InternalError::ArithmeticOperationUnderflow)?
+        } else if exponent_size > 32 {
+            let extra_size = (exponent_size
+                .checked_sub(32)
+                .ok_or(InternalError::ArithmeticOperationUnderflow)?)
+            .checked_mul(8)
+            .ok_or(OutOfGasError::GasCostOverflow)?;
+            extra_size
+                .checked_add(exponent_first_32_bytes.bits().max(1))
+                .ok_or(OutOfGasError::GasCostOverflow)?
+                .checked_sub(1)
+                .ok_or(InternalError::ArithmeticOperationUnderflow)?
+        } else {
+            0
+        }
+        .max(1)
     } else {
-        0
+        //dbg!("pre-Berlin iteration count");
+        if exponent_size < 32 {
+            exponent_first_32_bytes.bits().saturating_sub(1) // Prevent underflow
+        } else {
+            // If exponent size is 32 or greater
+            let extra_size = (exponent_size
+                .checked_sub(32)
+                .ok_or(InternalError::ArithmeticOperationUnderflow)?) // Prevent underflow
+            .checked_mul(8)
+            .ok_or(OutOfGasError::GasCostOverflow)?; // Prevent overflow
+
+            let bits_part = exponent_first_32_bytes.bits().saturating_sub(1); // Prevent underflow
+
+            extra_size
+                .checked_add(bits_part)
+                .ok_or(OutOfGasError::GasCostOverflow)? // Prevent overflow
+        }
+        .max(1) // Ensure minimum of 1 iteration
     };
-    let calculate_iteration_count = iteration_count.max(1);
 
     let cost = if spec_id >= SpecId::BERLIN {
+        //dbg!("Berlin cost");
         MODEXP_STATIC_COST.max(
             multiplication_complexity
                 .checked_mul(calculate_iteration_count)
@@ -900,6 +927,7 @@ pub fn modexp(
                 / MODEXP_DYNAMIC_QUOTIENT,
         )
     } else {
+        //dbg!("Pre-Berlin cost");
         multiplication_complexity
             .checked_mul(calculate_iteration_count)
             .ok_or(OutOfGasError::GasCostOverflow)?
