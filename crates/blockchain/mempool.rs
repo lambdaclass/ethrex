@@ -22,7 +22,7 @@ use ethrex_storage::{error::StoreError, Store};
 pub fn add_blob_transaction(
     transaction: EIP4844Transaction,
     blobs_bundle: BlobsBundle,
-    store: Store,
+    store: &Store,
 ) -> Result<H256, MempoolError> {
     // Validate blobs bundle
     blobs_bundle.validate(&transaction)?;
@@ -173,9 +173,7 @@ fn validate_transaction(
 ) -> Result<(), MempoolError> {
     // TODO: Add validations here
 
-    let header_no = store
-        .get_latest_block_number()?
-        .ok_or(MempoolError::NoBlockHeaderError)?;
+    let header_no = store.get_latest_block_number()?;
     let header = store
         .get_block_header(header_no)?
         .ok_or(MempoolError::NoBlockHeaderError)?;

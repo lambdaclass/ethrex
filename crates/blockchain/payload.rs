@@ -1,5 +1,5 @@
 use std::{
-    cmp::{min, Ordering},
+    cmp::{max, Ordering},
     collections::HashMap,
 };
 
@@ -20,6 +20,11 @@ use ethrex_vm::{
 };
 use sha3::{Digest, Keccak256};
 
+use ethrex_metrics::metrics;
+
+#[cfg(feature = "metrics")]
+use ethrex_metrics::metrics_transactions::{MetricsTxStatus, MetricsTxType, METRICS_TX};
+
 use crate::{
     constants::{
         GAS_LIMIT_BOUND_DIVISOR, GAS_PER_BLOB, MAX_BLOB_GAS_PER_BLOCK, MIN_GAS_LIMIT,
@@ -36,7 +41,7 @@ pub struct BuildPayloadArgs {
     pub timestamp: u64,
     pub fee_recipient: Address,
     pub random: H256,
-    pub withdrawals: Vec<Withdrawal>,
+    pub withdrawals: Option<Vec<Withdrawal>>,
     pub beacon_root: Option<H256>,
     pub version: u8,
 }
@@ -49,7 +54,9 @@ impl BuildPayloadArgs {
         hasher.update(self.timestamp.to_be_bytes());
         hasher.update(self.random);
         hasher.update(self.fee_recipient);
-        hasher.update(self.withdrawals.encode_to_vec());
+        if let Some(withdrawals) = &self.withdrawals {
+            hasher.update(withdrawals.encode_to_vec());
+        }
         if let Some(beacon_root) = self.beacon_root {
             hasher.update(beacon_root);
         }
@@ -95,7 +102,9 @@ pub fn create_payload(args: &BuildPayloadArgs, storage: &Store) -> Result<Block,
         ),
         withdrawals_root: chain_config
             .is_shanghai_activated(args.timestamp)
-            .then_some(compute_withdrawals_root(&args.withdrawals)),
+            .then_some(compute_withdrawals_root(
+                args.withdrawals.as_ref().unwrap_or(&Vec::new()),
+            )),
         blob_gas_used: chain_config
             .is_cancun_activated(args.timestamp)
             .then_some(0),
@@ -111,7 +120,7 @@ pub fn create_payload(args: &BuildPayloadArgs, storage: &Store) -> Result<Block,
     let body = BlockBody {
         transactions: Vec::new(),
         ommers: Vec::new(),
-        withdrawals: Some(args.withdrawals.clone()),
+        withdrawals: args.withdrawals.clone(),
     };
 
     // Delay applying withdrawals until the payload is requested and built
@@ -121,7 +130,7 @@ pub fn create_payload(args: &BuildPayloadArgs, storage: &Store) -> Result<Block,
 fn calc_gas_limit(parent_gas_limit: u64, desired_limit: u64) -> u64 {
     let delta = parent_gas_limit / GAS_LIMIT_BOUND_DIVISOR - 1;
     let mut limit = parent_gas_limit;
-    let desired_limit = min(desired_limit, MIN_GAS_LIMIT);
+    let desired_limit = max(desired_limit, MIN_GAS_LIMIT);
     if limit < desired_limit {
         limit = parent_gas_limit + delta;
         if limit > desired_limit {
@@ -319,6 +328,12 @@ pub fn fill_transactions(context: &mut PayloadBuildContext) -> Result<(), ChainE
             )?;
             continue;
         }
+
+        // Increment the total transaction counter
+        // CHECK: do we want it here to count every processed transaction
+        // or we want it before the return?
+        metrics!(METRICS_TX.inc_tx());
+
         // Execute tx
         let receipt = match apply_transaction(&head_tx, context) {
             Ok(receipt) => {
@@ -330,11 +345,20 @@ pub fn fill_transactions(context: &mut PayloadBuildContext) -> Result<(), ChainE
                         .store()
                         .ok_or(ChainError::StoreError(StoreError::MissingStore))?,
                 )?;
+
+                metrics!(METRICS_TX.inc_tx_with_status_and_type(
+                    MetricsTxStatus::Succeeded,
+                    MetricsTxType(head_tx.tx_type())
+                ));
                 receipt
             }
             // Ignore following txs from sender
             Err(e) => {
                 debug!("Failed to execute transaction: {}, {e}", tx_hash);
+                metrics!(METRICS_TX.inc_tx_with_status_and_type(
+                    MetricsTxStatus::Failed,
+                    MetricsTxType(head_tx.tx_type())
+                ));
                 txs.pop();
                 continue;
             }

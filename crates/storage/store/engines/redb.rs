@@ -1,10 +1,9 @@
 use std::{borrow::Borrow, panic::RefUnwindSafe, sync::Arc};
 
 use ethrex_core::types::BlockBody;
-use ethrex_core::U256;
 use ethrex_core::{
-    types::{Block, BlockHash, BlockHeader, BlockNumber, ChainConfig, Index, Receipt},
-    H256,
+    types::{BlobsBundle, Block, BlockHash, BlockHeader, BlockNumber, ChainConfig, Index, Receipt},
+    H256, U256,
 };
 use ethrex_rlp::decode::RLPDecode;
 use ethrex_rlp::encode::RLPEncode;
@@ -45,7 +44,8 @@ pub const STORAGE_TRIE_NODES_TABLE: MultimapTableDefinition<([u8; 32], [u8; 33])
     MultimapTableDefinition::new("StorageTrieNodes");
 const CHAIN_DATA_TABLE: TableDefinition<ChainDataIndex, Vec<u8>> =
     TableDefinition::new("ChainData");
-const PAYLOADS_TABLE: TableDefinition<BlockNumber, BlockRLP> = TableDefinition::new("Payloads");
+const PAYLOADS_TABLE: TableDefinition<BlockNumber, Rlp<(Block, U256, BlobsBundle, bool)>> =
+    TableDefinition::new("Payloads");
 const PENDING_BLOCKS_TABLE: TableDefinition<BlockHashRLP, BlockRLP> =
     TableDefinition::new("PendingBlocks");
 const TRANSACTION_LOCATIONS_TABLE: MultimapTableDefinition<
@@ -97,6 +97,50 @@ impl RedBStore {
     {
         let write_txn = self.db.begin_write()?;
         write_txn.open_multimap_table(table)?.insert(key, value)?;
+        write_txn.commit()?;
+
+        Ok(())
+    }
+
+    // Helper method to write into a redb table
+    fn write_batch<'k, 'v, 'a, K, V>(
+        &self,
+        table: TableDefinition<'a, K, V>,
+        key_values: Vec<(impl Borrow<K::SelfType<'k>>, impl Borrow<V::SelfType<'v>>)>,
+    ) -> Result<(), StoreError>
+    where
+        K: Key + 'static,
+        V: Value + 'static,
+    {
+        let write_txn = self.db.begin_write()?;
+        {
+            let mut table = write_txn.open_table(table)?;
+            for (key, value) in key_values {
+                table.insert(key, value)?;
+            }
+        }
+        write_txn.commit()?;
+
+        Ok(())
+    }
+
+    // Helper method to write into a redb table
+    fn write_to_multi_batch<'k, 'v, 'a, K, V>(
+        &self,
+        table: MultimapTableDefinition<'a, K, V>,
+        key_values: Vec<(impl Borrow<K::SelfType<'k>>, impl Borrow<V::SelfType<'v>>)>,
+    ) -> Result<(), StoreError>
+    where
+        K: Key + 'static,
+        V: Key + 'static,
+    {
+        let write_txn = self.db.begin_write()?;
+        {
+            let mut table = write_txn.open_multimap_table(table)?;
+            for (key, value) in key_values {
+                table.insert(key, value)?;
+            }
+        }
         write_txn.commit()?;
 
         Ok(())
@@ -532,23 +576,119 @@ impl StoreEngine for RedBStore {
         self.write(
             PAYLOADS_TABLE,
             payload_id,
-            <Block as Into<BlockRLP>>::into(block),
+            <(Block, U256, BlobsBundle, bool) as Into<Rlp<(Block, U256, BlobsBundle, bool)>>>::into(
+                (block, U256::zero(), BlobsBundle::empty(), false),
+            ),
         )
     }
 
-    fn get_payload(&self, payload_id: u64) -> Result<Option<Block>, StoreError> {
+    fn get_payload(
+        &self,
+        payload_id: u64,
+    ) -> Result<Option<(Block, U256, BlobsBundle, bool)>, StoreError> {
         Ok(self
             .read(PAYLOADS_TABLE, payload_id)?
             .map(|b| b.value().to()))
     }
+
+    fn add_receipts(
+        &self,
+        block_hash: BlockHash,
+        receipts: Vec<Receipt>,
+    ) -> Result<(), StoreError> {
+        let key_values = receipts
+            .into_iter()
+            .enumerate()
+            .map(|(index, receipt)| {
+                (
+                    <(H256, u64) as Into<TupleRLP<BlockHash, Index>>>::into((
+                        block_hash,
+                        index as u64,
+                    )),
+                    <Receipt as Into<ReceiptRLP>>::into(receipt),
+                )
+            })
+            .collect();
+        self.write_batch(RECEIPTS_TABLE, key_values)
+    }
+
+    fn add_transaction_locations(
+        &self,
+        locations: Vec<(H256, BlockNumber, BlockHash, Index)>,
+    ) -> Result<(), StoreError> {
+        let key_values = locations
+            .into_iter()
+            .map(|(tx_hash, block_number, block_hash, index)| {
+                (
+                    <H256 as Into<TransactionHashRLP>>::into(tx_hash),
+                    <(u64, H256, u64) as Into<Rlp<(BlockNumber, BlockHash, Index)>>>::into((
+                        block_number,
+                        block_hash,
+                        index,
+                    )),
+                )
+            })
+            .collect();
+
+        self.write_to_multi_batch(TRANSACTION_LOCATIONS_TABLE, key_values)?;
+
+        Ok(())
+    }
+    fn update_payload(
+        &self,
+        payload_id: u64,
+        block: Block,
+        block_value: U256,
+        blobs_bundle: BlobsBundle,
+        completed: bool,
+    ) -> Result<(), StoreError> {
+        self.write(
+            PAYLOADS_TABLE,
+            payload_id,
+            <(Block, U256, BlobsBundle, bool) as Into<Rlp<(Block, U256, BlobsBundle, bool)>>>::into(
+                (block, block_value, blobs_bundle, completed),
+            ),
+        )
+    }
+
+    fn get_receipts_for_block(
+        &self,
+        block_hash: &BlockHash,
+    ) -> std::result::Result<Vec<Receipt>, StoreError> {
+        let mut encoded_receipts = vec![];
+        let mut receipt_index = 0;
+        let read_tx = self.db.begin_read()?;
+        let mut expected_key: TupleRLP<BlockHash, Index> = (*block_hash, 0).into();
+        let table = read_tx.open_table(RECEIPTS_TABLE)?;
+        // We're searching receipts for a block, the keys
+        // for the receipt table are of the kind: rlp((BlockHash, Index)).
+        // So we search for values in the db that match with this kind
+        // of key, until we reach an Index that returns None
+        // and we stop the search.
+        // TODO(#1436): Make sure this if this is the proper way of
+        // doing a search for each key, libmdbx has cursors
+        // for this purpose, we should do the equal here,
+        // if this approach is not correct.
+        while let Some(access_guard) = table.get(&expected_key)? {
+            encoded_receipts.push(access_guard.value());
+            receipt_index += 1;
+            expected_key = (*block_hash, receipt_index).into()
+        }
+        Ok(encoded_receipts
+            .into_iter()
+            .map(|receipt| receipt.to())
+            .collect())
+    }
 }
 
 impl redb::Value for ChainDataIndex {
-    type SelfType<'a> = ChainDataIndex
+    type SelfType<'a>
+        = ChainDataIndex
     where
         Self: 'a;
 
-    type AsBytes<'a> = [u8; 1]
+    type AsBytes<'a>
+        = [u8; 1]
     where
         Self: 'a;
 

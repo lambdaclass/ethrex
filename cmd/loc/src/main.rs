@@ -1,35 +1,36 @@
-use serde::{Deserialize, Serialize};
-use std::path::PathBuf;
-use tokei::{Config, LanguageType, Languages};
+use clap::Parser;
+use report::{shell_summary, LinesOfCodeReport, LinesOfCodeReporterOptions};
+use spinoff::{spinners::Dots, Color, Spinner};
+use std::{collections::HashMap, env::current_dir, path::PathBuf};
+use tokei::{Config, Language, LanguageType, Languages};
 
-const CARGO_MANIFEST_DIR: &str = std::env!("CARGO_MANIFEST_DIR");
+mod report;
 
-#[derive(Default, Serialize, Deserialize, Clone, Copy)]
-pub struct LinesOfCodeReport {
-    ethrex: usize,
-    ethrex_l1: usize,
-    ethrex_l2: usize,
-    levm: usize,
+fn count_loc(path: PathBuf, config: &Config) -> Language {
+    let mut languages = Languages::new();
+    languages.get_statistics(&[path], &["tests"], config);
+    languages.get(&LanguageType::Rust).unwrap().clone()
 }
 
 fn main() {
-    let ethrex = PathBuf::from(CARGO_MANIFEST_DIR).join("../../");
-    let levm = PathBuf::from(CARGO_MANIFEST_DIR).join("../../crates/vm");
-    let ethrex_l2 = PathBuf::from(CARGO_MANIFEST_DIR).join("../../crates/l2");
+    let opts = LinesOfCodeReporterOptions::parse();
+
+    let mut spinner = Spinner::new(Dots, "Counting lines of code...", Color::Cyan);
+
+    let ethrex = current_dir().unwrap();
+    let ethrex_crates = ethrex.join("crates");
+    let levm = ethrex_crates.join("vm");
+    let ethrex_l2 = ethrex_crates.join("l2");
 
     let config = Config::default();
 
-    let mut languages = Languages::new();
-    languages.get_statistics(&[ethrex.clone()], &["tests"], &config);
-    let ethrex_loc = &languages.get(&LanguageType::Rust).unwrap();
+    let ethrex_loc = count_loc(ethrex, &config);
+    let levm_loc = count_loc(levm, &config);
+    let ethrex_l2_loc = count_loc(ethrex_l2, &config);
 
-    let mut languages = Languages::new();
-    languages.get_statistics(&[levm], &["tests"], &config);
-    let levm_loc = &languages.get(&LanguageType::Rust).unwrap();
+    spinner.success("Lines of code calculated!");
 
-    let mut languages = Languages::new();
-    languages.get_statistics(&[ethrex_l2], &["tests"], &config);
-    let ethrex_l2_loc = &languages.get(&LanguageType::Rust).unwrap();
+    let mut spinner = Spinner::new(Dots, "Generating report...", Color::Cyan);
 
     let new_report = LinesOfCodeReport {
         ethrex: ethrex_loc.code,
@@ -38,121 +39,65 @@ fn main() {
         levm: levm_loc.code,
     };
 
-    std::fs::write(
-        "loc_report.json",
-        serde_json::to_string(&new_report).unwrap(),
-    )
-    .expect("loc_report.json could not be written");
+    if opts.detailed {
+        let mut current_detailed_loc_report = HashMap::new();
+        for report in ethrex_loc.reports {
+            let file_path = report.name;
+            // let file_name = file_path.file_name().unwrap().to_str().unwrap();
+            // let dir_path = file_path.parent().unwrap();
 
-    let old_report: LinesOfCodeReport = std::fs::read_to_string("loc_report.json.old")
-        .map(|s| serde_json::from_str(&s).unwrap())
-        .unwrap_or(new_report);
+            current_detailed_loc_report
+                .entry(file_path.as_os_str().to_str().unwrap().to_owned())
+                .and_modify(|e: &mut usize| *e += report.stats.code)
+                .or_insert_with(|| report.stats.code);
+        }
 
-    std::fs::write(
-        "loc_report_slack.txt",
-        slack_message(old_report, new_report),
-    )
-    .unwrap();
-    std::fs::write(
-        "loc_report_github.txt",
-        github_step_summary(old_report, new_report),
-    )
-    .unwrap();
-}
+        std::fs::write(
+            "current_detailed_loc_report.json",
+            serde_json::to_string(&current_detailed_loc_report).unwrap(),
+        )
+        .expect("current_detailed_loc_report.json could not be written");
+    } else if opts.compare_detailed {
+        let current_detailed_loc_report: HashMap<String, usize> =
+            std::fs::read_to_string("current_detailed_loc_report.json")
+                .map(|s| serde_json::from_str(&s).unwrap())
+                .expect("current_detailed_loc_report.json could not be read");
 
-fn slack_message(old_report: LinesOfCodeReport, new_report: LinesOfCodeReport) -> String {
-    let ethrex_l1_diff = new_report.ethrex_l1.abs_diff(old_report.ethrex_l1);
-    let ethrex_l2_diff = new_report.ethrex_l2.abs_diff(old_report.ethrex_l2);
-    let levm_diff = new_report.levm.abs_diff(old_report.levm);
-    let ethrex_diff_total = ethrex_l1_diff + ethrex_l2_diff + levm_diff;
+        let previous_detailed_loc_report: HashMap<String, usize> =
+            std::fs::read_to_string("previous_detailed_loc_report.json")
+                .map(|s| serde_json::from_str(&s).unwrap())
+                .unwrap_or(current_detailed_loc_report.clone());
 
-    format!(
-        r#"{{
-    "blocks": [
-        {{
-            "type": "header",
-            "text": {{
-                "type": "plain_text",
-                "text": "Daily Lines of Code Report"
-            }}
-        }},
-        {{
-            "type": "divider"
-        }},
-        {{
-            "type": "section",
-            "text": {{
-                "type": "mrkdwn",
-                "text": "*ethrex L1:* {} {}\n*ethrex L2:* {} {}\n*levm:* {} {}\n*ethrex (total):* {} {}"
-            }}             
-        }}
-    ]
-}}"#,
-        new_report.ethrex_l1,
-        match new_report.ethrex_l1.cmp(&old_report.ethrex_l1) {
-            std::cmp::Ordering::Greater => format!("(+{ethrex_l1_diff})"),
-            std::cmp::Ordering::Less => format!("(-{ethrex_l1_diff})"),
-            std::cmp::Ordering::Equal => "".to_string(),
-        },
-        new_report.ethrex_l2,
-        match new_report.ethrex_l2.cmp(&old_report.ethrex_l2) {
-            std::cmp::Ordering::Greater => format!("(+{ethrex_l2_diff})"),
-            std::cmp::Ordering::Less => format!("(-{ethrex_l2_diff})"),
-            std::cmp::Ordering::Equal => "".to_string(),
-        },
-        new_report.levm,
-        match new_report.levm.cmp(&old_report.levm) {
-            std::cmp::Ordering::Greater => format!("(+{levm_diff})"),
-            std::cmp::Ordering::Less => format!("(-{levm_diff})"),
-            std::cmp::Ordering::Equal => "".to_string(),
-        },
-        new_report.ethrex,
-        match new_report.ethrex.cmp(&old_report.ethrex) {
-            std::cmp::Ordering::Greater => format!("(+{ethrex_diff_total})"),
-            std::cmp::Ordering::Less => format!("(-{ethrex_diff_total})"),
-            std::cmp::Ordering::Equal => "".to_string(),
-        },
-    )
-}
+        std::fs::write(
+            "detailed_loc_report.txt",
+            report::pr_message(previous_detailed_loc_report, current_detailed_loc_report),
+        )
+        .unwrap();
+    } else if opts.summary {
+        spinner.success("Report generated!");
+        println!("{}", shell_summary(new_report));
+    } else {
+        std::fs::write(
+            "loc_report.json",
+            serde_json::to_string(&new_report).unwrap(),
+        )
+        .expect("loc_report.json could not be written");
 
-fn github_step_summary(old_report: LinesOfCodeReport, new_report: LinesOfCodeReport) -> String {
-    let ethrex_l1_diff = new_report.ethrex_l1.abs_diff(old_report.ethrex_l1);
-    let ethrex_l2_diff = new_report.ethrex_l2.abs_diff(old_report.ethrex_l2);
-    let levm_diff = new_report.levm.abs_diff(old_report.levm);
-    let ethrex_diff_total = ethrex_l1_diff + ethrex_l2_diff + levm_diff;
+        let old_report: LinesOfCodeReport = std::fs::read_to_string("loc_report.json.old")
+            .map(|s| serde_json::from_str(&s).unwrap())
+            .unwrap_or(new_report);
 
-    format!(
-        r#"```
-ethrex loc summary
-====================
-ethrex L1: {} {}
-ethrex L2: {} {}
-levm: {} ({})
-ethrex (total): {} {}
-```"#,
-        new_report.ethrex_l1,
-        if new_report.ethrex > old_report.ethrex {
-            format!("(+{ethrex_l1_diff})")
-        } else {
-            format!("(-{ethrex_l1_diff})")
-        },
-        new_report.ethrex_l2,
-        if new_report.ethrex_l2 > old_report.ethrex_l2 {
-            format!("(+{ethrex_l2_diff})")
-        } else {
-            format!("(-{ethrex_l2_diff})")
-        },
-        new_report.levm,
-        if new_report.levm > old_report.levm {
-            format!("(+{levm_diff})")
-        } else {
-            format!("(-{levm_diff})")
-        },
-        new_report.ethrex,
-        if new_report.ethrex > old_report.ethrex {
-            format!("(+{ethrex_diff_total})")
-        } else {
-            format!("(-{ethrex_diff_total})")
-        },
-    )
+        std::fs::write(
+            "loc_report_slack.txt",
+            report::slack_message(old_report, new_report),
+        )
+        .unwrap();
+        std::fs::write(
+            "loc_report_github.txt",
+            report::github_step_summary(old_report, new_report),
+        )
+        .unwrap();
+
+        spinner.success("Report generated!");
+    }
 }

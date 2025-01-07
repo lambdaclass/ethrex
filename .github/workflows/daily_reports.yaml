@@ -11,7 +11,7 @@ env:
 
 jobs:
   run-hive:
-    name: Run engine hive simulator to gather coverage information.
+    name: Hive - ${{ matrix.name }}
     runs-on: ubuntu-latest
     strategy:
       matrix:
@@ -45,7 +45,7 @@ jobs:
         run: make setup-hive
 
       - name: Run Hive Simulation
-        run: cd hive && ./hive --client ethrex --sim ${{ matrix.simulation }} --sim.parallelism 4
+        run: cd hive && ./hive --client ethrex --sim ${{ matrix.simulation }} --sim.parallelism 16
         continue-on-error: true
 
       - name: Upload results
@@ -125,7 +125,7 @@ jobs:
             loc-report-
 
       - name: Rename cached loc_report.json to loc_report.json.old
-        if: steps.cache-loc-report.outputs.cache-hit == 'true'
+        if: steps.cache-loc-report.outputs.cache-hit != ''
         run: mv loc_report.json loc_report.json.old
 
       - name: Generate the loc report
@@ -141,7 +141,7 @@ jobs:
 
       - name: Post results in summary
         run: |
-          echo "# `ethrex` lines of code report" >> $GITHUB_STEP_SUMMARY
+          echo "# 'ethrex' lines of code report" >> $GITHUB_STEP_SUMMARY
           cat loc_report_github.txt >> $GITHUB_STEP_SUMMARY
 
       - name: Post results to ethrex L1 slack channel
@@ -158,6 +158,13 @@ jobs:
         env:
           url: ${{ secrets.LEVM_SLACK_WEBHOOK }}
         run: sh .github/scripts/publish_loc.sh
+
+      # This is left commented out to ease debugging later on.
+      # Comment out all the other "Post to * slack channel" directives
+      # - name: Post results to test slack channel
+      #   env:
+      #     url: ${{ secrets.TEST_CHANNEL_SLACK }}
+      #   run: sh .github/scripts/publish_loc.sh
 
   levm-test:
     name: Generate Report for LEVM EF Tests

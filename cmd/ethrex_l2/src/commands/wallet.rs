@@ -1,12 +1,11 @@
-use crate::{commands::utils::encode_calldata, config::EthrexL2Config};
+use crate::config::EthrexL2Config;
 use bytes::Bytes;
 use clap::Subcommand;
 use ethereum_types::{Address, H256, U256};
 use ethrex_core::types::{PrivilegedTxType, Transaction};
-use ethrex_l2::utils::{
-    eth_client::{eth_sender::Overrides, EthClient},
-    merkle_tree::merkle_proof,
-};
+use ethrex_l2_sdk::calldata::{encode_calldata, Value};
+use ethrex_l2_sdk::eth_client::{eth_sender::Overrides, EthClient};
+use ethrex_l2_sdk::merkle_tree::merkle_proof;
 use ethrex_rpc::types::block::BlockBodyWrapper;
 use eyre::OptionExt;
 use hex::FromHexError;
@@ -340,17 +339,24 @@ impl Command {
                 let (index, proof) =
                     get_withdraw_merkle_proof(&rollup_client, l2_withdrawal_tx_hash).await?;
 
-                let claim_withdrawal_data = encode_calldata(
-                    CLAIM_WITHDRAWAL_SIGNATURE,
-                    &format!(
-                        "{l2_withdrawal_tx_hash:#x} {claimed_amount} {withdrawal_l2_block_number} {index} {}",
-                        proof.iter().map(hex::encode).join(",")
-                    ),
-                    false
-                )?;
+                let mut values = vec![
+                    Value::Uint(U256::from_big_endian(
+                        l2_withdrawal_tx_hash.as_fixed_bytes(),
+                    )),
+                    Value::Uint(claimed_amount),
+                    Value::Uint(withdrawal_l2_block_number),
+                    Value::Uint(U256::from(index)),
+                ];
+
+                for hash in proof {
+                    values.push(Value::Uint(U256::from_big_endian(hash.as_fixed_bytes())));
+                }
+
+                let claim_withdrawal_data =
+                    encode_calldata(CLAIM_WITHDRAWAL_SIGNATURE, &values).unwrap();
                 println!(
                     "ClaimWithdrawalData: {}",
-                    hex::encode(claim_withdrawal_data.clone())
+                    hex::encode(&claim_withdrawal_data)
                 );
 
                 let tx = eth_client

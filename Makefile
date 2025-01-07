@@ -1,5 +1,6 @@
 .PHONY: build lint test clean run-image build-image download-test-vectors clean-vectors \
-	setup-hive test-pattern-default run-hive run-hive-debug clean-hive-logs
+	setup-hive test-pattern-default run-hive run-hive-debug clean-hive-logs loc-detailed \
+	loc-compare-detailed
 
 help: ## 📚 Show help for each of the Makefile recipes
 	@grep -E '^[a-zA-Z0-9_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-30s\033[0m %s\n", $$1, $$2}'
@@ -58,34 +59,58 @@ checkout-ethereum-package: ethereum-package ## 📦 Checkout specific Ethereum p
 		git fetch && \
 		git checkout $(ETHEREUM_PACKAGE_REVISION)
 
+ENCLAVE ?= lambdanet
+
 localnet: stop-localnet-silent build-image checkout-ethereum-package ## 🌐 Start local network
-	kurtosis run --enclave lambdanet ethereum-package --args-file test_data/network_params.yaml
+	kurtosis run --enclave $(ENCLAVE) ethereum-package --args-file test_data/network_params.yaml
+	docker logs -f $$(docker ps -q --filter ancestor=ethrex)
+
+localnet-assertoor-blob: stop-localnet-silent build-image checkout-ethereum-package ## 🌐 Start local network with assertoor test
+	kurtosis run --enclave $(ENCLAVE) ethereum-package --args-file .github/config/assertoor/network_params_blob.yaml
+	docker logs -f $$(docker ps -q --filter ancestor=ethrex)
+
+
+localnet-assertoor-tx: stop-localnet-silent build-image checkout-ethereum-package ## 🌐 Start local network with assertoor test
+	kurtosis run --enclave $(ENCLAVE) ethereum-package --args-file .github/config/assertoor/network_params_tx.yaml
 	docker logs -f $$(docker ps -q --filter ancestor=ethrex)
 
 stop-localnet: ## 🛑 Stop local network
-	kurtosis enclave stop lambdanet
-	kurtosis enclave rm lambdanet --force
+	kurtosis enclave stop $(ENCLAVE)
+	kurtosis enclave rm $(ENCLAVE) --force
 
 stop-localnet-silent:
 	@echo "Double checking local net is not already started..."
-	@kurtosis enclave stop lambdanet >/dev/null 2>&1 || true
-	@kurtosis enclave rm lambdanet --force >/dev/null 2>&1 || true
+	@kurtosis enclave stop $(ENCLAVE) >/dev/null 2>&1 || true
+	@kurtosis enclave rm $(ENCLAVE) --force >/dev/null 2>&1 || true
 
-HIVE_REVISION := f220e0c55fb222aaaffdf17d66aa0537cd16a67a
+HIVE_REVISION := df7d5103d4ddc772307f9947be4ad1f20ce03ed0
 # Shallow clones can't specify a single revision, but at least we avoid working
 # the whole history by making it shallow since a given date (one day before our
 # target revision).
 HIVE_SHALLOW_SINCE := 2024-09-02
+QUIET ?= false
 hive:
-	git clone --single-branch --branch master --shallow-since=$(HIVE_SHALLOW_SINCE) https://github.com/lambdaclass/hive
-	cd hive && git checkout --detach $(HIVE_REVISION) && go build .
+	if [ "$(QUIET)" = "true" ]; then \
+		git clone --quiet --single-branch --branch master --shallow-since=$(HIVE_SHALLOW_SINCE) https://github.com/lambdaclass/hive && \
+		cd hive && git checkout --quiet --detach $(HIVE_REVISION) && go build .; \
+	else \
+		git clone --single-branch --branch master --shallow-since=$(HIVE_SHALLOW_SINCE) https://github.com/lambdaclass/hive && \
+		cd hive && git checkout --detach $(HIVE_REVISION) && go build .; \
+	fi
 
 setup-hive: hive ## 🐝 Set up Hive testing framework
 	if [ "$$(cd hive && git rev-parse HEAD)" != "$(HIVE_REVISION)" ]; then \
-		cd hive && \
-		git checkout master && \
-		git fetch --shallow-since=$(HIVE_SHALLOW_SINCE) && \
-		git checkout --detach $(HIVE_REVISION) && go build . ;\
+		if [ "$(QUIET)" = "true" ]; then \
+			cd hive && \
+			git checkout --quiet master && \
+			git fetch --quiet --shallow-since=$(HIVE_SHALLOW_SINCE) && \
+			git checkout --quiet --detach $(HIVE_REVISION) && go build .;\
+		else \
+			cd hive && \
+			git checkout master && \
+			git fetch --shallow-since=$(HIVE_SHALLOW_SINCE) && \
+			git checkout --detach $(HIVE_REVISION) && go build .;\
+		fi \
 	fi
 
 TEST_PATTERN ?= /
@@ -95,7 +120,10 @@ TEST_PATTERN ?= /
 # For example, to run the rpc-compat suites for eth_chainId & eth_blockNumber you should run:
 # `make run-hive SIMULATION=ethereum/rpc-compat TEST_PATTERN="/eth_chainId|eth_blockNumber"`
 run-hive: build-image setup-hive ## 🧪 Run Hive testing suite
-	cd hive && ./hive --sim $(SIMULATION) --client ethrex --sim.limit "$(TEST_PATTERN)"
+	cd hive && ./hive --client ethrex --sim $(SIMULATION) --sim.limit "$(TEST_PATTERN)"
+
+run-hive-all: build-image setup-hive ## 🧪 Run all Hive testing suites
+	cd hive && ./hive --client ethrex --sim ".*" --sim.parallelism 4
 
 run-hive-debug: build-image setup-hive ## 🐞 Run Hive testing suite in debug mode
 	cd hive && ./hive --sim $(SIMULATION) --client ethrex --sim.limit "$(TEST_PATTERN)" --docker.output
@@ -105,6 +133,35 @@ clean-hive-logs: ## 🧹 Clean Hive logs
 
 loc:
 	cargo run -p loc
+
+loc-stats:
+	if [ "$(QUIET)" = "true" ]; then \
+		cargo run --quiet -p loc -- --summary;\
+	else \
+		cargo run -p loc -- --summary;\
+	fi
+
+loc-detailed:
+	cargo run --release --bin loc -- --detailed
+
+loc-compare-detailed:
+	cargo run --release --bin loc -- --compare-detailed
+
+hive-stats:
+	make hive QUIET=true
+	make setup-hive QUIET=true
+	rm -rf hive/workspace $(FILE_NAME)_logs
+	make run-hive-all SIMULATION=ethereum/rpc-compat || exit 0
+	make run-hive-all SIMULATION=devp2p || exit 0
+	make run-hive-all SIMULATION=ethereum/engine || exit 0
+	make run-hive-all SIMULATION=ethereum/sync || exit 0
+
+stats:
+	make loc-stats QUIET=true && echo
+	cd crates/vm/levm && make download-evm-ef-tests
+	cd crates/vm/levm && make run-evm-ef-tests QUIET=true && echo
+	make hive-stats
+	cargo run --quiet --release -p hive_report
 
 flamegraph:
 	sudo -E CARGO_PROFILE_RELEASE_DEBUG=true cargo flamegraph --bin ethrex --features dev  --  --network test_data/genesis-l2.json --http.port 1729 &

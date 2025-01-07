@@ -32,4 +32,17 @@ impl TrieDB for RedBTrie {
 
         Ok(())
     }
+
+    fn put_batch(&self, key_values: Vec<(Vec<u8>, Vec<u8>)>) -> Result<(), crate::TrieError> {
+        let write_txn = self.db.begin_write()?;
+        {
+            let mut table = write_txn.open_table(TABLE)?;
+            for (key, value) in key_values {
+                table.insert(&*key, &*value)?;
+            }
+        }
+        write_txn.commit()?;
+
+        Ok(())
+    }
 }

@@ -6,6 +6,7 @@ use crate::{
         eth::{
             backend,
             blocks::{BlockBodies, BlockHeaders},
+            receipts::Receipts,
             transactions::Transactions,
         },
         handshake::encode_ack_message,
@@ -22,6 +23,7 @@ use crate::{
 
 use super::{
     error::RLPxError,
+    eth::receipts::GetReceipts,
     eth::transactions::GetPooledTransactions,
     frame,
     handshake::{decode_ack_message, decode_auth_message, encode_auth_message},
@@ -338,7 +340,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
         let peer_supports_eth = self.capabilities.contains(&CAP_ETH);
         match message {
             Message::Disconnect(msg_data) => {
-                debug!("Received Disconnect: {:?}", msg_data.reason);
+                debug!("Received Disconnect: {}", msg_data.reason());
                 // Returning a Disconnect error to be handled later at the call stack
                 return Err(RLPxError::Disconnect());
             }
@@ -379,6 +381,17 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
                 };
                 self.send(Message::BlockBodies(response)).await?;
             }
+            Message::GetReceipts(GetReceipts { id, block_hashes }) if peer_supports_eth => {
+                let receipts: Result<_, _> = block_hashes
+                    .iter()
+                    .map(|hash| self.storage.get_receipts_for_block(hash))
+                    .collect();
+                let response = Receipts {
+                    id,
+                    receipts: receipts?,
+                };
+                self.send(Message::Receipts(response)).await?;
+            }
             Message::NewPooledTransactionHashes(new_pooled_transaction_hashes)
                 if peer_supports_eth =>
             {
@@ -389,6 +402,13 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
                 //TODO(#1416): Evaluate keeping track of the request-id.
                 let request = GetPooledTransactions::new(random(), hashes);
                 self.send(Message::GetPooledTransactions(request)).await?;
+            }
+            Message::GetPooledTransactions(msg) => {
+                let response = msg.handle(&self.storage)?;
+                self.send(Message::PooledTransactions(response)).await?;
+            }
+            Message::PooledTransactions(msg) if peer_supports_eth => {
+                msg.handle(&self.storage)?;
             }
             Message::GetStorageRanges(req) => {
                 let response = process_storage_ranges_request(req, self.storage.clone())?;

@@ -7,10 +7,10 @@ edition = "2021"
 
 [dependencies]
 tokio = { version = "1.38.0", features = ["full"] }
-ethereum-types = { version = "0.14.1", features = ["serialize"] }
+ethereum-types = { workspace = true, features = ["serialize"] }
 bytes = { version = "1.6.0", features = ["serde"] }
 secp256k1.workspace = true
-keccak-hash = "0.10.0"
+keccak-hash.workspace = true
 hex = "0.4.3"
 spinoff = "0.8.0"
 colored = "2.1.0"
@@ -19,6 +19,7 @@ tracing.workspace = true
 thiserror.workspace = true
 
 ethrex-l2 = { path = "../../l2" }
+ethrex-sdk = { path = "../../l2/sdk" }
 ethrex-core = { path = "../../common" }
 
 [[bin]]

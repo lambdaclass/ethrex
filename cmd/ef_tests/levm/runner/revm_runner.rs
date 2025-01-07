@@ -14,7 +14,7 @@ use ethrex_levm::{
     Account, StorageSlot,
 };
 use ethrex_storage::{error::StoreError, AccountUpdate};
-use ethrex_vm::{db::StoreWrapper, EvmState, RevmAddress, RevmU256, SpecId};
+use ethrex_vm::{db::StoreWrapper, EvmState, RevmAddress, RevmU256};
 use revm::{
     db::State,
     inspectors::TracerEip3155 as RevmTracerEip3155,
@@ -53,6 +53,9 @@ pub fn re_run_failed_ef_test(
                     }
                 }
             },
+            // Currently, we decided not to re-execute the test when the Expected exception does not match 
+            // with the received. This can change in the future.
+            EFTestRunnerError::ExpectedExceptionDoesNotMatchReceived(_) => continue,
             EFTestRunnerError::VMInitializationFailed(_)
             | EFTestRunnerError::ExecutionFailedUnexpectedly(_)
             | EFTestRunnerError::FailedToEnsurePreState(_) => continue,
@@ -98,11 +101,12 @@ pub fn prepare_revm_for_tx<'state>(
     let chain_spec = initial_state
         .chain_config()
         .map_err(|err| EFTestRunnerError::VMInitializationFailed(err.to_string()))?;
+
     let block_env = RevmBlockEnv {
         number: RevmU256::from_limbs(test.env.current_number.0),
         coinbase: RevmAddress(test.env.current_coinbase.0.into()),
         timestamp: RevmU256::from_limbs(test.env.current_timestamp.0),
-        gas_limit: RevmU256::from_limbs(test.env.current_gas_limit.0),
+        gas_limit: RevmU256::from(test.env.current_gas_limit),
         basefee: RevmU256::from_limbs(test.env.current_base_fee.unwrap_or_default().0),
         difficulty: RevmU256::from_limbs(test.env.current_difficulty.0),
         prevrandao: test.env.current_random.map(|v| v.0.into()),
@@ -134,7 +138,7 @@ pub fn prepare_revm_for_tx<'state>(
 
     let tx_env = RevmTxEnv {
         caller: tx.sender.0.into(),
-        gas_limit: tx.gas_limit.as_u64(),
+        gas_limit: tx.gas_limit,
         gas_price: RevmU256::from_limbs(effective_gas_price(test, tx)?.0),
         transact_to: match tx.to {
             TxKind::Call(to) => RevmTxKind::Call(to.0.into()),
@@ -163,7 +167,7 @@ pub fn prepare_revm_for_tx<'state>(
         .with_block_env(block_env)
         .with_tx_env(tx_env)
         .modify_cfg_env(|cfg| cfg.chain_id = chain_spec.chain_id)
-        .with_spec_id(SpecId::CANCUN) //TODO: In the future replace cancun for the actual spec id
+        .with_spec_id(test.fork())
         .with_external_context(
             RevmTracerEip3155::new(Box::new(std::io::stderr())).without_summary(),
         );
@@ -271,9 +275,12 @@ pub fn ensure_post_state(
         Some(_expected_exception) => {}
         // We only want to compare account updates when no exception is expected.
         None => {
-            let (initial_state, _block_hash) = load_initial_state(test);
-            let levm_account_updates =
-                levm_runner::get_state_transitions(&initial_state, levm_execution_report);
+            let (initial_state, block_hash) = load_initial_state(test);
+            let levm_account_updates = levm_runner::get_state_transitions(
+                &initial_state,
+                block_hash,
+                levm_execution_report,
+            );
             let revm_account_updates = ethrex_vm::get_state_transitions(revm_state);
             let account_updates_report = compare_levm_revm_account_updates(
                 test,
@@ -303,13 +310,11 @@ pub fn compare_levm_revm_account_updates(
                 .storage
                 .iter()
                 .map(|(key, value)| {
-                    let mut temp = [0u8; 32];
-                    key.to_big_endian(&mut temp);
                     let storage_slot = StorageSlot {
                         original_value: *value,
                         current_value: *value,
                     };
-                    (H256::from_slice(&temp), storage_slot)
+                    (H256::from_slice(&key.to_big_endian()), storage_slot)
                 })
                 .collect();
             let account = Account::new(
@@ -355,13 +360,10 @@ pub fn compare_levm_revm_account_updates(
 }
 
 pub fn _run_ef_test_revm(test: &EFTest) -> Result<EFTestReport, EFTestRunnerError> {
-    dbg!(&test.name);
-    let mut ef_test_report = EFTestReport::new(
-        test.name.clone(),
-        test.dir.clone(),
-        test._info.generated_test_hash,
-        test.fork(),
-    );
+    let hash = test._info.generated_test_hash.or(test._info.hash).unwrap();
+
+    let mut ef_test_report =
+        EFTestReport::new(test.name.clone(), test.dir.clone(), hash, test.fork());
     for (vector, _tx) in test.transactions.iter() {
         match _run_ef_test_tx_revm(vector, test) {
             Ok(_) => continue,
@@ -389,6 +391,12 @@ pub fn _run_ef_test_revm(test: &EFTest) -> Result<EFTestReport, EFTestRunnerErro
             }
             Err(EFTestRunnerError::Internal(reason)) => {
                 return Err(EFTestRunnerError::Internal(reason));
+            }
+            Err(EFTestRunnerError::ExpectedExceptionDoesNotMatchReceived(_)) => {
+                return Err(EFTestRunnerError::Internal(InternalError::MainRunnerInternal(
+                    "The ExpectedExceptionDoesNotMatchReceived error should only happen when executing Levm, the errors matching is not implemented in Revm"
+                        .to_owned(),
+                )));
             }
         }
     }
@@ -418,8 +426,7 @@ pub fn _ensure_post_state_revm(
             match test.post.vector_post_value(vector).expect_exception {
                 // Execution result was successful but an exception was expected.
                 Some(expected_exception) => {
-                    let error_reason = format!("Expected exception: {expected_exception}");
-                    println!("Expected exception: {expected_exception}");
+                    let error_reason = format!("Expected exception: {expected_exception:?}");
                     return Err(EFTestRunnerError::FailedToEnsurePostState(
                         TransactionReport {
                             result: TxResult::Success,

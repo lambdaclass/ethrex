@@ -22,16 +22,16 @@ pub fn load_initial_state(test: &EFTest) -> (EvmState, H256) {
     )
 }
 
-pub fn spinner_update_text_or_print(spinner: &mut Spinner, text: String, no_spinner: bool) {
-    if no_spinner {
+pub fn spinner_update_text_or_print(spinner: &mut Spinner, text: String, spinner_enabled: bool) {
+    if !spinner_enabled {
         println!("{}", text);
     } else {
         spinner.update_text(text);
     }
 }
 
-pub fn spinner_success_or_print(spinner: &mut Spinner, text: String, no_spinner: bool) {
-    if no_spinner {
+pub fn spinner_success_or_print(spinner: &mut Spinner, text: String, spinner_enabled: bool) {
+    if !spinner_enabled {
         println!("{}", text);
     } else {
         spinner.success(&text);

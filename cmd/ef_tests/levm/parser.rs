@@ -20,12 +20,22 @@ pub enum EFTestParseError {
     FailedToParseTestFile(String),
 }
 
+const IGNORED_TESTS: [&str; 7] = [
+    "ValueOverflowParis.json",                 // Skip because of errors
+    "loopMul.json",                            // Skip because it takes too long to run
+    "dynamicAccountOverwriteEmpty_Paris.json", // Skip because it fails on REVM
+    "RevertInCreateInInitCreate2Paris.json", // Skip because it fails on REVM. See https://github.com/lambdaclass/ethrex/issues/1555
+    "RevertInCreateInInit_Paris.json", // Skip because it fails on REVM. See https://github.com/lambdaclass/ethrex/issues/1555
+    "create2collisionStorageParis.json", // Skip because it fails on REVM
+    "InitCollisionParis.json",         // Skip because it fails on REVM
+];
+
 pub fn parse_ef_tests(opts: &EFTestRunnerOptions) -> Result<Vec<EFTest>, EFTestParseError> {
     let parsing_time = std::time::Instant::now();
     let cargo_manifest_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let ef_general_state_tests_path = cargo_manifest_dir.join("vectors/GeneralStateTests");
+    let ef_general_state_tests_path = cargo_manifest_dir.join("vectors");
     let mut spinner = Spinner::new(Dots, "Parsing EF Tests".bold().to_string(), Color::Cyan);
-    if opts.disable_spinner {
+    if !opts.spinner {
         spinner.stop();
     }
     let mut tests = Vec::new();
@@ -41,14 +51,16 @@ pub fn parse_ef_tests(opts: &EFTestRunnerOptions) -> Result<Vec<EFTest>, EFTestP
         let directory_tests = parse_ef_test_dir(test_dir, opts, &mut spinner)?;
         tests.extend(directory_tests);
     }
+
     spinner_success_or_print(
         &mut spinner,
         format!(
             "Parsed EF Tests in {}",
             format_duration_as_mm_ss(parsing_time.elapsed())
         ),
-        opts.disable_spinner,
+        opts.spinner,
     );
+
     Ok(tests)
 }
 
@@ -60,7 +72,7 @@ pub fn parse_ef_test_dir(
     spinner_update_text_or_print(
         directory_parsing_spinner,
         format!("Parsing directory {:?}", test_dir.file_name()),
-        opts.disable_spinner,
+        opts.spinner,
     );
 
     let mut directory_tests = Vec::new();
@@ -87,11 +99,11 @@ pub fn parse_ef_test_dir(
         {
             continue;
         }
-        // Skip the ValueOverflowParis.json file because of errors, and loopMul.json because it takes too long to run.
+        // Skip ignored tests
         if test
             .path()
             .file_name()
-            .is_some_and(|name| name == "ValueOverflowParis.json" || name == "loopMul.json")
+            .is_some_and(|name| IGNORED_TESTS.contains(&name.to_str().unwrap_or("")))
         {
             continue;
         }
@@ -125,7 +137,7 @@ pub fn parse_ef_test_dir(
                     "Skipping test {:?} as it is in the folder of tests to skip",
                     test.path().file_name().unwrap()
                 ),
-                opts.disable_spinner,
+                opts.spinner,
             );
             continue;
         }
@@ -146,7 +158,7 @@ pub fn parse_ef_test_dir(
                     "Skipping test {:?} as it is in the list of tests to skip",
                     test.path().file_name().unwrap()
                 ),
-                opts.disable_spinner,
+                opts.spinner,
             );
             continue;
         }
