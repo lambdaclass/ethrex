@@ -28,7 +28,7 @@ jobs:
           path: "*-image.tar"
 
   run-hive:
-    name: Hive - ( $${{$ matrix.image }} feature set)
+    name: Hive - ( ${{ matrix.image }} feature set)
     runs-on: ubuntu-latest
     strategy:
       matrix:
