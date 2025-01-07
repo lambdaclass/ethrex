@@ -10,8 +10,25 @@ env:
   RUST_VERSION: 1.81.0
 
 jobs:
+  build-images:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build default image
+        run: docker build -t ethrex:default --build-arg BUILD_FLAGS="--features default" .
+      - name: Build levm image
+        run: docker build -t ethrex:levm --build-arg BUILD_FLAGS="--features levm" .
+      - name: Save images
+        run: |
+          docker save ethrex:default > default-image.tar
+          docker save ethrex:levm > levm-image.tar
+      - uses: actions/upload-artifact@v4
+        with:
+          name: docker-images
+          path: "*-image.tar"
+
   run-hive:
-    name: Hive - ${{ matrix.name }}
+    name: Hive - ( $${{$ matrix.image }} feature set)
     runs-on: ubuntu-latest
     strategy:
       matrix:
@@ -31,12 +48,12 @@ jobs:
             simulation: ethereum/sync
 
     steps:
-      - name: Checkout sources
-        uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: docker-images
 
-      - name: Build image
-        run: |
-          docker build -t ethrex --build-arg BUILD_FLAGS="--features ${{ matrix.image }}" .
+      - name: Load image for ethrex build ( ${{ matrix.image }} feature set )
+        run: docker load < ${{ matrix.image }}-image.tar
 
       - name: Setup Go
         uses: actions/setup-go@v5
