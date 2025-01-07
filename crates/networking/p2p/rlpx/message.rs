@@ -1,5 +1,6 @@
 use bytes::BufMut;
 use ethrex_rlp::error::{RLPDecodeError, RLPEncodeError};
+use tracing::warn;
 use std::fmt::Display;
 
 use super::eth::blocks::{BlockBodies, BlockHeaders, GetBlockBodies, GetBlockHeaders};
@@ -53,7 +54,12 @@ pub(crate) enum Message {
 impl Message {
     pub fn decode(msg_id: u8, msg_data: &[u8]) -> Result<Message, RLPDecodeError> {
         match msg_id {
-            0x00 => Ok(Message::Hello(HelloMessage::decode(msg_data)?)),
+            0x00 => {
+                let msg = HelloMessage::decode(msg_data);
+                if let Err(e) = &msg {
+                    warn!("Decode error in Hello Message: {e:?}");
+                }
+                Ok(Message::Hello(msg?))},
             0x01 => Ok(Message::Disconnect(DisconnectMessage::decode(msg_data)?)),
             0x02 => Ok(Message::Ping(PingMessage::decode(msg_data)?)),
             0x03 => Ok(Message::Pong(PongMessage::decode(msg_data)?)),
