@@ -29,6 +29,7 @@ jobs:
 
   run-hive:
     name: Hive - ( ${{ matrix.image }} feature set)
+    needs: build-images
     runs-on: ubuntu-latest
     strategy:
       matrix:
