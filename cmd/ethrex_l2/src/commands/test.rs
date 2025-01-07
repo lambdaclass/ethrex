@@ -1,9 +1,8 @@
-use crate::{commands::wallet::wait_for_transaction_receipt, config::EthrexL2Config};
+use crate::config::EthrexL2Config;
 use bytes::Bytes;
 use clap::Subcommand;
 use ethereum_types::{Address, H256, U256};
 use ethrex_blockchain::constants::TX_GAS_COST;
-use ethrex_core::H160;
 use ethrex_l2_sdk::{
     calldata::{self, Value},
     eth_client::{eth_sender::Overrides, EthClient},
@@ -14,7 +13,6 @@ use std::{
     fs::File,
     io::{self, BufRead},
     path::Path,
-    str::FromStr,
     thread::sleep,
 };
 
