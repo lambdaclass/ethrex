@@ -46,9 +46,6 @@ jobs:
           cargo install flamegraph
           cargo install inferno
 
-      - name: Install Foundry
-        uses: foundry-rs/foundry-toolchain@v1
-
       - name: Install ethrex_l2 cli
         run: |
           cargo install --path cmd/ethrex_l2
@@ -111,9 +108,6 @@ jobs:
         run: |
           cargo install flamegraph
           cargo install inferno
-
-      - name: Install Foundry
-        uses: foundry-rs/foundry-toolchain@v1
 
       - name: Install ethrex_l2 cli
         run: |
