@@ -17,14 +17,14 @@ jobs:
         features: ["default", "levm"]
     steps:
       - uses: actions/checkout@v4
-      - name: Build ethrex image with features ${{ matrix.featuers }}
+      - name: Build ethrex image with features ${{ matrix.features }}
         run: docker build -t ethrex:${{ matrix.features }} --build-arg BUILD_FLAGS="--features ${{ matrix.features }}" .
       - name: Save image
         run: |
           docker save ethrex:${{ matrix.features }} > ${{ matrix.features }}-image.tar
       - uses: actions/upload-artifact@v4
         with:
-          name: ethrex-image-${{matrix.features}}
+          name: ethrex-image-${{ matrix.features }}
           path: "${{ matrix.features }}-image.tar"
 
   run-hive:
@@ -51,7 +51,8 @@ jobs:
     steps:
       - uses: actions/download-artifact@v4
         with:
-          name: ${{ matrix.image }}-image.tar
+          name: ethrex-image-${{ matrix.image }}
+          path: .
 
       - name: Checkout sources
         uses: actions/checkout@v4
