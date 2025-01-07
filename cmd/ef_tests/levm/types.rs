@@ -220,6 +220,7 @@ pub enum TransactionExpectedException {
     Type3TxZeroBlobs,
     Type3TxContractCreation,
     Type3TxInvalidBlobVersionedHash,
+    Type4TxContractCreation,
     IntrinsicGasTooLow,
     InsufficientAccountFunds,
     SenderNotEoa,

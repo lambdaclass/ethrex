@@ -242,7 +242,7 @@ fn re_run_with_revm(
 
                     let failed_hash = failed_test_report.test_hash;
 
-                    hash == failed_hash
+                    hash == failed_hash && test.name == failed_test_report.name
                 })
                 .unwrap(),
             failed_test_report,
