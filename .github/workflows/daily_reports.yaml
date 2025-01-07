@@ -20,8 +20,9 @@ jobs:
       - name: Build ethrex image with features ${{ matrix.features }}
         run: docker build -t ethrex:${{ matrix.features }} --build-arg BUILD_FLAGS="--features ${{ matrix.features }}" .
       - name: Save image
+        # docker save ethrex:${{ matrix.features }} > ${{ matrix.features }}-image.tar
         run: |
-          docker save ethrex:${{ matrix.features }} > ${{ matrix.features }}-image.tar
+          touch ${{ matrix.features }}-image.tar
       - uses: actions/upload-artifact@v4
         with:
           name: ethrex-image-${{ matrix.features }}
@@ -54,11 +55,14 @@ jobs:
           name: ethrex-image-${{ matrix.image }}
           path: images
 
+      - name: Debug images folder
+        run: echo $(ls images)
+
       - name: Checkout sources
         uses: actions/checkout@v4
 
       - name: Load image for ethrex build (${{ matrix.image }} feature set)
-        run: docker load < images/${{ matrix.image }}-image.tar
+        run: docker load < images/ethrex-image-${{matrix.image}}
 
       - name: Setup Go
         uses: actions/setup-go@v5
