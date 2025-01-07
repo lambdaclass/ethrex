@@ -2798,6 +2798,7 @@ dependencies = [
  "ethrex-blockchain",
  "ethrex-core",
  "ethrex-dev",
+ "ethrex-metrics",
  "ethrex-rlp",
  "ethrex-rpc",
  "ethrex-sdk",

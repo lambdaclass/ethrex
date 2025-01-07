@@ -1,0 +1,20 @@
+apiVersion: 1
+
+providers:
+  - name: "Ethrex Common Dashboards"
+    orgId: 1
+    folder: ""
+    type: file
+    disableDeletion: true
+    editable: true
+    options:
+      path: /etc/grafana/provisioning/dashboards/common_dashboards
+
+  - name: "EthrexL2 Dashboards"
+    orgId: 1
+    folder: ""
+    type: file
+    disableDeletion: true
+    editable: true
+    options:
+      path: /etc/grafana/provisioning/dashboards/l2_dashboards
