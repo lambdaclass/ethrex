@@ -114,7 +114,6 @@ We'll run flamegraph or Samply over the VM to identify bottlenecks and improve t
 
 The acceptance criteria for this milestone is that:
 
-- We have a GitHub workflow that posts the benchmarks results as a comment in every PR that includes changes in `levm`.
 - We have a GitHub workflow that posts the benchmarks results comparison between the PR and the main branch in every PR that includes changes in `levm`.
 - We have a GitHub workflow that generates a flamegraph over `levm` and `revm` and post the results in GitHub Pages.
 - We add a table in the README comparing the benchmark results between multiple EVM implementations similar to the one in https://github.com/ziyadedher/evm-bench.
