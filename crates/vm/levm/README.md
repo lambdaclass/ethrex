@@ -94,7 +94,7 @@ Once we support all the forks from Merge to Cancun and we have fully integrated 
 
 For this milestone we'll have to refactor the code to support custom builds of the VM. A user should be able to build an instance of the VM modifying or adding new behavior to the VM. We'll call this "hooks" and `ethrex L2` will plug custom hooks to the VM so it can support the current `ethrex L2`'s Privilege transactions and other features.
 
-We'll also have to refactor (and probably re-write) some precompiles implementation to enable the Risc-V zkVM backend to successfully prove `levm`'s execution. We need to ensure that the crates used in LEVM are compatible with these. For instance, most of the precompiles will need to be re-written using patched libraries instead of the ones they currently use.
+We'll also have to refactor (and probably re-write) some precompiles implementation to enable the RISC-V zkVM backend to successfully prove `levm`'s execution. We need to ensure that the crates used in LEVM are compatible with these. For instance, most of the precompiles will need to be re-written using patched libraries instead of the ones they currently use.
 
 The acceptance criteria for this milestone is that:
 
