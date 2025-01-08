@@ -15,8 +15,8 @@ use super::{
     utils::{pubkey2id, snappy_compress},
 };
 
-#[derive(Debug, Clone, PartialEq)]
-pub(crate) enum Capability {
+#[derive(Debug, Clone, PartialEq, Copy)]
+pub enum Capability {
     P2p,
     Eth,
     Snap,
