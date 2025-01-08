@@ -97,6 +97,7 @@ impl EthClient {
         let mut encode = vec![];
         (deployer, nonce).encode(&mut encode);
 
+        //Taking the last 20bytes so it matches an H160 == Address length
         let deployed_address =
             Address::from_slice(keccak(encode).as_fixed_bytes().get(12..).ok_or(
                 EthClientError::Custom("Failed to get deployed_address".to_owned()),
