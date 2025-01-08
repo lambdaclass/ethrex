@@ -18,6 +18,107 @@ Implementation of a simple Ethereum Virtual Machine in Rust.
 | Homestead      | ✅     |
 | Frontier       | ✅     |
 
+## Roadmap
+
+| Nº  | Milestone                       | Status |
+| --- | ------------------------------- | ------ |
+| 1   | Support Merge->Cancun forks     | ✅     |
+| 2   | Integrate `ethrex L1` <> `levm` | 🏗️     |
+| 3   | Support pre Merge forks         | 🏗️     |
+| 4   | Support Pectra upgrade          | 🏗️     |
+| 5   | Integrate `ethrex L2` <> `levm` | ❌     |
+| 6   | Performance                     | 🏗️     |
+
+### Milestone 1: Support Merge->Cancun forks
+
+This is having the minimum implementation so all the Ethereum Foundation tests from the fork Merge (Paris) to Cancun pass.
+
+The acceptance criteria for this milestone is that:
+
+- All the Cancun tests pass.
+- All the Shanghai tests pass.
+- All the Merge tests pass.
+
+### Milestone 2: Integrate `ethrex L1` <> `levm`
+
+Once we support all the forks from Merge to Cancun, we will integrate `ethrex L1` with `levm`.
+
+Nowadays `ethrex L1` uses `revm` as the backend VM. We will replace `revm` with `levm` and make sure all the tests pass.
+
+The acceptance criteria for this milestone is that:
+
+- All the Hive tests that pass with `revm` also pass with `levm`.
+- We have an insurance that if `levm` some time diverges from `revm`'s behavior, we will know it. And in such case, switching to `revm` while we fix the issue is easy.
+- The feature flag `levm` is used as the default backend VM for `ethrex L1`.
+- We have a `EVM` trait or similar to standardize the VM interface. This trait should be implemented by `levm` and `revm`.
+
+### Milestone 3: Support pre Merge forks
+
+This is extending our current implementation so we support all the forks from Frontier to Merge.
+
+The acceptance criteria for this milestone is that:
+
+- All the London EF tests pass.
+- All the Berlin EF tests pass.
+- All the Istanbul EF tests pass.
+- All the Constantinople EF tests pass.
+- All the Byzantium EF tests pass.
+- All the Homestead EF tests pass.
+- All the Frontier EF tests pass.
+
+### Milestone 4: Support Pectra upgrade
+
+> [!NOTE]
+> This milestone can be started after we finish the milestone 1, and can be done in parallel with milestones 2, 3, and 5 (speaking in terms of the current priorities).
+
+This is extending our current implementation so we support the [Pectra upgrade](https://eips.ethereum.org/EIPS/eip-7600).
+
+There are a lot of EIPs schedule to include in this upgrade but for `levm` we'll only focus on:
+
+- EIP-2537: Precompile for BLS12-381 curve operations
+- EIP-2935: Save historical block hashes in state
+- EIP-7623: Increase calldata cost
+- EIP-7702: Set EOA account code
+
+The acceptance criteria for this milestone is that:
+
+- All the EIPs mentioned above are implemented.
+- All the Prague EF tests pass.
+
+### Milestone 5: Integrate `ethrex L2` <> `levm`
+
+> [!NOTE]
+> This milestone can be started after we finish the milestone 2, and can be done in parallel with the milestones 3, and 4. It is placed at this point in the roadmap because of the current priorities.
+
+Once we support all the forks from Merge to Cancun and we have fully integrated `ethrex L1` with `levm`, we can start integrating with `ethrex L2`.
+
+For this milestone we'll have to refactor the code to support custom builds of the VM. A user should be able to build an instance of the VM modifying or adding new behavior to the VM. We'll call this "hooks" and `ethrex L2` will plug custom hooks to the VM so it can support the current `ethrex L2`'s Privilege transactions and other features.
+
+We'll also have to refactor (and probably re-write) some precompiles implementation to enable the RISC-V zkVM backend to successfully prove `levm`'s execution. We need to ensure that the crates used in LEVM are compatible with these. For instance, most of the precompiles will need to be re-written using patched libraries instead of the ones they currently use.
+
+The acceptance criteria for this milestone is that:
+
+- This does not add breaking changes to the current implementation.
+- The feature flag `levm` is used as the default backend VM for `ethrex L2`.
+- The L2 integration test pass.
+- The prover tests pass.
+
+### Milestone 6: Performance
+
+> [!NOTE]
+> This milestone can be started after we finish the milestone 1, and can be done in parallel with the milestones 2, 3, 4, and 5. It is placed at this point in the roadmap because of the current priorities.
+
+This is improving the performance of the VM.
+
+We'll run flamegraph or Samply over the VM to identify bottlenecks and improve the performance of the VM. We'll also extend the current benchmarks suite to include more complex contracts and compare the performance not only of `levm` with `revm` but also with other known EVM implementations (like `evmone`).
+
+The acceptance criteria for this milestone is that:
+
+- We have a GitHub workflow that posts the benchmarks results comparison between the PR and the main branch in every PR that includes changes in `levm`.
+- We have a GitHub workflow that generates a flamegraph over `levm` and `revm` and post the results in GitHub Pages.
+- We add a table in the README comparing the benchmark results between multiple EVM implementations similar to the one in https://github.com/ziyadedher/evm-bench.
+- All the identified bottlenecks are fixed.
+
 ## Ethereum Foundation Tests (EF Tests)
 
 ### Status
