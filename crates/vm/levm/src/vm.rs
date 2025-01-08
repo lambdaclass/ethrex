@@ -540,9 +540,7 @@ impl VM {
         matches!(self.tx_kind, TxKind::Create)
     }
 
-    fn add_intrinsic_gas(&mut self, initial_call_frame: &mut CallFrame) -> Result<(), VMError> {
-        // Intrinsic gas is the gas consumed by the transaction before the execution of the opcodes. Section 6.2 in the Yellow Paper.
-
+    fn get_intrinsic_gas(&self, initial_call_frame: &CallFrame) -> Result<u64, VMError> {
         // Intrinsic Gas = Calldata cost + Create cost + Base cost + Access list cost
         let mut intrinsic_gas: u64 = 0;
 
@@ -595,6 +593,14 @@ impl VM {
             .checked_add(access_lists_cost)
             .ok_or(OutOfGasError::ConsumedGasOverflow)?;
 
+        Ok(intrinsic_gas)
+    }
+
+    fn add_intrinsic_gas(&mut self, initial_call_frame: &mut CallFrame) -> Result<(), VMError> {
+        // Intrinsic gas is the gas consumed by the transaction before the execution of the opcodes. Section 6.2 in the Yellow Paper.
+
+        let intrinsic_gas = self.get_intrinsic_gas(initial_call_frame)?;
+
         self.increase_consumed_gas(initial_call_frame, intrinsic_gas)
             .map_err(|_| TxValidationError::IntrinsicGasTooLow)?;
 
@@ -605,7 +611,7 @@ impl VM {
         if self.env.spec_id >= SpecId::PRAGUE {
             let gas_without_base_cost: u64 = current_call_frame
                 .gas_used
-                .checked_sub(TX_BASE_COST)
+                .checked_sub(TX_BASE_COST) // to calculate the floor it has to be without the tx base cost
                 .ok_or(VMError::Internal(
                     InternalError::ArithmeticOperationUnderflow,
                 ))?;
@@ -619,6 +625,7 @@ impl VM {
                 .checked_mul(TOTAL_COST_FLOOR_PER_TOKEN)
                 .ok_or(VMError::Internal(InternalError::GasOverflow))?;
 
+            // restore the tx base cost
             let gas_used = max(floor_gas_price, gas_without_base_cost)
                 .checked_add(TX_BASE_COST)
                 .ok_or(VMError::Internal(InternalError::GasOverflow))?;
@@ -699,61 +706,20 @@ impl VM {
         let sender_address = self.env.origin;
         let sender_account = self.get_account(sender_address);
 
+        //
         if self.env.spec_id >= SpecId::PRAGUE {
-            let calldata_cost =
+            let intrinsic_gas: u64 = self.get_intrinsic_gas(initial_call_frame)?;
+
+            // calldata_cost = tokens_in_calldata * 4
+            let calldata_cost: u64 =
                 gas_cost::tx_calldata(&initial_call_frame.calldata).map_err(VMError::OutOfGas)?;
 
-            // Intrinsic Gas = Calldata cost + Create cost + Base cost + Access list cost
-            let mut intrinsic_gas: u64 = 0;
-
-            // Base Cost
-            intrinsic_gas = intrinsic_gas
-                .checked_add(TX_BASE_COST)
-                .ok_or(OutOfGasError::ConsumedGasOverflow)?;
-
-            intrinsic_gas = intrinsic_gas
-                .checked_add(calldata_cost)
-                .ok_or(OutOfGasError::ConsumedGasOverflow)?;
-
-            // Create Cost
-            if self.is_create() {
-                intrinsic_gas = intrinsic_gas
-                    .checked_add(CREATE_BASE_COST)
-                    .ok_or(OutOfGasError::ConsumedGasOverflow)?;
-
-                let number_of_words = initial_call_frame.calldata.len().div_ceil(WORD_SIZE);
-                let double_number_of_words: u64 = number_of_words
-                    .checked_mul(2)
-                    .ok_or(OutOfGasError::ConsumedGasOverflow)?
-                    .try_into()
-                    .map_err(|_| VMError::Internal(InternalError::ConversionError))?;
-
-                intrinsic_gas = intrinsic_gas
-                    .checked_add(double_number_of_words)
-                    .ok_or(OutOfGasError::ConsumedGasOverflow)?;
-            }
-
-            // Access List Cost
-            let mut access_lists_cost: u64 = 0;
-            for (_, keys) in self.access_list.clone() {
-                access_lists_cost = access_lists_cost
-                    .checked_add(ACCESS_LIST_ADDRESS_COST)
-                    .ok_or(OutOfGasError::ConsumedGasOverflow)?;
-                for _ in keys {
-                    access_lists_cost = access_lists_cost
-                        .checked_add(ACCESS_LIST_STORAGE_KEY_COST)
-                        .ok_or(OutOfGasError::ConsumedGasOverflow)?;
-                }
-            }
-
-            intrinsic_gas = intrinsic_gas
-                .checked_add(access_lists_cost)
-                .ok_or(OutOfGasError::ConsumedGasOverflow)?;
+            let tokens_in_calldata: u64 = calldata_cost
+                .checked_div(4) // tokens_in_calldata
+                .ok_or(VMError::Internal(InternalError::DivisionError))?;
 
             // floor_cost_by_tokens = 21000 + TOTAL_COST_FLOOR_PER_TOKEN * tokens_in_calldata
-            let floor_cost_by_tokens = calldata_cost
-                .checked_div(4) // tokens_in_calldata
-                .ok_or(VMError::Internal(InternalError::DivisionError))?
+            let floor_cost_by_tokens = tokens_in_calldata
                 .checked_mul(TOTAL_COST_FLOOR_PER_TOKEN)
                 .ok_or(VMError::Internal(InternalError::GasOverflow))?
                 .checked_add(TX_BASE_COST)
@@ -767,6 +733,7 @@ impl VM {
                 ));
             }
         }
+
         // (1) GASLIMIT_PRICE_PRODUCT_OVERFLOW
         let gaslimit_price_product = self
             .env
