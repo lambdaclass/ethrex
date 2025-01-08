@@ -31,4 +31,106 @@ impl RpcHandler for MaxPriorityFee {
 }
 
 #[cfg(test)]
-mod tests {}
+mod tests {
+    use super::MaxPriorityFee;
+    use crate::eth::test_utils::{
+        add_eip1559_tx_blocks, add_legacy_tx_blocks, add_mixed_tx_blocks, setup_store,
+        BASE_PRICE_IN_WEI,
+    };
+
+    use crate::{
+        map_http_requests,
+        utils::{parse_json_hex, test_utils::example_p2p_node, RpcRequest},
+        RpcApiContext, RpcHandler,
+    };
+    use ethrex_net::{sync::SyncManager, types::Node};
+    use serde_json::{json, Value};
+    use std::{net::Ipv4Addr, sync::Arc};
+    use tokio::sync::Mutex;
+
+    fn default_context() -> RpcApiContext {
+        RpcApiContext {
+            storage: setup_store(),
+            jwt_secret: Default::default(),
+            local_p2p_node: Node {
+                ip: std::net::IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)),
+                udp_port: Default::default(),
+                tcp_port: Default::default(),
+                node_id: Default::default(),
+            },
+            active_filters: Default::default(),
+            syncer: Arc::new(Mutex::new(SyncManager::dummy())),
+        }
+    }
+
+    #[test]
+    fn test_for_legacy_txs() {
+        let context = default_context();
+
+        add_legacy_tx_blocks(&context.storage, 100, 10);
+
+        let gas_price = MaxPriorityFee {};
+        let response = gas_price.handle(context).unwrap();
+        let parsed_result = parse_json_hex(&response).unwrap();
+        assert_eq!(parsed_result, BASE_PRICE_IN_WEI);
+    }
+
+    #[test]
+    fn test_for_eip_1559_txs() {
+        let context = default_context();
+
+        add_eip1559_tx_blocks(&context.storage, 100, 10);
+
+        let gas_price = MaxPriorityFee {};
+        let response = gas_price.handle(context).unwrap();
+        let parsed_result = parse_json_hex(&response).unwrap();
+        assert_eq!(parsed_result, BASE_PRICE_IN_WEI);
+    }
+    #[test]
+    fn test_with_mixed_transactions() {
+        let context = default_context();
+
+        add_mixed_tx_blocks(&context.storage, 100, 10);
+
+        let gas_price = MaxPriorityFee {};
+        let response = gas_price.handle(context).unwrap();
+        let parsed_result = parse_json_hex(&response).unwrap();
+        assert_eq!(parsed_result, BASE_PRICE_IN_WEI);
+    }
+    #[test]
+    fn test_with_not_enough_blocks_or_transactions() {
+        let context = default_context();
+
+        add_mixed_tx_blocks(&context.storage, 100, 0);
+
+        let gas_price = MaxPriorityFee {};
+        let response = gas_price.handle(context).unwrap();
+        assert_eq!(response, Value::Null);
+    }
+    #[test]
+    fn test_with_no_blocks_but_genesis() {
+        let context = default_context();
+        let gas_price = MaxPriorityFee {};
+
+        let response = gas_price.handle(context).unwrap();
+        assert_eq!(response, Value::Null);
+    }
+    #[test]
+    fn request_smoke_test() {
+        let raw_json = json!(
+        {
+            "jsonrpc":"2.0",
+            "method":"eth_maxPriorityFeePerGas",
+            "id":1
+        });
+        let expected_response = json!("0x3b9aca00");
+        let request: RpcRequest = serde_json::from_value(raw_json).expect("Test json is not valid");
+        let mut context = default_context();
+        context.local_p2p_node = example_p2p_node();
+
+        add_eip1559_tx_blocks(&context.storage, 100, 3);
+
+        let response = map_http_requests(&request, context).unwrap();
+        assert_eq!(response, expected_response)
+    }
+}

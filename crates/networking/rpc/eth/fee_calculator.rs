@@ -77,3 +77,44 @@ pub fn estimate_gas_tip(storage: &Store) -> Result<Option<u64>, RpcErr> {
         Some(gas) => Ok(Some(*gas)),
     }
 }
+
+// Tests for the estimate_gas_tip function.
+#[cfg(test)]
+mod tests {
+    use crate::eth::fee_calculator::estimate_gas_tip;
+    use crate::eth::test_utils::{
+        add_eip1559_tx_blocks, add_legacy_tx_blocks, add_mixed_tx_blocks, setup_store,
+        BASE_PRICE_IN_WEI,
+    };
+
+    #[test]
+    fn test_for_legacy_txs() {
+        let storage = setup_store();
+        add_legacy_tx_blocks(&storage, 20, 10);
+        let gas_tip = estimate_gas_tip(&storage).unwrap().unwrap();
+        assert_eq!(gas_tip, BASE_PRICE_IN_WEI);
+    }
+
+    #[test]
+    fn test_for_eip1559_txs() {
+        let storage = setup_store();
+        add_eip1559_tx_blocks(&storage, 20, 10);
+        let gas_tip = estimate_gas_tip(&storage).unwrap().unwrap();
+        assert_eq!(gas_tip, BASE_PRICE_IN_WEI);
+    }
+
+    #[test]
+    fn test_for_mixed_txs() {
+        let storage = setup_store();
+        add_mixed_tx_blocks(&storage, 20, 10);
+        let gas_tip = estimate_gas_tip(&storage).unwrap().unwrap();
+        assert_eq!(gas_tip, BASE_PRICE_IN_WEI);
+    }
+
+    #[test]
+    fn test_for_empty_blocks() {
+        let storage = setup_store();
+        let gas_tip = estimate_gas_tip(&storage).unwrap();
+        assert_eq!(gas_tip, None);
+    }
+}
