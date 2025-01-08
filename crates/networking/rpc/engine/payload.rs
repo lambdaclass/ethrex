@@ -4,7 +4,7 @@ use ethrex_blockchain::payload::build_payload;
 use ethrex_core::types::{BlobsBundle, Block, Fork};
 use ethrex_core::{H256, U256};
 use serde_json::Value;
-use tracing::{error, info, warn};
+use tracing::{debug, error, info, warn};
 
 use crate::types::payload::{ExecutionPayload, ExecutionPayloadResponse, PayloadStatus};
 use crate::utils::RpcRequest;
