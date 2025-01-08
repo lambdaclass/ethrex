@@ -1,5 +1,3 @@
-// Use fee_calculator mod in crates/networking/rpc/eth/ as gas_price
-
 use std::cmp::max;
 
 use crate::eth::fee_calculator::estimate_gas_tip;
