@@ -254,7 +254,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
                 ))
             }
             Message::Disconnect(disconnect) => {
-                return Err(RLPxError::HandshakeError(format!(
+                Err(RLPxError::HandshakeError(format!(
                     "Peer disconnected due to: {}",
                     disconnect.reason()
                 )))
