@@ -3,7 +3,7 @@ use std::str::FromStr;
 use ethrex_net::bootnode::BootNode;
 use lazy_static::lazy_static;
 
-pub const HOLESKY_GENESIS_PATH: &str = "cmd/ethrex/genesis_holesky.json";
+pub const HOLESKY_GENESIS_PATH: &str = "cmd/ethrex/networks/holesky/genesis.json";
 
 lazy_static! {
     pub static ref HOLESKY_NODES: Vec<BootNode> = vec![
