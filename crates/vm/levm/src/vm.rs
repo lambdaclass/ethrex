@@ -13,7 +13,7 @@ use crate::{
     },
     gas_cost::{
         self, fake_exponential, ACCESS_LIST_ADDRESS_COST, ACCESS_LIST_STORAGE_KEY_COST,
-        BLOB_GAS_PER_BLOB, CODE_DEPOSIT_COST, CREATE_BASE_COST,
+        BLOB_GAS_PER_BLOB, CODE_DEPOSIT_COST, CREATE_BASE_COST, TOTAL_COST_FLOOR_PER_TOKEN,
     },
     opcodes::Opcode,
     precompiles::{execute_precompile, is_precompile},
@@ -27,6 +27,7 @@ use keccak_hash::keccak;
 use revm_primitives::SpecId;
 use sha3::{Digest, Keccak256};
 use std::{
+    cmp::max,
     collections::{HashMap, HashSet},
     sync::Arc,
 };
@@ -263,7 +264,7 @@ impl VM {
                     return Ok(TransactionReport {
                         result: TxResult::Success,
                         new_state: self.cache.clone(),
-                        gas_used: current_call_frame.gas_used,
+                        gas_used: self.gas_used(current_call_frame)?,
                         gas_refunded: 0,
                         output,
                         logs: current_call_frame.logs.clone(),
@@ -465,7 +466,7 @@ impl VM {
                                 return Ok(TransactionReport {
                                     result: TxResult::Revert(error),
                                     new_state: self.cache.clone(),
-                                    gas_used: current_call_frame.gas_used,
+                                    gas_used: self.gas_used(current_call_frame)?,
                                     gas_refunded: self.env.refunded_gas,
                                     output: current_call_frame.output.clone(),
                                     logs: current_call_frame.logs.clone(),
@@ -478,7 +479,7 @@ impl VM {
                     return Ok(TransactionReport {
                         result: TxResult::Success,
                         new_state: self.cache.clone(),
-                        gas_used: current_call_frame.gas_used,
+                        gas_used: self.gas_used(current_call_frame)?,
                         gas_refunded: self.env.refunded_gas,
                         output: current_call_frame.output.clone(),
                         logs: current_call_frame.logs.clone(),
@@ -511,7 +512,7 @@ impl VM {
                     return Ok(TransactionReport {
                         result: TxResult::Revert(error),
                         new_state: self.cache.clone(),
-                        gas_used: current_call_frame.gas_used,
+                        gas_used: self.gas_used(current_call_frame)?,
                         gas_refunded: self.env.refunded_gas,
                         output: current_call_frame.output.clone(), // Bytes::new() if error is not RevertOpcode
                         logs: current_call_frame.logs.clone(),
@@ -600,6 +601,24 @@ impl VM {
         Ok(())
     }
 
+    fn gas_used(&self, current_call_frame: &mut CallFrame) -> Result<u64, VMError> {
+        if self.env.spec_id >= SpecId::PRAGUE {
+            let gas_without_base_cost = current_call_frame.gas_used - TX_BASE_COST;
+
+            // Calldata Cost
+            // 4 gas for each zero byte in the transaction data 16 gas for each non-zero byte in the transaction.
+            let calldata_cost =
+                gas_cost::tx_calldata(&current_call_frame.calldata).map_err(VMError::OutOfGas)?;
+
+            let floor_gas_price = (calldata_cost / 4) * TOTAL_COST_FLOOR_PER_TOKEN;
+
+            let gas_used = max(floor_gas_price, gas_without_base_cost) + TX_BASE_COST;
+            Ok(gas_used)
+        } else {
+            Ok(current_call_frame.gas_used)
+        }
+    }
+
     /// Gets the max blob gas cost for a transaction that a user is willing to pay.
     fn get_max_blob_gas_price(&self) -> Result<U256, VMError> {
         let blobhash_amount: u64 = self
@@ -671,14 +690,74 @@ impl VM {
         let sender_address = self.env.origin;
         let sender_account = self.get_account(sender_address);
 
+        if self.env.spec_id >= SpecId::PRAGUE {
+            let calldata_cost =
+                gas_cost::tx_calldata(&initial_call_frame.calldata).map_err(VMError::OutOfGas)?;
+
+            // Intrinsic Gas = Calldata cost + Create cost + Base cost + Access list cost
+            let mut intrinsic_gas: u64 = 0;
+
+            // Base Cost
+            intrinsic_gas = intrinsic_gas
+                .checked_add(TX_BASE_COST)
+                .ok_or(OutOfGasError::ConsumedGasOverflow)?;
+
+            intrinsic_gas = intrinsic_gas
+                .checked_add(calldata_cost)
+                .ok_or(OutOfGasError::ConsumedGasOverflow)?;
+
+            // Create Cost
+            if self.is_create() {
+                intrinsic_gas = intrinsic_gas
+                    .checked_add(CREATE_BASE_COST)
+                    .ok_or(OutOfGasError::ConsumedGasOverflow)?;
+
+                let number_of_words = initial_call_frame.calldata.len().div_ceil(WORD_SIZE);
+                let double_number_of_words: u64 = number_of_words
+                    .checked_mul(2)
+                    .ok_or(OutOfGasError::ConsumedGasOverflow)?
+                    .try_into()
+                    .map_err(|_| VMError::Internal(InternalError::ConversionError))?;
+
+                intrinsic_gas = intrinsic_gas
+                    .checked_add(double_number_of_words)
+                    .ok_or(OutOfGasError::ConsumedGasOverflow)?;
+            }
+
+            // Access List Cost
+            let mut access_lists_cost: u64 = 0;
+            for (_, keys) in self.access_list.clone() {
+                access_lists_cost = access_lists_cost
+                    .checked_add(ACCESS_LIST_ADDRESS_COST)
+                    .ok_or(OutOfGasError::ConsumedGasOverflow)?;
+                for _ in keys {
+                    access_lists_cost = access_lists_cost
+                        .checked_add(ACCESS_LIST_STORAGE_KEY_COST)
+                        .ok_or(OutOfGasError::ConsumedGasOverflow)?;
+                }
+            }
+
+            intrinsic_gas = intrinsic_gas
+                .checked_add(access_lists_cost)
+                .ok_or(OutOfGasError::ConsumedGasOverflow)?;
+
+            let min_gas_limit = max(
+                intrinsic_gas,
+                ((calldata_cost / 4) * TOTAL_COST_FLOOR_PER_TOKEN) + 21000,
+            );
+
+            if initial_call_frame.gas_limit < min_gas_limit {
+                return Err(VMError::TxValidation(
+                    TxValidationError::GasAllowanceExceeded,
+                ));
+            }
+        }
         // (1) GASLIMIT_PRICE_PRODUCT_OVERFLOW
         let gaslimit_price_product = self
             .env
             .gas_price
             .checked_mul(self.env.gas_limit.into())
-            .ok_or(VMError::TxValidation(
-                TxValidationError::GasLimitPriceProductOverflow,
-            ))?;
+            .ok_or(VMError::TxValidation(TxValidationError::GasLimitTooLow))?;
 
         // Up front cost is the maximum amount of wei that a user is willing to pay for. Gaslimit * gasprice + value + blob_gas_cost
         let value = initial_call_frame.msg_value;

@@ -169,6 +169,9 @@ pub const ACCESS_LIST_ADDRESS_COST: u64 = 2400;
 // Precompile costs
 pub const ECRECOVER_COST: u64 = 3000;
 
+// Floor price gas used
+pub const TOTAL_COST_FLOOR_PER_TOKEN: u64 = 10;
+
 pub const SHA2_256_STATIC_COST: u64 = 60;
 pub const SHA2_256_DYNAMIC_BASE: u64 = 12;
 
