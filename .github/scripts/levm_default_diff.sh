@@ -1,5 +1,8 @@
 #!/bin/bash
 
+# Exit on error, undefined vars, and pipe failures
+set -euo pipefail
+
 if [ "$#" -ne 2 ]; then
     echo "Usage: $0 <default_file> <levm_file>"
     exit 1
@@ -7,6 +10,17 @@ fi
 
 default_file=$1
 levm_file=$2
+
+# Check if files exist
+if [ ! -f "$default_file" ]; then
+    echo "Error: Default file '$default_file' not found"
+    exit 1
+fi
+
+if [ ! -f "$levm_file" ]; then
+    echo "Error: LEVM file '$levm_file' not found"
+    exit 1
+fi
 
 # Function to extract test results
 parse_results() {
@@ -26,10 +40,9 @@ levm_results=$(parse_results "$levm_file")
 
 found_differences=false
 
-# Compare results
-while IFS='|' read -r name default_passed default_total default_percentage; do
+echo "$default_results" | while IFS='|' read -r name default_passed default_total default_percentage; do
     if [ -n "$name" ]; then
-        levm_line=$(echo "$levm_results" | grep "^$name|")
+        levm_line=$(echo "$levm_results" | grep "^$name|" || true)
         if [ -n "$levm_line" ]; then
             levm_passed=$(echo "$levm_line" | cut -d'|' -f2)
             levm_total=$(echo "$levm_line" | cut -d'|' -f3)
@@ -54,7 +67,7 @@ while IFS='|' read -r name default_passed default_total default_percentage; do
             echo "• *$name*: Test present in default but missing in LEVM"
         fi
     fi
-done <<< "$default_results"
+done || true
 
 if [ "$found_differences" = false ]; then
     echo "No regressions found between default and LEVM implementations! :white_check_mark:"
