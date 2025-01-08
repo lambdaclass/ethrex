@@ -150,3 +150,11 @@ pub enum StateDiffError {
     #[error("The length of the vector is too big to fit in u16: {0}")]
     LengthTooBig(#[from] core::num::TryFromIntError),
 }
+
+#[derive(Debug, thiserror::Error)]
+pub enum MetricsGathererError {
+    #[error("MetricsGathererError: {0}")]
+    MetricsError(#[from] ethrex_metrics::MetricsError),
+    #[error("MetricsGatherer failed because of an EthClient error: {0}")]
+    EthClientError(#[from] EthClientError),
+}

@@ -233,7 +233,17 @@ fn re_run_with_revm(
         match revm_runner::re_run_failed_ef_test(
             ef_tests
                 .iter()
-                .find(|test| test._info.generated_test_hash == failed_test_report.test_hash)
+                .find(|test|  {
+                    let hash = test
+                        ._info
+                        .generated_test_hash
+                        .or(test._info.hash)
+                        .unwrap();
+
+                    let failed_hash = failed_test_report.test_hash;
+
+                    hash == failed_hash && test.name == failed_test_report.name
+                })
                 .unwrap(),
             failed_test_report,
         ) {

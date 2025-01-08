@@ -167,7 +167,11 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
                     )
                     .await;
             };
-            table.lock().await.set_channels(node_id, peer_channels);
+            let capabilities = self.capabilities.iter().map(|(cap, _)| *cap).collect();
+            table
+                .lock()
+                .await
+                .init_backend_communication(node_id, peer_channels, capabilities);
             if let Err(e) = self.handle_peer_conn(sender, receiver).await {
                 self.peer_conn_failed("Error during RLPx connection", e, table)
                     .await;
@@ -185,13 +189,13 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
             reason: self.match_disconnect_reason(&error),
         }))
         .await
-        .unwrap_or_else(|e| debug!("Could not send Disconnect message: ({e})"));
+        .unwrap_or_else(|e| error!("Could not send Disconnect message: ({e})."));
         if let Ok(node_id) = self.get_remote_node_id() {
             // Discard peer from kademlia table
-            debug!("{error_text}: ({error}), discarding peer {node_id}");
+            error!("{error_text}: ({error}), discarding peer {node_id}");
             table.lock().await.replace_peer(node_id);
         } else {
-            debug!("{error_text}: ({error}), unknown peer")
+            error!("{error_text}: ({error}), unknown peer")
         }
     }
 
@@ -345,7 +349,6 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
                 return Err(RLPxError::Disconnect());
             }
             Message::Ping(_) => {
-                debug!("Received Ping");
                 self.send(Message::Pong(PongMessage {})).await?;
                 debug!("Pong sent");
             }
@@ -353,7 +356,6 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
                 // We ignore received Pong messages
             }
             Message::Status(msg_data) if !peer_supports_eth => {
-                debug!("Received Status");
                 backend::validate_status(msg_data, &self.storage)?
             }
             Message::GetAccountRange(req) => {
@@ -608,10 +610,12 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
         let mut buf = vec![0; MAX_DISC_PACKET_SIZE];
 
         // Read the message's size
-        self.stream
-            .read_exact(&mut buf[..2])
-            .await
-            .map_err(|_| RLPxError::ConnectionError("Connection dropped".to_string()))?;
+        self.stream.read_exact(&mut buf[..2]).await.map_err(|e| {
+            RLPxError::ConnectionError(format!(
+                "Connection dropped. Failed to read handshake message size: {}",
+                e
+            ))
+        })?;
         let ack_data = [buf[0], buf[1]];
         let msg_size = u16::from_be_bytes(ack_data) as usize;
 
@@ -619,7 +623,12 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
         self.stream
             .read_exact(&mut buf[2..msg_size + 2])
             .await
-            .map_err(|_| RLPxError::ConnectionError("Connection dropped".to_string()))?;
+            .map_err(|e| {
+                RLPxError::ConnectionError(format!(
+                    "Connection dropped. Failed to read the rest of the handshake message: {}.",
+                    e
+                ))
+            })?;
         let ack_bytes = &buf[..msg_size + 2];
         Ok(ack_bytes.to_vec())
     }

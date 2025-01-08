@@ -29,6 +29,7 @@ use tracing::{error, info, warn};
 use tracing_subscriber::{filter::Directive, EnvFilter, FmtSubscriber};
 mod cli;
 mod decode;
+mod networks;
 
 const DEFAULT_DATADIR: &str = "ethrex";
 #[tokio::main]
@@ -90,15 +91,23 @@ async fn main() {
         .get_one::<String>("discovery.port")
         .expect("discovery.port is required");
 
-    let genesis_file_path = matches
+    let mut network = matches
         .get_one::<String>("network")
-        .expect("network is required");
+        .expect("network is required")
+        .clone();
 
-    let bootnodes: Vec<BootNode> = matches
+    let mut bootnodes: Vec<BootNode> = matches
         .get_many("bootnodes")
         .map(Iterator::copied)
         .map(Iterator::collect)
         .unwrap_or_default();
+
+    if network == "holesky" {
+        warn!("Using holesky presets, bootnodes field will be ignored");
+        // Set holesky presets
+        network = String::from(networks::HOLESKY_GENESIS_PATH);
+        bootnodes = networks::HOLESKY_BOOTNODES.to_vec();
+    }
 
     if bootnodes.is_empty() {
         warn!("No bootnodes specified. This node will not be able to connect to the network.");
@@ -130,7 +139,7 @@ async fn main() {
         }
     }
 
-    let genesis = read_genesis_file(genesis_file_path);
+    let genesis = read_genesis_file(&network);
     store
         .add_initial_state(genesis.clone())
         .expect("Failed to create genesis block");
