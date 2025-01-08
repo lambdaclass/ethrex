@@ -51,7 +51,7 @@ use tokio::{
     task,
     time::{sleep, Instant},
 };
-use tracing::{debug, error};
+use tracing::{debug, error, warn};
 const CAP_P2P: (Capability, u8) = (Capability::P2p, 5);
 const CAP_ETH: (Capability, u8) = (Capability::Eth, 68);
 const CAP_SNAP: (Capability, u8) = (Capability::Snap, 1);
@@ -238,24 +238,38 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
         self.send(hello_msg).await?;
 
         // Receive Hello message
-        if let Message::Hello(hello_message) = self.receive().await? {
-            self.capabilities = hello_message.capabilities;
+        match self.receive().await? {
+            Message::Hello(hello_message) => {
+                self.capabilities = hello_message.capabilities;
 
-            // Check if we have any capability in common
-            for cap in self.capabilities.clone() {
-                if SUPPORTED_CAPABILITIES.contains(&cap) {
-                    return Ok(());
+                // Check if we have any capability in common
+                for cap in self.capabilities.clone() {
+                    if SUPPORTED_CAPABILITIES.contains(&cap) {
+                        return Ok(());
+                    }
                 }
+                // Return error if not
+                Err(RLPxError::HandshakeError(
+                    "No matching capabilities".to_string(),
+                ))
             }
-            // Return error if not
-            Err(RLPxError::HandshakeError(
-                "No matching capabilities".to_string(),
-            ))
-        } else {
-            // Fail if it is not a hello message
-            Err(RLPxError::HandshakeError(
-                "Expected Hello message".to_string(),
-            ))
+            Message::Disconnect(disconnect) => {
+                warn!(
+                    "Peer replied to Hello with Disconnect with reason: {}",
+                    disconnect.reason()
+                );
+                // Fail if it is not a hello message
+                Err(RLPxError::HandshakeError(
+                    "Expected Hello message".to_string(),
+                ))
+            }
+            m => {
+                warn!("Peer replied to Hello with {m:?}");
+                // Fail if it is not a hello message
+                Err(RLPxError::HandshakeError(
+                    "Expected Hello message".to_string(),
+                ))
+            }
         }
     }
 

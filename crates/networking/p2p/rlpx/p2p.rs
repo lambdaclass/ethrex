@@ -42,7 +42,10 @@ impl RLPDecode for Capability {
             "p2p" => Ok((Capability::P2p, rest)),
             "eth" => Ok((Capability::Eth, rest)),
             "snap" => Ok((Capability::Snap, rest)),
-            a => {info!("Unrecognized capability {a}"); Ok((Capability::Unknown, rest))},
+            a => {
+                info!("Unrecognized capability {a}");
+                Ok((Capability::Unknown, rest))
+            }
         }
     }
 }
