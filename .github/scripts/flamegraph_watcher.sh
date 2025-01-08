@@ -18,7 +18,7 @@ seconds=$((elapsed % 60))
 output=$(ethrex_l2 info -b -a $account --wei 2>&1)
 echo "Balance of $output reached in $minutes min $seconds s, killing process"
 
-sudo pkill "$PROGRAM" && while pgrep -l "cargo-flamegraph"; do
+sudo pkill "$PROGRAM" && while pgrep -f "cargo-flamegraph"; do
     echo "waiting for $PROGRAM to exit... "
     sleep 1
 done
