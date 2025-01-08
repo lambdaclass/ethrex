@@ -554,8 +554,8 @@ impl VM {
 
         // Calldata Cost
         // 4 gas for each zero byte in the transaction data 16 gas for each non-zero byte in the transaction.
-        let calldata_cost =
-            gas_cost::tx_calldata(&initial_call_frame.calldata).map_err(VMError::OutOfGas)?;
+        let calldata_cost = gas_cost::tx_calldata(&initial_call_frame.calldata, self.env.spec_id)
+            .map_err(VMError::OutOfGas)?;
 
         intrinsic_gas = intrinsic_gas
             .checked_add(calldata_cost)

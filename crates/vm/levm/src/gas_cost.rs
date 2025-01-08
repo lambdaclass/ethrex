@@ -158,6 +158,7 @@ pub const CREATE_BASE_COST: u64 = 32000;
 // Calldata costs
 pub const CALLDATA_COST_ZERO_BYTE: u64 = 4;
 pub const CALLDATA_COST_NON_ZERO_BYTE: u64 = 16;
+pub const CALLDATA_COST_NON_ZERO_BYTE_PRE_ISTANBUL: u64 = 68;
 
 // Blob gas costs
 pub const BLOB_GAS_PER_BLOB: u64 = 131072;
@@ -526,15 +527,21 @@ pub fn selfdestruct(
     Ok(gas_cost)
 }
 
-pub fn tx_calldata(calldata: &Bytes) -> Result<u64, OutOfGasError> {
+pub fn tx_calldata(calldata: &Bytes, spec_id: SpecId) -> Result<u64, OutOfGasError> {
     // This cost applies both for call and create
     // 4 gas for each zero byte in the transaction data 16 gas for each non-zero byte in the transaction.
     let mut calldata_cost: u64 = 0;
     for byte in calldata {
         if *byte != 0 {
-            calldata_cost = calldata_cost
-                .checked_add(CALLDATA_COST_NON_ZERO_BYTE)
-                .ok_or(OutOfGasError::GasUsedOverflow)?;
+            if spec_id >= SpecId::ISTANBUL {
+                calldata_cost = calldata_cost
+                    .checked_add(CALLDATA_COST_NON_ZERO_BYTE)
+                    .ok_or(OutOfGasError::GasUsedOverflow)?;
+            } else {
+                calldata_cost = calldata_cost
+                    .checked_add(CALLDATA_COST_NON_ZERO_BYTE_PRE_ISTANBUL)
+                    .ok_or(OutOfGasError::GasUsedOverflow)?;
+            }
         } else {
             calldata_cost = calldata_cost
                 .checked_add(CALLDATA_COST_ZERO_BYTE)
