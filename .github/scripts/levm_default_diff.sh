@@ -1,5 +1,8 @@
 #!/bin/bash
 
+# Exit on error, undefined vars, and pipe failures
+set -euo pipefail
+
 if [ "$#" -ne 2 ]; then
     echo "Usage: $0 <default_file> <levm_file>"
     exit 1
@@ -19,25 +22,37 @@ if [ ! -f "$levm_file" ]; then
     exit 1
 fi
 
-# Function to extract test results
-parse_results() {
-    grep -v "^\*" "$1" | grep ": " | while read -r line; do
-        name=$(echo "$line" | cut -d':' -f1 | tr -d '\t')
-        values=$(echo "$line" | cut -d':' -f2 | tr -d ' ')
-        passed=$(echo "$values" | cut -d'/' -f1)
-        total=$(echo "$values" | cut -d'/' -f2 | cut -d'(' -f1)
-        percentage=$(echo "$values" | grep -o "[0-9.]*%" | tr -d '%')
-        echo "$name|$passed|$total|$percentage"
-    done
+# Create a temporary file
+TEMP_FILE=$(mktemp)
+trap 'rm -f $TEMP_FILE' EXIT
+
+# Get the last section of the file (everything after the last "Total" line)
+get_last_section() {
+    tac "$1" | sed -n "1,/\*Total:/p" | tac
 }
 
-# Store results in temporary files
+# Function to extract test results
+parse_results() {
+    while IFS= read -r line; do
+        if [[ $line =~ ^[[:space:]]*[^*] && $line =~ : ]]; then
+            name=$(echo "$line" | cut -d':' -f1 | tr -d '\t' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+            values=$(echo "$line" | cut -d':' -f2 | tr -d ' ')
+            passed=$(echo "$values" | cut -d'/' -f1)
+            total=$(echo "$values" | cut -d'/' -f2 | cut -d'(' -f1)
+            percentage=$(echo "$values" | grep -o "[0-9.]*%" | tr -d '%')
+            echo "$name|$passed|$total|$percentage"
+        fi
+    done < <(get_last_section "$1")
+}
+
 default_results=$(parse_results "$default_file")
 levm_results=$(parse_results "$levm_file")
 
 found_differences=false
 
-echo "$default_results" | while IFS='|' read -r name default_passed default_total default_percentage; do
+echo "$default_results" > "$TEMP_FILE"
+
+while IFS='|' read -r name default_passed default_total default_percentage; do
     if [ -n "$name" ]; then
         levm_line=$(echo "$levm_results" | grep "^$name|" || true)
         if [ -n "$levm_line" ]; then
@@ -45,27 +60,33 @@ echo "$default_results" | while IFS='|' read -r name default_passed default_tota
             levm_total=$(echo "$levm_line" | cut -d'|' -f3)
             levm_percentage=$(echo "$levm_line" | cut -d'|' -f4)
 
-            if [ "$levm_passed" -lt "$default_passed" ]; then
+            if [ "$levm_passed" != "$default_passed" ]; then
                 if [ "$found_differences" = false ]; then
-                    echo "Found the following test regressions in LEVM vs default: :warning:"
+                    echo "Found differences between LEVM and default: :warning:"
                     echo
                     found_differences=true
                 fi
-                echo "• *$name*:"
+                if [ "$levm_passed" -gt "$default_passed" ]; then
+                    echo "• *$name* (improvement :arrow_up:):"
+                else
+                    echo "• *$name* (regression :arrow_down:):"
+                fi
                 echo "  - Default: $default_passed/$default_total ($default_percentage%)"
                 echo "  - LEVM: $levm_passed/$levm_total ($levm_percentage%)"
+                echo 1 >> "$TEMP_FILE.diff"
             fi
         else
             if [ "$found_differences" = false ]; then
-                echo "Found the following test regressions in LEVM vs default: :warning:"
+                echo "Found differences between LEVM and default: :warning:"
                 echo
                 found_differences=true
             fi
-            echo "• *$name*: Test present in default but missing in LEVM"
+            echo "• *$name*: Test present in default but missing in LEVM :x:"
+            echo 1 >> "$TEMP_FILE.diff"
         fi
     fi
-done || true
+done < "$TEMP_FILE"
 
-if [ "$found_differences" = false ]; then
-    echo "No regressions found between default and LEVM implementations! :white_check_mark:"
+if [ ! -f "$TEMP_FILE.diff" ]; then
+    echo "No differences found between default and LEVM implementations! :white_check_mark:"
 fi
