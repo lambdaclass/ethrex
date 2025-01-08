@@ -70,7 +70,7 @@ jobs:
       - name: Generate SVG
         shell: bash
         run: |
-          perf script -v -i perf.data --no-inline > stack.data
+          perf script -v -i /home/runner/work/ethrex/ethrex/perf.data --no-inline > stack.data
           inferno-collapse-perf -q < stack.data > collapsed.data
           inferno-flamegraph --title "Ethrex Flamegraph" < collapsed.data > flamegraph_ethrex.svg
 
