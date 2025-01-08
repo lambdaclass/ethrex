@@ -76,6 +76,7 @@ impl RLPEncode for P2PTransaction {
 impl RLPDecode for P2PTransaction {
     fn decode_unfinished(rlp: &[u8]) -> Result<(Self, &[u8]), RLPDecodeError> {
         if is_encoded_as_bytes(rlp)? {
+            // Adjust the encoding to get the payload
             let payload = get_rlp_bytes_item_payload(rlp)?;
             let tx_type = payload.first().ok_or(RLPDecodeError::InvalidLength)?;
             let tx_encoding = &payload.get(1..).ok_or(RLPDecodeError::InvalidLength)?;
@@ -93,6 +94,7 @@ impl RLPDecode for P2PTransaction {
                 // EIP4844
                 0x3 => WrappedEIP4844Transaction::decode_unfinished(tx_encoding)
                     .map(|(tx, rem)| (P2PTransaction::EIP4844TransactionWithBlobs(tx), rem)),
+
                 // PriviligedL2
                 0x7e => PrivilegedL2Transaction::decode_unfinished(tx_encoding)
                     .map(|(tx, rem)| (P2PTransaction::PrivilegedL2Transaction(tx), rem)),

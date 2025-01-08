@@ -22,9 +22,6 @@ use crate::rlpx::{
 pub(crate) struct Transactions {
     pub(crate) transactions: Vec<Transaction>,
 }
-// TODO(#1132): Also limit transactions by message byte-size.
-// Limit taken from here: https://github.com/ethereum/go-ethereum/blob/df182a742cec68adcc034d4747afa5182fc75ca3/eth/fetcher/tx_fetcher.go#L49
-pub const TRANSACTION_LIMIT: usize = 256;
 
 impl Transactions {
     pub fn new(transactions: Vec<Transaction>) -> Self {
@@ -55,12 +52,8 @@ impl RLPxMessage for Transactions {
         // or so it seems.
         while let Ok((tx, updated_decoder)) = decoder.decode_field::<Transaction>("p2p transaction")
         {
-            if transactions.len() > TRANSACTION_LIMIT {
-                break;
-            } else {
-                decoder = updated_decoder;
-                transactions.push(tx);
-            }
+            decoder = updated_decoder;
+            transactions.push(tx);
         }
         Ok(Self::new(transactions))
     }
@@ -256,6 +249,7 @@ impl PooledTransactions {
     }
 
     /// Saves every incoming pooled transaction to the mempool.
+
     pub fn handle(self, store: &Store) -> Result<(), MempoolError> {
         for tx in self.pooled_transactions {
             if let P2PTransaction::EIP4844TransactionWithBlobs(itx) = tx {
