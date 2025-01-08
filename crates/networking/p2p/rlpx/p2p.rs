@@ -7,6 +7,7 @@ use ethrex_rlp::{
     structs::{Decoder, Encoder},
 };
 use k256::PublicKey;
+use tracing::info;
 
 use crate::rlpx::utils::{id2pubkey, snappy_decompress};
 
@@ -20,6 +21,7 @@ pub enum Capability {
     P2p,
     Eth,
     Snap,
+    Unknown,
 }
 
 impl RLPEncode for Capability {
@@ -28,6 +30,7 @@ impl RLPEncode for Capability {
             Self::P2p => "p2p".encode(buf),
             Self::Eth => "eth".encode(buf),
             Self::Snap => "snap".encode(buf),
+            Self::Unknown => "unk".encode(buf),
         }
     }
 }
@@ -39,7 +42,7 @@ impl RLPDecode for Capability {
             "p2p" => Ok((Capability::P2p, rest)),
             "eth" => Ok((Capability::Eth, rest)),
             "snap" => Ok((Capability::Snap, rest)),
-            _ => Err(RLPDecodeError::UnexpectedString),
+            a => {info!("Unrecognized capability {a}"); Ok((Capability::Unknown, rest))},
         }
     }
 }
