@@ -318,7 +318,12 @@ async fn rebuild_state_trie(
     // Fetch Account Ranges
     // If we reached the maximum amount of retries then it means the state we are requesting is probably old and no longer available
     for _ in 0..MAX_RETRIES {
-        let peer = peers.clone().lock().await.get_peer_channels(Capability::Snap).await;
+        let peer = peers
+            .clone()
+            .lock()
+            .await
+            .get_peer_channels(Capability::Snap)
+            .await;
         debug!("Requesting Account Range for state root {state_root}, starting hash: {start_account_hash}");
         if let Some((account_hashes, accounts, should_continue)) = peer
             .request_account_range(state_root, start_account_hash)
