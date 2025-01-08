@@ -609,26 +609,22 @@ impl VM {
 
     fn gas_used(&self, current_call_frame: &mut CallFrame) -> Result<u64, VMError> {
         if self.env.spec_id >= SpecId::PRAGUE {
-            let gas_without_base_cost: u64 = current_call_frame
-                .gas_used
-                .checked_sub(TX_BASE_COST) // to calculate the floor it has to be without the tx base cost
-                .ok_or(VMError::Internal(
-                    InternalError::ArithmeticOperationUnderflow,
-                ))?;
-
+            // tokens_in_calldata = tx_calldata / 4
             let tokens_in_calldata: u64 = gas_cost::tx_calldata(&current_call_frame.calldata)
                 .map_err(VMError::OutOfGas)?
                 .checked_div(4)
                 .ok_or(VMError::Internal(InternalError::DivisionError))?;
 
-            let floor_gas_price: u64 = tokens_in_calldata
+            // floor_gas_price = TX_BASE_COST + TOTAL_COST_FLOOR_PER_TOKEN * tokens_in_calldata
+            let mut floor_gas_price: u64 = tokens_in_calldata
                 .checked_mul(TOTAL_COST_FLOOR_PER_TOKEN)
                 .ok_or(VMError::Internal(InternalError::GasOverflow))?;
 
-            // restore the tx base cost
-            let gas_used = max(floor_gas_price, gas_without_base_cost)
+            floor_gas_price = floor_gas_price
                 .checked_add(TX_BASE_COST)
                 .ok_or(VMError::Internal(InternalError::GasOverflow))?;
+
+            let gas_used = max(floor_gas_price, current_call_frame.gas_used);
             Ok(gas_used)
         } else {
             Ok(current_call_frame.gas_used)
@@ -706,8 +702,8 @@ impl VM {
         let sender_address = self.env.origin;
         let sender_account = self.get_account(sender_address);
 
-        //
         if self.env.spec_id >= SpecId::PRAGUE {
+            // check for gas limit is grater or equal than the minimum required
             let intrinsic_gas: u64 = self.get_intrinsic_gas(initial_call_frame)?;
 
             // calldata_cost = tokens_in_calldata * 4
@@ -728,9 +724,7 @@ impl VM {
             let min_gas_limit = max(intrinsic_gas, floor_cost_by_tokens);
 
             if initial_call_frame.gas_limit < min_gas_limit {
-                return Err(VMError::TxValidation(
-                    TxValidationError::GasAllowanceExceeded,
-                ));
+                return Err(VMError::TxValidation(TxValidationError::GasLimitTooLow));
             }
         }
 
@@ -739,7 +733,9 @@ impl VM {
             .env
             .gas_price
             .checked_mul(self.env.gas_limit.into())
-            .ok_or(VMError::TxValidation(TxValidationError::GasLimitTooLow))?;
+            .ok_or(VMError::TxValidation(
+                TxValidationError::GasLimitPriceProductOverflow,
+            ))?;
 
         // Up front cost is the maximum amount of wei that a user is willing to pay for. Gaslimit * gasprice + value + blob_gas_cost
         let value = initial_call_frame.msg_value;
