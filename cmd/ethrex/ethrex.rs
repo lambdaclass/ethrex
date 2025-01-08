@@ -109,6 +109,13 @@ async fn main() {
         bootnodes = networks::HOLESKY_BOOTNODES.to_vec();
     }
 
+    if network == "sepolia" {
+        warn!("Using sepolia presets, bootnodes field will be ignored");
+        // Set sepolia presets
+        network = String::from(networks::SEPOLIA_GENESIS_PATH);
+        bootnodes = networks::SEPOLIA_BOOTNODES.to_vec();
+    }
+
     if bootnodes.is_empty() {
         warn!("No bootnodes specified. This node will not be able to connect to the network.");
     }

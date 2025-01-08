@@ -38,7 +38,7 @@ impl<'de> serde::de::Deserialize<'de> for BootNode {
     where
         D: serde::Deserializer<'de>,
     {
-        BootNode::from_str(<&str>::deserialize(deserializer)?).map_err(serde::de::Error::custom)
+        BootNode::from_str(&<String>::deserialize(deserializer)?).map_err(serde::de::Error::custom)
     }
 }
 
