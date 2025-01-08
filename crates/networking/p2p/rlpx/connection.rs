@@ -493,10 +493,16 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
                     debug!("Received Status");
                     backend::validate_status(msg_data, &self.storage)?
                 }
-                _msg => {
-                    return Err(RLPxError::HandshakeError(
-                        "Expected a Status message".to_string(),
-                    ))
+                Message::Disconnect(disconnect) => {
+                    return Err(RLPxError::HandshakeError(format!(
+                        "Peer disconnected due to: {}",
+                        disconnect.reason()
+                    )))
+                }
+                msg => {
+                    return Err(RLPxError::HandshakeError(format!(
+                        "Expected a Status message, got: {msg:?}"
+                    )))
                 }
             }
         }
