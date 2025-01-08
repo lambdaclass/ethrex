@@ -27,5 +27,4 @@ assertoor_params:
     - https://raw.githubusercontent.com/lambdaclass/ethrex/refs/heads/check-transaction-spammer-count-diff/.github/config/assertoor/el-stability-check.yaml
 
 tx_spammer_params:
-  # A list of optional extra params that will be passed to the TX Spammer container for modifying its behaviour
   tx_spammer_extra_args: ["--txcount=3", "--accounts=80"]

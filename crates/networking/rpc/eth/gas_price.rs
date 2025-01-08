@@ -139,8 +139,8 @@ mod tests {
         Transaction::EIP1559Transaction(EIP1559Transaction {
             chain_id: 1,
             nonce,
-            max_fee_per_gas: nonce * BASE_PRICE_IN_WEI,
-            max_priority_fee_per_gas: (nonce * (10_u64.pow(9))).pow(2),
+            max_fee_per_gas: nonce * BASE_PRICE_IN_WEI * 2,
+            max_priority_fee_per_gas: nonce * BASE_PRICE_IN_WEI,
             gas_limit: 10000,
             to: TxKind::Create,
             value: 100.into(),
