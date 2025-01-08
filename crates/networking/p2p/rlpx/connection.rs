@@ -282,7 +282,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
                 tokio::select! {
                     // TODO check if this is cancel safe, and fix it if not.
                     message = self.receive() => {
-                        self.handle_message(message?, sender.clone()).await?;
+                        let _ = self.handle_message(message?, sender.clone()).await;
                     }
                     // This is not ideal, but using the receiver without
                     // this function call, causes the loop to take ownwership
