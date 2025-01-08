@@ -1,7 +1,10 @@
 use crate::prover::create_prover;
 use ethrex_l2::{
-    proposer::prover_server::{ProofData, ProverType, ProvingOutput},
-    utils::config::prover_client::ProverClientConfig,
+    proposer::prover_server::ProofData,
+    utils::{
+        config::prover_client::ProverClientConfig,
+        prover::proving_systems::{ProverType, ProvingOutput},
+    },
 };
 use std::{
     io::{BufReader, BufWriter},
@@ -61,6 +64,7 @@ impl ProverClient {
                     warn!("Failed to request new data: {e}");
                 }
             }
+            sleep(Duration::from_millis(self.interval_ms)).await;
         }
     }
 

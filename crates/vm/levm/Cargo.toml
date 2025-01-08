@@ -17,7 +17,7 @@ serde = { version = "1.0.203", features = ["derive", "rc"] }
 serde_json = { version = "1.0.117" }
 walkdir = "2.5.0"
 keccak-hash.workspace = true
-thiserror = "2.0.3"
+thiserror.workspace = true
 libsecp256k1 = "0.7.1"
 sha2 = "0.10.8"
 ripemd = "0.1.3"

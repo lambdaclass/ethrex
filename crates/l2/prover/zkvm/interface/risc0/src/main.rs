@@ -31,10 +31,10 @@ fn main() {
     let receipts = execute_block(&block, &mut state).expect("failed to execute block");
     validate_gas_used(&receipts, &block.header).expect("invalid gas used");
 
-    let cumulative_gas_used = match receipts.last() {
-        Some(last_receipt) => last_receipt.cumulative_gas_used,
-        None => 0_u64,
-    };
+    let cumulative_gas_used = receipts
+        .last()
+        .map(|last_receipt| last_receipt.cumulative_gas_used)
+        .unwrap_or_default();
 
     env::write(&cumulative_gas_used);
 

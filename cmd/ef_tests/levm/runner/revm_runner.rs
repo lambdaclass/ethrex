@@ -14,7 +14,7 @@ use ethrex_levm::{
     Account, StorageSlot,
 };
 use ethrex_storage::{error::StoreError, AccountUpdate};
-use ethrex_vm::{db::StoreWrapper, EvmState, RevmAddress, RevmU256, SpecId};
+use ethrex_vm::{db::StoreWrapper, EvmState, RevmAddress, RevmU256};
 use revm::{
     db::State,
     inspectors::TracerEip3155 as RevmTracerEip3155,
@@ -167,7 +167,7 @@ pub fn prepare_revm_for_tx<'state>(
         .with_block_env(block_env)
         .with_tx_env(tx_env)
         .modify_cfg_env(|cfg| cfg.chain_id = chain_spec.chain_id)
-        .with_spec_id(SpecId::CANCUN) //TODO: In the future replace cancun for the actual spec id
+        .with_spec_id(test.fork())
         .with_external_context(
             RevmTracerEip3155::new(Box::new(std::io::stderr())).without_summary(),
         );
@@ -360,12 +360,10 @@ pub fn compare_levm_revm_account_updates(
 }
 
 pub fn _run_ef_test_revm(test: &EFTest) -> Result<EFTestReport, EFTestRunnerError> {
-    let mut ef_test_report = EFTestReport::new(
-        test.name.clone(),
-        test.dir.clone(),
-        test._info.generated_test_hash,
-        test.fork(),
-    );
+    let hash = test._info.generated_test_hash.or(test._info.hash).unwrap();
+
+    let mut ef_test_report =
+        EFTestReport::new(test.name.clone(), test.dir.clone(), hash, test.fork());
     for (vector, _tx) in test.transactions.iter() {
         match _run_ef_test_tx_revm(vector, test) {
             Ok(_) => continue,
