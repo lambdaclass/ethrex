@@ -603,16 +603,25 @@ impl VM {
 
     fn gas_used(&self, current_call_frame: &mut CallFrame) -> Result<u64, VMError> {
         if self.env.spec_id >= SpecId::PRAGUE {
-            let gas_without_base_cost = current_call_frame.gas_used - TX_BASE_COST;
+            let gas_without_base_cost: u64 = current_call_frame
+                .gas_used
+                .checked_sub(TX_BASE_COST)
+                .ok_or(VMError::Internal(
+                    InternalError::ArithmeticOperationUnderflow,
+                ))?;
 
-            // Calldata Cost
-            // 4 gas for each zero byte in the transaction data 16 gas for each non-zero byte in the transaction.
-            let calldata_cost =
-                gas_cost::tx_calldata(&current_call_frame.calldata).map_err(VMError::OutOfGas)?;
+            let tokens_in_calldata: u64 = gas_cost::tx_calldata(&current_call_frame.calldata)
+                .map_err(VMError::OutOfGas)?
+                .checked_div(4)
+                .ok_or(VMError::Internal(InternalError::DivisionError))?;
 
-            let floor_gas_price = (calldata_cost / 4) * TOTAL_COST_FLOOR_PER_TOKEN;
+            let floor_gas_price: u64 = tokens_in_calldata
+                .checked_mul(TOTAL_COST_FLOOR_PER_TOKEN)
+                .ok_or(VMError::Internal(InternalError::GasOverflow))?;
 
-            let gas_used = max(floor_gas_price, gas_without_base_cost) + TX_BASE_COST;
+            let gas_used = max(floor_gas_price, gas_without_base_cost)
+                .checked_add(TX_BASE_COST)
+                .ok_or(VMError::Internal(InternalError::GasOverflow))?;
             Ok(gas_used)
         } else {
             Ok(current_call_frame.gas_used)
@@ -741,10 +750,16 @@ impl VM {
                 .checked_add(access_lists_cost)
                 .ok_or(OutOfGasError::ConsumedGasOverflow)?;
 
-            let min_gas_limit = max(
-                intrinsic_gas,
-                ((calldata_cost / 4) * TOTAL_COST_FLOOR_PER_TOKEN) + 21000,
-            );
+            // floor_cost_by_tokens = 21000 + TOTAL_COST_FLOOR_PER_TOKEN * tokens_in_calldata
+            let floor_cost_by_tokens = calldata_cost
+                .checked_div(4) // tokens_in_calldata
+                .ok_or(VMError::Internal(InternalError::DivisionError))?
+                .checked_mul(TOTAL_COST_FLOOR_PER_TOKEN)
+                .ok_or(VMError::Internal(InternalError::GasOverflow))?
+                .checked_add(TX_BASE_COST)
+                .ok_or(VMError::Internal(InternalError::GasOverflow))?;
+
+            let min_gas_limit = max(intrinsic_gas, floor_cost_by_tokens);
 
             if initial_call_frame.gas_limit < min_gas_limit {
                 return Err(VMError::TxValidation(
