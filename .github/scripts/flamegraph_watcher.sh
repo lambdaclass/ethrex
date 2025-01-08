@@ -20,14 +20,8 @@ echo "Balance of $output reached in $minutes min $seconds s, killing process"
 
 sudo pkill "$PROGRAM"
 
-spinner=('/' '|' '\\' '-')
-
 while pgrep -l "perf" >/dev/null; do
-    for s in "${spinner[@]}"; do
-        printf "\rWaiting for $PROGRAM to exit $s"
-        sleep 0.1
-    done
-    sleep 0.6
+    sleep 10
 done
 
 # We need this for the following job, to add to the static page
