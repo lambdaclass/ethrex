@@ -13,7 +13,8 @@ use crate::{
     },
     gas_cost::{
         self, fake_exponential, ACCESS_LIST_ADDRESS_COST, ACCESS_LIST_STORAGE_KEY_COST,
-        BLOB_GAS_PER_BLOB, CODE_DEPOSIT_COST, CREATE_BASE_COST, TOTAL_COST_FLOOR_PER_TOKEN,
+        BLOB_GAS_PER_BLOB, CODE_DEPOSIT_COST, CREATE_BASE_COST, STANDARD_TOKEN_COST,
+        TOTAL_COST_FLOOR_PER_TOKEN,
     },
     opcodes::Opcode,
     precompiles::{execute_precompile, is_precompile},
@@ -609,10 +610,13 @@ impl VM {
 
     fn gas_used(&self, current_call_frame: &mut CallFrame) -> Result<u64, VMError> {
         if self.env.spec_id >= SpecId::PRAGUE {
-            // tokens_in_calldata = tx_calldata / 4
+            // tokens_in_calldata = nonzero_bytes_in_calldata * 4 + zero_bytes_in_calldata
+            // tx_calldata = nonzero_bytes_in_calldata * 16 + zero_bytes_in_calldata * 4
+            // this is actually tokens_in_calldata * STANDARD_TOKEN_COST
+            // see it in https://eips.ethereum.org/EIPS/eip-7623
             let tokens_in_calldata: u64 = gas_cost::tx_calldata(&current_call_frame.calldata)
                 .map_err(VMError::OutOfGas)?
-                .checked_div(4)
+                .checked_div(STANDARD_TOKEN_COST)
                 .ok_or(VMError::Internal(InternalError::DivisionError))?;
 
             // floor_gas_price = TX_BASE_COST + TOTAL_COST_FLOOR_PER_TOKEN * tokens_in_calldata
@@ -710,11 +714,12 @@ impl VM {
             let calldata_cost: u64 =
                 gas_cost::tx_calldata(&initial_call_frame.calldata).map_err(VMError::OutOfGas)?;
 
+            // same as calculated in gas_used()
             let tokens_in_calldata: u64 = calldata_cost
-                .checked_div(4) // tokens_in_calldata
+                .checked_div(STANDARD_TOKEN_COST)
                 .ok_or(VMError::Internal(InternalError::DivisionError))?;
 
-            // floor_cost_by_tokens = 21000 + TOTAL_COST_FLOOR_PER_TOKEN * tokens_in_calldata
+            // floor_cost_by_tokens = TX_BASE_COST + TOTAL_COST_FLOOR_PER_TOKEN * tokens_in_calldata
             let floor_cost_by_tokens = tokens_in_calldata
                 .checked_mul(TOTAL_COST_FLOOR_PER_TOKEN)
                 .ok_or(VMError::Internal(InternalError::GasOverflow))?

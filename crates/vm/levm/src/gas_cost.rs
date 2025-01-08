@@ -158,6 +158,7 @@ pub const CREATE_BASE_COST: u64 = 32000;
 // Calldata costs
 pub const CALLDATA_COST_ZERO_BYTE: u64 = 4;
 pub const CALLDATA_COST_NON_ZERO_BYTE: u64 = 16;
+pub const STANDARD_TOKEN_COST: u64 = 4;
 
 // Blob gas costs
 pub const BLOB_GAS_PER_BLOB: u64 = 131072;
