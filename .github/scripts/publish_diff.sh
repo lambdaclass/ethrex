@@ -1,13 +1,13 @@
 curl -X POST $url \
 -H 'Content-Type: application/json; charset=utf-8' \
 --data @- <<EOF
-$(jq -n --arg text "$(diff.md)" '{
+$(jq -n --arg text "$(cat results_default.md)" '{
     "blocks": [
         {
             "type": "header",
             "text": {
                 "type": "plain_text",
-                "text": "Passing HIVE tests diff default vs levm feature"
+                "text": "Daily Hive Coverage report"
             }
         },
         {
@@ -15,7 +15,7 @@ $(jq -n --arg text "$(diff.md)" '{
             "text": {
                 "type": "mrkdwn",
                 "text": $text
-            }
+            }             
         }
     ]
 }')

@@ -48,7 +48,6 @@ jobs:
           docker load < images/${{matrix.image}}-image.tar
           docker tag ethrex:${{ matrix.image }} ethrex
 
-
       - name: Checkout sources
         uses: actions/checkout@v4
 
@@ -174,16 +173,13 @@ jobs:
           name: "results_default.md"
 
       - name: Post results in summary
-        run: |
-          echo "# LEVM coverage report" >> $GITHUB_STEP_SUMMARY
-          cat results_levm.md >> $GITHUB_STEP_SUMMARY
-          echo "# Diff between default and LEVM" >> $GITHUB_STEP_SUMMARY
-          diff results_default.md results_levm.md >> diff.md
-
-      - name: Post results to test channel for debugging
         env:
           url: ${{ secrets.TEST_CHANNEL_SLACK }}
-        run: sh .github/scripts/publish_levm_hive.sh
+        run: |
+          sh .github/scripts/levm_default_diff.sh results_default.md results_levm.md >> diff.md
+          cat diff.md >> $GITHUB_STEP_SUMMARY
+          sh .github/scripts/publish_default_levm_diffh.sh results_default.md results_levm.md >> diff.md
+
       # - name: Post results to levm slack channel
       #   env:
       #     url: ${{ secrets.LEVM_SLACK_WEBHOOK }}
