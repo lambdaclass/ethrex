@@ -18,9 +18,16 @@ seconds=$((elapsed % 60))
 output=$(ethrex_l2 info -b -a $account --wei 2>&1)
 echo "Balance of $output reached in $minutes min $seconds s, killing process"
 
-sudo pkill "$PROGRAM" && while pgrep -l "perf"; do
-    echo "waiting for $PROGRAM to exit... "
-    sleep 1
+sudo pkill "$PROGRAM"
+
+spinner=('/' '|' '\\' '-')
+
+while pgrep -l "perf" >/dev/null; do
+    for s in "${spinner[@]}"; do
+        printf "\rWaiting for $PROGRAM to exit $s"
+        sleep 0.1
+    done
+    sleep 0.6
 done
 
 # We need this for the following job, to add to the static page

@@ -9,7 +9,7 @@ value=1
 account=0x33c6b73432B3aeA0C1725E415CC40D04908B85fd
 
 start_time=$(date +%s)
-ethrex_l2 test load --path ./test_data/private_keys.txt -i $iterations -v --value $value --to $account
+ethrex_l2 test load --path ./test_data/private_keys.txt -i $iterations -v --value $value --to $account >/dev/null
 end_time=$(date +%s)
 elapsed=$((end_time - start_time))
 
@@ -18,7 +18,14 @@ seconds=$((elapsed % 60))
 output=$(ethrex_l2 info -b -a $account --wei 2>&1)
 echo "Balance of $output reached in $minutes min $seconds s, killing process"
 
-sudo pkill ethrex && while pgrep -l "cargo-flamegraph"; do
-    echo "waiting for ethrex to exit... "
-    sleep 1
+sudo pkill ethrex
+
+while pgrep -l "perf" >/dev/null; do
+    for s in "${spinner[@]}"; do
+        printf "\rWaiting for $PROGRAM to exit $s"
+        sleep 0.1
+    done
+    sleep 0.6
 done
+
+echo "The Flamegraph should have been generated."

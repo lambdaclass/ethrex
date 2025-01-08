@@ -164,7 +164,7 @@ stats:
 	cargo run --quiet --release -p hive_report
 
 flamegraph:
-	sudo -E CARGO_PROFILE_RELEASE_DEBUG=true cargo flamegraph --bin ethrex --features dev  --  --network test_data/genesis-l2.json --http.port 1729 &
+	sudo -E CARGO_PROFILE_RELEASE_DEBUG=true cargo flamegraph --bin ethrex --features dev  --  --network test_data/genesis-l2.json --http.port 1729 >/dev/null &
 	bash scripts/flamegraph.sh
 
 test-load:
