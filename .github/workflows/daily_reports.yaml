@@ -11,7 +11,7 @@ env:
 
 jobs:
   run-hive:
-    name: Hive (${{ matrix.vm }}) - ${{ matrix.name }}
+    name: Hive (${{ matrix.vm }}) - ${{ matrix.test.name }}
     runs-on: ubuntu-latest
     strategy:
       matrix:
@@ -51,13 +51,13 @@ jobs:
         run: make setup-hive
 
       - name: Run Hive Simulation
-        run: cd hive && ./hive --client ethrex --sim ${{ matrix.simulation }} --sim.parallelism 16
+        run: cd hive && ./hive --client ethrex --sim ${{ matrix.test.simulation }} --sim.parallelism 16
         continue-on-error: true
 
       - name: Upload results
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.file_name }}_${{ matrix.vm }}_logs
+          name: ${{ matrix.test.file_name }}_${{ matrix.vm }}_logs
           path: hive/workspace/logs/*-*.json
 
   hive-report:
