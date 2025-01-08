@@ -102,6 +102,8 @@ pub enum TxValidationError {
     InsufficientMaxFeePerGas,
     #[error("Insufficient max fee per blob gas")]
     InsufficientMaxFeePerBlobGas,
+    #[error("Type 3 transactions are not supported before the Cancun fork")]
+    Type3TxPreFork,
     #[error("Type3TxZeroBlobs")]
     Type3TxZeroBlobs,
     #[error("Type3TxInvalidBlobVersionedHash")]
@@ -152,6 +154,8 @@ pub enum InternalError {
     DivisionError,
     #[error("Tried to access last call frame but found none")]
     CouldNotAccessLastCallframe, // Last callframe before execution is the same as the first, but after execution the last callframe is actually the initial CF
+    #[error("Tried to access blobhash but was out of range")]
+    BlobHashOutOfRange,
     #[error("Tried to read from empty code")]
     TriedToIndexEmptyCode,
     #[error("Failed computing CREATE address")]
@@ -186,6 +190,8 @@ pub enum PrecompileError {
     GasConsumedOverflow,
     #[error("There is not enough gas to execute precompiled contract")]
     NotEnoughGas,
+    #[error("There was an error evaluating the point")]
+    EvaluationError,
     #[error("This is a default error")]
     DefaultError,
 }

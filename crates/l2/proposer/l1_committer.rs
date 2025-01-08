@@ -3,20 +3,21 @@ use crate::{
         errors::CommitterError,
         state_diff::{AccountStateDiff, DepositLog, StateDiff, WithdrawalLog},
     },
-    utils::{
-        config::{committer::CommitterConfig, errors::ConfigError, eth::EthConfig},
-        eth_client::{eth_sender::Overrides, BlockByNumber, EthClient, WrappedTransaction},
-        merkle_tree::merkelize,
-    },
+    utils::config::{committer::CommitterConfig, errors::ConfigError, eth::EthConfig},
 };
-use bytes::Bytes;
+
 use ethrex_core::{
     types::{
-        blobs_bundle, fake_exponential_checked, BlobsBundle, Block, PrivilegedL2Transaction,
-        PrivilegedTxType, Transaction, TxKind, BLOB_BASE_FEE_UPDATE_FRACTION,
-        MIN_BASE_FEE_PER_BLOB_GAS,
+        blobs_bundle, fake_exponential_checked, BlobsBundle, BlobsBundleError, Block,
+        PrivilegedL2Transaction, PrivilegedTxType, Transaction, TxKind,
+        BLOB_BASE_FEE_UPDATE_FRACTION, MIN_BASE_FEE_PER_BLOB_GAS,
     },
     Address, H256, U256,
+};
+use ethrex_l2_sdk::merkle_tree::merkelize;
+use ethrex_l2_sdk::{
+    calldata::{encode_calldata, Value},
+    eth_client::{eth_sender::Overrides, BlockByNumber, EthClient, WrappedTransaction},
 };
 use ethrex_storage::{error::StoreError, Store};
 use ethrex_vm::{evm_state, execute_block, get_state_transitions};
@@ -28,7 +29,7 @@ use tracing::{error, info};
 
 use super::errors::BlobEstimationError;
 
-const COMMIT_FUNCTION_SELECTOR: [u8; 4] = [132, 97, 12, 179];
+const COMMIT_FUNCTION_SIGNATURE: &str = "commit(uint256,bytes32,bytes32,bytes32)";
 
 pub struct Committer {
     eth_client: EthClient,
@@ -77,17 +78,11 @@ impl Committer {
 
     async fn main_logic(&self) -> Result<(), CommitterError> {
         loop {
-            let last_committed_block = EthClient::get_last_committed_block(
+            let block_number_to_fetch = EthClient::get_next_block_to_commit(
                 &self.eth_client,
                 self.on_chain_proposer_address,
             )
             .await?;
-
-            let block_number_to_fetch = if last_committed_block == u64::MAX {
-                0
-            } else {
-                last_committed_block + 1
-            };
 
             if let Some(block_to_commit_body) = self
                 .store
@@ -333,21 +328,23 @@ impl Committer {
     ) -> Result<H256, CommitterError> {
         info!("Sending commitment for block {block_number}");
 
-        let mut calldata = Vec::with_capacity(132);
-        calldata.extend(COMMIT_FUNCTION_SELECTOR);
-        let mut block_number_bytes = [0_u8; 32];
-        U256::from(block_number).to_big_endian(&mut block_number_bytes);
-        calldata.extend(block_number_bytes);
-
         let blob_versioned_hashes = blobs_bundle.generate_versioned_hashes();
-        // We only actually support one versioned hash on the onChainProposer for now,
-        // but eventually this should work if we start sending multiple blobs per commit operation.
-        for blob_versioned_hash in blob_versioned_hashes {
-            let blob_versioned_hash_bytes = blob_versioned_hash.to_fixed_bytes();
-            calldata.extend(blob_versioned_hash_bytes);
-        }
-        calldata.extend(withdrawal_logs_merkle_root.0);
-        calldata.extend(deposit_logs_hash.0);
+        let calldata_values = vec![
+            Value::Uint(U256::from(block_number)),
+            Value::FixedBytes(
+                blob_versioned_hashes
+                    .first()
+                    .ok_or(BlobsBundleError::BlobBundleEmptyError)
+                    .map_err(CommitterError::from)?
+                    .as_fixed_bytes()
+                    .to_vec()
+                    .into(),
+            ),
+            Value::FixedBytes(withdrawal_logs_merkle_root.0.to_vec().into()),
+            Value::FixedBytes(deposit_logs_hash.0.to_vec().into()),
+        ];
+
+        let calldata = encode_calldata(COMMIT_FUNCTION_SIGNATURE, &calldata_values)?;
 
         let le_bytes = estimate_blob_gas(
             &self.eth_client,
@@ -364,7 +361,7 @@ impl Committer {
             .build_eip4844_transaction(
                 self.on_chain_proposer_address,
                 self.l1_address,
-                Bytes::from(calldata),
+                calldata.into(),
                 Overrides {
                     from: Some(self.l1_address),
                     gas_price_per_blob,

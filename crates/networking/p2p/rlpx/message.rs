@@ -3,9 +3,11 @@ use ethrex_rlp::error::{RLPDecodeError, RLPEncodeError};
 use std::fmt::Display;
 
 use super::eth::blocks::{BlockBodies, BlockHeaders, GetBlockBodies, GetBlockHeaders};
-use super::eth::receipts::Receipts;
+use super::eth::receipts::{GetReceipts, Receipts};
 use super::eth::status::StatusMessage;
-use super::eth::transactions::{GetPooledTransactions, NewPooledTransactionHashes, Transactions};
+use super::eth::transactions::{
+    GetPooledTransactions, NewPooledTransactionHashes, PooledTransactions, Transactions,
+};
 use super::p2p::{DisconnectMessage, HelloMessage, PingMessage, PongMessage};
 use super::snap::{
     AccountRange, ByteCodes, GetAccountRange, GetByteCodes, GetStorageRanges, GetTrieNodes,
@@ -32,9 +34,11 @@ pub(crate) enum Message {
     Transactions(Transactions),
     GetBlockBodies(GetBlockBodies),
     BlockBodies(BlockBodies),
+    GetReceipts(GetReceipts),
+    Receipts(Receipts),
     NewPooledTransactionHashes(NewPooledTransactionHashes),
     GetPooledTransactions(GetPooledTransactions),
-    Receipts(Receipts),
+    PooledTransactions(PooledTransactions),
     // snap capability
     GetAccountRange(GetAccountRange),
     AccountRange(AccountRange),
@@ -75,6 +79,10 @@ impl Message {
             0x19 => Ok(Message::GetPooledTransactions(
                 GetPooledTransactions::decode(msg_data)?,
             )),
+            0x1a => Ok(Message::PooledTransactions(PooledTransactions::decode(
+                msg_data,
+            )?)),
+            0x1F => Ok(Message::GetReceipts(GetReceipts::decode(msg_data)?)),
             0x20 => Ok(Message::Receipts(Receipts::decode(msg_data)?)),
             0x21 => Ok(Message::GetAccountRange(GetAccountRange::decode(msg_data)?)),
             0x22 => Ok(Message::AccountRange(AccountRange::decode(msg_data)?)),
@@ -140,6 +148,14 @@ impl Message {
                 0x19_u8.encode(buf);
                 msg.encode(buf)
             }
+            Message::PooledTransactions(msg) => {
+                0x1a_u8.encode(buf);
+                msg.encode(buf)
+            }
+            Message::GetReceipts(msg) => {
+                0x1F_u8.encode(buf);
+                msg.encode(buf)
+            }
             Message::Receipts(msg) => {
                 0x20_u8.encode(buf);
                 msg.encode(buf)
@@ -193,8 +209,10 @@ impl Display for Message {
             Message::BlockBodies(_) => "eth:BlockBodies".fmt(f),
             Message::NewPooledTransactionHashes(_) => "eth:NewPooledTransactionHashes".fmt(f),
             Message::GetPooledTransactions(_) => "eth::GetPooledTransactions".fmt(f),
+            Message::PooledTransactions(_) => "eth::PooledTransactions".fmt(f),
             Message::Transactions(_) => "eth:TransactionsMessage".fmt(f),
             Message::GetBlockBodies(_) => "eth:GetBlockBodies".fmt(f),
+            Message::GetReceipts(_) => "eth:GetReceipts".fmt(f),
             Message::Receipts(_) => "eth:Receipts".fmt(f),
             Message::GetAccountRange(_) => "snap:GetAccountRange".fmt(f),
             Message::AccountRange(_) => "snap:AccountRange".fmt(f),

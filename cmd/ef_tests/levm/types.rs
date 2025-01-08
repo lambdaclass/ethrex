@@ -4,6 +4,7 @@ use crate::{
         deserialize_h256_vec_optional_safe, deserialize_hex_bytes, deserialize_hex_bytes_vec,
         deserialize_transaction_expected_exception, deserialize_u256_optional_safe,
         deserialize_u256_safe, deserialize_u256_valued_hashmap_safe, deserialize_u256_vec_safe,
+        deserialize_u64_safe, deserialize_u64_vec_safe,
     },
     report::TestVector,
 };
@@ -33,6 +34,7 @@ pub struct EFTest {
 impl EFTest {
     pub fn fork(&self) -> SpecId {
         match &self.post {
+            EFTestPost::Prague(_) => SpecId::PRAGUE,
             EFTestPost::Cancun(_) => SpecId::CANCUN,
             EFTestPost::Shanghai(_) => SpecId::SHANGHAI,
             EFTestPost::Homestead(_) => SpecId::HOMESTEAD,
@@ -61,7 +63,7 @@ impl From<&EFTest> for Genesis {
             },
             coinbase: test.env.current_coinbase,
             difficulty: test.env.current_difficulty,
-            gas_limit: test.env.current_gas_limit.as_u64(),
+            gas_limit: test.env.current_gas_limit,
             mix_hash: test.env.current_random.unwrap_or_default(),
             timestamp: test.env.current_timestamp.as_u64(),
             base_fee_per_gas: test.env.current_base_fee.map(|v| v.as_u64()),
@@ -73,20 +75,40 @@ impl From<&EFTest> for Genesis {
 
 #[derive(Debug, Deserialize)]
 pub struct EFTestInfo {
-    pub comment: String,
-    #[serde(rename = "filling-rpc-server")]
-    pub filling_rpc_server: String,
-    #[serde(rename = "filling-tool-version")]
-    pub filling_tool_version: String,
-    #[serde(rename = "generatedTestHash")]
-    pub generated_test_hash: H256,
+    #[serde(default)]
+    pub comment: Option<String>,
+    #[serde(rename = "filling-rpc-server", default)]
+    pub filling_rpc_server: Option<String>,
+    #[serde(rename = "filling-tool-version", default)]
+    pub filling_tool_version: Option<String>,
+    #[serde(rename = "generatedTestHash", default)]
+    pub generated_test_hash: Option<H256>,
     #[serde(default)]
     pub labels: Option<HashMap<u64, String>>,
-    pub lllcversion: String,
-    pub solidity: String,
-    pub source: String,
-    #[serde(rename = "sourceHash")]
-    pub source_hash: H256,
+    #[serde(default)]
+    pub lllcversion: Option<String>,
+    #[serde(default)]
+    pub solidity: Option<String>,
+    #[serde(default)]
+    pub source: Option<String>,
+    #[serde(rename = "sourceHash", default)]
+    pub source_hash: Option<H256>,
+
+    // These fields are implemented in the new version of the test vectors (Prague).
+    #[serde(rename = "hash", default)]
+    pub hash: Option<H256>,
+    #[serde(rename = "filling-transition-tool", default)]
+    pub filling_transition_tool: Option<String>,
+    #[serde(default)]
+    pub description: Option<String>,
+    #[serde(default)]
+    pub url: Option<String>,
+    #[serde(rename = "fixture_format", default)]
+    pub fixture_format: Option<String>,
+    #[serde(rename = "reference-spec", default)]
+    pub reference_spec: Option<String>,
+    #[serde(rename = "reference-spec-version", default)]
+    pub reference_spec_version: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -99,8 +121,8 @@ pub struct EFTestEnv {
     pub current_difficulty: U256,
     #[serde(default, deserialize_with = "deserialize_u256_optional_safe")]
     pub current_excess_blob_gas: Option<U256>,
-    #[serde(deserialize_with = "deserialize_u256_safe")]
-    pub current_gas_limit: U256,
+    #[serde(deserialize_with = "deserialize_u64_safe")]
+    pub current_gas_limit: u64,
     #[serde(deserialize_with = "deserialize_u256_safe")]
     pub current_number: U256,
     pub current_random: Option<H256>,
@@ -110,6 +132,7 @@ pub struct EFTestEnv {
 
 #[derive(Debug, Deserialize, Clone)]
 pub enum EFTestPost {
+    Prague(Vec<EFTestPostValue>),
     Cancun(Vec<EFTestPostValue>),
     Shanghai(Vec<EFTestPostValue>),
     Homestead(Vec<EFTestPostValue>),
@@ -126,6 +149,7 @@ pub enum EFTestPost {
 impl EFTestPost {
     pub fn values(self) -> Vec<EFTestPostValue> {
         match self {
+            EFTestPost::Prague(v) => v,
             EFTestPost::Cancun(v) => v,
             EFTestPost::Shanghai(v) => v,
             EFTestPost::Homestead(v) => v,
@@ -142,6 +166,7 @@ impl EFTestPost {
 
     pub fn vector_post_value(&self, vector: &TestVector) -> EFTestPostValue {
         match self {
+            EFTestPost::Prague(v) => Self::find_vector_post_value(v, vector),
             EFTestPost::Cancun(v) => Self::find_vector_post_value(v, vector),
             EFTestPost::Shanghai(v) => Self::find_vector_post_value(v, vector),
             EFTestPost::Homestead(v) => Self::find_vector_post_value(v, vector),
@@ -171,6 +196,7 @@ impl EFTestPost {
 
     pub fn iter(&self) -> impl Iterator<Item = &EFTestPostValue> {
         match self {
+            EFTestPost::Prague(v) => v.iter(),
             EFTestPost::Cancun(v) => v.iter(),
             EFTestPost::Shanghai(v) => v.iter(),
             EFTestPost::Homestead(v) => v.iter(),
@@ -194,6 +220,7 @@ pub enum TransactionExpectedException {
     Type3TxZeroBlobs,
     Type3TxContractCreation,
     Type3TxInvalidBlobVersionedHash,
+    Type4TxContractCreation,
     IntrinsicGasTooLow,
     InsufficientAccountFunds,
     SenderNotEoa,
@@ -244,11 +271,7 @@ impl From<&EFTestPreValue> for GenesisAccount {
             storage: value
                 .storage
                 .iter()
-                .map(|(k, v)| {
-                    let mut key_bytes = [0u8; 32];
-                    k.to_big_endian(&mut key_bytes);
-                    (H256::from_slice(&key_bytes), *v)
-                })
+                .map(|(k, v)| (H256::from_slice(&k.to_big_endian()), *v))
                 .collect(),
             balance: value.balance,
             nonce: value.nonce.as_u64(),
@@ -268,8 +291,8 @@ pub struct EFTestAccessListItem {
 pub struct EFTestRawTransaction {
     #[serde(deserialize_with = "deserialize_hex_bytes_vec")]
     pub data: Vec<Bytes>,
-    #[serde(deserialize_with = "deserialize_u256_vec_safe")]
-    pub gas_limit: Vec<U256>,
+    #[serde(deserialize_with = "deserialize_u64_vec_safe")]
+    pub gas_limit: Vec<u64>,
     #[serde(default, deserialize_with = "deserialize_u256_optional_safe")]
     pub gas_price: Option<U256>,
     #[serde(deserialize_with = "deserialize_u256_safe")]
@@ -295,7 +318,7 @@ pub struct EFTestRawTransaction {
 #[serde(rename_all = "camelCase")]
 pub struct EFTestTransaction {
     pub data: Bytes,
-    pub gas_limit: U256,
+    pub gas_limit: u64,
     pub gas_price: Option<U256>,
     #[serde(deserialize_with = "deserialize_u256_safe")]
     pub nonce: U256,

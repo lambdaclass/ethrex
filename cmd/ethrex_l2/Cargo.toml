@@ -24,9 +24,10 @@ spinoff = "0.8.0"
 itertools = "0.13.0"
 strum = "0.26.3"
 secp256k1.workspace = true
-keccak-hash = "0.10.0"
+keccak-hash.workspace = true
 
 ethrex-l2.workspace = true
+ethrex-sdk.workspace = true
 ethrex-core.workspace = true
 ethrex-blockchain.workspace = true
 ethrex-prover.workspace = true

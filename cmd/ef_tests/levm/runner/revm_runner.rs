@@ -14,7 +14,7 @@ use ethrex_levm::{
     Account, StorageSlot,
 };
 use ethrex_storage::{error::StoreError, AccountUpdate};
-use ethrex_vm::{db::StoreWrapper, EvmState, RevmAddress, RevmU256, SpecId};
+use ethrex_vm::{db::StoreWrapper, EvmState, RevmAddress, RevmU256};
 use revm::{
     db::State,
     inspectors::TracerEip3155 as RevmTracerEip3155,
@@ -101,11 +101,12 @@ pub fn prepare_revm_for_tx<'state>(
     let chain_spec = initial_state
         .chain_config()
         .map_err(|err| EFTestRunnerError::VMInitializationFailed(err.to_string()))?;
+
     let block_env = RevmBlockEnv {
         number: RevmU256::from_limbs(test.env.current_number.0),
         coinbase: RevmAddress(test.env.current_coinbase.0.into()),
         timestamp: RevmU256::from_limbs(test.env.current_timestamp.0),
-        gas_limit: RevmU256::from_limbs(test.env.current_gas_limit.0),
+        gas_limit: RevmU256::from(test.env.current_gas_limit),
         basefee: RevmU256::from_limbs(test.env.current_base_fee.unwrap_or_default().0),
         difficulty: RevmU256::from_limbs(test.env.current_difficulty.0),
         prevrandao: test.env.current_random.map(|v| v.0.into()),
@@ -137,7 +138,7 @@ pub fn prepare_revm_for_tx<'state>(
 
     let tx_env = RevmTxEnv {
         caller: tx.sender.0.into(),
-        gas_limit: tx.gas_limit.as_u64(),
+        gas_limit: tx.gas_limit,
         gas_price: RevmU256::from_limbs(effective_gas_price(test, tx)?.0),
         transact_to: match tx.to {
             TxKind::Call(to) => RevmTxKind::Call(to.0.into()),
@@ -166,7 +167,7 @@ pub fn prepare_revm_for_tx<'state>(
         .with_block_env(block_env)
         .with_tx_env(tx_env)
         .modify_cfg_env(|cfg| cfg.chain_id = chain_spec.chain_id)
-        .with_spec_id(SpecId::CANCUN) //TODO: In the future replace cancun for the actual spec id
+        .with_spec_id(test.fork())
         .with_external_context(
             RevmTracerEip3155::new(Box::new(std::io::stderr())).without_summary(),
         );
@@ -309,13 +310,11 @@ pub fn compare_levm_revm_account_updates(
                 .storage
                 .iter()
                 .map(|(key, value)| {
-                    let mut temp = [0u8; 32];
-                    key.to_big_endian(&mut temp);
                     let storage_slot = StorageSlot {
                         original_value: *value,
                         current_value: *value,
                     };
-                    (H256::from_slice(&temp), storage_slot)
+                    (H256::from_slice(&key.to_big_endian()), storage_slot)
                 })
                 .collect();
             let account = Account::new(
@@ -361,12 +360,10 @@ pub fn compare_levm_revm_account_updates(
 }
 
 pub fn _run_ef_test_revm(test: &EFTest) -> Result<EFTestReport, EFTestRunnerError> {
-    let mut ef_test_report = EFTestReport::new(
-        test.name.clone(),
-        test.dir.clone(),
-        test._info.generated_test_hash,
-        test.fork(),
-    );
+    let hash = test._info.generated_test_hash.or(test._info.hash).unwrap();
+
+    let mut ef_test_report =
+        EFTestReport::new(test.name.clone(), test.dir.clone(), hash, test.fork());
     for (vector, _tx) in test.transactions.iter() {
         match _run_ef_test_tx_revm(vector, test) {
             Ok(_) => continue,

@@ -5,7 +5,6 @@ use crate::{
     types::Node,
 };
 use ethrex_core::{H256, H512, U256};
-use rand::random;
 use sha3::{Digest, Keccak256};
 use tokio::sync::mpsc::UnboundedSender;
 use tracing::info;

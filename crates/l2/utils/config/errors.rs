@@ -1,6 +1,6 @@
 use crate::proposer::errors::ProposerError;
-use crate::utils::eth_client::errors::EthClientError;
 use ethrex_dev::utils::engine_client;
+use ethrex_l2_sdk::eth_client::errors::EthClientError;
 
 #[derive(Debug, thiserror::Error)]
 pub enum ConfigError {
@@ -14,4 +14,6 @@ pub enum ConfigError {
     BuildProposerEngineServerFromConfigError(#[from] engine_client::errors::ConfigError),
     #[error("Error building Prover server from config: {0}")]
     BuildProverServerFromConfigError(#[from] EthClientError),
+    #[error("{0}")]
+    Custom(String),
 }

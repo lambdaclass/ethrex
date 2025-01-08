@@ -1,12 +1,11 @@
-use crate::{commands::utils::encode_calldata, config::EthrexL2Config};
+use crate::config::EthrexL2Config;
 use bytes::Bytes;
 use clap::Subcommand;
 use ethereum_types::{Address, H256, U256};
 use ethrex_core::types::{PrivilegedTxType, Transaction};
-use ethrex_l2::utils::{
-    eth_client::{eth_sender::Overrides, EthClient},
-    merkle_tree::merkle_proof,
-};
+use ethrex_l2_sdk::calldata::{encode_calldata, Value};
+use ethrex_l2_sdk::eth_client::{eth_sender::Overrides, EthClient};
+use ethrex_l2_sdk::merkle_tree::merkle_proof;
 use ethrex_rpc::types::block::BlockBodyWrapper;
 use eyre::OptionExt;
 use hex::FromHexError;
@@ -129,9 +128,9 @@ pub(crate) enum Command {
         #[clap(long = "gas-limit", required = false)]
         gas_limit: Option<u64>,
         #[clap(long = "gas-price", required = false)]
-        gas_price: Option<u64>,
+        max_fee_per_gas: Option<u64>,
         #[clap(long = "priority-gas-price", required = false)]
-        priority_gas_price: Option<u64>,
+        max_priority_fee_per_gas: Option<u64>,
         #[clap(short = 'w', required = false)]
         wait_for_receipt: bool,
     },
@@ -160,7 +159,7 @@ pub(crate) enum Command {
         #[clap(long = "gas-limit", required = false)]
         gas_limit: Option<u64>,
         #[clap(long = "gas-price", required = false)]
-        gas_price: Option<u64>,
+        max_fee_per_gas: Option<u64>,
     },
     #[clap(about = "Deploy a contract")]
     Deploy {
@@ -187,9 +186,9 @@ pub(crate) enum Command {
         #[clap(long = "gas-limit", required = false)]
         gas_limit: Option<u64>,
         #[clap(long = "gas-price", required = false)]
-        gas_price: Option<u64>,
+        max_fee_per_gas: Option<u64>,
         #[clap(long = "priority-gas-price", required = false)]
-        priority_gas_price: Option<u64>,
+        max_priority_fee_per_gas: Option<u64>,
         #[clap(short = 'w', required = false)]
         wait_for_receipt: bool,
     },
@@ -331,17 +330,24 @@ impl Command {
                 let (index, proof) =
                     get_withdraw_merkle_proof(&rollup_client, l2_withdrawal_tx_hash).await?;
 
-                let claim_withdrawal_data = encode_calldata(
-                    CLAIM_WITHDRAWAL_SIGNATURE,
-                    &format!(
-                        "{l2_withdrawal_tx_hash:#x} {claimed_amount} {withdrawal_l2_block_number} {index} {}",
-                        proof.iter().map(hex::encode).join(",")
-                    ),
-                    false
-                )?;
+                let mut values = vec![
+                    Value::Uint(U256::from_big_endian(
+                        l2_withdrawal_tx_hash.as_fixed_bytes(),
+                    )),
+                    Value::Uint(claimed_amount),
+                    Value::Uint(withdrawal_l2_block_number),
+                    Value::Uint(U256::from(index)),
+                ];
+
+                for hash in proof {
+                    values.push(Value::Uint(U256::from_big_endian(hash.as_fixed_bytes())));
+                }
+
+                let claim_withdrawal_data =
+                    encode_calldata(CLAIM_WITHDRAWAL_SIGNATURE, &values).unwrap();
                 println!(
                     "ClaimWithdrawalData: {}",
-                    hex::encode(claim_withdrawal_data.clone())
+                    hex::encode(&claim_withdrawal_data)
                 );
 
                 let tx = eth_client
@@ -435,7 +441,7 @@ impl Command {
                             from: Some(cfg.wallet.address),
                             value: Some(amount),
                             gas_limit: Some(21000 * 2),
-                            gas_price: Some(800000000),
+                            max_fee_per_gas: Some(800000000),
                             ..Default::default()
                         },
                         10,
@@ -470,8 +476,8 @@ impl Command {
                 chain_id,
                 nonce,
                 gas_limit,
-                gas_price,
-                priority_gas_price,
+                max_fee_per_gas,
+                max_priority_fee_per_gas,
                 wait_for_receipt,
             } => {
                 let client = match l1 {
@@ -495,8 +501,8 @@ impl Command {
                             },
                             nonce,
                             gas_limit,
-                            gas_price,
-                            priority_gas_price,
+                            max_fee_per_gas,
+                            max_priority_fee_per_gas,
                             from: Some(cfg.wallet.address),
                             ..Default::default()
                         },
@@ -523,7 +529,7 @@ impl Command {
                 value,
                 from,
                 gas_limit,
-                gas_price,
+                max_fee_per_gas,
             } => {
                 let client = match l1 {
                     true => eth_client,
@@ -538,7 +544,7 @@ impl Command {
                             from,
                             value: value.into(),
                             gas_limit,
-                            gas_price,
+                            max_fee_per_gas,
                             ..Default::default()
                         },
                     )
@@ -553,8 +559,8 @@ impl Command {
                 chain_id,
                 nonce,
                 gas_limit,
-                gas_price,
-                priority_gas_price,
+                max_fee_per_gas,
+                max_priority_fee_per_gas,
                 wait_for_receipt,
             } => {
                 let client = match l1 {
@@ -572,8 +578,8 @@ impl Command {
                             nonce,
                             chain_id,
                             gas_limit,
-                            gas_price,
-                            priority_gas_price,
+                            max_fee_per_gas,
+                            max_priority_fee_per_gas,
                             ..Default::default()
                         },
                     )

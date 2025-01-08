@@ -31,9 +31,7 @@ impl VM {
         let mut topics = Vec::new();
         for _ in 0..number_of_topics {
             let topic = current_call_frame.stack.pop()?;
-            let mut topic_bytes = [0u8; 32];
-            topic.to_big_endian(&mut topic_bytes);
-            topics.push(H256::from_slice(&topic_bytes));
+            topics.push(H256::from_slice(&topic.to_big_endian()));
         }
 
         let new_memory_size = calculate_memory_size(offset, size)?;
@@ -49,7 +47,7 @@ impl VM {
         )?;
 
         let log = Log {
-            address: current_call_frame.msg_sender, // Should change the addr if we are on a Call/Create transaction (Call should be the contract we are calling, Create should be the original caller)
+            address: current_call_frame.to,
             topics,
             data: Bytes::from(
                 memory::load_range(&mut current_call_frame.memory, offset, size)?.to_vec(),

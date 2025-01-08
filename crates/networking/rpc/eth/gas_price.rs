@@ -172,10 +172,10 @@ mod tests {
             value: 100.into(),
             data: Default::default(),
             v: U256::from(0x1b),
-            r: U256::from(hex!(
+            r: U256::from_big_endian(&hex!(
                 "7e09e26678ed4fac08a249ebe8ed680bf9051a5e14ad223e4b2b9d26e0208f37"
             )),
-            s: U256::from(hex!(
+            s: U256::from_big_endian(&hex!(
                 "5f6e3f188e3e6eab7d7d3b6568f5eac7d687b08d307d3154ccd8c87b4630509b"
             )),
         })

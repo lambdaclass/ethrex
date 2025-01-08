@@ -1,5 +1,5 @@
 [package]
-name = "zkvm_program"
+name = "zkvm-risc0-program"
 version = "0.1.0"
 edition = "2021"
 
