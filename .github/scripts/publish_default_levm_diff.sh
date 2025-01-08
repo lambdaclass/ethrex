@@ -1,7 +1,7 @@
 curl -X POST $url \
 -H 'Content-Type: application/json; charset=utf-8' \
 --data @- <<EOF
-$(jq -n --arg text "$(diff.md)" '{
+$(jq -n --arg text "$(cat diff.md)" '{
     "blocks": [
         {
             "type": "header",
