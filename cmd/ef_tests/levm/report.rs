@@ -224,13 +224,13 @@ pub fn summary_for_shell(reports: &[EFTestReport]) -> String {
         fork_summary_shell(reports, SpecId::PRAGUE),
         fork_summary_shell(reports, SpecId::CANCUN),
         fork_summary_shell(reports, SpecId::SHANGHAI),
-        fork_summary_shell(reports, SpecId::HOMESTEAD),
-        fork_summary_shell(reports, SpecId::ISTANBUL),
-        fork_summary_shell(reports, SpecId::LONDON),
-        fork_summary_shell(reports, SpecId::BYZANTIUM),
-        fork_summary_shell(reports, SpecId::BERLIN),
-        fork_summary_shell(reports, SpecId::CONSTANTINOPLE),
         fork_summary_shell(reports, SpecId::MERGE),
+        fork_summary_shell(reports, SpecId::LONDON),
+        fork_summary_shell(reports, SpecId::BERLIN),
+        fork_summary_shell(reports, SpecId::ISTANBUL),
+        fork_summary_shell(reports, SpecId::CONSTANTINOPLE),
+        fork_summary_shell(reports, SpecId::BYZANTIUM),
+        fork_summary_shell(reports, SpecId::HOMESTEAD),
         fork_summary_shell(reports, SpecId::FRONTIER),
         test_dir_summary_for_shell(reports),
     )
@@ -268,7 +268,20 @@ pub fn test_dir_summary_for_shell(reports: &[EFTestReport]) -> String {
         .iter()
         .into_group_map_by(|report| report.dir.clone())
         .iter()
-        .for_each(|(dir, reports)| {
+        .map(|(dir, reports)| {
+            let total_passed = reports.iter().filter(|report| report.passed()).count();
+            let total_run = reports.len();
+            if total_passed == 0 {
+                (dir, reports, 0)
+            } else if total_passed > 0 && total_passed < total_run {
+                (dir, reports, 1)
+            } else {
+                (dir, reports, 2)
+            }
+        })
+        .sorted_by_key(|(_dir, _reports, weight)| *weight)
+        .rev()
+        .for_each(|(dir, reports, _weight)| {
             let total_passed = reports.iter().filter(|report| report.passed()).count();
             let total_run = reports.len();
             let success_percentage = (total_passed as f64 / total_run as f64) * 100.0;
