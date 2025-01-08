@@ -7,3 +7,7 @@ services:
   grafana:
     ports:
       - "3801:3000"
+    volumes:
+      - type: bind
+        source: ../metrics/provisioning/grafana_provisioning/dashboards/dashboard_config_l1.yaml
+        target: /etc/grafana/provisioning/dashboards/dashboard.yaml

@@ -33,7 +33,7 @@ const IGNORED_TESTS: [&str; 7] = [
 pub fn parse_ef_tests(opts: &EFTestRunnerOptions) -> Result<Vec<EFTest>, EFTestParseError> {
     let parsing_time = std::time::Instant::now();
     let cargo_manifest_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let ef_general_state_tests_path = cargo_manifest_dir.join("vectors/GeneralStateTests");
+    let ef_general_state_tests_path = cargo_manifest_dir.join("vectors");
     let mut spinner = Spinner::new(Dots, "Parsing EF Tests".bold().to_string(), Color::Cyan);
     if !opts.spinner {
         spinner.stop();
@@ -51,6 +51,7 @@ pub fn parse_ef_tests(opts: &EFTestRunnerOptions) -> Result<Vec<EFTest>, EFTestP
         let directory_tests = parse_ef_test_dir(test_dir, opts, &mut spinner)?;
         tests.extend(directory_tests);
     }
+
     spinner_success_or_print(
         &mut spinner,
         format!(
@@ -59,6 +60,7 @@ pub fn parse_ef_tests(opts: &EFTestRunnerOptions) -> Result<Vec<EFTest>, EFTestP
         ),
         opts.spinner,
     );
+
     Ok(tests)
 }
 
