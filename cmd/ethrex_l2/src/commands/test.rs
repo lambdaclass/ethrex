@@ -99,8 +99,6 @@ async fn transfer_from(
                     chain_id: Some(cfg.network.l2_chain_id),
                     nonce: Some(i),
                     value: Some(value),
-                    gas_price: Some(3121115334),
-                    priority_gas_price: Some(3000000000),
                     gas_limit: Some(TX_GAS_COST),
                     ..Default::default()
                 },
