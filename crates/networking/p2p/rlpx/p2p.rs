@@ -109,6 +109,31 @@ impl DisconnectMessage {
     pub fn new(reason: Option<u8>) -> Self {
         Self { reason }
     }
+
+    /// Returns the meaning of the disconnect reason's error code
+    /// The meaning of each error code is defined by the spec: https://github.com/ethereum/devp2p/blob/master/rlpx.md#disconnect-0x01
+    pub fn reason(&self) -> &str {
+        if let Some(reason) = self.reason {
+            match reason {
+                0x00 => "Disconnect requested",
+                0x01 => "TCP sub-system error",
+                0x02 => "Breach of protocol, e.g. a malformed message, bad RLP, ...",
+                0x03 => "Useless peer",
+                0x04 => "Too many peers",
+                0x05 => "Already connected",
+                0x06 => "Incompatible P2P protocol version",
+                0x07 => "Null node identity received - this is automatically invalid",
+                0x08 => "Client quitting",
+                0x09 => "Unexpected identity in handshake",
+                0x0a => "Identity is the same as this node (i.e. connected to itself)",
+                0x0b => "Ping timeout",
+                0x10 => "Some other reason specific to a subprotocol",
+                _ => "Unknown Reason",
+            }
+        } else {
+            "Reason Not Provided"
+        }
+    }
 }
 
 impl RLPxMessage for DisconnectMessage {
@@ -128,16 +153,20 @@ impl RLPxMessage for DisconnectMessage {
 
     fn decode(msg_data: &[u8]) -> Result<Self, RLPDecodeError> {
         // decode disconnect message: [reason (optional)]
-        let decompressed_data = snappy_decompress(msg_data)?;
+        // The msg data may be compressed or not
+        let msg_data = if let Ok(decompressed) = snappy_decompress(msg_data) {
+            decompressed
+        } else {
+            msg_data.to_vec()
+        };
         // It seems that disconnect reason can be encoded in different ways:
-        // TODO: it may be not compressed at all. We should check that case
-        let reason = match decompressed_data.len() {
+        let reason = match msg_data.len() {
             0 => None,
             // As a single u8
-            1 => Some(decompressed_data[0]),
+            1 => Some(msg_data[0]),
             // As an RLP encoded Vec<u8>
             _ => {
-                let decoder = Decoder::new(&decompressed_data)?;
+                let decoder = Decoder::new(&msg_data)?;
                 let (reason, _): (Option<u8>, _) = decoder.decode_optional_field();
                 reason
             }

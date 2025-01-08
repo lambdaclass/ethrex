@@ -116,6 +116,12 @@ pub fn cli() -> Command {
                 .required(false)
                 .value_name("BLOCKS_DIR_PATH"),
         )
+        .arg(
+            Arg::new("metrics.port")
+                .long("metrics.port")
+                .required(false)
+                .value_name("PROMETHEUS_METRICS_PORT"),
+        )
         .subcommand(
             Command::new("removedb").about("Remove the database").arg(
                 Arg::new("datadir")

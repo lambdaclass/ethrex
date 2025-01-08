@@ -1,0 +1,8 @@
+global:
+  scrape_interval: 15s
+
+scrape_configs:
+  - job_name: "ethrex L2"
+    static_configs:
+      # Use the name defined in the docker-compose.yaml
+      - targets: ["host.docker.internal:3702"]
