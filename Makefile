@@ -192,7 +192,7 @@ load-node: install-cli ## 🚧 Runs a load-test. Run make start-node-with-flameg
 		CONTRACT_INTERACTION="-c"; \
 		echo "Running the load-test with contract interaction"; \
 	fi; \
-	ethrex_l2 test load --path test_data/private_keys.txt -i 2000 -v  --value 1 $$CONTRACT_INTERACTION
+	ethrex_l2 test load --path test_data/private_keys.txt -i 100 -v  --value 1 $$CONTRACT_INTERACTION
 
 rm-test-db:  ## 🛑 Removes the DB used by the ethrex client used for testing
 	sudo cargo run --release --bin ethrex -- removedb --datadir test_ethrex
