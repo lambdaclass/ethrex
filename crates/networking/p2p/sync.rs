@@ -16,6 +16,7 @@ use tokio::{
 };
 use tracing::{debug, info, warn};
 
+use crate::rlpx::p2p::Capability;
 use crate::{kademlia::KademliaTable, peer_channels::BlockRequestOrder};
 
 /// Maximum amount of times we will ask a peer for an account/storage range
@@ -100,7 +101,12 @@ impl SyncManager {
         // This step is not parallelized
         let mut all_block_hashes = vec![];
         loop {
-            let peer = self.peers.lock().await.get_peer_channels().await;
+            let peer = self
+                .peers
+                .lock()
+                .await
+                .get_peer_channels(Capability::Eth)
+                .await;
             debug!("Requesting Block Headers from {current_head}");
             // Request Block Headers from Peer
             if let Some(mut block_headers) = peer
@@ -212,7 +218,7 @@ async fn download_and_run_blocks(
     store: Store,
 ) -> Result<(), SyncError> {
     loop {
-        let peer = peers.lock().await.get_peer_channels().await;
+        let peer = peers.lock().await.get_peer_channels(Capability::Eth).await;
         debug!("Requesting Block Bodies ");
         if let Some(block_bodies) = peer.request_block_bodies(block_hashes.clone()).await {
             let block_bodies_len = block_bodies.len();
@@ -251,7 +257,7 @@ async fn store_block_bodies(
     store: Store,
 ) -> Result<(), SyncError> {
     loop {
-        let peer = peers.lock().await.get_peer_channels().await;
+        let peer = peers.lock().await.get_peer_channels(Capability::Eth).await;
         debug!("Requesting Block Headers ");
         if let Some(block_bodies) = peer.request_block_bodies(block_hashes.clone()).await {
             debug!(" Received {} Block Bodies", block_bodies.len());
@@ -278,7 +284,7 @@ async fn store_receipts(
     store: Store,
 ) -> Result<(), SyncError> {
     loop {
-        let peer = peers.lock().await.get_peer_channels().await;
+        let peer = peers.lock().await.get_peer_channels(Capability::Eth).await;
         debug!("Requesting Block Headers ");
         if let Some(receipts) = peer.request_receipts(block_hashes.clone()).await {
             debug!(" Received {} Receipts", receipts.len());
@@ -323,7 +329,12 @@ async fn rebuild_state_trie(
     // Fetch Account Ranges
     // If we reached the maximum amount of retries then it means the state we are requesting is probably old and no longer available
     for _ in 0..MAX_RETRIES {
-        let peer = peers.clone().lock().await.get_peer_channels().await;
+        let peer = peers
+            .clone()
+            .lock()
+            .await
+            .get_peer_channels(Capability::Snap)
+            .await;
         debug!("Requesting Account Range for state root {state_root}, starting hash: {start_account_hash}");
         if let Some((account_hashes, accounts, should_continue)) = peer
             .request_account_range(state_root, start_account_hash)
@@ -431,7 +442,7 @@ async fn fetch_bytecode_batch(
     store: Store,
 ) -> Result<Vec<H256>, StoreError> {
     loop {
-        let peer = peers.lock().await.get_peer_channels().await;
+        let peer = peers.lock().await.get_peer_channels(Capability::Snap).await;
         if let Some(bytecodes) = peer.request_bytecodes(batch.clone()).await {
             debug!("Received {} bytecodes", bytecodes.len());
             // Store the bytecodes
@@ -489,7 +500,7 @@ async fn fetch_storage_batch(
     store: Store,
 ) -> Result<Vec<(H256, H256)>, StoreError> {
     for _ in 0..MAX_RETRIES {
-        let peer = peers.lock().await.get_peer_channels().await;
+        let peer = peers.lock().await.get_peer_channels(Capability::Snap).await;
         let (batch_hahses, batch_roots) = batch.clone().into_iter().unzip();
         if let Some((mut keys, mut values, incomplete)) = peer
             .request_storage_ranges(state_root, batch_roots, batch_hahses, H256::zero())
@@ -544,7 +555,7 @@ async fn heal_state_trie(
     // Count the number of request retries so we don't get stuck requesting old state
     let mut retry_count = 0;
     while !paths.is_empty() && retry_count < MAX_RETRIES {
-        let peer = peers.lock().await.get_peer_channels().await;
+        let peer = peers.lock().await.get_peer_channels(Capability::Snap).await;
         if let Some(nodes) = peer
             .request_state_trienodes(state_root, paths.clone())
             .await
@@ -661,7 +672,7 @@ async fn heal_storage_batch(
     store: Store,
 ) -> Result<BTreeMap<H256, Vec<Nibbles>>, SyncError> {
     for _ in 0..MAX_RETRIES {
-        let peer = peers.lock().await.get_peer_channels().await;
+        let peer = peers.lock().await.get_peer_channels(Capability::Snap).await;
         if let Some(mut nodes) = peer
             .request_storage_trienodes(state_root, batch.clone())
             .await
