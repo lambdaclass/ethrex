@@ -29,7 +29,7 @@ use tracing::{error, info, warn};
 use tracing_subscriber::{filter::Directive, EnvFilter, FmtSubscriber};
 mod cli;
 mod decode;
-mod holesky_presets;
+mod networks;
 
 const DEFAULT_DATADIR: &str = "ethrex";
 #[tokio::main]
@@ -105,8 +105,8 @@ async fn main() {
     if network == "holesky" {
         warn!("Using holesky presets, bootnodes field will be ignored");
         // Set holesky presets
-        network = String::from(holesky_presets::HOLESKY_GENESIS_PATH);
-        bootnodes = holesky_presets::HOLESKY_NODES.to_vec();
+        network = String::from(networks::HOLESKY_GENESIS_PATH);
+        bootnodes = networks::HOLESKY_BOOTNODES.to_vec();
     }
 
     if bootnodes.is_empty() {

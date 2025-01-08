@@ -33,6 +33,16 @@ pub fn decode_hex(s: &str) -> Result<Vec<u8>, ParseIntError> {
         .collect()
 }
 
+impl<'de> serde::de::Deserialize<'de> for BootNode {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        BootNode::from_str(<&str>::deserialize(deserializer)?)
+            .map_err(|e| serde::de::Error::custom(e))
+    }
+}
+
 #[test]
 fn parse_bootnode_from_string() {
     let input = "enode://d860a01f9722d78051619d1e2351aba3f43f943f6f00718d1b9baa4101932a1f5011f16bb2b1bb35db20d6fe28fa0bf09636d26a87d31de9ec6203eeedb1f666@18.138.108.67:30303";
