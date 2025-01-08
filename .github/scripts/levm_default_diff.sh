@@ -1,8 +1,5 @@
 #!/bin/bash
 
-# Exit on error, undefined vars, and pipe failures
-set -euo pipefail
-
 if [ "$#" -ne 2 ]; then
     echo "Usage: $0 <default_file> <levm_file>"
     exit 1
