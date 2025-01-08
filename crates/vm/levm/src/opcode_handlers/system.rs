@@ -56,6 +56,9 @@ impl VM {
             .gas_limit
             .checked_sub(current_call_frame.gas_used)
             .ok_or(InternalError::GasOverflow)?;
+        //dbg the current gas used
+        dbg!(current_call_frame.gas_used);
+        let _previous_gas = current_call_frame.gas_used;
         let (cost, gas_limit) = gas_cost::call(
             new_memory_size,
             current_memory_size,
@@ -64,8 +67,10 @@ impl VM {
             value_to_transfer,
             gas,
             gas_left,
+            self.env.spec_id,
         )?;
         self.increase_consumed_gas(current_call_frame, cost)?;
+        dbg!(current_call_frame.gas_used);
 
         // OPERATION
         let msg_sender = current_call_frame.to; // The new sender will be the current contract.

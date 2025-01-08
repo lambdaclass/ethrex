@@ -309,7 +309,6 @@ pub fn modexp(
             .ok_or(PrecompileError::ParsingInputError)?,
     );
 
-    //dbg!(b_size, e_size, m_size);
     if b_size == U256::zero() && m_size == U256::zero() {
         increase_precompile_consumed_gas(gas_for_call, MODEXP_STATIC_COST, consumed_gas)?;
         return Ok(Bytes::new());
@@ -347,11 +346,10 @@ pub fn modexp(
     let exp_first_32 = BigUint::from_bytes_be(e.get(0..bytes_to_take).unwrap_or_default());
 
     let gas_cost = gas_cost::modexp(&exp_first_32, b_size, e_size, m_size, spec_id)?;
-    //dbg!(gas_cost);
+
     increase_precompile_consumed_gas(gas_for_call, gas_cost, consumed_gas)?;
 
     let result = mod_exp(base, exponent, modulus);
-    //dbg!(&result);
 
     let res_bytes = result.to_bytes_be();
     let res_bytes = increase_left_pad(&Bytes::from(res_bytes), m_size)?;
