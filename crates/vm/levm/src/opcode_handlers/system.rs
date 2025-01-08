@@ -56,7 +56,6 @@ impl VM {
             .gas_limit
             .checked_sub(current_call_frame.gas_used)
             .ok_or(InternalError::GasOverflow)?;
-        //dbg the current gas used
         let (cost, gas_limit) = gas_cost::call(
             new_memory_size,
             current_memory_size,

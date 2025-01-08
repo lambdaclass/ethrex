@@ -253,8 +253,6 @@ impl VM {
             self.env.transient_storage.clone(),
         );
 
-        dbg!(current_call_frame.msg_sender);
-        dbg!(current_call_frame.to);
         if is_precompile(&current_call_frame.code_address, self.env.spec_id) {
             let precompile_result = execute_precompile(current_call_frame, self.env.spec_id);
 
@@ -409,11 +407,6 @@ impl VM {
             if opcode != Opcode::JUMP && opcode != Opcode::JUMPI {
                 current_call_frame.increment_pc()?;
             }
-
-            dbg!(opcode);
-            dbg!(&current_call_frame.stack);
-            dbg!(current_call_frame.gas_used);
-            dbg!(op_result.clone());
 
             // Gas refunds are applied at the end of a transaction. Should it be implemented here?
 

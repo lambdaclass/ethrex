@@ -639,6 +639,7 @@ pub fn extcodehash(address_was_cold: bool) -> Result<u64, VMError> {
     )
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn call(
     new_memory_size: usize,
     current_memory_size: usize,
@@ -684,7 +685,6 @@ pub fn call(
         .ok_or(OutOfGasError::GasCostOverflow)?
         .checked_add(value_to_empty_account)
         .ok_or(OutOfGasError::GasCostOverflow)?;
-    dbg!(call_gas_costs);
 
     calculate_cost_and_gas_limit_call(
         value_to_transfer.is_zero(),
@@ -850,23 +850,14 @@ pub fn modexp(
     .checked_div(8)
     .ok_or(InternalError::DivisionError)?;
 
-    // Here previous to berlin the complexity had a more complex formula.
-    // Should i implement it here and branch it?
-    //let multiplication_complexity = words.checked_pow(2).ok_or(OutOfGasError::GasCostOverflow)?;
     let multiplication_complexity: u64 = if spec_id >= SpecId::BERLIN {
-        //dbg!("Berlin");
         words.checked_pow(2).ok_or(OutOfGasError::GasCostOverflow)?
     } else {
-        //dbg!("Pre-Berlin");
-        //if x <= 64: return x ** 2
-        //elif x <= 1024: return x ** 2 // 4 + 96 * x - 3072
-        //else: return x ** 2 // 16 + 480 * x - 199680
         if max_length <= 64 {
             max_length
                 .checked_pow(2)
                 .ok_or(OutOfGasError::GasCostOverflow)?
         } else if max_length <= 1024 {
-            // (max_length^2 // 4) + 96 * max_length - 3072
             max_length
                 .checked_pow(2)
                 .ok_or(OutOfGasError::GasCostOverflow)?
@@ -881,7 +872,6 @@ pub fn modexp(
                 .checked_sub(3072)
                 .ok_or(OutOfGasError::GasCostOverflow)?
         } else {
-            // x ** 2 // 16 + 480 * x - 199680
             max_length
                 .checked_pow(2)
                 .ok_or(OutOfGasError::GasCostOverflow)?
@@ -900,7 +890,6 @@ pub fn modexp(
 
     // Iteration count should be branched to use EIP-2565 or EIP-198
     let calculate_iteration_count = if spec_id >= SpecId::BERLIN {
-        //dbg!("Berlin iteration count");
         if exponent_size <= 32 && *exponent_first_32_bytes != BigUint::ZERO {
             exponent_first_32_bytes
                 .bits()
@@ -925,7 +914,6 @@ pub fn modexp(
         if exponent_size < 32 {
             exponent_first_32_bytes.bits().saturating_sub(1)
         } else {
-            // If exponent size is 32 or greater
             let extra_size = (exponent_size
                 .checked_sub(32)
                 .ok_or(InternalError::ArithmeticOperationUnderflow)?)
@@ -936,15 +924,12 @@ pub fn modexp(
 
             extra_size
                 .checked_add(bits_part)
-                .ok_or(OutOfGasError::GasCostOverflow)? // Prevent overflow
+                .ok_or(OutOfGasError::GasCostOverflow)?
         }
-        .max(1) // Ensure minimum of 1 iteration
+        .max(1)
     };
 
     let cost = if spec_id >= SpecId::BERLIN {
-        //multiplication_complexity = calculate_multiplication_complexity(base_length, modulus_length)
-        //iteration_count = calculate_iteration_count(exponent_length, exponent)
-        //return max(200, math.floor(multiplication_complexity * iteration_count / 3))
         MODEXP_STATIC_COST.max(
             multiplication_complexity
                 .checked_mul(calculate_iteration_count)
