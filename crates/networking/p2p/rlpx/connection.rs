@@ -238,40 +238,27 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
         self.send(hello_msg).await?;
 
         // Receive Hello message
-        match self.receive().await? {
-            Message::Hello(hello_message) => {
-                self.capabilities = hello_message.capabilities;
+        if let Message::Hello(hello_message) = self.receive().await? {
+            self.capabilities = hello_message.capabilities;
 
-                // Check if we have any capability in common
-                for cap in self.capabilities.clone() {
-                    if SUPPORTED_CAPABILITIES.contains(&cap) {
-                        return Ok(());
-                    }
+            // Check if we have any capability in common
+            for cap in self.capabilities.clone() {
+                if SUPPORTED_CAPABILITIES.contains(&cap) {
+                    return Ok(());
                 }
-                // Return error if not
-                Err(RLPxError::HandshakeError(
-                    "No matching capabilities".to_string(),
-                ))
             }
-            Message::Disconnect(disconnect) => {
-                warn!(
-                    "Peer replied to Hello with Disconnect with reason: {}",
-                    disconnect.reason()
-                );
-                // Fail if it is not a hello message
-                Err(RLPxError::HandshakeError(
-                    "Expected Hello message".to_string(),
-                ))
-            }
-            m => {
-                warn!("Peer replied to Hello with {m:?}");
-                // Fail if it is not a hello message
-                Err(RLPxError::HandshakeError(
-                    "Expected Hello message".to_string(),
-                ))
-            }
+            // Return error if not
+            Err(RLPxError::HandshakeError(
+                "No matching capabilities".to_string(),
+            ))
+        } else {
+            // Fail if it is not a hello message
+            Err(RLPxError::HandshakeError(
+                "Expected Hello message".to_string(),
+            ))
         }
     }
+
 
     async fn handle_peer_conn(
         &mut self,
