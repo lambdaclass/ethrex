@@ -241,6 +241,7 @@ pub fn map_eth_requests(req: &RpcRequest, context: RpcApiContext) -> Result<Valu
         "eth_sendRawTransaction" => SendRawTransactionRequest::call(req, context),
         "eth_getProof" => GetProofRequest::call(req, context),
         "eth_gasPrice" => GasPrice::call(req, context),
+        "eth_maxPriorityFeePerGas" => eth::max_priority_fee::MaxPriorityFee::call(req, context),
         unknown_eth_method => Err(RpcErr::MethodNotFound(unknown_eth_method.to_owned())),
     }
 }

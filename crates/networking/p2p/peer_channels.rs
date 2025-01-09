@@ -39,6 +39,11 @@ pub struct PeerChannels {
     receiver: Arc<Mutex<mpsc::Receiver<RLPxMessage>>>,
 }
 
+pub enum BlockRequestOrder {
+    OldToNew,
+    NewToOld,
+}
+
 impl PeerChannels {
     /// Sets up the communication channels for the peer
     /// Returns the channel endpoints to send to the active connection's listen loop
@@ -57,22 +62,26 @@ impl PeerChannels {
         )
     }
 
-    /// Requests block headers from the peer, starting from the `start` block hash towards newer blocks
+    /// Requests block headers from the peer, starting from the `start` block hash towards either older or newer blocks depending on the order
     /// Returns the block headers or None if:
     /// - There are no available peers (the node just started up or was rejected by all other nodes)
     /// - The response timed out
     /// - The response was empty or not valid
-    pub async fn request_block_headers(&self, start: H256) -> Option<Vec<BlockHeader>> {
+    pub async fn request_block_headers(
+        &self,
+        start: H256,
+        order: BlockRequestOrder,
+    ) -> Option<Vec<BlockHeader>> {
         let request_id = rand::random();
         let request = RLPxMessage::GetBlockHeaders(GetBlockHeaders {
             id: request_id,
             startblock: start.into(),
             limit: BLOCK_HEADER_LIMIT,
             skip: 0,
-            reverse: false,
+            reverse: matches!(order, BlockRequestOrder::NewToOld),
         });
-        self.sender.send(request).await.ok()?;
         let mut receiver = self.receiver.lock().await;
+        self.sender.send(request).await.ok()?;
         let block_headers = tokio::time::timeout(PEER_REPLY_TIMOUT, async move {
             loop {
                 match receiver.recv().await {
@@ -104,8 +113,8 @@ impl PeerChannels {
             id: request_id,
             block_hashes,
         });
-        self.sender.send(request).await.ok()?;
         let mut receiver = self.receiver.lock().await;
+        self.sender.send(request).await.ok()?;
         let block_bodies = tokio::time::timeout(PEER_REPLY_TIMOUT, async move {
             loop {
                 match receiver.recv().await {
@@ -138,8 +147,8 @@ impl PeerChannels {
             id: request_id,
             block_hashes,
         });
-        self.sender.send(request).await.ok()?;
         let mut receiver = self.receiver.lock().await;
+        self.sender.send(request).await.ok()?;
         let receipts = tokio::time::timeout(PEER_REPLY_TIMOUT, async move {
             loop {
                 match receiver.recv().await {
@@ -177,8 +186,8 @@ impl PeerChannels {
             limit_hash: HASH_MAX,
             response_bytes: MAX_RESPONSE_BYTES,
         });
-        self.sender.send(request).await.ok()?;
         let mut receiver = self.receiver.lock().await;
+        self.sender.send(request).await.ok()?;
         let (accounts, proof) = tokio::time::timeout(PEER_REPLY_TIMOUT, async move {
             loop {
                 match receiver.recv().await {
@@ -229,8 +238,8 @@ impl PeerChannels {
             hashes,
             bytes: MAX_RESPONSE_BYTES,
         });
-        self.sender.send(request).await.ok()?;
         let mut receiver = self.receiver.lock().await;
+        self.sender.send(request).await.ok()?;
         let codes = tokio::time::timeout(PEER_REPLY_TIMOUT, async move {
             loop {
                 match receiver.recv().await {
@@ -272,8 +281,8 @@ impl PeerChannels {
             limit_hash: HASH_MAX,
             response_bytes: MAX_RESPONSE_BYTES,
         });
-        self.sender.send(request).await.ok()?;
         let mut receiver = self.receiver.lock().await;
+        self.sender.send(request).await.ok()?;
         let (mut slots, proof) = tokio::time::timeout(PEER_REPLY_TIMOUT, async move {
             loop {
                 match receiver.recv().await {
@@ -378,8 +387,8 @@ impl PeerChannels {
                 .collect(),
             bytes: MAX_RESPONSE_BYTES,
         });
-        self.sender.send(request).await.ok()?;
         let mut receiver = self.receiver.lock().await;
+        self.sender.send(request).await.ok()?;
         let nodes = tokio::time::timeout(PEER_REPLY_TIMOUT, async move {
             loop {
                 match receiver.recv().await {
@@ -437,8 +446,8 @@ impl PeerChannels {
                 .collect(),
             bytes: MAX_RESPONSE_BYTES,
         });
-        self.sender.send(request).await.ok()?;
         let mut receiver = self.receiver.lock().await;
+        self.sender.send(request).await.ok()?;
         let nodes = tokio::time::timeout(PEER_REPLY_TIMOUT, async move {
             loop {
                 match receiver.recv().await {

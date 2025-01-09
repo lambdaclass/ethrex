@@ -1,8 +1,6 @@
 name: PR Lines of Code
 
 on:
-  push:
-    branches: ["main"]
   pull_request:
     branches: ["**"]
 
