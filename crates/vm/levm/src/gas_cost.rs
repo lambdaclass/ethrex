@@ -160,6 +160,7 @@ pub const CREATE_BASE_COST: u64 = 32000;
 pub const CALLDATA_COST_ZERO_BYTE: u64 = 4;
 pub const CALLDATA_COST_NON_ZERO_BYTE: u64 = 16;
 pub const CALLDATA_COST_NON_ZERO_BYTE_PRE_ISTANBUL: u64 = 68;
+pub const STANDARD_TOKEN_COST: u64 = 4;
 
 // Blob gas costs
 pub const BLOB_GAS_PER_BLOB: u64 = 131072;
@@ -170,6 +171,9 @@ pub const ACCESS_LIST_ADDRESS_COST: u64 = 2400;
 
 // Precompile costs
 pub const ECRECOVER_COST: u64 = 3000;
+
+// Floor cost per token, specified in https://eips.ethereum.org/EIPS/eip-7623
+pub const TOTAL_COST_FLOOR_PER_TOKEN: u64 = 10;
 
 pub const SHA2_256_STATIC_COST: u64 = 60;
 pub const SHA2_256_DYNAMIC_BASE: u64 = 12;
