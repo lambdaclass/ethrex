@@ -845,7 +845,7 @@ pub fn modexp(
     .checked_div(8)
     .ok_or(InternalError::DivisionError)?;
 
-    let multiplication_complexity: u64 = if spec_id >= SpecId::BERLIN {
+    let multiplication_complexity = if spec_id >= SpecId::BERLIN {
         words.checked_pow(2).ok_or(OutOfGasError::GasCostOverflow)?
     } else {
         if max_length <= 64 {
