@@ -7,7 +7,7 @@ $(jq -n --arg text "$(cat diff.md)" '{
             "type": "header",
             "text": {
                 "type": "plain_text",
-                "text": "Passing HIVE tests diff default vs levm feature"
+                "text": "Hive tests revm vs levm diff"
             }
         },
         {
