@@ -6,6 +6,7 @@ use ethrex_core::H128;
 use ethrex_rlp::encode::RLPEncode as _;
 use sha3::Digest as _;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
+use tracing::warn;
 
 use super::{connection::Established, error::RLPxError};
 
