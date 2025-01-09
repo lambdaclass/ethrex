@@ -183,9 +183,9 @@ jobs:
         env:
           url: ${{ secrets.TEST_CHANNEL_SLACK }}
         run: |
-          sh .github/scripts/levm_default_diff.sh results_default.md results_levm.md >> diff.md
+          bash .github/scripts/levm_default_diff.sh results_default.md results_levm.md >> diff.md
           cat diff.md >> $GITHUB_STEP_SUMMARY
-          sh .github/scripts/publish_default_levm_diff.sh
+          bash .github/scripts/publish_default_levm_diff.sh
 
       # - name: Post results to levm slack channel
       #   env:
