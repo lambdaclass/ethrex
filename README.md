@@ -159,6 +159,11 @@ You now should be able to build the client:
 ```bash
 make build
 ```
+Disclaimer: We're using LEVM as the default EVM for Ethrex, if you wish to 
+build it with REVM support instead, you can use:
+```bash
+make build-revm
+```
 ### Database
 Currently, the database is `libmdbx`, it will be set up
 when you start the client. The location of the db's files will depend on your OS:

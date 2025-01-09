@@ -8,6 +8,9 @@ help: ## 📚 Show help for each of the Makefile recipes
 build: ## 🔨 Build the client
 	cargo build --workspace
 
+build-revm: ## 🔨 Build the client with revm as EVM
+	cargo build --workspace --features revm --no-default-features
+
 lint: ## 🧹 Linter check
 	cargo clippy --all-targets --all-features --workspace --exclude ethrex-prover -- -D warnings
 
@@ -25,10 +28,17 @@ clean: clean-vectors ## 🧹 Remove build artifacts
 
 STAMP_FILE := .docker_build_stamp
 $(STAMP_FILE): $(shell find crates cmd -type f -name '*.rs') Cargo.toml Dockerfile
-	docker build -t ethrex .
+	docker build -t ethrex --build-arg "BUILD_FLAGS=${--features levm}" .
+	touch $(STAMP_FILE)
+
+STAMP_FILE_REVM := .docker_build_stamp_revm
+$(STAMP_FILE_REVM): $(shell find crates cmd -type f -name '*.rs') Cargo.toml Dockerfile
+	docker build -t ethrex --build-arg "BUILD_FLAGS=--features revm --no-default-features" .
 	touch $(STAMP_FILE)
 
 build-image: $(STAMP_FILE) ## 🐳 Build the Docker image
+
+build-image-revm: $(STAMP_FILE_REVM)
 
 run-image: build-image ## 🏃 Run the Docker image
 	docker run --rm -p 127.0.0.1:8545:8545 ethrex --http.addr 0.0.0.0
