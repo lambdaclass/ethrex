@@ -23,12 +23,10 @@ fi
 TEMP_FILE=$(mktemp)
 trap 'rm -f $TEMP_FILE' EXIT
 
-# Get the last section of the file (everything after the last "Total" line)
 get_last_section() {
     tac "$1" | sed -n "1,/\*Total:/p" | tac
 }
 
-# Function to extract test results
 parse_results() {
     while IFS= read -r line; do
         if [[ $line =~ ^[[:space:]]*[^*] && $line =~ : ]]; then
