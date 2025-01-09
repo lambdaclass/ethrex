@@ -80,8 +80,8 @@ impl PeerChannels {
             skip: 0,
             reverse: matches!(order, BlockRequestOrder::NewToOld),
         });
-        self.sender.send(request).await.ok()?;
         let mut receiver = self.receiver.lock().await;
+        self.sender.send(request).await.ok()?;
         let block_headers = tokio::time::timeout(PEER_REPLY_TIMOUT, async move {
             loop {
                 match receiver.recv().await {
@@ -113,8 +113,8 @@ impl PeerChannels {
             id: request_id,
             block_hashes,
         });
-        self.sender.send(request).await.ok()?;
         let mut receiver = self.receiver.lock().await;
+        self.sender.send(request).await.ok()?;
         let block_bodies = tokio::time::timeout(PEER_REPLY_TIMOUT, async move {
             loop {
                 match receiver.recv().await {
@@ -147,8 +147,8 @@ impl PeerChannels {
             id: request_id,
             block_hashes,
         });
-        self.sender.send(request).await.ok()?;
         let mut receiver = self.receiver.lock().await;
+        self.sender.send(request).await.ok()?;
         let receipts = tokio::time::timeout(PEER_REPLY_TIMOUT, async move {
             loop {
                 match receiver.recv().await {
@@ -186,8 +186,8 @@ impl PeerChannels {
             limit_hash: HASH_MAX,
             response_bytes: MAX_RESPONSE_BYTES,
         });
-        self.sender.send(request).await.ok()?;
         let mut receiver = self.receiver.lock().await;
+        self.sender.send(request).await.ok()?;
         let (accounts, proof) = tokio::time::timeout(PEER_REPLY_TIMOUT, async move {
             loop {
                 match receiver.recv().await {
@@ -238,8 +238,8 @@ impl PeerChannels {
             hashes,
             bytes: MAX_RESPONSE_BYTES,
         });
-        self.sender.send(request).await.ok()?;
         let mut receiver = self.receiver.lock().await;
+        self.sender.send(request).await.ok()?;
         let codes = tokio::time::timeout(PEER_REPLY_TIMOUT, async move {
             loop {
                 match receiver.recv().await {
@@ -281,8 +281,8 @@ impl PeerChannels {
             limit_hash: HASH_MAX,
             response_bytes: MAX_RESPONSE_BYTES,
         });
-        self.sender.send(request).await.ok()?;
         let mut receiver = self.receiver.lock().await;
+        self.sender.send(request).await.ok()?;
         let (mut slots, proof) = tokio::time::timeout(PEER_REPLY_TIMOUT, async move {
             loop {
                 match receiver.recv().await {
@@ -387,8 +387,8 @@ impl PeerChannels {
                 .collect(),
             bytes: MAX_RESPONSE_BYTES,
         });
-        self.sender.send(request).await.ok()?;
         let mut receiver = self.receiver.lock().await;
+        self.sender.send(request).await.ok()?;
         let nodes = tokio::time::timeout(PEER_REPLY_TIMOUT, async move {
             loop {
                 match receiver.recv().await {
@@ -446,8 +446,8 @@ impl PeerChannels {
                 .collect(),
             bytes: MAX_RESPONSE_BYTES,
         });
-        self.sender.send(request).await.ok()?;
         let mut receiver = self.receiver.lock().await;
+        self.sender.send(request).await.ok()?;
         let nodes = tokio::time::timeout(PEER_REPLY_TIMOUT, async move {
             loop {
                 match receiver.recv().await {
