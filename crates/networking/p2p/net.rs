@@ -401,7 +401,9 @@ async fn peers_revalidation(
         // first check that the peers we ping have responded
         for node_id in previously_pinged_peers {
             let mut table = table.lock().await;
-            let peer = table.get_by_node_id_mut(node_id).unwrap();
+            let Some(peer) = table.get_by_node_id_mut(node_id) else {
+                continue;
+            };
 
             if let Some(has_answered) = peer.revalidation {
                 if has_answered {
@@ -769,6 +771,7 @@ async fn serve_requests(
     let tcp_socket = TcpSocket::new_v4().unwrap();
     tcp_socket.bind(tcp_addr).unwrap();
     let listener = tcp_socket.listen(50).unwrap();
+    table.lock().await.show_peer_stats();
     loop {
         let (stream, _peer_addr) = listener.accept().await.unwrap();
 
