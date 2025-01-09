@@ -384,12 +384,18 @@ fn import_blocks(store: &Store, blocks: &Vec<Block>) {
     if let Some(last_block) = blocks.last() {
         let hash = last_block.hash();
         cfg_if::cfg_if! {
-            if #[cfg(feature = "levm")] {
+            if #[cfg(all(feature = "levm", not(feature = "revm")))] {
                 // We are allowing this not to unwrap so that tests can run even if block execution results in the wrong root hash with LEVM.
                 let _ = apply_fork_choice(store, hash, hash, hash);
             }
-            else {
+            else if #[cfg(all(feature = "revm", not(feature = "levm")))] {
                 apply_fork_choice(store, hash, hash, hash).unwrap();
+            }
+            else if #[cfg(all(feature = "revm", feature = "levm"))] {
+                compile_error!("Ehtrex only supports one vm feature at the time. \nIf you're trying to use revm, pass --no-default-features to cargo build")
+            }
+            else {
+                compile_error!("ethrex was tried to compile without a proper vm")
             }
         }
     }
