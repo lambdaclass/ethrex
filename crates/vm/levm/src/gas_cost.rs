@@ -883,7 +883,6 @@ pub fn modexp(
         }
     };
 
-    // Iteration count should be branched to use EIP-2565 or EIP-198
     let calculate_iteration_count = if spec_id >= SpecId::BERLIN {
         if exponent_size <= 32 && *exponent_first_32_bytes != BigUint::ZERO {
             exponent_first_32_bytes
