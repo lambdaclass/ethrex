@@ -324,6 +324,19 @@ impl KademliaTable {
             tokio::time::sleep(tokio::time::Duration::from_secs(10)).await;
         }
     }
+
+    /// Outputs total amount of peers, active peers, and active peers supporting the Snap Capability to the command line
+    pub fn show_peer_stats(&self) {
+        let active_filter = |peer: &PeerData| -> bool { peer.channels.as_ref().is_some() };
+        let snap_active_filter = |peer: &PeerData| -> bool {
+            peer.channels.as_ref().is_some()
+                && peer.supported_capabilities.contains(&Capability::Snap)
+        };
+        let total_peers = self.iter_peers().count();
+        let active_peers = self.filter_peers(&active_filter).count();
+        let snap_active_peers = self.filter_peers(&snap_active_filter).count();
+        info!("Snap Peers: {snap_active_peers} / Active Peers {active_peers} / Total Peers: {total_peers}")
+    }
 }
 
 /// Computes the distance between two nodes according to the discv4 protocol

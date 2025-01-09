@@ -25,3 +25,6 @@ assertoor_params:
   tests:
     - https://raw.githubusercontent.com/ethpandaops/assertoor/refs/heads/master/playbooks/stable/blob-transactions-test.yaml
     - https://raw.githubusercontent.com/lambdaclass/ethrex/refs/heads/main/.github/config/assertoor/el-stability-check.yaml
+
+tx_spammer_params:
+  tx_spammer_extra_args: ["--txcount=3", "--accounts=80"]
