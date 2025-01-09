@@ -188,14 +188,44 @@ pub fn github_step_summary(old_report: LinesOfCodeReport, new_report: LinesOfCod
     let levm_diff = new_report.levm.abs_diff(old_report.levm);
     let ethrex_diff_total = ethrex_l1_diff + ethrex_l2_diff + levm_diff;
 
+    let ethrex_crates_github =
+        new_report
+            .ethrex_crates
+            .iter()
+            .fold(String::new(), |acc, (crate_name, loc)| {
+                let old_loc = old_report
+                    .ethrex_crates
+                    .iter()
+                    .find(|(old_crate_name, _)| old_crate_name == crate_name)
+                    .map(|(_, old_loc)| old_loc)
+                    .unwrap_or(&0);
+
+                let loc_diff = loc.abs_diff(*old_loc);
+                format!(
+                    "{}{}: {} {}\n",
+                    acc,
+                    crate_name,
+                    loc,
+                    match loc.cmp(old_loc) {
+                        std::cmp::Ordering::Greater => format!("(+{loc_diff})"),
+                        std::cmp::Ordering::Less => format!("(-{loc_diff})"),
+                        std::cmp::Ordering::Equal => "".to_string(),
+                    }
+                )
+            });
+
     format!(
         r#"```
 ethrex loc summary
 ====================
 ethrex L1: {} {}
 ethrex L2: {} {}
-levm: {} ({})
+levm: {} {}
 ethrex (total): {} {}
+
+ethrex crates loc
+=================
+{}
 ```"#,
         new_report.ethrex_l1,
         if new_report.ethrex > old_report.ethrex {
@@ -221,6 +251,7 @@ ethrex (total): {} {}
         } else {
             format!("(-{ethrex_diff_total})")
         },
+        ethrex_crates_github
     )
 }
 
