@@ -820,70 +820,19 @@ pub fn identity(data_size: usize) -> Result<u64, VMError> {
     precompile(data_size, IDENTITY_STATIC_COST, IDENTITY_DYNAMIC_BASE)
 }
 
-#[allow(clippy::collapsible_else_if)]
-pub fn modexp(
+pub fn modexp_eip2565(
+    max_length: u64,
     exponent_first_32_bytes: &BigUint,
-    base_size: usize,
-    exponent_size: usize,
-    modulus_size: usize,
-    spec_id: SpecId,
-) -> Result<u64, VMError> {
-    let base_size: u64 = base_size
-        .try_into()
-        .map_err(|_| PrecompileError::ParsingInputError)?;
-    let exponent_size: u64 = exponent_size
-        .try_into()
-        .map_err(|_| PrecompileError::ParsingInputError)?;
-    let modulus_size: u64 = modulus_size
-        .try_into()
-        .map_err(|_| PrecompileError::ParsingInputError)?;
-
-    let max_length = base_size.max(modulus_size);
+    exponent_size: u64,
+) -> Result<(u64, u64), VMError> {
     let words = (max_length
         .checked_add(7)
         .ok_or(OutOfGasError::GasCostOverflow)?)
     .checked_div(8)
     .ok_or(InternalError::DivisionError)?;
+    let multiplication_complexity = words.checked_pow(2).ok_or(OutOfGasError::GasCostOverflow)?;
 
-    let multiplication_complexity = if spec_id >= SpecId::BERLIN {
-        words.checked_pow(2).ok_or(OutOfGasError::GasCostOverflow)?
-    } else {
-        if max_length <= 64 {
-            max_length
-                .checked_pow(2)
-                .ok_or(OutOfGasError::GasCostOverflow)?
-        } else if max_length <= 1024 {
-            max_length
-                .checked_pow(2)
-                .ok_or(OutOfGasError::GasCostOverflow)?
-                .checked_div(4)
-                .ok_or(OutOfGasError::GasCostOverflow)?
-                .checked_add(
-                    max_length
-                        .checked_mul(96)
-                        .ok_or(OutOfGasError::GasCostOverflow)?,
-                )
-                .ok_or(OutOfGasError::GasCostOverflow)?
-                .checked_sub(3072)
-                .ok_or(OutOfGasError::GasCostOverflow)?
-        } else {
-            max_length
-                .checked_pow(2)
-                .ok_or(OutOfGasError::GasCostOverflow)?
-                .checked_div(16)
-                .ok_or(OutOfGasError::GasCostOverflow)?
-                .checked_add(
-                    max_length
-                        .checked_mul(480)
-                        .ok_or(OutOfGasError::GasCostOverflow)?,
-                )
-                .ok_or(OutOfGasError::GasCostOverflow)?
-                .checked_sub(199680)
-                .ok_or(OutOfGasError::GasCostOverflow)?
-        }
-    };
-
-    let calculate_iteration_count = if spec_id >= SpecId::BERLIN {
+    let calculate_iteration_count =
         if exponent_size <= 32 && *exponent_first_32_bytes != BigUint::ZERO {
             exponent_first_32_bytes
                 .bits()
@@ -903,24 +852,91 @@ pub fn modexp(
         } else {
             0
         }
-        .max(1)
+        .max(1);
+    Ok((multiplication_complexity, calculate_iteration_count))
+}
+
+pub fn modexp_eip198(
+    max_length: u64,
+    exponent_first_32_bytes: &BigUint,
+    exponent_size: u64,
+) -> Result<(u64, u64), VMError> {
+    let multiplication_complexity = if max_length <= 64 {
+        max_length
+            .checked_pow(2)
+            .ok_or(OutOfGasError::GasCostOverflow)?
+    } else if max_length <= 1024 {
+        max_length
+            .checked_pow(2)
+            .ok_or(OutOfGasError::GasCostOverflow)?
+            .checked_div(4)
+            .ok_or(OutOfGasError::GasCostOverflow)?
+            .checked_add(
+                max_length
+                    .checked_mul(96)
+                    .ok_or(OutOfGasError::GasCostOverflow)?,
+            )
+            .ok_or(OutOfGasError::GasCostOverflow)?
+            .checked_sub(3072)
+            .ok_or(OutOfGasError::GasCostOverflow)?
     } else {
-        if exponent_size < 32 {
-            exponent_first_32_bytes.bits().saturating_sub(1)
-        } else {
-            let extra_size = (exponent_size
-                .checked_sub(32)
-                .ok_or(InternalError::ArithmeticOperationUnderflow)?)
-            .checked_mul(8)
-            .ok_or(OutOfGasError::GasCostOverflow)?;
+        max_length
+            .checked_pow(2)
+            .ok_or(OutOfGasError::GasCostOverflow)?
+            .checked_div(16)
+            .ok_or(OutOfGasError::GasCostOverflow)?
+            .checked_add(
+                max_length
+                    .checked_mul(480)
+                    .ok_or(OutOfGasError::GasCostOverflow)?,
+            )
+            .ok_or(OutOfGasError::GasCostOverflow)?
+            .checked_sub(199680)
+            .ok_or(OutOfGasError::GasCostOverflow)?
+    };
 
-            let bits_part = exponent_first_32_bytes.bits().saturating_sub(1);
+    let calculate_iteration_count = if exponent_size < 32 {
+        exponent_first_32_bytes.bits().saturating_sub(1)
+    } else {
+        let extra_size = (exponent_size
+            .checked_sub(32)
+            .ok_or(InternalError::ArithmeticOperationUnderflow)?)
+        .checked_mul(8)
+        .ok_or(OutOfGasError::GasCostOverflow)?;
 
-            extra_size
-                .checked_add(bits_part)
-                .ok_or(OutOfGasError::GasCostOverflow)?
-        }
-        .max(1)
+        let bits_part = exponent_first_32_bytes.bits().saturating_sub(1);
+
+        extra_size
+            .checked_add(bits_part)
+            .ok_or(OutOfGasError::GasCostOverflow)?
+    }
+    .max(1);
+
+    Ok((multiplication_complexity, calculate_iteration_count))
+}
+
+pub fn modexp(
+    exponent_first_32_bytes: &BigUint,
+    base_size: usize,
+    exponent_size: usize,
+    modulus_size: usize,
+    spec_id: SpecId,
+) -> Result<u64, VMError> {
+    let base_size: u64 = base_size
+        .try_into()
+        .map_err(|_| PrecompileError::ParsingInputError)?;
+    let exponent_size: u64 = exponent_size
+        .try_into()
+        .map_err(|_| PrecompileError::ParsingInputError)?;
+    let modulus_size: u64 = modulus_size
+        .try_into()
+        .map_err(|_| PrecompileError::ParsingInputError)?;
+
+    let max_length = base_size.max(modulus_size);
+    let (multiplication_complexity, calculate_iteration_count) = if spec_id >= SpecId::BERLIN {
+        modexp_eip2565(max_length, exponent_first_32_bytes, exponent_size)?
+    } else {
+        modexp_eip198(max_length, exponent_first_32_bytes, exponent_size)?
     };
 
     let cost = if spec_id >= SpecId::BERLIN {
