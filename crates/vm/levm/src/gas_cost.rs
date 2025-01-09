@@ -533,20 +533,20 @@ pub fn tx_calldata(calldata: &Bytes, spec_id: SpecId) -> Result<u64, OutOfGasErr
     // 4 gas for each zero byte in the transaction data 16 gas for each non-zero byte in the transaction.
     let mut calldata_cost: u64 = 0;
     for byte in calldata {
-        if *byte != 0 {
+        calldata_cost = if *byte != 0 {
             if spec_id >= SpecId::ISTANBUL {
-                calldata_cost = calldata_cost
+                calldata_cost
                     .checked_add(CALLDATA_COST_NON_ZERO_BYTE)
-                    .ok_or(OutOfGasError::GasUsedOverflow)?;
+                    .ok_or(OutOfGasError::GasUsedOverflow)?
             } else {
-                calldata_cost = calldata_cost
+                calldata_cost
                     .checked_add(CALLDATA_COST_NON_ZERO_BYTE_PRE_ISTANBUL)
-                    .ok_or(OutOfGasError::GasUsedOverflow)?;
+                    .ok_or(OutOfGasError::GasUsedOverflow)?
             }
         } else {
-            calldata_cost = calldata_cost
+            calldata_cost
                 .checked_add(CALLDATA_COST_ZERO_BYTE)
-                .ok_or(OutOfGasError::GasUsedOverflow)?;
+                .ok_or(OutOfGasError::GasUsedOverflow)?
         }
     }
     Ok(calldata_cost)
