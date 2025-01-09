@@ -6,6 +6,24 @@ use tokei::{Config, Language, LanguageType, Languages};
 
 mod report;
 
+fn count_crates_loc(crates_path: &PathBuf, config: &Config) -> Vec<(String, usize)> {
+    let mut ethrex_crates_loc: Vec<(String, usize)> = std::fs::read_dir(crates_path)
+        .into_iter()
+        .flatten()
+        .map(|crate_dir_entry| {
+            let crate_path = crate_dir_entry.unwrap().path();
+            let crate_loc = count_loc(crate_path.clone(), config);
+            (
+                crate_path.file_name().unwrap().to_str().unwrap().to_owned(),
+                crate_loc.code,
+            )
+        })
+        .collect::<Vec<(String, usize)>>();
+    ethrex_crates_loc.sort_by_key(|(_crate_name, loc)| *loc);
+    ethrex_crates_loc.reverse();
+    ethrex_crates_loc
+}
+
 fn count_loc(path: PathBuf, config: &Config) -> Language {
     let mut languages = Languages::new();
     languages.get_statistics(&[path], &["tests"], config);
@@ -17,16 +35,17 @@ fn main() {
 
     let mut spinner = Spinner::new(Dots, "Counting lines of code...", Color::Cyan);
 
-    let ethrex = current_dir().unwrap();
-    let ethrex_crates = ethrex.join("crates");
-    let levm = ethrex_crates.join("vm");
-    let ethrex_l2 = ethrex_crates.join("l2");
+    let ethrex_path = current_dir().unwrap();
+    let ethrex_crates_path = ethrex_path.join("crates");
+    let levm_path = ethrex_crates_path.join("vm");
+    let ethrex_l2_path = ethrex_crates_path.join("l2");
 
     let config = Config::default();
 
-    let ethrex_loc = count_loc(ethrex, &config);
-    let levm_loc = count_loc(levm, &config);
-    let ethrex_l2_loc = count_loc(ethrex_l2, &config);
+    let ethrex_loc = count_loc(ethrex_path, &config);
+    let levm_loc = count_loc(levm_path, &config);
+    let ethrex_l2_loc = count_loc(ethrex_l2_path, &config);
+    let ethrex_crates_loc = count_crates_loc(&ethrex_crates_path, &config);
 
     spinner.success("Lines of code calculated!");
 
@@ -37,6 +56,7 @@ fn main() {
         ethrex_l1: ethrex_loc.code - ethrex_l2_loc.code - levm_loc.code,
         ethrex_l2: ethrex_l2_loc.code,
         levm: levm_loc.code,
+        ethrex_crates: ethrex_crates_loc,
     };
 
     if opts.detailed {
@@ -85,11 +105,11 @@ fn main() {
 
         let old_report: LinesOfCodeReport = std::fs::read_to_string("loc_report.json.old")
             .map(|s| serde_json::from_str(&s).unwrap())
-            .unwrap_or(new_report);
+            .unwrap_or(new_report.clone());
 
         std::fs::write(
             "loc_report_slack.txt",
-            report::slack_message(old_report, new_report),
+            report::slack_message(old_report.clone(), new_report.clone()),
         )
         .unwrap();
         std::fs::write(
