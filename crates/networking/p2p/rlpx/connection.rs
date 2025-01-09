@@ -51,7 +51,7 @@ use tokio::{
     task,
     time::{sleep, Instant},
 };
-use tracing::{debug, error};
+use tracing::{debug, error, warn};
 const CAP_P2P: (Capability, u8) = (Capability::P2p, 5);
 const CAP_ETH: (Capability, u8) = (Capability::Eth, 68);
 const CAP_SNAP: (Capability, u8) = (Capability::Snap, 1);
@@ -253,10 +253,18 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
                     "No matching capabilities".to_string(),
                 ))
             }
-            Message::Disconnect(disconnect) => Err(RLPxError::HandshakeError(format!(
+            Message::Disconnect(disconnect) => {
+                // Check if the disconnect is due to already being connected:
+                if disconnect.reason.is_some_and(|r| r ==0x05) {
+                    warn!("Tried to connect to already connected peer");
+                    // Return Ok so we don;t discard a good peer
+                    return Ok(())
+                }
+                Err(RLPxError::HandshakeError(format!(
                 "Peer disconnected due to: {}",
                 disconnect.reason()
-            ))),
+            )))
+        }
             _ => {
                 // Fail if it is not a hello message
                 Err(RLPxError::HandshakeError(
