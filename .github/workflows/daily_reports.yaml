@@ -80,7 +80,7 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           path: hive/workspace/logs
-          pattern: "*_$${{ matrix.vm }}_logs"
+          pattern: "*_${{ matrix.vm }}_logs"
           merge-multiple: true
 
       - name: Caching
