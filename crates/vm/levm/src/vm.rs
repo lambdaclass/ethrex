@@ -862,6 +862,31 @@ impl VM {
             }
         }
 
+        // [EIP-7702]: https://eips.ethereum.org/EIPS/eip-7702
+        // Transaction is type 4 if authorization_list is Some
+        if let Some(auth_list) = &self.authorization_list {
+            // (16) TYPE_4_TX_PRE_FORK
+            if self.env.spec_id < SpecId::PRAGUE {
+                return Err(VMError::TxValidation(TxValidationError::Type4TxPreFork));
+            }
+
+            // (17) TYPE_4_TX_LIST_EMPTY
+            // From the EIP docs: The transaction is considered invalid if the length of authorization_list is zero.
+            if auth_list.is_empty() {
+                return Err(VMError::TxValidation(
+                    TxValidationError::Type4TxAuthorizationListIsEmpty,
+                ));
+            }
+
+            // (18) TYPE_4_TX_CONTRACT_CREATION -- or null address
+            // From the EIP docs: a null destination is not valid.
+            if self.is_create() {
+                return Err(VMError::TxValidation(
+                    TxValidationError::Type4TxContractCreation,
+                ));
+            }
+        }
+
         if self.is_create() {
             // Assign bytecode to context and empty calldata
             initial_call_frame.assign_bytecode(initial_call_frame.calldata.clone());

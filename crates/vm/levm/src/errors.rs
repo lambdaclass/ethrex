@@ -112,6 +112,12 @@ pub enum TxValidationError {
     Type3TxBlobCountExceeded,
     #[error("Type3TxContractCreation")]
     Type3TxContractCreation,
+    #[error("Type 4 transactions are not supported before the Prague fork")]
+    Type4TxPreFork,
+    #[error("Type4TxAuthorizationListIsEmpty")]
+    Type4TxAuthorizationListIsEmpty,
+    #[error("Type4TxContractCreation")]
+    Type4TxContractCreation,
     #[error("Gas limit price product overflow")]
     GasLimitPriceProductOverflow,
 }
