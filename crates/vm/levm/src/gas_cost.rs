@@ -539,6 +539,7 @@ pub fn tx_calldata(calldata: &Bytes, spec_id: SpecId) -> Result<u64, OutOfGasErr
                     .checked_add(CALLDATA_COST_NON_ZERO_BYTE)
                     .ok_or(OutOfGasError::GasUsedOverflow)?
             } else {
+                // EIP-2028
                 calldata_cost
                     .checked_add(CALLDATA_COST_NON_ZERO_BYTE_PRE_ISTANBUL)
                     .ok_or(OutOfGasError::GasUsedOverflow)?
