@@ -218,8 +218,11 @@ async fn discover_peers_server(
                         continue;
                     }
                     if peer.last_ping_hash.unwrap() == msg.ping_hash {
-                        info!("Peer {} answered ping with pong", peer.node.node_id);
+                        debug!("Peer {} answered ping with pong", peer.node.node_id);
                         table.lock().await.pong_answered(peer.node.node_id);
+                        if peer.channels.is_some() {
+                            continue;
+                        }
 
                         let mut msg_buf = vec![0; read - 32];
                         buf[32..read].clone_into(&mut msg_buf);
