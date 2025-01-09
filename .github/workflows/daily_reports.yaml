@@ -128,7 +128,7 @@ jobs:
 
       - name: Post results in summary
         run: |
-          echo "# Hive coverage report (default features build)" >> $GITHUB_STEP_SUMMARY
+          echo "# Hive coverage report" >> $GITHUB_STEP_SUMMARY
           cat results_default.md >> $GITHUB_STEP_SUMMARY
 
       # Note: Leave this commented, as it is for testing purposes.
@@ -178,13 +178,10 @@ jobs:
       #     cat results_levm.md >> $GITHUB_STEP_SUMMARY
       #     sh .github/scripts/publish_levm_hive.sh
 
-      - name: Post results diff in L1 channel
-        env:
-          url: ${{ secrets.ETHREX_L1_SLACK_WEBHOOK }}
+      - name: Post results in summary
         run: |
-          bash .github/scripts/levm_default_diff.sh results_default.md results_levm.md >> diff.md
-          cat diff.md >> $GITHUB_STEP_SUMMARY
-          bash .github/scripts/publish_default_levm_diff.sh
+          echo "# LEVM coverage report" >> $GITHUB_STEP_SUMMARY
+          cat results_levm.md >> $GITHUB_STEP_SUMMARY
 
       - name: Post results diff in LEVM channel
         env:
