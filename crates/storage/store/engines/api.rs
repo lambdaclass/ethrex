@@ -249,4 +249,18 @@ pub trait StoreEngine: Debug + Send + Sync + RefUnwindSafe {
     ) -> Result<(), StoreError>;
 
     fn get_receipts_for_block(&self, block_hash: &BlockHash) -> Result<Vec<Receipt>, StoreError>;
+
+    // Snap State methods
+
+    fn set_latest_downloaded_header(&self, block_hash: BlockHash) -> Result<(), StoreError>;
+
+    fn get_latest_downloaded_header(&self) -> Result<Option<BlockHash>, StoreError>;
+
+    fn clear_latest_downloaded_header(&self) -> Result<(), StoreError>;
+
+    fn set_latest_downloaded_body(&self, block_hash: BlockHash) -> Result<(), StoreError>;
+
+    fn get_latest_downloaded_body(&self) -> Result<Option<BlockHash>, StoreError>;
+
+    fn clear_latest_downloaded_body(&self) -> Result<(), StoreError>;
 }

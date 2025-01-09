@@ -100,6 +100,23 @@ impl SyncManager {
         // We will begin from the current head so that we download the earliest state first
         // This step is not parallelized
         let mut all_block_hashes = vec![];
+        // Check if we have some blocks downloaded from a previous sync attempt
+        if let Some(last_header) = store.get_latest_downloaded_header()? {
+            // We might have more headers than bodies downloaded so we should queue missing bodies for download
+            let last_body = match store.get_latest_downloaded_body()? {
+                Some(hash) => hash,
+                None => current_head,
+            };
+            if last_body != last_header {
+                let mut parent = last_header;
+                while parent != last_body {
+                    all_block_hashes.insert(0, parent);
+                    parent = store.get_block_header_by_hash(parent)?.unwrap().parent_hash;
+                }
+            }
+            // Set latest downloaded header as current head for header fetching
+            current_head = last_header;
+        }
         loop {
             let peer = self
                 .peers
@@ -126,6 +143,8 @@ impl SyncManager {
                 // Update current fetch head if needed
                 if !sync_head_found {
                     current_head = *block_hashes.last().unwrap();
+                    // Update snap state
+                    store.set_latest_downloaded_header(current_head)?;
                 }
                 // Store headers and save hashes for full block retrieval
                 all_block_hashes.extend_from_slice(&block_hashes[..]);
@@ -206,6 +225,9 @@ impl SyncManager {
                 download_and_run_blocks(all_block_hashes, self.peers.clone(), store.clone()).await?
             }
         }
+        // Finished a sync cycle without aborting halfway, clear current state (TODO: write pivot here too)
+        store.clear_latest_downloaded_header();
+        store.clear_latest_downloaded_body();
         Ok(())
     }
 }
@@ -263,6 +285,8 @@ async fn store_block_bodies(
             debug!(" Received {} Block Bodies", block_bodies.len());
             // Track which bodies we have already fetched
             let current_block_hashes = block_hashes.drain(..block_bodies.len());
+            // Update snap state
+            store.set_latest_downloaded_body(*current_block_hashes.as_ref().last().unwrap())?;
             // Add bodies to storage
             for (hash, body) in current_block_hashes.zip(block_bodies.into_iter()) {
                 store.add_block_body(hash, body)?;
