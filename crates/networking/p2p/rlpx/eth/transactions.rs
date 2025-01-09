@@ -155,10 +155,7 @@ impl GetPooledTransactions {
     }
 
     pub fn handle(&self, store: &Store) -> Result<PooledTransactions, StoreError> {
-<<<<<<< HEAD
-=======
         // TODO(#1615): get transactions in batch instead of iterating over them.
->>>>>>> 6c3701a800bf7a0bff76f75528700b3dc4698d60
         let txs = self
             .transaction_hashes
             .iter()
@@ -171,10 +168,6 @@ impl GetPooledTransactions {
             .flatten()
             .collect();
 
-<<<<<<< HEAD
-        // TODO: add getting of the blob bundle, as we'll implement this as a p2p transaction.
-=======
->>>>>>> 6c3701a800bf7a0bff76f75528700b3dc4698d60
         Ok(PooledTransactions {
             id: self.id,
             pooled_transactions: txs,
@@ -201,11 +194,7 @@ impl GetPooledTransactions {
                     )));
                 };
 
-<<<<<<< HEAD
-                P2PTransaction::WrappedEIP4844Transaction(WrappedEIP4844Transaction {
-=======
                 P2PTransaction::EIP4844TransactionWithBlobs(WrappedEIP4844Transaction {
->>>>>>> 6c3701a800bf7a0bff76f75528700b3dc4698d60
                     tx: itx,
                     blobs_bundle: bundle,
                 })
@@ -260,15 +249,6 @@ impl PooledTransactions {
     }
 
     /// Saves every incoming pooled transaction to the mempool.
-<<<<<<< HEAD
-    pub fn handle(&self, store: &Store) -> Result<(), MempoolError> {
-        for tx in &self.pooled_transactions {
-            if let P2PTransaction::WrappedEIP4844Transaction(itx) = tx.clone() {
-                mempool::add_blob_transaction(itx.tx, itx.blobs_bundle, store)?;
-            } else {
-                let regular_tx = tx
-                    .clone()
-=======
 
     pub fn handle(self, store: &Store) -> Result<(), MempoolError> {
         for tx in self.pooled_transactions {
@@ -276,7 +256,6 @@ impl PooledTransactions {
                 mempool::add_blob_transaction(itx.tx, itx.blobs_bundle, store)?;
             } else {
                 let regular_tx = tx
->>>>>>> 6c3701a800bf7a0bff76f75528700b3dc4698d60
                     .try_into()
                     .map_err(|error| MempoolError::StoreError(StoreError::Custom(error)))?;
                 mempool::add_transaction(regular_tx, store)?;

@@ -354,15 +354,11 @@ pub fn fill_transactions(context: &mut PayloadBuildContext) -> Result<(), ChainE
             }
             // Ignore following txs from sender
             Err(e) => {
-<<<<<<< HEAD
-                info!("Failed to execute transaction: {}, {e}", tx_hash);
-=======
                 debug!("Failed to execute transaction: {}, {e}", tx_hash);
                 metrics!(METRICS_TX.inc_tx_with_status_and_type(
                     MetricsTxStatus::Failed,
                     MetricsTxType(head_tx.tx_type())
                 ));
->>>>>>> 6c3701a800bf7a0bff76f75528700b3dc4698d60
                 txs.pop();
                 continue;
             }
