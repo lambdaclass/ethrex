@@ -253,16 +253,10 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
                     "No matching capabilities".to_string(),
                 ))
             }
-            Message::Disconnect(disconnect) => {
-                // Check if the disconnect is due to already being connected:
-                if disconnect.reason.is_some_and(|r| r ==0x05) {
-                    warn!("Tried to connect to already connected peer");
-                }
-                Err(RLPxError::HandshakeError(format!(
+            Message::Disconnect(disconnect) => Err(RLPxError::HandshakeError(format!(
                 "Peer disconnected due to: {}",
                 disconnect.reason()
-            )))
-        }
+            ))),
             _ => {
                 // Fail if it is not a hello message
                 Err(RLPxError::HandshakeError(

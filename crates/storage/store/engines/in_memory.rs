@@ -38,6 +38,8 @@ struct StoreInner {
     // Stores local blocks by payload id
     payloads: HashMap<u64, (Block, U256, BlobsBundle, bool)>,
     pending_blocks: HashMap<BlockHash, Block>,
+    // Stores current Snap Sate
+    snap_state: SnapState,
 }
 
 #[derive(Default, Debug)]
@@ -50,6 +52,17 @@ struct ChainData {
     // TODO (#307): Remove TotalDifficulty.
     latest_total_difficulty: Option<U256>,
     pending_block_number: Option<BlockNumber>,
+}
+
+// Keeps track of the state left by the latest snap attempt
+#[derive(Default, Debug)]
+pub struct SnapState {
+    /// The last block number used as a pivot for snap-sync
+    last_snap_pivot: u64,
+    /// Latest downloaded block header's hash from a previously aborted sync
+    last_downloaded_header_hash: Option<BlockHash>,
+    /// Latest downloaded block body's hash from a previously aborted sync
+    last_downloaded_body_hash: Option<BlockHash>,
 }
 
 impl Store {
@@ -421,6 +434,34 @@ impl StoreEngine for Store {
         self.inner()
             .payloads
             .insert(payload_id, (block, block_value, blobs_bundle, completed));
+        Ok(())
+    }
+
+    fn set_latest_downloaded_header(&self, block_hash: BlockHash) -> Result<(), StoreError> {
+        self.inner().snap_state.last_downloaded_header_hash = Some(block_hash);
+        Ok(())
+    }
+
+    fn get_latest_downloaded_header(&self) -> Result<Option<BlockHash>, StoreError> {
+        Ok(self.inner().snap_state.last_downloaded_header_hash)
+    }
+
+    fn clear_latest_downloaded_header(&self) -> Result<(), StoreError> {
+        self.inner().snap_state.last_downloaded_header_hash = None;
+        Ok(())
+    }
+
+    fn set_latest_downloaded_body(&self, block_hash: BlockHash) -> Result<(), StoreError> {
+        self.inner().snap_state.last_downloaded_body_hash = Some(block_hash);
+        Ok(())
+    }
+
+    fn get_latest_downloaded_body(&self) -> Result<Option<BlockHash>, StoreError> {
+        Ok(self.inner().snap_state.last_downloaded_body_hash)
+    }
+
+    fn clear_latest_downloaded_body(&self) -> Result<(), StoreError> {
+        self.inner().snap_state.last_downloaded_body_hash = None;
         Ok(())
     }
 }

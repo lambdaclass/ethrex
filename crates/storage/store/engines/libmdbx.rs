@@ -1,5 +1,5 @@
 use super::api::StoreEngine;
-use super::utils::ChainDataIndex;
+use super::utils::{ChainDataIndex, SnapStateIndex};
 use crate::error::StoreError;
 use crate::rlp::{
     AccountCodeHashRLP, AccountCodeRLP, BlockBodyRLP, BlockHashRLP, BlockHeaderRLP, BlockRLP,
@@ -70,6 +70,17 @@ impl Store {
     fn read<T: Table>(&self, key: T::Key) -> Result<Option<T::Value>, StoreError> {
         let txn = self.db.begin_read().map_err(StoreError::LibmdbxError)?;
         txn.get::<T>(key).map_err(StoreError::LibmdbxError)
+    }
+
+    // Helper method to remove a value from a libmdbx table
+    fn delete<T: Table>(&self, key: T::Key) -> Result<(), StoreError> {
+        let txn = self
+            .db
+            .begin_readwrite()
+            .map_err(StoreError::LibmdbxError)?;
+        txn.delete::<T>(key, None)
+            .map_err(StoreError::LibmdbxError)?;
+        txn.commit().map_err(StoreError::LibmdbxError)
     }
 
     fn get_block_hash_by_block_number(
@@ -514,6 +525,42 @@ impl StoreEngine for Store {
 
         Ok(receipts.into_iter().map(|receipt| receipt.to()).collect())
     }
+
+    fn set_latest_downloaded_header(&self, block_hash: BlockHash) -> Result<(), StoreError> {
+        self.write::<SnapState>(
+            SnapStateIndex::LatestDownloadedHeader,
+            block_hash.encode_to_vec(),
+        )
+    }
+
+    fn get_latest_downloaded_header(&self) -> Result<Option<BlockHash>, StoreError> {
+        self.read::<SnapState>(SnapStateIndex::LatestDownloadedHeader)?
+            .map(|ref h| BlockHash::decode(h))
+            .transpose()
+            .map_err(StoreError::RLPDecode)
+    }
+
+    fn clear_latest_downloaded_header(&self) -> Result<(), StoreError> {
+        self.delete::<SnapState>(SnapStateIndex::LatestDownloadedHeader)
+    }
+
+    fn set_latest_downloaded_body(&self, block_hash: BlockHash) -> Result<(), StoreError> {
+        self.write::<SnapState>(
+            SnapStateIndex::LatestDownloadedBody,
+            block_hash.encode_to_vec(),
+        )
+    }
+
+    fn get_latest_downloaded_body(&self) -> Result<Option<BlockHash>, StoreError> {
+        self.read::<SnapState>(SnapStateIndex::LatestDownloadedBody)?
+            .map(|ref h| BlockHash::decode(h))
+            .transpose()
+            .map_err(StoreError::RLPDecode)
+    }
+
+    fn clear_latest_downloaded_body(&self) -> Result<(), StoreError> {
+        self.delete::<SnapState>(SnapStateIndex::LatestDownloadedBody)
+    }
 }
 
 impl Debug for Store {
@@ -573,6 +620,12 @@ table!(
     /// Stores chain data, each value is unique and stored as its rlp encoding
     /// See [ChainDataIndex] for available chain values
     ( ChainData ) ChainDataIndex => Vec<u8>
+);
+
+table!(
+    /// Stores snap state, each value is unique and stored as its rlp encoding
+    /// See [SnapStateIndex] for available values
+    ( SnapState ) SnapStateIndex => Vec<u8>
 );
 
 // Trie storages
@@ -659,6 +712,13 @@ impl Encodable for ChainDataIndex {
     }
 }
 
+impl Encodable for SnapStateIndex {
+    type Encoded = [u8; 4];
+
+    fn encode(self) -> Self::Encoded {
+        (self as u32).encode()
+    }
+}
 /// Initializes a new database with the provided path. If the path is `None`, the database
 /// will be temporary.
 pub fn init_db(path: Option<impl AsRef<Path>>) -> Database {
@@ -677,6 +737,7 @@ pub fn init_db(path: Option<impl AsRef<Path>>) -> Database {
         table_info!(CanonicalBlockHashes),
         table_info!(Payloads),
         table_info!(PendingBlocks),
+        table_info!(SnapState),
     ]
     .into_iter()
     .collect();
