@@ -114,6 +114,8 @@ pub enum TxValidationError {
     Type3TxContractCreation,
     #[error("Gas limit price product overflow")]
     GasLimitPriceProductOverflow,
+    #[error("Gas limit is too low")]
+    GasLimitTooLow,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, thiserror::Error, Serialize, Deserialize)]
