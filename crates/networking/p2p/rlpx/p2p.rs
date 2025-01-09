@@ -15,8 +15,8 @@ use super::{
     utils::{pubkey2id, snappy_compress},
 };
 
-#[derive(Debug, Clone, PartialEq)]
-pub(crate) enum Capability {
+#[derive(Debug, Clone, PartialEq, Copy)]
+pub enum Capability {
     P2p,
     Eth,
     Snap,
@@ -153,16 +153,20 @@ impl RLPxMessage for DisconnectMessage {
 
     fn decode(msg_data: &[u8]) -> Result<Self, RLPDecodeError> {
         // decode disconnect message: [reason (optional)]
-        let decompressed_data = snappy_decompress(msg_data)?;
+        // The msg data may be compressed or not
+        let msg_data = if let Ok(decompressed) = snappy_decompress(msg_data) {
+            decompressed
+        } else {
+            msg_data.to_vec()
+        };
         // It seems that disconnect reason can be encoded in different ways:
-        // TODO: it may be not compressed at all. We should check that case
-        let reason = match decompressed_data.len() {
+        let reason = match msg_data.len() {
             0 => None,
             // As a single u8
-            1 => Some(decompressed_data[0]),
+            1 => Some(msg_data[0]),
             // As an RLP encoded Vec<u8>
             _ => {
-                let decoder = Decoder::new(&decompressed_data)?;
+                let decoder = Decoder::new(&msg_data)?;
                 let (reason, _): (Option<u8>, _) = decoder.decode_optional_field();
                 reason
             }

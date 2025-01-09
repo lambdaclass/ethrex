@@ -254,7 +254,7 @@ impl VM {
         );
 
         if is_precompile(&current_call_frame.code_address, self.env.spec_id) {
-            let precompile_result = execute_precompile(current_call_frame);
+            let precompile_result = execute_precompile(current_call_frame, self.env.spec_id);
 
             match precompile_result {
                 Ok(output) => {
@@ -547,8 +547,8 @@ impl VM {
 
         // Calldata Cost
         // 4 gas for each zero byte in the transaction data 16 gas for each non-zero byte in the transaction.
-        let calldata_cost =
-            gas_cost::tx_calldata(&initial_call_frame.calldata).map_err(VMError::OutOfGas)?;
+        let calldata_cost = gas_cost::tx_calldata(&initial_call_frame.calldata, self.env.spec_id)
+            .map_err(VMError::OutOfGas)?;
 
         intrinsic_gas = intrinsic_gas
             .checked_add(calldata_cost)
@@ -1060,12 +1060,16 @@ impl VM {
         address: Address,
         key: H256,
     ) -> Result<(StorageSlot, bool), VMError> {
-        let storage_slot_was_cold = self
-            .accrued_substate
-            .touched_storage_slots
-            .entry(address)
-            .or_default()
-            .insert(key);
+        // [EIP-2929] - Introduced conditional tracking of accessed storage slots for Berlin and later specs.
+        let mut storage_slot_was_cold = false;
+        if self.env.spec_id >= SpecId::BERLIN {
+            storage_slot_was_cold = self
+                .accrued_substate
+                .touched_storage_slots
+                .entry(address)
+                .or_default()
+                .insert(key);
+        }
         let storage_slot = match cache::get_account(&self.cache, &address) {
             Some(account) => match account.storage.get(&key) {
                 Some(storage_slot) => storage_slot.clone(),
