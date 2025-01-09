@@ -257,8 +257,6 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
                 // Check if the disconnect is due to already being connected:
                 if disconnect.reason.is_some_and(|r| r ==0x05) {
                     warn!("Tried to connect to already connected peer");
-                    // Return Ok so we don;t discard a good peer
-                    return Ok(())
                 }
                 Err(RLPxError::HandshakeError(format!(
                 "Peer disconnected due to: {}",
