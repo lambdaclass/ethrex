@@ -86,6 +86,9 @@ impl Message {
             0x19 => Ok(Message::GetPooledTransactions(
                 GetPooledTransactions::decode(msg_data)?,
             )),
+            0x1a => Ok(Message::PooledTransactions(PooledTransactions::decode(
+                msg_data,
+            )?)),
             0x1F => Ok(Message::GetReceipts(GetReceipts::decode(msg_data)?)),
             0x1a => Ok(Message::PooledTransactions(PooledTransactions::decode(
                 msg_data,
@@ -153,6 +156,10 @@ impl Message {
             }
             Message::GetPooledTransactions(msg) => {
                 0x19_u8.encode(buf);
+                msg.encode(buf)
+            }
+            Message::PooledTransactions(msg) => {
+                0x1a_u8.encode(buf);
                 msg.encode(buf)
             }
             Message::GetReceipts(msg) => {

@@ -102,6 +102,8 @@ pub enum TxValidationError {
     InsufficientMaxFeePerGas,
     #[error("Insufficient max fee per blob gas")]
     InsufficientMaxFeePerBlobGas,
+    #[error("Type 3 transactions are not supported before the Cancun fork")]
+    Type3TxPreFork,
     #[error("Type3TxZeroBlobs")]
     Type3TxZeroBlobs,
     #[error("Type3TxInvalidBlobVersionedHash")]

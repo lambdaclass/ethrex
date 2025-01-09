@@ -57,9 +57,12 @@ pub fn try_store_word(memory: &mut Memory, offset: U256, word: U256) -> Result<(
         .map_err(|_err| VMError::VeryLargeNumber)?;
 
     try_resize(memory, new_size)?;
-    let mut word_bytes = [0u8; WORD_SIZE_IN_BYTES_USIZE];
-    word.to_big_endian(&mut word_bytes);
-    try_store(memory, &word_bytes, offset, WORD_SIZE_IN_BYTES_USIZE)
+    try_store(
+        memory,
+        &word.to_big_endian(),
+        offset,
+        WORD_SIZE_IN_BYTES_USIZE,
+    )
 }
 
 pub fn try_store_data(memory: &mut Memory, offset: U256, data: &[u8]) -> Result<(), VMError> {

@@ -1,6 +1,7 @@
 use std::sync::mpsc::SendError;
 
 use crate::utils::config::errors::ConfigError;
+use crate::utils::prover::errors::SaveStateError;
 use ethereum_types::FromStrRadixErr;
 use ethrex_core::types::{BlobsBundleError, FakeExponentialError};
 use ethrex_dev::utils::engine_client::errors::EngineClientError;
@@ -22,6 +23,8 @@ pub enum L1WatcherError {
     FailedToRetrieveChainConfig(String),
     #[error("L1Watcher failed to get config: {0}")]
     FailedToGetConfig(#[from] ConfigError),
+    #[error("{0}")]
+    Custom(String),
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -32,9 +35,9 @@ pub enum ProverServerError {
     EthClientError(#[from] EthClientError),
     #[error("ProverServer failed to send transaction: {0}")]
     FailedToVerifyProofOnChain(String),
-    #[error("ProverServer failed retrieve block from storage: {0}")]
-    FailedToRetrieveBlockFromStorage(#[from] StoreError),
-    #[error("ProverServer failed retrieve block from storaga, data is None.")]
+    #[error("ProverServer failed to access Store: {0}")]
+    FailedAccessingStore(#[from] StoreError),
+    #[error("ProverServer failed to retrieve block from storaga, data is None.")]
     StorageDataIsNone,
     #[error("ProverServer failed to create ProverInputs: {0}")]
     FailedToCreateProverInputs(#[from] EvmError),
@@ -44,6 +47,12 @@ pub enum ProverServerError {
     JoinError(#[from] JoinError),
     #[error("ProverServer failed: {0}")]
     Custom(String),
+    #[error("ProverServer failed to write to TcpStream: {0}")]
+    WriteError(String),
+    #[error("ProverServer failed to get data from Store: {0}")]
+    ItemNotFoundInStore(String),
+    #[error("ProverServer encountered a SaveStateError: {0}")]
+    SaveStateError(#[from] SaveStateError),
     #[error("Failed to encode calldata: {0}")]
     CalldataEncodeError(#[from] CalldataEncodeError),
 }
@@ -140,4 +149,12 @@ pub enum StateDiffError {
     EmptyAccountDiff,
     #[error("The length of the vector is too big to fit in u16: {0}")]
     LengthTooBig(#[from] core::num::TryFromIntError),
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum MetricsGathererError {
+    #[error("MetricsGathererError: {0}")]
+    MetricsError(#[from] ethrex_metrics::MetricsError),
+    #[error("MetricsGatherer failed because of an EthClient error: {0}")]
+    EthClientError(#[from] EthClientError),
 }

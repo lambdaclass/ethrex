@@ -214,6 +214,11 @@ fn validate_v2(
     context: &RpcApiContext,
 ) -> Result<(), RpcErr> {
     let chain_config = context.storage.get_chain_config()?;
+    if attributes.withdrawals.is_none() {
+        return Err(RpcErr::WrongParam(
+            "forkChoiceV2 withdrawals is null".to_string(),
+        ));
+    }
     if attributes.parent_beacon_block_root.is_some() {
         return Err(RpcErr::InvalidPayloadAttributes(
             "forkChoiceV2 with Beacon Root".to_string(),

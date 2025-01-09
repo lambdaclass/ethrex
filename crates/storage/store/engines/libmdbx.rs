@@ -49,7 +49,10 @@ impl Store {
     }
 
     // Helper method to write into a libmdbx table in batch
-    fn write_batch<T: Table>(&self, key_values: Vec<(T::Key, T::Value)>) -> Result<(), StoreError> {
+    fn write_batch<T: Table>(
+        &self,
+        key_values: impl Iterator<Item = (T::Key, T::Value)>,
+    ) -> Result<(), StoreError> {
         let txn = self
             .db
             .begin_readwrite()
@@ -82,8 +85,20 @@ impl StoreEngine for Store {
         &self,
         block_hash: BlockHash,
         block_header: BlockHeader,
-    ) -> std::result::Result<(), StoreError> {
+    ) -> Result<(), StoreError> {
         self.write::<Headers>(block_hash.into(), block_header.into())
+    }
+
+    fn add_block_headers(
+        &self,
+        block_hashes: Vec<BlockHash>,
+        block_headers: Vec<BlockHeader>,
+    ) -> Result<(), StoreError> {
+        let hashes_and_headers = block_hashes
+            .into_iter()
+            .zip(block_headers)
+            .map(|(hash, header)| (hash.into(), header.into()));
+        self.write_batch::<Headers>(hashes_and_headers)
     }
 
     fn get_block_header(
@@ -101,14 +116,11 @@ impl StoreEngine for Store {
         &self,
         block_hash: BlockHash,
         block_body: BlockBody,
-    ) -> std::result::Result<(), StoreError> {
+    ) -> Result<(), StoreError> {
         self.write::<Bodies>(block_hash.into(), block_body.into())
     }
 
-    fn get_block_body(
-        &self,
-        block_number: BlockNumber,
-    ) -> std::result::Result<Option<BlockBody>, StoreError> {
+    fn get_block_body(&self, block_number: BlockNumber) -> Result<Option<BlockBody>, StoreError> {
         if let Some(hash) = self.get_block_hash_by_block_number(block_number)? {
             self.get_block_body_by_hash(hash)
         } else {
@@ -134,28 +146,25 @@ impl StoreEngine for Store {
         &self,
         block_hash: BlockHash,
         block_number: BlockNumber,
-    ) -> std::result::Result<(), StoreError> {
+    ) -> Result<(), StoreError> {
         self.write::<BlockNumbers>(block_hash.into(), block_number)
     }
 
-    fn get_block_number(
-        &self,
-        block_hash: BlockHash,
-    ) -> std::result::Result<Option<BlockNumber>, StoreError> {
+    fn get_block_number(&self, block_hash: BlockHash) -> Result<Option<BlockNumber>, StoreError> {
         self.read::<BlockNumbers>(block_hash.into())
     }
     fn add_block_total_difficulty(
         &self,
         block_hash: BlockHash,
         block_total_difficulty: U256,
-    ) -> std::result::Result<(), StoreError> {
+    ) -> Result<(), StoreError> {
         self.write::<BlockTotalDifficulties>(block_hash.into(), block_total_difficulty.into())
     }
 
     fn get_block_total_difficulty(
         &self,
         block_hash: BlockHash,
-    ) -> std::result::Result<Option<U256>, StoreError> {
+    ) -> Result<Option<U256>, StoreError> {
         Ok(self
             .read::<BlockTotalDifficulties>(block_hash.into())?
             .map(|b| b.to()))
@@ -309,7 +318,7 @@ impl StoreEngine for Store {
     fn update_latest_total_difficulty(
         &self,
         latest_total_difficulty: U256,
-    ) -> std::result::Result<(), StoreError> {
+    ) -> Result<(), StoreError> {
         self.write::<ChainData>(
             ChainDataIndex::LatestTotalDifficulty,
             latest_total_difficulty.encode_to_vec(),
@@ -387,7 +396,7 @@ impl StoreEngine for Store {
         block_value: U256,
         blobs_bundle: BlobsBundle,
         completed: bool,
-    ) -> std::result::Result<(), StoreError> {
+    ) -> Result<(), StoreError> {
         self.write::<Payloads>(
             payload_id,
             (block, block_value, blobs_bundle, completed).into(),
@@ -397,7 +406,7 @@ impl StoreEngine for Store {
     fn get_transaction_by_hash(
         &self,
         transaction_hash: H256,
-    ) -> std::result::Result<Option<Transaction>, StoreError> {
+    ) -> Result<Option<Transaction>, StoreError> {
         let (_block_number, block_hash, index) =
             match self.get_transaction_location(transaction_hash)? {
                 Some(location) => location,
@@ -410,7 +419,7 @@ impl StoreEngine for Store {
         &self,
         block_hash: H256,
         index: u64,
-    ) -> std::result::Result<Option<Transaction>, StoreError> {
+    ) -> Result<Option<Transaction>, StoreError> {
         let block_body = match self.get_block_body_by_hash(block_hash)? {
             Some(body) => body,
             None => return Ok(None),
@@ -421,10 +430,7 @@ impl StoreEngine for Store {
             .and_then(|index: usize| block_body.transactions.get(index).cloned()))
     }
 
-    fn get_block_by_hash(
-        &self,
-        block_hash: BlockHash,
-    ) -> std::result::Result<Option<Block>, StoreError> {
+    fn get_block_by_hash(&self, block_hash: BlockHash) -> Result<Option<Block>, StoreError> {
         let header = match self.get_block_header_by_hash(block_hash)? {
             Some(header) => header,
             None => return Ok(None),
@@ -445,14 +451,11 @@ impl StoreEngine for Store {
             .map_err(StoreError::LibmdbxError)
     }
 
-    fn add_pending_block(&self, block: Block) -> std::result::Result<(), StoreError> {
+    fn add_pending_block(&self, block: Block) -> Result<(), StoreError> {
         self.write::<PendingBlocks>(block.header.compute_block_hash().into(), block.into())
     }
 
-    fn get_pending_block(
-        &self,
-        block_hash: BlockHash,
-    ) -> std::result::Result<Option<Block>, StoreError> {
+    fn get_pending_block(&self, block_hash: BlockHash) -> Result<Option<Block>, StoreError> {
         Ok(self
             .read::<PendingBlocks>(block_hash.into())?
             .map(|b| b.to()))
@@ -461,14 +464,13 @@ impl StoreEngine for Store {
     fn add_transaction_locations(
         &self,
         locations: Vec<(H256, BlockNumber, BlockHash, Index)>,
-    ) -> std::result::Result<(), StoreError> {
+    ) -> Result<(), StoreError> {
         #[allow(clippy::type_complexity)]
-        let key_values: Vec<(TransactionHashRLP, Rlp<(BlockNumber, BlockHash, Index)>)> = locations
+        let key_values = locations
             .into_iter()
             .map(|(tx_hash, block_number, block_hash, index)| {
                 (tx_hash.into(), (block_number, block_hash, index).into())
-            })
-            .collect();
+            });
 
         self.write_batch::<TransactionLocations>(key_values)
     }
@@ -477,28 +479,18 @@ impl StoreEngine for Store {
         &self,
         block_hash: BlockHash,
         receipts: Vec<Receipt>,
-    ) -> std::result::Result<(), StoreError> {
-        let key_values = receipts
-            .into_iter()
-            .enumerate()
-            .map(|(index, receipt)| {
-                (
-                    <(H256, u64) as Into<TupleRLP<BlockHash, Index>>>::into((
-                        block_hash,
-                        index as u64,
-                    )),
-                    <Receipt as Into<ReceiptRLP>>::into(receipt),
-                )
-            })
-            .collect();
+    ) -> Result<(), StoreError> {
+        let key_values = receipts.into_iter().enumerate().map(|(index, receipt)| {
+            (
+                <(H256, u64) as Into<TupleRLP<BlockHash, Index>>>::into((block_hash, index as u64)),
+                <Receipt as Into<ReceiptRLP>>::into(receipt),
+            )
+        });
 
         self.write_batch::<Receipts>(key_values)
     }
 
-    fn get_receipts_for_block(
-        &self,
-        block_hash: &BlockHash,
-    ) -> std::result::Result<Vec<Receipt>, StoreError> {
+    fn get_receipts_for_block(&self, block_hash: &BlockHash) -> Result<Vec<Receipt>, StoreError> {
         let mut receipts = vec![];
         let mut receipt_index = 0;
         let mut key: TupleRLP<BlockHash, Index> = (*block_hash, 0).into();
@@ -643,9 +635,7 @@ impl From<H256> for AccountStorageKeyBytes {
 
 impl From<U256> for AccountStorageValueBytes {
     fn from(value: U256) -> Self {
-        let mut value_bytes = [0; 32];
-        value.to_big_endian(&mut value_bytes);
-        AccountStorageValueBytes(value_bytes)
+        AccountStorageValueBytes(value.to_big_endian())
     }
 }
 

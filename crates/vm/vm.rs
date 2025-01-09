@@ -174,7 +174,7 @@ cfg_if::cfg_if! {
             let mut block_cache: CacheDB = HashMap::new();
 
             for tx in block.body.transactions.iter() {
-                let report = execute_tx_levm(tx, block_header, store_wrapper.clone(), block_cache.clone(), spec_id).unwrap();
+                let report = execute_tx_levm(tx, block_header, store_wrapper.clone(), block_cache.clone(), spec_id).map_err(EvmError::from)?;
 
                 let mut new_state = report.new_state.clone();
 
@@ -762,14 +762,9 @@ pub fn block_env(header: &BlockHeader) -> BlockEnv {
 }
 
 pub fn tx_env(tx: &Transaction) -> TxEnv {
-    let mut max_fee_per_blob_gas_bytes: [u8; 32] = [0; 32];
-    let max_fee_per_blob_gas = match tx.max_fee_per_blob_gas() {
-        Some(x) => {
-            x.to_big_endian(&mut max_fee_per_blob_gas_bytes);
-            Some(RevmU256::from_be_bytes(max_fee_per_blob_gas_bytes))
-        }
-        None => None,
-    };
+    let max_fee_per_blob_gas = tx
+        .max_fee_per_blob_gas()
+        .map(|x| RevmU256::from_be_bytes(x.to_big_endian()));
     TxEnv {
         caller: match tx {
             Transaction::PrivilegedL2Transaction(tx) if tx.tx_type == PrivilegedTxType::Deposit => {

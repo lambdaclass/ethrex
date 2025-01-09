@@ -17,6 +17,13 @@ pub trait StoreEngine: Debug + Send + Sync + RefUnwindSafe {
         block_header: BlockHeader,
     ) -> Result<(), StoreError>;
 
+    /// Add a batch of block headers
+    fn add_block_headers(
+        &self,
+        block_hashes: Vec<BlockHash>,
+        block_headers: Vec<BlockHeader>,
+    ) -> Result<(), StoreError>;
+
     /// Obtain canonical block header
     fn get_block_header(
         &self,

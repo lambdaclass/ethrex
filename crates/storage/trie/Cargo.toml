@@ -6,7 +6,7 @@ edition.workspace = true
 [dependencies]
 ethrex-rlp.workspace = true
 
-ethereum-types = "0.14.1"
+ethereum-types.workspace = true
 anyhow = "1.0.86"
 bytes.workspace = true
 tracing.workspace = true

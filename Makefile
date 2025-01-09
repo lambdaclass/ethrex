@@ -1,5 +1,6 @@
 .PHONY: build lint test clean run-image build-image download-test-vectors clean-vectors \
-	setup-hive test-pattern-default run-hive run-hive-debug clean-hive-logs
+	setup-hive test-pattern-default run-hive run-hive-debug clean-hive-logs loc-detailed \
+	loc-compare-detailed
 
 help: ## 📚 Show help for each of the Makefile recipes
 	@grep -E '^[a-zA-Z0-9_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-30s\033[0m %s\n", $$1, $$2}'
@@ -16,7 +17,7 @@ SPECTEST_VECTORS_DIR := cmd/ef_tests/ethrex/vectors
 
 CRATE ?= *
 test: $(SPECTEST_VECTORS_DIR) ## 🧪 Run each crate's tests
-	cargo test -p '$(CRATE)' --workspace --exclude ethrex-prover --exclude ethrex-levm --exclude ef_tests-levm -- --skip test_contract_compilation --skip testito
+	cargo test -p '$(CRATE)' --workspace --exclude ethrex-prover --exclude ethrex-levm --exclude ef_tests-levm --exclude ethrex-l2 -- --skip test_contract_compilation
 
 clean: clean-vectors ## 🧹 Remove build artifacts
 	cargo clean
@@ -122,7 +123,7 @@ run-hive: build-image setup-hive ## 🧪 Run Hive testing suite
 	cd hive && ./hive --client ethrex --sim $(SIMULATION) --sim.limit "$(TEST_PATTERN)"
 
 run-hive-all: build-image setup-hive ## 🧪 Run all Hive testing suites
-	cd hive && ./hive --client ethrex --sim $(SIMULATION) --sim.parallelism 4
+	cd hive && ./hive --client ethrex --sim ".*" --sim.parallelism 4
 
 run-hive-debug: build-image setup-hive ## 🐞 Run Hive testing suite in debug mode
 	cd hive && ./hive --sim $(SIMULATION) --client ethrex --sim.limit "$(TEST_PATTERN)" --docker.output
@@ -140,6 +141,11 @@ loc-stats:
 		cargo run -p loc -- --summary;\
 	fi
 
+loc-detailed:
+	cargo run --release --bin loc -- --detailed
+
+loc-compare-detailed:
+	cargo run --release --bin loc -- --compare-detailed
 
 hive-stats:
 	make hive QUIET=true

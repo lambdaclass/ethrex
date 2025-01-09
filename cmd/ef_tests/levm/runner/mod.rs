@@ -55,6 +55,8 @@ pub struct EFTestRunnerOptions {
     pub spinner: bool, // Replaces prints for spinner, but execution is slower.
     #[arg(long, value_name = "VERBOSE", default_value = "false")]
     pub verbose: bool,
+    #[arg(long, value_name = "REVM", default_value = "false")]
+    pub revm: bool,
 }
 
 pub fn run_ef_tests(
@@ -63,7 +65,12 @@ pub fn run_ef_tests(
 ) -> Result<(), EFTestRunnerError> {
     let mut reports = report::load()?;
     if reports.is_empty() {
-        run_with_levm(&mut reports, &ef_tests, opts)?;
+        if opts.revm {
+            run_with_revm(&mut reports, &ef_tests, opts)?;
+            return Ok(());
+        } else {
+            run_with_levm(&mut reports, &ef_tests, opts)?;
+        }
     }
     if opts.summary {
         return Ok(());
@@ -131,8 +138,7 @@ fn run_with_levm(
 }
 
 /// ### Runs all tests with REVM
-/// **Note:** This is not used in the current implementation because we only run with REVM the tests that failed with LEVM so that execution time is minimized.
-fn _run_with_revm(
+fn run_with_revm(
     reports: &mut Vec<EFTestReport>,
     ef_tests: &[EFTest],
     opts: &EFTestRunnerOptions,
@@ -227,7 +233,17 @@ fn re_run_with_revm(
         match revm_runner::re_run_failed_ef_test(
             ef_tests
                 .iter()
-                .find(|test| test._info.generated_test_hash == failed_test_report.test_hash)
+                .find(|test|  {
+                    let hash = test
+                        ._info
+                        .generated_test_hash
+                        .or(test._info.hash)
+                        .unwrap();
+
+                    let failed_hash = failed_test_report.test_hash;
+
+                    hash == failed_hash && test.name == failed_test_report.name
+                })
                 .unwrap(),
             failed_test_report,
         ) {

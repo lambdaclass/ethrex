@@ -177,8 +177,7 @@ impl Operation {
                     value.bits().div_ceil(8) <= n_usize,
                     "value doesn't fit in n bytes"
                 );
-                let mut word_buffer = [0; 32];
-                value.to_big_endian(&mut word_buffer);
+                let word_buffer = value.to_big_endian();
                 // extract the last n bytes to push
                 let value_to_push = &word_buffer
                     .get(

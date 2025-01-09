@@ -216,6 +216,30 @@ impl KademliaTable {
         peers
     }
 
+    /// Returns an iterator for all peers in the table
+    fn iter_peers(&self) -> impl Iterator<Item = &PeerData> {
+        self.buckets.iter().flat_map(|bucket| bucket.peers.iter())
+    }
+
+    /// Returns an iterator for all peers in the table that match the filter
+    fn filter_peers<'a>(
+        &'a self,
+        filter: &'a dyn Fn(&'a PeerData) -> bool,
+    ) -> impl Iterator<Item = &PeerData> + 'a {
+        self.iter_peers().filter(|peer| filter(peer))
+    }
+
+    /// Obtain a random peer from the kademlia table that matches the filter
+    fn get_random_peer_with_filter<'a>(
+        &'a self,
+        filter: &'a dyn Fn(&'a PeerData) -> bool,
+    ) -> Option<&'a PeerData> {
+        let peer_idx = rand::random::<usize>()
+            .checked_rem(self.filter_peers(filter).count())
+            .unwrap_or_default();
+        self.filter_peers(filter).nth(peer_idx)
+    }
+
     /// Replaces the peer with the given id with the latest replacement stored.
     /// If there are no replacements, it simply remove it
     ///
@@ -262,7 +286,7 @@ impl KademliaTable {
     /// Set the sender end of the channel between the kademlia table and the peer's active connection
     /// Set the peer's supported capabilities
     /// This function should be called each time a connection is established so the backend can send requests to the peers
-    pub fn init_backend_communication(
+    pub(crate) fn init_backend_communication(
         &mut self,
         node_id: H512,
         channels: PeerChannels,
@@ -280,50 +304,14 @@ impl KademliaTable {
         }
     }
 
-    /// TODO: Randomly select peer
-    pub fn get_peer(&self) -> Option<PeerData> {
-        let filter = |peer: &PeerData| -> bool {
-            peer.channels
-                .as_ref()
-                .is_some_and(|ch| !ch.sender.is_closed() && ch.receiver.try_lock().is_ok())
-        };
-        self.get_random_peer_with_filter(&filter).cloned()
-    }
-
-    /// Returns an iterator for all peers in the table
-    fn iter_peers(&self) -> impl Iterator<Item = &PeerData> {
-        self.buckets.iter().flat_map(|bucket| bucket.peers.iter())
-    }
-
-    /// Returns an iterator for all peers in the table that match the filter
-    fn filter_peers<'a>(
-        &'a self,
-        filter: &'a dyn Fn(&'a PeerData) -> bool,
-    ) -> impl Iterator<Item = &PeerData> + 'a {
-        self.iter_peers().filter(|peer| filter(peer))
-    }
-
-    /// Obtain a random peer from the kademlia table that matches the filter
-    fn get_random_peer_with_filter<'a>(
-        &'a self,
-        filter: &'a dyn Fn(&'a PeerData) -> bool,
-    ) -> Option<&'a PeerData> {
-        self.show_peer_stats();
-        let peer_idx = rand::random::<usize>()
-            .checked_rem(self.filter_peers(filter).count())
-            .unwrap_or_default();
-        self.filter_peers(filter).nth(peer_idx)
-    }
-
-    /// Returns the channel ends to an active peer connection
-    /// The peer is selected randomly (TODO), and doesn't guarantee that the selected peer is not currenlty busy
+    /// Returns the channel ends to an active peer connection that supports the given capability
+    /// The peer is selected randomly, and doesn't guarantee that the selected peer is not currenlty busy
     /// If no peer is found, this method will try again after 10 seconds
-    /// TODO: Filter peers by capabilities, set max amount of retries
-    pub async fn get_peer_channels(&self) -> PeerChannels {
+    pub async fn get_peer_channels(&self, capability: Capability) -> PeerChannels {
+        self.show_peer_stats();
         let filter = |peer: &PeerData| -> bool {
-            peer.channels
-                .as_ref()
-                .is_some_and(|ch| !ch.sender.is_closed())
+            // Search for peers with an active connection that support the required capabilities
+            peer.channels.is_some() && peer.supported_capabilities.contains(&capability)
         };
         loop {
             if let Some(channels) = self
@@ -338,18 +326,14 @@ impl KademliaTable {
         }
     }
 
+    /// Outputs total amount of peers, active peers, and active peers supporting the Snap Capability to the command line
     pub fn show_peer_stats(&self) {
-        let total_peers = self.iter_peers().count();
-        let active_filter = |peer: &PeerData| -> bool {
-            peer.channels
-                .as_ref()
-                .is_some_and(|ch| !ch.sender.is_closed())
-        };
+        let active_filter = |peer: &PeerData| -> bool { peer.channels.as_ref().is_some() };
         let snap_active_filter = |peer: &PeerData| -> bool {
-            peer.channels.as_ref().is_some_and(|ch| {
-                !ch.sender.is_closed() && peer.supported_capabilities.contains(&Capability::Snap)
-            })
+            peer.channels.as_ref().is_some()
+                && peer.supported_capabilities.contains(&Capability::Snap)
         };
+        let total_peers = self.iter_peers().count();
         let active_peers = self.filter_peers(&active_filter).count();
         let snap_active_peers = self.filter_peers(&snap_active_filter).count();
         info!("Snap Peers: {snap_active_peers} / Active Peers {active_peers} / Total Peers: {total_peers}")

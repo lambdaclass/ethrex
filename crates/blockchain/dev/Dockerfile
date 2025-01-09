@@ -22,7 +22,7 @@ COPY --from=planner /ethrex/recipe.json recipe.json
 RUN cargo chef cook --release --recipe-path recipe.json
 
 COPY . .
-RUN cargo build --release --features dev
+RUN cargo build --release --features "dev,metrics"
 
 FROM ubuntu:24.04
 WORKDIR /usr/local/bin
