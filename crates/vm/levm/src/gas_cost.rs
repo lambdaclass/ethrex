@@ -653,7 +653,6 @@ pub fn call(
 ) -> Result<(u64, u64), VMError> {
     let memory_expansion_cost = memory::expansion_cost(new_memory_size, current_memory_size)?;
 
-    // before berlin the cost was 700. This is done in EIP-2929
     let address_access_cost = address_access_cost(
         address_was_cold,
         CALL_STATIC,
@@ -661,6 +660,7 @@ pub fn call(
         if spec_id >= SpecId::BERLIN {
             CALL_WARM_DYNAMIC
         } else {
+            //https://eips.ethereum.org/EIPS/eip-2929
             CALL_PRE_BERLIN
         },
     )?;
