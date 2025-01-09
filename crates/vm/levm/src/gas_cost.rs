@@ -826,7 +826,7 @@ pub fn modexp_eip2565(
     max_length: u64,
     exponent_first_32_bytes: &BigUint,
     exponent_size: u64,
-) -> Result<(u64, u64), VMError> {
+) -> Result<u64, VMError> {
     let words = (max_length
         .checked_add(7)
         .ok_or(OutOfGasError::GasCostOverflow)?)
@@ -855,7 +855,14 @@ pub fn modexp_eip2565(
             0
         }
         .max(1);
-    Ok((multiplication_complexity, calculate_iteration_count))
+
+    let cost = MODEXP_STATIC_COST.max(
+        multiplication_complexity
+            .checked_mul(calculate_iteration_count)
+            .ok_or(OutOfGasError::GasCostOverflow)?
+            / MODEXP_DYNAMIC_QUOTIENT,
+    );
+    Ok(cost)
 }
 
 //https://eips.ethereum.org/EIPS/eip-198
@@ -863,7 +870,7 @@ pub fn modexp_eip198(
     max_length: u64,
     exponent_first_32_bytes: &BigUint,
     exponent_size: u64,
-) -> Result<(u64, u64), VMError> {
+) -> Result<u64, VMError> {
     let multiplication_complexity = if max_length <= 64 {
         max_length
             .checked_pow(2)
@@ -915,7 +922,11 @@ pub fn modexp_eip198(
     }
     .max(1);
 
-    Ok((multiplication_complexity, calculate_iteration_count))
+    let cost = multiplication_complexity
+        .checked_mul(calculate_iteration_count)
+        .ok_or(OutOfGasError::GasCostOverflow)?
+        / MODEXP_DYNAMIC_QUOTIENT_PRE_BERLIN;
+    Ok(cost)
 }
 
 pub fn modexp(
@@ -936,27 +947,12 @@ pub fn modexp(
         .map_err(|_| PrecompileError::ParsingInputError)?;
 
     let max_length = base_size.max(modulus_size);
-    let (multiplication_complexity, calculate_iteration_count) = if spec_id >= SpecId::BERLIN {
-        modexp_eip2565(max_length, exponent_first_32_bytes, exponent_size)?
-    } else {
-        modexp_eip198(max_length, exponent_first_32_bytes, exponent_size)?
-    };
 
-    let cost = if spec_id >= SpecId::BERLIN {
-        MODEXP_STATIC_COST.max(
-            multiplication_complexity
-                .checked_mul(calculate_iteration_count)
-                .ok_or(OutOfGasError::GasCostOverflow)?
-                / MODEXP_DYNAMIC_QUOTIENT,
-        )
+    if spec_id >= SpecId::BERLIN {
+        modexp_eip2565(max_length, exponent_first_32_bytes, exponent_size)
     } else {
-        multiplication_complexity
-            .checked_mul(calculate_iteration_count)
-            .ok_or(OutOfGasError::GasCostOverflow)?
-            / MODEXP_DYNAMIC_QUOTIENT_PRE_BERLIN
-    };
-
-    Ok(cost)
+        modexp_eip198(max_length, exponent_first_32_bytes, exponent_size)
+    }
 }
 
 fn precompile(data_size: usize, static_cost: u64, dynamic_base: u64) -> Result<u64, VMError> {
