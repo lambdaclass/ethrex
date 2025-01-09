@@ -1,5 +1,6 @@
 use ethrex_core::{types::ForkId, U256};
 use ethrex_storage::Store;
+use tracing::warn;
 
 use crate::rlpx::error::RLPxError;
 
@@ -69,9 +70,7 @@ pub fn validate_status(msg_data: StatusMessage, storage: &Store) -> Result<(), R
     }
     // Check ForkID
     if msg_data.fork_id.fork_hash != fork_id.fork_hash {
-        return Err(RLPxError::HandshakeError(
-            "Fork Id does not match".to_string(),
-        ));
+        warn!("Fork Id Hash does not match")
     }
 
     Ok(())
