@@ -218,6 +218,7 @@ async fn discover_peers_server(
                         continue;
                     }
                     if peer.last_ping_hash.unwrap() == msg.ping_hash {
+                        info!("Peer {} answered ping with pong", peer.node.node_id);
                         table.lock().await.pong_answered(peer.node.node_id);
 
                         let mut msg_buf = vec![0; read - 32];
@@ -396,7 +397,7 @@ async fn peers_revalidation(
 
     loop {
         interval.tick().await;
-        debug!("Running peer revalidation");
+        info!("Running peer revalidation");
 
         // first check that the peers we ping have responded
         for node_id in previously_pinged_peers {
@@ -447,10 +448,10 @@ async fn peers_revalidation(
             table.update_peer_ping_with_revalidation(peer.node.node_id, ping_hash);
             previously_pinged_peers.insert(peer.node.node_id);
 
-            debug!("Pinging peer {:?} to re-validate!", peer.node.node_id);
+            info!("Pinging peer {} to re-validate!", peer.node.node_id);
         }
 
-        debug!("Peer revalidation finished");
+        info!("Peer revalidation finished");
     }
 }
 
