@@ -821,6 +821,7 @@ pub fn identity(data_size: usize) -> Result<u64, VMError> {
     precompile(data_size, IDENTITY_STATIC_COST, IDENTITY_DYNAMIC_BASE)
 }
 
+//https://eips.ethereum.org/EIPS/eip-2565
 pub fn modexp_eip2565(
     max_length: u64,
     exponent_first_32_bytes: &BigUint,
@@ -857,6 +858,7 @@ pub fn modexp_eip2565(
     Ok((multiplication_complexity, calculate_iteration_count))
 }
 
+//https://eips.ethereum.org/EIPS/eip-198
 pub fn modexp_eip198(
     max_length: u64,
     exponent_first_32_bytes: &BigUint,
