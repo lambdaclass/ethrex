@@ -36,22 +36,8 @@ impl Environment {
             origin,
             refunded_gas: 0,
             gas_limit: u64::MAX,
-            spec_id: Default::default(),
-            block_number: Default::default(),
-            coinbase: Default::default(),
-            timestamp: Default::default(),
-            prev_randao: Default::default(),
             chain_id: U256::one(),
-            base_fee_per_gas: Default::default(),
-            gas_price: Default::default(),
-            block_excess_blob_gas: Default::default(),
-            block_blob_gas_used: Default::default(),
-            tx_blob_hashes: Default::default(),
-            tx_max_priority_fee_per_gas: Default::default(),
-            tx_max_fee_per_gas: Default::default(),
-            tx_max_fee_per_blob_gas: Default::default(),
-            block_gas_limit: Default::default(),
-            transient_storage: Default::default(),
+            ..Default::default()
         }
     }
 }

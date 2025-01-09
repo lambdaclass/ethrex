@@ -57,6 +57,10 @@ pub struct VM {
     pub cache: CacheDB,
     pub tx_kind: TxKind,
     pub access_list: AccessList,
+    // CHECK: check if we have to use an Option, if the AuthorizationList is not present in the tx.
+    // The node has to validate if the TxType is 0x4 and validate the AuthorizationList
+    // The Option is used with .is_some() and run the EIP7702 transaction.
+    pub authorization_list: Option<AuthorizationList>,
 }
 
 pub fn address_to_word(address: Address) -> U256 {
@@ -82,6 +86,19 @@ pub struct AccessListItem {
 }
 
 type AccessList = Vec<(Address, Vec<H256>)>;
+
+type AuthorizationList = Vec<AuthorizationTuple>;
+// TODO: We have to implement this in ethrex_core
+#[derive(Debug, Clone, Default)]
+pub struct AuthorizationTuple {
+    pub chain_id: U256,
+    pub address: Address,
+    pub nonce: u64,
+    pub y_parity: bool,
+    pub r_signature: U256,
+    pub s_signature: U256,
+    pub signer: Address,
+}
 
 pub fn get_valid_jump_destinations(code: &Bytes) -> Result<HashSet<usize>, VMError> {
     let mut valid_jump_destinations = HashSet::new();
@@ -128,6 +145,7 @@ impl VM {
         db: Arc<dyn Database>,
         mut cache: CacheDB,
         access_list: AccessList,
+        authorization_list: Option<AuthorizationList>,
     ) -> Result<Self, VMError> {
         // Maybe this decision should be made in an upper layer
 
@@ -194,6 +212,7 @@ impl VM {
                     cache,
                     tx_kind: to,
                     access_list,
+                    authorization_list,
                 })
             }
             TxKind::Create => {
@@ -236,6 +255,8 @@ impl VM {
                     cache,
                     tx_kind: TxKind::Create,
                     access_list,
+                    // CHECK: check if we can create a contract if we have an EIP7702 tx
+                    authorization_list,
                 })
             }
         }

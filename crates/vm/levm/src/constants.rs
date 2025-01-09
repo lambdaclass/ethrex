@@ -50,3 +50,9 @@ pub const VALID_BLOB_PREFIXES: [u8; 2] = [0x01, 0x02];
 // Block constants
 pub const LAST_AVAILABLE_BLOCK_LIMIT: U256 = U256([256, 0, 0, 0]);
 pub const MAX_BLOCK_GAS_LIMIT: U256 = U256([30_000_000, 0, 0, 0]);
+
+// EIP7702 - EOA Load Code
+pub const MAGIC: u64 = 0x05;
+pub const SET_CODE_TX_TYPE: u64 = 0x04;
+pub const PER_AUTH_BASE_COST: U256 = U256([12500, 0, 0, 0]);
+pub const PER_EMPTY_ACCOUNT_COST: U256 = U256([25000, 0, 0, 0]);
