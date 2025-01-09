@@ -307,7 +307,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
                     // the function below will yield immediately but the select will not match and
                     // ignore the returned value.
                     Some(broadcasted_msg) = Self::maybe_wait_for_broadcaster(&mut broadcaster_receive) => {
-                        self.handle_broadcast(broadcasted_msg?).await?
+                        self.handle_broadcast(broadcasted_msg.unwrap()).await.unwrap()
                     }
                     Some(message) = receiver.recv() => {
                         self.send(message).await?;
