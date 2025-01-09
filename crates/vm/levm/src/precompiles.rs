@@ -306,7 +306,11 @@ pub fn modexp(
     );
 
     if base_size == U256::zero() && modulus_size == U256::zero() {
-        increase_precompile_consumed_gas(gas_for_call, MODEXP_STATIC_COST, consumed_gas)?;
+        // On Berlin or newer there is a floor cost for the modexp precompile
+        // On older versions in this return there is no cost added, see more https://eips.ethereum.org/EIPS/eip-2565
+        if spec_id >= SpecId::BERLIN {
+            increase_precompile_consumed_gas(gas_for_call, MODEXP_STATIC_COST, consumed_gas)?;
+        }
         return Ok(Bytes::new());
     }
 
