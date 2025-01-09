@@ -653,21 +653,16 @@ pub fn call(
     let memory_expansion_cost = memory::expansion_cost(new_memory_size, current_memory_size)?;
 
     // before berlin the cost was 700. This is done in EIP-2929
-    let address_access_cost = if spec_id >= SpecId::BERLIN {
-        address_access_cost(
-            address_was_cold,
-            CALL_STATIC,
-            CALL_COLD_DYNAMIC,
-            CALL_WARM_DYNAMIC,
-        )?
-    } else {
-        address_access_cost(
-            address_was_cold,
-            CALL_STATIC,
-            CALL_COLD_DYNAMIC,
-            CALL_PRE_BERLIN,
-        )?
-    };
+    let address_access_cost = address_access_cost(
+        address_was_cold,
+        CALL_STATIC,
+        CALL_COLD_DYNAMIC,
+        if spec_id >= SpecId::BERLIN {
+            CALL_WARM_DYNAMIC
+        } else {
+            CALL_PRE_BERLIN
+        },
+    )?;
     let positive_value_cost = if !value_to_transfer.is_zero() {
         CALL_POSITIVE_VALUE
     } else {
