@@ -221,6 +221,7 @@ async fn discover_peers_server(
                         debug!("Peer {} answered ping with pong", peer.node.node_id);
                         table.lock().await.pong_answered(peer.node.node_id);
                         if peer.channels.is_some() {
+                            info!("Skip trying to connect to already connected peer");
                             continue;
                         }
 
