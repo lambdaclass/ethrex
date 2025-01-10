@@ -18,10 +18,10 @@ keccak-hash.workspace = true
 colored.workspace = true
 spinoff.workspace = true
 thiserror.workspace = true
-clap = { version = "4.3", features = ["derive"] }
-clap_complete.workspace = true
 itertools.workspace = true
-revm = { workspace = true, features = [
+clap_complete.workspace = true
+clap = { version = "4.3", features = ["derive"] }
+revm = { version = "19.2.0", features = [
     "serde",
     "std",
     "serde-json",

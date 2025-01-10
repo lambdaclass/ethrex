@@ -14,7 +14,7 @@ use ethrex_levm::{
     Account, StorageSlot,
 };
 use ethrex_storage::{error::StoreError, AccountUpdate};
-use ethrex_vm::{db::StoreWrapper, EvmState, RevmAddress, RevmU256};
+use ethrex_vm::{db::StoreWrapper, is_prague, EvmState, RevmAddress, RevmU256};
 use revm::{
     db::State,
     inspectors::TracerEip3155 as RevmTracerEip3155,
@@ -113,7 +113,7 @@ pub fn prepare_revm_for_tx<'state>(
         blob_excess_gas_and_price: test
             .env
             .current_excess_blob_gas
-            .map(|gas| BlobExcessGasAndPrice::new(gas.as_u64())),
+            .map(|gas| BlobExcessGasAndPrice::new(gas.as_u64(), is_prague(test.fork()))),
     };
     let tx = &test
         .transactions
