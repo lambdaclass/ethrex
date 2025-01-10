@@ -162,3 +162,10 @@ stats:
 	cd crates/vm/levm && make run-evm-ef-tests QUIET=true && echo
 	make hive-stats
 	cargo run --quiet --release -p hive_report
+
+flamegraph:
+	sudo -E CARGO_PROFILE_RELEASE_DEBUG=true cargo flamegraph --bin ethrex --features dev  --  --network test_data/genesis-l2.json --http.port 1729 >/dev/null &
+	bash scripts/flamegraph.sh
+
+test-load:
+	ethrex_l2 test load --path ./test_data/private_keys.txt -i 1000 -v  --value 10000000 --to 0xFCbaC0713ACf16708aB6BC977227041FA1BC618D
