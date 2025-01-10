@@ -423,7 +423,7 @@ async fn peers_revalidation(
             peer.revalidation = None;
 
             if peer.liveness == 0 {
-                info!("Replacing Peer {node_id} due to revalidation");
+                debug!("Replacing Peer {node_id} due to revalidation");
                 let new_peer = table.replace_peer(node_id);
                 if let Some(new_peer) = new_peer {
                     let ping_hash: Option<H256> = ping(
@@ -455,10 +455,10 @@ async fn peers_revalidation(
             table.update_peer_ping_with_revalidation(peer.node.node_id, ping_hash);
             previously_pinged_peers.insert(peer.node.node_id);
 
-            info!("Pinging peer {} to re-validate!", peer.node.node_id);
+            debug!("Pinging peer {} to re-validate!", peer.node.node_id);
         }
 
-        info!("Peer revalidation finished");
+        debug!("Peer revalidation finished");
     }
 }
 
