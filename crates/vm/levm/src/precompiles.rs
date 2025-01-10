@@ -1,3 +1,4 @@
+use bls12_381::G1Affine;
 use bytes::Bytes;
 use ethrex_core::{Address, H160, H256, U256};
 use keccak_hash::keccak256;
@@ -80,8 +81,36 @@ pub const POINT_EVALUATION_ADDRESS: H160 = H160([
     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
     0x00, 0x00, 0x00, 0x0a,
 ]);
+pub const BLS12_G1ADD_ADDRESS: H160 = H160([
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x0b,
+]);
+pub const BLS12_G1MSM_ADDRESS: H160 = H160([
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x0c,
+]);
+pub const BLS12_G2ADD_ADDRESS: H160 = H160([
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x0d,
+]);
+pub const BLS12_G2MSM_ADDRESS: H160 = H160([
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x0e,
+]);
+pub const BLS12_PAIRING_CHECK_ADDRESS: H160 = H160([
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x0f,
+]);
+pub const BLS12_MAP_FP_TO_G1_ADDRESS: H160 = H160([
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x10,
+]);
+pub const BLS12_MAP_FP2_TO_G2_ADDRESS: H160 = H160([
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x11,
+]);
 
-pub const PRECOMPILES: [H160; 10] = [
+pub const PRECOMPILES: [H160; 17] = [
     ECRECOVER_ADDRESS,
     SHA2_256_ADDRESS,
     RIPEMD_160_ADDRESS,
@@ -92,6 +121,13 @@ pub const PRECOMPILES: [H160; 10] = [
     ECPAIRING_ADDRESS,
     BLAKE2F_ADDRESS,
     POINT_EVALUATION_ADDRESS,
+    BLS12_G1ADD_ADDRESS,
+    BLS12_G1MSM_ADDRESS,
+    BLS12_G2ADD_ADDRESS,
+    BLS12_G2MSM_ADDRESS,
+    BLS12_PAIRING_CHECK_ADDRESS,
+    BLS12_MAP_FP_TO_G1_ADDRESS,
+    BLS12_MAP_FP2_TO_G2_ADDRESS,
 ];
 
 pub const BLAKE2F_ELEMENT_SIZE: usize = 8;
@@ -99,6 +135,27 @@ pub const BLAKE2F_ELEMENT_SIZE: usize = 8;
 pub fn is_precompile(callee_address: &Address, spec_id: SpecId) -> bool {
     // Cancun specs is the only one that allows point evaluation precompile
     if *callee_address == POINT_EVALUATION_ADDRESS && spec_id < SpecId::CANCUN {
+        return false;
+    }
+    if *callee_address == BLS12_G1ADD_ADDRESS && spec_id < SpecId::PRAGUE {
+        return false;
+    }
+    if *callee_address == BLS12_G1MSM_ADDRESS && spec_id < SpecId::PRAGUE {
+        return false;
+    }
+    if *callee_address == BLS12_G2ADD_ADDRESS && spec_id < SpecId::PRAGUE {
+        return false;
+    }
+    if *callee_address == BLS12_G2MSM_ADDRESS && spec_id < SpecId::PRAGUE {
+        return false;
+    }
+    if *callee_address == BLS12_PAIRING_CHECK_ADDRESS && spec_id < SpecId::PRAGUE {
+        return false;
+    }
+    if *callee_address == BLS12_MAP_FP_TO_G1_ADDRESS && spec_id < SpecId::PRAGUE {
+        return false;
+    }
+    if *callee_address == BLS12_MAP_FP2_TO_G2_ADDRESS && spec_id < SpecId::PRAGUE {
         return false;
     }
 
@@ -137,6 +194,9 @@ pub fn execute_precompile(
         address if address == BLAKE2F_ADDRESS => blake2f(&calldata, gas_for_call, consumed_gas)?,
         address if address == POINT_EVALUATION_ADDRESS => {
             point_evaluation(&calldata, gas_for_call, consumed_gas)?
+        }
+        address if address == BLS12_G1ADD_ADDRESS => {
+            bls12_g1add(&calldata, gas_for_call, consumed_gas)?
         }
         _ => return Err(VMError::Internal(InternalError::InvalidPrecompileAddress)),
     };
@@ -1081,4 +1141,63 @@ fn point_evaluation(
     let output = POINT_EVALUATION_OUTPUT_BYTES.to_vec();
 
     Ok(Bytes::from(output))
+}
+
+pub fn bls12_g1add(
+    calldata: &Bytes,
+    _gas_for_call: u64,
+    _consumed_gas: &mut u64,
+) -> Result<Bytes, VMError> {
+    // Two inputs of 128 bytes are requiered
+    if calldata.len() != 256 {
+        return Err(VMError::PrecompileError(PrecompileError::ParsingInputError));
+    }
+
+    let fp1_1 = calldata
+        .get(0..64)
+        .ok_or(VMError::PrecompileError(PrecompileError::ParsingInputError))?;
+    let fp2_1 = calldata
+        .get(64..128)
+        .ok_or(VMError::PrecompileError(PrecompileError::ParsingInputError))?;
+    let fp1_2 = calldata
+        .get(128..192)
+        .ok_or(VMError::PrecompileError(PrecompileError::ParsingInputError))?;
+    let fp2_2 = calldata
+        .get(192..)
+        .ok_or(VMError::PrecompileError(PrecompileError::ParsingInputError))?;
+
+    dbg!(fp1_1, fp2_1, fp1_2, fp2_2);
+    let zeros: [u8; 16] = [0_u8; 16];
+
+    // the first 16 bytes of any of the points MUST be all zeros
+    if fp1_1
+        .get(0..16)
+        .ok_or(VMError::PrecompileError(PrecompileError::ParsingInputError))?
+        != zeros
+    {
+        return Err(VMError::PrecompileError(PrecompileError::ParsingInputError));
+    }
+    if fp2_1
+        .get(0..16)
+        .ok_or(VMError::PrecompileError(PrecompileError::ParsingInputError))?
+        != zeros
+    {
+        return Err(VMError::PrecompileError(PrecompileError::ParsingInputError));
+    }
+    if fp1_2
+        .get(0..16)
+        .ok_or(VMError::PrecompileError(PrecompileError::ParsingInputError))?
+        != zeros
+    {
+        return Err(VMError::PrecompileError(PrecompileError::ParsingInputError));
+    }
+    if fp2_2
+        .get(0..16)
+        .ok_or(VMError::PrecompileError(PrecompileError::ParsingInputError))?
+        != zeros
+    {
+        return Err(VMError::PrecompileError(PrecompileError::ParsingInputError));
+    }
+
+    Ok(Bytes::new())
 }
