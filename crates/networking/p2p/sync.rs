@@ -102,11 +102,21 @@ impl SyncManager {
         let mut all_block_hashes = vec![];
         // Check if we have some blocks downloaded from a previous sync attempt
         if let Some(last_header) = store.get_latest_downloaded_header()? {
+            // Debug Code Block
+            {
+                let last_downloaded_header = store.get_block_header_by_hash(last_header)?.unwrap().number;
+                info!("Resuming header download from last downloaded header with number: {last_downloaded_header}");
+            }
             // We might have more headers than bodies downloaded so we should queue missing bodies for download
             let last_body = match store.get_latest_downloaded_body()? {
                 Some(hash) => hash,
                 None => current_head,
             };
+            // Debug Code Block
+            {
+                let last_downloaded_body = store.get_block_header_by_hash(last_body)?.unwrap().number;
+                info!("Resuming body download from last downloaded body with number: {last_downloaded_body}");
+            }
             if last_body != last_header {
                 let mut parent = last_header;
                 while parent != last_body {
@@ -226,8 +236,8 @@ impl SyncManager {
             }
         }
         // Finished a sync cycle without aborting halfway, clear current state (TODO: write pivot here too)
-        store.clear_latest_downloaded_header();
-        store.clear_latest_downloaded_body();
+        store.clear_latest_downloaded_header()?;
+        store.clear_latest_downloaded_body()?;
         Ok(())
     }
 }

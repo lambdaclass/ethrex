@@ -797,7 +797,6 @@ async fn handle_peer_as_receiver(
     connection_broadcast: broadcast::Sender<(tokio::task::Id, Arc<RLPxMessage>)>,
 ) {
     let mut conn = RLPxConnection::receiver(signer, stream, storage, connection_broadcast);
-    info!("Starting Peer as Receiver");
     conn.start_peer(table).await;
 }
 
@@ -815,7 +814,6 @@ async fn handle_peer_as_initiator(
         .connect(SocketAddr::new(node.ip, node.tcp_port))
         .await
         .unwrap();
-    info!("Starting Peer as Initiator");
     match RLPxConnection::initiator(signer, msg, stream, storage, connection_broadcast).await {
         Ok(mut conn) => conn.start_peer(table).await,
         Err(e) => {
