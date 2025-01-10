@@ -29,6 +29,7 @@ use tracing::{error, info, warn};
 use tracing_subscriber::{filter::Directive, EnvFilter, FmtSubscriber};
 mod cli;
 mod decode;
+mod networks;
 
 const DEFAULT_DATADIR: &str = "ethrex";
 #[tokio::main]
@@ -90,15 +91,30 @@ async fn main() {
         .get_one::<String>("discovery.port")
         .expect("discovery.port is required");
 
-    let genesis_file_path = matches
+    let mut network = matches
         .get_one::<String>("network")
-        .expect("network is required");
+        .expect("network is required")
+        .clone();
 
-    let bootnodes: Vec<BootNode> = matches
+    let mut bootnodes: Vec<BootNode> = matches
         .get_many("bootnodes")
         .map(Iterator::copied)
         .map(Iterator::collect)
         .unwrap_or_default();
+
+    if network == "holesky" {
+        warn!("Using holesky presets, bootnodes field will be ignored");
+        // Set holesky presets
+        network = String::from(networks::HOLESKY_GENESIS_PATH);
+        bootnodes = networks::HOLESKY_BOOTNODES.to_vec();
+    }
+
+    if network == "sepolia" {
+        warn!("Using sepolia presets, bootnodes field will be ignored");
+        // Set sepolia presets
+        network = String::from(networks::SEPOLIA_GENESIS_PATH);
+        bootnodes = networks::SEPOLIA_BOOTNODES.to_vec();
+    }
 
     if bootnodes.is_empty() {
         warn!("No bootnodes specified. This node will not be able to connect to the network.");
@@ -130,7 +146,7 @@ async fn main() {
         }
     }
 
-    let genesis = read_genesis_file(genesis_file_path);
+    let genesis = read_genesis_file(&network);
     store
         .add_initial_state(genesis.clone())
         .expect("Failed to create genesis block");
@@ -207,6 +223,17 @@ async fn main() {
     info!("Node: {enode}");
 
     tracker.spawn(rpc_api);
+
+    // Check if the metrics.port is present, else set it to 0
+    let metrics_port = matches
+        .get_one::<String>("metrics.port")
+        .map_or("0".to_owned(), |v| v.clone());
+
+    // Start the metrics_api with the given metrics.port if it's != 0
+    if metrics_port != *"0" {
+        let metrics_api = ethrex_metrics::api::start_prometheus_metrics_api(metrics_port);
+        tracker.spawn(metrics_api);
+    }
 
     // We do not want to start the networking module if the l2 feature is enabled.
     cfg_if::cfg_if! {

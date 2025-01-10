@@ -13,7 +13,8 @@ use crate::{
     },
     gas_cost::{
         self, fake_exponential, ACCESS_LIST_ADDRESS_COST, ACCESS_LIST_STORAGE_KEY_COST,
-        BLOB_GAS_PER_BLOB, CODE_DEPOSIT_COST, CREATE_BASE_COST,
+        BLOB_GAS_PER_BLOB, CODE_DEPOSIT_COST, CREATE_BASE_COST, STANDARD_TOKEN_COST,
+        TOTAL_COST_FLOOR_PER_TOKEN,
     },
     opcodes::Opcode,
     precompiles::{execute_precompile, is_precompile},
@@ -27,6 +28,7 @@ use keccak_hash::keccak;
 use revm_primitives::SpecId;
 use sha3::{Digest, Keccak256};
 use std::{
+    cmp::max,
     collections::{HashMap, HashSet},
     sync::Arc,
 };
@@ -254,7 +256,7 @@ impl VM {
         );
 
         if is_precompile(&current_call_frame.code_address, self.env.spec_id) {
-            let precompile_result = execute_precompile(current_call_frame);
+            let precompile_result = execute_precompile(current_call_frame, self.env.spec_id);
 
             match precompile_result {
                 Ok(output) => {
@@ -263,7 +265,7 @@ impl VM {
                     return Ok(TransactionReport {
                         result: TxResult::Success,
                         new_state: self.cache.clone(),
-                        gas_used: current_call_frame.gas_used,
+                        gas_used: self.gas_used(current_call_frame)?,
                         gas_refunded: 0,
                         output,
                         logs: current_call_frame.logs.clone(),
@@ -465,7 +467,7 @@ impl VM {
                                 return Ok(TransactionReport {
                                     result: TxResult::Revert(error),
                                     new_state: self.cache.clone(),
-                                    gas_used: current_call_frame.gas_used,
+                                    gas_used: self.gas_used(current_call_frame)?,
                                     gas_refunded: self.env.refunded_gas,
                                     output: current_call_frame.output.clone(),
                                     logs: current_call_frame.logs.clone(),
@@ -478,7 +480,7 @@ impl VM {
                     return Ok(TransactionReport {
                         result: TxResult::Success,
                         new_state: self.cache.clone(),
-                        gas_used: current_call_frame.gas_used,
+                        gas_used: self.gas_used(current_call_frame)?,
                         gas_refunded: self.env.refunded_gas,
                         output: current_call_frame.output.clone(),
                         logs: current_call_frame.logs.clone(),
@@ -511,7 +513,7 @@ impl VM {
                     return Ok(TransactionReport {
                         result: TxResult::Revert(error),
                         new_state: self.cache.clone(),
-                        gas_used: current_call_frame.gas_used,
+                        gas_used: self.gas_used(current_call_frame)?,
                         gas_refunded: self.env.refunded_gas,
                         output: current_call_frame.output.clone(), // Bytes::new() if error is not RevertOpcode
                         logs: current_call_frame.logs.clone(),
@@ -539,16 +541,14 @@ impl VM {
         matches!(self.tx_kind, TxKind::Create)
     }
 
-    fn add_intrinsic_gas(&mut self, initial_call_frame: &mut CallFrame) -> Result<(), VMError> {
-        // Intrinsic gas is the gas consumed by the transaction before the execution of the opcodes. Section 6.2 in the Yellow Paper.
-
+    fn get_intrinsic_gas(&self, initial_call_frame: &CallFrame) -> Result<u64, VMError> {
         // Intrinsic Gas = Calldata cost + Create cost + Base cost + Access list cost
         let mut intrinsic_gas: u64 = 0;
 
         // Calldata Cost
         // 4 gas for each zero byte in the transaction data 16 gas for each non-zero byte in the transaction.
-        let calldata_cost =
-            gas_cost::tx_calldata(&initial_call_frame.calldata).map_err(VMError::OutOfGas)?;
+        let calldata_cost = gas_cost::tx_calldata(&initial_call_frame.calldata, self.env.spec_id)
+            .map_err(VMError::OutOfGas)?;
 
         intrinsic_gas = intrinsic_gas
             .checked_add(calldata_cost)
@@ -594,10 +594,46 @@ impl VM {
             .checked_add(access_lists_cost)
             .ok_or(OutOfGasError::ConsumedGasOverflow)?;
 
+        Ok(intrinsic_gas)
+    }
+
+    fn add_intrinsic_gas(&mut self, initial_call_frame: &mut CallFrame) -> Result<(), VMError> {
+        // Intrinsic gas is the gas consumed by the transaction before the execution of the opcodes. Section 6.2 in the Yellow Paper.
+
+        let intrinsic_gas = self.get_intrinsic_gas(initial_call_frame)?;
+
         self.increase_consumed_gas(initial_call_frame, intrinsic_gas)
             .map_err(|_| TxValidationError::IntrinsicGasTooLow)?;
 
         Ok(())
+    }
+
+    fn gas_used(&self, current_call_frame: &mut CallFrame) -> Result<u64, VMError> {
+        if self.env.spec_id >= SpecId::PRAGUE {
+            // tokens_in_calldata = nonzero_bytes_in_calldata * 4 + zero_bytes_in_calldata
+            // tx_calldata = nonzero_bytes_in_calldata * 16 + zero_bytes_in_calldata * 4
+            // this is actually tokens_in_calldata * STANDARD_TOKEN_COST
+            // see it in https://eips.ethereum.org/EIPS/eip-7623
+            let tokens_in_calldata: u64 =
+                gas_cost::tx_calldata(&current_call_frame.calldata, self.env.spec_id)
+                    .map_err(VMError::OutOfGas)?
+                    .checked_div(STANDARD_TOKEN_COST)
+                    .ok_or(VMError::Internal(InternalError::DivisionError))?;
+
+            // floor_gas_price = TX_BASE_COST + TOTAL_COST_FLOOR_PER_TOKEN * tokens_in_calldata
+            let mut floor_gas_price: u64 = tokens_in_calldata
+                .checked_mul(TOTAL_COST_FLOOR_PER_TOKEN)
+                .ok_or(VMError::Internal(InternalError::GasOverflow))?;
+
+            floor_gas_price = floor_gas_price
+                .checked_add(TX_BASE_COST)
+                .ok_or(VMError::Internal(InternalError::GasOverflow))?;
+
+            let gas_used = max(floor_gas_price, current_call_frame.gas_used);
+            Ok(gas_used)
+        } else {
+            Ok(current_call_frame.gas_used)
+        }
     }
 
     /// Gets the max blob gas cost for a transaction that a user is willing to pay.
@@ -670,6 +706,34 @@ impl VM {
     fn prepare_execution(&mut self, initial_call_frame: &mut CallFrame) -> Result<(), VMError> {
         let sender_address = self.env.origin;
         let sender_account = self.get_account(sender_address);
+
+        if self.env.spec_id >= SpecId::PRAGUE {
+            // check for gas limit is grater or equal than the minimum required
+            let intrinsic_gas: u64 = self.get_intrinsic_gas(initial_call_frame)?;
+
+            // calldata_cost = tokens_in_calldata * 4
+            let calldata_cost: u64 =
+                gas_cost::tx_calldata(&initial_call_frame.calldata, self.env.spec_id)
+                    .map_err(VMError::OutOfGas)?;
+
+            // same as calculated in gas_used()
+            let tokens_in_calldata: u64 = calldata_cost
+                .checked_div(STANDARD_TOKEN_COST)
+                .ok_or(VMError::Internal(InternalError::DivisionError))?;
+
+            // floor_cost_by_tokens = TX_BASE_COST + TOTAL_COST_FLOOR_PER_TOKEN * tokens_in_calldata
+            let floor_cost_by_tokens = tokens_in_calldata
+                .checked_mul(TOTAL_COST_FLOOR_PER_TOKEN)
+                .ok_or(VMError::Internal(InternalError::GasOverflow))?
+                .checked_add(TX_BASE_COST)
+                .ok_or(VMError::Internal(InternalError::GasOverflow))?;
+
+            let min_gas_limit = max(intrinsic_gas, floor_cost_by_tokens);
+
+            if initial_call_frame.gas_limit < min_gas_limit {
+                return Err(VMError::TxValidation(TxValidationError::GasLimitTooLow));
+            }
+        }
 
         // (1) GASLIMIT_PRICE_PRODUCT_OVERFLOW
         let gaslimit_price_product = self
@@ -1060,12 +1124,16 @@ impl VM {
         address: Address,
         key: H256,
     ) -> Result<(StorageSlot, bool), VMError> {
-        let storage_slot_was_cold = self
-            .accrued_substate
-            .touched_storage_slots
-            .entry(address)
-            .or_default()
-            .insert(key);
+        // [EIP-2929] - Introduced conditional tracking of accessed storage slots for Berlin and later specs.
+        let mut storage_slot_was_cold = false;
+        if self.env.spec_id >= SpecId::BERLIN {
+            storage_slot_was_cold = self
+                .accrued_substate
+                .touched_storage_slots
+                .entry(address)
+                .or_default()
+                .insert(key);
+        }
         let storage_slot = match cache::get_account(&self.cache, &address) {
             Some(account) => match account.storage.get(&key) {
                 Some(storage_slot) => storage_slot.clone(),

@@ -11,32 +11,38 @@ env:
 
 jobs:
   run-hive:
-    name: Hive - ${{ matrix.name }}
+    name: Hive (${{ matrix.vm }}) - ${{ matrix.test.name }}
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        include:
-          - name: "Rpc Compat tests"
-            file_name: rpc-compat
-            simulation: ethereum/rpc-compat
-          - name: "Devp2p eth tests"
-            file_name: devp2p
-            simulation: devp2p
-          - name: "Cancun Engine tests"
-            file_name: engine
-            simulation: ethereum/engine
-          - name: "Sync tests"
-            file_name: sync
-            simulation: ethereum/sync
+        vm: [levm, revm]
+        test:
+          - {
+              name: "Rpc Compat tests",
+              file_name: rpc-compat,
+              simulation: ethereum/rpc-compat,
+            }
+          - { name: "Devp2p eth tests", file_name: devp2p, simulation: devp2p }
+          - {
+              name: "Cancun Engine tests",
+              file_name: engine,
+              simulation: ethereum/engine,
+            }
+          - { name: "Sync tests", file_name: sync, simulation: ethereum/sync }
 
     steps:
       - name: Pull image
+        if: ${{ matrix.vm == 'revm' }}
         run: |
           docker pull ghcr.io/lambdaclass/ethrex:latest
           docker tag ghcr.io/lambdaclass/ethrex:latest ethrex:latest
 
       - name: Checkout sources
         uses: actions/checkout@v4
+
+      - name: Build Image with LEVM
+        if: ${{ matrix.vm == 'levm' }}
+        run: cd crates/vm/levm && make build-image-levm
 
       - name: Setup Go
         uses: actions/setup-go@v5
@@ -45,19 +51,23 @@ jobs:
         run: make setup-hive
 
       - name: Run Hive Simulation
-        run: cd hive && ./hive --client ethrex --sim ${{ matrix.simulation }} --sim.parallelism 16
+        run: cd hive && ./hive --client ethrex --sim ${{ matrix.test.simulation }} --sim.parallelism 16
         continue-on-error: true
 
       - name: Upload results
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.file_name }}_logs
+          name: ${{ matrix.test.file_name }}_${{ matrix.vm }}_logs
           path: hive/workspace/logs/*-*.json
+          if-no-files-found: error
 
   hive-report:
-    name: Generate report and upload to summary and slack
+    name: Generate report and upload to slack (${{ matrix.vm }})
     needs: run-hive
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        vm: [levm, revm]
     steps:
       - name: Checkout sources
         uses: actions/checkout@v4
@@ -71,7 +81,7 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           path: hive/workspace/logs
-          pattern: "*_logs"
+          pattern: "*_${{ matrix.vm }}_logs"
           merge-multiple: true
 
       - name: Caching
@@ -80,9 +90,16 @@ jobs:
       - name: Generate the hive report
         run: cargo run -p hive_report > results.md
 
+      - name: Upload ${{matrix.vm}} result
+        uses: actions/upload-artifact@v4
+        with:
+          name: results_${{matrix.vm}}.md
+          path: results.md
+          if-no-files-found: error
+
       - name: Post results in summary
         run: |
-          echo "# Hive coverage report" >> $GITHUB_STEP_SUMMARY
+          echo "# Hive coverage report (${{ matrix.vm }})" >> $GITHUB_STEP_SUMMARY
           cat results.md >> $GITHUB_STEP_SUMMARY
 
       - name: Post results to ethrex L1 slack channel
@@ -98,73 +115,38 @@ jobs:
       - name: Post results to levm slack channel
         env:
           url: ${{ secrets.LEVM_SLACK_WEBHOOK }}
-        run: sh .github/scripts/publish.sh
+        run: |
+          if [ "${{ matrix.vm }}" = "revm" ]; then
+            sh .github/scripts/publish.sh
+          elif [ "${{ matrix.vm }}" = "levm" ]; then
+            sh .github/scripts/publish_levm_hive.sh
+          fi
 
-  loc:
-    name: Count ethrex loc and generate report
+  hive-diff-report:
+    name: Post tests diff to levm slack
+    needs: hive-report
     runs-on: ubuntu-latest
     steps:
       - name: Checkout sources
         uses: actions/checkout@v4
 
-      - name: Rustup toolchain install
-        uses: dtolnay/rust-toolchain@stable
+      - name: Download results (levm)
+        uses: actions/download-artifact@v4
         with:
-          toolchain: ${{ env.RUST_VERSION }}
+          name: results_levm.md
 
-      - name: Add Rust Cache
-        uses: Swatinem/rust-cache@v2
-
-      - name: Restore cache
-        id: cache-loc-report
-        uses: actions/cache@v4
+      - name: Download results (revm)
+        uses: actions/download-artifact@v4
         with:
-          path: loc_report.json
-          key: loc-report-${{ github.ref_name }}
-          restore-keys: |
-            loc-report-
+          name: results_revm.md
 
-      - name: Rename cached loc_report.json to loc_report.json.old
-        if: steps.cache-loc-report.outputs.cache-hit != ''
-        run: mv loc_report.json loc_report.json.old
-
-      - name: Generate the loc report
-        run: |
-          make loc
-
-      - name: Save new loc_report.json to cache
-        if: success()
-        uses: actions/cache@v4
-        with:
-          path: loc_report.json
-          key: loc-report-${{ github.ref_name }}
-
-      - name: Post results in summary
-        run: |
-          echo "# 'ethrex' lines of code report" >> $GITHUB_STEP_SUMMARY
-          cat loc_report_github.txt >> $GITHUB_STEP_SUMMARY
-
-      - name: Post results to ethrex L1 slack channel
-        env:
-          url: ${{ secrets.ETHREX_L1_SLACK_WEBHOOK }}
-        run: sh .github/scripts/publish_loc.sh
-
-      - name: Post results to ethrex L2 slack channel
-        env:
-          url: ${{ secrets.ETHREX_L2_SLACK_WEBHOOK }}
-        run: sh .github/scripts/publish_loc.sh
-
-      - name: Post results to levm slack channel
+      - name: Post results diff in LEVM channel
         env:
           url: ${{ secrets.LEVM_SLACK_WEBHOOK }}
-        run: sh .github/scripts/publish_loc.sh
-
-      # This is left commented out to ease debugging later on.
-      # Comment out all the other "Post to * slack channel" directives
-      # - name: Post results to test slack channel
-      #   env:
-      #     url: ${{ secrets.TEST_CHANNEL_SLACK }}
-      #   run: sh .github/scripts/publish_loc.sh
+        run: |
+          bash .github/scripts/levm_revm_diff.sh results_revm.md results_levm.md >> diff.md
+          cat diff.md >> $GITHUB_STEP_SUMMARY
+          bash .github/scripts/publish_revm_levm_diff.sh
 
   levm-test:
     name: Generate Report for LEVM EF Tests
@@ -196,10 +178,10 @@ jobs:
           echo "# Daily LEVM EF Tests Run Report" >> $GITHUB_STEP_SUMMARY
           cat cmd/ef_tests/levm/levm_ef_tests_summary_github.txt >> $GITHUB_STEP_SUMMARY
 
-      - name: Post results to ethrex L2 slack channel
-        env:
-          url: ${{ secrets.ETHREX_L2_SLACK_WEBHOOK }}
-        run: sh .github/scripts/publish_levm_ef_tests_summary.sh
+      # - name: Post results to ethrex L2 slack channel
+      #   env:
+      #     url: ${{ secrets.ETHREX_L2_SLACK_WEBHOOK }}
+      #   run: sh .github/scripts/publish_levm_ef_tests_summary.sh
 
       - name: Post results to levm slack channel
         env:
