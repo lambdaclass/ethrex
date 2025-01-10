@@ -127,18 +127,19 @@ We'll run flamegraph or Samply over the VM to identify bottlenecks and improve t
 > [!NOTE]
 > This is updated as of this README's last update. For the most up-to-date status, please run the tests locally.
 
-**Total**: 3933/4095 (96.04%)
+**Total**: 5057/7878 (64.19%)
 
-**Cancun**: 3572/3572 (100.00%)
-**Shanghai**: 221/221 (100.00%)
-**Merge**: 62/62 (100.00%)
-**London**: 39/39 (100.00%)
-**Berlin**: 35/35 (100.00%)
-**Istanbul**: 1/34 (2.94%)
-**Constantinople**: 2/66 (3.03%)
-**Byzantium**: 1/33 (3.03%)
-**Homestead**: 0/17 (0.00%)
-**Frontier**: 0/16 (0.00%)
+**Prague:** 955/3776 (25.29%)
+**Cancun:** 3579/3579 (100.00%)
+**Shanghai:** 221/221 (100.00%)
+**Homestead:** 17/17 (100.00%)
+**Istanbul:** 34/34 (100.00%)
+**London:** 39/39 (100.00%)
+**Byzantium:** 33/33 (100.00%)
+**Berlin:** 35/35 (100.00%)
+**Constantinople:** 66/66 (100.00%)
+**Merge:** 62/62 (100.00%)
+**Frontier:** 16/16 (100.00%)
 
 ### How to run EF tests locally
 
@@ -155,8 +156,8 @@ make download-evm-ef-tests run-evm-ef-tests QUIET=true
 
 | Benchmark | `levm`             | `revm`            | Difference                                     |
 | --------- | ------------------ | ----------------- | ---------------------------------------------- |
-| Factorial | 29.828 s ± 1.217 s | 7.295 s ± 0.089 s | `revm` is 3.74 ± 0.11 times faster than `levm` |
-| Fibonacci | 26.437 s ± 0.730 s | 7.068 s ± 0.039 s | `revm` is 4.09 ± 0.17 times faster than `levm` |
+| Factorial | 26.534 s ± 0.219 s | 7.116 s ± 0.109 s | `revm` is 3.73 ± 0.07 times faster than `levm` |
+| Fibonacci | 24.272 s ± 0.872 s | 7.107 s ± 0.033 s | `revm` is 3.42 ± 0.12 times faster than `levm` |
 
 ### How to run benchmarks locally
 
@@ -182,12 +183,12 @@ This section covers how to run `ethrex`'s Hive tests using LEVM as the backend V
 - **Paris**: 103/129 (79.84%)
 - **Auth**: 8/8 (100.00%)
 - **Exchange Capabilities**: 5/5 (100.00%)
-- **Shanghai**: 5/36 (13.89%)
+- **Shanghai**: 13/36 (36.11%)
 
 **P2P**
 
 - **Discovery V4**: 15/15 (100.00%)
-- **Eth capability**: 13/15 (86.67%)
+- **Eth capability**: 15/15 (100.00%)
 - **Snap capability**: 6/6 (100.00%)
 
 **RPC**
@@ -197,7 +198,8 @@ This section covers how to run `ethrex`'s Hive tests using LEVM as the backend V
 **Sync**
 
 - **Node Syncing**: 2/2 (100.00%)
-- **Total**: 438/533 (82.18%)
+
+**Total**: 448/533 (84.05%)
 
 ### How to run
 
