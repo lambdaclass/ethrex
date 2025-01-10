@@ -6,15 +6,15 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-tokio = { version = "1.38.0", features = ["full"] }
+tokio = { workspace = true, features = ["full"] }
 ethereum-types = { workspace = true, features = ["serialize"] }
-bytes = { version = "1.6.0", features = ["serde"] }
+bytes = { workspace = true, features = ["serde"] }
 secp256k1.workspace = true
 keccak-hash.workspace = true
-hex = "0.4.3"
-spinoff = "0.8.0"
-colored = "2.1.0"
-lazy_static = "1.5.0"
+hex.workspace = true
+spinoff.workspace = true
+colored.workspace = true
+lazy_static.workspace = true
 tracing.workspace = true
 thiserror.workspace = true
 

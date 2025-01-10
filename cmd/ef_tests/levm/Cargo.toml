@@ -15,22 +15,22 @@ serde_json.workspace = true
 bytes.workspace = true
 hex.workspace = true
 keccak-hash.workspace = true
-colored = "2.1.0"
-spinoff = "0.8.0"
+colored.workspace = true
+spinoff.workspace = true
 thiserror.workspace = true
 clap = { version = "4.3", features = ["derive"] }
-clap_complete = "4.5.17"
-itertools = "0.13.0"
-revm = { version = "14.0.3", features = [
+clap_complete.workspace = true
+itertools.workspace = true
+revm = { workspace = true, features = [
     "serde",
     "std",
     "serde-json",
     "optional_no_base_fee",
     "optional_block_gas_limit",
-], default-features = false }
+] }
 
 [dev-dependencies]
-hex = "0.4.3"
+hex.workspace = true
 
 [lib]
 path = "./ef_tests.rs"

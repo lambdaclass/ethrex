@@ -25,9 +25,9 @@ bytes.workspace = true
 jsonwebtoken.workspace = true
 secp256k1.workspace = true
 keccak-hash.workspace = true
-envy = "0.4.2"
+envy.workspace = true
 thiserror.workspace = true
-directories = "5.0.1"
+directories.workspace = true
 
 zkvm_interface = { path = "./prover/zkvm/interface/", default-features = false }
 
@@ -40,7 +40,7 @@ ethrex-sdk = { path = "./sdk" }
 ethrex-metrics = { path = "../blockchain/metrics", default-features = false }
 
 [dev-dependencies]
-rand = "0.8.5"
+rand.workspace = true
 
 
 [lib]

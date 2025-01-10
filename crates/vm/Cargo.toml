@@ -9,13 +9,13 @@ ethrex-storage = { path = "../storage/store", default-features = false }
 ethrex-levm = { path = "./levm", optional = true }
 ethrex-trie = { path = "../storage/trie", default-features = false }
 ethrex-rlp = { path = "../common/rlp", default-features = false }
-revm = { version = "14.0.3", features = [
+revm = { workspace = true, features = [
   "serde",
   "std",
   "serde-json",
   "optional_no_base_fee",
   "optional_block_gas_limit",
-], default-features = false }
+] }
 
 # These dependencies must be kept up to date with the corresponding revm version, otherwise errors may pop up because of trait implementation mismatches
 revm-inspectors = { version = "0.8.1" }

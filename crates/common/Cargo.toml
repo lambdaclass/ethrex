@@ -9,7 +9,7 @@ edition = "2021"
 ethrex-rlp.workspace = true
 ethrex-trie = { path = "../storage/trie", default-features = false }
 
-tinyvec = "1.6.0"
+tinyvec.workspace = true
 ethereum-types.workspace = true
 serde.workspace = true
 serde_json.workspace = true

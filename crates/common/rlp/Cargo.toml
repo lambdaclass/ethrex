@@ -4,7 +4,7 @@ version.workspace = true
 edition.workspace = true
 
 [dependencies]
-tinyvec = "1.6.0"
+tinyvec.workspace = true
 thiserror.workspace = true
 bytes.workspace = true
 hex.workspace = true

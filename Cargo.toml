@@ -47,10 +47,10 @@ tracing = { version = "0.1", features = ["log"] }
 tracing-subscriber = { version = "0.3.0", features = ["env-filter"] }
 
 ethereum-types = { version = "0.15.1", features = ["serialize"] }
-serde = { version = "1.0.203", features = ["derive"] }
-serde_json = "1.0.117"
+serde = { version = "1.0.217", features = ["derive"] }
+serde_json = "1.0.135"
 libmdbx = { version = "0.5.0", features = ["orm"] }
-bytes = { version = "1.6.0", features = ["serde"] }
+bytes = "1.9.0"
 tokio = { version = "1.41.1", features = ["full"] }
 thiserror = "2.0.9"
 hex = "0.4.3"
@@ -73,3 +73,14 @@ secp256k1 = { version = "0.29", default-features = false, features = [
 ] }
 keccak-hash = "0.11.0"
 axum = "0.8.1"
+anyhow = "1.0.86"
+directories = "5.0.1"
+tinyvec = "1.6.0"
+revm = { version = "14.0.3", default-features = false }
+spinoff = "0.8.0"
+colored = "2.1.0"
+envy = "0.4.2"
+sha2 = "0.10.8"
+datatest-stable = "0.2.9"
+itertools = "0.13.0"
+clap_complete = "4.5.17"
