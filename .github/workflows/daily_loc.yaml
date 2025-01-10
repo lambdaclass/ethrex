@@ -6,6 +6,9 @@ on:
     - cron: "0 0 * * 1,2,3,4,5"
   workflow_dispatch:
 
+env:
+  RUST_VERSION: 1.81.0
+
 jobs:
   loc:
     name: Count ethrex loc and generate report
