@@ -817,10 +817,10 @@ async fn handle_peer_as_initiator(
 ) {
     debug!("Trying RLPx connection with {node:?}");
     let stream = TcpSocket::new_v4()
-        .unwrap()
+        .expect("TcpSocket::new_v4")
         .connect(SocketAddr::new(node.ip, node.tcp_port))
         .await
-        .unwrap();
+        .expect("TcpSocket::connect");
     match RLPxConnection::initiator(signer, msg, stream, storage, connection_broadcast).await {
         Ok(mut conn) => conn.start_peer(table).await,
         Err(e) => {
