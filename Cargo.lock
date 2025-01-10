@@ -2276,7 +2276,7 @@ dependencies = [
  "hex",
  "itertools 0.13.0",
  "keccak-hash",
- "revm",
+ "revm 14.0.3",
  "serde",
  "serde_json",
  "spinoff",
@@ -2886,7 +2886,7 @@ dependencies = [
  "lambdaworks-math",
  "libsecp256k1",
  "num-bigint 0.4.6",
- "revm-primitives",
+ "revm-primitives 10.0.0",
  "ripemd",
  "serde",
  "serde_json",
@@ -3088,9 +3088,9 @@ dependencies = [
  "ethrex-trie",
  "hex",
  "lazy_static",
- "revm",
+ "revm 14.0.3",
  "revm-inspectors",
- "revm-primitives",
+ "revm-primitives 10.0.0",
  "serde",
  "thiserror 2.0.9",
  "tracing",
@@ -6572,6 +6572,21 @@ dependencies = [
 
 [[package]]
 name = "revm"
+version = "9.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3a2c336f9921588e50871c00024feb51a521eca50ce6d01494bb9c50f837c8ed"
+dependencies = [
+ "auto_impl",
+ "cfg-if",
+ "dyn-clone",
+ "revm-interpreter 5.0.0",
+ "revm-precompile 7.0.0",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "revm"
 version = "14.0.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "641702b12847f9ed418d552f4fcabe536d867a2c980e96b6e7e25d7b992f929f"
@@ -6579,8 +6594,8 @@ dependencies = [
  "auto_impl",
  "cfg-if",
  "dyn-clone",
- "revm-interpreter",
- "revm-precompile",
+ "revm-interpreter 10.0.3",
+ "revm-precompile 11.0.3",
  "serde",
  "serde_json",
 ]
@@ -6597,9 +6612,19 @@ dependencies = [
  "alloy-sol-types 0.8.14",
  "anstyle",
  "colorchoice",
- "revm",
+ "revm 14.0.3",
  "serde_json",
  "thiserror 1.0.69",
+]
+
+[[package]]
+name = "revm-interpreter"
+version = "5.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a58182c7454179826f9dad2ca577661963092ce9d0fd0c9d682c1e9215a72e70"
+dependencies = [
+ "revm-primitives 4.0.0",
+ "serde",
 ]
 
 [[package]]
@@ -6608,8 +6633,26 @@ version = "10.0.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2e5e14002afae20b5bf1566f22316122f42f57517000e559c55b25bf7a49cba2"
 dependencies = [
- "revm-primitives",
+ "revm-primitives 10.0.0",
  "serde",
+]
+
+[[package]]
+name = "revm-precompile"
+version = "7.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "dc8af9aa737eef0509a50d9f3cc1a631557a00ef2e70a3aa8a75d9ee0ed275bb"
+dependencies = [
+ "aurora-engine-modexp",
+ "blst",
+ "c-kzg",
+ "k256",
+ "once_cell",
+ "revm-primitives 4.0.0",
+ "ripemd",
+ "secp256k1",
+ "sha2 0.10.8",
+ "substrate-bn",
 ]
 
 [[package]]
@@ -6624,11 +6667,32 @@ dependencies = [
  "cfg-if",
  "k256",
  "once_cell",
- "revm-primitives",
+ "revm-primitives 10.0.0",
  "ripemd",
  "secp256k1",
  "sha2 0.10.8",
  "substrate-bn",
+]
+
+[[package]]
+name = "revm-primitives"
+version = "4.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b9bf5d465e64b697da6a111cb19e798b5b2ebb18e5faf2ad48e9e8d47c64add2"
+dependencies = [
+ "alloy-primitives 0.7.7",
+ "auto_impl",
+ "bitflags 2.6.0",
+ "bitvec",
+ "c-kzg",
+ "cfg-if",
+ "derive_more 0.99.18",
+ "dyn-clone",
+ "enumn",
+ "hashbrown 0.14.5",
+ "hex",
+ "once_cell",
+ "serde",
 ]
 
 [[package]]
@@ -6658,7 +6722,7 @@ dependencies = [
  "bytes",
  "ethrex-levm",
  "hex",
- "revm",
+ "revm 9.0.0",
 ]
 
 [[package]]
