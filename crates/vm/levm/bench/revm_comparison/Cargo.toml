@@ -11,8 +11,9 @@ path = "src/lib.rs"
 ethrex-levm = { path = "../../" }
 
 hex.workspace = true
-revm.workspace = true
 bytes.workspace = true
+
+revm = "9.0.0"
 
 [[bin]]
 name = "levm_factorial"
