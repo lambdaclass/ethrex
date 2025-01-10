@@ -292,7 +292,7 @@ async fn store_block_bodies(
 ) -> Result<(), SyncError> {
     loop {
         let peer = peers.lock().await.get_peer_channels(Capability::Eth).await;
-        info!("Requesting Block Headers ");
+        info!("Requesting Block Bodies ");
         if let Some(block_bodies) = peer.request_block_bodies(block_hashes.clone()).await {
             info!(" Received {} Block Bodies", block_bodies.len());
             // Track which bodies we have already fetched
@@ -321,7 +321,7 @@ async fn store_receipts(
 ) -> Result<(), SyncError> {
     loop {
         let peer = peers.lock().await.get_peer_channels(Capability::Eth).await;
-        info!("Requesting Block Headers ");
+        info!("Requesting Receipts");
         if let Some(receipts) = peer.request_receipts(block_hashes.clone()).await {
             info!(" Received {} Receipts", receipts.len());
             // Track which blocks we have already fetched receipts for
@@ -344,6 +344,7 @@ async fn rebuild_state_trie(
     peers: Arc<Mutex<KademliaTable>>,
     store: Store,
 ) -> Result<bool, SyncError> {
+    info!("Rebuilding State Trie");
     // Spawn storage & bytecode fetchers
     let (bytecode_sender, bytecode_receiver) = mpsc::channel::<Vec<H256>>(500);
     let (storage_sender, storage_receiver) = mpsc::channel::<Vec<(H256, H256)>>(500);
