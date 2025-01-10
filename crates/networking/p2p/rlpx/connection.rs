@@ -23,18 +23,16 @@ use crate::{
 
 use super::{
     error::RLPxError,
-    eth::receipts::GetReceipts,
-    eth::transactions::GetPooledTransactions,
-    frame,
+    eth::{receipts::GetReceipts, transactions::GetPooledTransactions},
+    frame::{self, FrameAdaptor},
     handshake::{decode_ack_message, decode_auth_message, encode_auth_message},
-    message::{self as rlpx},
+    message as rlpx,
     p2p::Capability,
     utils::{ecdh_xchng, pubkey2id},
 };
 use aes::cipher::KeyIvInit;
 use ethrex_blockchain::mempool::{self};
 use ethrex_core::{H256, H512};
-use ethrex_rlp::decode::RLPDecode;
 use ethrex_storage::Store;
 use k256::{
     ecdsa::{RecoveryId, Signature, SigningKey, VerifyingKey},
@@ -64,7 +62,7 @@ pub(crate) type Aes256Ctr64BE = ctr::Ctr64BE<aes::Aes256>;
 pub(crate) struct RLPxConnection<S> {
     signer: SigningKey,
     state: RLPxConnectionState,
-    stream: S,
+    frame_adaptor: FrameAdaptor<S>,
     storage: Store,
     capabilities: Vec<(Capability, u8)>,
     next_periodic_task_check: Instant,
@@ -90,7 +88,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
         Self {
             signer,
             state,
-            stream,
+            frame_adaptor: FrameAdaptor::new(stream),
             storage,
             capabilities: vec![],
             next_periodic_task_check: Instant::now() + PERIODIC_TASKS_CHECK_INTERVAL,
@@ -117,7 +115,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
         )
     }
 
-    pub async fn initiator(
+    pub fn initiator(
         signer: SigningKey,
         msg: &[u8],
         stream: S,
@@ -597,10 +595,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
     }
 
     async fn send_handshake_msg(&mut self, msg: &[u8]) -> Result<(), RLPxError> {
-        self.stream
-            .write_all(msg)
-            .await
-            .map_err(|_| RLPxError::ConnectionError("Could not send message".to_string()))?;
+        self.frame_adaptor.stream().write_all(msg).await?;
         Ok(())
     }
 
@@ -608,18 +603,18 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
         let mut buf = vec![0; MAX_DISC_PACKET_SIZE];
 
         // Read the message's size
-        self.stream
+        self.frame_adaptor
+            .stream()
             .read_exact(&mut buf[..2])
-            .await
-            .map_err(|_| RLPxError::ConnectionError("Connection dropped".to_string()))?;
+            .await?;
         let ack_data = [buf[0], buf[1]];
         let msg_size = u16::from_be_bytes(ack_data) as usize;
 
         // Read the rest of the message
-        self.stream
+        self.frame_adaptor
+            .stream()
             .read_exact(&mut buf[2..msg_size + 2])
-            .await
-            .map_err(|_| RLPxError::ConnectionError("Connection dropped".to_string()))?;
+            .await?;
         let ack_bytes = &buf[..msg_size + 2];
         Ok(ack_bytes.to_vec())
     }
@@ -628,7 +623,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
         if let RLPxConnectionState::Established(state) = &mut self.state {
             let mut frame_buffer = vec![];
             message.encode(&mut frame_buffer)?;
-            frame::write(frame_buffer, state, &mut self.stream).await?;
+            frame::write(frame_buffer, state, &mut self.frame_adaptor.stream()).await?;
             Ok(())
         } else {
             Err(RLPxError::InvalidState())
@@ -636,10 +631,20 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
     }
 
     async fn receive(&mut self) -> Result<rlpx::Message, RLPxError> {
-        if let RLPxConnectionState::Established(state) = &mut self.state {
-            let frame_data = frame::read(state, &mut self.stream).await?;
-            let (msg_id, msg_data): (u8, _) = RLPDecode::decode_unfinished(&frame_data)?;
-            Ok(rlpx::Message::decode(msg_id, msg_data)?)
+        if let RLPxConnectionState::Established(inner_state) = &mut self.state {
+            let state: Established = *inner_state.clone();
+            self.frame_adaptor.framed.codec_mut().set_state(state);
+
+            let result = self.frame_adaptor.read().await;
+
+            let new_state = self.frame_adaptor.framed.codec_mut().get_state();
+            inner_state.mac_key = new_state.mac_key;
+            inner_state.ingress_mac = new_state.ingress_mac;
+            inner_state.ingress_aes = new_state.ingress_aes;
+            inner_state.egress_mac = new_state.egress_mac;
+            inner_state.egress_aes = new_state.egress_aes;
+
+            result
         } else {
             Err(RLPxError::InvalidState())
         }
@@ -756,13 +761,14 @@ impl InitiatedAuth {
     }
 }
 
+#[derive(Clone)]
 pub struct Established {
-    pub remote_node_id: H512,
+    pub(crate) remote_node_id: H512,
     pub(crate) mac_key: H256,
-    pub ingress_mac: Keccak256,
-    pub egress_mac: Keccak256,
-    pub ingress_aes: Aes256Ctr64BE,
-    pub egress_aes: Aes256Ctr64BE,
+    pub(crate) ingress_mac: Keccak256,
+    pub(crate) egress_mac: Keccak256,
+    pub(crate) ingress_aes: Aes256Ctr64BE,
+    pub(crate) egress_aes: Aes256Ctr64BE,
 }
 
 impl Established {
