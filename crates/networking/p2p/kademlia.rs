@@ -337,7 +337,11 @@ impl KademliaTable {
         let active_peers = self.filter_peers(&active_filter).count();
         let snap_active_peers = self.filter_peers(&snap_active_filter).count();
         info!("Snap Peers: {snap_active_peers} / Active Peers {active_peers} / Total Peers: {total_peers}");
-        let active_peers = self.filter_peers(&active_filter).map(|peer| peer.node.node_id.to_string()).collect::<Vec<_>>().join(", ");
+        let active_peers = self
+            .filter_peers(&active_filter)
+            .map(|peer| format!("{:#x}", peer.node.node_id))
+            .collect::<Vec<_>>()
+            .join(", ");
         info!("Active Peers ID: {active_peers}");
     }
 }

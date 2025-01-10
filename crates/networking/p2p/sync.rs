@@ -136,7 +136,7 @@ impl SyncManager {
                 .await
                 .get_peer_channels(Capability::Eth)
                 .await;
-            info!("Requesting Block Headers from {current_head}");
+            info!("Requesting Block Headers from {current_head:#x}");
             // Request Block Headers from Peer
             if let Some(mut block_headers) = peer
                 .request_block_headers(current_head, BlockRequestOrder::OldToNew)
