@@ -17,10 +17,11 @@ serde.workspace = true
 bytes.workspace = true
 ethereum-types.workspace = true
 hex.workspace = true
-reqwest = { version = "0.12.7", features = ["json"] }
 envy.workspace = true
 keccak-hash.workspace = true
 sha2.workspace = true
+
+reqwest = { version = "0.12.7", features = ["json"] }
 
 [lib]
 path = "./dev.rs"

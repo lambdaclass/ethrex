@@ -6,6 +6,10 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
+ethrex-l2 = { path = "../../l2" }
+ethrex-sdk = { path = "../../l2/sdk" }
+ethrex-core = { path = "../../common" }
+
 tokio = { workspace = true, features = ["full"] }
 ethereum-types = { workspace = true, features = ["serialize"] }
 bytes = { workspace = true, features = ["serde"] }
@@ -17,10 +21,6 @@ colored.workspace = true
 lazy_static.workspace = true
 tracing.workspace = true
 thiserror.workspace = true
-
-ethrex-l2 = { path = "../../l2" }
-ethrex-sdk = { path = "../../l2/sdk" }
-ethrex-core = { path = "../../common" }
 
 [[bin]]
 name = "ethrex_l2_l1_deployer"

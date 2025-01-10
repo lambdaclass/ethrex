@@ -20,11 +20,12 @@ ethrex-blockchain.workspace = true
 ethrex-net.workspace = true
 ethrex-rlp.workspace = true
 hex.workspace = true
-axum-extra = { version = "0.10.0", features = ["typed-header"] }
 jsonwebtoken.workspace = true
 rand.workspace = true
 tokio-util.workspace = true
 reqwest.workspace = true
+
+axum-extra = { version = "0.10.0", features = ["typed-header"] }
 
 [dev-dependencies]
 hex-literal.workspace = true

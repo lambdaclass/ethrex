@@ -6,20 +6,18 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
+ethrex-rlp.workspace = true
+ethrex-core = { path = "../common", default-features = false }
+ethrex-storage = { path = "../storage/store", default-features = false }
+ethrex-vm = { path = "../vm", default-features = false }
+ethrex-metrics = { path = "./metrics", default-features = false }
+
 thiserror.workspace = true
 sha3.workspace = true
 tracing.workspace = true
 bytes.workspace = true
 cfg-if.workspace = true
-
-ethrex-rlp.workspace = true
-ethrex-core = { path = "../common", default-features = false }
-ethrex-storage = { path = "../storage/store", default-features = false }
-ethrex-vm = { path = "../vm", default-features = false }
-
 k256 = { workspace = true, features = ["ecdh"] }
-
-ethrex-metrics = { path = "./metrics", default-features = false }
 
 [dev-dependencies]
 serde_json.workspace = true

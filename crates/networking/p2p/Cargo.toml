@@ -20,10 +20,8 @@ thiserror.workspace = true
 lazy_static.workspace = true
 snap.workspace = true
 serde.workspace = true
-
 k256 = { workspace = true, features = ["ecdh"] }
 sha3.workspace = true
-
 serde_json.workspace = true
 
 # RLPx
