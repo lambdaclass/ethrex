@@ -1148,73 +1148,10 @@ fn point_evaluation(
 }
 
 pub fn bls12_g1add(
-    calldata: &Bytes,
+    _calldata: &Bytes,
     _gas_for_call: u64,
     _consumed_gas: &mut u64,
 ) -> Result<Bytes, VMError> {
-    // Two inputs of 128 bytes are requiered
-    if calldata.len() != 256 {
-        return Err(VMError::PrecompileError(PrecompileError::ParsingInputError));
-    }
-
-    let mut fp1_1 = calldata
-        .get(0..64)
-        .ok_or(VMError::PrecompileError(PrecompileError::ParsingInputError))?;
-    let mut fp2_1 = calldata
-        .get(64..128)
-        .ok_or(VMError::PrecompileError(PrecompileError::ParsingInputError))?;
-    let mut fp1_2 = calldata
-        .get(128..192)
-        .ok_or(VMError::PrecompileError(PrecompileError::ParsingInputError))?;
-    let mut fp2_2 = calldata
-        .get(192..)
-        .ok_or(VMError::PrecompileError(PrecompileError::ParsingInputError))?;
-
-    let zeros: [u8; 16] = [0_u8; 16];
-
-    // the first 16 bytes of any of the points MUST be all zeros
-    if fp1_1
-        .get(0..16)
-        .ok_or(VMError::PrecompileError(PrecompileError::ParsingInputError))?
-        != zeros
-    {
-        return Err(VMError::PrecompileError(PrecompileError::ParsingInputError));
-    }
-    if fp2_1
-        .get(0..16)
-        .ok_or(VMError::PrecompileError(PrecompileError::ParsingInputError))?
-        != zeros
-    {
-        return Err(VMError::PrecompileError(PrecompileError::ParsingInputError));
-    }
-    if fp1_2
-        .get(0..16)
-        .ok_or(VMError::PrecompileError(PrecompileError::ParsingInputError))?
-        != zeros
-    {
-        return Err(VMError::PrecompileError(PrecompileError::ParsingInputError));
-    }
-    if fp2_2
-        .get(0..16)
-        .ok_or(VMError::PrecompileError(PrecompileError::ParsingInputError))?
-        != zeros
-    {
-        return Err(VMError::PrecompileError(PrecompileError::ParsingInputError));
-    }
-
-    fp1_1 = fp1_1
-        .get(16..64)
-        .ok_or(VMError::PrecompileError(PrecompileError::ParsingInputError))?;
-    fp2_1 = fp2_1
-        .get(16..64)
-        .ok_or(VMError::PrecompileError(PrecompileError::ParsingInputError))?;
-    fp1_2 = fp1_2
-        .get(16..64)
-        .ok_or(VMError::PrecompileError(PrecompileError::ParsingInputError))?;
-    fp2_2 = fp2_2
-        .get(16..64)
-        .ok_or(VMError::PrecompileError(PrecompileError::ParsingInputError))?;
-
     Ok(Bytes::new())
 }
 
@@ -1258,8 +1195,8 @@ pub fn bls12_map_fp_to_g1(
     Ok(Bytes::new())
 }
 
-pub fn bls12_map_fp2_to_g2(
-    calldata: &Bytes,
+pub fn bls12_map_fp2_tp_g2(
+    _calldata: &Bytes,
     _gas_for_call: u64,
     _consumed_gas: &mut u64,
 ) -> Result<Bytes, VMError> {
