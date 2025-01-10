@@ -121,7 +121,9 @@ impl SyncManager {
                 let mut parent = last_header;
                 while parent != last_body {
                     all_block_hashes.insert(0, parent);
-                    parent = store.get_block_header_by_hash(parent)?.unwrap().parent_hash;
+                    let parent_header = store.get_block_header_by_hash(parent)?.unwrap();
+                    println!("Queuing body {} for download", parent_header.number);
+                    parent = parent_header.parent_hash;
                 }
             }
             // Set latest downloaded header as current head for header fetching
