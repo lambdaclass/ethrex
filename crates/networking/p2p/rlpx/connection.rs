@@ -51,7 +51,7 @@ use tokio::{
     task,
     time::{sleep, Instant},
 };
-use tracing::{debug, error, warn};
+use tracing::{debug, error, info, warn};
 const CAP_P2P: (Capability, u8) = (Capability::P2p, 5);
 const CAP_ETH: (Capability, u8) = (Capability::Eth, 68);
 const CAP_SNAP: (Capability, u8) = (Capability::Snap, 1);
@@ -210,10 +210,12 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
     async fn handshake(&mut self) -> Result<(), RLPxError> {
         match &self.state {
             RLPxConnectionState::Initiator(_) => {
+                tracing::info!("Starting handshake as initiator");
                 self.send_auth().await?;
                 self.receive_ack().await?;
             }
             RLPxConnectionState::Receiver(_) => {
+                tracing::info!("Starting handshake as receiver");
                 self.receive_auth().await?;
                 self.send_ack().await?;
             }
@@ -504,6 +506,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
     }
 
     async fn send_auth(&mut self) -> Result<(), RLPxError> {
+        info!("Sending auth message as initiator");
         if let RLPxConnectionState::Initiator(initiator_state) = &self.state {
             let secret_key: SecretKey = self.signer.clone().into();
             let peer_pk =
