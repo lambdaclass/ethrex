@@ -2,17 +2,17 @@ participants:
   - el_type: ethrex
     cl_type: lighthouse
     cl_image: sigp/lighthouse:v5.3.0
-    validator_count: 32
+    validator_count: 22
   - el_type: geth
     el_image: ethereum/client-go:v1.14.12
     cl_type: lighthouse
     cl_image: sigp/lighthouse:v5.3.0
-    validator_count: 32
+    validator_count: 21
   - el_type: geth
     el_image: ethereum/client-go:v1.14.12
     cl_type: lighthouse
     cl_image: sigp/lighthouse:v5.3.0
-    validator_count: 32
+    validator_count: 21
 
 additional_services:
   - assertoor
@@ -20,6 +20,7 @@ additional_services:
   - dora
 
 assertoor_params:
+  image: ethpandaops/assertoor:v0.0.12
   run_stability_check: false
   run_block_proposal_check: false
   tests:
