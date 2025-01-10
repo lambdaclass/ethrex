@@ -1,3 +1,4 @@
+use bls12_381::{G1Affine, G1Projective};
 use bytes::Bytes;
 use ethrex_core::{Address, H160, H256, U256};
 use keccak_hash::keccak256;
@@ -35,8 +36,8 @@ use crate::{
     constants::VERSIONED_HASH_VERSION_KZG,
     errors::{InternalError, PrecompileError, VMError},
     gas_cost::{
-        self, BLAKE2F_ROUND_COST, ECADD_COST, ECMUL_COST, ECRECOVER_COST, MODEXP_STATIC_COST,
-        POINT_EVALUATION_COST,
+        self, BLAKE2F_ROUND_COST, BLS12_381_G1ADD_COST, ECADD_COST, ECMUL_COST, ECRECOVER_COST,
+        MODEXP_STATIC_COST, POINT_EVALUATION_COST,
     },
 };
 
@@ -145,7 +146,7 @@ pub fn is_precompile(callee_address: &Address, spec_id: SpecId) -> bool {
         return false;
     }
 
-    PRECOMPILES.contains(callee_address)
+    PRECOMPILES.contains(callee_address) || PRECOMPILES_POST_CANCUN.contains(callee_address)
 }
 
 pub fn execute_precompile(
@@ -1148,11 +1149,117 @@ fn point_evaluation(
 }
 
 pub fn bls12_g1add(
-    _calldata: &Bytes,
-    _gas_for_call: u64,
-    _consumed_gas: &mut u64,
+    calldata: &Bytes,
+    gas_for_call: u64,
+    consumed_gas: &mut u64,
 ) -> Result<Bytes, VMError> {
-    Ok(Bytes::new())
+    dbg!("entro", calldata.len(), consumed_gas.clone(), gas_for_call);
+    // Two inputs of 128 bytes are requiered
+    if calldata.len() != 256 {
+        return Err(VMError::PrecompileError(PrecompileError::ParsingInputError));
+    }
+
+    dbg!("pasa test length");
+
+    let mut first_point_x = calldata
+        .get(0..64)
+        .ok_or(VMError::PrecompileError(PrecompileError::ParsingInputError))?;
+    let mut first_point_y = calldata
+        .get(64..128)
+        .ok_or(VMError::PrecompileError(PrecompileError::ParsingInputError))?;
+    let mut second_point_x = calldata
+        .get(128..192)
+        .ok_or(VMError::PrecompileError(PrecompileError::ParsingInputError))?;
+    let mut second_point_y = calldata
+        .get(192..)
+        .ok_or(VMError::PrecompileError(PrecompileError::ParsingInputError))?;
+
+    let zeros: [u8; 16] = [0_u8; 16];
+
+    // the first 16 bytes of any of the points MUST be all zeros
+    if first_point_x
+        .get(0..16)
+        .ok_or(VMError::PrecompileError(PrecompileError::ParsingInputError))?
+        != zeros
+    {
+        return Err(VMError::PrecompileError(PrecompileError::ParsingInputError));
+    }
+    if first_point_y
+        .get(0..16)
+        .ok_or(VMError::PrecompileError(PrecompileError::ParsingInputError))?
+        != zeros
+    {
+        return Err(VMError::PrecompileError(PrecompileError::ParsingInputError));
+    }
+    if second_point_x
+        .get(0..16)
+        .ok_or(VMError::PrecompileError(PrecompileError::ParsingInputError))?
+        != zeros
+    {
+        return Err(VMError::PrecompileError(PrecompileError::ParsingInputError));
+    }
+    if second_point_y
+        .get(0..16)
+        .ok_or(VMError::PrecompileError(PrecompileError::ParsingInputError))?
+        != zeros
+    {
+        return Err(VMError::PrecompileError(PrecompileError::ParsingInputError));
+    }
+
+    first_point_x = first_point_x
+        .get(16..64)
+        .ok_or(VMError::PrecompileError(PrecompileError::ParsingInputError))?;
+    first_point_y = first_point_y
+        .get(16..64)
+        .ok_or(VMError::PrecompileError(PrecompileError::ParsingInputError))?;
+    second_point_x = second_point_x
+        .get(16..64)
+        .ok_or(VMError::PrecompileError(PrecompileError::ParsingInputError))?;
+    second_point_y = second_point_y
+        .get(16..64)
+        .ok_or(VMError::PrecompileError(PrecompileError::ParsingInputError))?;
+
+    dbg!(first_point_x, first_point_y, second_point_x, second_point_y);
+
+    let mut first_g1_points = Vec::new();
+    first_g1_points.extend_from_slice(first_point_x);
+    first_g1_points.extend_from_slice(first_point_y);
+
+    let first_g1_points: [u8; 96] = first_g1_points
+        .try_into()
+        .map_err(|_| VMError::Internal(InternalError::ConversionError))?;
+
+    let first_g1_group = G1Affine::from_uncompressed(&first_g1_points);
+    let first_g1_group: G1Projective = if first_g1_group.is_some().into() {
+        first_g1_group.unwrap()
+    } else {
+        return Err(VMError::PrecompileError(PrecompileError::ParsingInputError));
+    }
+    .into();
+
+    let mut second_g1_points = Vec::new();
+    second_g1_points.extend_from_slice(second_point_x);
+    second_g1_points.extend_from_slice(second_point_y);
+
+    let second_g1_points: [u8; 96] = second_g1_points
+        .try_into()
+        .map_err(|_| VMError::Internal(InternalError::ConversionError))?;
+
+    let second_g1_group = G1Affine::from_uncompressed(&second_g1_points);
+    let second_g1_group: G1Projective = if second_g1_group.is_some().into() {
+        second_g1_group.unwrap()
+    } else {
+        return Err(VMError::PrecompileError(PrecompileError::ParsingInputError));
+    }
+    .into();
+
+    let res = G1Affine::from(first_g1_group.add(&second_g1_group)).to_uncompressed();
+
+    // GAS
+    increase_precompile_consumed_gas(gas_for_call, BLS12_381_G1ADD_COST, consumed_gas)
+        .map_err(|_| VMError::PrecompileError(PrecompileError::NotEnoughGas))?;
+
+    Ok(Bytes::copy_from_slice(&res))
 }
 
 pub fn bls12_g1msm(
