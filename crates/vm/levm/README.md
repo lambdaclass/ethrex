@@ -76,7 +76,6 @@ This is extending our current implementation so we support the [Pectra upgrade](
 There are a lot of EIPs schedule to include in this upgrade but for `levm` we'll only focus on:
 
 - EIP-2537: Precompile for BLS12-381 curve operations
-- EIP-2935: Save historical block hashes in state
 - EIP-7623: Increase calldata cost
 - EIP-7702: Set EOA account code
 
