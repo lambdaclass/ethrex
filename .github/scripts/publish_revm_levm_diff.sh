@@ -1,13 +1,13 @@
 curl -X POST $url \
 -H 'Content-Type: application/json; charset=utf-8' \
 --data @- <<EOF
-$(jq -n --arg text "$(cat results_levm.md)" '{
+$(jq -n --arg text "$(cat diff.md)" '{
     "blocks": [
         {
             "type": "header",
             "text": {
                 "type": "plain_text",
-                "text": "LEVM Hive Coverage Report"
+                "text": "Hive tests revm vs levm diff"
             }
         },
         {
@@ -15,7 +15,7 @@ $(jq -n --arg text "$(cat results_levm.md)" '{
             "text": {
                 "type": "mrkdwn",
                 "text": $text
-            }             
+            }
         }
     ]
 }')
