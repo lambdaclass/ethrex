@@ -97,7 +97,7 @@ pub fn prepare_vm_for_tx(vector: &TestVector, test: &EFTest) -> Result<VM, EFTes
                 chain_id: auth_tuple.chain_id,
                 address: auth_tuple.address,
                 nonce: auth_tuple.nonce,
-                y_parity: auth_tuple.v.as_u32() == 1,
+                v: auth_tuple.v,
                 r_signature: auth_tuple.r,
                 s_signature: auth_tuple.s,
                 // If the signer is not present, set it to Address::zero()

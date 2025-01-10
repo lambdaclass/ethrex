@@ -296,7 +296,6 @@ pub struct EFTestAuthorizationListTuple {
     #[serde(deserialize_with = "deserialize_u64_safe")]
     pub nonce: u64,
     #[serde(deserialize_with = "deserialize_u256_safe")]
-    // yParity
     pub v: U256,
     #[serde(deserialize_with = "deserialize_u256_safe")]
     pub r: U256,

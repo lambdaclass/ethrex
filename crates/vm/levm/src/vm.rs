@@ -3,7 +3,7 @@ use crate::{
     call_frame::CallFrame,
     constants::*,
     db::{
-        cache::{self, remove_account},
+        cache::{self, get_account_mut, remove_account},
         CacheDB, Database,
     },
     environment::Environment,
@@ -23,14 +23,18 @@ use bytes::Bytes;
 use ethrex_core::{types::TxKind, Address, H256, U256};
 use ethrex_rlp;
 use ethrex_rlp::encode::RLPEncode;
+use k256::{
+    elliptic_curve::{bigint::Encoding, Curve},
+    Secp256k1,
+};
 use keccak_hash::keccak;
+use libsecp256k1::{Message, RecoveryId, Signature};
 use revm_primitives::SpecId;
 use sha3::{Digest, Keccak256};
 use std::{
     collections::{HashMap, HashSet},
     sync::Arc,
 };
-
 pub type Storage = HashMap<U256, H256>;
 
 #[derive(Debug, Clone, Default)]
@@ -89,12 +93,12 @@ type AccessList = Vec<(Address, Vec<H256>)>;
 
 type AuthorizationList = Vec<AuthorizationTuple>;
 // TODO: We have to implement this in ethrex_core
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Copy)]
 pub struct AuthorizationTuple {
     pub chain_id: U256,
     pub address: Address,
     pub nonce: u64,
-    pub y_parity: bool,
+    pub v: U256,
     pub r_signature: U256,
     pub s_signature: U256,
     pub signer: Address,
@@ -885,6 +889,8 @@ impl VM {
                     TxValidationError::Type4TxContractCreation,
                 ));
             }
+
+            self.eip7702_set_access_code(initial_call_frame.calldata.clone())?;
         }
 
         if self.is_create() {
@@ -1258,6 +1264,137 @@ impl VM {
 
         Ok(report)
     }
+
+    pub fn eip7702_set_access_code(&mut self, calldata: Bytes) -> Result<(), VMError> {
+        // Set code for the origin_address
+        let origin_address = self.env.origin;
+        let origin_account = get_account_mut(&mut self.cache, &origin_address);
+        if let Some(account) = origin_account {
+            account.info.bytecode = calldata;
+        } else {
+            return Err(VMError::Internal(InternalError::AccountNotFound));
+        }
+
+        // Steps from the EIP7702:
+        // IMPORTANT:
+        // If any of the below steps fail, immediately stop processing that tuple and continue to the next tuple in the list. It will in the case of multiple tuples for the same authority, set the code using the address in the last valid occurrence.
+        // If transaction execution results in failure (any exceptional condition or code reverting), setting delegation designations is not rolled back.
+
+        // TODO: avoid clone()
+        for auth_tuple in self.authorization_list.clone().unwrap_or_default() {
+            let chain_id_not_equals_this_chain_id = auth_tuple.chain_id != self.env.chain_id;
+            let chain_id_not_zero = !auth_tuple.chain_id.is_zero();
+
+            // 1. Verify the chain id is either 0 or the chain’s current ID.
+            if chain_id_not_zero || chain_id_not_equals_this_chain_id {
+                continue;
+            }
+
+            // 2. Verify the nonce is less than 2**64 - 1.
+            if auth_tuple.nonce < u64::MAX {
+                continue;
+            }
+
+            // 3. authority = ecrecover(keccak(MAGIC || rlp([chain_id, address, nonce])), y_parity, r, s]
+            //      s value must be less than or equal to secp256k1n/2, as specified in EIP-2.
+            let order_bytes = Secp256k1::ORDER.to_be_bytes();
+            let n = U256::from_big_endian(&order_bytes);
+            if auth_tuple.s_signature <= n / 2 {
+                continue;
+            }
+
+            let mut bytes = Vec::new();
+            let mut rlp_buf = Vec::new();
+            (auth_tuple.chain_id, auth_tuple.address, auth_tuple.nonce).encode(&mut rlp_buf);
+
+            bytes.push(MAGIC);
+            bytes.extend_from_slice(&rlp_buf);
+            // TODO: remove unwrap
+            let message = Message::parse_slice(keccak(bytes).as_bytes()).unwrap();
+
+            let mut bytes = Vec::new();
+
+            bytes.extend_from_slice(&auth_tuple.r_signature.to_little_endian());
+            bytes.extend_from_slice(&auth_tuple.s_signature.to_little_endian());
+
+            // TODO: remove unwrap
+            let signature = Signature::parse_standard_slice(&bytes).unwrap();
+
+            // TODO: remove as conversion and unwrap
+            let recovery_id = RecoveryId::parse(auth_tuple.v.as_u32() as u8).unwrap();
+
+            // TODO: remove unwrap
+            let authority = libsecp256k1::recover(&message, &signature, &recovery_id).unwrap();
+
+            let hash = keccak(&authority.serialize()[1..]);
+            // Get the last 20 bytes of the hash
+            let authority_address_bytes: [u8; 20] =
+                hash.as_ref().get(12..32).unwrap().try_into().unwrap();
+            let authority_address = Address::from_slice(&authority_address_bytes);
+
+            // 4. Add authority to accessed_addresses (as defined in EIP-2929.
+            self.accrued_substate
+                .touched_accounts
+                .insert(authority_address);
+
+            // 5. Verify the code of authority is either empty or already delegated.
+            // CHECK: what do we do with this check? do we continue if it was already delegated?
+
+            // What happens if it's not cached?
+            let authority_account = get_account_mut(&mut self.cache, &authority_address).ok_or(
+                VMError::Internal(InternalError::AccountShouldHaveBeenCached),
+            )?;
+
+            if was_delegated(&authority_account.info)? {
+                continue;
+            }
+
+            // 6. Verify the nonce of authority is equal to nonce. In case authority does not exist in the trie, verify that nonce is equal to 0.
+            // If it doesn't has nonce, it means it's zero,
+            // if it has nonce, the account.info.nonce should equal auth_tuple.nonce
+            if authority_account.has_nonce() {
+                if authority_account.info.nonce != auth_tuple.nonce {
+                    continue;
+                }
+            }
+
+            // If account is not empty exist -> exists
+            // 7. Add PER_EMPTY_ACCOUNT_COST - PER_AUTH_BASE_COST gas to the global refund counter if authority exists in the trie.
+            if !authority_account.is_empty() {
+                // Should never throw an error
+                let refunded_gas_if_exists: u64 = (PER_EMPTY_ACCOUNT_COST - PER_AUTH_BASE_COST)
+                    .try_into()
+                    .map_err(|_| VMError::Internal(InternalError::ConversionError))?;
+                self.env.refunded_gas += refunded_gas_if_exists;
+            }
+
+            // 8. Set the code of authority to be 0xef0100 || address. This is a delegation designation.
+            let mut delegation_bytes = Vec::new();
+            delegation_bytes.extend_from_slice(&SET_CODE_DELEGATION_BYTES);
+            delegation_bytes.extend_from_slice(auth_tuple.address.as_bytes());
+
+            // As a special case, if address is 0x0000000000000000000000000000000000000000 do not write the designation.
+            // Clear the account’s code and reset the account’s code hash to the empty hash.
+            if auth_tuple.address != Address::zero() {
+                // Write Designation
+                authority_account.info.bytecode = delegation_bytes.into();
+            } else {
+                // auth_tuple.address is Address::zero()
+                // Do not write Designation and Write account's bytecode to empty
+                let origin_account = get_account_mut(&mut self.cache, &origin_address);
+                if let Some(account) = origin_account {
+                    account.info.bytecode = Bytes::new()
+                } else {
+                    return Err(VMError::Internal(InternalError::AccountNotFound));
+                }
+            }
+
+            // 9. Increase the nonce of authority by one.
+            self.increment_account_nonce(authority_address)
+                .map_err(|_| VMError::TxValidation(TxValidationError::NonceIsMax))?;
+        }
+        Ok(())
+    }
 }
 
 fn get_n_value(op: Opcode, base_opcode: Opcode) -> Result<usize, VMError> {
@@ -1292,4 +1429,21 @@ pub fn get_account(cache: &mut CacheDB, db: &Arc<dyn Database>, address: Address
             account
         }
     }
+}
+
+pub fn was_delegated(account_info: &AccountInfo) -> Result<bool, VMError> {
+    let mut was_delegated = false;
+    if account_info.has_code() {
+        if account_info.bytecode.len() == EIP7702_DELEGATED_CODE_LEN {
+            let first_3_bytes = account_info
+                .bytecode
+                .get(..3)
+                .ok_or(VMError::Internal(InternalError::SlicingError))?;
+
+            if first_3_bytes == SET_CODE_DELEGATION_BYTES {
+                was_delegated = true;
+            }
+        }
+    }
+    Ok(was_delegated)
 }
