@@ -108,24 +108,24 @@ impl SyncManager {
                 info!("Resuming header download from last downloaded header with number: {last_downloaded_header}");
             }
             // We might have more headers than bodies downloaded so we should queue missing bodies for download
-            let last_body = match store.get_latest_downloaded_body()? {
-                Some(hash) => hash,
-                None => current_head,
-            };
+            // let last_body = match store.get_latest_downloaded_body()? {
+            //     Some(hash) => hash,
+            //     None => current_head,
+            // };
             // Debug Code Block
-            {
-                let last_downloaded_body = store.get_block_header_by_hash(last_body)?.unwrap().number;
-                info!("Resuming body download from last downloaded body with number: {last_downloaded_body}");
-            }
-            if last_body != last_header {
-                let mut parent = last_header;
-                while parent != last_body {
-                    all_block_hashes.insert(0, parent);
-                    let parent_header = store.get_block_header_by_hash(parent)?.unwrap();
-                    println!("Queuing body {} for download", parent_header.number);
-                    parent = parent_header.parent_hash;
-                }
-            }
+            // {
+            //     let last_downloaded_body = store.get_block_header_by_hash(last_body)?.unwrap().number;
+            //     info!("Resuming body download from last downloaded body with number: {last_downloaded_body}");
+            // }
+            // if last_body != last_header {
+            //     let mut parent = last_header;
+            //     while parent != last_body {
+            //         all_block_hashes.insert(0, parent);
+            //         let parent_header = store.get_block_header_by_hash(parent)?.unwrap();
+            //         println!("Queuing body {} for download", parent_header.number);
+            //         parent = parent_header.parent_hash;
+            //     }
+            // }
             // Set latest downloaded header as current head for header fetching
             current_head = last_header;
         }
@@ -174,7 +174,7 @@ impl SyncManager {
                 // snap-sync: launch tasks to fetch blocks and state in parallel
                 // - Fetch each block's body and its receipt via eth p2p requests
                 // - Fetch the pivot block's state via snap p2p requests
-                // - Execute blocks after the pivote (like in full-sync)
+                // - Execute blocks after the pivot (like in full-sync)
                 let store_bodies_handle = tokio::spawn(store_block_bodies(
                     all_block_hashes.clone(),
                     self.peers.clone(),
