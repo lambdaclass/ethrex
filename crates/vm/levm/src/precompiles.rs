@@ -1,4 +1,3 @@
-use bls12_381::G1Affine;
 use bytes::Bytes;
 use ethrex_core::{Address, H160, H256, U256};
 use keccak_hash::keccak256;
@@ -110,7 +109,7 @@ pub const BLS12_MAP_FP2_TO_G2_ADDRESS: H160 = H160([
     0x00, 0x00, 0x00, 0x11,
 ]);
 
-pub const PRECOMPILES: [H160; 17] = [
+pub const PRECOMPILES: [H160; 10] = [
     ECRECOVER_ADDRESS,
     SHA2_256_ADDRESS,
     RIPEMD_160_ADDRESS,
@@ -121,6 +120,9 @@ pub const PRECOMPILES: [H160; 17] = [
     ECPAIRING_ADDRESS,
     BLAKE2F_ADDRESS,
     POINT_EVALUATION_ADDRESS,
+];
+
+pub const PRECOMPILES_POST_CANCUN: [H160; 7] = [
     BLS12_G1ADD_ADDRESS,
     BLS12_G1MSM_ADDRESS,
     BLS12_G2ADD_ADDRESS,
@@ -137,25 +139,9 @@ pub fn is_precompile(callee_address: &Address, spec_id: SpecId) -> bool {
     if *callee_address == POINT_EVALUATION_ADDRESS && spec_id < SpecId::CANCUN {
         return false;
     }
-    if *callee_address == BLS12_G1ADD_ADDRESS && spec_id < SpecId::PRAGUE {
-        return false;
-    }
-    if *callee_address == BLS12_G1MSM_ADDRESS && spec_id < SpecId::PRAGUE {
-        return false;
-    }
-    if *callee_address == BLS12_G2ADD_ADDRESS && spec_id < SpecId::PRAGUE {
-        return false;
-    }
-    if *callee_address == BLS12_G2MSM_ADDRESS && spec_id < SpecId::PRAGUE {
-        return false;
-    }
-    if *callee_address == BLS12_PAIRING_CHECK_ADDRESS && spec_id < SpecId::PRAGUE {
-        return false;
-    }
-    if *callee_address == BLS12_MAP_FP_TO_G1_ADDRESS && spec_id < SpecId::PRAGUE {
-        return false;
-    }
-    if *callee_address == BLS12_MAP_FP2_TO_G2_ADDRESS && spec_id < SpecId::PRAGUE {
+    // Prague or newers forks should only use this precompiles
+    // https://eips.ethereum.org/EIPS/eip-2537
+    if PRECOMPILES_POST_CANCUN.contains(callee_address) && spec_id < SpecId::PRAGUE {
         return false;
     }
 
@@ -197,6 +183,24 @@ pub fn execute_precompile(
         }
         address if address == BLS12_G1ADD_ADDRESS => {
             bls12_g1add(&calldata, gas_for_call, consumed_gas)?
+        }
+        address if address == BLS12_G1MSM_ADDRESS => {
+            bls12_g1msm(&calldata, gas_for_call, consumed_gas)?
+        }
+        address if address == BLS12_G2ADD_ADDRESS => {
+            bls12_g2add(&calldata, gas_for_call, consumed_gas)?
+        }
+        address if address == BLS12_G2MSM_ADDRESS => {
+            bls12_g2msm(&calldata, gas_for_call, consumed_gas)?
+        }
+        address if address == BLS12_PAIRING_CHECK_ADDRESS => {
+            bls12_pairing_check(&calldata, gas_for_call, consumed_gas)?
+        }
+        address if address == BLS12_MAP_FP_TO_G1_ADDRESS => {
+            bls12_map_fp_to_g1(&calldata, gas_for_call, consumed_gas)?
+        }
+        address if address == BLS12_MAP_FP2_TO_G2_ADDRESS => {
+            bls12_map_fp2_tp_g2(&calldata, gas_for_call, consumed_gas)?
         }
         _ => return Err(VMError::Internal(InternalError::InvalidPrecompileAddress)),
     };
@@ -1153,20 +1157,19 @@ pub fn bls12_g1add(
         return Err(VMError::PrecompileError(PrecompileError::ParsingInputError));
     }
 
-    let fp1_1 = calldata
+    let mut fp1_1 = calldata
         .get(0..64)
         .ok_or(VMError::PrecompileError(PrecompileError::ParsingInputError))?;
-    let fp2_1 = calldata
+    let mut fp2_1 = calldata
         .get(64..128)
         .ok_or(VMError::PrecompileError(PrecompileError::ParsingInputError))?;
-    let fp1_2 = calldata
+    let mut fp1_2 = calldata
         .get(128..192)
         .ok_or(VMError::PrecompileError(PrecompileError::ParsingInputError))?;
-    let fp2_2 = calldata
+    let mut fp2_2 = calldata
         .get(192..)
         .ok_or(VMError::PrecompileError(PrecompileError::ParsingInputError))?;
 
-    dbg!(fp1_1, fp2_1, fp1_2, fp2_2);
     let zeros: [u8; 16] = [0_u8; 16];
 
     // the first 16 bytes of any of the points MUST be all zeros
@@ -1199,5 +1202,66 @@ pub fn bls12_g1add(
         return Err(VMError::PrecompileError(PrecompileError::ParsingInputError));
     }
 
+    fp1_1 = fp1_1
+        .get(16..64)
+        .ok_or(VMError::PrecompileError(PrecompileError::ParsingInputError))?;
+    fp2_1 = fp2_1
+        .get(16..64)
+        .ok_or(VMError::PrecompileError(PrecompileError::ParsingInputError))?;
+    fp1_2 = fp1_2
+        .get(16..64)
+        .ok_or(VMError::PrecompileError(PrecompileError::ParsingInputError))?;
+    fp2_2 = fp2_2
+        .get(16..64)
+        .ok_or(VMError::PrecompileError(PrecompileError::ParsingInputError))?;
+
+    Ok(Bytes::new())
+}
+
+pub fn bls12_g1msm(
+    _calldata: &Bytes,
+    _gas_for_call: u64,
+    _consumed_gas: &mut u64,
+) -> Result<Bytes, VMError> {
+    Ok(Bytes::new())
+}
+
+pub fn bls12_g2add(
+    _calldata: &Bytes,
+    _gas_for_call: u64,
+    _consumed_gas: &mut u64,
+) -> Result<Bytes, VMError> {
+    Ok(Bytes::new())
+}
+
+pub fn bls12_g2msm(
+    _calldata: &Bytes,
+    _gas_for_call: u64,
+    _consumed_gas: &mut u64,
+) -> Result<Bytes, VMError> {
+    Ok(Bytes::new())
+}
+
+pub fn bls12_pairing_check(
+    _calldata: &Bytes,
+    _gas_for_call: u64,
+    _consumed_gas: &mut u64,
+) -> Result<Bytes, VMError> {
+    Ok(Bytes::new())
+}
+
+pub fn bls12_map_fp_to_g1(
+    _calldata: &Bytes,
+    _gas_for_call: u64,
+    _consumed_gas: &mut u64,
+) -> Result<Bytes, VMError> {
+    Ok(Bytes::new())
+}
+
+pub fn bls12_map_fp2_to_g2(
+    calldata: &Bytes,
+    _gas_for_call: u64,
+    _consumed_gas: &mut u64,
+) -> Result<Bytes, VMError> {
     Ok(Bytes::new())
 }
