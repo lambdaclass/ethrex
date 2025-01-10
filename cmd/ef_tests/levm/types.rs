@@ -1,7 +1,8 @@
 use crate::{
     deserialize::{
-        deserialize_access_lists, deserialize_ef_post_value_indexes,
-        deserialize_h256_vec_optional_safe, deserialize_hex_bytes, deserialize_hex_bytes_vec,
+        deserialize_access_lists, deserialize_authorization_lists,
+        deserialize_ef_post_value_indexes, deserialize_h256_vec_optional_safe,
+        deserialize_hex_bytes, deserialize_hex_bytes_vec,
         deserialize_transaction_expected_exception, deserialize_u256_optional_safe,
         deserialize_u256_safe, deserialize_u256_valued_hashmap_safe, deserialize_u256_vec_safe,
         deserialize_u64_safe, deserialize_u64_vec_safe,
@@ -286,6 +287,23 @@ pub struct EFTestAccessListItem {
     pub storage_keys: Vec<H256>,
 }
 
+#[derive(Debug, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct EFTestAuthorizationListTuple {
+    #[serde(deserialize_with = "deserialize_u256_safe")]
+    pub chain_id: U256,
+    pub address: Address,
+    #[serde(deserialize_with = "deserialize_u64_safe")]
+    pub nonce: u64,
+    #[serde(deserialize_with = "deserialize_u256_safe")]
+    pub v: U256,
+    #[serde(deserialize_with = "deserialize_u256_safe")]
+    pub r: U256,
+    #[serde(deserialize_with = "deserialize_u256_safe")]
+    pub s: U256,
+    pub signer: Option<Address>,
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct EFTestRawTransaction {
@@ -312,6 +330,8 @@ pub struct EFTestRawTransaction {
     pub blob_versioned_hashes: Option<Vec<H256>>,
     #[serde(default, deserialize_with = "deserialize_access_lists")]
     pub access_lists: Option<Vec<Vec<EFTestAccessListItem>>>,
+    #[serde(default, deserialize_with = "deserialize_authorization_lists")]
+    pub authorization_list: Option<Vec<EFTestAuthorizationListTuple>>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -331,4 +351,5 @@ pub struct EFTestTransaction {
     pub max_fee_per_blob_gas: Option<U256>,
     pub blob_versioned_hashes: Vec<H256>,
     pub access_list: Vec<EFTestAccessListItem>,
+    pub authorization_list: Option<Vec<EFTestAuthorizationListTuple>>,
 }
