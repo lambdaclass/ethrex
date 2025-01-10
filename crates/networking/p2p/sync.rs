@@ -140,7 +140,7 @@ impl SyncManager {
                 .request_block_headers(current_head, BlockRequestOrder::OldToNew)
                 .await
             {
-                info!("Received {} block headers", block_headers.len());
+                info!("Received {} block headers| Last Number: {}", block_headers.len(), block_headers.last().as_ref().unwrap().number);
                 let mut block_hashes = block_headers
                     .iter()
                     .map(|header| header.compute_block_hash())
