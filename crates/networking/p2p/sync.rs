@@ -175,16 +175,16 @@ impl SyncManager {
                 // - Fetch each block's body and its receipt via eth p2p requests
                 // - Fetch the pivot block's state via snap p2p requests
                 // - Execute blocks after the pivot (like in full-sync)
-                let store_bodies_handle = tokio::spawn(store_block_bodies(
-                    all_block_hashes.clone(),
-                    self.peers.clone(),
-                    store.clone(),
-                ));
                 let mut pivot_idx = if all_block_hashes.len() > MIN_FULL_BLOCKS {
                     all_block_hashes.len() - MIN_FULL_BLOCKS
                 } else {
                     all_block_hashes.len() - 1
                 };
+                let store_bodies_handle = tokio::spawn(store_block_bodies(
+                    all_block_hashes[pivot_idx..].to_vec(),
+                    self.peers.clone(),
+                    store.clone(),
+                ));
                 let mut pivot_header = store
                     .get_block_header_by_hash(all_block_hashes[pivot_idx])?
                     .ok_or(SyncError::CorruptDB)?;

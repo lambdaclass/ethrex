@@ -218,10 +218,10 @@ async fn discover_peers_server(
                         continue;
                     }
                     if peer.last_ping_hash.unwrap() == msg.ping_hash {
-                        info!("Peer {} answered ping with pong", peer.node.node_id);
+                        debug!("Peer {} answered ping with pong", peer.node.node_id);
                         table.lock().await.pong_answered(peer.node.node_id);
                         if peer.channels.is_some() {
-                            info!("Skip trying to connect to already connected peer {}", peer.node.node_id);
+                            debug!("Skip trying to connect to already connected peer {}", peer.node.node_id);
                             continue;
                         }
 
@@ -401,7 +401,7 @@ async fn peers_revalidation(
 
     loop {
         interval.tick().await;
-        info!("Running peer revalidation");
+        debug!("Running peer revalidation");
 
         // first check that the peers we ping have responded
         for node_id in previously_pinged_peers {
@@ -412,10 +412,10 @@ async fn peers_revalidation(
 
             if let Some(has_answered) = peer.revalidation {
                 if has_answered {
-                    info!("Peer {node_id} answered revalidation ping");
+                    debug!("Peer {node_id} answered revalidation ping");
                     peer.increment_liveness();
                 } else {
-                    info!("Peer {node_id} hasn't answered revalidation ping");
+                    debug!("Peer {node_id} hasn't answered revalidation ping");
                     peer.decrement_liveness();
                 }
             }
