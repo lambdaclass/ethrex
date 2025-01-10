@@ -9,6 +9,7 @@ use ethrex_rlp::encode::RLPEncode;
 use ethrex_trie::Nibbles;
 use ethrex_trie::{verify_range, Node};
 use tokio::sync::{mpsc, Mutex};
+use tracing::warn;
 
 use crate::{
     rlpx::{
@@ -91,13 +92,19 @@ impl PeerChannels {
                         return Some(block_headers)
                     }
                     // Ignore replies that don't match the expected id (such as late responses)
-                    Some(_) => continue,
-                    None => return None,
+                    Some(a) => {warn!("UNEXPECTED RESPONSE: {a:?}"); continue},
+                    None => {warn!("NO RESPONSE");return None},
                 }
             }
         })
-        .await
-        .ok()??;
+        .await;
+        if block_headers.is_err() {
+            warn!("PEER TIMEOUT");
+        }
+        let block_headers = block_headers.ok()??;
+        if block_headers.is_empty() {
+            warn!("EMPTY BLOCK HEADERS RESPONSE");
+        }
         (!block_headers.is_empty()).then_some(block_headers)
     }
 
