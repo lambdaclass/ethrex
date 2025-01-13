@@ -771,6 +771,26 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7c02d123df017efcdfbd739ef81735b36c5ba83ec3c59c80a9d7ecc718f92e50"
 
 [[package]]
+name = "async-stdin"
+version = "0.3.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b1ff8b5d9b5ec29e0f49583ba71847b8c8888b67a8510133048a380903aa6822"
+dependencies = [
+ "tokio",
+]
+
+[[package]]
+name = "async-throttle"
+version = "0.3.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1c99532de164435a0b91279e715bff4fa0d164643b409a67761907ffc210ee8f"
+dependencies = [
+ "backoff",
+ "dashmap 5.5.3",
+ "tokio",
+]
+
+[[package]]
 name = "async-trait"
 version = "0.1.83"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -974,6 +994,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "backoff"
+version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b62ddb9cb1ec0a098ad4bbf9344d0713fa193ae1a80af55febcff2627b6a00c1"
+dependencies = [
+ "futures-core",
+ "getrandom",
+ "instant",
+ "pin-project-lite",
+ "rand 0.8.5",
+ "tokio",
+]
+
+[[package]]
 name = "backtrace"
 version = "0.3.74"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1024,6 +1058,30 @@ name = "bech32"
 version = "0.9.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d86b93f97252c47b41663388e6d155714a9d0c398b99f1005cbc5f978b29f445"
+
+[[package]]
+name = "bench"
+version = "0.1.0"
+dependencies = [
+ "bytes",
+ "clap 4.5.21",
+ "ethrex-core",
+ "ethrex-l2",
+ "ethrex-prover",
+ "ethrex-rlp",
+ "ethrex-vm",
+ "futures-util",
+ "hex",
+ "reqwest 0.12.9",
+ "revm 14.0.3",
+ "revm-inspectors",
+ "revm-primitives 10.0.0",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tokio-utils",
+ "zkvm_interface",
+]
 
 [[package]]
 name = "bincode"
@@ -1904,6 +1962,19 @@ dependencies = [
  "cfg-if",
  "num_cpus",
  "serde",
+]
+
+[[package]]
+name = "dashmap"
+version = "5.5.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "978747c1d849a7d2ee5e8adc0159961c48fb7e5db2f06af6723b80123bb53856"
+dependencies = [
+ "cfg-if",
+ "hashbrown 0.14.5",
+ "lock_api",
+ "once_cell",
+ "parking_lot_core 0.9.10",
 ]
 
 [[package]]
@@ -7673,6 +7744,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0fda2ff0d084019ba4d7c6f371c95d8fd75ce3524c3cb8fb653a3023f6323e64"
 
 [[package]]
+name = "shutdown-async"
+version = "0.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e2799e69bde7e68bedd86c6d94bffa783219114f1f31435ddda61f4aeba348ff"
+dependencies = [
+ "tokio",
+]
+
+[[package]]
 name = "signal-hook-registry"
 version = "1.4.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -8691,7 +8771,7 @@ dependencies = [
  "aho-corasick 0.7.20",
  "clap 2.34.0",
  "crossbeam-channel",
- "dashmap",
+ "dashmap 4.0.2",
  "dirs 3.0.2",
  "encoding_rs_io",
  "env_logger",
@@ -8784,6 +8864,18 @@ dependencies = [
  "hashbrown 0.14.5",
  "pin-project-lite",
  "tokio",
+]
+
+[[package]]
+name = "tokio-utils"
+version = "0.1.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "de75f75f464153a50fe48b9675360e3cf2ae1d7d81f9751363bd2ee4888f5ce8"
+dependencies = [
+ "async-stdin",
+ "async-throttle",
+ "shutdown-async",
+ "tub",
 ]
 
 [[package]]
@@ -8967,6 +9059,16 @@ name = "try-lock"
 version = "0.2.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e421abadd41a4225275504ea4d6566923418b7f05506fbc9c0fe86ba7396114b"
+
+[[package]]
+name = "tub"
+version = "0.3.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6bca43faba247bc76eb1d6c1b8b561e4a1c5bdd427cc3d7a007faabea75c683a"
+dependencies = [
+ "crossbeam-queue",
+ "tokio",
+]
 
 [[package]]
 name = "twirp-rs"

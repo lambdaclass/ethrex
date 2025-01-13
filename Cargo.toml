@@ -18,6 +18,7 @@ members = [
     "crates/vm/levm/bench/revm_comparison",
     "crates/l2/",
     "crates/l2/prover",
+    "crates/l2/prover/bench",
     "crates/l2/contracts",
     "crates/l2/sdk",
     "cmd/loc",
