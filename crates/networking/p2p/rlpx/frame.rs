@@ -119,11 +119,12 @@ impl Decoder for RLPxCodec {
         };
 
         // ingress-mac = keccak256.update(ingress-mac, header-mac-seed)
-        self.state.ingress_mac.update(header_mac_seed);
+        let mut temp_ingress_mac = self.state.ingress_mac.clone();
+        temp_ingress_mac.update(header_mac_seed);
 
         // header-mac = keccak256.digest(egress-mac)[:16]
         let expected_header_mac = H128(
-            self.state.ingress_mac.clone().finalize()[..16]
+            temp_ingress_mac.clone().finalize()[..16]
                 .try_into()
                 .map_err(|_| RLPxError::CryptographyError("Invalid header mac".to_owned()))?,
         );
@@ -131,7 +132,8 @@ impl Decoder for RLPxCodec {
         assert_eq!(header_mac, expected_header_mac.0);
 
         let header_text = header_ciphertext;
-        self.state.ingress_aes.apply_keystream(header_text);
+        let mut temp_ingress_aes = self.state.ingress_aes.clone();
+        temp_ingress_aes.apply_keystream(header_text);
 
         // header-data = [capability-id, context-id]
         // Both are unused, and always zero
@@ -150,7 +152,7 @@ impl Decoder for RLPxCodec {
             return Err(RLPxError::InvalidMessageLength());
         }
 
-        if src.len() < 32 + padded_size {
+        if src.len() < 32 + padded_size + 16 {
             // The full string has not yet arrived.
             //
             // We reserve more space in the buffer. This is not strictly
@@ -166,11 +168,12 @@ impl Decoder for RLPxCodec {
         // this frame.
         let mut frame_data = src[32..32 + padded_size + 16].to_vec();
         src.advance(32 + padded_size + 16);
+        self.state.ingress_mac = temp_ingress_mac;
+        self.state.ingress_aes = temp_ingress_aes;
 
         let (frame_ciphertext, frame_mac) = frame_data.split_at_mut(padded_size);
 
         // check MAC
-        #[allow(clippy::needless_borrows_for_generic_args)]
         self.state.ingress_mac.update(&frame_ciphertext);
         let frame_mac_seed = {
             let mac_digest: [u8; 16] =

@@ -649,6 +649,18 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
         }
     }
 
+    #[allow(dead_code)]
+    async fn receive_old(&mut self) -> Result<rlpx::Message, RLPxError> {
+        if let RLPxConnectionState::Established(state) = &mut self.state {
+            let frame_data = frame::read_old(state, &mut self.frame_adaptor.stream()).await?;
+            let (msg_id, msg_data): (u8, _) =
+                ethrex_rlp::decode::RLPDecode::decode_unfinished(&frame_data)?;
+            Ok(rlpx::Message::decode(msg_id, msg_data)?)
+        } else {
+            Err(RLPxError::InvalidState())
+        }
+    }
+
     async fn receive(&mut self) -> Result<rlpx::Message, RLPxError> {
         if let RLPxConnectionState::Established(inner_state) = &mut self.state {
             let state: Established = *inner_state.clone();
