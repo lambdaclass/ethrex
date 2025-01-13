@@ -38,6 +38,8 @@ pub fn pr_message(
     table.add_row(row!["File", "Lines", "Diff"]);
 
     let mut total_lines_changed: i64 = 0;
+    let mut total_lines_added: i64 = 0;
+    let mut total_lines_removed: i64 = 0;
 
     for file_path in sorted_file_paths {
         let current_loc = *new_report.get(file_path).unwrap() as i64;
@@ -48,11 +50,13 @@ pub fn pr_message(
             continue;
         }
 
-        total_lines_changed = if current_loc > previous_loc {
-            total_lines_changed + loc_diff
+        if loc_diff > 0 {
+            total_lines_added += loc_diff;
         } else {
-            total_lines_changed - loc_diff
-        };
+            total_lines_removed += loc_diff.abs();
+        }
+
+        total_lines_changed += loc_diff.abs();
 
         table.add_row(row![
             file_path,
@@ -65,18 +69,42 @@ pub fn pr_message(
         ]);
     }
 
-    if total_lines_changed != 0 {
-        format!(
-            "```\n{table}\nTotal lines changed: {}\n```",
-            match total_lines_changed.cmp(&0) {
-                std::cmp::Ordering::Greater => format!("+{total_lines_changed}"),
-                std::cmp::Ordering::Less => format!("{total_lines_changed}"),
-                std::cmp::Ordering::Equal => "-".to_owned(),
-            }
-        )
-    } else {
-        "The amount of lines of code in the project has not changed.".to_owned()
+    let mut pr_message = String::new();
+
+    if total_lines_changed > 0 {
+        pr_message.push_str(&format!("```{table}\n"));
     }
+
+    pr_message.push_str(&format!(
+        "Total lines added: {}\n",
+        match total_lines_added.cmp(&0) {
+            std::cmp::Ordering::Greater => format!("+{total_lines_added}"),
+            std::cmp::Ordering::Less =>
+                unreachable!("total_lines_added should never be less than 0"),
+            std::cmp::Ordering::Equal => format!("{total_lines_added}"),
+        }
+    ));
+    pr_message.push_str(&format!(
+        "Total lines removed: {}\n",
+        match total_lines_removed.cmp(&0) {
+            std::cmp::Ordering::Greater =>
+                unreachable!("total_lines_removed should never be greater than 0"),
+            std::cmp::Ordering::Less | std::cmp::Ordering::Equal =>
+                format!("{total_lines_removed}"),
+        }
+    ));
+    pr_message.push_str(&format!(
+        "Total lines changed: {}\n",
+        match total_lines_changed.cmp(&0) {
+            std::cmp::Ordering::Greater | std::cmp::Ordering::Equal =>
+                format!("{total_lines_changed}"),
+            std::cmp::Ordering::Less =>
+                unreachable!("total_lines_changed should never be less than 0"),
+        }
+    ));
+    pr_message.push_str("```");
+
+    pr_message
 }
 
 pub fn slack_message(old_report: LinesOfCodeReport, new_report: LinesOfCodeReport) -> String {
