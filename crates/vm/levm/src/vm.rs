@@ -162,6 +162,7 @@ impl VM {
             spec if spec >= SpecId::PRAGUE => SIZE_PRECOMPILES_PRAGUE,
             spec if spec >= SpecId::CANCUN => SIZE_PRECOMPILES_CANCUN,
             spec if spec < SpecId::CANCUN => SIZE_PRECOMPILES_PRE_CANCUN,
+            _ => return Err(VMError::InvalidSpecId),
         };
         for i in 1..=max_precompile_address {
             default_touched_accounts.insert(Address::from_low_u64_be(i));

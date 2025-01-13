@@ -74,6 +74,8 @@ pub enum VMError {
     OutOfBounds,
     #[error("Precompile execution error: {0}")]
     PrecompileError(#[from] PrecompileError),
+    #[error("Spec Id doesn't match to any fork")]
+    InvalidSpecId,
 }
 
 impl VMError {
