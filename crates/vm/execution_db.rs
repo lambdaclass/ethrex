@@ -343,11 +343,12 @@ impl DatabaseRef for ExecutionDB {
 }
 
 pub mod touched_state {
+    use std::{cell::RefCell, collections::HashMap};
+
     use ethrex_core::{types::Block, Address, U256};
     use revm::{inspectors::TracerEip3155, DatabaseCommit, DatabaseRef, Evm};
     use revm_primitives::{
-        Account as RevmAccount, AccountStatus as RevmAccountStatus, Address as RevmAddress,
-        EVMError, SpecId, U256 as RevmU256,
+        Account as RevmAccount, Address as RevmAddress, EVMError, SpecId, U256 as RevmU256,
     };
 
     use crate::{block_env, tx_env};
@@ -357,7 +358,10 @@ pub mod touched_state {
     /// Dummy DB for storing touched account addresses and storage keys while executing a block.
     #[derive(Default)]
     struct TouchedStateDB {
-        touched_state: Vec<(RevmAddress, Vec<RevmU256>)>,
+        written_state: Vec<(RevmAddress, Vec<RevmU256>)>,
+        // read_state is going to be mutated on cases that (immutably) borrow the DB, so internal mutability is
+        // needed.
+        read_state: RefCell<HashMap<RevmAddress, Vec<RevmU256>>>,
     }
 
     #[allow(unused_variables)]
@@ -368,6 +372,7 @@ pub mod touched_state {
             &self,
             address: RevmAddress,
         ) -> Result<Option<revm_primitives::AccountInfo>, Self::Error> {
+            self.read_state.borrow_mut().entry(address).or_default();
             Ok(Some(Default::default()))
         }
         fn storage_ref(
@@ -375,6 +380,11 @@ pub mod touched_state {
             address: RevmAddress,
             index: RevmU256,
         ) -> Result<RevmU256, Self::Error> {
+            self.read_state
+                .borrow_mut()
+                .entry(address)
+                .and_modify(|vec| vec.push(index))
+                .or_default();
             Ok(Default::default())
         }
         fn block_hash_ref(&self, number: u64) -> Result<revm_primitives::B256, Self::Error> {
@@ -391,7 +401,7 @@ pub mod touched_state {
     impl DatabaseCommit for TouchedStateDB {
         fn commit(&mut self, changes: revm_primitives::HashMap<RevmAddress, RevmAccount>) {
             for (address, account) in changes {
-                self.touched_state
+                self.written_state
                     .push((address, account.storage.keys().cloned().collect()));
             }
         }
@@ -433,8 +443,9 @@ pub mod touched_state {
         }
 
         let mut touched_state: Vec<(Address, Vec<U256>)> = db
-            .touched_state
+            .written_state
             .into_iter()
+            .chain(db.read_state.into_inner())
             .map(|(address, storage_keys)| {
                 (
                     Address::from_slice(address.as_slice()),
