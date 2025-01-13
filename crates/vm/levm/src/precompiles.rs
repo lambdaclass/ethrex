@@ -1175,34 +1175,13 @@ pub fn bls12_g1add(
         .get(192..)
         .ok_or(VMError::PrecompileError(PrecompileError::ParsingInputError))?;
 
-    let zeros: [u8; 16] = [0_u8; 16];
+    let _zeros: [u8; 16] = [0_u8; 16];
 
     // the first 16 bytes of any of the points MUST be all zeros
-    if first_point_x
-        .get(0..16)
-        .ok_or(VMError::PrecompileError(PrecompileError::ParsingInputError))?
-        != zeros
-    {
-        return Err(VMError::PrecompileError(PrecompileError::ParsingInputError));
-    }
-    if first_point_y
-        .get(0..16)
-        .ok_or(VMError::PrecompileError(PrecompileError::ParsingInputError))?
-        != zeros
-    {
-        return Err(VMError::PrecompileError(PrecompileError::ParsingInputError));
-    }
-    if second_point_x
-        .get(0..16)
-        .ok_or(VMError::PrecompileError(PrecompileError::ParsingInputError))?
-        != zeros
-    {
-        return Err(VMError::PrecompileError(PrecompileError::ParsingInputError));
-    }
-    if second_point_y
-        .get(0..16)
-        .ok_or(VMError::PrecompileError(PrecompileError::ParsingInputError))?
-        != zeros
+    if !matches!(first_point_x.get(0..16), Some(_zeros))
+        || !matches!(first_point_y.get(0..16), Some(_zeros))
+        || !matches!(second_point_x.get(0..16), Some(_zeros))
+        || !matches!(second_point_y.get(0..16), Some(_zeros))
     {
         return Err(VMError::PrecompileError(PrecompileError::ParsingInputError));
     }
