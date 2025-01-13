@@ -9,7 +9,7 @@ use ethrex_rlp::encode::RLPEncode;
 use ethrex_trie::Nibbles;
 use ethrex_trie::{verify_range, Node};
 use tokio::sync::{mpsc, Mutex};
-use tracing::warn;
+use tracing::{info, warn};
 
 use crate::{
     rlpx::{
@@ -92,8 +92,14 @@ impl PeerChannels {
                         return Some(block_headers)
                     }
                     // Ignore replies that don't match the expected id (such as late responses)
-                    Some(a) => {warn!("UNEXPECTED RESPONSE: {a:?}"); continue},
-                    None => {warn!("NO RESPONSE");return None},
+                    Some(a) => {
+                        warn!("UNEXPECTED RESPONSE: {a:?}");
+                        continue;
+                    }
+                    None => {
+                        warn!("NO RESPONSE");
+                        return None;
+                    }
                 }
             }
         })
@@ -211,6 +217,7 @@ impl PeerChannels {
         })
         .await
         .ok()??;
+        info!("Peer returned accounts: {accounts:?}, proof: {proof:?}");
         // Unzip & validate response
         let proof = encodable_to_proof(&proof);
         let (account_hashes, accounts): (Vec<_>, Vec<_>) = accounts
