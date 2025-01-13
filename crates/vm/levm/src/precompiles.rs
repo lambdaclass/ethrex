@@ -219,9 +219,11 @@ fn increase_precompile_consumed_gas(
     gas_cost: u64,
     consumed_gas: &mut u64,
 ) -> Result<(), VMError> {
+    dbg!(gas_for_call, gas_cost, consumed_gas.clone());
     if gas_for_call < gas_cost {
         return Err(VMError::PrecompileError(PrecompileError::NotEnoughGas));
     }
+    dbg!("puede aumentar gas");
 
     *consumed_gas = consumed_gas
         .checked_add(gas_cost)
@@ -1182,10 +1184,10 @@ pub fn bls12_g1add(
     let _zeros: [u8; 16] = [0_u8; 16];
 
     // the first 16 bytes of any of the points MUST be all zeros
-    if !matches!(first_point_x.get(0..16), Some(_zeros))
-        || !matches!(first_point_y.get(0..16), Some(_zeros))
-        || !matches!(second_point_x.get(0..16), Some(_zeros))
-        || !matches!(second_point_y.get(0..16), Some(_zeros))
+    if !matches!(first_point_x.get(0..16), Some(prefix) if prefix == _zeros)
+        || !matches!(first_point_y.get(0..16), Some(prefix) if prefix == _zeros)
+        || !matches!(second_point_x.get(0..16), Some(prefix) if prefix == _zeros)
+        || !matches!(second_point_y.get(0..16), Some(prefix) if prefix == _zeros)
     {
         return Err(VMError::PrecompileError(PrecompileError::ParsingInputError));
     }
@@ -1203,37 +1205,52 @@ pub fn bls12_g1add(
         .get(16..64)
         .ok_or(VMError::PrecompileError(PrecompileError::ParsingInputError))?;
 
-    let mut first_g1_point = Vec::new();
-    first_g1_point.extend_from_slice(first_point_x);
-    first_g1_point.extend_from_slice(first_point_y);
-
-    let first_g1_point: [u8; 96] = first_g1_point
-        .try_into()
-        .map_err(|_| VMError::Internal(InternalError::ConversionError))?;
-
-    let first_g1_point = G1Affine::from_uncompressed(&first_g1_point);
-    let first_g1_point: G1Projective = if first_g1_point.is_some().into() {
-        first_g1_point.unwrap()
+    let zeros: [u8; 48] = [0_u8; 48];
+    let first_g1_point = if first_point_x == zeros && second_point_x == zeros {
+        dbg!("first identity");
+        G1Projective::identity()
     } else {
-        return Err(VMError::PrecompileError(PrecompileError::ParsingInputError));
-    }
-    .into();
+        let mut first_g1_point = Vec::new();
+        first_g1_point.extend_from_slice(first_point_x);
+        first_g1_point.extend_from_slice(first_point_y);
 
-    let mut second_g1_point = Vec::new();
-    second_g1_point.extend_from_slice(second_point_x);
-    second_g1_point.extend_from_slice(second_point_y);
+        let first_g1_point: [u8; 96] = first_g1_point
+            .try_into()
+            .map_err(|_| VMError::Internal(InternalError::ConversionError))?;
 
-    let second_g1_point: [u8; 96] = second_g1_point
-        .try_into()
-        .map_err(|_| VMError::Internal(InternalError::ConversionError))?;
+        let first_g1_point = G1Affine::from_uncompressed(&first_g1_point);
+        let first_g1_point: G1Projective = if first_g1_point.is_some().into() {
+            first_g1_point.unwrap()
+        } else {
+            return Err(VMError::PrecompileError(PrecompileError::ParsingInputError));
+        }
+        .into();
+        first_g1_point
+    };
 
-    let second_g1_point = G1Affine::from_uncompressed(&second_g1_point);
-    let second_g1_point: G1Projective = if second_g1_point.is_some().into() {
-        second_g1_point.unwrap()
+    let second_g1_point = if second_point_x == zeros && second_point_y == zeros {
+        dbg!("second is identity");
+        G1Projective::identity()
     } else {
-        return Err(VMError::PrecompileError(PrecompileError::ParsingInputError));
-    }
-    .into();
+        let mut second_g1_point = Vec::new();
+        second_g1_point.extend_from_slice(second_point_x);
+        second_g1_point.extend_from_slice(second_point_y);
+
+        let second_g1_point: [u8; 96] = second_g1_point
+            .try_into()
+            .map_err(|_| VMError::Internal(InternalError::ConversionError))?;
+
+        let second_g1_point = G1Affine::from_uncompressed(&second_g1_point);
+        let second_g1_point: G1Projective = if second_g1_point.is_some().into() {
+            second_g1_point.unwrap()
+        } else {
+            return Err(VMError::PrecompileError(PrecompileError::ParsingInputError));
+        }
+        .into();
+        second_g1_point
+    };
+
+    dbg!("POINTS!", first_g1_point, second_g1_point);
 
     let res = G1Affine::from(first_g1_point.add(&second_g1_point)).to_uncompressed();
 
