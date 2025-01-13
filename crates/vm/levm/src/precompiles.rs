@@ -1199,39 +1199,39 @@ pub fn bls12_g1add(
         .get(16..64)
         .ok_or(VMError::PrecompileError(PrecompileError::ParsingInputError))?;
 
-    let mut first_g1_points = Vec::new();
-    first_g1_points.extend_from_slice(first_point_x);
-    first_g1_points.extend_from_slice(first_point_y);
+    let mut first_g1_point = Vec::new();
+    first_g1_point.extend_from_slice(first_point_x);
+    first_g1_point.extend_from_slice(first_point_y);
 
-    let first_g1_points: [u8; 96] = first_g1_points
+    let first_g1_point: [u8; 96] = first_g1_point
         .try_into()
         .map_err(|_| VMError::Internal(InternalError::ConversionError))?;
 
-    let first_g1_group = G1Affine::from_uncompressed(&first_g1_points);
-    let first_g1_group: G1Projective = if first_g1_group.is_some().into() {
-        first_g1_group.unwrap()
+    let first_g1_point = G1Affine::from_uncompressed(&first_g1_point);
+    let first_g1_point: G1Projective = if first_g1_point.is_some().into() {
+        first_g1_point.unwrap()
     } else {
         return Err(VMError::PrecompileError(PrecompileError::ParsingInputError));
     }
     .into();
 
-    let mut second_g1_points = Vec::new();
-    second_g1_points.extend_from_slice(second_point_x);
-    second_g1_points.extend_from_slice(second_point_y);
+    let mut second_g1_point = Vec::new();
+    second_g1_point.extend_from_slice(second_point_x);
+    second_g1_point.extend_from_slice(second_point_y);
 
-    let second_g1_points: [u8; 96] = second_g1_points
+    let second_g1_point: [u8; 96] = second_g1_point
         .try_into()
         .map_err(|_| VMError::Internal(InternalError::ConversionError))?;
 
-    let second_g1_group = G1Affine::from_uncompressed(&second_g1_points);
-    let second_g1_group: G1Projective = if second_g1_group.is_some().into() {
-        second_g1_group.unwrap()
+    let second_g1_point = G1Affine::from_uncompressed(&second_g1_point);
+    let second_g1_point: G1Projective = if second_g1_point.is_some().into() {
+        second_g1_point.unwrap()
     } else {
         return Err(VMError::PrecompileError(PrecompileError::ParsingInputError));
     }
     .into();
 
-    let res = G1Affine::from(first_g1_group.add(&second_g1_group)).to_uncompressed();
+    let res = G1Affine::from(first_g1_point.add(&second_g1_point)).to_uncompressed();
 
     // GAS
     increase_precompile_consumed_gas(gas_for_call, BLS12_381_G1ADD_COST, consumed_gas)
