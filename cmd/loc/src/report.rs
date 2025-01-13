@@ -78,10 +78,10 @@ pub fn pr_message(
     pr_message.push_str(&format!(
         "Total lines added: {}\n",
         match total_lines_added.cmp(&0) {
-            std::cmp::Ordering::Greater | std::cmp::Ordering::Equal =>
-                format!("{total_lines_added}"),
+            std::cmp::Ordering::Greater => format!("+{total_lines_added}"),
             std::cmp::Ordering::Less =>
                 unreachable!("total_lines_added should never be less than 0"),
+            std::cmp::Ordering::Equal => format!("{total_lines_added}"),
         }
     ));
     pr_message.push_str(&format!(
