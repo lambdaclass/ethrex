@@ -102,7 +102,8 @@ impl SyncManager {
         if let Some(last_header) = store.get_latest_downloaded_header()? {
             // Debug Code Block
             {
-                let last_downloaded_header = store.get_block_header_by_hash(last_header)?.unwrap().number;
+                let last_downloaded_header =
+                    store.get_block_header_by_hash(last_header)?.unwrap().number;
                 info!("Resuming header download from last downloaded header with number: {last_downloaded_header}");
             }
             // We might have more headers than bodies downloaded so we should queue missing bodies for download
@@ -140,7 +141,11 @@ impl SyncManager {
                 .request_block_headers(current_head, BlockRequestOrder::OldToNew)
                 .await
             {
-                info!("Received {} block headers| Last Number: {}", block_headers.len(), block_headers.last().as_ref().unwrap().number);
+                info!(
+                    "Received {} block headers| Last Number: {}",
+                    block_headers.len(),
+                    block_headers.last().as_ref().unwrap().number
+                );
                 let mut block_hashes = block_headers
                     .iter()
                     .map(|header| header.compute_block_hash())
@@ -158,9 +163,12 @@ impl SyncManager {
                 }
                 // Store headers and save hashes for full block retrieval
                 all_block_hashes.extend_from_slice(&block_hashes[..]);
-                store.add_block_headers(block_hashes, block_headers)?;
+                store.add_block_headers(block_hashes, block_headers.clone())?;
 
                 if sync_head_found {
+                    let sync_header = block_headers.iter().find(|h| h.compute_block_hash() == sync_head).unwrap();
+                    info!("Found sync head at block: {}", sync_header.number);
+
                     // No more headers to request
                     break;
                 }
