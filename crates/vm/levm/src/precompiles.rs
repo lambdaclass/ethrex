@@ -1247,22 +1247,33 @@ pub fn bls12_g1msm(
         let scalar_bytes: [u8; 32] = scalar_bytes
             .try_into()
             .map_err(|_| PrecompileError::ParsingInputError)?;
-        dbg!(scalar_bytes);
 
-        let mut scalar_le_bytes = [0u8; 32];
-        scalar_le_bytes.copy_from_slice(&scalar_bytes);
-        scalar_le_bytes.reverse();
-        dbg!(scalar_le_bytes);
+        let mut scalar_le = [0u64; 4];
+        for (j, chunk) in scalar_bytes.chunks(8).enumerate() {
+            let bytes: [u8; 8] = chunk
+                .try_into()
+                .map_err(|_| PrecompileError::ParsingInputError)?;
+            scalar_le[j] = u64::from_le_bytes(bytes);
+        }
 
-        let scalar = Scalar::from_bytes(&scalar_le_bytes);
+        dbg!(scalar_le);
+
+        // let mut scalar_le_bytes = [0u8; 32];
+        // scalar_le_bytes.copy_from_slice(&scalar_bytes);
+        // scalar_le_bytes.reverse();
+        // dbg!(scalar_le_bytes);
+        //
+
+        let scalar = Scalar::from_raw(scalar_le);
         // This always returinig an Error, there is a problem related to a Cannonical check.
-        let scalar = if scalar.is_some().into() {
-            dbg!("Im here");
-            scalar.unwrap()
-        } else {
-            dbg!("Im gonna return err");
-            return Err(VMError::PrecompileError(PrecompileError::ParsingInputError));
-        };
+        // let scalar = if scalar.is_some().into() {
+        //     dbg!("Im here");
+        //     dbg!(scalar.unwrap());
+        //     scalar.unwrap()
+        // } else {
+        //     dbg!("Im gonna return err");
+        //     return Err(VMError::PrecompileError(PrecompileError::ParsingInputError));
+        // };
         dbg!(scalar);
 
         //from x and y we should get the byte right after the first 16 bytes which are for padding.
