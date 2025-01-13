@@ -75,7 +75,6 @@ axum = "0.8.1"
 anyhow = "1.0.86"
 directories = "5.0.1"
 tinyvec = "1.6.0"
-revm = { version = "14.0.3", default-features = false }
 spinoff = "0.8.0"
 colored = "2.1.0"
 envy = "0.4.2"
