@@ -1,3 +1,6 @@
+use std::ops::Mul;
+
+use bls12_381::{G1Affine, G1Projective, Scalar};
 use bytes::Bytes;
 use ethrex_core::{Address, H160, H256, U256};
 use keccak_hash::keccak256;
@@ -134,6 +137,10 @@ pub const PRECOMPILES_POST_CANCUN: [H160; 7] = [
 
 pub const BLAKE2F_ELEMENT_SIZE: usize = 8;
 
+pub const SIZE_PRECOMPILES_PRE_CANCUN: u64 = 9;
+pub const SIZE_PRECOMPILES_CANCUN: u64 = 10;
+pub const SIZE_PRECOMPILES_PRAGUE: u64 = 17;
+
 pub fn is_precompile(callee_address: &Address, spec_id: SpecId) -> bool {
     // Cancun specs is the only one that allows point evaluation precompile
     if *callee_address == POINT_EVALUATION_ADDRESS && spec_id < SpecId::CANCUN {
@@ -145,7 +152,7 @@ pub fn is_precompile(callee_address: &Address, spec_id: SpecId) -> bool {
         return false;
     }
 
-    PRECOMPILES.contains(callee_address)
+    PRECOMPILES.contains(callee_address) || PRECOMPILES_POST_CANCUN.contains(callee_address)
 }
 
 pub fn execute_precompile(
@@ -1155,12 +1162,144 @@ pub fn bls12_g1add(
     Ok(Bytes::new())
 }
 
+pub const LENGTH_PER_PAIR: usize = 160;
+
+/// Implements EIP-2537 G1MultiExp precompile.
+/// G1 multiplication call expects `160*k` bytes as an input that is interpreted as byte concatenation of `k` slices each
+/// of them being a byte concatenation of encoding of G1 point (`128` bytes) and encoding of a scalar value (`32` bytes).
+/// Output is an encoding of multiexponentiation operation result - single G1 point
 pub fn bls12_g1msm(
-    _calldata: &Bytes,
-    _gas_for_call: u64,
-    _consumed_gas: &mut u64,
+    calldata: &Bytes,
+    gas_for_call: u64,
+    consumed_gas: &mut u64,
 ) -> Result<Bytes, VMError> {
-    Ok(Bytes::new())
+    // Check if the calldata is the correct length
+    // the input length is a multiple of 160 bytes ( 128 + 32  per pair).
+    if calldata.is_empty() || calldata.len() % 160 != 0 {
+        // This should be an invalid error with a clearer message
+        return Err(VMError::PrecompileError(PrecompileError::ParsingInputError));
+    }
+
+    // Gas cost
+    let k = calldata.len() / LENGTH_PER_PAIR;
+    dbg!(k);
+    let required_gas = gas_cost::bls12_g1msm(k)?;
+    increase_precompile_consumed_gas(gas_for_call, required_gas, consumed_gas)?;
+
+    dbg!("Im here");
+    let mut result = bls12_381::G1Affine::identity();
+    dbg!(result);
+
+    // R = s_P_1 + s_P_2 + ... + s_P_k
+    // Where:
+    // s_i are scalars (numbers)
+    // P_i are points in the group (in this case, points in G1)
+    for i in 0..k {
+        dbg!(i);
+        dbg!("here");
+        // in msm the lengt_per_pair is 160 bytes
+        // where the first 128 bytes are the x and y coordinates of the point
+        // and the last 32 bytes are the scalar value
+        let offset: usize = i
+            .checked_mul(LENGTH_PER_PAIR)
+            .ok_or(InternalError::ArithmeticOperationOverflow)?;
+        dbg!(offset);
+        let x = calldata
+            .get(
+                offset
+                    ..offset
+                        .checked_add(64)
+                        .ok_or(InternalError::ArithmeticOperationOverflow)?,
+            )
+            .ok_or(InternalError::SlicingError)?;
+        let y = calldata
+            .get(
+                offset
+                    .checked_add(64)
+                    .ok_or(InternalError::ArithmeticOperationOverflow)?
+                    ..offset
+                        .checked_add(128)
+                        .ok_or(InternalError::ArithmeticOperationOverflow)?,
+            )
+            .ok_or(InternalError::SlicingError)?;
+        dbg!(x, y);
+
+        // Validate that first 16 bytes are zero for field elements
+        dbg!("Im gonna check if x and y are zero");
+        if !x.iter().take(16).all(|x| *x == 0) || !y.iter().take(16).all(|x| *x == 0) {
+            dbg!("Im gonnar return err");
+            return Err(VMError::PrecompileError(PrecompileError::ParsingInputError));
+        }
+        dbg!("Checked ok");
+
+        let scalar_bytes = calldata
+            .get(
+                offset
+                    .checked_add(128)
+                    .ok_or(InternalError::ArithmeticOperationOverflow)?
+                    ..offset
+                        .checked_add(LENGTH_PER_PAIR)
+                        .ok_or(InternalError::ArithmeticOperationOverflow)?,
+            )
+            .ok_or(InternalError::SlicingError)?;
+        dbg!(scalar_bytes);
+
+        let scalar_bytes: [u8; 32] = scalar_bytes
+            .try_into()
+            .map_err(|_| PrecompileError::ParsingInputError)?;
+        dbg!(scalar_bytes);
+
+        let mut scalar_le_bytes = [0u8; 32];
+        scalar_le_bytes.copy_from_slice(&scalar_bytes);
+        scalar_le_bytes.reverse();
+        dbg!(scalar_le_bytes);
+
+        let scalar = Scalar::from_bytes(&scalar_le_bytes);
+        // This always returinig an Error, there is a problem related to a Cannonical check.
+        let scalar = if scalar.is_some().into() {
+            dbg!("Im here");
+            scalar.unwrap()
+        } else {
+            dbg!("Im gonna return err");
+            return Err(VMError::PrecompileError(PrecompileError::ParsingInputError));
+        };
+        dbg!(scalar);
+
+        //from x and y we should get the byte right after the first 16 bytes which are for padding.
+        let x = x.get(16..).ok_or(InternalError::SlicingError)?;
+        let y = y.get(16..).ok_or(InternalError::SlicingError)?;
+        dbg!(x, y);
+        //here we should build g1 point which is the concat of x and y
+        let mut g1_point_byte = Vec::with_capacity(96);
+        g1_point_byte.extend_from_slice(x);
+        g1_point_byte.extend_from_slice(y);
+        dbg!(g1_point_byte.clone());
+
+        let g1_point_byte: [u8; 96] = g1_point_byte
+            .try_into()
+            .map_err(|_| PrecompileError::ParsingInputError)?;
+        dbg!(g1_point_byte);
+
+        let g1 = G1Affine::from_uncompressed(&g1_point_byte);
+        let g1: G1Projective = if g1.is_some().into() {
+            g1.unwrap()
+        } else {
+            return Err(VMError::PrecompileError(PrecompileError::ParsingInputError));
+        }
+        .into();
+        dbg!(g1);
+
+        // Here we should do scalar multiplication of the point and add it to the result and avoid arithmetic side effects
+        // we must use .mul
+        let scaled_point = G1Projective::mul(g1, scalar);
+        dbg!(scaled_point);
+        let result = G1Projective::from(result).add(&scaled_point);
+        dbg!(result);
+    }
+
+    let result_bytes = result.to_uncompressed();
+    dbg!(result_bytes);
+    Ok(Bytes::copy_from_slice(&result_bytes))
 }
 
 pub fn bls12_g2add(

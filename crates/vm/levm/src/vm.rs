@@ -17,7 +17,10 @@ use crate::{
         TOTAL_COST_FLOOR_PER_TOKEN,
     },
     opcodes::Opcode,
-    precompiles::{execute_precompile, is_precompile},
+    precompiles::{
+        execute_precompile, is_precompile, SIZE_PRECOMPILES_CANCUN, SIZE_PRECOMPILES_PRAGUE,
+        SIZE_PRECOMPILES_PRE_CANCUN,
+    },
     AccountInfo, TransientStorage,
 };
 use bytes::Bytes;
@@ -155,7 +158,13 @@ impl VM {
 
         // Add precompiled contracts addresses to cache.
         // TODO: Use the addresses from precompiles.rs in a future
-        let max_precompile_address = if env.spec_id >= SpecId::CANCUN { 10 } else { 9 };
+        //let max_precompile_address = if env.spec_id >= SpecId::CANCUN { 10 } else { 9 };
+        let max_precompile_address = match env.spec_id {
+            spec if spec >= SpecId::PRAGUE => SIZE_PRECOMPILES_PRAGUE,
+            spec if spec >= SpecId::CANCUN => SIZE_PRECOMPILES_CANCUN,
+            _ => SIZE_PRECOMPILES_PRE_CANCUN,
+        };
+
         for i in 1..=max_precompile_address {
             default_touched_accounts.insert(Address::from_low_u64_be(i));
         }
