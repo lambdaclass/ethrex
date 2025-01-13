@@ -74,8 +74,6 @@ pub enum VMError {
     OutOfBounds,
     #[error("Precompile execution error: {0}")]
     PrecompileError(#[from] PrecompileError),
-    #[error("Spec Id doesn't match to any fork")]
-    InvalidSpecId,
 }
 
 impl VMError {
@@ -184,6 +182,8 @@ pub enum InternalError {
     UndefinedState(i32), // This error is temporarily for things that cause an undefined state.
     #[error("Invalid precompile address. Tried to execute a precompile that does not exist.")]
     InvalidPrecompileAddress,
+    #[error("Spec Id doesn't match to any fork")]
+    InvalidSpecId,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error, Serialize, Deserialize)]
