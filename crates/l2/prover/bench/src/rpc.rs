@@ -193,29 +193,10 @@ async fn get_code(rpc_url: &str, block_number: usize, address: &Address) -> Resu
 }
 
 fn get_result<T: DeserializeOwned>(response: serde_json::Value) -> Result<T, String> {
-    response
-        .get("result")
-        .cloned()
-        .ok_or_else(|| {
-            let final_error = response
-                .get("error")
-                .cloned()
-                .ok_or("request failed (result field not found) but error is missing".to_string())
-                .and_then(|error| {
-                    error.get("message").cloned().ok_or(
-                        "request failed, found error field but message is missing".to_string(),
-                    )
-                })
-                .and_then(|message| {
-                    serde_json::from_value::<String>(message)
-                        .map_err(|err| format!("failed to deserialize error message: {err}"))
-                });
-            match final_error {
-                Ok(request_err) => request_err,
-                Err(json_err) => json_err,
-            }
-        })
-        .and_then(|result| serde_json::from_value(result).map_err(|err| err.to_string()))
+    match response.get("result") {
+        Some(result) => serde_json::from_value(result.clone()).map_err(|err| err.to_string()),
+        None => Err(format!("result not found, response is: {response}")),
+    }
 }
 
 fn decode_hex(hex: String) -> Result<Vec<u8>, String> {
