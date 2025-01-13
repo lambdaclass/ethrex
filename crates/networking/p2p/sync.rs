@@ -79,8 +79,6 @@ impl SyncManager {
                     "Sync finished, time elapsed: {} secs",
                     start_time.elapsed().as_secs()
                 );
-                // Next sync will be full-sync
-                self.sync_mode = SyncMode::Full;
             }
             Err(error) => warn!(
                 "Sync failed due to {error}, time elapsed: {} secs ",
@@ -240,6 +238,8 @@ impl SyncManager {
         // Finished a sync cycle without aborting halfway, clear current state (TODO: write pivot here too)
         store.clear_latest_downloaded_header()?;
         store.clear_latest_downloaded_body()?;
+        // Next sync will be full-sync
+        self.sync_mode = SyncMode::Full;
         Ok(())
     }
 }
