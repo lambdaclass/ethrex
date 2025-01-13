@@ -4,7 +4,7 @@ use crate::{
     constants::*,
     db::{
         cache::{self, get_account_mut, remove_account},
-        CacheDB, Database, Db,
+        CacheDB, Database,
     },
     environment::Environment,
     errors::{
@@ -1272,7 +1272,7 @@ impl VM {
         // If any of the below steps fail, immediately stop processing that tuple and continue to the next tuple in the list. It will in the case of multiple tuples for the same authority, set the code using the address in the last valid occurrence.
         // If transaction execution results in failure (any exceptional condition or code reverting), setting delegation designations is not rolled back.
 
-        dbg!("authorization_list:", &self.authorization_list);
+        //dbg!("authorization_list:", &self.authorization_list);
         // TODO: avoid clone()
         for auth_tuple in self.authorization_list.clone().unwrap_or_default() {
             let chain_id_not_equals_this_chain_id = auth_tuple.chain_id != self.env.chain_id;
@@ -1280,13 +1280,15 @@ impl VM {
 
             // 1. Verify the chain id is either 0 or the chain’s current ID.
             if chain_id_not_zero && chain_id_not_equals_this_chain_id {
-                continue;
+                return Err(VMError::EIP7702Error(
+                    crate::errors::EIP7702Error::ChainIdError,
+                ));
             }
 
             dbg!("EIP-7702-1");
             // 2. Verify the nonce is less than 2**64 - 1.
             if !(auth_tuple.nonce < u64::MAX) {
-                continue;
+                return Err(VMError::NonceOverflow);
             }
             dbg!("EIP-7702-2");
 
@@ -1294,34 +1296,51 @@ impl VM {
             //      s value must be less than or equal to secp256k1n/2, as specified in EIP-2.
             let order_bytes = Secp256k1::ORDER.to_be_bytes();
             let n = U256::from_big_endian(&order_bytes);
-            if !(auth_tuple.s_signature <= n / 2) {
-                continue;
+            if auth_tuple.s_signature > n / 2 || U256::zero() >= auth_tuple.s_signature {
+                return Err(VMError::EIP7702Error(
+                    crate::errors::EIP7702Error::InvalidSignatureS,
+                ));
+            }
+            if auth_tuple.r_signature > n || U256::zero() >= auth_tuple.r_signature {
+                return Err(VMError::EIP7702Error(
+                    crate::errors::EIP7702Error::InvalidSignatureR,
+                ));
+            }
+            if auth_tuple.v != U256::one() && auth_tuple.v != U256::zero() {
+                return Err(VMError::EIP7702Error(
+                    crate::errors::EIP7702Error::InvalidYParity,
+                ));
             }
             dbg!("EIP-7702-3");
 
-            let mut bytes = Vec::new();
             let mut rlp_buf = Vec::new();
             (auth_tuple.chain_id, auth_tuple.address, auth_tuple.nonce).encode(&mut rlp_buf);
 
-            bytes.push(MAGIC);
-            bytes.extend_from_slice(&rlp_buf);
-            // TODO: remove unwrap
-            keccak256(&mut bytes);
-            dbg!(bytes.get(..32));
-            let message = Message::parse_slice(bytes.get(..32).unwrap()).unwrap();
+            let mut hasher = Keccak256::new();
+            hasher.update(&[MAGIC]);
+            hasher.update(rlp_buf);
+            let bytes = &mut hasher.finalize();
+
+            let message = Message::parse_slice(bytes).unwrap();
 
             let mut bytes = Vec::new();
-            bytes.extend_from_slice(&auth_tuple.r_signature.to_little_endian());
-            bytes.extend_from_slice(&auth_tuple.s_signature.to_little_endian());
+            bytes.extend_from_slice(&auth_tuple.r_signature.to_big_endian());
+            bytes.extend_from_slice(&auth_tuple.s_signature.to_big_endian());
 
-            // TODO: remove unwrap
-            let signature = Signature::parse_standard_slice(&bytes).unwrap();
+            // TODO: do not continue
+            let signature = Signature::parse_standard_slice(&bytes).map_err(|_| {
+                VMError::EIP7702Error(crate::errors::EIP7702Error::ErrorParsingSignature)
+            })?;
 
             // TODO: remove as conversion and unwrap
-            let recovery_id = RecoveryId::parse(auth_tuple.v.as_u32() as u8).unwrap();
+            let recovery_id = RecoveryId::parse(auth_tuple.v.as_u32() as u8).map_err(|_| {
+                VMError::EIP7702Error(crate::errors::EIP7702Error::ErrorParsingSignature)
+            })?;
 
-            // TODO: remove unwrap
-            let authority = libsecp256k1::recover(&message, &signature, &recovery_id).unwrap();
+            let authority =
+                libsecp256k1::recover(&message, &signature, &recovery_id).map_err(|_| {
+                    VMError::EIP7702Error(crate::errors::EIP7702Error::ErrorRecoveringSignature)
+                })?;
             dbg!("EIP-7702-3.1");
             let mut public_key = authority.serialize();
             keccak256(&mut public_key[1..]);
@@ -1330,21 +1349,18 @@ impl VM {
                 public_key.get(12..32).unwrap().try_into().unwrap();
             let authority_address = Address::from_slice(&authority_address_bytes);
 
-            dbg!("authority_address", authority_address);
-            assert_eq!(
-                authority_address,
-                Address::from_str("0xa94f5374fce5edbc8e2a8697c15331677e6ebf0b").unwrap()
-            );
+            dbg!(authority_address);
 
             // 4. Add authority to accessed_addresses (as defined in EIP-2929).
             self.accrued_substate
                 .touched_accounts
                 .insert(authority_address);
             dbg!("EIP-7702-4");
+
             // 5. Verify the code of authority is either empty or already delegated.
             // CHECK: what do we do with this check? do we continue if it was already delegated?
-
             // What happens if it's not cached?
+            let authority_account = get_account(&mut self.cache, &self.db, authority_address);
             let authority_account = get_account_mut(&mut self.cache, &authority_address).ok_or(
                 VMError::Internal(InternalError::AccountShouldHaveBeenCached),
             )?;
@@ -1388,7 +1404,6 @@ impl VM {
             } else {
                 // auth_tuple.address is Address::zero()
                 // Do not write Designation and Write account's bytecode to empty
-                todo!()
             }
 
             dbg!("EIP-7702-7");

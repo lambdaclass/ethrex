@@ -74,6 +74,8 @@ pub enum VMError {
     OutOfBounds,
     #[error("Precompile execution error: {0}")]
     PrecompileError(#[from] PrecompileError),
+    #[error("EIP7702 execution error: {0}")]
+    EIP7702Error(#[from] EIP7702Error),
 }
 
 impl VMError {
@@ -152,7 +154,7 @@ pub enum InternalError {
     ArithmeticOperationUnderflow,
     #[error("Arithmetic operation divided by zero")]
     ArithmeticOperationDividedByZero,
-    #[error("Accound should have been cached")]
+    #[error("Account should have been cached")]
     AccountShouldHaveBeenCached,
     #[error("Tried to convert one type to another")]
     ConversionError,
@@ -200,6 +202,22 @@ pub enum PrecompileError {
     EvaluationError,
     #[error("This is a default error")]
     DefaultError,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error, Serialize, Deserialize)]
+pub enum EIP7702Error {
+    #[error("ChainID is not 0 nor the blockchain's id")]
+    ChainIdError,
+    #[error("Invalid R signature")]
+    InvalidSignatureR,
+    #[error("Invalid S signature")]
+    InvalidSignatureS,
+    #[error("Invalid Y parity")]
+    InvalidYParity,
+    #[error("Internal Error while parsing signatures")]
+    ErrorParsingSignature,
+    #[error("Internal Error while recovering signatures")]
+    ErrorRecoveringSignature,
 }
 
 #[derive(Debug, Clone)]
