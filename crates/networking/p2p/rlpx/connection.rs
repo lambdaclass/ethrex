@@ -165,7 +165,15 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
                     )
                     .await;
             };
-            table.lock().await.set_channels(node_id, peer_channels);
+            let capabilities = self
+                .capabilities
+                .iter()
+                .map(|(cap, _)| cap.clone())
+                .collect();
+            table
+                .lock()
+                .await
+                .init_backend_communication(node_id, peer_channels, capabilities);
             if let Err(e) = self.handle_peer_conn(sender, receiver).await {
                 self.peer_conn_failed("Error during RLPx connection", e, table)
                     .await;
@@ -183,13 +191,13 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
             reason: self.match_disconnect_reason(&error),
         }))
         .await
-        .unwrap_or_else(|e| debug!("Could not send Disconnect message: ({e})"));
+        .unwrap_or_else(|e| error!("Could not send Disconnect message: ({e})."));
         if let Ok(node_id) = self.get_remote_node_id() {
             // Discard peer from kademlia table
-            debug!("{error_text}: ({error}), discarding peer {node_id}");
+            error!("{error_text}: ({error}), discarding peer {node_id}");
             table.lock().await.replace_peer(node_id);
         } else {
-            debug!("{error_text}: ({error}), unknown peer")
+            error!("{error_text}: ({error}), unknown peer")
         }
     }
 
@@ -232,24 +240,31 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
         self.send(hello_msg).await?;
 
         // Receive Hello message
-        if let Message::Hello(hello_message) = self.receive().await? {
-            self.capabilities = hello_message.capabilities;
+        match self.receive().await? {
+            Message::Hello(hello_message) => {
+                self.capabilities = hello_message.capabilities;
 
-            // Check if we have any capability in common
-            for cap in self.capabilities.clone() {
-                if SUPPORTED_CAPABILITIES.contains(&cap) {
-                    return Ok(());
+                // Check if we have any capability in common
+                for cap in self.capabilities.clone() {
+                    if SUPPORTED_CAPABILITIES.contains(&cap) {
+                        return Ok(());
+                    }
                 }
+                // Return error if not
+                Err(RLPxError::HandshakeError(
+                    "No matching capabilities".to_string(),
+                ))
             }
-            // Return error if not
-            Err(RLPxError::HandshakeError(
-                "No matching capabilities".to_string(),
-            ))
-        } else {
-            // Fail if it is not a hello message
-            Err(RLPxError::HandshakeError(
-                "Expected Hello message".to_string(),
-            ))
+            Message::Disconnect(disconnect) => Err(RLPxError::HandshakeError(format!(
+                "Peer disconnected due to: {}",
+                disconnect.reason()
+            ))),
+            _ => {
+                // Fail if it is not a hello message
+                Err(RLPxError::HandshakeError(
+                    "Expected Hello message".to_string(),
+                ))
+            }
         }
     }
 
@@ -343,7 +358,6 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
                 return Err(RLPxError::Disconnect());
             }
             Message::Ping(_) => {
-                debug!("Received Ping");
                 self.send(Message::Pong(PongMessage {})).await?;
                 debug!("Pong sent");
             }
@@ -351,7 +365,6 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
                 // We ignore received Pong messages
             }
             Message::Status(msg_data) if !peer_supports_eth => {
-                debug!("Received Status");
                 backend::validate_status(msg_data, &self.storage)?
             }
             Message::GetAccountRange(req) => {
@@ -475,7 +488,13 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
                     debug!("Received Status");
                     backend::validate_status(msg_data, &self.storage)?
                 }
-                _msg => {
+                Message::Disconnect(disconnect) => {
+                    return Err(RLPxError::HandshakeError(format!(
+                        "Peer disconnected due to: {}",
+                        disconnect.reason()
+                    )))
+                }
+                _ => {
                     return Err(RLPxError::HandshakeError(
                         "Expected a Status message".to_string(),
                     ))

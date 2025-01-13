@@ -80,6 +80,34 @@ pub const POINT_EVALUATION_ADDRESS: H160 = H160([
     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
     0x00, 0x00, 0x00, 0x0a,
 ]);
+pub const BLS12_G1ADD_ADDRESS: H160 = H160([
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x0b,
+]);
+pub const BLS12_G1MSM_ADDRESS: H160 = H160([
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x0c,
+]);
+pub const BLS12_G2ADD_ADDRESS: H160 = H160([
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x0d,
+]);
+pub const BLS12_G2MSM_ADDRESS: H160 = H160([
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x0e,
+]);
+pub const BLS12_PAIRING_CHECK_ADDRESS: H160 = H160([
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x0f,
+]);
+pub const BLS12_MAP_FP_TO_G1_ADDRESS: H160 = H160([
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x10,
+]);
+pub const BLS12_MAP_FP2_TO_G2_ADDRESS: H160 = H160([
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x11,
+]);
 
 pub const PRECOMPILES: [H160; 10] = [
     ECRECOVER_ADDRESS,
@@ -94,6 +122,16 @@ pub const PRECOMPILES: [H160; 10] = [
     POINT_EVALUATION_ADDRESS,
 ];
 
+pub const PRECOMPILES_POST_CANCUN: [H160; 7] = [
+    BLS12_G1ADD_ADDRESS,
+    BLS12_G1MSM_ADDRESS,
+    BLS12_G2ADD_ADDRESS,
+    BLS12_G2MSM_ADDRESS,
+    BLS12_PAIRING_CHECK_ADDRESS,
+    BLS12_MAP_FP_TO_G1_ADDRESS,
+    BLS12_MAP_FP2_TO_G2_ADDRESS,
+];
+
 pub const BLAKE2F_ELEMENT_SIZE: usize = 8;
 
 pub fn is_precompile(callee_address: &Address, spec_id: SpecId) -> bool {
@@ -101,11 +139,19 @@ pub fn is_precompile(callee_address: &Address, spec_id: SpecId) -> bool {
     if *callee_address == POINT_EVALUATION_ADDRESS && spec_id < SpecId::CANCUN {
         return false;
     }
+    // Prague or newers forks should only use this precompiles
+    // https://eips.ethereum.org/EIPS/eip-2537
+    if PRECOMPILES_POST_CANCUN.contains(callee_address) && spec_id < SpecId::PRAGUE {
+        return false;
+    }
 
     PRECOMPILES.contains(callee_address)
 }
 
-pub fn execute_precompile(current_call_frame: &mut CallFrame) -> Result<Bytes, VMError> {
+pub fn execute_precompile(
+    current_call_frame: &mut CallFrame,
+    spec_id: SpecId,
+) -> Result<Bytes, VMError> {
     let callee_address = current_call_frame.code_address;
     let calldata = current_call_frame.calldata.clone();
     let gas_for_call = current_call_frame
@@ -123,7 +169,9 @@ pub fn execute_precompile(current_call_frame: &mut CallFrame) -> Result<Bytes, V
         address if address == RIPEMD_160_ADDRESS => {
             ripemd_160(&calldata, gas_for_call, consumed_gas)?
         }
-        address if address == MODEXP_ADDRESS => modexp(&calldata, gas_for_call, consumed_gas)?,
+        address if address == MODEXP_ADDRESS => {
+            modexp(&calldata, gas_for_call, consumed_gas, spec_id)?
+        }
         address if address == ECADD_ADDRESS => ecadd(&calldata, gas_for_call, consumed_gas)?,
         address if address == ECMUL_ADDRESS => ecmul(&calldata, gas_for_call, consumed_gas)?,
         address if address == ECPAIRING_ADDRESS => {
@@ -132,6 +180,27 @@ pub fn execute_precompile(current_call_frame: &mut CallFrame) -> Result<Bytes, V
         address if address == BLAKE2F_ADDRESS => blake2f(&calldata, gas_for_call, consumed_gas)?,
         address if address == POINT_EVALUATION_ADDRESS => {
             point_evaluation(&calldata, gas_for_call, consumed_gas)?
+        }
+        address if address == BLS12_G1ADD_ADDRESS => {
+            bls12_g1add(&calldata, gas_for_call, consumed_gas)?
+        }
+        address if address == BLS12_G1MSM_ADDRESS => {
+            bls12_g1msm(&calldata, gas_for_call, consumed_gas)?
+        }
+        address if address == BLS12_G2ADD_ADDRESS => {
+            bls12_g2add(&calldata, gas_for_call, consumed_gas)?
+        }
+        address if address == BLS12_G2MSM_ADDRESS => {
+            bls12_g2msm(&calldata, gas_for_call, consumed_gas)?
+        }
+        address if address == BLS12_PAIRING_CHECK_ADDRESS => {
+            bls12_pairing_check(&calldata, gas_for_call, consumed_gas)?
+        }
+        address if address == BLS12_MAP_FP_TO_G1_ADDRESS => {
+            bls12_map_fp_to_g1(&calldata, gas_for_call, consumed_gas)?
+        }
+        address if address == BLS12_MAP_FP2_TO_G2_ADDRESS => {
+            bls12_map_fp2_tp_g2(&calldata, gas_for_call, consumed_gas)?
         }
         _ => return Err(VMError::Internal(InternalError::InvalidPrecompileAddress)),
     };
@@ -277,73 +346,87 @@ pub fn modexp(
     calldata: &Bytes,
     gas_for_call: u64,
     consumed_gas: &mut u64,
+    spec_id: SpecId,
 ) -> Result<Bytes, VMError> {
     // If calldata does not reach the required length, we should fill the rest with zeros
     let calldata = fill_with_zeros(calldata, 96)?;
 
-    let b_size = U256::from_big_endian(
+    let base_size = U256::from_big_endian(
         calldata
             .get(0..32)
             .ok_or(PrecompileError::ParsingInputError)?,
     );
 
-    let e_size = U256::from_big_endian(
+    let exponent_size = U256::from_big_endian(
         calldata
             .get(32..64)
             .ok_or(PrecompileError::ParsingInputError)?,
     );
 
-    let m_size = U256::from_big_endian(
+    let modulus_size = U256::from_big_endian(
         calldata
             .get(64..96)
             .ok_or(PrecompileError::ParsingInputError)?,
     );
 
-    if b_size == U256::zero() && m_size == U256::zero() {
-        increase_precompile_consumed_gas(gas_for_call, MODEXP_STATIC_COST, consumed_gas)?;
+    if base_size == U256::zero() && modulus_size == U256::zero() {
+        // On Berlin or newer there is a floor cost for the modexp precompile
+        // On older versions in this return there is no cost added, see more https://eips.ethereum.org/EIPS/eip-2565
+        if spec_id >= SpecId::BERLIN {
+            increase_precompile_consumed_gas(gas_for_call, MODEXP_STATIC_COST, consumed_gas)?;
+        }
         return Ok(Bytes::new());
     }
 
     // Because on some cases conversions to usize exploded before the check of the zero value could be done
-    let b_size = usize::try_from(b_size).map_err(|_| PrecompileError::ParsingInputError)?;
-    let e_size = usize::try_from(e_size).map_err(|_| PrecompileError::ParsingInputError)?;
-    let m_size = usize::try_from(m_size).map_err(|_| PrecompileError::ParsingInputError)?;
+    let base_size = usize::try_from(base_size).map_err(|_| PrecompileError::ParsingInputError)?;
+    let exponent_size =
+        usize::try_from(exponent_size).map_err(|_| PrecompileError::ParsingInputError)?;
+    let modulus_size =
+        usize::try_from(modulus_size).map_err(|_| PrecompileError::ParsingInputError)?;
 
-    let base_limit = b_size
+    let base_limit = base_size
         .checked_add(96)
         .ok_or(InternalError::ArithmeticOperationOverflow)?;
 
-    let exponent_limit = e_size
+    let exponent_limit = exponent_size
         .checked_add(base_limit)
         .ok_or(InternalError::ArithmeticOperationOverflow)?;
 
-    let modulus_limit = m_size
+    let modulus_limit = modulus_size
         .checked_add(exponent_limit)
         .ok_or(InternalError::ArithmeticOperationOverflow)?;
 
-    let b = get_slice_or_default(&calldata, 96, base_limit, b_size)?;
+    let b = get_slice_or_default(&calldata, 96, base_limit, base_size)?;
     let base = BigUint::from_bytes_be(&b);
 
-    let e = get_slice_or_default(&calldata, base_limit, exponent_limit, e_size)?;
+    let e = get_slice_or_default(&calldata, base_limit, exponent_limit, exponent_size)?;
     let exponent = BigUint::from_bytes_be(&e);
 
-    let m = get_slice_or_default(&calldata, exponent_limit, modulus_limit, m_size)?;
+    let m = get_slice_or_default(&calldata, exponent_limit, modulus_limit, modulus_size)?;
     let modulus = BigUint::from_bytes_be(&m);
 
     // First 32 bytes of exponent or exponent if e_size < 32
-    let bytes_to_take = 32.min(e_size);
+    let bytes_to_take = 32.min(exponent_size);
     // Use of unwrap_or_default because if e == 0 get_slice_or_default returns an empty vec
     let exp_first_32 = BigUint::from_bytes_be(e.get(0..bytes_to_take).unwrap_or_default());
 
-    let gas_cost = gas_cost::modexp(&exp_first_32, b_size, e_size, m_size)?;
+    let gas_cost = gas_cost::modexp(
+        &exp_first_32,
+        base_size,
+        exponent_size,
+        modulus_size,
+        spec_id,
+    )?;
+
     increase_precompile_consumed_gas(gas_for_call, gas_cost, consumed_gas)?;
 
     let result = mod_exp(base, exponent, modulus);
 
     let res_bytes = result.to_bytes_be();
-    let res_bytes = increase_left_pad(&Bytes::from(res_bytes), m_size)?;
+    let res_bytes = increase_left_pad(&Bytes::from(res_bytes), modulus_size)?;
 
-    Ok(res_bytes.slice(..m_size))
+    Ok(res_bytes.slice(..modulus_size))
 }
 
 /// This function returns the slice between the lower and upper limit of the calldata (as a vector),
@@ -1062,4 +1145,60 @@ fn point_evaluation(
     let output = POINT_EVALUATION_OUTPUT_BYTES.to_vec();
 
     Ok(Bytes::from(output))
+}
+
+pub fn bls12_g1add(
+    _calldata: &Bytes,
+    _gas_for_call: u64,
+    _consumed_gas: &mut u64,
+) -> Result<Bytes, VMError> {
+    Ok(Bytes::new())
+}
+
+pub fn bls12_g1msm(
+    _calldata: &Bytes,
+    _gas_for_call: u64,
+    _consumed_gas: &mut u64,
+) -> Result<Bytes, VMError> {
+    Ok(Bytes::new())
+}
+
+pub fn bls12_g2add(
+    _calldata: &Bytes,
+    _gas_for_call: u64,
+    _consumed_gas: &mut u64,
+) -> Result<Bytes, VMError> {
+    Ok(Bytes::new())
+}
+
+pub fn bls12_g2msm(
+    _calldata: &Bytes,
+    _gas_for_call: u64,
+    _consumed_gas: &mut u64,
+) -> Result<Bytes, VMError> {
+    Ok(Bytes::new())
+}
+
+pub fn bls12_pairing_check(
+    _calldata: &Bytes,
+    _gas_for_call: u64,
+    _consumed_gas: &mut u64,
+) -> Result<Bytes, VMError> {
+    Ok(Bytes::new())
+}
+
+pub fn bls12_map_fp_to_g1(
+    _calldata: &Bytes,
+    _gas_for_call: u64,
+    _consumed_gas: &mut u64,
+) -> Result<Bytes, VMError> {
+    Ok(Bytes::new())
+}
+
+pub fn bls12_map_fp2_tp_g2(
+    _calldata: &Bytes,
+    _gas_for_call: u64,
+    _consumed_gas: &mut u64,
+) -> Result<Bytes, VMError> {
+    Ok(Bytes::new())
 }

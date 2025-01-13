@@ -1168,6 +1168,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "bls12_381"
+version = "0.8.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d7bc6d6292be3a19e6379786dac800f551e5865a5bb51ebbe3064ab80433f403"
+dependencies = [
+ "ff 0.13.0",
+ "group 0.13.0",
+ "pairing 0.23.0",
+ "rand_core 0.6.4",
+ "subtle",
+]
+
+[[package]]
 name = "blst"
 version = "0.3.13"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2280,7 +2293,7 @@ dependencies = [
  "serde",
  "serde_json",
  "spinoff",
- "thiserror 2.0.3",
+ "thiserror 2.0.9",
 ]
 
 [[package]]
@@ -2761,6 +2774,7 @@ dependencies = [
  "ethrex-vm",
  "hex",
  "k256",
+ "lazy_static",
  "libmdbx",
  "local-ip-address",
  "rand 0.8.5",
@@ -2787,7 +2801,7 @@ dependencies = [
  "k256",
  "serde_json",
  "sha3",
- "thiserror 1.0.69",
+ "thiserror 2.0.9",
  "tracing",
 ]
 
@@ -2811,7 +2825,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha3",
- "thiserror 1.0.69",
+ "thiserror 2.0.9",
  "tinyvec",
 ]
 
@@ -2830,7 +2844,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2 0.10.8",
- "thiserror 1.0.69",
+ "thiserror 2.0.9",
  "tokio",
  "tracing",
 ]
@@ -2862,7 +2876,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sp1-sdk",
- "thiserror 1.0.69",
+ "thiserror 2.0.9",
  "tokio",
  "tokio-util",
  "tracing",
@@ -2873,6 +2887,7 @@ dependencies = [
 name = "ethrex-levm"
 version = "0.1.0"
 dependencies = [
+ "bls12_381 0.8.0",
  "bytes",
  "colored",
  "datatest-stable",
@@ -2892,7 +2907,7 @@ dependencies = [
  "sha2 0.10.8",
  "sha3",
  "spinoff",
- "thiserror 2.0.3",
+ "thiserror 2.0.9",
  "walkdir",
 ]
 
@@ -2905,7 +2920,7 @@ dependencies = [
  "prometheus",
  "serde",
  "serde_json",
- "thiserror 1.0.69",
+ "thiserror 2.0.9",
  "tokio",
  "tracing",
 ]
@@ -2929,10 +2944,11 @@ dependencies = [
  "k256",
  "lazy_static",
  "rand 0.8.5",
+ "serde",
  "serde_json",
  "sha3",
  "snap",
- "thiserror 1.0.69",
+ "thiserror 2.0.9",
  "tokio",
  "tokio-stream",
  "tokio-util",
@@ -2956,7 +2972,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sp1-sdk",
- "thiserror 1.0.69",
+ "thiserror 2.0.9",
  "tokio",
  "tokio-util",
  "tracing",
@@ -2974,7 +2990,7 @@ dependencies = [
  "hex-literal",
  "lazy_static",
  "snap",
- "thiserror 1.0.69",
+ "thiserror 2.0.9",
  "tinyvec",
 ]
 
@@ -3021,7 +3037,7 @@ dependencies = [
  "secp256k1",
  "serde",
  "serde_json",
- "thiserror 1.0.69",
+ "thiserror 2.0.9",
  "tokio",
  "tracing",
 ]
@@ -3043,7 +3059,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha3",
- "thiserror 1.0.69",
+ "thiserror 2.0.9",
  "tracing",
 ]
 
@@ -3069,7 +3085,7 @@ dependencies = [
  "sha3",
  "smallvec",
  "tempdir",
- "thiserror 1.0.69",
+ "thiserror 2.0.9",
  "tracing",
 ]
 
@@ -3092,7 +3108,7 @@ dependencies = [
  "revm-inspectors",
  "revm-primitives 10.0.0",
  "serde",
- "thiserror 1.0.69",
+ "thiserror 2.0.9",
  "tracing",
 ]
 
@@ -3111,7 +3127,7 @@ dependencies = [
  "lazy_static",
  "secp256k1",
  "spinoff",
- "thiserror 1.0.69",
+ "thiserror 2.0.9",
  "tokio",
  "tracing",
 ]
@@ -4494,7 +4510,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a575df5f985fe1cd5b2b05664ff6accfc46559032b954529fd225a2168d27b0f"
 dependencies = [
  "bitvec",
- "bls12_381",
+ "bls12_381 0.7.1",
  "ff 0.12.1",
  "group 0.12.1",
  "rand_core 0.6.4",
@@ -6207,7 +6223,7 @@ dependencies = [
  "rustc-hash 2.0.0",
  "rustls",
  "socket2",
- "thiserror 2.0.3",
+ "thiserror 2.0.9",
  "tokio",
  "tracing",
 ]
@@ -6226,7 +6242,7 @@ dependencies = [
  "rustls",
  "rustls-pki-types",
  "slab",
- "thiserror 2.0.3",
+ "thiserror 2.0.9",
  "tinyvec",
  "tracing",
  "web-time",
@@ -8550,11 +8566,11 @@ dependencies = [
 
 [[package]]
 name = "thiserror"
-version = "2.0.3"
+version = "2.0.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c006c85c7651b3cf2ada4584faa36773bd07bac24acfb39f3c431b36d7e667aa"
+checksum = "f072643fd0190df67a8bab670c20ef5d8737177d6ac6b2e9a236cb096206b2cc"
 dependencies = [
- "thiserror-impl 2.0.3",
+ "thiserror-impl 2.0.9",
 ]
 
 [[package]]
@@ -8570,9 +8586,9 @@ dependencies = [
 
 [[package]]
 name = "thiserror-impl"
-version = "2.0.3"
+version = "2.0.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f077553d607adc1caf65430528a576c757a71ed73944b66ebb58ef2bbd243568"
+checksum = "7b50fa271071aae2e6ee85f842e2e28ba8cd2c5fb67f11fcb1fd70b276f9e7d4"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -9822,7 +9838,7 @@ dependencies = [
  "flate2",
  "indexmap 2.6.0",
  "memchr",
- "thiserror 2.0.3",
+ "thiserror 2.0.9",
  "zopfli",
 ]
 
@@ -9836,7 +9852,7 @@ dependencies = [
  "ark-std 0.4.0",
  "bitvec",
  "blake2",
- "bls12_381",
+ "bls12_381 0.7.1",
  "byteorder",
  "cfg-if",
  "group 0.12.1",
@@ -9866,7 +9882,7 @@ dependencies = [
  "serde",
  "serde_with",
  "sp1-build",
- "thiserror 1.0.69",
+ "thiserror 2.0.9",
 ]
 
 [[package]]

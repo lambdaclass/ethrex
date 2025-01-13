@@ -19,6 +19,7 @@ hex.workspace = true
 thiserror.workspace = true
 lazy_static.workspace = true
 snap.workspace = true
+serde.workspace = true
 
 tokio-util = "0.7.13"
 tokio-stream = "0.1.17"
