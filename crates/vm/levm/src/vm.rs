@@ -27,7 +27,7 @@ use k256::{
     elliptic_curve::{bigint::Encoding, Curve},
     Secp256k1,
 };
-use keccak_hash::keccak;
+use keccak_hash::{keccak, keccak256};
 use libsecp256k1::{Message, RecoveryId, Signature};
 use revm_primitives::SpecId;
 use sha3::{Digest, Keccak256};
@@ -890,7 +890,7 @@ impl VM {
                 ));
             }
 
-            self.eip7702_set_access_code(initial_call_frame.calldata.clone())?;
+            self.eip7702_set_access_code(initial_call_frame.code_address)?;
         }
 
         if self.is_create() {
@@ -1265,16 +1265,7 @@ impl VM {
         Ok(report)
     }
 
-    pub fn eip7702_set_access_code(&mut self, calldata: Bytes) -> Result<(), VMError> {
-        // Set code for the origin_address
-        let origin_address = self.env.origin;
-        let origin_account = get_account_mut(&mut self.cache, &origin_address);
-        if let Some(account) = origin_account {
-            account.info.bytecode = calldata;
-        } else {
-            return Err(VMError::Internal(InternalError::AccountNotFound));
-        }
-
+    pub fn eip7702_set_access_code(&mut self, code_address: Address) -> Result<(), VMError> {
         // Steps from the EIP7702:
         // IMPORTANT:
         // If any of the below steps fail, immediately stop processing that tuple and continue to the next tuple in the list. It will in the case of multiple tuples for the same authority, set the code using the address in the last valid occurrence.
@@ -1310,7 +1301,8 @@ impl VM {
             bytes.push(MAGIC);
             bytes.extend_from_slice(&rlp_buf);
             // TODO: remove unwrap
-            let message = Message::parse_slice(keccak(bytes).as_bytes()).unwrap();
+            keccak256(&mut bytes);
+            let message = Message::parse_slice(&bytes).unwrap();
 
             let mut bytes = Vec::new();
 
@@ -1326,10 +1318,11 @@ impl VM {
             // TODO: remove unwrap
             let authority = libsecp256k1::recover(&message, &signature, &recovery_id).unwrap();
 
-            let hash = keccak(&authority.serialize()[1..]);
+            let mut public_key = authority.serialize();
+            keccak256(&mut public_key[1..]);
             // Get the last 20 bytes of the hash
             let authority_address_bytes: [u8; 20] =
-                hash.as_ref().get(12..32).unwrap().try_into().unwrap();
+                public_key.get(12..32).unwrap().try_into().unwrap();
             let authority_address = Address::from_slice(&authority_address_bytes);
 
             // 4. Add authority to accessed_addresses (as defined in EIP-2929.
@@ -1381,12 +1374,7 @@ impl VM {
             } else {
                 // auth_tuple.address is Address::zero()
                 // Do not write Designation and Write account's bytecode to empty
-                let origin_account = get_account_mut(&mut self.cache, &origin_address);
-                if let Some(account) = origin_account {
-                    account.info.bytecode = Bytes::new()
-                } else {
-                    return Err(VMError::Internal(InternalError::AccountNotFound));
-                }
+                todo!()
             }
 
             // 9. Increase the nonce of authority by one.

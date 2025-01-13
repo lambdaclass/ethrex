@@ -19,8 +19,9 @@ use revm::{
     db::State,
     inspectors::TracerEip3155 as RevmTracerEip3155,
     primitives::{
-        AccessListItem, BlobExcessGasAndPrice, BlockEnv as RevmBlockEnv, EVMError as REVMError,
-        ExecutionResult as RevmExecutionResult, TxEnv as RevmTxEnv, TxKind as RevmTxKind, B256,
+        AccessListItem, Authorization, BlobExcessGasAndPrice, BlockEnv as RevmBlockEnv,
+        EVMError as REVMError, ExecutionResult as RevmExecutionResult, SignedAuthorization,
+        TxEnv as RevmTxEnv, TxKind as RevmTxKind, B256,
     },
     Evm as Revm,
 };
@@ -113,7 +114,7 @@ pub fn prepare_revm_for_tx<'state>(
         blob_excess_gas_and_price: test
             .env
             .current_excess_blob_gas
-            .map(|gas| BlobExcessGasAndPrice::new(gas.as_u64())),
+            .map(|gas| BlobExcessGasAndPrice::new(gas.as_u64(), true)),
     };
     let tx = &test
         .transactions
@@ -135,6 +136,27 @@ pub fn prepare_revm_for_tx<'state>(
                 .collect(),
         })
         .collect();
+
+    let revm_authorization_list: Vec<SignedAuthorization> = tx
+        .authorization_list
+        .clone()
+        .unwrap_or_default()
+        .iter()
+        .map(|auth_t| {
+            SignedAuthorization::new_unchecked(
+                Authorization {
+                    chain_id: RevmU256::from_le_bytes(auth_t.chain_id.to_little_endian()),
+                    address: RevmAddress(auth_t.address.0.into()),
+                    nonce: auth_t.nonce,
+                },
+                auth_t.v.as_u32() as u8,
+                RevmU256::from_le_bytes(auth_t.r.to_little_endian()),
+                RevmU256::from_le_bytes(auth_t.s.to_little_endian()),
+            )
+        })
+        .collect();
+
+    let authorization_list = Some(revm_authorization_list.into());
 
     let tx_env = RevmTxEnv {
         caller: tx.sender.0.into(),
@@ -160,7 +182,7 @@ pub fn prepare_revm_for_tx<'state>(
         max_fee_per_blob_gas: tx
             .max_fee_per_blob_gas
             .map(|fee| RevmU256::from_limbs(fee.0)),
-        authorization_list: None,
+        authorization_list,
     };
 
     let evm_builder = Revm::builder()

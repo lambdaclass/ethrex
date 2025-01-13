@@ -313,7 +313,7 @@ pub fn execute_tx(
     state: &mut EvmState,
     spec_id: SpecId,
 ) -> Result<ExecutionResult, EvmError> {
-    let block_env = block_env(header);
+    let block_env = block_env(header, is_prague(spec_id));
     let tx_env = tx_env(tx);
     run_evm(tx_env, block_env, state, spec_id)
 }
@@ -325,7 +325,7 @@ pub fn simulate_tx_from_generic(
     state: &mut EvmState,
     spec_id: SpecId,
 ) -> Result<ExecutionResult, EvmError> {
-    let block_env = block_env(header);
+    let block_env = block_env(header, is_prague(spec_id));
     let tx_env = tx_env_from_generic(tx, header.base_fee_per_gas.unwrap_or(INITIAL_BASE_FEE));
     run_without_commit(tx_env, block_env, state, spec_id)
 }
@@ -403,7 +403,7 @@ pub fn create_access_list(
     spec_id: SpecId,
 ) -> Result<(ExecutionResult, AccessList), EvmError> {
     let mut tx_env = tx_env_from_generic(tx, header.base_fee_per_gas.unwrap_or(INITIAL_BASE_FEE));
-    let block_env = block_env(header);
+    let block_env = block_env(header, is_prague(spec_id));
     // Run tx with access list inspector
 
     let (execution_result, access_list) =
@@ -712,7 +712,7 @@ pub fn beacon_root_contract_call(
         data: revm::primitives::Bytes::copy_from_slice(beacon_root.as_bytes()),
         ..Default::default()
     };
-    let mut block_env = block_env(header);
+    let mut block_env = block_env(header, is_prague(spec_id));
     block_env.basefee = RevmU256::ZERO;
     block_env.gas_limit = RevmU256::from(30_000_000);
 
@@ -749,7 +749,7 @@ pub fn beacon_root_contract_call(
     }
 }
 
-pub fn block_env(header: &BlockHeader) -> BlockEnv {
+pub fn block_env(header: &BlockHeader, is_prague: bool) -> BlockEnv {
     BlockEnv {
         number: RevmU256::from(header.number),
         coinbase: RevmAddress(header.coinbase.0.into()),
@@ -760,6 +760,7 @@ pub fn block_env(header: &BlockHeader) -> BlockEnv {
         prevrandao: Some(header.prev_randao.as_fixed_bytes().into()),
         blob_excess_gas_and_price: Some(BlobExcessGasAndPrice::new(
             header.excess_blob_gas.unwrap_or_default(),
+            is_prague,
         )),
     }
 }
@@ -936,4 +937,8 @@ fn calculate_gas_price(tx: &GenericTransaction, basefee: u64) -> Uint<256, 4> {
             tx.max_fee_per_gas.unwrap_or(0),
         ))
     }
+}
+
+pub fn is_prague(spec_id: SpecId) -> bool {
+    spec_id >= SpecId::PRAGUE
 }
