@@ -4,7 +4,7 @@ use crate::{
     constants::*,
     db::{
         cache::{self, get_account_mut, remove_account},
-        CacheDB, Database,
+        CacheDB, Database, Db,
     },
     environment::Environment,
     errors::{
@@ -36,6 +36,7 @@ use std::{
     sync::Arc,
 };
 pub type Storage = HashMap<U256, H256>;
+use std::str::FromStr;
 
 #[derive(Debug, Clone, Default)]
 // TODO: https://github.com/lambdaclass/ethrex/issues/604
@@ -1271,28 +1272,32 @@ impl VM {
         // If any of the below steps fail, immediately stop processing that tuple and continue to the next tuple in the list. It will in the case of multiple tuples for the same authority, set the code using the address in the last valid occurrence.
         // If transaction execution results in failure (any exceptional condition or code reverting), setting delegation designations is not rolled back.
 
+        dbg!("authorization_list:", &self.authorization_list);
         // TODO: avoid clone()
         for auth_tuple in self.authorization_list.clone().unwrap_or_default() {
             let chain_id_not_equals_this_chain_id = auth_tuple.chain_id != self.env.chain_id;
             let chain_id_not_zero = !auth_tuple.chain_id.is_zero();
 
             // 1. Verify the chain id is either 0 or the chain’s current ID.
-            if chain_id_not_zero || chain_id_not_equals_this_chain_id {
+            if chain_id_not_zero && chain_id_not_equals_this_chain_id {
                 continue;
             }
 
+            dbg!("EIP-7702-1");
             // 2. Verify the nonce is less than 2**64 - 1.
-            if auth_tuple.nonce < u64::MAX {
+            if !(auth_tuple.nonce < u64::MAX) {
                 continue;
             }
+            dbg!("EIP-7702-2");
 
             // 3. authority = ecrecover(keccak(MAGIC || rlp([chain_id, address, nonce])), y_parity, r, s]
             //      s value must be less than or equal to secp256k1n/2, as specified in EIP-2.
             let order_bytes = Secp256k1::ORDER.to_be_bytes();
             let n = U256::from_big_endian(&order_bytes);
-            if auth_tuple.s_signature <= n / 2 {
+            if !(auth_tuple.s_signature <= n / 2) {
                 continue;
             }
+            dbg!("EIP-7702-3");
 
             let mut bytes = Vec::new();
             let mut rlp_buf = Vec::new();
@@ -1302,10 +1307,10 @@ impl VM {
             bytes.extend_from_slice(&rlp_buf);
             // TODO: remove unwrap
             keccak256(&mut bytes);
-            let message = Message::parse_slice(&bytes).unwrap();
+            dbg!(bytes.get(..32));
+            let message = Message::parse_slice(bytes.get(..32).unwrap()).unwrap();
 
             let mut bytes = Vec::new();
-
             bytes.extend_from_slice(&auth_tuple.r_signature.to_little_endian());
             bytes.extend_from_slice(&auth_tuple.s_signature.to_little_endian());
 
@@ -1317,7 +1322,7 @@ impl VM {
 
             // TODO: remove unwrap
             let authority = libsecp256k1::recover(&message, &signature, &recovery_id).unwrap();
-
+            dbg!("EIP-7702-3.1");
             let mut public_key = authority.serialize();
             keccak256(&mut public_key[1..]);
             // Get the last 20 bytes of the hash
@@ -1325,11 +1330,17 @@ impl VM {
                 public_key.get(12..32).unwrap().try_into().unwrap();
             let authority_address = Address::from_slice(&authority_address_bytes);
 
-            // 4. Add authority to accessed_addresses (as defined in EIP-2929.
+            dbg!("authority_address", authority_address);
+            assert_eq!(
+                authority_address,
+                Address::from_str("0xa94f5374fce5edbc8e2a8697c15331677e6ebf0b").unwrap()
+            );
+
+            // 4. Add authority to accessed_addresses (as defined in EIP-2929).
             self.accrued_substate
                 .touched_accounts
                 .insert(authority_address);
-
+            dbg!("EIP-7702-4");
             // 5. Verify the code of authority is either empty or already delegated.
             // CHECK: what do we do with this check? do we continue if it was already delegated?
 
@@ -1341,6 +1352,7 @@ impl VM {
             if was_delegated(&authority_account.info)? {
                 continue;
             }
+            dbg!("EIP-7702-5");
 
             // 6. Verify the nonce of authority is equal to nonce. In case authority does not exist in the trie, verify that nonce is equal to 0.
             // If it doesn't has nonce, it means it's zero,
@@ -1350,6 +1362,7 @@ impl VM {
                     continue;
                 }
             }
+            dbg!("EIP-7702-6");
 
             // If account is not empty exist -> exists
             // 7. Add PER_EMPTY_ACCOUNT_COST - PER_AUTH_BASE_COST gas to the global refund counter if authority exists in the trie.
@@ -1360,6 +1373,7 @@ impl VM {
                     .map_err(|_| VMError::Internal(InternalError::ConversionError))?;
                 self.env.refunded_gas += refunded_gas_if_exists;
             }
+            dbg!("EIP-7702-7");
 
             // 8. Set the code of authority to be 0xef0100 || address. This is a delegation designation.
             let mut delegation_bytes = Vec::new();
@@ -1377,10 +1391,15 @@ impl VM {
                 todo!()
             }
 
+            dbg!("EIP-7702-7");
+
             // 9. Increase the nonce of authority by one.
             self.increment_account_nonce(authority_address)
                 .map_err(|_| VMError::TxValidation(TxValidationError::NonceIsMax))?;
+            dbg!("EIP-7702-9");
         }
+        dbg!("EIP-7702-DONE");
+
         Ok(())
     }
 }
