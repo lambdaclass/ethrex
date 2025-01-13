@@ -39,19 +39,8 @@ pub fn add_block(block: &Block, storage: &Store) -> Result<(), ChainError> {
 
     // Validate the block pre-execution
     validate_block(block, &parent_header, &state)?;
-    let (receipts, account_updates): (Vec<Receipt>, Vec<AccountUpdate>) = {
-        // TODO: Consider refactoring both implementations so that they have the same signature
-        #[cfg(feature = "levm")]
-        {
-            execute_block(block, &mut state)?
-        }
-        #[cfg(not(feature = "levm"))]
-        {
-            let receipts = execute_block(block, &mut state)?;
-            let account_updates = ethrex_vm::get_state_transitions(&mut state);
-            (receipts, account_updates)
-        }
-    };
+    let (receipts, account_updates): (Vec<Receipt>, Vec<AccountUpdate>) =
+        execute_block(block, &mut state)?;
 
     validate_gas_used(&receipts, &block.header)?;
 

@@ -38,6 +38,7 @@ pub use execution_result::*;
 pub use revm::primitives::{Address as RevmAddress, SpecId, U256 as RevmU256};
 
 type AccessList = Vec<(Address, Vec<H256>)>;
+pub type BlockExecutionOutput = (Vec<Receipt>, Vec<AccountUpdate>);
 
 pub const WITHDRAWAL_MAGIC_DATA: &[u8] = b"burn";
 pub const DEPOSIT_MAGIC_DATA: &[u8] = b"mint";
@@ -149,7 +150,7 @@ cfg_if::cfg_if! {
         pub fn execute_block(
             block: &Block,
             state: &mut EvmState,
-        ) -> Result<(Vec<Receipt>, Vec<AccountUpdate>), EvmError> {
+        ) -> Result<BlockExecutionOutput, EvmError> {
             let block_header = &block.header;
             let spec_id = spec_id(&state.chain_config()?, block_header.timestamp);
             //eip 4788: execute beacon_root_contract_call before block transactions
@@ -267,7 +268,7 @@ cfg_if::cfg_if! {
         }
     } else if #[cfg(not(feature = "levm"))] {
         /// Executes all transactions in a block and returns their receipts.
-        pub fn execute_block(block: &Block, state: &mut EvmState) -> Result<Vec<Receipt>, EvmError> {
+        pub fn execute_block(block: &Block, state: &mut EvmState) -> Result<BlockExecutionOutput, EvmError> {
             let block_header = &block.header;
             let spec_id = spec_id(&state.chain_config()?, block_header.timestamp);
             //eip 4788: execute beacon_root_contract_call before block transactions
@@ -298,7 +299,9 @@ cfg_if::cfg_if! {
                 process_withdrawals(state, withdrawals)?;
             }
 
-            Ok(receipts)
+            let account_updates = get_state_transitions(&mut state);
+
+            Ok((receipts, account_updates))
         }
     }
 }
