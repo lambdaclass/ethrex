@@ -67,7 +67,7 @@ impl NewFilterRequest {
 
     pub fn handle(
         &self,
-        storage: ethrex_storage::Store,
+        storage: &ethrex_storage::Store,
         filters: ActiveFilters,
     ) -> Result<serde_json::Value, crate::utils::RpcErr> {
         let from = self
@@ -110,7 +110,7 @@ impl NewFilterRequest {
 
     pub fn stateful_call(
         req: &RpcRequest,
-        storage: Store,
+        storage: &Store,
         state: ActiveFilters,
     ) -> Result<Value, RpcErr> {
         let request = Self::parse(&req.params)?;
@@ -138,7 +138,7 @@ impl DeleteFilterRequest {
 
     pub fn handle(
         &self,
-        _storage: ethrex_storage::Store,
+        _storage: &ethrex_storage::Store,
         filters: ActiveFilters,
     ) -> Result<serde_json::Value, crate::utils::RpcErr> {
         let mut active_filters_guard = filters.lock().unwrap_or_else(|mut poisoned_guard| {
@@ -155,7 +155,7 @@ impl DeleteFilterRequest {
 
     pub fn stateful_call(
         req: &RpcRequest,
-        storage: ethrex_storage::Store,
+        storage: &ethrex_storage::Store,
         filters: ActiveFilters,
     ) -> Result<serde_json::Value, crate::utils::RpcErr> {
         let request = Self::parse(&req.params)?;
@@ -182,7 +182,7 @@ impl FilterChangesRequest {
     }
     pub fn handle(
         &self,
-        storage: ethrex_storage::Store,
+        storage: &ethrex_storage::Store,
         filters: ActiveFilters,
     ) -> Result<serde_json::Value, crate::utils::RpcErr> {
         let latest_block_num = storage.get_latest_block_number()?;
@@ -236,7 +236,7 @@ impl FilterChangesRequest {
     }
     pub fn stateful_call(
         req: &RpcRequest,
-        storage: ethrex_storage::Store,
+        storage: &ethrex_storage::Store,
         filters: ActiveFilters,
     ) -> Result<serde_json::Value, crate::utils::RpcErr> {
         let request = Self::parse(&req.params)?;
@@ -246,6 +246,8 @@ impl FilterChangesRequest {
 
 #[cfg(test)]
 mod tests {
+    use ethrex_blockchain::BlockChain;
+    use ethrex_vm::EVM;
     use std::{
         collections::HashMap,
         sync::{Arc, Mutex},
@@ -433,8 +435,11 @@ mod tests {
         filters_pointer: ActiveFilters,
     ) -> u64 {
         let context = RpcApiContext {
-            storage: Store::new("in-mem", EngineType::InMemory)
-                .expect("Fatal: could not create in memory test db"),
+            chain: BlockChain::new(
+                Store::new("in-mem", EngineType::InMemory)
+                    .expect("Fatal: could not create in memory test db"),
+                EVM::REVM,
+            ),
             jwt_secret: Default::default(),
             local_p2p_node: example_p2p_node(),
             active_filters: filters_pointer.clone(),
@@ -445,7 +450,8 @@ mod tests {
             serde_json::from_str(TEST_GENESIS).expect("Fatal: non-valid genesis test config");
 
         context
-            .storage
+            .chain
+            .store()
             .add_initial_state(genesis_config)
             .expect("Fatal: could not add test genesis in test");
         let response = map_http_requests(&request, context).unwrap().to_string();
@@ -487,7 +493,10 @@ mod tests {
         );
         let active_filters = Arc::new(Mutex::new(HashMap::from([filter])));
         let context = RpcApiContext {
-            storage: Store::new("in-mem", EngineType::InMemory).unwrap(),
+            chain: BlockChain::new(
+                Store::new("in-mem", EngineType::InMemory).unwrap(),
+                EVM::REVM,
+            ),
             local_p2p_node: example_p2p_node(),
             jwt_secret: Default::default(),
             active_filters: active_filters.clone(),
@@ -507,7 +516,10 @@ mod tests {
         let active_filters = Arc::new(Mutex::new(HashMap::new()));
 
         let context = RpcApiContext {
-            storage: Store::new("in-mem", EngineType::InMemory).unwrap(),
+            chain: BlockChain::new(
+                Store::new("in-mem", EngineType::InMemory).unwrap(),
+                EVM::REVM,
+            ),
             local_p2p_node: example_p2p_node(),
             active_filters: active_filters.clone(),
             jwt_secret: Default::default(),

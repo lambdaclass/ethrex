@@ -15,8 +15,8 @@ use ethrex_core::{
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_storage::{error::StoreError, Store};
 use ethrex_vm::{
-    beacon_root_contract_call, evm_state, execute_tx, get_state_transitions, process_withdrawals,
-    spec_id, EvmError, EvmState, SpecId,
+    revm::{self, RevmSpecId},
+    EvmError, EvmState,
 };
 use sha3::{Digest, Keccak256};
 
@@ -32,6 +32,7 @@ use crate::{
     },
     error::{ChainError, InvalidBlockError},
     mempool::{self, PendingTxFilter},
+    BlockChain,
 };
 
 use tracing::debug;
@@ -210,7 +211,7 @@ pub fn build_payload(
     store: &Store,
 ) -> Result<(BlobsBundle, U256), ChainError> {
     debug!("Building payload");
-    let mut evm_state = evm_state(store.clone(), payload.header.parent_hash);
+    let mut evm_state = revm::evm_state(store.clone(), payload.header.parent_hash);
     let mut context = PayloadBuildContext::new(payload, &mut evm_state);
     apply_withdrawals(&mut context)?;
     fill_transactions(&mut context)?;
@@ -220,12 +221,12 @@ pub fn build_payload(
 
 pub fn apply_withdrawals(context: &mut PayloadBuildContext) -> Result<(), EvmError> {
     // Apply withdrawals & call beacon root contract, and obtain the new state root
-    let spec_id = spec_id(&context.chain_config()?, context.payload.header.timestamp);
-    if context.payload.header.parent_beacon_block_root.is_some() && spec_id == SpecId::CANCUN {
-        beacon_root_contract_call(context.evm_state, &context.payload.header, spec_id)?;
+    let spec_id = revm::spec_id(&context.chain_config()?, context.payload.header.timestamp);
+    if context.payload.header.parent_beacon_block_root.is_some() && spec_id == RevmSpecId::CANCUN {
+        revm::beacon_root_contract_call(context.evm_state, &context.payload.header, spec_id)?;
     }
     let withdrawals = context.payload.body.withdrawals.clone().unwrap_or_default();
-    process_withdrawals(context.evm_state, &withdrawals)?;
+    revm::process_withdrawals(context.evm_state, &withdrawals)?;
     Ok(())
 }
 
@@ -422,11 +423,11 @@ fn apply_plain_transaction(
     head: &HeadTransaction,
     context: &mut PayloadBuildContext,
 ) -> Result<Receipt, ChainError> {
-    let result = execute_tx(
+    let result = revm::execute_tx(
         &head.tx,
         &context.payload.header,
         context.evm_state,
-        spec_id(
+        revm::spec_id(
             &context.chain_config().map_err(ChainError::from)?,
             context.payload.header.timestamp,
         ),
@@ -443,7 +444,7 @@ fn apply_plain_transaction(
 }
 
 fn finalize_payload(context: &mut PayloadBuildContext) -> Result<(), StoreError> {
-    let account_updates = get_state_transitions(context.evm_state);
+    let account_updates = revm::get_state_transitions(context.evm_state);
     // Note: This is commented because it is still being used in development.
     // dbg!(&account_updates);
     context.payload.header.state_root = context

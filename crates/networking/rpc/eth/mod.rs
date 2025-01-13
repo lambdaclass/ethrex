@@ -13,6 +13,7 @@ pub(crate) mod max_priority_fee;
 #[cfg(test)]
 pub mod test_utils {
     use bytes::Bytes;
+    use ethrex_blockchain::BlockChain;
     use ethrex_core::{
         types::{
             Block, BlockBody, BlockHeader, EIP1559Transaction, Genesis, LegacyTransaction,
@@ -128,6 +129,10 @@ pub mod test_utils {
             signature_r: U256::default(),
             signature_s: U256::default(),
         })
+    }
+
+    pub fn blockchain() -> BlockChain {
+        BlockChain::new(setup_store(), ethrex_vm::EVM::REVM)
     }
 
     pub fn setup_store() -> Store {

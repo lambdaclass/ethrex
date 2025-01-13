@@ -167,21 +167,14 @@ install-cli: ## 🛠️ Installs the ethrex-l2 cli
 	cargo install --path cmd/ethrex_l2/ --force
 
 start-node-with-flamegraph: rm-test-db ## 🚀🔥 Starts an ethrex client used for testing
-	@if [ -z "$$L" ]; then \
-		LEVM=""; \
-		echo "Running the test-node without the LEVM feature"; \
-		echo "If you want to use levm, run the target with an L at the end: make <target> L=1"; \
-	else \
-		LEVM=",levm"; \
-		echo "Running the test-node with the LEVM feature"; \
-	fi; \
 	sudo CARGO_PROFILE_RELEASE_DEBUG=true cargo flamegraph \
 	--bin ethrex \
-	--features "dev$$LEVM" \
+	--features "dev" \
 	--  \
 	--network test_data/genesis-l2.json \
 	--http.port 1729 \
-	--datadir test_ethrex
+	--datadir test_ethrex \
+	--vm $(EVM) \
 
 load-node: install-cli ## 🚧 Runs a load-test. Run make start-node-with-flamegraph and in a new terminal make load-node
 	@if [ -z "$$C" ]; then \

@@ -248,9 +248,12 @@ pub fn parse_json_hex(hex: &serde_json::Value) -> Result<u64, String> {
 pub mod test_utils {
     use std::{net::SocketAddr, str::FromStr};
 
+    use bytes::Bytes;
+    use ethrex_blockchain::BlockChain;
     use ethrex_core::H512;
     use ethrex_net::{sync::SyncManager, types::Node};
     use ethrex_storage::{EngineType, Store};
+    use ethrex_vm::EVM;
 
     use crate::start_api;
 
@@ -284,16 +287,17 @@ pub mod test_utils {
         storage
             .add_initial_state(serde_json::from_str(TEST_GENESIS).unwrap())
             .expect("Failed to build test genesis");
+        let chain = BlockChain::new(storage, EVM::REVM);
 
-        let jwt_secret = Default::default();
+        let jwt_secret = Bytes::default();
         let local_p2p_node = example_p2p_node();
         start_api(
             http_addr,
             authrpc_addr,
-            storage,
             jwt_secret,
             local_p2p_node,
             SyncManager::dummy(),
+            chain,
         )
         .await;
     }

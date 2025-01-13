@@ -16,7 +16,10 @@ use ethrex_blockchain::mempool;
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_storage::Store;
 
-use ethrex_vm::{evm_state, ExecutionResult, SpecId};
+use ethrex_vm::{
+    revm::{self, evm_state, RevmSpecId},
+    ExecutionResult,
+};
 use serde::Serialize;
 
 use serde_json::Value;
@@ -99,13 +102,18 @@ impl RpcHandler for CallRequest {
     fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
         let block = self.block.clone().unwrap_or_default();
         info!("Requested call on block: {}", block);
-        let header = match block.resolve_block_header(&context.storage)? {
+        let header = match block.resolve_block_header(context.chain.store())? {
             Some(header) => header,
             // Block not found
             _ => return Ok(Value::Null),
         };
         // Run transaction
-        let result = simulate_tx(&self.transaction, &header, context.storage, SpecId::CANCUN)?;
+        let result = simulate_tx(
+            &self.transaction,
+            &header,
+            context.chain.store().clone(),
+            RevmSpecId::CANCUN,
+        )?;
         serde_json::to_value(format!("0x{:#x}", result.output()))
             .map_err(|error| RpcErr::Internal(error.to_string()))
     }
@@ -137,15 +145,15 @@ impl RpcHandler for GetTransactionByBlockNumberAndIndexRequest {
             "Requested transaction at index: {} of block with number: {}",
             self.transaction_index, self.block,
         );
-        let block_number = match self.block.resolve_block_number(&context.storage)? {
+        let block_number = match self.block.resolve_block_number(context.chain.store())? {
             Some(block_number) => block_number,
             _ => return Ok(Value::Null),
         };
-        let block_body = match context.storage.get_block_body(block_number)? {
+        let block_body = match context.chain.store().get_block_body(block_number)? {
             Some(block_body) => block_body,
             _ => return Ok(Value::Null),
         };
-        let block_header = match context.storage.get_block_header(block_number)? {
+        let block_header = match context.chain.store().get_block_header(block_number)? {
             Some(block_body) => block_body,
             _ => return Ok(Value::Null),
         };
@@ -188,11 +196,11 @@ impl RpcHandler for GetTransactionByBlockHashAndIndexRequest {
             "Requested transaction at index: {} of block with hash: {:#x}",
             self.transaction_index, self.block,
         );
-        let block_number = match context.storage.get_block_number(self.block)? {
+        let block_number = match context.chain.store().get_block_number(self.block)? {
             Some(number) => number,
             _ => return Ok(Value::Null),
         };
-        let block_body = match context.storage.get_block_body(block_number)? {
+        let block_body = match context.chain.store().get_block_body(block_number)? {
             Some(block_body) => block_body,
             _ => return Ok(Value::Null),
         };
@@ -222,22 +230,27 @@ impl RpcHandler for GetTransactionByHashRequest {
         })
     }
     fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
-        let storage = &context.storage;
         info!(
             "Requested transaction with hash: {:#x}",
             self.transaction_hash,
         );
-        let (block_number, block_hash, index) =
-            match storage.get_transaction_location(self.transaction_hash)? {
-                Some(location) => location,
-                _ => return Ok(Value::Null),
-            };
+        let (block_number, block_hash, index) = match context
+            .chain
+            .store()
+            .get_transaction_location(self.transaction_hash)?
+        {
+            Some(location) => location,
+            _ => return Ok(Value::Null),
+        };
 
-        let transaction: ethrex_core::types::Transaction =
-            match storage.get_transaction_by_location(block_hash, index)? {
-                Some(transaction) => transaction,
-                _ => return Ok(Value::Null),
-            };
+        let transaction: ethrex_core::types::Transaction = match context
+            .chain
+            .store()
+            .get_transaction_by_location(block_hash, index)?
+        {
+            Some(transaction) => transaction,
+            _ => return Ok(Value::Null),
+        };
 
         let transaction =
             RpcTransaction::build(transaction, block_number, block_hash, index as usize);
@@ -261,22 +274,28 @@ impl RpcHandler for GetTransactionReceiptRequest {
         })
     }
     fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
-        let storage = &context.storage;
         info!(
             "Requested receipt for transaction {:#x}",
             self.transaction_hash,
         );
-        let (block_number, block_hash, index) =
-            match storage.get_transaction_location(self.transaction_hash)? {
-                Some(location) => location,
-                _ => return Ok(Value::Null),
-            };
-        let block = match storage.get_block_by_hash(block_hash)? {
+        let (block_number, block_hash, index) = match context
+            .chain
+            .store()
+            .get_transaction_location(self.transaction_hash)?
+        {
+            Some(location) => location,
+            _ => return Ok(Value::Null),
+        };
+        let block = match context.chain.store().get_block_by_hash(block_hash)? {
             Some(block) => block,
             None => return Ok(Value::Null),
         };
-        let receipts =
-            block::get_all_block_rpc_receipts(block_number, block.header, block.body, storage)?;
+        let receipts = block::get_all_block_rpc_receipts(
+            block_number,
+            block.header,
+            block.body,
+            context.chain.store(),
+        )?;
 
         serde_json::to_value(receipts.get(index as usize))
             .map_err(|error| RpcErr::Internal(error.to_string()))
@@ -310,21 +329,21 @@ impl RpcHandler for CreateAccessListRequest {
     fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
         let block = self.block.clone().unwrap_or_default();
         info!("Requested access list creation for tx on block: {}", block);
-        let block_number = match block.resolve_block_number(&context.storage)? {
+        let block_number = match block.resolve_block_number(context.chain.store())? {
             Some(block_number) => block_number,
             _ => return Ok(Value::Null),
         };
-        let header = match context.storage.get_block_header(block_number)? {
+        let header = match context.chain.store().get_block_header(block_number)? {
             Some(header) => header,
             // Block not found
             _ => return Ok(Value::Null),
         };
         // Run transaction and obtain access list
-        let (gas_used, access_list, error) = match ethrex_vm::create_access_list(
+        let (gas_used, access_list, error) = match revm::create_access_list(
             &self.transaction,
             &header,
-            &mut evm_state(context.storage, header.compute_block_hash()),
-            SpecId::CANCUN,
+            &mut evm_state(context.chain.store().clone(), header.compute_block_hash()),
+            RevmSpecId::CANCUN,
         )? {
             (
                 ExecutionResult::Success {
@@ -391,7 +410,8 @@ impl RpcHandler for GetRawTransaction {
 
     fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
         let tx = context
-            .storage
+            .chain
+            .store()
             .get_transaction_by_hash(self.transaction_hash)?;
 
         let tx = match tx {
@@ -429,10 +449,9 @@ impl RpcHandler for EstimateGasRequest {
         })
     }
     fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
-        let storage = &context.storage;
         let block = self.block.clone().unwrap_or_default();
         info!("Requested estimate on block: {}", block);
-        let block_header = match block.resolve_block_header(storage)? {
+        let block_header = match block.resolve_block_header(context.chain.store())? {
             Some(header) => header,
             // Block not found
             _ => return Ok(Value::Null),
@@ -441,7 +460,9 @@ impl RpcHandler for EstimateGasRequest {
         let transaction = match self.transaction.nonce {
             Some(_nonce) => self.transaction.clone(),
             None => {
-                let transaction_nonce = storage
+                let transaction_nonce = context
+                    .chain
+                    .store()
                     .get_nonce_by_account_address(block_header.number, self.transaction.from)?;
 
                 let mut cloned_transaction = self.transaction.clone();
@@ -450,19 +471,26 @@ impl RpcHandler for EstimateGasRequest {
             }
         };
 
-        let spec_id = ethrex_vm::spec_id(&storage.get_chain_config()?, block_header.timestamp);
+        let spec_id = revm::spec_id(
+            &context.chain.store().get_chain_config()?,
+            block_header.timestamp,
+        );
 
         // If the transaction is a plain value transfer, short circuit estimation.
         if let TxKind::Call(address) = transaction.to {
-            let account_info = storage.get_account_info(block_header.number, address)?;
-            let code = account_info.map(|info| storage.get_account_code(info.code_hash));
+            let account_info = context
+                .chain
+                .store()
+                .get_account_info(block_header.number, address)?;
+            let code =
+                account_info.map(|info| context.chain.store().get_account_code(info.code_hash));
             if code.is_none() {
                 let mut value_transfer_transaction = transaction.clone();
                 value_transfer_transaction.gas = Some(TRANSACTION_GAS);
                 let result: Result<ExecutionResult, RpcErr> = simulate_tx(
                     &value_transfer_transaction,
                     &block_header,
-                    storage.clone(),
+                    context.chain.store().clone(),
                     spec_id,
                 );
                 if let Ok(ExecutionResult::Success { .. }) = result {
@@ -482,7 +510,7 @@ impl RpcHandler for EstimateGasRequest {
             highest_gas_limit = recap_with_account_balances(
                 highest_gas_limit,
                 &transaction,
-                storage,
+                context.chain.store(),
                 block_header.number,
             )?;
         }
@@ -490,7 +518,12 @@ impl RpcHandler for EstimateGasRequest {
         // Check whether the execution is possible
         let mut transaction = transaction.clone();
         transaction.gas = Some(highest_gas_limit);
-        let result = simulate_tx(&transaction, &block_header, storage.clone(), spec_id)?;
+        let result = simulate_tx(
+            &transaction,
+            &block_header,
+            context.chain.store().clone(),
+            spec_id,
+        )?;
 
         let gas_used = result.gas_used();
         let gas_refunded = result.gas_refunded();
@@ -513,7 +546,12 @@ impl RpcHandler for EstimateGasRequest {
             }
             transaction.gas = Some(middle_gas_limit);
 
-            let result = simulate_tx(&transaction, &block_header, storage.clone(), spec_id);
+            let result = simulate_tx(
+                &transaction,
+                &block_header,
+                context.chain.store().clone(),
+                spec_id,
+            );
             if let Ok(ExecutionResult::Success { .. }) = result {
                 highest_gas_limit = middle_gas_limit;
             } else {
@@ -546,9 +584,9 @@ fn simulate_tx(
     transaction: &GenericTransaction,
     block_header: &BlockHeader,
     storage: Store,
-    spec_id: SpecId,
+    spec_id: RevmSpecId,
 ) -> Result<ExecutionResult, RpcErr> {
-    match ethrex_vm::simulate_tx_from_generic(
+    match revm::simulate_tx_from_generic(
         transaction,
         block_header,
         &mut evm_state(storage, block_header.compute_block_hash()),
@@ -593,10 +631,10 @@ impl RpcHandler for SendRawTransactionRequest {
             mempool::add_blob_transaction(
                 wrapped_blob_tx.tx.clone(),
                 wrapped_blob_tx.blobs_bundle.clone(),
-                &context.storage,
+                context.chain.store(),
             )
         } else {
-            mempool::add_transaction(self.to_transaction(), &context.storage)
+            mempool::add_transaction(self.to_transaction(), context.chain.store())
         }?;
         serde_json::to_value(format!("{:#x}", hash))
             .map_err(|error| RpcErr::Internal(error.to_string()))

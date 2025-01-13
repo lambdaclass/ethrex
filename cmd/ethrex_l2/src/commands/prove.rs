@@ -1,9 +1,12 @@
 use clap::Args;
+use ethrex_blockchain::BlockChain;
 use ethrex_l2::utils::{
     prover::proving_systems::ProverType,
     test_data_io::{generate_program_input, read_chain_file, read_genesis_file},
 };
 use ethrex_prover_lib::prover::create_prover;
+use ethrex_storage::{EngineType, Store};
+use ethrex_vm::EVM;
 
 #[derive(Args)]
 pub(crate) struct Command {
@@ -30,8 +33,10 @@ pub(crate) struct Command {
 impl Command {
     pub fn run(self) -> eyre::Result<()> {
         let genesis = read_genesis_file(&self.genesis);
-        let chain = read_chain_file(&self.chain);
-        let program_input = generate_program_input(genesis, chain, self.block_number)?;
+        let blocks = read_chain_file(&self.chain);
+        let chain = BlockChain::new(Store::new("memory", EngineType::InMemory)?, EVM::REVM);
+        chain.store().add_initial_state(genesis)?;
+        let program_input = generate_program_input(chain, blocks, self.block_number)?;
 
         let mut prover = create_prover(ProverType::RISC0);
         prover.prove(program_input).expect("proving failed");

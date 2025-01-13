@@ -1,4 +1,4 @@
-use ethrex_blockchain::error::ChainError;
+use ethrex_blockchain::{error::ChainError, BlockChain};
 use ethrex_core::{
     types::{AccountState, Block, BlockHash, EMPTY_KECCACK_HASH},
     H256,
@@ -70,10 +70,10 @@ impl SyncManager {
     /// After the sync cycle is complete, the sync mode will be set to full
     /// If the sync fails, no error will be returned but a warning will be emitted
     /// [WARNING] Sync is done optimistically, so headers and bodies may be stored even if their data has not been fully synced if the sync is aborted halfway
-    pub async fn start_sync(&mut self, current_head: H256, sync_head: H256, store: Store) {
+    pub async fn start_sync(&mut self, current_head: H256, sync_head: H256, chain: BlockChain) {
         info!("Syncing from current head {current_head} to sync_head {sync_head}");
         let start_time = Instant::now();
-        match self.sync_cycle(current_head, sync_head, store).await {
+        match self.sync_cycle(current_head, sync_head, chain).await {
             Ok(()) => {
                 info!(
                     "Sync finished, time elapsed: {} secs",
@@ -94,7 +94,7 @@ impl SyncManager {
         &mut self,
         mut current_head: H256,
         sync_head: H256,
-        store: Store,
+        chain: BlockChain,
     ) -> Result<(), SyncError> {
         // Request all block headers between the current head and the sync head
         // We will begin from the current head so that we download the earliest state first
@@ -129,7 +129,9 @@ impl SyncManager {
                 }
                 // Store headers and save hashes for full block retrieval
                 all_block_hashes.extend_from_slice(&block_hashes[..]);
-                store.add_block_headers(block_hashes, block_headers)?;
+                chain
+                    .store()
+                    .add_block_headers(block_hashes, block_headers)?;
 
                 if sync_head_found {
                     // No more headers to request
@@ -147,30 +149,35 @@ impl SyncManager {
                 let store_bodies_handle = tokio::spawn(store_block_bodies(
                     all_block_hashes.clone(),
                     self.peers.clone(),
-                    store.clone(),
+                    chain.store().clone(),
                 ));
                 let mut pivot_idx = if all_block_hashes.len() > MIN_FULL_BLOCKS {
                     all_block_hashes.len() - MIN_FULL_BLOCKS
                 } else {
                     all_block_hashes.len() - 1
                 };
-                let mut pivot_header = store
+                let mut pivot_header = chain
+                    .store()
                     .get_block_header_by_hash(all_block_hashes[pivot_idx])?
                     .ok_or(SyncError::CorruptDB)?;
-                let mut stale_pivot =
-                    !rebuild_state_trie(pivot_header.state_root, self.peers.clone(), store.clone())
-                        .await?;
+                let mut stale_pivot = !rebuild_state_trie(
+                    pivot_header.state_root,
+                    self.peers.clone(),
+                    chain.store().clone(),
+                )
+                .await?;
                 // If the pivot became stale, set a further pivot and try again
                 if stale_pivot && pivot_idx != all_block_hashes.len() - 1 {
                     warn!("Stale pivot, switching to newer head");
                     pivot_idx = all_block_hashes.len() - 1;
-                    pivot_header = store
+                    pivot_header = chain
+                        .store()
                         .get_block_header_by_hash(all_block_hashes[pivot_idx])?
                         .ok_or(SyncError::CorruptDB)?;
                     stale_pivot = !rebuild_state_trie(
                         pivot_header.state_root,
                         self.peers.clone(),
-                        store.clone(),
+                        chain.store().clone(),
                     )
                     .await?;
                 }
@@ -185,17 +192,26 @@ impl SyncManager {
                 let store_receipts_handle = tokio::spawn(store_receipts(
                     all_block_hashes[pivot_idx..].to_vec(),
                     self.peers.clone(),
-                    store.clone(),
+                    chain.store().clone(),
                 ));
                 for hash in all_block_hashes.into_iter() {
-                    let block = store.get_block_by_hash(hash)?.ok_or(SyncError::CorruptDB)?;
+                    let block = chain
+                        .store()
+                        .get_block_by_hash(hash)?
+                        .ok_or(SyncError::CorruptDB)?;
                     if block.header.number <= pivot_header.number {
-                        store.set_canonical_block(block.header.number, hash)?;
-                        store.add_block(block)?;
+                        chain
+                            .store()
+                            .set_canonical_block(block.header.number, hash)?;
+                        chain.store().add_block(block)?;
                     } else {
-                        store.set_canonical_block(block.header.number, hash)?;
-                        store.update_latest_block_number(block.header.number)?;
-                        ethrex_blockchain::add_block(&block, &store)?;
+                        chain
+                            .store()
+                            .set_canonical_block(block.header.number, hash)?;
+                        chain
+                            .store()
+                            .update_latest_block_number(block.header.number)?;
+                        chain.add_block(&block)?;
                     }
                 }
                 store_receipts_handle.await??;
@@ -203,7 +219,7 @@ impl SyncManager {
             }
             SyncMode::Full => {
                 // full-sync: Fetch all block bodies and execute them sequentially to build the state
-                download_and_run_blocks(all_block_hashes, self.peers.clone(), store.clone()).await?
+                download_and_run_blocks(all_block_hashes, self.peers.clone(), chain).await?
             }
         }
         Ok(())
@@ -215,7 +231,7 @@ impl SyncManager {
 async fn download_and_run_blocks(
     mut block_hashes: Vec<BlockHash>,
     peers: Arc<Mutex<KademliaTable>>,
-    store: Store,
+    chain: BlockChain,
 ) -> Result<(), SyncError> {
     loop {
         let peer = peers.lock().await.get_peer_channels(Capability::Eth).await;
@@ -228,17 +244,18 @@ async fn download_and_run_blocks(
                 .drain(..block_bodies_len)
                 .zip(block_bodies.into_iter())
             {
-                let header = store
+                let header = chain
+                    .store()
                     .get_block_header_by_hash(hash)?
                     .ok_or(SyncError::CorruptDB)?;
                 let number = header.number;
                 let block = Block::new(header, body);
-                if let Err(error) = ethrex_blockchain::add_block(&block, &store) {
+                if let Err(error) = chain.add_block(&block) {
                     warn!("Failed to add block during FullSync: {error}");
                     return Err(error.into());
                 }
-                store.set_canonical_block(number, hash)?;
-                store.update_latest_block_number(number)?;
+                chain.store().set_canonical_block(number, hash)?;
+                chain.store().update_latest_block_number(number)?;
             }
             debug!("Executed & stored {} blocks", block_bodies_len);
             // Check if we need to ask for another batch

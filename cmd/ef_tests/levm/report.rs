@@ -6,7 +6,7 @@ use ethrex_levm::{
     Account, StorageSlot,
 };
 use ethrex_storage::{error::StoreError, AccountUpdate};
-use ethrex_vm::SpecId;
+use ethrex_vm::revm::RevmSpecId;
 use itertools::Itertools;
 use revm::primitives::{EVMError, ExecutionResult as RevmExecutionResult};
 use serde::{Deserialize, Serialize};
@@ -133,21 +133,21 @@ pub fn summary_for_slack(reports: &[EFTestReport]) -> String {
         }}
     ]
 }}"#,
-        fork_summary_for_slack(reports, SpecId::PRAGUE),
-        fork_summary_for_slack(reports, SpecId::CANCUN),
-        fork_summary_for_slack(reports, SpecId::SHANGHAI),
-        fork_summary_for_slack(reports, SpecId::HOMESTEAD),
-        fork_summary_for_slack(reports, SpecId::ISTANBUL),
-        fork_summary_for_slack(reports, SpecId::LONDON),
-        fork_summary_for_slack(reports, SpecId::BYZANTIUM),
-        fork_summary_for_slack(reports, SpecId::BERLIN),
-        fork_summary_for_slack(reports, SpecId::CONSTANTINOPLE),
-        fork_summary_for_slack(reports, SpecId::MERGE),
-        fork_summary_for_slack(reports, SpecId::FRONTIER),
+        fork_summary_for_slack(reports, RevmSpecId::PRAGUE),
+        fork_summary_for_slack(reports, RevmSpecId::CANCUN),
+        fork_summary_for_slack(reports, RevmSpecId::SHANGHAI),
+        fork_summary_for_slack(reports, RevmSpecId::HOMESTEAD),
+        fork_summary_for_slack(reports, RevmSpecId::ISTANBUL),
+        fork_summary_for_slack(reports, RevmSpecId::LONDON),
+        fork_summary_for_slack(reports, RevmSpecId::BYZANTIUM),
+        fork_summary_for_slack(reports, RevmSpecId::BERLIN),
+        fork_summary_for_slack(reports, RevmSpecId::CONSTANTINOPLE),
+        fork_summary_for_slack(reports, RevmSpecId::MERGE),
+        fork_summary_for_slack(reports, RevmSpecId::FRONTIER),
     )
 }
 
-fn fork_summary_for_slack(reports: &[EFTestReport], fork: SpecId) -> String {
+fn fork_summary_for_slack(reports: &[EFTestReport], fork: RevmSpecId) -> String {
     let fork_str: &str = fork.into();
     let (fork_tests, fork_passed_tests, fork_success_percentage) = fork_statistics(reports, fork);
     format!(r#"*{fork_str}:* {fork_passed_tests}/{fork_tests} ({fork_success_percentage:.2}%)"#)
@@ -173,21 +173,21 @@ pub fn summary_for_github(reports: &[EFTestReport]) -> String {
     let success_percentage = (total_passed as f64 / total_run as f64) * 100.0;
     format!(
         r#"Summary: {total_passed}/{total_run} ({success_percentage:.2}%)\n\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n"#,
-        fork_summary_for_github(reports, SpecId::PRAGUE),
-        fork_summary_for_github(reports, SpecId::CANCUN),
-        fork_summary_for_github(reports, SpecId::SHANGHAI),
-        fork_summary_for_github(reports, SpecId::HOMESTEAD),
-        fork_summary_for_github(reports, SpecId::ISTANBUL),
-        fork_summary_for_github(reports, SpecId::LONDON),
-        fork_summary_for_github(reports, SpecId::BYZANTIUM),
-        fork_summary_for_github(reports, SpecId::BERLIN),
-        fork_summary_for_github(reports, SpecId::CONSTANTINOPLE),
-        fork_summary_for_github(reports, SpecId::MERGE),
-        fork_summary_for_github(reports, SpecId::FRONTIER),
+        fork_summary_for_github(reports, RevmSpecId::PRAGUE),
+        fork_summary_for_github(reports, RevmSpecId::CANCUN),
+        fork_summary_for_github(reports, RevmSpecId::SHANGHAI),
+        fork_summary_for_github(reports, RevmSpecId::HOMESTEAD),
+        fork_summary_for_github(reports, RevmSpecId::ISTANBUL),
+        fork_summary_for_github(reports, RevmSpecId::LONDON),
+        fork_summary_for_github(reports, RevmSpecId::BYZANTIUM),
+        fork_summary_for_github(reports, RevmSpecId::BERLIN),
+        fork_summary_for_github(reports, RevmSpecId::CONSTANTINOPLE),
+        fork_summary_for_github(reports, RevmSpecId::MERGE),
+        fork_summary_for_github(reports, RevmSpecId::FRONTIER),
     )
 }
 
-fn fork_summary_for_github(reports: &[EFTestReport], fork: SpecId) -> String {
+fn fork_summary_for_github(reports: &[EFTestReport], fork: RevmSpecId) -> String {
     let fork_str: &str = fork.into();
     let (fork_tests, fork_passed_tests, fork_success_percentage) = fork_statistics(reports, fork);
     format!("{fork_str}: {fork_passed_tests}/{fork_tests} ({fork_success_percentage:.2}%)")
@@ -221,22 +221,22 @@ pub fn summary_for_shell(reports: &[EFTestReport]) -> String {
         } else {
             format!("{}", total_passed).red()
         },
-        fork_summary_shell(reports, SpecId::PRAGUE),
-        fork_summary_shell(reports, SpecId::CANCUN),
-        fork_summary_shell(reports, SpecId::SHANGHAI),
-        fork_summary_shell(reports, SpecId::MERGE),
-        fork_summary_shell(reports, SpecId::LONDON),
-        fork_summary_shell(reports, SpecId::BERLIN),
-        fork_summary_shell(reports, SpecId::ISTANBUL),
-        fork_summary_shell(reports, SpecId::CONSTANTINOPLE),
-        fork_summary_shell(reports, SpecId::BYZANTIUM),
-        fork_summary_shell(reports, SpecId::HOMESTEAD),
-        fork_summary_shell(reports, SpecId::FRONTIER),
+        fork_summary_shell(reports, RevmSpecId::PRAGUE),
+        fork_summary_shell(reports, RevmSpecId::CANCUN),
+        fork_summary_shell(reports, RevmSpecId::SHANGHAI),
+        fork_summary_shell(reports, RevmSpecId::MERGE),
+        fork_summary_shell(reports, RevmSpecId::LONDON),
+        fork_summary_shell(reports, RevmSpecId::BERLIN),
+        fork_summary_shell(reports, RevmSpecId::ISTANBUL),
+        fork_summary_shell(reports, RevmSpecId::CONSTANTINOPLE),
+        fork_summary_shell(reports, RevmSpecId::BYZANTIUM),
+        fork_summary_shell(reports, RevmSpecId::HOMESTEAD),
+        fork_summary_shell(reports, RevmSpecId::FRONTIER),
         test_dir_summary_for_shell(reports),
     )
 }
 
-fn fork_summary_shell(reports: &[EFTestReport], fork: SpecId) -> String {
+fn fork_summary_shell(reports: &[EFTestReport], fork: RevmSpecId) -> String {
     let fork_str: &str = fork.into();
     let (fork_tests, fork_passed_tests, fork_success_percentage) = fork_statistics(reports, fork);
     format!(
@@ -252,7 +252,7 @@ fn fork_summary_shell(reports: &[EFTestReport], fork: SpecId) -> String {
     )
 }
 
-fn fork_statistics(reports: &[EFTestReport], fork: SpecId) -> (usize, usize, f64) {
+fn fork_statistics(reports: &[EFTestReport], fork: RevmSpecId) -> (usize, usize, f64) {
     let fork_tests = reports.iter().filter(|report| report.fork == fork).count();
     let fork_passed_tests = reports
         .iter()
@@ -312,17 +312,21 @@ impl Display for EFTestsReport {
         let total_run = self.0.len();
         writeln!(f, "Summary: {total_passed}/{total_run}",)?;
         writeln!(f)?;
-        writeln!(f, "{}", fork_summary_shell(&self.0, SpecId::PRAGUE))?;
-        writeln!(f, "{}", fork_summary_shell(&self.0, SpecId::CANCUN))?;
-        writeln!(f, "{}", fork_summary_shell(&self.0, SpecId::SHANGHAI))?;
-        writeln!(f, "{}", fork_summary_shell(&self.0, SpecId::HOMESTEAD))?;
-        writeln!(f, "{}", fork_summary_shell(&self.0, SpecId::ISTANBUL))?;
-        writeln!(f, "{}", fork_summary_shell(&self.0, SpecId::LONDON))?;
-        writeln!(f, "{}", fork_summary_shell(&self.0, SpecId::BYZANTIUM))?;
-        writeln!(f, "{}", fork_summary_shell(&self.0, SpecId::BERLIN))?;
-        writeln!(f, "{}", fork_summary_shell(&self.0, SpecId::CONSTANTINOPLE))?;
-        writeln!(f, "{}", fork_summary_shell(&self.0, SpecId::MERGE))?;
-        writeln!(f, "{}", fork_summary_shell(&self.0, SpecId::FRONTIER))?;
+        writeln!(f, "{}", fork_summary_shell(&self.0, RevmSpecId::PRAGUE))?;
+        writeln!(f, "{}", fork_summary_shell(&self.0, RevmSpecId::CANCUN))?;
+        writeln!(f, "{}", fork_summary_shell(&self.0, RevmSpecId::SHANGHAI))?;
+        writeln!(f, "{}", fork_summary_shell(&self.0, RevmSpecId::HOMESTEAD))?;
+        writeln!(f, "{}", fork_summary_shell(&self.0, RevmSpecId::ISTANBUL))?;
+        writeln!(f, "{}", fork_summary_shell(&self.0, RevmSpecId::LONDON))?;
+        writeln!(f, "{}", fork_summary_shell(&self.0, RevmSpecId::BYZANTIUM))?;
+        writeln!(f, "{}", fork_summary_shell(&self.0, RevmSpecId::BERLIN))?;
+        writeln!(
+            f,
+            "{}",
+            fork_summary_shell(&self.0, RevmSpecId::CONSTANTINOPLE)
+        )?;
+        writeln!(f, "{}", fork_summary_shell(&self.0, RevmSpecId::MERGE))?;
+        writeln!(f, "{}", fork_summary_shell(&self.0, RevmSpecId::FRONTIER))?;
         writeln!(f)?;
         writeln!(f, "Failed tests:")?;
         writeln!(f)?;
@@ -397,14 +401,14 @@ pub struct EFTestReport {
     pub name: String,
     pub dir: String,
     pub test_hash: H256,
-    pub fork: SpecId,
+    pub fork: RevmSpecId,
     pub skipped: bool,
     pub failed_vectors: HashMap<TestVector, EFTestRunnerError>,
     pub re_run_report: Option<TestReRunReport>,
 }
 
 impl EFTestReport {
-    pub fn new(name: String, dir: String, test_hash: H256, fork: SpecId) -> Self {
+    pub fn new(name: String, dir: String, test_hash: H256, fork: RevmSpecId) -> Self {
         EFTestReport {
             name,
             dir,

@@ -18,7 +18,7 @@ impl RpcHandler for MaxPriorityFee {
     }
 
     fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
-        let estimated_gas_tip = estimate_gas_tip(&context.storage)?;
+        let estimated_gas_tip = estimate_gas_tip(context.chain.store())?;
 
         let gas_tip = match estimated_gas_tip {
             Some(gas_tip) => gas_tip,
@@ -34,7 +34,7 @@ impl RpcHandler for MaxPriorityFee {
 mod tests {
     use super::MaxPriorityFee;
     use crate::eth::test_utils::{
-        add_eip1559_tx_blocks, add_legacy_tx_blocks, add_mixed_tx_blocks, setup_store,
+        add_eip1559_tx_blocks, add_legacy_tx_blocks, add_mixed_tx_blocks, blockchain,
         BASE_PRICE_IN_WEI,
     };
 
@@ -50,7 +50,7 @@ mod tests {
 
     fn default_context() -> RpcApiContext {
         RpcApiContext {
-            storage: setup_store(),
+            chain: blockchain(),
             jwt_secret: Default::default(),
             local_p2p_node: Node {
                 ip: std::net::IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)),
@@ -67,7 +67,7 @@ mod tests {
     fn test_for_legacy_txs() {
         let context = default_context();
 
-        add_legacy_tx_blocks(&context.storage, 100, 10);
+        add_legacy_tx_blocks(context.chain.store(), 100, 10);
 
         let gas_price = MaxPriorityFee {};
         let response = gas_price.handle(context).unwrap();
@@ -79,7 +79,7 @@ mod tests {
     fn test_for_eip_1559_txs() {
         let context = default_context();
 
-        add_eip1559_tx_blocks(&context.storage, 100, 10);
+        add_eip1559_tx_blocks(context.chain.store(), 100, 10);
 
         let gas_price = MaxPriorityFee {};
         let response = gas_price.handle(context).unwrap();
@@ -90,7 +90,7 @@ mod tests {
     fn test_with_mixed_transactions() {
         let context = default_context();
 
-        add_mixed_tx_blocks(&context.storage, 100, 10);
+        add_mixed_tx_blocks(context.chain.store(), 100, 10);
 
         let gas_price = MaxPriorityFee {};
         let response = gas_price.handle(context).unwrap();
@@ -101,7 +101,7 @@ mod tests {
     fn test_with_not_enough_blocks_or_transactions() {
         let context = default_context();
 
-        add_mixed_tx_blocks(&context.storage, 100, 0);
+        add_mixed_tx_blocks(context.chain.store(), 100, 0);
 
         let gas_price = MaxPriorityFee {};
         let response = gas_price.handle(context).unwrap();
@@ -128,7 +128,7 @@ mod tests {
         let mut context = default_context();
         context.local_p2p_node = example_p2p_node();
 
-        add_eip1559_tx_blocks(&context.storage, 100, 3);
+        add_eip1559_tx_blocks(context.chain.store(), 100, 3);
 
         let response = map_http_requests(&request, context).unwrap();
         assert_eq!(response, expected_response)

@@ -85,7 +85,7 @@ impl RpcHandler for LogsFilter {
         }
     }
     fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
-        let filtered_logs = fetch_logs_with_filter(self, context.storage)?;
+        let filtered_logs = fetch_logs_with_filter(self, context.chain.store())?;
         serde_json::to_value(filtered_logs).map_err(|error| {
             tracing::error!("Log filtering request failed with: {error}");
             RpcErr::Internal("Failed to filter logs".to_string())
@@ -104,7 +104,7 @@ impl RpcHandler for LogsFilter {
 
 pub(crate) fn fetch_logs_with_filter(
     filter: &LogsFilter,
-    storage: Store,
+    storage: &Store,
 ) -> Result<Vec<RpcLog>, RpcErr> {
     let from = filter
         .from_block

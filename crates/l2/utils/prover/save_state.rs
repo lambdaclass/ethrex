@@ -386,7 +386,7 @@ pub fn block_number_has_all_proofs(block_number: u64) -> Result<bool, SaveStateE
 #[cfg(test)]
 #[allow(clippy::expect_used)]
 mod tests {
-    use ethrex_blockchain::add_block;
+    use ethrex_blockchain::BlockChain;
     use ethrex_storage::{EngineType, Store};
     use ethrex_vm::execution_db::ExecutionDB;
     use risc0_zkvm::sha::Digest;
@@ -413,14 +413,17 @@ mod tests {
         let genesis_file_path = path.join("genesis-l2-old.json");
 
         // Create an InMemory Store to later perform an execute_block so we can have the Vec<AccountUpdate>.
-        let store = Store::new("memory", EngineType::InMemory).expect("Failed to create Store");
+        let chain = BlockChain::new(
+            Store::new("memory", EngineType::InMemory).expect("Failed to create Store"),
+            ethrex_vm::EVM::REVM,
+        );
 
         let genesis = test_data_io::read_genesis_file(genesis_file_path.to_str().unwrap());
-        store.add_initial_state(genesis.clone()).unwrap();
+        chain.store().add_initial_state(genesis.clone()).unwrap();
 
         let blocks = test_data_io::read_chain_file(chain_file_path.to_str().unwrap());
         for block in &blocks {
-            add_block(block, &store).unwrap();
+            chain.add_block(block).unwrap();
         }
 
         let mut account_updates_vec: Vec<Vec<AccountUpdate>> = Vec::new();
@@ -480,7 +483,7 @@ mod tests {
         // Write all the account_updates and proofs for each block
         for block in &blocks {
             let account_updates =
-                ExecutionDB::get_account_updates(blocks.last().unwrap(), &store).unwrap();
+                ExecutionDB::get_account_updates(blocks.last().unwrap(), chain.store()).unwrap();
 
             account_updates_vec.push(account_updates.clone());
 

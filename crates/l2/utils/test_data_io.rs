@@ -1,7 +1,7 @@
 #![allow(clippy::unwrap_used)]
 #![allow(clippy::expect_used)]
 
-use ethrex_blockchain::add_block;
+use ethrex_blockchain::BlockChain;
 use ethrex_core::types::{Block, Genesis};
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
 use ethrex_storage::{EngineType, Store};
@@ -60,28 +60,26 @@ pub fn generate_rlp(
 }
 
 pub fn generate_program_input(
-    genesis: Genesis,
-    chain: Vec<Block>,
+    chain: BlockChain,
+    blocks: Vec<Block>,
     block_number: usize,
 ) -> Result<ProgramInput, ProverInputError> {
-    let block = chain
+    let block = blocks
         .get(block_number)
         .ok_or(ProverInputError::InvalidBlockNumber(block_number))?
         .clone();
 
-    // create store
-    let store = Store::new("memory", EngineType::InMemory)?;
-    store.add_initial_state(genesis)?;
-    for block in chain {
-        add_block(&block, &store)?;
+    for block in blocks {
+        chain.add_block(&block)?;
     }
 
-    let parent_block_header = store
+    let parent_block_header = chain
+        .store()
         .get_block_header_by_hash(block.header.parent_hash)?
         .ok_or(ProverInputError::InvalidParentBlock(
             block.header.parent_hash,
         ))?;
-    let db = ExecutionDB::from_exec(&block, &store)?;
+    let db = ExecutionDB::from_exec(&block, chain.store())?;
 
     Ok(ProgramInput {
         db,

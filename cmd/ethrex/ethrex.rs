@@ -1,6 +1,6 @@
 use bytes::Bytes;
 use directories::ProjectDirs;
-use ethrex_blockchain::{add_block, fork_choice::apply_fork_choice};
+use ethrex_blockchain::BlockChain;
 use ethrex_core::{
     types::{Block, Genesis},
     H256,
@@ -13,6 +13,7 @@ use ethrex_net::{
 };
 use ethrex_rlp::decode::RLPDecode;
 use ethrex_storage::{EngineType, Store};
+use ethrex_vm::EVM;
 use k256::ecdsa::SigningKey;
 use local_ip_address::local_ip;
 use std::{
@@ -134,6 +135,8 @@ async fn main() {
         .get_one::<String>("datadir")
         .map_or(set_datadir(DEFAULT_DATADIR), |datadir| set_datadir(datadir));
 
+    let evm = matches.get_one::<EVM>("evm").unwrap_or(&EVM::REVM).clone();
+
     let sync_mode = sync_mode(&matches);
 
     cfg_if::cfg_if! {
@@ -146,15 +149,18 @@ async fn main() {
         }
     }
 
+    let chain = BlockChain::new(store, evm);
+
     let genesis = read_genesis_file(&network);
-    store
+    chain
+        .store()
         .add_initial_state(genesis.clone())
         .expect("Failed to create genesis block");
 
     if let Some(chain_rlp_path) = matches.get_one::<String>("import") {
         info!("Importing blocks from chain file: {}", chain_rlp_path);
         let blocks = read_chain_file(chain_rlp_path);
-        import_blocks(&store, &blocks);
+        import_blocks(&blocks, &chain);
     }
 
     if let Some(blocks_path) = matches.get_one::<String>("import_dir") {
@@ -173,7 +179,7 @@ async fn main() {
             blocks.push(read_block_file(s));
         }
 
-        import_blocks(&store, &blocks);
+        import_blocks(&blocks, &chain);
     }
 
     let jwt_secret = read_jwtsecret_file(authrpc_jwtsecret);
@@ -210,10 +216,10 @@ async fn main() {
     let rpc_api = ethrex_rpc::start_api(
         http_socket_addr,
         authrpc_socket_addr,
-        store.clone(),
         jwt_secret,
         local_p2p_node,
         syncer,
+        chain.clone(),
     )
     .into_future();
 
@@ -259,7 +265,7 @@ async fn main() {
                 bootnodes,
                 signer,
                 peer_table,
-                store,
+                chain.store().clone(),
             )
             .into_future();
             tracker.spawn(networking);
@@ -348,7 +354,7 @@ fn set_datadir(datadir: &str) -> String {
         .to_owned()
 }
 
-fn import_blocks(store: &Store, blocks: &Vec<Block>) {
+fn import_blocks(blocks: &Vec<Block>, chain: &BlockChain) {
     let size = blocks.len();
     for block in blocks {
         let hash = block.hash();
@@ -356,21 +362,23 @@ fn import_blocks(store: &Store, blocks: &Vec<Block>) {
             "Adding block {} with hash {:#x}.",
             block.header.number, hash
         );
-        let result = add_block(block, store);
+        let result = chain.add_block(block);
         if let Some(error) = result.err() {
             warn!(
                 "Failed to add block {} with hash {:#x}: {}.",
                 block.header.number, hash, error
             );
         }
-        if store
+        if chain
+            .store()
             .update_latest_block_number(block.header.number)
             .is_err()
         {
             error!("Fatal: added block {} but could not update the block number -- aborting block import", block.header.number);
             break;
         };
-        if store
+        if chain
+            .store()
             .set_canonical_block(block.header.number, hash)
             .is_err()
         {
@@ -383,15 +391,15 @@ fn import_blocks(store: &Store, blocks: &Vec<Block>) {
     }
     if let Some(last_block) = blocks.last() {
         let hash = last_block.hash();
-        cfg_if::cfg_if! {
-            if #[cfg(feature = "levm")] {
+        match chain.evm() {
+            EVM::LEVM => {
                 // We are allowing this not to unwrap so that tests can run even if block execution results in the wrong root hash with LEVM.
-                let _ = apply_fork_choice(store, hash, hash, hash);
+                let _ = chain.apply_fork_choice(hash, hash, hash);
             }
-            else {
-                apply_fork_choice(store, hash, hash, hash).unwrap();
+            EVM::REVM => {
+                chain.apply_fork_choice(hash, hash, hash).unwrap();
             }
-        }
+        };
     }
     info!("Added {} blocks to blockchain", size);
 }

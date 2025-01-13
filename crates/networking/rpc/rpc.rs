@@ -35,6 +35,7 @@ use eth::{
         GetTransactionByHashRequest, GetTransactionReceiptRequest,
     },
 };
+use ethrex_blockchain::BlockChain;
 use ethrex_net::sync::SyncManager;
 use serde_json::Value;
 use std::{
@@ -62,11 +63,10 @@ mod web3;
 
 use axum::extract::State;
 use ethrex_net::types::Node;
-use ethrex_storage::Store;
 
 #[derive(Debug, Clone)]
 pub struct RpcApiContext {
-    storage: Store,
+    chain: BlockChain,
     jwt_secret: Bytes,
     local_p2p_node: Node,
     active_filters: ActiveFilters,
@@ -95,16 +95,16 @@ const FILTER_DURATION: Duration = {
 pub async fn start_api(
     http_addr: SocketAddr,
     authrpc_addr: SocketAddr,
-    storage: Store,
     jwt_secret: Bytes,
     local_p2p_node: Node,
     syncer: SyncManager,
+    chain: BlockChain,
 ) {
     // TODO: Refactor how filters are handled,
     // filters are used by the filters endpoints (eth_newFilter, eth_getFilterChanges, ...etc)
     let active_filters = Arc::new(Mutex::new(HashMap::new()));
     let service_context = RpcApiContext {
-        storage: storage.clone(),
+        chain,
         jwt_secret,
         local_p2p_node,
         active_filters: active_filters.clone(),
@@ -230,13 +230,13 @@ pub fn map_eth_requests(req: &RpcRequest, context: RpcApiContext) -> Result<Valu
         "eth_estimateGas" => EstimateGasRequest::call(req, context),
         "eth_getLogs" => LogsFilter::call(req, context),
         "eth_newFilter" => {
-            NewFilterRequest::stateful_call(req, context.storage, context.active_filters)
+            NewFilterRequest::stateful_call(req, context.chain.store(), context.active_filters)
         }
         "eth_uninstallFilter" => {
-            DeleteFilterRequest::stateful_call(req, context.storage, context.active_filters)
+            DeleteFilterRequest::stateful_call(req, context.chain.store(), context.active_filters)
         }
         "eth_getFilterChanges" => {
-            FilterChangesRequest::stateful_call(req, context.storage, context.active_filters)
+            FilterChangesRequest::stateful_call(req, context.chain.store(), context.active_filters)
         }
         "eth_sendRawTransaction" => SendRawTransactionRequest::call(req, context),
         "eth_getProof" => GetProofRequest::call(req, context),
@@ -277,14 +277,14 @@ pub fn map_engine_requests(req: &RpcRequest, context: RpcApiContext) -> Result<V
 
 pub fn map_admin_requests(req: &RpcRequest, context: RpcApiContext) -> Result<Value, RpcErr> {
     match req.method.as_str() {
-        "admin_nodeInfo" => admin::node_info(context.storage, context.local_p2p_node),
+        "admin_nodeInfo" => admin::node_info(context.chain.store(), context.local_p2p_node),
         unknown_admin_method => Err(RpcErr::MethodNotFound(unknown_admin_method.to_owned())),
     }
 }
 
 pub fn map_web3_requests(req: &RpcRequest, context: RpcApiContext) -> Result<Value, RpcErr> {
     match req.method.as_str() {
-        "web3_clientVersion" => web3::client_version(req, context.storage),
+        "web3_clientVersion" => web3::client_version(req, context.chain.store()),
         unknown_web3_method => Err(RpcErr::MethodNotFound(unknown_web3_method.to_owned())),
     }
 }
@@ -325,7 +325,8 @@ mod tests {
     use super::*;
     use crate::utils::test_utils::example_p2p_node;
     use ethrex_core::types::{ChainConfig, Genesis};
-    use ethrex_storage::EngineType;
+    use ethrex_storage::{EngineType, Store};
+    use ethrex_vm::EVM;
     use std::fs::File;
     use std::io::BufReader;
 
@@ -340,12 +341,17 @@ mod tests {
         let body = r#"{"jsonrpc":"2.0", "method":"admin_nodeInfo", "params":[], "id":1}"#;
         let request: RpcRequest = serde_json::from_str(body).unwrap();
         let local_p2p_node = example_p2p_node();
-        let storage =
-            Store::new("temp.db", EngineType::InMemory).expect("Failed to create test DB");
-        storage.set_chain_config(&example_chain_config()).unwrap();
+        let chain = BlockChain::new(
+            Store::new("temp.db", EngineType::InMemory).expect("Failed to create test DB"),
+            EVM::REVM,
+        );
+        chain
+            .store()
+            .set_chain_config(&example_chain_config())
+            .unwrap();
         let context = RpcApiContext {
+            chain,
             local_p2p_node,
-            storage,
             jwt_secret: Default::default(),
             active_filters: Default::default(),
             syncer: Arc::new(TokioMutex::new(SyncManager::dummy())),
@@ -375,15 +381,17 @@ mod tests {
         // Setup initial storage
         let storage =
             Store::new("temp.db", EngineType::InMemory).expect("Failed to create test DB");
+        let chain = BlockChain::new(storage, EVM::REVM);
         let genesis = read_execution_api_genesis_file();
-        storage
+        chain
+            .store()
             .add_initial_state(genesis)
             .expect("Failed to add genesis block to DB");
         let local_p2p_node = example_p2p_node();
         // Process request
         let context = RpcApiContext {
+            chain,
             local_p2p_node,
-            storage,
             jwt_secret: Default::default(),
             active_filters: Default::default(),
             syncer: Arc::new(TokioMutex::new(SyncManager::dummy())),
@@ -409,11 +417,12 @@ mod tests {
         storage
             .add_initial_state(genesis)
             .expect("Failed to add genesis block to DB");
+        let chain = BlockChain::new(storage, EVM::REVM);
         let local_p2p_node = example_p2p_node();
         // Process request
         let context = RpcApiContext {
+            chain,
             local_p2p_node,
-            storage,
             jwt_secret: Default::default(),
             active_filters: Default::default(),
             syncer: Arc::new(TokioMutex::new(SyncManager::dummy())),
@@ -470,9 +479,10 @@ mod tests {
             .expect("failed to get chain_id")
             .chain_id
             .to_string();
+        let chain = BlockChain::new(storage, EVM::REVM);
         let local_p2p_node = example_p2p_node();
         let context = RpcApiContext {
-            storage,
+            chain,
             local_p2p_node,
             jwt_secret: Default::default(),
             active_filters: Default::default(),

@@ -73,12 +73,13 @@ init-l1-levm: ## 🚀 Initializes an L1 Lambda ethrex Client with LEVM
 	cargo run --release \
     --manifest-path ../../Cargo.toml \
     --bin ethrex \
-    --features dev,ethrex-blockchain/levm,ethrex-vm/levm -- \
+    --features dev -- \
     --network ${L1_GENESIS_FILE_PATH} \
     --http.port ${L1_PORT} \
     --http.addr 0.0.0.0 \
     --authrpc.port ${L1_AUTH_PORT} \
-    --datadir ${ethrex_L1_DEV_LIBMDBX}
+    --datadir ${ethrex_L1_DEV_LIBMDBX} \
+	--vm levm
 
 down-local-l1: ## 🛑 Shuts down the L1 Lambda ethrex Client
 	docker compose -f ${ethrex_DEV_DOCKER_COMPOSE_PATH} -f ${ethrex_METRICS_OVERRIDES_L1_DOCKER_COMPOSE_PATH} down

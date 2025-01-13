@@ -4,7 +4,7 @@ use ethrex_core::{
     types::{BlockHash, BlockHeader, BlockNumber, Log, Receipt, Transaction, TxKind, TxType},
     Address, Bloom, Bytes, H256,
 };
-use ethrex_vm::RevmAddress;
+use ethrex_vm::revm::RevmAddress;
 
 use serde::{Deserialize, Serialize};
 
