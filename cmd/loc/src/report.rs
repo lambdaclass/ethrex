@@ -48,11 +48,7 @@ pub fn pr_message(
             continue;
         }
 
-        total_lines_changed = if current_loc > previous_loc {
-            total_lines_changed + loc_diff
-        } else {
-            total_lines_changed - loc_diff
-        };
+        total_lines_changed += loc_diff;
 
         table.add_row(row![
             file_path,
