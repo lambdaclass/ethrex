@@ -36,7 +36,6 @@ use std::{
     sync::Arc,
 };
 pub type Storage = HashMap<U256, H256>;
-use std::str::FromStr;
 
 #[derive(Debug, Clone, Default)]
 // TODO: https://github.com/lambdaclass/ethrex/issues/604
@@ -1327,26 +1326,32 @@ impl VM {
             bytes.extend_from_slice(&auth_tuple.r_signature.to_big_endian());
             bytes.extend_from_slice(&auth_tuple.s_signature.to_big_endian());
 
-            // TODO: do not continue
             let signature = Signature::parse_standard_slice(&bytes).map_err(|_| {
                 VMError::EIP7702Error(crate::errors::EIP7702Error::ErrorParsingSignature)
             })?;
 
-            // TODO: remove as conversion and unwrap
-            let recovery_id = RecoveryId::parse(auth_tuple.v.as_u32() as u8).map_err(|_| {
-                VMError::EIP7702Error(crate::errors::EIP7702Error::ErrorParsingSignature)
-            })?;
+            let recovery_id =
+                RecoveryId::parse(auth_tuple.v.as_u32().try_into().map_err(|_| {
+                    VMError::EIP7702Error(crate::errors::EIP7702Error::ErrorParsingSignature)
+                })?)
+                .map_err(|_| {
+                    VMError::EIP7702Error(crate::errors::EIP7702Error::ErrorParsingSignature)
+                })?;
 
             let authority =
                 libsecp256k1::recover(&message, &signature, &recovery_id).map_err(|_| {
                     VMError::EIP7702Error(crate::errors::EIP7702Error::ErrorRecoveringSignature)
                 })?;
             dbg!("EIP-7702-3.1");
-            let mut public_key = authority.serialize();
-            keccak256(&mut public_key[1..]);
-            // Get the last 20 bytes of the hash
+
+            let public_key = authority.serialize();
+            let mut hasher = Keccak256::new();
+            hasher.update(public_key.get(1..).unwrap());
+            let address_hash = hasher.finalize();
+
+            // Get the last 20 bytes of the hash -> Address
             let authority_address_bytes: [u8; 20] =
-                public_key.get(12..32).unwrap().try_into().unwrap();
+                address_hash.get(12..32).unwrap().try_into().unwrap();
             let authority_address = Address::from_slice(&authority_address_bytes);
 
             dbg!(authority_address);
@@ -1405,8 +1410,7 @@ impl VM {
                 // auth_tuple.address is Address::zero()
                 // Do not write Designation and Write account's bytecode to empty
             }
-
-            dbg!("EIP-7702-7");
+            dbg!("EIP-7702-8");
 
             // 9. Increase the nonce of authority by one.
             self.increment_account_nonce(authority_address)
