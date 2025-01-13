@@ -1162,6 +1162,10 @@ pub fn bls12_g1add(
         return Err(VMError::PrecompileError(PrecompileError::ParsingInputError));
     }
 
+    // GAS
+    increase_precompile_consumed_gas(gas_for_call, BLS12_381_G1ADD_COST, consumed_gas)
+        .map_err(|_| VMError::PrecompileError(PrecompileError::NotEnoughGas))?;
+
     let mut first_point_x = calldata
         .get(0..64)
         .ok_or(VMError::PrecompileError(PrecompileError::ParsingInputError))?;
@@ -1232,10 +1236,6 @@ pub fn bls12_g1add(
     .into();
 
     let res = G1Affine::from(first_g1_point.add(&second_g1_point)).to_uncompressed();
-
-    // GAS
-    increase_precompile_consumed_gas(gas_for_call, BLS12_381_G1ADD_COST, consumed_gas)
-        .map_err(|_| VMError::PrecompileError(PrecompileError::NotEnoughGas))?;
 
     Ok(Bytes::copy_from_slice(&res))
 }
