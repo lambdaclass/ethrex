@@ -133,6 +133,10 @@ pub const PRECOMPILES_POST_CANCUN: [H160; 7] = [
     BLS12_MAP_FP2_TO_G2_ADDRESS,
 ];
 
+pub const SIZE_PRECOMPILES: u64 = 9;
+pub const SIZE_PRECOMPILES_CANCUN: u64 = 10;
+pub const SIZE_PRECOMPILES_PRAGUE: u64 = 17;
+
 pub const BLAKE2F_ELEMENT_SIZE: usize = 8;
 
 pub fn is_precompile(callee_address: &Address, spec_id: SpecId) -> bool {
@@ -1153,13 +1157,10 @@ pub fn bls12_g1add(
     gas_for_call: u64,
     consumed_gas: &mut u64,
 ) -> Result<Bytes, VMError> {
-    dbg!("entro", calldata.len(), consumed_gas.clone(), gas_for_call);
     // Two inputs of 128 bytes are requiered
     if calldata.len() != 256 {
         return Err(VMError::PrecompileError(PrecompileError::ParsingInputError));
     }
-
-    dbg!("pasa test length");
 
     let mut first_point_x = calldata
         .get(0..64)
@@ -1218,8 +1219,6 @@ pub fn bls12_g1add(
     second_point_y = second_point_y
         .get(16..64)
         .ok_or(VMError::PrecompileError(PrecompileError::ParsingInputError))?;
-
-    dbg!(first_point_x, first_point_y, second_point_x, second_point_y);
 
     let mut first_g1_points = Vec::new();
     first_g1_points.extend_from_slice(first_point_x);
