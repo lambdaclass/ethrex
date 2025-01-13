@@ -134,7 +134,7 @@ pub const PRECOMPILES_POST_CANCUN: [H160; 7] = [
 
 pub const BLAKE2F_ELEMENT_SIZE: usize = 8;
 
-pub const SIZE_PRECOMPILES: u64 = 9;
+pub const SIZE_PRECOMPILES_PRE_CANCUN: u64 = 9;
 pub const SIZE_PRECOMPILES_CANCUN: u64 = 10;
 pub const SIZE_PRECOMPILES_PRAGUE: u64 = 17;
 

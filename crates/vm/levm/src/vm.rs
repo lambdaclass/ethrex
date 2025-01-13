@@ -18,8 +18,8 @@ use crate::{
     },
     opcodes::Opcode,
     precompiles::{
-        execute_precompile, is_precompile, SIZE_PRECOMPILES, SIZE_PRECOMPILES_CANCUN,
-        SIZE_PRECOMPILES_PRAGUE,
+        execute_precompile, is_precompile, SIZE_PRECOMPILES_CANCUN, SIZE_PRECOMPILES_PRAGUE,
+        SIZE_PRECOMPILES_PRE_CANCUN,
     },
     AccountInfo, TransientStorage,
 };
@@ -161,7 +161,7 @@ impl VM {
         let max_precompile_address = match env.spec_id {
             spec if spec >= SpecId::PRAGUE => SIZE_PRECOMPILES_PRAGUE,
             spec if spec >= SpecId::CANCUN => SIZE_PRECOMPILES_CANCUN,
-            _ => SIZE_PRECOMPILES,
+            _ => SIZE_PRECOMPILES_PRE_CANCUN,
         };
         for i in 1..=max_precompile_address {
             default_touched_accounts.insert(Address::from_low_u64_be(i));
