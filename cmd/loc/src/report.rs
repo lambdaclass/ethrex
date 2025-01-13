@@ -96,10 +96,10 @@ pub fn pr_message(
     pr_message.push_str(&format!(
         "Total lines changed: {}\n",
         match total_lines_changed.cmp(&0) {
-            std::cmp::Ordering::Greater => format!("+{total_lines_changed}"),
+            std::cmp::Ordering::Greater | std::cmp::Ordering::Equal =>
+                format!("{total_lines_changed}"),
             std::cmp::Ordering::Less =>
                 unreachable!("total_lines_changed should never be less than 0"),
-            std::cmp::Ordering::Equal => format!("{total_lines_changed}"),
         }
     ));
     pr_message.push_str("```");
