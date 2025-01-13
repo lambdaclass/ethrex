@@ -8,16 +8,12 @@ use ethrex_core::{
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_storage::{hash_address, hash_key, AccountUpdate, Store};
 use ethrex_trie::{NodeRLP, Trie};
-use revm::{
-    primitives::{
-        AccountInfo as RevmAccountInfo, Address as RevmAddress, Bytecode as RevmBytecode,
-        B256 as RevmB256, U256 as RevmU256,
-    },
-    DatabaseRef,
-};
 use serde::{Deserialize, Serialize};
 
-use crate::{errors::ExecutionDBError, evm_state, execute_block, get_state_transitions};
+use crate::{
+    errors::ExecutionDBError,
+    revm::{self, DatabaseRef, RevmAccountInfo, RevmAddress, RevmB256, RevmBytecode, RevmU256},
+};
 
 /// In-memory EVM database for caching execution data.
 ///
@@ -146,11 +142,11 @@ impl ExecutionDB {
     ) -> Result<Vec<AccountUpdate>, ExecutionDBError> {
         // TODO: perform validation to exit early
 
-        let mut state = evm_state(store.clone(), block.header.parent_hash);
+        let mut state = revm::evm_state(store.clone(), block.header.parent_hash);
 
-        execute_block(block, &mut state).map_err(Box::new)?;
+        revm::execute_block(block, &mut state).map_err(Box::new)?;
 
-        let account_updates = get_state_transitions(&mut state);
+        let account_updates = revm::get_state_transitions(&mut state);
         Ok(account_updates)
     }
 
