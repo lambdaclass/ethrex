@@ -134,6 +134,10 @@ pub const PRECOMPILES_POST_CANCUN: [H160; 7] = [
 
 pub const BLAKE2F_ELEMENT_SIZE: usize = 8;
 
+pub const SIZE_PRECOMPILES: u64 = 9;
+pub const SIZE_PRECOMPILES_CANCUN: u64 = 10;
+pub const SIZE_PRECOMPILES_PRAGUE: u64 = 17;
+
 pub fn is_precompile(callee_address: &Address, spec_id: SpecId) -> bool {
     // Cancun specs is the only one that allows point evaluation precompile
     if *callee_address == POINT_EVALUATION_ADDRESS && spec_id < SpecId::CANCUN {
@@ -145,7 +149,7 @@ pub fn is_precompile(callee_address: &Address, spec_id: SpecId) -> bool {
         return false;
     }
 
-    PRECOMPILES.contains(callee_address)
+    PRECOMPILES.contains(callee_address) || PRECOMPILES_POST_CANCUN.contains(callee_address)
 }
 
 pub fn execute_precompile(
