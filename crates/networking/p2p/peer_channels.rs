@@ -217,7 +217,9 @@ impl PeerChannels {
         })
         .await
         .ok()??;
-        info!("Peer returned accounts: {accounts:?}, proof: {proof:?}");
+        if accounts.is_empty() && proof.is_empty() {
+            info!("Peer returned empty account range");
+        }
         // Unzip & validate response
         let proof = encodable_to_proof(&proof);
         let (account_hashes, accounts): (Vec<_>, Vec<_>) = accounts
@@ -313,6 +315,9 @@ impl PeerChannels {
         })
         .await
         .ok()??;
+        if slots.is_empty() && proof.is_empty() {
+            info!("Peer returned empty storage ranges");
+        }
         // Check we got a reasonable amount of storage ranges
         if slots.len() > storage_roots.len() || slots.is_empty() {
             return None;
