@@ -266,7 +266,6 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
         }
     }
 
-
     async fn handle_peer_conn(
         &mut self,
         sender: mpsc::Sender<rlpx::Message>,
