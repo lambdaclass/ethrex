@@ -326,13 +326,7 @@ impl PeerChannels {
         let mut storage_values = vec![];
         let mut should_continue = false;
         // Validate each storage range
-        let total_slots = slots.len();
         while !slots.is_empty() {
-            info!(
-                "Verifying slot {}/{}",
-                total_slots - slots.len(),
-                total_slots
-            );
             let (hahsed_keys, values): (Vec<_>, Vec<_>) = slots
                 .remove(0)
                 .into_iter()
@@ -348,7 +342,6 @@ impl PeerChannels {
                 .map(|val| val.encode_to_vec())
                 .collect::<Vec<_>>();
             let storage_root = storage_roots.remove(0);
-            info!("Storage root: {storage_root}");
 
             // The proof corresponds to the last slot, for the previous ones the slot must be the full range without edge proofs
             if slots.is_empty() {
