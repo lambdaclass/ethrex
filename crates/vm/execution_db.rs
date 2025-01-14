@@ -6,7 +6,7 @@ use ethrex_core::{
     H256,
 };
 use ethrex_rlp::encode::RLPEncode;
-use ethrex_storage::{hash_address, hash_key, Store};
+use ethrex_storage::{hash_address, hash_key, AccountUpdate, Store};
 use ethrex_trie::{NodeRLP, Trie};
 use revm::{
     primitives::{
@@ -44,15 +44,23 @@ pub struct ExecutionDB {
 }
 
 impl ExecutionDB {
-    /// Creates a database by executing a block, without performing any validation.
+    /// Creates a database and returns the ExecutionDB by executing a block,
+    /// without performing any validation.
     pub fn from_exec(block: &Block, store: &Store) -> Result<Self, ExecutionDBError> {
         // TODO: perform validation to exit early
+        let account_updates = Self::get_account_updates(block, store)?;
+        Self::from_account_updates(account_updates, block, store)
+    }
 
-        // Execute and obtain account updates
-        let mut state = evm_state(store.clone(), block.header.parent_hash);
+    /// Creates a database and returns the ExecutionDB from a Vec<[AccountUpdate]>,
+    /// without performing any validation.
+    pub fn from_account_updates(
+        account_updates: Vec<AccountUpdate>,
+        block: &Block,
+        store: &Store,
+    ) -> Result<Self, ExecutionDBError> {
+        // TODO: perform validation to exit early
         let chain_config = store.get_chain_config()?;
-        execute_block(block, &mut state).map_err(Box::new)?;
-        let account_updates = get_state_transitions(&mut state);
 
         // Store data touched by updates and get all touched storage keys for each account
         let mut accounts = HashMap::new();
@@ -77,11 +85,9 @@ impl ExecutionDB {
                 .added_storage
                 .iter()
                 .map(|(key, value)| {
-                    let mut value_bytes = [0u8; 32];
-                    value.to_big_endian(&mut value_bytes);
                     (
                         RevmU256::from_be_bytes(key.to_fixed_bytes()),
-                        RevmU256::from_be_slice(&value_bytes),
+                        RevmU256::from_be_slice(&value.to_big_endian()),
                     )
                 })
                 .collect();
@@ -131,6 +137,21 @@ impl ExecutionDB {
             pruned_state_trie,
             pruned_storage_tries,
         })
+    }
+
+    /// Gets the Vec<[AccountUpdate]>/StateTransitions obtained after executing a block.
+    pub fn get_account_updates(
+        block: &Block,
+        store: &Store,
+    ) -> Result<Vec<AccountUpdate>, ExecutionDBError> {
+        // TODO: perform validation to exit early
+
+        let mut state = evm_state(store.clone(), block.header.parent_hash);
+
+        execute_block(block, &mut state).map_err(Box::new)?;
+
+        let account_updates = get_state_transitions(&mut state);
+        Ok(account_updates)
     }
 
     pub fn get_chain_config(&self) -> ChainConfig {
@@ -197,11 +218,7 @@ impl DatabaseRef for ExecutionDB {
         };
 
         Ok(Some(RevmAccountInfo {
-            balance: {
-                let mut balance_bytes = [0; 32];
-                account_state.balance.to_big_endian(&mut balance_bytes);
-                RevmU256::from_be_bytes(balance_bytes)
-            },
+            balance: RevmU256::from_be_bytes(account_state.balance.to_big_endian()),
             nonce: account_state.nonce,
             code_hash: RevmB256::from_slice(account_state.code_hash.as_bytes()),
             code: None,

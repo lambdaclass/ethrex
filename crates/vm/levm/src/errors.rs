@@ -102,6 +102,8 @@ pub enum TxValidationError {
     InsufficientMaxFeePerGas,
     #[error("Insufficient max fee per blob gas")]
     InsufficientMaxFeePerBlobGas,
+    #[error("Type 3 transactions are not supported before the Cancun fork")]
+    Type3TxPreFork,
     #[error("Type3TxZeroBlobs")]
     Type3TxZeroBlobs,
     #[error("Type3TxInvalidBlobVersionedHash")]
@@ -112,6 +114,8 @@ pub enum TxValidationError {
     Type3TxContractCreation,
     #[error("Gas limit price product overflow")]
     GasLimitPriceProductOverflow,
+    #[error("Gas limit is too low")]
+    GasLimitTooLow,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, thiserror::Error, Serialize, Deserialize)]
@@ -178,6 +182,8 @@ pub enum InternalError {
     UndefinedState(i32), // This error is temporarily for things that cause an undefined state.
     #[error("Invalid precompile address. Tried to execute a precompile that does not exist.")]
     InvalidPrecompileAddress,
+    #[error("Spec Id doesn't match to any fork")]
+    InvalidSpecId,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error, Serialize, Deserialize)]

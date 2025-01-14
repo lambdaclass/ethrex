@@ -6,10 +6,6 @@ on:
   pull_request:
     branches: ["**"]
     paths-ignore:
-      - "README.md"
-      - "LICENSE"
-      - "**/README.md"
-      - "**/docs/**"
       - "crates/vm/levm/**" # We run this in a separate workflow
 
 concurrency:
@@ -171,7 +167,7 @@ jobs:
             test_pattern: /AccountRange|StorageRanges|ByteCodes|TrieNodes
           - name: "Devp2p eth tests"
             simulation: devp2p
-            test_pattern: eth/Status|GetBlockHeaders|SimultaneousRequests|SameRequestID|ZeroRequestID|GetBlockBodies|MaliciousHandshake|MaliciousStatus|Transaction|InvalidTxs|NewPooledTxs|GetBlockReceipts
+            test_pattern: eth/Status|GetBlockHeaders|SimultaneousRequests|SameRequestID|ZeroRequestID|GetBlockBodies|MaliciousHandshake|MaliciousStatus|Transaction|InvalidTxs|NewPooledTxs|GetBlockReceipts|BlobViolations|LargeTxRequest
           - name: "Engine Auth and EC tests"
             simulation: ethereum/engine
             test_pattern: engine-(auth|exchange-capabilities)/
@@ -183,7 +179,7 @@ jobs:
             test_pattern: "engine-api/RPC|Re-Org Back to Canonical Chain From Syncing Chain|Re-org to Previously Validated Sidechain Payload|Re-Org Back into Canonical Chain, Depth=5|Safe Re-Org|Transaction Re-Org|Inconsistent|Suggested Fee|PrevRandao|Fork ID|Unknown|Invalid PayloadAttributes|Bad Hash|Unique Payload ID|Re-Execute Payload|In-Order|Multiple New Payloads|Valid NewPayload|NewPayload with|Invalid NewPayload|Payload Build|Invalid NewPayload, Transaction|ParentHash equals|Build Payload|Invalid Missing Ancestor ReOrg"
           - name: "Engine withdrawal tests"
             simulation: ethereum/engine
-            test_pattern: "engine-withdrawals/engine-withdrawals test loader|GetPayloadV2 Block Value|Sync after 2 blocks - Withdrawals on Genesis|Max Initcode Size|Pre-Merge Fork Number > 0"
+            test_pattern: "engine-withdrawals/engine-withdrawals test loader|GetPayloadV2 Block Value|Sync after 2 blocks - Withdrawals on Genesis|Max Initcode Size|Pre-Merge Fork Number > 0|Empty Withdrawals|Corrupted Block Hash Payload"
           - name: "Sync"
             simulation: ethereum/sync
             test_pattern: ""

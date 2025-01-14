@@ -1,5 +1,6 @@
 .PHONY: build lint test clean run-image build-image download-test-vectors clean-vectors \
-	setup-hive test-pattern-default run-hive run-hive-debug clean-hive-logs
+	setup-hive test-pattern-default run-hive run-hive-debug clean-hive-logs loc-detailed \
+	loc-compare-detailed
 
 help: ## 📚 Show help for each of the Makefile recipes
 	@grep -E '^[a-zA-Z0-9_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-30s\033[0m %s\n", $$1, $$2}'
@@ -16,7 +17,7 @@ SPECTEST_VECTORS_DIR := cmd/ef_tests/ethrex/vectors
 
 CRATE ?= *
 test: $(SPECTEST_VECTORS_DIR) ## 🧪 Run each crate's tests
-	cargo test -p '$(CRATE)' --workspace --exclude ethrex-prover --exclude ethrex-levm --exclude ef_tests-levm -- --skip test_contract_compilation --skip testito
+	cargo test -p '$(CRATE)' --workspace --exclude ethrex-prover --exclude ethrex-levm --exclude ef_tests-levm --exclude ethrex-l2 -- --skip test_contract_compilation
 
 clean: clean-vectors ## 🧹 Remove build artifacts
 	cargo clean
@@ -122,7 +123,7 @@ run-hive: build-image setup-hive ## 🧪 Run Hive testing suite
 	cd hive && ./hive --client ethrex --sim $(SIMULATION) --sim.limit "$(TEST_PATTERN)"
 
 run-hive-all: build-image setup-hive ## 🧪 Run all Hive testing suites
-	cd hive && ./hive --client ethrex --sim $(SIMULATION) --sim.parallelism 4
+	cd hive && ./hive --client ethrex --sim ".*" --sim.parallelism 4
 
 run-hive-debug: build-image setup-hive ## 🐞 Run Hive testing suite in debug mode
 	cd hive && ./hive --sim $(SIMULATION) --client ethrex --sim.limit "$(TEST_PATTERN)" --docker.output
@@ -140,6 +141,11 @@ loc-stats:
 		cargo run -p loc -- --summary;\
 	fi
 
+loc-detailed:
+	cargo run --release --bin loc -- --detailed
+
+loc-compare-detailed:
+	cargo run --release --bin loc -- --compare-detailed
 
 hive-stats:
 	make hive QUIET=true
@@ -156,3 +162,37 @@ stats:
 	cd crates/vm/levm && make run-evm-ef-tests QUIET=true && echo
 	make hive-stats
 	cargo run --quiet --release -p hive_report
+
+install-cli: ## 🛠️ Installs the ethrex-l2 cli
+	cargo install --path cmd/ethrex_l2/ --force
+
+start-node-with-flamegraph: rm-test-db ## 🚀🔥 Starts an ethrex client used for testing
+	@if [ -z "$$L" ]; then \
+		LEVM=""; \
+		echo "Running the test-node without the LEVM feature"; \
+		echo "If you want to use levm, run the target with an L at the end: make <target> L=1"; \
+	else \
+		LEVM=",levm"; \
+		echo "Running the test-node with the LEVM feature"; \
+	fi; \
+	sudo CARGO_PROFILE_RELEASE_DEBUG=true cargo flamegraph \
+	--bin ethrex \
+	--features "dev$$LEVM" \
+	--  \
+	--network test_data/genesis-l2.json \
+	--http.port 1729 \
+	--datadir test_ethrex
+
+load-node: install-cli ## 🚧 Runs a load-test. Run make start-node-with-flamegraph and in a new terminal make load-node
+	@if [ -z "$$C" ]; then \
+		CONTRACT_INTERACTION=""; \
+		echo "Running the load-test without contract interaction"; \
+		echo "If you want to interact with contracts to load the evm, run the target with a C at the end: make <target> C=1"; \
+	else \
+		CONTRACT_INTERACTION="-c"; \
+		echo "Running the load-test with contract interaction"; \
+	fi; \
+	ethrex_l2 test load --path test_data/private_keys.txt -i 100 -v  --value 1 $$CONTRACT_INTERACTION
+
+rm-test-db:  ## 🛑 Removes the DB used by the ethrex client used for testing
+	sudo cargo run --release --bin ethrex -- removedb --datadir test_ethrex

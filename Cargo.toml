@@ -46,13 +46,13 @@ ethrex-prover = { path = "./crates/l2/prover" }
 tracing = { version = "0.1", features = ["log"] }
 tracing-subscriber = { version = "0.3.0", features = ["env-filter"] }
 
-ethereum-types = { version = "0.14.1", features = ["serialize"] }
+ethereum-types = { version = "0.15.1", features = ["serialize"] }
 serde = { version = "1.0.203", features = ["derive"] }
 serde_json = "1.0.117"
 libmdbx = { version = "0.5.0", features = ["orm"] }
 bytes = { version = "1.6.0", features = ["serde"] }
 tokio = { version = "1.41.1", features = ["full"] }
-thiserror = "1.0.61"
+thiserror = "2.0.9"
 hex = "0.4.3"
 hex-literal = "0.4.1"
 crc32fast = "1.4.2"
@@ -71,3 +71,5 @@ secp256k1 = { version = "0.29", default-features = false, features = [
     "recovery",
     "rand",
 ] }
+keccak-hash = "0.11.0"
+axum = "0.8.1"

@@ -20,12 +20,10 @@ use keccak_hash::keccak;
 use std::{collections::HashMap, sync::Arc};
 
 pub fn run_ef_test(test: &EFTest) -> Result<EFTestReport, EFTestRunnerError> {
-    let mut ef_test_report = EFTestReport::new(
-        test.name.clone(),
-        test.dir.clone(),
-        test._info.generated_test_hash,
-        test.fork(),
-    );
+    let hash = test._info.generated_test_hash.or(test._info.hash).unwrap();
+
+    let mut ef_test_report =
+        EFTestReport::new(test.name.clone(), test.dir.clone(), hash, test.fork());
     for (vector, _tx) in test.transactions.iter() {
         match run_ef_test_tx(vector, test) {
             Ok(_) => continue,
@@ -141,9 +139,8 @@ pub fn ensure_pre_state(evm: &VM, test: &EFTest) -> Result<(), EFTestRunnerError
             ),
         )?;
         for (k, v) in &pre_value.storage {
-            let mut key_bytes = [0u8; 32];
-            k.to_big_endian(&mut key_bytes);
-            let storage_slot = world_state.get_storage_slot(*address, H256::from_slice(&key_bytes));
+            let storage_slot =
+                world_state.get_storage_slot(*address, H256::from_slice(&k.to_big_endian()));
             ensure_pre_state_condition(
                 &storage_slot == v,
                 format!(
@@ -175,7 +172,7 @@ fn ensure_pre_state_condition(
     Ok(())
 }
 
-// Exceptions not covered: RlpInvalidValue and Type3TxPreFork
+// Exceptions not covered: RlpInvalidValue
 fn exception_is_expected(
     expected_exceptions: Vec<TransactionExpectedException>,
     returned_error: VMError,
@@ -207,6 +204,9 @@ fn exception_is_expected(
             ) | (
                 TransactionExpectedException::GasAllowanceExceeded,
                 VMError::TxValidation(TxValidationError::GasAllowanceExceeded)
+            ) | (
+                TransactionExpectedException::Type3TxPreFork,
+                VMError::TxValidation(TxValidationError::Type3TxPreFork)
             ) | (
                 TransactionExpectedException::Type3TxBlobCountExceeded,
                 VMError::TxValidation(TxValidationError::Type3TxBlobCountExceeded)
@@ -376,7 +376,8 @@ pub fn get_state_transitions(
             added_storage.insert(*key, value.current_value);
             updates += 1;
         }
-        if updates == 0 {
+
+        if updates == 0 && !new_state_account.is_empty() {
             continue;
         }
 

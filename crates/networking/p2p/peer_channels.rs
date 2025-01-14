@@ -39,6 +39,11 @@ pub struct PeerChannels {
     receiver: Arc<Mutex<mpsc::Receiver<RLPxMessage>>>,
 }
 
+pub enum BlockRequestOrder {
+    OldToNew,
+    NewToOld,
+}
+
 impl PeerChannels {
     /// Sets up the communication channels for the peer
     /// Returns the channel endpoints to send to the active connection's listen loop
@@ -57,22 +62,26 @@ impl PeerChannels {
         )
     }
 
-    /// Requests block headers from the peer, starting from the `start` block hash towards newer blocks
+    /// Requests block headers from the peer, starting from the `start` block hash towards either older or newer blocks depending on the order
     /// Returns the block headers or None if:
     /// - There are no available peers (the node just started up or was rejected by all other nodes)
     /// - The response timed out
     /// - The response was empty or not valid
-    pub async fn request_block_headers(&self, start: H256) -> Option<Vec<BlockHeader>> {
+    pub async fn request_block_headers(
+        &self,
+        start: H256,
+        order: BlockRequestOrder,
+    ) -> Option<Vec<BlockHeader>> {
         let request_id = rand::random();
         let request = RLPxMessage::GetBlockHeaders(GetBlockHeaders {
             id: request_id,
             startblock: start.into(),
             limit: BLOCK_HEADER_LIMIT,
             skip: 0,
-            reverse: false,
+            reverse: matches!(order, BlockRequestOrder::NewToOld),
         });
-        self.sender.send(request).await.ok()?;
         let mut receiver = self.receiver.lock().await;
+        self.sender.send(request).await.ok()?;
         let block_headers = tokio::time::timeout(PEER_REPLY_TIMOUT, async move {
             loop {
                 match receiver.recv().await {
@@ -104,8 +113,8 @@ impl PeerChannels {
             id: request_id,
             block_hashes,
         });
-        self.sender.send(request).await.ok()?;
         let mut receiver = self.receiver.lock().await;
+        self.sender.send(request).await.ok()?;
         let block_bodies = tokio::time::timeout(PEER_REPLY_TIMOUT, async move {
             loop {
                 match receiver.recv().await {
@@ -138,8 +147,8 @@ impl PeerChannels {
             id: request_id,
             block_hashes,
         });
-        self.sender.send(request).await.ok()?;
         let mut receiver = self.receiver.lock().await;
+        self.sender.send(request).await.ok()?;
         let receipts = tokio::time::timeout(PEER_REPLY_TIMOUT, async move {
             loop {
                 match receiver.recv().await {
@@ -177,8 +186,8 @@ impl PeerChannels {
             limit_hash: HASH_MAX,
             response_bytes: MAX_RESPONSE_BYTES,
         });
-        self.sender.send(request).await.ok()?;
         let mut receiver = self.receiver.lock().await;
+        self.sender.send(request).await.ok()?;
         let (accounts, proof) = tokio::time::timeout(PEER_REPLY_TIMOUT, async move {
             loop {
                 match receiver.recv().await {
@@ -229,8 +238,8 @@ impl PeerChannels {
             hashes,
             bytes: MAX_RESPONSE_BYTES,
         });
-        self.sender.send(request).await.ok()?;
         let mut receiver = self.receiver.lock().await;
+        self.sender.send(request).await.ok()?;
         let codes = tokio::time::timeout(PEER_REPLY_TIMOUT, async move {
             loop {
                 match receiver.recv().await {
@@ -272,8 +281,8 @@ impl PeerChannels {
             limit_hash: HASH_MAX,
             response_bytes: MAX_RESPONSE_BYTES,
         });
-        self.sender.send(request).await.ok()?;
         let mut receiver = self.receiver.lock().await;
+        self.sender.send(request).await.ok()?;
         let (mut slots, proof) = tokio::time::timeout(PEER_REPLY_TIMOUT, async move {
             loop {
                 match receiver.recv().await {
@@ -295,7 +304,7 @@ impl PeerChannels {
             return None;
         }
         // Unzip & validate response
-        let mut proof = encodable_to_proof(&proof);
+        let proof = encodable_to_proof(&proof);
         let mut storage_keys = vec![];
         let mut storage_values = vec![];
         let mut should_continue = false;
@@ -316,37 +325,12 @@ impl PeerChannels {
                 .collect::<Vec<_>>();
             let storage_root = storage_roots.remove(0);
 
-            // We have 3 cases (as we won't accept empty storage ranges):
-            // - The range has only 1 element (with key matching the start): We expect one edge proof
-            // - The range has the full storage: We expect no proofs
-            // - The range is not the full storage (last range): We expect 2 edge proofs
-            if hahsed_keys.len() == 1 && hahsed_keys[0] == start {
-                if proof.is_empty() {
-                    return None;
-                };
-                let first_proof = vec![proof.remove(0)];
-                verify_range(
-                    storage_root,
-                    &start,
-                    &hahsed_keys,
-                    &encoded_values,
-                    &first_proof,
-                )
-                .ok()?;
-            }
-            // Last element with two edge proofs
-            if slots.is_empty() && proof.len() >= 2 {
-                let last_proof = vec![proof.remove(0), proof.remove(0)];
-                should_continue = verify_range(
-                    storage_root,
-                    &start,
-                    &hahsed_keys,
-                    &encoded_values,
-                    &last_proof,
-                )
-                .ok()?;
+            // The proof corresponds to the last slot, for the previous ones the slot must be the full range without edge proofs
+            if slots.is_empty() && !proof.is_empty() {
+                should_continue =
+                    verify_range(storage_root, &start, &hahsed_keys, &encoded_values, &proof)
+                        .ok()?;
             } else {
-                // Full range (no proofs)
                 verify_range(storage_root, &start, &hahsed_keys, &encoded_values, &[]).ok()?;
             }
 
@@ -378,8 +362,8 @@ impl PeerChannels {
                 .collect(),
             bytes: MAX_RESPONSE_BYTES,
         });
-        self.sender.send(request).await.ok()?;
         let mut receiver = self.receiver.lock().await;
+        self.sender.send(request).await.ok()?;
         let nodes = tokio::time::timeout(PEER_REPLY_TIMOUT, async move {
             loop {
                 match receiver.recv().await {
@@ -437,8 +421,8 @@ impl PeerChannels {
                 .collect(),
             bytes: MAX_RESPONSE_BYTES,
         });
-        self.sender.send(request).await.ok()?;
         let mut receiver = self.receiver.lock().await;
+        self.sender.send(request).await.ok()?;
         let nodes = tokio::time::timeout(PEER_REPLY_TIMOUT, async move {
             loop {
                 match receiver.recv().await {

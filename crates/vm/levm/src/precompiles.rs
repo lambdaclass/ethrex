@@ -8,7 +8,9 @@ use lambdaworks_math::{
         short_weierstrass::{
             curves::bn_254::{
                 curve::{BN254Curve, BN254FieldElement, BN254TwistCurveFieldElement},
-                field_extension::Degree12ExtensionField,
+                field_extension::{
+                    BN254FieldModulus, Degree12ExtensionField, Degree2ExtensionField,
+                },
                 pairing::BN254AtePairing,
                 twist::BN254TwistCurve,
             },
@@ -16,7 +18,10 @@ use lambdaworks_math::{
         },
         traits::{IsEllipticCurve, IsPairing},
     },
-    field::{element::FieldElement, extensions::quadratic::QuadraticExtensionFieldElement},
+    field::{
+        element::FieldElement, extensions::quadratic::QuadraticExtensionFieldElement,
+        fields::montgomery_backed_prime_fields::MontgomeryBackendPrimeField,
+    },
     traits::ByteConversion,
     unsigned_integer::element,
 };
@@ -75,6 +80,34 @@ pub const POINT_EVALUATION_ADDRESS: H160 = H160([
     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
     0x00, 0x00, 0x00, 0x0a,
 ]);
+pub const BLS12_G1ADD_ADDRESS: H160 = H160([
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x0b,
+]);
+pub const BLS12_G1MSM_ADDRESS: H160 = H160([
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x0c,
+]);
+pub const BLS12_G2ADD_ADDRESS: H160 = H160([
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x0d,
+]);
+pub const BLS12_G2MSM_ADDRESS: H160 = H160([
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x0e,
+]);
+pub const BLS12_PAIRING_CHECK_ADDRESS: H160 = H160([
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x0f,
+]);
+pub const BLS12_MAP_FP_TO_G1_ADDRESS: H160 = H160([
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x10,
+]);
+pub const BLS12_MAP_FP2_TO_G2_ADDRESS: H160 = H160([
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x11,
+]);
 
 pub const PRECOMPILES: [H160; 10] = [
     ECRECOVER_ADDRESS,
@@ -89,18 +122,40 @@ pub const PRECOMPILES: [H160; 10] = [
     POINT_EVALUATION_ADDRESS,
 ];
 
+pub const PRECOMPILES_POST_CANCUN: [H160; 7] = [
+    BLS12_G1ADD_ADDRESS,
+    BLS12_G1MSM_ADDRESS,
+    BLS12_G2ADD_ADDRESS,
+    BLS12_G2MSM_ADDRESS,
+    BLS12_PAIRING_CHECK_ADDRESS,
+    BLS12_MAP_FP_TO_G1_ADDRESS,
+    BLS12_MAP_FP2_TO_G2_ADDRESS,
+];
+
 pub const BLAKE2F_ELEMENT_SIZE: usize = 8;
+
+pub const SIZE_PRECOMPILES_PRE_CANCUN: u64 = 9;
+pub const SIZE_PRECOMPILES_CANCUN: u64 = 10;
+pub const SIZE_PRECOMPILES_PRAGUE: u64 = 17;
 
 pub fn is_precompile(callee_address: &Address, spec_id: SpecId) -> bool {
     // Cancun specs is the only one that allows point evaluation precompile
     if *callee_address == POINT_EVALUATION_ADDRESS && spec_id < SpecId::CANCUN {
         return false;
     }
+    // Prague or newers forks should only use this precompiles
+    // https://eips.ethereum.org/EIPS/eip-2537
+    if PRECOMPILES_POST_CANCUN.contains(callee_address) && spec_id < SpecId::PRAGUE {
+        return false;
+    }
 
-    PRECOMPILES.contains(callee_address)
+    PRECOMPILES.contains(callee_address) || PRECOMPILES_POST_CANCUN.contains(callee_address)
 }
 
-pub fn execute_precompile(current_call_frame: &mut CallFrame) -> Result<Bytes, VMError> {
+pub fn execute_precompile(
+    current_call_frame: &mut CallFrame,
+    spec_id: SpecId,
+) -> Result<Bytes, VMError> {
     let callee_address = current_call_frame.code_address;
     let gas_for_call = current_call_frame
         .gas_limit
@@ -121,9 +176,12 @@ pub fn execute_precompile(current_call_frame: &mut CallFrame) -> Result<Bytes, V
         address if address == RIPEMD_160_ADDRESS => {
             ripemd_160(&current_call_frame.calldata, gas_for_call, consumed_gas)?
         }
-        address if address == MODEXP_ADDRESS => {
-            modexp(&current_call_frame.calldata, gas_for_call, consumed_gas)?
-        }
+        address if address == MODEXP_ADDRESS => modexp(
+            &current_call_frame.calldata,
+            gas_for_call,
+            consumed_gas,
+            spec_id,
+        )?,
         address if address == ECADD_ADDRESS => {
             ecadd(&current_call_frame.calldata, gas_for_call, consumed_gas)?
         }
@@ -138,6 +196,27 @@ pub fn execute_precompile(current_call_frame: &mut CallFrame) -> Result<Bytes, V
         }
         address if address == POINT_EVALUATION_ADDRESS => {
             point_evaluation(&current_call_frame.calldata, gas_for_call, consumed_gas)?
+        }
+        address if address == BLS12_G1ADD_ADDRESS => {
+            bls12_g1add(&calldata, gas_for_call, consumed_gas)?
+        }
+        address if address == BLS12_G1MSM_ADDRESS => {
+            bls12_g1msm(&calldata, gas_for_call, consumed_gas)?
+        }
+        address if address == BLS12_G2ADD_ADDRESS => {
+            bls12_g2add(&calldata, gas_for_call, consumed_gas)?
+        }
+        address if address == BLS12_G2MSM_ADDRESS => {
+            bls12_g2msm(&calldata, gas_for_call, consumed_gas)?
+        }
+        address if address == BLS12_PAIRING_CHECK_ADDRESS => {
+            bls12_pairing_check(&calldata, gas_for_call, consumed_gas)?
+        }
+        address if address == BLS12_MAP_FP_TO_G1_ADDRESS => {
+            bls12_map_fp_to_g1(&calldata, gas_for_call, consumed_gas)?
+        }
+        address if address == BLS12_MAP_FP2_TO_G2_ADDRESS => {
+            bls12_map_fp2_tp_g2(&calldata, gas_for_call, consumed_gas)?
         }
         _ => return Err(VMError::Internal(InternalError::InvalidPrecompileAddress)),
     };
@@ -195,10 +274,7 @@ pub fn ecrecover(
         return Ok(Bytes::new());
     };
 
-    let v: U256 = calldata
-        .get(32..64)
-        .ok_or(InternalError::SlicingError)?
-        .into();
+    let v = U256::from_big_endian(calldata.get(32..64).ok_or(InternalError::SlicingError)?);
 
     // The Recovery identifier is expected to be 27 or 28, any other value is invalid
     if !(v == U256::from(27) || v == U256::from(28)) {
@@ -233,6 +309,7 @@ pub fn ecrecover(
     Ok(Bytes::from(output.to_vec()))
 }
 
+/// Returns the calldata received
 pub fn identity(
     calldata: &Bytes,
     gas_for_call: u64,
@@ -280,77 +357,96 @@ pub fn ripemd_160(
     Ok(Bytes::from(output))
 }
 
+/// Returns the result of the module-exponentiation operation
 pub fn modexp(
     calldata: &Bytes,
     gas_for_call: u64,
     consumed_gas: &mut u64,
+    spec_id: SpecId,
 ) -> Result<Bytes, VMError> {
     // If calldata does not reach the required length, we should fill the rest with zeros
     let calldata = fill_with_zeros(calldata, 96)?;
 
-    let b_size: U256 = calldata
-        .get(0..32)
-        .ok_or(PrecompileError::ParsingInputError)?
-        .into();
+    let base_size = U256::from_big_endian(
+        calldata
+            .get(0..32)
+            .ok_or(PrecompileError::ParsingInputError)?,
+    );
 
-    let e_size: U256 = calldata
-        .get(32..64)
-        .ok_or(PrecompileError::ParsingInputError)?
-        .into();
+    let exponent_size = U256::from_big_endian(
+        calldata
+            .get(32..64)
+            .ok_or(PrecompileError::ParsingInputError)?,
+    );
 
-    let m_size: U256 = calldata
-        .get(64..96)
-        .ok_or(PrecompileError::ParsingInputError)?
-        .into();
+    let modulus_size = U256::from_big_endian(
+        calldata
+            .get(64..96)
+            .ok_or(PrecompileError::ParsingInputError)?,
+    );
 
-    if b_size == U256::zero() && m_size == U256::zero() {
-        increase_precompile_consumed_gas(gas_for_call, MODEXP_STATIC_COST, consumed_gas)?;
+    if base_size == U256::zero() && modulus_size == U256::zero() {
+        // On Berlin or newer there is a floor cost for the modexp precompile
+        // On older versions in this return there is no cost added, see more https://eips.ethereum.org/EIPS/eip-2565
+        if spec_id >= SpecId::BERLIN {
+            increase_precompile_consumed_gas(gas_for_call, MODEXP_STATIC_COST, consumed_gas)?;
+        }
         return Ok(Bytes::new());
     }
 
     // Because on some cases conversions to usize exploded before the check of the zero value could be done
-    let b_size = usize::try_from(b_size).map_err(|_| PrecompileError::ParsingInputError)?;
-    let e_size = usize::try_from(e_size).map_err(|_| PrecompileError::ParsingInputError)?;
-    let m_size = usize::try_from(m_size).map_err(|_| PrecompileError::ParsingInputError)?;
+    let base_size = usize::try_from(base_size).map_err(|_| PrecompileError::ParsingInputError)?;
+    let exponent_size =
+        usize::try_from(exponent_size).map_err(|_| PrecompileError::ParsingInputError)?;
+    let modulus_size =
+        usize::try_from(modulus_size).map_err(|_| PrecompileError::ParsingInputError)?;
 
-    let base_limit = b_size
+    let base_limit = base_size
         .checked_add(96)
         .ok_or(InternalError::ArithmeticOperationOverflow)?;
 
-    let exponent_limit = e_size
+    let exponent_limit = exponent_size
         .checked_add(base_limit)
         .ok_or(InternalError::ArithmeticOperationOverflow)?;
 
-    let modulus_limit = m_size
+    let modulus_limit = modulus_size
         .checked_add(exponent_limit)
         .ok_or(InternalError::ArithmeticOperationOverflow)?;
-    // The reason I use unwrap_or_default is to cover the case where calldata does not reach the required
-    // length, so then we should fill the rest with zeros. The same is done in modulus parsing
-    let b = get_slice_or_default(&calldata, 96, base_limit, b_size)?;
+
+    let b = get_slice_or_default(&calldata, 96, base_limit, base_size)?;
     let base = BigUint::from_bytes_be(&b);
 
-    let e = get_slice_or_default(&calldata, base_limit, exponent_limit, e_size)?;
+    let e = get_slice_or_default(&calldata, base_limit, exponent_limit, exponent_size)?;
     let exponent = BigUint::from_bytes_be(&e);
 
-    let m = get_slice_or_default(&calldata, exponent_limit, modulus_limit, m_size)?;
+    let m = get_slice_or_default(&calldata, exponent_limit, modulus_limit, modulus_size)?;
     let modulus = BigUint::from_bytes_be(&m);
 
-    // first 32 bytes of exponent or exponent if e_size < 32
-    let bytes_to_take = 32.min(e_size);
+    // First 32 bytes of exponent or exponent if e_size < 32
+    let bytes_to_take = 32.min(exponent_size);
     // Use of unwrap_or_default because if e == 0 get_slice_or_default returns an empty vec
     let exp_first_32 = BigUint::from_bytes_be(e.get(0..bytes_to_take).unwrap_or_default());
 
-    let gas_cost = gas_cost::modexp(&exp_first_32, b_size, e_size, m_size)?;
+    let gas_cost = gas_cost::modexp(
+        &exp_first_32,
+        base_size,
+        exponent_size,
+        modulus_size,
+        spec_id,
+    )?;
+
     increase_precompile_consumed_gas(gas_for_call, gas_cost, consumed_gas)?;
 
     let result = mod_exp(base, exponent, modulus);
 
     let res_bytes = result.to_bytes_be();
-    let res_bytes = increase_left_pad(&Bytes::from(res_bytes), m_size)?;
+    let res_bytes = increase_left_pad(&Bytes::from(res_bytes), modulus_size)?;
 
-    Ok(res_bytes.slice(..m_size))
+    Ok(res_bytes.slice(..modulus_size))
 }
 
+/// This function returns the slice between the lower and upper limit of the calldata (as a vector),
+/// padding with zeros at the end if necessary.
 fn get_slice_or_default(
     calldata: &Bytes,
     lower_limit: usize,
@@ -383,6 +479,7 @@ fn mod_exp(base: BigUint, exponent: BigUint, modulus: BigUint) -> BigUint {
     }
 }
 
+/// If the result size is less than needed, pads left with zeros.
 pub fn increase_left_pad(result: &Bytes, m_size: usize) -> Result<Bytes, VMError> {
     let mut padded_result = vec![0u8; m_size];
     if result.len() < m_size {
@@ -400,6 +497,7 @@ pub fn increase_left_pad(result: &Bytes, m_size: usize) -> Result<Bytes, VMError
     }
 }
 
+/// Makes a point addition on the elliptic curve 'alt_bn128'
 pub fn ecadd(
     calldata: &Bytes,
     gas_for_call: u64,
@@ -478,6 +576,7 @@ pub fn ecadd(
     }
 }
 
+/// Makes a scalar multiplication on the elliptic curve 'alt_bn128'
 pub fn ecmul(
     calldata: &Bytes,
     gas_for_call: u64,
@@ -534,6 +633,158 @@ pub fn ecmul(
     }
 }
 
+const ALT_BN128_PRIME: U256 = U256([
+    0x3c208c16d87cfd47,
+    0x97816a916871ca8d,
+    0xb85045b68181585d,
+    0x30644e72e131a029,
+]);
+
+type FirstPointCoordinates = (
+    FieldElement<MontgomeryBackendPrimeField<BN254FieldModulus, 4>>,
+    FieldElement<MontgomeryBackendPrimeField<BN254FieldModulus, 4>>,
+);
+
+/// Parses first point coordinates and makes verification of invalid infinite
+fn parse_first_point_coordinates(input_data: &[u8]) -> Result<FirstPointCoordinates, VMError> {
+    let first_point_x = input_data.get(..32).ok_or(InternalError::SlicingError)?;
+    let first_point_y = input_data.get(32..64).ok_or(InternalError::SlicingError)?;
+
+    // Infinite is defined by (0,0). Any other zero-combination is invalid
+    if (U256::from_big_endian(first_point_x) == U256::zero())
+        ^ (U256::from_big_endian(first_point_y) == U256::zero())
+    {
+        return Err(VMError::PrecompileError(PrecompileError::DefaultError));
+    }
+
+    let first_point_y = BN254FieldElement::from_bytes_be(first_point_y)
+        .map_err(|_| PrecompileError::DefaultError)?;
+    let first_point_x = BN254FieldElement::from_bytes_be(first_point_x)
+        .map_err(|_| PrecompileError::DefaultError)?;
+
+    Ok((first_point_x, first_point_y))
+}
+
+/// Parses second point coordinates and makes verification of invalid infinite and curve belonging.
+fn parse_second_point_coordinates(
+    input_data: &[u8],
+) -> Result<
+    (
+        FieldElement<Degree2ExtensionField>,
+        FieldElement<Degree2ExtensionField>,
+    ),
+    VMError,
+> {
+    let second_point_x_first_part = input_data.get(96..128).ok_or(InternalError::SlicingError)?;
+    let second_point_x_second_part = input_data.get(64..96).ok_or(InternalError::SlicingError)?;
+
+    // Infinite is defined by (0,0). Any other zero-combination is invalid
+    if (U256::from_big_endian(second_point_x_first_part) == U256::zero())
+        ^ (U256::from_big_endian(second_point_x_second_part) == U256::zero())
+    {
+        return Err(VMError::PrecompileError(PrecompileError::DefaultError));
+    }
+
+    let second_point_y_first_part = input_data
+        .get(160..192)
+        .ok_or(InternalError::SlicingError)?;
+    let second_point_y_second_part = input_data
+        .get(128..160)
+        .ok_or(InternalError::SlicingError)?;
+
+    // Infinite is defined by (0,0). Any other zero-combination is invalid
+    if (U256::from_big_endian(second_point_y_first_part) == U256::zero())
+        ^ (U256::from_big_endian(second_point_y_second_part) == U256::zero())
+    {
+        return Err(VMError::PrecompileError(PrecompileError::DefaultError));
+    }
+
+    // Check if the second point belongs to the curve (this happens if it's lower than the prime)
+    if U256::from_big_endian(second_point_x_first_part) >= ALT_BN128_PRIME
+        || U256::from_big_endian(second_point_x_second_part) >= ALT_BN128_PRIME
+        || U256::from_big_endian(second_point_y_first_part) >= ALT_BN128_PRIME
+        || U256::from_big_endian(second_point_y_second_part) >= ALT_BN128_PRIME
+    {
+        return Err(VMError::PrecompileError(PrecompileError::DefaultError));
+    }
+
+    let second_point_x_bytes = [second_point_x_first_part, second_point_x_second_part].concat();
+    let second_point_y_bytes = [second_point_y_first_part, second_point_y_second_part].concat();
+
+    let second_point_x = BN254TwistCurveFieldElement::from_bytes_be(&second_point_x_bytes)
+        .map_err(|_| PrecompileError::DefaultError)?;
+    let second_point_y = BN254TwistCurveFieldElement::from_bytes_be(&second_point_y_bytes)
+        .map_err(|_| PrecompileError::DefaultError)?;
+
+    Ok((second_point_x, second_point_y))
+}
+
+/// Handles pairing given a certain elements, and depending on if elements represent infinity, then
+/// continues, verifies errors on the other point or calculates the pairing
+fn handle_pairing_from_coordinates(
+    first_point_x: FieldElement<MontgomeryBackendPrimeField<BN254FieldModulus, 4>>,
+    first_point_y: FieldElement<MontgomeryBackendPrimeField<BN254FieldModulus, 4>>,
+    second_point_x: FieldElement<Degree2ExtensionField>,
+    second_point_y: FieldElement<Degree2ExtensionField>,
+    mul: &mut FieldElement<Degree12ExtensionField>,
+) -> Result<bool, VMError> {
+    let zero_element = BN254FieldElement::from(0);
+    let twcurve_zero_element = BN254TwistCurveFieldElement::from(0);
+    let first_point_is_infinity =
+        first_point_x.eq(&zero_element) && first_point_y.eq(&zero_element);
+    let second_point_is_infinity =
+        second_point_x.eq(&twcurve_zero_element) && second_point_y.eq(&twcurve_zero_element);
+
+    match (first_point_is_infinity, second_point_is_infinity) {
+        (true, true) => {
+            // If both points are infinity, then continue to the next input
+            Ok(true)
+        }
+        (true, false) => {
+            // If the first point is infinity, then do the checks for the second
+            if let Ok(p2) = BN254TwistCurve::create_point_from_affine(
+                second_point_x.clone(),
+                second_point_y.clone(),
+            ) {
+                if !p2.is_in_subgroup() {
+                    Err(VMError::PrecompileError(PrecompileError::DefaultError))
+                } else {
+                    Ok(true)
+                }
+            } else {
+                Err(VMError::PrecompileError(PrecompileError::DefaultError))
+            }
+        }
+        (false, true) => {
+            // If the second point is infinity, then do the checks for the first
+            if BN254Curve::create_point_from_affine(first_point_x.clone(), first_point_y.clone())
+                .is_err()
+            {
+                Err(VMError::PrecompileError(PrecompileError::DefaultError))
+            } else {
+                Ok(true)
+            }
+        }
+        (false, false) => {
+            // Define the pairing points
+            let first_point = BN254Curve::create_point_from_affine(first_point_x, first_point_y)
+                .map_err(|_| PrecompileError::DefaultError)?;
+
+            let second_point =
+                BN254TwistCurve::create_point_from_affine(second_point_x, second_point_y)
+                    .map_err(|_| PrecompileError::DefaultError)?;
+            if !second_point.is_in_subgroup() {
+                return Err(VMError::PrecompileError(PrecompileError::DefaultError));
+            }
+
+            // Get the result of the pairing and affect the mul value with it
+            update_pairing_result(mul, first_point, second_point)?;
+            Ok(false)
+        }
+    }
+}
+
+/// Performs a bilinear pairing on points on the elliptic curve 'alt_bn128', returns 1 on success and 0 on failure
 pub fn ecpairing(
     calldata: &Bytes,
     gas_for_call: u64,
@@ -564,119 +815,18 @@ pub fn ecpairing(
             .get(input_start..input_end)
             .ok_or(InternalError::SlicingError)?;
 
-        let first_point_x = input_data.get(..32).ok_or(InternalError::SlicingError)?;
-        let first_point_y = input_data.get(32..64).ok_or(InternalError::SlicingError)?;
+        let (first_point_x, first_point_y) = parse_first_point_coordinates(input_data)?;
 
-        // Infinite is defined by (0,0). Any other zero-combination is invalid
-        if (U256::from_big_endian(first_point_x) == U256::zero())
-            ^ (U256::from_big_endian(first_point_y) == U256::zero())
-        {
-            return Err(VMError::PrecompileError(PrecompileError::DefaultError));
-        }
+        let (second_point_x, second_point_y) = parse_second_point_coordinates(input_data)?;
 
-        let first_point_y = BN254FieldElement::from_bytes_be(first_point_y)
-            .map_err(|_| PrecompileError::DefaultError)?;
-        let first_point_x = BN254FieldElement::from_bytes_be(first_point_x)
-            .map_err(|_| PrecompileError::DefaultError)?;
-
-        let second_point_x_first_part =
-            input_data.get(96..128).ok_or(InternalError::SlicingError)?;
-        let second_point_x_second_part =
-            input_data.get(64..96).ok_or(InternalError::SlicingError)?;
-
-        // Infinite is defined by (0,0). Any other zero-combination is invalid
-        if (U256::from_big_endian(second_point_x_first_part) == U256::zero())
-            ^ (U256::from_big_endian(second_point_x_second_part) == U256::zero())
-        {
-            return Err(VMError::PrecompileError(PrecompileError::DefaultError));
-        }
-
-        let second_point_y_first_part = input_data
-            .get(160..192)
-            .ok_or(InternalError::SlicingError)?;
-        let second_point_y_second_part = input_data
-            .get(128..160)
-            .ok_or(InternalError::SlicingError)?;
-
-        // Infinite is defined by (0,0). Any other zero-combination is invalid
-        if (U256::from_big_endian(second_point_y_first_part) == U256::zero())
-            ^ (U256::from_big_endian(second_point_y_second_part) == U256::zero())
-        {
-            return Err(VMError::PrecompileError(PrecompileError::DefaultError));
-        }
-
-        let alt_bn128_prime = U256::from_str_radix(
-            "30644e72e131a029b85045b68181585d97816a916871ca8d3c208c16d87cfd47",
-            16,
-        )
-        .map_err(|_| InternalError::ConversionError)?;
-
-        // Check if the second point belongs to the curve (this happens if it's lower than the prime)
-        if U256::from_big_endian(second_point_x_first_part) >= alt_bn128_prime
-            || U256::from_big_endian(second_point_x_second_part) >= alt_bn128_prime
-            || U256::from_big_endian(second_point_y_first_part) >= alt_bn128_prime
-            || U256::from_big_endian(second_point_y_second_part) >= alt_bn128_prime
-        {
-            return Err(VMError::PrecompileError(PrecompileError::DefaultError));
-        }
-
-        let second_point_x_bytes = [second_point_x_first_part, second_point_x_second_part].concat();
-        let second_point_y_bytes = [second_point_y_first_part, second_point_y_second_part].concat();
-
-        let second_point_x: FieldElement<lambdaworks_math::elliptic_curve::short_weierstrass::curves::bn_254::field_extension::Degree2ExtensionField> = BN254TwistCurveFieldElement::from_bytes_be(&second_point_x_bytes)
-            .map_err(|_| PrecompileError::DefaultError)?;
-        let second_point_y = BN254TwistCurveFieldElement::from_bytes_be(&second_point_y_bytes)
-            .map_err(|_| PrecompileError::DefaultError)?;
-
-        let zero_element = BN254FieldElement::from(0);
-        let twcurve_zero_element = BN254TwistCurveFieldElement::from(0);
-        let first_point_is_infinity =
-            first_point_x.eq(&zero_element) && first_point_y.eq(&zero_element);
-        let second_point_is_infinity =
-            second_point_x.eq(&twcurve_zero_element) && second_point_y.eq(&twcurve_zero_element);
-
-        match (first_point_is_infinity, second_point_is_infinity) {
-            (true, true) => {
-                // If both points are infinity, then continue to the next input
-                continue;
-            }
-            (true, false) => {
-                // If the first point is infinity, then do the checks for the second
-                if let Ok(p2) =
-                    BN254TwistCurve::create_point_from_affine(second_point_x, second_point_y)
-                {
-                    if !p2.is_in_subgroup() {
-                        return Err(VMError::PrecompileError(PrecompileError::DefaultError));
-                    } else {
-                        continue;
-                    }
-                } else {
-                    return Err(VMError::PrecompileError(PrecompileError::DefaultError));
-                }
-            }
-            (false, true) => {
-                // If the second point is infinity, then do the checks for the first
-                if BN254Curve::create_point_from_affine(first_point_x, first_point_y).is_err() {
-                    return Err(VMError::PrecompileError(PrecompileError::DefaultError));
-                }
-                continue;
-            }
-            (false, false) => {
-                // Define the pairing points
-                let first_point =
-                    BN254Curve::create_point_from_affine(first_point_x, first_point_y)
-                        .map_err(|_| PrecompileError::DefaultError)?;
-
-                let second_point =
-                    BN254TwistCurve::create_point_from_affine(second_point_x, second_point_y)
-                        .map_err(|_| PrecompileError::DefaultError)?;
-                if !second_point.is_in_subgroup() {
-                    return Err(VMError::PrecompileError(PrecompileError::DefaultError));
-                }
-
-                // Get the result of the pairing and affect the mul value with it
-                update_pairing_result(&mut mul, first_point, second_point)?;
-            }
+        if handle_pairing_from_coordinates(
+            first_point_x,
+            first_point_y,
+            second_point_x,
+            second_point_y,
+            &mut mul,
+        )? {
+            continue;
         }
     }
 
@@ -687,7 +837,8 @@ pub fn ecpairing(
     Ok(Bytes::from(result.to_vec()))
 }
 
-/// I allow this clippy alert because lib handles mul for the type and will not panic in case of overflow
+/// Updates the success variable with the pairing result. I allow this clippy alert because lib handles
+/// mul for the type and will not panic in case of overflow
 #[allow(clippy::arithmetic_side_effects)]
 fn update_pairing_result(
     mul: &mut FieldElement<Degree12ExtensionField>,
@@ -737,10 +888,10 @@ const R2: u32 = 24;
 const R3: u32 = 16;
 const R4: u32 = 63;
 
-// The G primitive function mixes two input words, "x" and "y", into
-// four words indexed by "a", "b", "c", and "d" in the working vector
-// v[0..15].  The full modified vector is returned.
-// Based on https://datatracker.ietf.org/doc/html/rfc7693#section-3.1
+/// The G primitive function mixes two input words, "x" and "y", into
+/// four words indexed by "a", "b", "c", and "d" in the working vector
+/// v[0..15].  The full modified vector is returned.
+/// Based on https://datatracker.ietf.org/doc/html/rfc7693#section-3.1
 #[allow(clippy::indexing_slicing)]
 fn g(v: [u64; 16], a: usize, b: usize, c: usize, d: usize, x: u64, y: u64) -> [u64; 16] {
     let mut ret = v;
@@ -756,7 +907,7 @@ fn g(v: [u64; 16], a: usize, b: usize, c: usize, d: usize, x: u64, y: u64) -> [u
     ret
 }
 
-// Perform the permutations on the work vector
+/// Perform the permutations on the work vector given the rounds to permute and the message block
 #[allow(clippy::indexing_slicing)]
 fn word_permutation(rounds_to_permute: usize, v: [u64; 16], m: &[u64; 16]) -> [u64; 16] {
     let mut ret = v;
@@ -780,13 +931,13 @@ fn word_permutation(rounds_to_permute: usize, v: [u64; 16], m: &[u64; 16]) -> [u
     ret
 }
 
-// Based on https://datatracker.ietf.org/doc/html/rfc7693#section-3.2
+/// Based on https://datatracker.ietf.org/doc/html/rfc7693#section-3.2
 fn blake2f_compress_f(
-    rounds: usize,
-    h: [u64; 8],
-    m: &[u64; 16],
-    t: &[u64; 2],
-    f: bool,
+    rounds: usize, // Specifies the rounds to permute
+    h: [u64; 8],   // State vector, defines the work vector (v) and affects the XOR process
+    m: &[u64; 16], // The message block to compress
+    t: &[u64; 2],  // Affects the work vector (v) before permutations
+    f: bool,       // If set as true, inverts all bits
 ) -> Result<[u64; 8], InternalError> {
     // Initialize local work vector v[0..15], takes first half from state and second half from IV.
     let mut v: [u64; 16] = [0; 16];
@@ -816,7 +967,8 @@ fn blake2f_compress_f(
     Ok(output)
 }
 
-// Reads a part of the calldata and returns what is read as u64 or an error
+/// Reads part of the calldata and returns what is read as u64 or an error
+/// in the case where the calculated indexes don't match the calldata
 fn read_bytes_from_offset(calldata: &Bytes, offset: usize, index: usize) -> Result<u64, VMError> {
     let index_start = (index
         .checked_mul(BLAKE2F_ELEMENT_SIZE)
@@ -866,6 +1018,7 @@ fn parse_slice_arguments(calldata: &Bytes) -> Result<SliceArguments, VMError> {
     Ok((h, m, t))
 }
 
+/// Returns the result of Blake2 hashing algorithm given a certain parameters from the calldata.
 pub fn blake2f(
     calldata: &Bytes,
     gas_for_call: u64,
@@ -875,10 +1028,7 @@ pub fn blake2f(
         return Err(VMError::PrecompileError(PrecompileError::ParsingInputError));
     }
 
-    let rounds: U256 = calldata
-        .get(0..4)
-        .ok_or(InternalError::SlicingError)?
-        .into();
+    let rounds = U256::from_big_endian(calldata.get(0..4).ok_or(InternalError::SlicingError)?);
 
     let rounds: usize = rounds
         .try_into()
@@ -904,23 +1054,25 @@ pub fn blake2f(
     Ok(Bytes::from(output))
 }
 
-// Taken from the same name function from crates/common/types/blobs_bundle.rs
-fn kzg_commitment_to_versioned_hash(data: &[u8; 48]) -> H256 {
+/// Converts the provided commitment to match the provided versioned_hash.
+/// Taken from the same name function from crates/common/types/blobs_bundle.rs
+fn kzg_commitment_to_versioned_hash(commitment_bytes: &[u8; 48]) -> H256 {
     use k256::sha2::Digest;
-    let mut versioned_hash: [u8; 32] = k256::sha2::Sha256::digest(data).into();
+    let mut versioned_hash: [u8; 32] = k256::sha2::Sha256::digest(commitment_bytes).into();
     versioned_hash[0] = VERSIONED_HASH_VERSION_KZG;
     versioned_hash.into()
 }
 
+/// Verifies that p(z) = y given a commitment that corresponds to the polynomial p(x) and a KZG proof
 fn verify_kzg_proof(
     commitment_bytes: &[u8; 48],
-    x: &[u8; 32],
+    z: &[u8; 32],
     y: &[u8; 32],
     proof_bytes: &[u8; 48],
 ) -> Result<bool, VMError> {
     let commitment_bytes =
         Bytes48::from_slice(commitment_bytes).map_err(|_| PrecompileError::EvaluationError)?; // Could be ParsingInputError
-    let z_bytes = Bytes32::from_slice(x).map_err(|_| PrecompileError::EvaluationError)?;
+    let z_bytes = Bytes32::from_slice(z).map_err(|_| PrecompileError::EvaluationError)?;
     let y_bytes = Bytes32::from_slice(y).map_err(|_| PrecompileError::EvaluationError)?;
     let proof_bytes =
         Bytes48::from_slice(proof_bytes).map_err(|_| PrecompileError::EvaluationError)?;
@@ -947,6 +1099,7 @@ const POINT_EVALUATION_OUTPUT_BYTES: [u8; 64] = [
     0x53, 0xBD, 0xA4, 0x02, 0xFF, 0xFE, 0x5B, 0xFE, 0xFF, 0xFF, 0xFF, 0xFF, 0x00, 0x00, 0x00, 0x01,
 ];
 
+/// Makes verifications on the received point, proof and commitment, if true returns a constant value
 fn point_evaluation(
     calldata: &Bytes,
     gas_for_call: u64,
@@ -1008,4 +1161,60 @@ fn point_evaluation(
     let output = POINT_EVALUATION_OUTPUT_BYTES.to_vec();
 
     Ok(Bytes::from(output))
+}
+
+pub fn bls12_g1add(
+    _calldata: &Bytes,
+    _gas_for_call: u64,
+    _consumed_gas: &mut u64,
+) -> Result<Bytes, VMError> {
+    Ok(Bytes::new())
+}
+
+pub fn bls12_g1msm(
+    _calldata: &Bytes,
+    _gas_for_call: u64,
+    _consumed_gas: &mut u64,
+) -> Result<Bytes, VMError> {
+    Ok(Bytes::new())
+}
+
+pub fn bls12_g2add(
+    _calldata: &Bytes,
+    _gas_for_call: u64,
+    _consumed_gas: &mut u64,
+) -> Result<Bytes, VMError> {
+    Ok(Bytes::new())
+}
+
+pub fn bls12_g2msm(
+    _calldata: &Bytes,
+    _gas_for_call: u64,
+    _consumed_gas: &mut u64,
+) -> Result<Bytes, VMError> {
+    Ok(Bytes::new())
+}
+
+pub fn bls12_pairing_check(
+    _calldata: &Bytes,
+    _gas_for_call: u64,
+    _consumed_gas: &mut u64,
+) -> Result<Bytes, VMError> {
+    Ok(Bytes::new())
+}
+
+pub fn bls12_map_fp_to_g1(
+    _calldata: &Bytes,
+    _gas_for_call: u64,
+    _consumed_gas: &mut u64,
+) -> Result<Bytes, VMError> {
+    Ok(Bytes::new())
+}
+
+pub fn bls12_map_fp2_tp_g2(
+    _calldata: &Bytes,
+    _gas_for_call: u64,
+    _consumed_gas: &mut u64,
+) -> Result<Bytes, VMError> {
+    Ok(Bytes::new())
 }
