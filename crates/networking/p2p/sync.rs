@@ -79,8 +79,6 @@ impl SyncManager {
                     "Sync finished, time elapsed: {} secs",
                     start_time.elapsed().as_secs()
                 );
-                // Next sync will be full-sync
-                self.sync_mode = SyncMode::Full;
             }
             Err(error) => warn!(
                 "Sync failed due to {error}, time elapsed: {} secs ",
@@ -200,6 +198,8 @@ impl SyncManager {
                 }
                 store_receipts_handle.await??;
                 self.last_snap_pivot = pivot_header.number;
+                // Next sync will be full-sync
+                self.sync_mode = SyncMode::Full;
             }
             SyncMode::Full => {
                 // full-sync: Fetch all block bodies and execute them sequentially to build the state
