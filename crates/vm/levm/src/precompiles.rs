@@ -198,25 +198,25 @@ pub fn execute_precompile(
             point_evaluation(&current_call_frame.calldata, gas_for_call, consumed_gas)?
         }
         address if address == BLS12_G1ADD_ADDRESS => {
-            bls12_g1add(&calldata, gas_for_call, consumed_gas)?
+            bls12_g1add(&current_call_frame.calldata, gas_for_call, consumed_gas)?
         }
         address if address == BLS12_G1MSM_ADDRESS => {
-            bls12_g1msm(&calldata, gas_for_call, consumed_gas)?
+            bls12_g1msm(&current_call_frame.calldata, gas_for_call, consumed_gas)?
         }
         address if address == BLS12_G2ADD_ADDRESS => {
-            bls12_g2add(&calldata, gas_for_call, consumed_gas)?
+            bls12_g2add(&current_call_frame.calldata, gas_for_call, consumed_gas)?
         }
         address if address == BLS12_G2MSM_ADDRESS => {
-            bls12_g2msm(&calldata, gas_for_call, consumed_gas)?
+            bls12_g2msm(&current_call_frame.calldata, gas_for_call, consumed_gas)?
         }
         address if address == BLS12_PAIRING_CHECK_ADDRESS => {
-            bls12_pairing_check(&calldata, gas_for_call, consumed_gas)?
+            bls12_pairing_check(&current_call_frame.calldata, gas_for_call, consumed_gas)?
         }
         address if address == BLS12_MAP_FP_TO_G1_ADDRESS => {
-            bls12_map_fp_to_g1(&calldata, gas_for_call, consumed_gas)?
+            bls12_map_fp_to_g1(&current_call_frame.calldata, gas_for_call, consumed_gas)?
         }
         address if address == BLS12_MAP_FP2_TO_G2_ADDRESS => {
-            bls12_map_fp2_tp_g2(&calldata, gas_for_call, consumed_gas)?
+            bls12_map_fp2_tp_g2(&current_call_frame.calldata, gas_for_call, consumed_gas)?
         }
         _ => return Err(VMError::Internal(InternalError::InvalidPrecompileAddress)),
     };
