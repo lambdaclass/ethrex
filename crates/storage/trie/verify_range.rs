@@ -123,8 +123,8 @@ pub fn verify_range_ex_i(
         info!("Node: {hash}: {node:?}")
     }
     // Fill up the state with the nodes from the proof
-    fill_state(&mut trie.state, root, first_key, &proof_nodes)?;
-    fill_state(&mut trie.state, root, last_key, &proof_nodes)?;
+    fill_state_ex(&mut trie.state, root, first_key, &proof_nodes)?;
+    fill_state_ex(&mut trie.state, root, last_key, &proof_nodes)?;
     // Remove all references to the internal nodes that belong to the range so they can be reconstructed
     let empty = remove_internal_references(root, first_key, last_key, &mut trie.state)?;
     if !empty {
@@ -279,6 +279,50 @@ fn fill_state(
     )
 }
 
+fn fill_state_ex(
+    trie_state: &mut TrieState,
+    root_hash: H256,
+    first_key: &H256,
+    proof_nodes: &ProofNodeStorage,
+) -> Result<Vec<u8>, TrieError> {
+    let mut path = Nibbles::from_bytes(&first_key.0);
+    fill_node_ex(
+        &mut path,
+        &NodeHash::from(root_hash),
+        trie_state,
+        proof_nodes,
+    )
+}
+
+/// Fills up the TrieState with nodes from the proof traversing the path given by first_key
+/// Returns an error if there are gaps in the proof node path
+/// Also returns the value if it is part of the proof
+fn fill_node_ex(
+    path: &mut Nibbles,
+    node_hash: &NodeHash,
+    trie_state: &mut TrieState,
+    proof_nodes: &ProofNodeStorage,
+) -> Result<Vec<u8>, TrieError> {
+    let node = proof_nodes.get_node(node_hash)?;
+    info!("Filling node: {node:?} on path {path:?}");
+    let child_hash = get_child(path, &node);
+    info!("got child: {child_hash:?}");
+    if let Some(ref child_hash) = child_hash {
+        trie_state.insert_node(node, node_hash.clone());
+        fill_node(path, child_hash, trie_state, proof_nodes)
+    } else {
+        let value = match &node {
+            Node::Branch(n) => n.value.clone(),
+            Node::Extension(_) => vec![],
+            Node::Leaf(n) => (*path == n.partial)
+                .then_some(n.value.clone())
+                .unwrap_or_default(),
+        };
+        trie_state.insert_node(node, node_hash.clone());
+        Ok(value)
+    }
+}
+
 /// Fills up the TrieState with nodes from the proof traversing the path given by first_key
 /// Returns an error if there are gaps in the proof node path
 /// Also returns the value if it is part of the proof
@@ -289,9 +333,7 @@ fn fill_node(
     proof_nodes: &ProofNodeStorage,
 ) -> Result<Vec<u8>, TrieError> {
     let node = proof_nodes.get_node(node_hash)?;
-    info!("Filling node: {node:?} on path {path:?}");
     let child_hash = get_child(path, &node);
-    info!("got child: {child_hash:?}");
     if let Some(ref child_hash) = child_hash {
         trie_state.insert_node(node, node_hash.clone());
         fill_node(path, child_hash, trie_state, proof_nodes)
