@@ -6,8 +6,8 @@ use ethrex_core::{
     H256, U256,
 };
 use ethrex_rlp::encode::RLPEncode;
+use ethrex_trie::Nibbles;
 use ethrex_trie::{verify_range, Node};
-use ethrex_trie::{verify_range_ex, Nibbles};
 use tokio::sync::{mpsc, Mutex};
 use tracing::{info, warn};
 
@@ -321,13 +321,12 @@ impl PeerChannels {
             return None;
         }
         // Unzip & validate response
-        let mut proof = encodable_to_proof(&proof);
+        let proof = encodable_to_proof(&proof);
         let mut storage_keys = vec![];
         let mut storage_values = vec![];
         let mut should_continue = false;
         // Validate each storage range
         let total_slots = slots.len();
-        info!("proof count: {}", proof.len());
         while !slots.is_empty() {
             info!(
                 "Verifying slot {}/{}",
@@ -351,41 +350,12 @@ impl PeerChannels {
             let storage_root = storage_roots.remove(0);
             info!("Storage root: {storage_root}");
 
-            // We have 3 cases (as we won't accept empty storage ranges):
-            // - The range has only 1 element (with key matching the start): We expect one edge proof
-            // - The range has the full storage: We expect no proofs
-            // - The range is not the full storage (last range): We expect 2 edge proofs
-            if hahsed_keys.len() == 1 && hahsed_keys[0] == start {
-                info!(" 1 Elem - 1 Proof");
-                if proof.is_empty() {
-                    info!("One element with no proof");
-                    return None;
-                };
-                let first_proof = vec![proof.remove(0)];
-                verify_range(
-                    storage_root,
-                    &start,
-                    &hahsed_keys,
-                    &encoded_values,
-                    &first_proof,
-                )
-                .ok()?;
-            }
-            // Last element with two edge proofs
-            if slots.is_empty() && proof.len() >= 2 {
-                info!("Remaining proofs for last element: {}", proof.len());
-                let last_proof = vec![proof.remove(0), proof.remove(0)];
-                should_continue = verify_range_ex(
-                    storage_root,
-                    &start,
-                    &hahsed_keys,
-                    &encoded_values,
-                    &last_proof,
-                )
-                .ok()?;
+            // The proof corresponds to the last slot, for the previous ones the slot must be the full range without edge proofs
+            if slots.is_empty() {
+                should_continue =
+                    verify_range(storage_root, &start, &hahsed_keys, &encoded_values, &proof)
+                        .ok()?;
             } else {
-                info!(" Full Range  - 0 Proof");
-                // Full range (no proofs)
                 verify_range(storage_root, &start, &hahsed_keys, &encoded_values, &[]).ok()?;
             }
 
