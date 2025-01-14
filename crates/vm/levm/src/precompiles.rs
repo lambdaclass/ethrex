@@ -1257,7 +1257,11 @@ pub fn bls12_g1msm(
                 .try_into()
                 .map_err(|_| PrecompileError::ParsingInputError)?;
             // each scalar_le[j] is a u64 so convert each chunk of 8 bytes to u64
-            scalar_le[j] = u64::from_be_bytes(bytes);
+            if let Some(val) = scalar_le.get_mut(j) {
+                *val = u64::from_le_bytes(bytes);
+            } else {
+                return Err(InternalError::SlicingError.into());
+            }
         }
 
         dbg!(scalar_le);
