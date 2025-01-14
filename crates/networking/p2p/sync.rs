@@ -327,6 +327,7 @@ async fn rebuild_state_trie(
     // We cannot keep an open trie here so we will track the root between lookups
     let mut current_state_root = *EMPTY_TRIE_HASH;
     // Fetch Account Ranges
+    // If we reached the maximum amount of retries then it means the state we are requesting is probably old and no longer available
     let mut retry_count = 0;
     while retry_count <= MAX_RETRIES {
         let peer = peers
