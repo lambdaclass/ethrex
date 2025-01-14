@@ -13,7 +13,8 @@ use crate::{
     },
     gas_cost::{
         self, fake_exponential, ACCESS_LIST_ADDRESS_COST, ACCESS_LIST_STORAGE_KEY_COST,
-        BLOB_GAS_PER_BLOB, CODE_DEPOSIT_COST, CREATE_BASE_COST,
+        BLOB_GAS_PER_BLOB, CODE_DEPOSIT_COST, COLD_ADDRESS_ACCESS_COST, CREATE_BASE_COST,
+        WARM_ADDRESS_ACCESS_COST,
     },
     opcodes::Opcode,
     precompiles::{execute_precompile, is_precompile},
@@ -27,7 +28,7 @@ use k256::{
     elliptic_curve::{bigint::Encoding, Curve},
     Secp256k1,
 };
-use keccak_hash::{keccak, keccak256};
+use keccak_hash::keccak;
 use libsecp256k1::{Message, RecoveryId, Signature};
 use revm_primitives::SpecId;
 use sha3::{Digest, Keccak256};
@@ -882,15 +883,7 @@ impl VM {
                 ));
             }
 
-            // (18) TYPE_4_TX_CONTRACT_CREATION -- or null address
-            // From the EIP docs: a null destination is not valid.
-            if self.is_create() {
-                return Err(VMError::TxValidation(
-                    TxValidationError::Type4TxContractCreation,
-                ));
-            }
-
-            self.eip7702_set_access_code(initial_call_frame.code_address)?;
+            self.eip7702_set_access_code(initial_call_frame)?;
         }
 
         if self.is_create() {
@@ -1265,7 +1258,10 @@ impl VM {
         Ok(report)
     }
 
-    pub fn eip7702_set_access_code(&mut self, code_address: Address) -> Result<(), VMError> {
+    pub fn eip7702_set_access_code(
+        &mut self,
+        initial_call_frame: &mut CallFrame,
+    ) -> Result<(), VMError> {
         // Steps from the EIP7702:
         // IMPORTANT:
         // If any of the below steps fail, immediately stop processing that tuple and continue to the next tuple in the list. It will in the case of multiple tuples for the same authority, set the code using the address in the last valid occurrence.
@@ -1279,15 +1275,13 @@ impl VM {
 
             // 1. Verify the chain id is either 0 or the chain’s current ID.
             if chain_id_not_zero && chain_id_not_equals_this_chain_id {
-                return Err(VMError::EIP7702Error(
-                    crate::errors::EIP7702Error::ChainIdError,
-                ));
+                continue;
             }
 
             dbg!("EIP-7702-1");
             // 2. Verify the nonce is less than 2**64 - 1.
             if !(auth_tuple.nonce < u64::MAX) {
-                return Err(VMError::NonceOverflow);
+                continue;
             }
             dbg!("EIP-7702-2");
 
@@ -1296,19 +1290,13 @@ impl VM {
             let order_bytes = Secp256k1::ORDER.to_be_bytes();
             let n = U256::from_big_endian(&order_bytes);
             if auth_tuple.s_signature > n / 2 || U256::zero() >= auth_tuple.s_signature {
-                return Err(VMError::EIP7702Error(
-                    crate::errors::EIP7702Error::InvalidSignatureS,
-                ));
+                continue;
             }
             if auth_tuple.r_signature > n || U256::zero() >= auth_tuple.r_signature {
-                return Err(VMError::EIP7702Error(
-                    crate::errors::EIP7702Error::InvalidSignatureR,
-                ));
+                continue;
             }
             if auth_tuple.v != U256::one() && auth_tuple.v != U256::zero() {
-                return Err(VMError::EIP7702Error(
-                    crate::errors::EIP7702Error::InvalidYParity,
-                ));
+                continue;
             }
             dbg!("EIP-7702-3");
 
@@ -1365,12 +1353,9 @@ impl VM {
             // 5. Verify the code of authority is either empty or already delegated.
             // CHECK: what do we do with this check? do we continue if it was already delegated?
             // What happens if it's not cached?
-            let authority_account = get_account(&mut self.cache, &self.db, authority_address);
-            let authority_account = get_account_mut(&mut self.cache, &authority_address).ok_or(
-                VMError::Internal(InternalError::AccountShouldHaveBeenCached),
-            )?;
+            let (authority_account_info, _) = self.access_account(authority_address);
 
-            if was_delegated(&authority_account.info)? {
+            if was_delegated(&authority_account_info)? {
                 continue;
             }
             dbg!("EIP-7702-5");
@@ -1378,16 +1363,16 @@ impl VM {
             // 6. Verify the nonce of authority is equal to nonce. In case authority does not exist in the trie, verify that nonce is equal to 0.
             // If it doesn't has nonce, it means it's zero,
             // if it has nonce, the account.info.nonce should equal auth_tuple.nonce
-            if authority_account.has_nonce() {
-                if authority_account.info.nonce != auth_tuple.nonce {
+            if authority_account_info.has_nonce() {
+                if authority_account_info.nonce != auth_tuple.nonce {
                     continue;
                 }
             }
             dbg!("EIP-7702-6");
 
-            // If account is not empty exist -> exists
+            // If account is not empty, it exists
             // 7. Add PER_EMPTY_ACCOUNT_COST - PER_AUTH_BASE_COST gas to the global refund counter if authority exists in the trie.
-            if !authority_account.is_empty() {
+            if !authority_account_info.is_empty() {
                 // Should never throw an error
                 let refunded_gas_if_exists: u64 = (PER_EMPTY_ACCOUNT_COST - PER_AUTH_BASE_COST)
                     .try_into()
@@ -1403,12 +1388,14 @@ impl VM {
 
             // As a special case, if address is 0x0000000000000000000000000000000000000000 do not write the designation.
             // Clear the account’s code and reset the account’s code hash to the empty hash.
+            let auth_account = get_account_mut(&mut self.cache, &authority_address)
+                .ok_or(VMError::Internal(InternalError::AccountNotFound))?;
             if auth_tuple.address != Address::zero() {
                 // Write Designation
-                authority_account.info.bytecode = delegation_bytes.into();
+                auth_account.info.bytecode = delegation_bytes.into();
             } else {
                 // auth_tuple.address is Address::zero()
-                // Do not write Designation and Write account's bytecode to empty
+                auth_account.info.bytecode = Bytes::new();
             }
             dbg!("EIP-7702-8");
 
@@ -1416,10 +1403,82 @@ impl VM {
             self.increment_account_nonce(authority_address)
                 .map_err(|_| VMError::TxValidation(TxValidationError::NonceIsMax))?;
             dbg!("EIP-7702-9");
+
+            // From the EIP docs: a null destination is not valid.
+            // CHECK: is this ok?
+            if self.is_create() {
+                return Err(VMError::TxValidation(
+                    TxValidationError::Type4TxContractCreation,
+                ));
+            }
+            let (code_address_info, _) = self.access_account(initial_call_frame.code_address);
+
+            if was_delegated(&code_address_info)? {
+                initial_call_frame.code_address =
+                    get_authorized_address(&code_address_info)?.unwrap();
+                let (auth_address_info, _) = self.access_account(initial_call_frame.code_address);
+
+                initial_call_frame.assign_bytecode(auth_address_info.bytecode);
+            } else {
+                initial_call_frame.assign_bytecode(code_address_info.bytecode);
+            }
         }
         dbg!("EIP-7702-DONE");
 
         Ok(())
+    }
+
+    // Used for the opcodes
+    // The following reading instructions are impacted:
+    //      EXTCODESIZE, EXTCODECOPY, EXTCODEHASH
+    // and the following executing instructions are impacted:
+    //      CALL, CALLCODE, STATICCALL, DELEGATECALL
+    // In case a delegation designator points to another designator,
+    // creating a potential chain or loop of designators,
+    // clients must retrieve only the first code and then stop following the designator chain.
+
+    // For example,
+    // EXTCODESIZE would return 2 (the size of 0xef01) instead of 23 which would represent the delegation designation,
+    // EXTCODEHASH would return 0xeadcdba66a79ab5dce91622d1d75c8cff5cff0b96944c3bf1072cd08ce018329 (keccak256(0xef01)), and
+    // CALL would load the code from address and execute it in the context of authority.
+    pub fn eip7702_get_code(
+        &mut self,
+        address: Address,
+    ) -> Result<(bool, u64, Address, Bytes), VMError> {
+        // Address is the delgated address
+        let account = get_account(&mut self.cache, &self.db, address);
+        let bytecode = account.info.bytecode.clone();
+        let access_cost;
+
+        // If the Address doesn't have a delegation code
+        // return false meaning that is not a delegation
+        // return the same address given
+        // return the bytecode of the given address
+        if !was_delegated(&account.info)? {
+            return Ok((false, 0, address, bytecode));
+        }
+
+        // Here the address has a delegation code
+        // The delegation code has the authorized address
+        let auth_address = get_authorized_address(&account.info)?.unwrap_or_default();
+
+        match self.accrued_substate.touched_accounts.get(&auth_address) {
+            Some(_) => {
+                // Means we've touched the account
+                access_cost = WARM_ADDRESS_ACCESS_COST;
+            }
+            None => {
+                // Means we've not touched the account
+                access_cost = COLD_ADDRESS_ACCESS_COST;
+            }
+        }
+
+        // Get the bytecode from the authorized address
+        let authorized_bytecode = get_account(&mut self.cache, &self.db, auth_address)
+            .info
+            .bytecode;
+
+        Ok((true, access_cost, auth_address, authorized_bytecode))
     }
 }
 
@@ -1472,4 +1531,14 @@ pub fn was_delegated(account_info: &AccountInfo) -> Result<bool, VMError> {
         }
     }
     Ok(was_delegated)
+}
+
+pub fn get_authorized_address(account_info: &AccountInfo) -> Result<Option<Address>, VMError> {
+    if was_delegated(account_info)? {
+        let address_bytes = account_info.bytecode.get(3..).unwrap();
+        let address = Address::from_slice(address_bytes);
+        Ok(Some(address))
+    } else {
+        Ok(None)
+    }
 }
