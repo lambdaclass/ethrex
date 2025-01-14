@@ -83,6 +83,14 @@ pub fn execute_block(
 ) -> Result<BlockExecutionOutput, EvmError> {
     match evm {
         EVM::LEVM => {
+            // "levm" feature today exists for the only purpose of making the
+            // prover crate work successfully, and it is configured in such a way
+            // that from a user perspective this does not to be handled manually.
+            // The feature is part of the crate's default features so the prover
+            // can successfully import the crate disabling the default features,
+            // and so the user does not need to worry about handling it manually.
+            // In the future, the levm crate should be adapted so it can be
+            // compiled by the prover crate and the levm feature can be removed.
             cfg_if::cfg_if! {
                 if #[cfg(feature = "levm")] {
                     levm::execute_block(block, state)
