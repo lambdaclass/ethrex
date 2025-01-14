@@ -327,8 +327,8 @@ async fn rebuild_state_trie(
     // We cannot keep an open trie here so we will track the root between lookups
     let mut current_state_root = *EMPTY_TRIE_HASH;
     // Fetch Account Ranges
-    // If we reached the maximum amount of retries then it means the state we are requesting is probably old and no longer available
-    for _ in 0..MAX_RETRIES {
+    let mut retry_count = 0;
+    while retry_count <= MAX_RETRIES {
         let peer = peers
             .clone()
             .lock()
@@ -340,6 +340,8 @@ async fn rebuild_state_trie(
             .request_account_range(state_root, start_account_hash)
             .await
         {
+            // Reset retry counter
+            retry_count = 0;
             // Update starting hash for next batch
             if should_continue {
                 start_account_hash = *account_hashes.last().unwrap();
@@ -384,6 +386,8 @@ async fn rebuild_state_trie(
                 // All accounts fetched!
                 break;
             }
+        } else {
+            retry_count += 1;
         }
     }
     // Send empty batch to signal that no more batches are incoming
