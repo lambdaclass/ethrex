@@ -327,6 +327,7 @@ impl PeerChannels {
         let mut should_continue = false;
         // Validate each storage range
         let total_slots = slots.len();
+        info!("proofs: {proof:?}");
         while !slots.is_empty() {
             info!(
                 "Verifying slot {}/{}",
