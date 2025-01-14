@@ -2,6 +2,7 @@ use std::{cmp::Ordering, collections::HashMap};
 
 use ethereum_types::H256;
 use sha3::{Digest, Keccak256};
+use tracing::warn;
 
 use crate::{
     nibbles::Nibbles, node::Node, node_hash::NodeHash, state::TrieState, Trie, TrieError, ValueRLP,
@@ -29,6 +30,7 @@ pub fn verify_range(
     // Check that the key range is monotonically increasing
     for keys in keys.windows(2) {
         if keys[0] >= keys[1] {
+            warn!("key range is not monotonically increasing");
             return Err(TrieError::Verify(String::from(
                 "key range is not monotonically increasing",
             )));
@@ -36,6 +38,7 @@ pub fn verify_range(
     }
     // Check for empty values
     if values.iter().any(|value| value.is_empty()) {
+        warn!("value range contains empty value");
         return Err(TrieError::Verify(String::from(
             "value range contains empty value",
         )));
@@ -52,6 +55,9 @@ pub fn verify_range(
         }
         let hash = trie.hash()?;
         if hash != root {
+            warn!(
+                "[Special Case: Empty Proof] invalid proof, expected root hash {root}, got  {hash}"
+            );
             return Err(TrieError::Verify(format!(
                 "invalid proof, expected root hash {}, got  {}",
                 root, hash
@@ -67,6 +73,7 @@ pub fn verify_range(
         let value = fill_state(&mut trie.state, root, first_key, &proof_nodes)?;
         let has_right_element = has_right_element(root, first_key.as_bytes(), &trie.state)?;
         if has_right_element || !value.is_empty() {
+            warn!("[Special Case: No keys, one edge proof] no keys returned but more are available on the trie");
             return Err(TrieError::Verify(
                 "no keys returned but more are available on the trie".to_string(),
             ));
@@ -82,11 +89,13 @@ pub fn verify_range(
         // We need to check that the proof confirms the existance of the first key
         let value = fill_state(&mut trie.state, root, first_key, &proof_nodes)?;
         if first_key != &keys[0] {
+            warn!("[Special Case: One elem 2 proof] correct proof but invalid key");
             return Err(TrieError::Verify(
                 "correct proof but invalid key".to_string(),
             ));
         }
         if value != values[0] {
+            warn!("[Special Case: One elem 2 proof] correct proof but invalid data");
             return Err(TrieError::Verify(
                 "correct proof but invalid data".to_string(),
             ));
@@ -96,6 +105,7 @@ pub fn verify_range(
 
     // Regular Case: Two edge proofs
     if first_key >= last_key {
+        warn!("[Regular Case] invalid edge keys");
         return Err(TrieError::Verify("invalid edge keys".to_string()));
     }
     // Fill up the state with the nodes from the proof
@@ -115,6 +125,7 @@ pub fn verify_range(
     // Check that the hash is the one we expected (aka the trie was properly reconstructed from the edge proofs and the range)
     let hash = trie.hash()?;
     if hash != root {
+        warn!("[Regular Case] invalid proof, expected root hash {root}, got  {hash}");
         return Err(TrieError::Verify(format!(
             "invalid proof, expected root hash {}, got  {}",
             root, hash
