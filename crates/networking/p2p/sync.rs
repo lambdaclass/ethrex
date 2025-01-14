@@ -162,6 +162,10 @@ impl SyncManager {
                 let mut pivot_header = store
                     .get_block_header_by_hash(all_block_hashes[pivot_idx])?
                     .ok_or(SyncError::CorruptDB)?;
+                debug!(
+                    "Selected block {} as pivot for snap sync",
+                    pivot_header.number
+                );
                 let store_bodies_handle = tokio::spawn(store_block_bodies(
                     all_block_hashes[pivot_idx..].to_vec(),
                     self.peers.clone(),
