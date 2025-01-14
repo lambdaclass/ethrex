@@ -1252,16 +1252,13 @@ pub fn bls12_g1msm(
             .map_err(|_| PrecompileError::ParsingInputError)?;
 
         let mut scalar_le = [0u64; 4];
+        #[allow(clippy::indexing_slicing)]
         for (j, chunk) in scalar_bytes.chunks(8).enumerate() {
             let bytes: [u8; 8] = chunk
                 .try_into()
                 .map_err(|_| PrecompileError::ParsingInputError)?;
             // each scalar_le[j] is a u64 so convert each chunk of 8 bytes to u64
-            if let Some(val) = scalar_le.get_mut(j) {
-                *val = u64::from_le_bytes(bytes);
-            } else {
-                return Err(InternalError::SlicingError.into());
-            }
+            scalar_le[j] = u64::from_be_bytes(bytes);
         }
 
         dbg!(scalar_le);
