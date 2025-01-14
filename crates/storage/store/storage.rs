@@ -1000,28 +1000,16 @@ impl Store {
             .is_some())
     }
 
-    pub fn set_latest_downloaded_header(&self, block_hash: BlockHash) -> Result<(), StoreError> {
-        self.engine.set_latest_downloaded_header(block_hash)
+    pub fn set_header_download_checkpoint(&self, block_hash: BlockHash) -> Result<(), StoreError> {
+        self.engine.set_header_download_checkpoint(block_hash)
     }
 
-    pub fn get_latest_downloaded_header(&self) -> Result<Option<BlockHash>, StoreError> {
-        self.engine.get_latest_downloaded_header()
+    pub fn get_header_download_checkpoint(&self) -> Result<Option<BlockHash>, StoreError> {
+        self.engine.get_header_download_checkpoint()
     }
 
-    pub fn clear_latest_downloaded_header(&self) -> Result<(), StoreError> {
-        self.engine.clear_latest_downloaded_header()
-    }
-
-    pub fn set_latest_downloaded_body(&self, block_hash: BlockHash) -> Result<(), StoreError> {
-        self.engine.set_latest_downloaded_body(block_hash)
-    }
-
-    pub fn get_latest_downloaded_body(&self) -> Result<Option<BlockHash>, StoreError> {
-        self.engine.get_latest_downloaded_body()
-    }
-
-    pub fn clear_latest_downloaded_body(&self) -> Result<(), StoreError> {
-        self.engine.clear_latest_downloaded_body()
+    pub fn clear_header_download_checkpoint(&self) -> Result<(), StoreError> {
+        self.engine.clear_header_download_checkpoint()
     }
 }
 

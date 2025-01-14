@@ -437,31 +437,17 @@ impl StoreEngine for Store {
         Ok(())
     }
 
-    fn set_latest_downloaded_header(&self, block_hash: BlockHash) -> Result<(), StoreError> {
+    fn set_header_download_checkpoint(&self, block_hash: BlockHash) -> Result<(), StoreError> {
         self.inner().snap_state.last_downloaded_header_hash = Some(block_hash);
         Ok(())
     }
 
-    fn get_latest_downloaded_header(&self) -> Result<Option<BlockHash>, StoreError> {
+    fn get_header_download_checkpoint(&self) -> Result<Option<BlockHash>, StoreError> {
         Ok(self.inner().snap_state.last_downloaded_header_hash)
     }
 
-    fn clear_latest_downloaded_header(&self) -> Result<(), StoreError> {
+    fn clear_header_download_checkpoint(&self) -> Result<(), StoreError> {
         self.inner().snap_state.last_downloaded_header_hash = None;
-        Ok(())
-    }
-
-    fn set_latest_downloaded_body(&self, block_hash: BlockHash) -> Result<(), StoreError> {
-        self.inner().snap_state.last_downloaded_body_hash = Some(block_hash);
-        Ok(())
-    }
-
-    fn get_latest_downloaded_body(&self) -> Result<Option<BlockHash>, StoreError> {
-        Ok(self.inner().snap_state.last_downloaded_body_hash)
-    }
-
-    fn clear_latest_downloaded_body(&self) -> Result<(), StoreError> {
-        self.inner().snap_state.last_downloaded_body_hash = None;
         Ok(())
     }
 }
