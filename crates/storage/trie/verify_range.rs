@@ -289,7 +289,9 @@ fn fill_node(
     proof_nodes: &ProofNodeStorage,
 ) -> Result<Vec<u8>, TrieError> {
     let node = proof_nodes.get_node(node_hash)?;
+    info!("Filling node: {node:?} on path {path:?}");
     let child_hash = get_child(path, &node);
+    info!("got child: {child_hash:?}");
     if let Some(ref child_hash) = child_hash {
         trie_state.insert_node(node, node_hash.clone());
         fill_node(path, child_hash, trie_state, proof_nodes)
