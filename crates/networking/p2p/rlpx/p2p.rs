@@ -16,12 +16,12 @@ use super::{
     utils::{pubkey2id, snappy_compress},
 };
 
-#[derive(Debug, Clone, PartialEq, Copy)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum Capability {
     P2p,
     Eth,
     Snap,
-    Unknown,
+    UnsupportedCapability(String),
 }
 
 impl RLPEncode for Capability {
@@ -30,7 +30,7 @@ impl RLPEncode for Capability {
             Self::P2p => "p2p".encode(buf),
             Self::Eth => "eth".encode(buf),
             Self::Snap => "snap".encode(buf),
-            Self::Unknown => "unk".encode(buf),
+            Self::UnsupportedCapability(name) => name.encode(buf),
         }
     }
 }
@@ -42,10 +42,7 @@ impl RLPDecode for Capability {
             "p2p" => Ok((Capability::P2p, rest)),
             "eth" => Ok((Capability::Eth, rest)),
             "snap" => Ok((Capability::Snap, rest)),
-            a => {
-                info!("Unrecognized capability {a}");
-                Ok((Capability::Unknown, rest))
-            }
+            other => Ok((Capability::UnsupportedCapability(other.to_string()), rest)),
         }
     }
 }
