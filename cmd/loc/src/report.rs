@@ -102,7 +102,9 @@ pub fn pr_message(
                 unreachable!("total_lines_changed should never be less than 0"),
         }
     ));
-    pr_message.push_str("```");
+    if total_lines_changed > 0 {
+        pr_message.push_str("```");
+    }
 
     pr_message
 }
