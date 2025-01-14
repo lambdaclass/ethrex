@@ -327,7 +327,7 @@ impl PeerChannels {
         let mut should_continue = false;
         // Validate each storage range
         let total_slots = slots.len();
-        info!("proofs: {proof:?}");
+        info!("proof count: {}", proof.len());
         while !slots.is_empty() {
             info!(
                 "Verifying slot {}/{}",
@@ -356,6 +356,7 @@ impl PeerChannels {
             // - The range has the full storage: We expect no proofs
             // - The range is not the full storage (last range): We expect 2 edge proofs
             if hahsed_keys.len() == 1 && hahsed_keys[0] == start {
+                info!(" 1 Elem - 1 Proof");
                 if proof.is_empty() {
                     info!("One element with no proof");
                     return None;
@@ -383,6 +384,7 @@ impl PeerChannels {
                 )
                 .ok()?;
             } else {
+                info!(" Full Range  - 0 Proof");
                 // Full range (no proofs)
                 verify_range(storage_root, &start, &hahsed_keys, &encoded_values, &[]).ok()?;
             }
