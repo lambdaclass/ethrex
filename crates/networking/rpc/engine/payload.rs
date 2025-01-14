@@ -1,4 +1,3 @@
-use ethrex_blockchain::add_block;
 use ethrex_blockchain::error::ChainError;
 use ethrex_blockchain::payload::build_payload;
 use ethrex_core::types::{BlobsBundle, Block, Fork};
@@ -242,7 +241,7 @@ fn validate_block_hash(payload: &ExecutionPayload, block: &Block) -> Result<(), 
 
 fn execute_payload(block: &Block, context: &RpcApiContext) -> Result<PayloadStatus, RpcErr> {
     let block_hash = block.hash();
-    let storage = &context.storage;
+    let storage = &context.chain.store();
     // Return the valid message directly if we have it.
     if storage.get_block_header_by_hash(block_hash)?.is_some() {
         return Ok(PayloadStatus::valid_with_hash(block_hash));
@@ -250,7 +249,7 @@ fn execute_payload(block: &Block, context: &RpcApiContext) -> Result<PayloadStat
 
     // Execute and store the block
     info!("Executing payload with block hash: {block_hash:#x}");
-    match add_block(block, storage) {
+    match context.chain.add_block(block) {
         Err(ChainError::ParentNotFound) => Ok(PayloadStatus::syncing()),
         // Under the current implementation this is not possible: we always calculate the state
         // transition of any new payload as long as the parent is present. If we received the
@@ -315,7 +314,7 @@ fn get_payload(
     context: &RpcApiContext,
 ) -> Result<(Block, U256, BlobsBundle, bool), RpcErr> {
     info!("Requested payload with id: {:#018x}", payload_id);
-    let payload = context.storage.get_payload(payload_id)?;
+    let payload = context.chain.store().get_payload(payload_id)?;
 
     let Some((payload_block, block_value, blobs_bundle, completed)) = payload else {
         return Err(RpcErr::UnknownPayload(format!(
@@ -328,7 +327,7 @@ fn get_payload(
 
 fn validate_fork(block: &Block, fork: Fork, context: &RpcApiContext) -> Result<(), RpcErr> {
     // Check timestamp matches valid fork
-    let chain_config = &context.storage.get_chain_config()?;
+    let chain_config = &context.chain.store().get_chain_config()?;
     let current_fork = chain_config.get_fork(block.header.timestamp);
     if current_fork != fork {
         return Err(RpcErr::UnsuportedFork(format!("{current_fork:?}")));
@@ -355,10 +354,10 @@ fn build_execution_payload_response(
             should_override_builder,
         })
     } else {
-        let (blobs_bundle, block_value) = build_payload(&mut payload_block, &context.storage)
+        let (blobs_bundle, block_value) = build_payload(&mut payload_block, context.chain.store())
             .map_err(|err| RpcErr::Internal(err.to_string()))?;
 
-        context.storage.update_payload(
+        context.chain.store().update_payload(
             payload_id,
             payload_block.clone(),
             block_value,

@@ -4,7 +4,7 @@ use crate::{
 };
 use ethrex_core::{types::Genesis, H256, U256};
 use ethrex_storage::{EngineType, Store};
-use ethrex_vm::{evm_state, EvmState};
+use ethrex_vm::{revm, EvmState};
 use spinoff::Spinner;
 
 pub fn load_initial_state(test: &EFTest) -> (EvmState, H256) {
@@ -14,7 +14,7 @@ pub fn load_initial_state(test: &EFTest) -> (EvmState, H256) {
     storage.add_initial_state(genesis.clone()).unwrap();
 
     (
-        evm_state(
+        revm::evm_state(
             storage.clone(),
             genesis.get_block().header.compute_block_hash(),
         ),

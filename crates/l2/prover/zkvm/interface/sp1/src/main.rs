@@ -1,7 +1,7 @@
 #![no_main]
 
-use ethrex_blockchain::{validate_block, validate_gas_used};
-use ethrex_vm::{execute_block, get_state_transitions, EvmState};
+use ethrex_blockchain::BlockChain;
+use ethrex_vm::{revm, EvmState};
 use zkvm_interface::{
     io::{ProgramInput, ProgramOutput},
     trie::update_tries,
@@ -19,7 +19,7 @@ pub fn main() {
     let mut state = EvmState::from(db.clone());
 
     // Validate the block pre-execution
-    validate_block(&block, &parent_block_header, &state).expect("invalid block");
+    BlockChain::validate_block(&block, &parent_block_header, &state).expect("invalid block");
 
     // Validate the initial state
     let (mut state_trie, mut storage_tries) = db
@@ -31,8 +31,9 @@ pub fn main() {
         panic!("invalid initial state trie");
     }
 
-    let receipts = execute_block(&block, &mut state).expect("failed to execute block");
-    validate_gas_used(&receipts, &block.header).expect("invalid gas used");
+    let (receipts, account_updates) =
+        revm::execute_block(&block, &mut state).expect("failed to execute block");
+    BlockChain::validate_gas_used(&receipts, &block.header).expect("invalid gas used");
 
     let cumulative_gas_used = receipts
         .last()
@@ -40,8 +41,6 @@ pub fn main() {
         .unwrap_or_default();
 
     sp1_zkvm::io::commit(&cumulative_gas_used);
-
-    let account_updates = get_state_transitions(&mut state);
 
     // Update tries and calculate final state root hash
     update_tries(&mut state_trie, &mut storage_tries, &account_updates)

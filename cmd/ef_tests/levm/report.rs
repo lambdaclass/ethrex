@@ -6,7 +6,7 @@ use ethrex_levm::{
     Account, StorageSlot,
 };
 use ethrex_storage::{error::StoreError, AccountUpdate};
-use ethrex_vm::SpecId;
+use ethrex_vm::revm::SpecId;
 use itertools::Itertools;
 use revm::primitives::{EVMError, ExecutionResult as RevmExecutionResult};
 use serde::{Deserialize, Serialize};

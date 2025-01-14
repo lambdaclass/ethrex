@@ -18,12 +18,13 @@ impl RpcHandler for GasPrice {
     }
 
     fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
-        let latest_block_number = context.storage.get_latest_block_number()?;
+        let latest_block_number = context.chain.store().get_latest_block_number()?;
 
-        let estimated_gas_tip = estimate_gas_tip(&context.storage)?;
+        let estimated_gas_tip = estimate_gas_tip(context.chain.store())?;
 
         let base_fee = context
-            .storage
+            .chain
+            .store()
             .get_block_header(latest_block_number)
             .ok()
             .flatten()
@@ -51,7 +52,7 @@ impl RpcHandler for GasPrice {
 mod tests {
     use super::GasPrice;
     use crate::eth::test_utils::{
-        add_eip1559_tx_blocks, add_legacy_tx_blocks, add_mixed_tx_blocks, setup_store,
+        add_eip1559_tx_blocks, add_legacy_tx_blocks, add_mixed_tx_blocks, blockchain,
         BASE_PRICE_IN_WEI,
     };
 
@@ -67,7 +68,7 @@ mod tests {
 
     fn default_context() -> RpcApiContext {
         RpcApiContext {
-            storage: setup_store(),
+            chain: blockchain(),
             jwt_secret: Default::default(),
             local_p2p_node: Node {
                 ip: std::net::IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)),
@@ -84,7 +85,7 @@ mod tests {
     fn test_for_legacy_txs() {
         let context = default_context();
 
-        add_legacy_tx_blocks(&context.storage, 100, 10);
+        add_legacy_tx_blocks(context.chain.store(), 100, 10);
 
         let gas_price = GasPrice {};
         let response = gas_price.handle(context).unwrap();
@@ -96,7 +97,7 @@ mod tests {
     fn test_for_eip_1559_txs() {
         let context = default_context();
 
-        add_eip1559_tx_blocks(&context.storage, 100, 10);
+        add_eip1559_tx_blocks(context.chain.store(), 100, 10);
 
         let gas_price = GasPrice {};
         let response = gas_price.handle(context).unwrap();
@@ -107,7 +108,7 @@ mod tests {
     fn test_with_mixed_transactions() {
         let context = default_context();
 
-        add_mixed_tx_blocks(&context.storage, 100, 10);
+        add_mixed_tx_blocks(context.chain.store(), 100, 10);
 
         let gas_price = GasPrice {};
         let response = gas_price.handle(context).unwrap();
@@ -118,7 +119,7 @@ mod tests {
     fn test_with_not_enough_blocks_or_transactions() {
         let context = default_context();
 
-        add_mixed_tx_blocks(&context.storage, 100, 0);
+        add_mixed_tx_blocks(context.chain.store(), 100, 0);
 
         let gas_price = GasPrice {};
         let response = gas_price.handle(context).unwrap();
@@ -148,7 +149,7 @@ mod tests {
         let mut context = default_context();
         context.local_p2p_node = example_p2p_node();
 
-        add_legacy_tx_blocks(&context.storage, 100, 1);
+        add_legacy_tx_blocks(context.chain.store(), 100, 1);
 
         let response = map_http_requests(&request, context).unwrap();
         assert_eq!(response, expected_response)

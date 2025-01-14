@@ -68,7 +68,7 @@ impl RpcHandler for FeeHistoryRequest {
     }
 
     fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
-        let storage = &context.storage;
+        let storage = &context.chain.store();
         info!(
             "Requested fee history for {} blocks starting from {}",
             self.block_count, self.newest_block

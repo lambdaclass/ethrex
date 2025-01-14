@@ -1,12 +1,13 @@
 use std::{collections::HashMap, path::Path};
 
 use crate::types::{BlockWithRLP, TestUnit};
-use ethrex_blockchain::{add_block, fork_choice::apply_fork_choice};
+use ethrex_blockchain::BlockChain;
 use ethrex_core::types::{
     Account as CoreAccount, Block as CoreBlock, BlockHeader as CoreBlockHeader,
 };
 use ethrex_rlp::decode::RLPDecode;
 use ethrex_storage::{EngineType, Store};
+use ethrex_vm::EVM;
 
 pub fn run_ef_test(test_key: &str, test: &TestUnit) {
     // check that the decoded genesis block header matches the deserialized one
@@ -16,6 +17,7 @@ pub fn run_ef_test(test_key: &str, test: &TestUnit) {
     assert_eq!(decoded_block.header, genesis_block_header);
 
     let store = build_store_for_test(test);
+    let chain = BlockChain::new(store.clone(), EVM::REVM);
 
     // Check world_state
     check_prestate_against_db(test_key, test, &store);
@@ -33,7 +35,7 @@ pub fn run_ef_test(test_key: &str, test: &TestUnit) {
         let hash = block.hash();
 
         // Attempt to add the block as the head of the chain
-        let chain_result = add_block(block, &store);
+        let chain_result = chain.add_block(block);
         match chain_result {
             Err(error) => {
                 assert!(
@@ -50,7 +52,7 @@ pub fn run_ef_test(test_key: &str, test: &TestUnit) {
                     test_key,
                     block_fixture.expect_exception.clone().unwrap()
                 );
-                apply_fork_choice(&store, hash, hash, hash).unwrap();
+                chain.apply_fork_choice(hash, hash, hash).unwrap();
             }
         }
     }

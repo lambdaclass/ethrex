@@ -29,7 +29,7 @@ enum Protocol {
     Eth(ChainConfig),
 }
 
-pub fn node_info(storage: Store, local_node: Node) -> Result<Value, RpcErr> {
+pub fn node_info(storage: &Store, local_node: Node) -> Result<Value, RpcErr> {
     let enode_url = local_node.enode_url();
     let mut protocols = HashMap::new();
 

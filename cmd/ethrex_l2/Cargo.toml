@@ -33,6 +33,8 @@ ethrex-blockchain.workspace = true
 ethrex-prover.workspace = true
 ethrex-rlp.workspace = true
 ethrex-rpc.workspace = true
+ethrex-storage.workspace = true
+ethrex-vm.workspace = true
 
 [[bin]]
 name = "ethrex_l2"

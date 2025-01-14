@@ -1,7 +1,5 @@
 use ethrex_blockchain::{
     error::{ChainError, InvalidForkChoice},
-    fork_choice::apply_fork_choice,
-    latest_canonical_block_hash,
     payload::{create_payload, BuildPayloadArgs},
 };
 use ethrex_core::types::BlockHeader;
@@ -154,8 +152,7 @@ fn handle_forkchoice(
         fork_choice_state.finalized_block_hash
     );
 
-    match apply_fork_choice(
-        &context.storage,
+    match context.chain.apply_fork_choice(
         fork_choice_state.head_block_hash,
         fork_choice_state.safe_block_hash,
         fork_choice_state.finalized_block_hash,
@@ -170,14 +167,16 @@ fn handle_forkchoice(
             let forkchoice_response = match forkchoice_error {
                 InvalidForkChoice::NewHeadAlreadyCanonical => {
                     ForkChoiceResponse::from(PayloadStatus::valid_with_hash(
-                        latest_canonical_block_hash(&context.storage).unwrap(),
+                        context.chain.latest_canonical_block_hash().unwrap(),
                     ))
                 }
                 InvalidForkChoice::Syncing => {
                     // Start sync
-                    let current_number = context.storage.get_latest_block_number()?;
-                    let Some(current_head) =
-                        context.storage.get_canonical_block_hash(current_number)?
+                    let current_number = context.chain.store().get_latest_block_number()?;
+                    let Some(current_head) = context
+                        .chain
+                        .store()
+                        .get_canonical_block_hash(current_number)?
                     else {
                         return Err(RpcErr::Internal(
                             "Missing latest canonical block".to_owned(),
@@ -188,7 +187,7 @@ fn handle_forkchoice(
                         // If we can't get hold of the syncer, then it means that there is an active sync in process
                         if let Ok(mut syncer) = context.syncer.try_lock() {
                             syncer
-                                .start_sync(current_head, sync_head, context.storage.clone())
+                                .start_sync(current_head, sync_head, context.chain)
                                 .await
                         }
                     });
@@ -213,7 +212,7 @@ fn validate_v2(
     head_block: BlockHeader,
     context: &RpcApiContext,
 ) -> Result<(), RpcErr> {
-    let chain_config = context.storage.get_chain_config()?;
+    let chain_config = context.chain.store().get_chain_config()?;
     if attributes.withdrawals.is_none() {
         return Err(RpcErr::WrongParam(
             "forkChoiceV2 withdrawals is null".to_string(),
@@ -242,7 +241,7 @@ fn validate_v3(
     head_block: BlockHeader,
     context: &RpcApiContext,
 ) -> Result<(), RpcErr> {
-    let chain_config = context.storage.get_chain_config()?;
+    let chain_config = context.chain.store().get_chain_config()?;
     if attributes.parent_beacon_block_root.is_none() {
         return Err(RpcErr::InvalidPayloadAttributes(
             "Null Parent Beacon Root".to_string(),
@@ -285,14 +284,14 @@ fn build_payload(
         version,
     };
     let payload_id = args.id();
-    let payload = match create_payload(&args, &context.storage) {
+    let payload = match create_payload(&args, context.chain.store()) {
         Ok(payload) => payload,
         Err(ChainError::EvmError(error)) => return Err(error.into()),
         // Parent block is guaranteed to be present at this point,
         // so the only errors that may be returned are internal storage errors
         Err(error) => return Err(RpcErr::Internal(error.to_string())),
     };
-    context.storage.add_payload(payload_id, payload)?;
+    context.chain.store().add_payload(payload_id, payload)?;
 
     Ok(payload_id)
 }

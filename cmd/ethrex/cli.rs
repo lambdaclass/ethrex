@@ -1,5 +1,6 @@
 use clap::{Arg, ArgAction, Command};
 use ethrex_net::bootnode::BootNode;
+use ethrex_vm::EVM;
 use tracing::Level;
 
 pub fn cli() -> Command {
@@ -121,6 +122,14 @@ pub fn cli() -> Command {
                 .long("metrics.port")
                 .required(false)
                 .value_name("PROMETHEUS_METRICS_PORT"),
+        )
+        .arg(
+            Arg::new("vm")
+                .long("vm")
+                .required(false)
+                .value_name("VM_BACKEND")
+                .value_parser(clap::value_parser!(EVM))
+                .default_value("revm"),
         )
         .subcommand(
             Command::new("removedb").about("Remove the database").arg(

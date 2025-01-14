@@ -13,7 +13,7 @@ use ethrex_core::{
     types::{Genesis, GenesisAccount, TxKind},
     Address, H256, U256,
 };
-use ethrex_vm::SpecId;
+use ethrex_vm::revm::SpecId;
 use serde::Deserialize;
 use std::collections::HashMap;
 

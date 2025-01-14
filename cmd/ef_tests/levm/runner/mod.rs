@@ -6,7 +6,7 @@ use crate::{
 use clap::Parser;
 use colored::Colorize;
 use ethrex_levm::errors::{TransactionReport, VMError};
-use ethrex_vm::SpecId;
+use ethrex_vm::revm::SpecId;
 use serde::{Deserialize, Serialize};
 use spinoff::{spinners::Dots, Color, Spinner};
 

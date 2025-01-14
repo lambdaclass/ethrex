@@ -1,13 +1,13 @@
 #![allow(clippy::expect_used)]
 #![allow(clippy::unwrap_used)]
+use ethrex_blockchain::BlockChain;
 use ethrex_core::types::Block;
 use std::path::Path;
 use tracing::info;
 
-use ethrex_blockchain::add_block;
 use ethrex_prover_lib::prover::{Prover, Risc0Prover, Sp1Prover};
 use ethrex_storage::{EngineType, Store};
-use ethrex_vm::execution_db::ExecutionDB;
+use ethrex_vm::{execution_db::ExecutionDB, EVM};
 use zkvm_interface::io::ProgramInput;
 
 #[tokio::test]
@@ -66,23 +66,27 @@ async fn setup() -> (ProgramInput, Block) {
     // l2-loadtest.rlp has blocks with many txs.
     let chain_file_path = path.join("l2-loadtest.rlp");
 
-    let store = Store::new("memory", EngineType::InMemory).expect("Failed to create Store");
+    let chain = BlockChain::new(
+        Store::new("memory", EngineType::InMemory).expect("Failed to create Store"),
+        EVM::REVM,
+    );
 
     let genesis =
         ethrex_l2::utils::test_data_io::read_genesis_file(genesis_file_path.to_str().unwrap());
-    store.add_initial_state(genesis.clone()).unwrap();
+    chain.store().add_initial_state(genesis.clone()).unwrap();
 
     let blocks = ethrex_l2::utils::test_data_io::read_chain_file(chain_file_path.to_str().unwrap());
     info!("Number of blocks to insert: {}", blocks.len());
 
     for block in &blocks {
-        add_block(block, &store).unwrap();
+        chain.add_block(block).unwrap();
     }
     let block_to_prove = blocks.last().unwrap();
 
-    let db = ExecutionDB::from_exec(block_to_prove, &store).unwrap();
+    let db = ExecutionDB::from_exec(block_to_prove, chain.store()).unwrap();
 
-    let parent_block_header = store
+    let parent_block_header = chain
+        .store()
         .get_block_header_by_hash(block_to_prove.header.parent_hash)
         .unwrap()
         .unwrap();
