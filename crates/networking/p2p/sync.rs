@@ -392,6 +392,7 @@ async fn rebuild_state_trie(
             .request_account_range(state_root, start_account_hash)
             .await
         {
+            info!("Received {} account ranges", accounts.len());
             // Update starting hash for next batch
             if should_continue {
                 start_account_hash = *account_hashes.last().unwrap();
@@ -438,6 +439,7 @@ async fn rebuild_state_trie(
             }
         }
     }
+    info!("Account Trie fully fetched, signaling storage fetcher process");
     // Send empty batch to signal that no more batches are incoming
     storage_sender.send(vec![]).await?;
     storage_fetcher_handle.await??;
@@ -445,11 +447,13 @@ async fn rebuild_state_trie(
         info!("Completed state sync for state root {state_root}");
         true
     } else {
+        info!("Oh no! Trie needs healing");
         // Perform state healing to fix any potential inconsistency in the rebuilt tries
         // As we are not fetching different chunks of the same trie this step is not necessary
         heal_state_trie(bytecode_sender.clone(), state_root, store, peers).await?
     };
     // Send empty batch to signal that no more batches are incoming
+    info!("Account Trie fully rebuilt, signaling bytecode fetcher process");
     bytecode_sender.send(vec![]).await?;
     bytecode_fetcher_handle.await??;
     Ok(sync_complete)
@@ -475,7 +479,7 @@ async fn bytecode_fetcher(
                 )
             }
             // Disconnect / Empty message signaling no more bytecodes to sync
-            _ => incoming = false,
+            _ => {info!("Final bytecode batch"); incoming = false},
         }
         // If we have enough pending bytecodes to fill a batch
         // or if we have no more incoming batches, spawn a fetch process
@@ -535,7 +539,7 @@ async fn storage_fetcher(
                 )
             }
             // Disconnect / Empty message signaling no more bytecodes to sync
-            _ => incoming = false,
+            _ => {info!("Final storage batch"); incoming = false}
         }
         // If we have enough pending bytecodes to fill a batch
         // or if we have no more incoming batches, spawn a fetch process
