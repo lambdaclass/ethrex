@@ -620,6 +620,17 @@ impl VM {
             .checked_add(access_lists_cost)
             .ok_or(OutOfGasError::ConsumedGasOverflow)?;
 
+        // Authorization List Cost
+        // CHECK: if we add this, it means that it's not empty
+        let amount_of_auth_tuples = self.authorization_list.clone().unwrap().len();
+        let authorization_list_cost: u64 = (PER_EMPTY_ACCOUNT_COST * amount_of_auth_tuples)
+            .try_into()
+            .map_err(|_| VMError::Internal(InternalError::ConversionError))?;
+
+        intrinsic_gas = intrinsic_gas
+            .checked_add(authorization_list_cost)
+            .ok_or(OutOfGasError::ConsumedGasOverflow)?;
+
         self.increase_consumed_gas(initial_call_frame, intrinsic_gas)
             .map_err(|_| TxValidationError::IntrinsicGasTooLow)?;
 
@@ -880,6 +891,14 @@ impl VM {
             if auth_list.is_empty() {
                 return Err(VMError::TxValidation(
                     TxValidationError::Type4TxAuthorizationListIsEmpty,
+                ));
+            }
+
+            // (18) TYPE_4_TX_NULL_ADDRESS
+            // From the EIP docs: a null destination is not valid.
+            if self.is_create() {
+                return Err(VMError::TxValidation(
+                    TxValidationError::Type4TxContractCreation,
                 ));
             }
 
@@ -1438,7 +1457,9 @@ impl VM {
     /// clients must retrieve only the first code and then stop following the designator chain.
     ///
     /// For example,
+    /// CHECK: we are not returning 2. Following the ethereum/execution-specs
     /// EXTCODESIZE would return 2 (the size of 0xef01) instead of 23 which would represent the delegation designation,
+    /// CHECK: we are not returning the keccak256(0xef01). Following the ethereum/execution-specs
     /// EXTCODEHASH would return 0xeadcdba66a79ab5dce91622d1d75c8cff5cff0b96944c3bf1072cd08ce018329 (keccak256(0xef01)), and
     /// CALL would load the code from address and execute it in the context of authority.
     pub fn eip7702_get_code(
