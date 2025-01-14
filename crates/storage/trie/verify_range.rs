@@ -10,20 +10,20 @@ use crate::{
 
 /// Verifies that the key value range belongs to the trie with the given root given the edge proofs for the range
 /// Also returns true if there is more state to be fetched (aka if there are more keys to the right of the given range)
-pub fn verify_range(
+pub fn verify_range_ex(
     root: H256,
     first_key: &H256,
     keys: &[H256],
     values: &[ValueRLP],
     proof: &[Vec<u8>],
 ) -> Result<bool, TrieError> {
-    let res = verify_range_i(root, first_key, keys, values, proof);
+    let res = verify_range_ex_i(root, first_key, keys, values, proof);
     if let Err(ref e) = res {
         warn!("Verify Range failed due to : {e:?}")
     }
     res
 }
-pub fn verify_range_i(
+pub fn verify_range_ex_i(
     root: H256,
     first_key: &H256,
     keys: &[H256],
@@ -113,6 +113,126 @@ pub fn verify_range_i(
 
     // Regular Case: Two edge proofs
     info!("Regular Case: 2 proof");
+    if first_key >= last_key {
+        return Err(TrieError::Verify("invalid edge keys".to_string()));
+    }
+    // Show nodes
+    for node in proof {
+        let hash = H256::from_slice(&Keccak256::new_with_prefix(node).finalize().to_vec());
+        let node = Node::decode_raw(node).unwrap();
+        info!("Node: {hash}: {node:?}")
+    }
+    // Fill up the state with the nodes from the proof
+    fill_state(&mut trie.state, root, first_key, &proof_nodes)?;
+    fill_state(&mut trie.state, root, last_key, &proof_nodes)?;
+    // Remove all references to the internal nodes that belong to the range so they can be reconstructed
+    let empty = remove_internal_references(root, first_key, last_key, &mut trie.state)?;
+    if !empty {
+        trie.root = Some(NodeHash::from(root));
+    }
+    // Reconstruct the internal nodes by inserting the elements on the range
+    for (key, value) in keys.iter().zip(values.iter()) {
+        trie.insert(key.0.to_vec(), value.clone())?;
+    }
+    // Check for elements to the right of the range before we wipe the sate
+    let has_right_element = has_right_element(root, last_key.as_bytes(), &trie.state)?;
+    // Check that the hash is the one we expected (aka the trie was properly reconstructed from the edge proofs and the range)
+    let hash = trie.hash()?;
+    if hash != root {
+        return Err(TrieError::Verify(format!(
+            "invalid proof, expected root hash {}, got  {}",
+            root, hash
+        )));
+    }
+    Ok(has_right_element)
+}
+
+pub fn verify_range(
+    root: H256,
+    first_key: &H256,
+    keys: &[H256],
+    values: &[ValueRLP],
+    proof: &[Vec<u8>],
+) -> Result<bool, TrieError> {
+    // Store proof nodes by hash
+    let proof_nodes = ProofNodeStorage::from_proof(proof);
+    // Validate range
+    if keys.len() != values.len() {
+        return Err(TrieError::Verify(format!(
+            "inconsistent proof data, got {} keys and {} values",
+            keys.len(),
+            values.len()
+        )));
+    }
+    // Check that the key range is monotonically increasing
+    for keys in keys.windows(2) {
+        if keys[0] >= keys[1] {
+            return Err(TrieError::Verify(String::from(
+                "key range is not monotonically increasing",
+            )));
+        }
+    }
+    // Check for empty values
+    if values.iter().any(|value| value.is_empty()) {
+        return Err(TrieError::Verify(String::from(
+            "value range contains empty value",
+        )));
+    }
+
+    // Verify ranges depending on the given proof
+    let mut trie = Trie::stateless();
+
+    // Special Case: No proofs given, the range is expected to be the full set of leaves
+    if proof.is_empty() {
+        // Check that the trie constructed from the given keys and values has the expected root
+        for (key, value) in keys.iter().zip(values.iter()) {
+            trie.insert(key.0.to_vec(), value.clone())?;
+        }
+        let hash = trie.hash()?;
+        if hash != root {
+            return Err(TrieError::Verify(format!(
+                "invalid proof, expected root hash {}, got  {}",
+                root, hash
+            )));
+        }
+        return Ok(false);
+    }
+
+    // Special Case: One edge proof, no range given, there are no more values in the trie
+    if keys.is_empty() {
+        // We need to check that the proof confirms the non-existance of the first key
+        // and that there are no more elements to the right of the first key
+        let value = fill_state(&mut trie.state, root, first_key, &proof_nodes)?;
+        let has_right_element = has_right_element(root, first_key.as_bytes(), &trie.state)?;
+        if has_right_element || !value.is_empty() {
+            return Err(TrieError::Verify(
+                "no keys returned but more are available on the trie".to_string(),
+            ));
+        } else {
+            return Ok(false);
+        }
+    }
+
+    let last_key = keys.last().unwrap();
+
+    // Special Case: There is only one element and the two edge keys are the same
+    if keys.len() == 1 && first_key == last_key {
+        // We need to check that the proof confirms the existance of the first key
+        let value = fill_state(&mut trie.state, root, first_key, &proof_nodes)?;
+        if first_key != &keys[0] {
+            return Err(TrieError::Verify(
+                "correct proof but invalid key".to_string(),
+            ));
+        }
+        if value != values[0] {
+            return Err(TrieError::Verify(
+                "correct proof but invalid data".to_string(),
+            ));
+        }
+        return has_right_element(root, first_key.as_bytes(), &trie.state);
+    }
+
+    // Regular Case: Two edge proofs
     if first_key >= last_key {
         return Err(TrieError::Verify("invalid edge keys".to_string()));
     }

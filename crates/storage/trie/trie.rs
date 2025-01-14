@@ -20,7 +20,7 @@ pub use self::db::{libmdbx::LibmdbxTrieDB, libmdbx_dupsort::LibmdbxDupsortTrieDB
 
 pub use self::db::{in_memory::InMemoryTrieDB, TrieDB};
 pub use self::nibbles::Nibbles;
-pub use self::verify_range::verify_range;
+pub use self::verify_range::{verify_range, verify_range_ex};
 pub use self::{node::Node, state::TrieState};
 
 pub use self::error::TrieError;

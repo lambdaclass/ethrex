@@ -6,8 +6,8 @@ use ethrex_core::{
     H256, U256,
 };
 use ethrex_rlp::encode::RLPEncode;
-use ethrex_trie::Nibbles;
 use ethrex_trie::{verify_range, Node};
+use ethrex_trie::{verify_range_ex, Nibbles};
 use tokio::sync::{mpsc, Mutex};
 use tracing::{info, warn};
 
@@ -328,7 +328,11 @@ impl PeerChannels {
         // Validate each storage range
         let total_slots = slots.len();
         while !slots.is_empty() {
-            info!("Verifying slot {}/{}", total_slots - slots.len(), total_slots);
+            info!(
+                "Verifying slot {}/{}",
+                total_slots - slots.len(),
+                total_slots
+            );
             let (hahsed_keys, values): (Vec<_>, Vec<_>) = slots
                 .remove(0)
                 .into_iter()
@@ -368,7 +372,7 @@ impl PeerChannels {
             // Last element with two edge proofs
             if slots.is_empty() && proof.len() >= 2 {
                 let last_proof = vec![proof.remove(0), proof.remove(0)];
-                should_continue = verify_range(
+                should_continue = verify_range_ex(
                     storage_root,
                     &start,
                     &hahsed_keys,
