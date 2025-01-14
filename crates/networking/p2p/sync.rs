@@ -166,7 +166,10 @@ impl SyncManager {
                 store.add_block_headers(block_hashes, block_headers.clone())?;
 
                 if sync_head_found {
-                    let sync_header = block_headers.iter().find(|h| h.compute_block_hash() == sync_head).unwrap();
+                    let sync_header = block_headers
+                        .iter()
+                        .find(|h| h.compute_block_hash() == sync_head)
+                        .unwrap();
                     info!("Found sync head at block: {}", sync_header.number);
 
                     // No more headers to request
@@ -515,7 +518,7 @@ async fn storage_fetcher(
     store: Store,
     state_root: H256,
 ) -> Result<(), StoreError> {
-    const BATCH_SIZE: usize = 100;
+    const BATCH_SIZE: usize = 50;
     // Pending list of storages to fetch
     let mut pending_storage: Vec<(H256, H256)> = vec![];
     // TODO: Also add a queue for storages that were incompletely fecthed,
@@ -556,6 +559,11 @@ async fn fetch_storage_batch(
     peers: Arc<Mutex<KademliaTable>>,
     store: Store,
 ) -> Result<Vec<(H256, H256)>, StoreError> {
+    info!(
+        "Requesting storage ranges for addresses {}..{}",
+        batch.first().unwrap().0,
+        batch.last().unwrap().0
+    );
     for _ in 0..MAX_RETRIES {
         let peer = peers.lock().await.get_peer_channels(Capability::Snap).await;
         let (batch_hahses, batch_roots) = batch.clone().into_iter().unzip();
