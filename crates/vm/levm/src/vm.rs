@@ -1428,19 +1428,19 @@ impl VM {
         Ok(())
     }
 
-    // Used for the opcodes
-    // The following reading instructions are impacted:
-    //      EXTCODESIZE, EXTCODECOPY, EXTCODEHASH
-    // and the following executing instructions are impacted:
-    //      CALL, CALLCODE, STATICCALL, DELEGATECALL
-    // In case a delegation designator points to another designator,
-    // creating a potential chain or loop of designators,
-    // clients must retrieve only the first code and then stop following the designator chain.
-
-    // For example,
-    // EXTCODESIZE would return 2 (the size of 0xef01) instead of 23 which would represent the delegation designation,
-    // EXTCODEHASH would return 0xeadcdba66a79ab5dce91622d1d75c8cff5cff0b96944c3bf1072cd08ce018329 (keccak256(0xef01)), and
-    // CALL would load the code from address and execute it in the context of authority.
+    /// Used for the opcodes
+    /// The following reading instructions are impacted:
+    ///      EXTCODESIZE, EXTCODECOPY, EXTCODEHASH
+    /// and the following executing instructions are impacted:
+    ///      CALL, CALLCODE, STATICCALL, DELEGATECALL
+    /// In case a delegation designator points to another designator,
+    /// creating a potential chain or loop of designators,
+    /// clients must retrieve only the first code and then stop following the designator chain.
+    ///
+    /// For example,
+    /// EXTCODESIZE would return 2 (the size of 0xef01) instead of 23 which would represent the delegation designation,
+    /// EXTCODEHASH would return 0xeadcdba66a79ab5dce91622d1d75c8cff5cff0b96944c3bf1072cd08ce018329 (keccak256(0xef01)), and
+    /// CALL would load the code from address and execute it in the context of authority.
     pub fn eip7702_get_code(
         &mut self,
         address: Address,

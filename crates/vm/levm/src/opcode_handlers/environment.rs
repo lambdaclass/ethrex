@@ -279,11 +279,20 @@ impl VM {
 
         let (account_info, address_was_cold) = self.access_account(address);
 
-        self.increase_consumed_gas(current_call_frame, gas_cost::extcodesize(address_was_cold)?)?;
+        let (is_delegation, eip7702_gas_consumed, _, bytecode) = self.eip7702_get_code(address)?;
 
-        current_call_frame
-            .stack
-            .push(account_info.bytecode.len().into())?;
+        self.increase_consumed_gas(
+            current_call_frame,
+            gas_cost::extcodesize(address_was_cold)? + eip7702_gas_consumed,
+        )?;
+
+        if is_delegation {
+            current_call_frame.stack.push(bytecode.len().into())?;
+        } else {
+            current_call_frame
+                .stack
+                .push(account_info.bytecode.len().into())?;
+        }
 
         Ok(OpcodeSuccess::Continue)
     }
@@ -306,6 +315,9 @@ impl VM {
 
         let new_memory_size = calculate_memory_size(dest_offset, size)?;
 
+        let (is_delegation, eip7702_gas_consumed, _, delegation_bytecode) =
+            self.eip7702_get_code(address)?;
+
         self.increase_consumed_gas(
             current_call_frame,
             gas_cost::extcodecopy(
@@ -313,25 +325,25 @@ impl VM {
                 new_memory_size,
                 current_call_frame.memory.len(),
                 address_was_cold,
-            )?,
+            )? + eip7702_gas_consumed,
         )?;
 
         if size == 0 {
             return Ok(OpcodeSuccess::Continue);
         }
 
+        let bytecode = if is_delegation {
+            delegation_bytecode
+        } else {
+            account_info.bytecode
+        };
+
         let mut data = vec![0u8; size];
-        if offset < account_info.bytecode.len().into() {
+        if offset < bytecode.len().into() {
             let offset: usize = offset
                 .try_into()
                 .map_err(|_| VMError::Internal(InternalError::ConversionError))?;
-            for (i, byte) in account_info
-                .bytecode
-                .iter()
-                .skip(offset)
-                .take(size)
-                .enumerate()
-            {
+            for (i, byte) in bytecode.iter().skip(offset).take(size).enumerate() {
                 if let Some(data_byte) = data.get_mut(i) {
                     *data_byte = *byte;
                 }
@@ -424,16 +436,27 @@ impl VM {
 
         let (account_info, address_was_cold) = self.access_account(address);
 
-        self.increase_consumed_gas(current_call_frame, gas_cost::extcodehash(address_was_cold)?)?;
+        let (is_delegation, eip7702_gas_consumed, _, bytecode) = self.eip7702_get_code(address)?;
 
-        // An account is considered empty when it has no code and zero nonce and zero balance. [EIP-161]
-        if account_info.is_empty() {
-            current_call_frame.stack.push(U256::zero())?;
-            return Ok(OpcodeSuccess::Continue);
+        self.increase_consumed_gas(
+            current_call_frame,
+            gas_cost::extcodehash(address_was_cold)? + eip7702_gas_consumed,
+        )?;
+
+        if is_delegation {
+            let hash = U256::from_big_endian(keccak(bytecode).as_fixed_bytes());
+            current_call_frame.stack.push(hash)?;
+        } else {
+            // An account is considered empty when it has no code and zero nonce and zero balance. [EIP-161]
+            if account_info.is_empty() {
+                current_call_frame.stack.push(U256::zero())?;
+                return Ok(OpcodeSuccess::Continue);
+            }
+
+            let hash = U256::from_big_endian(keccak(account_info.bytecode).as_fixed_bytes());
+            current_call_frame.stack.push(hash)?;
         }
 
-        let hash = U256::from_big_endian(keccak(account_info.bytecode).as_fixed_bytes());
-        current_call_frame.stack.push(hash)?;
         Ok(OpcodeSuccess::Continue)
     }
 }
