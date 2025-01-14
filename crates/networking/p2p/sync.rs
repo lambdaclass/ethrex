@@ -14,7 +14,7 @@ use tokio::{
     },
     time::Instant,
 };
-use tracing::{debug, info, warn};
+use tracing::{info, warn};
 
 use crate::rlpx::p2p::Capability;
 use crate::{kademlia::KademliaTable, peer_channels::BlockRequestOrder};
