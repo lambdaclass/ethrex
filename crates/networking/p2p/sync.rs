@@ -226,11 +226,11 @@ impl SyncManager {
                 store_bodies_handle.await??;
                 // For all blocks before the pivot: Store the bodies and fetch the receipts
                 // For all blocks after the pivot: Process them fully
-                let store_receipts_handle = tokio::spawn(store_receipts(
-                    all_block_hashes[pivot_idx..].to_vec(),
-                    self.peers.clone(),
-                    store.clone(),
-                ));
+                // let store_receipts_handle = tokio::spawn(store_receipts(
+                //     all_block_hashes[pivot_idx..].to_vec(),
+                //     self.peers.clone(),
+                //     store.clone(),
+                // ));
                 for hash in all_block_hashes.into_iter() {
                     let block = store.get_block_by_hash(hash)?.ok_or(SyncError::CorruptDB)?;
                     if block.header.number <= pivot_header.number {
@@ -242,7 +242,7 @@ impl SyncManager {
                         ethrex_blockchain::add_block(&block, &store)?;
                     }
                 }
-                store_receipts_handle.await??;
+                //store_receipts_handle.await??;
                 self.last_snap_pivot = pivot_header.number;
             }
             SyncMode::Full => {
