@@ -24,7 +24,7 @@ use crate::{
 use super::{
     error::RLPxError,
     eth::{receipts::GetReceipts, transactions::GetPooledTransactions},
-    frame::{self, FrameAdaptor},
+    frame::FrameAdaptor,
     handshake::{decode_ack_message, decode_auth_message, encode_auth_message},
     message as rlpx,
     p2p::Capability,
@@ -648,30 +648,6 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
     async fn send(&mut self, message: rlpx::Message) -> Result<(), RLPxError> {
         if let RLPxConnectionState::Established(_) = &mut self.state {
             self.frame_adaptor.write(message).await
-        } else {
-            Err(RLPxError::InvalidState())
-        }
-    }
-
-    #[allow(dead_code)]
-    async fn send_old(&mut self, message: rlpx::Message) -> Result<(), RLPxError> {
-        if let RLPxConnectionState::Established(state) = &mut self.state {
-            let mut frame_buffer = vec![];
-            message.encode(&mut frame_buffer)?;
-            frame::write(frame_buffer, state, &mut self.frame_adaptor.stream()).await?;
-            Ok(())
-        } else {
-            Err(RLPxError::InvalidState())
-        }
-    }
-
-    #[allow(dead_code)]
-    async fn receive_old(&mut self) -> Result<rlpx::Message, RLPxError> {
-        if let RLPxConnectionState::Established(state) = &mut self.state {
-            let frame_data = frame::read_old(state, &mut self.frame_adaptor.stream()).await?;
-            let (msg_id, msg_data): (u8, _) =
-                ethrex_rlp::decode::RLPDecode::decode_unfinished(&frame_data)?;
-            Ok(rlpx::Message::decode(msg_id, msg_data)?)
         } else {
             Err(RLPxError::InvalidState())
         }
