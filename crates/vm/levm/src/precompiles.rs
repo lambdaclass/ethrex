@@ -228,6 +228,7 @@ fn increase_precompile_consumed_gas(
     *consumed_gas = consumed_gas
         .checked_add(gas_cost)
         .ok_or(PrecompileError::GasConsumedOverflow)?;
+    dbg!(consumed_gas);
 
     Ok(())
 }
@@ -1184,9 +1185,9 @@ pub fn bls12_g1msm(
     let k = calldata.len() / LENGTH_PER_PAIR;
     dbg!(k);
     let required_gas = gas_cost::bls12_g1msm(k)?;
+    dbg!(required_gas);
     increase_precompile_consumed_gas(gas_for_call, required_gas, consumed_gas)?;
 
-    dbg!("Im here");
     let mut result = bls12_381::G1Affine::identity();
     dbg!(result);
 
@@ -1196,7 +1197,6 @@ pub fn bls12_g1msm(
     // P_i are points in the group (in this case, points in G1)
     for i in 0..k {
         dbg!(i);
-        dbg!("here");
         // in msm the lengt_per_pair is 160 bytes
         // where the first 128 bytes are the x and y coordinates of the point
         // and the last 32 bytes are the scalar value
@@ -1309,8 +1309,20 @@ pub fn bls12_g1msm(
     }
 
     let result_bytes = result.to_uncompressed();
-    dbg!(result_bytes);
-    Ok(Bytes::copy_from_slice(&result_bytes))
+
+    // .to_uncompressed() returns a Vec<u8> with 96 bytes, we need to return 128 bytes.
+    // we need to padd 16 bytes x and y with zeros. first 48 bytes are x and the last 48 bytes are y.
+    let mut output = [0u8; 128];
+    let (x_bytes, y_bytes) = result_bytes.split_at(48);
+    // append x before first 16 bytes
+    output[16..64].copy_from_slice(x_bytes);
+    // append y after first 16 bytes past 64
+    output[80..128].copy_from_slice(y_bytes);
+    // do a debug assert that output is 128 bytes
+    debug_assert!(output.len() == 128);
+
+    dbg!(output);
+    Ok(Bytes::copy_from_slice(&output))
 }
 
 pub fn bls12_g2add(
