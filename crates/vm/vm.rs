@@ -82,7 +82,15 @@ pub fn execute_block(
     evm: &EVM,
 ) -> Result<BlockExecutionOutput, EvmError> {
     match evm {
-        EVM::LEVM => levm::execute_block(block, state),
+        EVM::LEVM => {
+            cfg_if::cfg_if! {
+                if #[cfg(feature = "levm")] {
+                    levm::execute_block(block, state)
+                } else {
+                    Err(EvmError::InvalidEVM("Using EVM::LEVM but levm feature is not enabled".to_owned()))
+                }
+            }
+        }
         EVM::REVM => revm::execute_block(block, state),
     }
 }
