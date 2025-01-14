@@ -65,7 +65,11 @@ impl VM {
             gas,
             gas_left,
         )?;
-        self.increase_consumed_gas(current_call_frame, cost)?;
+
+        let (is_delegation, eip7702_gas_consumed, code_address, bytecode) =
+            self.eip7702_get_code(callee)?;
+
+        self.increase_consumed_gas(current_call_frame, cost + eip7702_gas_consumed)?;
 
         // OPERATION
         let msg_sender = current_call_frame.to; // The new sender will be the current contract.
@@ -78,13 +82,15 @@ impl VM {
             value_to_transfer,
             msg_sender,
             to,
-            callee,
+            code_address,
             true,
             is_static,
             args_start_offset,
             args_size,
             return_data_start_offset,
             return_data_size,
+            bytecode,
+            is_delegation,
         )
     }
 
@@ -133,7 +139,10 @@ impl VM {
             gas,
             gas_left,
         )?;
-        self.increase_consumed_gas(current_call_frame, cost)?;
+
+        let (is_delegation, eip7702_gas_consumed, code_address, bytecode) =
+            self.eip7702_get_code(code_address)?;
+        self.increase_consumed_gas(current_call_frame, cost + eip7702_gas_consumed)?;
 
         // Sender and recipient are the same in this case. But the code executed is from another account.
         let msg_sender = current_call_frame.to;
@@ -153,6 +162,8 @@ impl VM {
             args_size,
             return_data_start_offset,
             return_data_size,
+            bytecode,
+            is_delegation,
         )
     }
 
@@ -230,7 +241,10 @@ impl VM {
             gas,
             gas_left,
         )?;
-        self.increase_consumed_gas(current_call_frame, cost)?;
+
+        let (is_delegation, eip7702_gas_consumed, code_address, bytecode) =
+            self.eip7702_get_code(code_address)?;
+        self.increase_consumed_gas(current_call_frame, cost + eip7702_gas_consumed)?;
 
         // OPERATION
         let msg_sender = current_call_frame.msg_sender;
@@ -251,6 +265,8 @@ impl VM {
             args_size,
             return_data_start_offset,
             return_data_size,
+            bytecode,
+            is_delegation,
         )
     }
 
@@ -296,7 +312,10 @@ impl VM {
             gas,
             gas_left,
         )?;
-        self.increase_consumed_gas(current_call_frame, cost)?;
+
+        let (is_delegation, eip7702_gas_consumed, _, bytecode) =
+            self.eip7702_get_code(code_address)?;
+        self.increase_consumed_gas(current_call_frame, cost + eip7702_gas_consumed)?;
 
         // OPERATION
         let value = U256::zero();
@@ -316,6 +335,8 @@ impl VM {
             args_size,
             return_data_start_offset,
             return_data_size,
+            bytecode,
+            is_delegation,
         )
     }
 
@@ -662,6 +683,8 @@ impl VM {
         args_size: usize,
         ret_offset: U256,
         ret_size: usize,
+        bytecode: Bytes,
+        is_delegation: bool,
     ) -> Result<OpcodeSuccess, VMError> {
         // Clear callframe subreturn data
         current_call_frame.sub_return_data = Bytes::new();
@@ -695,13 +718,16 @@ impl VM {
             return Ok(OpcodeSuccess::Continue);
         }
 
-        let recipient_bytecode = self.access_account(code_address).0.bytecode;
+        if is_delegation && bytecode.len() == 0 {
+            current_call_frame.stack.push(SUCCESS_FOR_CALL)?;
+            return Ok(OpcodeSuccess::Continue);
+        }
 
         let mut new_call_frame = CallFrame::new(
             msg_sender,
             to,
             code_address,
-            recipient_bytecode,
+            bytecode,
             value,
             calldata.into(),
             is_static,
