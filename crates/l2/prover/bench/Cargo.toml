@@ -1,0 +1,38 @@
+[package]
+name = "bench"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+ethrex-core.workspace = true
+ethrex-rlp.workspace = true
+ethrex-vm.workspace = true
+ethrex-prover.workspace = true
+ethrex-l2.workspace = true
+
+zkvm_interface = { path = "../zkvm/interface", default-features = false }
+
+serde.workspace = true
+hex.workspace = true
+serde_json.workspace = true
+bytes.workspace = true
+
+tokio = { version = "1.21", default-features = false, features = ["full"] }
+reqwest = { version = "0.12.9", features = ["json"] }
+clap = { version = "4.5.21", features = ["derive"] }
+
+revm = { version = "14.0.3", features = [
+  "serde",
+  "std",
+  "serde-json",
+  "optional_no_base_fee",
+  "optional_block_gas_limit",
+], default-features = false }
+
+# These dependencies must be kept up to date with the corresponding revm version, otherwise errors may pop up because of trait implementation mismatches
+revm-inspectors = { version = "0.8.1" }
+revm-primitives = { version = "10.0.0", features = [
+  "std",
+], default-features = false }
+futures-util = "0.3.31"
+tokio-utils = "0.1.2"
