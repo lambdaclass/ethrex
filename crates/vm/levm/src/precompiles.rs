@@ -1162,12 +1162,11 @@ pub fn bls12_g1add(
         return Err(VMError::PrecompileError(PrecompileError::ParsingInputError));
     }
 
-    dbg!("pasa check length");
-
     // GAS
     increase_precompile_consumed_gas(gas_for_call, BLS12_381_G1ADD_COST, consumed_gas)
         .map_err(|_| VMError::PrecompileError(PrecompileError::NotEnoughGas))?;
 
+    // Each point is 64 bytes
     let mut first_point_x = calldata
         .get(0..64)
         .ok_or(VMError::PrecompileError(PrecompileError::ParsingInputError))?;
@@ -1181,20 +1180,18 @@ pub fn bls12_g1add(
         .get(192..)
         .ok_or(VMError::PrecompileError(PrecompileError::ParsingInputError))?;
 
-    dbg!("pasa check 64 bytes");
-    let sixteen_zeros: [u8; 16] = [0_u8; 16];
+    let sixteen_zeroes: [u8; 16] = [0_u8; 16];
 
-    // the first 16 bytes of any of the points MUST be all zeros
-    if !matches!(first_point_x.get(0..16), Some(prefix) if prefix == sixteen_zeros)
-        || !matches!(first_point_y.get(0..16), Some(prefix) if prefix == sixteen_zeros)
-        || !matches!(second_point_x.get(0..16), Some(prefix) if prefix == sixteen_zeros)
-        || !matches!(second_point_y.get(0..16), Some(prefix) if prefix == sixteen_zeros)
+    // the first 16 bytes of any of the points MUST be all zeroes
+    if !matches!(first_point_x.get(0..16), Some(prefix) if prefix == sixteen_zeroes)
+        || !matches!(first_point_y.get(0..16), Some(prefix) if prefix == sixteen_zeroes)
+        || !matches!(second_point_x.get(0..16), Some(prefix) if prefix == sixteen_zeroes)
+        || !matches!(second_point_y.get(0..16), Some(prefix) if prefix == sixteen_zeroes)
     {
         return Err(VMError::PrecompileError(PrecompileError::ParsingInputError));
     }
 
-    dbg!("pasa checks cero");
-
+    // remove padding of zeroes
     first_point_x = first_point_x
         .get(16..64)
         .ok_or(VMError::PrecompileError(PrecompileError::ParsingInputError))?;
@@ -1208,86 +1205,74 @@ pub fn bls12_g1add(
         .get(16..64)
         .ok_or(VMError::PrecompileError(PrecompileError::ParsingInputError))?;
 
-    dbg!("pasa 48 bytes");
-
-    let zeros: [u8; 48] = [0_u8; 48];
-    dbg!(first_point_x, first_point_y);
-    let first_g1_point = if first_point_x == zeros && second_point_x == zeros {
+    // if a g1 point decode to (0,0) by convention it is interpreted as a point to infinity
+    let zeroes: [u8; 48] = [0_u8; 48];
+    let first_g1_point: G1Projective = if first_point_x == zeroes && second_point_x == zeroes {
         G1Projective::identity()
     } else {
-        let mut first_g1_point = Vec::new();
-        first_g1_point.extend_from_slice(first_point_x);
-        first_g1_point.extend_from_slice(first_point_y);
-
-        let first_g1_point: [u8; 96] = first_g1_point
+        let g1_bytes: [u8; 96] = [first_point_x, first_point_y]
+            .concat()
             .try_into()
             .map_err(|_| VMError::Internal(InternalError::ConversionError))?;
 
-        let first_g1_point = G1Affine::from_uncompressed_unchecked(&first_g1_point);
-        let first_g1_point: G1Projective = if first_g1_point.is_some().into() {
-            let g1_affine = first_g1_point.unwrap();
+        let g1_affine = G1Affine::from_uncompressed_unchecked(&g1_bytes);
+
+        if g1_affine.is_some().into() {
+            let g1_affine = g1_affine.unwrap();
             if g1_affine.is_on_curve().into() {
-                g1_affine
-            } else {
-                dbg!("here");
-                return Err(VMError::PrecompileError(PrecompileError::ParsingInputError));
-            }
-        } else {
-            dbg!("cant parse to g1");
-            return Err(VMError::PrecompileError(PrecompileError::ParsingInputError));
-        }
-        .into();
-        first_g1_point
-    };
-
-    dbg!("FIRST POINT PASA G1AFFINE");
-
-    let second_g1_point = if second_point_x == zeros && second_point_y == zeros {
-        G1Projective::identity()
-    } else {
-        let mut second_g1_point = Vec::new();
-        second_g1_point.extend_from_slice(second_point_x);
-        second_g1_point.extend_from_slice(second_point_y);
-
-        let second_g1_point: [u8; 96] = second_g1_point
-            .try_into()
-            .map_err(|_| VMError::Internal(InternalError::ConversionError))?;
-
-        let second_g1_point = G1Affine::from_uncompressed_unchecked(&second_g1_point);
-        let second_g1_point: G1Projective = if second_g1_point.is_some().into() {
-            let g1_affine = second_g1_point.unwrap();
-            if g1_affine.is_on_curve().into() {
-                g1_affine
+                g1_affine.into()
             } else {
                 return Err(VMError::PrecompileError(PrecompileError::ParsingInputError));
             }
         } else {
             return Err(VMError::PrecompileError(PrecompileError::ParsingInputError));
         }
-        .into();
-        second_g1_point
     };
 
-    dbg!("SECOND POINT PASA G1AFFINE");
+    let second_g1_point: G1Projective = if second_point_x == zeroes && second_point_y == zeroes {
+        G1Projective::identity()
+    } else {
+        let g1_bytes: [u8; 96] = [second_point_x, second_point_y]
+            .concat()
+            .try_into()
+            .map_err(|_| VMError::Internal(InternalError::ConversionError))?;
+
+        let g1_affine = G1Affine::from_uncompressed_unchecked(&g1_bytes);
+
+        if g1_affine.is_some().into() {
+            let g1_affine = g1_affine.unwrap();
+            if g1_affine.is_on_curve().into() {
+                g1_affine.into()
+            } else {
+                return Err(VMError::PrecompileError(PrecompileError::ParsingInputError));
+            }
+        } else {
+            return Err(VMError::PrecompileError(PrecompileError::ParsingInputError));
+        }
+    };
 
     let result_of_addition = G1Affine::from(first_g1_point.add(&second_g1_point));
 
-    let res = if result_of_addition.is_identity().into() {
-        [0_u8; 96]
+    let result_bytes = if result_of_addition.is_identity().into() {
+        return Ok(Bytes::copy_from_slice(&[0_u8; 128]));
     } else {
         result_of_addition.to_uncompressed()
     };
-    let mut padded_res = Vec::new();
-    padded_res.extend_from_slice(&sixteen_zeros);
-    if let Some(x) = res.get(0..48) {
-        padded_res.extend_from_slice(x);
+    let mut padded_result = Vec::new();
+    padded_result.extend_from_slice(&sixteen_zeroes);
+    if let Some(x) = result_bytes.get(0..48) {
+        padded_result.extend_from_slice(x);
+    } else {
+        return Err(VMError::Internal(InternalError::SlicingError));
     }
-    padded_res.extend_from_slice(&sixteen_zeros);
-    if let Some(y) = res.get(48..) {
-        padded_res.extend_from_slice(y);
+    padded_result.extend_from_slice(&sixteen_zeroes);
+    if let Some(y) = result_bytes.get(48..) {
+        padded_result.extend_from_slice(y);
+    } else {
+        return Err(VMError::Internal(InternalError::SlicingError));
     }
 
-    Ok(Bytes::from(padded_res))
+    Ok(Bytes::from(padded_result))
 }
 
 pub fn bls12_g1msm(
