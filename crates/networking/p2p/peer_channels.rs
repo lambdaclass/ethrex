@@ -371,6 +371,7 @@ impl PeerChannels {
             }
             // Last element with two edge proofs
             if slots.is_empty() && proof.len() >= 2 {
+                info!("Remaining proofs for last element: {}", proof.len());
                 let last_proof = vec![proof.remove(0), proof.remove(0)];
                 should_continue = verify_range_ex(
                     storage_root,
