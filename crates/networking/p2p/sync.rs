@@ -231,16 +231,14 @@ impl SyncManager {
                 //     self.peers.clone(),
                 //     store.clone(),
                 // ));
-                for hash in all_block_hashes.into_iter() {
-                    let block = store.get_block_by_hash(hash)?.ok_or(SyncError::CorruptDB)?;
-                    if block.header.number <= pivot_header.number {
-                        store.set_canonical_block(block.header.number, hash)?;
-                        store.add_block(block)?;
-                    } else {
-                        store.set_canonical_block(block.header.number, hash)?;
-                        store.update_latest_block_number(block.header.number)?;
-                        ethrex_blockchain::add_block(&block, &store)?;
-                    }
+                // Execute blocks after pivot
+                for hash in &all_block_hashes[pivot_idx..] {
+                    let block = store
+                        .get_block_by_hash(*hash)?
+                        .ok_or(SyncError::CorruptDB)?;
+                    store.set_canonical_block(block.header.number, *hash)?;
+                    store.update_latest_block_number(block.header.number)?;
+                    ethrex_blockchain::add_block(&block, &store)?;
                 }
                 //store_receipts_handle.await??;
                 self.last_snap_pivot = pivot_header.number;
