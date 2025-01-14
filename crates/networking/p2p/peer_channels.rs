@@ -326,7 +326,9 @@ impl PeerChannels {
         let mut storage_values = vec![];
         let mut should_continue = false;
         // Validate each storage range
+        let total_slots = slots.len();
         while !slots.is_empty() {
+            info!("Verifying slot {}/{}", total_slots - slots.len(), total_slots);
             let (hahsed_keys, values): (Vec<_>, Vec<_>) = slots
                 .remove(0)
                 .into_iter()
@@ -334,6 +336,7 @@ impl PeerChannels {
                 .unzip();
             // We won't accept empty storage ranges
             if hahsed_keys.is_empty() {
+                info!("Empty Slot");
                 return None;
             }
             let encoded_values = values
@@ -348,6 +351,7 @@ impl PeerChannels {
             // - The range is not the full storage (last range): We expect 2 edge proofs
             if hahsed_keys.len() == 1 && hahsed_keys[0] == start {
                 if proof.is_empty() {
+                    info!("One element with no proof");
                     return None;
                 };
                 let first_proof = vec![proof.remove(0)];
