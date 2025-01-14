@@ -1162,6 +1162,8 @@ pub fn bls12_g1add(
         return Err(VMError::PrecompileError(PrecompileError::ParsingInputError));
     }
 
+    dbg!("pasa check length");
+
     // GAS
     increase_precompile_consumed_gas(gas_for_call, BLS12_381_G1ADD_COST, consumed_gas)
         .map_err(|_| VMError::PrecompileError(PrecompileError::NotEnoughGas))?;
@@ -1179,6 +1181,7 @@ pub fn bls12_g1add(
         .get(192..)
         .ok_or(VMError::PrecompileError(PrecompileError::ParsingInputError))?;
 
+    dbg!("pasa check 64 bytes");
     let sixteen_zeros: [u8; 16] = [0_u8; 16];
 
     // the first 16 bytes of any of the points MUST be all zeros
@@ -1189,6 +1192,8 @@ pub fn bls12_g1add(
     {
         return Err(VMError::PrecompileError(PrecompileError::ParsingInputError));
     }
+
+    dbg!("pasa checks cero");
 
     first_point_x = first_point_x
         .get(16..64)
@@ -1203,7 +1208,10 @@ pub fn bls12_g1add(
         .get(16..64)
         .ok_or(VMError::PrecompileError(PrecompileError::ParsingInputError))?;
 
+    dbg!("pasa 48 bytes");
+
     let zeros: [u8; 48] = [0_u8; 48];
+    dbg!(first_point_x, first_point_y);
     let first_g1_point = if first_point_x == zeros && second_point_x == zeros {
         G1Projective::identity()
     } else {
@@ -1215,15 +1223,24 @@ pub fn bls12_g1add(
             .try_into()
             .map_err(|_| VMError::Internal(InternalError::ConversionError))?;
 
-        let first_g1_point = G1Affine::from_uncompressed(&first_g1_point);
+        let first_g1_point = G1Affine::from_uncompressed_unchecked(&first_g1_point);
         let first_g1_point: G1Projective = if first_g1_point.is_some().into() {
-            first_g1_point.unwrap()
+            let g1_affine = first_g1_point.unwrap();
+            if g1_affine.is_on_curve().into() {
+                g1_affine
+            } else {
+                dbg!("here");
+                return Err(VMError::PrecompileError(PrecompileError::ParsingInputError));
+            }
         } else {
+            dbg!("cant parse to g1");
             return Err(VMError::PrecompileError(PrecompileError::ParsingInputError));
         }
         .into();
         first_g1_point
     };
+
+    dbg!("FIRST POINT PASA G1AFFINE");
 
     let second_g1_point = if second_point_x == zeros && second_point_y == zeros {
         G1Projective::identity()
@@ -1236,9 +1253,14 @@ pub fn bls12_g1add(
             .try_into()
             .map_err(|_| VMError::Internal(InternalError::ConversionError))?;
 
-        let second_g1_point = G1Affine::from_uncompressed(&second_g1_point);
+        let second_g1_point = G1Affine::from_uncompressed_unchecked(&second_g1_point);
         let second_g1_point: G1Projective = if second_g1_point.is_some().into() {
-            second_g1_point.unwrap()
+            let g1_affine = second_g1_point.unwrap();
+            if g1_affine.is_on_curve().into() {
+                g1_affine
+            } else {
+                return Err(VMError::PrecompileError(PrecompileError::ParsingInputError));
+            }
         } else {
             return Err(VMError::PrecompileError(PrecompileError::ParsingInputError));
         }
@@ -1246,17 +1268,15 @@ pub fn bls12_g1add(
         second_g1_point
     };
 
-    dbg!(first_g1_point, second_g1_point);
+    dbg!("SECOND POINT PASA G1AFFINE");
 
     let result_of_addition = G1Affine::from(first_g1_point.add(&second_g1_point));
-    dbg!(result_of_addition);
 
     let res = if result_of_addition.is_identity().into() {
         [0_u8; 96]
     } else {
         result_of_addition.to_uncompressed()
     };
-    dbg!(res);
     let mut padded_res = Vec::new();
     padded_res.extend_from_slice(&sixteen_zeros);
     if let Some(x) = res.get(0..48) {
@@ -1267,7 +1287,7 @@ pub fn bls12_g1add(
         padded_res.extend_from_slice(y);
     }
 
-    Ok(dbg!(Bytes::from(padded_res)))
+    Ok(Bytes::from(padded_res))
 }
 
 pub fn bls12_g1msm(
