@@ -61,6 +61,7 @@ pub(crate) type Aes256Ctr64BE = ctr::Ctr64BE<aes::Aes256>;
 /// Fully working RLPx connection.
 pub(crate) struct RLPxConnection<S> {
     signer: SigningKey,
+    remote_node_id: H512,
     state: RLPxConnectionState,
     frame_adaptor: FrameAdaptor<S>,
     storage: Store,
@@ -80,6 +81,7 @@ pub(crate) struct RLPxConnection<S> {
 impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
     fn new(
         signer: SigningKey,
+        remote_node_id: H512,
         stream: S,
         state: RLPxConnectionState,
         storage: Store,
@@ -87,6 +89,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
     ) -> Self {
         Self {
             signer,
+            remote_node_id,
             state,
             frame_adaptor: FrameAdaptor::new(stream),
             storage,
@@ -105,6 +108,8 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
         let mut rng = rand::thread_rng();
         Self::new(
             signer,
+            // remote_node_id not yet provided. It will be replaced later with correct one.
+            H512::default(),
             stream,
             RLPxConnectionState::Receiver(Receiver::new(
                 H256::random_using(&mut rng),
@@ -139,6 +144,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
         ));
         Ok(RLPxConnection::new(
             signer,
+            pubkey2id(&peer_pk.into()),
             stream,
             state,
             storage,
@@ -156,24 +162,16 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
             // Handshake OK: handle connection
             // Create channels to communicate directly to the peer
             let (peer_channels, sender, receiver) = PeerChannels::create();
-            let Ok(node_id) = self.get_remote_node_id() else {
-                return self
-                    .peer_conn_failed(
-                        "Error during RLPx connection",
-                        RLPxError::InvalidState(),
-                        table,
-                    )
-                    .await;
-            };
             let capabilities = self
                 .capabilities
                 .iter()
                 .map(|(cap, _)| cap.clone())
                 .collect();
-            table
-                .lock()
-                .await
-                .init_backend_communication(node_id, peer_channels, capabilities);
+            table.lock().await.init_backend_communication(
+                self.remote_node_id,
+                peer_channels,
+                capabilities,
+            );
             if let Err(e) = self.handle_peer_conn(sender, receiver).await {
                 self.peer_conn_failed("Error during RLPx connection", e, table)
                     .await;
@@ -192,13 +190,11 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
         }))
         .await
         .unwrap_or_else(|e| error!("Could not send Disconnect message: ({e})."));
-        if let Ok(node_id) = self.get_remote_node_id() {
-            // Discard peer from kademlia table
-            error!("{error_text}: ({error}), discarding peer {node_id}");
-            table.lock().await.replace_peer(node_id);
-        } else {
-            error!("{error_text}: ({error}), unknown peer")
-        }
+
+        // Discard peer from kademlia table
+        let remote_node_id = self.remote_node_id;
+        error!("{error_text}: ({error}), discarding peer {remote_node_id}");
+        table.lock().await.replace_peer(remote_node_id);
     }
 
     fn match_disconnect_reason(&self, error: &RLPxError) -> Option<u8> {
@@ -296,9 +292,13 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
             // and subscribe this connection to the broadcasting.
             loop {
                 tokio::select! {
-                    // TODO check if this is cancel safe, and fix it if not.
+                    // Exoect a message from the remote peer
                     message = self.receive() => {
                         self.handle_message(message?, sender.clone()).await?;
+                    }
+                    // Expect a message from the backend
+                    Some(message) = receiver.recv() => {
+                        self.send(message).await?;
                     }
                     // This is not ideal, but using the receiver without
                     // this function call, causes the loop to take ownwership
@@ -311,13 +311,8 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
                     Some(broadcasted_msg) = Self::maybe_wait_for_broadcaster(&mut broadcaster_receive) => {
                         self.handle_broadcast(broadcasted_msg?).await?
                     }
-                    Some(message) = receiver.recv() => {
-                        self.send(message).await?;
-                    }
-                    _ = sleep(PERIODIC_TASKS_CHECK_INTERVAL) => {
-                        // no progress on other tasks, yield control to check
-                        // periodic tasks
-                    }
+                    // Allow a periodi interruption to check perioic tasks
+                    _ = sleep(PERIODIC_TASKS_CHECK_INTERVAL) => () // noop
                 }
                 self.check_periodic_tasks().await?;
             }
@@ -332,14 +327,6 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
         match receiver {
             None => None,
             Some(rec) => Some(rec.recv().await),
-        }
-    }
-
-    fn get_remote_node_id(&self) -> Result<H512, RLPxError> {
-        if let RLPxConnectionState::Established(state) = &self.state {
-            Ok(state.remote_node_id)
-        } else {
-            Err(RLPxError::InvalidState())
         }
     }
 
@@ -539,8 +526,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
 
     async fn send_ack(&mut self) -> Result<(), RLPxError> {
         if let RLPxConnectionState::ReceivedAuth(received_auth_state) = &self.state {
-            let peer_pk =
-                id2pubkey(received_auth_state.remote_node_id).ok_or(RLPxError::InvalidPeerId())?;
+            let peer_pk = id2pubkey(self.remote_node_id).ok_or(RLPxError::InvalidPeerId())?;
 
             // Clonning previous state to avoid ownership issues
             let previous_state = received_auth_state.clone();
@@ -576,11 +562,11 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
                 .get(2..)
                 .ok_or(RLPxError::InvalidMessageLength())?;
             let (auth, remote_ephemeral_key) = decode_auth_message(&secret_key, msg, size_data)?;
+            self.remote_node_id = auth.node_id;
 
             // Build next state
             self.state = RLPxConnectionState::ReceivedAuth(ReceivedAuth::new(
                 previous_state,
-                auth.node_id,
                 msg_bytes.to_owned(),
                 auth.nonce,
                 remote_ephemeral_key,
@@ -728,7 +714,6 @@ impl Initiator {
 struct ReceivedAuth {
     pub(crate) local_nonce: H256,
     pub(crate) local_ephemeral_key: SecretKey,
-    pub(crate) remote_node_id: H512,
     pub(crate) remote_nonce: H256,
     pub(crate) remote_ephemeral_key: PublicKey,
     pub(crate) remote_init_message: Vec<u8>,
@@ -737,7 +722,6 @@ struct ReceivedAuth {
 impl ReceivedAuth {
     pub fn new(
         previous_state: Receiver,
-        remote_node_id: H512,
         remote_init_message: Vec<u8>,
         remote_nonce: H256,
         remote_ephemeral_key: PublicKey,
@@ -745,7 +729,6 @@ impl ReceivedAuth {
         Self {
             local_nonce: previous_state.nonce,
             local_ephemeral_key: previous_state.ephemeral_key,
-            remote_node_id,
             remote_nonce,
             remote_ephemeral_key,
             remote_init_message,
@@ -755,7 +738,6 @@ impl ReceivedAuth {
 
 #[derive(Clone)]
 struct InitiatedAuth {
-    pub(crate) remote_node_id: H512,
     pub(crate) local_nonce: H256,
     pub(crate) local_ephemeral_key: SecretKey,
     pub(crate) local_init_message: Vec<u8>,
@@ -764,7 +746,6 @@ struct InitiatedAuth {
 impl InitiatedAuth {
     pub fn new(previous_state: Initiator, local_init_message: Vec<u8>) -> Self {
         Self {
-            remote_node_id: previous_state.remote_node_id,
             local_nonce: previous_state.nonce,
             local_ephemeral_key: previous_state.ephemeral_key,
             local_init_message,
@@ -774,7 +755,6 @@ impl InitiatedAuth {
 
 #[derive(Clone)]
 pub struct Established {
-    pub(crate) remote_node_id: H512,
     pub(crate) mac_key: H256,
     pub(crate) ingress_mac: Keccak256,
     pub(crate) egress_mac: Keccak256,
@@ -792,7 +772,6 @@ impl Established {
         .into();
 
         Self::new(
-            previous_state.remote_node_id,
             init_message,
             previous_state.local_nonce,
             previous_state.local_ephemeral_key,
@@ -815,7 +794,6 @@ impl Established {
             Keccak256::digest([remote_nonce.0, previous_state.local_nonce.0].concat()).into();
 
         Self::new(
-            previous_state.remote_node_id,
             previous_state.local_init_message,
             previous_state.local_nonce,
             previous_state.local_ephemeral_key,
@@ -828,7 +806,6 @@ impl Established {
 
     #[allow(clippy::too_many_arguments)]
     fn new(
-        remote_node_id: H512,
         local_init_message: Vec<u8>,
         local_nonce: H256,
         local_ephemeral_key: SecretKey,
@@ -861,7 +838,6 @@ impl Established {
         let ingress_aes = <Aes256Ctr64BE as KeyIvInit>::new(&aes_key.0.into(), &[0; 16].into());
         let egress_aes = ingress_aes.clone();
         Self {
-            remote_node_id,
             mac_key,
             ingress_mac,
             egress_mac,

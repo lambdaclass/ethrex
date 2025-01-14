@@ -35,7 +35,6 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> FrameAdaptor<S> {
         }
     }
 
-    #[allow(dead_code)]
     pub(crate) async fn write(&mut self, message: rlpx::Message) -> Result<(), RLPxError> {
         self.framed.send(message).await
     }
@@ -53,12 +52,12 @@ impl RLPxCodec {
     fn new() -> Self {
         let mac_key = ethrex_core::H256::random();
         let ingress_aes = <super::connection::Aes256Ctr64BE as aes::cipher::KeyIvInit>::new(
-            &mac_key.0.into(),
+            &[0; 32].into(),
             &[0; 16].into(),
         );
+
         Self {
             state: Established {
-                remote_node_id: ethrex_core::H512::random(),
                 mac_key,
                 ingress_mac: sha3::Keccak256::default(),
                 egress_mac: sha3::Keccak256::default(),
