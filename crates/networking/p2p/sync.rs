@@ -194,7 +194,10 @@ impl SyncManager {
                 let mut pivot_header = store
                     .get_block_header_by_hash(all_block_hashes[pivot_idx])?
                     .ok_or(SyncError::CorruptDB)?;
-                info!("Selected block {} as pivot for snap sync", pivot_header.number);
+                info!(
+                    "Selected block {} as pivot for snap sync",
+                    pivot_header.number
+                );
                 let mut stale_pivot =
                     !rebuild_state_trie(pivot_header.state_root, self.peers.clone(), store.clone())
                         .await?;
