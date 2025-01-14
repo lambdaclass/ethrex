@@ -4,6 +4,11 @@ version.workspace = true
 edition.workspace = true
 
 [dependencies]
+ethrex-core.workspace = true
+ethrex-vm.workspace = true
+ethrex-rlp.workspace = true
+ethrex-l2.workspace = true
+
 serde_json.workspace = true
 serde.workspace = true
 bytes.workspace = true
@@ -15,24 +20,13 @@ tracing.workspace = true
 hex.workspace = true
 thiserror.workspace = true
 
-# ethrex
-ethrex-core.workspace = true
-ethrex-vm.workspace = true
-ethrex-rlp.workspace = true
-
-# l2
-ethrex-l2.workspace = true
-
 zkvm_interface = { path = "./zkvm/interface", default-features = false }
-
 # risc0
 risc0-zkvm = { version = "1.2.0" }
-
 # sp1
 sp1-sdk = "3.4.0"
 
 [dev-dependencies]
-ethrex-vm.workspace = true
 ethrex-storage.workspace = true
 ethrex-blockchain.workspace = true
 
