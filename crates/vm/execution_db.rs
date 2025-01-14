@@ -251,3 +251,174 @@ impl DatabaseRef for ExecutionDB {
             .ok_or(ExecutionDBError::BlockHashNotFound(number))
     }
 }
+
+pub mod index_db {
+    use std::{cell::RefCell, collections::HashMap};
+
+    use ethrex_core::{types::Block, Address, U256};
+    use revm::{inspectors::TracerEip3155, DatabaseCommit, DatabaseRef, Evm};
+    use revm_primitives::{
+        Account as RevmAccount, Address as RevmAddress, EVMError, SpecId, B256 as RevmB256,
+        U256 as RevmU256,
+    };
+
+    use crate::{block_env, tx_env};
+
+    pub struct BorrowError;
+
+    /// Auxiliary structure for creating a [IndexDB]
+    #[derive(Default)]
+    struct InnerIndexDB {
+        written_state: HashMap<RevmAddress, Vec<RevmU256>>,
+
+        // the following fields need to be mutated whenever a reference is queried from the DB, in
+        // which case the DB is immutably borrowed, so they're wrapped in RefCells.
+        read_state: RefCell<HashMap<RevmAddress, Vec<RevmU256>>>,
+        block_numbers: RefCell<Vec<u64>>,
+        code_hashes: RefCell<Vec<RevmB256>>,
+    }
+
+    /// Dummy DB for indexing read/written state from the execution a block.
+    pub struct IndexDB {
+        pub written_state: HashMap<Address, Vec<U256>>,
+        pub read_state: HashMap<Address, Vec<U256>>,
+        pub block_numbers: Vec<u64>,
+        pub code_hashes: Vec<RevmB256>,
+    }
+
+    #[allow(unused_variables)]
+    impl DatabaseRef for InnerIndexDB {
+        type Error = BorrowError;
+
+        fn basic_ref(
+            &self,
+            address: RevmAddress,
+        ) -> Result<Option<revm_primitives::AccountInfo>, Self::Error> {
+            self.read_state
+                .try_borrow_mut()
+                .map_err(|_| BorrowError)?
+                .entry(address)
+                .or_default();
+            Ok(Some(Default::default()))
+        }
+        fn storage_ref(
+            &self,
+            address: RevmAddress,
+            index: RevmU256,
+        ) -> Result<RevmU256, Self::Error> {
+            self.read_state
+                .try_borrow_mut()
+                .map_err(|_| BorrowError)?
+                .entry(address)
+                .or_default()
+                .push(index);
+            Ok(Default::default())
+        }
+        fn block_hash_ref(&self, number: u64) -> Result<RevmB256, Self::Error> {
+            self.block_numbers
+                .try_borrow_mut()
+                .map_err(|_| BorrowError)?
+                .push(number);
+            Ok(Default::default())
+        }
+        fn code_by_hash_ref(
+            &self,
+            code_hash: RevmB256,
+        ) -> Result<revm_primitives::Bytecode, Self::Error> {
+            self.code_hashes
+                .try_borrow_mut()
+                .map_err(|_| BorrowError)?
+                .push(code_hash);
+            Ok(Default::default())
+        }
+    }
+
+    impl DatabaseCommit for InnerIndexDB {
+        fn commit(&mut self, changes: revm_primitives::HashMap<RevmAddress, RevmAccount>) {
+            for (address, account) in changes {
+                self.written_state
+                    .entry(address)
+                    .or_default()
+                    .extend(account.storage.keys());
+            }
+        }
+    }
+
+    impl IndexDB {
+        /// Get all touched account addresses and storage keys during the execution of a block,
+        /// ignoring newly created accounts.
+        ///
+        /// Generally used for building an [super::ExecutionDB].
+        pub fn new(
+            block: &Block,
+            chain_id: u64,
+            spec_id: SpecId,
+        ) -> Result<Self, EVMError<BorrowError>> {
+            let block_env = block_env(&block.header);
+            let mut db = InnerIndexDB::default();
+
+            for transaction in &block.body.transactions {
+                let mut tx_env = tx_env(transaction);
+
+                // disable nonce check (we're executing with empty accounts, nonce 0)
+                tx_env.nonce = None;
+
+                // execute tx
+                let evm_builder = Evm::builder()
+                    .with_block_env(block_env.clone())
+                    .with_tx_env(tx_env)
+                    .modify_cfg_env(|cfg| {
+                        cfg.chain_id = chain_id;
+                        // we're executing with empty accounts, balance 0
+                        cfg.disable_balance_check = true;
+                    })
+                    .with_spec_id(spec_id)
+                    .with_external_context(
+                        TracerEip3155::new(Box::new(std::io::stderr())).without_summary(),
+                    );
+                let mut evm = evm_builder.with_ref_db(&mut db).build();
+                evm.transact_commit()?;
+            }
+
+            let mut db = IndexDB {
+                written_state: db
+                    .written_state
+                    .into_iter()
+                    .map(|(address, indexes)| {
+                        (
+                            Address::from_slice(address.as_slice()),
+                            indexes
+                                .into_iter()
+                                .map(|index| U256::from_big_endian(&index.to_be_bytes_vec()))
+                                .collect(),
+                        )
+                    })
+                    .collect(),
+                read_state: db
+                    .read_state
+                    .into_inner()
+                    .into_iter()
+                    .map(|(address, indexes)| {
+                        (
+                            Address::from_slice(address.as_slice()),
+                            indexes
+                                .into_iter()
+                                .map(|index| U256::from_big_endian(&index.to_be_bytes_vec()))
+                                .collect(),
+                        )
+                    })
+                    .collect(),
+                block_numbers: db.block_numbers.into_inner(),
+                code_hashes: db.code_hashes.into_inner(),
+            };
+
+            // add withdrawal accounts
+            if let Some(ref withdrawals) = block.body.withdrawals {
+                db.written_state
+                    .extend(withdrawals.iter().map(|w| (w.address, Vec::new())))
+            }
+
+            Ok(db)
+        }
+    }
+}
