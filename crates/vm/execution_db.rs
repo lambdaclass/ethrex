@@ -17,7 +17,7 @@ use revm::{
 };
 use serde::{Deserialize, Serialize};
 
-use crate::{errors::ExecutionDBError, execute_block};
+use crate::{errors::ExecutionDBError, evm_state, execute_block, get_state_transitions};
 
 /// In-memory EVM database for caching execution data.
 ///
@@ -146,12 +146,11 @@ impl ExecutionDB {
     ) -> Result<Vec<AccountUpdate>, ExecutionDBError> {
         // TODO: perform validation to exit early
 
-        // let mut state = evm_state(store.clone(), block.header.parent_hash);
+        let mut state = evm_state(store.clone(), block.header.parent_hash);
 
-        // execute_block(block, &mut state).map_err(Box::new)?;
+        execute_block(block, &mut state).map_err(Box::new)?;
 
-        // let account_updates = get_state_transitions(&mut state);
-        let account_updates = execute_block(block, store).map_err(Box::new)?.1;
+        let account_updates = get_state_transitions(&mut state);
         Ok(account_updates)
     }
 
