@@ -17,7 +17,8 @@ use ethrex_levm::{
     memory,
     operations::Operation,
     precompiles::{
-        blake2f, ecadd, ecmul, ecpairing, ecrecover, identity, modexp, ripemd_160, sha2_256,
+        blake2f, bls12_g1msm, ecadd, ecmul, ecpairing, ecrecover, identity, modexp, ripemd_160,
+        sha2_256,
     },
     utils::{new_vm_with_ops, new_vm_with_ops_addr_bal_db, new_vm_with_ops_db, ops_to_bytecode},
     vm::{word_to_address, Storage, VM},
@@ -4677,4 +4678,20 @@ fn blake2f_test_2() {
 
     assert_eq!(result, expected_result);
     assert_eq!(consumed_gas, 16 * BLAKE2F_ROUND_COST);
+}
+
+#[test]
+fn g1_mul() {
+    // this test is based on the test vector 0 of the EIP-2537
+    // does 0*g1 = inf
+    let calldata = hex::decode("0000000000000000000000000000000017f1d3a73197d7942695638c4fa9ac0fc3688c4f9774b905a14e3a3f171bac586c55e83ff97a1aeffb3af00adb22c6bb0000000000000000000000000000000008b3f481e3aaa0f1a09e30ed741d8ae4fcf5e095d5d00af600db18cb2c04b3edd03cc744a2888ae40caa232946c5e7e10000000000000000000000000000000000000000000000000000000000000000").unwrap();
+    let calldata = Bytes::from(calldata);
+
+    let mut consumed_gas = 0;
+    let result = bls12_g1msm(&calldata, 12000, &mut consumed_gas).unwrap();
+
+    let expected_result = [0u8; 128];
+
+    assert_eq!(result, Bytes::copy_from_slice(&expected_result));
+    assert_eq!(consumed_gas, 12000); // Verify gas consumptio
 }

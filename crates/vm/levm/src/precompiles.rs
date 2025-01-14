@@ -1181,11 +1181,14 @@ pub fn bls12_g1msm(
         return Err(VMError::PrecompileError(PrecompileError::ParsingInputError));
     }
 
+    dbg!(calldata);
+
     // Gas cost
     let k = calldata.len() / LENGTH_PER_PAIR;
     dbg!(k);
     let required_gas = gas_cost::bls12_g1msm(k)?;
     dbg!(required_gas);
+    dbg!(gas_for_call);
     increase_precompile_consumed_gas(gas_for_call, required_gas, consumed_gas)?;
 
     let mut result = bls12_381::G1Affine::identity();
@@ -1308,7 +1311,15 @@ pub fn bls12_g1msm(
         dbg!(result);
     }
 
+    if result.is_identity().into() {
+        let output = [0u8; 128];
+        return Ok(Bytes::copy_from_slice(&output));
+    }
+
     let result_bytes = result.to_uncompressed();
+    dbg!(result_bytes);
+
+    // check if the result is identity and if so return 128 bytes of zeros
 
     // .to_uncompressed() returns a Vec<u8> with 96 bytes, we need to return 128 bytes.
     // we need to padd 16 bytes x and y with zeros. first 48 bytes are x and the last 48 bytes are y.
