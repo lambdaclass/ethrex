@@ -87,10 +87,10 @@ pub fn pr_message(
     pr_message.push_str(&format!(
         "Total lines removed: {}\n",
         match total_lines_removed.cmp(&0) {
-            std::cmp::Ordering::Greater =>
-                unreachable!("total_lines_removed should never be greater than 0"),
-            std::cmp::Ordering::Less | std::cmp::Ordering::Equal =>
+            std::cmp::Ordering::Greater | std::cmp::Ordering::Equal =>
                 format!("{total_lines_removed}"),
+            std::cmp::Ordering::Less =>
+                unreachable!("total_lines_removed should never be less than 0"),
         }
     ));
     pr_message.push_str(&format!(
