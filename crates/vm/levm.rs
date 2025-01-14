@@ -1,11 +1,12 @@
-use crate::{db::StoreWrapper, revm, revm::RevmSpecId, BlockExecutionOutput, EvmError, EvmState};
+use crate::{db::StoreWrapper, revm, revm::SpecId, BlockExecutionOutput, EvmError, EvmState};
 use ethrex_core::types::code_hash;
+use ethrex_core::Address;
 use ethrex_core::{
     types::{AccountInfo, Block, BlockHeader, Receipt, Transaction, GWEI_TO_WEI},
     H256, U256,
 };
 use ethrex_levm::{
-    db::{CacheDB, Database as LevmDatabase},
+    db::{CacheDB, Database},
     errors::{TransactionReport, TxResult, VMError},
     vm::VM,
     Account, Environment,
@@ -82,7 +83,7 @@ pub fn execute_block(
     //eip 4788: execute beacon_root_contract_call before block transactions
     cfg_if::cfg_if! {
         if #[cfg(not(feature = "l2"))] {
-            if block_header.parent_beacon_block_root.is_some() && spec_id == RevmSpecId::CANCUN {
+            if block_header.parent_beacon_block_root.is_some() && spec_id == SpecId::CANCUN {
                 revm::beacon_root_contract_call(state, block_header, spec_id)?;
             }
         }
@@ -167,9 +168,9 @@ pub fn execute_block(
 pub fn execute_tx(
     tx: &Transaction,
     block_header: &BlockHeader,
-    db: Arc<dyn LevmDatabase>,
+    db: Arc<dyn Database>,
     block_cache: CacheDB,
-    spec_id: RevmSpecId,
+    spec_id: SpecId,
 ) -> Result<TransactionReport, VMError> {
     let gas_price: U256 = tx
         .effective_gas_price(block_header.base_fee_per_gas)
@@ -209,4 +210,56 @@ pub fn execute_tx(
     )?;
 
     vm.transact()
+}
+
+impl Database for StoreWrapper {
+    fn get_account_info(&self, address: Address) -> ethrex_levm::account::AccountInfo {
+        let acc_info = self
+            .store
+            .get_account_info_by_hash(self.block_hash, address)
+            .unwrap()
+            .unwrap_or_default();
+
+        let acc_code = self
+            .store
+            .get_account_code(acc_info.code_hash)
+            .unwrap()
+            .unwrap_or_default();
+
+        ethrex_levm::account::AccountInfo {
+            balance: acc_info.balance,
+            nonce: acc_info.nonce,
+            bytecode: acc_code,
+        }
+    }
+
+    fn get_storage_slot(&self, address: Address, key: H256) -> U256 {
+        self.store
+            .get_storage_at_hash(self.block_hash, address, key)
+            .unwrap()
+            .unwrap_or_default()
+    }
+
+    fn get_block_hash(&self, block_number: u64) -> Option<H256> {
+        let a = self.store.get_block_header(block_number).unwrap();
+
+        a.map(|a| H256::from(a.compute_block_hash().0))
+    }
+}
+
+pub mod errors {
+    use crate::EvmError;
+    use ethrex_levm::errors::VMError;
+
+    impl From<VMError> for EvmError {
+        fn from(value: VMError) -> Self {
+            if value.is_internal() {
+                // We don't categorize our internal errors yet, so we label them as "Custom"
+                EvmError::Custom(value.to_string())
+            } else {
+                // If an error is not internal it means it is a transaction validation error.
+                EvmError::Transaction(value.to_string())
+            }
+        }
+    }
 }

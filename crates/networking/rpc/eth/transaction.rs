@@ -17,7 +17,7 @@ use ethrex_rlp::encode::RLPEncode;
 use ethrex_storage::Store;
 
 use ethrex_vm::{
-    revm::{self, evm_state, RevmSpecId},
+    revm::{self, evm_state, SpecId},
     ExecutionResult,
 };
 use serde::Serialize;
@@ -112,7 +112,7 @@ impl RpcHandler for CallRequest {
             &self.transaction,
             &header,
             context.chain.store().clone(),
-            RevmSpecId::CANCUN,
+            SpecId::CANCUN,
         )?;
         serde_json::to_value(format!("0x{:#x}", result.output()))
             .map_err(|error| RpcErr::Internal(error.to_string()))
@@ -343,7 +343,7 @@ impl RpcHandler for CreateAccessListRequest {
             &self.transaction,
             &header,
             &mut evm_state(context.chain.store().clone(), header.compute_block_hash()),
-            RevmSpecId::CANCUN,
+            SpecId::CANCUN,
         )? {
             (
                 ExecutionResult::Success {
@@ -584,7 +584,7 @@ fn simulate_tx(
     transaction: &GenericTransaction,
     block_header: &BlockHeader,
     storage: Store,
-    spec_id: RevmSpecId,
+    spec_id: SpecId,
 ) -> Result<ExecutionResult, RpcErr> {
     match revm::simulate_tx_from_generic(
         transaction,

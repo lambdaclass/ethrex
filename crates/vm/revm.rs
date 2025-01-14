@@ -9,11 +9,12 @@ use ethrex_core::{
     },
     Address, BigEndianHash, H256, U256,
 };
+
 use ethrex_storage::{error::StoreError, AccountUpdate, Store};
 use lazy_static::lazy_static;
 pub use revm::primitives::{
     ruint::Uint, AccessList as RevmAccessList, AccessListItem, AccountInfo as RevmAccountInfo,
-    Address as RevmAddress, Bytecode as RevmBytecode, Bytes, FixedBytes, SpecId as RevmSpecId,
+    Address as RevmAddress, Bytecode as RevmBytecode, Bytes, FixedBytes, SpecId,
     TxKind as RevmTxKind, B256 as RevmB256, U256 as RevmU256,
 };
 pub use revm::{
@@ -40,7 +41,7 @@ pub fn execute_block(
     cfg_if::cfg_if! {
         if #[cfg(not(feature = "l2"))] {
             //eip 4788: execute beacon_root_contract_call before block transactions
-            if block_header.parent_beacon_block_root.is_some() && spec_id == RevmSpecId::CANCUN {
+            if block_header.parent_beacon_block_root.is_some() && spec_id == SpecId::CANCUN {
                 beacon_root_contract_call(state, block_header, spec_id)?;
             }
         }
@@ -74,7 +75,7 @@ pub fn execute_tx(
     tx: &Transaction,
     header: &BlockHeader,
     state: &mut EvmState,
-    spec_id: RevmSpecId,
+    spec_id: SpecId,
 ) -> Result<ExecutionResult, EvmError> {
     let block_env = block_env(header);
     let tx_env = tx_env(tx);
@@ -86,7 +87,7 @@ pub fn simulate_tx_from_generic(
     tx: &GenericTransaction,
     header: &BlockHeader,
     state: &mut EvmState,
-    spec_id: RevmSpecId,
+    spec_id: SpecId,
 ) -> Result<ExecutionResult, EvmError> {
     let block_env = block_env(header);
     let tx_env = tx_env_from_generic(tx, header.base_fee_per_gas.unwrap_or(INITIAL_BASE_FEE));
@@ -114,7 +115,7 @@ fn run_evm(
     tx_env: TxEnv,
     block_env: BlockEnv,
     state: &mut EvmState,
-    spec_id: RevmSpecId,
+    spec_id: SpecId,
 ) -> Result<ExecutionResult, EvmError> {
     let tx_result = {
         let chain_spec = state.chain_config()?;
@@ -134,7 +135,7 @@ fn run_evm(
                 use std::sync::Arc;
 
                 evm_builder = evm_builder.with_handler({
-                    let mut evm_handler = Handler::new(HandlerCfg::new(RevmSpecId::LATEST));
+                    let mut evm_handler = Handler::new(HandlerCfg::new(SpecId::LATEST));
                     evm_handler.pre_execution.deduct_caller = Arc::new(mods::deduct_caller::<CancunSpec, _, _>);
                     evm_handler.validation.tx_against_state = Arc::new(mods::validate_tx_against_state::<CancunSpec, _, _>);
                     evm_handler.execution.last_frame_return = Arc::new(mods::last_frame_return::<CancunSpec, _, _>);
@@ -164,7 +165,7 @@ pub fn create_access_list(
     tx: &GenericTransaction,
     header: &BlockHeader,
     state: &mut EvmState,
-    spec_id: RevmSpecId,
+    spec_id: SpecId,
 ) -> Result<(ExecutionResult, AccessList), EvmError> {
     let mut tx_env = tx_env_from_generic(tx, header.base_fee_per_gas.unwrap_or(INITIAL_BASE_FEE));
     let block_env = block_env(header);
@@ -201,7 +202,7 @@ fn create_access_list_inner(
     tx_env: TxEnv,
     block_env: BlockEnv,
     state: &mut EvmState,
-    spec_id: RevmSpecId,
+    spec_id: SpecId,
 ) -> Result<(ExecutionResult, RevmAccessList), EvmError> {
     let mut access_list_inspector = access_list_inspector(&tx_env, state, spec_id)?;
     #[allow(unused_mut)]
@@ -243,7 +244,7 @@ fn run_without_commit(
     tx_env: TxEnv,
     mut block_env: BlockEnv,
     state: &mut EvmState,
-    spec_id: RevmSpecId,
+    spec_id: SpecId,
 ) -> Result<ExecutionResult, EvmError> {
     adjust_disabled_base_fee(
         &mut block_env,
@@ -450,7 +451,7 @@ pub fn evm_state(store: Store, block_hash: BlockHash) -> EvmState {
 pub fn beacon_root_contract_call(
     state: &mut EvmState,
     header: &BlockHeader,
-    spec_id: RevmSpecId,
+    spec_id: SpecId,
 ) -> Result<ExecutionResult, EvmError> {
     lazy_static! {
         static ref SYSTEM_ADDRESS: RevmAddress = RevmAddress::from_slice(
@@ -648,7 +649,7 @@ fn tx_env_from_generic(tx: &GenericTransaction, basefee: u64) -> TxEnv {
 fn access_list_inspector(
     tx_env: &TxEnv,
     state: &mut EvmState,
-    spec_id: RevmSpecId,
+    spec_id: SpecId,
 ) -> Result<AccessListInspector, EvmError> {
     // Access list provided by the transaction
     let current_access_list = RevmAccessList(tx_env.access_list.clone());
@@ -679,11 +680,11 @@ fn access_list_inspector(
 
 /// Returns the spec id according to the block timestamp and the stored chain config
 /// WARNING: Assumes at least Merge fork is active
-pub fn spec_id(chain_config: &ChainConfig, block_timestamp: u64) -> RevmSpecId {
+pub fn spec_id(chain_config: &ChainConfig, block_timestamp: u64) -> SpecId {
     match chain_config.get_fork(block_timestamp) {
-        Fork::Cancun => RevmSpecId::CANCUN,
-        Fork::Shanghai => RevmSpecId::SHANGHAI,
-        Fork::Paris => RevmSpecId::MERGE,
+        Fork::Cancun => SpecId::CANCUN,
+        Fork::Shanghai => SpecId::SHANGHAI,
+        Fork::Paris => SpecId::MERGE,
     }
 }
 
@@ -699,5 +700,56 @@ fn calculate_gas_price(tx: &GenericTransaction, basefee: u64) -> Uint<256, 4> {
             tx.max_priority_fee_per_gas.unwrap_or(0) + basefee,
             tx.max_fee_per_gas.unwrap_or(0),
         ))
+    }
+}
+
+impl revm::Database for StoreWrapper {
+    type Error = StoreError;
+
+    fn basic(&mut self, address: RevmAddress) -> Result<Option<RevmAccountInfo>, Self::Error> {
+        let acc_info = match self
+            .store
+            .get_account_info_by_hash(self.block_hash, Address::from(address.0.as_ref()))?
+        {
+            None => return Ok(None),
+            Some(acc_info) => acc_info,
+        };
+        let code = self
+            .store
+            .get_account_code(acc_info.code_hash)?
+            .map(|b| RevmBytecode::new_raw(Bytes(b)));
+
+        Ok(Some(RevmAccountInfo {
+            balance: RevmU256::from_limbs(acc_info.balance.0),
+            nonce: acc_info.nonce,
+            code_hash: RevmB256::from(acc_info.code_hash.0),
+            code,
+        }))
+    }
+
+    fn code_by_hash(&mut self, code_hash: RevmB256) -> Result<RevmBytecode, Self::Error> {
+        self.store
+            .get_account_code(H256::from(code_hash.as_ref()))?
+            .map(|b| RevmBytecode::new_raw(Bytes(b)))
+            .ok_or_else(|| StoreError::Custom(format!("No code for hash {code_hash}")))
+    }
+
+    fn storage(&mut self, address: RevmAddress, index: RevmU256) -> Result<RevmU256, Self::Error> {
+        Ok(self
+            .store
+            .get_storage_at_hash(
+                self.block_hash,
+                Address::from(address.0.as_ref()),
+                H256::from(index.to_be_bytes()),
+            )?
+            .map(|value| RevmU256::from_limbs(value.0))
+            .unwrap_or_else(|| RevmU256::ZERO))
+    }
+
+    fn block_hash(&mut self, number: u64) -> Result<RevmB256, Self::Error> {
+        self.store
+            .get_block_header(number)?
+            .map(|header| RevmB256::from_slice(&header.compute_block_hash().0))
+            .ok_or_else(|| StoreError::Custom(format!("Block {number} not found")))
     }
 }

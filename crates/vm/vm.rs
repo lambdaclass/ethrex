@@ -2,17 +2,17 @@ pub mod db;
 pub mod errors;
 pub mod execution_db;
 mod execution_result;
+#[cfg(feature = "levm")]
 pub mod levm;
 #[cfg(feature = "l2")]
 mod mods;
 pub mod revm;
 
-use std::str::FromStr;
-
 use db::StoreWrapper;
-use ethrex_core::types::{ChainConfig, Receipt};
+use ethrex_core::types::{Block, ChainConfig, Receipt};
 use ethrex_storage::{AccountUpdate, Store};
 use execution_db::ExecutionDB;
+use std::str::FromStr;
 
 // Export needed types
 pub use errors::EvmError;
@@ -72,6 +72,19 @@ impl FromStr for EVM {
             "levm" => Ok(EVM::LEVM),
             "revm" => Ok(EVM::REVM),
             _ => Err(EvmError::InvalidEVM(s.to_string())),
+        }
+    }
+}
+
+pub fn execute_block(
+    block: &Block,
+    state: &mut EvmState,
+) -> Result<BlockExecutionOutput, EvmError> {
+    cfg_if::cfg_if! {
+        if #[cfg(feature = "levm")] {
+            levm::execute_block(block, state)
+        } else if #[cfg(not(feature = "levm"))] {
+            revm::execute_block(block, state)
         }
     }
 }

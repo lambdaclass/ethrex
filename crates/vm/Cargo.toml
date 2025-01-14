@@ -6,7 +6,7 @@ edition = "2021"
 [dependencies]
 ethrex-core = { path = "../common", default-features = false }
 ethrex-storage = { path = "../storage/store", default-features = false }
-ethrex-levm = { path = "./levm", optional = false }
+ethrex-levm = { path = "./levm", optional = true }
 ethrex-trie = { path = "../storage/trie", default-features = false }
 ethrex-rlp = { path = "../common/rlp", default-features = false }
 
@@ -39,8 +39,10 @@ ethereum-types.workspace = true
 path = "./vm.rs"
 
 [features]
-default = ["c-kzg", "blst"]
+default = ["c-kzg", "blst", "levm"]
 l2 = []
+# This feature exists only to allow l2/prover compilation.
+levm = ["dep:ethrex-levm"]
 c-kzg = ["revm/c-kzg"]
 blst = ["revm/blst"]
 libmdbx = ["ethrex-storage/default", "ethrex-core/libmdbx"]

@@ -16,11 +16,8 @@ use ethrex_core::H256;
 
 use ethrex_storage::error::StoreError;
 use ethrex_storage::{AccountUpdate, Store};
-use ethrex_vm::{levm, EVM};
-use ethrex_vm::{
-    revm::{self, RevmSpecId},
-    EvmState,
-};
+use ethrex_vm::revm;
+use ethrex_vm::{EvmState, EVM};
 
 //TODO: Implement a struct Chain or BlockChain to encapsulate
 //functionality and canonical chain state and config
@@ -64,10 +61,8 @@ impl BlockChain {
 
         // Validate the block pre-execution
         Self::validate_block(block, &parent_header, &state)?;
-        let (receipts, account_updates): (Vec<Receipt>, Vec<AccountUpdate>) = match self.evm {
-            EVM::LEVM => levm::execute_block(block, &mut state)?,
-            EVM::REVM => revm::execute_block(block, &mut state)?,
-        };
+        let (receipts, account_updates): (Vec<Receipt>, Vec<AccountUpdate>) =
+            ethrex_vm::execute_block(block, &mut state)?;
 
         Self::validate_gas_used(&receipts, &block.header)?;
 
@@ -179,14 +174,14 @@ impl BlockChain {
         validate_block_header(&block.header, parent_header).map_err(InvalidBlockError::from)?;
 
         match spec {
-            RevmSpecId::CANCUN => validate_cancun_header_fields(&block.header, parent_header)
+            revm::SpecId::CANCUN => validate_cancun_header_fields(&block.header, parent_header)
                 .map_err(InvalidBlockError::from)?,
             _other_specs => {
                 validate_no_cancun_header_fields(&block.header).map_err(InvalidBlockError::from)?
             }
         };
 
-        if spec == RevmSpecId::CANCUN {
+        if spec == revm::SpecId::CANCUN {
             Self::verify_blob_gas_usage(block)?
         }
         Ok(())
