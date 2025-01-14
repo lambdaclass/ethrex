@@ -228,7 +228,10 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
         debug!("Completed handshake!");
 
         if let RLPxConnectionState::Established(established) = &self.state {
-            self.frame_adaptor.framed.codec_mut().set_state(*established.clone());
+            self.frame_adaptor
+                .framed
+                .codec_mut()
+                .set_state(*established.clone());
         }
 
         self.exchange_hello_messages().await?;
