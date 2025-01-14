@@ -310,7 +310,7 @@ fn fill_node_ex(
     info!("got child: {child_hash:?}");
     if let Some(ref child_hash) = child_hash {
         trie_state.insert_node(node, node_hash.clone());
-        fill_node(path, child_hash, trie_state, proof_nodes)
+        fill_node_ex(path, child_hash, trie_state, proof_nodes)
     } else {
         let value = match &node {
             Node::Branch(n) => n.value.clone(),
