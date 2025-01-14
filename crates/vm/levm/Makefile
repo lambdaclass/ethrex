@@ -115,11 +115,9 @@ build-revm-comparison:
 
 ###### Build Client with LEVM ######
 
-FLAGS := "--features ethrex-blockchain/levm,ethrex-vm/levm,ethrex/levm"
-
 build-image-levm: ## 🐳 Build the Docker image with LEVM features
 	cd ../../../ && \
-	docker build -t ethrex --build-arg BUILD_FLAGS=$(FLAGS) .
+	docker build -t ethrex .
 
 run-hive-debug-levm: build-image-levm ## 🐝 Run Hive with LEVM in debug mode
 	$(MAKE) -C ../../../ setup-hive
