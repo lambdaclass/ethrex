@@ -4,7 +4,7 @@
 use ethrex_blockchain::BlockChain;
 use ethrex_core::types::{Block, Genesis};
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
-use ethrex_storage::{EngineType, Store};
+use ethrex_storage::Store;
 use ethrex_vm::execution_db::ExecutionDB;
 use tracing::info;
 use zkvm_interface::io::ProgramInput;

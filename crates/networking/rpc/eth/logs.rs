@@ -108,11 +108,11 @@ pub(crate) fn fetch_logs_with_filter(
 ) -> Result<Vec<RpcLog>, RpcErr> {
     let from = filter
         .from_block
-        .resolve_block_number(&storage)?
+        .resolve_block_number(storage)?
         .ok_or(RpcErr::WrongParam("fromBlock".to_string()))?;
     let to = filter
         .to_block
-        .resolve_block_number(&storage)?
+        .resolve_block_number(storage)?
         .ok_or(RpcErr::WrongParam("toBlock".to_string()))?;
     if (from..=to).is_empty() {
         return Err(RpcErr::BadParams("Empty range".to_string()));

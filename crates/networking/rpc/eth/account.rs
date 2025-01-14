@@ -54,7 +54,7 @@ impl RpcHandler for GetBalanceRequest {
             self.address, self.block
         );
 
-        let Some(block_number) = self.block.resolve_block_number(&context.chain.store())? else {
+        let Some(block_number) = self.block.resolve_block_number(context.chain.store())? else {
             return Err(RpcErr::Internal(
                 "Could not resolve block number".to_owned(),
             )); // Should we return Null here?
@@ -90,7 +90,7 @@ impl RpcHandler for GetCodeRequest {
             self.address, self.block
         );
 
-        let Some(block_number) = self.block.resolve_block_number(&context.chain.store())? else {
+        let Some(block_number) = self.block.resolve_block_number(context.chain.store())? else {
             return Err(RpcErr::Internal(
                 "Could not resolve block number".to_owned(),
             )); // Should we return Null here?
@@ -127,7 +127,7 @@ impl RpcHandler for GetStorageAtRequest {
             self.storage_slot, self.address, self.block
         );
 
-        let Some(block_number) = self.block.resolve_block_number(&context.chain.store())? else {
+        let Some(block_number) = self.block.resolve_block_number(context.chain.store())? else {
             return Err(RpcErr::Internal(
                 "Could not resolve block number".to_owned(),
             )); // Should we return Null here?
@@ -165,7 +165,7 @@ impl RpcHandler for GetTransactionCountRequest {
 
         // If the tag is Pending, we need to get the nonce from the mempool
         let pending_nonce = if self.block == BlockTag::Pending {
-            mempool::get_nonce(&self.address, &context.chain.store())?
+            mempool::get_nonce(&self.address, context.chain.store())?
         } else {
             None
         };
@@ -173,7 +173,7 @@ impl RpcHandler for GetTransactionCountRequest {
         let nonce = match pending_nonce {
             Some(nonce) => nonce,
             None => {
-                let Some(block_number) = self.block.resolve_block_number(&context.chain.store())?
+                let Some(block_number) = self.block.resolve_block_number(context.chain.store())?
                 else {
                     return serde_json::to_value("0x0")
                         .map_err(|error| RpcErr::Internal(error.to_string()));

@@ -79,7 +79,9 @@ mod blockchain_integration_test {
         let block_1 = new_block(&chain.store, &genesis_header);
         let hash_1 = block_1.header.compute_block_hash();
         chain.add_block(&block_1).unwrap();
-        chain.apply_fork_choice(hash_1, H256::zero(), H256::zero());
+        chain
+            .apply_fork_choice(hash_1, H256::zero(), H256::zero())
+            .unwrap();
 
         // Build a child, then change its parent, making it effectively a pending block.
         let mut block_2 = new_block(&chain.store, &block_1.header);

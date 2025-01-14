@@ -73,12 +73,12 @@ impl NewFilterRequest {
         let from = self
             .request_data
             .from_block
-            .resolve_block_number(&storage)?
+            .resolve_block_number(storage)?
             .ok_or(RpcErr::WrongParam("fromBlock".to_string()))?;
         let to = self
             .request_data
             .to_block
-            .resolve_block_number(&storage)?
+            .resolve_block_number(storage)?
             .ok_or(RpcErr::WrongParam("toBlock".to_string()))?;
 
         if (from..=to).is_empty() {

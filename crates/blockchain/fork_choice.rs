@@ -2,7 +2,7 @@ use ethrex_core::{
     types::{Block, BlockHash, BlockHeader, BlockNumber},
     H256,
 };
-use ethrex_storage::{error::StoreError, Store};
+use ethrex_storage::error::StoreError;
 
 use crate::{
     error::{self, InvalidForkChoice},

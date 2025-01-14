@@ -32,7 +32,6 @@ use crate::{
     },
     error::{ChainError, InvalidBlockError},
     mempool::{self, PendingTxFilter},
-    BlockChain,
 };
 
 use tracing::debug;
