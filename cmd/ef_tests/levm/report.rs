@@ -320,11 +320,7 @@ impl Display for EFTestsReport {
         writeln!(f, "{}", fork_summary_shell(&self.0, SpecId::LONDON))?;
         writeln!(f, "{}", fork_summary_shell(&self.0, SpecId::BYZANTIUM))?;
         writeln!(f, "{}", fork_summary_shell(&self.0, SpecId::BERLIN))?;
-        writeln!(
-            f,
-            "{}",
-            fork_summary_shell(&self.0, SpecId::CONSTANTINOPLE)
-        )?;
+        writeln!(f, "{}", fork_summary_shell(&self.0, SpecId::CONSTANTINOPLE))?;
         writeln!(f, "{}", fork_summary_shell(&self.0, SpecId::MERGE))?;
         writeln!(f, "{}", fork_summary_shell(&self.0, SpecId::FRONTIER))?;
         writeln!(f)?;
