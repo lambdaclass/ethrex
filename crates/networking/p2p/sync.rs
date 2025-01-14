@@ -466,7 +466,10 @@ async fn bytecode_fetcher(
         match receiver.recv().await {
             Some(code_hashes) if !code_hashes.is_empty() => {
                 pending_bytecodes.extend(code_hashes);
-                info!("Received incoming bytecode request, current batch: {}/{BATCH_SIZE}", pending_bytecodes.len())
+                info!(
+                    "Received incoming bytecode request, current batch: {}/{BATCH_SIZE}",
+                    pending_bytecodes.len()
+                )
             }
             // Disconnect / Empty message signaling no more bytecodes to sync
             _ => incoming = false,
@@ -523,7 +526,10 @@ async fn storage_fetcher(
         match receiver.recv().await {
             Some(account_hashes_and_roots) if !account_hashes_and_roots.is_empty() => {
                 pending_storage.extend(account_hashes_and_roots);
-                info!("Received incoming storage range request, current batch: {}/{BATCH_SIZE}", pending_storage.len())
+                info!(
+                    "Received incoming storage range request, current batch: {}/{BATCH_SIZE}",
+                    pending_storage.len()
+                )
             }
             // Disconnect / Empty message signaling no more bytecodes to sync
             _ => incoming = false,

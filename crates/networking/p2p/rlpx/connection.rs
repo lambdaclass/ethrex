@@ -650,8 +650,11 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
         if let RLPxConnectionState::Established(state) = &mut self.state {
             let mut frame_buffer = vec![];
             message.encode(&mut frame_buffer)?;
-            frame::write(frame_buffer, state, &mut self.stream).await?;
-            Ok(())
+            let ret = frame::write(frame_buffer, state, &mut self.stream).await;
+            if ret.is_err() {
+                warn!("Failed to send message: {message:?}");
+            }
+            ret
         } else {
             Err(RLPxError::InvalidState())
         }
