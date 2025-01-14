@@ -62,7 +62,7 @@ impl BlockChain {
         // Validate the block pre-execution
         Self::validate_block(block, &parent_header, &state)?;
         let (receipts, account_updates): (Vec<Receipt>, Vec<AccountUpdate>) =
-            ethrex_vm::execute_block(block, &mut state)?;
+            ethrex_vm::execute_block(block, &mut state, &self.evm)?;
 
         Self::validate_gas_used(&receipts, &block.header)?;
 

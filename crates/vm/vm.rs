@@ -79,12 +79,10 @@ impl FromStr for EVM {
 pub fn execute_block(
     block: &Block,
     state: &mut EvmState,
+    evm: &EVM,
 ) -> Result<BlockExecutionOutput, EvmError> {
-    cfg_if::cfg_if! {
-        if #[cfg(feature = "levm")] {
-            levm::execute_block(block, state)
-        } else if #[cfg(not(feature = "levm"))] {
-            revm::execute_block(block, state)
-        }
+    match evm {
+        EVM::LEVM => levm::execute_block(block, state),
+        EVM::REVM => revm::execute_block(block, state),
     }
 }
