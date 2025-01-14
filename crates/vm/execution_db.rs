@@ -266,9 +266,17 @@ pub mod index_db {
 
     pub struct BorrowError;
 
+    /// Dummy DB for indexing read/written state from the execution a block.
+    pub struct IndexDB {
+        pub written_state: HashMap<Address, Vec<U256>>,
+        pub read_state: HashMap<Address, Vec<U256>>,
+        pub block_numbers: Vec<u64>,
+        pub code_hashes: Vec<RevmB256>,
+    }
+
     /// Auxiliary structure for creating a [IndexDB]
     #[derive(Default)]
-    struct InnerIndexDB {
+    struct AuxIndexDB {
         written_state: HashMap<RevmAddress, Vec<RevmU256>>,
 
         // the following fields need to be mutated whenever a reference is queried from the DB, in
@@ -278,16 +286,8 @@ pub mod index_db {
         code_hashes: RefCell<Vec<RevmB256>>,
     }
 
-    /// Dummy DB for indexing read/written state from the execution a block.
-    pub struct IndexDB {
-        pub written_state: HashMap<Address, Vec<U256>>,
-        pub read_state: HashMap<Address, Vec<U256>>,
-        pub block_numbers: Vec<u64>,
-        pub code_hashes: Vec<RevmB256>,
-    }
-
     #[allow(unused_variables)]
-    impl DatabaseRef for InnerIndexDB {
+    impl DatabaseRef for AuxIndexDB {
         type Error = BorrowError;
 
         fn basic_ref(
@@ -333,7 +333,7 @@ pub mod index_db {
         }
     }
 
-    impl DatabaseCommit for InnerIndexDB {
+    impl DatabaseCommit for AuxIndexDB {
         fn commit(&mut self, changes: revm_primitives::HashMap<RevmAddress, RevmAccount>) {
             for (address, account) in changes {
                 self.written_state
@@ -355,7 +355,7 @@ pub mod index_db {
             spec_id: SpecId,
         ) -> Result<Self, EVMError<BorrowError>> {
             let block_env = block_env(&block.header);
-            let mut db = InnerIndexDB::default();
+            let mut db = AuxIndexDB::default();
 
             for transaction in &block.body.transactions {
                 let mut tx_env = tx_env(transaction);
