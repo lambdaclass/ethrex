@@ -344,6 +344,7 @@ impl PeerChannels {
                 .map(|val| val.encode_to_vec())
                 .collect::<Vec<_>>();
             let storage_root = storage_roots.remove(0);
+            info!("Storage root: {storage_root}");
 
             // We have 3 cases (as we won't accept empty storage ranges):
             // - The range has only 1 element (with key matching the start): We expect one edge proof

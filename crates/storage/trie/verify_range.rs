@@ -2,7 +2,7 @@ use std::{cmp::Ordering, collections::HashMap};
 
 use ethereum_types::H256;
 use sha3::{Digest, Keccak256};
-use tracing::warn;
+use tracing::{info, warn};
 
 use crate::{
     nibbles::Nibbles, node::Node, node_hash::NodeHash, state::TrieState, Trie, TrieError, ValueRLP,
@@ -60,6 +60,7 @@ pub fn verify_range_i(
 
     // Special Case: No proofs given, the range is expected to be the full set of leaves
     if proof.is_empty() {
+        info!("Special Case: No Proof");
         // Check that the trie constructed from the given keys and values has the expected root
         for (key, value) in keys.iter().zip(values.iter()) {
             trie.insert(key.0.to_vec(), value.clone())?;
@@ -76,6 +77,7 @@ pub fn verify_range_i(
 
     // Special Case: One edge proof, no range given, there are no more values in the trie
     if keys.is_empty() {
+        info!("Special Case: No Range One Edge Proof");
         // We need to check that the proof confirms the non-existance of the first key
         // and that there are no more elements to the right of the first key
         let value = fill_state(&mut trie.state, root, first_key, &proof_nodes)?;
@@ -93,6 +95,7 @@ pub fn verify_range_i(
 
     // Special Case: There is only one element and the two edge keys are the same
     if keys.len() == 1 && first_key == last_key {
+        info!("Special Case: One elem 2 proof");
         // We need to check that the proof confirms the existance of the first key
         let value = fill_state(&mut trie.state, root, first_key, &proof_nodes)?;
         if first_key != &keys[0] {
@@ -109,6 +112,7 @@ pub fn verify_range_i(
     }
 
     // Regular Case: Two edge proofs
+    info!("Regular Case: 2 proof");
     if first_key >= last_key {
         return Err(TrieError::Verify("invalid edge keys".to_string()));
     }
