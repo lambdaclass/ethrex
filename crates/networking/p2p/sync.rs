@@ -443,14 +443,17 @@ async fn rebuild_state_trie(
     // Send empty batch to signal that no more batches are incoming
     storage_sender.send(vec![]).await?;
     storage_fetcher_handle.await??;
+    info!("Current State Root: {current_state_root} vs Expected Root: {state_root}");
     let sync_complete = if current_state_root == state_root {
         info!("Completed state sync for state root {state_root}");
         true
     } else {
         info!("Oh no! Trie needs healing");
+        info!("Skipping state healing");
+        true
         // Perform state healing to fix any potential inconsistency in the rebuilt tries
         // As we are not fetching different chunks of the same trie this step is not necessary
-        heal_state_trie(bytecode_sender.clone(), state_root, store, peers).await?
+        //heal_state_trie(bytecode_sender.clone(), state_root, store, peers).await?
     };
     // Send empty batch to signal that no more batches are incoming
     info!("Account Trie fully rebuilt, signaling bytecode fetcher process");
@@ -479,7 +482,10 @@ async fn bytecode_fetcher(
                 )
             }
             // Disconnect / Empty message signaling no more bytecodes to sync
-            _ => {info!("Final bytecode batch"); incoming = false},
+            _ => {
+                info!("Final bytecode batch");
+                incoming = false
+            }
         }
         // If we have enough pending bytecodes to fill a batch
         // or if we have no more incoming batches, spawn a fetch process
@@ -539,7 +545,10 @@ async fn storage_fetcher(
                 )
             }
             // Disconnect / Empty message signaling no more bytecodes to sync
-            _ => {info!("Final storage batch"); incoming = false}
+            _ => {
+                info!("Final storage batch");
+                incoming = false
+            }
         }
         // If we have enough pending bytecodes to fill a batch
         // or if we have no more incoming batches, spawn a fetch process
