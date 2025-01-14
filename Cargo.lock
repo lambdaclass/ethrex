@@ -2266,6 +2266,7 @@ dependencies = [
  "ethrex-core",
  "ethrex-rlp",
  "ethrex-storage",
+ "ethrex-vm",
  "hex",
  "lazy_static",
  "serde",
