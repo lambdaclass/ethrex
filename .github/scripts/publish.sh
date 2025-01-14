@@ -1,7 +1,7 @@
 curl -X POST $url \
 -H 'Content-Type: application/json; charset=utf-8' \
 --data @- <<EOF
-$(jq -n --arg text "$(cat results_default.md)" '{
+$(jq -n --arg text "$(cat results.md)" '{
     "blocks": [
         {
             "type": "header",
