@@ -6,7 +6,7 @@ use ethrex_core::H128;
 use ethrex_rlp::encode::RLPEncode as _;
 use sha3::Digest as _;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
-use tracing::warn;
+use tracing::{debug, warn};
 
 use super::{connection::Established, error::RLPxError};
 
@@ -127,7 +127,7 @@ pub(crate) async fn read<S: AsyncRead + std::marker::Unpin>(
     );
 
     if header_mac != expected_header_mac.0 {
-        warn!("Mismatched mac");
+        debug!("Mismatched mac");
     }
 
     let header_text = header_ciphertext;

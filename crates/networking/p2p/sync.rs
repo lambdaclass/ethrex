@@ -21,7 +21,7 @@ use crate::{kademlia::KademliaTable, peer_channels::BlockRequestOrder};
 
 /// Maximum amount of times we will ask a peer for an account/storage range
 /// If the max amount of retries is exceeded we will asume that the state we are requesting is old and no longer available
-const MAX_RETRIES: usize = 10;
+const MAX_RETRIES: usize = 5;
 /// The minimum amount of blocks from the head that we want to full sync during a snap sync
 const MIN_FULL_BLOCKS: usize = 64;
 
