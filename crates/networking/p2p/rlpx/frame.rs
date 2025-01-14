@@ -9,7 +9,7 @@ use sha3::Digest as _;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio_stream::StreamExt;
 use tokio_util::codec::{Decoder, Encoder, Framed};
-
+use futures::SinkExt;
 use super::{connection::Established, error::RLPxError, message as rlpx};
 
 // max RLPx Message size
@@ -38,10 +38,9 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> FrameAdaptor<S> {
     #[allow(dead_code)]
     pub(crate) async fn write(
         &mut self,
-        frame_data: Vec<u8>,
-        state: &mut Established,
+        message: rlpx::Message,
     ) -> Result<(), RLPxError> {
-        write(frame_data, state, self.framed.get_mut()).await
+        self.framed.send(message).await
     }
 
     pub(crate) fn stream(&mut self) -> &mut S {
@@ -76,10 +75,6 @@ impl RLPxCodec {
 impl RLPxCodec {
     pub(crate) fn set_state(&mut self, state: Established) {
         self.state = state
-    }
-
-    pub(crate) fn get_state(&mut self) -> Established {
-        self.state.clone()
     }
 }
 
@@ -227,8 +222,69 @@ impl Decoder for RLPxCodec {
 impl Encoder<rlpx::Message> for RLPxCodec {
     type Error = RLPxError;
 
-    fn encode(&mut self, _item: rlpx::Message, _dst: &mut BytesMut) -> Result<(), Self::Error> {
-        todo!()
+    fn encode(&mut self, message: rlpx::Message, buffer: &mut BytesMut) -> Result<(), Self::Error> {
+        let mut frame_data = vec![];
+        message.encode(&mut frame_data)?;
+
+        let mac_aes_cipher = Aes256Enc::new_from_slice(&self.state.mac_key.0)?;
+
+        // header = frame-size || header-data || header-padding
+        let mut header = Vec::with_capacity(32);
+        let frame_size = frame_data.len().to_be_bytes();
+        header.extend_from_slice(&frame_size[5..8]);
+
+        // header-data = [capability-id, context-id]  (both always zero)
+        let header_data = (0_u8, 0_u8);
+        header_data.encode(&mut header);
+
+        header.resize(16, 0);
+        self.state.egress_aes.apply_keystream(&mut header[..16]);
+
+        let header_mac_seed =
+            {
+                let mac_digest: [u8; 16] = self.state.egress_mac.clone().finalize()[..16]
+                    .try_into()
+                    .map_err(|_| RLPxError::CryptographyError("Invalid mac digest".to_owned()))?;
+                let mut seed = mac_digest.into();
+                mac_aes_cipher.encrypt_block(&mut seed);
+                H128(seed.into())
+                    ^ H128(header[..16].try_into().map_err(|_| {
+                        RLPxError::CryptographyError("Invalid header length".to_owned())
+                    })?)
+            };
+        self.state.egress_mac.update(header_mac_seed);
+        let header_mac = self.state.egress_mac.clone().finalize();
+        header.extend_from_slice(&header_mac[..16]);
+
+        // Write header
+        buffer.extend_from_slice(&header);
+
+        // Pad to next multiple of 16
+        frame_data.resize(frame_data.len().next_multiple_of(16), 0);
+        self.state.egress_aes.apply_keystream(&mut frame_data);
+        let frame_ciphertext = frame_data;
+
+        // Write frame
+        buffer.extend_from_slice(&frame_ciphertext);
+        
+        // Compute frame-mac
+        self.state.egress_mac.update(&frame_ciphertext);
+
+        // frame-mac-seed = aes(mac-secret, keccak256.digest(egress-mac)[:16]) ^ keccak256.digest(egress-mac)[:16]
+        let frame_mac_seed = {
+            let mac_digest: [u8; 16] = self.state.egress_mac.clone().finalize()[..16]
+                .try_into()
+                .map_err(|_| RLPxError::CryptographyError("Invalid mac digest".to_owned()))?;
+            let mut seed = mac_digest.into();
+            mac_aes_cipher.encrypt_block(&mut seed);
+            (H128(seed.into()) ^ H128(mac_digest)).0
+        };
+        self.state.egress_mac.update(frame_mac_seed);
+        let frame_mac = self.state.egress_mac.clone().finalize();
+        
+        // Write frame-mac
+        buffer.extend_from_slice(&frame_mac[..16]);
+        Ok(())
     }
 }
 

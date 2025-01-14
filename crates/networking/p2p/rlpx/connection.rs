@@ -227,6 +227,10 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
         };
         debug!("Completed handshake!");
 
+        if let RLPxConnectionState::Established(established) = &self.state {
+            self.frame_adaptor.framed.codec_mut().set_state(*established.clone());
+        }
+
         self.exchange_hello_messages().await?;
         Ok(())
     }
@@ -639,6 +643,15 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
     }
 
     async fn send(&mut self, message: rlpx::Message) -> Result<(), RLPxError> {
+        if let RLPxConnectionState::Established(_) = &mut self.state {
+            self.frame_adaptor.write(message).await
+        } else {
+            Err(RLPxError::InvalidState())
+        }
+    }
+
+    #[allow(dead_code)]
+    async fn send_old(&mut self, message: rlpx::Message) -> Result<(), RLPxError> {
         if let RLPxConnectionState::Established(state) = &mut self.state {
             let mut frame_buffer = vec![];
             message.encode(&mut frame_buffer)?;
@@ -662,20 +675,8 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
     }
 
     async fn receive(&mut self) -> Result<rlpx::Message, RLPxError> {
-        if let RLPxConnectionState::Established(inner_state) = &mut self.state {
-            let state: Established = *inner_state.clone();
-            self.frame_adaptor.framed.codec_mut().set_state(state);
-
-            let result = self.frame_adaptor.read().await;
-
-            let new_state = self.frame_adaptor.framed.codec_mut().get_state();
-            inner_state.mac_key = new_state.mac_key;
-            inner_state.ingress_mac = new_state.ingress_mac;
-            inner_state.ingress_aes = new_state.ingress_aes;
-            inner_state.egress_mac = new_state.egress_mac;
-            inner_state.egress_aes = new_state.egress_aes;
-
-            result
+        if let RLPxConnectionState::Established(_) = &mut self.state {
+            self.frame_adaptor.read().await
         } else {
             Err(RLPxError::InvalidState())
         }
