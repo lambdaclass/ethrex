@@ -1,5 +1,3 @@
-use std::cmp::min;
-
 use crate::{
     db::StoreWrapper, BlockExecutionOutput, EvmError, EvmState, ExecutionResult,
     DEPOSIT_MAGIC_DATA, WITHDRAWAL_MAGIC_DATA,
@@ -27,6 +25,7 @@ pub use revm::{
     Database, DatabaseCommit, DatabaseRef, Evm,
 };
 use revm_inspectors::access_list::AccessListInspector;
+use std::cmp::min;
 
 type AccessList = Vec<(Address, Vec<H256>)>;
 
@@ -130,6 +129,7 @@ fn run_evm(
             );
         cfg_if::cfg_if! {
             if #[cfg(feature = "l2")] {
+                use crate::mods;
                 use revm::{Handler, primitives::{CancunSpec, HandlerCfg}};
                 use std::sync::Arc;
 

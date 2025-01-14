@@ -149,7 +149,7 @@ async fn main() {
         }
     }
 
-    let chain = BlockChain::new(store, evm);
+    let chain = BlockChain::new(store.clone(), evm);
 
     let genesis = read_genesis_file(&network);
     chain
