@@ -303,8 +303,9 @@ fn fill_node_ex(
     trie_state: &mut TrieState,
     proof_nodes: &ProofNodeStorage,
 ) -> Result<Vec<u8>, TrieError> {
+    info!("Filling node: {node_hash:?} on path {path:?}");
     let node = proof_nodes.get_node(node_hash)?;
-    info!("Filling node: {node:?} on path {path:?}");
+    info!("got node: {node:?}");
     let child_hash = get_child(path, &node);
     info!("got child: {child_hash:?}");
     if let Some(ref child_hash) = child_hash {
