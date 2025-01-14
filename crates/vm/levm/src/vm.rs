@@ -272,7 +272,7 @@ impl VM {
                     return Ok(TransactionReport {
                         result: TxResult::Success,
                         new_state: self.cache.clone(),
-                        gas_used: self.gas_used(current_call_frame)?,
+                        gas_used: current_call_frame.gas_used,
                         gas_refunded: 0,
                         output,
                         logs: current_call_frame.logs.clone(),

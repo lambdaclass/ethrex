@@ -219,11 +219,9 @@ fn increase_precompile_consumed_gas(
     gas_cost: u64,
     consumed_gas: &mut u64,
 ) -> Result<(), VMError> {
-    dbg!(gas_for_call, gas_cost, consumed_gas.clone());
     if gas_for_call < gas_cost {
         return Err(VMError::PrecompileError(PrecompileError::NotEnoughGas));
     }
-    dbg!("puede aumentar gas");
 
     *consumed_gas = consumed_gas
         .checked_add(gas_cost)
@@ -1181,13 +1179,13 @@ pub fn bls12_g1add(
         .get(192..)
         .ok_or(VMError::PrecompileError(PrecompileError::ParsingInputError))?;
 
-    let _zeros: [u8; 16] = [0_u8; 16];
+    let sixteen_zeros: [u8; 16] = [0_u8; 16];
 
     // the first 16 bytes of any of the points MUST be all zeros
-    if !matches!(first_point_x.get(0..16), Some(prefix) if prefix == _zeros)
-        || !matches!(first_point_y.get(0..16), Some(prefix) if prefix == _zeros)
-        || !matches!(second_point_x.get(0..16), Some(prefix) if prefix == _zeros)
-        || !matches!(second_point_y.get(0..16), Some(prefix) if prefix == _zeros)
+    if !matches!(first_point_x.get(0..16), Some(prefix) if prefix == sixteen_zeros)
+        || !matches!(first_point_y.get(0..16), Some(prefix) if prefix == sixteen_zeros)
+        || !matches!(second_point_x.get(0..16), Some(prefix) if prefix == sixteen_zeros)
+        || !matches!(second_point_y.get(0..16), Some(prefix) if prefix == sixteen_zeros)
     {
         return Err(VMError::PrecompileError(PrecompileError::ParsingInputError));
     }
@@ -1207,7 +1205,6 @@ pub fn bls12_g1add(
 
     let zeros: [u8; 48] = [0_u8; 48];
     let first_g1_point = if first_point_x == zeros && second_point_x == zeros {
-        dbg!("first identity");
         G1Projective::identity()
     } else {
         let mut first_g1_point = Vec::new();
@@ -1229,7 +1226,6 @@ pub fn bls12_g1add(
     };
 
     let second_g1_point = if second_point_x == zeros && second_point_y == zeros {
-        dbg!("second is identity");
         G1Projective::identity()
     } else {
         let mut second_g1_point = Vec::new();
@@ -1250,11 +1246,18 @@ pub fn bls12_g1add(
         second_g1_point
     };
 
-    dbg!("POINTS!", first_g1_point, second_g1_point);
-
     let res = G1Affine::from(first_g1_point.add(&second_g1_point)).to_uncompressed();
+    let mut padded_res = Vec::new();
+    padded_res.extend_from_slice(&sixteen_zeros);
+    if let Some(x) = res.get(0..48) {
+        padded_res.extend_from_slice(x);
+    }
+    padded_res.extend_from_slice(&sixteen_zeros);
+    if let Some(y) = res.get(48..) {
+        padded_res.extend_from_slice(y);
+    }
 
-    Ok(Bytes::copy_from_slice(&res))
+    Ok(Bytes::from(padded_res))
 }
 
 pub fn bls12_g1msm(
