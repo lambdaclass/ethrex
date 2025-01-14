@@ -6,7 +6,7 @@ use crate::{
 use clap::Parser;
 use colored::Colorize;
 use ethrex_levm::errors::{TransactionReport, VMError};
-use ethrex_vm::revm::RevmSpecId;
+use ethrex_vm::revm::SpecId;
 use serde::{Deserialize, Serialize};
 use spinoff::{spinners::Dots, Color, Spinner};
 
@@ -44,7 +44,7 @@ pub enum InternalError {
 #[derive(Parser)]
 pub struct EFTestRunnerOptions {
     #[arg(short, long, value_name = "FORK", default_value = "Cancun")]
-    pub fork: Vec<RevmSpecId>,
+    pub fork: Vec<SpecId>,
     #[arg(short, long, value_name = "TESTS", use_value_delimiter = true)]
     pub tests: Vec<String>,
     #[arg(short, long, value_name = "SUMMARY", default_value = "false")]

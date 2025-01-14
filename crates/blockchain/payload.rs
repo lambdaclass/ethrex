@@ -15,7 +15,7 @@ use ethrex_core::{
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_storage::{error::StoreError, Store};
 use ethrex_vm::{
-    revm::{self, RevmSpecId},
+    revm::{self, SpecId},
     EvmError, EvmState,
 };
 use sha3::{Digest, Keccak256};
@@ -221,7 +221,7 @@ pub fn build_payload(
 pub fn apply_withdrawals(context: &mut PayloadBuildContext) -> Result<(), EvmError> {
     // Apply withdrawals & call beacon root contract, and obtain the new state root
     let spec_id = revm::spec_id(&context.chain_config()?, context.payload.header.timestamp);
-    if context.payload.header.parent_beacon_block_root.is_some() && spec_id == RevmSpecId::CANCUN {
+    if context.payload.header.parent_beacon_block_root.is_some() && spec_id == SpecId::CANCUN {
         revm::beacon_root_contract_call(context.evm_state, &context.payload.header, spec_id)?;
     }
     let withdrawals = context.payload.body.withdrawals.clone().unwrap_or_default();

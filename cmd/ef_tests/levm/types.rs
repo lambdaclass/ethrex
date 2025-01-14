@@ -13,7 +13,7 @@ use ethrex_core::{
     types::{Genesis, GenesisAccount, TxKind},
     Address, H256, U256,
 };
-use ethrex_vm::revm::RevmSpecId;
+use ethrex_vm::revm::SpecId;
 use serde::Deserialize;
 use std::collections::HashMap;
 
@@ -32,21 +32,21 @@ pub struct EFTest {
 }
 
 impl EFTest {
-    pub fn fork(&self) -> RevmSpecId {
+    pub fn fork(&self) -> SpecId {
         match &self.post {
-            EFTestPost::Prague(_) => RevmSpecId::PRAGUE,
-            EFTestPost::Cancun(_) => RevmSpecId::CANCUN,
-            EFTestPost::Shanghai(_) => RevmSpecId::SHANGHAI,
-            EFTestPost::Homestead(_) => RevmSpecId::HOMESTEAD,
-            EFTestPost::Istanbul(_) => RevmSpecId::ISTANBUL,
-            EFTestPost::London(_) => RevmSpecId::LONDON,
-            EFTestPost::Byzantium(_) => RevmSpecId::BYZANTIUM,
-            EFTestPost::Berlin(_) => RevmSpecId::BERLIN,
+            EFTestPost::Prague(_) => SpecId::PRAGUE,
+            EFTestPost::Cancun(_) => SpecId::CANCUN,
+            EFTestPost::Shanghai(_) => SpecId::SHANGHAI,
+            EFTestPost::Homestead(_) => SpecId::HOMESTEAD,
+            EFTestPost::Istanbul(_) => SpecId::ISTANBUL,
+            EFTestPost::London(_) => SpecId::LONDON,
+            EFTestPost::Byzantium(_) => SpecId::BYZANTIUM,
+            EFTestPost::Berlin(_) => SpecId::BERLIN,
             EFTestPost::Constantinople(_) | EFTestPost::ConstantinopleFix(_) => {
-                RevmSpecId::CONSTANTINOPLE
+                SpecId::CONSTANTINOPLE
             }
-            EFTestPost::Paris(_) => RevmSpecId::MERGE,
-            EFTestPost::Frontier(_) => RevmSpecId::FRONTIER,
+            EFTestPost::Paris(_) => SpecId::MERGE,
+            EFTestPost::Frontier(_) => SpecId::FRONTIER,
         }
     }
 }
