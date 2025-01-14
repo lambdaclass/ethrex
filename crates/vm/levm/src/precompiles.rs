@@ -1246,7 +1246,17 @@ pub fn bls12_g1add(
         second_g1_point
     };
 
-    let res = G1Affine::from(first_g1_point.add(&second_g1_point)).to_uncompressed();
+    dbg!(first_g1_point, second_g1_point);
+
+    let result_of_addition = G1Affine::from(first_g1_point.add(&second_g1_point));
+    dbg!(result_of_addition);
+
+    let res = if result_of_addition.is_identity().into() {
+        [0_u8; 96]
+    } else {
+        result_of_addition.to_uncompressed()
+    };
+    dbg!(res);
     let mut padded_res = Vec::new();
     padded_res.extend_from_slice(&sixteen_zeros);
     if let Some(x) = res.get(0..48) {
@@ -1257,7 +1267,7 @@ pub fn bls12_g1add(
         padded_res.extend_from_slice(y);
     }
 
-    Ok(Bytes::from(padded_res))
+    Ok(dbg!(Bytes::from(padded_res)))
 }
 
 pub fn bls12_g1msm(
