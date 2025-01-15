@@ -621,8 +621,9 @@ impl VM {
             .ok_or(OutOfGasError::ConsumedGasOverflow)?;
 
         // Authorization List Cost
-        // CHECK: if we add this, it means that it's not empty
-        let amount_of_auth_tuples = self.authorization_list.clone().unwrap().len();
+        // When using unwrap_or_default we will get an empty vec in case the authorization_list field is None.
+        // If the vec is empty, the len will be 0, thus the authorization_list_cost is 0.
+        let amount_of_auth_tuples = self.authorization_list.clone().unwrap_or_default().len();
         let authorization_list_cost: u64 = (PER_EMPTY_ACCOUNT_COST * amount_of_auth_tuples)
             .try_into()
             .map_err(|_| VMError::Internal(InternalError::ConversionError))?;
@@ -1462,6 +1463,9 @@ impl VM {
     /// CHECK: we are not returning the keccak256(0xef01). Following the ethereum/execution-specs
     /// EXTCODEHASH would return 0xeadcdba66a79ab5dce91622d1d75c8cff5cff0b96944c3bf1072cd08ce018329 (keccak256(0xef01)), and
     /// CALL would load the code from address and execute it in the context of authority.
+    ///
+    /// The idea of this function comes from ethereum/execution-specs:
+    /// https://github.com/ethereum/execution-specs/blob/951fc43a709b493f27418a8e57d2d6f3608cef84/src/ethereum/prague/vm/eoa_delegation.py#L115
     pub fn eip7702_get_code(
         &mut self,
         address: Address,
