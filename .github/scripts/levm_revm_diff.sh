@@ -1,5 +1,8 @@
 #!/bin/bash
 
+
+set -e
+
 if [ "$#" -ne 2 ]; then
     echo "Usage: $0 <revm_file> <levm_file>"
     exit 1

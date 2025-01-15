@@ -344,7 +344,7 @@ impl PeerChannels {
             let storage_root = storage_roots.remove(0);
 
             // The proof corresponds to the last slot, for the previous ones the slot must be the full range without edge proofs
-            if slots.is_empty() {
+            if slots.is_empty() && !proof.is_empty() {
                 should_continue =
                     verify_range(storage_root, &start, &hahsed_keys, &encoded_values, &proof)
                         .ok()?;

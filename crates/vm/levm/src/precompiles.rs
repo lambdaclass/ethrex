@@ -157,7 +157,6 @@ pub fn execute_precompile(
     spec_id: SpecId,
 ) -> Result<Bytes, VMError> {
     let callee_address = current_call_frame.code_address;
-    let calldata = current_call_frame.calldata.clone();
     let gas_for_call = current_call_frame
         .gas_limit
         .checked_sub(current_call_frame.gas_used)
@@ -166,45 +165,58 @@ pub fn execute_precompile(
 
     let result = match callee_address {
         address if address == ECRECOVER_ADDRESS => {
-            ecrecover(&calldata, gas_for_call, consumed_gas)?
+            ecrecover(&current_call_frame.calldata, gas_for_call, consumed_gas)?
         }
-        address if address == IDENTITY_ADDRESS => identity(&calldata, gas_for_call, consumed_gas)?,
-        address if address == SHA2_256_ADDRESS => sha2_256(&calldata, gas_for_call, consumed_gas)?,
+        address if address == IDENTITY_ADDRESS => {
+            identity(&current_call_frame.calldata, gas_for_call, consumed_gas)?
+        }
+        address if address == SHA2_256_ADDRESS => {
+            sha2_256(&current_call_frame.calldata, gas_for_call, consumed_gas)?
+        }
         address if address == RIPEMD_160_ADDRESS => {
-            ripemd_160(&calldata, gas_for_call, consumed_gas)?
+            ripemd_160(&current_call_frame.calldata, gas_for_call, consumed_gas)?
         }
-        address if address == MODEXP_ADDRESS => {
-            modexp(&calldata, gas_for_call, consumed_gas, spec_id)?
+        address if address == MODEXP_ADDRESS => modexp(
+            &current_call_frame.calldata,
+            gas_for_call,
+            consumed_gas,
+            spec_id,
+        )?,
+        address if address == ECADD_ADDRESS => {
+            ecadd(&current_call_frame.calldata, gas_for_call, consumed_gas)?
         }
-        address if address == ECADD_ADDRESS => ecadd(&calldata, gas_for_call, consumed_gas)?,
-        address if address == ECMUL_ADDRESS => ecmul(&calldata, gas_for_call, consumed_gas)?,
+        address if address == ECMUL_ADDRESS => {
+            ecmul(&current_call_frame.calldata, gas_for_call, consumed_gas)?
+        }
         address if address == ECPAIRING_ADDRESS => {
-            ecpairing(&calldata, gas_for_call, consumed_gas)?
+            ecpairing(&current_call_frame.calldata, gas_for_call, consumed_gas)?
         }
-        address if address == BLAKE2F_ADDRESS => blake2f(&calldata, gas_for_call, consumed_gas)?,
+        address if address == BLAKE2F_ADDRESS => {
+            blake2f(&current_call_frame.calldata, gas_for_call, consumed_gas)?
+        }
         address if address == POINT_EVALUATION_ADDRESS => {
-            point_evaluation(&calldata, gas_for_call, consumed_gas)?
+            point_evaluation(&current_call_frame.calldata, gas_for_call, consumed_gas)?
         }
         address if address == BLS12_G1ADD_ADDRESS => {
-            bls12_g1add(&calldata, gas_for_call, consumed_gas)?
+            bls12_g1add(&current_call_frame.calldata, gas_for_call, consumed_gas)?
         }
         address if address == BLS12_G1MSM_ADDRESS => {
-            bls12_g1msm(&calldata, gas_for_call, consumed_gas)?
+            bls12_g1msm(&current_call_frame.calldata, gas_for_call, consumed_gas)?
         }
         address if address == BLS12_G2ADD_ADDRESS => {
-            bls12_g2add(&calldata, gas_for_call, consumed_gas)?
+            bls12_g2add(&current_call_frame.calldata, gas_for_call, consumed_gas)?
         }
         address if address == BLS12_G2MSM_ADDRESS => {
-            bls12_g2msm(&calldata, gas_for_call, consumed_gas)?
+            bls12_g2msm(&current_call_frame.calldata, gas_for_call, consumed_gas)?
         }
         address if address == BLS12_PAIRING_CHECK_ADDRESS => {
-            bls12_pairing_check(&calldata, gas_for_call, consumed_gas)?
+            bls12_pairing_check(&current_call_frame.calldata, gas_for_call, consumed_gas)?
         }
         address if address == BLS12_MAP_FP_TO_G1_ADDRESS => {
-            bls12_map_fp_to_g1(&calldata, gas_for_call, consumed_gas)?
+            bls12_map_fp_to_g1(&current_call_frame.calldata, gas_for_call, consumed_gas)?
         }
         address if address == BLS12_MAP_FP2_TO_G2_ADDRESS => {
-            bls12_map_fp2_tp_g2(&calldata, gas_for_call, consumed_gas)?
+            bls12_map_fp2_tp_g2(&current_call_frame.calldata, gas_for_call, consumed_gas)?
         }
         _ => return Err(VMError::Internal(InternalError::InvalidPrecompileAddress)),
     };
