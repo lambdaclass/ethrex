@@ -1378,9 +1378,8 @@ impl VM {
                 continue;
             }
 
-            // If account is not empty, it exists
             // 7. Add PER_EMPTY_ACCOUNT_COST - PER_AUTH_BASE_COST gas to the global refund counter if authority exists in the trie.
-            if !authority_account_info.is_empty() {
+            if self.db.account_exists(authority_address) {
                 // Should never throw an error
                 let refunded_gas_if_exists: u64 = (PER_EMPTY_ACCOUNT_COST - PER_AUTH_BASE_COST)
                     .try_into()
