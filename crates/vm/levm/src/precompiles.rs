@@ -1,4 +1,4 @@
-use bls12_381::{G1Affine, G1Projective,Scalar, G2Affine, G2Projective};
+use bls12_381::{G1Affine, G1Projective, G2Affine, G2Projective, Scalar};
 
 use bytes::Bytes;
 use ethrex_core::{serde_utils::bool, Address, H160, H256, U256};
@@ -1245,8 +1245,8 @@ pub fn bls12_g1msm(
             .checked_add(32)
             .ok_or(InternalError::ArithmeticOperationOverflow)?;
 
-        let x = parse_g1_coordinate(calldata.get(x_offset..y_offset))?;
-        let y = parse_g1_coordinate(calldata.get(y_offset..scalar_offset))?;
+        let x = parse_coordinate(calldata.get(x_offset..y_offset))?;
+        let y = parse_coordinate(calldata.get(y_offset..scalar_offset))?;
         let g1 = parse_g1_point(x, y, false)?;
 
         let scalar_bytes = calldata
