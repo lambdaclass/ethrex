@@ -140,11 +140,9 @@ pub const SIZE_PRECOMPILES_PRE_CANCUN: u64 = 9;
 pub const SIZE_PRECOMPILES_CANCUN: u64 = 10;
 pub const SIZE_PRECOMPILES_PRAGUE: u64 = 17;
 
-
 pub const BLS12_381_G1_MSM_PAIR_LENGTH: usize = 160;
 
 const BLS12_381_G1ADD_VALID_INPUT_LENGTH: usize = 256;
-
 
 pub fn is_precompile(callee_address: &Address, spec_id: SpecId) -> bool {
     // Cancun specs is the only one that allows point evaluation precompile
@@ -1232,7 +1230,7 @@ pub fn bls12_g1msm(
         return Err(VMError::PrecompileError(PrecompileError::ParsingInputError));
     }
 
-    let k = calldata.len() / LENGTH_PER_PAIR;
+    let k = calldata.len() / BLS12_381_G1_MSM_PAIR_LENGTH;
     let required_gas = gas_cost::bls12_g1msm(k)?;
     increase_precompile_consumed_gas(gas_for_call, required_gas, consumed_gas)?;
 
@@ -1243,7 +1241,7 @@ pub fn bls12_g1msm(
     // P_i are points in the group (in this case, points in G1)
     for i in 0..k {
         let offset: usize = i
-            .checked_mul(LENGTH_PER_PAIR)
+            .checked_mul(BLS12_381_G1_MSM_PAIR_LENGTH)
             .ok_or(InternalError::ArithmeticOperationOverflow)?;
         let x = calldata
             .get(
@@ -1274,7 +1272,7 @@ pub fn bls12_g1msm(
                     .checked_add(128)
                     .ok_or(InternalError::ArithmeticOperationOverflow)?
                     ..offset
-                        .checked_add(LENGTH_PER_PAIR)
+                        .checked_add(BLS12_381_G1_MSM_PAIR_LENGTH)
                         .ok_or(InternalError::ArithmeticOperationOverflow)?,
             )
             .ok_or(InternalError::SlicingError)?;

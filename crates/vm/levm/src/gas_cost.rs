@@ -1069,7 +1069,7 @@ pub fn bls12_g1msm(k: usize) -> Result<u64, VMError> {
         .ok_or(VMError::VeryLargeNumber)?
         .checked_mul(discount)
         .ok_or(VMError::VeryLargeNumber)?
-        .checked_div(MULTIPLIER)
+        .checked_div(BLS12_381_MSM_MULTIPLIER)
         .ok_or(VMError::VeryLargeNumber)?;
     Ok(gas_cost)
 }
