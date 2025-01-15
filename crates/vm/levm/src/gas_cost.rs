@@ -125,6 +125,7 @@ pub const EXTCODECOPY_WARM_DYNAMIC: u64 = DEFAULT_WARM_DYNAMIC;
 pub const CALL_STATIC: u64 = DEFAULT_STATIC;
 pub const CALL_COLD_DYNAMIC: u64 = DEFAULT_COLD_DYNAMIC;
 pub const CALL_WARM_DYNAMIC: u64 = DEFAULT_WARM_DYNAMIC;
+pub const CALL_PRE_BERLIN: u64 = 700;
 pub const CALL_POSITIVE_VALUE: u64 = 9000;
 pub const CALL_POSITIVE_VALUE_STIPEND: u64 = 2300;
 pub const CALL_TO_EMPTY_ACCOUNT: u64 = 25000;
@@ -158,6 +159,8 @@ pub const CREATE_BASE_COST: u64 = 32000;
 // Calldata costs
 pub const CALLDATA_COST_ZERO_BYTE: u64 = 4;
 pub const CALLDATA_COST_NON_ZERO_BYTE: u64 = 16;
+pub const CALLDATA_COST_NON_ZERO_BYTE_PRE_ISTANBUL: u64 = 68;
+pub const STANDARD_TOKEN_COST: u64 = 4;
 
 // Blob gas costs
 pub const BLOB_GAS_PER_BLOB: u64 = 131072;
@@ -168,6 +171,10 @@ pub const ACCESS_LIST_ADDRESS_COST: u64 = 2400;
 
 // Precompile costs
 pub const ECRECOVER_COST: u64 = 3000;
+pub const BLS12_381_G1ADD_COST: u64 = 375;
+
+// Floor cost per token, specified in https://eips.ethereum.org/EIPS/eip-7623
+pub const TOTAL_COST_FLOOR_PER_TOKEN: u64 = 10;
 
 pub const SHA2_256_STATIC_COST: u64 = 60;
 pub const SHA2_256_DYNAMIC_BASE: u64 = 12;
@@ -181,6 +188,8 @@ pub const IDENTITY_DYNAMIC_BASE: u64 = 3;
 pub const MODEXP_STATIC_COST: u64 = 200;
 pub const MODEXP_DYNAMIC_BASE: u64 = 200;
 pub const MODEXP_DYNAMIC_QUOTIENT: u64 = 3;
+
+pub const MODEXP_DYNAMIC_QUOTIENT_PRE_BERLIN: u64 = 20;
 
 pub const ECADD_COST: u64 = 150;
 pub const ECMUL_COST: u64 = 6000;
@@ -524,19 +533,26 @@ pub fn selfdestruct(
     Ok(gas_cost)
 }
 
-pub fn tx_calldata(calldata: &Bytes) -> Result<u64, OutOfGasError> {
+pub fn tx_calldata(calldata: &Bytes, spec_id: SpecId) -> Result<u64, OutOfGasError> {
     // This cost applies both for call and create
     // 4 gas for each zero byte in the transaction data 16 gas for each non-zero byte in the transaction.
     let mut calldata_cost: u64 = 0;
     for byte in calldata {
-        if *byte != 0 {
-            calldata_cost = calldata_cost
-                .checked_add(CALLDATA_COST_NON_ZERO_BYTE)
-                .ok_or(OutOfGasError::GasUsedOverflow)?;
+        calldata_cost = if *byte != 0 {
+            if spec_id >= SpecId::ISTANBUL {
+                calldata_cost
+                    .checked_add(CALLDATA_COST_NON_ZERO_BYTE)
+                    .ok_or(OutOfGasError::GasUsedOverflow)?
+            } else {
+                // EIP-2028
+                calldata_cost
+                    .checked_add(CALLDATA_COST_NON_ZERO_BYTE_PRE_ISTANBUL)
+                    .ok_or(OutOfGasError::GasUsedOverflow)?
+            }
         } else {
-            calldata_cost = calldata_cost
+            calldata_cost
                 .checked_add(CALLDATA_COST_ZERO_BYTE)
-                .ok_or(OutOfGasError::GasUsedOverflow)?;
+                .ok_or(OutOfGasError::GasUsedOverflow)?
         }
     }
     Ok(calldata_cost)
@@ -629,6 +645,7 @@ pub fn extcodehash(address_was_cold: bool) -> Result<u64, VMError> {
     )
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn call(
     new_memory_size: usize,
     current_memory_size: usize,
@@ -637,6 +654,7 @@ pub fn call(
     value_to_transfer: U256,
     gas_from_stack: U256,
     gas_left: u64,
+    spec_id: SpecId,
 ) -> Result<(u64, u64), VMError> {
     let memory_expansion_cost = memory::expansion_cost(new_memory_size, current_memory_size)?;
 
@@ -644,7 +662,12 @@ pub fn call(
         address_was_cold,
         CALL_STATIC,
         CALL_COLD_DYNAMIC,
-        CALL_WARM_DYNAMIC,
+        if spec_id >= SpecId::BERLIN {
+            CALL_WARM_DYNAMIC
+        } else {
+            //https://eips.ethereum.org/EIPS/eip-2929
+            CALL_PRE_BERLIN
+        },
     )?;
     let positive_value_cost = if !value_to_transfer.is_zero() {
         CALL_POSITIVE_VALUE
@@ -803,11 +826,120 @@ pub fn identity(data_size: usize) -> Result<u64, VMError> {
     precompile(data_size, IDENTITY_STATIC_COST, IDENTITY_DYNAMIC_BASE)
 }
 
+//https://eips.ethereum.org/EIPS/eip-2565
+pub fn modexp_eip2565(
+    max_length: u64,
+    exponent_first_32_bytes: &BigUint,
+    exponent_size: u64,
+) -> Result<u64, VMError> {
+    let words = (max_length
+        .checked_add(7)
+        .ok_or(OutOfGasError::GasCostOverflow)?)
+    .checked_div(8)
+    .ok_or(InternalError::DivisionError)?;
+    let multiplication_complexity = words.checked_pow(2).ok_or(OutOfGasError::GasCostOverflow)?;
+
+    let calculate_iteration_count =
+        if exponent_size <= 32 && *exponent_first_32_bytes != BigUint::ZERO {
+            exponent_first_32_bytes
+                .bits()
+                .checked_sub(1)
+                .ok_or(InternalError::ArithmeticOperationUnderflow)?
+        } else if exponent_size > 32 {
+            let extra_size = (exponent_size
+                .checked_sub(32)
+                .ok_or(InternalError::ArithmeticOperationUnderflow)?)
+            .checked_mul(8)
+            .ok_or(OutOfGasError::GasCostOverflow)?;
+            extra_size
+                .checked_add(exponent_first_32_bytes.bits().max(1))
+                .ok_or(OutOfGasError::GasCostOverflow)?
+                .checked_sub(1)
+                .ok_or(InternalError::ArithmeticOperationUnderflow)?
+        } else {
+            0
+        }
+        .max(1);
+
+    let cost = MODEXP_STATIC_COST.max(
+        multiplication_complexity
+            .checked_mul(calculate_iteration_count)
+            .ok_or(OutOfGasError::GasCostOverflow)?
+            / MODEXP_DYNAMIC_QUOTIENT,
+    );
+    Ok(cost)
+}
+
+//https://eips.ethereum.org/EIPS/eip-198
+pub fn modexp_eip198(
+    max_length: u64,
+    exponent_first_32_bytes: &BigUint,
+    exponent_size: u64,
+) -> Result<u64, VMError> {
+    let multiplication_complexity = if max_length <= 64 {
+        max_length
+            .checked_pow(2)
+            .ok_or(OutOfGasError::GasCostOverflow)?
+    } else if max_length <= 1024 {
+        max_length
+            .checked_pow(2)
+            .ok_or(OutOfGasError::GasCostOverflow)?
+            .checked_div(4)
+            .ok_or(OutOfGasError::GasCostOverflow)?
+            .checked_add(
+                max_length
+                    .checked_mul(96)
+                    .ok_or(OutOfGasError::GasCostOverflow)?,
+            )
+            .ok_or(OutOfGasError::GasCostOverflow)?
+            .checked_sub(3072)
+            .ok_or(OutOfGasError::GasCostOverflow)?
+    } else {
+        max_length
+            .checked_pow(2)
+            .ok_or(OutOfGasError::GasCostOverflow)?
+            .checked_div(16)
+            .ok_or(OutOfGasError::GasCostOverflow)?
+            .checked_add(
+                max_length
+                    .checked_mul(480)
+                    .ok_or(OutOfGasError::GasCostOverflow)?,
+            )
+            .ok_or(OutOfGasError::GasCostOverflow)?
+            .checked_sub(199680)
+            .ok_or(OutOfGasError::GasCostOverflow)?
+    };
+
+    let calculate_iteration_count = if exponent_size < 32 {
+        exponent_first_32_bytes.bits().saturating_sub(1)
+    } else {
+        let extra_size = (exponent_size
+            .checked_sub(32)
+            .ok_or(InternalError::ArithmeticOperationUnderflow)?)
+        .checked_mul(8)
+        .ok_or(OutOfGasError::GasCostOverflow)?;
+
+        let bits_part = exponent_first_32_bytes.bits().saturating_sub(1);
+
+        extra_size
+            .checked_add(bits_part)
+            .ok_or(OutOfGasError::GasCostOverflow)?
+    }
+    .max(1);
+
+    let cost = multiplication_complexity
+        .checked_mul(calculate_iteration_count)
+        .ok_or(OutOfGasError::GasCostOverflow)?
+        / MODEXP_DYNAMIC_QUOTIENT_PRE_BERLIN;
+    Ok(cost)
+}
+
 pub fn modexp(
     exponent_first_32_bytes: &BigUint,
     base_size: usize,
     exponent_size: usize,
     modulus_size: usize,
+    spec_id: SpecId,
 ) -> Result<u64, VMError> {
     let base_size: u64 = base_size
         .try_into()
@@ -820,43 +952,12 @@ pub fn modexp(
         .map_err(|_| PrecompileError::ParsingInputError)?;
 
     let max_length = base_size.max(modulus_size);
-    let words = (max_length
-        .checked_add(7)
-        .ok_or(OutOfGasError::GasCostOverflow)?)
-    .checked_div(8)
-    .ok_or(InternalError::DivisionError)?;
 
-    let multiplication_complexity = words.checked_pow(2).ok_or(OutOfGasError::GasCostOverflow)?;
-
-    let iteration_count = if exponent_size <= 32 && *exponent_first_32_bytes != BigUint::ZERO {
-        exponent_first_32_bytes
-            .bits()
-            .checked_sub(1)
-            .ok_or(InternalError::ArithmeticOperationUnderflow)?
-    } else if exponent_size > 32 {
-        let extra_size = (exponent_size
-            .checked_sub(32)
-            .ok_or(InternalError::ArithmeticOperationUnderflow)?)
-        .checked_mul(8)
-        .ok_or(OutOfGasError::GasCostOverflow)?;
-        extra_size
-            .checked_add(exponent_first_32_bytes.bits().max(1))
-            .ok_or(OutOfGasError::GasCostOverflow)?
-            .checked_sub(1)
-            .ok_or(InternalError::ArithmeticOperationUnderflow)?
+    if spec_id >= SpecId::BERLIN {
+        modexp_eip2565(max_length, exponent_first_32_bytes, exponent_size)
     } else {
-        0
-    };
-    let calculate_iteration_count = iteration_count.max(1);
-
-    let cost = MODEXP_STATIC_COST.max(
-        multiplication_complexity
-            .checked_mul(calculate_iteration_count)
-            .ok_or(OutOfGasError::GasCostOverflow)?
-            / MODEXP_DYNAMIC_QUOTIENT,
-    );
-
-    Ok(cost)
+        modexp_eip198(max_length, exponent_first_32_bytes, exponent_size)
+    }
 }
 
 fn precompile(data_size: usize, static_cost: u64, dynamic_base: u64) -> Result<u64, VMError> {

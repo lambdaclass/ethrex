@@ -3,7 +3,10 @@ use bytes::Bytes;
 use clap::Subcommand;
 use ethereum_types::{Address, H256, U256};
 use ethrex_blockchain::constants::TX_GAS_COST;
-use ethrex_l2_sdk::eth_client::{eth_sender::Overrides, EthClient};
+use ethrex_l2_sdk::{
+    calldata::{self, Value},
+    eth_client::{eth_sender::Overrides, EthClient},
+};
 use keccak_hash::keccak;
 use secp256k1::SecretKey;
 use std::{
@@ -50,6 +53,13 @@ pub(crate) enum Command {
             help = "Prints each transaction."
         )]
         verbose: bool,
+        #[clap(
+            short = 'c',
+            long = "contract",
+            default_value = "false",
+            help = "send value to address with contract"
+        )]
+        contract: bool,
     },
 }
 
@@ -67,6 +77,7 @@ async fn transfer_from(
     value: U256,
     iterations: u64,
     verbose: bool,
+    calldata: Bytes,
     cfg: EthrexL2Config,
 ) -> u64 {
     let client = EthClient::new(&cfg.network.l2_rpc_url);
@@ -94,12 +105,18 @@ async fn transfer_from(
             .build_eip1559_transaction(
                 to_address,
                 address,
-                Bytes::new(),
+                calldata.clone(),
                 Overrides {
                     chain_id: Some(cfg.network.l2_chain_id),
                     nonce: Some(i),
-                    value: Some(value),
-                    gas_limit: Some(TX_GAS_COST),
+                    value: if calldata.is_empty() {
+                        Some(value)
+                    } else {
+                        None
+                    },
+                    max_fee_per_gas: Some(3121115334),
+                    max_priority_fee_per_gas: Some(3000000000),
+                    gas_limit: Some(TX_GAS_COST * 5),
                     ..Default::default()
                 },
                 10,
@@ -145,20 +162,48 @@ impl Command {
                 value,
                 iterations,
                 verbose,
+                contract,
             } => {
                 let Ok(lines) = read_lines(path) else {
                     return Ok(());
                 };
-
                 if !test_connection(cfg.clone()).await {
                     println!("Test failed to establish connection to server");
                     return Ok(());
                 }
 
-                let to_address = match to {
+                let mut to_address = match to {
                     Some(address) => address,
                     None => Address::random(),
                 };
+
+                let calldata: Bytes = if contract {
+                    // This is the bytecode for the contract with the following functions
+                    // version() -> always returns 2
+                    // function fibonacci(uint n) public pure returns (uint) -> returns the nth fib number
+                    let init_code = hex::decode("6080604052348015600e575f5ffd5b506103198061001c5f395ff3fe608060405234801561000f575f5ffd5b5060043610610034575f3560e01c806354fd4d501461003857806361047ff414610056575b5f5ffd5b610040610086565b60405161004d9190610152565b60405180910390f35b610070600480360381019061006b9190610199565b61008b565b60405161007d9190610152565b60405180910390f35b600281565b5f5f8210156100cf576040517f08c379a00000000000000000000000000000000000000000000000000000000081526004016100c69061021e565b60405180910390fd5b5f82036100de575f9050610135565b600182036100ef5760019050610135565b5f5f90505f600190505f600290505b84811161012e575f82905083836101159190610269565b92508093505080806101269061029c565b9150506100fe565b5080925050505b919050565b5f819050919050565b61014c8161013a565b82525050565b5f6020820190506101655f830184610143565b92915050565b5f5ffd5b6101788161013a565b8114610182575f5ffd5b50565b5f813590506101938161016f565b92915050565b5f602082840312156101ae576101ad61016b565b5b5f6101bb84828501610185565b91505092915050565b5f82825260208201905092915050565b7f496e707574206d757374206265206e6f6e2d6e656761746976650000000000005f82015250565b5f610208601a836101c4565b9150610213826101d4565b602082019050919050565b5f6020820190508181035f830152610235816101fc565b9050919050565b7f4e487b71000000000000000000000000000000000000000000000000000000005f52601160045260245ffd5b5f6102738261013a565b915061027e8361013a565b92508282019050808211156102965761029561023c565b5b92915050565b5f6102a68261013a565b91507fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff82036102d8576102d761023c565b5b60018201905091905056fea264697066735822122021e2c2b56b7e23b9555cc95390dfb2979a8526595038818d133d5bb772c01a6564736f6c634300081c0033")?;
+                    let client = EthClient::new(&cfg.network.l2_rpc_url);
+
+                    let (_, contract_address) = client
+                        .deploy(
+                            cfg.wallet.address,
+                            cfg.wallet.private_key,
+                            init_code.into(),
+                            Overrides::default(),
+                        )
+                        .await?;
+
+                    to_address = contract_address;
+
+                    calldata::encode_calldata(
+                        "fibonacci(uint256)",
+                        &[Value::Uint(100000000000000_u64.into())],
+                    )?
+                    .into()
+                } else {
+                    Bytes::new()
+                };
+
                 println!("Sending to: {to_address:#x}");
 
                 let mut threads = vec![];
@@ -169,6 +214,7 @@ impl Command {
                         value,
                         iterations,
                         verbose,
+                        calldata.clone(),
                         cfg.clone(),
                     ));
                     threads.push(thread);
@@ -180,7 +226,6 @@ impl Command {
                 }
 
                 println!("Total retries: {retries}");
-
                 Ok(())
             }
         }

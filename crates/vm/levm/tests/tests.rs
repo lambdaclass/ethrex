@@ -3461,9 +3461,9 @@ fn logs_from_multiple_callers() {
     .unwrap();
 
     let mut current_call_frame = vm.call_frames.pop().unwrap();
-    vm.execute(&mut current_call_frame).unwrap();
+    let report = vm.execute(&mut current_call_frame).unwrap();
 
-    assert_eq!(current_call_frame.logs.len(), 2)
+    assert_eq!(report.logs.len(), 2)
 }
 
 // #[test]
@@ -4549,7 +4549,13 @@ fn modexp_test() {
     let calldata = Bytes::from(calldata);
 
     let mut consumed_gas = 0;
-    let result = modexp(&calldata, 10000, &mut consumed_gas).unwrap();
+    let result = modexp(
+        &calldata,
+        10000,
+        &mut consumed_gas,
+        ethrex_levm::SpecId::CANCUN,
+    )
+    .unwrap();
 
     let expected_result = Bytes::from(hex::decode("08").unwrap());
 
@@ -4564,7 +4570,13 @@ fn modexp_test_2() {
     let calldata = Bytes::from(calldata);
 
     let mut consumed_gas = 0;
-    let result = modexp(&calldata, 10000, &mut consumed_gas).unwrap();
+    let result = modexp(
+        &calldata,
+        10000,
+        &mut consumed_gas,
+        ethrex_levm::SpecId::CANCUN,
+    )
+    .unwrap();
 
     let expected_result = Bytes::from(
         hex::decode("3b01b01ac41f2d6e917c6d6a221ce793802469026d9ab7578fa2e79e4da6aaab").unwrap(),
