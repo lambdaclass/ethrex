@@ -158,7 +158,6 @@ impl VM {
 
         // Add precompiled contracts addresses to cache.
         // TODO: Use the addresses from precompiles.rs in a future
-
         let max_precompile_address = match env.spec_id {
             spec if spec >= SpecId::PRAGUE => SIZE_PRECOMPILES_PRAGUE,
             spec if spec >= SpecId::CANCUN => SIZE_PRECOMPILES_CANCUN,
