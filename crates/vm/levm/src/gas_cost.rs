@@ -1052,22 +1052,17 @@ pub fn bls12_g1msm(k: usize) -> Result<u64, VMError> {
     }
 
     let discount = if k < G1_K_DISCOUNT.len() {
-        // is there a more clean way to do this?
         G1_K_DISCOUNT
             .get(k.checked_sub(1).ok_or(VMError::VeryLargeNumber)?)
             .copied()
-            .ok_or(VMError::VeryLargeNumber)?
+            .ok_or(VMError::Internal(InternalError::SlicingError))?
     } else {
-        // Here we just return the last element of the discount table
-        //TODO: use a better error message
         G1_K_DISCOUNT
             .last()
             .copied()
-            .ok_or(VMError::VeryLargeNumber)?
+            .ok_or(VMError::Internal(InternalError::SlicingError))?
     };
-    dbg!(discount);
 
-    // Calculate the gas cost, remeber that K is an usize and for this the gas cost is in u64
     let gas_cost = u64::try_from(k)
         .map_err(|_| VMError::VeryLargeNumber)?
         .checked_mul(G1_MUL_COST)
@@ -1076,6 +1071,5 @@ pub fn bls12_g1msm(k: usize) -> Result<u64, VMError> {
         .ok_or(VMError::VeryLargeNumber)?
         .checked_div(MULTIPLIER)
         .ok_or(VMError::VeryLargeNumber)?;
-    dbg!(gas_cost);
     Ok(gas_cost)
 }
