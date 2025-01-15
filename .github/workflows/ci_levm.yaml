@@ -50,10 +50,9 @@ jobs:
 
       - name: Create test summary
         run: |
-        cd crates/vm/levm
         {
           printf '```\n';
-          awk '/Summary: /,0' test_result.txt;
+          cd crates/vm/levm && awk '/Summary: /,0' test_result.txt;
           printf '```\n';
         } > test_summary.txt
 
