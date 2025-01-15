@@ -1,5 +1,6 @@
 use crate::{
     call_frame::CallFrame,
+    constants::SET_CODE_DELEGATION_BYTES,
     errors::{InternalError, OpcodeSuccess, VMError},
     gas_cost::{self},
     memory::{self, calculate_memory_size},
@@ -279,7 +280,7 @@ impl VM {
 
         let (account_info, address_was_cold) = self.access_account(address);
 
-        let (is_delegation, eip7702_gas_consumed, _, bytecode) = self.eip7702_get_code(address)?;
+        let (is_delegation, eip7702_gas_consumed, _, _) = self.eip7702_get_code(address)?;
 
         self.increase_consumed_gas(
             current_call_frame,
@@ -287,7 +288,9 @@ impl VM {
         )?;
 
         if is_delegation {
-            current_call_frame.stack.push(bytecode.len().into())?;
+            current_call_frame
+                .stack
+                .push(SET_CODE_DELEGATION_BYTES[..2].len().into())?;
         } else {
             current_call_frame
                 .stack
@@ -315,8 +318,7 @@ impl VM {
 
         let new_memory_size = calculate_memory_size(dest_offset, size)?;
 
-        let (is_delegation, eip7702_gas_consumed, _, delegation_bytecode) =
-            self.eip7702_get_code(address)?;
+        let (is_delegation, eip7702_gas_consumed, _, _) = self.eip7702_get_code(address)?;
 
         self.increase_consumed_gas(
             current_call_frame,
@@ -333,7 +335,7 @@ impl VM {
         }
 
         let bytecode = if is_delegation {
-            delegation_bytecode
+            SET_CODE_DELEGATION_BYTES[..2].into()
         } else {
             account_info.bytecode
         };
@@ -436,7 +438,7 @@ impl VM {
 
         let (account_info, address_was_cold) = self.access_account(address);
 
-        let (is_delegation, eip7702_gas_consumed, _, bytecode) = self.eip7702_get_code(address)?;
+        let (is_delegation, eip7702_gas_consumed, _, _) = self.eip7702_get_code(address)?;
 
         self.increase_consumed_gas(
             current_call_frame,
@@ -444,7 +446,8 @@ impl VM {
         )?;
 
         if is_delegation {
-            let hash = U256::from_big_endian(keccak(bytecode).as_fixed_bytes());
+            let hash =
+                U256::from_big_endian(keccak(&SET_CODE_DELEGATION_BYTES[..2]).as_fixed_bytes());
             current_call_frame.stack.push(hash)?;
         } else {
             // An account is considered empty when it has no code and zero nonce and zero balance. [EIP-161]

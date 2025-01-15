@@ -1364,30 +1364,24 @@ impl VM {
 
             dbg!(authority_address);
 
-            // 4. Add authority to accessed_addresses (as defined in EIP-2929).
-            self.accrued_substate
-                .touched_accounts
-                .insert(authority_address);
-            dbg!("EIP-7702-4");
-
+            // 4. Add authority to accessed_addresses (as defined in EIP-2929). This is done inside the self.access_account() function
             // 5. Verify the code of authority is either empty or already delegated.
             // CHECK: what do we do with this check? do we continue if it was already delegated?
             // What happens if it's not cached?
             let (authority_account_info, _) = self.access_account(authority_address);
 
-            if was_delegated(&authority_account_info)? {
-                continue;
-            }
+            //if !(was_delegated(&authority_account_info)? || authority_account_info.has_code()) {
+            //    continue;
+            //}
             dbg!("EIP-7702-5");
 
             // 6. Verify the nonce of authority is equal to nonce. In case authority does not exist in the trie, verify that nonce is equal to 0.
             // If it doesn't has nonce, it means it's zero,
             // if it has nonce, the account.info.nonce should equal auth_tuple.nonce
-            if authority_account_info.has_nonce() {
-                if authority_account_info.nonce != auth_tuple.nonce {
-                    continue;
-                }
+            if authority_account_info.nonce != auth_tuple.nonce {
+                continue;
             }
+
             dbg!("EIP-7702-6");
 
             // If account is not empty, it exists
@@ -1458,9 +1452,7 @@ impl VM {
     /// clients must retrieve only the first code and then stop following the designator chain.
     ///
     /// For example,
-    /// CHECK: we are not returning 2. Following the ethereum/execution-specs
     /// EXTCODESIZE would return 2 (the size of 0xef01) instead of 23 which would represent the delegation designation,
-    /// CHECK: we are not returning the keccak256(0xef01). Following the ethereum/execution-specs
     /// EXTCODEHASH would return 0xeadcdba66a79ab5dce91622d1d75c8cff5cff0b96944c3bf1072cd08ce018329 (keccak256(0xef01)), and
     /// CALL would load the code from address and execute it in the context of authority.
     ///
