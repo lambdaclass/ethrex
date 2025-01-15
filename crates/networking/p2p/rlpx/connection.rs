@@ -114,10 +114,10 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
             // remote_node_id not yet provided. It will be replaced later with correct one.
             H512::default(),
             stream,
-            RLPxConnectionState::Receiver(Receiver::new(
-                H256::random_using(&mut rng),
-                SecretKey::random(&mut rng),
-            )),
+            RLPxConnectionState::Receiver(Receiver {
+                nonce: H256::random_using(&mut rng),
+                ephemeral_key: SecretKey::random(&mut rng),
+            }),
             storage,
             connection_broadcast,
         )
@@ -140,11 +140,10 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
         let rid = RecoveryId::from_byte(*msg.get(64).ok_or(RLPxError::InvalidMessageLength())?)
             .ok_or(RLPxError::InvalidRecoveryId())?;
         let peer_pk = VerifyingKey::recover_from_prehash(&digest, signature, rid)?;
-        let state = RLPxConnectionState::Initiator(Initiator::new(
-            H256::random_using(&mut rng),
-            SecretKey::random(&mut rng),
-            pubkey2id(&peer_pk.into()),
-        ));
+        let state = RLPxConnectionState::Initiator(Initiator {
+            nonce: H256::random_using(&mut rng),
+            ephemeral_key: SecretKey::random(&mut rng),
+        });
         Ok(RLPxConnection::new(
             signer,
             pubkey2id(&peer_pk.into()),
@@ -497,8 +496,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
     async fn send_auth(&mut self) -> Result<(), RLPxError> {
         if let RLPxConnectionState::Initiator(initiator_state) = &self.state {
             let secret_key: SecretKey = self.signer.clone().into();
-            let peer_pk =
-                id2pubkey(initiator_state.remote_node_id).ok_or(RLPxError::InvalidPeerId())?;
+            let peer_pk = id2pubkey(self.remote_node_id).ok_or(RLPxError::InvalidPeerId())?;
 
             // Clonning previous state to avoid ownership issues
             let previous_state = initiator_state.clone();
@@ -512,8 +510,11 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
 
             self.send_handshake_msg(&msg).await?;
 
-            self.state =
-                RLPxConnectionState::InitiatedAuth(InitiatedAuth::new(previous_state, msg));
+            self.state = RLPxConnectionState::InitiatedAuth(InitiatedAuth {
+                local_nonce: previous_state.nonce,
+                local_ephemeral_key: previous_state.ephemeral_key,
+                local_init_message: msg,
+            });
             Ok(())
         } else {
             Err(RLPxError::InvalidState())
@@ -576,12 +577,13 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
             self.remote_node_id = auth.node_id;
 
             // Build next state
-            self.state = RLPxConnectionState::ReceivedAuth(ReceivedAuth::new(
-                previous_state,
-                msg_bytes.to_owned(),
-                auth.nonce,
+            self.state = RLPxConnectionState::ReceivedAuth(ReceivedAuth {
+                local_nonce: previous_state.nonce,
+                local_ephemeral_key: previous_state.ephemeral_key,
+                remote_nonce: auth.nonce,
                 remote_ephemeral_key,
-            ));
+                remote_init_message: msg_bytes.to_owned(),
+            });
             Ok(())
         } else {
             Err(RLPxError::InvalidState())
@@ -706,30 +708,10 @@ struct Receiver {
     pub(crate) ephemeral_key: SecretKey,
 }
 
-impl Receiver {
-    pub fn new(nonce: H256, ephemeral_key: SecretKey) -> Self {
-        Self {
-            nonce,
-            ephemeral_key,
-        }
-    }
-}
-
 #[derive(Clone)]
 struct Initiator {
     pub(crate) nonce: H256,
     pub(crate) ephemeral_key: SecretKey,
-    pub(crate) remote_node_id: H512,
-}
-
-impl Initiator {
-    pub fn new(nonce: H256, ephemeral_key: SecretKey, remote_node_id: H512) -> Self {
-        Self {
-            nonce,
-            ephemeral_key,
-            remote_node_id,
-        }
-    }
 }
 
 #[derive(Clone)]
@@ -741,38 +723,11 @@ struct ReceivedAuth {
     pub(crate) remote_init_message: Vec<u8>,
 }
 
-impl ReceivedAuth {
-    pub fn new(
-        previous_state: Receiver,
-        remote_init_message: Vec<u8>,
-        remote_nonce: H256,
-        remote_ephemeral_key: PublicKey,
-    ) -> Self {
-        Self {
-            local_nonce: previous_state.nonce,
-            local_ephemeral_key: previous_state.ephemeral_key,
-            remote_nonce,
-            remote_ephemeral_key,
-            remote_init_message,
-        }
-    }
-}
-
 #[derive(Clone)]
 struct InitiatedAuth {
     pub(crate) local_nonce: H256,
     pub(crate) local_ephemeral_key: SecretKey,
     pub(crate) local_init_message: Vec<u8>,
-}
-
-impl InitiatedAuth {
-    pub fn new(previous_state: Initiator, local_init_message: Vec<u8>) -> Self {
-        Self {
-            local_nonce: previous_state.nonce,
-            local_ephemeral_key: previous_state.ephemeral_key,
-            local_init_message,
-        }
-    }
 }
 
 #[derive(Clone)]
