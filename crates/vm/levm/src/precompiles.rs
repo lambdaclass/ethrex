@@ -1280,7 +1280,9 @@ pub fn bls12_g1msm(
     let result_bytes = G1Affine::from(result).to_uncompressed();
 
     let mut output = [0u8; 128];
-    let (x_bytes, y_bytes) = result_bytes.split_at(48);
+    let (x_bytes, y_bytes) = result_bytes
+        .split_at_checked(48)
+        .ok_or(InternalError::SlicingError)?;
     output[16..64].copy_from_slice(x_bytes);
     output[80..128].copy_from_slice(y_bytes);
 
