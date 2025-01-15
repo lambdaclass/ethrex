@@ -1169,43 +1169,10 @@ pub fn bls12_g1add(
         .map_err(|_| VMError::PrecompileError(PrecompileError::NotEnoughGas))?;
 
     // Each point is 64 bytes
-    let mut first_point_x = calldata
-        .get(0..64)
-        .ok_or(VMError::PrecompileError(PrecompileError::ParsingInputError))?;
-    let mut first_point_y = calldata
-        .get(64..128)
-        .ok_or(VMError::PrecompileError(PrecompileError::ParsingInputError))?;
-    let mut second_point_x = calldata
-        .get(128..192)
-        .ok_or(VMError::PrecompileError(PrecompileError::ParsingInputError))?;
-    let mut second_point_y = calldata
-        .get(192..)
-        .ok_or(VMError::PrecompileError(PrecompileError::ParsingInputError))?;
-
-    let sixteen_zeroes: [u8; 16] = [0_u8; 16];
-
-    // the first 16 bytes of any of the points MUST be all zeroes
-    if !matches!(first_point_x.get(0..16), Some(prefix) if prefix == sixteen_zeroes)
-        || !matches!(first_point_y.get(0..16), Some(prefix) if prefix == sixteen_zeroes)
-        || !matches!(second_point_x.get(0..16), Some(prefix) if prefix == sixteen_zeroes)
-        || !matches!(second_point_y.get(0..16), Some(prefix) if prefix == sixteen_zeroes)
-    {
-        return Err(VMError::PrecompileError(PrecompileError::ParsingInputError));
-    }
-
-    // remove padding of zeroes
-    first_point_x = first_point_x
-        .get(16..64)
-        .ok_or(VMError::PrecompileError(PrecompileError::ParsingInputError))?;
-    first_point_y = first_point_y
-        .get(16..64)
-        .ok_or(VMError::PrecompileError(PrecompileError::ParsingInputError))?;
-    second_point_x = second_point_x
-        .get(16..64)
-        .ok_or(VMError::PrecompileError(PrecompileError::ParsingInputError))?;
-    second_point_y = second_point_y
-        .get(16..64)
-        .ok_or(VMError::PrecompileError(PrecompileError::ParsingInputError))?;
+    let first_point_x = parse_coordinate(calldata.get(0..64))?;
+    let first_point_y = parse_coordinate(calldata.get(64..128))?;
+    let second_point_x = parse_coordinate(calldata.get(128..192))?;
+    let second_point_y = parse_coordinate(calldata.get(192..256))?;
 
     // if a g1 point decode to (0,0) by convention it is interpreted as a point to infinity
     let zeroes: [u8; 48] = [0_u8; 48];
@@ -1255,6 +1222,7 @@ pub fn bls12_g1add(
 
     let result_of_addition = G1Affine::from(first_g1_point.add(&second_g1_point));
 
+    let sixteen_zeroes: [u8; 16] = [0_u8; 16];
     let result_bytes = if result_of_addition.is_identity().into() {
         return Ok(Bytes::copy_from_slice(&[0_u8; 128]));
     } else {
@@ -1323,4 +1291,19 @@ pub fn bls12_map_fp2_tp_g2(
     _consumed_gas: &mut u64,
 ) -> Result<Bytes, VMError> {
     Ok(Bytes::new())
+}
+
+fn parse_coordinate(coordinate_raw_bytes: Option<&[u8]>) -> Result<[u8; 48], VMError> {
+    let sixteen_zeroes: [u8; 16] = [0_u8; 16];
+    let padded_coordinate =
+        coordinate_raw_bytes.ok_or(VMError::PrecompileError(PrecompileError::ParsingInputError))?;
+    if !matches!(padded_coordinate.get(0..16), Some(prefix) if prefix == sixteen_zeroes) {
+        return Err(VMError::PrecompileError(PrecompileError::ParsingInputError));
+    }
+    let unpadded_coordinate = padded_coordinate
+        .get(16..64)
+        .ok_or(VMError::PrecompileError(PrecompileError::ParsingInputError))?;
+    unpadded_coordinate
+        .try_into()
+        .map_err(|_| VMError::PrecompileError(PrecompileError::ParsingInputError))
 }
