@@ -275,7 +275,6 @@ impl VM {
                         result: TxResult::Success,
                         new_state: self.cache.clone(),
                         //gas_used: self.gas_used(current_call_frame)?,
-                        //this should be reviewed, it is only to pass test.
                         gas_used: current_call_frame.gas_used,
                         gas_refunded: 0,
                         output,
