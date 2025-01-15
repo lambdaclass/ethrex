@@ -1198,19 +1198,22 @@ pub fn bls12_g1add(
     } else {
         result_of_addition.to_uncompressed()
     };
+
+    // add the padding to satisfy the convention of enconding
+    // https://eips.ethereum.org/EIPS/eip-2537
     let mut padded_result = Vec::new();
     padded_result.extend_from_slice(&sixteen_zeroes);
-    if let Some(x) = result_bytes.get(0..48) {
-        padded_result.extend_from_slice(x);
-    } else {
-        return Err(VMError::Internal(InternalError::SlicingError));
-    }
+    padded_result.extend_from_slice(
+        result_bytes
+            .get(0..48)
+            .ok_or(VMError::Internal(InternalError::SlicingError))?,
+    );
     padded_result.extend_from_slice(&sixteen_zeroes);
-    if let Some(y) = result_bytes.get(48..) {
-        padded_result.extend_from_slice(y);
-    } else {
-        return Err(VMError::Internal(InternalError::SlicingError));
-    }
+    padded_result.extend_from_slice(
+        result_bytes
+            .get(48..96)
+            .ok_or(VMError::Internal(InternalError::SlicingError))?,
+    );
 
     Ok(Bytes::from(padded_result))
 }
