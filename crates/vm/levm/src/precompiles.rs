@@ -1169,56 +1169,14 @@ pub fn bls12_g1add(
         .map_err(|_| VMError::PrecompileError(PrecompileError::NotEnoughGas))?;
 
     // Each coordinate is 64 bytes
-    let first_point_x = parse_coordinate(calldata.get(0..64))?;
-    let first_point_y = parse_coordinate(calldata.get(64..128))?;
-    let second_point_x = parse_coordinate(calldata.get(128..192))?;
-    let second_point_y = parse_coordinate(calldata.get(192..256))?;
+    let first_point_x = parse_g1_coordinate(calldata.get(0..64))?;
+    let first_point_y = parse_g1_coordinate(calldata.get(64..128))?;
+    let second_point_x = parse_g1_coordinate(calldata.get(128..192))?;
+    let second_point_y = parse_g1_coordinate(calldata.get(192..256))?;
 
-    // if a g1 point decode to (0,0) by convention it is interpreted as a point to infinity
-    let zeroes: [u8; 48] = [0_u8; 48];
-    let first_g1_point: G1Projective = if first_point_x == zeroes && second_point_x == zeroes {
-        G1Projective::identity()
-    } else {
-        let g1_bytes: [u8; 96] = [first_point_x, first_point_y]
-            .concat()
-            .try_into()
-            .map_err(|_| VMError::Internal(InternalError::ConversionError))?;
+    let first_g1_point = parse_g1_point(first_point_x, first_point_y)?;
 
-        let g1_affine = G1Affine::from_uncompressed_unchecked(&g1_bytes);
-
-        if g1_affine.is_some().into() {
-            let g1_affine = g1_affine.unwrap();
-            if g1_affine.is_on_curve().into() {
-                g1_affine.into()
-            } else {
-                return Err(VMError::PrecompileError(PrecompileError::ParsingInputError));
-            }
-        } else {
-            return Err(VMError::PrecompileError(PrecompileError::ParsingInputError));
-        }
-    };
-
-    let second_g1_point: G1Projective = if second_point_x == zeroes && second_point_y == zeroes {
-        G1Projective::identity()
-    } else {
-        let g1_bytes: [u8; 96] = [second_point_x, second_point_y]
-            .concat()
-            .try_into()
-            .map_err(|_| VMError::Internal(InternalError::ConversionError))?;
-
-        let g1_affine = G1Affine::from_uncompressed_unchecked(&g1_bytes);
-
-        if g1_affine.is_some().into() {
-            let g1_affine = g1_affine.unwrap();
-            if g1_affine.is_on_curve().into() {
-                g1_affine.into()
-            } else {
-                return Err(VMError::PrecompileError(PrecompileError::ParsingInputError));
-            }
-        } else {
-            return Err(VMError::PrecompileError(PrecompileError::ParsingInputError));
-        }
-    };
+    let second_g1_point = parse_g1_point(second_point_x, second_point_y)?;
 
     let result_of_addition = G1Affine::from(first_g1_point.add(&second_g1_point));
 
@@ -1293,7 +1251,7 @@ pub fn bls12_map_fp2_tp_g2(
     Ok(Bytes::new())
 }
 
-fn parse_coordinate(coordinate_raw_bytes: Option<&[u8]>) -> Result<[u8; 48], VMError> {
+fn parse_g1_coordinate(coordinate_raw_bytes: Option<&[u8]>) -> Result<[u8; 48], VMError> {
     let sixteen_zeroes: [u8; 16] = [0_u8; 16];
     let padded_coordinate =
         coordinate_raw_bytes.ok_or(VMError::PrecompileError(PrecompileError::ParsingInputError))?;
@@ -1306,4 +1264,32 @@ fn parse_coordinate(coordinate_raw_bytes: Option<&[u8]>) -> Result<[u8; 48], VME
     unpadded_coordinate
         .try_into()
         .map_err(|_| VMError::PrecompileError(PrecompileError::ParsingInputError))
+}
+
+fn parse_g1_point(x: [u8; 48], y: [u8; 48]) -> Result<G1Projective, VMError> {
+    // if a g1 point decode to (0,0) by convention it is interpreted as a point to infinity
+    let g1_point: G1Projective = if x.iter().all(|e| *e == 0) && y.iter().all(|e| *e == 0) {
+        G1Projective::identity()
+    } else {
+        let g1_bytes: [u8; 96] = [x, y]
+            .concat()
+            .try_into()
+            .map_err(|_| VMError::Internal(InternalError::ConversionError))?;
+
+        // We use unchecked because in the https://github.com/ethereum/EIPs/blob/master/EIPS/eip-2537.md?plain=1#L141
+        // note that there is no subgroup check for the G1 addition precompile
+        let g1_affine = G1Affine::from_uncompressed_unchecked(&g1_bytes);
+
+        if g1_affine.is_some().into() {
+            let g1_affine = g1_affine.unwrap();
+            if g1_affine.is_on_curve().into() {
+                g1_affine.into()
+            } else {
+                return Err(VMError::PrecompileError(PrecompileError::ParsingInputError));
+            }
+        } else {
+            return Err(VMError::PrecompileError(PrecompileError::ParsingInputError));
+        }
+    };
+    Ok(g1_point)
 }
