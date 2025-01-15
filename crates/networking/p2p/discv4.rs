@@ -85,8 +85,10 @@ impl Packet {
         }
 
         let digest = Keccak256::digest(encoded_msg);
-        let signature = &Signature::from_slice(&signature_bytes[0..64]).unwrap();
-        let rid = RecoveryId::from_byte(signature_bytes[64]).unwrap();
+        let signature = &Signature::from_slice(&signature_bytes[0..64])
+            .map_err(|_| PacketDecodeErr::InvalidSignature)?;
+        let rid =
+            RecoveryId::from_byte(signature_bytes[64]).ok_or(PacketDecodeErr::InvalidSignature)?;
 
         let peer_pk = VerifyingKey::recover_from_prehash(&digest, signature, rid)
             .map_err(|_| PacketDecodeErr::InvalidSignature)?;
