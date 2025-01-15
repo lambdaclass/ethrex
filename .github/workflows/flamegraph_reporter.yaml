@@ -36,6 +36,14 @@ jobs:
       - name: Caching
         uses: Swatinem/rust-cache@v2
 
+      - name: Cache Cargo binaries
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/bin
+          key: ${{ runner.os }}-cargo-install-${{ hashFiles('cmd/ethrex_l2/Cargo.toml') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-install-
+
       - name: Change perf settings
         run: |
           sudo sysctl kernel.perf_event_paranoid=-1
