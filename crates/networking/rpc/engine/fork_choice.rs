@@ -6,7 +6,7 @@ use ethrex_blockchain::{
 };
 use ethrex_core::types::BlockHeader;
 use serde_json::Value;
-use tracing::{info, warn};
+use tracing::{info, warn, debug};
 
 use crate::{
     types::{
