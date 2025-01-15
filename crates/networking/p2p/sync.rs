@@ -476,7 +476,7 @@ async fn bytecode_fetcher(
     peers: Arc<Mutex<KademliaTable>>,
     store: Store,
 ) -> Result<(), SyncError> {
-    const BATCH_SIZE: usize = 200;
+    const BATCH_SIZE: usize = 100;
     let mut pending_bytecodes: Vec<H256> = vec![];
     let mut incoming = true;
     while incoming {
@@ -538,7 +538,7 @@ async fn storage_fetcher(
     store: Store,
     state_root: H256,
 ) -> Result<(), SyncError> {
-    const BATCH_SIZE: usize = 50;
+    const BATCH_SIZE: usize = 100;
     // Pending list of storages to fetch
     let mut pending_storage: Vec<(H256, H256)> = vec![];
     // TODO: Also add a queue for storages that were incompletely fecthed,
