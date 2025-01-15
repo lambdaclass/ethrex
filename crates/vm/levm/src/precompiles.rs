@@ -1,6 +1,6 @@
-use bls12_381::{G1Affine, G1Projective};
+use bls12_381::{G1Affine, G1Projective, Scalar};
 use bytes::Bytes;
-use ethrex_core::{Address, H160, H256, U256};
+use ethrex_core::{serde_utils::bool, Address, H160, H256, U256};
 use keccak_hash::keccak256;
 use kzg_rs::{Bytes32, Bytes48, KzgSettings};
 use lambdaworks_math::{
@@ -30,6 +30,7 @@ use libsecp256k1::{self, Message, RecoveryId, Signature};
 use num_bigint::BigUint;
 use revm_primitives::SpecId;
 use sha3::Digest;
+use std::ops::Mul;
 
 use crate::{
     call_frame::CallFrame,
@@ -138,6 +139,8 @@ pub const BLAKE2F_ELEMENT_SIZE: usize = 8;
 pub const SIZE_PRECOMPILES_PRE_CANCUN: u64 = 9;
 pub const SIZE_PRECOMPILES_CANCUN: u64 = 10;
 pub const SIZE_PRECOMPILES_PRAGUE: u64 = 17;
+
+pub const BLS12_381_G1_MSM_PAIR_LENGTH: usize = 160;
 
 const BLS12_381_G1ADD_VALID_INPUT_LENGTH: usize = 256;
 
@@ -1219,11 +1222,119 @@ pub fn bls12_g1add(
 }
 
 pub fn bls12_g1msm(
-    _calldata: &Bytes,
-    _gas_for_call: u64,
-    _consumed_gas: &mut u64,
+    calldata: &Bytes,
+    gas_for_call: u64,
+    consumed_gas: &mut u64,
 ) -> Result<Bytes, VMError> {
-    Ok(Bytes::new())
+    if calldata.is_empty() || calldata.len() % BLS12_381_G1_MSM_PAIR_LENGTH != 0 {
+        return Err(VMError::PrecompileError(PrecompileError::ParsingInputError));
+    }
+
+    let k = calldata.len() / BLS12_381_G1_MSM_PAIR_LENGTH;
+    let required_gas = gas_cost::bls12_g1msm(k)?;
+    increase_precompile_consumed_gas(gas_for_call, required_gas, consumed_gas)?;
+
+    let mut result = G1Projective::identity();
+    // R = s_P_1 + s_P_2 + ... + s_P_k
+    // Where:
+    // s_i are scalars (numbers)
+    // P_i are points in the group (in this case, points in G1)
+    for i in 0..k {
+        let offset: usize = i
+            .checked_mul(BLS12_381_G1_MSM_PAIR_LENGTH)
+            .ok_or(InternalError::ArithmeticOperationOverflow)?;
+        let x = calldata
+            .get(
+                offset
+                    ..offset
+                        .checked_add(64)
+                        .ok_or(InternalError::ArithmeticOperationOverflow)?,
+            )
+            .ok_or(InternalError::SlicingError)?;
+        let y = calldata
+            .get(
+                offset
+                    .checked_add(64)
+                    .ok_or(InternalError::ArithmeticOperationOverflow)?
+                    ..offset
+                        .checked_add(128)
+                        .ok_or(InternalError::ArithmeticOperationOverflow)?,
+            )
+            .ok_or(InternalError::SlicingError)?;
+
+        if !x.iter().take(16).all(|x| *x == 0) || !y.iter().take(16).all(|x| *x == 0) {
+            return Err(VMError::PrecompileError(PrecompileError::ParsingInputError));
+        }
+
+        let scalar_bytes = calldata
+            .get(
+                offset
+                    .checked_add(128)
+                    .ok_or(InternalError::ArithmeticOperationOverflow)?
+                    ..offset
+                        .checked_add(BLS12_381_G1_MSM_PAIR_LENGTH)
+                        .ok_or(InternalError::ArithmeticOperationOverflow)?,
+            )
+            .ok_or(InternalError::SlicingError)?;
+        let scalar_bytes: [u8; 32] = scalar_bytes
+            .try_into()
+            .map_err(|_| PrecompileError::ParsingInputError)?;
+
+        let mut scalar_le = [0u64; 4];
+        for (j, chunk) in scalar_bytes.chunks(8).enumerate() {
+            let bytes: [u8; 8] = chunk
+                .try_into()
+                .map_err(|_| PrecompileError::ParsingInputError)?;
+            if let Some(value) = scalar_le.get_mut(j) {
+                *value = u64::from_be_bytes(bytes);
+            } else {
+                return Err(VMError::Internal(InternalError::SlicingError));
+            }
+        }
+        scalar_le.reverse();
+        let scalar = Scalar::from_raw(scalar_le);
+
+        let x = x.get(16..).ok_or(InternalError::SlicingError)?;
+        let y = y.get(16..).ok_or(InternalError::SlicingError)?;
+        let mut g1_point_byte = Vec::with_capacity(96);
+        g1_point_byte.extend_from_slice(x);
+        g1_point_byte.extend_from_slice(y);
+
+        let g1_point_byte: [u8; 96] = g1_point_byte
+            .try_into()
+            .map_err(|_| PrecompileError::ParsingInputError)?;
+
+        let g1 = if g1_point_byte.iter().all(|e| *e == 0) {
+            G1Projective::identity()
+        } else {
+            let g1 = G1Affine::from_uncompressed(&g1_point_byte);
+            let g1: G1Projective = if g1.is_some().into() {
+                g1.unwrap()
+            } else {
+                return Err(VMError::PrecompileError(PrecompileError::ParsingInputError));
+            }
+            .into();
+            g1
+        };
+
+        let scaled_point = G1Projective::mul(g1, scalar);
+        result = result.add(&scaled_point);
+    }
+
+    if result.is_identity().into() {
+        let output = [0u8; 128];
+        return Ok(Bytes::copy_from_slice(&output));
+    }
+    let result_bytes = G1Affine::from(result).to_uncompressed();
+
+    let mut output = [0u8; 128];
+    let (x_bytes, y_bytes) = result_bytes
+        .split_at_checked(48)
+        .ok_or(InternalError::SlicingError)?;
+    output[16..64].copy_from_slice(x_bytes);
+    output[80..128].copy_from_slice(y_bytes);
+
+    Ok(Bytes::copy_from_slice(&output))
 }
 
 pub fn bls12_g2add(
