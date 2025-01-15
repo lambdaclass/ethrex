@@ -14,7 +14,7 @@ use crate::{
         payload::PayloadStatus,
     },
     utils::RpcRequest,
-    RpcApiContext, RpcErr, RpcHandler,
+    RpcApiContext, RpcErr, RpcHandler, SyncStatus,
 };
 
 #[derive(Debug)]
@@ -153,13 +153,20 @@ fn handle_forkchoice(
         fork_choice_state.safe_block_hash,
         fork_choice_state.finalized_block_hash
     );
+    // Check if there is an ongoing sync before applying the forkchoice
+    let fork_choice_res = match context.sync_status()? {
+        // Apply current fork choice
+        SyncStatus::Inactive => apply_fork_choice(
+            &context.storage,
+            fork_choice_state.head_block_hash,
+            fork_choice_state.safe_block_hash,
+            fork_choice_state.finalized_block_hash,
+        ),
+        // Restart sync if needed
+        _ => Err(InvalidForkChoice::Syncing),
+    };
 
-    match apply_fork_choice(
-        &context.storage,
-        fork_choice_state.head_block_hash,
-        fork_choice_state.safe_block_hash,
-        fork_choice_state.finalized_block_hash,
-    ) {
+    match fork_choice_res {
         Ok(head) => Ok((
             Some(head),
             ForkChoiceResponse::from(PayloadStatus::valid_with_hash(

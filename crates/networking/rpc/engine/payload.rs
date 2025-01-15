@@ -8,7 +8,7 @@ use tracing::{error, info, warn};
 
 use crate::types::payload::{ExecutionPayload, ExecutionPayloadResponse, PayloadStatus};
 use crate::utils::RpcRequest;
-use crate::{RpcApiContext, RpcErr, RpcHandler};
+use crate::{RpcApiContext, RpcErr, RpcHandler, SyncStatus};
 
 // NewPayload V1-V2-V3 implementations
 pub struct NewPayloadV1Request {
@@ -92,20 +92,28 @@ impl RpcHandler for NewPayloadV3Request {
         let block = get_block_from_payload(&self.payload, Some(self.parent_beacon_block_root))?;
         validate_fork(&block, Fork::Cancun, &context)?;
         let payload_status = {
-            if let Err(RpcErr::Internal(error_msg)) = validate_block_hash(&self.payload, &block) {
-                PayloadStatus::invalid_with_err(&error_msg)
-            } else {
-                let blob_versioned_hashes: Vec<H256> = block
-                    .body
-                    .transactions
-                    .iter()
-                    .flat_map(|tx| tx.blob_versioned_hashes())
-                    .collect();
+            // Ignore incoming
+            match context.sync_status()? {
+                SyncStatus::Active | SyncStatus::Pending => PayloadStatus::syncing(),
+                SyncStatus::Inactive => {
+                    if let Err(RpcErr::Internal(error_msg)) =
+                        validate_block_hash(&self.payload, &block)
+                    {
+                        PayloadStatus::invalid_with_err(&error_msg)
+                    } else {
+                        let blob_versioned_hashes: Vec<H256> = block
+                            .body
+                            .transactions
+                            .iter()
+                            .flat_map(|tx| tx.blob_versioned_hashes())
+                            .collect();
 
-                if self.expected_blob_versioned_hashes != blob_versioned_hashes {
-                    PayloadStatus::invalid_with_err("Invalid blob_versioned_hashes")
-                } else {
-                    execute_payload(&block, &context)?
+                        if self.expected_blob_versioned_hashes != blob_versioned_hashes {
+                            PayloadStatus::invalid_with_err("Invalid blob_versioned_hashes")
+                        } else {
+                            execute_payload(&block, &context)?
+                        }
+                    }
                 }
             }
         };
@@ -195,11 +203,14 @@ fn handle_new_payload_v1_v2(
 ) -> Result<Value, RpcErr> {
     let block = get_block_from_payload(payload, None)?;
     validate_fork(&block, fork, &context)?;
-    let payload_status = {
-        if let Err(RpcErr::Internal(error_msg)) = validate_block_hash(payload, &block) {
-            PayloadStatus::invalid_with_err(&error_msg)
-        } else {
-            execute_payload(&block, &context)?
+    let payload_status = match context.sync_status()? {
+        SyncStatus::Active | SyncStatus::Pending => PayloadStatus::syncing(),
+        SyncStatus::Inactive => {
+            if let Err(RpcErr::Internal(error_msg)) = validate_block_hash(payload, &block) {
+                PayloadStatus::invalid_with_err(&error_msg)
+            } else {
+                execute_payload(&block, &context)?
+            }
         }
     };
     serde_json::to_value(payload_status).map_err(|error| RpcErr::Internal(error.to_string()))

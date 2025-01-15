@@ -999,6 +999,18 @@ impl Store {
             .get_node(node_hash.into())?
             .is_some())
     }
+
+    pub fn set_header_download_checkpoint(&self, block_hash: BlockHash) -> Result<(), StoreError> {
+        self.engine.set_header_download_checkpoint(block_hash)
+    }
+
+    pub fn get_header_download_checkpoint(&self) -> Result<Option<BlockHash>, StoreError> {
+        self.engine.get_header_download_checkpoint()
+    }
+
+    pub fn clear_header_download_checkpoint(&self) -> Result<(), StoreError> {
+        self.engine.clear_header_download_checkpoint()
+    }
 }
 
 pub fn hash_address(address: &Address) -> Vec<u8> {

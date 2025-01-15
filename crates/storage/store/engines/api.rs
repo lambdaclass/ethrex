@@ -249,4 +249,12 @@ pub trait StoreEngine: Debug + Send + Sync + RefUnwindSafe {
     ) -> Result<(), StoreError>;
 
     fn get_receipts_for_block(&self, block_hash: &BlockHash) -> Result<Vec<Receipt>, StoreError>;
+
+    // Snap State methods
+
+    fn set_header_download_checkpoint(&self, block_hash: BlockHash) -> Result<(), StoreError>;
+
+    fn get_header_download_checkpoint(&self) -> Result<Option<BlockHash>, StoreError>;
+
+    fn clear_header_download_checkpoint(&self) -> Result<(), StoreError>;
 }
