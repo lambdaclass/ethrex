@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::{io::Read, sync::Arc};
 
 use crate::{
     peer_channels::PeerChannels,
@@ -196,7 +196,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
         .unwrap_or_else(|e| debug!("Could not send Disconnect message: ({e})."));
         if let Ok(node_id) = self.get_remote_node_id() {
             // Discard peer from kademlia table
-            error!("{error_text}: ({error}), discarding peer {node_id}");
+            debug!("{error_text}: ({error}), discarding peer {node_id}");
             table.lock().await.replace_peer(node_id);
         } else {
             debug!("{error_text}: ({error}), unknown peer")
@@ -637,6 +637,10 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
         let msg_size = u16::from_be_bytes(ack_data) as usize;
 
         // Read the rest of the message
+        // Guard unwrap
+        if buf.len() < msg_size + 2 {
+            return Err(RLPxError::ConnectionError(String::from("bad buf size")));
+        }
         self.stream
             .read_exact(&mut buf[2..msg_size + 2])
             .await

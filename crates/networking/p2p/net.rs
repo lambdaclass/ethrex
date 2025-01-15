@@ -816,15 +816,17 @@ async fn handle_peer_as_initiator(
     connection_broadcast: broadcast::Sender<(tokio::task::Id, Arc<RLPxMessage>)>,
 ) {
     debug!("Trying RLPx connection with {node:?}");
-    let stream = TcpSocket::new_v4()
+    let Ok(stream) = TcpSocket::new_v4()
         .unwrap()
         .connect(SocketAddr::new(node.ip, node.tcp_port))
         .await
-        .unwrap();
+    else {
+        return;
+    };
     match RLPxConnection::initiator(signer, msg, stream, storage, connection_broadcast).await {
         Ok(mut conn) => conn.start_peer(table).await,
         Err(e) => {
-            error!("Error: {e}, Could not start connection with {node:?}");
+            debug!("Error: {e}, Could not start connection with {node:?}");
         }
     }
 }
