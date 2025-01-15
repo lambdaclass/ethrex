@@ -141,6 +141,8 @@ async fn main() {
             let store = Store::new(&data_dir, EngineType::RedB).expect("Failed to create Store");
         } else if #[cfg(feature = "libmdbx")] {
             let store = Store::new(&data_dir, EngineType::Libmdbx).expect("Failed to create Store");
+        } else if #[cfg(feature = "qmdb")] {
+            let store = Store::new(&data_dir, EngineType::Qmdb).expect("Failed to create QMDB Store");
         } else {
             let store = Store::new(&data_dir, EngineType::InMemory).expect("Failed to create Store");
         }
