@@ -95,7 +95,6 @@ impl VM {
     }
 
     // CALLCODE operation
-    // TODO: https://github.com/lambdaclass/ethrex/issues/1086
     pub fn op_callcode(
         &mut self,
         current_call_frame: &mut CallFrame,
@@ -200,7 +199,6 @@ impl VM {
     }
 
     // DELEGATECALL operation
-    // TODO: https://github.com/lambdaclass/ethrex/issues/1086
     pub fn op_delegatecall(
         &mut self,
         current_call_frame: &mut CallFrame,
@@ -271,7 +269,6 @@ impl VM {
     }
 
     // STATICCALL operation
-    // TODO: https://github.com/lambdaclass/ethrex/issues/1086
     pub fn op_staticcall(
         &mut self,
         current_call_frame: &mut CallFrame,
@@ -341,7 +338,6 @@ impl VM {
     }
 
     // CREATE operation
-    // TODO: https://github.com/lambdaclass/ethrex/issues/1086
     pub fn op_create(
         &mut self,
         current_call_frame: &mut CallFrame,
@@ -376,7 +372,6 @@ impl VM {
     }
 
     // CREATE2 operation
-    // TODO: https://github.com/lambdaclass/ethrex/issues/1086
     pub fn op_create2(
         &mut self,
         current_call_frame: &mut CallFrame,
@@ -719,6 +714,10 @@ impl VM {
         }
 
         if is_delegation && bytecode.len() == 0 {
+            current_call_frame
+                .gas_used
+                .checked_sub(gas_limit)
+                .ok_or(InternalError::GasOverflow)?;
             current_call_frame.stack.push(SUCCESS_FOR_CALL)?;
             return Ok(OpcodeSuccess::Continue);
         }

@@ -3,7 +3,7 @@ use crate::{
     call_frame::CallFrame,
     constants::*,
     db::{
-        cache::{self, get_account_mut, remove_account},
+        cache::{self, get_account_mut, insert_account, remove_account},
         CacheDB, Database,
     },
     environment::Environment,
@@ -1370,9 +1370,13 @@ impl VM {
 
             // 4. Add authority to accessed_addresses (as defined in EIP-2929). This is done inside the self.access_account() function
             // 5. Verify the code of authority is either empty or already delegated.
-            // CHECK: what do we do with this check? do we continue if it was already delegated?
             let (authority_account_info, _) = self.access_account(authority_address);
+            let auth_account = self.get_account(authority_address);
+            // We are inserting the account in the cache, so later on when we use get_account_mut() it retrieves
+            // this cached state.
+            insert_account(&mut self.cache, authority_address, auth_account);
 
+            // CHECK: what do we do with this check? do we continue if it was already delegated?
             //if !(was_delegated(&authority_account_info)? || authority_account_info.has_code()) {
             //    continue;
             //}
@@ -1411,7 +1415,6 @@ impl VM {
             self.increment_account_nonce(authority_address)
                 .map_err(|_| VMError::TxValidation(TxValidationError::NonceIsMax))?;
 
-            // From the EIP docs: a null destination is not valid.
             // CHECK: is this ok?
             if initial_call_frame.code_address == Address::zero() {
                 return Err(VMError::TxValidation(
