@@ -17,7 +17,10 @@ use crate::{
         TOTAL_COST_FLOOR_PER_TOKEN,
     },
     opcodes::Opcode,
-    precompiles::{execute_precompile, is_precompile},
+    precompiles::{
+        execute_precompile, is_precompile, SIZE_PRECOMPILES_CANCUN, SIZE_PRECOMPILES_PRAGUE,
+        SIZE_PRECOMPILES_PRE_CANCUN,
+    },
     AccountInfo, TransientStorage,
 };
 use bytes::Bytes;
@@ -155,7 +158,12 @@ impl VM {
 
         // Add precompiled contracts addresses to cache.
         // TODO: Use the addresses from precompiles.rs in a future
-        let max_precompile_address = if env.spec_id >= SpecId::CANCUN { 10 } else { 9 };
+        let max_precompile_address = match env.spec_id {
+            spec if spec >= SpecId::PRAGUE => SIZE_PRECOMPILES_PRAGUE,
+            spec if spec >= SpecId::CANCUN => SIZE_PRECOMPILES_CANCUN,
+            spec if spec < SpecId::CANCUN => SIZE_PRECOMPILES_PRE_CANCUN,
+            _ => return Err(VMError::Internal(InternalError::InvalidSpecId)),
+        };
         for i in 1..=max_precompile_address {
             default_touched_accounts.insert(Address::from_low_u64_be(i));
         }
@@ -173,7 +181,7 @@ impl VM {
                     address_to,
                     bytecode,
                     value,
-                    calldata.clone(),
+                    calldata,
                     false,
                     env.gas_limit,
                     0,
@@ -265,10 +273,12 @@ impl VM {
                     return Ok(TransactionReport {
                         result: TxResult::Success,
                         new_state: self.cache.clone(),
-                        gas_used: self.gas_used(current_call_frame)?,
+                        // Here we use the gas used and not check for the floor cost
+                        // for Prague fork because the precompiles have constant gas cost
+                        gas_used: current_call_frame.gas_used,
                         gas_refunded: 0,
                         output,
-                        logs: current_call_frame.logs.clone(),
+                        logs: std::mem::take(&mut current_call_frame.logs),
                         created_address: None,
                     });
                 }
@@ -288,11 +298,11 @@ impl VM {
 
                     return Ok(TransactionReport {
                         result: TxResult::Revert(error),
-                        new_state: self.cache.clone(),
+                        new_state: HashMap::default(),
                         gas_used: current_call_frame.gas_limit,
                         gas_refunded: 0,
                         output: Bytes::new(),
-                        logs: current_call_frame.logs.clone(),
+                        logs: std::mem::take(&mut current_call_frame.logs),
                         created_address: None,
                     });
                 }
@@ -420,7 +430,7 @@ impl VM {
                     if (self.is_create() && current_call_frame.depth == 0)
                         || current_call_frame.create_op_called
                     {
-                        let contract_code = current_call_frame.output.clone();
+                        let contract_code = std::mem::take(&mut current_call_frame.output);
                         let code_length = contract_code.len();
 
                         let code_length_u64: u64 = code_length
@@ -466,11 +476,11 @@ impl VM {
 
                                 return Ok(TransactionReport {
                                     result: TxResult::Revert(error),
-                                    new_state: self.cache.clone(),
+                                    new_state: HashMap::default(),
                                     gas_used: self.gas_used(current_call_frame)?,
                                     gas_refunded: self.env.refunded_gas,
-                                    output: current_call_frame.output.clone(),
-                                    logs: current_call_frame.logs.clone(),
+                                    output: std::mem::take(&mut current_call_frame.output),
+                                    logs: std::mem::take(&mut current_call_frame.logs),
                                     created_address: None,
                                 });
                             }
@@ -479,11 +489,11 @@ impl VM {
 
                     return Ok(TransactionReport {
                         result: TxResult::Success,
-                        new_state: self.cache.clone(),
+                        new_state: HashMap::default(),
                         gas_used: self.gas_used(current_call_frame)?,
                         gas_refunded: self.env.refunded_gas,
-                        output: current_call_frame.output.clone(),
-                        logs: current_call_frame.logs.clone(),
+                        output: std::mem::take(&mut current_call_frame.output),
+                        logs: std::mem::take(&mut current_call_frame.logs),
                         created_address: None,
                     });
                 }
@@ -512,11 +522,11 @@ impl VM {
 
                     return Ok(TransactionReport {
                         result: TxResult::Revert(error),
-                        new_state: self.cache.clone(),
+                        new_state: HashMap::default(),
                         gas_used: self.gas_used(current_call_frame)?,
                         gas_refunded: self.env.refunded_gas,
-                        output: current_call_frame.output.clone(), // Bytes::new() if error is not RevertOpcode
-                        logs: current_call_frame.logs.clone(),
+                        output: std::mem::take(&mut current_call_frame.output), // Bytes::new() if error is not RevertOpcode
+                        logs: std::mem::take(&mut current_call_frame.logs),
                         created_address: None,
                     });
                 }
@@ -907,8 +917,9 @@ impl VM {
 
         if self.is_create() {
             // Assign bytecode to context and empty calldata
-            initial_call_frame.assign_bytecode(initial_call_frame.calldata.clone());
-            initial_call_frame.calldata = Bytes::new();
+            initial_call_frame.bytecode = std::mem::take(&mut initial_call_frame.calldata);
+            initial_call_frame.valid_jump_destinations =
+                get_valid_jump_destinations(&initial_call_frame.bytecode).unwrap_or_default();
         }
         Ok(())
     }
@@ -1266,7 +1277,7 @@ impl VM {
             gas_used: self.env.gas_limit,
             gas_refunded: 0,
             logs: vec![],
-            new_state: self.cache.clone(),
+            new_state: HashMap::default(),
             output: Bytes::new(),
             created_address: None,
         };
