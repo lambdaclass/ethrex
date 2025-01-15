@@ -444,6 +444,9 @@ async fn rebuild_state_trie(
             retry_count += 1;
         }
     }
+    if retry_count >= MAX_RETRIES {
+        return Err(SyncError::StalePivot)
+    }
     info!("Account Trie fully fetched, signaling storage fetcher process");
     // Send empty batch to signal that no more batches are incoming
     storage_sender.send(vec![]).await?;
@@ -527,12 +530,14 @@ async fn fetch_bytecode_batch(
 }
 
 /// Waits for incoming account hashes & storage roots from the receiver channel endpoint, queues them, and fetches and stores their bytecodes in batches
+/// This function will remain active until either an empty vec is sent to the receiver or the pivot becomes stale
+/// In the last case, the fetcher will return an internal SyncError::StalePivot error
 async fn storage_fetcher(
     mut receiver: Receiver<Vec<(H256, H256)>>,
     peers: Arc<Mutex<KademliaTable>>,
     store: Store,
     state_root: H256,
-) -> Result<(), StoreError> {
+) -> Result<(), SyncError> {
     const BATCH_SIZE: usize = 50;
     // Pending list of storages to fetch
     let mut pending_storage: Vec<(H256, H256)> = vec![];
@@ -585,7 +590,7 @@ async fn fetch_storage_batch(
     state_root: H256,
     peers: Arc<Mutex<KademliaTable>>,
     store: Store,
-) -> Result<Vec<(H256, H256)>, StoreError> {
+) -> Result<Vec<(H256, H256)>, SyncError> {
     info!(
         "Requesting storage ranges for addresses {}..{}",
         batch.first().unwrap().0,
@@ -622,7 +627,7 @@ async fn fetch_storage_batch(
             // Return remaining code hashes in the batch if we couldn't fetch all of them
             return Ok(batch);
         } {
-            info!("Invalid/Empty batch, retrying")
+            return Err(SyncError::StalePivot)
         }
     }
     // This is a corner case where we fetched an account range for a block but the chain has moved on and the block
@@ -847,4 +852,7 @@ enum SyncError {
     JoinHandle(#[from] tokio::task::JoinError),
     #[error("Missing data from DB")]
     CorruptDB,
+    // This is an internal signal for fetcher processes and should not be returned by the main sync cycle
+    #[error("[INTERNAL] Stale Pivot")]
+    StalePivot,
 }
