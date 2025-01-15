@@ -821,7 +821,7 @@ pub fn node_id_from_signing_key(signer: &SigningKey) -> H512 {
     H512::from_slice(&encoded.as_bytes()[1..])
 }
 
-
+/// Shows the amount of connected peers, active peers, and peers suitable for snap sync on a set interval
 pub async fn peridically_show_peer_stats(peer_table: Arc<Mutex<KademliaTable>>) {
     const INTERVAL_DURATION: tokio::time::Duration = tokio::time::Duration::from_secs(30);
     let mut interval = tokio::time::interval(INTERVAL_DURATION);
