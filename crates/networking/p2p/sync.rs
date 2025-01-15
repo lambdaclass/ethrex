@@ -614,10 +614,10 @@ async fn fetch_storage_batch(
             info!("Received {} storage ranges", keys.len());
             // Handle incomplete ranges
             if incomplete {
-                info!("Last element in batch was not completely fetched");
                 // If only one incomplete range is returned then it must belong to a trie that is too big to fit into one request
                 // We will handle this large trie separately
                 if keys.len() == 1 {
+                    info!("Large storage trie encountered, handling separately");
                     // An incomplete range cannot be empty
                     let (keys, values) = (keys.pop().unwrap(), values.pop().unwrap());
                     let (account_hash, storage_root) = batch.remove(0);
@@ -682,6 +682,7 @@ async fn handle_large_storage_range(
     let mut retry_count = 0;
     while should_continue {
         while retry_count <= MAX_RETRIES {
+            info!("Fetching large storage trie, current key: {}", next_key);
             let peer = peers.lock().await.get_peer_channels(Capability::Snap).await;
             if let Some((keys, values, incomplete)) = peer
                 .request_storage_range(state_root, storage_root, account_hash, next_key)
@@ -706,6 +707,7 @@ async fn handle_large_storage_range(
     if current_root != storage_root {
         warn!("State sync failed for storage root {storage_root}");
     }
+    info!("Completely fetched large storage trie");
     Ok(())
 }
 
