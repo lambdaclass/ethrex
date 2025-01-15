@@ -258,12 +258,11 @@ pub mod index_db {
     use ethrex_core::{types::Block, Address, U256};
     use revm::{inspectors::TracerEip3155, DatabaseCommit, DatabaseRef, Evm};
     use revm_primitives::{
-        Account as RevmAccount, Address as RevmAddress, EVMError, SpecId, B256 as RevmB256,
-        U256 as RevmU256,
+        Account as RevmAccount, Address as RevmAddress, SpecId, B256 as RevmB256, U256 as RevmU256,
     };
     use thiserror::Error;
 
-    use crate::{block_env, tx_env};
+    use crate::{block_env, tx_env, EvmError};
 
     #[derive(Debug, Error)]
     pub enum IndexDBError {
@@ -354,11 +353,7 @@ pub mod index_db {
         /// ignoring newly created accounts.
         ///
         /// Generally used for building an [super::ExecutionDB].
-        pub fn new(
-            block: &Block,
-            chain_id: u64,
-            spec_id: SpecId,
-        ) -> Result<Self, EVMError<IndexDBError>> {
+        pub fn new(block: &Block, chain_id: u64, spec_id: SpecId) -> Result<Self, EvmError> {
             let block_env = block_env(&block.header);
             let mut db = AuxIndexDB::default();
 

@@ -109,6 +109,18 @@ impl From<RevmError<ExecutionDBError>> for EvmError {
     }
 }
 
+impl From<RevmError<IndexDBError>> for EvmError {
+    fn from(value: RevmError<IndexDBError>) -> Self {
+        match value {
+            RevmError::Transaction(err) => EvmError::Transaction(err.to_string()),
+            RevmError::Header(err) => EvmError::Header(err.to_string()),
+            RevmError::Database(err) => EvmError::ExecutionDB(err),
+            RevmError::Custom(err) => EvmError::Custom(err),
+            RevmError::Precompile(err) => EvmError::Precompile(err),
+        }
+    }
+}
+
 cfg_if::cfg_if! {
     if #[cfg(feature = "levm")] {
         use ethrex_levm::errors::VMError;
