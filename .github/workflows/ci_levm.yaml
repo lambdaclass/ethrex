@@ -50,11 +50,11 @@ jobs:
 
       - name: Create test summary
         run: |
-        {
-          printf '```\n';
-          cd crates/vm/levm && awk '/Summary: /,0' test_result.txt;
-          printf '```\n';
-        } > test_summary.txt
+          {
+            printf '```\n';
+            cd crates/vm/levm && awk '/Summary: /,0' test_result.txt;
+            printf '```\n';
+          } > test_summary.txt
 
       - name: Find comment
         continue-on-error: true
