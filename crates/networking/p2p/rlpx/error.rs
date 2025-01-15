@@ -11,8 +11,6 @@ use super::message::Message;
 pub(crate) enum RLPxError {
     #[error("{0}")]
     HandshakeError(String),
-    #[error("Invalid connection state")]
-    InvalidState(),
     #[error("Disconnect received")]
     Disconnect(),
     #[error("Not Found: {0}")]

@@ -60,11 +60,28 @@ const PERIODIC_TASKS_CHECK_INTERVAL: std::time::Duration = std::time::Duration::
 
 pub(crate) type Aes256Ctr64BE = ctr::Ctr64BE<aes::Aes256>;
 
+enum RLPxConnectionMode {
+    Initiator,
+    Receiver,
+}
+
+struct RemoteState {
+    nonce: H256,
+    ephemeral_key: PublicKey,
+    init_message: Vec<u8>,
+}
+
+struct LocalState {
+    nonce: H256,
+    ephemeral_key: SecretKey,
+    init_message: Vec<u8>,
+}
+
 /// Fully working RLPx connection.
 pub(crate) struct RLPxConnection<S> {
     signer: SigningKey,
     remote_node_id: H512,
-    state: RLPxConnectionState,
+    mode: RLPxConnectionMode,
     framed: Framed<S, RLPxCodec>,
     storage: Store,
     capabilities: Vec<(Capability, u8)>,
@@ -85,14 +102,14 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
         signer: SigningKey,
         remote_node_id: H512,
         stream: S,
-        state: RLPxConnectionState,
+        mode: RLPxConnectionMode,
         storage: Store,
         connection_broadcast: broadcast::Sender<(task::Id, Arc<Message>)>,
     ) -> Self {
         Self {
             signer,
             remote_node_id,
-            state,
+            mode,
             // Creating RLPxCodec with default values. They will be updated during the handshake
             framed: Framed::new(stream, RLPxCodec::default()),
             storage,
@@ -108,16 +125,12 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
         storage: Store,
         connection_broadcast: broadcast::Sender<(task::Id, Arc<Message>)>,
     ) -> Self {
-        let mut rng = rand::thread_rng();
         Self::new(
             signer,
             // remote_node_id not yet provided. It will be replaced later with correct one.
             H512::default(),
             stream,
-            RLPxConnectionState::Receiver(Receiver {
-                nonce: H256::random_using(&mut rng),
-                ephemeral_key: SecretKey::random(&mut rng),
-            }),
+            RLPxConnectionMode::Receiver,
             storage,
             connection_broadcast,
         )
@@ -130,7 +143,6 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
         storage: Store,
         connection_broadcast_send: broadcast::Sender<(task::Id, Arc<Message>)>,
     ) -> Result<Self, RLPxError> {
-        let mut rng = rand::thread_rng();
         let digest = Keccak256::digest(msg.get(65..).ok_or(RLPxError::InvalidMessageLength())?);
         let signature = &Signature::from_bytes(
             msg.get(..64)
@@ -140,15 +152,11 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
         let rid = RecoveryId::from_byte(*msg.get(64).ok_or(RLPxError::InvalidMessageLength())?)
             .ok_or(RLPxError::InvalidRecoveryId())?;
         let peer_pk = VerifyingKey::recover_from_prehash(&digest, signature, rid)?;
-        let state = RLPxConnectionState::Initiator(Initiator {
-            nonce: H256::random_using(&mut rng),
-            ephemeral_key: SecretKey::random(&mut rng),
-        });
         Ok(RLPxConnection::new(
             signer,
             pubkey2id(&peer_pk.into()),
             stream,
-            state,
+            RLPxConnectionMode::Initiator,
             storage,
             connection_broadcast_send,
         ))
@@ -208,19 +216,14 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
     }
 
     async fn handshake(&mut self) -> Result<(), RLPxError> {
-        match &self.state {
-            RLPxConnectionState::Initiator(_) => {
-                self.send_auth().await?;
-                self.receive_ack().await?;
+        match &self.mode {
+            RLPxConnectionMode::Initiator => {
+                let local_state = self.send_auth().await?;
+                self.receive_ack(local_state).await?;
             }
-            RLPxConnectionState::Receiver(_) => {
-                self.receive_auth().await?;
-                self.send_ack().await?;
-            }
-            _ => {
-                return Err(RLPxError::HandshakeError(
-                    "Invalid connection state for handshake".to_string(),
-                ))
+            RLPxConnectionMode::Receiver => {
+                let remote_state = self.receive_auth().await?;
+                self.send_ack(remote_state).await?;
             }
         };
         debug!("Completed handshake!");
@@ -271,48 +274,44 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
         sender: mpsc::Sender<rlpx::Message>,
         mut receiver: mpsc::Receiver<rlpx::Message>,
     ) -> Result<(), RLPxError> {
-        if let RLPxConnectionState::Established() = &self.state {
-            self.init_peer_conn().await?;
-            debug!("Started peer main loop");
-            // Wait for eth status message or timeout.
-            let mut broadcaster_receive = {
-                if self.capabilities.contains(&CAP_ETH) {
-                    Some(self.connection_broadcast_send.subscribe())
-                } else {
-                    None
-                }
-            };
-
-            // Status message received, start listening for connections,
-            // and subscribe this connection to the broadcasting.
-            loop {
-                tokio::select! {
-                    // Expect a message from the remote peer
-                    message = self.receive() => {
-                        self.handle_message(message?, sender.clone()).await?;
-                    }
-                    // Expect a message from the backend
-                    Some(message) = receiver.recv() => {
-                        self.send(message).await?;
-                    }
-                    // This is not ideal, but using the receiver without
-                    // this function call, causes the loop to take ownwership
-                    // of the variable and the compiler will complain about it,
-                    // with this function, we avoid that.
-                    // If the broadcaster is Some (i.e. we're connected to a peer that supports an eth protocol),
-                    // we'll receive broadcasted messages from another connections through a channel, otherwise
-                    // the function below will yield immediately but the select will not match and
-                    // ignore the returned value.
-                    Some(broadcasted_msg) = Self::maybe_wait_for_broadcaster(&mut broadcaster_receive) => {
-                        self.handle_broadcast(broadcasted_msg?).await?
-                    }
-                    // Allow an interruption to check periodic tasks
-                    _ = sleep(PERIODIC_TASKS_CHECK_INTERVAL) => () // noop
-                }
-                self.check_periodic_tasks().await?;
+        self.init_peer_conn().await?;
+        debug!("Started peer main loop");
+        // Wait for eth status message or timeout.
+        let mut broadcaster_receive = {
+            if self.capabilities.contains(&CAP_ETH) {
+                Some(self.connection_broadcast_send.subscribe())
+            } else {
+                None
             }
-        } else {
-            Err(RLPxError::InvalidState())
+        };
+
+        // Status message received, start listening for connections,
+        // and subscribe this connection to the broadcasting.
+        loop {
+            tokio::select! {
+                // Expect a message from the remote peer
+                message = self.receive() => {
+                    self.handle_message(message?, sender.clone()).await?;
+                }
+                // Expect a message from the backend
+                Some(message) = receiver.recv() => {
+                    self.send(message).await?;
+                }
+                // This is not ideal, but using the receiver without
+                // this function call, causes the loop to take ownwership
+                // of the variable and the compiler will complain about it,
+                // with this function, we avoid that.
+                // If the broadcaster is Some (i.e. we're connected to a peer that supports an eth protocol),
+                // we'll receive broadcasted messages from another connections through a channel, otherwise
+                // the function below will yield immediately but the select will not match and
+                // ignore the returned value.
+                Some(broadcasted_msg) = Self::maybe_wait_for_broadcaster(&mut broadcaster_receive) => {
+                    self.handle_broadcast(broadcasted_msg?).await?
+                }
+                // Allow an interruption to check periodic tasks
+                _ = sleep(PERIODIC_TASKS_CHECK_INTERVAL) => () // noop
+            }
+            self.check_periodic_tasks().await?;
         }
     }
 
@@ -493,140 +492,98 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
         Ok(())
     }
 
-    async fn send_auth(&mut self) -> Result<(), RLPxError> {
-        if let RLPxConnectionState::Initiator(initiator_state) = &self.state {
-            let secret_key: SecretKey = self.signer.clone().into();
-            let peer_pk = id2pubkey(self.remote_node_id).ok_or(RLPxError::InvalidPeerId())?;
+    async fn send_auth(&mut self) -> Result<LocalState, RLPxError> {
+        let secret_key: SecretKey = self.signer.clone().into();
+        let peer_pk = id2pubkey(self.remote_node_id).ok_or(RLPxError::InvalidPeerId())?;
 
-            // Clonning previous state to avoid ownership issues
-            let previous_state = initiator_state.clone();
+        let local_nonce = H256::random_using(&mut rand::thread_rng());
+        let local_ephemeral_key = SecretKey::random(&mut rand::thread_rng());
 
-            let msg = encode_auth_message(
-                &secret_key,
-                previous_state.nonce,
-                &peer_pk,
-                &previous_state.ephemeral_key,
-            )?;
+        let msg = encode_auth_message(&secret_key, local_nonce, &peer_pk, &local_ephemeral_key)?;
+        self.send_handshake_msg(&msg).await?;
 
-            self.send_handshake_msg(&msg).await?;
-
-            self.state = RLPxConnectionState::InitiatedAuth(InitiatedAuth {
-                local_nonce: previous_state.nonce,
-                local_ephemeral_key: previous_state.ephemeral_key,
-                local_init_message: msg,
-            });
-            Ok(())
-        } else {
-            Err(RLPxError::InvalidState())
-        }
+        Ok(LocalState {
+            nonce: local_nonce,
+            ephemeral_key: local_ephemeral_key,
+            init_message: msg,
+        })
     }
 
-    async fn send_ack(&mut self) -> Result<(), RLPxError> {
-        if let RLPxConnectionState::ReceivedAuth(received_auth_state) = &self.state {
-            let peer_pk = id2pubkey(self.remote_node_id).ok_or(RLPxError::InvalidPeerId())?;
+    async fn send_ack(&mut self, remote_state: RemoteState) -> Result<(), RLPxError> {
+        let peer_pk = id2pubkey(self.remote_node_id).ok_or(RLPxError::InvalidPeerId())?;
 
-            // Clonning previous state to avoid ownership issues
-            let previous_state = received_auth_state.clone();
+        let local_nonce = H256::random_using(&mut rand::thread_rng());
+        let local_ephemeral_key = SecretKey::random(&mut rand::thread_rng());
 
-            let msg = encode_ack_message(
-                &previous_state.local_ephemeral_key,
-                previous_state.local_nonce,
-                &peer_pk,
-            )?;
+        let msg = encode_ack_message(&local_ephemeral_key, local_nonce, &peer_pk)?;
+        self.send_handshake_msg(&msg).await?;
 
-            self.send_handshake_msg(&msg).await?;
+        // keccak256(nonce || initiator-nonce)
+        // Remote node is initator
+        let hashed_nonces =
+            Keccak256::digest([local_nonce.0, remote_state.nonce.0].concat()).into();
 
-            // keccak256(nonce || initiator-nonce)
-            // Remote node is initator
-            let hashed_nonces = Keccak256::digest(
-                [previous_state.local_nonce.0, previous_state.remote_nonce.0].concat(),
-            )
-            .into();
-
-            self.framed.codec_mut().update_secrets(
-                msg,
-                previous_state.local_nonce,
-                previous_state.local_ephemeral_key,
-                hashed_nonces,
-                previous_state.remote_init_message,
-                previous_state.remote_nonce,
-                previous_state.remote_ephemeral_key,
-            );
-
-            self.state = RLPxConnectionState::Established();
-
-            Ok(())
-        } else {
-            Err(RLPxError::InvalidState())
-        }
+        self.framed.codec_mut().update_secrets(
+            msg,
+            local_nonce,
+            local_ephemeral_key,
+            hashed_nonces,
+            remote_state.init_message,
+            remote_state.nonce,
+            remote_state.ephemeral_key,
+        );
+        Ok(())
     }
 
-    async fn receive_auth(&mut self) -> Result<(), RLPxError> {
-        if let RLPxConnectionState::Receiver(receiver_state) = &self.state {
-            let secret_key: SecretKey = self.signer.clone().into();
-            // Clonning previous state to avoid ownership issues
-            let previous_state = receiver_state.clone();
-            let msg_bytes = self.receive_handshake_msg().await?;
-            let size_data = &msg_bytes
-                .get(..2)
-                .ok_or(RLPxError::InvalidMessageLength())?;
-            let msg = &msg_bytes
-                .get(2..)
-                .ok_or(RLPxError::InvalidMessageLength())?;
-            let (auth, remote_ephemeral_key) = decode_auth_message(&secret_key, msg, size_data)?;
-            self.remote_node_id = auth.node_id;
+    async fn receive_auth(&mut self) -> Result<RemoteState, RLPxError> {
+        let secret_key: SecretKey = self.signer.clone().into();
 
-            // Build next state
-            self.state = RLPxConnectionState::ReceivedAuth(ReceivedAuth {
-                local_nonce: previous_state.nonce,
-                local_ephemeral_key: previous_state.ephemeral_key,
-                remote_nonce: auth.nonce,
-                remote_ephemeral_key,
-                remote_init_message: msg_bytes.to_owned(),
-            });
-            Ok(())
-        } else {
-            Err(RLPxError::InvalidState())
-        }
+        let msg_bytes = self.receive_handshake_msg().await?;
+        let size_data = &msg_bytes
+            .get(..2)
+            .ok_or(RLPxError::InvalidMessageLength())?;
+        let msg = &msg_bytes
+            .get(2..)
+            .ok_or(RLPxError::InvalidMessageLength())?;
+        let (auth, remote_ephemeral_key) = decode_auth_message(&secret_key, msg, size_data)?;
+        self.remote_node_id = auth.node_id;
+
+        Ok(RemoteState {
+            nonce: auth.nonce,
+            ephemeral_key: remote_ephemeral_key,
+            init_message: msg_bytes.to_owned(),
+        })
     }
 
-    async fn receive_ack(&mut self) -> Result<(), RLPxError> {
-        if let RLPxConnectionState::InitiatedAuth(initiated_auth_state) = &self.state {
-            let secret_key: SecretKey = self.signer.clone().into();
-            // Clonning previous state to avoid ownership issues
-            let previous_state = initiated_auth_state.clone();
-            let msg_bytes = self.receive_handshake_msg().await?;
-            let size_data = &msg_bytes
-                .get(..2)
-                .ok_or(RLPxError::InvalidMessageLength())?;
-            let msg = &msg_bytes
-                .get(2..)
-                .ok_or(RLPxError::InvalidMessageLength())?;
-            let ack = decode_ack_message(&secret_key, msg, size_data)?;
-            let remote_ephemeral_key = ack
-                .get_ephemeral_pubkey()
-                .ok_or(RLPxError::NotFound("Remote ephemeral key".to_string()))?;
+    async fn receive_ack(&mut self, local_state: LocalState) -> Result<(), RLPxError> {
+        let secret_key: SecretKey = self.signer.clone().into();
+        let msg_bytes = self.receive_handshake_msg().await?;
+        let size_data = &msg_bytes
+            .get(..2)
+            .ok_or(RLPxError::InvalidMessageLength())?;
+        let msg = &msg_bytes
+            .get(2..)
+            .ok_or(RLPxError::InvalidMessageLength())?;
+        let ack = decode_ack_message(&secret_key, msg, size_data)?;
+        let remote_ephemeral_key = ack
+            .get_ephemeral_pubkey()
+            .ok_or(RLPxError::NotFound("Remote ephemeral key".to_string()))?;
 
-            // keccak256(nonce || initiator-nonce)
-            // Local node is initator
-            let hashed_nonces =
-                Keccak256::digest([ack.nonce.0, previous_state.local_nonce.0].concat()).into();
+        // keccak256(nonce || initiator-nonce)
+        // Local node is initator
+        let hashed_nonces = Keccak256::digest([ack.nonce.0, local_state.nonce.0].concat()).into();
 
-            self.framed.codec_mut().update_secrets(
-                previous_state.local_init_message,
-                previous_state.local_nonce,
-                previous_state.local_ephemeral_key,
-                hashed_nonces,
-                msg_bytes.to_owned(),
-                ack.nonce,
-                remote_ephemeral_key,
-            );
+        self.framed.codec_mut().update_secrets(
+            local_state.init_message,
+            local_state.nonce,
+            local_state.ephemeral_key,
+            hashed_nonces,
+            msg_bytes.to_owned(),
+            ack.nonce,
+            remote_ephemeral_key,
+        );
 
-            self.state = RLPxConnectionState::Established();
-            Ok(())
-        } else {
-            Err(RLPxError::InvalidState())
-        }
+        Ok(())
     }
 
     async fn send_handshake_msg(&mut self, msg: &[u8]) -> Result<(), RLPxError> {
@@ -652,22 +609,14 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
     }
 
     async fn send(&mut self, message: rlpx::Message) -> Result<(), RLPxError> {
-        if let RLPxConnectionState::Established() = &mut self.state {
-            self.framed.send(message).await
-        } else {
-            Err(RLPxError::InvalidState())
-        }
+        self.framed.send(message).await
     }
 
     async fn receive(&mut self) -> Result<rlpx::Message, RLPxError> {
-        if let RLPxConnectionState::Established() = &mut self.state {
-            if let Some(message) = self.framed.next().await {
-                message
-            } else {
-                Err(RLPxError::Disconnect())
-            }
+        if let Some(message) = self.framed.next().await {
+            message
         } else {
-            Err(RLPxError::InvalidState())
+            Err(RLPxError::Disconnect())
         }
     }
 
@@ -693,42 +642,3 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
         }
     }
 }
-
-enum RLPxConnectionState {
-    Initiator(Initiator),
-    Receiver(Receiver),
-    ReceivedAuth(ReceivedAuth),
-    InitiatedAuth(InitiatedAuth),
-    Established(),
-}
-
-#[derive(Clone)]
-struct Receiver {
-    pub(crate) nonce: H256,
-    pub(crate) ephemeral_key: SecretKey,
-}
-
-#[derive(Clone)]
-struct Initiator {
-    pub(crate) nonce: H256,
-    pub(crate) ephemeral_key: SecretKey,
-}
-
-#[derive(Clone)]
-struct ReceivedAuth {
-    pub(crate) local_nonce: H256,
-    pub(crate) local_ephemeral_key: SecretKey,
-    pub(crate) remote_nonce: H256,
-    pub(crate) remote_ephemeral_key: PublicKey,
-    pub(crate) remote_init_message: Vec<u8>,
-}
-
-#[derive(Clone)]
-struct InitiatedAuth {
-    pub(crate) local_nonce: H256,
-    pub(crate) local_ephemeral_key: SecretKey,
-    pub(crate) local_init_message: Vec<u8>,
-}
-
-#[derive(Clone)]
-pub struct Established {}
