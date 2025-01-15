@@ -1,5 +1,5 @@
 use serde_json::Value;
-use tracing::info;
+use tracing::{info, debug};
 
 use crate::{utils::RpcErr, RpcApiContext, RpcHandler};
 
