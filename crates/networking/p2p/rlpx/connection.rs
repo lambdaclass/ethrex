@@ -24,16 +24,16 @@ use crate::{
 use super::{
     error::RLPxError,
     eth::{receipts::GetReceipts, transactions::GetPooledTransactions},
-    frame::FrameAdaptor,
+    frame::RLPxCodec,
     handshake::{decode_ack_message, decode_auth_message, encode_auth_message},
     message as rlpx,
     p2p::Capability,
-    utils::{ecdh_xchng, pubkey2id},
+    utils::pubkey2id,
 };
-use aes::cipher::KeyIvInit;
 use ethrex_blockchain::mempool::{self};
 use ethrex_core::{H256, H512};
 use ethrex_storage::Store;
+use futures::SinkExt;
 use k256::{
     ecdsa::{RecoveryId, Signature, SigningKey, VerifyingKey},
     PublicKey, SecretKey,
@@ -49,6 +49,8 @@ use tokio::{
     task,
     time::{sleep, Instant},
 };
+use tokio_stream::StreamExt;
+use tokio_util::codec::Framed;
 use tracing::{debug, error};
 const CAP_P2P: (Capability, u8) = (Capability::P2p, 5);
 const CAP_ETH: (Capability, u8) = (Capability::Eth, 68);
@@ -63,7 +65,7 @@ pub(crate) struct RLPxConnection<S> {
     signer: SigningKey,
     remote_node_id: H512,
     state: RLPxConnectionState,
-    frame_adaptor: FrameAdaptor<S>,
+    framed: Framed<S, RLPxCodec>,
     storage: Store,
     capabilities: Vec<(Capability, u8)>,
     next_periodic_task_check: Instant,
@@ -91,7 +93,8 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
             signer,
             remote_node_id,
             state,
-            frame_adaptor: FrameAdaptor::new(stream),
+            // Creating RLPxCodec with default values. They will be updated during the handshake
+            framed: Framed::new(stream, RLPxCodec::default()),
             storage,
             capabilities: vec![],
             next_periodic_task_check: Instant::now() + PERIODIC_TASKS_CHECK_INTERVAL,
@@ -223,13 +226,6 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
         };
         debug!("Completed handshake!");
 
-        if let RLPxConnectionState::Established(established) = &self.state {
-            self.frame_adaptor
-                .framed
-                .codec_mut()
-                .set_state(*established.clone());
-        }
-
         self.exchange_hello_messages().await?;
         Ok(())
     }
@@ -276,7 +272,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
         sender: mpsc::Sender<rlpx::Message>,
         mut receiver: mpsc::Receiver<rlpx::Message>,
     ) -> Result<(), RLPxError> {
-        if let RLPxConnectionState::Established(_) = &self.state {
+        if let RLPxConnectionState::Established() = &self.state {
             self.init_peer_conn().await?;
             debug!("Started peer main loop");
             // Wait for eth status message or timeout.
@@ -292,7 +288,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
             // and subscribe this connection to the broadcasting.
             loop {
                 tokio::select! {
-                    // Exoect a message from the remote peer
+                    // Expect a message from the remote peer
                     message = self.receive() => {
                         self.handle_message(message?, sender.clone()).await?;
                     }
@@ -311,7 +307,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
                     Some(broadcasted_msg) = Self::maybe_wait_for_broadcaster(&mut broadcaster_receive) => {
                         self.handle_broadcast(broadcasted_msg?).await?
                     }
-                    // Allow a periodi interruption to check perioic tasks
+                    // Allow an interruption to check periodic tasks
                     _ = sleep(PERIODIC_TASKS_CHECK_INTERVAL) => () // noop
                 }
                 self.check_periodic_tasks().await?;
@@ -539,10 +535,25 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
 
             self.send_handshake_msg(&msg).await?;
 
-            self.state = RLPxConnectionState::Established(Box::new(Established::for_receiver(
-                previous_state,
+            // keccak256(nonce || initiator-nonce)
+            // Remote node is initator
+            let hashed_nonces = Keccak256::digest(
+                [previous_state.local_nonce.0, previous_state.remote_nonce.0].concat(),
+            )
+            .into();
+
+            self.framed.codec_mut().update_secrets(
                 msg,
-            )));
+                previous_state.local_nonce,
+                previous_state.local_ephemeral_key,
+                hashed_nonces,
+                previous_state.remote_init_message,
+                previous_state.remote_nonce,
+                previous_state.remote_ephemeral_key,
+            );
+
+            self.state = RLPxConnectionState::Established();
+
             Ok(())
         } else {
             Err(RLPxError::InvalidState())
@@ -593,13 +604,23 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
             let remote_ephemeral_key = ack
                 .get_ephemeral_pubkey()
                 .ok_or(RLPxError::NotFound("Remote ephemeral key".to_string()))?;
-            // Build next state
-            self.state = RLPxConnectionState::Established(Box::new(Established::for_initiator(
-                previous_state,
+
+            // keccak256(nonce || initiator-nonce)
+            // Local node is initator
+            let hashed_nonces =
+                Keccak256::digest([ack.nonce.0, previous_state.local_nonce.0].concat()).into();
+
+            self.framed.codec_mut().update_secrets(
+                previous_state.local_init_message,
+                previous_state.local_nonce,
+                previous_state.local_ephemeral_key,
+                hashed_nonces,
                 msg_bytes.to_owned(),
                 ack.nonce,
                 remote_ephemeral_key,
-            )));
+            );
+
+            self.state = RLPxConnectionState::Established();
             Ok(())
         } else {
             Err(RLPxError::InvalidState())
@@ -607,7 +628,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
     }
 
     async fn send_handshake_msg(&mut self, msg: &[u8]) -> Result<(), RLPxError> {
-        self.frame_adaptor.stream().write_all(msg).await?;
+        self.framed.get_mut().write_all(msg).await?;
         Ok(())
     }
 
@@ -615,16 +636,13 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
         let mut buf = vec![0; MAX_DISC_PACKET_SIZE];
 
         // Read the message's size
-        self.frame_adaptor
-            .stream()
-            .read_exact(&mut buf[..2])
-            .await?;
+        self.framed.get_mut().read_exact(&mut buf[..2]).await?;
         let ack_data = [buf[0], buf[1]];
         let msg_size = u16::from_be_bytes(ack_data) as usize;
 
         // Read the rest of the message
-        self.frame_adaptor
-            .stream()
+        self.framed
+            .get_mut()
             .read_exact(&mut buf[2..msg_size + 2])
             .await?;
         let ack_bytes = &buf[..msg_size + 2];
@@ -632,16 +650,20 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
     }
 
     async fn send(&mut self, message: rlpx::Message) -> Result<(), RLPxError> {
-        if let RLPxConnectionState::Established(_) = &mut self.state {
-            self.frame_adaptor.write(message).await
+        if let RLPxConnectionState::Established() = &mut self.state {
+            self.framed.send(message).await
         } else {
             Err(RLPxError::InvalidState())
         }
     }
 
     async fn receive(&mut self) -> Result<rlpx::Message, RLPxError> {
-        if let RLPxConnectionState::Established(_) = &mut self.state {
-            self.frame_adaptor.read().await
+        if let RLPxConnectionState::Established() = &mut self.state {
+            if let Some(message) = self.framed.next().await {
+                message
+            } else {
+                Err(RLPxError::Disconnect())
+            }
         } else {
             Err(RLPxError::InvalidState())
         }
@@ -675,7 +697,7 @@ enum RLPxConnectionState {
     Receiver(Receiver),
     ReceivedAuth(ReceivedAuth),
     InitiatedAuth(InitiatedAuth),
-    Established(Box<Established>),
+    Established(),
 }
 
 #[derive(Clone)]
@@ -754,95 +776,4 @@ impl InitiatedAuth {
 }
 
 #[derive(Clone)]
-pub struct Established {
-    pub(crate) mac_key: H256,
-    pub(crate) ingress_mac: Keccak256,
-    pub(crate) egress_mac: Keccak256,
-    pub(crate) ingress_aes: Aes256Ctr64BE,
-    pub(crate) egress_aes: Aes256Ctr64BE,
-}
-
-impl Established {
-    fn for_receiver(previous_state: ReceivedAuth, init_message: Vec<u8>) -> Self {
-        // keccak256(nonce || initiator-nonce)
-        // Remote node is initator
-        let hashed_nonces = Keccak256::digest(
-            [previous_state.local_nonce.0, previous_state.remote_nonce.0].concat(),
-        )
-        .into();
-
-        Self::new(
-            init_message,
-            previous_state.local_nonce,
-            previous_state.local_ephemeral_key,
-            hashed_nonces,
-            previous_state.remote_init_message,
-            previous_state.remote_nonce,
-            previous_state.remote_ephemeral_key,
-        )
-    }
-
-    fn for_initiator(
-        previous_state: InitiatedAuth,
-        remote_init_message: Vec<u8>,
-        remote_nonce: H256,
-        remote_ephemeral_key: PublicKey,
-    ) -> Self {
-        // keccak256(nonce || initiator-nonce)
-        // Local node is initator
-        let hashed_nonces =
-            Keccak256::digest([remote_nonce.0, previous_state.local_nonce.0].concat()).into();
-
-        Self::new(
-            previous_state.local_init_message,
-            previous_state.local_nonce,
-            previous_state.local_ephemeral_key,
-            hashed_nonces,
-            remote_init_message,
-            remote_nonce,
-            remote_ephemeral_key,
-        )
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    fn new(
-        local_init_message: Vec<u8>,
-        local_nonce: H256,
-        local_ephemeral_key: SecretKey,
-        hashed_nonces: [u8; 32],
-        remote_init_message: Vec<u8>,
-        remote_nonce: H256,
-        remote_ephemeral_key: PublicKey,
-    ) -> Self {
-        let ephemeral_key_secret = ecdh_xchng(&local_ephemeral_key, &remote_ephemeral_key);
-
-        // shared-secret = keccak256(ephemeral-key || keccak256(nonce || initiator-nonce))
-        let shared_secret =
-            Keccak256::digest([ephemeral_key_secret, hashed_nonces].concat()).into();
-        // aes-secret = keccak256(ephemeral-key || shared-secret)
-        let aes_key =
-            H256(Keccak256::digest([ephemeral_key_secret, shared_secret].concat()).into());
-        // mac-secret = keccak256(ephemeral-key || aes-secret)
-        let mac_key = H256(Keccak256::digest([ephemeral_key_secret, aes_key.0].concat()).into());
-
-        // egress-mac = keccak256.init((mac-secret ^ remote-nonce) || auth)
-        let egress_mac = Keccak256::default()
-            .chain_update(mac_key ^ remote_nonce)
-            .chain_update(&local_init_message);
-
-        // ingress-mac = keccak256.init((mac-secret ^ initiator-nonce) || ack)
-        let ingress_mac = Keccak256::default()
-            .chain_update(mac_key ^ local_nonce)
-            .chain_update(&remote_init_message);
-
-        let ingress_aes = <Aes256Ctr64BE as KeyIvInit>::new(&aes_key.0.into(), &[0; 16].into());
-        let egress_aes = ingress_aes.clone();
-        Self {
-            mac_key,
-            ingress_mac,
-            egress_mac,
-            ingress_aes,
-            egress_aes,
-        }
-    }
-}
+pub struct Established {}
