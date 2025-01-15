@@ -7,6 +7,8 @@ use revm::primitives::{
 };
 use thiserror::Error;
 
+use crate::execution_db::index_db::IndexDBError;
+
 #[derive(Debug, Error)]
 pub enum EvmError {
     #[error("Invalid Transaction: {0}")]
@@ -61,6 +63,8 @@ pub enum ExecutionDBError {
     MissingKeyInStorageTrie(H160, H256),
     #[error("Storage trie value for account {0} and key {1} does not match value stored in db")]
     InvalidStorageTrieValue(H160, H256),
+    #[error("{0}")]
+    IndexBorrow(#[from] IndexDBError),
     #[error("{0}")]
     Custom(String),
 }
