@@ -66,7 +66,14 @@ impl RpcHandler for ForkChoiceUpdatedV2 {
         let (head_block_opt, mut response) =
             handle_forkchoice(&self.fork_choice_state, context.clone(), 2)?;
         if let (Some(head_block), Some(attributes)) = (head_block_opt, &self.payload_attributes) {
-            validate_v2(attributes, head_block, &context)?;
+            let chain_config = context.storage.get_chain_config()?;
+
+            if chain_config.is_shanghai_activated(attributes.timestamp) {
+                validate_v2(attributes, head_block)?;
+            } else {
+                validate_v1(attributes, head_block)?;
+            }
+
             let payload_id = build_payload(attributes, context, &self.fork_choice_state, 2)?;
             response.set_id(payload_id);
         }
@@ -205,34 +212,21 @@ fn handle_forkchoice(
 }
 
 fn validate_v1(attributes: &PayloadAttributesV3, head_block: BlockHeader) -> Result<(), RpcErr> {
+    if attributes.withdrawals.is_some() {
+        return Err(RpcErr::WrongParam("withdrawals".to_string()));
+    }
+    if attributes.parent_beacon_block_root.is_some() {
+        return Err(RpcErr::WrongParam("parent_beacon_block_root".to_string()));
+    }
     validate_timestamp(attributes, head_block)
 }
 
-fn validate_v2(
-    attributes: &PayloadAttributesV3,
-    head_block: BlockHeader,
-    context: &RpcApiContext,
-) -> Result<(), RpcErr> {
-    let chain_config = context.storage.get_chain_config()?;
+fn validate_v2(attributes: &PayloadAttributesV3, head_block: BlockHeader) -> Result<(), RpcErr> {
     if attributes.withdrawals.is_none() {
-        return Err(RpcErr::WrongParam(
-            "forkChoiceV2 withdrawals is null".to_string(),
-        ));
+        return Err(RpcErr::WrongParam("withdrawals".to_string()));
     }
     if attributes.parent_beacon_block_root.is_some() {
-        return Err(RpcErr::InvalidPayloadAttributes(
-            "forkChoiceV2 with Beacon Root".to_string(),
-        ));
-    }
-    if !chain_config.is_shanghai_activated(attributes.timestamp) {
-        return Err(RpcErr::UnsuportedFork(
-            "forkChoiceV2 used to build pre-Shanghai payload".to_string(),
-        ));
-    }
-    if chain_config.is_cancun_activated(attributes.timestamp) {
-        return Err(RpcErr::UnsuportedFork(
-            "forkChoiceV2 used to build Cancun payload".to_string(),
-        ));
+        return Err(RpcErr::WrongParam("parent_beacon_block_root".to_string()));
     }
     validate_timestamp(attributes, head_block)
 }
@@ -243,15 +237,16 @@ fn validate_v3(
     context: &RpcApiContext,
 ) -> Result<(), RpcErr> {
     let chain_config = context.storage.get_chain_config()?;
-    if attributes.parent_beacon_block_root.is_none() {
-        return Err(RpcErr::InvalidPayloadAttributes(
-            "Null Parent Beacon Root".to_string(),
-        ));
-    }
     if !chain_config.is_cancun_activated(attributes.timestamp) {
         return Err(RpcErr::UnsuportedFork(
             "forkChoiceV3 used to build pre-Cancun payload".to_string(),
         ));
+    }
+    if attributes.withdrawals.is_none() {
+        return Err(RpcErr::WrongParam("withdrawals".to_string()));
+    }
+    if attributes.parent_beacon_block_root.is_none() {
+        return Err(RpcErr::WrongParam("parent_beacon_block_root".to_string()));
     }
     validate_timestamp(attributes, head_block)
 }
