@@ -1226,7 +1226,7 @@ pub fn bls12_g1msm(
     gas_for_call: u64,
     consumed_gas: &mut u64,
 ) -> Result<Bytes, VMError> {
-    if calldata.is_empty() || calldata.len() % 160 != 0 {
+    if calldata.is_empty() || calldata.len() % BLS12_381_G1_MSM_PAIR_LENGTH != 0 {
         return Err(VMError::PrecompileError(PrecompileError::ParsingInputError));
     }
 
