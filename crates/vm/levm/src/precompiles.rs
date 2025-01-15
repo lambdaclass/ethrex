@@ -1168,7 +1168,7 @@ pub fn bls12_g1add(
     increase_precompile_consumed_gas(gas_for_call, BLS12_381_G1ADD_COST, consumed_gas)
         .map_err(|_| VMError::PrecompileError(PrecompileError::NotEnoughGas))?;
 
-    // Each point is 64 bytes
+    // Each coordinate is 64 bytes
     let mut first_point_x = calldata
         .get(0..64)
         .ok_or(VMError::PrecompileError(PrecompileError::ParsingInputError))?;
