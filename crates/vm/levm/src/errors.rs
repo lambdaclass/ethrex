@@ -208,16 +208,10 @@ pub enum PrecompileError {
 pub enum EIP7702Error {
     #[error("ChainID is not 0 nor the blockchain's id")]
     ChainIdError,
-    #[error("Invalid R signature")]
-    InvalidSignatureR,
-    #[error("Invalid S signature")]
-    InvalidSignatureS,
-    #[error("Invalid Y parity")]
-    InvalidYParity,
     #[error("Internal Error while parsing signatures")]
     ErrorParsingSignature,
-    #[error("Internal Error while recovering signatures")]
-    ErrorRecoveringSignature,
+    #[error("Internal Error while geting the authorized address")]
+    AuthorizedAddressError,
 }
 
 #[derive(Debug, Clone)]

@@ -17,7 +17,7 @@ use crate::{
         WARM_ADDRESS_ACCESS_COST,
     },
     opcodes::Opcode,
-    precompiles::{execute_precompile, is_precompile},
+    precompiles::{execute_precompile, is_precompile, PRECOMPILES},
     AccountInfo, TransientStorage,
 };
 use bytes::Bytes;
@@ -1353,18 +1353,24 @@ impl VM {
 
             let public_key = authority.serialize();
             let mut hasher = Keccak256::new();
-            hasher.update(public_key.get(1..).unwrap());
+            hasher.update(
+                public_key
+                    .get(1..)
+                    .ok_or(VMError::Internal(InternalError::SlicingError))?,
+            );
             let address_hash = hasher.finalize();
 
             // Get the last 20 bytes of the hash -> Address
-            let authority_address_bytes: [u8; 20] =
-                address_hash.get(12..32).unwrap().try_into().unwrap();
+            let authority_address_bytes: [u8; 20] = address_hash
+                .get(12..32)
+                .ok_or(VMError::Internal(InternalError::SlicingError))?
+                .try_into()
+                .map_err(|_| VMError::Internal(InternalError::ConversionError))?;
             let authority_address = Address::from_slice(&authority_address_bytes);
 
             // 4. Add authority to accessed_addresses (as defined in EIP-2929). This is done inside the self.access_account() function
             // 5. Verify the code of authority is either empty or already delegated.
             // CHECK: what do we do with this check? do we continue if it was already delegated?
-            // What happens if it's not cached?
             let (authority_account_info, _) = self.access_account(authority_address);
 
             //if !(was_delegated(&authority_account_info)? || authority_account_info.has_code()) {
@@ -1372,15 +1378,14 @@ impl VM {
             //}
 
             // 6. Verify the nonce of authority is equal to nonce. In case authority does not exist in the trie, verify that nonce is equal to 0.
-            // If it doesn't has nonce, it means it's zero,
-            // if it has nonce, the account.info.nonce should equal auth_tuple.nonce
+            // If it doesn't exist, it means the nonce is zero. The access_account() function will return AccountInfo::default()
+            // If it has nonce, the account.info.nonce should equal auth_tuple.nonce
             if authority_account_info.nonce != auth_tuple.nonce {
                 continue;
             }
 
             // 7. Add PER_EMPTY_ACCOUNT_COST - PER_AUTH_BASE_COST gas to the global refund counter if authority exists in the trie.
             if self.db.account_exists(authority_address) {
-                // Should never throw an error
                 let refunded_gas_if_exists: u64 = (PER_EMPTY_ACCOUNT_COST - PER_AUTH_BASE_COST)
                     .try_into()
                     .map_err(|_| VMError::Internal(InternalError::ConversionError))?;
@@ -1476,10 +1481,17 @@ impl VM {
             }
         }
 
-        // Get the bytecode from the authorized address
-        let authorized_bytecode = get_account(&mut self.cache, &self.db, auth_address)
-            .info
-            .bytecode;
+        // CHECK: is this ok?
+        // The EIP says: In case a delegation designator points to a precompile address, retrieved code is considered empty and CALL, CALLCODE, STATICCALL, DELEGATECALL
+        // instructions targeting this account will execute empty code, i.e. succeed with no execution given enough gas.
+        let authorized_bytecode = if PRECOMPILES.contains(&auth_address) {
+            Bytes::new()
+        } else {
+            // Get the bytecode from the authorized address
+            get_account(&mut self.cache, &self.db, auth_address)
+                .info
+                .bytecode
+        };
 
         Ok((true, access_cost, auth_address, authorized_bytecode))
     }
@@ -1545,6 +1557,8 @@ pub fn get_authorized_address(account_info: &AccountInfo) -> Result<Address, VME
         let address = Address::from_slice(address_bytes);
         Ok(address)
     } else {
-        Err(VMError::Internal(InternalError::AccountNotFound))
+        Err(VMError::EIP7702Error(
+            crate::errors::EIP7702Error::AuthorizedAddressError,
+        ))
     }
 }

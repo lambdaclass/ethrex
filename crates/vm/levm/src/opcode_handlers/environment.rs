@@ -4,7 +4,7 @@ use crate::{
     errors::{InternalError, OpcodeSuccess, VMError},
     gas_cost::{self},
     memory::{self, calculate_memory_size},
-    vm::{word_to_address, VM},
+    vm::{was_delegated, word_to_address, VM},
 };
 use ethrex_core::U256;
 use keccak_hash::keccak;
@@ -280,12 +280,9 @@ impl VM {
 
         let (account_info, address_was_cold) = self.access_account(address);
 
-        let (is_delegation, eip7702_gas_consumed, _, _) = self.eip7702_get_code(address)?;
+        let is_delegation = was_delegated(&account_info)?;
 
-        self.increase_consumed_gas(
-            current_call_frame,
-            gas_cost::extcodesize(address_was_cold)? + eip7702_gas_consumed,
-        )?;
+        self.increase_consumed_gas(current_call_frame, gas_cost::extcodesize(address_was_cold)?)?;
 
         if is_delegation {
             current_call_frame
@@ -318,7 +315,7 @@ impl VM {
 
         let new_memory_size = calculate_memory_size(dest_offset, size)?;
 
-        let (is_delegation, eip7702_gas_consumed, _, _) = self.eip7702_get_code(address)?;
+        let is_delegation = was_delegated(&account_info)?;
 
         self.increase_consumed_gas(
             current_call_frame,
@@ -327,7 +324,7 @@ impl VM {
                 new_memory_size,
                 current_call_frame.memory.len(),
                 address_was_cold,
-            )? + eip7702_gas_consumed,
+            )?,
         )?;
 
         if size == 0 {
@@ -438,12 +435,9 @@ impl VM {
 
         let (account_info, address_was_cold) = self.access_account(address);
 
-        let (is_delegation, eip7702_gas_consumed, _, _) = self.eip7702_get_code(address)?;
+        let is_delegation = was_delegated(&account_info)?;
 
-        self.increase_consumed_gas(
-            current_call_frame,
-            gas_cost::extcodehash(address_was_cold)? + eip7702_gas_consumed,
-        )?;
+        self.increase_consumed_gas(current_call_frame, gas_cost::extcodehash(address_was_cold)?)?;
 
         if is_delegation {
             let hash =
