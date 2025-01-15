@@ -141,7 +141,7 @@ pub const SIZE_PRECOMPILES_CANCUN: u64 = 10;
 pub const SIZE_PRECOMPILES_PRAGUE: u64 = 17;
 
 // G1_MSM
-pub const LENGTH_PER_PAIR: usize = 160;
+pub const BLS12_381_G1_MSM_PAIR_LENGTH: usize = 160;
 
 pub fn is_precompile(callee_address: &Address, spec_id: SpecId) -> bool {
     // Cancun specs is the only one that allows point evaluation precompile
