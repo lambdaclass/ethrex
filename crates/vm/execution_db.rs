@@ -3,21 +3,22 @@ use std::collections::HashMap;
 use ethereum_types::H160;
 use ethrex_core::{
     types::{AccountState, Block, ChainConfig},
-    H256,
+    H256, U256,
 };
-use ethrex_rlp::encode::RLPEncode;
+use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
 use ethrex_storage::{hash_address, hash_key, AccountUpdate, Store};
 use ethrex_trie::{NodeRLP, Trie};
+use index_db::IndexDB;
 use revm::{
     primitives::{
         AccountInfo as RevmAccountInfo, Address as RevmAddress, Bytecode as RevmBytecode,
-        B256 as RevmB256, U256 as RevmU256,
+        Bytes as RevmBytes, B256 as RevmB256, U256 as RevmU256,
     },
     DatabaseRef,
 };
 use serde::{Deserialize, Serialize};
 
-use crate::{errors::ExecutionDBError, evm_state, execute_block, get_state_transitions};
+use crate::{errors::ExecutionDBError, evm_state, execute_block, get_state_transitions, spec_id};
 
 /// In-memory EVM database for caching execution data.
 ///
@@ -47,85 +48,100 @@ impl ExecutionDB {
     /// Creates a database and returns the ExecutionDB by executing a block,
     /// without performing any validation.
     pub fn from_exec(block: &Block, store: &Store) -> Result<Self, ExecutionDBError> {
-        // TODO: perform validation to exit early
-        let account_updates = Self::get_account_updates(block, store)?;
-        Self::from_account_updates(account_updates, block, store)
-    }
-
-    /// Creates a database and returns the ExecutionDB from a Vec<[AccountUpdate]>,
-    /// without performing any validation.
-    pub fn from_account_updates(
-        account_updates: Vec<AccountUpdate>,
-        block: &Block,
-        store: &Store,
-    ) -> Result<Self, ExecutionDBError> {
-        // TODO: perform validation to exit early
+        let parent_hash = block.header.parent_hash;
         let chain_config = store.get_chain_config()?;
 
-        // Store data touched by updates and get all touched storage keys for each account
+        // pre-execute and index all touched state, block numbers and code hashes
+        let index = IndexDB::new(
+            block,
+            chain_config.chain_id,
+            spec_id(&chain_config, block.header.timestamp),
+        )
+        .map_err(Box::new)?;
+
+        // retrieve accounts and storage
         let mut accounts = HashMap::new();
-        let code = HashMap::new(); // TODO: `code` remains empty for now
         let mut storage = HashMap::new();
-        let block_hashes = HashMap::new(); // TODO: `block_hashes` remains empty for now
+        let mut state_paths = Vec::new();
+        let mut pruned_storage_tries = HashMap::new();
 
-        let mut address_storage_keys = HashMap::new();
+        let state_index = index.written_state.into_iter().chain(index.read_state);
 
-        for account_update in account_updates.iter() {
-            let address = RevmAddress::from_slice(account_update.address.as_bytes());
-            let account_state = match store.get_account_state_by_hash(
-                block.header.parent_hash,
-                H160::from_slice(address.as_slice()),
-            )? {
-                Some(state) => state,
-                None => continue,
+        let state_trie = store
+            .state_trie(parent_hash)?
+            .ok_or(ExecutionDBError::NewMissingStateTrie(parent_hash))?;
+
+        for (address, storage_keys) in state_index {
+            let hashed_address = hash_address(&address);
+            let revm_address = RevmAddress::from_slice(address.as_bytes());
+
+            // check that account is contained in the parent state,
+            // otherwise this is a newly created account, so we skip storing it
+            // WARN: the above statement may not be true and an unknown edge case may emerge from here
+            let Some(encoded_state) = state_trie.get(&hashed_address)? else {
+                continue;
             };
-            accounts.insert(address, account_state);
 
-            let account_storage = account_update
-                .added_storage
-                .iter()
-                .map(|(key, value)| {
-                    (
-                        RevmU256::from_be_bytes(key.to_fixed_bytes()),
-                        RevmU256::from_be_slice(&value.to_big_endian()),
-                    )
-                })
-                .collect();
-            storage.insert(address, account_storage);
-            address_storage_keys.insert(
-                account_update.address,
-                account_update
-                    .added_storage
-                    .keys()
-                    .cloned()
-                    .collect::<Vec<_>>(),
-            );
+            accounts.insert(revm_address, AccountState::decode(&encoded_state)?);
+
+            state_paths.push(hashed_address);
+
+            // now do the same for each touched storage slot
+            let mut account_storage = HashMap::new();
+            let mut storage_paths = Vec::new();
+
+            let storage_trie = store.storage_trie(parent_hash, address)?.ok_or(
+                ExecutionDBError::NewMissingStorageTrie(parent_hash, address),
+            )?;
+
+            for key in storage_keys {
+                let key = H256::from_slice(&key.to_big_endian());
+                let hashed_key = hash_key(&key);
+
+                // check that storage slot is contained in the parent state,
+                // otherwise this is a newly created slot, so we skip storing it
+                // WARN: the above statement may not be true and an unknown edge case may emerge from here
+                let Some(encoded_value) = storage_trie.get(&hashed_key)? else {
+                    continue;
+                };
+
+                let revm_key = RevmU256::from_be_bytes(key.to_fixed_bytes());
+                let revm_value =
+                    RevmU256::from_be_bytes(U256::decode(&encoded_value)?.to_big_endian());
+                account_storage.insert(revm_key, revm_value);
+                storage_paths.push(hashed_key);
+            }
+            storage.insert(revm_address, account_storage);
+
+            let pruned_storage_trie = storage_trie.get_proofs(&storage_paths)?;
+            pruned_storage_tries.insert(address, pruned_storage_trie);
         }
-
-        // Get pruned state and storage tries. For this we get the "state" (all relevant nodes) of every trie.
-        // "Pruned" because we're only getting the nodes that make paths to the relevant
-        // key-values.
-        let state_trie = store.state_trie(block.header.parent_hash)?.ok_or(
-            ExecutionDBError::NewMissingStateTrie(block.header.parent_hash),
-        )?;
-
-        // Get pruned state trie
-        let state_paths: Vec<_> = address_storage_keys.keys().map(hash_address).collect();
         let pruned_state_trie = state_trie.get_proofs(&state_paths)?;
 
-        // Get pruned storage tries for every account
-        let mut pruned_storage_tries = HashMap::new();
-        for (address, keys) in address_storage_keys {
-            let storage_trie = store
-                .storage_trie(block.header.parent_hash, address)?
-                .ok_or(ExecutionDBError::NewMissingStorageTrie(
-                    block.header.parent_hash,
-                    address,
-                ))?;
-            let storage_paths: Vec<_> = keys.iter().map(hash_key).collect();
-            let (storage_trie_root, storage_trie_nodes) =
-                storage_trie.get_proofs(&storage_paths)?;
-            pruned_storage_tries.insert(address, (storage_trie_root, storage_trie_nodes));
+        // retrieve code
+        let mut code = HashMap::new();
+        for revm_hash in index.code_hashes {
+            let hash = H256::from_slice(revm_hash.as_slice());
+
+            // check that account code is contained in the parent state,
+            // otherwise this is a newly created account, so we skip storing it
+            // WARN: the above statement may not be true and an unknown edge case may emerge from here
+            let Some(bytecode) = store.get_account_code(hash)? else {
+                continue;
+            };
+
+            let revm_bytecode = RevmBytecode::new_raw_checked(RevmBytes(bytecode))?;
+            code.insert(revm_hash, revm_bytecode);
+        }
+
+        // retrieve block hashes
+        let mut block_hashes = HashMap::new();
+        for number in index.block_numbers {
+            let hash = store
+                .get_canonical_block_hash(number)?
+                .ok_or(ExecutionDBError::BlockHashNotFound(number))?;
+            let revm_hash = RevmB256::from_slice(hash.as_bytes());
+            block_hashes.insert(number, revm_hash);
         }
 
         Ok(Self {
@@ -158,7 +174,7 @@ impl ExecutionDB {
         self.chain_config
     }
 
-    /// Verifies that all data in [self] is included in the stored tries, and then builds the
+    /// Verifies that all data in [self] is included in the stored tries, and then returns the
     /// pruned tries from the stored nodes.
     pub fn build_tries(&self) -> Result<(Trie, HashMap<H160, Trie>), ExecutionDBError> {
         let (state_trie_root, state_trie_nodes) = &self.pruned_state_trie;
@@ -272,8 +288,8 @@ pub mod index_db {
 
     /// Dummy DB for indexing read/written state from the execution a block.
     pub struct IndexDB {
-        pub written_state: HashMap<RevmAddress, Vec<RevmU256>>,
-        pub read_state: HashMap<RevmAddress, Vec<RevmU256>>,
+        pub written_state: HashMap<Address, Vec<U256>>,
+        pub read_state: HashMap<Address, Vec<U256>>,
         pub block_numbers: Vec<u64>,
         pub code_hashes: Vec<RevmB256>,
     }

@@ -1,10 +1,12 @@
 use ethereum_types::{H160, H256};
-use ethrex_core::types::BlockHash;
+use ethrex_core::{types::BlockHash, Address};
+use ethrex_rlp::error::RLPDecodeError;
 use ethrex_storage::error::StoreError;
 use ethrex_trie::TrieError;
 use revm::primitives::{
     result::EVMError as RevmError, Address as RevmAddress, B256 as RevmB256, U256 as RevmU256,
 };
+use revm_primitives::BytecodeDecodeError;
 use thiserror::Error;
 
 use crate::execution_db::index_db::IndexDBError;
@@ -19,6 +21,8 @@ pub enum EvmError {
     DB(#[from] StoreError),
     #[error("Execution DB error: {0}")]
     ExecutionDB(#[from] ExecutionDBError),
+    #[error("Index DB error: {0}")]
+    IndexDB(#[from] IndexDBError),
     #[error("{0}")]
     Custom(String),
     #[error("{0}")]
@@ -35,6 +39,12 @@ pub enum ExecutionDBError {
     Trie(#[from] TrieError),
     #[error("State proofs error: {0}")]
     StateProofs(#[from] StateProofsError),
+    #[error("{0}")]
+    IndexBorrow(#[from] IndexDBError),
+    #[error("Revm failed to decode bytecode: {0}")]
+    RevmBytecodeDecode(#[from] BytecodeDecodeError),
+    #[error("{0}")]
+    RLPDecode(#[from] RLPDecodeError),
     #[error("Account {0} not found")]
     AccountNotFound(RevmAddress),
     #[error("Code by hash {0} not found")]
@@ -46,13 +56,13 @@ pub enum ExecutionDBError {
     #[error("Hash of block with number {0} not found")]
     BlockHashNotFound(u64),
     #[error("Missing account {0} info while trying to create ExecutionDB")]
-    NewMissingAccountInfo(RevmAddress),
+    NewMissingAccountInfo(Address),
     #[error("Missing state trie of block {0} while trying to create ExecutionDB")]
     NewMissingStateTrie(BlockHash),
     #[error(
         "Missing storage trie of block {0} and address {1} while trying to create ExecutionDB"
     )]
-    NewMissingStorageTrie(BlockHash, H160),
+    NewMissingStorageTrie(BlockHash, Address),
     #[error("The account {0} is not included in the stored pruned state trie")]
     MissingAccountInStateTrie(H160),
     #[error("Missing storage trie of account {0}")]
@@ -63,8 +73,6 @@ pub enum ExecutionDBError {
     MissingKeyInStorageTrie(H160, H256),
     #[error("Storage trie value for account {0} and key {1} does not match value stored in db")]
     InvalidStorageTrieValue(H160, H256),
-    #[error("{0}")]
-    IndexBorrow(#[from] IndexDBError),
     #[error("{0}")]
     Custom(String),
 }
@@ -114,7 +122,7 @@ impl From<RevmError<IndexDBError>> for EvmError {
         match value {
             RevmError::Transaction(err) => EvmError::Transaction(err.to_string()),
             RevmError::Header(err) => EvmError::Header(err.to_string()),
-            RevmError::Database(err) => EvmError::ExecutionDB(err),
+            RevmError::Database(err) => EvmError::IndexDB(err),
             RevmError::Custom(err) => EvmError::Custom(err),
             RevmError::Precompile(err) => EvmError::Precompile(err),
         }
