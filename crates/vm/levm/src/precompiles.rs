@@ -144,6 +144,8 @@ pub const BLS12_381_G1_MSM_PAIR_LENGTH: usize = 160;
 
 const BLS12_381_G1ADD_VALID_INPUT_LENGTH: usize = 256;
 
+pub const FIELD_ELEMENT_WITHOUT_PADDING_LENGTH: usize = 48;
+
 pub fn is_precompile(callee_address: &Address, spec_id: SpecId) -> bool {
     // Cancun specs is the only one that allows point evaluation precompile
     if *callee_address == POINT_EVALUATION_ADDRESS && spec_id < SpecId::CANCUN {
@@ -1221,7 +1223,6 @@ pub fn bls12_g1add(
     Ok(Bytes::from(padded_result))
 }
 
-pub const FIELD_ELEMENT_WITHOUT_PADDING_LENGTH: usize = 48;
 pub fn bls12_g1msm(
     calldata: &Bytes,
     gas_for_call: u64,
@@ -1321,14 +1322,12 @@ pub fn bls12_g1msm(
         let scaled_point = G1Projective::mul(g1, scalar);
         result = result.add(&scaled_point);
     }
+    let mut output = [0u8; 128];
 
     if result.is_identity().into() {
-        let output = [0u8; 128];
         return Ok(Bytes::copy_from_slice(&output));
     }
     let result_bytes = G1Affine::from(result).to_uncompressed();
-
-    let mut output = [0u8; 128];
     let (x_bytes, y_bytes) = result_bytes
         .split_at_checked(FIELD_ELEMENT_WITHOUT_PADDING_LENGTH)
         .ok_or(InternalError::SlicingError)?;
