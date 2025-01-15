@@ -1,4 +1,5 @@
-use bls12_381::{G1Affine, G1Projective, Scalar};
+use bls12_381::{G1Affine, G1Projective,Scalar, G2Affine, G2Projective};
+
 use bytes::Bytes;
 use ethrex_core::{serde_utils::bool, Address, H160, H256, U256};
 use keccak_hash::keccak256;
@@ -37,8 +38,8 @@ use crate::{
     constants::VERSIONED_HASH_VERSION_KZG,
     errors::{InternalError, PrecompileError, VMError},
     gas_cost::{
-        self, BLAKE2F_ROUND_COST, BLS12_381_G1ADD_COST, ECADD_COST, ECMUL_COST, ECRECOVER_COST,
-        MODEXP_STATIC_COST, POINT_EVALUATION_COST,
+        self, BLAKE2F_ROUND_COST, BLS12_381_G1ADD_COST, BLS12_381_G2ADD_COST, ECADD_COST,
+        ECMUL_COST, ECRECOVER_COST, MODEXP_STATIC_COST, POINT_EVALUATION_COST,
     },
 };
 
@@ -143,6 +144,7 @@ pub const SIZE_PRECOMPILES_PRAGUE: u64 = 17;
 pub const BLS12_381_G1_MSM_PAIR_LENGTH: usize = 160;
 
 const BLS12_381_G1ADD_VALID_INPUT_LENGTH: usize = 256;
+const BLS12_381_G2ADD_VALID_INPUT_LENGTH: usize = 512;
 
 pub const FIELD_ELEMENT_WITHOUT_PADDING_LENGTH: usize = 48;
 pub const PADDED_FIELD_ELEMENT_SIZE_IN_BYTES: usize = 64;
@@ -1187,10 +1189,10 @@ pub fn bls12_g1add(
         .map_err(|_| VMError::PrecompileError(PrecompileError::NotEnoughGas))?;
 
     // Each coordinate is 64 bytes
-    let first_point_x = parse_g1_coordinate(calldata.get(0..64))?;
-    let first_point_y = parse_g1_coordinate(calldata.get(64..128))?;
-    let second_point_x = parse_g1_coordinate(calldata.get(128..192))?;
-    let second_point_y = parse_g1_coordinate(calldata.get(192..256))?;
+    let first_point_x = parse_coordinate(calldata.get(0..64))?;
+    let first_point_y = parse_coordinate(calldata.get(64..128))?;
+    let second_point_x = parse_coordinate(calldata.get(128..192))?;
+    let second_point_y = parse_coordinate(calldata.get(192..256))?;
 
     let first_g1_point = parse_g1_point(first_point_x, first_point_y, true)?;
 
@@ -1198,28 +1200,15 @@ pub fn bls12_g1add(
 
     let result_of_addition = G1Affine::from(first_g1_point.add(&second_g1_point));
 
-    let sixteen_zeroes: [u8; 16] = [0_u8; 16];
     let result_bytes = if result_of_addition.is_identity().into() {
         return Ok(Bytes::copy_from_slice(&[0_u8; 128]));
     } else {
         result_of_addition.to_uncompressed()
     };
 
-    // add the padding to satisfy the convention of enconding
-    // https://eips.ethereum.org/EIPS/eip-2537
     let mut padded_result = Vec::new();
-    padded_result.extend_from_slice(&sixteen_zeroes);
-    padded_result.extend_from_slice(
-        result_bytes
-            .get(0..48)
-            .ok_or(VMError::Internal(InternalError::SlicingError))?,
-    );
-    padded_result.extend_from_slice(&sixteen_zeroes);
-    padded_result.extend_from_slice(
-        result_bytes
-            .get(48..96)
-            .ok_or(VMError::Internal(InternalError::SlicingError))?,
-    );
+    add_padded_coordinate(&mut padded_result, result_bytes.get(0..48))?;
+    add_padded_coordinate(&mut padded_result, result_bytes.get(48..96))?;
 
     Ok(Bytes::from(padded_result))
 }
@@ -1300,11 +1289,49 @@ pub fn bls12_g1msm(
 }
 
 pub fn bls12_g2add(
-    _calldata: &Bytes,
-    _gas_for_call: u64,
-    _consumed_gas: &mut u64,
+    calldata: &Bytes,
+    gas_for_call: u64,
+    consumed_gas: &mut u64,
 ) -> Result<Bytes, VMError> {
-    Ok(Bytes::new())
+    if calldata.len() != BLS12_381_G2ADD_VALID_INPUT_LENGTH {
+        return Err(VMError::PrecompileError(PrecompileError::ParsingInputError));
+    }
+
+    // GAS
+    increase_precompile_consumed_gas(gas_for_call, BLS12_381_G2ADD_COST, consumed_gas)
+        .map_err(|_| VMError::PrecompileError(PrecompileError::NotEnoughGas))?;
+
+    // Each coordinate is 64 bytes
+    // There are 4 coordinates per G2 point
+    let first_x_1 = parse_coordinate(calldata.get(0..64))?;
+    let first_x_2 = parse_coordinate(calldata.get(64..128))?;
+    let first_y_1 = parse_coordinate(calldata.get(128..192))?;
+    let first_y_2 = parse_coordinate(calldata.get(192..256))?;
+    let second_x_1 = parse_coordinate(calldata.get(256..320))?;
+    let second_x_2 = parse_coordinate(calldata.get(320..384))?;
+    let second_y_1 = parse_coordinate(calldata.get(384..448))?;
+    let second_y_2 = parse_coordinate(calldata.get(448..512))?;
+
+    let first_g2_point = parse_g2_point(first_x_1, first_x_2, first_y_1, first_y_2)?;
+    let second_g2_point = parse_g2_point(second_x_1, second_x_2, second_y_1, second_y_2)?;
+
+    let result_of_addition = G2Affine::from(first_g2_point.add(&second_g2_point));
+
+    let result_bytes = if result_of_addition.is_identity().into() {
+        return Ok(Bytes::copy_from_slice(&[0_u8; 256]));
+    } else {
+        result_of_addition.to_uncompressed()
+    };
+
+    let mut padded_result = Vec::new();
+    // The crate bls12_381 deserialize the G2 point as x_2 || x_1 || y_2 || y_1
+    // https://docs.rs/bls12_381/0.8.0/src/bls12_381/g2.rs.html#284-299
+    add_padded_coordinate(&mut padded_result, result_bytes.get(48..96))?;
+    add_padded_coordinate(&mut padded_result, result_bytes.get(0..48))?;
+    add_padded_coordinate(&mut padded_result, result_bytes.get(144..192))?;
+    add_padded_coordinate(&mut padded_result, result_bytes.get(96..144))?;
+
+    Ok(Bytes::from(padded_result))
 }
 
 pub fn bls12_g2msm(
@@ -1339,7 +1366,7 @@ pub fn bls12_map_fp2_tp_g2(
     Ok(Bytes::new())
 }
 
-fn parse_g1_coordinate(coordinate_raw_bytes: Option<&[u8]>) -> Result<[u8; 48], VMError> {
+fn parse_coordinate(coordinate_raw_bytes: Option<&[u8]>) -> Result<[u8; 48], VMError> {
     let sixteen_zeroes: [u8; 16] = [0_u8; 16];
     let padded_coordinate =
         coordinate_raw_bytes.ok_or(VMError::PrecompileError(PrecompileError::ParsingInputError))?;
@@ -1390,4 +1417,56 @@ fn parse_g1_point(x: [u8; 48], y: [u8; 48], unchecked: bool) -> Result<G1Project
         }
     };
     Ok(g1_point)
+}
+
+fn parse_g2_point(
+    x_1: [u8; 48],
+    x_2: [u8; 48],
+    y_1: [u8; 48],
+    y_2: [u8; 48],
+) -> Result<G2Projective, VMError> {
+    // if a g1 point decode to (0,0) by convention it is interpreted as a point to infinity
+    let g2_point: G2Projective = if x_1.iter().all(|e| *e == 0)
+        && x_2.iter().all(|e| *e == 0)
+        && y_1.iter().all(|e| *e == 0)
+        && y_2.iter().all(|e| *e == 0)
+    {
+        G2Projective::identity()
+    } else {
+        // The crate serialize the coordintates in a reverse order
+        // https://docs.rs/bls12_381/0.8.0/src/bls12_381/g2.rs.html#401-464
+        let g2_bytes: [u8; 192] = [x_2, x_1, y_2, y_1]
+            .concat()
+            .try_into()
+            .map_err(|_| VMError::Internal(InternalError::ConversionError))?;
+
+        // We use unchecked because in the https://github.com/ethereum/EIPs/blob/master/EIPS/eip-2537.md?plain=1#L141
+        // note that there is no subgroup check for the G1 addition precompile
+        let g2_affine = G2Affine::from_uncompressed_unchecked(&g2_bytes);
+        if g2_affine.is_some().into() {
+            let g2_affine = g2_affine.unwrap();
+            if g2_affine.is_on_curve().into() {
+                g2_affine.into()
+            } else {
+                return Err(VMError::PrecompileError(PrecompileError::ParsingInputError));
+            }
+        } else {
+            return Err(VMError::PrecompileError(PrecompileError::ParsingInputError));
+        }
+    };
+    Ok(g2_point)
+}
+
+fn add_padded_coordinate(
+    result: &mut Vec<u8>,
+    coordinate_raw_bytes: Option<&[u8]>,
+) -> Result<(), VMError> {
+    // add the padding to satisfy the convention of enconding
+    // https://eips.ethereum.org/EIPS/eip-2537
+    let sixteen_zeroes: [u8; 16] = [0_u8; 16];
+    result.extend_from_slice(&sixteen_zeroes);
+    result.extend_from_slice(
+        coordinate_raw_bytes.ok_or(VMError::Internal(InternalError::SlicingError))?,
+    );
+    Ok(())
 }
