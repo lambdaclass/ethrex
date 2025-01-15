@@ -1,16 +1,67 @@
 use crate::engines::api::StoreEngine;
-
 use qmdb::{config::Config, test_helper::SimpleTask, AdsCore, AdsWrap};
+use std::{
+    collections::HashMap,
+    fmt::Debug,
+    sync::{Arc, Mutex},
+};
 
-#[derive(Debug)]
-pub struct Store;
+const STATE_TRIE_NODES_TABLE: &str = "StateTrieNodes";
+const BLOCK_NUMBERS_TABLE: &str = "BlockNumbers";
+const BLOCK_TOTAL_DIFFICULTIES_TABLE: &str = "BlockTotalDifficulties";
+const HEADERS_TABLE: &str = "Headers";
+const BLOCK_BODIES_TABLE: &str = "BlockBodies";
+const ACCOUNT_CODES_TABLE: &str = "AccountCodes";
+const RECEIPTS_TABLE: &str = "Receipts";
+const CANONICAL_BLOCK_HASHES_TABLE: &str = "CanonicalBlockHashes";
+const STORAGE_TRIE_NODES_TABLE: &str = "StorageTrieNodes";
+const CHAIN_DATA_TABLE: &str = "ChainData";
+const PAYLOADS_TABLE: &str = "Payloads";
+const PENDING_BLOCKS_TABLE: &str = "PendingBlocks";
+const TRANSACTION_LOCATIONS_TABLE: &str = "TransactionLocations";
+
+const TABLES: [&str; 13] = [
+    STATE_TRIE_NODES_TABLE,
+    BLOCK_NUMBERS_TABLE,
+    BLOCK_TOTAL_DIFFICULTIES_TABLE,
+    HEADERS_TABLE,
+    BLOCK_BODIES_TABLE,
+    ACCOUNT_CODES_TABLE,
+    RECEIPTS_TABLE,
+    CANONICAL_BLOCK_HASHES_TABLE,
+    STORAGE_TRIE_NODES_TABLE,
+    CHAIN_DATA_TABLE,
+    PAYLOADS_TABLE,
+    PENDING_BLOCKS_TABLE,
+    TRANSACTION_LOCATIONS_TABLE,
+];
+
+pub struct Store {
+    db: Arc<Mutex<HashMap<String, AdsWrap<SimpleTask>>>>,
+}
+
+impl Debug for Store {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Store")
+            .field("db", &"place holder".to_owned())
+            .finish()
+    }
+}
 
 impl Store {
     pub fn new() -> Self {
-        let config = Config::from_dir("ethrex.qmdb");
-        AdsCore::init_dir(&config);
-        let mut ads: AdsWrap<SimpleTask> = AdsWrap::new(&config);
-        Self {}
+        let db: HashMap<String, AdsWrap<SimpleTask>> = TABLES
+            .into_iter()
+            .map(|table_name| {
+                let config = Config::from_dir(table_name);
+                AdsCore::init_dir(&config);
+                let db: AdsWrap<SimpleTask> = AdsWrap::new(&config);
+                (table_name.to_owned(), db)
+            })
+            .collect();
+        Self {
+            db: Arc::new(Mutex::new(db)),
+        }
     }
 }
 
