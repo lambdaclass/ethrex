@@ -148,6 +148,7 @@ impl RpcHandler for GetPayloadV2Request {
 
     fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
         let payload = get_payload(self.payload_id, &context)?;
+        validate_payload_v1_v2(&payload.0, &context)?;
         let execution_payload_response =
             build_execution_payload_response(self.payload_id, payload, None, context)?;
         serde_json::to_value(execution_payload_response)
@@ -238,6 +239,14 @@ fn validate_execution_payload_v3(payload: &ExecutionPayload) -> Result<(), RpcEr
         return Err(RpcErr::WrongParam("excess_blob_gas".to_string()));
     }
 
+    Ok(())
+}
+
+fn validate_payload_v1_v2(block: &Block, context: &RpcApiContext) -> Result<(), RpcErr> {
+    let chain_config = &context.storage.get_chain_config()?;
+    if chain_config.is_cancun_activated(block.header.timestamp) {
+        return Err(RpcErr::UnsuportedFork(format!("Cancun")));
+    }
     Ok(())
 }
 
