@@ -1221,6 +1221,7 @@ pub fn bls12_g1add(
     Ok(Bytes::from(padded_result))
 }
 
+pub const FIELD_ELEMENT_WITHOUT_PADDING_LENGTH: usize = 48;
 pub fn bls12_g1msm(
     calldata: &Bytes,
     gas_for_call: u64,
@@ -1329,7 +1330,7 @@ pub fn bls12_g1msm(
 
     let mut output = [0u8; 128];
     let (x_bytes, y_bytes) = result_bytes
-        .split_at_checked(48)
+        .split_at_checked(FIELD_ELEMENT_WITHOUT_PADDING_LENGTH)
         .ok_or(InternalError::SlicingError)?;
     output[16..64].copy_from_slice(x_bytes);
     output[80..128].copy_from_slice(y_bytes);
