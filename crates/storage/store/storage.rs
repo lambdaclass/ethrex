@@ -4,6 +4,8 @@ use self::engines::libmdbx::Store as LibmdbxStore;
 use self::error::StoreError;
 use bytes::Bytes;
 use engines::api::StoreEngine;
+#[cfg(feature = "qmdb")]
+use engines::qmdb::Store as QMDBStore;
 #[cfg(feature = "redb")]
 use engines::redb::RedBStore;
 use ethereum_types::{Address, H256, U256};
@@ -42,6 +44,8 @@ pub enum EngineType {
     Libmdbx,
     #[cfg(feature = "redb")]
     RedB,
+    #[cfg(feature = "qmdb")]
+    Qmdb,
 }
 
 #[derive(Default, Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -92,6 +96,12 @@ impl Store {
             #[cfg(feature = "redb")]
             EngineType::RedB => Self {
                 engine: Arc::new(RedBStore::new()?),
+                mempool: Arc::new(Mutex::new(HashMap::new())),
+                blobs_bundle_pool: Arc::new(Mutex::new(HashMap::new())),
+            },
+            #[cfg(feature = "qmdb")]
+            EngineType::Qmdb => Self {
+                engine: Arc::new(QMDBStore::new()),
                 mempool: Arc::new(Mutex::new(HashMap::new())),
                 blobs_bundle_pool: Arc::new(Mutex::new(HashMap::new())),
             },
