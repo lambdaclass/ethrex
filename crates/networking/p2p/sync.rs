@@ -541,13 +541,16 @@ async fn storage_fetcher(
     let mut incoming = true;
     while incoming {
         // Fetch incoming requests
+        let awaiting_batch = Instant::now();
         match receiver.recv().await {
             Some(account_hashes_and_roots) if !account_hashes_and_roots.is_empty() => {
+                info!("Spent {} secs waiting for incoming batch", awaiting_batch.elapsed().as_secs());
                 pending_storage.extend(account_hashes_and_roots);
                 info!(
                     "Received incoming storage range request, current batch: {}/{BATCH_SIZE}",
                     pending_storage.len()
-                )
+                );
+                info!("Number of messages in receiver: {}", receiver.len());
             }
             // Disconnect / Empty message signaling no more bytecodes to sync
             _ => {
@@ -555,17 +558,23 @@ async fn storage_fetcher(
                 incoming = false
             }
         }
+        info!("Processing current batches");
         // If we have enough pending bytecodes to fill a batch
         // or if we have no more incoming batches, spawn a fetch process
         while pending_storage.len() >= BATCH_SIZE || !incoming && !pending_storage.is_empty() {
+            let now = Instant::now();
             let next_batch = pending_storage
                 .drain(..BATCH_SIZE.min(pending_storage.len()))
                 .collect::<Vec<_>>();
+            let batch_size = next_batch.len();
             let remaining =
                 fetch_storage_batch(next_batch, state_root, peers.clone(), store.clone()).await?;
+            let remaining_size = remaining.len();
             // Add unfeched bytecodes back to the queue
             pending_storage.extend(remaining);
+            info!("Processed Batch of size {} with {} remaing in {} secs", batch_size, remaining_size, now.elapsed().as_secs())
         }
+        info!("Finished processing current batches");
     }
     Ok(())
 }
@@ -611,10 +620,13 @@ async fn fetch_storage_batch(
             // For now we will fetch the full range again
             // Return remaining code hashes in the batch if we couldn't fetch all of them
             return Ok(batch);
+        } {
+            info!("Invalid/Empty batch, retrying")
         }
     }
     // This is a corner case where we fetched an account range for a block but the chain has moved on and the block
     // was dropped by the peer's snapshot. We will keep the fetcher alive to avoid errors and stop fetching as from the next account
+    info!("Pivot became stale but we cannot handle it here, on no!");
     Ok(vec![])
 }
 
