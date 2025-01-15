@@ -32,7 +32,7 @@ use super::{
     utils::{ecdh_xchng, pubkey2id},
 };
 use aes::cipher::KeyIvInit;
-use ethrex_blockchain::{error, mempool::{self}};
+use ethrex_blockchain::mempool::{self};
 use ethrex_core::{H256, H512};
 use ethrex_rlp::decode::RLPDecode;
 use ethrex_storage::Store;
@@ -149,11 +149,12 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
     }
 
     pub async fn start_peer_receiver(
-        &mut self, 
+        &mut self,
         peer_addr: std::net::SocketAddr,
         udp_socket: Arc<tokio::net::UdpSocket>,
         signer: SigningKey,
-        table: Arc<Mutex<crate::kademlia::KademliaTable>>) {
+        table: Arc<Mutex<crate::kademlia::KademliaTable>>,
+    ) {
         // Perform handshake
         debug!("Starting peer receiver");
         if let Err(e) = self.handshake().await {
@@ -167,7 +168,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
             match self.get_remote_node_id() {
                 Err(e) => {
                     debug!("Get remote id failed for {peer_addr:?}, with errror {e:?}");
-                    return self
+                    self
                         .peer_conn_failed(
                             "Error during RLPx connection",
                             RLPxError::InvalidState(),
@@ -178,19 +179,27 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
                 Ok(node_id) => {
                     debug!("Got remote id for {peer_addr:?}, with id {node_id:?}");
 
-                    let capabilities = self.capabilities.iter().map(|(cap, _)| *cap).collect();
-            
+                    let capabilities = self.capabilities.iter().map(|(cap, _)| cap.clone()).collect();
+
                     let bootnode = crate::BootNode {
-                        node_id: node_id,
+                        node_id,
                         socket_address: peer_addr,
                     };
                     debug!("About to add to table");
-                    crate::discovery_startup(peer_addr, udp_socket, table.clone(), signer, vec![bootnode]).await;
+                    crate::discovery_startup(
+                        peer_addr,
+                        udp_socket,
+                        table.clone(),
+                        signer,
+                        vec![bootnode],
+                    )
+                    .await;
                     debug!("Added to table, about to init backend communication");
-                    table
-                        .lock()
-                        .await
-                        .init_backend_communication(node_id, peer_channels, capabilities);
+                    table.lock().await.init_backend_communication(
+                        node_id,
+                        peer_channels,
+                        capabilities,
+                    );
                     if let Err(e) = self.handle_peer_conn(sender, receiver).await {
                         self.peer_conn_failed("Error during RLPx connection", e, table)
                             .await;

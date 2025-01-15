@@ -77,7 +77,6 @@ pub async fn start_network(
     ));
     let server_handle = tokio::spawn(serve_requests(
         tcp_addr,
-        udp_addr,
         udp_socket.clone(),
         signer.clone(),
         storage.clone(),
@@ -767,7 +766,6 @@ async fn pong(socket: &UdpSocket, to_addr: SocketAddr, ping_hash: H256, signer: 
 
 async fn serve_requests(
     tcp_addr: SocketAddr,
-    udp_addr: SocketAddr,
     udp_socket: Arc<UdpSocket>,
     signer: SigningKey,
     storage: Store,
@@ -803,7 +801,8 @@ async fn handle_peer_as_receiver(
 ) {
     let mut conn = RLPxConnection::receiver(signer.clone(), stream, storage, connection_broadcast);
     debug!("[INCOMING] Starting RLPx connection with {peer_addr:?}");
-    conn.start_peer_receiver(peer_addr, udp_socket, signer, table).await;
+    conn.start_peer_receiver(peer_addr, udp_socket, signer, table)
+        .await;
 }
 
 async fn handle_peer_as_initiator(
