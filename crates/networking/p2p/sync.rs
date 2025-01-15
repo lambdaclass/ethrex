@@ -696,6 +696,7 @@ async fn handle_large_storage_range(
                 }
                 // Compute current root so we can extend this trie later
                 current_root = trie.hash()?;
+                break;
             } else {
                 retry_count += 1;
             }
