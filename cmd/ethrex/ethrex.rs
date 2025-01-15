@@ -263,10 +263,9 @@ async fn main() {
             )
             .into_future();
             tracker.spawn(networking);
+            tracker.spawn(ethrex_net::periodically_show_peer_stats(peer_table));
         }
     }
-
-    tracker.spawn(ethrex_net::peridically_show_peer_stats(peer_table));
 
     tokio::select! {
         _ = tokio::signal::ctrl_c() => {
