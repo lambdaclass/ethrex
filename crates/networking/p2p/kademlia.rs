@@ -7,7 +7,7 @@ use crate::{
 use ethrex_core::{H256, H512, U256};
 use sha3::{Digest, Keccak256};
 use tokio::sync::mpsc::UnboundedSender;
-use tracing::info;
+use tracing::{info, warn};
 
 pub const MAX_NODES_PER_BUCKET: usize = 16;
 const NUMBER_OF_BUCKETS: usize = 256;
@@ -63,6 +63,8 @@ impl KademliaTable {
     pub fn insert_node(&mut self, node: Node) -> (Option<PeerData>, bool) {
         let node_id = node.node_id;
         let bucket_idx = bucket_number(node_id, self.local_node_id);
+
+        info!("Inserting node {:?} into bucket {}", node, bucket_idx);
 
         self.insert_node_inner(node, bucket_idx)
     }
@@ -292,6 +294,10 @@ impl KademliaTable {
         channels: PeerChannels,
         capabilities: Vec<Capability>,
     ) {
+        info!(
+            "[PEERS] Initializing backend communication with peer {:?}",
+            node_id
+        );
         let bucket_idx = bucket_number(self.local_node_id, node_id);
         if let Some(peer) = self.buckets.get_mut(bucket_idx).and_then(|bucket| {
             bucket
@@ -301,6 +307,11 @@ impl KademliaTable {
         }) {
             peer.channels = Some(channels);
             peer.supported_capabilities = capabilities;
+        } else {
+            warn!(
+                "[PEERS] Peer with node_id {:?} not found in the kademlia table",
+                node_id
+            );
         }
     }
 
@@ -319,9 +330,10 @@ impl KademliaTable {
             {
                 return channels;
             }
-            info!("[Sync] No peers available, retrying in 10 sec");
+            info!("[Sync] No peers available, retrying in 1 sec");
+            self.show_peer_stats();
             // This is the unlikely case where we just started the node and don't have peers, wait a bit and try again
-            tokio::time::sleep(tokio::time::Duration::from_secs(10)).await;
+            tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
         }
     }
 

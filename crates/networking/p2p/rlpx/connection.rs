@@ -32,7 +32,7 @@ use super::{
     utils::{ecdh_xchng, pubkey2id},
 };
 use aes::cipher::KeyIvInit;
-use ethrex_blockchain::mempool::{self};
+use ethrex_blockchain::{error, mempool::{self}};
 use ethrex_core::{H256, H512};
 use ethrex_rlp::decode::RLPDecode;
 use ethrex_storage::Store;
@@ -148,11 +148,65 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
         ))
     }
 
+    pub async fn start_peer_receiver(
+        &mut self, 
+        peer_addr: std::net::SocketAddr,
+        udp_socket: Arc<tokio::net::UdpSocket>,
+        signer: SigningKey,
+        table: Arc<Mutex<crate::kademlia::KademliaTable>>) {
+        // Perform handshake
+        debug!("Starting peer receiver");
+        if let Err(e) = self.handshake().await {
+            error!("Handshake failed: ({e})");
+            self.peer_conn_failed("Handshake failed", e, table).await;
+        } else {
+            // Handshake OK: handle connection
+            // Create channels to communicate directly to the peer
+            debug!("Creating peer channels for peer {peer_addr:?}");
+            let (peer_channels, sender, receiver) = PeerChannels::create();
+            match self.get_remote_node_id() {
+                Err(e) => {
+                    debug!("Get remote id failed for {peer_addr:?}, with errror {e:?}");
+                    return self
+                        .peer_conn_failed(
+                            "Error during RLPx connection",
+                            RLPxError::InvalidState(),
+                            table,
+                        )
+                        .await;
+                }
+                Ok(node_id) => {
+                    debug!("Got remote id for {peer_addr:?}, with id {node_id:?}");
+
+                    let capabilities = self.capabilities.iter().map(|(cap, _)| *cap).collect();
+            
+                    let bootnode = crate::BootNode {
+                        node_id: node_id,
+                        socket_address: peer_addr,
+                    };
+                    debug!("About to add to table");
+                    crate::discovery_startup(peer_addr, udp_socket, table.clone(), signer, vec![bootnode]).await;
+                    debug!("Added to table, about to init backend communication");
+                    table
+                        .lock()
+                        .await
+                        .init_backend_communication(node_id, peer_channels, capabilities);
+                    if let Err(e) = self.handle_peer_conn(sender, receiver).await {
+                        self.peer_conn_failed("Error during RLPx connection", e, table)
+                            .await;
+                    }
+                }
+            };
+        }
+    }
+
     /// Starts a handshake and runs the peer connection.
     /// It runs in it's own task and blocks until the connection is dropped
     pub async fn start_peer(&mut self, table: Arc<Mutex<crate::kademlia::KademliaTable>>) {
         // Perform handshake
+        debug!("Starting peer initiator");
         if let Err(e) = self.handshake().await {
+            error!("Handshake failed initiator: ({e})");
             self.peer_conn_failed("Handshake failed", e, table).await;
         } else {
             // Handshake OK: handle connection

@@ -64,8 +64,11 @@ pub async fn start_network(
         tokio::task::Id,
         Arc<RLPxMessage>,
     )>(MAX_MESSAGES_TO_BROADCAST);
+    let udp_socket = Arc::new(UdpSocket::bind(udp_addr).await.unwrap());
+
     let discovery_handle = tokio::spawn(discover_peers(
         udp_addr,
+        udp_socket.clone(),
         signer.clone(),
         storage.clone(),
         peer_table.clone(),
@@ -74,6 +77,8 @@ pub async fn start_network(
     ));
     let server_handle = tokio::spawn(serve_requests(
         tcp_addr,
+        udp_addr,
+        udp_socket.clone(),
         signer.clone(),
         storage.clone(),
         peer_table.clone(),
@@ -85,14 +90,13 @@ pub async fn start_network(
 
 async fn discover_peers(
     udp_addr: SocketAddr,
+    udp_socket: Arc<UdpSocket>,
     signer: SigningKey,
     storage: Store,
     table: Arc<Mutex<KademliaTable>>,
     bootnodes: Vec<BootNode>,
     connection_broadcast: broadcast::Sender<(tokio::task::Id, Arc<RLPxMessage>)>,
 ) {
-    let udp_socket = Arc::new(UdpSocket::bind(udp_addr).await.unwrap());
-
     let server_handler = tokio::spawn(discover_peers_server(
         udp_addr,
         udp_socket.clone(),
@@ -340,14 +344,16 @@ async fn discover_peers_server(
 /// This is a really basic startup and should be improved when we have the nodes stored in the db
 /// currently, since we are not storing nodes, the only way to have startup nodes is by providing
 /// an array of bootnodes.
-async fn discovery_startup(
+pub async fn discovery_startup(
     udp_addr: SocketAddr,
     udp_socket: Arc<UdpSocket>,
     table: Arc<Mutex<KademliaTable>>,
     signer: SigningKey,
     bootnodes: Vec<BootNode>,
 ) {
+    debug!("Starting discovery startup");
     for bootnode in bootnodes {
+        debug!("Inserting node {:?}", bootnode);
         table.lock().await.insert_node(Node {
             ip: bootnode.socket_address.ip(),
             udp_port: bootnode.socket_address.port(),
@@ -761,6 +767,8 @@ async fn pong(socket: &UdpSocket, to_addr: SocketAddr, ping_hash: H256, signer: 
 
 async fn serve_requests(
     tcp_addr: SocketAddr,
+    udp_addr: SocketAddr,
+    udp_socket: Arc<UdpSocket>,
     signer: SigningKey,
     storage: Store,
     table: Arc<Mutex<KademliaTable>>,
@@ -770,9 +778,11 @@ async fn serve_requests(
     tcp_socket.bind(tcp_addr).unwrap();
     let listener = tcp_socket.listen(50).unwrap();
     loop {
-        let (stream, _peer_addr) = listener.accept().await.unwrap();
+        let (stream, peer_addr) = listener.accept().await.unwrap();
 
         tokio::spawn(handle_peer_as_receiver(
+            peer_addr,
+            udp_socket.clone(),
             signer.clone(),
             stream,
             storage.clone(),
@@ -783,14 +793,17 @@ async fn serve_requests(
 }
 
 async fn handle_peer_as_receiver(
+    peer_addr: SocketAddr,
+    udp_socket: Arc<UdpSocket>,
     signer: SigningKey,
     stream: TcpStream,
     storage: Store,
     table: Arc<Mutex<KademliaTable>>,
     connection_broadcast: broadcast::Sender<(tokio::task::Id, Arc<RLPxMessage>)>,
 ) {
-    let mut conn = RLPxConnection::receiver(signer, stream, storage, connection_broadcast);
-    conn.start_peer(table).await;
+    let mut conn = RLPxConnection::receiver(signer.clone(), stream, storage, connection_broadcast);
+    debug!("[INCOMING] Starting RLPx connection with {peer_addr:?}");
+    conn.start_peer_receiver(peer_addr, udp_socket, signer, table).await;
 }
 
 async fn handle_peer_as_initiator(
@@ -801,6 +814,7 @@ async fn handle_peer_as_initiator(
     table: Arc<Mutex<KademliaTable>>,
     connection_broadcast: broadcast::Sender<(tokio::task::Id, Arc<RLPxMessage>)>,
 ) {
+    debug!("[INCOMING] Starting RLPx connection with {:?}", node);
     debug!("Trying RLPx connection with {node:?}");
     let stream = TcpSocket::new_v4()
         .unwrap()
