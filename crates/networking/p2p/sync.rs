@@ -602,6 +602,7 @@ async fn fetch_storage_batch(
             let mut _last_range;
             // Hold on to the last batch (if incomplete)
             if incomplete {
+                info!("Last element in batch was not completely fetched");
                 // An incomplete range cannot be empty
                 _last_range = (keys.pop().unwrap(), values.pop().unwrap());
             }
