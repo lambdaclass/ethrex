@@ -1,5 +1,3 @@
-use std::ops::Mul;
-
 use bls12_381::{G1Affine, G1Projective, Scalar};
 use bytes::Bytes;
 use ethrex_core::{serde_utils::bool, Address, H160, H256, U256};
@@ -32,6 +30,7 @@ use libsecp256k1::{self, Message, RecoveryId, Signature};
 use num_bigint::BigUint;
 use revm_primitives::SpecId;
 use sha3::Digest;
+use std::ops::Mul;
 
 use crate::{
     call_frame::CallFrame,
@@ -1174,7 +1173,6 @@ pub fn bls12_g1msm(
         return Err(VMError::PrecompileError(PrecompileError::ParsingInputError));
     }
 
-    // Gas cost
     let k = calldata.len() / LENGTH_PER_PAIR;
     let required_gas = gas_cost::bls12_g1msm(k)?;
     increase_precompile_consumed_gas(gas_for_call, required_gas, consumed_gas)?;

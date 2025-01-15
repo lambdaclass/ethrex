@@ -200,7 +200,6 @@ pub const POINT_EVALUATION_COST: u64 = 50000;
 
 pub const BLAKE2F_ROUND_COST: u64 = 1;
 
-// G1 MSM
 pub const MULTIPLIER: u64 = 1000;
 pub const G1_K_DISCOUNT: [u64; 128] = [
     1000, 949, 848, 797, 764, 750, 738, 728, 719, 712, 705, 698, 692, 687, 682, 677, 673, 669, 665,
