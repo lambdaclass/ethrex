@@ -73,3 +73,4 @@ secp256k1 = { version = "0.29", default-features = false, features = [
 ] }
 keccak-hash = "0.11.0"
 axum = "0.8.1"
+qmdb = { git = "https://github.com/LayerZero-Labs/qmdb", package = "qmdb" }
