@@ -1,7 +1,7 @@
 use ethrex_blockchain::error::ChainError;
 use ethrex_core::{
     types::{AccountState, Block, BlockHash, EMPTY_KECCACK_HASH},
-    H256,
+    H256, U256,
 };
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode, error::RLPDecodeError};
 use ethrex_storage::{error::StoreError, Store};
@@ -444,8 +444,8 @@ async fn rebuild_state_trie(
             retry_count += 1;
         }
     }
-    if retry_count >= MAX_RETRIES {
-        return Err(SyncError::StalePivot)
+    if retry_count > MAX_RETRIES {
+        return Err(SyncError::StalePivot);
     }
     info!("Account Trie fully fetched, signaling storage fetcher process");
     // Send empty batch to signal that no more batches are incoming
@@ -549,7 +549,10 @@ async fn storage_fetcher(
         let awaiting_batch = Instant::now();
         match receiver.recv().await {
             Some(account_hashes_and_roots) if !account_hashes_and_roots.is_empty() => {
-                info!("Spent {} secs waiting for incoming batch", awaiting_batch.elapsed().as_secs());
+                info!(
+                    "Spent {} secs waiting for incoming batch",
+                    awaiting_batch.elapsed().as_secs()
+                );
                 pending_storage.extend(account_hashes_and_roots);
                 info!(
                     "Received incoming storage range request, current batch: {}/{BATCH_SIZE}",
@@ -577,7 +580,12 @@ async fn storage_fetcher(
             let remaining_size = remaining.len();
             // Add unfeched bytecodes back to the queue
             pending_storage.extend(remaining);
-            info!("Processed Batch of size {} with {} remaing in {} secs", batch_size, remaining_size, now.elapsed().as_secs())
+            info!(
+                "Processed Batch of size {} with {} remaing in {} secs",
+                batch_size,
+                remaining_size,
+                now.elapsed().as_secs()
+            )
         }
         info!("Finished processing current batches");
     }
@@ -604,12 +612,27 @@ async fn fetch_storage_batch(
             .await
         {
             info!("Received {} storage ranges", keys.len());
-            let mut _last_range;
-            // Hold on to the last batch (if incomplete)
+            // Handle incomplete ranges
             if incomplete {
                 info!("Last element in batch was not completely fetched");
-                // An incomplete range cannot be empty
-                _last_range = (keys.pop().unwrap(), values.pop().unwrap());
+                // If only one incomplete range is returned then it must belong to a trie that is too big to fit into one request
+                // We will handle this large trie separately
+                if keys.len() == 1 {
+                    // An incomplete range cannot be empty
+                    let (keys, values) = (keys.pop().unwrap(), values.pop().unwrap());
+                    let (account_hash, storage_root) = batch.remove(0);
+                    handle_large_storage_range(
+                        state_root,
+                        account_hash,
+                        storage_root,
+                        keys,
+                        values,
+                        peers.clone(),
+                        store.clone(),
+                    )
+                    .await?;
+                }
+                // The incomplete range is not the first, we cannot asume it is a large trie, so lets add it back to the queue
             }
             // Store the storage ranges & rebuild the storage trie for each account
             for (keys, values) in keys.into_iter().zip(values.into_iter()) {
@@ -622,18 +645,68 @@ async fn fetch_storage_batch(
                     warn!("State sync failed for storage root {storage_root}");
                 }
             }
-            // TODO: if the last range is incomplete add it to the incomplete batches queue
-            // For now we will fetch the full range again
             // Return remaining code hashes in the batch if we couldn't fetch all of them
             return Ok(batch);
-        } {
-            return Err(SyncError::StalePivot)
         }
     }
-    // This is a corner case where we fetched an account range for a block but the chain has moved on and the block
-    // was dropped by the peer's snapshot. We will keep the fetcher alive to avoid errors and stop fetching as from the next account
-    info!("Pivot became stale but we cannot handle it here, on no!");
-    Ok(vec![])
+    // Pivot became stale
+    Err(SyncError::StalePivot)
+}
+
+/// Handles the returned incomplete storage range of a large storage trie and
+/// fetches the rest of the trie using single requests
+// TODO: Later on this method can be refactored to use a separate queue process
+// instead of blocking the current thread for the remainder of the retrieval
+async fn handle_large_storage_range(
+    state_root: H256,
+    account_hash: H256,
+    storage_root: H256,
+    keys: Vec<H256>,
+    values: Vec<U256>,
+    peers: Arc<Mutex<KademliaTable>>,
+    store: Store,
+) -> Result<(), SyncError> {
+    // First process the initial range
+    // Keep hold of the last key as this will be the first key of the next range
+    let mut next_key = *keys.last().unwrap();
+    let mut current_root = {
+        let mut trie = store.open_storage_trie(account_hash, *EMPTY_TRIE_HASH);
+        for (key, value) in keys.into_iter().zip(values.into_iter()) {
+            trie.insert(key.0.to_vec(), value.encode_to_vec())?;
+        }
+        // Compute current root so we can extend this trie later
+        trie.hash()?
+    };
+    let mut should_continue = true;
+    // Fetch the remaining range
+    let mut retry_count = 0;
+    while should_continue {
+        while retry_count <= MAX_RETRIES {
+            let peer = peers.lock().await.get_peer_channels(Capability::Snap).await;
+            if let Some((keys, values, incomplete)) = peer
+                .request_storage_range(state_root, storage_root, account_hash, next_key)
+                .await
+            {
+                next_key = *keys.last().unwrap();
+                should_continue = incomplete;
+                let mut trie = store.open_storage_trie(account_hash, current_root);
+                for (key, value) in keys.into_iter().zip(values.into_iter()) {
+                    trie.insert(key.0.to_vec(), value.encode_to_vec())?;
+                }
+                // Compute current root so we can extend this trie later
+                current_root = trie.hash()?;
+            } else {
+                retry_count += 1;
+            }
+        }
+    }
+    if retry_count > MAX_RETRIES {
+        return Err(SyncError::StalePivot);
+    }
+    if current_root != storage_root {
+        warn!("State sync failed for storage root {storage_root}");
+    }
+    Ok(())
 }
 
 /// Heals the trie given its state_root by fetching any missing nodes in it via p2p
