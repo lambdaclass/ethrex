@@ -826,11 +826,6 @@ impl VM {
             }
         }
 
-        // (9) SENDER_NOT_EOA
-        if sender_account.has_code() {
-            return Err(VMError::TxValidation(TxValidationError::SenderNotEOA));
-        }
-
         // (10) GAS_ALLOWANCE_EXCEEDED
         if self.env.gas_limit > self.env.block_gas_limit {
             return Err(VMError::TxValidation(
@@ -887,15 +882,7 @@ impl VM {
                 return Err(VMError::TxValidation(TxValidationError::Type4TxPreFork));
             }
 
-            // (17) TYPE_4_TX_LIST_EMPTY
-            // From the EIP docs: The transaction is considered invalid if the length of authorization_list is zero.
-            if auth_list.is_empty() {
-                return Err(VMError::TxValidation(
-                    TxValidationError::Type4TxAuthorizationListIsEmpty,
-                ));
-            }
-
-            // (18) TYPE_4_TX_NULL_ADDRESS
+            // (17) TYPE_4_TX_CONTRACT_CREATION
             // From the EIP docs: a null destination is not valid.
             if self.is_create() {
                 return Err(VMError::TxValidation(
@@ -903,7 +890,20 @@ impl VM {
                 ));
             }
 
+            // (18) TYPE_4_TX_LIST_EMPTY
+            // From the EIP docs: The transaction is considered invalid if the length of authorization_list is zero.
+            if auth_list.is_empty() {
+                return Err(VMError::TxValidation(
+                    TxValidationError::Type4TxAuthorizationListIsEmpty,
+                ));
+            }
+
             self.eip7702_set_access_code(initial_call_frame)?;
+        } else {
+            // (9) SENDER_NOT_EOA
+            if sender_account.has_code() {
+                return Err(VMError::TxValidation(TxValidationError::SenderNotEOA));
+            }
         }
 
         if self.is_create() {
@@ -1298,12 +1298,10 @@ impl VM {
                 continue;
             }
 
-            dbg!("EIP-7702-1");
             // 2. Verify the nonce is less than 2**64 - 1.
             if !(auth_tuple.nonce < u64::MAX) {
                 continue;
             }
-            dbg!("EIP-7702-2");
 
             // 3. authority = ecrecover(keccak(MAGIC || rlp([chain_id, address, nonce])), y_parity, r, s]
             //      s value must be less than or equal to secp256k1n/2, as specified in EIP-2.
@@ -1318,7 +1316,6 @@ impl VM {
             if auth_tuple.v != U256::one() && auth_tuple.v != U256::zero() {
                 continue;
             }
-            dbg!("EIP-7702-3");
 
             let mut rlp_buf = Vec::new();
             (auth_tuple.chain_id, auth_tuple.address, auth_tuple.nonce).encode(&mut rlp_buf);
@@ -1328,29 +1325,31 @@ impl VM {
             hasher.update(rlp_buf);
             let bytes = &mut hasher.finalize();
 
-            let message = Message::parse_slice(bytes).unwrap();
+            let Ok(message) = Message::parse_slice(bytes) else {
+                continue;
+            };
 
             let mut bytes = Vec::new();
             bytes.extend_from_slice(&auth_tuple.r_signature.to_big_endian());
             bytes.extend_from_slice(&auth_tuple.s_signature.to_big_endian());
 
-            let signature = Signature::parse_standard_slice(&bytes).map_err(|_| {
-                VMError::EIP7702Error(crate::errors::EIP7702Error::ErrorParsingSignature)
-            })?;
+            let Ok(signature) = Signature::parse_standard_slice(&bytes) else {
+                continue;
+            };
 
-            let recovery_id =
-                RecoveryId::parse(auth_tuple.v.as_u32().try_into().map_err(|_| {
-                    VMError::EIP7702Error(crate::errors::EIP7702Error::ErrorParsingSignature)
-                })?)
-                .map_err(|_| {
-                    VMError::EIP7702Error(crate::errors::EIP7702Error::ErrorParsingSignature)
-                })?;
+            let Ok(recovery_id) = RecoveryId::parse(
+                auth_tuple
+                    .v
+                    .as_u32()
+                    .try_into()
+                    .map_err(|_| VMError::Internal(InternalError::ConversionError))?,
+            ) else {
+                continue;
+            };
 
-            let authority =
-                libsecp256k1::recover(&message, &signature, &recovery_id).map_err(|_| {
-                    VMError::EIP7702Error(crate::errors::EIP7702Error::ErrorRecoveringSignature)
-                })?;
-            dbg!("EIP-7702-3.1");
+            let Ok(authority) = libsecp256k1::recover(&message, &signature, &recovery_id) else {
+                continue;
+            };
 
             let public_key = authority.serialize();
             let mut hasher = Keccak256::new();
@@ -1362,8 +1361,6 @@ impl VM {
                 address_hash.get(12..32).unwrap().try_into().unwrap();
             let authority_address = Address::from_slice(&authority_address_bytes);
 
-            dbg!(authority_address);
-
             // 4. Add authority to accessed_addresses (as defined in EIP-2929). This is done inside the self.access_account() function
             // 5. Verify the code of authority is either empty or already delegated.
             // CHECK: what do we do with this check? do we continue if it was already delegated?
@@ -1373,7 +1370,6 @@ impl VM {
             //if !(was_delegated(&authority_account_info)? || authority_account_info.has_code()) {
             //    continue;
             //}
-            dbg!("EIP-7702-5");
 
             // 6. Verify the nonce of authority is equal to nonce. In case authority does not exist in the trie, verify that nonce is equal to 0.
             // If it doesn't has nonce, it means it's zero,
@@ -1381,8 +1377,6 @@ impl VM {
             if authority_account_info.nonce != auth_tuple.nonce {
                 continue;
             }
-
-            dbg!("EIP-7702-6");
 
             // If account is not empty, it exists
             // 7. Add PER_EMPTY_ACCOUNT_COST - PER_AUTH_BASE_COST gas to the global refund counter if authority exists in the trie.
@@ -1393,7 +1387,6 @@ impl VM {
                     .map_err(|_| VMError::Internal(InternalError::ConversionError))?;
                 self.env.refunded_gas += refunded_gas_if_exists;
             }
-            dbg!("EIP-7702-7");
 
             // 8. Set the code of authority to be 0xef0100 || address. This is a delegation designation.
             let mut delegation_bytes = Vec::new();
@@ -1405,22 +1398,18 @@ impl VM {
             let auth_account = get_account_mut(&mut self.cache, &authority_address)
                 .ok_or(VMError::Internal(InternalError::AccountNotFound))?;
             if auth_tuple.address != Address::zero() {
-                // Write Designation
                 auth_account.info.bytecode = delegation_bytes.into();
             } else {
-                // auth_tuple.address is Address::zero()
                 auth_account.info.bytecode = Bytes::new();
             }
-            dbg!("EIP-7702-8");
 
             // 9. Increase the nonce of authority by one.
             self.increment_account_nonce(authority_address)
                 .map_err(|_| VMError::TxValidation(TxValidationError::NonceIsMax))?;
-            dbg!("EIP-7702-9");
 
             // From the EIP docs: a null destination is not valid.
             // CHECK: is this ok?
-            if self.is_create() {
+            if initial_call_frame.code_address == Address::zero() {
                 return Err(VMError::TxValidation(
                     TxValidationError::Type4TxContractCreation,
                 ));
@@ -1428,8 +1417,7 @@ impl VM {
             let (code_address_info, _) = self.access_account(initial_call_frame.code_address);
 
             if was_delegated(&code_address_info)? {
-                initial_call_frame.code_address =
-                    get_authorized_address(&code_address_info)?.unwrap();
+                initial_call_frame.code_address = get_authorized_address(&code_address_info)?;
                 let (auth_address_info, _) = self.access_account(initial_call_frame.code_address);
 
                 initial_call_frame.assign_bytecode(auth_address_info.bytecode);
@@ -1437,7 +1425,6 @@ impl VM {
                 initial_call_frame.assign_bytecode(code_address_info.bytecode);
             }
         }
-        dbg!("EIP-7702-DONE");
 
         Ok(())
     }
@@ -1477,7 +1464,7 @@ impl VM {
 
         // Here the address has a delegation code
         // The delegation code has the authorized address
-        let auth_address = get_authorized_address(&account.info)?.unwrap_or_default();
+        let auth_address = get_authorized_address(&account.info)?;
 
         match self.accrued_substate.touched_accounts.get(&auth_address) {
             Some(_) => {
@@ -1550,12 +1537,15 @@ pub fn was_delegated(account_info: &AccountInfo) -> Result<bool, VMError> {
     Ok(was_delegated)
 }
 
-pub fn get_authorized_address(account_info: &AccountInfo) -> Result<Option<Address>, VMError> {
+pub fn get_authorized_address(account_info: &AccountInfo) -> Result<Address, VMError> {
     if was_delegated(account_info)? {
-        let address_bytes = account_info.bytecode.get(3..).unwrap();
+        let address_bytes = account_info
+            .bytecode
+            .get(SET_CODE_DELEGATION_BYTES.len()..)
+            .ok_or(VMError::Internal(InternalError::SlicingError))?;
         let address = Address::from_slice(address_bytes);
-        Ok(Some(address))
+        Ok(address)
     } else {
-        Ok(None)
+        Err(VMError::Internal(InternalError::AccountNotFound))
     }
 }
