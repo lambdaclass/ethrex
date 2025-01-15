@@ -614,12 +614,12 @@ async fn fetch_storage_batch(
             info!("Received {} storage ranges", keys.len());
             // Handle incomplete ranges
             if incomplete {
+                // An incomplete range cannot be empty
+                let (keys, values) = (keys.pop().unwrap(), values.pop().unwrap());
                 // If only one incomplete range is returned then it must belong to a trie that is too big to fit into one request
                 // We will handle this large trie separately
                 if keys.len() == 1 {
                     info!("Large storage trie encountered, handling separately");
-                    // An incomplete range cannot be empty
-                    let (keys, values) = (keys.pop().unwrap(), values.pop().unwrap());
                     let (account_hash, storage_root) = batch.remove(0);
                     handle_large_storage_range(
                         state_root,
