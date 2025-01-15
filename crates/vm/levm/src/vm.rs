@@ -273,6 +273,8 @@ impl VM {
                     return Ok(TransactionReport {
                         result: TxResult::Success,
                         new_state: self.cache.clone(),
+                        // Here we use the gas used and not check for the floor cost
+                        // for Prague fork because the precompiles have constant gas cost
                         gas_used: current_call_frame.gas_used,
                         gas_refunded: 0,
                         output,
