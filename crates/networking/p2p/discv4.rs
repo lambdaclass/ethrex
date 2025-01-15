@@ -1086,7 +1086,6 @@ mod tests {
         updated_buf.put_slice(&buf[32..]);
 
         let decoded_packet = Packet::decode(&updated_buf);
-        println!("RESUlT {:?}", decoded_packet);
         assert!(decoded_packet.is_err());
         assert!(decoded_packet.err().unwrap() == PacketDecodeErr::InvalidSignature);
     }
