@@ -658,12 +658,12 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
         if let RLPxConnectionState::Established(state) = &mut self.state {
             let mut frame_buffer = vec![];
             message.encode(&mut frame_buffer)?;
-            let ret = frame::write(frame_buffer, state, &mut self.stream).await;
-            if ret.is_err() {
-                let node_id = self.get_remote_node_id()?;
-                warn!("Failed to send message: {message:?}, to: {node_id}");
-            }
-            ret
+            frame::write(frame_buffer, state, &mut self.stream).await
+            // if ret.is_err() {
+            //     let node_id = self.get_remote_node_id()?;
+            //     warn!("Failed to send message: {message:?}, to: {node_id}");
+            // }
+            // ret
         } else {
             Err(RLPxError::InvalidState())
         }
