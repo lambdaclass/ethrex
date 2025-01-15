@@ -202,7 +202,7 @@ pub const POINT_EVALUATION_COST: u64 = 50000;
 pub const BLAKE2F_ROUND_COST: u64 = 1;
 
 pub const BLS12_381_MSM_MULTIPLIER: u64 = 1000;
-pub const G1_K_DISCOUNT: [u64; 128] = [
+pub const BLS12_381_G1_K_DISCOUNT: [u64; 128] = [
     1000, 949, 848, 797, 764, 750, 738, 728, 719, 712, 705, 698, 692, 687, 682, 677, 673, 669, 665,
     661, 658, 654, 651, 648, 645, 642, 640, 637, 635, 632, 630, 627, 625, 623, 621, 619, 617, 615,
     613, 611, 609, 608, 606, 604, 603, 601, 599, 598, 596, 595, 593, 592, 591, 589, 588, 586, 585,
@@ -1051,13 +1051,15 @@ pub fn bls12_g1msm(k: usize) -> Result<u64, VMError> {
         return Ok(0);
     }
 
-    let discount = if k < G1_K_DISCOUNT.len() {
-        G1_K_DISCOUNT
-            .get(k.checked_sub(1).ok_or(VMError::VeryLargeNumber)?)
+    let discount = if k < BLS12_381_G1_K_DISCOUNT.len() {
+        BLS12_381_G1_K_DISCOUNT
+            .get(k.checked_sub(1).ok_or(VMError::Internal(
+                InternalError::ArithmeticOperationUnderflow,
+            ))?)
             .copied()
             .ok_or(VMError::Internal(InternalError::SlicingError))?
     } else {
-        G1_K_DISCOUNT
+        BLS12_381_G1_K_DISCOUNT
             .last()
             .copied()
             .ok_or(VMError::Internal(InternalError::SlicingError))?
