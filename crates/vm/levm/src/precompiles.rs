@@ -1250,26 +1250,7 @@ pub fn bls12_g1msm(
         let y = parse_coordinate(calldata.get(y_offset..scalar_offset))?;
         let g1 = parse_g1_point(x, y, false)?;
 
-        let scalar_bytes = calldata
-            .get(scalar_offset..pair_end)
-            .ok_or(InternalError::SlicingError)?;
-        let scalar_bytes: [u8; 32] = scalar_bytes
-            .try_into()
-            .map_err(|_| PrecompileError::ParsingInputError)?;
-
-        let mut scalar_le = [0u64; 4];
-        for (j, chunk) in scalar_bytes.chunks(8).enumerate() {
-            let bytes: [u8; 8] = chunk
-                .try_into()
-                .map_err(|_| PrecompileError::ParsingInputError)?;
-            if let Some(value) = scalar_le.get_mut(j) {
-                *value = u64::from_be_bytes(bytes);
-            } else {
-                return Err(VMError::Internal(InternalError::SlicingError));
-            }
-        }
-        scalar_le.reverse();
-        let scalar = Scalar::from_raw(scalar_le);
+        let scalar = parse_scalar(calldata.get(scalar_offset..pair_end))?;
 
         let scaled_point = G1Projective::mul(g1, scalar);
         result = result.add(&scaled_point);
@@ -1351,7 +1332,7 @@ pub fn bls12_g2msm(
     let mut result = G2Projective::identity();
     for i in 0..k {
         let x_0_offset = i
-            .checked_mul(BLS12_381_G1_MSM_PAIR_LENGTH)
+            .checked_mul(BLS12_381_G2_MSM_PAIR_LENGTH)
             .ok_or(InternalError::ArithmeticOperationOverflow)?;
         let x_1_offset = x_0_offset
             .checked_add(64)
@@ -1373,27 +1354,9 @@ pub fn bls12_g2msm(
         let x_1 = parse_coordinate(calldata.get(x_1_offset..y_0_offset))?;
         let y_0 = parse_coordinate(calldata.get(y_0_offset..y_1_offset))?;
         let y_1 = parse_coordinate(calldata.get(y_1_offset..scalar_offset))?;
-        let g2 = parse_g2_point(x_0, x_1, y_0, y_1, false)?; // ADD CHECKED
+        let g2 = parse_g2_point(x_0, x_1, y_0, y_1, false)?;
 
-        let scalar_bytes: [u8; 32] = calldata
-            .get(scalar_offset..pair_end)
-            .ok_or(InternalError::SlicingError)?
-            .try_into()
-            .map_err(|_| PrecompileError::ParsingInputError)?;
-
-        let mut scalar_le = [0u64; 4];
-        for (j, chunk) in scalar_bytes.chunks(8).enumerate() {
-            let bytes: [u8; 8] = chunk
-                .try_into()
-                .map_err(|_| PrecompileError::ParsingInputError)?;
-            if let Some(value) = scalar_le.get_mut(j) {
-                *value = u64::from_be_bytes(bytes);
-            } else {
-                return Err(VMError::Internal(InternalError::SlicingError));
-            }
-        }
-        scalar_le.reverse();
-        let scalar = Scalar::from_raw(scalar_le);
+        let scalar = parse_scalar(calldata.get(scalar_offset..pair_end))?;
 
         let scaled_point = G2Projective::mul(g2, scalar);
         result = result.add(&scaled_point);
@@ -1554,4 +1517,25 @@ fn add_padded_coordinate(
         coordinate_raw_bytes.ok_or(VMError::Internal(InternalError::SlicingError))?,
     );
     Ok(())
+}
+
+fn parse_scalar(scalar_raw_bytes: Option<&[u8]>) -> Result<Scalar, VMError> {
+    let scalar_bytes: [u8; 32] = scalar_raw_bytes
+        .ok_or(InternalError::SlicingError)?
+        .try_into()
+        .map_err(|_| PrecompileError::ParsingInputError)?;
+
+    let mut scalar_le = [0u64; 4];
+    for (j, chunk) in scalar_bytes.chunks(8).enumerate() {
+        let bytes: [u8; 8] = chunk
+            .try_into()
+            .map_err(|_| PrecompileError::ParsingInputError)?;
+        if let Some(value) = scalar_le.get_mut(j) {
+            *value = u64::from_be_bytes(bytes);
+        } else {
+            return Err(VMError::Internal(InternalError::SlicingError));
+        }
+    }
+    scalar_le.reverse();
+    Ok(Scalar::from_raw(scalar_le))
 }
