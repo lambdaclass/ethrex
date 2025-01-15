@@ -80,6 +80,34 @@ pub const POINT_EVALUATION_ADDRESS: H160 = H160([
     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
     0x00, 0x00, 0x00, 0x0a,
 ]);
+pub const BLS12_G1ADD_ADDRESS: H160 = H160([
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x0b,
+]);
+pub const BLS12_G1MSM_ADDRESS: H160 = H160([
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x0c,
+]);
+pub const BLS12_G2ADD_ADDRESS: H160 = H160([
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x0d,
+]);
+pub const BLS12_G2MSM_ADDRESS: H160 = H160([
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x0e,
+]);
+pub const BLS12_PAIRING_CHECK_ADDRESS: H160 = H160([
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x0f,
+]);
+pub const BLS12_MAP_FP_TO_G1_ADDRESS: H160 = H160([
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x10,
+]);
+pub const BLS12_MAP_FP2_TO_G2_ADDRESS: H160 = H160([
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x11,
+]);
 
 pub const PRECOMPILES: [H160; 10] = [
     ECRECOVER_ADDRESS,
@@ -94,15 +122,34 @@ pub const PRECOMPILES: [H160; 10] = [
     POINT_EVALUATION_ADDRESS,
 ];
 
+pub const PRECOMPILES_POST_CANCUN: [H160; 7] = [
+    BLS12_G1ADD_ADDRESS,
+    BLS12_G1MSM_ADDRESS,
+    BLS12_G2ADD_ADDRESS,
+    BLS12_G2MSM_ADDRESS,
+    BLS12_PAIRING_CHECK_ADDRESS,
+    BLS12_MAP_FP_TO_G1_ADDRESS,
+    BLS12_MAP_FP2_TO_G2_ADDRESS,
+];
+
 pub const BLAKE2F_ELEMENT_SIZE: usize = 8;
+
+pub const SIZE_PRECOMPILES_PRE_CANCUN: u64 = 9;
+pub const SIZE_PRECOMPILES_CANCUN: u64 = 10;
+pub const SIZE_PRECOMPILES_PRAGUE: u64 = 17;
 
 pub fn is_precompile(callee_address: &Address, spec_id: SpecId) -> bool {
     // Cancun specs is the only one that allows point evaluation precompile
     if *callee_address == POINT_EVALUATION_ADDRESS && spec_id < SpecId::CANCUN {
         return false;
     }
+    // Prague or newers forks should only use this precompiles
+    // https://eips.ethereum.org/EIPS/eip-2537
+    if PRECOMPILES_POST_CANCUN.contains(callee_address) && spec_id < SpecId::PRAGUE {
+        return false;
+    }
 
-    PRECOMPILES.contains(callee_address)
+    PRECOMPILES.contains(callee_address) || PRECOMPILES_POST_CANCUN.contains(callee_address)
 }
 
 pub fn execute_precompile(
@@ -110,7 +157,6 @@ pub fn execute_precompile(
     spec_id: SpecId,
 ) -> Result<Bytes, VMError> {
     let callee_address = current_call_frame.code_address;
-    let calldata = current_call_frame.calldata.clone();
     let gas_for_call = current_call_frame
         .gas_limit
         .checked_sub(current_call_frame.gas_used)
@@ -119,24 +165,58 @@ pub fn execute_precompile(
 
     let result = match callee_address {
         address if address == ECRECOVER_ADDRESS => {
-            ecrecover(&calldata, gas_for_call, consumed_gas)?
+            ecrecover(&current_call_frame.calldata, gas_for_call, consumed_gas)?
         }
-        address if address == IDENTITY_ADDRESS => identity(&calldata, gas_for_call, consumed_gas)?,
-        address if address == SHA2_256_ADDRESS => sha2_256(&calldata, gas_for_call, consumed_gas)?,
+        address if address == IDENTITY_ADDRESS => {
+            identity(&current_call_frame.calldata, gas_for_call, consumed_gas)?
+        }
+        address if address == SHA2_256_ADDRESS => {
+            sha2_256(&current_call_frame.calldata, gas_for_call, consumed_gas)?
+        }
         address if address == RIPEMD_160_ADDRESS => {
-            ripemd_160(&calldata, gas_for_call, consumed_gas)?
+            ripemd_160(&current_call_frame.calldata, gas_for_call, consumed_gas)?
         }
-        address if address == MODEXP_ADDRESS => {
-            modexp(&calldata, gas_for_call, consumed_gas, spec_id)?
+        address if address == MODEXP_ADDRESS => modexp(
+            &current_call_frame.calldata,
+            gas_for_call,
+            consumed_gas,
+            spec_id,
+        )?,
+        address if address == ECADD_ADDRESS => {
+            ecadd(&current_call_frame.calldata, gas_for_call, consumed_gas)?
         }
-        address if address == ECADD_ADDRESS => ecadd(&calldata, gas_for_call, consumed_gas)?,
-        address if address == ECMUL_ADDRESS => ecmul(&calldata, gas_for_call, consumed_gas)?,
+        address if address == ECMUL_ADDRESS => {
+            ecmul(&current_call_frame.calldata, gas_for_call, consumed_gas)?
+        }
         address if address == ECPAIRING_ADDRESS => {
-            ecpairing(&calldata, gas_for_call, consumed_gas)?
+            ecpairing(&current_call_frame.calldata, gas_for_call, consumed_gas)?
         }
-        address if address == BLAKE2F_ADDRESS => blake2f(&calldata, gas_for_call, consumed_gas)?,
+        address if address == BLAKE2F_ADDRESS => {
+            blake2f(&current_call_frame.calldata, gas_for_call, consumed_gas)?
+        }
         address if address == POINT_EVALUATION_ADDRESS => {
-            point_evaluation(&calldata, gas_for_call, consumed_gas)?
+            point_evaluation(&current_call_frame.calldata, gas_for_call, consumed_gas)?
+        }
+        address if address == BLS12_G1ADD_ADDRESS => {
+            bls12_g1add(&current_call_frame.calldata, gas_for_call, consumed_gas)?
+        }
+        address if address == BLS12_G1MSM_ADDRESS => {
+            bls12_g1msm(&current_call_frame.calldata, gas_for_call, consumed_gas)?
+        }
+        address if address == BLS12_G2ADD_ADDRESS => {
+            bls12_g2add(&current_call_frame.calldata, gas_for_call, consumed_gas)?
+        }
+        address if address == BLS12_G2MSM_ADDRESS => {
+            bls12_g2msm(&current_call_frame.calldata, gas_for_call, consumed_gas)?
+        }
+        address if address == BLS12_PAIRING_CHECK_ADDRESS => {
+            bls12_pairing_check(&current_call_frame.calldata, gas_for_call, consumed_gas)?
+        }
+        address if address == BLS12_MAP_FP_TO_G1_ADDRESS => {
+            bls12_map_fp_to_g1(&current_call_frame.calldata, gas_for_call, consumed_gas)?
+        }
+        address if address == BLS12_MAP_FP2_TO_G2_ADDRESS => {
+            bls12_map_fp2_tp_g2(&current_call_frame.calldata, gas_for_call, consumed_gas)?
         }
         _ => return Err(VMError::Internal(InternalError::InvalidPrecompileAddress)),
     };
@@ -1081,4 +1161,60 @@ fn point_evaluation(
     let output = POINT_EVALUATION_OUTPUT_BYTES.to_vec();
 
     Ok(Bytes::from(output))
+}
+
+pub fn bls12_g1add(
+    _calldata: &Bytes,
+    _gas_for_call: u64,
+    _consumed_gas: &mut u64,
+) -> Result<Bytes, VMError> {
+    Ok(Bytes::new())
+}
+
+pub fn bls12_g1msm(
+    _calldata: &Bytes,
+    _gas_for_call: u64,
+    _consumed_gas: &mut u64,
+) -> Result<Bytes, VMError> {
+    Ok(Bytes::new())
+}
+
+pub fn bls12_g2add(
+    _calldata: &Bytes,
+    _gas_for_call: u64,
+    _consumed_gas: &mut u64,
+) -> Result<Bytes, VMError> {
+    Ok(Bytes::new())
+}
+
+pub fn bls12_g2msm(
+    _calldata: &Bytes,
+    _gas_for_call: u64,
+    _consumed_gas: &mut u64,
+) -> Result<Bytes, VMError> {
+    Ok(Bytes::new())
+}
+
+pub fn bls12_pairing_check(
+    _calldata: &Bytes,
+    _gas_for_call: u64,
+    _consumed_gas: &mut u64,
+) -> Result<Bytes, VMError> {
+    Ok(Bytes::new())
+}
+
+pub fn bls12_map_fp_to_g1(
+    _calldata: &Bytes,
+    _gas_for_call: u64,
+    _consumed_gas: &mut u64,
+) -> Result<Bytes, VMError> {
+    Ok(Bytes::new())
+}
+
+pub fn bls12_map_fp2_tp_g2(
+    _calldata: &Bytes,
+    _gas_for_call: u64,
+    _consumed_gas: &mut u64,
+) -> Result<Bytes, VMError> {
+    Ok(Bytes::new())
 }

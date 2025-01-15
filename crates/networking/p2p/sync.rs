@@ -80,8 +80,6 @@ impl SyncManager {
                     "Sync finished, time elapsed: {} secs",
                     start_time.elapsed().as_secs()
                 );
-                // Next sync will be full-sync
-                self.sync_mode = SyncMode::Full;
             }
             Err(error) => warn!(
                 "Sync failed due to {error}, time elapsed: {} secs ",
@@ -207,6 +205,8 @@ impl SyncManager {
                 self.last_snap_pivot = pivot_header.number;
                 // Finished a sync cycle without aborting halfway, clear current checkpoint
                 store.clear_header_download_checkpoint()?;
+                // Next sync will be full-sync
+                self.sync_mode = SyncMode::Full;
             }
             SyncMode::Full => {
                 // full-sync: Fetch all block bodies and execute them sequentially to build the state
@@ -337,7 +337,8 @@ async fn rebuild_state_trie(
     let mut current_state_root = *EMPTY_TRIE_HASH;
     // Fetch Account Ranges
     // If we reached the maximum amount of retries then it means the state we are requesting is probably old and no longer available
-    for _ in 0..MAX_RETRIES {
+    let mut retry_count = 0;
+    while retry_count <= MAX_RETRIES {
         let peer = peers
             .clone()
             .lock()
@@ -349,6 +350,8 @@ async fn rebuild_state_trie(
             .request_account_range(state_root, start_account_hash)
             .await
         {
+            // Reset retry counter
+            retry_count = 0;
             // Update starting hash for next batch
             if should_continue {
                 start_account_hash = *account_hashes.last().unwrap();
@@ -393,6 +396,8 @@ async fn rebuild_state_trie(
                 // All accounts fetched!
                 break;
             }
+        } else {
+            retry_count += 1;
         }
     }
     // Send empty batch to signal that no more batches are incoming
