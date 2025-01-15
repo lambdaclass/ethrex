@@ -141,6 +141,9 @@ pub const SIZE_PRECOMPILES_PRE_CANCUN: u64 = 9;
 pub const SIZE_PRECOMPILES_CANCUN: u64 = 10;
 pub const SIZE_PRECOMPILES_PRAGUE: u64 = 17;
 
+// G1_MSM
+pub const LENGTH_PER_PAIR: usize = 160;
+
 pub fn is_precompile(callee_address: &Address, spec_id: SpecId) -> bool {
     // Cancun specs is the only one that allows point evaluation precompile
     if *callee_address == POINT_EVALUATION_ADDRESS && spec_id < SpecId::CANCUN {
@@ -228,7 +231,6 @@ fn increase_precompile_consumed_gas(
     *consumed_gas = consumed_gas
         .checked_add(gas_cost)
         .ok_or(PrecompileError::GasConsumedOverflow)?;
-    dbg!(consumed_gas);
 
     Ok(())
 }
@@ -1163,50 +1165,29 @@ pub fn bls12_g1add(
     Ok(Bytes::new())
 }
 
-pub const LENGTH_PER_PAIR: usize = 160;
-
-/// Implements EIP-2537 G1MultiExp precompile.
-/// G1 multiplication call expects `160*k` bytes as an input that is interpreted as byte concatenation of `k` slices each
-/// of them being a byte concatenation of encoding of G1 point (`128` bytes) and encoding of a scalar value (`32` bytes).
-/// Output is an encoding of multiexponentiation operation result - single G1 point
 pub fn bls12_g1msm(
     calldata: &Bytes,
     gas_for_call: u64,
     consumed_gas: &mut u64,
 ) -> Result<Bytes, VMError> {
-    // Check if the calldata is the correct length
-    // the input length is a multiple of 160 bytes ( 128 + 32  per pair).
     if calldata.is_empty() || calldata.len() % 160 != 0 {
-        // This should be an invalid error with a clearer message
         return Err(VMError::PrecompileError(PrecompileError::ParsingInputError));
     }
 
-    dbg!(calldata);
-
     // Gas cost
     let k = calldata.len() / LENGTH_PER_PAIR;
-    dbg!(k);
     let required_gas = gas_cost::bls12_g1msm(k)?;
-    dbg!(required_gas);
-    dbg!(gas_for_call);
     increase_precompile_consumed_gas(gas_for_call, required_gas, consumed_gas)?;
 
     let mut result = G1Projective::identity();
-    dbg!(result);
-
     // R = s_P_1 + s_P_2 + ... + s_P_k
     // Where:
     // s_i are scalars (numbers)
     // P_i are points in the group (in this case, points in G1)
     for i in 0..k {
-        dbg!(i);
-        // in msm the lengt_per_pair is 160 bytes
-        // where the first 128 bytes are the x and y coordinates of the point
-        // and the last 32 bytes are the scalar value
         let offset: usize = i
             .checked_mul(LENGTH_PER_PAIR)
             .ok_or(InternalError::ArithmeticOperationOverflow)?;
-        dbg!(offset);
         let x = calldata
             .get(
                 offset
@@ -1225,15 +1206,10 @@ pub fn bls12_g1msm(
                         .ok_or(InternalError::ArithmeticOperationOverflow)?,
             )
             .ok_or(InternalError::SlicingError)?;
-        dbg!(x, y);
 
-        // Validate that first 16 bytes are zero for field elements
-        dbg!("Im gonna check if x and y are zero");
         if !x.iter().take(16).all(|x| *x == 0) || !y.iter().take(16).all(|x| *x == 0) {
-            dbg!("Im gonnar return err");
             return Err(VMError::PrecompileError(PrecompileError::ParsingInputError));
         }
-        dbg!("Checked ok");
 
         let scalar_bytes = calldata
             .get(
@@ -1245,8 +1221,6 @@ pub fn bls12_g1msm(
                         .ok_or(InternalError::ArithmeticOperationOverflow)?,
             )
             .ok_or(InternalError::SlicingError)?;
-        dbg!(scalar_bytes);
-
         let scalar_bytes: [u8; 32] = scalar_bytes
             .try_into()
             .map_err(|_| PrecompileError::ParsingInputError)?;
@@ -1257,73 +1231,49 @@ pub fn bls12_g1msm(
             let bytes: [u8; 8] = chunk
                 .try_into()
                 .map_err(|_| PrecompileError::ParsingInputError)?;
-            // each scalar_le[j] is a u64 so convert each chunk of 8 bytes to u64
             scalar_le[j] = u64::from_be_bytes(bytes);
         }
-
-        dbg!(scalar_le);
-
-        // this should be in little_endian
         scalar_le.reverse();
-        dbg!(scalar_le);
-
         let scalar = Scalar::from_raw(scalar_le);
-        dbg!(scalar.to_bytes());
 
-        //from x and y we should get the byte right after the first 16 bytes which are for padding.
         let x = x.get(16..).ok_or(InternalError::SlicingError)?;
         let y = y.get(16..).ok_or(InternalError::SlicingError)?;
-        dbg!(x, y);
-        //here we should build g1 point which is the concat of x and y
         let mut g1_point_byte = Vec::with_capacity(96);
         g1_point_byte.extend_from_slice(x);
         g1_point_byte.extend_from_slice(y);
-        dbg!(g1_point_byte.clone());
 
         let g1_point_byte: [u8; 96] = g1_point_byte
             .try_into()
             .map_err(|_| PrecompileError::ParsingInputError)?;
-        dbg!(g1_point_byte);
 
-        let g1 = G1Affine::from_uncompressed(&g1_point_byte);
-        let g1: G1Projective = if g1.is_some().into() {
-            g1.unwrap()
+        let g1 = if g1_point_byte.iter().all(|e| *e == 0) {
+            G1Projective::identity()
         } else {
-            return Err(VMError::PrecompileError(PrecompileError::ParsingInputError));
-        }
-        .into();
-        dbg!(g1);
+            let g1 = G1Affine::from_uncompressed(&g1_point_byte);
+            let g1: G1Projective = if g1.is_some().into() {
+                g1.unwrap()
+            } else {
+                return Err(VMError::PrecompileError(PrecompileError::ParsingInputError));
+            }
+            .into();
+            g1
+        };
 
         let scaled_point = G1Projective::mul(g1, scalar);
-        dbg!(scaled_point);
         result = result.add(&scaled_point);
-        dbg!(result);
     }
-    dbg!("Print result again");
-    dbg!(result);
 
-    dbg!("Im gonna check if result is identity");
-    dbg!(result.is_identity());
-    let is_identity: bool = result.is_identity().into();
-    dbg!(is_identity);
     if result.is_identity().into() {
-        dbg!("Im gonna return 128 bytes of zeros");
         let output = [0u8; 128];
         return Ok(Bytes::copy_from_slice(&output));
     }
-    dbg!("Im gonna return result");
     let result_bytes = G1Affine::from(result).to_uncompressed();
-    dbg!(result_bytes);
 
-    // .to_uncompressed() returns a Vec<u8> with 96 bytes, we need to return 128 bytes.
-    // we need to padd 16 bytes x and y with zeros. first 48 bytes are x and the last 48 bytes are y.
     let mut output = [0u8; 128];
     let (x_bytes, y_bytes) = result_bytes.split_at(48);
     output[16..64].copy_from_slice(x_bytes);
     output[80..128].copy_from_slice(y_bytes);
-    debug_assert!(output.len() == 128);
 
-    dbg!(output);
     Ok(Bytes::copy_from_slice(&output))
 }
 
