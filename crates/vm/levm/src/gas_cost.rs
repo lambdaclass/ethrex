@@ -202,6 +202,18 @@ pub const POINT_EVALUATION_COST: u64 = 50000;
 
 pub const BLAKE2F_ROUND_COST: u64 = 1;
 
+pub const BLS12_381_MSM_MULTIPLIER: u64 = 1000;
+pub const BLS12_381_G1_K_DISCOUNT: [u64; 128] = [
+    1000, 949, 848, 797, 764, 750, 738, 728, 719, 712, 705, 698, 692, 687, 682, 677, 673, 669, 665,
+    661, 658, 654, 651, 648, 645, 642, 640, 637, 635, 632, 630, 627, 625, 623, 621, 619, 617, 615,
+    613, 611, 609, 608, 606, 604, 603, 601, 599, 598, 596, 595, 593, 592, 591, 589, 588, 586, 585,
+    584, 582, 581, 580, 579, 577, 576, 575, 574, 573, 572, 570, 569, 568, 567, 566, 565, 564, 563,
+    562, 561, 560, 559, 558, 557, 556, 555, 554, 553, 552, 551, 550, 549, 548, 547, 547, 546, 545,
+    544, 543, 542, 541, 540, 540, 539, 538, 537, 536, 536, 535, 534, 533, 532, 532, 531, 530, 529,
+    528, 528, 527, 526, 525, 525, 524, 523, 522, 522, 521, 520, 520, 519,
+];
+pub const G1_MUL_COST: u64 = 12000;
+
 pub fn exp(exponent: U256) -> Result<u64, VMError> {
     let exponent_byte_size = (exponent
         .bits()
@@ -1033,4 +1045,34 @@ fn calculate_cost_and_gas_limit_call(
         gas.checked_add(gas_stipend)
             .ok_or(OutOfGasError::MaxGasLimitExceeded)?,
     ))
+}
+
+pub fn bls12_g1msm(k: usize) -> Result<u64, VMError> {
+    if k == 0 {
+        return Ok(0);
+    }
+
+    let discount = if k < BLS12_381_G1_K_DISCOUNT.len() {
+        BLS12_381_G1_K_DISCOUNT
+            .get(k.checked_sub(1).ok_or(VMError::Internal(
+                InternalError::ArithmeticOperationUnderflow,
+            ))?)
+            .copied()
+            .ok_or(VMError::Internal(InternalError::SlicingError))?
+    } else {
+        BLS12_381_G1_K_DISCOUNT
+            .last()
+            .copied()
+            .ok_or(VMError::Internal(InternalError::SlicingError))?
+    };
+
+    let gas_cost = u64::try_from(k)
+        .map_err(|_| VMError::VeryLargeNumber)?
+        .checked_mul(G1_MUL_COST)
+        .ok_or(VMError::VeryLargeNumber)?
+        .checked_mul(discount)
+        .ok_or(VMError::VeryLargeNumber)?
+        .checked_div(BLS12_381_MSM_MULTIPLIER)
+        .ok_or(VMError::VeryLargeNumber)?;
+    Ok(gas_cost)
 }
