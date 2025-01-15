@@ -261,15 +261,20 @@ pub mod index_db {
         Account as RevmAccount, Address as RevmAddress, EVMError, SpecId, B256 as RevmB256,
         U256 as RevmU256,
     };
+    use thiserror::Error;
 
     use crate::{block_env, tx_env};
 
-    pub struct BorrowError;
+    #[derive(Debug, Error)]
+    pub enum IndexDBError {
+        #[error("Runtime borrowing")]
+        Borrow,
+    }
 
     /// Dummy DB for indexing read/written state from the execution a block.
     pub struct IndexDB {
-        pub written_state: HashMap<Address, Vec<U256>>,
-        pub read_state: HashMap<Address, Vec<U256>>,
+        pub written_state: HashMap<RevmAddress, Vec<RevmU256>>,
+        pub read_state: HashMap<RevmAddress, Vec<RevmU256>>,
         pub block_numbers: Vec<u64>,
         pub code_hashes: Vec<RevmB256>,
     }
@@ -288,7 +293,7 @@ pub mod index_db {
 
     #[allow(unused_variables)]
     impl DatabaseRef for AuxIndexDB {
-        type Error = BorrowError;
+        type Error = IndexDBError;
 
         fn basic_ref(
             &self,
@@ -296,7 +301,7 @@ pub mod index_db {
         ) -> Result<Option<revm_primitives::AccountInfo>, Self::Error> {
             self.read_state
                 .try_borrow_mut()
-                .map_err(|_| BorrowError)?
+                .map_err(|_| IndexDBError::Borrow)?
                 .entry(address)
                 .or_default();
             Ok(Some(Default::default()))
@@ -308,7 +313,7 @@ pub mod index_db {
         ) -> Result<RevmU256, Self::Error> {
             self.read_state
                 .try_borrow_mut()
-                .map_err(|_| BorrowError)?
+                .map_err(|_| IndexDBError::Borrow)?
                 .entry(address)
                 .or_default()
                 .push(index);
@@ -317,7 +322,7 @@ pub mod index_db {
         fn block_hash_ref(&self, number: u64) -> Result<RevmB256, Self::Error> {
             self.block_numbers
                 .try_borrow_mut()
-                .map_err(|_| BorrowError)?
+                .map_err(|_| IndexDBError::Borrow)?
                 .push(number);
             Ok(Default::default())
         }
@@ -327,7 +332,7 @@ pub mod index_db {
         ) -> Result<revm_primitives::Bytecode, Self::Error> {
             self.code_hashes
                 .try_borrow_mut()
-                .map_err(|_| BorrowError)?
+                .map_err(|_| IndexDBError::Borrow)?
                 .push(code_hash);
             Ok(Default::default())
         }
@@ -353,7 +358,7 @@ pub mod index_db {
             block: &Block,
             chain_id: u64,
             spec_id: SpecId,
-        ) -> Result<Self, EVMError<BorrowError>> {
+        ) -> Result<Self, EVMError<IndexDBError>> {
             let block_env = block_env(&block.header);
             let mut db = AuxIndexDB::default();
 
