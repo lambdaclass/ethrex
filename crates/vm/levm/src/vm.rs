@@ -182,7 +182,7 @@ impl VM {
                     address_to,
                     bytecode,
                     value,
-                    calldata.clone(),
+                    calldata,
                     false,
                     env.gas_limit,
                     0,
@@ -274,11 +274,10 @@ impl VM {
                     return Ok(TransactionReport {
                         result: TxResult::Success,
                         new_state: self.cache.clone(),
-                        //gas_used: self.gas_used(current_call_frame)?,
                         gas_used: current_call_frame.gas_used,
                         gas_refunded: 0,
                         output,
-                        logs: current_call_frame.logs.clone(),
+                        logs: std::mem::take(&mut current_call_frame.logs),
                         created_address: None,
                     });
                 }
@@ -298,11 +297,11 @@ impl VM {
 
                     return Ok(TransactionReport {
                         result: TxResult::Revert(error),
-                        new_state: self.cache.clone(),
+                        new_state: HashMap::default(),
                         gas_used: current_call_frame.gas_limit,
                         gas_refunded: 0,
                         output: Bytes::new(),
-                        logs: current_call_frame.logs.clone(),
+                        logs: std::mem::take(&mut current_call_frame.logs),
                         created_address: None,
                     });
                 }
@@ -430,7 +429,7 @@ impl VM {
                     if (self.is_create() && current_call_frame.depth == 0)
                         || current_call_frame.create_op_called
                     {
-                        let contract_code = current_call_frame.output.clone();
+                        let contract_code = std::mem::take(&mut current_call_frame.output);
                         let code_length = contract_code.len();
 
                         let code_length_u64: u64 = code_length
@@ -476,11 +475,11 @@ impl VM {
 
                                 return Ok(TransactionReport {
                                     result: TxResult::Revert(error),
-                                    new_state: self.cache.clone(),
+                                    new_state: HashMap::default(),
                                     gas_used: self.gas_used(current_call_frame)?,
                                     gas_refunded: self.env.refunded_gas,
-                                    output: current_call_frame.output.clone(),
-                                    logs: current_call_frame.logs.clone(),
+                                    output: std::mem::take(&mut current_call_frame.output),
+                                    logs: std::mem::take(&mut current_call_frame.logs),
                                     created_address: None,
                                 });
                             }
@@ -489,11 +488,11 @@ impl VM {
 
                     return Ok(TransactionReport {
                         result: TxResult::Success,
-                        new_state: self.cache.clone(),
+                        new_state: HashMap::default(),
                         gas_used: self.gas_used(current_call_frame)?,
                         gas_refunded: self.env.refunded_gas,
-                        output: current_call_frame.output.clone(),
-                        logs: current_call_frame.logs.clone(),
+                        output: std::mem::take(&mut current_call_frame.output),
+                        logs: std::mem::take(&mut current_call_frame.logs),
                         created_address: None,
                     });
                 }
@@ -522,11 +521,11 @@ impl VM {
 
                     return Ok(TransactionReport {
                         result: TxResult::Revert(error),
-                        new_state: self.cache.clone(),
+                        new_state: HashMap::default(),
                         gas_used: self.gas_used(current_call_frame)?,
                         gas_refunded: self.env.refunded_gas,
-                        output: current_call_frame.output.clone(), // Bytes::new() if error is not RevertOpcode
-                        logs: current_call_frame.logs.clone(),
+                        output: std::mem::take(&mut current_call_frame.output), // Bytes::new() if error is not RevertOpcode
+                        logs: std::mem::take(&mut current_call_frame.logs),
                         created_address: None,
                     });
                 }
@@ -917,8 +916,9 @@ impl VM {
 
         if self.is_create() {
             // Assign bytecode to context and empty calldata
-            initial_call_frame.assign_bytecode(initial_call_frame.calldata.clone());
-            initial_call_frame.calldata = Bytes::new();
+            initial_call_frame.bytecode = std::mem::take(&mut initial_call_frame.calldata);
+            initial_call_frame.valid_jump_destinations =
+                get_valid_jump_destinations(&initial_call_frame.bytecode).unwrap_or_default();
         }
         Ok(())
     }
@@ -1276,7 +1276,7 @@ impl VM {
             gas_used: self.env.gas_limit,
             gas_refunded: 0,
             logs: vec![],
-            new_state: self.cache.clone(),
+            new_state: HashMap::default(),
             output: Bytes::new(),
             created_address: None,
         };
