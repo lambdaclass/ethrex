@@ -4693,5 +4693,5 @@ fn g1_mul() {
     let expected_result = [0u8; 128];
 
     assert_eq!(result, Bytes::copy_from_slice(&expected_result));
-    assert_eq!(consumed_gas, 12000); // Verify gas consumptio
+    assert_eq!(consumed_gas, 12000); // Verify gas consumption
 }
