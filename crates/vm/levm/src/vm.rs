@@ -695,14 +695,9 @@ impl VM {
     pub fn get_base_fee_per_blob_gas(&self) -> Result<U256, VMError> {
         fake_exponential(
             MIN_BASE_FEE_PER_BLOB_GAS,
-            self.env
-                .block_excess_blob_gas
-                .unwrap_or_default()
-                .try_into()
-                .map_err(|_| VMError::VeryLargeNumber)?, //Maybe replace unwrap_or_default for sth else later.
-            BLOB_BASE_FEE_UPDATE_FRACTION.into(),
+            self.env.block_excess_blob_gas.unwrap_or_default(),
+            BLOB_BASE_FEE_UPDATE_FRACTION,
         )
-        .map(|ok_value| ok_value.into())
     }
 
     /// ## Description
