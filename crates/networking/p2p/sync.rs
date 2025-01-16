@@ -333,7 +333,7 @@ async fn rebuild_state_trie(
     ));
     // Resume download from checkpoint if available or start from an empty trie
     // We cannot keep an open trie here so we will track the root between lookups
-    let (mut current_state_root, mut start_account_hash) = checkpoint.unwrap_or((H256::zero(), *EMPTY_TRIE_HASH));
+    let (mut current_state_root, mut start_account_hash) = checkpoint.unwrap_or((*EMPTY_TRIE_HASH, H256::zero()));
     info!("Starting/Resuming state trie download from key {start_account_hash}");
     // Fetch Account Ranges
     // If we reached the maximum amount of retries then it means the state we are requesting is probably old and no longer available

@@ -146,8 +146,6 @@ async fn main() {
         }
     }
 
-    store.clear_state_trie_download_checkpoint();
-
     let genesis = read_genesis_file(&network);
     store
         .add_initial_state(genesis.clone())
