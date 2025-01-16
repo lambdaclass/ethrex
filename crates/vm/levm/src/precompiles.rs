@@ -1345,12 +1345,25 @@ pub fn bls12_g2msm(
 
 pub fn bls12_pairing_check(
     calldata: &Bytes,
-    _gas_for_call: u64,
-    _consumed_gas: &mut u64,
+    gas_for_call: u64,
+    consumed_gas: &mut u64,
 ) -> Result<Bytes, VMError> {
     if calldata.is_empty() || calldata.len() % BLS12_381_PAIRING_CHECK_PAIR_LENGTH != 0 {
         return Err(VMError::PrecompileError(PrecompileError::ParsingInputError));
     }
+
+    // GAS
+    let k = calldata.len() / BLS12_381_PAIRING_CHECK_PAIR_LENGTH;
+    let gas_cost = gas_cost::bls12_pairing_check(k)?;
+    k.checked_mul(32600)
+        .ok_or(VMError::PrecompileError(
+            PrecompileError::GasConsumedOverflow,
+        ))?
+        .checked_add(37700)
+        .ok_or(VMError::PrecompileError(
+            PrecompileError::GasConsumedOverflow,
+        ))?;
+    increase_precompile_consumed_gas(gas_for_call, gas_cost, consumed_gas)?;
     Ok(Bytes::new())
 }
 
