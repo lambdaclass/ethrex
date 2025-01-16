@@ -51,18 +51,29 @@ jobs:
           sudo chmod +r /proc/kallsyms
           sudo perf list hw
 
+      - name: Check addr2line installation
+        id: check-addr2line
+        run: |
+          if command -v addr2line >/dev/null 2>&1; then
+            echo "addr2line_exists=true" >> $GITHUB_OUTPUT
+          else
+            echo "addr2line_exists=false" >> $GITHUB_OUTPUT
+          fi
+
       - name: Checkout gimli addr2line
+        if: steps.check-addr2line.outputs.addr2line_exists != 'true'
         uses: actions/checkout@v4
         with:
           repository: gimli-rs/addr2line
           path: "addr2line"
 
       - name: Build gimli addr2line
+        if: steps.check-addr2line.outputs.addr2line_exists != 'true'
         working-directory: ./addr2line
         run: |
           # Little hack we need else it throws error building
           echo "[workspace]" >> ./Cargo.toml
-          cargo install --features="bin" addr2line
+          cargo install --force --features="bin" addr2line
 
       - name: Install flamegraph
         run: |
@@ -82,11 +93,13 @@ jobs:
         name: Generate Flamegraph data for Ethrex
         shell: bash
         run: |
-          CARGO_PROFILE_RELEASE_DEBUG=true cargo flamegraph --no-build -c "record -o perf.data -F997 --call-graph dwarf,16384 -g" \
-          --bin ethrex --features dev  --  --network /home/runner/work/ethrex/ethrex/test_data/genesis-l2.json --http.port 1729 >/dev/null &
-          echo "Waiting for compilation to finish..."
-          sleep 60
-          ls -l ./target/release
+          CARGO_PROFILE_RELEASE_DEBUG=true cargo flamegraph -c "record -o perf.data -F997 --call-graph dwarf,16384 -g" \
+          --bin ethrex --features dev -- --network /home/runner/work/ethrex/ethrex/test_data/genesis-l2.json --http.port 1729 >/dev/null &
+          while [ ! -x "./target/release/ethrex" ]; do
+            echo "Waiting for ethrex binary to be ready..."
+            sleep 2
+          done
+          sleep 10
           echo "Compilation finished. Executing load test..."
           bash /home/runner/work/ethrex/ethrex/.github/scripts/flamegraph_watcher.sh &&
           echo "Load test finished"
@@ -113,47 +126,33 @@ jobs:
     outputs:
       time: ${{steps.generate-flamegraph-reth.outputs.time}}
     steps:
-      - name: Cache Cargo binaries
-        uses: actions/cache@v4
-        with:
-          path: ~/.cargo/bin
-          key: ${{ runner.os }}-cargo-install-${{ hashFiles('cmd/ethrex_l2/Cargo.toml') }}
-          restore-keys: |
-            ${{ runner.os }}-cargo-install-
-
       - name: Checkout sources
         uses: actions/checkout@v4
 
-      - name: Cache reth binary
-        id: cache-reth-binary
-        uses: actions/cache@v4
-        with:
-          path: ./reth-binary
-          key: reth-binary-${{ env.RUST_RETH_VERSION }}-${{ runner.os }}
-
       - name: Rustup toolchain install
-        if: steps.cache-reth-binary.outputs.cache-hit != 'true'
         uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: ${{ env.RUST_RETH_VERSION }}
 
       - name: Checkout reth
-        if: steps.cache-reth-binary.outputs.cache-hit != 'true'
         uses: actions/checkout@v4
         with:
           repository: paradigmxyz/reth
           path: "reth"
           ref: main
 
-      - name: Build reth
-        if: steps.cache-reth-binary.outputs.cache-hit != 'true'
-        run: |
-          cd ./reth
-          CARGO_PROFILE_RELEASE_DEBUG=true cargo build --profile profiling --bin reth
-          ls -l ./target/profiling
-          mkdir -p ../reth-binary
-          cp target/profiling/reth ../reth-binary/
-          echo "Reth binary built and cached"
+      - name: Cache cargo dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin
+            ~/.cargo/registry
+            ~/.cargo/git
+            reth/target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}-${{ env.RUST_RETH_VERSION }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}-
+            ${{ runner.os }}-cargo-
 
       - name: Change perf settings
         run: |
@@ -162,18 +161,29 @@ jobs:
           sudo chmod +r /proc/kallsyms
           sudo perf list hw
 
+      - name: Check addr2line installation
+        id: check-addr2line
+        run: |
+          if command -v addr2line >/dev/null 2>&1; then
+            echo "addr2line_exists=true" >> $GITHUB_OUTPUT
+          else
+            echo "addr2line_exists=false" >> $GITHUB_OUTPUT
+          fi
+
       - name: Checkout gimli addr2line
+        if: steps.check-addr2line.outputs.addr2line_exists != 'true'
         uses: actions/checkout@v4
         with:
           repository: gimli-rs/addr2line
           path: "addr2line"
 
       - name: Build gimli addr2line
+        if: steps.check-addr2line.outputs.addr2line_exists != 'true'
         working-directory: ./addr2line
         run: |
           # Little hack we need else it throws error building
           echo "[workspace]" >> ./Cargo.toml
-          cargo install --features="bin" addr2line
+          cargo install --force --features="bin" addr2line
 
       - name: Install flamegraph
         run: |
@@ -186,19 +196,31 @@ jobs:
           ethrex_l2 config create default --default
           ethrex_l2 config set default
 
+      - name: Cache reth binary
+        id: cache-reth-binary
+        uses: actions/cache@v4
+        with:
+          path: ./reth/target/profiling
+          key: reth-binary-${{ env.RUST_RETH_VERSION }}-${{ runner.os }}-${{ hashFiles('reth/**/*.rs') }}
+
       - id: generate-flamegraph-reth
         name: Build and test reth
         shell: bash
         # --dev.block-time 1000ms set to 1000ms to match ethrex block generation time
         run: |
-          chmod +x ./reth-binary/reth
           cd ./reth
+          if [ ! -f "target/profiling/reth" ]; then
+            CARGO_PROFILE_RELEASE_DEBUG=true cargo build --profile profiling
+          fi
           CARGO_PROFILE_RELEASE_DEBUG=true cargo flamegraph -c "record -o perf.data -F997 --call-graph dwarf,16384 -g" \
-          --exec ./reth-binary/reth -- node --chain /home/runner/work/ethrex/ethrex/test_data/genesis-load-test.json --dev \
+          --bin reth --profile profiling -- node --chain /home/runner/work/ethrex/ethrex/test_data/genesis-load-test.json --dev \
           --dev.block-time 1000ms --http.port 1729  --txpool.max-pending-txns 100000000 --txpool.max-new-txns 1000000000 \
           --txpool.pending-max-count 100000000 --txpool.pending-max-size 10000000000 --txpool.basefee-max-count 100000000000 \
           --txpool.basefee-max-size 1000000000000 --txpool.queued-max-count 1000000000 >/dev/null &
-          echo "Waiting for reth to start..."
+          while [ ! -x "./target/profiling/reth" ]; do
+            echo "Waiting for reth binary to be ready..."
+            sleep 10
+          done
           sleep 30
           echo "Executing load test..."
           bash /home/runner/work/ethrex/ethrex/.github/scripts/flamegraph_watcher.sh &&
