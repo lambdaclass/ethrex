@@ -70,6 +70,7 @@ impl SyncManager {
     /// After the sync cycle is complete, the sync mode will be set to full
     /// If the sync fails, no error will be returned but a warning will be emitted
     /// [WARNING] Sync is done optimistically, so headers and bodies may be stored even if their data has not been fully synced if the sync is aborted halfway
+    /// [WARNING] Sync is currenlty simplified and will not download bodies + receipts previous to the pivot during snap sync
     pub async fn start_sync(&mut self, current_head: H256, sync_head: H256, store: Store) {
         info!("Syncing from current head {current_head} to sync_head {sync_head}");
         let start_time = Instant::now();
@@ -99,34 +100,11 @@ impl SyncManager {
         // This step is not parallelized
         let mut all_block_hashes = vec![];
         // Check if we have some blocks downloaded from a previous sync attempt
-        if let Some(last_header) = store.get_latest_downloaded_header()? {
-            // Debug Code Block
-            {
-                let last_downloaded_header =
-                    store.get_block_header_by_hash(last_header)?.unwrap().number;
-                info!("Resuming header download from last downloaded header with number: {last_downloaded_header}");
+        if matches!(self.sync_mode, SyncMode::Snap) {
+            if let Some(last_header) = store.get_header_download_checkpoint()? {
+                // Set latest downloaded header as current head for header fetching
+                current_head = last_header;
             }
-            // We might have more headers than bodies downloaded so we should queue missing bodies for download
-            // let last_body = match store.get_latest_downloaded_body()? {
-            //     Some(hash) => hash,
-            //     None => current_head,
-            // };
-            // Debug Code Block
-            // {
-            //     let last_downloaded_body = store.get_block_header_by_hash(last_body)?.unwrap().number;
-            //     info!("Resuming body download from last downloaded body with number: {last_downloaded_body}");
-            // }
-            // if last_body != last_header {
-            //     let mut parent = last_header;
-            //     while parent != last_body {
-            //         all_block_hashes.insert(0, parent);
-            //         let parent_header = store.get_block_header_by_hash(parent)?.unwrap();
-            //         println!("Queuing body {} for download", parent_header.number);
-            //         parent = parent_header.parent_hash;
-            //     }
-            // }
-            // Set latest downloaded header as current head for header fetching
-            current_head = last_header;
         }
         loop {
             let peer = self
@@ -159,7 +137,7 @@ impl SyncManager {
                 if !sync_head_found {
                     current_head = *block_hashes.last().unwrap();
                     // Update snap state
-                    store.set_latest_downloaded_header(current_head)?;
+                    store.set_header_download_checkpoint(current_head)?;
                 }
                 // Store headers and save hashes for full block retrieval
                 all_block_hashes.extend_from_slice(&block_hashes[..]);
@@ -189,11 +167,6 @@ impl SyncManager {
                 } else {
                     all_block_hashes.len() - 1
                 };
-                let store_bodies_handle = tokio::spawn(store_block_bodies(
-                    all_block_hashes[pivot_idx..].to_vec(),
-                    self.peers.clone(),
-                    store.clone(),
-                ));
                 let mut pivot_header = store
                     .get_block_header_by_hash(all_block_hashes[pivot_idx])?
                     .ok_or(SyncError::CorruptDB)?;
@@ -201,6 +174,11 @@ impl SyncManager {
                     "Selected block {} as pivot for snap sync",
                     pivot_header.number
                 );
+                let store_bodies_handle = tokio::spawn(store_block_bodies(
+                    all_block_hashes[pivot_idx..].to_vec(),
+                    self.peers.clone(),
+                    store.clone(),
+                ));
                 let mut stale_pivot =
                     !rebuild_state_trie(pivot_header.state_root, self.peers.clone(), store.clone())
                         .await?;
@@ -226,12 +204,6 @@ impl SyncManager {
                 store_bodies_handle.await??;
                 // For all blocks before the pivot: Store the bodies and fetch the receipts
                 // For all blocks after the pivot: Process them fully
-                // let store_receipts_handle = tokio::spawn(store_receipts(
-                //     all_block_hashes[pivot_idx..].to_vec(),
-                //     self.peers.clone(),
-                //     store.clone(),
-                // ));
-                // Execute blocks after pivot
                 for hash in &all_block_hashes[pivot_idx..] {
                     let block = store
                         .get_block_by_hash(*hash)?
@@ -240,8 +212,9 @@ impl SyncManager {
                     store.update_latest_block_number(block.header.number)?;
                     ethrex_blockchain::add_block(&block, &store)?;
                 }
-                //store_receipts_handle.await??;
                 self.last_snap_pivot = pivot_header.number;
+                // Finished a sync cycle without aborting halfway, clear current checkpoint
+                store.clear_header_download_checkpoint()?;
                 // Next sync will be full-sync
                 self.sync_mode = SyncMode::Full;
             }
@@ -250,11 +223,6 @@ impl SyncManager {
                 download_and_run_blocks(all_block_hashes, self.peers.clone(), store.clone()).await?
             }
         }
-        // Finished a sync cycle without aborting halfway, clear current state (TODO: write pivot here too)
-        store.clear_latest_downloaded_header()?;
-        store.clear_latest_downloaded_body()?;
-        // Next sync will be full-sync
-        self.sync_mode = SyncMode::Full;
         Ok(())
     }
 }
@@ -312,8 +280,6 @@ async fn store_block_bodies(
             info!(" Received {} Block Bodies", block_bodies.len());
             // Track which bodies we have already fetched
             let current_block_hashes = block_hashes.drain(..block_bodies.len());
-            // Update snap state
-            store.set_latest_downloaded_body(*current_block_hashes.as_ref().last().unwrap())?;
             // Add bodies to storage
             for (hash, body) in current_block_hashes.zip(block_bodies.into_iter()) {
                 store.add_block_body(hash, body)?;
@@ -329,6 +295,8 @@ async fn store_block_bodies(
 }
 
 /// Fetches all receipts for the given block hashes via p2p and stores them
+// TODO: remove allow when used again
+#[allow(unused)]
 async fn store_receipts(
     mut block_hashes: Vec<BlockHash>,
     peers: Arc<Mutex<KademliaTable>>,
@@ -611,7 +579,11 @@ async fn fetch_storage_batch(
             .request_storage_ranges(state_root, batch_roots, batch_hahses, H256::zero())
             .await
         {
-            info!("Received {} storage ranges, last batch incomplete: {}", keys.len(), incomplete);
+            info!(
+                "Received {} storage ranges, last batch incomplete: {}",
+                keys.len(),
+                incomplete
+            );
             // Handle incomplete ranges
             if incomplete {
                 // An incomplete range cannot be empty

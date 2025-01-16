@@ -526,40 +526,22 @@ impl StoreEngine for Store {
         Ok(receipts.into_iter().map(|receipt| receipt.to()).collect())
     }
 
-    fn set_latest_downloaded_header(&self, block_hash: BlockHash) -> Result<(), StoreError> {
+    fn set_header_download_checkpoint(&self, block_hash: BlockHash) -> Result<(), StoreError> {
         self.write::<SnapState>(
-            SnapStateIndex::LatestDownloadedHeader,
+            SnapStateIndex::HeaderDownloadCheckpoint,
             block_hash.encode_to_vec(),
         )
     }
 
-    fn get_latest_downloaded_header(&self) -> Result<Option<BlockHash>, StoreError> {
-        self.read::<SnapState>(SnapStateIndex::LatestDownloadedHeader)?
+    fn get_header_download_checkpoint(&self) -> Result<Option<BlockHash>, StoreError> {
+        self.read::<SnapState>(SnapStateIndex::HeaderDownloadCheckpoint)?
             .map(|ref h| BlockHash::decode(h))
             .transpose()
             .map_err(StoreError::RLPDecode)
     }
 
-    fn clear_latest_downloaded_header(&self) -> Result<(), StoreError> {
-        self.delete::<SnapState>(SnapStateIndex::LatestDownloadedHeader)
-    }
-
-    fn set_latest_downloaded_body(&self, block_hash: BlockHash) -> Result<(), StoreError> {
-        self.write::<SnapState>(
-            SnapStateIndex::LatestDownloadedBody,
-            block_hash.encode_to_vec(),
-        )
-    }
-
-    fn get_latest_downloaded_body(&self) -> Result<Option<BlockHash>, StoreError> {
-        self.read::<SnapState>(SnapStateIndex::LatestDownloadedBody)?
-            .map(|ref h| BlockHash::decode(h))
-            .transpose()
-            .map_err(StoreError::RLPDecode)
-    }
-
-    fn clear_latest_downloaded_body(&self) -> Result<(), StoreError> {
-        self.delete::<SnapState>(SnapStateIndex::LatestDownloadedBody)
+    fn clear_header_download_checkpoint(&self) -> Result<(), StoreError> {
+        self.delete::<SnapState>(SnapStateIndex::HeaderDownloadCheckpoint)
     }
 }
 

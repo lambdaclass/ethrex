@@ -57,12 +57,8 @@ struct ChainData {
 // Keeps track of the state left by the latest snap attempt
 #[derive(Default, Debug)]
 pub struct SnapState {
-    /// The last block number used as a pivot for snap-sync
-    last_snap_pivot: u64,
     /// Latest downloaded block header's hash from a previously aborted sync
-    last_downloaded_header_hash: Option<BlockHash>,
-    /// Latest downloaded block body's hash from a previously aborted sync
-    last_downloaded_body_hash: Option<BlockHash>,
+    header_download_checkpoint: Option<BlockHash>,
 }
 
 impl Store {
@@ -437,31 +433,17 @@ impl StoreEngine for Store {
         Ok(())
     }
 
-    fn set_latest_downloaded_header(&self, block_hash: BlockHash) -> Result<(), StoreError> {
-        self.inner().snap_state.last_downloaded_header_hash = Some(block_hash);
+    fn set_header_download_checkpoint(&self, block_hash: BlockHash) -> Result<(), StoreError> {
+        self.inner().snap_state.header_download_checkpoint = Some(block_hash);
         Ok(())
     }
 
-    fn get_latest_downloaded_header(&self) -> Result<Option<BlockHash>, StoreError> {
-        Ok(self.inner().snap_state.last_downloaded_header_hash)
+    fn get_header_download_checkpoint(&self) -> Result<Option<BlockHash>, StoreError> {
+        Ok(self.inner().snap_state.header_download_checkpoint)
     }
 
-    fn clear_latest_downloaded_header(&self) -> Result<(), StoreError> {
-        self.inner().snap_state.last_downloaded_header_hash = None;
-        Ok(())
-    }
-
-    fn set_latest_downloaded_body(&self, block_hash: BlockHash) -> Result<(), StoreError> {
-        self.inner().snap_state.last_downloaded_body_hash = Some(block_hash);
-        Ok(())
-    }
-
-    fn get_latest_downloaded_body(&self) -> Result<Option<BlockHash>, StoreError> {
-        Ok(self.inner().snap_state.last_downloaded_body_hash)
-    }
-
-    fn clear_latest_downloaded_body(&self) -> Result<(), StoreError> {
-        self.inner().snap_state.last_downloaded_body_hash = None;
+    fn clear_header_download_checkpoint(&self) -> Result<(), StoreError> {
+        self.inner().snap_state.header_download_checkpoint = None;
         Ok(())
     }
 }

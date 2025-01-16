@@ -35,27 +35,20 @@ impl From<u8> for ChainDataIndex {
     }
 }
 
-/// Represents the key for each unique value of the chain data stored in the db
-//  Stores chain-specific data such as chain id and latest finalized/pending/safe block number
+/// Represents the key for each unique value of the snap state stored in the db
+//  Stores the snap state from previous sync cycles. Currently stores the header download checkpoint
+//, but will later on also include the body download checkpoint and the last pivot used
 #[derive(Debug, Copy, Clone)]
 pub enum SnapStateIndex {
-    // Pivot used by the last completed snap sync cycle
-    LastPivot = 0,
-    // Hash of the last downloaded header in a previous sync that was aborted
-    LatestDownloadedHeader = 1,
-    // Hash of the last downloaded body in a previous sync that was aborted
-    LatestDownloadedBody = 2,
+    // Hash of the last downloaded header in a previous sync cycle that was aborted
+    HeaderDownloadCheckpoint = 0,
 }
 
 impl From<u8> for SnapStateIndex {
     fn from(value: u8) -> Self {
         match value {
-            x if x == SnapStateIndex::LastPivot as u8 => SnapStateIndex::LastPivot,
-            x if x == SnapStateIndex::LatestDownloadedHeader as u8 => {
-                SnapStateIndex::LatestDownloadedHeader
-            }
-            x if x == SnapStateIndex::LatestDownloadedBody as u8 => {
-                SnapStateIndex::LatestDownloadedBody
+            x if x == SnapStateIndex::HeaderDownloadCheckpoint as u8 => {
+                SnapStateIndex::HeaderDownloadCheckpoint
             }
             _ => panic!("Invalid value when casting to SnapDataIndex: {}", value),
         }
