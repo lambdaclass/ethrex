@@ -2,6 +2,7 @@
 
 
 set -e
+set -x
 
 if [ "$#" -ne 2 ]; then
     echo "Usage: $0 <revm_file> <levm_file>"
