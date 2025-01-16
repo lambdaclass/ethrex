@@ -49,6 +49,19 @@ jobs:
           sudo sysctl kernel.perf_event_paranoid=-1
           sudo perf list hw
 
+      - name: Checkout gimli addr2line
+        uses: actions/checkout@v4
+        with:
+          repository: gimli-rs/addr2line
+          path: "addr2line"
+
+      - name: Build gimli addr2line
+        working-directory: ./addr2line
+        run: |
+          # Little hack we need else it throws error building
+          echo "[workspace]" >> ./Cargo.toml
+          cargo install --features="bin" addr2line
+
       - name: Install flamegraph
         run: |
           cargo install flamegraph
@@ -78,7 +91,8 @@ jobs:
       - name: Generate SVG
         shell: bash
         run: |
-          perf script -v -i /home/runner/work/ethrex/ethrex/perf.data --no-inline > stack.data
+          PATH=$HOME/.cargo/bin:$PATH which addr2line
+          PATH=$HOME/.cargo/bin:$PATH perf script -v -i /home/runner/work/ethrex/ethrex/perf.data --no-inline > stack.data
           inferno-collapse-perf -q < stack.data > collapsed.data
           inferno-flamegraph --title "Ethrex Flamegraph" < collapsed.data > flamegraph_ethrex.svg
 
@@ -111,6 +125,19 @@ jobs:
         run: |
           sudo sysctl kernel.perf_event_paranoid=-1
           sudo perf list hw
+
+      - name: Checkout gimli addr2line
+        uses: actions/checkout@v4
+        with:
+          repository: gimli-rs/addr2line
+          path: "addr2line"
+
+      - name: Build gimli addr2line
+        working-directory: ./addr2line
+        run: |
+          # Little hack we need else it throws error building
+          echo "[workspace]" >> ./Cargo.toml
+          cargo install --features="bin" addr2line
 
       - name: Install flamegraph
         run: |
@@ -148,7 +175,8 @@ jobs:
       - name: Generate SVG
         shell: bash
         run: |
-          perf script -v -i /home/runner/work/ethrex/ethrex/reth/perf.data --no-inline > stack.data
+          PATH=$HOME/.cargo/bin:$PATH which addr2line
+          PATH=$HOME/.cargo/bin:$PATH perf script -v -i /home/runner/work/ethrex/ethrex/reth/perf.data --no-inline > stack.data
           inferno-collapse-perf -q < stack.data > collapsed.data
           inferno-flamegraph --title "Reth Flamegraph" < collapsed.data > flamegraph_reth.svg
 
