@@ -48,12 +48,86 @@ impl ForkId {
             fork_next,
         }
     }
+
+    // See https://eips.ethereum.org/EIPS/eip-2124#validation-rules.
+    pub fn is_valid(
+        &self,
+        incoming: Self,
+        latest_block_number: u64,
+        head_timestamp: u64,
+        chain_config: ChainConfig,
+        genesis_hash: BlockHash,
+    ) -> bool {
+        let (block_number_based_forks, timestamp_based_forks) = chain_config.gather_forks();
+        // decide if our head is block or timestamp based.
+        let mut head = head_timestamp;
+        if let Some(last_block_number_based_fork) = block_number_based_forks.last() {
+            if *last_block_number_based_fork > latest_block_number {
+                head = latest_block_number;
+            }
+        }
+        if incoming.fork_hash == self.fork_hash {
+            // validation rule #1
+            if incoming.fork_next == 0 {
+                return true;
+            }
+            if incoming.fork_next <= head {
+                return false;
+            }
+            return true;
+        }
+
+        let forks = [
+            block_number_based_forks.as_slice(),
+            timestamp_based_forks.as_slice(),
+        ]
+        .concat();
+        let valid_combinations = get_all_fork_id_combinations(forks, genesis_hash);
+
+        let mut is_subset = true;
+
+        for (fork_hash, fork_next) in valid_combinations {
+            if is_subset {
+                // is a subset of the local past forks (rule #2)
+                if incoming.fork_hash == fork_hash && incoming.fork_next == fork_next {
+                    return true;
+                }
+            } else {
+                // is a superset of the local past forks (rule #3)
+                if incoming.fork_hash == fork_hash {
+                    return true;
+                }
+            }
+            if fork_hash == self.fork_hash {
+                // from this point, is a superset of the local past forks
+                is_subset = false;
+            }
+        }
+        // rule #4
+        false
+    }
 }
 
-fn update_checksum(forks: Vec<Option<u64>>, hasher: &mut Hasher, head: u64) -> u64 {
+fn get_all_fork_id_combinations(forks: Vec<u64>, genesis_hash: BlockHash) -> Vec<(H32, u64)> {
+    let mut combinations = vec![];
+
+    let mut hasher = Hasher::new();
+    hasher.update(genesis_hash.as_bytes());
+    for activation in forks {
+        combinations.push((
+            H32::from_slice(&hasher.clone().finalize().to_be_bytes()),
+            activation,
+        ));
+        hasher.update(&activation.to_be_bytes());
+    }
+    combinations.push((H32::from_slice(&hasher.finalize().to_be_bytes()), 0));
+    return combinations;
+}
+
+fn update_checksum(forks: Vec<u64>, hasher: &mut Hasher, head: u64) -> u64 {
     let mut last_included = 0;
 
-    for activation in forks.into_iter().flatten() {
+    for activation in forks {
         if activation <= head {
             if activation != last_included {
                 hasher.update(&activation.to_be_bytes());

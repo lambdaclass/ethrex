@@ -122,7 +122,7 @@ impl ChainConfig {
         }
     }
 
-    pub fn gather_forks(&self) -> (Vec<Option<u64>>, Vec<Option<u64>>) {
+    pub fn gather_forks(&self) -> (Vec<u64>, Vec<u64>) {
         let block_number_based_forks: Vec<Option<u64>> = vec![
             self.homestead_block,
             if self.dao_fork_support {
@@ -151,6 +151,16 @@ impl ChainConfig {
             self.prague_time,
             self.verkle_time,
         ];
+
+        // filter the None ones
+        let block_number_based_forks = block_number_based_forks
+            .into_iter()
+            .filter_map(|block| block)
+            .collect();
+        let timestamp_based_forks = timestamp_based_forks
+            .into_iter()
+            .filter_map(|block| block)
+            .collect();
 
         (block_number_based_forks, timestamp_based_forks)
     }
