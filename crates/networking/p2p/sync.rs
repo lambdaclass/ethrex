@@ -590,7 +590,7 @@ async fn fetch_storage_batch(
                 let (last_keys, last_values) = (keys.pop().unwrap(), values.pop().unwrap());
                 // If only one incomplete range is returned then it must belong to a trie that is too big to fit into one request
                 // We will handle this large trie separately
-                if keys.len() == 1 {
+                if keys.is_empty() {
                     info!("Large storage trie encountered, handling separately");
                     let (account_hash, storage_root) = batch.remove(0);
                     handle_large_storage_range(
