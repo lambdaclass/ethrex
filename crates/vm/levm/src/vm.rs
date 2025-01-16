@@ -700,7 +700,7 @@ impl VM {
                 .unwrap_or_default()
                 .try_into()
                 .map_err(|_| VMError::VeryLargeNumber)?, //Maybe replace unwrap_or_default for sth else later.
-            BLOB_BASE_FEE_UPDATE_FRACTION,
+            BLOB_BASE_FEE_UPDATE_FRACTION.into(),
         )
         .map(|ok_value| ok_value.into())
     }

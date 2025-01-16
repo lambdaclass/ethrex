@@ -776,16 +776,16 @@ pub fn staticcall(
     calculate_cost_and_gas_limit_call(true, gas_from_stack, gas_left, call_gas_costs, 0)
 }
 
-pub fn fake_exponential(factor: u64, numerator: u64, denominator: u64) -> Result<u64, VMError> {
-    let mut i = 1;
-    let mut output: u64 = 0;
+pub fn fake_exponential(factor: U256, numerator: U256, denominator: U256) -> Result<U256, VMError> {
+    let mut i = U256::one();
+    let mut output: U256 = U256::zero();
 
     // Initial multiplication: factor * denominator
     let mut numerator_accum = factor
         .checked_mul(denominator)
         .ok_or(InternalError::ArithmeticOperationOverflow)?;
 
-    while numerator_accum > 0 {
+    while !numerator_accum.is_zero() {
         // Safe addition to output
         output = output
             .checked_add(numerator_accum)
@@ -805,7 +805,7 @@ pub fn fake_exponential(factor: u64, numerator: u64, denominator: u64) -> Result
             ))?;
 
         i = i
-            .checked_add(1)
+            .checked_add(U256::one())
             .ok_or(InternalError::ArithmeticOperationOverflow)?;
     }
 
