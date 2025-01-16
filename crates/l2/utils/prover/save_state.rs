@@ -385,12 +385,13 @@ pub fn block_number_has_all_proofs(block_number: u64) -> Result<bool, SaveStateE
 
 #[cfg(test)]
 #[allow(clippy::expect_used)]
+// TODO THIS TEST IS FAILING
 mod tests {
     use ethrex_blockchain::add_block;
     use ethrex_storage::{EngineType, Store};
     use ethrex_vm::execution_db::ExecutionDB;
     use risc0_zkvm::sha::Digest;
-    use sp1_sdk::{HashableKey, PlonkBn254Proof, ProverClient, SP1Proof, SP1PublicValues};
+    use sp1_sdk::{HashableKey, Prover, ProverClient, SP1Stdin};
 
     use super::*;
     use crate::utils::{
@@ -458,22 +459,16 @@ mod tests {
             0x28, 0x00,
         ];
 
-        let prover = ProverClient::mock();
-        let (_pk, vk) =
+        let prover = ProverClient::builder().mock().build();
+        let (pk, vk) =
             prover.setup(&[magic_bytes1, magic_bytes2, magic_bytes3, &[0; 256]].concat());
 
+        let sp1_proof_with_values = prover.prove(&pk, &SP1Stdin::new()).plonk().run().unwrap();
+
+        // Create a mock Plonk proof.
+
         let sp1_proof = Sp1Proof {
-            proof: Box::new(sp1_sdk::SP1ProofWithPublicValues {
-                proof: SP1Proof::Plonk(PlonkBn254Proof {
-                    public_inputs: ["1".to_owned(), "2".to_owned()],
-                    encoded_proof: "d".repeat(4),
-                    raw_proof: "d".repeat(4),
-                    plonk_vkey_hash: [1; 32],
-                }),
-                stdin: sp1_sdk::SP1Stdin::new(),
-                public_values: SP1PublicValues::new(),
-                sp1_version: "dummy".to_owned(),
-            }),
+            proof: Box::new(sp1_proof_with_values),
             vk,
         };
 
