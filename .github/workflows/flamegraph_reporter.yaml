@@ -47,6 +47,8 @@ jobs:
       - name: Change perf settings
         run: |
           sudo sysctl kernel.perf_event_paranoid=-1
+          sudo sysctl -w kernel.kptr_restrict=0
+          sudo chmod +r /proc/kallsyms
           sudo perf list hw
 
       - name: Checkout gimli addr2line
@@ -145,6 +147,8 @@ jobs:
       - name: Change perf settings
         run: |
           sudo sysctl kernel.perf_event_paranoid=-1
+          sudo sysctl -w kernel.kptr_restrict=0
+          sudo chmod +r /proc/kallsyms
           sudo perf list hw
 
       - name: Checkout gimli addr2line
