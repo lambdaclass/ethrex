@@ -1432,26 +1432,24 @@ fn parse_g1_point(x: [u8; 48], y: [u8; 48], unchecked: bool) -> Result<G1Project
         if unchecked {
             // We use unchecked because in the https://github.com/ethereum/EIPs/blob/master/EIPS/eip-2537.md?plain=1#L141
             // note that there is no subgroup check for the G1 addition precompile
-            let g1_affine = G1Affine::from_uncompressed_unchecked(&g1_bytes);
+            let g1_affine = G1Affine::from_uncompressed_unchecked(&g1_bytes)
+                .into_option()
+                .ok_or(VMError::PrecompileError(PrecompileError::ParsingInputError))?;
 
-            if g1_affine.is_some().into() {
-                let g1_affine = g1_affine.unwrap();
-                if g1_affine.is_on_curve().into() {
-                    g1_affine.into()
-                } else {
-                    return Err(VMError::PrecompileError(PrecompileError::ParsingInputError));
-                }
-            } else {
-                return Err(VMError::PrecompileError(PrecompileError::ParsingInputError));
+            // We still need to check if the point is on the curve
+            if !bool::from(g1_affine.is_on_curve()) {
+                return Err(VMError::PrecompileError(
+                    PrecompileError::BLS12381G1PointNotInCurve,
+                ));
             }
+
+            G1Projective::from(g1_affine)
         } else {
-            let g1_affine = G1Affine::from_uncompressed(&g1_bytes);
+            let g1_affine = G1Affine::from_uncompressed(&g1_bytes)
+                .into_option()
+                .ok_or(VMError::PrecompileError(PrecompileError::ParsingInputError))?;
 
-            if g1_affine.is_some().into() {
-                g1_affine.unwrap().into()
-            } else {
-                return Err(VMError::PrecompileError(PrecompileError::ParsingInputError));
-            }
+            G1Projective::from(g1_affine)
         }
     };
     Ok(g1_point)
@@ -1482,26 +1480,24 @@ fn parse_g2_point(
         if unchecked {
             // We use unchecked because in the https://github.com/ethereum/EIPs/blob/master/EIPS/eip-2537.md?plain=1#L141
             // note that there is no subgroup check for the G1 addition precompile
-            let g2_affine = G2Affine::from_uncompressed_unchecked(&g2_bytes);
-            if g2_affine.is_some().into() {
-                let g2_affine = g2_affine.unwrap();
-                if g2_affine.is_on_curve().into() {
-                    g2_affine.into()
-                } else {
-                    return Err(VMError::PrecompileError(PrecompileError::ParsingInputError));
-                }
-            } else {
-                return Err(VMError::PrecompileError(PrecompileError::ParsingInputError));
-            }
-        } else {
-            let g2_affine = G2Affine::from_uncompressed(&g2_bytes);
+            let g2_affine = G2Affine::from_uncompressed_unchecked(&g2_bytes)
+                .into_option()
+                .ok_or(VMError::PrecompileError(PrecompileError::ParsingInputError))?;
 
-            if g2_affine.is_some().into() {
-                g2_affine.unwrap().into()
-            } else {
-                return Err(VMError::PrecompileError(PrecompileError::ParsingInputError));
+            // We still need to check if the point is on the curve
+            if !bool::from(g2_affine.is_on_curve()) {
+                return Err(VMError::PrecompileError(
+                    PrecompileError::BLS12381G2PointNotInCurve,
+                ));
             }
-        }
+          
+            G2Projective::from(g2_affine)
+        } else {
+            let g2_affine = G2Affine::from_uncompressed(&g2_bytes)
+                .into_option()
+                .ok_or(VMError::PrecompileError(PrecompileError::ParsingInputError))?;
+
+            G2Projective::from(g2_affine)
     };
     Ok(g2_point)
 }
