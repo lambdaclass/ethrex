@@ -112,6 +112,14 @@ jobs:
     outputs:
       time: ${{steps.generate-flamegraph-reth.outputs.time}}
     steps:
+      - name: Cache Cargo binaries
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/bin
+          key: ${{ runner.os }}-cargo-install-${{ hashFiles('cmd/ethrex_l2/Cargo.toml') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-install-
+
       - name: Checkout sources
         uses: actions/checkout@v4
 
@@ -143,14 +151,6 @@ jobs:
         with:
           workspaces: "reth -> target"
           key: reth-build-main
-
-      - name: Cache Cargo binaries
-        uses: actions/cache@v4
-        with:
-          path: ~/.cargo/bin
-          key: ${{ runner.os }}-cargo-install-${{ hashFiles('cmd/ethrex_l2/Cargo.toml') }}
-          restore-keys: |
-            ${{ runner.os }}-cargo-install-
 
       - name: Change perf settings
         run: |
