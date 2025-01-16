@@ -36,14 +36,6 @@ jobs:
       - name: Caching
         uses: Swatinem/rust-cache@v2
 
-      - name: Cache Cargo binaries
-        uses: actions/cache@v4
-        with:
-          path: ~/.cargo/bin
-          key: ${{ runner.os }}-cargo-install-${{ hashFiles('cmd/ethrex_l2/Cargo.toml') }}
-          restore-keys: |
-            ${{ runner.os }}-cargo-install-
-
       - name: Change perf settings
         run: |
           sudo sysctl kernel.perf_event_paranoid=-1
@@ -81,14 +73,22 @@ jobs:
         run: |
           if [ ! -f "./cargo/bin/flamegraph" ]; then
             cargo install --force flamegraph
+          else
+            echo "./cargo/bin/flamegraph" already found
           fi
-          if [ ! -f "./cargo/bin/inferno" ]; then
+          if [ ! -f "./cargo/bin/inferno-collapse-perf" ]; then
             cargo install --force inferno
+          else
+            echo "./cargo/bin/inferno-collapse-perf" already found
           fi
 
       - name: Install ethrex_l2 cli
         run: |
-          cargo install --path cmd/ethrex_l2
+          if [ -f "./cargo/bin/ethrex_l2" ]; then
+            echo "./cargo/bin/ethrex_l2" already found
+          else
+            cargo install --path cmd/ethrex_l2
+          fi
           ethrex_l2 config create default --default
           ethrex_l2 config set default
 
@@ -96,6 +96,7 @@ jobs:
         name: Generate Flamegraph data for Ethrex
         shell: bash
         run: |
+          rm -rf target/release/ethrex
           CARGO_PROFILE_RELEASE_DEBUG=true cargo flamegraph -c "record -o perf.data -F997 --call-graph dwarf,16384 -g" \
           --bin ethrex --features dev -- --network /home/runner/work/ethrex/ethrex/test_data/genesis-l2.json --http.port 1729 >/dev/null &
           while [ ! -x "./target/release/ethrex" ]; do
@@ -144,18 +145,11 @@ jobs:
           path: "reth"
           ref: main
 
-      - name: Cache cargo dependencies
-        uses: actions/cache@v4
+      - name: Caching
+        uses: Swatinem/rust-cache@v2
         with:
-          path: |
-            ~/.cargo/bin
-            ~/.cargo/registry
-            ~/.cargo/git
-            reth/target
-          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}-${{ env.RUST_RETH_VERSION }}
-          restore-keys: |
-            ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}-
-            ${{ runner.os }}-cargo-
+          workspaces: '. -> target
+          ./reth -> ./reth/target'
 
       - name: Change perf settings
         run: |
@@ -194,25 +188,24 @@ jobs:
         run: |
           if [ ! -f "./cargo/bin/flamegraph" ]; then
             cargo install --force flamegraph
+          else
+            echo "./cargo/bin/flamegraph" already found
           fi
-          if [ ! -f "./cargo/bin/inferno" ]; then
+          if [ ! -f "./cargo/bin/inferno-collapse-perf" ]; then
             cargo install --force inferno
+          else
+            echo "./cargo/bin/inferno-collapse-perf" already found
           fi
 
       - name: Install ethrex_l2 cli
         run: |
-          cargo install --force --path cmd/ethrex_l2
+          if [ -f "./cargo/bin/ethrex_l2" ]; then
+            echo "./cargo/bin/ethrex_l2" already found
+          else
+            cargo install --path cmd/ethrex_l2
+          fi
           ethrex_l2 config create default --default
           ethrex_l2 config set default
-
-      - name: Cache reth binary
-        id: cache-reth-binary
-        uses: actions/cache@v4
-        with:
-          path:
-            ./reth/target/
-            ~/.cargo
-          key: reth-binary-${{ env.RUST_RETH_VERSION }}-${{ runner.os }}-${{ hashFiles('reth/**/*.rs') }}
 
       - id: generate-flamegraph-reth
         name: Build and test reth
@@ -220,12 +213,7 @@ jobs:
         # --dev.block-time 1000ms set to 1000ms to match ethrex block generation time
         run: |
           cd ./reth
-          if [ ! -f "target/profiling/reth" ]; then
-            echo "reth binary not in cache, building..."
-            CARGO_PROFILE_RELEASE_DEBUG=true cargo build --profile profiling
-          else
-            echo "reth binary cached, skipping build"
-          fi
+          rm -rf target/profiling/reth
           CARGO_PROFILE_RELEASE_DEBUG=true cargo flamegraph -c "record -o perf.data -F997 --call-graph dwarf,16384 -g" \
           --bin reth --profile profiling -- node --chain /home/runner/work/ethrex/ethrex/test_data/genesis-load-test.json --dev \
           --dev.block-time 1000ms --http.port 1729  --txpool.max-pending-txns 100000000 --txpool.max-new-txns 1000000000 \
