@@ -343,7 +343,7 @@ async fn discover_peers_server(
 /// This is a really basic startup and should be improved when we have the nodes stored in the db
 /// currently, since we are not storing nodes, the only way to have startup nodes is by providing
 /// an array of bootnodes.
-pub async fn discovery_startup(
+async fn discovery_startup(
     udp_addr: SocketAddr,
     udp_socket: Arc<UdpSocket>,
     table: Arc<Mutex<KademliaTable>>,
@@ -657,7 +657,7 @@ fn peers_to_ask_push(peers_to_ask: &mut Vec<Node>, target: H512, node: Node) {
 /// Sends a ping to the addr
 /// # Returns
 /// an optional hash corresponding to the message header hash to account if the send was successful
-async fn ping(
+pub async fn ping(
     socket: &UdpSocket,
     local_addr: SocketAddr,
     to_addr: SocketAddr,

@@ -181,28 +181,34 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
 
                     let capabilities = self.capabilities.iter().map(|(cap, _)| cap.clone()).collect();
 
-                    let bootnode = crate::BootNode {
+                    let node = crate::Node {
                         node_id,
-                        socket_address: peer_addr,
+                        ip: peer_addr.ip(),
+                        udp_port: peer_addr.port(),
+                        tcp_port: peer_addr.port(),
                     };
+
                     debug!("About to add to table");
-                    crate::discovery_startup(
-                        peer_addr,
-                        udp_socket,
-                        table.clone(),
-                        signer,
-                        vec![bootnode],
-                    )
-                    .await;
+                    
+                    let mut table = table.lock().await;
+
+                    let (peer, inserted_to_table) = table.insert_node(node);
+                    if inserted_to_table && peer.is_some() {
+                        let peer = peer.unwrap();
+                        let node_addr = std::net::SocketAddr::new(peer.node.ip, peer.node.udp_port);
+                        let sockedt_addr = std::net::SocketAddr::new(std::net::Ipv4Addr::new(127,0, 0, 1).into(), 30303);
+                        let ping_hash = crate::ping(&udp_socket, sockedt_addr, node_addr, &signer).await;
+                        table.update_peer_ping(peer.node.node_id, ping_hash);
+                    };
+
                     debug!("Added to table, about to init backend communication");
-                    table.lock().await.init_backend_communication(
+                    table.init_backend_communication(
                         node_id,
                         peer_channels,
                         capabilities,
                     );
                     if let Err(e) = self.handle_peer_conn(sender, receiver).await {
-                        self.peer_conn_failed("Error during RLPx connection", e, table)
-                            .await;
+                        error!("Error during RLPx connection: {e}");
                     }
                 }
             };
