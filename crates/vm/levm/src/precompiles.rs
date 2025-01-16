@@ -1359,40 +1359,26 @@ pub fn bls12_pairing_check(
 
     let mut points: Vec<(G1Affine, G2Prepared)> = Vec::new();
     for i in 0..k {
-        let g1_offset = i
+        let g1_point_offset = i
             .checked_mul(BLS12_381_PAIRING_CHECK_PAIR_LENGTH)
             .ok_or(InternalError::ArithmeticOperationOverflow)?;
-        let y_offset = g1_offset
-            .checked_add(64)
+        let g2_point_offset = g1_point_offset
+            .checked_add(128)
             .ok_or(InternalError::ArithmeticOperationOverflow)?;
-        let g2_offset = y_offset
-            .checked_add(64)
+        let pair_end = g2_point_offset
+            .checked_add(256)
             .ok_or(InternalError::ArithmeticOperationOverflow)?;
-        let x_1_offset = g2_offset
-            .checked_add(64)
-            .ok_or(InternalError::ArithmeticOperationOverflow)?;
-        let y_0_offset = x_1_offset
-            .checked_add(64)
-            .ok_or(InternalError::ArithmeticOperationOverflow)?;
-        let y_1_offset = y_0_offset
-            .checked_add(64)
-            .ok_or(InternalError::ArithmeticOperationOverflow)?;
-        let pair_end = y_1_offset
-            .checked_add(64)
-            .ok_or(InternalError::ArithmeticOperationOverflow)?;
-
-        let g1_x = parse_coordinate(calldata.get(g1_offset..y_offset))?;
-        let g1_y = parse_coordinate(calldata.get(y_offset..g2_offset))?;
-
-        let g2_x_0 = parse_coordinate(calldata.get(g2_offset..x_1_offset))?;
-        let g2_x_1 = parse_coordinate(calldata.get(x_1_offset..y_0_offset))?;
-        let g2_y_0 = parse_coordinate(calldata.get(y_0_offset..y_1_offset))?;
-        let g2_y_1 = parse_coordinate(calldata.get(y_1_offset..pair_end))?;
 
         // The check for the subgroup is required
         // https://github.com/ethereum/EIPs/blob/master/EIPS/eip-2537.md?plain=1#L194
-        let g1 = G1Affine::from(parse_g1_point(g1_x, g1_y, false)?);
-        let g2 = G2Affine::from(parse_g2_point(g2_x_0, g2_x_1, g2_y_0, g2_y_1, false)?);
+        let g1 = G1Affine::from(parse_g1_point(
+            calldata.get(g1_point_offset..g2_point_offset),
+            false,
+        )?);
+        let g2 = G2Affine::from(parse_g2_point(
+            calldata.get(g2_point_offset..pair_end),
+            false,
+        )?);
         points.push((g1, G2Prepared::from(g2)));
     }
 
