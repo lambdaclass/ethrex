@@ -51,7 +51,7 @@ impl From<RpcErr> for RpcErrorMetadata {
             RpcErr::TooLargeRequest => RpcErrorMetadata {
                 code: -38004,
                 data: None,
-                message: format!("Too large request"),
+                message: "Too large request".to_string(),
             },
             RpcErr::UnsuportedFork(context) => RpcErrorMetadata {
                 code: -38005,
