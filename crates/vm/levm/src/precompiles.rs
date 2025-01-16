@@ -1,4 +1,6 @@
-use bls12_381::{G1Affine, G1Projective, G2Affine, G2Projective, Scalar};
+use bls12_381::{
+    multi_miller_loop, G1Affine, G1Projective, G2Affine, G2Prepared, G2Projective, Gt, Scalar,
+};
 
 use bytes::Bytes;
 use ethrex_core::{serde_utils::bool, Address, H160, H256, U256};
@@ -144,6 +146,7 @@ pub const SIZE_PRECOMPILES_PRAGUE: u64 = 17;
 
 pub const BLS12_381_G1_MSM_PAIR_LENGTH: usize = 160;
 pub const BLS12_381_G2_MSM_PAIR_LENGTH: usize = 288;
+pub const BLS12_381_PAIRING_CHECK_PAIR_LENGTH: usize = 384;
 
 const BLS12_381_G1ADD_VALID_INPUT_LENGTH: usize = 256;
 const BLS12_381_G2ADD_VALID_INPUT_LENGTH: usize = 512;
@@ -1343,11 +1346,59 @@ pub fn bls12_g2msm(
 }
 
 pub fn bls12_pairing_check(
-    _calldata: &Bytes,
-    _gas_for_call: u64,
-    _consumed_gas: &mut u64,
+    calldata: &Bytes,
+    gas_for_call: u64,
+    consumed_gas: &mut u64,
 ) -> Result<Bytes, VMError> {
-    Ok(Bytes::new())
+    if calldata.is_empty() || calldata.len() % BLS12_381_PAIRING_CHECK_PAIR_LENGTH != 0 {
+        return Err(VMError::PrecompileError(PrecompileError::ParsingInputError));
+    }
+
+    // GAS
+    let k = calldata.len() / BLS12_381_PAIRING_CHECK_PAIR_LENGTH;
+    let gas_cost = gas_cost::bls12_pairing_check(k)?;
+    increase_precompile_consumed_gas(gas_for_call, gas_cost, consumed_gas)?;
+
+    let mut points: Vec<(G1Affine, G2Prepared)> = Vec::new();
+    for i in 0..k {
+        let g1_point_offset = i
+            .checked_mul(BLS12_381_PAIRING_CHECK_PAIR_LENGTH)
+            .ok_or(InternalError::ArithmeticOperationOverflow)?;
+        let g2_point_offset = g1_point_offset
+            .checked_add(128)
+            .ok_or(InternalError::ArithmeticOperationOverflow)?;
+        let pair_end = g2_point_offset
+            .checked_add(256)
+            .ok_or(InternalError::ArithmeticOperationOverflow)?;
+
+        // The check for the subgroup is required
+        // https://github.com/ethereum/EIPs/blob/master/EIPS/eip-2537.md?plain=1#L194
+        let g1 = G1Affine::from(parse_g1_point(
+            calldata.get(g1_point_offset..g2_point_offset),
+            false,
+        )?);
+        let g2 = G2Affine::from(parse_g2_point(
+            calldata.get(g2_point_offset..pair_end),
+            false,
+        )?);
+        points.push((g1, G2Prepared::from(g2)));
+    }
+
+    // The crate bls12_381 expects a reference to the points
+    let points: Vec<(&G1Affine, &G2Prepared)> = points.iter().map(|(g1, g2)| (g1, g2)).collect();
+
+    // perform the final exponentiation to get the result of the pairing check
+    // https://docs.rs/bls12_381/0.8.0/src/bls12_381/pairings.rs.html#43-48
+    let result: Gt = multi_miller_loop(&points).final_exponentiation();
+
+    // follows this https://github.com/ethereum/EIPs/blob/master/EIPS/eip-2537.md?plain=1#L188
+    if result == Gt::identity() {
+        let mut result = vec![0_u8; 31];
+        result.push(1);
+        Ok(Bytes::from(result))
+    } else {
+        Ok(Bytes::copy_from_slice(&[0_u8; 32]))
+    }
 }
 
 pub fn bls12_map_fp_to_g1(
