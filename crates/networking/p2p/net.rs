@@ -143,9 +143,11 @@ async fn discover_peers_server(
     signer: SigningKey,
     tx_broadcaster_send: broadcast::Sender<(tokio::task::Id, Arc<RLPxMessage>)>,
 ) {
+    debug!("Starting discovery server");
     let mut buf = vec![0; MAX_DISC_PACKET_SIZE];
 
     loop {
+        debug!("Waiting for a packet");
         let (read, from) = udp_socket.recv_from(&mut buf).await.unwrap();
         debug!("Received {read} bytes from {from}");
 

@@ -99,6 +99,7 @@ impl SyncManager {
         // This step is not parallelized
         let mut all_block_hashes = vec![];
         loop {
+            debug!("[Sync] About to check peers in syncing");
             let peer = self
                 .peers
                 .lock()
