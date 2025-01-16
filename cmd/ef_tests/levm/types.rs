@@ -113,6 +113,10 @@ pub struct EFTestInfo {
     pub reference_spec: Option<String>,
     #[serde(rename = "reference-spec-version", default)]
     pub reference_spec_version: Option<String>,
+
+    // These fields are implemented in the Legacy Test
+    #[serde(rename = "filledwith", default)]
+    pub filled_with: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
