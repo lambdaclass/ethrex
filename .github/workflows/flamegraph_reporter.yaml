@@ -85,8 +85,12 @@ jobs:
           CARGO_PROFILE_RELEASE_DEBUG=true cargo flamegraph -c "record -o perf.data -F997 --call-graph dwarf,16384 -g" \
           --bin ethrex --features dev  --  --network /home/runner/work/ethrex/ethrex/test_data/genesis-l2.json --http.port 1729 >/dev/null &
           echo "waiting to execute load test..."
-          sleep 30 &&
-          echo "executing load test..."
+          echo "Waiting for compilation to finish..."
+          while [ ! -f ".target/release/ethrex" ]; do
+            sleep 5
+          done
+          sleep 5
+          echo "Compilation finished. Executing load test..."
           bash /home/runner/work/ethrex/ethrex/.github/scripts/flamegraph_watcher.sh &&
           echo "Load test finished"
 
@@ -194,8 +198,12 @@ jobs:
           --dev.block-time 1000ms --http.port 1729  --txpool.max-pending-txns 100000000 --txpool.max-new-txns 1000000000 \
           --txpool.pending-max-count 100000000 --txpool.pending-max-size 10000000000 --txpool.basefee-max-count 100000000000 \
           --txpool.basefee-max-size 1000000000000 --txpool.queued-max-count 1000000000 >/dev/null &
-          echo "waiting to execute load test..."
-          sleep 1200 &&
+          echo "Waiting for compilation to finish..."
+          while [ ! -f ".target/release/reth" ]; do
+            sleep 5
+          done
+          sleep 5
+          echo "Compilation finished. Executing load test..."
           bash /home/runner/work/ethrex/ethrex/.github/scripts/flamegraph_watcher.sh &&
           echo "Load test finished"
 
