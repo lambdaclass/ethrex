@@ -144,6 +144,7 @@ pub const SIZE_PRECOMPILES_PRAGUE: u64 = 17;
 
 pub const BLS12_381_G1_MSM_PAIR_LENGTH: usize = 160;
 pub const BLS12_381_G2_MSM_PAIR_LENGTH: usize = 288;
+pub const BLS12_381_PAIRING_CHECK_PAIR_LENGTH: usize = 384;
 
 const BLS12_381_G1ADD_VALID_INPUT_LENGTH: usize = 256;
 const BLS12_381_G2ADD_VALID_INPUT_LENGTH: usize = 512;
@@ -1381,10 +1382,13 @@ pub fn bls12_g2msm(
 }
 
 pub fn bls12_pairing_check(
-    _calldata: &Bytes,
+    calldata: &Bytes,
     _gas_for_call: u64,
     _consumed_gas: &mut u64,
 ) -> Result<Bytes, VMError> {
+    if calldata.is_empty() || calldata.len() % BLS12_381_PAIRING_CHECK_PAIR_LENGTH != 0 {
+        return Err(VMError::PrecompileError(PrecompileError::ParsingInputError));
+    }
     Ok(Bytes::new())
 }
 
