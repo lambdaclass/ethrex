@@ -171,7 +171,7 @@ impl VM {
         let index = current_call_frame.stack.pop()?;
 
         let blob_hashes = &self.env.tx_blob_hashes;
-        if index > blob_hashes.len().into() {
+        if index >= blob_hashes.len().into() {
             current_call_frame.stack.push(U256::zero())?;
             return Ok(OpcodeSuccess::Continue);
         }
