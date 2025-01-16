@@ -14,7 +14,7 @@ use ethrex_core::types::{
 };
 use ethrex_rlp::decode::RLPDecode;
 use ethrex_rlp::encode::RLPEncode;
-use ethrex_trie::{LibmdbxDupsortTrieDB, LibmdbxTrieDB, Nibbles, Trie};
+use ethrex_trie::{LibmdbxDupsortTrieDB, LibmdbxTrieDB, Trie};
 use libmdbx::orm::{Decodable, Encodable, Table};
 use libmdbx::{
     dupsort,
@@ -544,58 +544,22 @@ impl StoreEngine for Store {
         self.delete::<SnapState>(SnapStateIndex::HeaderDownloadCheckpoint)
     }
 
-    fn set_state_download_checkpoint(&self, current_root: H256, last_key: H256) -> Result<(), StoreError> {
+    fn set_state_trie_download_checkpoint(&self, current_root: H256, last_key: H256) -> Result<(), StoreError> {
         self.write::<SnapState>(
             SnapStateIndex::StateTrieDownloadCheckpoint,
             (current_root, last_key).encode_to_vec(),
         )
     }
 
-    fn get_state_download_checkpoint(&self) -> Result<Option<(H256, H256)>, StoreError> {
+    fn get_state_trie_download_checkpoint(&self) -> Result<Option<(H256, H256)>, StoreError> {
         self.read::<SnapState>(SnapStateIndex::StateTrieDownloadCheckpoint)?
             .map(|ref h| <(H256, H256)>::decode(h))
             .transpose()
             .map_err(StoreError::RLPDecode)
     }
 
-    fn clear_state_download_checkpoint(&self) -> Result<(), StoreError> {
+    fn clear_state_trie_download_checkpoint(&self) -> Result<(), StoreError> {
         self.delete::<SnapState>(SnapStateIndex::StateTrieDownloadCheckpoint)
-    }
-
-    fn set_state_heal_pending(&self, paths: Vec<Nibbles>) -> Result<(), StoreError> {
-        self.write::<SnapState>(
-            SnapStateIndex::StateTrieHealPending,
-            paths.encode_to_vec(),
-        )
-    }
-
-    fn get_state_heal_pending(&self) -> Result<Option<Vec<Nibbles>>, StoreError> {
-        self.read::<SnapState>(SnapStateIndex::StateTrieHealPending)?
-            .map(|ref h| <Vec<Nibbles>>::decode(h))
-            .transpose()
-            .map_err(StoreError::RLPDecode)
-    }
-
-    fn clear_state_heal_pending(&self) -> Result<(), StoreError> {
-        self.delete::<SnapState>(SnapStateIndex::StateTrieHealPending)
-    }
-
-    fn set_storage_heal_pending(&self, paths: Vec<(H256, Nibbles)>) -> Result<(), StoreError> {
-        self.write::<SnapState>(
-            SnapStateIndex::StorageTrieHealPending,
-            paths.encode_to_vec(),
-        )
-    }
-
-    fn get_storage_heal_pending(&self) -> Result<Option<Vec<(H256, Nibbles)>>, StoreError> {
-        self.read::<SnapState>(SnapStateIndex::StorageTrieHealPending)?
-            .map(|ref h| <Vec<(H256, Nibbles)>>::decode(h))
-            .transpose()
-            .map_err(StoreError::RLPDecode)
-    }
-
-    fn clear_storage_heal_pending(&self) -> Result<(), StoreError> {
-        self.delete::<SnapState>(SnapStateIndex::StorageTrieHealPending)
     }
 }
 
