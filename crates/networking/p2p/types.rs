@@ -1,5 +1,5 @@
 use bytes::{BufMut, Bytes};
-use ethrex_core::H512;
+use ethrex_core::{H512, U256};
 use ethrex_rlp::{
     decode::RLPDecode,
     encode::RLPEncode,
@@ -97,6 +97,38 @@ pub struct NodeRecord {
     pub seq: u64,
     pub id: String,
     pub pairs: Vec<(Bytes, Bytes)>,
+}
+
+#[derive(Debug, Default)]
+pub struct NodeRecordDecodedPairs {
+    pub ip: Option<u32>,
+    // the record structure reference says that tcp_port and udp_ports are big-endian integers
+    // but they are actually encoded as 4 bytes, see geth for example: https://github.com/ethereum/go-ethereum/blob/master/p2p/enr/entries.go#L186-L196
+    // I think the confusion comes from the fact that geth decodes the 4 bytes and then builds an IPV4 big-integer structure.
+    pub tcp_port: Option<u32>,
+    pub udp_port: Option<u32>,
+    pub secp256k1: Option<U256>,
+    // TODO implement ipv6 addresses
+}
+
+impl NodeRecord {
+    pub fn decode_pairs(&self) -> NodeRecordDecodedPairs {
+        let mut decoded_pairs = NodeRecordDecodedPairs::default();
+        for (key, value) in &self.pairs {
+            let Ok(key) = String::from_utf8(key.to_vec()) else {
+                continue;
+            };
+            let value = value.to_vec();
+            match key.as_str() {
+                "ip" => decoded_pairs.ip = u32::decode(&value).ok(),
+                "tcp_port" => decoded_pairs.tcp_port = u32::decode(&value).ok(),
+                "udp_port" => decoded_pairs.udp_port = u32::decode(&value).ok(),
+                "secp256k1" => decoded_pairs.secp256k1 = U256::decode(&value).ok(),
+                _ => {}
+            }
+        }
+        return decoded_pairs;
+    }
 }
 
 impl RLPDecode for NodeRecord {
