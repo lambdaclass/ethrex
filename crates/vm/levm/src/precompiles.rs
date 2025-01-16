@@ -1350,61 +1350,7 @@ pub fn bls12_pairing_check(
     gas_for_call: u64,
     consumed_gas: &mut u64,
 ) -> Result<Bytes, VMError> {
-    if calldata.is_empty() || calldata.len() % BLS12_381_PAIRING_CHECK_PAIR_LENGTH != 0 {
-        return Err(VMError::PrecompileError(PrecompileError::ParsingInputError));
-    }
-
-    // GAS
-    let k = calldata.len() / BLS12_381_PAIRING_CHECK_PAIR_LENGTH;
-    let gas_cost = gas_cost::bls12_pairing_check(k)?;
-    increase_precompile_consumed_gas(gas_for_call, gas_cost, consumed_gas)?;
-
-    let mut points: Vec<(G1Affine, G2Prepared)> = Vec::new();
-    for i in 0..k {
-        let g1_offset = i
-            .checked_mul(BLS12_381_PAIRING_CHECK_PAIR_LENGTH)
-            .ok_or(InternalError::ArithmeticOperationOverflow)?;
-        let y_offset = g1_offset
-            .checked_add(64)
-            .ok_or(InternalError::ArithmeticOperationOverflow)?;
-        let g2_offset = y_offset
-            .checked_add(64)
-            .ok_or(InternalError::ArithmeticOperationOverflow)?;
-        let x_1_offset = g2_offset
-            .checked_add(64)
-            .ok_or(InternalError::ArithmeticOperationOverflow)?;
-        let y_0_offset = x_1_offset
-            .checked_add(64)
-            .ok_or(InternalError::ArithmeticOperationOverflow)?;
-        let y_1_offset = y_0_offset
-            .checked_add(64)
-            .ok_or(InternalError::ArithmeticOperationOverflow)?;
-        let pair_end = y_1_offset
-            .checked_add(64)
-            .ok_or(InternalError::ArithmeticOperationOverflow)?;
-
-        // The check for the subgroup is required
-        // https://github.com/ethereum/EIPs/blob/master/EIPS/eip-2537.md?plain=1#L194
-        let g1 = G1Affine::from(parse_g1_point(calldata.get(g1_offset..g2_offset), false)?);
-        let g2 = G2Affine::from(parse_g2_point(calldata.get(g2_offset..pair_end), false)?);
-        points.push((g1, G2Prepared::from(g2)));
-    }
-
-    // The crate bls12_381 expects a reference to the points
-    let points: Vec<(&G1Affine, &G2Prepared)> = points.iter().map(|(g1, g2)| (g1, g2)).collect();
-
-    // perform the final exponentiation to get the result of the pairing check
-    // https://docs.rs/bls12_381/0.8.0/src/bls12_381/pairings.rs.html#43-48
-    let result: Gt = multi_miller_loop(&points).final_exponentiation();
-
-    // follows this https://github.com/ethereum/EIPs/blob/master/EIPS/eip-2537.md?plain=1#L188
-    if result == Gt::identity() {
-        let mut result = Vec::from([0_u8; 31]);
-        result.push(1);
-        Ok(Bytes::from(result))
-    } else {
-        Ok(Bytes::copy_from_slice(&[0_u8; 32]))
-    }
+    Ok(Bytes::new())
 }
 
 pub fn bls12_map_fp_to_g1(
