@@ -1490,7 +1490,7 @@ fn parse_g2_point(
                     PrecompileError::BLS12381G2PointNotInCurve,
                 ));
             }
-          
+
             G2Projective::from(g2_affine)
         } else {
             let g2_affine = G2Affine::from_uncompressed(&g2_bytes)
@@ -1498,6 +1498,7 @@ fn parse_g2_point(
                 .ok_or(VMError::PrecompileError(PrecompileError::ParsingInputError))?;
 
             G2Projective::from(g2_affine)
+        }
     };
     Ok(g2_point)
 }
