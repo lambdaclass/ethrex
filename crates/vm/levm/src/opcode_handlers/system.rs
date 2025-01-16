@@ -52,10 +52,16 @@ impl VM {
 
         let (account_info, address_was_cold) = self.access_account(callee);
 
+        let (is_delegation, eip7702_gas_consumed, code_address, bytecode) =
+            self.eip7702_get_code(callee)?;
+
         let gas_left = current_call_frame
             .gas_limit
             .checked_sub(current_call_frame.gas_used)
+            .ok_or(InternalError::GasOverflow)?
+            .checked_sub(eip7702_gas_consumed)
             .ok_or(InternalError::GasOverflow)?;
+
         let (cost, gas_limit) = gas_cost::call(
             new_memory_size,
             current_memory_size,
@@ -66,10 +72,8 @@ impl VM {
             gas_left,
         )?;
 
-        let (is_delegation, eip7702_gas_consumed, code_address, bytecode) =
-            self.eip7702_get_code(callee)?;
-
-        self.increase_consumed_gas(current_call_frame, cost + eip7702_gas_consumed)?;
+        self.increase_consumed_gas(current_call_frame, cost)?;
+        self.increase_consumed_gas(current_call_frame, eip7702_gas_consumed)?;
 
         // OPERATION
         let msg_sender = current_call_frame.to; // The new sender will be the current contract.
@@ -126,10 +130,16 @@ impl VM {
 
         let (_account_info, address_was_cold) = self.access_account(code_address);
 
+        let (is_delegation, eip7702_gas_consumed, code_address, bytecode) =
+            self.eip7702_get_code(code_address)?;
+
         let gas_left = current_call_frame
             .gas_limit
             .checked_sub(current_call_frame.gas_used)
+            .ok_or(InternalError::GasOverflow)?
+            .checked_sub(eip7702_gas_consumed)
             .ok_or(InternalError::GasOverflow)?;
+
         let (cost, gas_limit) = gas_cost::callcode(
             new_memory_size,
             current_memory_size,
@@ -139,9 +149,8 @@ impl VM {
             gas_left,
         )?;
 
-        let (is_delegation, eip7702_gas_consumed, code_address, bytecode) =
-            self.eip7702_get_code(code_address)?;
-        self.increase_consumed_gas(current_call_frame, cost + eip7702_gas_consumed)?;
+        self.increase_consumed_gas(current_call_frame, cost)?;
+        self.increase_consumed_gas(current_call_frame, eip7702_gas_consumed)?;
 
         // Sender and recipient are the same in this case. But the code executed is from another account.
         let msg_sender = current_call_frame.to;
@@ -228,10 +237,16 @@ impl VM {
             calculate_memory_size(return_data_start_offset, return_data_size)?;
         let new_memory_size = new_memory_size_for_args.max(new_memory_size_for_return_data);
 
+        let (is_delegation, eip7702_gas_consumed, code_address, bytecode) =
+            self.eip7702_get_code(code_address)?;
+
         let gas_left = current_call_frame
             .gas_limit
             .checked_sub(current_call_frame.gas_used)
+            .ok_or(InternalError::GasOverflow)?
+            .checked_sub(eip7702_gas_consumed)
             .ok_or(InternalError::GasOverflow)?;
+
         let (cost, gas_limit) = gas_cost::delegatecall(
             new_memory_size,
             current_memory_size,
@@ -240,9 +255,8 @@ impl VM {
             gas_left,
         )?;
 
-        let (is_delegation, eip7702_gas_consumed, code_address, bytecode) =
-            self.eip7702_get_code(code_address)?;
-        self.increase_consumed_gas(current_call_frame, cost + eip7702_gas_consumed)?;
+        self.increase_consumed_gas(current_call_frame, cost)?;
+        self.increase_consumed_gas(current_call_frame, eip7702_gas_consumed)?;
 
         // OPERATION
         let msg_sender = current_call_frame.msg_sender;
@@ -298,10 +312,16 @@ impl VM {
             calculate_memory_size(return_data_start_offset, return_data_size)?;
         let new_memory_size = new_memory_size_for_args.max(new_memory_size_for_return_data);
 
+        let (is_delegation, eip7702_gas_consumed, _, bytecode) =
+            self.eip7702_get_code(code_address)?;
+
         let gas_left = current_call_frame
             .gas_limit
             .checked_sub(current_call_frame.gas_used)
+            .ok_or(InternalError::GasOverflow)?
+            .checked_sub(eip7702_gas_consumed)
             .ok_or(InternalError::GasOverflow)?;
+
         let (cost, gas_limit) = gas_cost::staticcall(
             new_memory_size,
             current_memory_size,
@@ -310,9 +330,8 @@ impl VM {
             gas_left,
         )?;
 
-        let (is_delegation, eip7702_gas_consumed, _, bytecode) =
-            self.eip7702_get_code(code_address)?;
-        self.increase_consumed_gas(current_call_frame, cost + eip7702_gas_consumed)?;
+        self.increase_consumed_gas(current_call_frame, cost)?;
+        self.increase_consumed_gas(current_call_frame, eip7702_gas_consumed)?;
 
         // OPERATION
         let value = U256::zero();
@@ -713,7 +732,8 @@ impl VM {
             return Ok(OpcodeSuccess::Continue);
         }
 
-        if is_delegation && bytecode.len() == 0 {
+        if is_delegation && bytecode.is_empty() {
+            dbg!("BYTECODE EMPTY");
             current_call_frame
                 .gas_used
                 .checked_sub(gas_limit)

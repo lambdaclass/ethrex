@@ -17,7 +17,7 @@ use crate::{
         WARM_ADDRESS_ACCESS_COST,
     },
     opcodes::Opcode,
-    precompiles::{execute_precompile, is_precompile, PRECOMPILES},
+    precompiles::{execute_precompile, is_precompile},
     AccountInfo, TransientStorage,
 };
 use bytes::Bytes;
@@ -1376,10 +1376,9 @@ impl VM {
             // this cached state.
             insert_account(&mut self.cache, authority_address, auth_account);
 
-            // CHECK: what do we do with this check? do we continue if it was already delegated?
-            //if !(was_delegated(&authority_account_info)? || authority_account_info.has_code()) {
-            //    continue;
-            //}
+            if !was_delegated(&authority_account_info)? && authority_account_info.has_code() {
+                continue;
+            }
 
             // 6. Verify the nonce of authority is equal to nonce. In case authority does not exist in the trie, verify that nonce is equal to 0.
             // If it doesn't exist, it means the nonce is zero. The access_account() function will return AccountInfo::default()
@@ -1414,23 +1413,23 @@ impl VM {
             // 9. Increase the nonce of authority by one.
             self.increment_account_nonce(authority_address)
                 .map_err(|_| VMError::TxValidation(TxValidationError::NonceIsMax))?;
+        }
 
-            // CHECK: is this ok?
-            if initial_call_frame.code_address == Address::zero() {
-                return Err(VMError::TxValidation(
-                    TxValidationError::Type4TxContractCreation,
-                ));
-            }
-            let (code_address_info, _) = self.access_account(initial_call_frame.code_address);
+        // CHECK: is this ok?
+        if initial_call_frame.code_address == Address::zero() {
+            return Err(VMError::TxValidation(
+                TxValidationError::Type4TxContractCreation,
+            ));
+        }
+        let (code_address_info, _) = self.access_account(initial_call_frame.code_address);
 
-            if was_delegated(&code_address_info)? {
-                initial_call_frame.code_address = get_authorized_address(&code_address_info)?;
-                let (auth_address_info, _) = self.access_account(initial_call_frame.code_address);
+        if was_delegated(&code_address_info)? {
+            initial_call_frame.code_address = get_authorized_address(&code_address_info)?;
+            let (auth_address_info, _) = self.access_account(initial_call_frame.code_address);
 
-                initial_call_frame.assign_bytecode(auth_address_info.bytecode);
-            } else {
-                initial_call_frame.assign_bytecode(code_address_info.bytecode);
-            }
+            initial_call_frame.assign_bytecode(auth_address_info.bytecode);
+        } else {
+            initial_call_frame.assign_bytecode(code_address_info.bytecode);
         }
 
         Ok(())
@@ -1484,17 +1483,9 @@ impl VM {
             }
         }
 
-        // CHECK: is this ok?
-        // The EIP says: In case a delegation designator points to a precompile address, retrieved code is considered empty and CALL, CALLCODE, STATICCALL, DELEGATECALL
-        // instructions targeting this account will execute empty code, i.e. succeed with no execution given enough gas.
-        let authorized_bytecode = if PRECOMPILES.contains(&auth_address) {
-            Bytes::new()
-        } else {
-            // Get the bytecode from the authorized address
-            get_account(&mut self.cache, &self.db, auth_address)
-                .info
-                .bytecode
-        };
+        let authorized_bytecode = get_account(&mut self.cache, &self.db, auth_address)
+            .info
+            .bytecode;
 
         Ok((true, access_cost, auth_address, authorized_bytecode))
     }
