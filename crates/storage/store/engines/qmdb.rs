@@ -149,7 +149,10 @@ impl StoreEngine for Store {
         &self,
         block_number: ethrex_core::types::BlockNumber,
     ) -> Result<Option<ethrex_core::types::BlockHeader>, crate::error::StoreError> {
-        self.read(block_number, HEADERS_TABLE)
+        let Some(block_hash) = self.get_block_hash_by_block_number(block_number)? else {
+            return Ok(None);
+        };
+        self.read(block_hash, HEADERS_TABLE)
     }
 
     fn add_block_body(
@@ -164,7 +167,10 @@ impl StoreEngine for Store {
         &self,
         block_number: ethrex_core::types::BlockNumber,
     ) -> Result<Option<ethrex_core::types::BlockBody>, crate::error::StoreError> {
-        self.read(block_number, BLOCK_BODIES_TABLE)
+        let Some(block_hash) = self.get_block_hash_by_block_number(block_number)? else {
+            return Ok(None);
+        };
+        self.read(block_hash, BLOCK_BODIES_TABLE)
     }
 
     fn get_block_body_by_hash(
@@ -286,7 +292,6 @@ impl StoreEngine for Store {
         let Some(block_hash) = self.get_block_hash_by_block_number(block_number)? else {
             return Ok(None);
         };
-
         self.read((block_hash, index), RECEIPTS_TABLE)
     }
 
