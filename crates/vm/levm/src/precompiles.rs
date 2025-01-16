@@ -1,4 +1,6 @@
-use bls12_381::{G1Affine, G1Projective, G2Affine, G2Prepared, G2Projective, Scalar};
+use bls12_381::{
+    multi_miller_loop, G1Affine, G1Projective, G2Affine, G2Prepared, G2Projective, Gt, Scalar,
+};
 
 use bytes::Bytes;
 use ethrex_core::{serde_utils::bool, Address, H160, H256, U256};
@@ -1434,7 +1436,19 @@ pub fn bls12_pairing_check(
         points.push((g1, G2Prepared::from(g2)));
     }
 
-    Ok(Bytes::new())
+    let points_ref: Vec<(&G1Affine, &G2Prepared)> =
+        points.iter().map(|(g1, g2)| (g1, g2)).collect();
+    // perform the final exponentiation to get the result of the pairing check
+    // https://docs.rs/bls12_381/0.8.0/src/bls12_381/pairings.rs.html#43-48
+    let result: Gt = multi_miller_loop(&points_ref).final_exponentiation();
+    let one = Gt::identity();
+    if result == one {
+        let mut result = Vec::from([0_u8; 31]);
+        result.push(1);
+        Ok(Bytes::from(result))
+    } else {
+        Ok(Bytes::copy_from_slice(&[0_u8; 32]))
+    }
 }
 
 pub fn bls12_map_fp_to_g1(
