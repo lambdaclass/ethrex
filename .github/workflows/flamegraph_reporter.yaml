@@ -17,11 +17,7 @@ env:
   RUST_RETH_VERSION: 1.84.0
 
 jobs:
-  setup:
-    uses: ./.github/workflows/ci_flamegraph_setup.yaml
-
   flamegraph-ethrex:
-    needs: setup
     name: Generate Flamegraph for Ethrex
     runs-on: ubuntu-latest
     env:
@@ -32,60 +28,74 @@ jobs:
       - name: Checkout sources
         uses: actions/checkout@v4
 
-      - name: Restore flamegraph tools
+      - name: Rustup toolchain install
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: ${{ env.RUST_VERSION }}
+
+      - name: Caching
+        uses: Swatinem/rust-cache@v2
+
+      - name: Cache Cargo binaries
         uses: actions/cache@v4
         with:
-          path: |
-            ~/.cargo/bin/addr2line
-            ~/.cargo/bin/flamegraph
-            ~/.cargo/bin/inferno-collapse
-          key: ${{ needs.setup.outputs.cache-key }}
-          fail-on-cache-miss: true
+          path: ~/.cargo/bin
+          key: ${{ runner.os }}-cargo-install-${{ hashFiles('cmd/ethrex_l2/Cargo.toml') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-install-
 
-      - name: Check cached binaries
-        id: check-binaries
+      - name: Change perf settings
         run: |
-          ls -l ~/.cargo/bin
-          which addr2line || exit
-          which flamegraph || exit
-          which inferno-collapse-perf || exit
-          which inferno-flamegraph || exit
+          sudo sysctl kernel.perf_event_paranoid=-1
+          sudo sysctl -w kernel.kptr_restrict=0
+          sudo chmod +r /proc/kallsyms
+          sudo perf list hw
 
-      - name: Cache Cargo dependencies
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: ${{ runner.os }}-cargo-deps-${{ hashFiles('**/Cargo.lock', '**/Cargo.toml') }}
-
-      - name: Cache ethrex_l2 binary
-        id: cache-ethrex
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cargo/bin/ethrex_l2
-            target/release/ethrex_l2
-          key: ${{ runner.os }}-ethrex-binary-${{ hashFiles('cmd/ethrex_l2/**/*.rs', 'cmd/ethrex_l2/Cargo.toml') }}
-
-      - name: Install ethrex_l2
-        if: steps.cache-ethrex.outputs.cache-hit != 'true'
-        run: cargo install --path cmd/ethrex_l2
-
-      - name: Configure ethrex_l2
+      - name: Check addr2line installation
+        id: check-addr2line
         run: |
+          if [ -f "./cargo/bin/addr2line" ]; then
+            echo "./cargo/bin/addr2line found"
+            echo "addr2line_exists=true" >> $GITHUB_OUTPUT
+          else
+            echo "./cargo/bin/addr2line NOT found"
+            echo "addr2line_exists=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Checkout gimli addr2line
+        if: steps.check-addr2line.outputs.addr2line_exists != 'true'
+        uses: actions/checkout@v4
+        with:
+          repository: gimli-rs/addr2line
+          path: "addr2line"
+
+      - name: Build gimli addr2line
+        if: steps.check-addr2line.outputs.addr2line_exists != 'true'
+        working-directory: ./addr2line
+        run: |
+          # Little hack we need else it throws error building
+          echo "[workspace]" >> ./Cargo.toml
+          cargo install --force --features="bin" addr2line
+
+      - name: Install flamegraph
+        run: |
+          if [ ! -f "./cargo/bin/flamegraph" ]; then
+            cargo install --force flamegraph
+          fi
+          if [ ! -f "./cargo/bin/inferno" ]; then
+            cargo install --force inferno
+          fi
+
+      - name: Install ethrex_l2 cli
+        run: |
+          cargo install --path cmd/ethrex_l2
           ethrex_l2 config create default --default
           ethrex_l2 config set default
-
-      #- name: Caching
-      #  uses: Swatinem/rust-cache@v2
 
       - id: generate-flamegraph-ethrex
         name: Generate Flamegraph data for Ethrex
         shell: bash
         run: |
-          rm -rf target/release/ethrex
           CARGO_PROFILE_RELEASE_DEBUG=true cargo flamegraph -c "record -o perf.data -F997 --call-graph dwarf,16384 -g" \
           --bin ethrex --features dev -- --network /home/runner/work/ethrex/ethrex/test_data/genesis-l2.json --http.port 1729 >/dev/null &
           while [ ! -x "./target/release/ethrex" ]; do
@@ -112,7 +122,6 @@ jobs:
           path: ./flamegraph_ethrex.svg
 
   flamegraph-reth:
-    needs: setup
     name: Generate Flamegraph for Reth
     runs-on: ubuntu-latest
     env:
@@ -123,42 +132,10 @@ jobs:
       - name: Checkout sources
         uses: actions/checkout@v4
 
-      - name: Restore flamegraph tools
-        uses: actions/cache@v4
+      - name: Rustup toolchain install
+        uses: dtolnay/rust-toolchain@stable
         with:
-          path: |
-            ~/.cargo/bin/addr2line
-            ~/.cargo/bin/flamegraph
-            ~/.cargo/bin/inferno
-          key: ${{ needs.setup.outputs.cache-key }}
-          fail-on-cache-miss: true
-
-      - name: Check cached binaries
-        id: check-binaries
-        run: |
-          ls -l ~/.cargo/bin
-          which addr2line || exit
-          which flamegraph || exit
-          which inferno-collapse-perf || exit
-          which inferno-flamegraph || exit
-
-      - name: Cache ethrex_l2 binary
-        id: cache-ethrex
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cargo/bin/ethrex_l2
-            target/release/ethrex_l2
-          key: ${{ runner.os }}-ethrex-binary-${{ hashFiles('cmd/ethrex_l2/**/*.rs', 'cmd/ethrex_l2/Cargo.toml') }}
-
-      - name: Install ethrex_l2 if needed
-        if: steps.cache-ethrex.outputs.cache-hit != 'true'
-        run: cargo install --path cmd/ethrex_l2
-
-      - name: Configure ethrex_l2
-        run: |
-          ethrex_l2 config create default --default
-          ethrex_l2 config set default
+          toolchain: ${{ env.RUST_RETH_VERSION }}
 
       - name: Checkout reth
         uses: actions/checkout@v4
@@ -171,6 +148,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: |
+            ~/.cargo/bin
             ~/.cargo/registry
             ~/.cargo/git
             reth/target
@@ -179,13 +157,75 @@ jobs:
             ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}-
             ${{ runner.os }}-cargo-
 
+      - name: Change perf settings
+        run: |
+          sudo sysctl kernel.perf_event_paranoid=-1
+          sudo sysctl -w kernel.kptr_restrict=0
+          sudo chmod +r /proc/kallsyms
+          sudo perf list hw
+
+      - name: Check addr2line installation
+        id: check-addr2line
+        run: |
+          if [ -f "./cargo/bin/addr2line" ]; then
+            echo "./cargo/bin/addr2line found"
+            echo "addr2line_exists=true" >> $GITHUB_OUTPUT
+          else
+            echo "./cargo/bin/addr2line NOT found"
+            echo "addr2line_exists=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Checkout gimli addr2line
+        if: steps.check-addr2line.outputs.addr2line_exists != 'true'
+        uses: actions/checkout@v4
+        with:
+          repository: gimli-rs/addr2line
+          path: "addr2line"
+
+      - name: Build gimli addr2line
+        if: steps.check-addr2line.outputs.addr2line_exists != 'true'
+        working-directory: ./addr2line
+        run: |
+          # Little hack we need else it throws error building
+          echo "[workspace]" >> ./Cargo.toml
+          cargo install --force --features="bin" addr2line
+
+      - name: Install flamegraph
+        run: |
+          if [ ! -f "./cargo/bin/flamegraph" ]; then
+            cargo install --force flamegraph
+          fi
+          if [ ! -f "./cargo/bin/inferno" ]; then
+            cargo install --force inferno
+          fi
+
+      - name: Install ethrex_l2 cli
+        run: |
+          cargo install --force --path cmd/ethrex_l2
+          ethrex_l2 config create default --default
+          ethrex_l2 config set default
+
+      - name: Cache reth binary
+        id: cache-reth-binary
+        uses: actions/cache@v4
+        with:
+          path:
+            ./reth/target/
+            ~/.cargo
+          key: reth-binary-${{ env.RUST_RETH_VERSION }}-${{ runner.os }}-${{ hashFiles('reth/**/*.rs') }}
+
       - id: generate-flamegraph-reth
         name: Build and test reth
         shell: bash
         # --dev.block-time 1000ms set to 1000ms to match ethrex block generation time
         run: |
           cd ./reth
-          rm -rf target/profiling/reth
+          if [ ! -f "target/profiling/reth" ]; then
+            echo "reth binary not in cache, building..."
+            CARGO_PROFILE_RELEASE_DEBUG=true cargo build --profile profiling
+          else
+            echo "reth binary cached, skipping build"
+          fi
           CARGO_PROFILE_RELEASE_DEBUG=true cargo flamegraph -c "record -o perf.data -F997 --call-graph dwarf,16384 -g" \
           --bin reth --profile profiling -- node --chain /home/runner/work/ethrex/ethrex/test_data/genesis-load-test.json --dev \
           --dev.block-time 1000ms --http.port 1729  --txpool.max-pending-txns 100000000 --txpool.max-new-txns 1000000000 \
@@ -199,6 +239,7 @@ jobs:
           echo "Executing load test..."
           bash /home/runner/work/ethrex/ethrex/.github/scripts/flamegraph_watcher.sh &&
           echo "Load test finished"
+
 
       - name: Generate SVG
         shell: bash
