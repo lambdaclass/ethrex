@@ -1181,7 +1181,7 @@ pub fn bls12_g1add(
     gas_for_call: u64,
     consumed_gas: &mut u64,
 ) -> Result<Bytes, VMError> {
-    // Two inputs of 128 bytes are requiered
+    // Two inputs of 128 bytes are required
     if calldata.len() != BLS12_381_G1ADD_VALID_INPUT_LENGTH {
         return Err(VMError::PrecompileError(PrecompileError::ParsingInputError));
     }
@@ -1190,15 +1190,8 @@ pub fn bls12_g1add(
     increase_precompile_consumed_gas(gas_for_call, BLS12_381_G1ADD_COST, consumed_gas)
         .map_err(|_| VMError::PrecompileError(PrecompileError::NotEnoughGas))?;
 
-    // Each coordinate is 64 bytes
-    let first_point_x = parse_coordinate(calldata.get(0..64))?;
-    let first_point_y = parse_coordinate(calldata.get(64..128))?;
-    let second_point_x = parse_coordinate(calldata.get(128..192))?;
-    let second_point_y = parse_coordinate(calldata.get(192..256))?;
-
-    let first_g1_point = parse_g1_point(first_point_x, first_point_y, true)?;
-
-    let second_g1_point = parse_g1_point(second_point_x, second_point_y, true)?;
+    let first_g1_point = parse_g1_point(calldata.get(0..128), true)?;
+    let second_g1_point = parse_g1_point(calldata.get(128..256), true)?;
 
     let result_of_addition = G1Affine::from(first_g1_point.add(&second_g1_point));
 
@@ -1234,26 +1227,20 @@ pub fn bls12_g1msm(
     // s_i are scalars (numbers)
     // P_i are points in the group (in this case, points in G1)
     for i in 0..k {
-        let x_offset = i
+        let point_offset = i
             .checked_mul(BLS12_381_G1_MSM_PAIR_LENGTH)
             .ok_or(InternalError::ArithmeticOperationOverflow)?;
-        let y_offset = x_offset
-            .checked_add(64)
-            .ok_or(InternalError::ArithmeticOperationOverflow)?;
-        let scalar_offset = y_offset
-            .checked_add(64)
+        let scalar_offset = point_offset
+            .checked_add(128)
             .ok_or(InternalError::ArithmeticOperationOverflow)?;
         let pair_end = scalar_offset
             .checked_add(32)
             .ok_or(InternalError::ArithmeticOperationOverflow)?;
 
-        let x = parse_coordinate(calldata.get(x_offset..y_offset))?;
-        let y = parse_coordinate(calldata.get(y_offset..scalar_offset))?;
-        let g1 = parse_g1_point(x, y, false)?;
-
+        let point = parse_g1_point(calldata.get(point_offset..scalar_offset), false)?;
         let scalar = parse_scalar(calldata.get(scalar_offset..pair_end))?;
 
-        let scaled_point = G1Projective::mul(g1, scalar);
+        let scaled_point = G1Projective::mul(point, scalar);
         result = result.add(&scaled_point);
     }
     let mut output = [0u8; 128];
@@ -1284,19 +1271,8 @@ pub fn bls12_g2add(
     increase_precompile_consumed_gas(gas_for_call, BLS12_381_G2ADD_COST, consumed_gas)
         .map_err(|_| VMError::PrecompileError(PrecompileError::NotEnoughGas))?;
 
-    // Each coordinate is 64 bytes
-    // There are 4 coordinates per G2 point
-    let first_x_1 = parse_coordinate(calldata.get(0..64))?;
-    let first_x_2 = parse_coordinate(calldata.get(64..128))?;
-    let first_y_1 = parse_coordinate(calldata.get(128..192))?;
-    let first_y_2 = parse_coordinate(calldata.get(192..256))?;
-    let second_x_1 = parse_coordinate(calldata.get(256..320))?;
-    let second_x_2 = parse_coordinate(calldata.get(320..384))?;
-    let second_y_1 = parse_coordinate(calldata.get(384..448))?;
-    let second_y_2 = parse_coordinate(calldata.get(448..512))?;
-
-    let first_g2_point = parse_g2_point(first_x_1, first_x_2, first_y_1, first_y_2, true)?;
-    let second_g2_point = parse_g2_point(second_x_1, second_x_2, second_y_1, second_y_2, true)?;
+    let first_g2_point = parse_g2_point(calldata.get(0..256), true)?;
+    let second_g2_point = parse_g2_point(calldata.get(256..512), true)?;
 
     let result_of_addition = G2Affine::from(first_g2_point.add(&second_g2_point));
 
@@ -1307,7 +1283,7 @@ pub fn bls12_g2add(
     };
 
     let mut padded_result = Vec::new();
-    // The crate bls12_381 deserialize the G2 point as x_2 || x_1 || y_2 || y_1
+    // The crate bls12_381 deserialize the G2 point as x_1 || x_0 || y_1 || y_0
     // https://docs.rs/bls12_381/0.8.0/src/bls12_381/g2.rs.html#284-299
     add_padded_coordinate(&mut padded_result, result_bytes.get(48..96))?;
     add_padded_coordinate(&mut padded_result, result_bytes.get(0..48))?;
@@ -1332,31 +1308,17 @@ pub fn bls12_g2msm(
 
     let mut result = G2Projective::identity();
     for i in 0..k {
-        let x_0_offset = i
+        let point_offset = i
             .checked_mul(BLS12_381_G2_MSM_PAIR_LENGTH)
             .ok_or(InternalError::ArithmeticOperationOverflow)?;
-        let x_1_offset = x_0_offset
-            .checked_add(64)
-            .ok_or(InternalError::ArithmeticOperationOverflow)?;
-        let y_0_offset = x_1_offset
-            .checked_add(64)
-            .ok_or(InternalError::ArithmeticOperationOverflow)?;
-        let y_1_offset = y_0_offset
-            .checked_add(64)
-            .ok_or(InternalError::ArithmeticOperationOverflow)?;
-        let scalar_offset = y_1_offset
-            .checked_add(64)
+        let scalar_offset = point_offset
+            .checked_add(256)
             .ok_or(InternalError::ArithmeticOperationOverflow)?;
         let pair_end = scalar_offset
             .checked_add(32)
             .ok_or(InternalError::ArithmeticOperationOverflow)?;
 
-        let x_0 = parse_coordinate(calldata.get(x_0_offset..x_1_offset))?;
-        let x_1 = parse_coordinate(calldata.get(x_1_offset..y_0_offset))?;
-        let y_0 = parse_coordinate(calldata.get(y_0_offset..y_1_offset))?;
-        let y_1 = parse_coordinate(calldata.get(y_1_offset..scalar_offset))?;
-        let point = parse_g2_point(x_0, x_1, y_0, y_1, false)?;
-
+        let point = parse_g2_point(calldata.get(point_offset..scalar_offset), false)?;
         let scalar = parse_scalar(calldata.get(scalar_offset..pair_end))?;
 
         let scaled_point = G2Projective::mul(point, scalar);
@@ -1370,7 +1332,7 @@ pub fn bls12_g2msm(
     };
 
     let mut padded_result = Vec::new();
-    // The crate bls12_381 deserialize the G2 point as x_2 || x_1 || y_2 || y_1
+    // The crate bls12_381 deserialize the G2 point as x_1 || x_0 || y_1 || y_0
     // https://docs.rs/bls12_381/0.8.0/src/bls12_381/g2.rs.html#284-299
     add_padded_coordinate(&mut padded_result, result_bytes.get(48..96))?;
     add_padded_coordinate(&mut padded_result, result_bytes.get(0..48))?;
@@ -1419,7 +1381,15 @@ fn parse_coordinate(coordinate_raw_bytes: Option<&[u8]>) -> Result<[u8; 48], VME
         .map_err(|_| VMError::PrecompileError(PrecompileError::ParsingInputError))
 }
 
-fn parse_g1_point(x: [u8; 48], y: [u8; 48], unchecked: bool) -> Result<G1Projective, VMError> {
+fn parse_g1_point(
+    point_raw_bytes: Option<&[u8]>,
+    unchecked: bool,
+) -> Result<G1Projective, VMError> {
+    let point_bytes =
+        point_raw_bytes.ok_or(VMError::PrecompileError(PrecompileError::ParsingInputError))?;
+    let x = parse_coordinate(point_bytes.get(0..64))?;
+    let y = parse_coordinate(point_bytes.get(64..128))?;
+
     // if a g1 point decode to (0,0) by convention it is interpreted as a point to infinity
     let g1_point: G1Projective = if x.iter().all(|e| *e == 0) && y.iter().all(|e| *e == 0) {
         G1Projective::identity()
@@ -1456,23 +1426,27 @@ fn parse_g1_point(x: [u8; 48], y: [u8; 48], unchecked: bool) -> Result<G1Project
 }
 
 fn parse_g2_point(
-    x_1: [u8; 48],
-    x_2: [u8; 48],
-    y_1: [u8; 48],
-    y_2: [u8; 48],
+    point_raw_bytes: Option<&[u8]>,
     unchecked: bool,
 ) -> Result<G2Projective, VMError> {
+    let point_bytes =
+        point_raw_bytes.ok_or(VMError::PrecompileError(PrecompileError::ParsingInputError))?;
+    let x_0 = parse_coordinate(point_bytes.get(0..64))?;
+    let x_1 = parse_coordinate(point_bytes.get(64..128))?;
+    let y_0 = parse_coordinate(point_bytes.get(128..192))?;
+    let y_1 = parse_coordinate(point_bytes.get(192..256))?;
+
     // if a g1 point decode to (0,0) by convention it is interpreted as a point to infinity
-    let g2_point: G2Projective = if x_1.iter().all(|e| *e == 0)
-        && x_2.iter().all(|e| *e == 0)
+    let g2_point: G2Projective = if x_0.iter().all(|e| *e == 0)
+        && x_1.iter().all(|e| *e == 0)
+        && y_0.iter().all(|e| *e == 0)
         && y_1.iter().all(|e| *e == 0)
-        && y_2.iter().all(|e| *e == 0)
     {
         G2Projective::identity()
     } else {
         // The crate serialize the coordinates in a reverse order
         // https://docs.rs/bls12_381/0.8.0/src/bls12_381/g2.rs.html#401-464
-        let g2_bytes: [u8; 192] = [x_2, x_1, y_2, y_1]
+        let g2_bytes: [u8; 192] = [x_1, x_0, y_1, y_0]
             .concat()
             .try_into()
             .map_err(|_| VMError::Internal(InternalError::ConversionError))?;
