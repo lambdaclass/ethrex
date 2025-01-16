@@ -102,26 +102,6 @@ jobs:
           echo "# Hive coverage report (${{ matrix.vm }})" >> $GITHUB_STEP_SUMMARY
           cat results.md >> $GITHUB_STEP_SUMMARY
 
-      - name: Post results to ethrex L1 slack channel
-        env:
-          url: ${{ secrets.ETHREX_L1_SLACK_WEBHOOK }}
-        run: sh .github/scripts/publish.sh
-
-      - name: Post results to ethrex L2 slack channel
-        env:
-          url: ${{ secrets.ETHREX_L2_SLACK_WEBHOOK }}
-        run: sh .github/scripts/publish.sh
-
-      - name: Post results to levm slack channel
-        env:
-          url: ${{ secrets.LEVM_SLACK_WEBHOOK }}
-        run: |
-          if [ "${{ matrix.vm }}" = "revm" ]; then
-            sh .github/scripts/publish.sh
-          elif [ "${{ matrix.vm }}" = "levm" ]; then
-            sh .github/scripts/publish_levm_hive.sh
-          fi
-
   hive-diff-report:
     name: Post tests diff to levm slack
     needs: hive-report
@@ -148,7 +128,6 @@ jobs:
         run: |
           bash .github/scripts/levm_revm_diff.sh results_revm.md results_levm.md >> diff.md
           cat diff.md >> $GITHUB_STEP_SUMMARY
-          bash .github/scripts/publish_revm_levm_diff.sh
 
   levm-test:
     name: Generate Report for LEVM EF Tests
@@ -185,7 +164,3 @@ jobs:
       #     url: ${{ secrets.ETHREX_L2_SLACK_WEBHOOK }}
       #   run: sh .github/scripts/publish_levm_ef_tests_summary.sh
 
-      - name: Post results to levm slack channel
-        env:
-          url: ${{ secrets.LEVM_SLACK_WEBHOOK }}
-        run: sh .github/scripts/publish_levm_ef_tests_summary.sh
