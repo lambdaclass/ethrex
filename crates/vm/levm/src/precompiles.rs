@@ -1,4 +1,4 @@
-use bls12_381::{G1Affine, G1Projective, G2Affine, G2Projective, Scalar};
+use bls12_381::{G1Affine, G1Projective, G2Affine, G2Prepared, G2Projective, Scalar};
 
 use bytes::Bytes;
 use ethrex_core::{serde_utils::bool, Address, H160, H256, U256};
@@ -1393,15 +1393,47 @@ pub fn bls12_pairing_check(
     // GAS
     let k = calldata.len() / BLS12_381_PAIRING_CHECK_PAIR_LENGTH;
     let gas_cost = gas_cost::bls12_pairing_check(k)?;
-    k.checked_mul(32600)
-        .ok_or(VMError::PrecompileError(
-            PrecompileError::GasConsumedOverflow,
-        ))?
-        .checked_add(37700)
-        .ok_or(VMError::PrecompileError(
-            PrecompileError::GasConsumedOverflow,
-        ))?;
     increase_precompile_consumed_gas(gas_for_call, gas_cost, consumed_gas)?;
+
+    let mut points: Vec<(G1Affine, G2Prepared)> = Vec::new();
+    for i in 0..k {
+        let g1_offset = i
+            .checked_mul(BLS12_381_PAIRING_CHECK_PAIR_LENGTH)
+            .ok_or(InternalError::ArithmeticOperationOverflow)?;
+        let y_offset = g1_offset
+            .checked_add(64)
+            .ok_or(InternalError::ArithmeticOperationOverflow)?;
+        let g2_offset = y_offset
+            .checked_add(64)
+            .ok_or(InternalError::ArithmeticOperationOverflow)?;
+        let x_1_offset = g2_offset
+            .checked_add(64)
+            .ok_or(InternalError::ArithmeticOperationOverflow)?;
+        let y_0_offset = x_1_offset
+            .checked_add(64)
+            .ok_or(InternalError::ArithmeticOperationOverflow)?;
+        let y_1_offset = y_0_offset
+            .checked_add(64)
+            .ok_or(InternalError::ArithmeticOperationOverflow)?;
+        let pair_end = y_1_offset
+            .checked_add(64)
+            .ok_or(InternalError::ArithmeticOperationOverflow)?;
+
+        let g1_x = parse_coordinate(calldata.get(g1_offset..y_offset))?;
+        let g1_y = parse_coordinate(calldata.get(y_offset..g2_offset))?;
+
+        let g2_x_0 = parse_coordinate(calldata.get(g2_offset..x_1_offset))?;
+        let g2_x_1 = parse_coordinate(calldata.get(x_1_offset..y_0_offset))?;
+        let g2_y_0 = parse_coordinate(calldata.get(y_0_offset..y_1_offset))?;
+        let g2_y_1 = parse_coordinate(calldata.get(y_1_offset..pair_end))?;
+
+        // The check for the subgroup is required
+        // https://github.com/ethereum/EIPs/blob/master/EIPS/eip-2537.md?plain=1#L194
+        let g1 = G1Affine::from(parse_g1_point(g1_x, g1_y, false)?);
+        let g2 = G2Affine::from(parse_g2_point(g2_x_0, g2_x_1, g2_y_0, g2_y_1, false)?);
+        points.push((g1, G2Prepared::from(g2)));
+    }
+
     Ok(Bytes::new())
 }
 
