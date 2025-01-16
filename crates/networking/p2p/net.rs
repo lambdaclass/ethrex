@@ -13,13 +13,14 @@ use discv4::{
 use ethrex_core::{H256, H512};
 use ethrex_storage::Store;
 use k256::{
-    ecdsa::SigningKey,
+    ecdsa::{RecoveryId, Signature, SigningKey, VerifyingKey},
     elliptic_curve::{sec1::ToEncodedPoint, PublicKey},
 };
 pub use kademlia::KademliaTable;
 use kademlia::{bucket_number, MAX_NODES_PER_BUCKET};
 use rand::rngs::OsRng;
 use rlpx::{connection::RLPxConnection, message::Message as RLPxMessage};
+use sha3::{Digest, Keccak256};
 use tokio::{
     net::{TcpSocket, TcpStream, UdpSocket},
     sync::{broadcast, Mutex},
@@ -379,7 +380,29 @@ async fn discover_peers_server(
                 let record = msg.node_record.decode_pairs();
                 // https://github.com/ethereum/devp2p/blob/master/enr.md#v4-identity-scheme
                 let signature_valid = match msg.node_record.id.as_str() {
-                    "v4" => true,
+                    "v4" => {
+                        let digest = Keccak256::digest(&[]);
+                        let Some(public_key) = record.secp256k1 else {
+                            debug!("Discarding enr-response as signature could not be verified because public key was not provided");
+                            continue;
+                        };
+                        let signature_bytes = msg.node_record.signature.as_bytes();
+                        let Ok(signature) = Signature::from_slice(&signature_bytes[0..64]) else {
+                            continue;
+                        };
+                        let Some(rid) = RecoveryId::from_byte(signature_bytes[64]) else {
+                            continue;
+                        };
+                        let Ok(recovered_pk) =
+                            VerifyingKey::recover_from_prehash(&digest, &signature, rid)
+                        else {
+                            continue;
+                        };
+                        let encoded_compressed = recovered_pk.to_encoded_point(true);
+                        let recovered_pk = H256::from_slice(&encoded_compressed.as_bytes()[1..]);
+
+                        recovered_pk == public_key
+                    }
                     _ => false,
                 };
                 if !signature_valid {
@@ -387,7 +410,6 @@ async fn discover_peers_server(
                     continue;
                 }
 
-                // TODO validate node record (ip, ports, etc)
                 if let Some(ip) = record.ip {
                     peer.node.ip = IpAddr::from(Ipv4Addr::from_bits(ip));
                 }
@@ -398,6 +420,10 @@ async fn discover_peers_server(
                     peer.node.udp_port = udp_port as u16;
                 }
                 peer.record = msg.node_record.clone();
+                debug!(
+                    "Node with id {:?} record has been successfully updated",
+                    peer.node.node_id
+                );
             }
             _ => {}
         }

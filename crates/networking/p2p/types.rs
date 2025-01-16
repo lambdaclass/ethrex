@@ -1,5 +1,5 @@
 use bytes::{BufMut, Bytes};
-use ethrex_core::{H512, U256};
+use ethrex_core::{H256, H512, U256};
 use ethrex_rlp::{
     decode::RLPDecode,
     encode::RLPEncode,
@@ -107,7 +107,7 @@ pub struct NodeRecordDecodedPairs {
     // I think the confusion comes from the fact that geth decodes the 4 bytes and then builds an IPV4 big-integer structure.
     pub tcp_port: Option<u32>,
     pub udp_port: Option<u32>,
-    pub secp256k1: Option<U256>,
+    pub secp256k1: Option<H256>,
     // TODO implement ipv6 addresses
 }
 
@@ -119,11 +119,24 @@ impl NodeRecord {
                 continue;
             };
             let value = value.to_vec();
+            let construct_u32_from_value = || {
+                if value.len() < 4 {
+                    None
+                } else {
+                    Some(u32::from_be_bytes([value[0], value[1], value[2], value[3]]))
+                }
+            };
             match key.as_str() {
-                "ip" => decoded_pairs.ip = u32::decode(&value).ok(),
-                "tcp_port" => decoded_pairs.tcp_port = u32::decode(&value).ok(),
-                "udp_port" => decoded_pairs.udp_port = u32::decode(&value).ok(),
-                "secp256k1" => decoded_pairs.secp256k1 = U256::decode(&value).ok(),
+                "ip" => decoded_pairs.ip = construct_u32_from_value(),
+
+                "tcp_port" => decoded_pairs.tcp_port = construct_u32_from_value(),
+                "udp_port" => decoded_pairs.udp_port = construct_u32_from_value(),
+                "secp256k1" => {
+                    if value.len() < 33 {
+                        continue;
+                    }
+                    decoded_pairs.secp256k1 = Some(H256::from_slice(&value.as_slice()[1..]))
+                }
                 _ => {}
             }
         }
