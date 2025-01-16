@@ -91,7 +91,7 @@ impl Node {
 }
 
 /// Reference: [ENR records](https://github.com/ethereum/devp2p/blob/master/enr.md)
-#[derive(Debug, PartialEq, Eq, Default)]
+#[derive(Debug, PartialEq, Clone, Eq, Default)]
 pub struct NodeRecord {
     pub signature: H512,
     pub seq: u64,

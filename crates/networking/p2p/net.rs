@@ -181,12 +181,13 @@ async fn discover_peers_server(
                     }
                     // if it has updated its record, send a request to update it
                     if let Some(enr_seq) = msg.enr_seq {
-                        if enr_seq > peer.enr_seq {
-                            send_enr_request(&udp_socket, from, &signer).await;
-                            table
-                                .lock()
-                                .await
-                                .update_peer_enr_seq(peer.node.node_id, enr_seq);
+                        if enr_seq > peer.record.seq {
+                            let req_hash = send_enr_request(&udp_socket, from, &signer).await;
+                            table.lock().await.update_peer_enr_seq(
+                                peer.node.node_id,
+                                enr_seq,
+                                req_hash,
+                            );
                         }
                     }
                 } else {
@@ -230,12 +231,13 @@ async fn discover_peers_server(
                     if peer.last_ping_hash.unwrap() == msg.ping_hash {
                         table.lock().await.pong_answered(peer.node.node_id);
                         if let Some(enr_seq) = msg.enr_seq {
-                            if enr_seq > peer.enr_seq {
-                                send_enr_request(&udp_socket, from, &signer).await;
-                                table
-                                    .lock()
-                                    .await
-                                    .update_peer_enr_seq(peer.node.node_id, enr_seq);
+                            if enr_seq > peer.record.seq {
+                                let req_hash = send_enr_request(&udp_socket, from, &signer).await;
+                                table.lock().await.update_peer_enr_seq(
+                                    peer.node.node_id,
+                                    enr_seq,
+                                    req_hash,
+                                );
                             }
                         }
                         let mut msg_buf = vec![0; read - 32];
@@ -348,6 +350,54 @@ async fn discover_peers_server(
                         };
                     }
                 }
+            }
+            Message::ENRResponse(msg) => {
+                let mut table = table.lock().await;
+                let peer = table.get_by_node_id_mut(packet.get_node_id());
+                let Some(peer) = peer else {
+                    debug!("Discarding enr-response as we don't know the peer");
+                    continue;
+                };
+
+                let Some(req_hash) = peer.enr_request_hash else {
+                    debug!("Discarding enr-response as it wasn't requested");
+                    continue;
+                };
+                if req_hash != msg.request_hash {
+                    debug!("Discarding enr-response as the request hash did not match");
+                    continue;
+                }
+                peer.enr_request_hash = None;
+
+                if msg.node_record.seq < peer.record.seq {
+                    debug!(
+                        "Discarding enr-response as the record seq is lower than the one we have"
+                    );
+                    continue;
+                }
+
+                let record = msg.node_record.decode_pairs();
+                // https://github.com/ethereum/devp2p/blob/master/enr.md#v4-identity-scheme
+                let signature_valid = match msg.node_record.id.as_str() {
+                    "v4" => true,
+                    _ => false,
+                };
+                if !signature_valid {
+                    debug!("Discarding enr-response as the signature verification was invalid");
+                    continue;
+                }
+
+                // TODO validate node record (ip, ports, etc)
+                if let Some(ip) = record.ip {
+                    peer.node.ip = IpAddr::from(Ipv4Addr::from_bits(ip));
+                }
+                if let Some(tcp_port) = record.tcp_port {
+                    peer.node.tcp_port = tcp_port as u16;
+                }
+                if let Some(udp_port) = record.udp_port {
+                    peer.node.udp_port = udp_port as u16;
+                }
+                peer.record = msg.node_record.clone();
             }
             _ => {}
         }
@@ -777,7 +827,11 @@ async fn pong(socket: &UdpSocket, to_addr: SocketAddr, ping_hash: H256, signer: 
     let _ = socket.send_to(&buf, to_addr).await;
 }
 
-async fn send_enr_request(socket: &UdpSocket, to_addr: SocketAddr, signer: &SigningKey) {
+async fn send_enr_request(
+    socket: &UdpSocket,
+    to_addr: SocketAddr,
+    signer: &SigningKey,
+) -> Option<H256> {
     let mut buf = Vec::new();
 
     let expiration: u64 = (SystemTime::now() + Duration::from_secs(20))
@@ -788,7 +842,17 @@ async fn send_enr_request(socket: &UdpSocket, to_addr: SocketAddr, signer: &Sign
     let enr_req = discv4::Message::ENRRequest(ENRRequestMessage::new(expiration));
 
     enr_req.encode_with_header(&mut buf, signer);
-    let _ = socket.send_to(&buf, to_addr).await;
+    let bytes_sent = socket.send_to(&buf, to_addr).await;
+
+    let Ok(bytes_sent) = bytes_sent else {
+        return None;
+    };
+
+    if bytes_sent == buf.len() {
+        return Some(H256::from_slice(&buf[0..32]));
+    }
+
+    return None;
 }
 
 async fn serve_requests(

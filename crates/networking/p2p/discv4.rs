@@ -478,6 +478,12 @@ pub(crate) struct ENRRequestMessage {
     expiration: u64,
 }
 
+impl ENRRequestMessage {
+    pub fn new(expiration: u64) -> Self {
+        Self { expiration }
+    }
+}
+
 impl RLPDecode for ENRRequestMessage {
     fn decode_unfinished(rlp: &[u8]) -> Result<(Self, &[u8]), RLPDecodeError> {
         let decoder = Decoder::new(rlp)?;
