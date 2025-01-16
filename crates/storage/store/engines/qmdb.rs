@@ -111,6 +111,7 @@ impl Store {
     ) -> Result<Option<Vec<u8>>, crate::error::StoreError> {
         self.db
             .lock()
+            .map_err(|err| StoreError::Custom(format!("Could not lock db: {err}")))
             .map(|db_lock| {
                 let mut buf = vec![0; value_size];
                 db_lock
@@ -124,7 +125,6 @@ impl Store {
                     .is_some()
                     .then_some(buf)
             })
-            .map_err(|err| StoreError::Custom(format!("Could not lock db: {err}")))
     }
 }
 
