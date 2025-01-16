@@ -3,7 +3,7 @@ use crate::{
     call_frame::CallFrame,
     constants::*,
     db::{
-        cache::{self, get_account_mut, insert_account, remove_account},
+        cache::{self, get_account_mut, remove_account},
         CacheDB, Database,
     },
     environment::Environment,
@@ -260,7 +260,6 @@ impl VM {
                     cache,
                     tx_kind: TxKind::Create,
                     access_list,
-                    // CHECK: check if we can create a contract if we have an EIP7702 tx
                     authorization_list,
                 })
             }
@@ -826,6 +825,11 @@ impl VM {
             }
         }
 
+        // (9) SENDER_NOT_EOA
+        if sender_account.has_code() && !was_delegated(&sender_account.info)? {
+            return Err(VMError::TxValidation(TxValidationError::SenderNotEOA));
+        }
+
         // (10) GAS_ALLOWANCE_EXCEEDED
         if self.env.gas_limit > self.env.block_gas_limit {
             return Err(VMError::TxValidation(
@@ -898,12 +902,7 @@ impl VM {
                 ));
             }
 
-            self.eip7702_set_access_code(initial_call_frame)?;
-        } else {
-            // (9) SENDER_NOT_EOA
-            if sender_account.has_code() {
-                return Err(VMError::TxValidation(TxValidationError::SenderNotEOA));
-            }
+            self.env.refunded_gas = self.eip7702_set_access_code(initial_call_frame)?;
         }
 
         if self.is_create() {
@@ -931,7 +930,15 @@ impl VM {
         // 1. Undo value transfer if the transaction was reverted
         if let TxResult::Revert(_) = report.result {
             // We remove the receiver account from the cache, like nothing changed in it's state.
-            remove_account(&mut self.cache, &receiver_address);
+            // I think this is wrong, we shouldn't remove the delegated accounts from cache, but if we send
+            // tokens to an account that has a delegation, but the tx reverts by any other reason, it will
+            // not remove the account.
+
+            // If transaction execution results in failure (any exceptional condition or code reverting), setting delegation designations is not rolled back.
+            if !was_delegated(&get_account(&mut self.cache, &self.db, receiver_address).info)? {
+                remove_account(&mut self.cache, &receiver_address);
+            }
+
             self.increase_account_balance(sender_address, initial_call_frame.msg_value)?;
         }
 
@@ -1281,13 +1288,12 @@ impl VM {
     pub fn eip7702_set_access_code(
         &mut self,
         initial_call_frame: &mut CallFrame,
-    ) -> Result<(), VMError> {
+    ) -> Result<u64, VMError> {
+        let mut refunded_gas = 0;
         // Steps from the EIP7702:
         // IMPORTANT:
         // If any of the below steps fail, immediately stop processing that tuple and continue to the next tuple in the list. It will in the case of multiple tuples for the same authority, set the code using the address in the last valid occurrence.
         // If transaction execution results in failure (any exceptional condition or code reverting), setting delegation designations is not rolled back.
-
-        //dbg!("authorization_list:", &self.authorization_list);
         // TODO: avoid clone()
         for auth_tuple in self.authorization_list.clone().unwrap_or_default() {
             let chain_id_not_equals_this_chain_id = auth_tuple.chain_id != self.env.chain_id;
@@ -1369,14 +1375,16 @@ impl VM {
             let authority_address = Address::from_slice(&authority_address_bytes);
 
             // 4. Add authority to accessed_addresses (as defined in EIP-2929). This is done inside the self.access_account() function
-            // 5. Verify the code of authority is either empty or already delegated.
             let (authority_account_info, _) = self.access_account(authority_address);
             let auth_account = self.get_account(authority_address);
-            // We are inserting the account in the cache, so later on when we use get_account_mut() it retrieves
+            // We are inserting the account in the cache if not present, so later on when we use get_account_mut() it retrieves
             // this cached state.
-            insert_account(&mut self.cache, authority_address, auth_account);
+            self.cache.entry(authority_address).or_insert(auth_account);
 
-            if !was_delegated(&authority_account_info)? && authority_account_info.has_code() {
+            // 5. Verify the code of authority is either empty or already delegated.
+            let empty_or_delegated = authority_account_info.bytecode.is_empty()
+                || was_delegated(&authority_account_info)?;
+            if !empty_or_delegated {
                 continue;
             }
 
@@ -1392,7 +1400,7 @@ impl VM {
                 let refunded_gas_if_exists: u64 = (PER_EMPTY_ACCOUNT_COST - PER_AUTH_BASE_COST)
                     .try_into()
                     .map_err(|_| VMError::Internal(InternalError::ConversionError))?;
-                self.env.refunded_gas += refunded_gas_if_exists;
+                refunded_gas += refunded_gas_if_exists;
             }
 
             // 8. Set the code of authority to be 0xef0100 || address. This is a delegation designation.
@@ -1415,13 +1423,7 @@ impl VM {
                 .map_err(|_| VMError::TxValidation(TxValidationError::NonceIsMax))?;
         }
 
-        // CHECK: is this ok?
-        if initial_call_frame.code_address == Address::zero() {
-            return Err(VMError::TxValidation(
-                TxValidationError::Type4TxContractCreation,
-            ));
-        }
-        let (code_address_info, _) = self.access_account(initial_call_frame.code_address);
+        let code_address_info = self.get_account(initial_call_frame.code_address).info;
 
         if was_delegated(&code_address_info)? {
             initial_call_frame.code_address = get_authorized_address(&code_address_info)?;
@@ -1432,7 +1434,7 @@ impl VM {
             initial_call_frame.assign_bytecode(code_address_info.bytecode);
         }
 
-        Ok(())
+        Ok(refunded_gas)
     }
 
     /// Used for the opcodes
@@ -1458,7 +1460,6 @@ impl VM {
         // Address is the delgated address
         let account = get_account(&mut self.cache, &self.db, address);
         let bytecode = account.info.bytecode.clone();
-        let access_cost;
 
         // If the Address doesn't have a delegation code
         // return false meaning that is not a delegation
@@ -1472,16 +1473,10 @@ impl VM {
         // The delegation code has the authorized address
         let auth_address = get_authorized_address(&account.info)?;
 
-        match self.accrued_substate.touched_accounts.get(&auth_address) {
-            Some(_) => {
-                // Means we've touched the account
-                access_cost = WARM_ADDRESS_ACCESS_COST;
-            }
-            None => {
-                // Means we've not touched the account
-                access_cost = COLD_ADDRESS_ACCESS_COST;
-            }
-        }
+        let access_cost = match self.accrued_substate.touched_accounts.get(&auth_address) {
+            Some(_) => WARM_ADDRESS_ACCESS_COST,
+            None => COLD_ADDRESS_ACCESS_COST,
+        };
 
         let authorized_bytecode = get_account(&mut self.cache, &self.db, auth_address)
             .info
