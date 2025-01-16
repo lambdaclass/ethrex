@@ -1,4 +1,4 @@
-use crate::{engines::api::StoreEngine, error::StoreError, rlp::BlockHashRLP};
+use crate::{engines::api::StoreEngine, error::StoreError};
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
 use qmdb::{
     config::Config, seqads::SeqAdsWrap, test_helper::SimpleTask, utils::hasher, AdsCore, ADS,
@@ -94,13 +94,13 @@ impl Store {
             .map(Some)
     }
 
-    pub fn read_from_block_hash<T>(
+    pub fn read_from_hash<T>(
         &self,
         block_hash: ethrex_core::types::BlockHash,
         table: &str,
     ) -> Result<Option<T>, crate::error::StoreError>
     where
-        T: RLPEncode + RLPDecode,
+        T: RLPDecode,
     {
         let Some(block_number) = self.get_block_number(block_hash)? else {
             return Ok(None);
@@ -201,14 +201,14 @@ impl StoreEngine for Store {
         &self,
         block_hash: ethrex_core::types::BlockHash,
     ) -> Result<Option<ethrex_core::types::BlockBody>, crate::error::StoreError> {
-        self.read_from_block_hash(block_hash, BLOCK_BODIES_TABLE)
+        self.read_from_hash(block_hash, BLOCK_BODIES_TABLE)
     }
 
     fn get_block_header_by_hash(
         &self,
         block_hash: ethrex_core::types::BlockHash,
     ) -> Result<Option<ethrex_core::types::BlockHeader>, crate::error::StoreError> {
-        self.read_from_block_hash(block_hash, HEADERS_TABLE)
+        self.read_from_hash(block_hash, HEADERS_TABLE)
     }
 
     fn add_pending_block(
@@ -222,7 +222,7 @@ impl StoreEngine for Store {
         &self,
         block_hash: ethrex_core::types::BlockHash,
     ) -> Result<Option<ethrex_core::types::Block>, crate::error::StoreError> {
-        self.read_from_block_hash(block_hash, PENDING_BLOCKS_TABLE)
+        self.read_from_hash(block_hash, PENDING_BLOCKS_TABLE)
     }
 
     fn add_block_number(
@@ -237,7 +237,7 @@ impl StoreEngine for Store {
         &self,
         block_hash: ethrex_core::types::BlockHash,
     ) -> Result<Option<ethrex_core::types::BlockNumber>, crate::error::StoreError> {
-        self.read_from_block_hash(block_hash, BLOCK_NUMBERS_TABLE)
+        self.read_from_hash(block_hash, BLOCK_NUMBERS_TABLE)
     }
 
     fn add_block_total_difficulty(
@@ -252,7 +252,7 @@ impl StoreEngine for Store {
         &self,
         block_hash: ethrex_core::types::BlockHash,
     ) -> Result<Option<ethrex_core::U256>, crate::error::StoreError> {
-        self.read_from_block_hash(block_hash, BLOCK_TOTAL_DIFFICULTIES_TABLE)
+        self.read_from_hash(block_hash, BLOCK_TOTAL_DIFFICULTIES_TABLE)
     }
 
     fn add_transaction_location(
@@ -334,9 +334,9 @@ impl StoreEngine for Store {
 
     fn get_account_code(
         &self,
-        _code_hash: ethrex_core::H256,
+        code_hash: ethrex_core::H256,
     ) -> Result<Option<bytes::Bytes>, crate::error::StoreError> {
-        todo!()
+        self.read_from_hash(code_hash, ACCOUNT_CODES_TABLE)
     }
 
     fn get_canonical_block_hash(
@@ -502,7 +502,7 @@ impl StoreEngine for Store {
         &self,
         block_hash: &ethrex_core::types::BlockHash,
     ) -> Result<Vec<ethrex_core::types::Receipt>, crate::error::StoreError> {
-        self.read_from_block_hash::<Vec<ethrex_core::types::Receipt>>(*block_hash, RECEIPTS_TABLE)
+        self.read_from_hash::<Vec<ethrex_core::types::Receipt>>(*block_hash, RECEIPTS_TABLE)
             .map(Option::unwrap_or_default)
     }
 }
