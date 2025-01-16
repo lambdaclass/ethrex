@@ -8,7 +8,8 @@ use std::{
 use bootnode::BootNode;
 use discv4::{
     get_expiration, is_expired, time_now_unix, time_since_in_hs, ENRRequestMessage,
-    FindNodeMessage, Message, NeighborsMessage, Packet, PingMessage, PongMessage,
+    ENRResponseMessage, FindNodeMessage, Message, NeighborsMessage, Packet, PingMessage,
+    PongMessage,
 };
 use ethrex_core::{H256, H512};
 use ethrex_storage::Store;
@@ -27,7 +28,7 @@ use tokio::{
     try_join,
 };
 use tracing::{debug, error, info};
-use types::{Endpoint, Node};
+use types::{Endpoint, Node, NodeRecord};
 
 pub mod bootnode;
 pub(crate) mod discv4;
@@ -52,6 +53,7 @@ pub fn peer_table(signer: SigningKey) -> Arc<Mutex<KademliaTable>> {
 }
 
 pub async fn start_network(
+    local_node: Node,
     udp_addr: SocketAddr,
     tcp_addr: SocketAddr,
     bootnodes: Vec<BootNode>,
@@ -66,6 +68,7 @@ pub async fn start_network(
         Arc<RLPxMessage>,
     )>(MAX_MESSAGES_TO_BROADCAST);
     let discovery_handle = tokio::spawn(discover_peers(
+        local_node,
         udp_addr,
         signer.clone(),
         storage.clone(),
@@ -85,6 +88,7 @@ pub async fn start_network(
 }
 
 async fn discover_peers(
+    local_node: Node,
     udp_addr: SocketAddr,
     signer: SigningKey,
     storage: Store,
@@ -95,6 +99,7 @@ async fn discover_peers(
     let udp_socket = Arc::new(UdpSocket::bind(udp_addr).await.unwrap());
 
     let server_handler = tokio::spawn(discover_peers_server(
+        local_node,
         udp_addr,
         udp_socket.clone(),
         storage,
@@ -134,6 +139,7 @@ async fn discover_peers(
 }
 
 async fn discover_peers_server(
+    local_node: Node,
     udp_addr: SocketAddr,
     udp_socket: Arc<UdpSocket>,
     storage: Store,
@@ -352,6 +358,23 @@ async fn discover_peers_server(
                     }
                 }
             }
+            Message::ENRRequest(msg) => {
+                if is_expired(msg.expiration) {
+                    debug!("Ignoring enr-request msg as it is expired.");
+                }
+                let Ok(node_record) = NodeRecord::from_node(local_node, &signer) else {
+                    debug!("Ignoring enr-request msg could not build local node record.");
+                    continue;
+                };
+                let msg = discv4::Message::ENRResponse(ENRResponseMessage::new(
+                    packet.get_hash(),
+                    node_record,
+                ));
+                let mut buf = vec![];
+                msg.encode_with_header(&mut buf, &signer);
+
+                let _ = udp_socket.send_to(&buf, from).await;
+            }
             Message::ENRResponse(msg) => {
                 let mut table = table.lock().await;
                 let peer = table.get_by_node_id_mut(packet.get_node_id());
@@ -378,8 +401,12 @@ async fn discover_peers_server(
                 }
 
                 let record = msg.node_record.decode_pairs();
+                let Some(id) = record.id else {
+                    continue;
+                };
+
                 // https://github.com/ethereum/devp2p/blob/master/enr.md#v4-identity-scheme
-                let signature_valid = match msg.node_record.id.as_str() {
+                let signature_valid = match id.as_str() {
                     "v4" => {
                         let digest = Keccak256::digest(&[]);
                         let Some(public_key) = record.secp256k1 else {
@@ -401,7 +428,7 @@ async fn discover_peers_server(
                         let encoded_compressed = recovered_pk.to_encoded_point(true);
                         let recovered_pk = H256::from_slice(&encoded_compressed.as_bytes()[1..]);
 
-                        recovered_pk == public_key
+                        recovered_pk == H256::from_slice(&public_key[1..])
                     }
                     _ => false,
                 };
@@ -425,7 +452,6 @@ async fn discover_peers_server(
                     peer.node.node_id
                 );
             }
-            _ => {}
         }
     }
 }
@@ -1012,6 +1038,12 @@ mod tests {
         )>(MAX_MESSAGES_TO_BROADCAST);
         if should_start_server {
             tokio::spawn(discover_peers_server(
+                Node {
+                    ip: addr.ip(),
+                    tcp_port: addr.port(),
+                    udp_port: addr.port(),
+                    node_id,
+                },
                 addr,
                 udp_socket.clone(),
                 storage.clone(),
