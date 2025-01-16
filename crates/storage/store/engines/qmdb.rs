@@ -109,19 +109,22 @@ impl Store {
         key: &[u8],
         value_size: usize,
     ) -> Result<Option<Vec<u8>>, crate::error::StoreError> {
-        let mut buf = vec![0; value_size];
-        Ok(self
-            .db
+        self.db
             .lock()
-            .map_err(|err| StoreError::Custom(format!("Could not lock db: {err}")))?
-            .get(table)
-            .filter(|table_ads| {
-                let key_hash = hasher::hash(key);
-                let (_size, found_it) = table_ads.read_entry(height, &key_hash, key, &mut buf);
-                found_it
+            .map_err(|err| StoreError::Custom(format!("Could not lock db: {err}")))
+            .map(|db_lock| {
+                let mut buf = vec![0; value_size];
+                db_lock
+                    .get(table)
+                    .filter(|table_ads| {
+                        let key_hash = hasher::hash(key);
+                        let (_size, found_it) =
+                            table_ads.read_entry(height, &key_hash, key, &mut buf);
+                        found_it
+                    })
+                    .is_some()
+                    .then_some(buf)
             })
-            .is_some()
-            .then_some(buf))
     }
 }
 
