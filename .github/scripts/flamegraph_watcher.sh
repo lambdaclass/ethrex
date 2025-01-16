@@ -9,17 +9,15 @@ value=1
 account=0x33c6b73432B3aeA0C1725E415CC40D04908B85fd
 end_val=$((171 * $iterations * $value))
 
-start_time=$(date +%s)
 ethrex_l2 test load --path /home/runner/work/ethrex/ethrex/test_data/private_keys.txt -i $iterations -v --value $value --to $account >/dev/null
 
+start_time=$(date +%s)
 output=$(ethrex_l2 info -b -a $account --wei 2>&1)
-
 while [[ $output -lt $end_val ]]; do
     sleep 5
     output=$(ethrex_l2 info -b -a $account --wei 2>&1)
 done
 end_time=$(date +%s)
-
 elapsed=$((end_time - start_time))
 
 minutes=$((elapsed / 60))
