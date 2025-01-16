@@ -554,6 +554,7 @@ async fn storage_fetcher(
         }
         info!("Finished processing current batches");
     }
+    info!("Concluding storage fetcher, {} storages left in queue to be healed later", pending_storage.len());
     Ok(pending_storage.into_iter().map(|(acc, _)| acc).collect())
 }
 
@@ -698,6 +699,7 @@ async fn heal_state_trie(
     ));
     // Check if we have pending storages to heal from a previous cycle
     if let Some(pending) = store.get_pending_storage_heal_accounts()? {
+        info!("Retrieved {} pending storage healing requests", pending.len());
         storage_sender.send(pending).await?;
     }
     // Begin by requesting the root node
@@ -759,12 +761,14 @@ async fn heal_state_trie(
             retry_count += 1;
         }
     }
+    info!("State Healing stopped, signaling storage healer");
     // Send empty batch to signal that no more batches are incoming
     storage_sender.send(vec![]).await?;
     let pending_storage_heal_accounts = storage_healer_handler.await??;
     // Update pending list
     let storage_healing_succesful = pending_storage_heal_accounts.is_empty();
     if !storage_healing_succesful {
+        info!("{} storages with pending healing", pending_storage_heal_accounts.len());
         store.set_pending_storage_heal_accounts(pending_storage_heal_accounts)?;
     }
     Ok(retry_count < MAX_RETRIES && storage_healing_succesful)
@@ -796,6 +800,11 @@ async fn storage_healer(
                         .into_iter()
                         .map(|acc_path| (acc_path, Nibbles::default())),
                 );
+                info!(
+                    "Received incoming storage heal request, current batch: {}/{BATCH_SIZE}",
+                    pending_storages.len()
+                );
+                info!("Number of messages in receiver: {}", receiver.len());
             }
             // Disconnect / Empty message signaling no more bytecodes to sync
             _ => incoming = false,
