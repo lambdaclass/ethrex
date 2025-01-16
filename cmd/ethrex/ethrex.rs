@@ -30,8 +30,6 @@ mod decode;
 mod networks;
 
 const DEFAULT_DATADIR: &str = "ethrex";
-const DEFAULT_KEYDIR: &str = "ethrex_key";
-
 #[tokio::main]
 async fn main() {
     let matches = cli::cli().get_matches();
@@ -179,7 +177,7 @@ async fn main() {
     let jwt_secret = read_jwtsecret_file(authrpc_jwtsecret);
 
     // Get the signer from the default directory, create one if the key file is not present.
-    let key_path = Path::new(DEFAULT_KEYDIR).join("key.txt");
+    let key_path = Path::new(&data_dir).join("node.key");
     let signer = match fs::read(key_path.clone()) {
         Ok(content) => SigningKey::from_slice(&content).expect("Signing key could not be created."),
         Err(_) => {
