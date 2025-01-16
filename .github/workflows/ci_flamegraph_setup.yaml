@@ -1,0 +1,50 @@
+name: Setup Flamegraph Deps
+
+on:
+  workflow_call:
+    outputs:
+      cache-key:
+        description: "Cache key for the setup"
+        value: ${{ jobs.setup.outputs.cache-key }}
+
+jobs:
+  setup:
+    runs-on: ubuntu-latest
+    outputs:
+      cache-key: ${{ steps.set-cache-key.outputs.key }}
+    
+    steps:
+      - name: Generate cache key
+        id: set-cache-key
+        run: echo "key=${{ runner.os }}-flamegraph-setup-${{ github.sha }}" >> $GITHUB_OUTPUT
+
+      - name: Setup perf and system
+        run: |
+          sudo sysctl kernel.perf_event_paranoid=-1
+          sudo sysctl -w kernel.kptr_restrict=0
+          sudo chmod +r /proc/kallsyms
+          sudo perf list hw
+
+      - name: Cache tooling
+        uses: actions/cache@v4
+        id: tools-cache
+        with:
+          path: |
+            ~/.cargo/bin/addr2line
+            ~/.cargo/bin/flamegraph
+            ~/.cargo/bin/inferno
+          key: ${{ steps.set-cache-key.outputs.key }}
+
+      - name: Install addr2line
+        if: steps.tools-cache.outputs.cache-hit != 'true'
+        run: |
+          git clone https://github.com/gimli-rs/addr2line
+          cd addr2line
+          echo "[workspace]" >> ./Cargo.toml
+          cargo install --force --features="bin" addr2line
+
+      - name: Install flamegraph tools
+        if: steps.tools-cache.outputs.cache-hit != 'true'
+        run: |
+          cargo install --force flamegraph
+          cargo install --force inferno
