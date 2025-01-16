@@ -167,9 +167,11 @@ impl RLPDecode for ForkId {
 #[cfg(test)]
 mod tests {
 
-    use std::str::FromStr;
+    use std::{io::BufReader, str::FromStr};
 
     use hex_literal::hex;
+
+    use crate::types::Genesis;
 
     use super::*;
 
@@ -199,5 +201,78 @@ mod tests {
         };
         let expected = hex!("ce84ffffffff88ffffffffffffffff");
         assert_eq!(fork.encode_to_vec(), expected);
+    }
+
+    #[test]
+    fn holesky_test_cases() {
+        let genesis_file = std::fs::File::open("../../cmd/ethrex/networks/holesky/genesis.json")
+            .expect("Failed to open genesis file");
+        let genesis_reader = BufReader::new(genesis_file);
+        let genesis: Genesis =
+            serde_json::from_reader(genesis_reader).expect("Failed to read genesis file");
+        let genesis_hash = genesis.get_block().hash();
+
+        // See https://github.com/ethereum/go-ethereum/blob/4d94bd83b20ce430e435f3107f29632c627cfb26/core/forkid/forkid_test.go#L98
+        let test_cases: Vec<(u64, u64, ForkId)> = vec![
+            (
+                0,
+                0,
+                ForkId {
+                    fork_hash: H32::from_str("0xc61a6098").unwrap(),
+                    fork_next: 1696000704,
+                },
+            ),
+            (
+                123,
+                0,
+                ForkId {
+                    fork_hash: H32::from_str("0xc61a6098").unwrap(),
+                    fork_next: 1696000704,
+                },
+            ),
+            (
+                123,
+                1696000704,
+                ForkId {
+                    fork_hash: H32::from_str("0xfd4f016b").unwrap(),
+                    fork_next: 1707305664,
+                },
+            ),
+            (
+                123,
+                1707305663,
+                ForkId {
+                    fork_hash: H32::from_str("0xfd4f016b").unwrap(),
+                    fork_next: 1707305664,
+                },
+            ),
+            (
+                123,
+                1707305664,
+                ForkId {
+                    fork_hash: H32::from_str("0x9b192ad0").unwrap(),
+                    fork_next: 0,
+                },
+            ),
+            (
+                123,
+                2707305664,
+                ForkId {
+                    fork_hash: H32::from_str("0x9b192ad0").unwrap(),
+                    fork_next: 0,
+                },
+            ),
+        ];
+
+        for test_case in test_cases {
+            let fork_id = ForkId::new(genesis.config, genesis_hash, test_case.1, test_case.0);
+            assert!(fork_id.is_valid(
+                test_case.2,
+                test_case.0,
+                test_case.1,
+                genesis.config,
+                genesis_hash
+            ))
+        }
     }
 }
