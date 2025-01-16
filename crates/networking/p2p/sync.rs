@@ -611,7 +611,7 @@ async fn fetch_storage_batch(
             .request_storage_ranges(state_root, batch_roots, batch_hahses, H256::zero())
             .await
         {
-            info!("Received {} storage ranges", keys.len());
+            info!("Received {} storage ranges, last batch complete: {}", keys.len(), incomplete);
             // Handle incomplete ranges
             if incomplete {
                 // An incomplete range cannot be empty
