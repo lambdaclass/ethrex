@@ -53,7 +53,7 @@ pub fn re_run_failed_ef_test(
                     }
                 }
             },
-            // Currently, we decided not to re-execute the test when the Expected exception does not match 
+            // Currently, we decided not to re-execute the test when the Expected exception does not match
             // with the received. This can change in the future.
             EFTestRunnerError::ExpectedExceptionDoesNotMatchReceived(_) => continue,
             EFTestRunnerError::VMInitializationFailed(_)
@@ -271,27 +271,28 @@ pub fn ensure_post_state(
     test: &EFTest,
     re_run_report: &mut TestReRunReport,
 ) -> Result<(), EFTestRunnerError> {
-    match test.post.vector_post_value(vector).expect_exception {
-        Some(_expected_exception) => {}
-        // We only want to compare account updates when no exception is expected.
-        None => {
-            let (initial_state, block_hash) = load_initial_state(test);
-            let levm_account_updates = levm_runner::get_state_transitions(
-                &initial_state,
-                block_hash,
-                levm_execution_report,
-            );
-            let revm_account_updates = ethrex_vm::get_state_transitions(revm_state);
-            let account_updates_report = compare_levm_revm_account_updates(
-                test,
-                &levm_account_updates,
-                &revm_account_updates,
-            );
-            re_run_report.register_account_updates_report(*vector, account_updates_report);
-        }
-    }
+    unimplemented!()
+    // match test.post.vector_post_value(vector).expect_exception {
+    //     Some(_expected_exception) => {}
+    //     // We only want to compare account updates when no exception is expected.
+    //     None => {
+    //         let (initial_state, block_hash) = load_initial_state(test);
+    //         let levm_account_updates = levm_runner::get_state_transitions(
+    //             &initial_state,
+    //             block_hash,
+    //             levm_execution_report,
+    //         );
+    //         let revm_account_updates = ethrex_vm::get_state_transitions(revm_state);
+    //         let account_updates_report = compare_levm_revm_account_updates(
+    //             test,
+    //             &levm_account_updates,
+    //             &revm_account_updates,
+    //         );
+    //         re_run_report.register_account_updates_report(*vector, account_updates_report);
+    //     }
+    // }
 
-    Ok(())
+    // Ok(())
 }
 
 pub fn compare_levm_revm_account_updates(
@@ -421,73 +422,74 @@ pub fn _ensure_post_state_revm(
     test: &EFTest,
     revm_state: &mut EvmState,
 ) -> Result<(), EFTestRunnerError> {
-    match revm_execution_result {
-        Ok(_execution_result) => {
-            match test.post.vector_post_value(vector).expect_exception {
-                // Execution result was successful but an exception was expected.
-                Some(expected_exception) => {
-                    let error_reason = format!("Expected exception: {expected_exception:?}");
-                    return Err(EFTestRunnerError::FailedToEnsurePostState(
-                        TransactionReport {
-                            result: TxResult::Success,
-                            gas_used: 42,
-                            gas_refunded: 42,
-                            logs: vec![],
-                            output: Bytes::new(),
-                            new_state: HashMap::new(),
-                            created_address: None,
-                        },
-                        //TODO: This is not a TransactionReport because it is REVM
-                        error_reason,
-                    ));
-                }
-                // Execution result was successful and no exception was expected.
-                None => {
-                    let revm_account_updates = ethrex_vm::get_state_transitions(revm_state);
-                    let pos_state_root = post_state_root(&revm_account_updates, test);
-                    let expected_post_state_root_hash = test.post.vector_post_value(vector).hash;
-                    if expected_post_state_root_hash != pos_state_root {
-                        println!(
-                            "Post-state root mismatch: expected {expected_post_state_root_hash:#x}, got {pos_state_root:#x}",
-                        );
-                        let error_reason = format!(
-                            "Post-state root mismatch: expected {expected_post_state_root_hash:#x}, got {pos_state_root:#x}",
-                        );
-                        return Err(EFTestRunnerError::FailedToEnsurePostState(
-                            TransactionReport {
-                                result: TxResult::Success,
-                                gas_used: 42,
-                                gas_refunded: 42,
-                                logs: vec![],
-                                output: Bytes::new(),
-                                new_state: HashMap::new(),
-                                created_address: None,
-                            },
-                            //TODO: This is not a TransactionReport because it is REVM
-                            error_reason,
-                        ));
-                    }
-                }
-            }
-        }
-        Err(err) => {
-            match test.post.vector_post_value(vector).expect_exception {
-                // Execution result was unsuccessful and an exception was expected.
-                // TODO: See if we want to map revm exceptions to expected exceptions, probably not.
-                Some(_expected_exception) => {}
-                // Execution result was unsuccessful but no exception was expected.
-                None => {
-                    println!(
-                        "Unexpected exception. Name: {}, vector: {:?}, error: {:?}",
-                        &test.name, vector, err
-                    );
-                    return Err(EFTestRunnerError::ExecutionFailedUnexpectedly(
-                        ethrex_levm::errors::VMError::AddressAlreadyOccupied,
-                        //TODO: Use another kind of error for this.
-                    ));
-                }
-            }
-        }
-    };
-    Ok(())
+    unimplemented!();
+    // match revm_execution_result {
+    //     Ok(_execution_result) => {
+    //         match test.post.vector_post_value(vector).expect_exception {
+    //             // Execution result was successful but an exception was expected.
+    //             Some(expected_exception) => {
+    //                 let error_reason = format!("Expected exception: {expected_exception:?}");
+    //                 return Err(EFTestRunnerError::FailedToEnsurePostState(
+    //                     TransactionReport {
+    //                         result: TxResult::Success,
+    //                         gas_used: 42,
+    //                         gas_refunded: 42,
+    //                         logs: vec![],
+    //                         output: Bytes::new(),
+    //                         new_state: HashMap::new(),
+    //                         created_address: None,
+    //                     },
+    //                     //TODO: This is not a TransactionReport because it is REVM
+    //                     error_reason,
+    //                 ));
+    //             }
+    //             // Execution result was successful and no exception was expected.
+    //             None => {
+    //                 let revm_account_updates = ethrex_vm::get_state_transitions(revm_state);
+    //                 let pos_state_root = post_state_root(&revm_account_updates, test);
+    //                 let expected_post_state_root_hash = test.post.vector_post_value(vector).hash;
+    //                 if expected_post_state_root_hash != pos_state_root {
+    //                     println!(
+    //                         "Post-state root mismatch: expected {expected_post_state_root_hash:#x}, got {pos_state_root:#x}",
+    //                     );
+    //                     let error_reason = format!(
+    //                         "Post-state root mismatch: expected {expected_post_state_root_hash:#x}, got {pos_state_root:#x}",
+    //                     );
+    //                     return Err(EFTestRunnerError::FailedToEnsurePostState(
+    //                         TransactionReport {
+    //                             result: TxResult::Success,
+    //                             gas_used: 42,
+    //                             gas_refunded: 42,
+    //                             logs: vec![],
+    //                             output: Bytes::new(),
+    //                             new_state: HashMap::new(),
+    //                             created_address: None,
+    //                         },
+    //                         //TODO: This is not a TransactionReport because it is REVM
+    //                         error_reason,
+    //                     ));
+    //                 }
+    //             }
+    //         }
+    //     }
+    //     Err(err) => {
+    //         match test.post.vector_post_value(vector).expect_exception {
+    //             // Execution result was unsuccessful and an exception was expected.
+    //             // TODO: See if we want to map revm exceptions to expected exceptions, probably not.
+    //             Some(_expected_exception) => {}
+    //             // Execution result was unsuccessful but no exception was expected.
+    //             None => {
+    //                 println!(
+    //                     "Unexpected exception. Name: {}, vector: {:?}, error: {:?}",
+    //                     &test.name, vector, err
+    //                 );
+    //                 return Err(EFTestRunnerError::ExecutionFailedUnexpectedly(
+    //                     ethrex_levm::errors::VMError::AddressAlreadyOccupied,
+    //                     //TODO: Use another kind of error for this.
+    //                 ));
+    //             }
+    //         }
+    //     }
+    // };
+    // Ok(())
 }

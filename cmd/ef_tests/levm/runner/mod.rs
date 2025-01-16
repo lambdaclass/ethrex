@@ -97,7 +97,8 @@ fn run_with_levm(
         if !opts.spinner && opts.verbose {
             println!("Running test: {:?}", test.name);
         }
-        let ef_test_report = match levm_runner::run_ef_test(test) {
+        let ef_test_report = match levm_runner::run_ef_test_multiple_forks(test) {
+        // let ef_test_report = match levm_runner::run_ef_test(test) {
             Ok(ef_test_report) => ef_test_report,
             Err(EFTestRunnerError::Internal(err)) => return Err(EFTestRunnerError::Internal(err)),
             non_internal_errors => {
