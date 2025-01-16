@@ -92,9 +92,6 @@ jobs:
           ethrex_l2 config create default --default
           ethrex_l2 config set default
 
-      - name: Build ethrex
-        run: CARGO_PROFILE_RELEASE_DEBUG=true cargo build --release --bin ethrex --features dev
-
       - id: generate-flamegraph-ethrex
         name: Generate Flamegraph data for Ethrex
         shell: bash
@@ -212,7 +209,9 @@ jobs:
         id: cache-reth-binary
         uses: actions/cache@v4
         with:
-          path: ./reth/target/profiling
+          path:
+            ./reth/target/
+            ~/.cargo
           key: reth-binary-${{ env.RUST_RETH_VERSION }}-${{ runner.os }}-${{ hashFiles('reth/**/*.rs') }}
 
       - id: generate-flamegraph-reth
@@ -222,7 +221,10 @@ jobs:
         run: |
           cd ./reth
           if [ ! -f "target/profiling/reth" ]; then
+            echo "reth binary not in cache, building..."
             CARGO_PROFILE_RELEASE_DEBUG=true cargo build --profile profiling
+          else
+            echo "reth binary cached, skipping build"
           fi
           CARGO_PROFILE_RELEASE_DEBUG=true cargo flamegraph -c "record -o perf.data -F997 --call-graph dwarf,16384 -g" \
           --bin reth --profile profiling -- node --chain /home/runner/work/ethrex/ethrex/test_data/genesis-load-test.json --dev \
