@@ -1057,20 +1057,20 @@ fn calculate_cost_and_gas_limit_call(
     ))
 }
 
-pub fn bls12_g1msm(k: usize) -> Result<u64, VMError> {
+pub fn bls12_msm(k: usize, discount_table: &[u64; 128], mul_cost: u64) -> Result<u64, VMError> {
     if k == 0 {
         return Ok(0);
     }
 
-    let discount = if k < BLS12_381_G1_K_DISCOUNT.len() {
-        BLS12_381_G1_K_DISCOUNT
+    let discount = if k < discount_table.len() {
+        discount_table
             .get(k.checked_sub(1).ok_or(VMError::Internal(
                 InternalError::ArithmeticOperationUnderflow,
             ))?)
             .copied()
             .ok_or(VMError::Internal(InternalError::SlicingError))?
     } else {
-        BLS12_381_G1_K_DISCOUNT
+        discount_table
             .last()
             .copied()
             .ok_or(VMError::Internal(InternalError::SlicingError))?
@@ -1078,37 +1078,7 @@ pub fn bls12_g1msm(k: usize) -> Result<u64, VMError> {
 
     let gas_cost = u64::try_from(k)
         .map_err(|_| VMError::VeryLargeNumber)?
-        .checked_mul(G1_MUL_COST)
-        .ok_or(VMError::VeryLargeNumber)?
-        .checked_mul(discount)
-        .ok_or(VMError::VeryLargeNumber)?
-        .checked_div(BLS12_381_MSM_MULTIPLIER)
-        .ok_or(VMError::VeryLargeNumber)?;
-    Ok(gas_cost)
-}
-
-pub fn bls12_g2msm(k: usize) -> Result<u64, VMError> {
-    if k == 0 {
-        return Ok(0);
-    }
-
-    let discount = if k < BLS12_381_G2_K_DISCOUNT.len() {
-        BLS12_381_G2_K_DISCOUNT
-            .get(k.checked_sub(1).ok_or(VMError::Internal(
-                InternalError::ArithmeticOperationUnderflow,
-            ))?)
-            .copied()
-            .ok_or(VMError::Internal(InternalError::SlicingError))?
-    } else {
-        BLS12_381_G2_K_DISCOUNT
-            .last()
-            .copied()
-            .ok_or(VMError::Internal(InternalError::SlicingError))?
-    };
-
-    let gas_cost = u64::try_from(k)
-        .map_err(|_| VMError::VeryLargeNumber)?
-        .checked_mul(G2_MUL_COST)
+        .checked_mul(mul_cost)
         .ok_or(VMError::VeryLargeNumber)?
         .checked_mul(discount)
         .ok_or(VMError::VeryLargeNumber)?

@@ -38,8 +38,9 @@ use crate::{
     constants::VERSIONED_HASH_VERSION_KZG,
     errors::{InternalError, PrecompileError, VMError},
     gas_cost::{
-        self, BLAKE2F_ROUND_COST, BLS12_381_G1ADD_COST, BLS12_381_G2ADD_COST, ECADD_COST,
-        ECMUL_COST, ECRECOVER_COST, MODEXP_STATIC_COST, POINT_EVALUATION_COST,
+        self, BLAKE2F_ROUND_COST, BLS12_381_G1ADD_COST, BLS12_381_G1_K_DISCOUNT,
+        BLS12_381_G2ADD_COST, BLS12_381_G2_K_DISCOUNT, ECADD_COST, ECMUL_COST, ECRECOVER_COST,
+        G1_MUL_COST, G2_MUL_COST, MODEXP_STATIC_COST, POINT_EVALUATION_COST,
     },
 };
 
@@ -1224,7 +1225,7 @@ pub fn bls12_g1msm(
     }
 
     let k = calldata.len() / BLS12_381_G1_MSM_PAIR_LENGTH;
-    let required_gas = gas_cost::bls12_g1msm(k)?;
+    let required_gas = gas_cost::bls12_msm(k, &BLS12_381_G1_K_DISCOUNT, G1_MUL_COST)?;
     increase_precompile_consumed_gas(gas_for_call, required_gas, consumed_gas)?;
 
     let mut result = G1Projective::identity();
@@ -1326,7 +1327,7 @@ pub fn bls12_g2msm(
     }
 
     let k = calldata.len() / BLS12_381_G2_MSM_PAIR_LENGTH;
-    let required_gas = gas_cost::bls12_g2msm(k)?;
+    let required_gas = gas_cost::bls12_msm(k, &BLS12_381_G2_K_DISCOUNT, G2_MUL_COST)?;
     increase_precompile_consumed_gas(gas_for_call, required_gas, consumed_gas)?;
 
     let mut result = G2Projective::identity();
@@ -1471,7 +1472,7 @@ fn parse_g2_point(
     {
         G2Projective::identity()
     } else {
-        // The crate serialize the coordintates in a reverse order
+        // The crate serialize the coordinates in a reverse order
         // https://docs.rs/bls12_381/0.8.0/src/bls12_381/g2.rs.html#401-464
         let g2_bytes: [u8; 192] = [x_2, x_1, y_2, y_1]
             .concat()
@@ -1509,7 +1510,7 @@ fn add_padded_coordinate(
     result: &mut Vec<u8>,
     coordinate_raw_bytes: Option<&[u8]>,
 ) -> Result<(), VMError> {
-    // add the padding to satisfy the convention of enconding
+    // add the padding to satisfy the convention of encoding
     // https://eips.ethereum.org/EIPS/eip-2537
     let sixteen_zeroes: [u8; 16] = [0_u8; 16];
     result.extend_from_slice(&sixteen_zeroes);
