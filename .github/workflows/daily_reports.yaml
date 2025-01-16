@@ -18,7 +18,6 @@ jobs:
         vm: [levm, revm]
         test:
           - {
-
               name: "Rpc Compat tests",
               file_name: rpc-compat,
               simulation: ethereum/rpc-compat,
@@ -136,13 +135,11 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: results_levm.md
-          path: ./results_levm.md
 
       - name: Download results (revm)
         uses: actions/download-artifact@v4
         with:
           name: results_revm.md
-          path: ./results_revm.md
 
       - name: Post results diff to Slack
         env:
@@ -152,7 +149,7 @@ jobs:
               || secrets.LEVM_SLACK_WEBHOOK
             }}
         run: |
-          ls
+          ls -lah
           bash .github/scripts/levm_revm_diff.sh results_revm.md results_levm.md >> diff.md
           cat diff.md >> $GITHUB_STEP_SUMMARY
           sh .github/scripts/publish_vms_diff.sh $SLACK_WEBHOOK
