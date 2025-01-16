@@ -168,18 +168,21 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
             match self.get_remote_node_id() {
                 Err(e) => {
                     debug!("Get remote id failed for {peer_addr:?}, with errror {e:?}");
-                    self
-                        .peer_conn_failed(
-                            "Error during RLPx connection",
-                            RLPxError::InvalidState(),
-                            table,
-                        )
-                        .await;
+                    self.peer_conn_failed(
+                        "Error during RLPx connection",
+                        RLPxError::InvalidState(),
+                        table,
+                    )
+                    .await;
                 }
                 Ok(node_id) => {
                     debug!("Got remote id for {peer_addr:?}, with id {node_id:?}");
 
-                    let capabilities = self.capabilities.iter().map(|(cap, _)| cap.clone()).collect();
+                    let capabilities = self
+                        .capabilities
+                        .iter()
+                        .map(|(cap, _)| cap.clone())
+                        .collect();
 
                     let node = crate::Node {
                         node_id,
@@ -189,24 +192,24 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
                     };
 
                     debug!("About to add to table");
-                    
+
                     let mut table = table.lock().await;
 
                     let (peer, inserted_to_table) = table.insert_node(node);
                     if inserted_to_table && peer.is_some() {
                         let peer = peer.unwrap();
                         let node_addr = std::net::SocketAddr::new(peer.node.ip, peer.node.udp_port);
-                        let sockedt_addr = std::net::SocketAddr::new(std::net::Ipv4Addr::new(127,0, 0, 1).into(), 30303);
-                        let ping_hash = crate::ping(&udp_socket, sockedt_addr, node_addr, &signer).await;
+                        let sockedt_addr = std::net::SocketAddr::new(
+                            std::net::Ipv4Addr::new(127, 0, 0, 1).into(),
+                            30303,
+                        );
+                        let ping_hash =
+                            crate::ping(&udp_socket, sockedt_addr, node_addr, &signer).await;
                         table.update_peer_ping(peer.node.node_id, ping_hash);
                     };
 
                     debug!("Added to table, about to init backend communication");
-                    table.init_backend_communication(
-                        node_id,
-                        peer_channels,
-                        capabilities,
-                    );
+                    table.init_backend_communication(node_id, peer_channels, capabilities);
                     if let Err(e) = self.handle_peer_conn(sender, receiver).await {
                         error!("Error during RLPx connection: {e}");
                     }
