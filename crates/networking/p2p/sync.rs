@@ -587,7 +587,7 @@ async fn fetch_storage_batch(
             // Handle incomplete ranges
             if incomplete {
                 // An incomplete range cannot be empty
-                let (keys, values) = (keys.pop().unwrap(), values.pop().unwrap());
+                let (last_keys, last_values) = (keys.pop().unwrap(), values.pop().unwrap());
                 // If only one incomplete range is returned then it must belong to a trie that is too big to fit into one request
                 // We will handle this large trie separately
                 if keys.len() == 1 {
@@ -597,8 +597,8 @@ async fn fetch_storage_batch(
                         state_root,
                         account_hash,
                         storage_root,
-                        keys,
-                        values,
+                        last_keys,
+                        last_values,
                         peers.clone(),
                         store.clone(),
                     )
