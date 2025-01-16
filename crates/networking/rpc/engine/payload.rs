@@ -1,14 +1,21 @@
 use ethrex_blockchain::add_block;
 use ethrex_blockchain::error::ChainError;
 use ethrex_blockchain::payload::build_payload;
-use ethrex_core::types::{BlobsBundle, Block, Fork};
+use ethrex_core::types::{BlobsBundle, Block, BlockBody, BlockHash, Fork};
 use ethrex_core::{H256, U256};
 use serde_json::Value;
 use tracing::{error, info, warn};
 
-use crate::types::payload::{ExecutionPayload, ExecutionPayloadResponse, PayloadStatus};
+use crate::types::payload::{
+    ExecutionPayload, ExecutionPayloadBody, ExecutionPayloadResponse, PayloadStatus,
+};
 use crate::utils::RpcRequest;
 use crate::{RpcApiContext, RpcErr, RpcHandler};
+
+// Must support rquest sizes of at least 32 blocks
+// Chosen an arbitrary x4 value
+// -> https://github.com/ethereum/execution-apis/blob/main/src/engine/shanghai.md#specification-3
+const GET_PAYLOAD_BODIES_REQUEST_MAX_SIZE: usize = 128;
 
 // NewPayload V1-V2-V3 implementations
 pub struct NewPayloadV1Request {
@@ -176,6 +183,45 @@ impl RpcHandler for GetPayloadV3Request {
         serde_json::to_value(execution_payload_response)
             .map_err(|error| RpcErr::Internal(error.to_string()))
     }
+}
+
+pub struct GetPayloadBodiesByHashV1Request {
+    pub hashes: Vec<BlockHash>,
+}
+
+impl RpcHandler for GetPayloadBodiesByHashV1Request {
+    fn parse(params: &Option<Vec<Value>>) -> Result<Self, RpcErr> {
+        let params = params
+            .as_ref()
+            .ok_or(RpcErr::BadParams("No params provided".to_owned()))?;
+        if params.len() != 1 {
+            return Err(RpcErr::BadParams("Expected 1 param".to_owned()));
+        };
+
+        Ok(GetPayloadBodiesByHashV1Request {
+            hashes: serde_json::from_value(params[0].clone())?,
+        })
+    }
+
+    fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
+        if self.hashes.len() >= GET_PAYLOAD_BODIES_REQUEST_MAX_SIZE {
+            return Err(RpcErr::TooLargeRequest);
+        }
+        let bodies = self
+            .hashes
+            .iter()
+            .map(|hash| context.storage.get_block_body_by_hash(hash.clone()))
+            .collect::<Result<Vec<Option<BlockBody>>, _>>()?;
+        build_payload_body_response(bodies)
+    }
+}
+
+fn build_payload_body_response(bodies: Vec<Option<BlockBody>>) -> Result<Value, RpcErr> {
+    let response: Vec<Option<ExecutionPayloadBody>> = bodies
+        .into_iter()
+        .map(|body| body.map(Into::into))
+        .collect();
+    serde_json::to_value(response).map_err(|error| RpcErr::Internal(error.to_string()))
 }
 
 fn parse_execution_payload(params: &Option<Vec<Value>>) -> Result<ExecutionPayload, RpcErr> {
