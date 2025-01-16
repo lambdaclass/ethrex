@@ -90,7 +90,7 @@ impl RpcApiContext {
         Ok(if self.syncer.try_lock().is_ok() {
             SyncStatus::Active
         // Check if there is a checkpoint left from a previous aborted sync
-        } else if self.storage.get_latest_downloaded_header()?.is_some() {
+        } else if self.storage.get_header_download_checkpoint()?.is_some() {
             SyncStatus::Pending
         // No trace of a sync being handled
         } else {
