@@ -189,7 +189,7 @@ jobs:
         # --dev.block-time 1000ms set to 1000ms to match ethrex block generation time
         run: |
           cd ./reth
-          CARGO_PROFILE_RELEASE_DEBUG=true cargo flamegraph -c "record -o perf.data -F997 --call-graph dwarf,16384 -g" --bin reth --profile profiling \
+          CARGO_PROFILE_RELEASE_DEBUG=true cargo flamegraph -c "record -o perf.data -F997 --call-graph dwarf,16384 -g" --bin reth --profile maxperf \
           -- node --chain /home/runner/work/ethrex/ethrex/test_data/genesis-load-test.json --dev \
           --dev.block-time 1000ms --http.port 1729  --txpool.max-pending-txns 100000000 --txpool.max-new-txns 1000000000 \
           --txpool.pending-max-count 100000000 --txpool.pending-max-size 10000000000 --txpool.basefee-max-count 100000000000 \
