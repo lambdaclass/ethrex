@@ -60,7 +60,9 @@ pub struct SnapState {
     /// Latest downloaded block header's hash from a previously aborted sync
     header_download_checkpoint: Option<BlockHash>,
     /// Current root hash of the latest State Trie + the last downloaded key
-    state_trie_download_checkpoint: Option<(H256, H256)>
+    state_trie_download_checkpoint: Option<(H256, H256)>,
+    /// Accounts which storage needs healing
+    pending_storage_heal_accounts: Option<Vec<H256>>,
 }
 
 impl Store {
@@ -462,6 +464,21 @@ impl StoreEngine for Store {
         self.inner().snap_state.state_trie_download_checkpoint = None;
         Ok(())
     }
+
+    fn set_pending_storage_heal_accounts(&self, accounts: Vec<H256>) -> Result<(), StoreError> {
+        self.inner().snap_state.pending_storage_heal_accounts = Some(accounts);
+        Ok(())
+    }
+
+    fn get_pending_storage_heal_accounts(&self) -> Result<Option<Vec<H256>>, StoreError> {
+        Ok(self.inner().snap_state.pending_storage_heal_accounts.clone())
+    }
+
+    fn clear_pending_storage_heal_accounts(&self) -> Result<(), StoreError> {
+        self.inner().snap_state.pending_storage_heal_accounts = None;
+        Ok(())
+    }
+
 }
 
 impl Debug for Store {

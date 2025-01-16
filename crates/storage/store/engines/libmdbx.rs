@@ -561,6 +561,24 @@ impl StoreEngine for Store {
     fn clear_state_trie_download_checkpoint(&self) -> Result<(), StoreError> {
         self.delete::<SnapState>(SnapStateIndex::StateTrieDownloadCheckpoint)
     }
+
+    fn set_pending_storage_heal_accounts(&self, accounts: Vec<H256>) -> Result<(), StoreError> {
+        self.write::<SnapState>(
+            SnapStateIndex::PendingStorageHealAccounts,
+            accounts.encode_to_vec(),
+        )
+    }
+
+    fn get_pending_storage_heal_accounts(&self) -> Result<Option<Vec<H256>>, StoreError> {
+        self.read::<SnapState>(SnapStateIndex::PendingStorageHealAccounts)?
+            .map(|ref h| <Vec<H256>>::decode(h))
+            .transpose()
+            .map_err(StoreError::RLPDecode)
+    }
+
+    fn clear_pending_storage_heal_accounts(&self) -> Result<(), StoreError> {
+        self.delete::<SnapState>(SnapStateIndex::PendingStorageHealAccounts)
+    }
 }
 
 impl Debug for Store {

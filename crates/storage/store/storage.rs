@@ -1023,6 +1023,18 @@ impl Store {
     pub fn clear_state_trie_download_checkpoint(&self) -> Result<(), StoreError> {
         self.engine.clear_state_trie_download_checkpoint()
     }
+
+    pub fn set_pending_storage_heal_accounts(&self, accounts: Vec<H256>) -> Result<(), StoreError> {
+        self.engine.set_pending_storage_heal_accounts(accounts)
+    }
+
+    pub fn get_pending_storage_heal_accounts(&self) -> Result<Option<Vec<H256>>, StoreError> {
+        self.engine.get_pending_storage_heal_accounts()
+    }
+
+    pub fn clear_pending_storage_heal_accounts(&self) -> Result<(), StoreError> {
+        self.engine.clear_pending_storage_heal_accounts()
+    }
 }
 
 pub fn hash_address(address: &Address) -> Vec<u8> {

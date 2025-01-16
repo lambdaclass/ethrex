@@ -404,12 +404,21 @@ async fn rebuild_state_trie(
     if retry_count > MAX_RETRIES {
         // Store current checkpoint
         store.set_state_trie_download_checkpoint(current_state_root, start_account_hash)?;
-        return Err(SyncError::StalePivot);
     }
-    info!("Account Trie fully fetched, signaling storage fetcher process");
+    info!("Account Trie Fetching ended, signaling storage fetcher process");
     // Send empty batch to signal that no more batches are incoming
     storage_sender.send(vec![]).await?;
-    storage_fetcher_handle.await??;
+    let pending_storage_accounts = storage_fetcher_handle.await??;
+    let pending_storages = pending_storage_accounts.is_empty();
+    // Next cycle may have different storage roots for these accounts so we will leave them to healing
+    if pending_storages {
+        // (Assumption) If we are still fetching storages then we should have never started healing and have no pending healing accounts to overwrite
+        store.set_pending_storage_heal_accounts(pending_storage_accounts)?;
+    }
+    if retry_count > MAX_RETRIES || pending_storages {
+        // Skip healing and return stale status
+        return Ok(false)
+    }
     // Perform state healing to fix inconsistencies with older state
     info!("Healing");
     let res = heal_state_trie(bytecode_sender.clone(), state_root, store.clone(), peers.clone()).await?;
@@ -481,18 +490,19 @@ async fn fetch_bytecode_batch(
 
 /// Waits for incoming account hashes & storage roots from the receiver channel endpoint, queues them, and fetches and stores their bytecodes in batches
 /// This function will remain active until either an empty vec is sent to the receiver or the pivot becomes stale
-/// In the last case, the fetcher will return an internal SyncError::StalePivot error
+/// In the last case, the fetcher will return the account hashes of the accounts in the queue
 async fn storage_fetcher(
     mut receiver: Receiver<Vec<(H256, H256)>>,
     peers: Arc<Mutex<KademliaTable>>,
     store: Store,
     state_root: H256,
-) -> Result<(), SyncError> {
+) -> Result<Vec<H256>, SyncError> {
     const BATCH_SIZE: usize = 100;
     // Pending list of storages to fetch
     let mut pending_storage: Vec<(H256, H256)> = vec![];
-    // TODO: Also add a queue for storages that were incompletely fecthed,
-    // but for the first iteration we will asume not fully fetched -> fetch again
+    // The pivot may become stale while the fetcher is active, we will still keep the process
+    // alive until the end signal so we don't lose queued messages
+    let mut stale = false;
     let mut incoming = true;
     while incoming {
         // Fetch incoming requests
@@ -519,14 +529,19 @@ async fn storage_fetcher(
         info!("Processing current batches");
         // If we have enough pending bytecodes to fill a batch
         // or if we have no more incoming batches, spawn a fetch process
-        while pending_storage.len() >= BATCH_SIZE || !incoming && !pending_storage.is_empty() {
+        // If the pivot became stale don't process anything and just save incoming requests
+        while !stale && (pending_storage.len() >= BATCH_SIZE || !incoming && !pending_storage.is_empty()) {
             let now = Instant::now();
             let next_batch = pending_storage
                 .drain(..BATCH_SIZE.min(pending_storage.len()))
                 .collect::<Vec<_>>();
             let batch_size = next_batch.len();
             let remaining =
-                fetch_storage_batch(next_batch, state_root, peers.clone(), store.clone()).await?;
+                match fetch_storage_batch(next_batch.clone(), state_root, peers.clone(), store.clone()).await {
+                    Ok(r) => r,
+                    Err(SyncError::StalePivot) => {stale = true; next_batch},
+                    Err(err) => return Err(err),
+                };
             let remaining_size = remaining.len();
             // Add unfeched bytecodes back to the queue
             pending_storage.extend(remaining);
@@ -539,7 +554,7 @@ async fn storage_fetcher(
         }
         info!("Finished processing current batches");
     }
-    Ok(())
+    Ok(pending_storage.into_iter().map(|(acc, _)| acc).collect())
 }
 
 /// Receives a batch of account hashes with their storage roots, fetches their respective storage ranges via p2p and returns a list of the code hashes that couldn't be fetched in the request (if applicable)
@@ -681,6 +696,10 @@ async fn heal_state_trie(
         peers.clone(),
         store.clone(),
     ));
+    // Check if we have pending storages to heal from a previous cycle
+    if let Some(pending) = store.get_pending_storage_heal_accounts()? {
+        storage_sender.send(pending).await?;
+    }
     // Begin by requesting the root node
     let mut paths = vec![Nibbles::default()];
     // Count the number of request retries so we don't get stuck requesting old state
@@ -742,21 +761,30 @@ async fn heal_state_trie(
     }
     // Send empty batch to signal that no more batches are incoming
     storage_sender.send(vec![]).await?;
-    storage_healer_handler.await??;
-    Ok(retry_count < MAX_RETRIES)
+    let pending_storage_heal_accounts = storage_healer_handler.await??;
+    // Update pending list
+    let storage_healing_succesful = pending_storage_heal_accounts.is_empty();
+    if !storage_healing_succesful {
+        store.set_pending_storage_heal_accounts(pending_storage_heal_accounts)?;
+    }
+    Ok(retry_count < MAX_RETRIES && storage_healing_succesful)
 }
 
 /// Waits for incoming hashed addresses from the receiver channel endpoint and queues the associated root nodes for state retrieval
 /// Also retrieves their children nodes until we have the full storage trie stored
+/// If the state becomes stale while fetching, returns its current queued account hashes
 async fn storage_healer(
     state_root: H256,
     mut receiver: Receiver<Vec<H256>>,
     peers: Arc<Mutex<KademliaTable>>,
     store: Store,
-) -> Result<(), SyncError> {
+) -> Result<Vec<H256>, SyncError> {
     const BATCH_SIZE: usize = 200;
-    // Pending list of bytecodes to fetch
+    // Pending list of storages to fetch
     let mut pending_storages: Vec<(H256, Nibbles)> = vec![];
+    // The pivot may become stale while the fetcher is active, we will still keep the process
+    // alive until the end signal so we don't lose queued messages
+    let mut stale = false;
     let mut incoming = true;
     while incoming {
         // Fetch incoming requests
@@ -774,7 +802,8 @@ async fn storage_healer(
         }
         // If we have enough pending storages to fill a batch
         // or if we have no more incoming batches, spawn a fetch process
-        while pending_storages.len() >= BATCH_SIZE || !incoming && !pending_storages.is_empty() {
+        // If the pivot became stale don't process anything and just save incoming requests
+        while !stale && (pending_storages.len() >= BATCH_SIZE || !incoming && !pending_storages.is_empty()) {
             let mut next_batch: BTreeMap<H256, Vec<Nibbles>> = BTreeMap::new();
             // Group pending storages by account path
             // We do this here instead of keeping them sorted so we don't prioritize further nodes from the first tries
@@ -783,7 +812,11 @@ async fn storage_healer(
                 next_batch.entry(account).or_default().push(path);
             }
             let return_batch =
-                heal_storage_batch(state_root, next_batch, peers.clone(), store.clone()).await?;
+                match heal_storage_batch(state_root, next_batch.clone(), peers.clone(), store.clone()).await {
+                    Ok(b) => b,
+                    Err(SyncError::StalePivot) => {stale = true; next_batch},
+                    Err(err) => return Err(err),
+                };
             for (acc_path, paths) in return_batch {
                 for path in paths {
                     pending_storages.push((acc_path, path));
@@ -791,7 +824,7 @@ async fn storage_healer(
             }
         }
     }
-    Ok(())
+    Ok(pending_storages.into_iter().map(|(h, _)| h).collect())
 }
 
 /// Receives a set of storage trie paths (grouped by their corresponding account's state trie path),
@@ -832,9 +865,8 @@ async fn heal_storage_batch(
             return Ok(batch);
         }
     }
-    // This is a corner case where we fetched an account range for a block but the chain has moved on and the block
-    // was dropped by the peer's snapshot. We will keep the fetcher alive to avoid errors and stop fetching as from the next account
-    Ok(BTreeMap::new())
+    // Pivot became stale, lets inform the fetcher
+    Err(SyncError::StalePivot)
 }
 
 /// Returns the partial paths to the node's children if they are not already part of the trie state
