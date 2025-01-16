@@ -118,8 +118,29 @@ jobs:
         with:
           toolchain: ${{ env.RUST_RETH_VERSION }}
 
+      - name: Cache reth repository
+        uses: actions/cache@v4
+        id: cache-reth-repo
+        with:
+          path: reth
+          key: reth-repo-main-${{ hashFiles('reth/Cargo.lock') }}
+          restore-keys: |
+            reth-repo-${{ env.RETH_REF }}-
+            reth-repo-
+
+      - name: Checkout reth
+        if: steps.cache-reth-repo.outputs.cache-hit != 'true'
+        uses: actions/checkout@v4
+        with:
+          repository: paradigmxyz/reth
+          path: "reth"
+          ref: main
+
       - name: Caching
         uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: "reth -> target"
+          key: reth-build-main
 
       - name: Change perf settings
         run: |
@@ -149,12 +170,6 @@ jobs:
           cargo install --path cmd/ethrex_l2
           ethrex_l2 config create default --default
           ethrex_l2 config set default
-
-      - name: Checkout reth
-        uses: actions/checkout@v4
-        with:
-          repository: paradigmxyz/reth
-          path: "reth"
 
       - id: generate-flamegraph-reth
         name: Build and test reth
