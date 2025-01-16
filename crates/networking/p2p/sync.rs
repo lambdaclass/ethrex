@@ -201,6 +201,8 @@ impl SyncManager {
                 self.last_snap_pivot = pivot_header.number;
                 // Finished a sync cycle without aborting halfway, clear current checkpoint
                 store.clear_header_download_checkpoint()?;
+                store.clear_state_trie_download_checkpoint()?;
+                store.clear_pending_storage_heal_accounts()?;
                 // Next sync will be full-sync
                 self.sync_mode = SyncMode::Full;
             }
