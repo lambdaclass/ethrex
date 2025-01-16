@@ -260,11 +260,12 @@ async fn main() {
                 tcp_socket_addr,
                 bootnodes,
                 signer,
-                peer_table,
+                peer_table.clone(),
                 store,
             )
             .into_future();
             tracker.spawn(networking);
+            tracker.spawn(ethrex_net::periodically_show_peer_stats(peer_table));
         }
     }
 
