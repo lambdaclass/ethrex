@@ -1,5 +1,4 @@
 use crate::{engines::api::StoreEngine, error::StoreError};
-use ethrex_core::{types::Receipt, H256};
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
 use qmdb::{
     config::Config, seqads::SeqAdsWrap, test_helper::SimpleTask, utils::hasher, AdsCore, ADS,
