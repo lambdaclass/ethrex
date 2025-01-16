@@ -1,14 +1,14 @@
 use std::{
     collections::HashSet,
-    net::SocketAddr,
+    net::{IpAddr, Ipv4Addr, SocketAddr},
     sync::Arc,
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
 use bootnode::BootNode;
 use discv4::{
-    get_expiration, is_expired, time_now_unix, time_since_in_hs, FindNodeMessage, Message,
-    NeighborsMessage, Packet, PingMessage, PongMessage,
+    get_expiration, is_expired, time_now_unix, time_since_in_hs, ENRRequestMessage,
+    FindNodeMessage, Message, NeighborsMessage, Packet, PingMessage, PongMessage,
 };
 use ethrex_core::{H256, H512};
 use ethrex_storage::Store;
@@ -179,6 +179,16 @@ async fn discover_peers_server(
                                 .update_peer_ping(peer.node.node_id, Some(hash));
                         }
                     }
+                    // if it has updated its record, send a request to update it
+                    if let Some(enr_seq) = msg.enr_seq {
+                        if enr_seq > peer.enr_seq {
+                            send_enr_request(&udp_socket, from, &signer).await;
+                            table
+                                .lock()
+                                .await
+                                .update_peer_enr_seq(peer.node.node_id, enr_seq);
+                        }
+                    }
                 } else {
                     // send a ping to get the endpoint proof from our end
                     let (peer, inserted_to_table) = {
@@ -219,7 +229,15 @@ async fn discover_peers_server(
                     }
                     if peer.last_ping_hash.unwrap() == msg.ping_hash {
                         table.lock().await.pong_answered(peer.node.node_id);
-
+                        if let Some(enr_seq) = msg.enr_seq {
+                            if enr_seq > peer.enr_seq {
+                                send_enr_request(&udp_socket, from, &signer).await;
+                                table
+                                    .lock()
+                                    .await
+                                    .update_peer_enr_seq(peer.node.node_id, enr_seq);
+                            }
+                        }
                         let mut msg_buf = vec![0; read - 32];
                         buf[32..read].clone_into(&mut msg_buf);
                         let signer = signer.clone();
@@ -756,6 +774,20 @@ async fn pong(socket: &UdpSocket, to_addr: SocketAddr, ping_hash: H256, signer: 
     let pong: discv4::Message = discv4::Message::Pong(PongMessage::new(to, ping_hash, expiration));
 
     pong.encode_with_header(&mut buf, signer);
+    let _ = socket.send_to(&buf, to_addr).await;
+}
+
+async fn send_enr_request(socket: &UdpSocket, to_addr: SocketAddr, signer: &SigningKey) {
+    let mut buf = Vec::new();
+
+    let expiration: u64 = (SystemTime::now() + Duration::from_secs(20))
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+
+    let enr_req = discv4::Message::ENRRequest(ENRRequestMessage::new(expiration));
+
+    enr_req.encode_with_header(&mut buf, signer);
     let _ = socket.send_to(&buf, to_addr).await;
 }
 
