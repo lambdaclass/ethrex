@@ -142,6 +142,7 @@ pub const SIZE_PRECOMPILES_CANCUN: u64 = 10;
 pub const SIZE_PRECOMPILES_PRAGUE: u64 = 17;
 
 pub const BLS12_381_G1_MSM_PAIR_LENGTH: usize = 160;
+pub const BLS12_381_PAIRING_CHECK_PAIR_LENGTH: usize = 384;
 
 const BLS12_381_G1ADD_VALID_INPUT_LENGTH: usize = 256;
 const BLS12_381_G2ADD_VALID_INPUT_LENGTH: usize = 512;
@@ -1312,8 +1313,8 @@ pub fn bls12_g2add(
     let second_y_1 = parse_coordinate(calldata.get(384..448))?;
     let second_y_2 = parse_coordinate(calldata.get(448..512))?;
 
-    let first_g2_point = parse_g2_point(first_x_1, first_x_2, first_y_1, first_y_2)?;
-    let second_g2_point = parse_g2_point(second_x_1, second_x_2, second_y_1, second_y_2)?;
+    let first_g2_point = parse_g2_point(first_x_1, first_x_2, first_y_1, first_y_2, true)?;
+    let second_g2_point = parse_g2_point(second_x_1, second_x_2, second_y_1, second_y_2, true)?;
 
     let result_of_addition = G2Affine::from(first_g2_point.add(&second_g2_point));
 
@@ -1343,10 +1344,13 @@ pub fn bls12_g2msm(
 }
 
 pub fn bls12_pairing_check(
-    _calldata: &Bytes,
+    calldata: &Bytes,
     _gas_for_call: u64,
     _consumed_gas: &mut u64,
 ) -> Result<Bytes, VMError> {
+    if calldata.is_empty() || calldata.len() % BLS12_381_PAIRING_CHECK_PAIR_LENGTH != 0 {
+        return Err(VMError::PrecompileError(PrecompileError::ParsingInputError));
+    }
     Ok(Bytes::new())
 }
 
@@ -1422,6 +1426,7 @@ fn parse_g2_point(
     x_2: [u8; 48],
     y_1: [u8; 48],
     y_2: [u8; 48],
+    unchecked: bool,
 ) -> Result<G2Projective, VMError> {
     // if a g1 point decode to (0,0) by convention it is interpreted as a point to infinity
     let g2_point: G2Projective = if x_1.iter().all(|e| *e == 0)
@@ -1431,26 +1436,35 @@ fn parse_g2_point(
     {
         G2Projective::identity()
     } else {
-        // The crate serialize the coordintates in a reverse order
+        // The crate serialize the coordinates in a reverse order
         // https://docs.rs/bls12_381/0.8.0/src/bls12_381/g2.rs.html#401-464
         let g2_bytes: [u8; 192] = [x_2, x_1, y_2, y_1]
             .concat()
             .try_into()
             .map_err(|_| VMError::Internal(InternalError::ConversionError))?;
 
-        // We use unchecked because in the https://github.com/ethereum/EIPs/blob/master/EIPS/eip-2537.md?plain=1#L141
-        // note that there is no subgroup check for the G1 addition precompile
-        let g2_affine = G2Affine::from_uncompressed_unchecked(&g2_bytes)
-            .into_option()
-            .ok_or(VMError::PrecompileError(PrecompileError::ParsingInputError))?;
+        if unchecked {
+            // We use unchecked because in the https://github.com/ethereum/EIPs/blob/master/EIPS/eip-2537.md?plain=1#L141
+            // note that there is no subgroup check for the G1 addition precompile
+            let g2_affine = G2Affine::from_uncompressed_unchecked(&g2_bytes)
+                .into_option()
+                .ok_or(VMError::PrecompileError(PrecompileError::ParsingInputError))?;
 
-        if !bool::from(g2_affine.is_on_curve()) {
-            return Err(VMError::PrecompileError(
-                PrecompileError::BLS12381G2PointNotInCurve,
-            ));
+            // We still need to check if the point is on the curve
+            if !bool::from(g2_affine.is_on_curve()) {
+                return Err(VMError::PrecompileError(
+                    PrecompileError::BLS12381G2PointNotInCurve,
+                ));
+            }
+
+            G2Projective::from(g2_affine)
+        } else {
+            let g2_affine = G2Affine::from_uncompressed(&g2_bytes)
+                .into_option()
+                .ok_or(VMError::PrecompileError(PrecompileError::ParsingInputError))?;
+
+            G2Projective::from(g2_affine)
         }
-
-        G2Projective::from(g2_affine)
     };
     Ok(g2_point)
 }
