@@ -121,7 +121,7 @@ fn get_all_fork_id_combinations(forks: Vec<u64>, genesis_hash: BlockHash) -> Vec
         hasher.update(&activation.to_be_bytes());
     }
     combinations.push((H32::from_slice(&hasher.finalize().to_be_bytes()), 0));
-    return combinations;
+    combinations
 }
 
 fn update_checksum(forks: Vec<u64>, hasher: &mut Hasher, head: u64) -> u64 {
