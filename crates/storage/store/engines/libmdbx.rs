@@ -552,10 +552,9 @@ impl StoreEngine for Store {
     }
 
     fn get_state_trie_download_checkpoint(&self) -> Result<Option<(H256, H256)>, StoreError> {
-        self.read::<SnapState>(SnapStateIndex::StateTrieDownloadCheckpoint)?
+        Ok(self.read::<SnapState>(SnapStateIndex::StateTrieDownloadCheckpoint)?
             .map(|ref h| <(H256, H256)>::decode(h))
-            .transpose()
-            .map_err(StoreError::RLPDecode)
+            .transpose().unwrap())
     }
 
     fn clear_state_trie_download_checkpoint(&self) -> Result<(), StoreError> {
