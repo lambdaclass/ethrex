@@ -59,6 +59,8 @@ struct ChainData {
 pub struct SnapState {
     /// Latest downloaded block header's hash from a previously aborted sync
     header_download_checkpoint: Option<BlockHash>,
+    /// Current root hash of the latest State Trie + the last downloaded key
+    state_trie_download_checkpoint: Option<(H256, H256)>
 }
 
 impl Store {
@@ -444,6 +446,20 @@ impl StoreEngine for Store {
 
     fn clear_header_download_checkpoint(&self) -> Result<(), StoreError> {
         self.inner().snap_state.header_download_checkpoint = None;
+        Ok(())
+    }
+
+    fn set_state_trie_download_checkpoint(&self, current_root: H256, last_key: H256) -> Result<(), StoreError> {
+        self.inner().snap_state.state_trie_download_checkpoint = Some((current_root, last_key));
+        Ok(())
+    }
+
+    fn get_state_trie_download_checkpoint(&self) -> Result<Option<(H256, H256)>, StoreError> {
+        Ok(self.inner().snap_state.state_trie_download_checkpoint)
+    }
+
+    fn clear_state_trie_download_checkpoint(&self) -> Result<(), StoreError> {
+        self.inner().snap_state.state_trie_download_checkpoint = None;
         Ok(())
     }
 }

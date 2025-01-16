@@ -543,6 +543,24 @@ impl StoreEngine for Store {
     fn clear_header_download_checkpoint(&self) -> Result<(), StoreError> {
         self.delete::<SnapState>(SnapStateIndex::HeaderDownloadCheckpoint)
     }
+
+    fn set_state_trie_download_checkpoint(&self, current_root: H256, last_key: H256) -> Result<(), StoreError> {
+        self.write::<SnapState>(
+            SnapStateIndex::StateTrieDownloadCheckpoint,
+            (current_root, last_key).encode_to_vec(),
+        )
+    }
+
+    fn get_state_trie_download_checkpoint(&self) -> Result<Option<(H256, H256)>, StoreError> {
+        self.read::<SnapState>(SnapStateIndex::StateTrieDownloadCheckpoint)?
+            .map(|ref h| <(H256, H256)>::decode(h))
+            .transpose()
+            .map_err(StoreError::RLPDecode)
+    }
+
+    fn clear_state_trie_download_checkpoint(&self) -> Result<(), StoreError> {
+        self.delete::<SnapState>(SnapStateIndex::StateTrieDownloadCheckpoint)
+    }
 }
 
 impl Debug for Store {
