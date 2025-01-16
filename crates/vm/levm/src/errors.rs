@@ -114,6 +114,8 @@ pub enum TxValidationError {
     Type3TxContractCreation,
     #[error("Gas limit price product overflow")]
     GasLimitPriceProductOverflow,
+    #[error("Gas limit is too low")]
+    GasLimitTooLow,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, thiserror::Error, Serialize, Deserialize)]
@@ -180,6 +182,8 @@ pub enum InternalError {
     UndefinedState(i32), // This error is temporarily for things that cause an undefined state.
     #[error("Invalid precompile address. Tried to execute a precompile that does not exist.")]
     InvalidPrecompileAddress,
+    #[error("Spec Id doesn't match to any fork")]
+    InvalidSpecId,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error, Serialize, Deserialize)]
@@ -194,6 +198,10 @@ pub enum PrecompileError {
     EvaluationError,
     #[error("This is a default error")]
     DefaultError,
+    #[error("The G1 point is not in the curve")]
+    BLS12381G1PointNotInCurve,
+    #[error("The G2 point is not in the curve")]
+    BLS12381G2PointNotInCurve,
 }
 
 #[derive(Debug, Clone)]

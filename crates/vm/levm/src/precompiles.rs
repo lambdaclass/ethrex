@@ -1,5 +1,7 @@
+use bls12_381::{G1Affine, G1Projective, G2Affine, G2Projective, Scalar};
+
 use bytes::Bytes;
-use ethrex_core::{Address, H160, H256, U256};
+use ethrex_core::{serde_utils::bool, Address, H160, H256, U256};
 use keccak_hash::keccak256;
 use kzg_rs::{Bytes32, Bytes48, KzgSettings};
 use lambdaworks_math::{
@@ -29,14 +31,16 @@ use libsecp256k1::{self, Message, RecoveryId, Signature};
 use num_bigint::BigUint;
 use revm_primitives::SpecId;
 use sha3::Digest;
+use std::ops::Mul;
 
 use crate::{
     call_frame::CallFrame,
     constants::VERSIONED_HASH_VERSION_KZG,
     errors::{InternalError, PrecompileError, VMError},
     gas_cost::{
-        self, BLAKE2F_ROUND_COST, ECADD_COST, ECMUL_COST, ECRECOVER_COST, MODEXP_STATIC_COST,
-        POINT_EVALUATION_COST,
+        self, BLAKE2F_ROUND_COST, BLS12_381_G1ADD_COST, BLS12_381_G1_K_DISCOUNT,
+        BLS12_381_G2ADD_COST, BLS12_381_G2_K_DISCOUNT, ECADD_COST, ECMUL_COST, ECRECOVER_COST,
+        G1_MUL_COST, G2_MUL_COST, MODEXP_STATIC_COST, POINT_EVALUATION_COST,
     },
 };
 
@@ -80,6 +84,34 @@ pub const POINT_EVALUATION_ADDRESS: H160 = H160([
     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
     0x00, 0x00, 0x00, 0x0a,
 ]);
+pub const BLS12_G1ADD_ADDRESS: H160 = H160([
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x0b,
+]);
+pub const BLS12_G1MSM_ADDRESS: H160 = H160([
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x0c,
+]);
+pub const BLS12_G2ADD_ADDRESS: H160 = H160([
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x0d,
+]);
+pub const BLS12_G2MSM_ADDRESS: H160 = H160([
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x0e,
+]);
+pub const BLS12_PAIRING_CHECK_ADDRESS: H160 = H160([
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x0f,
+]);
+pub const BLS12_MAP_FP_TO_G1_ADDRESS: H160 = H160([
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x10,
+]);
+pub const BLS12_MAP_FP2_TO_G2_ADDRESS: H160 = H160([
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x11,
+]);
 
 pub const PRECOMPILES: [H160; 10] = [
     ECRECOVER_ADDRESS,
@@ -94,15 +126,43 @@ pub const PRECOMPILES: [H160; 10] = [
     POINT_EVALUATION_ADDRESS,
 ];
 
+pub const PRECOMPILES_POST_CANCUN: [H160; 7] = [
+    BLS12_G1ADD_ADDRESS,
+    BLS12_G1MSM_ADDRESS,
+    BLS12_G2ADD_ADDRESS,
+    BLS12_G2MSM_ADDRESS,
+    BLS12_PAIRING_CHECK_ADDRESS,
+    BLS12_MAP_FP_TO_G1_ADDRESS,
+    BLS12_MAP_FP2_TO_G2_ADDRESS,
+];
+
 pub const BLAKE2F_ELEMENT_SIZE: usize = 8;
+
+pub const SIZE_PRECOMPILES_PRE_CANCUN: u64 = 9;
+pub const SIZE_PRECOMPILES_CANCUN: u64 = 10;
+pub const SIZE_PRECOMPILES_PRAGUE: u64 = 17;
+
+pub const BLS12_381_G1_MSM_PAIR_LENGTH: usize = 160;
+pub const BLS12_381_G2_MSM_PAIR_LENGTH: usize = 288;
+
+const BLS12_381_G1ADD_VALID_INPUT_LENGTH: usize = 256;
+const BLS12_381_G2ADD_VALID_INPUT_LENGTH: usize = 512;
+
+pub const FIELD_ELEMENT_WITHOUT_PADDING_LENGTH: usize = 48;
+pub const PADDED_FIELD_ELEMENT_SIZE_IN_BYTES: usize = 64;
 
 pub fn is_precompile(callee_address: &Address, spec_id: SpecId) -> bool {
     // Cancun specs is the only one that allows point evaluation precompile
     if *callee_address == POINT_EVALUATION_ADDRESS && spec_id < SpecId::CANCUN {
         return false;
     }
+    // Prague or newers forks should only use this precompiles
+    // https://eips.ethereum.org/EIPS/eip-2537
+    if PRECOMPILES_POST_CANCUN.contains(callee_address) && spec_id < SpecId::PRAGUE {
+        return false;
+    }
 
-    PRECOMPILES.contains(callee_address)
+    PRECOMPILES.contains(callee_address) || PRECOMPILES_POST_CANCUN.contains(callee_address)
 }
 
 pub fn execute_precompile(
@@ -110,7 +170,6 @@ pub fn execute_precompile(
     spec_id: SpecId,
 ) -> Result<Bytes, VMError> {
     let callee_address = current_call_frame.code_address;
-    let calldata = current_call_frame.calldata.clone();
     let gas_for_call = current_call_frame
         .gas_limit
         .checked_sub(current_call_frame.gas_used)
@@ -119,24 +178,58 @@ pub fn execute_precompile(
 
     let result = match callee_address {
         address if address == ECRECOVER_ADDRESS => {
-            ecrecover(&calldata, gas_for_call, consumed_gas)?
+            ecrecover(&current_call_frame.calldata, gas_for_call, consumed_gas)?
         }
-        address if address == IDENTITY_ADDRESS => identity(&calldata, gas_for_call, consumed_gas)?,
-        address if address == SHA2_256_ADDRESS => sha2_256(&calldata, gas_for_call, consumed_gas)?,
+        address if address == IDENTITY_ADDRESS => {
+            identity(&current_call_frame.calldata, gas_for_call, consumed_gas)?
+        }
+        address if address == SHA2_256_ADDRESS => {
+            sha2_256(&current_call_frame.calldata, gas_for_call, consumed_gas)?
+        }
         address if address == RIPEMD_160_ADDRESS => {
-            ripemd_160(&calldata, gas_for_call, consumed_gas)?
+            ripemd_160(&current_call_frame.calldata, gas_for_call, consumed_gas)?
         }
-        address if address == MODEXP_ADDRESS => {
-            modexp(&calldata, gas_for_call, consumed_gas, spec_id)?
+        address if address == MODEXP_ADDRESS => modexp(
+            &current_call_frame.calldata,
+            gas_for_call,
+            consumed_gas,
+            spec_id,
+        )?,
+        address if address == ECADD_ADDRESS => {
+            ecadd(&current_call_frame.calldata, gas_for_call, consumed_gas)?
         }
-        address if address == ECADD_ADDRESS => ecadd(&calldata, gas_for_call, consumed_gas)?,
-        address if address == ECMUL_ADDRESS => ecmul(&calldata, gas_for_call, consumed_gas)?,
+        address if address == ECMUL_ADDRESS => {
+            ecmul(&current_call_frame.calldata, gas_for_call, consumed_gas)?
+        }
         address if address == ECPAIRING_ADDRESS => {
-            ecpairing(&calldata, gas_for_call, consumed_gas)?
+            ecpairing(&current_call_frame.calldata, gas_for_call, consumed_gas)?
         }
-        address if address == BLAKE2F_ADDRESS => blake2f(&calldata, gas_for_call, consumed_gas)?,
+        address if address == BLAKE2F_ADDRESS => {
+            blake2f(&current_call_frame.calldata, gas_for_call, consumed_gas)?
+        }
         address if address == POINT_EVALUATION_ADDRESS => {
-            point_evaluation(&calldata, gas_for_call, consumed_gas)?
+            point_evaluation(&current_call_frame.calldata, gas_for_call, consumed_gas)?
+        }
+        address if address == BLS12_G1ADD_ADDRESS => {
+            bls12_g1add(&current_call_frame.calldata, gas_for_call, consumed_gas)?
+        }
+        address if address == BLS12_G1MSM_ADDRESS => {
+            bls12_g1msm(&current_call_frame.calldata, gas_for_call, consumed_gas)?
+        }
+        address if address == BLS12_G2ADD_ADDRESS => {
+            bls12_g2add(&current_call_frame.calldata, gas_for_call, consumed_gas)?
+        }
+        address if address == BLS12_G2MSM_ADDRESS => {
+            bls12_g2msm(&current_call_frame.calldata, gas_for_call, consumed_gas)?
+        }
+        address if address == BLS12_PAIRING_CHECK_ADDRESS => {
+            bls12_pairing_check(&current_call_frame.calldata, gas_for_call, consumed_gas)?
+        }
+        address if address == BLS12_MAP_FP_TO_G1_ADDRESS => {
+            bls12_map_fp_to_g1(&current_call_frame.calldata, gas_for_call, consumed_gas)?
+        }
+        address if address == BLS12_MAP_FP2_TO_G2_ADDRESS => {
+            bls12_map_fp2_tp_g2(&current_call_frame.calldata, gas_for_call, consumed_gas)?
         }
         _ => return Err(VMError::Internal(InternalError::InvalidPrecompileAddress)),
     };
@@ -306,7 +399,11 @@ pub fn modexp(
     );
 
     if base_size == U256::zero() && modulus_size == U256::zero() {
-        increase_precompile_consumed_gas(gas_for_call, MODEXP_STATIC_COST, consumed_gas)?;
+        // On Berlin or newer there is a floor cost for the modexp precompile
+        // On older versions in this return there is no cost added, see more https://eips.ethereum.org/EIPS/eip-2565
+        if spec_id >= SpecId::BERLIN {
+            increase_precompile_consumed_gas(gas_for_call, MODEXP_STATIC_COST, consumed_gas)?;
+        }
         return Ok(Bytes::new());
     }
 
@@ -1077,4 +1174,340 @@ fn point_evaluation(
     let output = POINT_EVALUATION_OUTPUT_BYTES.to_vec();
 
     Ok(Bytes::from(output))
+}
+
+pub fn bls12_g1add(
+    calldata: &Bytes,
+    gas_for_call: u64,
+    consumed_gas: &mut u64,
+) -> Result<Bytes, VMError> {
+    // Two inputs of 128 bytes are required
+    if calldata.len() != BLS12_381_G1ADD_VALID_INPUT_LENGTH {
+        return Err(VMError::PrecompileError(PrecompileError::ParsingInputError));
+    }
+
+    // GAS
+    increase_precompile_consumed_gas(gas_for_call, BLS12_381_G1ADD_COST, consumed_gas)
+        .map_err(|_| VMError::PrecompileError(PrecompileError::NotEnoughGas))?;
+
+    let first_g1_point = parse_g1_point(calldata.get(0..128), true)?;
+    let second_g1_point = parse_g1_point(calldata.get(128..256), true)?;
+
+    let result_of_addition = G1Affine::from(first_g1_point.add(&second_g1_point));
+
+    let result_bytes = if result_of_addition.is_identity().into() {
+        return Ok(Bytes::copy_from_slice(&[0_u8; 128]));
+    } else {
+        result_of_addition.to_uncompressed()
+    };
+
+    let mut padded_result = Vec::new();
+    add_padded_coordinate(&mut padded_result, result_bytes.get(0..48))?;
+    add_padded_coordinate(&mut padded_result, result_bytes.get(48..96))?;
+
+    Ok(Bytes::from(padded_result))
+}
+
+pub fn bls12_g1msm(
+    calldata: &Bytes,
+    gas_for_call: u64,
+    consumed_gas: &mut u64,
+) -> Result<Bytes, VMError> {
+    if calldata.is_empty() || calldata.len() % BLS12_381_G1_MSM_PAIR_LENGTH != 0 {
+        return Err(VMError::PrecompileError(PrecompileError::ParsingInputError));
+    }
+
+    let k = calldata.len() / BLS12_381_G1_MSM_PAIR_LENGTH;
+    let required_gas = gas_cost::bls12_msm(k, &BLS12_381_G1_K_DISCOUNT, G1_MUL_COST)?;
+    increase_precompile_consumed_gas(gas_for_call, required_gas, consumed_gas)?;
+
+    let mut result = G1Projective::identity();
+    // R = s_P_1 + s_P_2 + ... + s_P_k
+    // Where:
+    // s_i are scalars (numbers)
+    // P_i are points in the group (in this case, points in G1)
+    for i in 0..k {
+        let point_offset = i
+            .checked_mul(BLS12_381_G1_MSM_PAIR_LENGTH)
+            .ok_or(InternalError::ArithmeticOperationOverflow)?;
+        let scalar_offset = point_offset
+            .checked_add(128)
+            .ok_or(InternalError::ArithmeticOperationOverflow)?;
+        let pair_end = scalar_offset
+            .checked_add(32)
+            .ok_or(InternalError::ArithmeticOperationOverflow)?;
+
+        let point = parse_g1_point(calldata.get(point_offset..scalar_offset), false)?;
+        let scalar = parse_scalar(calldata.get(scalar_offset..pair_end))?;
+
+        let scaled_point = G1Projective::mul(point, scalar);
+        result = result.add(&scaled_point);
+    }
+    let mut output = [0u8; 128];
+
+    if result.is_identity().into() {
+        return Ok(Bytes::copy_from_slice(&output));
+    }
+    let result_bytes = G1Affine::from(result).to_uncompressed();
+    let (x_bytes, y_bytes) = result_bytes
+        .split_at_checked(FIELD_ELEMENT_WITHOUT_PADDING_LENGTH)
+        .ok_or(InternalError::SlicingError)?;
+    output[16..64].copy_from_slice(x_bytes);
+    output[80..128].copy_from_slice(y_bytes);
+
+    Ok(Bytes::copy_from_slice(&output))
+}
+
+pub fn bls12_g2add(
+    calldata: &Bytes,
+    gas_for_call: u64,
+    consumed_gas: &mut u64,
+) -> Result<Bytes, VMError> {
+    if calldata.len() != BLS12_381_G2ADD_VALID_INPUT_LENGTH {
+        return Err(VMError::PrecompileError(PrecompileError::ParsingInputError));
+    }
+
+    // GAS
+    increase_precompile_consumed_gas(gas_for_call, BLS12_381_G2ADD_COST, consumed_gas)
+        .map_err(|_| VMError::PrecompileError(PrecompileError::NotEnoughGas))?;
+
+    let first_g2_point = parse_g2_point(calldata.get(0..256), true)?;
+    let second_g2_point = parse_g2_point(calldata.get(256..512), true)?;
+
+    let result_of_addition = G2Affine::from(first_g2_point.add(&second_g2_point));
+
+    let result_bytes = if result_of_addition.is_identity().into() {
+        return Ok(Bytes::copy_from_slice(&[0_u8; 256]));
+    } else {
+        result_of_addition.to_uncompressed()
+    };
+
+    let mut padded_result = Vec::new();
+    // The crate bls12_381 deserialize the G2 point as x_1 || x_0 || y_1 || y_0
+    // https://docs.rs/bls12_381/0.8.0/src/bls12_381/g2.rs.html#284-299
+    add_padded_coordinate(&mut padded_result, result_bytes.get(48..96))?;
+    add_padded_coordinate(&mut padded_result, result_bytes.get(0..48))?;
+    add_padded_coordinate(&mut padded_result, result_bytes.get(144..192))?;
+    add_padded_coordinate(&mut padded_result, result_bytes.get(96..144))?;
+
+    Ok(Bytes::from(padded_result))
+}
+
+pub fn bls12_g2msm(
+    calldata: &Bytes,
+    gas_for_call: u64,
+    consumed_gas: &mut u64,
+) -> Result<Bytes, VMError> {
+    if calldata.is_empty() || calldata.len() % BLS12_381_G2_MSM_PAIR_LENGTH != 0 {
+        return Err(VMError::PrecompileError(PrecompileError::ParsingInputError));
+    }
+
+    let k = calldata.len() / BLS12_381_G2_MSM_PAIR_LENGTH;
+    let required_gas = gas_cost::bls12_msm(k, &BLS12_381_G2_K_DISCOUNT, G2_MUL_COST)?;
+    increase_precompile_consumed_gas(gas_for_call, required_gas, consumed_gas)?;
+
+    let mut result = G2Projective::identity();
+    for i in 0..k {
+        let point_offset = i
+            .checked_mul(BLS12_381_G2_MSM_PAIR_LENGTH)
+            .ok_or(InternalError::ArithmeticOperationOverflow)?;
+        let scalar_offset = point_offset
+            .checked_add(256)
+            .ok_or(InternalError::ArithmeticOperationOverflow)?;
+        let pair_end = scalar_offset
+            .checked_add(32)
+            .ok_or(InternalError::ArithmeticOperationOverflow)?;
+
+        let point = parse_g2_point(calldata.get(point_offset..scalar_offset), false)?;
+        let scalar = parse_scalar(calldata.get(scalar_offset..pair_end))?;
+
+        let scaled_point = G2Projective::mul(point, scalar);
+        result = result.add(&scaled_point);
+    }
+
+    let result_bytes = if result.is_identity().into() {
+        return Ok(Bytes::copy_from_slice(&[0_u8; 256]));
+    } else {
+        G2Affine::from(result).to_uncompressed()
+    };
+
+    let mut padded_result = Vec::new();
+    // The crate bls12_381 deserialize the G2 point as x_1 || x_0 || y_1 || y_0
+    // https://docs.rs/bls12_381/0.8.0/src/bls12_381/g2.rs.html#284-299
+    add_padded_coordinate(&mut padded_result, result_bytes.get(48..96))?;
+    add_padded_coordinate(&mut padded_result, result_bytes.get(0..48))?;
+    add_padded_coordinate(&mut padded_result, result_bytes.get(144..192))?;
+    add_padded_coordinate(&mut padded_result, result_bytes.get(96..144))?;
+
+    Ok(Bytes::from(padded_result))
+}
+
+pub fn bls12_pairing_check(
+    _calldata: &Bytes,
+    _gas_for_call: u64,
+    _consumed_gas: &mut u64,
+) -> Result<Bytes, VMError> {
+    Ok(Bytes::new())
+}
+
+pub fn bls12_map_fp_to_g1(
+    _calldata: &Bytes,
+    _gas_for_call: u64,
+    _consumed_gas: &mut u64,
+) -> Result<Bytes, VMError> {
+    Ok(Bytes::new())
+}
+
+pub fn bls12_map_fp2_tp_g2(
+    _calldata: &Bytes,
+    _gas_for_call: u64,
+    _consumed_gas: &mut u64,
+) -> Result<Bytes, VMError> {
+    Ok(Bytes::new())
+}
+
+fn parse_coordinate(coordinate_raw_bytes: Option<&[u8]>) -> Result<[u8; 48], VMError> {
+    let sixteen_zeroes: [u8; 16] = [0_u8; 16];
+    let padded_coordinate =
+        coordinate_raw_bytes.ok_or(VMError::PrecompileError(PrecompileError::ParsingInputError))?;
+    if !matches!(padded_coordinate.get(0..16), Some(prefix) if prefix == sixteen_zeroes) {
+        return Err(VMError::PrecompileError(PrecompileError::ParsingInputError));
+    }
+    let unpadded_coordinate = padded_coordinate
+        .get(16..64)
+        .ok_or(VMError::PrecompileError(PrecompileError::ParsingInputError))?;
+    unpadded_coordinate
+        .try_into()
+        .map_err(|_| VMError::PrecompileError(PrecompileError::ParsingInputError))
+}
+
+fn parse_g1_point(
+    point_raw_bytes: Option<&[u8]>,
+    unchecked: bool,
+) -> Result<G1Projective, VMError> {
+    let point_bytes =
+        point_raw_bytes.ok_or(VMError::PrecompileError(PrecompileError::ParsingInputError))?;
+    let x = parse_coordinate(point_bytes.get(0..64))?;
+    let y = parse_coordinate(point_bytes.get(64..128))?;
+
+    // if a g1 point decode to (0,0) by convention it is interpreted as a point to infinity
+    let g1_point: G1Projective = if x.iter().all(|e| *e == 0) && y.iter().all(|e| *e == 0) {
+        G1Projective::identity()
+    } else {
+        let g1_bytes: [u8; 96] = [x, y]
+            .concat()
+            .try_into()
+            .map_err(|_| VMError::Internal(InternalError::ConversionError))?;
+
+        if unchecked {
+            // We use unchecked because in the https://github.com/ethereum/EIPs/blob/master/EIPS/eip-2537.md?plain=1#L141
+            // note that there is no subgroup check for the G1 addition precompile
+            let g1_affine = G1Affine::from_uncompressed_unchecked(&g1_bytes)
+                .into_option()
+                .ok_or(VMError::PrecompileError(PrecompileError::ParsingInputError))?;
+
+            // We still need to check if the point is on the curve
+            if !bool::from(g1_affine.is_on_curve()) {
+                return Err(VMError::PrecompileError(
+                    PrecompileError::BLS12381G1PointNotInCurve,
+                ));
+            }
+
+            G1Projective::from(g1_affine)
+        } else {
+            let g1_affine = G1Affine::from_uncompressed(&g1_bytes)
+                .into_option()
+                .ok_or(VMError::PrecompileError(PrecompileError::ParsingInputError))?;
+
+            G1Projective::from(g1_affine)
+        }
+    };
+    Ok(g1_point)
+}
+
+fn parse_g2_point(
+    point_raw_bytes: Option<&[u8]>,
+    unchecked: bool,
+) -> Result<G2Projective, VMError> {
+    let point_bytes =
+        point_raw_bytes.ok_or(VMError::PrecompileError(PrecompileError::ParsingInputError))?;
+    let x_0 = parse_coordinate(point_bytes.get(0..64))?;
+    let x_1 = parse_coordinate(point_bytes.get(64..128))?;
+    let y_0 = parse_coordinate(point_bytes.get(128..192))?;
+    let y_1 = parse_coordinate(point_bytes.get(192..256))?;
+
+    // if a g1 point decode to (0,0) by convention it is interpreted as a point to infinity
+    let g2_point: G2Projective = if x_0.iter().all(|e| *e == 0)
+        && x_1.iter().all(|e| *e == 0)
+        && y_0.iter().all(|e| *e == 0)
+        && y_1.iter().all(|e| *e == 0)
+    {
+        G2Projective::identity()
+    } else {
+        // The crate serialize the coordinates in a reverse order
+        // https://docs.rs/bls12_381/0.8.0/src/bls12_381/g2.rs.html#401-464
+        let g2_bytes: [u8; 192] = [x_1, x_0, y_1, y_0]
+            .concat()
+            .try_into()
+            .map_err(|_| VMError::Internal(InternalError::ConversionError))?;
+
+        if unchecked {
+            // We use unchecked because in the https://github.com/ethereum/EIPs/blob/master/EIPS/eip-2537.md?plain=1#L141
+            // note that there is no subgroup check for the G1 addition precompile
+            let g2_affine = G2Affine::from_uncompressed_unchecked(&g2_bytes)
+                .into_option()
+                .ok_or(VMError::PrecompileError(PrecompileError::ParsingInputError))?;
+
+            // We still need to check if the point is on the curve
+            if !bool::from(g2_affine.is_on_curve()) {
+                return Err(VMError::PrecompileError(
+                    PrecompileError::BLS12381G2PointNotInCurve,
+                ));
+            }
+
+            G2Projective::from(g2_affine)
+        } else {
+            let g2_affine = G2Affine::from_uncompressed(&g2_bytes)
+                .into_option()
+                .ok_or(VMError::PrecompileError(PrecompileError::ParsingInputError))?;
+
+            G2Projective::from(g2_affine)
+        }
+    };
+    Ok(g2_point)
+}
+
+fn add_padded_coordinate(
+    result: &mut Vec<u8>,
+    coordinate_raw_bytes: Option<&[u8]>,
+) -> Result<(), VMError> {
+    // add the padding to satisfy the convention of encoding
+    // https://eips.ethereum.org/EIPS/eip-2537
+    let sixteen_zeroes: [u8; 16] = [0_u8; 16];
+    result.extend_from_slice(&sixteen_zeroes);
+    result.extend_from_slice(
+        coordinate_raw_bytes.ok_or(VMError::Internal(InternalError::SlicingError))?,
+    );
+    Ok(())
+}
+
+fn parse_scalar(scalar_raw_bytes: Option<&[u8]>) -> Result<Scalar, VMError> {
+    let scalar_bytes: [u8; 32] = scalar_raw_bytes
+        .ok_or(InternalError::SlicingError)?
+        .try_into()
+        .map_err(|_| PrecompileError::ParsingInputError)?;
+
+    let mut scalar_le = [0u64; 4];
+    for (j, chunk) in scalar_bytes.chunks(8).enumerate() {
+        let bytes: [u8; 8] = chunk
+            .try_into()
+            .map_err(|_| PrecompileError::ParsingInputError)?;
+        if let Some(value) = scalar_le.get_mut(j) {
+            *value = u64::from_be_bytes(bytes);
+        } else {
+            return Err(VMError::Internal(InternalError::SlicingError));
+        }
+    }
+    scalar_le.reverse();
+    Ok(Scalar::from_raw(scalar_le))
 }
