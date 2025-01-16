@@ -25,11 +25,14 @@ seconds=$((elapsed % 60))
 output=$(ethrex_l2 info -b -a $account --wei 2>&1)
 echo "Balance of $output reached in $minutes min $seconds s, killing process"
 
+echo killing "$PROGRAM"
 sudo pkill "$PROGRAM"
 
 while pgrep -l "perf" >/dev/null; do
+    echo "perf still alive, waiting for it to exit..."
     sleep 10
 done
+echo "perf exited"
 
 # We need this for the following job, to add to the static page
 echo "time=$minutes minutes $seconds seconds" >>"$GITHUB_OUTPUT"

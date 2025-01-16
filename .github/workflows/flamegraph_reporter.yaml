@@ -54,9 +54,11 @@ jobs:
       - name: Check addr2line installation
         id: check-addr2line
         run: |
-          if command -v addr2line >/dev/null 2>&1; then
+          if [ -f "./cargo/bin/addr2line" ]; then
+            echo "./cargo/bin/addr2line found"
             echo "addr2line_exists=true" >> $GITHUB_OUTPUT
           else
+            echo "./cargo/bin/addr2line NOT found"
             echo "addr2line_exists=false" >> $GITHUB_OUTPUT
           fi
 
@@ -109,8 +111,8 @@ jobs:
         run: |
           PATH=$HOME/.cargo/bin:$PATH which addr2line
           PATH=$HOME/.cargo/bin:$PATH perf script -v -i /home/runner/work/ethrex/ethrex/perf.data --no-inline > stack.data
-          inferno-collapse-perf -q < stack.data > collapsed.data
-          inferno-flamegraph --title "Ethrex Flamegraph" < collapsed.data > flamegraph_ethrex.svg
+          PATH=$HOME/.cargo/bin:$PATH inferno-collapse-perf -q < stack.data > collapsed.data
+          PATH=$HOME/.cargo/bin:$PATH inferno-flamegraph --title "Ethrex Flamegraph" < collapsed.data > flamegraph_ethrex.svg
 
       - name: Upload artifacts - flamegraph_ethrex.svg
         uses: actions/upload-artifact@v4
@@ -164,9 +166,11 @@ jobs:
       - name: Check addr2line installation
         id: check-addr2line
         run: |
-          if command -v addr2line >/dev/null 2>&1; then
+          if [ -f "./cargo/bin/addr2line" ]; then
+            echo "./cargo/bin/addr2line found"
             echo "addr2line_exists=true" >> $GITHUB_OUTPUT
           else
+            echo "./cargo/bin/addr2line NOT found"
             echo "addr2line_exists=false" >> $GITHUB_OUTPUT
           fi
 
@@ -232,8 +236,8 @@ jobs:
         run: |
           PATH=$HOME/.cargo/bin:$PATH which addr2line
           PATH=$HOME/.cargo/bin:$PATH perf script -v -i /home/runner/work/ethrex/ethrex/reth/perf.data --no-inline > stack.data
-          inferno-collapse-perf -q < stack.data > collapsed.data
-          inferno-flamegraph --title "Reth Flamegraph" < collapsed.data > flamegraph_reth.svg
+          PATH=$HOME/.cargo/bin:$PATH inferno-collapse-perf -q < stack.data > collapsed.data
+          PATH=$HOME/.cargo/bin:$PATH inferno-flamegraph --title "Reth Flamegraph" < collapsed.data > flamegraph_reth.svg
 
       - name: Upload artifacts - flamegraph_reth.svg
         uses: actions/upload-artifact@v4
