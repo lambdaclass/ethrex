@@ -2,9 +2,10 @@ use crate::{
     deserialize::{
         deserialize_access_lists, deserialize_ef_post_value_indexes,
         deserialize_h256_vec_optional_safe, deserialize_hex_bytes, deserialize_hex_bytes_vec,
-        deserialize_transaction_expected_exception, deserialize_u256_optional_safe,
-        deserialize_u256_safe, deserialize_u256_valued_hashmap_safe, deserialize_u256_vec_safe,
-        deserialize_u64_safe, deserialize_u64_vec_safe,
+        deserialize_legacy_forks, deserialize_transaction_expected_exception,
+        deserialize_u256_optional_safe, deserialize_u256_safe,
+        deserialize_u256_valued_hashmap_safe, deserialize_u256_vec_safe, deserialize_u64_safe,
+        deserialize_u64_vec_safe,
     },
     report::TestVector,
 };
@@ -26,28 +27,31 @@ pub struct EFTest {
     pub dir: String,
     pub _info: EFTestInfo,
     pub env: EFTestEnv,
-    pub post: EFTestPost,
+    // pub post: EFTestPost,
+    pub post: EFTestPostStruct,
     pub pre: EFTestPre,
     pub transactions: HashMap<TestVector, EFTestTransaction>,
 }
 
 impl EFTest {
     pub fn fork(&self) -> SpecId {
-        match &self.post {
-            EFTestPost::Prague(_) => SpecId::PRAGUE,
-            EFTestPost::Cancun(_) => SpecId::CANCUN,
-            EFTestPost::Shanghai(_) => SpecId::SHANGHAI,
-            EFTestPost::Homestead(_) => SpecId::HOMESTEAD,
-            EFTestPost::Istanbul(_) => SpecId::ISTANBUL,
-            EFTestPost::London(_) => SpecId::LONDON,
-            EFTestPost::Byzantium(_) => SpecId::BYZANTIUM,
-            EFTestPost::Berlin(_) => SpecId::BERLIN,
-            EFTestPost::Constantinople(_) | EFTestPost::ConstantinopleFix(_) => {
-                SpecId::CONSTANTINOPLE
-            }
-            EFTestPost::Paris(_) => SpecId::MERGE,
-            EFTestPost::Frontier(_) => SpecId::FRONTIER,
-        }
+        // dbg!(&self.post);
+        unimplemented!()
+        // match &self.post {
+        //     EFTestPost::Prague(_) => SpecId::PRAGUE,
+        //     EFTestPost::Cancun(_) => SpecId::CANCUN,
+        //     EFTestPost::Shanghai(_) => SpecId::SHANGHAI,
+        //     EFTestPost::Homestead(_) => SpecId::HOMESTEAD,
+        //     EFTestPost::Istanbul(_) => SpecId::ISTANBUL,
+        //     EFTestPost::London(_) => SpecId::LONDON,
+        //     EFTestPost::Byzantium(_) => SpecId::BYZANTIUM,
+        //     EFTestPost::Berlin(_) => SpecId::BERLIN,
+        //     EFTestPost::Constantinople(_) | EFTestPost::ConstantinopleFix(_) => {
+        //         SpecId::CONSTANTINOPLE
+        //     }
+        //     EFTestPost::Paris(_) => SpecId::MERGE,
+        //     EFTestPost::Frontier(_) => SpecId::FRONTIER,
+        // }
     }
 }
 
@@ -144,6 +148,45 @@ pub enum EFTestPost {
     Paris(Vec<EFTestPostValue>),
     ConstantinopleFix(Vec<EFTestPostValue>),
     Frontier(Vec<EFTestPostValue>),
+}
+
+/// This struct is needed in order to support modernt EFTest at the same time as Legacy EFTest.
+/// In legacy EFTest, the post field map to a HashMap<SpecId, Vec<EFTestPostValue>>.
+/// In modern EFTest, the post field map to a Vec<EFTestPostValue>.
+#[derive(Debug, Deserialize)]
+pub struct EFTestPostStruct {
+    #[serde(flatten)]
+    #[serde(deserialize_with = "deserialize_legacy_forks")]
+    pub forks: HashMap<SpecId, Vec<EFTestPostValue>>,
+}
+
+impl EFTestPostStruct {
+    pub fn values(&self) -> Vec<EFTestPostValue> {
+        // self.forks.values().flatten().cloned().collect()
+        // Just take the first SpecId values.
+        self.forks.values().next().unwrap().clone()
+    }
+
+    // Return from the first fork using find_vector_post_value
+    pub fn vector_post_value(&self, vector: &TestVector) -> EFTestPostValue {
+        let values = self.forks.values().next().unwrap();
+        Self::find_vector_post_value(values, &vector)
+    }
+
+    // pub fn vector_post_values_map
+
+    fn find_vector_post_value(values: &[EFTestPostValue], vector: &TestVector) -> EFTestPostValue {
+        values
+            .iter()
+            .find(|v| {
+                let data_index = v.indexes.get("data").unwrap().as_usize();
+                let gas_limit_index = v.indexes.get("gas").unwrap().as_usize();
+                let value_index = v.indexes.get("value").unwrap().as_usize();
+                vector == &(data_index, gas_limit_index, value_index)
+            })
+            .unwrap()
+            .clone()
+    }
 }
 
 impl EFTestPost {
@@ -245,7 +288,7 @@ pub struct EFTestPostValue {
     #[serde(deserialize_with = "deserialize_ef_post_value_indexes")]
     pub indexes: HashMap<String, U256>,
     pub logs: H256,
-    #[serde(deserialize_with = "deserialize_hex_bytes")]
+    #[serde(default, deserialize_with = "deserialize_hex_bytes")]
     pub txbytes: Bytes,
 }
 

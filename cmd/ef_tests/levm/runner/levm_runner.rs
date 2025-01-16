@@ -21,6 +21,8 @@ use std::{collections::HashMap, sync::Arc};
 
 pub fn run_ef_test(test: &EFTest) -> Result<EFTestReport, EFTestRunnerError> {
     let hash = test._info.generated_test_hash.or(test._info.hash).unwrap();
+    dbg!("im here");
+    dbg!(test);
 
     let mut ef_test_report =
         EFTestReport::new(test.name.clone(), test.dir.clone(), hash, test.fork());

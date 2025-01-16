@@ -1,10 +1,12 @@
-use crate::types::{EFTest, EFTestAccessListItem, EFTests, TransactionExpectedException};
+use crate::types::{
+    EFTest, EFTestAccessListItem, EFTestPostValue, EFTests, TransactionExpectedException,
+};
+use crate::types::{EFTestRawTransaction, EFTestTransaction};
 use bytes::Bytes;
 use ethrex_core::{H256, U256};
+use ethrex_vm::SpecId;
 use serde::{Deserialize, Deserializer};
 use std::{collections::HashMap, str::FromStr};
-
-use crate::types::{EFTestRawTransaction, EFTestTransaction};
 
 pub fn deserialize_transaction_expected_exception<'de, D>(
     deserializer: D,
@@ -75,6 +77,44 @@ where
     }
 }
 
+pub fn deserialize_legacy_forks<'de, D>(
+    deserializer: D,
+) -> Result<HashMap<SpecId, Vec<EFTestPostValue>>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let map: HashMap<String, Vec<EFTestPostValue>> = HashMap::deserialize(deserializer)?;
+    let mut result = HashMap::new();
+
+    for (fork_name, values) in map {
+        let spec_id = match fork_name.as_str() {
+            "Frontier" => SpecId::FRONTIER,
+            "Homestead" => SpecId::HOMESTEAD,
+            "Constantinople" => SpecId::CONSTANTINOPLE,
+            "ConstantinopleFix" | "Petersburg" => SpecId::CONSTANTINOPLE,
+            "Istanbul" => SpecId::ISTANBUL,
+            "Berlin" => SpecId::BERLIN,
+            "London" => SpecId::LONDON,
+            "Paris" => SpecId::MERGE,
+            "Merge" => SpecId::MERGE,
+            "Shanghai" => SpecId::SHANGHAI,
+            "Cancun" => SpecId::CANCUN,
+            "Prague" => SpecId::PRAGUE,
+            "Byzantium" => SpecId::BYZANTIUM,
+            "EIP158" => SpecId::SPURIOUS_DRAGON,
+            "EIP150" => SpecId::TANGERINE,
+            other => {
+                return Err(serde::de::Error::custom(format!(
+                    "Unknown fork name: {}",
+                    other
+                )))
+            }
+        };
+        result.insert(spec_id, values);
+    }
+    Ok(result)
+}
+
 pub fn deserialize_ef_post_value_indexes<'de, D>(
     deserializer: D,
 ) -> Result<HashMap<String, U256>, D::Error>
@@ -82,10 +122,12 @@ where
     D: serde::Deserializer<'de>,
 {
     let aux: HashMap<String, u64> = HashMap::deserialize(deserializer)?;
+    //dbg!(aux.clone());
     let indexes = aux
         .iter()
         .map(|(key, value)| (key.clone(), U256::from(*value)))
         .collect();
+    //dbg!(&indexes);
     Ok(indexes)
 }
 
