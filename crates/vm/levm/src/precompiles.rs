@@ -1355,11 +1355,11 @@ pub fn bls12_g2msm(
         let x_1 = parse_coordinate(calldata.get(x_1_offset..y_0_offset))?;
         let y_0 = parse_coordinate(calldata.get(y_0_offset..y_1_offset))?;
         let y_1 = parse_coordinate(calldata.get(y_1_offset..scalar_offset))?;
-        let g2 = parse_g2_point(x_0, x_1, y_0, y_1, false)?;
+        let point = parse_g2_point(x_0, x_1, y_0, y_1, false)?;
 
         let scalar = parse_scalar(calldata.get(scalar_offset..pair_end))?;
 
-        let scaled_point = G2Projective::mul(g2, scalar);
+        let scaled_point = G2Projective::mul(point, scalar);
         result = result.add(&scaled_point);
     }
 
