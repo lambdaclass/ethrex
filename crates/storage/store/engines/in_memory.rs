@@ -4,7 +4,7 @@ use ethereum_types::{H256, U256};
 use ethrex_core::types::{
     BlobsBundle, Block, BlockBody, BlockHash, BlockHeader, BlockNumber, ChainConfig, Index, Receipt,
 };
-use ethrex_trie::{InMemoryTrieDB, Trie};
+use ethrex_trie::{InMemoryTrieDB, Nibbles, Trie};
 use std::{
     collections::HashMap,
     fmt::Debug,
@@ -60,7 +60,11 @@ pub struct SnapState {
     /// Latest downloaded block header's hash from a previously aborted sync
     header_download_checkpoint: Option<BlockHash>,
     /// Current root hash of the latest State Trie + the last downloaded key
-    state_trie_download_checkpoint: Option<(H256, H256)>
+    state_download_checkpoint: Option<(H256, H256)>,
+    /// State trie paths that were left in the healing queue of a previous sync cycle
+    state_heal_pending: Option<Vec<Nibbles>>,
+    /// Storage trie paths that were left in the healing queue of a previous sync cycle
+    storage_heal_pending: Option<Vec<(H256, Nibbles)>>,
 }
 
 impl Store {
@@ -449,17 +453,45 @@ impl StoreEngine for Store {
         Ok(())
     }
 
-    fn set_state_trie_download_checkpoint(&self, current_root: H256, last_key: H256) -> Result<(), StoreError> {
-        self.inner().snap_state.state_trie_download_checkpoint = Some((current_root, last_key));
+    fn set_state_download_checkpoint(&self, current_root: H256, last_key: H256) -> Result<(), StoreError> {
+        self.inner().snap_state.state_download_checkpoint = Some((current_root, last_key));
         Ok(())
     }
 
-    fn get_state_trie_download_checkpoint(&self) -> Result<Option<(H256, H256)>, StoreError> {
-        Ok(self.inner().snap_state.state_trie_download_checkpoint)
+    fn get_state_download_checkpoint(&self) -> Result<Option<(H256, H256)>, StoreError> {
+        Ok(self.inner().snap_state.state_download_checkpoint)
     }
 
-    fn clear_state_trie_download_checkpoint(&self) -> Result<(), StoreError> {
-        self.inner().snap_state.state_trie_download_checkpoint = None;
+    fn clear_state_download_checkpoint(&self) -> Result<(), StoreError> {
+        self.inner().snap_state.state_download_checkpoint = None;
+        Ok(())
+    }
+
+    fn set_state_heal_pending(&self, paths: Vec<Nibbles>) -> Result<(), StoreError> {
+        self.inner().snap_state.state_heal_pending = Some(paths);
+        Ok(())
+    }
+
+    fn get_state_heal_pending(&self) -> Result<Option<Vec<Nibbles>>, StoreError> {
+        Ok(self.inner().snap_state.state_heal_pending.clone())
+    }
+
+    fn clear_state_heal_pending(&self) -> Result<(), StoreError> {
+        self.inner().snap_state.state_heal_pending = None;
+        Ok(())
+    }
+
+    fn set_storage_heal_pending(&self, paths: Vec<(H256, Nibbles)>) -> Result<(), StoreError> {
+        self.inner().snap_state.storage_heal_pending = Some(paths);
+        Ok(())
+    }
+
+    fn get_storage_heal_pending(&self) -> Result<Option<Vec<(H256, Nibbles)>>, StoreError> {
+        Ok(self.inner().snap_state.storage_heal_pending.clone())
+    }
+
+    fn clear_storage_heal_pending(&self) -> Result<(), StoreError> {
+        self.inner().snap_state.storage_heal_pending = None;
         Ok(())
     }
 }

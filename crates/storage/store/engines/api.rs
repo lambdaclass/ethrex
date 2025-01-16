@@ -7,7 +7,7 @@ use ethrex_core::types::{
 use std::{fmt::Debug, panic::RefUnwindSafe};
 
 use crate::error::StoreError;
-use ethrex_trie::Trie;
+use ethrex_trie::{Nibbles, Trie};
 
 pub trait StoreEngine: Debug + Send + Sync + RefUnwindSafe {
     /// Add block header
@@ -252,16 +252,37 @@ pub trait StoreEngine: Debug + Send + Sync + RefUnwindSafe {
 
     // Snap State methods
 
+    // Header Download Checkpoint
+
     fn set_header_download_checkpoint(&self, block_hash: BlockHash) -> Result<(), StoreError>;
 
     fn get_header_download_checkpoint(&self) -> Result<Option<BlockHash>, StoreError>;
 
     fn clear_header_download_checkpoint(&self) -> Result<(), StoreError>;
 
-    fn set_state_trie_download_checkpoint(&self, current_root: H256, last_key: H256) -> Result<(), StoreError>;
+    // State Trie Download Checkpoint
 
-    fn get_state_trie_download_checkpoint(&self) -> Result<Option<(H256, H256)>, StoreError>;
+    fn set_state_download_checkpoint(&self, current_root: H256, last_key: H256) -> Result<(), StoreError>;
 
-    fn clear_state_trie_download_checkpoint(&self) -> Result<(), StoreError>;
+    fn get_state_download_checkpoint(&self) -> Result<Option<(H256, H256)>, StoreError>;
+
+    fn clear_state_download_checkpoint(&self) -> Result<(), StoreError>;
+
+    // State heal pending
+
+    fn set_state_heal_pending(&self, paths: Vec<Nibbles>) -> Result<(), StoreError>;
+
+    fn get_state_heal_pending(&self) -> Result<Option<Vec<Nibbles>>, StoreError>;
+
+    fn clear_state_heal_pending(&self) -> Result<(), StoreError>;
+
+    // Storage heal pending
+
+    fn set_storage_heal_pending(&self, paths: Vec<(H256, Nibbles)>) -> Result<(), StoreError>;
+
+    fn get_storage_heal_pending(&self) -> Result<Option<Vec<(H256, Nibbles)>>, StoreError>;
+
+    fn clear_storage_heal_pending(&self) -> Result<(), StoreError>;
+
 
 }

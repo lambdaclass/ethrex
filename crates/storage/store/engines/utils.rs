@@ -44,6 +44,10 @@ pub enum SnapStateIndex {
     HeaderDownloadCheckpoint = 0,
     // Current root hash of the latest State Trie + the last downloaded key
     StateTrieDownloadCheckpoint = 1,
+    // State trie paths that were left in the healing queue of a previous sync cycle
+    StateTrieHealPending = 2,
+    // Storage trie paths that were left in the healing queue of a previous sync cycle
+    StorageTrieHealPending = 3,
 }
 
 impl From<u8> for SnapStateIndex {
@@ -54,6 +58,12 @@ impl From<u8> for SnapStateIndex {
             }
             x if x == SnapStateIndex::StateTrieDownloadCheckpoint as u8 => {
                 SnapStateIndex::StateTrieDownloadCheckpoint
+            }
+            x if x == SnapStateIndex::StateTrieHealPending as u8 => {
+                SnapStateIndex::StateTrieHealPending
+            }
+            x if x == SnapStateIndex::StorageTrieHealPending as u8 => {
+                SnapStateIndex::StorageTrieHealPending
             }
             _ => panic!("Invalid value when casting to SnapDataIndex: {}", value),
         }

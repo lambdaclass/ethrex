@@ -180,7 +180,7 @@ impl SyncManager {
                     store.clone(),
                 ));
                 let stale_pivot =
-                    !rebuild_state_trie(pivot_header.state_root, self.peers.clone(), store.clone(), store.get_state_trie_download_checkpoint()?)
+                    !rebuild_state_trie(pivot_header.state_root, self.peers.clone(), store.clone(), store.get_state_download_checkpoint()?)
                         .await?;
                 if stale_pivot {
                     warn!("Stale pivot, aborting sync");
@@ -403,7 +403,7 @@ async fn rebuild_state_trie(
     }
     if retry_count > MAX_RETRIES {
         // Store current checkpoint
-        store.set_state_trie_download_checkpoint(current_state_root, start_account_hash)?;
+        store.set_state_download_checkpoint(current_state_root, start_account_hash)?;
         return Err(SyncError::StalePivot);
     }
     info!("Account Trie fully fetched, signaling storage fetcher process");
