@@ -305,8 +305,13 @@ impl KademliaTable {
                 .iter_mut()
                 .find(|peer| peer.node.node_id == node_id)
         }) {
-            peer.channels = Some(channels);
-            peer.supported_capabilities = capabilities;
+            debug!("Peer {node_id:?} found in the kademlia table, updaing channels");
+            peer.channels = Some(channels.clone());
+            peer.supported_capabilities = capabilities.clone();
+            debug!(
+                "Peer {:?} updated with channels {:?} and capabilities {:?}",
+                node_id, channels, capabilities
+            );
         } else {
             warn!(
                 "[PEERS] Peer with node_id {:?} not found in the kademlia table",

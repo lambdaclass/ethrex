@@ -355,7 +355,10 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
     ) -> Result<(), RLPxError> {
         if let RLPxConnectionState::Established(_) = &self.state {
             self.init_peer_conn().await?;
-            debug!("Started peer main loop");
+            debug!(
+                "Started peer main loop, capabilities: {:?}",
+                self.capabilities
+            );
             // Wait for eth status message or timeout.
             let mut broadcaster_receive = {
                 if self.capabilities.contains(&CAP_ETH) {
