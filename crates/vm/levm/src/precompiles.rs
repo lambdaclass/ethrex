@@ -1,4 +1,4 @@
-use bls12_381::{G1Affine, G1Projective, G2Affine, G2Prepared, G2Projective, Scalar};
+use bls12_381::{G1Affine, G1Projective, G2Affine, G2Prepared, G2Prepared, G2Projective, Scalar};
 
 use bytes::Bytes;
 use ethrex_core::{serde_utils::bool, Address, H160, H256, U256};
