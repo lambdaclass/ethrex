@@ -106,8 +106,8 @@ jobs:
         env:
           SLACK_WEBHOOKS: >
             ${{ github.event_name == 'workflow_dispatch'
-              ? secrets.TEST_CHANNEL_SLACK
-              : format(
+              && secrets.TEST_CHANNEL_SLACK
+              || format(
                   '{0}, {1}, {2}',
                   secrets.ETHREX_REPORTS_SLACK_WEBHOOK,
                   secrets.LEVM_SLACK_WEBHOOK
@@ -115,8 +115,8 @@ jobs:
             }}
           SCRIPT: >
             ${{ matrix.vm == 'levm'
-              ? '.github/scripts/publish_levm_hive.sh'
-              : '.github/scripts/publish_hive.sh'
+              && '.github/scripts/publish_levm_hive.sh'
+              || '.github/scripts/publish_hive.sh'
             }}
         run: |
           for webhook in $SLACK_WEBHOOKS; do
@@ -147,8 +147,8 @@ jobs:
         env:
           SLACK_WEBHOOK: >
             ${{ github.event_name == 'workflow_dispatch'
-              ? secrets.TEST_CHANNEL_SLACK
-              : secrets.LEVM_SLACK_WEBHOOK
+              && secrets.TEST_CHANNEL_SLACK
+              || secrets.LEVM_SLACK_WEBHOOK
             }}
         run: |
           bash .github/scripts/levm_revm_diff.sh results_revm.md results_levm.md >> diff.md
@@ -189,7 +189,7 @@ jobs:
         env:
           SLACK_WEBHOOK: >
             ${{ github.event_name == 'workflow_dispatch'
-              ? secrets.TEST_CHANNEL_SLACK
-              : secrets.LEVM_SLACK_WEBHOOK
+              && secrets.TEST_CHANNEL_SLACK
+              || secrets.LEVM_SLACK_WEBHOOK
             }}
         run: sh .github/scripts/publish_levm_ef_tests.sh $SLACK_WEBHOOK
