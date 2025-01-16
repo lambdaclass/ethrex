@@ -10,8 +10,6 @@ use k256::ecdsa::SigningKey;
 use sha3::{Digest, Keccak256};
 use std::net::{IpAddr, SocketAddr};
 
-use crate::discv4::time_now_unix;
-
 const MAX_NODE_RECORD_ENCODED_SIZE: usize = 300;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -107,10 +105,10 @@ pub struct NodeRecordDecodedPairs {
     pub id: Option<String>,
     pub ip: Option<u32>,
     // the record structure reference says that tcp_port and udp_ports are big-endian integers
-    // but they are actually encoded as 4 bytes, see geth for example: https://github.com/ethereum/go-ethereum/blob/master/p2p/enr/entries.go#L186-L196
-    // I think the confusion comes from the fact that geth decodes the 4 bytes and then builds an IPV4 big-integer structure.
-    pub tcp_port: Option<u32>,
-    pub udp_port: Option<u32>,
+    // but they are actually encoded as 2 bytes, see geth for example: https://github.com/ethereum/go-ethereum/blob/f544fc3b4659aeca24a6de83f820dd61ea9b39db/p2p/enr/entries.go#L60-L78
+    // I think the confusion comes from the fact that geth decodes the bytes and then builds an IPV4/6 big-integer structure.
+    pub tcp_port: Option<u16>,
+    pub udp_port: Option<u16>,
     pub secp256k1: Option<H264>,
     // TODO implement ipv6 addresses
 }
@@ -123,18 +121,35 @@ impl NodeRecord {
                 continue;
             };
             let value = value.to_vec();
-            let construct_u32_from_value = || {
-                if value.len() < 4 {
-                    None
-                } else {
-                    Some(u32::from_be_bytes([value[0], value[1], value[2], value[3]]))
-                }
-            };
             match key.as_str() {
                 "id" => decoded_pairs.id = String::from_utf8(value).ok(),
-                "ip" => decoded_pairs.ip = construct_u32_from_value(),
-                "tcp" => decoded_pairs.tcp_port = construct_u32_from_value(),
-                "udp" => decoded_pairs.udp_port = construct_u32_from_value(),
+                "ip" => {
+                    decoded_pairs.ip = {
+                        if value.len() < 4 {
+                            None
+                        } else {
+                            Some(u32::from_be_bytes([value[0], value[1], value[2], value[3]]))
+                        }
+                    }
+                }
+                "tcp" => {
+                    decoded_pairs.tcp_port = {
+                        if value.len() < 2 {
+                            None
+                        } else {
+                            Some(u16::from_be_bytes([value[0], value[1]]))
+                        }
+                    }
+                }
+                "udp" => {
+                    decoded_pairs.udp_port = {
+                        if value.len() < 2 {
+                            None
+                        } else {
+                            Some(u16::from_be_bytes([value[0], value[1]]))
+                        }
+                    }
+                }
                 "secp256k1" => {
                     if value.len() < 33 {
                         continue;
@@ -147,16 +162,21 @@ impl NodeRecord {
         return decoded_pairs;
     }
 
-    pub fn from_node(node: Node, signer: &SigningKey) -> Result<Self, ()> {
+    pub fn from_node(node: Node, seq: u64, signer: &SigningKey) -> Result<Self, ()> {
         let mut record = Self::default();
-        record.seq = time_now_unix();
+        record.seq = seq;
         record.pairs.push(("id".into(), "v4".into()));
         match node.ip {
             IpAddr::V4(ip) => record
                 .pairs
                 .push(("ip".into(), Bytes::copy_from_slice(&ip.octets()))),
-            // TODO support ipv6
-            IpAddr::V6(_) => {}
+            IpAddr::V6(ip) => {
+                if let Some(ipv4) = ip.to_ipv4() {
+                    record
+                        .pairs
+                        .push(("ip".into(), Bytes::copy_from_slice(&ipv4.octets())))
+                };
+            }
         }
         record.pairs.push((
             "secp256k1".into(),
@@ -178,19 +198,22 @@ impl NodeRecord {
         }
     }
 
-    pub fn sign_record(&mut self, signer: &SigningKey) -> Result<(), ()> {
+    pub fn get_signature_digest(&self) -> Vec<u8> {
         let mut rlp = vec![];
         self.seq.encode(&mut rlp);
         self.pairs.encode(&mut rlp);
         let digest = Keccak256::digest(&rlp);
+        digest.to_vec()
+    }
 
-        let Ok((signature, v)) = signer.sign_prehash_recoverable(&digest) else {
+    pub fn sign_record(&mut self, signer: &SigningKey) -> Result<(), ()> {
+        // note: v is ignored
+        let Ok((signature, _)) = signer.sign_prehash_recoverable(&self.get_signature_digest())
+        else {
             return Err(());
         };
-        let mut sign_bytes = signature.to_bytes().to_vec();
-        sign_bytes.push(v.to_byte());
-
-        self.signature = H512::from_slice(&sign_bytes);
+        let signature_bytes = signature.to_bytes().to_vec();
+        self.signature = H512::from_slice(&signature_bytes);
 
         Ok(())
     }

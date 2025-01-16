@@ -362,7 +362,10 @@ async fn discover_peers_server(
                 if is_expired(msg.expiration) {
                     debug!("Ignoring enr-request msg as it is expired.");
                 }
-                let Ok(node_record) = NodeRecord::from_node(local_node, &signer) else {
+                // Note we are passing the current timestamp as the sequence number
+                // This is because we are not storing our local_node updates in the db
+                let Ok(node_record) = NodeRecord::from_node(local_node, time_now_unix(), &signer)
+                else {
                     debug!("Ignoring enr-request msg could not build local node record.");
                     continue;
                 };
@@ -372,7 +375,6 @@ async fn discover_peers_server(
                 ));
                 let mut buf = vec![];
                 msg.encode_with_header(&mut buf, &signer);
-
                 let _ = udp_socket.send_to(&buf, from).await;
             }
             Message::ENRResponse(msg) => {
@@ -408,7 +410,7 @@ async fn discover_peers_server(
                 // https://github.com/ethereum/devp2p/blob/master/enr.md#v4-identity-scheme
                 let signature_valid = match id.as_str() {
                     "v4" => {
-                        let digest = Keccak256::digest(&[]);
+                        let digest = msg.node_record.get_signature_digest();
                         let Some(public_key) = record.secp256k1 else {
                             debug!("Discarding enr-response as signature could not be verified because public key was not provided");
                             continue;
@@ -1275,4 +1277,15 @@ mod tests {
                 .is_some());
         }
     }
+
+    #[tokio::test]
+    /**
+     * This test focuses on enr messages, the idea is:
+     * 1. Start two nodes
+     * 2. Wait until they are connected
+     * 3. Update one of the nodes record
+     * 4. Send a new ping and assert that a enr-request was sent
+     * 5. Assert that the node record has been updated
+     */
+    async fn discovery_enr_messages() {}
 }
