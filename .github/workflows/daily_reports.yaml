@@ -136,10 +136,16 @@ jobs:
         with:
           name: results_levm.md
 
+      - name: Rename result (1)
+        run: cp results.md results_levm.md
+
       - name: Download results (revm)
         uses: actions/download-artifact@v4
         with:
           name: results_revm.md
+
+      - name: Rename result (2)
+        run: cp results.md results_revm.md
 
       - name: Post results diff to Slack
         env:
