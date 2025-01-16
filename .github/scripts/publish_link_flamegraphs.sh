@@ -20,4 +20,4 @@ curl -XPOST -H "Content-type: application/json" -d '{
       }
     }
   ]
-}' "$url"
+}' "$1"
