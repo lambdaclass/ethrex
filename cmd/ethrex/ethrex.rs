@@ -1,10 +1,7 @@
 use bytes::Bytes;
 use directories::ProjectDirs;
 use ethrex_blockchain::{add_block, fork_choice::apply_fork_choice};
-use ethrex_core::{
-    types::{Block, Genesis},
-    H256,
-};
+use ethrex_core::types::{Block, Genesis};
 use ethrex_net::{
     bootnode::BootNode,
     node_id_from_signing_key, peer_table,
@@ -15,6 +12,7 @@ use ethrex_rlp::decode::RLPDecode;
 use ethrex_storage::{EngineType, Store};
 use k256::ecdsa::SigningKey;
 use local_ip_address::local_ip;
+use rand::rngs::OsRng;
 use std::{
     fs::{self, File},
     future::IntoFuture,
@@ -178,12 +176,25 @@ async fn main() {
 
     let jwt_secret = read_jwtsecret_file(authrpc_jwtsecret);
 
-    // TODO Learn how should the key be created
-    // https://github.com/lambdaclass/ethrex/issues/836
-    //let signer = SigningKey::random(&mut OsRng);
-    let key_bytes =
-        H256::from_str("577d8278cc7748fad214b5378669b420f8221afb45ce930b7f22da49cbc545f3").unwrap();
-    let signer = SigningKey::from_slice(key_bytes.as_bytes()).unwrap();
+    // Get the signer from the default directory, create one if the key file is not present.
+    let key_path = Path::new(&data_dir).join("node.key");
+    let signer = match fs::read(key_path.clone()) {
+        Ok(content) => SigningKey::from_slice(&content).expect("Signing key could not be created."),
+        Err(_) => {
+            info!(
+                "Key file not found, creating a new key and saving to {:?}",
+                key_path
+            );
+            if let Some(parent) = key_path.parent() {
+                fs::create_dir_all(parent).expect("Key file path could not be created.")
+            }
+            let signer = SigningKey::random(&mut OsRng);
+            fs::write(key_path, signer.to_bytes())
+                .expect("Newly created signer could not be saved to disk.");
+            signer
+        }
+    };
+
     let local_node_id = node_id_from_signing_key(&signer);
 
     // TODO: If hhtp.addr is 0.0.0.0 we get the local ip as the one of the node, otherwise we use the provided one.
@@ -258,11 +269,12 @@ async fn main() {
                 tcp_socket_addr,
                 bootnodes,
                 signer,
-                peer_table,
+                peer_table.clone(),
                 store,
             )
             .into_future();
             tracker.spawn(networking);
+            tracker.spawn(ethrex_net::periodically_show_peer_stats(peer_table));
         }
     }
 
