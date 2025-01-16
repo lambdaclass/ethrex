@@ -36,6 +36,23 @@ jobs:
       - name: Caching
         uses: Swatinem/rust-cache@v2
 
+      - name: Cache Extra Binaries
+        id: cache-binaries
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin/addr2line
+            ~/.cargo/bin/flamegraph
+            ~/.cargo/bin/inferno-*
+          key: ${{ runner.os }}-${{ env.RUST_VERSION }}-extra-binaries
+
+      - name: Cache ethrex_l2
+        id: cache-ethrex-l2
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/bin/ethrex_l2
+          key: ${{ runner.os }}-${{ env.RUST_VERSION }}-ethrex-l2-${{ hashFiles('cmd/ethrex_l2/Cargo.lock') }}
+
       - name: Change perf settings
         run: |
           sudo sysctl kernel.perf_event_paranoid=-1
@@ -150,6 +167,23 @@ jobs:
         with:
           workspaces: '. -> target
           ./reth -> ./reth/target'
+
+      - name: Cache Extra Binaries
+        id: cache-binaries
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin/addr2line
+            ~/.cargo/bin/flamegraph
+            ~/.cargo/bin/inferno-*
+          key: ${{ runner.os }}-${{ env.RUST_VERSION }}-extra-binaries
+
+      - name: Cache ethrex_l2
+        id: cache-ethrex-l2
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/bin/ethrex_l2
+          key: ${{ runner.os }}-${{ env.RUST_VERSION }}-ethrex-l2-${{ hashFiles('cmd/ethrex_l2/Cargo.lock') }}
 
       - name: Change perf settings
         run: |
