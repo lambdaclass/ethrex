@@ -79,8 +79,12 @@ jobs:
 
       - name: Install flamegraph
         run: |
-          cargo install flamegraph
-          cargo install inferno
+          if [ ! -f "./cargo/bin/flamegraph" ]; then
+            cargo install --force flamegraph
+          fi
+          if [ ! -f "./cargo/bin/inferno" ]; then
+            cargo install --force inferno
+          fi
 
       - name: Install ethrex_l2 cli
         run: |
@@ -191,12 +195,16 @@ jobs:
 
       - name: Install flamegraph
         run: |
-          cargo install flamegraph
-          cargo install inferno
+          if [ ! -f "./cargo/bin/flamegraph" ]; then
+            cargo install --force flamegraph
+          fi
+          if [ ! -f "./cargo/bin/inferno" ]; then
+            cargo install --force inferno
+          fi
 
       - name: Install ethrex_l2 cli
         run: |
-          cargo install --path cmd/ethrex_l2
+          cargo install --force --path cmd/ethrex_l2
           ethrex_l2 config create default --default
           ethrex_l2 config set default
 
