@@ -1368,6 +1368,7 @@ pub fn bls12_map_fp_to_g1(
     increase_precompile_consumed_gas(gas_for_call, BLS12_381_MAP_FP_TO_G1_COST, consumed_gas)?;
 
     let _coordinate_bytes = parse_coordinate(calldata.get(0..64))?;
+
     Ok(Bytes::new())
 }
 
