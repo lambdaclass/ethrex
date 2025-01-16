@@ -173,6 +173,8 @@ pub const ACCESS_LIST_ADDRESS_COST: u64 = 2400;
 pub const ECRECOVER_COST: u64 = 3000;
 pub const BLS12_381_G1ADD_COST: u64 = 375;
 pub const BLS12_381_G2ADD_COST: u64 = 600;
+pub const BLS12_PAIRING_CHECK_MUL_COST: u64 = 32600;
+pub const BLS12_PAIRING_CHECK_FIXED_COST: u64 = 37700;
 
 // Floor cost per token, specified in https://eips.ethereum.org/EIPS/eip-7623
 pub const TOTAL_COST_FLOOR_PER_TOKEN: u64 = 10;
@@ -799,16 +801,16 @@ pub fn staticcall(
     calculate_cost_and_gas_limit_call(true, gas_from_stack, gas_left, call_gas_costs, 0)
 }
 
-pub fn fake_exponential(factor: u64, numerator: u64, denominator: u64) -> Result<u64, VMError> {
-    let mut i = 1;
-    let mut output: u64 = 0;
+pub fn fake_exponential(factor: U256, numerator: U256, denominator: U256) -> Result<U256, VMError> {
+    let mut i = U256::one();
+    let mut output: U256 = U256::zero();
 
     // Initial multiplication: factor * denominator
     let mut numerator_accum = factor
         .checked_mul(denominator)
         .ok_or(InternalError::ArithmeticOperationOverflow)?;
 
-    while numerator_accum > 0 {
+    while !numerator_accum.is_zero() {
         // Safe addition to output
         output = output
             .checked_add(numerator_accum)
@@ -828,7 +830,7 @@ pub fn fake_exponential(factor: u64, numerator: u64, denominator: u64) -> Result
             ))?;
 
         i = i
-            .checked_add(1)
+            .checked_add(U256::one())
             .ok_or(InternalError::ArithmeticOperationOverflow)?;
     }
 
@@ -1084,5 +1086,19 @@ pub fn bls12_msm(k: usize, discount_table: &[u64; 128], mul_cost: u64) -> Result
         .ok_or(VMError::VeryLargeNumber)?
         .checked_div(BLS12_381_MSM_MULTIPLIER)
         .ok_or(VMError::VeryLargeNumber)?;
+    Ok(gas_cost)
+}
+
+pub fn bls12_pairing_check(k: usize) -> Result<u64, VMError> {
+    let gas_cost = u64::try_from(k)
+        .map_err(|_| VMError::VeryLargeNumber)?
+        .checked_mul(BLS12_PAIRING_CHECK_MUL_COST)
+        .ok_or(VMError::PrecompileError(
+            PrecompileError::GasConsumedOverflow,
+        ))?
+        .checked_add(BLS12_PAIRING_CHECK_FIXED_COST)
+        .ok_or(VMError::PrecompileError(
+            PrecompileError::GasConsumedOverflow,
+        ))?;
     Ok(gas_cost)
 }
