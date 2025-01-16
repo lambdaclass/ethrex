@@ -1,4 +1,6 @@
-use bls12_381::{G1Affine, G1Projective, G2Affine, G2Projective, Scalar};
+use bls12_381::{
+    hash_to_curve::MapToCurve, G1Affine, G1Projective, G2Affine, G2Projective, Scalar,
+};
 
 use bytes::Bytes;
 use ethrex_core::{serde_utils::bool, Address, H160, H256, U256};
@@ -39,8 +41,9 @@ use crate::{
     errors::{InternalError, PrecompileError, VMError},
     gas_cost::{
         self, BLAKE2F_ROUND_COST, BLS12_381_G1ADD_COST, BLS12_381_G1_K_DISCOUNT,
-        BLS12_381_G2ADD_COST, BLS12_381_G2_K_DISCOUNT, ECADD_COST, ECMUL_COST, ECRECOVER_COST,
-        G1_MUL_COST, G2_MUL_COST, MODEXP_STATIC_COST, POINT_EVALUATION_COST,
+        BLS12_381_G2ADD_COST, BLS12_381_G2_K_DISCOUNT, BLS12_381_MAP_FP_TO_G1_COST, ECADD_COST,
+        ECMUL_COST, ECRECOVER_COST, G1_MUL_COST, G2_MUL_COST, MODEXP_STATIC_COST,
+        POINT_EVALUATION_COST,
     },
 };
 
@@ -147,6 +150,8 @@ pub const BLS12_381_G2_MSM_PAIR_LENGTH: usize = 288;
 
 const BLS12_381_G1ADD_VALID_INPUT_LENGTH: usize = 256;
 const BLS12_381_G2ADD_VALID_INPUT_LENGTH: usize = 512;
+
+const BLS12_381_FP_VALID_INPUT_LENGTH: usize = 64;
 
 pub const FIELD_ELEMENT_WITHOUT_PADDING_LENGTH: usize = 48;
 pub const PADDED_FIELD_ELEMENT_SIZE_IN_BYTES: usize = 64;
@@ -1351,10 +1356,18 @@ pub fn bls12_pairing_check(
 }
 
 pub fn bls12_map_fp_to_g1(
-    _calldata: &Bytes,
-    _gas_for_call: u64,
-    _consumed_gas: &mut u64,
+    calldata: &Bytes,
+    gas_for_call: u64,
+    consumed_gas: &mut u64,
 ) -> Result<Bytes, VMError> {
+    if calldata.len() != BLS12_381_FP_VALID_INPUT_LENGTH {
+        return Err(VMError::PrecompileError(PrecompileError::ParsingInputError));
+    }
+
+    // GAS
+    increase_precompile_consumed_gas(gas_for_call, BLS12_381_MAP_FP_TO_G1_COST, consumed_gas)?;
+
+    let _coordinate_bytes = parse_coordinate(calldata.get(0..64))?;
     Ok(Bytes::new())
 }
 
