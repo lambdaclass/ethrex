@@ -1,4 +1,4 @@
-curl -X POST $url \
+curl -X POST $1 \
 -H 'Content-Type: application/json; charset=utf-8' \
 --data @- <<EOF
 $(jq -n --arg text "$(cat diff.md)" '{
