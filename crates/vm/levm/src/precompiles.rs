@@ -1436,13 +1436,15 @@ pub fn bls12_pairing_check(
         points.push((g1, G2Prepared::from(g2)));
     }
 
-    let points_ref: Vec<(&G1Affine, &G2Prepared)> =
-        points.iter().map(|(g1, g2)| (g1, g2)).collect();
+    // The crate bls12_381 expects a reference to the points
+    let points: Vec<(&G1Affine, &G2Prepared)> = points.iter().map(|(g1, g2)| (g1, g2)).collect();
+
     // perform the final exponentiation to get the result of the pairing check
     // https://docs.rs/bls12_381/0.8.0/src/bls12_381/pairings.rs.html#43-48
-    let result: Gt = multi_miller_loop(&points_ref).final_exponentiation();
-    let one = Gt::identity();
-    if result == one {
+    let result: Gt = multi_miller_loop(&points).final_exponentiation();
+
+    // follows this https://github.com/ethereum/EIPs/blob/master/EIPS/eip-2537.md?plain=1#L188
+    if result == Gt::identity() {
         let mut result = Vec::from([0_u8; 31]);
         result.push(1);
         Ok(Bytes::from(result))
