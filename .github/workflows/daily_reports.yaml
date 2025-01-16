@@ -155,7 +155,6 @@ jobs:
               || secrets.LEVM_SLACK_WEBHOOK
             }}
         run: |
-          ls -lah
           bash .github/scripts/levm_revm_diff.sh results_revm.md results_levm.md >> diff.md
           cat diff.md >> $GITHUB_STEP_SUMMARY
           sh .github/scripts/publish_vms_diff.sh $SLACK_WEBHOOK
