@@ -42,7 +42,9 @@ where
                 "TransactionException.INSUFFICIENT_ACCOUNT_FUNDS" => {
                     TransactionExpectedException::InsufficientAccountFunds
                 }
-                "TransactionException.SENDER_NOT_EOA" => TransactionExpectedException::SenderNotEoa,
+                "TransactionException.SENDER_NOT_EOA" | "SenderNotEOA" => {
+                    TransactionExpectedException::SenderNotEoa
+                }
                 "TransactionException.PRIORITY_GREATER_THAN_MAX_FEE_PER_GAS" => {
                     TransactionExpectedException::PriorityGreaterThanMaxFeePerGas
                 }
@@ -67,6 +69,21 @@ where
                 "TransactionException.INSUFFICIENT_MAX_FEE_PER_BLOB_GAS" => {
                     TransactionExpectedException::InsufficientMaxFeePerBlobGas
                 }
+                "TR_InitCodeLimitExceeded" => TransactionExpectedException::InitCodeLimitExceeded,
+                "TR_NonceHasMaxValue" => TransactionExpectedException::NonceHasMaxValue,
+                "TR_BLOBLIST_OVERSIZE" => TransactionExpectedException::BloblistOversize,
+                "TR_EMPTYBLOB" => TransactionExpectedException::EmptyBlob,
+                "TR_BLOBCREATE" => TransactionExpectedException::BlobCreate,
+                "TR_BLOBVERSION_INVALID" => TransactionExpectedException::BlobVersionInvalid,
+                "TR_TypeNotSupported" => TransactionExpectedException::TypeNotSupported,
+                "TR_IntrinsicGas" | "IntrinsicGas" => TransactionExpectedException::IntrinsicGas,
+                "TR_NoFunds" => TransactionExpectedException::NoFunds,
+                "TR_TipGtFeeCap" => TransactionExpectedException::TipGtFeeCap,
+                "TR_GasLimitReached" => TransactionExpectedException::GasLimitReached,
+                "TR_FeeCapLessThanBlocks" => TransactionExpectedException::FeeCapLessThanBlocks,
+                "TR_NoFundsX" => TransactionExpectedException::NoFundsX,
+                "TR_NoFundsOrGas" => TransactionExpectedException::NoFundsOrGas,
+                "TR_RLP_WRONGVALUE" => TransactionExpectedException::RlpWrongValue,
                 other => panic!("Unexpected error type: {}", other), // Should not fail, TODO is to return an error
             })
             .collect();
@@ -260,11 +277,23 @@ where
     Vec::<String>::deserialize(deserializer)?
         .iter()
         .map(|s| {
-            U256::from_str(s.trim_start_matches("0x:bigint ")).map_err(|err| {
+            let mut s = s.trim_start_matches("0x:bigint ");
+            // if the len of the string could not 64 hex characters, it is invalid, so we want to skip it
+            if s.len() > 64 {
+                //just use the first 64 characters
+                dbg!(s);
+                s = &s[..64];
+            }
+            U256::from_str(s).map_err(|err| {
                 serde::de::Error::custom(format!(
                     "error parsing U256 when deserializing U256 vector safely: {err}"
                 ))
             })
+            // U256::from_str(s.trim_start_matches("0x:bigint ")).map_err(|err| {
+            //     serde::de::Error::custom(format!(
+            //         "error parsing U256 when deserializing U256 vector safely: {err}"
+            //     ))
+            // })
         })
         .collect()
 }

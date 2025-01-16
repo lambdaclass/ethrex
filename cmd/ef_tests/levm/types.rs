@@ -170,7 +170,7 @@ impl EFTestPostStruct {
     // Return from the first fork using find_vector_post_value
     pub fn vector_post_value(&self, vector: &TestVector) -> EFTestPostValue {
         let values = self.forks.values().next().unwrap();
-        Self::find_vector_post_value(values, &vector)
+        Self::find_vector_post_value(values, vector)
     }
 
     // pub fn vector_post_values_map
@@ -274,6 +274,22 @@ pub enum TransactionExpectedException {
     GasLimitPriceProductOverflow,
     Type3TxPreFork,
     InsufficientMaxFeePerBlobGas,
+    // LEGACY
+    InitCodeLimitExceeded,
+    NonceHasMaxValue,
+    BloblistOversize,
+    EmptyBlob,
+    BlobCreate,
+    BlobVersionInvalid,
+    TypeNotSupported,
+    IntrinsicGas,
+    NoFunds,
+    TipGtFeeCap,
+    GasLimitReached,
+    FeeCapLessThanBlocks,
+    NoFundsX,
+    NoFundsOrGas,
+    RlpWrongValue,
 }
 
 #[derive(Debug, Deserialize, Clone)]
