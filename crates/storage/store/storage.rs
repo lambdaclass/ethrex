@@ -1011,6 +1011,18 @@ impl Store {
     pub fn clear_header_download_checkpoint(&self) -> Result<(), StoreError> {
         self.engine.clear_header_download_checkpoint()
     }
+
+    pub fn set_state_trie_download_checkpoint(&self, current_root: H256, last_key: H256) -> Result<(), StoreError> {
+        self.engine.set_state_trie_download_checkpoint(current_root, last_key)
+    }
+
+    pub fn get_state_trie_download_checkpoint(&self) -> Result<Option<(H256, H256)>, StoreError> {
+        self.engine.get_state_trie_download_checkpoint()
+    }
+
+    pub fn clear_state_trie_download_checkpoint(&self) -> Result<(), StoreError> {
+        self.engine.clear_state_trie_download_checkpoint()
+    }
 }
 
 pub fn hash_address(address: &Address) -> Vec<u8> {

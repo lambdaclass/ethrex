@@ -162,12 +162,12 @@ impl SyncManager {
                 // - Fetch each block's body and its receipt via eth p2p requests
                 // - Fetch the pivot block's state via snap p2p requests
                 // - Execute blocks after the pivot (like in full-sync)
-                let mut pivot_idx = if all_block_hashes.len() > MIN_FULL_BLOCKS {
+                let pivot_idx = if all_block_hashes.len() > MIN_FULL_BLOCKS {
                     all_block_hashes.len() - MIN_FULL_BLOCKS
                 } else {
                     all_block_hashes.len() - 1
                 };
-                let mut pivot_header = store
+                let pivot_header = store
                     .get_block_header_by_hash(all_block_hashes[pivot_idx])?
                     .ok_or(SyncError::CorruptDB)?;
                 info!(
@@ -179,23 +179,9 @@ impl SyncManager {
                     self.peers.clone(),
                     store.clone(),
                 ));
-                let mut stale_pivot =
-                    !rebuild_state_trie(pivot_header.state_root, self.peers.clone(), store.clone())
+                let stale_pivot =
+                    !rebuild_state_trie(pivot_header.state_root, self.peers.clone(), store.clone(), store.get_state_trie_download_checkpoint()?)
                         .await?;
-                // If the pivot became stale, set a further pivot and try again
-                if stale_pivot && pivot_idx != all_block_hashes.len() - 1 {
-                    warn!("Stale pivot, switching to newer head");
-                    pivot_idx = all_block_hashes.len() - 1;
-                    pivot_header = store
-                        .get_block_header_by_hash(all_block_hashes[pivot_idx])?
-                        .ok_or(SyncError::CorruptDB)?;
-                    stale_pivot = !rebuild_state_trie(
-                        pivot_header.state_root,
-                        self.peers.clone(),
-                        store.clone(),
-                    )
-                    .await?;
-                }
                 if stale_pivot {
                     warn!("Stale pivot, aborting sync");
                     return Ok(());
@@ -320,12 +306,15 @@ async fn store_receipts(
     Ok(())
 }
 
-/// Rebuilds a Block's state trie by requesting snap state from peers, also performs state healing
+/// Rebuilds a Block's state trie by requesting snap state from peers, also performs state healing (TODO)
+/// Receives an optional checkpoint in case there was a previous snap sync process that became stale, in which
+/// case it will continue from the checkpoint and then apply healing to fix inconsistencies with the older state
 /// Returns true if all state was fetched or false if the block is too old and the state is no longer available
 async fn rebuild_state_trie(
     state_root: H256,
     peers: Arc<Mutex<KademliaTable>>,
     store: Store,
+    checkpoint: Option<(H256, H256)>,
 ) -> Result<bool, SyncError> {
     info!("Rebuilding State Trie");
     // Spawn storage & bytecode fetchers
@@ -342,10 +331,10 @@ async fn rebuild_state_trie(
         store.clone(),
         state_root,
     ));
-    let mut start_account_hash = H256::zero();
-    // Start from an empty state trie
+    // Resume download from checkpoint if available or start from an empty trie
     // We cannot keep an open trie here so we will track the root between lookups
-    let mut current_state_root = *EMPTY_TRIE_HASH;
+    let (mut current_state_root, mut start_account_hash) = checkpoint.unwrap_or((H256::zero(), *EMPTY_TRIE_HASH));
+    info!("Starting/Resuming state trie download from key {start_account_hash}");
     // Fetch Account Ranges
     // If we reached the maximum amount of retries then it means the state we are requesting is probably old and no longer available
     let mut retry_count = 0;
@@ -413,29 +402,22 @@ async fn rebuild_state_trie(
         }
     }
     if retry_count > MAX_RETRIES {
+        // Store current checkpoint
+        store.set_state_trie_download_checkpoint(current_state_root, start_account_hash)?;
         return Err(SyncError::StalePivot);
     }
     info!("Account Trie fully fetched, signaling storage fetcher process");
     // Send empty batch to signal that no more batches are incoming
     storage_sender.send(vec![]).await?;
     storage_fetcher_handle.await??;
-    info!("Current State Root: {current_state_root} vs Expected Root: {state_root}");
-    let sync_complete = if current_state_root == state_root {
-        info!("Completed state sync for state root {state_root}");
-        true
-    } else {
-        info!("Oh no! Trie needs healing");
-        info!("Skipping state healing");
-        true
-        // Perform state healing to fix any potential inconsistency in the rebuilt tries
-        // As we are not fetching different chunks of the same trie this step is not necessary
-        //heal_state_trie(bytecode_sender.clone(), state_root, store, peers).await?
-    };
+    // Perform state healing to fix inconsistencies with older state
+    info!("Healing");
+    let res = heal_state_trie(bytecode_sender.clone(), state_root, store.clone(), peers.clone()).await?;
     // Send empty batch to signal that no more batches are incoming
     info!("Account Trie fully rebuilt, signaling bytecode fetcher process");
     bytecode_sender.send(vec![]).await?;
     bytecode_fetcher_handle.await??;
-    Ok(sync_complete)
+    Ok(res)
 }
 
 /// Waits for incoming code hashes from the receiver channel endpoint, queues them, and fetches and stores their bytecodes in batches
