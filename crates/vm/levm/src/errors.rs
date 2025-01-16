@@ -198,6 +198,10 @@ pub enum PrecompileError {
     EvaluationError,
     #[error("This is a default error")]
     DefaultError,
+    #[error("The G1 point is not in the curve")]
+    BLS12381G1PointNotInCurve,
+    #[error("The G2 point is not in the curve")]
+    BLS12381G2PointNotInCurve,
 }
 
 #[derive(Debug, Clone)]
