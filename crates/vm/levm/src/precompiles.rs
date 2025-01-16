@@ -1,4 +1,6 @@
-use bls12_381::{G1Affine, G1Projective, G2Affine, G2Prepared, G2Projective, Scalar};
+use bls12_381::{
+    multi_miller_loop, G1Affine, G1Projective, G2Affine, G2Prepared, G2Projective, Gt, Scalar,
+};
 
 use bytes::Bytes;
 use ethrex_core::{serde_utils::bool, Address, H160, H256, U256};
@@ -1284,7 +1286,7 @@ pub fn bls12_g2add(
     };
 
     let mut padded_result = Vec::new();
-    // The crate bls12_381 deserialize the G2 point as x_1 || x_0 || y_1 || y_0
+    // The crate bls12_381 deserialize the G2 point as x_2 || x_1 || y_2 || y_1
     // https://docs.rs/bls12_381/0.8.0/src/bls12_381/g2.rs.html#284-299
     add_padded_coordinate(&mut padded_result, result_bytes.get(48..96))?;
     add_padded_coordinate(&mut padded_result, result_bytes.get(0..48))?;
@@ -1333,7 +1335,7 @@ pub fn bls12_g2msm(
     };
 
     let mut padded_result = Vec::new();
-    // The crate bls12_381 deserialize the G2 point as x_1 || x_0 || y_1 || y_0
+    // The crate bls12_381 deserialize the G2 point as x_2 || x_1 || y_2 || y_1
     // https://docs.rs/bls12_381/0.8.0/src/bls12_381/g2.rs.html#284-299
     add_padded_coordinate(&mut padded_result, result_bytes.get(48..96))?;
     add_padded_coordinate(&mut padded_result, result_bytes.get(0..48))?;
@@ -1359,30 +1361,50 @@ pub fn bls12_pairing_check(
 
     let mut points: Vec<(G1Affine, G2Prepared)> = Vec::new();
     for i in 0..k {
-        let g1_point_offset = i
+        let g1_offset = i
             .checked_mul(BLS12_381_PAIRING_CHECK_PAIR_LENGTH)
             .ok_or(InternalError::ArithmeticOperationOverflow)?;
-        let g2_point_offset = g1_point_offset
-            .checked_add(128)
+        let y_offset = g1_offset
+            .checked_add(64)
             .ok_or(InternalError::ArithmeticOperationOverflow)?;
-        let pair_end = g2_point_offset
-            .checked_add(256)
+        let g2_offset = y_offset
+            .checked_add(64)
+            .ok_or(InternalError::ArithmeticOperationOverflow)?;
+        let x_1_offset = g2_offset
+            .checked_add(64)
+            .ok_or(InternalError::ArithmeticOperationOverflow)?;
+        let y_0_offset = x_1_offset
+            .checked_add(64)
+            .ok_or(InternalError::ArithmeticOperationOverflow)?;
+        let y_1_offset = y_0_offset
+            .checked_add(64)
+            .ok_or(InternalError::ArithmeticOperationOverflow)?;
+        let pair_end = y_1_offset
+            .checked_add(64)
             .ok_or(InternalError::ArithmeticOperationOverflow)?;
 
         // The check for the subgroup is required
         // https://github.com/ethereum/EIPs/blob/master/EIPS/eip-2537.md?plain=1#L194
-        let g1 = G1Affine::from(parse_g1_point(
-            calldata.get(g1_point_offset..g2_point_offset),
-            false,
-        )?);
-        let g2 = G2Affine::from(parse_g2_point(
-            calldata.get(g2_point_offset..pair_end),
-            false,
-        )?);
+        let g1 = G1Affine::from(parse_g1_point(calldata.get(g1_offset..g2_offset), false)?);
+        let g2 = G2Affine::from(parse_g2_point(calldata.get(g2_offset..pair_end), false)?);
         points.push((g1, G2Prepared::from(g2)));
     }
 
-    Ok(Bytes::new())
+    // The crate bls12_381 expects a reference to the points
+    let points: Vec<(&G1Affine, &G2Prepared)> = points.iter().map(|(g1, g2)| (g1, g2)).collect();
+
+    // perform the final exponentiation to get the result of the pairing check
+    // https://docs.rs/bls12_381/0.8.0/src/bls12_381/pairings.rs.html#43-48
+    let result: Gt = multi_miller_loop(&points).final_exponentiation();
+
+    // follows this https://github.com/ethereum/EIPs/blob/master/EIPS/eip-2537.md?plain=1#L188
+    if result == Gt::identity() {
+        let mut result = Vec::from([0_u8; 31]);
+        result.push(1);
+        Ok(Bytes::from(result))
+    } else {
+        Ok(Bytes::copy_from_slice(&[0_u8; 32]))
+    }
 }
 
 pub fn bls12_map_fp_to_g1(
