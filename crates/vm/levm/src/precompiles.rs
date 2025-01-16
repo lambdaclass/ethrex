@@ -1393,7 +1393,7 @@ pub fn bls12_pairing_check(
 
     // follows this https://github.com/ethereum/EIPs/blob/master/EIPS/eip-2537.md?plain=1#L188
     if result == Gt::identity() {
-        let mut result = Vec::from([0_u8; 31]);
+        let mut result = vec![0_u8; 31];
         result.push(1);
         Ok(Bytes::from(result))
     } else {
