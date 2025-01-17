@@ -25,7 +25,7 @@ const MAX_RETRIES: usize = 5;
 /// The minimum amount of blocks from the head that we want to full sync during a snap sync
 const MIN_FULL_BLOCKS: usize = 64;
 /// Max size of a bach to stat a fetch request in queues
-const BATCH_SIZE: usize = 200;
+const BATCH_SIZE: usize = 300;
 
 #[derive(Debug)]
 pub enum SyncMode {
