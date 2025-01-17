@@ -97,10 +97,12 @@ impl Node {
 pub struct NodeRecord {
     pub signature: H512,
     pub seq: u64,
+    // holds optional values in (key, value) format
+    // value represents the rlp encoded bytes
     pub pairs: Vec<(Bytes, Bytes)>,
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug, Default, PartialEq)]
 pub struct NodeRecordDecodedPairs {
     pub id: Option<String>,
     pub ip: Option<u32>,
@@ -122,39 +124,18 @@ impl NodeRecord {
             };
             let value = value.to_vec();
             match key.as_str() {
-                "id" => decoded_pairs.id = String::from_utf8(value).ok(),
-                "ip" => {
-                    decoded_pairs.ip = {
-                        if value.len() < 4 {
-                            None
-                        } else {
-                            Some(u32::from_be_bytes([value[0], value[1], value[2], value[3]]))
-                        }
-                    }
-                }
-                "tcp" => {
-                    decoded_pairs.tcp_port = {
-                        if value.len() < 2 {
-                            None
-                        } else {
-                            Some(u16::from_be_bytes([value[0], value[1]]))
-                        }
-                    }
-                }
-                "udp" => {
-                    decoded_pairs.udp_port = {
-                        if value.len() < 2 {
-                            None
-                        } else {
-                            Some(u16::from_be_bytes([value[0], value[1]]))
-                        }
-                    }
-                }
+                "id" => decoded_pairs.id = String::decode(&value).ok(),
+                "ip" => decoded_pairs.ip = u32::decode(&value).ok(),
+                "tcp" => decoded_pairs.tcp_port = u16::decode(&value).ok(),
+                "udp" => decoded_pairs.udp_port = u16::decode(&value).ok(),
                 "secp256k1" => {
-                    if value.len() < 33 {
+                    let Ok(bytes) = Bytes::decode(&value) else {
+                        continue;
+                    };
+                    if bytes.len() < 33 {
                         continue;
                     }
-                    decoded_pairs.secp256k1 = Some(H264::from_slice(&value.as_slice()))
+                    decoded_pairs.secp256k1 = Some(H264::from_slice(&bytes))
                 }
                 _ => {}
             }
@@ -165,31 +146,27 @@ impl NodeRecord {
     pub fn from_node(node: Node, seq: u64, signer: &SigningKey) -> Result<Self, ()> {
         let mut record = Self::default();
         record.seq = seq;
-        record.pairs.push(("id".into(), "v4".into()));
-        match node.ip {
-            IpAddr::V4(ip) => record
-                .pairs
-                .push(("ip".into(), Bytes::copy_from_slice(&ip.octets()))),
-            IpAddr::V6(ip) => {
-                if let Some(ipv4) = ip.to_ipv4() {
-                    record
-                        .pairs
-                        .push(("ip".into(), Bytes::copy_from_slice(&ipv4.octets())))
-                };
-            }
-        }
+        record
+            .pairs
+            .push(("id".into(), "v4".encode_to_vec().into()));
+        record
+            .pairs
+            .push(("ip".into(), node.ip.encode_to_vec().into()));
         record.pairs.push((
             "secp256k1".into(),
-            Bytes::copy_from_slice(signer.verifying_key().to_encoded_point(true).as_bytes()),
+            signer
+                .verifying_key()
+                .to_encoded_point(true)
+                .as_bytes()
+                .encode_to_vec()
+                .into(),
         ));
-        record.pairs.push((
-            "tcp".into(),
-            Bytes::copy_from_slice(&(node.tcp_port as u32).to_be_bytes()),
-        ));
-        record.pairs.push((
-            "udp".into(),
-            Bytes::copy_from_slice(&(node.udp_port as u32).to_be_bytes()),
-        ));
+        record
+            .pairs
+            .push(("tcp".into(), node.tcp_port.encode_to_vec().into()));
+        record
+            .pairs
+            .push(("udp".into(), node.udp_port.encode_to_vec().into()));
 
         if record.sign_record(signer).is_ok() {
             Ok(record)
@@ -198,24 +175,24 @@ impl NodeRecord {
         }
     }
 
-    pub fn get_signature_digest(&self) -> Vec<u8> {
-        let mut rlp = vec![];
-        self.seq.encode(&mut rlp);
-        self.pairs.encode(&mut rlp);
-        let digest = Keccak256::digest(&rlp);
-        digest.to_vec()
-    }
-
     pub fn sign_record(&mut self, signer: &SigningKey) -> Result<(), ()> {
         // note: v is ignored
-        let Ok((signature, _)) = signer.sign_prehash_recoverable(&self.get_signature_digest())
-        else {
+        let digest = &self.get_signature_digest();
+        let Ok((signature, _)) = signer.sign_prehash_recoverable(digest) else {
             return Err(());
         };
         let signature_bytes = signature.to_bytes().to_vec();
         self.signature = H512::from_slice(&signature_bytes);
 
         Ok(())
+    }
+
+    pub fn get_signature_digest(&self) -> Vec<u8> {
+        let mut rlp = vec![];
+        self.seq.encode(&mut rlp);
+        self.pairs.encode(&mut rlp);
+        let digest = Keccak256::digest(&rlp);
+        digest.to_vec()
     }
 }
 
