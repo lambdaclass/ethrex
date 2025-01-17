@@ -221,8 +221,8 @@ mod tests {
             let fork_id = ForkId::new(chain_config, genesis_hash, test_case.time, test_case.head);
             assert!(fork_id.is_valid(
                 test_case.fork_id,
-                test_case.time,
                 test_case.head,
+                test_case.time,
                 chain_config,
                 genesis_hash
             ))
