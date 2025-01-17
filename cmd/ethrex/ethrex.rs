@@ -145,6 +145,7 @@ async fn main() {
             let store = Store::new(&data_dir, EngineType::InMemory).expect("Failed to create Store");
         }
     }
+    store.clear_snap_state();
 
     let genesis = read_genesis_file(&network);
     store
