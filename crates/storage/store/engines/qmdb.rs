@@ -297,7 +297,12 @@ impl StoreEngine for Store {
     }
 
     fn get_chain_config(&self) -> Result<ChainConfig, StoreError> {
-        todo!()
+        let key = ChainDataIndex::ChainConfig as u8;
+        let Some(bytes) = self.read::<_, Vec<u8>>(key, CHAIN_DATA_TABLE)? else {
+            return Err(StoreError::Custom("Chain config not found".to_string()));
+        };
+        let json = String::from_utf8(bytes).map_err(|_| StoreError::DecodeError)?;
+        serde_json::from_str(&json).map_err(|_| StoreError::DecodeError)
     }
 
     fn update_earliest_block_number(&self, _block_number: BlockNumber) -> Result<(), StoreError> {
