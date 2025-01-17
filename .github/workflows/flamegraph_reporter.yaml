@@ -1,4 +1,4 @@
-name: Daily Flamegraph Reporter
+name: Flamegraph Reporter
 
 permissions:
   contents: read
@@ -8,8 +8,6 @@ permissions:
 on:
   push:
     branches: [ "main" ]
-  pull_request:
-    branches: [ "**" ]
   workflow_dispatch:
 
 env:

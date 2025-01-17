@@ -28,6 +28,7 @@ output=$(ethrex_l2 info -b -a $account --wei 2>&1)
 echo "Balance of $output reached in $minutes min $seconds s, killing process"
 
 sudo pkill ethrex
+spinner=( '/' '-' '\' '|' )
 
 while pgrep -l "perf" >/dev/null; do
     for s in "${spinner[@]}"; do
