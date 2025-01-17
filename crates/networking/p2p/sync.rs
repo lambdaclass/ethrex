@@ -24,6 +24,8 @@ use crate::{kademlia::KademliaTable, peer_channels::BlockRequestOrder};
 const MAX_RETRIES: usize = 5;
 /// The minimum amount of blocks from the head that we want to full sync during a snap sync
 const MIN_FULL_BLOCKS: usize = 64;
+/// Max size of a bach to stat a fetch request in queues
+const BATCH_SIZE: usize = 200;
 
 #[derive(Debug)]
 pub enum SyncMode {
@@ -436,7 +438,6 @@ async fn bytecode_fetcher(
     peers: Arc<Mutex<KademliaTable>>,
     store: Store,
 ) -> Result<(), SyncError> {
-    const BATCH_SIZE: usize = 100;
     let mut pending_bytecodes: Vec<H256> = vec![];
     let mut incoming = true;
     while incoming {
@@ -498,7 +499,6 @@ async fn storage_fetcher(
     store: Store,
     state_root: H256,
 ) -> Result<Vec<H256>, SyncError> {
-    const BATCH_SIZE: usize = 100;
     // Pending list of storages to fetch
     let mut pending_storage: Vec<(H256, H256)> = vec![];
     // The pivot may become stale while the fetcher is active, we will still keep the process
@@ -787,7 +787,6 @@ async fn storage_healer(
     peers: Arc<Mutex<KademliaTable>>,
     store: Store,
 ) -> Result<Vec<H256>, SyncError> {
-    const BATCH_SIZE: usize = 200;
     // Pending list of storages to fetch
     // Each entry is made up of AccountHash -> (CurrentRoot, Paths)
     let mut pending_storages: BTreeMap<H256, (H256, Vec<Nibbles>)> = BTreeMap::new();
