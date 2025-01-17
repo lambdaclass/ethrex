@@ -1,6 +1,7 @@
 use ethrex_blockchain::error::ChainError;
 use ethrex_core::{
-    types::{AccountState, Block, BlockHash, EMPTY_KECCACK_HASH}, BigEndianHash, H256, U256, U512
+    types::{AccountState, Block, BlockHash, EMPTY_KECCACK_HASH},
+    BigEndianHash, H256, U256, U512,
 };
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode, error::RLPDecodeError};
 use ethrex_storage::{error::StoreError, Store};
@@ -341,15 +342,15 @@ async fn rebuild_state_trie(
     // Fetch Account Ranges
     // If we reached the maximum amount of retries then it means the state we are requesting is probably old and no longer available
     let mut retry_count = 0;
-    let mut timer = Instant::now();
+    let mut progress_timer = Instant::now();
+    let initial_timestamp = Instant::now();
+    let initial_account_hash = start_account_hash.into_uint();
     const PROGRESS_OUTPUT_TIMER: std::time::Duration = std::time::Duration::from_secs(30);
     while retry_count <= MAX_RETRIES {
-        // Show current progress percentage
-        if Instant::now().duration_since(timer) >= PROGRESS_OUTPUT_TIMER {
-            timer = Instant::now();
-            // Add 1 here to avoid dividing by zero, the change should be inperceptible
-            let completion_rate: U512 = U512::from(start_account_hash.into_uint() + 1) * 100 / U512::from(U256::MAX);
-            info!("Downloading state trie, completion rate: {}%", completion_rate)
+        // Show Progress stats (this task is not vital so we can detach it)
+        if Instant::now().duration_since(progress_timer) >= PROGRESS_OUTPUT_TIMER {
+            progress_timer = Instant::now();
+            tokio::spawn(show_progress(start_account_hash, initial_account_hash, initial_timestamp));
         }
         let peer = peers
             .clone()
@@ -958,6 +959,37 @@ fn node_missing_children(
         _ => {}
     }
     Ok(paths)
+}
+
+async fn show_progress(current_account_hash: H256, initial_account_hash: U256, start_time: Instant) {
+    // Calculate current progress percentage
+    // Add 1 here to avoid dividing by zero, the change should be inperceptible
+    let completion_rate: U512 =
+        U512::from(current_account_hash.into_uint() + 1) * 100 / U512::from(U256::MAX);
+    // Make a simple time to finish estimation based on current progress
+    // The estimation relies on account hashes being (close to) evenly distributed
+    let synced_account_hashes = current_account_hash.into_uint() - initial_account_hash;
+    let remaining_account_hashes = U256::MAX - current_account_hash.into_uint();
+    // Time to finish = Time since start / synced_account_hashes * remaining_account_hashes
+    let time_to_finish_secs =
+        U512::from(Instant::now().duration_since(start_time).as_secs())
+            * U512::from(remaining_account_hashes)
+            / U512::from(synced_account_hashes);
+    info!(
+        "Downloading state trie, completion rate: {}%, estimated time to finish: {}",
+        completion_rate,
+        seconds_to_readable(time_to_finish_secs)
+    )
+}
+
+fn seconds_to_readable(seconds: U512) -> String {
+    let (days, rest) = seconds.div_mod(U512::from(60 * 60 * 24));
+    let (hours, rest) = rest.div_mod(U512::from(60 * 60));
+    let (minutes, seconds) = rest.div_mod(U512::from(60));
+    if days > U512::zero() {
+        return format!("Over {days} days");
+    }
+    format!("{hours}h{minutes}m{seconds}s")
 }
 
 #[derive(thiserror::Error, Debug)]
