@@ -26,27 +26,33 @@ use std::{collections::HashMap, sync::Arc};
 //- [ ] Then return a Vec<EFTestReport> with the results of each fork (wip)
 
 pub fn run_ef_test_multiple_forks(test: &EFTest) -> Result<EFTestReport, EFTestRunnerError> {
-    // Is this okey that if the hash is None we set a random hash?
+    // The hash is used to uniquely identify the test, some legacy test may not have a hash so we default to a random one
     let hash = test
         ._info
         .generated_test_hash
         .or(test._info.hash)
         .unwrap_or_default();
-    //print the name of the json file
-    // dbg!(&test.dir);
-    // dbg!(&test.name);
 
     let mut ef_tests_report = Vec::new();
 
     for fork in test.post.forks.keys() {
-        dbg!("Running test for fork: ", fork);
+        //dbg!("Running test for fork: ", fork);
         let mut ef_test_report =
             EFTestReport::new(test.name.clone(), test.dir.clone(), hash, *fork);
         for (vector, _tx) in test.transactions.iter() {
-            if test.name == "OutOfGasPrefundedContractCreation" {
-                dbg!(&test.transactions);
-                dbg!(vector);
+            if !test.post.has_vector_for_fork(vector, *fork) {
+                // Print the name of the test
+                dbg!(&test.name);
+                continue;
             }
+            //     dbg!("this vector is not in the fork");
+            //     dbg!(vector);
+            //     // return Ok(());
+            //     continue;
+            // }
+            // dbg!("this vector is in the fork");
+            // dbg!(vector);
+
             match run_ef_test_tx(vector, test, *fork) {
                 Ok(_) => continue,
                 Err(EFTestRunnerError::VMInitializationFailed(reason)) => {
@@ -153,17 +159,25 @@ pub fn run_ef_test_tx(
     fork: SpecId,
 ) -> Result<(), EFTestRunnerError> {
     let mut levm = prepare_vm_for_tx(vector, test, fork)?;
-    if test.name == "OutOfGasPrefundedContractCreation" {
-        dbg!(&test.name);
-        dbg!(&test.transactions);
-        dbg!(vector);
-        dbg!(&test.post.forks.get(&fork).unwrap());
-    }
+    // if test.name == "OutOfGasPrefundedContractCreation" {
+    //     dbg!(&test.name);
+    //     dbg!(&test.transactions);
+    //     dbg!(vector);
+    //     dbg!(&test.post.forks.get(&fork).unwrap());
+    // }
 
     // Check if vector is in the fork if not skip the test
-    if !test.post.has_vector_for_fork(vector, fork) {
-        return Ok(());
-    }
+    // if !test.post.has_vector_for_fork(vector, fork) {
+    //     //Debug that print the name of tets, the vector and the current vectors that are in the fork.
+    //     dbg!("Im entering here");
+    //     dbg!(
+    //         &test.name,
+    //         &test.transactions,
+    //         vector,
+    //         test.post.forks.get(&fork).unwrap()
+    //     );
+    //     return Ok(());
+    // }
 
     ensure_pre_state(&levm, test)?;
     let levm_execution_result = levm.transact();

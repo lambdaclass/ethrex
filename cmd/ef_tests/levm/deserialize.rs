@@ -365,6 +365,8 @@ impl<'de> Deserialize<'de> for EFTests {
 
             let mut transactions = HashMap::new();
 
+            // Why we do this?
+            // We expect the same for legacy tests?
             // Note that in this order of iteration, in an example tx with 2 datas, 2 gasLimit and 2 values, order would be
             // 111, 112, 121, 122, 211, 212, 221, 222
             for (data_id, data) in raw_tx.data.iter().enumerate() {
@@ -394,6 +396,8 @@ impl<'de> Deserialize<'de> for EFTests {
                                 .cloned()
                                 .unwrap_or_default(),
                         };
+                        // dbg!(&tx);
+                        // dbg!(&data_id, &gas_limit_id, &value_id);
                         transactions.insert((data_id, gas_limit_id, value_id), tx);
                     }
                 }

@@ -97,6 +97,10 @@ fn run_with_levm(
         if !opts.spinner && opts.verbose {
             println!("Running test: {:?}", test.name);
         }
+        if test.name == "OutOfGasPrefundedContractCreation" {
+            //dbg!(test);
+            //dbg!(&test.transactions);
+        }
         let ef_test_report = match levm_runner::run_ef_test_multiple_forks(test) {
         // let ef_test_report = match levm_runner::run_ef_test(test) {
             Ok(ef_test_report) => ef_test_report,
@@ -168,7 +172,7 @@ fn run_with_revm(
             ),
             opts.spinner,
         );
-        let ef_test_report = match revm_runner::_run_ef_test_revm(test) {
+        let ef_test_report = match revm_runner::_run_ef_test_revm_multiple_forks(test) {
             Ok(ef_test_report) => ef_test_report,
             Err(EFTestRunnerError::Internal(err)) => return Err(EFTestRunnerError::Internal(err)),
             non_internal_errors => {
@@ -231,7 +235,8 @@ fn re_run_with_revm(
             opts.spinner,
         );
 
-        match revm_runner::re_run_failed_ef_test(
+        // match revm_runner::re_run_failed_ef_test(
+        match revm_runner::re_run_failed_ef_test_multiple_forks(
             ef_tests
                 .iter()
                 .find(|test|  {
@@ -239,7 +244,7 @@ fn re_run_with_revm(
                         ._info
                         .generated_test_hash
                         .or(test._info.hash)
-                        .unwrap();
+                        .unwrap_or_default();// Here it is panicking
 
                     let failed_hash = failed_test_report.test_hash;
 
