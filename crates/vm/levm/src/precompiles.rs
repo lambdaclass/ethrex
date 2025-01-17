@@ -1,5 +1,5 @@
 use bls12_381::{
-    hash_to_curve::MapToCurve, G1Affine, G1Projective, G2Affine, G2Projective, Scalar,
+    hash_to_curve::MapToCurve, Fp, G1Affine, G1Projective, G2Affine, G2Projective, Scalar,
 };
 
 use bytes::Bytes;
@@ -1367,9 +1367,30 @@ pub fn bls12_map_fp_to_g1(
     // GAS
     increase_precompile_consumed_gas(gas_for_call, BLS12_381_MAP_FP_TO_G1_COST, consumed_gas)?;
 
-    let _coordinate_bytes = parse_coordinate(calldata.get(0..64))?;
+    let coordinate_bytes = parse_coordinate(calldata.get(0..64))?;
+    let fp = if coordinate_bytes.iter().all(|e| *e == 0) {
+        Fp::zero()
+    } else {
+        Fp::from_bytes(&coordinate_bytes)
+            .into_option()
+            .ok_or(VMError::PrecompileError(PrecompileError::ParsingInputError))?
+    };
+    // following https://github.com/ethereum/EIPs/blob/master/assets/eip-2537/field_to_curve.md?plain=1#L3-L6, we do:
+    // map_to_curve: map a field element to a another curve, then isogeny is applied to map to the curve bls12_381
+    // clear_h: clears the cofactor
+    let point = G1Projective::map_to_curve(&fp).clear_h();
 
-    Ok(Bytes::new())
+    let result_bytes = if point.is_identity().into() {
+        return Ok(Bytes::copy_from_slice(&[0_u8; 128]));
+    } else {
+        G1Affine::from(point).to_uncompressed()
+    };
+
+    let mut padded_result = Vec::new();
+    add_padded_coordinate(&mut padded_result, result_bytes.get(0..48))?;
+    add_padded_coordinate(&mut padded_result, result_bytes.get(48..96))?;
+
+    Ok(Bytes::from(padded_result))
 }
 
 pub fn bls12_map_fp2_tp_g2(
