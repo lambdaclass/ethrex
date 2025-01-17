@@ -423,7 +423,7 @@ async fn rebuild_state_trie(
         stored_pending_storages.extend(pending_storage_accounts);
         info!(
             "Current pending storage accounts: {}",
-            pending_storage_accounts.len()
+            stored_pending_storages.len()
         );
         store.set_pending_storage_heal_accounts(stored_pending_storages)?;
     }
