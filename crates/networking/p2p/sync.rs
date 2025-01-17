@@ -1,7 +1,6 @@
 use ethrex_blockchain::error::ChainError;
 use ethrex_core::{
-    types::{AccountState, Block, BlockHash, EMPTY_KECCACK_HASH},
-    H256, U256,
+    types::{AccountState, Block, BlockHash, EMPTY_KECCACK_HASH}, BigEndianHash, H256, U256, U512
 };
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode, error::RLPDecodeError};
 use ethrex_storage::{error::StoreError, Store};
@@ -342,7 +341,16 @@ async fn rebuild_state_trie(
     // Fetch Account Ranges
     // If we reached the maximum amount of retries then it means the state we are requesting is probably old and no longer available
     let mut retry_count = 0;
+    let mut timer = Instant::now();
+    const PROGRESS_OUTPUT_TIMER: std::time::Duration = std::time::Duration::from_secs(30);
     while retry_count <= MAX_RETRIES {
+        // Show current progress percentage
+        if Instant::now().duration_since(timer) >= PROGRESS_OUTPUT_TIMER {
+            timer = Instant::now();
+            // Add 1 here to avoid dividing by zero, the change should be inperceptible
+            let completion_rate: U512 = U512::from(start_account_hash.into_uint() + 1) / U512::from(U256::MAX);
+            info!("Downloading state trie, completion rate: {}%", completion_rate);
+        }
         let peer = peers
             .clone()
             .lock()
