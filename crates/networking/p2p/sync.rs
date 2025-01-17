@@ -350,7 +350,11 @@ async fn rebuild_state_trie(
         // Show Progress stats (this task is not vital so we can detach it)
         if Instant::now().duration_since(progress_timer) >= PROGRESS_OUTPUT_TIMER {
             progress_timer = Instant::now();
-            tokio::spawn(show_progress(start_account_hash, initial_account_hash, initial_timestamp));
+            tokio::spawn(show_progress(
+                start_account_hash,
+                initial_account_hash,
+                initial_timestamp,
+            ));
         }
         let peer = peers
             .clone()
@@ -559,37 +563,29 @@ async fn storage_fetcher(
         while !stale
             && (pending_storage.len() >= BATCH_SIZE || !incoming && !pending_storage.is_empty())
         {
-            let now = Instant::now();
-            let next_batch = pending_storage
-                .drain(..BATCH_SIZE.min(pending_storage.len()))
-                .collect::<Vec<_>>();
-            let batch_size = next_batch.len();
-            let remaining = match fetch_storage_batch(
-                next_batch.clone(),
-                state_root,
-                peers.clone(),
-                store.clone(),
-            )
-            .await
+            // We will be spawning multiple tasks and then collecting their results
+            // This uses a loop inside the main loop as the result from these tasks may lead to more values in queue
+            let mut storage_tasks = tokio::task::JoinSet::new();
+            while !stale
+                && (pending_storage.len() >= BATCH_SIZE || !incoming && !pending_storage.is_empty())
             {
-                Ok(r) => r,
-                Err(SyncError::StalePivot) => {
-                    stale = true;
-                    next_batch
-                }
-                Err(err) => return Err(err),
-            };
-            let remaining_size = remaining.len();
-            // Add unfeched bytecodes back to the queue
-            pending_storage.extend(remaining);
-            info!(
-                "Processed Batch of size {} with {} remaing in {} secs",
-                batch_size,
-                remaining_size,
-                now.elapsed().as_secs()
-            )
+                let next_batch = pending_storage
+                    .drain(..BATCH_SIZE.min(pending_storage.len()))
+                    .collect::<Vec<_>>();
+                storage_tasks.spawn(fetch_storage_batch(
+                    next_batch.clone(),
+                    state_root,
+                    peers.clone(),
+                    store.clone(),
+                ));
+            }
+            // Add unfetched accounts to queue and handle stale signal
+            for res in storage_tasks.join_all().await {
+                let (remaining, is_stale) = res?;
+                pending_storage.extend(remaining);
+                stale &= is_stale;
+            }
         }
-        info!("Finished processing current batches");
     }
     info!(
         "Concluding storage fetcher, {} storages left in queue to be healed later",
@@ -599,12 +595,13 @@ async fn storage_fetcher(
 }
 
 /// Receives a batch of account hashes with their storage roots, fetches their respective storage ranges via p2p and returns a list of the code hashes that couldn't be fetched in the request (if applicable)
+/// Also returns a boolean indicating if the pivot became stale during the request
 async fn fetch_storage_batch(
     mut batch: Vec<(H256, H256)>,
     state_root: H256,
     peers: Arc<Mutex<KademliaTable>>,
     store: Store,
-) -> Result<Vec<(H256, H256)>, SyncError> {
+) -> Result<(Vec<(H256, H256)>, bool), SyncError> {
     info!(
         "Requesting storage ranges for addresses {}..{}",
         batch.first().unwrap().0,
@@ -652,11 +649,11 @@ async fn fetch_storage_batch(
                 }
             }
             // Return remaining code hashes in the batch if we couldn't fetch all of them
-            return Ok(batch);
+            return Ok((batch, false));
         }
     }
     // Pivot became stale
-    Err(SyncError::StalePivot)
+    Ok((batch, true))
 }
 
 /// Handles the returned incomplete storage range of a large storage trie and
@@ -961,7 +958,11 @@ fn node_missing_children(
     Ok(paths)
 }
 
-async fn show_progress(current_account_hash: H256, initial_account_hash: U256, start_time: Instant) {
+async fn show_progress(
+    current_account_hash: H256,
+    initial_account_hash: U256,
+    start_time: Instant,
+) {
     // Calculate current progress percentage
     // Add 1 here to avoid dividing by zero, the change should be inperceptible
     let completion_rate: U512 =
@@ -971,10 +972,9 @@ async fn show_progress(current_account_hash: H256, initial_account_hash: U256, s
     let synced_account_hashes = current_account_hash.into_uint() - initial_account_hash;
     let remaining_account_hashes = U256::MAX - current_account_hash.into_uint();
     // Time to finish = Time since start / synced_account_hashes * remaining_account_hashes
-    let time_to_finish_secs =
-        U512::from(Instant::now().duration_since(start_time).as_secs())
-            * U512::from(remaining_account_hashes)
-            / U512::from(synced_account_hashes);
+    let time_to_finish_secs = U512::from(Instant::now().duration_since(start_time).as_secs())
+        * U512::from(remaining_account_hashes)
+        / U512::from(synced_account_hashes);
     info!(
         "Downloading state trie, completion rate: {}%, estimated time to finish: {}",
         completion_rate,
