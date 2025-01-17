@@ -315,7 +315,6 @@ impl PeerChannels {
         })
         .await
         .ok()??;
-        info!("Peer returned {} storage ranges", slots.len());
         // Check we got a reasonable amount of storage ranges
         if slots.len() > storage_roots.len() || slots.is_empty() {
             return None;

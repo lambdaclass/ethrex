@@ -579,9 +579,8 @@ async fn fetch_storage_batch(
             .await
         {
             info!(
-                "Received {} storage ranges, last batch incomplete: {}",
+                "Received {} storage ranges",
                 keys.len(),
-                incomplete
             );
             // Handle incomplete ranges
             if incomplete {
