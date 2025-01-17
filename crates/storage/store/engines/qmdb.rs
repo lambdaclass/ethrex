@@ -12,9 +12,13 @@ use ethrex_core::{
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
 use ethrex_trie::Trie;
 use qmdb::{
-    config::Config, seqads::SeqAdsWrap, test_helper::SimpleTask, utils::hasher, AdsCore, ADS,
+    config::Config,
+    def::{IN_BLOCK_IDX_BITS, OP_CREATE, OP_DELETE, OP_WRITE},
+    seqads::SeqAdsWrap,
+    test_helper::SimpleTask,
+    utils::{byte0_to_shard_id, changeset::ChangeSet, hasher},
+    AdsCore, ADS,
 };
-use serde::de::DeserializeOwned;
 use std::{
     collections::HashMap,
     fmt::Debug,
@@ -148,23 +152,85 @@ impl Store {
                     .then_some(buf)
             })
     }
+
+    fn write<K, V>(&self, key: K, value: V, table: &str, operation: u8) -> Result<(), StoreError>
+    where
+        K: RLPEncode,
+        V: RLPEncode,
+    {
+        let mut change_set = ChangeSet::new();
+        self._add_op_to_change_set(&mut change_set, key, value, operation);
+        change_set.sort();
+        self._write(table, &vec![change_set])
+    }
+
+    fn write_batch<K, V>(
+        &self,
+        key_value_tuples: Vec<(K, V)>,
+        table: &str,
+        operation: u8,
+    ) -> Result<(), StoreError>
+    where
+        K: RLPEncode,
+        V: RLPEncode,
+    {
+        let mut change_set = ChangeSet::new();
+        for (key, value) in key_value_tuples {
+            self._add_op_to_change_set(&mut change_set, key, value, operation);
+        }
+        change_set.sort();
+        self._write(table, &vec![change_set])
+    }
+
+    fn _add_op_to_change_set<K, V>(&self, change_set: &mut ChangeSet, key: K, value: V, op: u8)
+    where
+        K: RLPEncode,
+        V: RLPEncode,
+    {
+        let encoded_key = key.encode_to_vec();
+        let encoded_value = value.encode_to_vec();
+
+        let key_hash = hasher::hash(&encoded_key);
+        let shard_id = byte0_to_shard_id(key_hash[0]) as u8;
+        change_set.add_op(op, shard_id, &key_hash, &encoded_key, &encoded_value, None);
+    }
+
+    fn _write(&self, table: &str, change_sets: &Vec<ChangeSet>) -> Result<(), StoreError> {
+        self.db
+            .lock()
+            .map_err(|err| StoreError::Custom(format!("Could not lock db: {err}")))
+            .and_then(|db| {
+                db.get(table)
+                    .map(|table_ads| {
+                        let task_id = 1 << IN_BLOCK_IDX_BITS;
+                        table_ads.commit_tx(task_id, change_sets);
+                    })
+                    .ok_or(StoreError::InternalError(format!(
+                        "Table {table} not found"
+                    )))
+            })
+    }
 }
 
 impl StoreEngine for Store {
     fn add_block_header(
         &self,
-        _block_hash: BlockHash,
-        _block_header: BlockHeader,
+        block_hash: BlockHash,
+        block_header: BlockHeader,
     ) -> Result<(), StoreError> {
-        todo!()
+        self.write(block_hash, block_header, HEADERS_TABLE, OP_CREATE)
     }
 
     fn add_block_headers(
         &self,
-        _block_hashes: Vec<BlockHash>,
-        _block_headers: Vec<BlockHeader>,
+        block_hashes: Vec<BlockHash>,
+        block_headers: Vec<BlockHeader>,
     ) -> Result<(), StoreError> {
-        todo!()
+        self.write_batch(
+            block_hashes.into_iter().zip(block_headers).collect(),
+            HEADERS_TABLE,
+            OP_CREATE,
+        )
     }
 
     fn get_block_header(
@@ -179,10 +245,10 @@ impl StoreEngine for Store {
 
     fn add_block_body(
         &self,
-        _block_hash: BlockHash,
-        _block_body: BlockBody,
+        block_hash: BlockHash,
+        block_body: BlockBody,
     ) -> Result<(), StoreError> {
-        todo!()
+        self.write(block_hash, block_body, BLOCK_BODIES_TABLE, OP_CREATE)
     }
 
     fn get_block_body(&self, block_number: BlockNumber) -> Result<Option<BlockBody>, StoreError> {
@@ -206,8 +272,8 @@ impl StoreEngine for Store {
         self.read(block_hash, HEADERS_TABLE)
     }
 
-    fn add_pending_block(&self, _block: Block) -> Result<(), StoreError> {
-        todo!()
+    fn add_pending_block(&self, block: Block) -> Result<(), StoreError> {
+        self.write(block.hash(), block, PENDING_BLOCKS_TABLE, OP_CREATE)
     }
 
     fn get_pending_block(&self, block_hash: BlockHash) -> Result<Option<Block>, StoreError> {
@@ -216,10 +282,10 @@ impl StoreEngine for Store {
 
     fn add_block_number(
         &self,
-        _block_hash: BlockHash,
-        _block_number: BlockNumber,
+        block_hash: BlockHash,
+        block_number: BlockNumber,
     ) -> Result<(), StoreError> {
-        todo!()
+        self.write(block_hash, block_number, BLOCK_NUMBERS_TABLE, OP_CREATE)
     }
 
     fn get_block_number(&self, block_hash: BlockHash) -> Result<Option<BlockNumber>, StoreError> {
@@ -228,10 +294,15 @@ impl StoreEngine for Store {
 
     fn add_block_total_difficulty(
         &self,
-        _block_hash: BlockHash,
-        _block_total_difficulty: U256,
+        block_hash: BlockHash,
+        block_total_difficulty: U256,
     ) -> Result<(), StoreError> {
-        todo!()
+        self.write(
+            block_hash,
+            block_total_difficulty,
+            BLOCK_TOTAL_DIFFICULTIES_TABLE,
+            OP_CREATE,
+        )
     }
 
     fn get_block_total_difficulty(
@@ -267,19 +338,27 @@ impl StoreEngine for Store {
 
     fn add_receipt(
         &self,
-        _block_hash: BlockHash,
-        _index: Index,
-        _receipt: Receipt,
+        block_hash: BlockHash,
+        index: Index,
+        receipt: Receipt,
     ) -> Result<(), StoreError> {
-        todo!()
+        self.write((block_hash, index), receipt, RECEIPTS_TABLE, OP_CREATE)
     }
 
     fn add_receipts(
         &self,
-        _block_hash: BlockHash,
-        _receipts: Vec<Receipt>,
+        block_hash: BlockHash,
+        receipts: Vec<Receipt>,
     ) -> Result<(), StoreError> {
-        todo!()
+        self.write_batch(
+            receipts
+                .into_iter()
+                .enumerate()
+                .map(|(index, receipt)| ((block_hash, index), receipt))
+                .collect(),
+            RECEIPTS_TABLE,
+            OP_CREATE,
+        )
     }
 
     fn get_receipt(
@@ -293,8 +372,8 @@ impl StoreEngine for Store {
         self.read((block_hash, index), RECEIPTS_TABLE)
     }
 
-    fn add_account_code(&self, _code_hash: H256, _code: bytes::Bytes) -> Result<(), StoreError> {
-        todo!()
+    fn add_account_code(&self, code_hash: H256, code: bytes::Bytes) -> Result<(), StoreError> {
+        self.write(code_hash, code, ACCOUNT_CODES_TABLE, OP_CREATE)
     }
 
     fn get_account_code(&self, code_hash: H256) -> Result<Option<bytes::Bytes>, StoreError> {
@@ -308,8 +387,13 @@ impl StoreEngine for Store {
         self.read(block_number, CANONICAL_BLOCK_HASHES_TABLE)
     }
 
-    fn set_chain_config(&self, _chain_config: &ChainConfig) -> Result<(), StoreError> {
-        todo!()
+    fn set_chain_config(&self, chain_config: &ChainConfig) -> Result<(), StoreError> {
+        self.write(
+            ChainDataIndex::ChainConfig as u8,
+            serde_json::to_string(chain_config).map_err(|_err| StoreError::DecodeError)?,
+            CHAIN_DATA_TABLE,
+            OP_CREATE, // FIXME: Create or write?
+        )
     }
 
     fn get_chain_config(&self) -> Result<ChainConfig, StoreError> {
@@ -320,32 +404,52 @@ impl StoreEngine for Store {
         serde_json::from_str(&json).map_err(|_| StoreError::DecodeError)
     }
 
-    fn update_earliest_block_number(&self, _block_number: BlockNumber) -> Result<(), StoreError> {
-        todo!()
+    fn update_earliest_block_number(&self, block_number: BlockNumber) -> Result<(), StoreError> {
+        self.write(
+            ChainDataIndex::EarliestBlockNumber as u8,
+            block_number,
+            CHAIN_DATA_TABLE,
+            OP_WRITE,
+        )
     }
 
     fn get_earliest_block_number(&self) -> Result<Option<BlockNumber>, StoreError> {
         self.get_chain_data(ChainDataIndex::EarliestBlockNumber as u8)
     }
 
-    fn update_finalized_block_number(&self, _block_number: BlockNumber) -> Result<(), StoreError> {
-        todo!()
+    fn update_finalized_block_number(&self, block_number: BlockNumber) -> Result<(), StoreError> {
+        self.write(
+            ChainDataIndex::FinalizedBlockNumber as u8,
+            block_number,
+            CHAIN_DATA_TABLE,
+            OP_WRITE,
+        )
     }
 
     fn get_finalized_block_number(&self) -> Result<Option<BlockNumber>, StoreError> {
         self.get_chain_data(ChainDataIndex::FinalizedBlockNumber as u8)
     }
 
-    fn update_safe_block_number(&self, _block_number: BlockNumber) -> Result<(), StoreError> {
-        todo!()
+    fn update_safe_block_number(&self, block_number: BlockNumber) -> Result<(), StoreError> {
+        self.write(
+            ChainDataIndex::SafeBlockNumber as u8,
+            block_number,
+            CHAIN_DATA_TABLE,
+            OP_WRITE,
+        )
     }
 
     fn get_safe_block_number(&self) -> Result<Option<BlockNumber>, StoreError> {
         self.get_chain_data(ChainDataIndex::SafeBlockNumber as u8)
     }
 
-    fn update_latest_block_number(&self, _block_number: BlockNumber) -> Result<(), StoreError> {
-        todo!()
+    fn update_latest_block_number(&self, block_number: BlockNumber) -> Result<(), StoreError> {
+        self.write(
+            ChainDataIndex::LatestBlockNumber as u8,
+            block_number,
+            CHAIN_DATA_TABLE,
+            OP_WRITE,
+        )
     }
 
     fn get_latest_block_number(&self) -> Result<Option<BlockNumber>, StoreError> {
@@ -354,17 +458,27 @@ impl StoreEngine for Store {
 
     fn update_latest_total_difficulty(
         &self,
-        _latest_total_difficulty: U256,
+        latest_total_difficulty: U256,
     ) -> Result<(), StoreError> {
-        todo!()
+        self.write(
+            ChainDataIndex::LatestTotalDifficulty as u8,
+            latest_total_difficulty,
+            CHAIN_DATA_TABLE,
+            OP_WRITE,
+        )
     }
 
     fn get_latest_total_difficulty(&self) -> Result<Option<U256>, StoreError> {
         self.get_chain_data(ChainDataIndex::LatestTotalDifficulty as u8)
     }
 
-    fn update_pending_block_number(&self, _block_number: BlockNumber) -> Result<(), StoreError> {
-        todo!()
+    fn update_pending_block_number(&self, block_number: BlockNumber) -> Result<(), StoreError> {
+        self.write(
+            ChainDataIndex::PendingBlockNumber as u8,
+            block_number,
+            CHAIN_DATA_TABLE,
+            OP_WRITE,
+        )
     }
 
     fn get_pending_block_number(&self) -> Result<Option<BlockNumber>, StoreError> {
@@ -379,20 +493,21 @@ impl StoreEngine for Store {
         todo!()
     }
 
-    fn set_canonical_block(
-        &self,
-        _number: BlockNumber,
-        _hash: BlockHash,
-    ) -> Result<(), StoreError> {
-        todo!()
+    fn set_canonical_block(&self, number: BlockNumber, hash: BlockHash) -> Result<(), StoreError> {
+        self.write(number, hash, CANONICAL_BLOCK_HASHES_TABLE, OP_CREATE)
     }
 
-    fn unset_canonical_block(&self, _number: BlockNumber) -> Result<(), StoreError> {
-        todo!()
+    fn unset_canonical_block(&self, number: BlockNumber) -> Result<(), StoreError> {
+        self.write(number, (), CANONICAL_BLOCK_HASHES_TABLE, OP_DELETE)
     }
 
-    fn add_payload(&self, _payload_id: u64, _block: Block) -> Result<(), StoreError> {
-        todo!()
+    fn add_payload(&self, payload_id: u64, block: Block) -> Result<(), StoreError> {
+        self.write(
+            payload_id,
+            (block, U256::zero(), BlobsBundle::empty(), false),
+            PAYLOADS_TABLE,
+            OP_CREATE,
+        )
     }
 
     fn get_payload(
@@ -404,13 +519,18 @@ impl StoreEngine for Store {
 
     fn update_payload(
         &self,
-        _payload_id: u64,
-        _block: Block,
-        _block_value: U256,
-        _blobs_bundle: BlobsBundle,
-        _completed: bool,
+        payload_id: u64,
+        block: Block,
+        block_value: U256,
+        blobs_bundle: BlobsBundle,
+        completed: bool,
     ) -> Result<(), StoreError> {
-        todo!()
+        self.write(
+            payload_id,
+            (block, block_value, blobs_bundle, completed),
+            PAYLOADS_TABLE,
+            OP_WRITE,
+        )
     }
 
     fn get_receipts_for_block(&self, block_hash: &BlockHash) -> Result<Vec<Receipt>, StoreError> {
