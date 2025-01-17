@@ -7,6 +7,7 @@ use ethrex_rlp::{
 };
 
 use ethereum_types::H32;
+use tracing::debug;
 
 use super::{BlockHash, BlockNumber, ChainConfig};
 
@@ -72,6 +73,7 @@ impl ForkId {
                 return true;
             }
             if incoming.fork_next <= head {
+                debug!("Future fork already passed locally.");
                 return false;
             }
             return true;
@@ -104,6 +106,7 @@ impl ForkId {
             }
         }
         // rule #4
+        debug!("Local or remote needs software update.");
         false
     }
 }

@@ -72,7 +72,6 @@ pub fn validate_status(msg_data: StatusMessage, storage: &Store) -> Result<(), R
         ));
     }
     // Check ForkID
-
     if !fork_id.is_valid(
         msg_data.fork_id,
         latest_block_number,
@@ -80,9 +79,7 @@ pub fn validate_status(msg_data: StatusMessage, storage: &Store) -> Result<(), R
         chain_config,
         genesis,
     ) {
-        return Err(RLPxError::HandshakeError(
-            "Fork Id does not match".to_string(),
-        ));
+        return Err(RLPxError::HandshakeError("Invalid Fork Id".to_string()));
     }
 
     Ok(())
