@@ -46,4 +46,6 @@ pub enum StoreError {
     MissingLatestBlockNumber,
     #[error("Missing earliest block number")]
     MissingEarliestBlockNumber,
+    #[error("Internal error: {0}")]
+    InternalError(String),
 }
