@@ -7,7 +7,7 @@ permissions:
 
 on:
   push:
-    branches: [ "main" ]
+    branches: [ "main", "automate-perf-tests" ]
   workflow_dispatch:
 
 env:

@@ -4,7 +4,7 @@ curl -XPOST -H "Content-type: application/json" -d '{
       "type": "header",
       "text": {
         "type": "plain_text",
-        "text": "Daily Flamegraph Report"
+        "text": "🔥 Daily Flamegraph Report"
       }
     },
     {
@@ -14,10 +14,12 @@ curl -XPOST -H "Content-type: application/json" -d '{
       "type": "section",
       "text": {
         "type": "mrkdwn",
-        "text": "🔥 Flamegraphs are available at *<https://lambdaclass.github.io/ethrex/|lambdaclass.github.io/ethrex/>*\n
-        • *<https://lambdaclass.github.io/ethrex/flamegraph_ethrex.svg/flamegraph_ethrex.svg|Ethrex Flamegraph>*\n
-        • *<https://lambdaclass.github.io/ethrex/flamegraph_reth.svg/flamegraph_reth.svg|Reth Flamegraph>*\n"
+        "text": "Flamegraphs are available at *<https://lambdaclass.github.io/ethrex/|https://lambdaclass.github.io/ethrex/>*\n
+        • *<https://lambdaclass.github.io/ethrex/flamegraph_ethrex.svg/flamegraph_ethrex.svg|Ethrex>*\n
+        • *<https://lambdaclass.github.io/ethrex/flamegraph_reth.svg/flamegraph_reth.svg|Reth>*\n"
       }
-    }
-  ]
+    },
+  ],
+  "unfurl_links": true,
+  "unfurl_media": true
 }' "$1"
