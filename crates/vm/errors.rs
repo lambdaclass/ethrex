@@ -9,8 +9,6 @@ use revm::primitives::{
 use revm_primitives::BytecodeDecodeError;
 use thiserror::Error;
 
-use crate::execution_db::index_db::IndexDBError;
-
 #[derive(Debug, Error)]
 pub enum EvmError {
     #[error("Invalid Transaction: {0}")]
@@ -21,8 +19,6 @@ pub enum EvmError {
     DB(#[from] StoreError),
     #[error("Execution DB error: {0}")]
     ExecutionDB(#[from] ExecutionDBError),
-    #[error("Index DB error: {0}")]
-    IndexDB(#[from] IndexDBError),
     #[error("{0}")]
     Custom(String),
     #[error("{0}")]
@@ -39,8 +35,6 @@ pub enum ExecutionDBError {
     Trie(#[from] TrieError),
     #[error("State proofs error: {0}")]
     StateProofs(#[from] StateProofsError),
-    #[error("{0}")]
-    IndexBorrow(#[from] IndexDBError),
     #[error("Revm failed to decode bytecode: {0}")]
     RevmBytecodeDecode(#[from] BytecodeDecodeError),
     #[error("{0}")]
@@ -111,18 +105,6 @@ impl From<RevmError<ExecutionDBError>> for EvmError {
             RevmError::Transaction(err) => EvmError::Transaction(err.to_string()),
             RevmError::Header(err) => EvmError::Header(err.to_string()),
             RevmError::Database(err) => EvmError::ExecutionDB(err),
-            RevmError::Custom(err) => EvmError::Custom(err),
-            RevmError::Precompile(err) => EvmError::Precompile(err),
-        }
-    }
-}
-
-impl From<RevmError<IndexDBError>> for EvmError {
-    fn from(value: RevmError<IndexDBError>) -> Self {
-        match value {
-            RevmError::Transaction(err) => EvmError::Transaction(err.to_string()),
-            RevmError::Header(err) => EvmError::Header(err.to_string()),
-            RevmError::Database(err) => EvmError::IndexDB(err),
             RevmError::Custom(err) => EvmError::Custom(err),
             RevmError::Precompile(err) => EvmError::Precompile(err),
         }
