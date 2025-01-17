@@ -776,7 +776,7 @@ pub async fn try_add_peer_and_ping(
         let node_addr = std::net::SocketAddr::new(peer.node.ip, peer.node.udp_port);
         let sockedt_addr =
             std::net::SocketAddr::new(std::net::Ipv4Addr::new(127, 0, 0, 1).into(), 30303);
-        let ping_hash = crate::ping(&udp_socket, sockedt_addr, node_addr, &signer).await;
+        let ping_hash = crate::ping(udp_socket, sockedt_addr, node_addr, signer).await;
         table
             .lock()
             .await
