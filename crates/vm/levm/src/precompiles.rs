@@ -1426,27 +1426,36 @@ pub fn bls12_map_fp2_tp_g2(
     increase_precompile_consumed_gas(gas_for_call, BLS12_381_MAP_FP2_TO_G2_COST, consumed_gas)?;
 
     // Parse the input to two Fp and create a Fp2
-    let c0 = parse_coordinate(calldata.get(0..64))?;
-    let c1 = parse_coordinate(calldata.get(64..128))?;
+    let c0 = parse_coordinate(calldata.get(0..PADDED_FIELD_ELEMENT_SIZE_IN_BYTES))?;
+    let c1 = parse_coordinate(
+        calldata.get(PADDED_FIELD_ELEMENT_SIZE_IN_BYTES..BLS12_381_FP2_VALID_INPUT_LENGTH),
+    )?;
     let fp_0 = Fp::from_bytes(&c0)
         .into_option()
         .ok_or(VMError::PrecompileError(PrecompileError::ParsingInputError))?;
+    dbg!(fp_0);
     let fp_1 = Fp::from_bytes(&c1)
         .into_option()
         .ok_or(VMError::PrecompileError(PrecompileError::ParsingInputError))?;
+    dbg!(fp_1);
 
     let fp2 = Fp2 { c0: fp_0, c1: fp_1 };
+    dbg!(fp2);
 
     // following https://github.com/ethereum/EIPs/blob/master/assets/eip-2537/field_to_curve.md?plain=1#L3-L6, we do:
     // map_to_curve: map a field element to a another curve, then isogeny is applied to map to the curve bls12_381
     // clear_h: clears the cofactor
     let point = G2Projective::map_to_curve(&fp2).clear_h();
+    dbg!(point);
 
     let result_bytes = if point.is_identity().into() {
-        return Ok(Bytes::copy_from_slice(&[0_u8; 256]));
+        return dbg!(Ok(Bytes::copy_from_slice(&[0_u8; 256])));
     } else {
         G2Affine::from(point).to_uncompressed()
     };
+
+    dbg!("no es identity");
+    dbg!(&result_bytes);
 
     let mut padded_result = Vec::new();
     // The crate bls12_381 deserialize the G2 point as x_1 || x_0 || y_1 || y_0
@@ -1455,6 +1464,8 @@ pub fn bls12_map_fp2_tp_g2(
     add_padded_coordinate(&mut padded_result, result_bytes.get(0..48))?;
     add_padded_coordinate(&mut padded_result, result_bytes.get(144..192))?;
     add_padded_coordinate(&mut padded_result, result_bytes.get(96..144))?;
+
+    dbg!(&padded_result);
 
     Ok(Bytes::from(padded_result))
 }
@@ -1604,3 +1615,14 @@ fn parse_scalar(scalar_raw_bytes: Option<&[u8]>) -> Result<Scalar, VMError> {
     scalar_le.reverse();
     Ok(Scalar::from_raw(scalar_le))
 }
+
+// #[cfg(test)]
+// mod precompile_tests {
+//     use super::*;
+
+//     #[test]
+//     fn test_map_fp2_to_g2 -> Result<(), dyn std::error::Error> {
+//         let calldata = Bytes::from(
+//             hex::decode("
+//         Ok(())
+// }
