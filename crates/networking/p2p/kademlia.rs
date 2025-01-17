@@ -321,28 +321,14 @@ impl KademliaTable {
     }
 
     /// Returns the channel ends to an active peer connection that supports the given capability
-    /// The peer is selected randomly, and doesn't guarantee that the selected peer is not currenlty busy
-    /// If no peer is found, this method will try again after 10 seconds
-    pub async fn get_peer_channels(&self, capability: Capability) -> PeerChannels {
-        tokio::time::sleep(tokio::time::Duration::from_secs(3)).await;
+    /// The peer is selected randomly, and doesn't guarantee that the selected peer is not currently busy
+    pub fn get_peer_channels(&self, capability: Capability) -> Option<PeerChannels> {
         let filter = |peer: &PeerData| -> bool {
             // Search for peers with an active connection that support the required capabilities
             peer.channels.is_some() && peer.supported_capabilities.contains(&capability)
         };
-        loop {
-            debug!("[Sync] About to search for peers!");
-            self.show_peer_stats();
-            if let Some(channels) = self
-                .get_random_peer_with_filter(&filter)
-                .and_then(|peer| peer.channels.clone())
-            {
-                return channels;
-            }
-            info!("[Sync] No peers available, retrying in 1 sec");
-            self.show_peer_stats();
-            // This is the unlikely case where we just started the node and don't have peers, wait a bit and try again
-            tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
-        }
+        self.get_random_peer_with_filter(&filter)
+            .and_then(|peer| peer.channels.clone())
     }
 
     /// Outputs total amount of peers, active peers, and active peers supporting the Snap Capability to the command line
