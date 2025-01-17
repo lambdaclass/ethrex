@@ -73,9 +73,8 @@ impl ExecutionDB {
         .map_err(|err| Box::new(EvmError::from(err)))?; // TODO: must be a better way
 
         // store values in execution db
-        let read_accounts = pre_exec_db
-            .read_accounts
-            .into_inner()
+        let accounts = pre_exec_db
+            .accounts
             .into_iter()
             .filter_map(|(address, account)| {
                 if let Some(account) = account {
@@ -83,11 +82,7 @@ impl ExecutionDB {
                 } else {
                     None
                 }
-            });
-        let accounts: HashMap<_, _> = pre_exec_db
-            .written_accounts
-            .into_iter()
-            .chain(read_accounts)
+            })
             .collect();
         let code = pre_exec_db.code.into_inner();
         let storage = pre_exec_db.storage.into_inner();
@@ -244,16 +239,14 @@ impl DatabaseRef for ExecutionDB {
     }
 }
 
-/// An utility for "pre-executing" a block and retrieving all needed state data from an InnerDB,
-/// e.g. a database or an RPC client. The data is finally stored in memory in an [super::ExecutionDB].
+/// An utility for "pre-executing" a block and caching all needed state data from an InnerDB,
+/// e.g. a [Store] or an RPC client.
 struct PreExecDB<InnerDB: Database> {
-    written_accounts: HashMap<RevmAddress, RevmAccountInfo>,
-    // internal mutability is needed for caching missing values whenever a reference
-    // to them is requested, in which case PreExecDB is immutably borrowed
-    read_accounts: RefCell<HashMap<RevmAddress, Option<RevmAccountInfo>>>,
-    storage: RefCell<HashMap<RevmAddress, HashMap<RevmU256, RevmU256>>>,
-    block_hashes: RefCell<HashMap<u64, RevmB256>>,
-    code: RefCell<HashMap<RevmB256, RevmBytecode>>,
+    /// option to differentiate between missing accounts (None) and yet-not-cached accounts (vacant entry)
+    accounts: HashMap<RevmAddress, Option<RevmAccountInfo>>,
+    storage: HashMap<RevmAddress, HashMap<RevmU256, RevmU256>>,
+    block_hashes: HashMap<u64, RevmB256>,
+    code: HashMap<RevmB256, RevmBytecode>,
     db: InnerDB,
 }
 
@@ -262,8 +255,7 @@ impl<InnerDB: Database> Database for PreExecDB<InnerDB> {
     type Error = InnerDB::Error;
 
     fn basic(&mut self, address: RevmAddress) -> Result<Option<RevmAccountInfo>, Self::Error> {
-        // WARN: borrot_mut() panics if value is currently borrowed
-        match self.read_accounts.borrow_mut().entry(address) {
+        match self.accounts.entry(address) {
             Entry::Occupied(entry) => Ok(entry.get().clone()),
             Entry::Vacant(entry) => {
                 let account = self.db.basic(address)?;
@@ -273,8 +265,7 @@ impl<InnerDB: Database> Database for PreExecDB<InnerDB> {
         }
     }
     fn storage(&mut self, address: RevmAddress, index: RevmU256) -> Result<RevmU256, Self::Error> {
-        // WARN: borrot_mut() panics if value is currently borrowed
-        match self.storage.borrow_mut().entry(address) {
+        match self.storage.entry(address) {
             Entry::Occupied(mut account_entry) => match account_entry.get_mut().entry(index) {
                 Entry::Occupied(storage_entry) => Ok(storage_entry.get().clone()),
                 Entry::Vacant(storage_entry) => {
@@ -291,8 +282,7 @@ impl<InnerDB: Database> Database for PreExecDB<InnerDB> {
         }
     }
     fn block_hash(&mut self, number: u64) -> Result<RevmB256, Self::Error> {
-        // WARN: borrot_mut() panics if value is currently borrowed
-        match self.block_hashes.borrow_mut().entry(number) {
+        match self.block_hashes.entry(number) {
             Entry::Occupied(entry) => Ok(entry.get().clone()),
             Entry::Vacant(entry) => {
                 let hash = self.db.block_hash(number)?;
@@ -305,8 +295,7 @@ impl<InnerDB: Database> Database for PreExecDB<InnerDB> {
         &mut self,
         code_hash: RevmB256,
     ) -> Result<revm_primitives::Bytecode, Self::Error> {
-        // WARN: borrot_mut() panics if value is currently borrowed
-        match self.code.borrow_mut().entry(code_hash) {
+        match self.code.entry(code_hash) {
             Entry::Occupied(entry) => Ok(entry.get().clone()),
             Entry::Vacant(entry) => {
                 let code = self.db.code_by_hash(code_hash)?;
@@ -321,7 +310,7 @@ impl<InnerDB: Database> DatabaseCommit for PreExecDB<InnerDB> {
     fn commit(&mut self, changes: revm_primitives::HashMap<RevmAddress, RevmAccount>) {
         for (address, account) in changes {
             if !account.is_created() {
-                self.written_accounts.entry(address).or_insert(account.info);
+                self.accounts.entry(address).or_insert(Some(account.info));
             }
         }
     }
@@ -333,9 +322,6 @@ where
 {
     /// Get all account addresses and storage keys during the execution of a block,
     /// ignoring newly created accounts.
-    ///
-    /// Generally used for building an [super::ExecutionDB].
-    /// Executes a block retrieving
     pub fn build(
         block: &Block,
         chain_id: u64,
@@ -344,11 +330,10 @@ where
     ) -> Result<Self, RevmError<InnerDB::Error>> {
         let block_env = block_env(&block.header);
         let mut db = Self {
-            written_accounts: HashMap::new(),
-            read_accounts: RefCell::new(HashMap::new()),
-            storage: RefCell::new(HashMap::new()),
-            block_hashes: RefCell::new(HashMap::new()),
-            code: RefCell::new(HashMap::new()),
+            accounts: HashMap::new(),
+            storage: HashMap::new(),
+            block_hashes: HashMap::new(),
+            code: HashMap::new(),
             db,
         };
 
