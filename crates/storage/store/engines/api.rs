@@ -258,11 +258,17 @@ pub trait StoreEngine: Debug + Send + Sync + RefUnwindSafe {
 
     fn clear_header_download_checkpoint(&self) -> Result<(), StoreError>;
 
-    fn set_state_trie_download_checkpoint(&self, current_root: H256, last_key: H256) -> Result<(), StoreError>;
+    fn set_state_trie_root_checkpoint(&self, current_root: H256) -> Result<(), StoreError>;
 
-    fn get_state_trie_download_checkpoint(&self) -> Result<Option<(H256, H256)>, StoreError>;
+    fn get_state_trie_root_checkpoint(&self) -> Result<Option<H256>, StoreError>;
 
-    fn clear_state_trie_download_checkpoint(&self) -> Result<(), StoreError>;
+    fn clear_state_trie_root_checkpoint(&self) -> Result<(), StoreError>;
+
+    fn set_state_trie_key_checkpoint(&self, last_key: H256) -> Result<(), StoreError>;
+
+    fn get_state_trie_key_checkpoint(&self) -> Result<Option<H256>, StoreError>;
+
+    fn clear_state_trie_key_checkpoint(&self) -> Result<(), StoreError>;
 
     fn set_pending_storage_heal_accounts(&self, accounts: Vec<H256>) -> Result<(), StoreError>;
 

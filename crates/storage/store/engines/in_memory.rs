@@ -59,8 +59,10 @@ struct ChainData {
 pub struct SnapState {
     /// Latest downloaded block header's hash from a previously aborted sync
     header_download_checkpoint: Option<BlockHash>,
-    /// Current root hash of the latest State Trie + the last downloaded key
-    state_trie_download_checkpoint: Option<(H256, H256)>,
+    /// Current root hash of the latest State Trie (Used for both fetching and healing)
+    state_trie_root_checkpoint: Option<H256>,
+    /// Last downloaded key of the latest State Trie
+    state_trie_key_checkpoint: Option<H256>,
     /// Accounts which storage needs healing
     pending_storage_heal_accounts: Option<Vec<H256>>,
 }
@@ -451,17 +453,31 @@ impl StoreEngine for Store {
         Ok(())
     }
 
-    fn set_state_trie_download_checkpoint(&self, current_root: H256, last_key: H256) -> Result<(), StoreError> {
-        self.inner().snap_state.state_trie_download_checkpoint = Some((current_root, last_key));
+    fn set_state_trie_root_checkpoint(&self, current_root: H256) -> Result<(), StoreError> {
+        self.inner().snap_state.state_trie_root_checkpoint = Some(current_root);
         Ok(())
     }
 
-    fn get_state_trie_download_checkpoint(&self) -> Result<Option<(H256, H256)>, StoreError> {
-        Ok(self.inner().snap_state.state_trie_download_checkpoint)
+    fn get_state_trie_root_checkpoint(&self) -> Result<Option<H256>, StoreError> {
+        Ok(self.inner().snap_state.state_trie_root_checkpoint)
     }
 
-    fn clear_state_trie_download_checkpoint(&self) -> Result<(), StoreError> {
-        self.inner().snap_state.state_trie_download_checkpoint = None;
+    fn clear_state_trie_root_checkpoint(&self) -> Result<(), StoreError> {
+        self.inner().snap_state.state_trie_root_checkpoint = None;
+        Ok(())
+    }
+
+    fn set_state_trie_key_checkpoint(&self, last_key: H256) -> Result<(), StoreError> {
+        self.inner().snap_state.state_trie_key_checkpoint = Some(last_key);
+        Ok(())
+    }
+
+    fn get_state_trie_key_checkpoint(&self) -> Result<Option<H256>, StoreError> {
+        Ok(self.inner().snap_state.state_trie_key_checkpoint)
+    }
+
+    fn clear_state_trie_key_checkpoint(&self) -> Result<(), StoreError> {
+        self.inner().snap_state.state_trie_key_checkpoint = None;
         Ok(())
     }
 
