@@ -1368,13 +1368,10 @@ pub fn bls12_map_fp_to_g1(
     increase_precompile_consumed_gas(gas_for_call, BLS12_381_MAP_FP_TO_G1_COST, consumed_gas)?;
 
     let coordinate_bytes = parse_coordinate(calldata.get(0..64))?;
-    let fp = if coordinate_bytes.iter().all(|e| *e == 0) {
-        Fp::zero()
-    } else {
-        Fp::from_bytes(&coordinate_bytes)
-            .into_option()
-            .ok_or(VMError::PrecompileError(PrecompileError::ParsingInputError))?
-    };
+    let fp = Fp::from_bytes(&coordinate_bytes)
+        .into_option()
+        .ok_or(VMError::PrecompileError(PrecompileError::ParsingInputError))?;
+
     // following https://github.com/ethereum/EIPs/blob/master/assets/eip-2537/field_to_curve.md?plain=1#L3-L6, we do:
     // map_to_curve: map a field element to a another curve, then isogeny is applied to map to the curve bls12_381
     // clear_h: clears the cofactor
