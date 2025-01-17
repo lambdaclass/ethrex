@@ -75,10 +75,10 @@ impl RpcHandler for ForkChoiceUpdatedV2 {
                     "forkChoiceV2 used to build Cancun payload".to_string(),
                 ));
             } else if chain_config.is_shanghai_activated(attributes.timestamp) {
-                validate_attributes_v2(&attributes, &head_block)?;
+                validate_attributes_v2(attributes, &head_block)?;
             } else {
                 // Behave as a v1
-                validate_attributes_v1(&attributes, &head_block)?;
+                validate_attributes_v1(attributes, &head_block)?;
             }
             let payload_id = build_payload(attributes, context, &self.fork_choice_state, 2)?;
             response.set_id(payload_id);
