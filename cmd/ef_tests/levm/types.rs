@@ -53,7 +53,8 @@ impl EFTest {
         //     EFTestPost::Frontier(_) => SpecId::FRONTIER,
         // }
         if self.post.forks.len() == 1 {
-            self.post.forks().first().unwrap().clone()
+            // self.post.forks().first().unwrap().clone()
+            todo!()
         } else {
             todo!()
         }
@@ -170,49 +171,48 @@ pub struct EFTestPostStruct {
 }
 
 impl EFTestPostStruct {
-    //Get all forks
-    pub fn forks(&self) -> Vec<SpecId> {
-        self.forks.keys().cloned().collect()
-    }
+    // //Get all forks
+    // pub fn forks(&self) -> Vec<SpecId> {
+    //     self.forks.keys().cloned().collect()
+    // }
 
-    // Get values for a specific fork
-    pub fn values_for_fork(&self, fork: SpecId) -> Option<&Vec<EFTestPostValue>> {
-        self.forks.get(&fork)
-    }
+    // // Get values for a specific fork
+    // pub fn values_for_fork(&self, fork: SpecId) -> Option<&Vec<EFTestPostValue>> {
+    //     self.forks.get(&fork)
+    // }
 
-    pub fn values(&self) -> Vec<EFTestPostValue> {
-        // self.forks.values().flatten().cloned().collect()
-        // Just take the first SpecId values.
-        self.forks.values().next().unwrap().clone()
+    // pub fn values(&self) -> Vec<EFTestPostValue> {
+    //     self.forks.values().next().unwrap().clone()
+    // }
+
+    // Helper method to check if a vector exists for a fork
+    pub fn has_vector_for_fork(&self, vector: &TestVector, fork: SpecId) -> bool {
+        self.forks
+            .get(&fork)
+            .and_then(|values| Self::find_vector_post_value(values, vector))
+            .is_some()
     }
 
     // Get post value for a given fork
-    pub fn vector_post_value(&self, vector: &TestVector, fork: SpecId) -> EFTestPostValue {
-        // let values = self.forks.values().next().unwrap();
-        // dbg!(values);
-        // Self::find_vector_post_value(values, vector)
+    pub fn vector_post_value(&self, vector: &TestVector, fork: SpecId) -> Option<EFTestPostValue> {
         let values = self.forks.get(&fork).unwrap();
         Self::find_vector_post_value(values, vector)
     }
 
-    // pub fn vector_post_values_map
-
-    fn find_vector_post_value(values: &[EFTestPostValue], vector: &TestVector) -> EFTestPostValue {
+    fn find_vector_post_value(
+        values: &[EFTestPostValue],
+        vector: &TestVector,
+    ) -> Option<EFTestPostValue> {
+        // dbg!(values);
         values
             .iter()
             .find(|v| {
                 let data_index = v.indexes.get("data").unwrap().as_usize();
-                // dbg!(data_index);
                 let gas_limit_index = v.indexes.get("gas").unwrap().as_usize();
-                // dbg!(gas_limit_index);
                 let value_index = v.indexes.get("value").unwrap().as_usize();
-                // dbg!(value_index);
-                // dbg!(vector == &(data_index, gas_limit_index, value_index));
                 vector == &(data_index, gas_limit_index, value_index)
-                // dbg!(vector);
             })
-            .unwrap()
-            .clone()
+            .cloned()
     }
 }
 
