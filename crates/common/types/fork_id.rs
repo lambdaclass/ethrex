@@ -79,11 +79,7 @@ impl ForkId {
             return true;
         }
 
-        let forks = [
-            block_number_based_forks.as_slice(),
-            timestamp_based_forks.as_slice(),
-        ]
-        .concat();
+        let forks = [block_number_based_forks, timestamp_based_forks].concat();
         let valid_combinations = get_all_fork_id_combinations(forks, genesis_hash);
 
         let mut is_subset = true;

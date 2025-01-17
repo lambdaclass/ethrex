@@ -336,6 +336,7 @@ async fn discover_peers_server(
     }
 }
 
+// this is just an arbitrary number, maybe we should get this from some kind of cfg
 /// This is a really basic startup and should be improved when we have the nodes stored in the db
 /// currently, since we are not storing nodes, the only way to have startup nodes is by providing
 /// an array of bootnodes.
@@ -459,7 +460,7 @@ const PEERS_RANDOM_LOOKUP_TIME_IN_MIN: usize = 30;
 /// **Random lookups**
 ///
 /// Random lookups work in the following manner:
-/// 1. Every 30min we spawn four concurrent lookups: one closest to our pubkey
+/// 1. Every 30min we spawn three concurrent lookups: one closest to our pubkey
 ///    and three other closest to random generated pubkeys.
 /// 2. Every lookup starts with the closest nodes from our table.
 ///    Each lookup keeps track of:
@@ -530,7 +531,6 @@ async fn recursive_lookup(
     let mut asked_peers = HashSet::default();
     // lookups start with the closest from our table
     let closest_nodes = table.lock().await.get_closest_nodes(target);
-    debug!("Closest nodes: {:?}", closest_nodes);
     let mut seen_peers: HashSet<H512> = HashSet::default();
 
     seen_peers.insert(local_node_id);
