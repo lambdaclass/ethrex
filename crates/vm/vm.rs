@@ -666,10 +666,8 @@ pub fn get_state_transitions(state: &mut EvmState) -> Vec<AccountUpdate> {
                 let mut account_update = AccountUpdate::new(address);
                 // Update account info in DB
                 if let Some(new_acc_info) = account.info() {
-                    let code_hash = H256::from_slice(new_acc_info.code_hash.as_slice());
-
                     // If code changed, update
-                    if matches!(db.db.accounts.get(revm_address), Some(account) if account.code_hash != code_hash)
+                    if matches!(db.db.accounts.get(revm_address), Some(account) if account.code_hash != new_acc_info.code_hash)
                     {
                         account_update.code = new_acc_info
                             .code
@@ -677,7 +675,7 @@ pub fn get_state_transitions(state: &mut EvmState) -> Vec<AccountUpdate> {
                     }
 
                     let account_info = AccountInfo {
-                        code_hash,
+                        code_hash: H256::from_slice(new_acc_info.code_hash.as_slice()),
                         balance: U256::from_little_endian(new_acc_info.balance.as_le_slice()),
                         nonce: new_acc_info.nonce,
                     };
