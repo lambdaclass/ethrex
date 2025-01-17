@@ -18,7 +18,7 @@ use crate::{
         process_account_range_request, process_byte_codes_request, process_storage_ranges_request,
         process_trie_nodes_request,
     },
-    MAX_DISC_PACKET_SIZE,
+    try_add_peer_and_ping, MAX_DISC_PACKET_SIZE,
 };
 
 use super::{
@@ -190,35 +190,15 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
                         udp_port: peer_addr.port(),
                         tcp_port: peer_addr.port(),
                     };
-
-                    debug!("About to add to table");
-
-                    let mut table = table.lock().await;
-
-                    let (peer, inserted_to_table) = table.insert_node(node);
-                    if inserted_to_table && peer.is_some() {
-                        debug!("Inserted to table, about to ping");
-                        let peer = peer.unwrap();
-                        let node_addr = std::net::SocketAddr::new(peer.node.ip, peer.node.udp_port);
-                        let sockedt_addr = std::net::SocketAddr::new(
-                            std::net::Ipv4Addr::new(127, 0, 0, 1).into(),
-                            30303,
-                        );
-                        debug!("About to ping");
-                        let ping_hash =
-                            crate::ping(&udp_socket, sockedt_addr, node_addr, &signer).await;
-                        debug!("Ping done, hash {ping_hash:?}, about to update table");
-                        table.update_peer_ping(peer.node.node_id, ping_hash);
-                    };
-                    table.show_peer_stats();
-
-                    debug!("Added to table, about to init backend communication");
-                    table.init_backend_communication(node_id, peer_channels, capabilities);
+                    try_add_peer_and_ping(&udp_socket, &signer, table.clone(), node).await;
+                    table.lock().await.init_backend_communication(
+                        node_id,
+                        peer_channels,
+                        capabilities,
+                    );
                     if let Err(e) = self.handle_peer_conn(sender, receiver).await {
                         error!("Error during RLPx connection: {e}");
                     }
-
-                    table.show_peer_stats();
                 }
             };
         }
