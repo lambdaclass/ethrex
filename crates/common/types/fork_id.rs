@@ -297,7 +297,7 @@ mod tests {
             serde_json::from_reader(genesis_reader).expect("Failed to read genesis file");
         let genesis_hash = genesis.get_block().hash();
 
-        // See https://github.com/ethereum/go-ethereum/blob/4d94bd83b20ce430e435f3107f29632c627cfb26/core/forkid/forkid_test.go#L98https://github.com/ethereum/go-ethereum/blob/4d94bd83b20ce430e435f3107f29632c627cfb26/core/forkid/forkid_test.go#L83
+        // See https://github.com/ethereum/go-ethereum/blob/4d94bd83b20ce430e435f3107f29632c627cfb26/core/forkid/forkid_test.go#L83
         let test_cases: Vec<TestCase> = vec![
             TestCase {
                 head: 0,
