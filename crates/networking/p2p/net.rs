@@ -420,8 +420,11 @@ async fn discover_peers_server(
                         let Ok(signature) = Signature::from_slice(&signature_bytes[0..64]) else {
                             continue;
                         };
-                        let verifying_key =
-                            VerifyingKey::from_sec1_bytes(&public_key.as_bytes()).unwrap();
+                        let Ok(verifying_key) =
+                            VerifyingKey::from_sec1_bytes(&public_key.as_bytes())
+                        else {
+                            continue;
+                        };
                         verifying_key.verify_prehash(&digest, &signature).is_ok()
                     }
                     _ => false,
@@ -1272,5 +1275,79 @@ mod tests {
                 .get_by_node_id(peer.node_id)
                 .is_some());
         }
+    }
+
+    #[tokio::test]
+    /**
+     * This test verifies the exchange and update of ENR (Ethereum Node Record) messages.
+     * The test follows these steps:
+     *
+     * 1. Start two nodes.
+     * 2. Wait until they establish a connection.
+     * 3. Assert that they exchange their records and store them
+     * 3. Modify the ENR (node record) of one of the nodes.
+     * 4. Send a new ping message and check that an ENR request was triggered.
+     * 5. Verify that the updated node record has been correctly received and stored.
+     */
+    async fn discovery_enr_message() {
+        let mut server_a = start_mock_discovery_server(8006, true).await;
+        let mut server_b = start_mock_discovery_server(8007, true).await;
+
+        connect_servers(&mut server_a, &mut server_b).await;
+
+        // wait some time for the enr request-response finishes
+        sleep(Duration::from_millis(2500)).await;
+
+        let expected_record =
+            NodeRecord::from_node(server_b.local_node, time_now_unix(), &server_b.signer).unwrap();
+
+        let server_a_peer_b = server_a
+            .table
+            .lock()
+            .await
+            .get_by_node_id(server_b.node_id)
+            .cloned()
+            .unwrap();
+
+        // we only match the pairs, as the signature and seq will change
+        // because they are calculated with the current time
+        assert!(server_a_peer_b.record.decode_pairs() == expected_record.decode_pairs());
+
+        // Modify server_a's record of server_b with an incorrect TCP port.
+        // This simulates an outdated or incorrect entry in the node table.
+        server_a
+            .table
+            .lock()
+            .await
+            .get_by_node_id_mut(server_b.node_id)
+            .unwrap()
+            .node
+            .tcp_port = 10;
+
+        // Send a ping from server_b to server_a.
+        // server_a should notice the enr_seq is outdated
+        // and trigger a enr-request to server_b to update the record.
+        ping(
+            &server_b.udp_socket,
+            server_b.addr,
+            server_a.addr,
+            &server_b.signer,
+        )
+        .await;
+
+        // Wait for the update to propagate.
+        sleep(Duration::from_millis(2500)).await;
+
+        // Verify that server_a has updated its record of server_b with the correct TCP port.
+        let tcp_port = server_a
+            .table
+            .lock()
+            .await
+            .get_by_node_id(server_b.node_id)
+            .unwrap()
+            .node
+            .tcp_port;
+
+        assert!(tcp_port == server_b.addr.port());
     }
 }
