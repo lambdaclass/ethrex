@@ -334,7 +334,9 @@ async fn rebuild_state_trie(
     ));
     // Resume download from checkpoint if available or start from an empty trie
     // We cannot keep an open trie here so we will track the root between lookups
-    let mut current_state_root = store.get_state_trie_root_checkpoint()?.unwrap_or(*EMPTY_TRIE_HASH);
+    let mut current_state_root = store
+        .get_state_trie_root_checkpoint()?
+        .unwrap_or(*EMPTY_TRIE_HASH);
     let mut start_account_hash = store.get_state_trie_key_checkpoint()?.unwrap_or_default();
     info!("Starting/Resuming state trie download from key {start_account_hash}");
     // Fetch Account Ranges
@@ -415,16 +417,30 @@ async fn rebuild_state_trie(
     let pending_storages = pending_storage_accounts.is_empty();
     // Next cycle may have different storage roots for these accounts so we will leave them to healing
     if pending_storages {
-        // (Assumption) If we are still fetching storages then we should have never started healing and have no pending healing accounts to overwrite
-        store.set_pending_storage_heal_accounts(pending_storage_accounts)?;
+        let mut stored_pending_storages = store
+            .get_pending_storage_heal_accounts()?
+            .unwrap_or_default();
+        stored_pending_storages.extend(pending_storage_accounts);
+        info!(
+            "Current pending storage accounts: {}",
+            pending_storage_accounts.len()
+        );
+        store.set_pending_storage_heal_accounts(stored_pending_storages)?;
     }
     if retry_count > MAX_RETRIES || pending_storages {
         // Skip healing and return stale status
-        return Ok(false)
+        return Ok(false);
     }
     // Perform state healing to fix inconsistencies with older state
     info!("Healing");
-    let res = heal_state_trie(bytecode_sender.clone(), state_root, current_state_root, store.clone(), peers.clone()).await?;
+    let res = heal_state_trie(
+        bytecode_sender.clone(),
+        state_root,
+        current_state_root,
+        store.clone(),
+        peers.clone(),
+    )
+    .await?;
     // Send empty batch to signal that no more batches are incoming
     info!("Account Trie fully rebuilt, signaling bytecode fetcher process");
     bytecode_sender.send(vec![]).await?;
@@ -531,18 +547,29 @@ async fn storage_fetcher(
         // If we have enough pending bytecodes to fill a batch
         // or if we have no more incoming batches, spawn a fetch process
         // If the pivot became stale don't process anything and just save incoming requests
-        while !stale && (pending_storage.len() >= BATCH_SIZE || !incoming && !pending_storage.is_empty()) {
+        while !stale
+            && (pending_storage.len() >= BATCH_SIZE || !incoming && !pending_storage.is_empty())
+        {
             let now = Instant::now();
             let next_batch = pending_storage
                 .drain(..BATCH_SIZE.min(pending_storage.len()))
                 .collect::<Vec<_>>();
             let batch_size = next_batch.len();
-            let remaining =
-                match fetch_storage_batch(next_batch.clone(), state_root, peers.clone(), store.clone()).await {
-                    Ok(r) => r,
-                    Err(SyncError::StalePivot) => {stale = true; next_batch},
-                    Err(err) => return Err(err),
-                };
+            let remaining = match fetch_storage_batch(
+                next_batch.clone(),
+                state_root,
+                peers.clone(),
+                store.clone(),
+            )
+            .await
+            {
+                Ok(r) => r,
+                Err(SyncError::StalePivot) => {
+                    stale = true;
+                    next_batch
+                }
+                Err(err) => return Err(err),
+            };
             let remaining_size = remaining.len();
             // Add unfeched bytecodes back to the queue
             pending_storage.extend(remaining);
@@ -555,7 +582,10 @@ async fn storage_fetcher(
         }
         info!("Finished processing current batches");
     }
-    info!("Concluding storage fetcher, {} storages left in queue to be healed later", pending_storage.len());
+    info!(
+        "Concluding storage fetcher, {} storages left in queue to be healed later",
+        pending_storage.len()
+    );
     Ok(pending_storage.into_iter().map(|(acc, _)| acc).collect())
 }
 
@@ -578,10 +608,7 @@ async fn fetch_storage_batch(
             .request_storage_ranges(state_root, batch_roots, batch_hahses, H256::zero())
             .await
         {
-            info!(
-                "Received {} storage ranges",
-                keys.len(),
-            );
+            info!("Received {} storage ranges", keys.len(),);
             // Handle incomplete ranges
             if incomplete {
                 // An incomplete range cannot be empty
@@ -701,7 +728,10 @@ async fn heal_state_trie(
     ));
     // Check if we have pending storages to heal from a previous cycle
     if let Some(pending) = store.get_pending_storage_heal_accounts()? {
-        info!("Retrieved {} pending storage healing requests", pending.len());
+        info!(
+            "Retrieved {} pending storage healing requests",
+            pending.len()
+        );
         storage_sender.send(pending).await?;
     }
     // Begin by requesting the root node
@@ -772,7 +802,10 @@ async fn heal_state_trie(
     // If a storage trie was left mid-healing we will heal it again
     let storage_healing_succesful = pending_storage_heal_accounts.is_empty();
     if !storage_healing_succesful {
-        info!("{} storages with pending healing", pending_storage_heal_accounts.len());
+        info!(
+            "{} storages with pending healing",
+            pending_storage_heal_accounts.len()
+        );
         store.set_pending_storage_heal_accounts(pending_storage_heal_accounts)?;
     }
     Ok(retry_count < MAX_RETRIES && storage_healing_succesful)
@@ -826,12 +859,21 @@ async fn storage_healer(
                 batch_size += val.1.len();
                 next_batch.insert(key, val);
             }
-            let return_batch =
-                match heal_storage_batch(state_root, next_batch.clone(), peers.clone(), store.clone()).await {
-                    Ok(b) => b,
-                    Err(SyncError::StalePivot) => {stale = true; next_batch},
-                    Err(err) => return Err(err),
-                };
+            let return_batch = match heal_storage_batch(
+                state_root,
+                next_batch.clone(),
+                peers.clone(),
+                store.clone(),
+            )
+            .await
+            {
+                Ok(b) => b,
+                Err(SyncError::StalePivot) => {
+                    stale = true;
+                    next_batch
+                }
+                Err(err) => return Err(err),
+            };
             pending_storages.extend(return_batch.into_iter());
         }
     }
@@ -849,10 +891,7 @@ async fn heal_storage_batch(
     for _ in 0..MAX_RETRIES {
         let peer = peers.lock().await.get_peer_channels(Capability::Snap).await;
         let req_batch = batch.iter().map(|(k, v)| (*k, v.1.clone())).collect();
-        if let Some(mut nodes) = peer
-            .request_storage_trienodes(state_root, req_batch)
-            .await
-        {
+        if let Some(mut nodes) = peer.request_storage_trienodes(state_root, req_batch).await {
             info!("Received {} nodes", nodes.len());
             // Process the nodes for each account path
             for (acc_path, (root, paths)) in batch.iter_mut() {

@@ -275,5 +275,4 @@ pub trait StoreEngine: Debug + Send + Sync + RefUnwindSafe {
     fn get_pending_storage_heal_accounts(&self) -> Result<Option<Vec<H256>>, StoreError>;
 
     fn clear_pending_storage_heal_accounts(&self) -> Result<(), StoreError>;
-
 }

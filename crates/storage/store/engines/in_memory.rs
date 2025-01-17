@@ -487,14 +487,17 @@ impl StoreEngine for Store {
     }
 
     fn get_pending_storage_heal_accounts(&self) -> Result<Option<Vec<H256>>, StoreError> {
-        Ok(self.inner().snap_state.pending_storage_heal_accounts.clone())
+        Ok(self
+            .inner()
+            .snap_state
+            .pending_storage_heal_accounts
+            .clone())
     }
 
     fn clear_pending_storage_heal_accounts(&self) -> Result<(), StoreError> {
         self.inner().snap_state.pending_storage_heal_accounts = None;
         Ok(())
     }
-
 }
 
 impl Debug for Store {
