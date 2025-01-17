@@ -91,10 +91,12 @@ pub(crate) async fn read<S: AsyncRead + std::marker::Unpin>(
 
     // Receive the message's frame header
     let mut frame_header = [0; 32];
-    stream
-        .read_exact(&mut frame_header)
-        .await
-        .map_err(|_| RLPxError::ConnectionError("Connection dropped".to_string()))?;
+    stream.read_exact(&mut frame_header).await.map_err(|e| {
+        RLPxError::ConnectionError(format!(
+            "Connection dropped. Failed to read message frame header: {}",
+            e
+        ))
+    })?;
     // Both are padded to the block's size (16 bytes)
     let (header_ciphertext, header_mac) = frame_header.split_at_mut(16);
 
@@ -138,10 +140,12 @@ pub(crate) async fn read<S: AsyncRead + std::marker::Unpin>(
     // Receive the hello message
     let padded_size = frame_size.next_multiple_of(16);
     let mut frame_data = vec![0; padded_size + 16];
-    stream
-        .read_exact(&mut frame_data)
-        .await
-        .map_err(|_| RLPxError::ConnectionError("Connection dropped".to_string()))?;
+    stream.read_exact(&mut frame_data).await.map_err(|e| {
+        RLPxError::ConnectionError(format!(
+            "Connection dropped. Failed to read the hello message: {}",
+            e
+        ))
+    })?;
     let (frame_ciphertext, frame_mac) = frame_data.split_at_mut(padded_size);
 
     // check MAC

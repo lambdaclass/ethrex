@@ -14,10 +14,13 @@ use crate::{
     gas_cost::{
         self, fake_exponential, ACCESS_LIST_ADDRESS_COST, ACCESS_LIST_STORAGE_KEY_COST,
         BLOB_GAS_PER_BLOB, CODE_DEPOSIT_COST, COLD_ADDRESS_ACCESS_COST, CREATE_BASE_COST,
-        WARM_ADDRESS_ACCESS_COST,
+        STANDARD_TOKEN_COST, TOTAL_COST_FLOOR_PER_TOKEN, WARM_ADDRESS_ACCESS_COST,
     },
     opcodes::Opcode,
-    precompiles::{execute_precompile, is_precompile},
+    precompiles::{
+        execute_precompile, is_precompile, SIZE_PRECOMPILES_CANCUN, SIZE_PRECOMPILES_PRAGUE,
+        SIZE_PRECOMPILES_PRE_CANCUN,
+    },
     AccountInfo, TransientStorage,
 };
 use bytes::Bytes;
@@ -33,6 +36,7 @@ use libsecp256k1::{Message, RecoveryId, Signature};
 use revm_primitives::SpecId;
 use sha3::{Digest, Keccak256};
 use std::{
+    cmp::max,
     collections::{HashMap, HashSet},
     sync::Arc,
 };
@@ -176,7 +180,12 @@ impl VM {
 
         // Add precompiled contracts addresses to cache.
         // TODO: Use the addresses from precompiles.rs in a future
-        let max_precompile_address = if env.spec_id >= SpecId::CANCUN { 10 } else { 9 };
+        let max_precompile_address = match env.spec_id {
+            spec if spec >= SpecId::PRAGUE => SIZE_PRECOMPILES_PRAGUE,
+            spec if spec >= SpecId::CANCUN => SIZE_PRECOMPILES_CANCUN,
+            spec if spec < SpecId::CANCUN => SIZE_PRECOMPILES_PRE_CANCUN,
+            _ => return Err(VMError::Internal(InternalError::InvalidSpecId)),
+        };
         for i in 1..=max_precompile_address {
             default_touched_accounts.insert(Address::from_low_u64_be(i));
         }
@@ -194,7 +203,7 @@ impl VM {
                     address_to,
                     bytecode,
                     value,
-                    calldata.clone(),
+                    calldata,
                     false,
                     env.gas_limit,
                     0,
@@ -279,7 +288,7 @@ impl VM {
         );
 
         if is_precompile(&current_call_frame.code_address, self.env.spec_id) {
-            let precompile_result = execute_precompile(current_call_frame);
+            let precompile_result = execute_precompile(current_call_frame, self.env.spec_id);
 
             match precompile_result {
                 Ok(output) => {
@@ -288,10 +297,12 @@ impl VM {
                     return Ok(TransactionReport {
                         result: TxResult::Success,
                         new_state: self.cache.clone(),
+                        // Here we use the gas used and not check for the floor cost
+                        // for Prague fork because the precompiles have constant gas cost
                         gas_used: current_call_frame.gas_used,
                         gas_refunded: 0,
                         output,
-                        logs: current_call_frame.logs.clone(),
+                        logs: std::mem::take(&mut current_call_frame.logs),
                         created_address: None,
                     });
                 }
@@ -311,11 +322,11 @@ impl VM {
 
                     return Ok(TransactionReport {
                         result: TxResult::Revert(error),
-                        new_state: self.cache.clone(),
+                        new_state: HashMap::default(),
                         gas_used: current_call_frame.gas_limit,
                         gas_refunded: 0,
                         output: Bytes::new(),
-                        logs: current_call_frame.logs.clone(),
+                        logs: std::mem::take(&mut current_call_frame.logs),
                         created_address: None,
                     });
                 }
@@ -443,7 +454,7 @@ impl VM {
                     if (self.is_create() && current_call_frame.depth == 0)
                         || current_call_frame.create_op_called
                     {
-                        let contract_code = current_call_frame.output.clone();
+                        let contract_code = std::mem::take(&mut current_call_frame.output);
                         let code_length = contract_code.len();
 
                         let code_length_u64: u64 = code_length
@@ -489,11 +500,11 @@ impl VM {
 
                                 return Ok(TransactionReport {
                                     result: TxResult::Revert(error),
-                                    new_state: self.cache.clone(),
-                                    gas_used: current_call_frame.gas_used,
+                                    new_state: HashMap::default(),
+                                    gas_used: self.gas_used(current_call_frame)?,
                                     gas_refunded: self.env.refunded_gas,
-                                    output: current_call_frame.output.clone(),
-                                    logs: current_call_frame.logs.clone(),
+                                    output: std::mem::take(&mut current_call_frame.output),
+                                    logs: std::mem::take(&mut current_call_frame.logs),
                                     created_address: None,
                                 });
                             }
@@ -502,11 +513,11 @@ impl VM {
 
                     return Ok(TransactionReport {
                         result: TxResult::Success,
-                        new_state: self.cache.clone(),
-                        gas_used: current_call_frame.gas_used,
+                        new_state: HashMap::default(),
+                        gas_used: self.gas_used(current_call_frame)?,
                         gas_refunded: self.env.refunded_gas,
-                        output: current_call_frame.output.clone(),
-                        logs: current_call_frame.logs.clone(),
+                        output: std::mem::take(&mut current_call_frame.output),
+                        logs: std::mem::take(&mut current_call_frame.logs),
                         created_address: None,
                     });
                 }
@@ -535,11 +546,11 @@ impl VM {
 
                     return Ok(TransactionReport {
                         result: TxResult::Revert(error),
-                        new_state: self.cache.clone(),
-                        gas_used: current_call_frame.gas_used,
+                        new_state: HashMap::default(),
+                        gas_used: self.gas_used(current_call_frame)?,
                         gas_refunded: self.env.refunded_gas,
-                        output: current_call_frame.output.clone(), // Bytes::new() if error is not RevertOpcode
-                        logs: current_call_frame.logs.clone(),
+                        output: std::mem::take(&mut current_call_frame.output), // Bytes::new() if error is not RevertOpcode
+                        logs: std::mem::take(&mut current_call_frame.logs),
                         created_address: None,
                     });
                 }
@@ -564,16 +575,14 @@ impl VM {
         matches!(self.tx_kind, TxKind::Create)
     }
 
-    fn add_intrinsic_gas(&mut self, initial_call_frame: &mut CallFrame) -> Result<(), VMError> {
-        // Intrinsic gas is the gas consumed by the transaction before the execution of the opcodes. Section 6.2 in the Yellow Paper.
-
+    fn get_intrinsic_gas(&self, initial_call_frame: &CallFrame) -> Result<u64, VMError> {
         // Intrinsic Gas = Calldata cost + Create cost + Base cost + Access list cost
         let mut intrinsic_gas: u64 = 0;
 
         // Calldata Cost
         // 4 gas for each zero byte in the transaction data 16 gas for each non-zero byte in the transaction.
-        let calldata_cost =
-            gas_cost::tx_calldata(&initial_call_frame.calldata).map_err(VMError::OutOfGas)?;
+        let calldata_cost = gas_cost::tx_calldata(&initial_call_frame.calldata, self.env.spec_id)
+            .map_err(VMError::OutOfGas)?;
 
         intrinsic_gas = intrinsic_gas
             .checked_add(calldata_cost)
@@ -631,10 +640,46 @@ impl VM {
             .checked_add(authorization_list_cost)
             .ok_or(OutOfGasError::ConsumedGasOverflow)?;
 
+        Ok(intrinsic_gas)
+    }
+
+    fn add_intrinsic_gas(&mut self, initial_call_frame: &mut CallFrame) -> Result<(), VMError> {
+        // Intrinsic gas is the gas consumed by the transaction before the execution of the opcodes. Section 6.2 in the Yellow Paper.
+
+        let intrinsic_gas = self.get_intrinsic_gas(initial_call_frame)?;
+
         self.increase_consumed_gas(initial_call_frame, intrinsic_gas)
             .map_err(|_| TxValidationError::IntrinsicGasTooLow)?;
 
         Ok(())
+    }
+
+    fn gas_used(&self, current_call_frame: &mut CallFrame) -> Result<u64, VMError> {
+        if self.env.spec_id >= SpecId::PRAGUE {
+            // tokens_in_calldata = nonzero_bytes_in_calldata * 4 + zero_bytes_in_calldata
+            // tx_calldata = nonzero_bytes_in_calldata * 16 + zero_bytes_in_calldata * 4
+            // this is actually tokens_in_calldata * STANDARD_TOKEN_COST
+            // see it in https://eips.ethereum.org/EIPS/eip-7623
+            let tokens_in_calldata: u64 =
+                gas_cost::tx_calldata(&current_call_frame.calldata, self.env.spec_id)
+                    .map_err(VMError::OutOfGas)?
+                    .checked_div(STANDARD_TOKEN_COST)
+                    .ok_or(VMError::Internal(InternalError::DivisionError))?;
+
+            // floor_gas_price = TX_BASE_COST + TOTAL_COST_FLOOR_PER_TOKEN * tokens_in_calldata
+            let mut floor_gas_price: u64 = tokens_in_calldata
+                .checked_mul(TOTAL_COST_FLOOR_PER_TOKEN)
+                .ok_or(VMError::Internal(InternalError::GasOverflow))?;
+
+            floor_gas_price = floor_gas_price
+                .checked_add(TX_BASE_COST)
+                .ok_or(VMError::Internal(InternalError::GasOverflow))?;
+
+            let gas_used = max(floor_gas_price, current_call_frame.gas_used);
+            Ok(gas_used)
+        } else {
+            Ok(current_call_frame.gas_used)
+        }
     }
 
     /// Gets the max blob gas cost for a transaction that a user is willing to pay.
@@ -686,14 +731,9 @@ impl VM {
     pub fn get_base_fee_per_blob_gas(&self) -> Result<U256, VMError> {
         fake_exponential(
             MIN_BASE_FEE_PER_BLOB_GAS,
-            self.env
-                .block_excess_blob_gas
-                .unwrap_or_default()
-                .try_into()
-                .map_err(|_| VMError::VeryLargeNumber)?, //Maybe replace unwrap_or_default for sth else later.
+            self.env.block_excess_blob_gas.unwrap_or_default(),
             BLOB_BASE_FEE_UPDATE_FRACTION,
         )
-        .map(|ok_value| ok_value.into())
     }
 
     /// ## Description
@@ -707,6 +747,34 @@ impl VM {
     fn prepare_execution(&mut self, initial_call_frame: &mut CallFrame) -> Result<(), VMError> {
         let sender_address = self.env.origin;
         let sender_account = self.get_account(sender_address);
+
+        if self.env.spec_id >= SpecId::PRAGUE {
+            // check for gas limit is grater or equal than the minimum required
+            let intrinsic_gas: u64 = self.get_intrinsic_gas(initial_call_frame)?;
+
+            // calldata_cost = tokens_in_calldata * 4
+            let calldata_cost: u64 =
+                gas_cost::tx_calldata(&initial_call_frame.calldata, self.env.spec_id)
+                    .map_err(VMError::OutOfGas)?;
+
+            // same as calculated in gas_used()
+            let tokens_in_calldata: u64 = calldata_cost
+                .checked_div(STANDARD_TOKEN_COST)
+                .ok_or(VMError::Internal(InternalError::DivisionError))?;
+
+            // floor_cost_by_tokens = TX_BASE_COST + TOTAL_COST_FLOOR_PER_TOKEN * tokens_in_calldata
+            let floor_cost_by_tokens = tokens_in_calldata
+                .checked_mul(TOTAL_COST_FLOOR_PER_TOKEN)
+                .ok_or(VMError::Internal(InternalError::GasOverflow))?
+                .checked_add(TX_BASE_COST)
+                .ok_or(VMError::Internal(InternalError::GasOverflow))?;
+
+            let min_gas_limit = max(intrinsic_gas, floor_cost_by_tokens);
+
+            if initial_call_frame.gas_limit < min_gas_limit {
+                return Err(VMError::TxValidation(TxValidationError::GasLimitTooLow));
+            }
+        }
 
         // (1) GASLIMIT_PRICE_PRODUCT_OVERFLOW
         let gaslimit_price_product = self
@@ -907,8 +975,9 @@ impl VM {
 
         if self.is_create() {
             // Assign bytecode to context and empty calldata
-            initial_call_frame.assign_bytecode(initial_call_frame.calldata.clone());
-            initial_call_frame.calldata = Bytes::new();
+            initial_call_frame.bytecode = std::mem::take(&mut initial_call_frame.calldata);
+            initial_call_frame.valid_jump_destinations =
+                get_valid_jump_destinations(&initial_call_frame.bytecode).unwrap_or_default();
         }
         Ok(())
     }
@@ -1274,7 +1343,7 @@ impl VM {
             gas_used: self.env.gas_limit,
             gas_refunded: 0,
             logs: vec![],
-            new_state: self.cache.clone(),
+            new_state: HashMap::default(),
             output: Bytes::new(),
             created_address: None,
         };
@@ -1429,9 +1498,9 @@ impl VM {
             initial_call_frame.code_address = get_authorized_address(&code_address_info)?;
             let (auth_address_info, _) = self.access_account(initial_call_frame.code_address);
 
-            initial_call_frame.assign_bytecode(auth_address_info.bytecode);
+            initial_call_frame.bytecode = auth_address_info.bytecode.clone();
         } else {
-            initial_call_frame.assign_bytecode(code_address_info.bytecode);
+            initial_call_frame.bytecode = code_address_info.bytecode.clone();
         }
 
         Ok(refunded_gas)

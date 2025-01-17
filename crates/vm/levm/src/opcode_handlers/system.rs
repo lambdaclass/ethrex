@@ -70,6 +70,7 @@ impl VM {
             value_to_transfer,
             gas,
             gas_left,
+            self.env.spec_id,
         )?;
 
         self.increase_consumed_gas(current_call_frame, cost)?;

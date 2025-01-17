@@ -16,10 +16,11 @@ use super::{
 };
 
 #[derive(Debug, Clone, PartialEq)]
-pub(crate) enum Capability {
+pub enum Capability {
     P2p,
     Eth,
     Snap,
+    UnsupportedCapability(String),
 }
 
 impl RLPEncode for Capability {
@@ -28,6 +29,7 @@ impl RLPEncode for Capability {
             Self::P2p => "p2p".encode(buf),
             Self::Eth => "eth".encode(buf),
             Self::Snap => "snap".encode(buf),
+            Self::UnsupportedCapability(name) => name.encode(buf),
         }
     }
 }
@@ -39,7 +41,7 @@ impl RLPDecode for Capability {
             "p2p" => Ok((Capability::P2p, rest)),
             "eth" => Ok((Capability::Eth, rest)),
             "snap" => Ok((Capability::Snap, rest)),
-            _ => Err(RLPDecodeError::UnexpectedString),
+            other => Ok((Capability::UnsupportedCapability(other.to_string()), rest)),
         }
     }
 }
