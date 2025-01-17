@@ -978,7 +978,9 @@ impl VM {
                 ));
             }
 
+            dbg!(self.env.refunded_gas);
             self.env.refunded_gas = self.eip7702_set_access_code(initial_call_frame)?;
+            dbg!(self.env.refunded_gas);
         }
 
         if self.is_create() {
@@ -1473,12 +1475,17 @@ impl VM {
             }
 
             // 7. Add PER_EMPTY_ACCOUNT_COST - PER_AUTH_BASE_COST gas to the global refund counter if authority exists in the trie.
+            dbg!("PRE self.db.account_exists");
+            dbg!(authority_address);
+            dbg!(self.db.account_exists(authority_address));
             if self.db.account_exists(authority_address) {
+                dbg!("IN self.db.account_exists");
                 let refunded_gas_if_exists: u64 = (PER_EMPTY_ACCOUNT_COST - PER_AUTH_BASE_COST)
                     .try_into()
                     .map_err(|_| VMError::Internal(InternalError::ConversionError))?;
                 refunded_gas += refunded_gas_if_exists;
             }
+            dbg!("POS self.db.account_exists");
 
             // 8. Set the code of authority to be 0xef0100 || address. This is a delegation designation.
             let mut delegation_bytes = Vec::new();
