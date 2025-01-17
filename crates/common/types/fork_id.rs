@@ -113,15 +113,19 @@ impl ForkId {
 
 fn get_all_fork_id_combinations(forks: Vec<u64>, genesis_hash: BlockHash) -> Vec<(H32, u64)> {
     let mut combinations = vec![];
+    let mut last_activation = 0;
 
     let mut hasher = Hasher::new();
     hasher.update(genesis_hash.as_bytes());
     for activation in forks {
-        combinations.push((
-            H32::from_slice(&hasher.clone().finalize().to_be_bytes()),
-            activation,
-        ));
-        hasher.update(&activation.to_be_bytes());
+        if activation != last_activation {
+            combinations.push((
+                H32::from_slice(&hasher.clone().finalize().to_be_bytes()),
+                activation,
+            ));
+            hasher.update(&activation.to_be_bytes());
+            last_activation = activation;
+        }
     }
     combinations.push((H32::from_slice(&hasher.finalize().to_be_bytes()), 0));
     combinations
