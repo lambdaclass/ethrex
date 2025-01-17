@@ -588,7 +588,7 @@ async fn storage_fetcher(
                 let (remaining, is_stale) = res?;
                 info!("Task {}/{} returned {} elements to the queue", ret_num, task_num, remaining.len());
                 pending_storage.extend(remaining);
-                stale &= is_stale;
+                stale |= is_stale;
                 ret_num +=1;
             }
         }
