@@ -414,7 +414,7 @@ async fn rebuild_state_trie(
     // Send empty batch to signal that no more batches are incoming
     storage_sender.send(vec![]).await?;
     let pending_storage_accounts = storage_fetcher_handle.await??;
-    let pending_storages = pending_storage_accounts.is_empty();
+    let pending_storages = !pending_storage_accounts.is_empty();
     // Next cycle may have different storage roots for these accounts so we will leave them to healing
     if pending_storages {
         let mut stored_pending_storages = store
@@ -427,7 +427,7 @@ async fn rebuild_state_trie(
         );
         store.set_pending_storage_heal_accounts(stored_pending_storages)?;
     }
-    if retry_count > MAX_RETRIES || pending_storages {
+    if retry_count > MAX_RETRIES || !pending_storages {
         // Skip healing and return stale status
         return Ok(false);
     }
