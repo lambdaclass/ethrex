@@ -421,7 +421,7 @@ async fn discover_peers_server(
                             continue;
                         };
                         let Ok(verifying_key) =
-                            VerifyingKey::from_sec1_bytes(&public_key.as_bytes())
+                            VerifyingKey::from_sec1_bytes(public_key.as_bytes())
                         else {
                             continue;
                         };
@@ -904,7 +904,7 @@ async fn send_enr_request(
         return Some(H256::from_slice(&buf[0..32]));
     }
 
-    return None;
+    None
 }
 
 async fn serve_requests(

@@ -140,12 +140,15 @@ impl NodeRecord {
                 _ => {}
             }
         }
-        return decoded_pairs;
+
+        decoded_pairs
     }
 
-    pub fn from_node(node: Node, seq: u64, signer: &SigningKey) -> Result<Self, ()> {
-        let mut record = Self::default();
-        record.seq = seq;
+    pub fn from_node(node: Node, seq: u64, signer: &SigningKey) -> Result<Self, String> {
+        let mut record = NodeRecord {
+            seq,
+            ..Default::default()
+        };
         record
             .pairs
             .push(("id".into(), "v4".encode_to_vec().into()));
@@ -168,23 +171,23 @@ impl NodeRecord {
             .pairs
             .push(("udp".into(), node.udp_port.encode_to_vec().into()));
 
-        if record.sign_record(signer).is_ok() {
-            Ok(record)
-        } else {
-            Err(())
-        }
+        match record.sign_record(signer) {
+            Ok(sig) => record.signature = sig,
+            Err(e) => return Err(e),
+        };
+
+        Ok(record)
     }
 
-    pub fn sign_record(&mut self, signer: &SigningKey) -> Result<(), ()> {
+    fn sign_record(&mut self, signer: &SigningKey) -> Result<H512, String> {
         // note: v is ignored
         let digest = &self.get_signature_digest();
         let Ok((signature, _)) = signer.sign_prehash_recoverable(digest) else {
-            return Err(());
+            return Err("Could not sign record.".to_string());
         };
         let signature_bytes = signature.to_bytes().to_vec();
-        self.signature = H512::from_slice(&signature_bytes);
 
-        Ok(())
+        Ok(H512::from_slice(&signature_bytes))
     }
 
     pub fn get_signature_digest(&self) -> Vec<u8> {
