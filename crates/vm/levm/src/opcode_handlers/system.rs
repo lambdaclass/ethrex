@@ -733,7 +733,9 @@ impl VM {
             return Ok(OpcodeSuccess::Continue);
         }
 
+        let mut empty = false;
         if is_delegation && bytecode.is_empty() {
+            empty = true;
             dbg!("BYTECODE EMPTY");
             current_call_frame
                 .gas_used
@@ -801,6 +803,10 @@ impl VM {
             }
         }
 
+        if empty {
+            dbg!("CALL FINISHED");
+            return Ok(OpcodeSuccess::Continue);
+        }
         Ok(OpcodeSuccess::Continue)
     }
 }

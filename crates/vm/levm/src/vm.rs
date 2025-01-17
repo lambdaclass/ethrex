@@ -38,6 +38,7 @@ use sha3::{Digest, Keccak256};
 use std::{
     cmp::max,
     collections::{HashMap, HashSet},
+    fmt::Debug,
     sync::Arc,
 };
 pub type Storage = HashMap<U256, H256>;
@@ -447,6 +448,13 @@ impl VM {
             // Gas refunds are applied at the end of a transaction. Should it be implemented here?
 
             match op_result {
+                Ok(OpcodeSuccess::Debug) => {
+                    let opcode = current_call_frame.next_opcode();
+                    dbg!(&current_call_frame);
+                    let pretty_bytecode = format!("{:#x}", current_call_frame.bytecode);
+                    dbg!(&pretty_bytecode);
+                    dbg!(opcode);
+                }
                 Ok(OpcodeSuccess::Continue) => {}
                 Ok(OpcodeSuccess::Result(_)) => {
                     self.call_frames.push(current_call_frame.clone());
@@ -772,7 +780,7 @@ impl VM {
             let min_gas_limit = max(intrinsic_gas, floor_cost_by_tokens);
 
             if initial_call_frame.gas_limit < min_gas_limit {
-                return Err(VMError::TxValidation(TxValidationError::GasLimitTooLow));
+                return Err(VMError::TxValidation(TxValidationError::IntrinsicGasTooLow));
             }
         }
 
@@ -1170,6 +1178,7 @@ impl VM {
             .checked_add(gas)
             .ok_or(OutOfGasError::ConsumedGasOverflow)?;
         if potential_consumed_gas > current_call_frame.gas_limit {
+            dbg!("GAS LIMIT EXCEEDED");
             return Err(VMError::OutOfGas(OutOfGasError::MaxGasLimitExceeded));
         }
 
@@ -1503,6 +1512,8 @@ impl VM {
             initial_call_frame.bytecode = code_address_info.bytecode.clone();
         }
 
+        initial_call_frame.valid_jump_destinations =
+            get_valid_jump_destinations(&initial_call_frame.bytecode).unwrap_or_default();
         Ok(refunded_gas)
     }
 

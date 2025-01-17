@@ -131,6 +131,9 @@ impl CallFrame {
     }
 
     pub fn next_opcode(&mut self) -> Opcode {
+        if self.bytecode.is_empty() {
+            dbg!("IS EMPTY");
+        }
         match self.bytecode.get(self.pc).copied().map(Opcode::from) {
             Some(opcode) => opcode,
             None => Opcode::STOP,

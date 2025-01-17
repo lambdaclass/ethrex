@@ -224,6 +224,7 @@ pub enum EIP7702Error {
 
 #[derive(Debug, Clone)]
 pub enum OpcodeSuccess {
+    Debug,
     Continue,
     Result(ResultReason),
 }
