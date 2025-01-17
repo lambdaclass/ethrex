@@ -1452,12 +1452,11 @@ impl VM {
                 .map_err(|_| VMError::Internal(InternalError::ConversionError))?;
             let authority_address = Address::from_slice(&authority_address_bytes);
 
-            // 4. Add authority to accessed_addresses (as defined in EIP-2929). This is done inside the self.access_account() function
-            let (authority_account_info, _) = self.access_account(authority_address);
-            let auth_account = self.get_account(authority_address);
-            // We are inserting the account in the cache if not present, so later on when we use get_account_mut() it retrieves
-            // this cached state.
-            self.cache.entry(authority_address).or_insert(auth_account);
+            // 4. Add authority to accessed_addresses (as defined in EIP-2929).
+            self.accrued_substate
+                .touched_accounts
+                .insert(authority_address);
+            let authority_account_info = self.get_account(authority_address).info;
 
             // 5. Verify the code of authority is either empty or already delegated.
             let empty_or_delegated = authority_account_info.bytecode.is_empty()
