@@ -871,7 +871,9 @@ async fn pong(socket: &UdpSocket, to_addr: SocketAddr, ping_hash: H256, signer: 
         udp_port: to_addr.port(),
         tcp_port: 0,
     };
-    let pong: discv4::Message = discv4::Message::Pong(PongMessage::new(to, ping_hash, expiration));
+    let pong: discv4::Message = discv4::Message::Pong(
+        PongMessage::new(to, ping_hash, expiration).with_enr_seq(time_now_unix()),
+    );
 
     pong.encode_with_header(&mut buf, signer);
     let _ = socket.send_to(&buf, to_addr).await;
