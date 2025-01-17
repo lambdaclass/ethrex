@@ -722,9 +722,9 @@ async fn heal_state_trie(
             // - Add its children to the queue (if we don't have them already)
             // - If it is a leaf, request its bytecode & storage
             // - If it is a leaf, add its path & value to the trie
-            // We cannot keep the trie state open
-            let mut trie = store.open_state_trie(current_root);
             for node in nodes {
+                // We cannot keep the trie state open
+                let mut trie = store.open_state_trie(current_root);
                 let path = paths.remove(0);
                 paths.extend(node_missing_children(&node, &path, trie.state())?);
                 if let Node::Leaf(node) = &node {
@@ -749,9 +749,9 @@ async fn heal_state_trie(
                     }
                     // Write values to trie
                     trie.insert(account_hash.0.to_vec(), account.encode_to_vec())?;
+                    // Update current root
+                    current_root = trie.hash()?;
                 }
-                // Update current root
-                current_root = trie.hash()?;
             }
             // Send storage & bytecode requests
             if !hahsed_addresses.is_empty() {
