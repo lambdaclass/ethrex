@@ -6,7 +6,7 @@ use std::{
 use ethereum_types::H160;
 use ethrex_core::{
     types::{AccountState, Block, ChainConfig},
-    H256, U256,
+    Address, H256, U256,
 };
 use ethrex_levm::SpecId;
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
@@ -19,13 +19,13 @@ use revm::{
         Address as RevmAddress, Bytecode as RevmBytecode, Bytes as RevmBytes, B256 as RevmB256,
         U256 as RevmU256,
     },
-    DatabaseCommit, DatabaseRef, Evm,
+    Database, DatabaseCommit, DatabaseRef, Evm,
 };
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    block_env, errors::ExecutionDBError, evm_state, execute_block, get_state_transitions, spec_id,
-    tx_env, EvmError,
+    block_env, db::StoreWrapper, errors::ExecutionDBError, evm_state, execute_block,
+    get_state_transitions, spec_id, tx_env, EvmError,
 };
 
 /// In-memory EVM database for caching execution data.
@@ -55,18 +55,24 @@ pub struct ExecutionDB {
 impl ExecutionDB {
     /// Creates a database and returns the ExecutionDB by "pre-executing" a block,
     /// without performing any validation, and retrieving data from a [Store].
-    pub fn from_store(block: &Block, store: &Store) -> Result<Self, ExecutionDBError> {
+    pub fn from_store(block: &Block, store: Store) -> Result<Self, ExecutionDBError> {
         let parent_hash = block.header.parent_hash;
         let chain_config = store.get_chain_config()?;
 
-        // pre-execute and get all touched state, block numbers and code hashes
-        let pre_exec_db = PreExecDB::exec(
+        // pre-execute and get all read/written state, block numbers and code hashes
+        let store_wrapper = StoreWrapper {
+            store: store.clone(),
+            block_hash: parent_hash,
+        };
+        let pre_exec_db = PreExecDB::build(
             block,
             chain_config.chain_id,
             spec_id(&chain_config, block.header.timestamp),
+            store_wrapper,
         )
         .map_err(|err| Box::new(EvmError::from(err)))?; // TODO: must be a better way
 
+        // store values in execution db
         let read_accounts = pre_exec_db
             .read_accounts
             .into_inner()
@@ -78,7 +84,7 @@ impl ExecutionDB {
                     None
                 }
             });
-        let accounts = pre_exec_db
+        let accounts: HashMap<_, _> = pre_exec_db
             .written_accounts
             .into_iter()
             .chain(read_accounts)
@@ -86,6 +92,33 @@ impl ExecutionDB {
         let code = pre_exec_db.code.into_inner();
         let storage = pre_exec_db.storage.into_inner();
         let block_hashes = pre_exec_db.block_hashes.into_inner();
+
+        // get state proofs
+        let state_trie = store
+            .state_trie(parent_hash)?
+            .ok_or(ExecutionDBError::NewMissingStateTrie(parent_hash))?;
+
+        let pruned_state_trie = state_trie.get_proofs(
+            &accounts
+                .keys()
+                .map(|a| hash_address(&Address::from_slice(a.as_slice())))
+                .collect::<Vec<_>>(),
+        )?;
+
+        let mut pruned_storage_tries = HashMap::new();
+        for (revm_address, storages) in &storage {
+            let address = Address::from_slice(revm_address.as_slice());
+
+            let storage_trie = store.storage_trie(parent_hash, address)?.ok_or(
+                ExecutionDBError::NewMissingStorageTrie(parent_hash, address),
+            )?;
+
+            let paths = storages
+                .keys()
+                .map(|k| hash_key(&H256::from_slice(&k.to_be_bytes_vec())))
+                .collect::<Vec<_>>();
+            pruned_storage_tries.insert(address, storage_trie.get_proofs(&paths)?);
+        }
 
         Ok(Self {
             accounts,
@@ -213,8 +246,7 @@ impl DatabaseRef for ExecutionDB {
 
 /// An utility for "pre-executing" a block and retrieving all needed state data from an InnerDB,
 /// e.g. a database or an RPC client. The data is finally stored in memory in an [super::ExecutionDB].
-#[derive(Default)]
-struct PreExecDB<InnerDB: DatabaseRef> {
+struct PreExecDB<InnerDB: Database> {
     written_accounts: HashMap<RevmAddress, RevmAccountInfo>,
     // internal mutability is needed for caching missing values whenever a reference
     // to them is requested, in which case PreExecDB is immutably borrowed
@@ -226,58 +258,58 @@ struct PreExecDB<InnerDB: DatabaseRef> {
 }
 
 #[allow(unused_variables)]
-impl<InnerDB: DatabaseRef> DatabaseRef for PreExecDB<InnerDB> {
+impl<InnerDB: Database> Database for PreExecDB<InnerDB> {
     type Error = InnerDB::Error;
 
-    fn basic_ref(&self, address: RevmAddress) -> Result<Option<RevmAccountInfo>, Self::Error> {
+    fn basic(&mut self, address: RevmAddress) -> Result<Option<RevmAccountInfo>, Self::Error> {
         // WARN: borrot_mut() panics if value is currently borrowed
         match self.read_accounts.borrow_mut().entry(address) {
             Entry::Occupied(entry) => Ok(entry.get().clone()),
             Entry::Vacant(entry) => {
-                let account = self.db.basic_ref(address)?;
+                let account = self.db.basic(address)?;
                 entry.insert(account.clone());
                 Ok(account)
             }
         }
     }
-    fn storage_ref(&self, address: RevmAddress, index: RevmU256) -> Result<RevmU256, Self::Error> {
+    fn storage(&mut self, address: RevmAddress, index: RevmU256) -> Result<RevmU256, Self::Error> {
         // WARN: borrot_mut() panics if value is currently borrowed
         match self.storage.borrow_mut().entry(address) {
             Entry::Occupied(mut account_entry) => match account_entry.get_mut().entry(index) {
                 Entry::Occupied(storage_entry) => Ok(storage_entry.get().clone()),
                 Entry::Vacant(storage_entry) => {
-                    let value = self.db.storage_ref(address, index)?;
+                    let value = self.db.storage(address, index)?;
                     storage_entry.insert(value);
                     Ok(value)
                 }
             },
             Entry::Vacant(account_entry) => {
-                let value = self.db.storage_ref(address, index)?;
+                let value = self.db.storage(address, index)?;
                 account_entry.insert(HashMap::from([(index, value)]));
                 Ok(value)
             }
         }
     }
-    fn block_hash_ref(&self, number: u64) -> Result<RevmB256, Self::Error> {
+    fn block_hash(&mut self, number: u64) -> Result<RevmB256, Self::Error> {
         // WARN: borrot_mut() panics if value is currently borrowed
         match self.block_hashes.borrow_mut().entry(number) {
             Entry::Occupied(entry) => Ok(entry.get().clone()),
             Entry::Vacant(entry) => {
-                let hash = self.db.block_hash_ref(number)?;
+                let hash = self.db.block_hash(number)?;
                 entry.insert(hash.clone());
                 Ok(hash)
             }
         }
     }
-    fn code_by_hash_ref(
-        &self,
+    fn code_by_hash(
+        &mut self,
         code_hash: RevmB256,
     ) -> Result<revm_primitives::Bytecode, Self::Error> {
         // WARN: borrot_mut() panics if value is currently borrowed
         match self.code.borrow_mut().entry(code_hash) {
             Entry::Occupied(entry) => Ok(entry.get().clone()),
             Entry::Vacant(entry) => {
-                let code = self.db.code_by_hash_ref(code_hash)?;
+                let code = self.db.code_by_hash(code_hash)?;
                 entry.insert(code.clone());
                 Ok(code)
             }
@@ -285,7 +317,7 @@ impl<InnerDB: DatabaseRef> DatabaseRef for PreExecDB<InnerDB> {
     }
 }
 
-impl<InnerDB: DatabaseRef> DatabaseCommit for PreExecDB<InnerDB> {
+impl<InnerDB: Database> DatabaseCommit for PreExecDB<InnerDB> {
     fn commit(&mut self, changes: revm_primitives::HashMap<RevmAddress, RevmAccount>) {
         for (address, account) in changes {
             if !account.is_created() {
@@ -297,20 +329,28 @@ impl<InnerDB: DatabaseRef> DatabaseCommit for PreExecDB<InnerDB> {
 
 impl<InnerDB> PreExecDB<InnerDB>
 where
-    InnerDB: DatabaseRef + Default,
+    InnerDB: Database,
 {
     /// Get all account addresses and storage keys during the execution of a block,
     /// ignoring newly created accounts.
     ///
     /// Generally used for building an [super::ExecutionDB].
     /// Executes a block retrieving
-    pub fn exec(
+    pub fn build(
         block: &Block,
         chain_id: u64,
         spec_id: SpecId,
+        db: InnerDB,
     ) -> Result<Self, RevmError<InnerDB::Error>> {
         let block_env = block_env(&block.header);
-        let mut db = PreExecDB::default();
+        let mut db = Self {
+            written_accounts: HashMap::new(),
+            read_accounts: RefCell::new(HashMap::new()),
+            storage: RefCell::new(HashMap::new()),
+            block_hashes: RefCell::new(HashMap::new()),
+            code: RefCell::new(HashMap::new()),
+            db,
+        };
 
         for transaction in &block.body.transactions {
             let mut tx_env = tx_env(transaction);
@@ -331,14 +371,14 @@ where
                 .with_external_context(
                     TracerEip3155::new(Box::new(std::io::stderr())).without_summary(),
                 );
-            let mut evm = evm_builder.with_ref_db(&mut db).build();
+            let mut evm = evm_builder.with_db(&mut db).build();
             evm.transact_commit()?;
         }
 
         // add withdrawal accounts
         if let Some(ref withdrawals) = block.body.withdrawals {
             for withdrawal in withdrawals {
-                db.basic_ref(RevmAddress::from_slice(withdrawal.address.as_bytes()))
+                db.basic(RevmAddress::from_slice(withdrawal.address.as_bytes()))
                     .map_err(RevmError::Database)?;
             }
         }
@@ -347,7 +387,7 @@ where
     }
 }
 
-impl<InnerDB: DatabaseRef> From<PreExecDB<InnerDB>> for ExecutionDB {
+impl<InnerDB: Database> From<PreExecDB<InnerDB>> for ExecutionDB {
     fn from(value: PreExecDB<InnerDB>) -> Self {
         let read_accounts =
             value
