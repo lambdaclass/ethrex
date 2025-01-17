@@ -236,6 +236,26 @@ impl PayloadStatus {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct ExecutionPayloadBody {
+    pub transactions: Vec<EncodedTransaction>,
+    pub withdrawals: Option<Vec<Withdrawal>>,
+}
+
+impl From<BlockBody> for ExecutionPayloadBody {
+    fn from(body: BlockBody) -> Self {
+        Self {
+            transactions: body
+                .transactions
+                .iter()
+                .map(EncodedTransaction::encode)
+                .collect(),
+            withdrawals: body.withdrawals,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ExecutionPayloadResponse {
     pub execution_payload: ExecutionPayload,
     // Total fees consumed by the block (fees paid)

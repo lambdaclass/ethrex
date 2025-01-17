@@ -9,8 +9,9 @@ use engine::{
     exchange_transition_config::ExchangeTransitionConfigV1Req,
     fork_choice::{ForkChoiceUpdatedV1, ForkChoiceUpdatedV2, ForkChoiceUpdatedV3},
     payload::{
-        GetPayloadV1Request, GetPayloadV2Request, GetPayloadV3Request, NewPayloadV1Request,
-        NewPayloadV2Request, NewPayloadV3Request,
+        GetPayloadBodiesByHashV1Request, GetPayloadBodiesByRangeV1Request, GetPayloadV1Request,
+        GetPayloadV2Request, GetPayloadV3Request, NewPayloadV1Request, NewPayloadV2Request,
+        NewPayloadV3Request,
     },
     ExchangeCapabilitiesRequest,
 };
@@ -271,6 +272,8 @@ pub fn map_engine_requests(req: &RpcRequest, context: RpcApiContext) -> Result<V
         "engine_getPayloadV3" => GetPayloadV3Request::call(req, context),
         "engine_getPayloadV2" => GetPayloadV2Request::call(req, context),
         "engine_getPayloadV1" => GetPayloadV1Request::call(req, context),
+        "engine_getPayloadBodiesByHashV1" => GetPayloadBodiesByHashV1Request::call(req, context),
+        "engine_getPayloadBodiesByRangeV1" => GetPayloadBodiesByRangeV1Request::call(req, context),
         unknown_engine_method => Err(RpcErr::MethodNotFound(unknown_engine_method.to_owned())),
     }
 }
