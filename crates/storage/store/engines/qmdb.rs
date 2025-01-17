@@ -1,4 +1,7 @@
-use crate::{engines::api::StoreEngine, error::StoreError};
+use crate::{
+    engines::{api::StoreEngine, utils::ChainDataIndex},
+    error::StoreError,
+};
 use ethrex_core::{
     types::{
         BlobsBundle, Block, BlockBody, BlockHash, BlockHeader, BlockNumber, ChainConfig, Index,
@@ -11,6 +14,7 @@ use ethrex_trie::Trie;
 use qmdb::{
     config::Config, seqads::SeqAdsWrap, test_helper::SimpleTask, utils::hasher, AdsCore, ADS,
 };
+use serde::de::DeserializeOwned;
 use std::{
     collections::HashMap,
     fmt::Debug,
@@ -75,7 +79,7 @@ impl Store {
         }
     }
 
-    pub fn read<K, V>(&self, key: K, table: &str) -> Result<Option<V>, StoreError>
+    fn read<K, V>(&self, key: K, table: &str) -> Result<Option<V>, StoreError>
     where
         K: RLPEncode,
         V: RLPDecode,
@@ -94,6 +98,16 @@ impl Store {
         V::decode(&value).map_err(StoreError::from).map(Some)
     }
 
+    fn get_chain_data<V>(&self, key: impl Into<u8>) -> Result<Option<V>, StoreError>
+    where
+        V: RLPDecode,
+    {
+        let Some(bytes) = self.read::<_, Vec<u8>>(key.into(), CHAIN_DATA_TABLE)? else {
+            return Ok(None);
+        };
+        V::decode(&bytes).map_err(StoreError::from).map(Some)
+    }
+
     fn get_block_hash_by_block_number(
         &self,
         block_number: BlockNumber,
@@ -101,7 +115,9 @@ impl Store {
         Ok(self
             ._read(
                 CANONICAL_BLOCK_HASHES_TABLE,
-                block_number.try_into().unwrap(),
+                block_number.try_into().map_err(|err| {
+                    StoreError::Custom(format!("Could not convert block number: {err}"))
+                })?,
                 &block_number.encode_to_vec(),
                 std::mem::size_of::<BlockHash>(),
             )?
@@ -297,10 +313,9 @@ impl StoreEngine for Store {
     }
 
     fn get_chain_config(&self) -> Result<ChainConfig, StoreError> {
-        let key = ChainDataIndex::ChainConfig as u8;
-        let Some(bytes) = self.read::<_, Vec<u8>>(key, CHAIN_DATA_TABLE)? else {
-            return Err(StoreError::Custom("Chain config not found".to_string()));
-        };
+        let bytes = self
+            .read::<_, Vec<u8>>(ChainDataIndex::ChainConfig as u8, CHAIN_DATA_TABLE)?
+            .ok_or(StoreError::Custom("Chain config not found".to_string()))?;
         let json = String::from_utf8(bytes).map_err(|_| StoreError::DecodeError)?;
         serde_json::from_str(&json).map_err(|_| StoreError::DecodeError)
     }
@@ -310,7 +325,7 @@ impl StoreEngine for Store {
     }
 
     fn get_earliest_block_number(&self) -> Result<Option<BlockNumber>, StoreError> {
-        todo!()
+        self.get_chain_data(ChainDataIndex::EarliestBlockNumber as u8)
     }
 
     fn update_finalized_block_number(&self, _block_number: BlockNumber) -> Result<(), StoreError> {
@@ -318,7 +333,7 @@ impl StoreEngine for Store {
     }
 
     fn get_finalized_block_number(&self) -> Result<Option<BlockNumber>, StoreError> {
-        todo!()
+        self.get_chain_data(ChainDataIndex::FinalizedBlockNumber as u8)
     }
 
     fn update_safe_block_number(&self, _block_number: BlockNumber) -> Result<(), StoreError> {
@@ -326,7 +341,7 @@ impl StoreEngine for Store {
     }
 
     fn get_safe_block_number(&self) -> Result<Option<BlockNumber>, StoreError> {
-        todo!()
+        self.get_chain_data(ChainDataIndex::SafeBlockNumber as u8)
     }
 
     fn update_latest_block_number(&self, _block_number: BlockNumber) -> Result<(), StoreError> {
@@ -334,7 +349,7 @@ impl StoreEngine for Store {
     }
 
     fn get_latest_block_number(&self) -> Result<Option<BlockNumber>, StoreError> {
-        todo!()
+        self.get_chain_data(ChainDataIndex::LatestBlockNumber as u8)
     }
 
     fn update_latest_total_difficulty(
@@ -345,7 +360,7 @@ impl StoreEngine for Store {
     }
 
     fn get_latest_total_difficulty(&self) -> Result<Option<U256>, StoreError> {
-        todo!()
+        self.get_chain_data(ChainDataIndex::LatestTotalDifficulty as u8)
     }
 
     fn update_pending_block_number(&self, _block_number: BlockNumber) -> Result<(), StoreError> {
@@ -353,7 +368,7 @@ impl StoreEngine for Store {
     }
 
     fn get_pending_block_number(&self) -> Result<Option<BlockNumber>, StoreError> {
-        todo!()
+        self.get_chain_data(ChainDataIndex::PendingBlockNumber as u8)
     }
 
     fn open_storage_trie(&self, _hashed_address: H256, _storage_root: H256) -> Trie {
@@ -382,9 +397,9 @@ impl StoreEngine for Store {
 
     fn get_payload(
         &self,
-        _payload_id: u64,
+        payload_id: u64,
     ) -> Result<Option<(Block, U256, BlobsBundle, bool)>, StoreError> {
-        todo!()
+        self.read(payload_id, PAYLOADS_TABLE)
     }
 
     fn update_payload(
