@@ -6,15 +6,16 @@ use ethrex_core::{
     Address, H256,
 };
 use ethrex_levm::SpecId;
-use ethrex_storage::{hash_address, hash_key, AccountUpdate, Store};
+use ethrex_storage::{error::StoreError, hash_address, hash_key, AccountUpdate, Store};
 use ethrex_trie::{NodeRLP, Trie, TrieError};
 use revm::{
+    db::CacheDB,
     inspectors::TracerEip3155,
     primitives::{
-        result::EVMError as RevmError, Account as RevmAccount, AccountInfo as RevmAccountInfo,
-        Address as RevmAddress, Bytecode as RevmBytecode, B256 as RevmB256, U256 as RevmU256,
+        result::EVMError as RevmError, AccountInfo as RevmAccountInfo, Address as RevmAddress,
+        Bytecode as RevmBytecode, B256 as RevmB256, U256 as RevmU256,
     },
-    Database, DatabaseCommit, DatabaseRef, Evm,
+    Database, DatabaseRef, Evm,
 };
 use serde::{Deserialize, Serialize};
 
@@ -50,20 +51,80 @@ impl ExecutionDB {
     ) -> Result<(Self, ExecutionDBProofs), ExecutionDBError> {
         let parent_hash = block.header.parent_hash;
         let chain_config = store.get_chain_config()?;
-
-        // pre-execute and get all read/written state, block numbers and code hashes
         let store_wrapper = StoreWrapper {
             store: store.clone(),
             block_hash: parent_hash,
         };
-        let db = PreExecDB::build(
+
+        // pre-execute and get all state changes
+        let cache = Self::pre_execute(
             block,
             chain_config.chain_id,
             spec_id(&chain_config, block.header.timestamp),
             store_wrapper,
         )
-        .map_err(|err| Box::new(EvmError::from(err)))? // TODO: must be a better way
-        .into_execdb(chain_config);
+        .map_err(|err| Box::new(EvmError::from(err)))?; // TODO: must be a better way
+        let store_wrapper = cache.db;
+
+        // fetch initial state
+        let initial_state_accounts = cache
+            .accounts
+            .iter()
+            // filter new accounts.
+            // new accounts are storage cleared, self-destructed accounts too but they're marked with "not
+            // existing" status instead.
+            .filter(|(_, account)| !account.account_state.is_storage_cleared());
+
+        let db = Self {
+            accounts: initial_state_accounts
+                .clone()
+                .map(|(address, _)| {
+                    // return error if account is missing
+                    let account = match store_wrapper.basic_ref(*address) {
+                        Ok(None) => Err(ExecutionDBError::NewMissingAccountInfo(
+                            Address::from_slice(address.as_slice()),
+                        )),
+                        Ok(Some(some)) => Ok(some),
+                        Err(err) => Err(ExecutionDBError::Store(err)),
+                    };
+                    Ok((*address, account?))
+                })
+                .collect::<Result<_, ExecutionDBError>>()?,
+            code: initial_state_accounts
+                .clone()
+                .map(|(_, account)| {
+                    // return error if code is missing
+                    let hash = account.info.code_hash;
+                    Ok((
+                        hash,
+                        cache
+                            .contracts
+                            .get(&hash)
+                            .cloned()
+                            .ok_or(ExecutionDBError::NewMissingCode(hash))?,
+                    ))
+                })
+                .collect::<Result<_, ExecutionDBError>>()?,
+            storage: initial_state_accounts
+                .map(|(address, account)| {
+                    // return error if storage is missing
+                    Ok((
+                        *address,
+                        account
+                            .storage
+                            .keys()
+                            .map(|key| Ok((*key, store_wrapper.storage_ref(*address, *key)?)))
+                            .collect::<Result<_, StoreError>>()?,
+                    ))
+                })
+                .collect::<Result<_, StoreError>>()?,
+            block_hashes: cache
+                .block_hashes
+                .into_iter()
+                .map(|(num, hash)| (num.try_into().unwrap(), hash))
+                .collect(),
+            chain_config,
+        };
 
         // get proofs
         let state_trie = store
@@ -117,6 +178,50 @@ impl ExecutionDB {
 
     pub fn get_chain_config(&self) -> ChainConfig {
         self.chain_config
+    }
+
+    /// Execute a block and cache all state changes, returns the cache
+    pub fn pre_execute<ExtDB: DatabaseRef>(
+        block: &Block,
+        chain_id: u64,
+        spec_id: SpecId,
+        db: ExtDB,
+    ) -> Result<CacheDB<ExtDB>, RevmError<ExtDB::Error>> {
+        let block_env = block_env(&block.header);
+        let mut db = CacheDB::new(db);
+
+        for transaction in &block.body.transactions {
+            let mut tx_env = tx_env(transaction);
+
+            // disable nonce check (we're executing with empty accounts, nonce 0)
+            tx_env.nonce = None;
+
+            // execute tx
+            let evm_builder = Evm::builder()
+                .with_block_env(block_env.clone())
+                .with_tx_env(tx_env)
+                .modify_cfg_env(|cfg| {
+                    cfg.chain_id = chain_id;
+                    // we're executing with empty accounts, balance 0
+                    cfg.disable_balance_check = true;
+                })
+                .with_spec_id(spec_id)
+                .with_external_context(
+                    TracerEip3155::new(Box::new(std::io::stderr())).without_summary(),
+                );
+            let mut evm = evm_builder.with_db(&mut db).build();
+            evm.transact_commit()?;
+        }
+
+        // add withdrawal accounts
+        if let Some(ref withdrawals) = block.body.withdrawals {
+            for withdrawal in withdrawals {
+                db.basic(RevmAddress::from_slice(withdrawal.address.as_bytes()))
+                    .map_err(RevmError::Database)?;
+            }
+        }
+
+        Ok(db)
     }
 }
 
@@ -195,160 +300,5 @@ impl ExecutionDBProofs {
             .collect::<Result<_, TrieError>>()?;
 
         Ok((state_trie, storage_trie))
-    }
-}
-
-/// An utility for "pre-executing" a block and caching all needed state data from an InnerDB,
-/// e.g. a [Store] or an RPC client.
-struct PreExecDB<InnerDB: Database> {
-    /// Option to differentiate between missing accounts (None) and yet-not-cached accounts (vacant entry)
-    accounts: HashMap<RevmAddress, Option<RevmAccountInfo>>,
-    storage: HashMap<RevmAddress, HashMap<RevmU256, RevmU256>>,
-    block_hashes: HashMap<u64, RevmB256>,
-    code: HashMap<RevmB256, RevmBytecode>,
-    db: InnerDB,
-}
-
-#[allow(unused_variables)]
-impl<InnerDB: Database> Database for PreExecDB<InnerDB> {
-    type Error = InnerDB::Error;
-
-    fn basic(&mut self, address: RevmAddress) -> Result<Option<RevmAccountInfo>, Self::Error> {
-        match self.accounts.entry(address) {
-            Entry::Occupied(entry) => Ok(entry.get().clone()),
-            Entry::Vacant(entry) => {
-                let account = self.db.basic(address)?;
-                entry.insert(account.clone());
-                Ok(account)
-            }
-        }
-    }
-    fn storage(&mut self, address: RevmAddress, index: RevmU256) -> Result<RevmU256, Self::Error> {
-        match self.storage.entry(address) {
-            Entry::Occupied(mut account_entry) => match account_entry.get_mut().entry(index) {
-                Entry::Occupied(storage_entry) => Ok(*storage_entry.get()),
-                Entry::Vacant(storage_entry) => {
-                    let value = self.db.storage(address, index)?;
-                    storage_entry.insert(value);
-                    Ok(value)
-                }
-            },
-            Entry::Vacant(account_entry) => {
-                let value = self.db.storage(address, index)?;
-                account_entry.insert(HashMap::from([(index, value)]));
-                Ok(value)
-            }
-        }
-    }
-    fn block_hash(&mut self, number: u64) -> Result<RevmB256, Self::Error> {
-        match self.block_hashes.entry(number) {
-            Entry::Occupied(entry) => Ok(*entry.get()),
-            Entry::Vacant(entry) => {
-                let hash = self.db.block_hash(number)?;
-                entry.insert(hash);
-                Ok(hash)
-            }
-        }
-    }
-    fn code_by_hash(
-        &mut self,
-        code_hash: RevmB256,
-    ) -> Result<revm_primitives::Bytecode, Self::Error> {
-        match self.code.entry(code_hash) {
-            Entry::Occupied(entry) => Ok(entry.get().clone()),
-            Entry::Vacant(entry) => {
-                let code = self.db.code_by_hash(code_hash)?;
-                entry.insert(code.clone());
-                Ok(code)
-            }
-        }
-    }
-}
-
-impl<InnerDB: Database> DatabaseCommit for PreExecDB<InnerDB> {
-    fn commit(&mut self, changes: revm_primitives::HashMap<RevmAddress, RevmAccount>) {
-        for (address, account) in changes {
-            if !account.is_created() {
-                self.accounts.entry(address).or_insert(Some(account.info));
-            }
-        }
-    }
-}
-
-impl<InnerDB> PreExecDB<InnerDB>
-where
-    InnerDB: Database,
-{
-    /// Execute a block and cache all loaded data from the initial state.
-    pub fn build(
-        block: &Block,
-        chain_id: u64,
-        spec_id: SpecId,
-        db: InnerDB,
-    ) -> Result<Self, RevmError<InnerDB::Error>> {
-        let block_env = block_env(&block.header);
-        let mut db = Self {
-            accounts: HashMap::new(),
-            storage: HashMap::new(),
-            block_hashes: HashMap::new(),
-            code: HashMap::new(),
-            db,
-        };
-
-        for transaction in &block.body.transactions {
-            let mut tx_env = tx_env(transaction);
-
-            // disable nonce check (we're executing with empty accounts, nonce 0)
-            tx_env.nonce = None;
-
-            // execute tx
-            let evm_builder = Evm::builder()
-                .with_block_env(block_env.clone())
-                .with_tx_env(tx_env)
-                .modify_cfg_env(|cfg| {
-                    cfg.chain_id = chain_id;
-                    // we're executing with empty accounts, balance 0
-                    cfg.disable_balance_check = true;
-                })
-                .with_spec_id(spec_id)
-                .with_external_context(
-                    TracerEip3155::new(Box::new(std::io::stderr())).without_summary(),
-                );
-            let mut evm = evm_builder.with_db(&mut db).build();
-            evm.transact_commit()?;
-        }
-
-        // add withdrawal accounts
-        if let Some(ref withdrawals) = block.body.withdrawals {
-            for withdrawal in withdrawals {
-                db.basic(RevmAddress::from_slice(withdrawal.address.as_bytes()))
-                    .map_err(RevmError::Database)?;
-            }
-        }
-
-        Ok(db)
-    }
-
-    pub fn into_execdb(self, chain_config: ChainConfig) -> ExecutionDB {
-        let Self {
-            accounts,
-            storage,
-            block_hashes,
-            code,
-            ..
-        } = self;
-
-        let accounts = accounts
-            .into_iter()
-            .filter_map(|(address, account)| account.map(|account| (address, account)))
-            .collect();
-
-        ExecutionDB {
-            accounts,
-            code,
-            storage,
-            block_hashes,
-            chain_config,
-        }
     }
 }

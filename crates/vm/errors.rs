@@ -57,6 +57,8 @@ pub enum ExecutionDBError {
         "Missing storage trie of block {0} and address {1} while trying to create ExecutionDB"
     )]
     NewMissingStorageTrie(BlockHash, Address),
+    #[error("Missing code of hash {0} while trying to create ExecutionDB")]
+    NewMissingCode(RevmB256),
     #[error("The account {0} is not included in the stored pruned state trie")]
     MissingAccountInStateTrie(H160),
     #[error("Missing storage trie of account {0}")]
