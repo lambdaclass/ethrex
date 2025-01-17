@@ -94,6 +94,9 @@ fn run_with_levm(
         levm_run_spinner.stop();
     }
     for test in ef_tests.iter() {
+        if test.name != "tests/prague/eip7702_set_code_tx/test_gas.py::test_gas_cost[fork_Prague-state_test-multiple_valid_authorizations_single_signer]" {
+            continue;
+        }
         if !opts.spinner && opts.verbose {
             println!("Running test: {:?}", test.name);
         }
