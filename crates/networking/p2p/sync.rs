@@ -348,8 +348,8 @@ async fn rebuild_state_trie(
         if Instant::now().duration_since(timer) >= PROGRESS_OUTPUT_TIMER {
             timer = Instant::now();
             // Add 1 here to avoid dividing by zero, the change should be inperceptible
-            let completion_rate: U512 = U512::from(start_account_hash.into_uint() + 1) / U512::from(U256::MAX);
-            info!("Downloading state trie, completion rate: {}%", completion_rate);
+            let completion_rate: U512 = dbg!(U512::from(start_account_hash.into_uint() + 1)) / dbg!(U512::from(U256::MAX));
+            info!("Downloading state trie, completion rate: {}%", completion_rate)
         }
         let peer = peers
             .clone()
