@@ -566,24 +566,30 @@ async fn storage_fetcher(
             // We will be spawning multiple tasks and then collecting their results
             // This uses a loop inside the main loop as the result from these tasks may lead to more values in queue
             let mut storage_tasks = tokio::task::JoinSet::new();
+            let mut task_num = 0;
             while !stale
                 && (pending_storage.len() >= BATCH_SIZE || !incoming && !pending_storage.is_empty())
             {
                 let next_batch = pending_storage
                     .drain(..BATCH_SIZE.min(pending_storage.len()))
                     .collect::<Vec<_>>();
+                info!("Spawning storage fetcher number {task_num}");
                 storage_tasks.spawn(fetch_storage_batch(
                     next_batch.clone(),
                     state_root,
                     peers.clone(),
                     store.clone(),
                 ));
+                task_num +=1;
             }
             // Add unfetched accounts to queue and handle stale signal
+            let mut ret_num = 0;
             for res in storage_tasks.join_all().await {
                 let (remaining, is_stale) = res?;
+                info!("Task {}/{} returned {} elements to the queue", ret_num, task_num, remaining.len());
                 pending_storage.extend(remaining);
                 stale &= is_stale;
+                ret_num +=1;
             }
         }
     }
