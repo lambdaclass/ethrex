@@ -39,7 +39,7 @@ impl RpcHandler for ForkChoiceUpdatedV1 {
             let chain_config = context.storage.get_chain_config()?;
             if chain_config.is_cancun_activated(attributes.timestamp) {
                 return Err(RpcErr::UnsuportedFork(
-                    "forkChoiceV3 used to build Cancun payload".to_string(),
+                    "forkChoiceV1 used to build Cancun payload".to_string(),
                 ));
             }
             validate_attributes_v1(attributes, &head_block)?;
