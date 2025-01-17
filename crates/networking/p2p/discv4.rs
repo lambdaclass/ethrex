@@ -42,7 +42,7 @@ pub fn time_now_unix() -> u64 {
         .as_secs()
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub enum PacketDecodeErr {
     #[allow(unused)]
     RLPDecodeError(RLPDecodeError),
@@ -85,8 +85,10 @@ impl Packet {
         }
 
         let digest = Keccak256::digest(encoded_msg);
-        let signature = &Signature::from_slice(&signature_bytes[0..64]).unwrap();
-        let rid = RecoveryId::from_byte(signature_bytes[64]).unwrap();
+        let signature = &Signature::from_slice(&signature_bytes[0..64])
+            .map_err(|_| PacketDecodeErr::InvalidSignature)?;
+        let rid =
+            RecoveryId::from_byte(signature_bytes[64]).ok_or(PacketDecodeErr::InvalidSignature)?;
 
         let peer_pk = VerifyingKey::recover_from_prehash(&digest, signature, rid)
             .map_err(|_| PacketDecodeErr::InvalidSignature)?;
@@ -1015,5 +1017,76 @@ mod tests {
         };
         let decoded = Endpoint::decode(&encoded).expect("Failed decoding Endpoint");
         assert_eq!(endpoint, decoded);
+    }
+
+    #[test]
+    fn test_decode_with_malformed_signature_should_fail() {
+        let expiration: u64 = 17195043770;
+        let from = Endpoint {
+            ip: IpAddr::from_str("1.2.3.4").unwrap(),
+            udp_port: 1613,
+            tcp_port: 6363,
+        };
+        let to = Endpoint {
+            ip: IpAddr::from_str("255.255.2.5").unwrap(),
+            udp_port: 3063,
+            tcp_port: 0,
+        };
+        let msg = Message::Ping(PingMessage::new(from, to, expiration));
+
+        let key_bytes =
+            H256::from_str("177d8278cc7748fad214b5378669b420f8221afb45ce930b7f22da49cbc545f3")
+                .unwrap();
+        let signer = SigningKey::from_slice(key_bytes.as_bytes()).unwrap();
+        let mut buf = Vec::new();
+        msg.encode_with_header(&mut buf, &signer);
+        // corrupt signature first byte
+        buf[32] ^= 0xFF;
+
+        // re hash the data as we have updated the message
+        let hash = Keccak256::digest(&buf[32..]);
+        let mut updated_buf = Vec::new();
+        updated_buf.put_slice(&hash);
+        updated_buf.put_slice(&buf[32..]);
+
+        let decoded_packet = Packet::decode(&updated_buf);
+        assert!(decoded_packet.is_err());
+        assert!(decoded_packet.err().unwrap() == PacketDecodeErr::InvalidSignature);
+    }
+
+    #[test]
+    fn test_decode_with_malformed_signature_recover_id_should_fail() {
+        let expiration: u64 = 17195043770;
+        let from = Endpoint {
+            ip: IpAddr::from_str("1.2.3.4").unwrap(),
+            udp_port: 1613,
+            tcp_port: 6363,
+        };
+        let to = Endpoint {
+            ip: IpAddr::from_str("255.255.2.5").unwrap(),
+            udp_port: 3063,
+            tcp_port: 0,
+        };
+        let msg = Message::Ping(PingMessage::new(from, to, expiration));
+
+        let key_bytes =
+            H256::from_str("177d8278cc7748fad214b5378669b420f8221afb45ce930b7f22da49cbc545f3")
+                .unwrap();
+        let signer = SigningKey::from_slice(key_bytes.as_bytes()).unwrap();
+        let mut buf = Vec::new();
+        msg.encode_with_header(&mut buf, &signer);
+        // byte 96 (first 32 are the msg digest) corresponds to the recover_id
+        // modify it with a value that is out of range (> 3)
+        buf[32 + 64] = 4;
+
+        // re hash the data as we have updated the message
+        let hash = Keccak256::digest(&buf[32..]);
+        let mut updated_buf = Vec::new();
+        updated_buf.put_slice(&hash);
+        updated_buf.put_slice(&buf[32..]);
+
+        let decoded_packet = Packet::decode(&updated_buf);
+        assert!(decoded_packet.is_err());
+        assert!(decoded_packet.err().unwrap() == PacketDecodeErr::InvalidSignature);
     }
 }
