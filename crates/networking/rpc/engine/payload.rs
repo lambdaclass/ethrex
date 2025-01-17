@@ -230,7 +230,7 @@ impl RpcHandler for GetPayloadBodiesByRangeV1Request {
             return Err(RpcErr::BadParams("Expected 1 param".to_owned()));
         };
         let start = parse_json_hex(&params[0]).map_err(|_| RpcErr::BadHexFormat(0))?;
-        let count = parse_json_hex(&params[1]).map_err(|_| RpcErr::BadHexFormat(0))?;
+        let count = parse_json_hex(&params[1]).map_err(|_| RpcErr::BadHexFormat(1))?;
         if start < 1 {
             return Err(RpcErr::WrongParam("start".to_owned()));
         }
