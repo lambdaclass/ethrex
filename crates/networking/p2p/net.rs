@@ -14,14 +14,13 @@ use discv4::{
 use ethrex_core::{H256, H512};
 use ethrex_storage::Store;
 use k256::{
-    ecdsa::{RecoveryId, Signature, SigningKey, VerifyingKey},
+    ecdsa::{signature::hazmat::PrehashVerifier, Signature, SigningKey, VerifyingKey},
     elliptic_curve::{sec1::ToEncodedPoint, PublicKey},
 };
 pub use kademlia::KademliaTable;
 use kademlia::{bucket_number, MAX_NODES_PER_BUCKET};
 use rand::rngs::OsRng;
 use rlpx::{connection::RLPxConnection, message::Message as RLPxMessage};
-use sha3::{Digest, Keccak256};
 use tokio::{
     net::{TcpSocket, TcpStream, UdpSocket},
     sync::{broadcast, Mutex},
@@ -189,6 +188,7 @@ async fn discover_peers_server(
                     // if it has updated its record, send a request to update it
                     if let Some(enr_seq) = msg.enr_seq {
                         if enr_seq > peer.record.seq {
+                            debug!("enr-seq outdated, send an enr_request");
                             let req_hash = send_enr_request(&udp_socket, from, &signer).await;
                             table.lock().await.update_peer_enr_seq(
                                 peer.node.node_id,
@@ -239,6 +239,7 @@ async fn discover_peers_server(
                         table.lock().await.pong_answered(peer.node.node_id);
                         if let Some(enr_seq) = msg.enr_seq {
                             if enr_seq > peer.record.seq {
+                                debug!("enr-seq outdated, send an enr_request");
                                 let req_hash = send_enr_request(&udp_socket, from, &signer).await;
                                 table.lock().await.update_peer_enr_seq(
                                     peer.node.node_id,
@@ -419,18 +420,9 @@ async fn discover_peers_server(
                         let Ok(signature) = Signature::from_slice(&signature_bytes[0..64]) else {
                             continue;
                         };
-                        let Some(rid) = RecoveryId::from_byte(signature_bytes[64]) else {
-                            continue;
-                        };
-                        let Ok(recovered_pk) =
-                            VerifyingKey::recover_from_prehash(&digest, &signature, rid)
-                        else {
-                            continue;
-                        };
-                        let encoded_compressed = recovered_pk.to_encoded_point(true);
-                        let recovered_pk = H256::from_slice(&encoded_compressed.as_bytes()[1..]);
-
-                        recovered_pk == H256::from_slice(&public_key[1..])
+                        let verifying_key =
+                            VerifyingKey::from_sec1_bytes(&public_key.as_bytes()).unwrap();
+                        verifying_key.verify_prehash(&digest, &signature).is_ok()
                     }
                     _ => false,
                 };
@@ -443,10 +435,10 @@ async fn discover_peers_server(
                     peer.node.ip = IpAddr::from(Ipv4Addr::from_bits(ip));
                 }
                 if let Some(tcp_port) = record.tcp_port {
-                    peer.node.tcp_port = tcp_port as u16;
+                    peer.node.tcp_port = tcp_port;
                 }
                 if let Some(udp_port) = record.udp_port {
-                    peer.node.udp_port = udp_port as u16;
+                    peer.node.udp_port = udp_port;
                 }
                 peer.record = msg.node_record.clone();
                 debug!(
@@ -799,7 +791,8 @@ async fn ping(
         tcp_port: 0,
     };
 
-    let ping: discv4::Message = discv4::Message::Ping(PingMessage::new(from, to, expiration));
+    let ping =
+        discv4::Message::Ping(PingMessage::new(from, to, expiration).with_enr_seq(time_now_unix()));
     ping.encode_with_header(&mut buf, signer);
     let res = socket.send_to(&buf, to_addr).await;
 
@@ -1019,6 +1012,7 @@ mod tests {
     }
 
     struct MockServer {
+        pub local_node: Node,
         pub addr: SocketAddr,
         pub signer: SigningKey,
         pub table: Arc<Mutex<KademliaTable>>,
@@ -1038,14 +1032,15 @@ mod tests {
             tokio::task::Id,
             Arc<RLPxMessage>,
         )>(MAX_MESSAGES_TO_BROADCAST);
+        let local_node = Node {
+            ip: addr.ip(),
+            tcp_port: addr.port(),
+            udp_port: addr.port(),
+            node_id,
+        };
         if should_start_server {
             tokio::spawn(discover_peers_server(
-                Node {
-                    ip: addr.ip(),
-                    tcp_port: addr.port(),
-                    udp_port: addr.port(),
-                    node_id,
-                },
+                local_node,
                 addr,
                 udp_socket.clone(),
                 storage.clone(),
@@ -1056,6 +1051,7 @@ mod tests {
         }
 
         MockServer {
+            local_node,
             addr,
             signer,
             table,
@@ -1277,15 +1273,4 @@ mod tests {
                 .is_some());
         }
     }
-
-    #[tokio::test]
-    /**
-     * This test focuses on enr messages, the idea is:
-     * 1. Start two nodes
-     * 2. Wait until they are connected
-     * 3. Update one of the nodes record
-     * 4. Send a new ping and assert that a enr-request was sent
-     * 5. Assert that the node record has been updated
-     */
-    async fn discovery_enr_messages() {}
 }
