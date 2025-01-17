@@ -1,5 +1,6 @@
 use bls12_381::{
-    hash_to_curve::MapToCurve, Fp, multi_miller_loop, G1Affine, G1Projective, G2Affine, G2Prepared, G2Projective, Gt, Scalar,
+    hash_to_curve::MapToCurve, multi_miller_loop, Fp, G1Affine, G1Projective, G2Affine, G2Prepared,
+    G2Projective, Gt, Scalar,
 };
 
 use bytes::Bytes;
