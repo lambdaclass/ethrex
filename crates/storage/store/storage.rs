@@ -576,6 +576,7 @@ impl Store {
         self.update_earliest_block_number(genesis_block_number)?;
         self.update_latest_block_number(genesis_block_number)?;
         self.set_canonical_block(genesis_block_number, genesis_hash)?;
+        self.update_sync_status(false)?;
 
         // Set chain config
         self.set_chain_config(&genesis.config)
@@ -998,6 +999,13 @@ impl Store {
             .state()
             .get_node(node_hash.into())?
             .is_some())
+    }
+
+    pub fn synced(&self) -> Result<bool, StoreError> {
+        self.engine.synced()
+    }
+    pub fn update_sync_status(&self, status: bool) -> Result<(), StoreError> {
+        self.engine.update_sync_status(status)
     }
 }
 

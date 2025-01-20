@@ -10,6 +10,7 @@ pub enum ChainDataIndex {
     PendingBlockNumber = 5,
     // TODO (#307): Remove TotalDifficulty.
     LatestTotalDifficulty = 6,
+    Synced = 7,
 }
 
 impl From<u8> for ChainDataIndex {
@@ -30,6 +31,7 @@ impl From<u8> for ChainDataIndex {
             x if x == ChainDataIndex::LatestTotalDifficulty as u8 => {
                 ChainDataIndex::LatestTotalDifficulty
             }
+            x if x == ChainDataIndex::Synced as u8 => ChainDataIndex::Synced,
             _ => panic!("Invalid value when casting to ChainDataIndex: {}", value),
         }
     }
