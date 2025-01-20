@@ -39,16 +39,16 @@ jobs:
         uses: actions/cache@v4
         with:
           path: |
-            ~/.cargo/bin/addr2line
-            ~/.cargo/bin/flamegraph
-            ~/.cargo/bin/inferno-*
+            ${{ env.HOME }}/.cargo/bin/addr2line
+            ${{ env.HOME }}/.cargo/bin/flamegraph
+            ${{ env.HOME }}/.cargo/bin/inferno-*
           key: ${{ runner.os }}-${{ env.RUST_VERSION }}-extra-binaries
 
       - name: Cache ethrex_l2
         id: cache-ethrex-l2
         uses: actions/cache@v4
         with:
-          path: ~/.cargo/bin/ethrex_l2
+          path: ${{ env.HOME }}/.cargo/bin/ethrex_l2
           key: ${{ runner.os }}-${{ env.RUST_VERSION }}-ethrex-l2-${{ hashFiles('cmd/ethrex_l2/Cargo.lock') }}
 
       - name: Change perf settings
@@ -61,11 +61,11 @@ jobs:
       - name: Check addr2line installation
         id: check-addr2line
         run: |
-          if [ -f "./cargo/bin/addr2line" ]; then
-            echo "./cargo/bin/addr2line found"
+          if [ -f "$HOME/.cargo/bin/addr2line" ]; then
+            echo "$HOME/.cargo/bin/addr2line found"
             echo "addr2line_exists=true" >> $GITHUB_OUTPUT
           else
-            echo "./cargo/bin/addr2line NOT found"
+            echo "$HOME/.cargo/bin/addr2line NOT found"
             echo "addr2line_exists=false" >> $GITHUB_OUTPUT
           fi
 
@@ -86,23 +86,23 @@ jobs:
 
       - name: Install flamegraph
         run: |
-          if [ ! -f "./cargo/bin/flamegraph" ]; then
+          if [ ! -f "$HOME/.cargo/bin/flamegraph" ]; then
             cargo install --force flamegraph
           else
-            echo "./cargo/bin/flamegraph" already found
+            echo "$HOME/.cargo/bin/flamegraph" already found
           fi
-          if [ ! -f "./cargo/bin/inferno-collapse-perf" ]; then
+          if [ ! -f "$HOME/.cargo/bin/inferno-collapse-perf" ]; then
             cargo install --force inferno
           else
-            echo "./cargo/bin/inferno-collapse-perf" already found
+            echo "$HOME/.cargo/bin/inferno-collapse-perf" already found
           fi
 
       - name: Install ethrex_l2 cli
         run: |
-          if [ -f "./cargo/bin/ethrex_l2" ]; then
-            echo "./cargo/bin/ethrex_l2" already found
+          if [ -f "$HOME/.cargo/bin/ethrex_l2" ]; then
+            echo "$HOME/.cargo/bin/ethrex_l2" already found
           else
-            cargo install --path cmd/ethrex_l2
+            cargo install --force --path cmd/ethrex_l2
           fi
           ethrex_l2 config create default --default
           ethrex_l2 config set default
@@ -171,16 +171,16 @@ jobs:
         uses: actions/cache@v4
         with:
           path: |
-            ~/.cargo/bin/addr2line
-            ~/.cargo/bin/flamegraph
-            ~/.cargo/bin/inferno-*
+            ${{ env.HOME }}/.cargo/bin/addr2line
+            ${{ env.HOME }}/.cargo/bin/flamegraph
+            ${{ env.HOME }}/.cargo/bin/inferno-*
           key: ${{ runner.os }}-${{ env.RUST_VERSION }}-extra-binaries
 
       - name: Cache ethrex_l2
         id: cache-ethrex-l2
         uses: actions/cache@v4
         with:
-          path: ~/.cargo/bin/ethrex_l2
+          path: ${{ env.HOME }}/.cargo/bin/ethrex_l2
           key: ${{ runner.os }}-${{ env.RUST_VERSION }}-ethrex-l2-${{ hashFiles('cmd/ethrex_l2/Cargo.lock') }}
 
       - name: Change perf settings
@@ -193,11 +193,11 @@ jobs:
       - name: Check addr2line installation
         id: check-addr2line
         run: |
-          if [ -f "./cargo/bin/addr2line" ]; then
-            echo "./cargo/bin/addr2line found"
+          if [ -f "$HOME/.cargo/bin/addr2line" ]; then
+            echo "$HOME/.cargo/bin/addr2line found"
             echo "addr2line_exists=true" >> $GITHUB_OUTPUT
           else
-            echo "./cargo/bin/addr2line NOT found"
+            echo "$HOME/.cargo/bin/addr2line NOT found"
             echo "addr2line_exists=false" >> $GITHUB_OUTPUT
           fi
 
@@ -218,23 +218,23 @@ jobs:
 
       - name: Install flamegraph
         run: |
-          if [ ! -f "./cargo/bin/flamegraph" ]; then
+          if [ ! -f "$HOME/.cargo/bin/flamegraph" ]; then
             cargo install --force flamegraph
           else
-            echo "./cargo/bin/flamegraph" already found
+            echo "$HOME/.cargo/bin/flamegraph" already found
           fi
-          if [ ! -f "./cargo/bin/inferno-collapse-perf" ]; then
+          if [ ! -f "$HOME/.cargo/bin/inferno-collapse-perf" ]; then
             cargo install --force inferno
           else
-            echo "./cargo/bin/inferno-collapse-perf" already found
+            echo "$HOME/.cargo/bin/inferno-collapse-perf" already found
           fi
 
       - name: Install ethrex_l2 cli
         run: |
-          if [ -f "./cargo/bin/ethrex_l2" ]; then
-            echo "./cargo/bin/ethrex_l2" already found
+          if [ -f "$HOME/.cargo/bin/ethrex_l2" ]; then
+            echo "$HOME/.cargo/bin/ethrex_l2" already found
           else
-            cargo install --path cmd/ethrex_l2
+            cargo install --force --path cmd/ethrex_l2
           fi
           ethrex_l2 config create default --default
           ethrex_l2 config set default
