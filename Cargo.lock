@@ -2950,6 +2950,7 @@ dependencies = [
  "snap",
  "thiserror 2.0.9",
  "tokio",
+ "tokio-util",
  "tracing",
 ]
 
