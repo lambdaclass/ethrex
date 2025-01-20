@@ -168,20 +168,21 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
         } else {
             // Handshake OK: handle connection
             // Create channels to communicate directly to the peer
-            debug!("Creating peer channels for peer {peer_addr:?}");
-            let (peer_channels, sender, receiver) = PeerChannels::create();
             match self.get_remote_node_id() {
                 Err(e) => {
                     debug!("Get remote id failed for {peer_addr:?}, with errror {e:?}");
-                    self.peer_conn_failed(
-                        "Error during RLPx connection",
-                        RLPxError::InvalidState(),
-                        table,
-                    )
-                    .await;
+                    return self
+                        .peer_conn_failed(
+                            "Error during RLPx connection",
+                            RLPxError::InvalidState(),
+                            table,
+                        )
+                        .await;
                 }
                 Ok(node_id) => {
                     debug!("Got remote id for {peer_addr:?}, with id {node_id:?}");
+                    debug!("Creating peer channels for peer {peer_addr:?}");
+                    let (peer_channels, sender, receiver) = PeerChannels::create();
                     let node = crate::Node {
                         node_id,
                         ip: peer_addr.ip(),
@@ -202,7 +203,8 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
                         capabilities,
                     );
                     if let Err(e) = self.handle_peer_conn(sender, receiver).await {
-                        error!("Error during RLPx connection: {e}");
+                        self.peer_conn_failed("Error during RLPx connection", e, table)
+                            .await;
                     }
                 }
             };
@@ -270,7 +272,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
         match error {
             RLPxError::RLPDecodeError(_) => Some(2_u8),
             // TODO build a proper matching between error types and disconnection reasons
-            _ => None,
+            _ => Some(2_u8),
         }
     }
 
