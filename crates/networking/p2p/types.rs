@@ -192,8 +192,10 @@ impl NodeRecord {
 
     pub fn get_signature_digest(&self) -> Vec<u8> {
         let mut rlp = vec![];
-        self.seq.encode(&mut rlp);
-        self.pairs.encode(&mut rlp);
+        structs::Encoder::new(&mut rlp)
+            .encode_field(&self.seq)
+            .encode_key_value_list::<Bytes>(&self.pairs)
+            .finish();
         let digest = Keccak256::digest(&rlp);
         digest.to_vec()
     }
