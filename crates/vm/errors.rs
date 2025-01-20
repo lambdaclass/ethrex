@@ -35,10 +35,6 @@ pub enum ExecutionDBError {
     Trie(#[from] TrieError),
     #[error("State proofs error: {0}")]
     StateProofs(#[from] StateProofsError),
-    #[error("Revm failed to decode bytecode: {0}")]
-    RevmBytecodeDecode(#[from] BytecodeDecodeError),
-    #[error("{0}")]
-    RLPDecode(#[from] RLPDecodeError),
     #[error("Account {0} not found")]
     AccountNotFound(RevmAddress),
     #[error("Code by hash {0} not found")]
