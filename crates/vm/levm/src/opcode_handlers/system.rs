@@ -78,7 +78,7 @@ impl VM {
             self.eip7702_get_code(callee)?;
 
         let pretty_bytecode = format!("{bytecode:#x}");
-        dbg!(code_address, pretty_bytecode);
+        dbg!(code_address, pretty_bytecode, bytecode.is_empty());
 
         let gas_left = current_call_frame
             .gas_limit
@@ -671,7 +671,7 @@ impl VM {
 
         self.accrued_substate.created_accounts.insert(new_address); // Mostly for SELFDESTRUCT during initcode.
 
-        let tx_report = self.execute(&mut new_call_frame)?;
+        let tx_report = self.execute(&mut new_call_frame, false)?;
         let unused_gas = max_message_call_gas
             .checked_sub(tx_report.gas_used)
             .ok_or(InternalError::GasOverflow)?;
@@ -762,19 +762,6 @@ impl VM {
             return Ok(OpcodeSuccess::Continue);
         }
 
-        let mut empty = false;
-        if is_delegation && bytecode.is_empty() {
-            empty = true;
-            dbg!("BYTECODE EMPTY");
-
-            current_call_frame
-                .gas_used
-                .checked_sub(gas_limit)
-                .ok_or(InternalError::GasOverflow)?;
-            current_call_frame.stack.push(SUCCESS_FOR_CALL)?;
-            return Ok(OpcodeSuccess::Continue);
-        }
-
         let mut new_call_frame = CallFrame::new(
             msg_sender,
             to,
@@ -795,7 +782,7 @@ impl VM {
             self.increase_account_balance(to, value)?;
         }
 
-        let tx_report = self.execute(&mut new_call_frame)?;
+        let tx_report = self.execute(&mut new_call_frame, is_delegation)?;
 
         dbg!(new_call_frame.gas_limit);
         dbg!(tx_report.gas_used);
@@ -836,7 +823,7 @@ impl VM {
             }
         }
 
-        if empty {
+        if false {
             dbg!("CALL FINISHED");
             return Ok(OpcodeSuccess::Debug(tx_report.result));
         }
