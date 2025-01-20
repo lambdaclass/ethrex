@@ -99,7 +99,6 @@ impl SyncManager {
         // This step is not parallelized
         let mut all_block_hashes = vec![];
         loop {
-            debug!("[Sync] About to check peers in syncing");
             let peer = get_peer_channel_with_retry(self.peers.clone(), Capability::Eth).await;
             debug!("Requesting Block Headers from {current_head}");
             // Request Block Headers from Peer
@@ -738,7 +737,6 @@ async fn get_peer_channel_with_retry(
     tokio::time::sleep(tokio::time::Duration::from_secs(3)).await;
     loop {
         let table = table.lock().await;
-        debug!("[Sync] About to search for peers!");
         table.show_peer_stats();
         if let Some(channels) = table.get_peer_channels(capability.clone()) {
             return channels;

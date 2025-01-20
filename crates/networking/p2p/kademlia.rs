@@ -64,8 +64,6 @@ impl KademliaTable {
         let node_id = node.node_id;
         let bucket_idx = bucket_number(node_id, self.local_node_id);
 
-        info!("Inserting node {:?} into bucket {}", node, bucket_idx);
-
         self.insert_node_inner(node, bucket_idx)
     }
 
@@ -294,10 +292,6 @@ impl KademliaTable {
         channels: PeerChannels,
         capabilities: Vec<Capability>,
     ) {
-        info!(
-            "[PEERS] Initializing backend communication with peer {:?}",
-            node_id
-        );
         let bucket_idx = bucket_number(self.local_node_id, node_id);
         if let Some(peer) = self.buckets.get_mut(bucket_idx).and_then(|bucket| {
             bucket
@@ -305,16 +299,11 @@ impl KademliaTable {
                 .iter_mut()
                 .find(|peer| peer.node.node_id == node_id)
         }) {
-            debug!("Peer {node_id:?} found in the kademlia table, updaing channels");
-            peer.channels = Some(channels.clone());
-            peer.supported_capabilities = capabilities.clone();
-            debug!(
-                "Peer {:?} updated with channels {:?} and capabilities {:?}",
-                node_id, channels, capabilities
-            );
+            peer.channels = Some(channels);
+            peer.supported_capabilities = capabilities;
         } else {
-            warn!(
-                "[PEERS] Peer with node_id {:?} not found in the kademlia table",
+            debug!(
+                "[PEERS] Peer with node_id {:?} not found in the kademlia table when trying to init backend communication",
                 node_id
             );
         }

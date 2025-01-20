@@ -158,7 +158,6 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
         // Perform handshake
         debug!("Starting peer initiator");
         if let Err(e) = self.handshake().await {
-            error!("Handshake failed initiator: ({e})");
             self.peer_conn_failed("Handshake failed", e, table).await;
         } else {
             // Handshake OK: handle connection

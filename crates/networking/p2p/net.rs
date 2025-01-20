@@ -141,7 +141,6 @@ async fn discover_peers_server(
     signer: SigningKey,
     tx_broadcaster_send: broadcast::Sender<(tokio::task::Id, Arc<RLPxMessage>)>,
 ) {
-    debug!("Starting discovery server");
     let mut buf = vec![0; MAX_DISC_PACKET_SIZE];
 
     loop {
