@@ -89,10 +89,8 @@ pub fn prepare_vm_for_tx(vector: &TestVector, test: &EFTest) -> Result<VM, EFTes
         .collect();
 
     // Check if the tx has the authorization_lists field implemented by eip7702.
-    let authorization_list = if let Some(list) = &tx.authorization_list {
-        // Used to convert from EFTestAuthorizationListItem to AuthorizationList = Vec<AuthorizationTuple>
-        let auth_list = list
-            .iter()
+    let authorization_list = tx.authorization_list.clone().map(|list| {
+        list.iter()
             .map(|auth_tuple| AuthorizationTuple {
                 chain_id: auth_tuple.chain_id,
                 address: auth_tuple.address,
@@ -103,12 +101,8 @@ pub fn prepare_vm_for_tx(vector: &TestVector, test: &EFTest) -> Result<VM, EFTes
                 // If the signer is not present, set it to Address::zero()
                 signer: auth_tuple.signer.unwrap_or_default(),
             })
-            .collect::<Vec<AuthorizationTuple>>();
-
-        Some(auth_list)
-    } else {
-        None
-    };
+            .collect::<Vec<AuthorizationTuple>>()
+    });
 
     VM::new(
         tx.to.clone(),
