@@ -1170,9 +1170,9 @@ dependencies = [
 [[package]]
 name = "bls12_381"
 version = "0.8.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d7bc6d6292be3a19e6379786dac800f551e5865a5bb51ebbe3064ab80433f403"
+source = "git+https://github.com/lambdaclass/bls12_381?branch=expose-fp-struct#219174187bd78154cec35b0809799fc2c991a579"
 dependencies = [
+ "digest 0.10.7",
  "ff 0.13.0",
  "group 0.13.0",
  "pairing 0.23.0",
@@ -2938,6 +2938,7 @@ dependencies = [
  "ethrex-rlp",
  "ethrex-storage",
  "ethrex-trie",
+ "futures",
  "hex",
  "hex-literal",
  "hmac 0.12.1",
@@ -2950,6 +2951,8 @@ dependencies = [
  "snap",
  "thiserror 2.0.9",
  "tokio",
+ "tokio-stream",
+ "tokio-util",
  "tracing",
 ]
 
@@ -8758,10 +8761,21 @@ dependencies = [
 ]
 
 [[package]]
-name = "tokio-util"
-version = "0.7.12"
+name = "tokio-stream"
+version = "0.1.17"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "61e7c3654c13bcd040d4a03abee2c75b1d14a37b423cf5a813ceae1cc903ec6a"
+checksum = "eca58d7bba4a75707817a2c44174253f9236b2d5fbd055602e9d5c07c139a047"
+dependencies = [
+ "futures-core",
+ "pin-project-lite",
+ "tokio",
+]
+
+[[package]]
+name = "tokio-util"
+version = "0.7.13"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d7fcaa8d55a2bdd6b83ace262b016eca0d79ee02818c5c1bcdf0305114081078"
 dependencies = [
  "bytes",
  "futures-core",
