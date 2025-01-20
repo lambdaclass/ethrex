@@ -17,7 +17,7 @@ SPECTEST_VECTORS_DIR := cmd/ef_tests/ethrex/vectors
 
 CRATE ?= *
 test: $(SPECTEST_VECTORS_DIR) ## 🧪 Run each crate's tests
-	cargo test -p '$(CRATE)' --workspace --exclude ethrex-prover --exclude ethrex-levm --exclude ef_tests-levm --exclude ethrex-l2 -- --skip test_contract_compilation
+	cargo test -p '$(CRATE)' --features levm --workspace --exclude ethrex-prover --exclude ethrex-levm --exclude ef_tests-levm --exclude ethrex-l2 -- --skip test_contract_compilation
 
 clean: clean-vectors ## 🧹 Remove build artifacts
 	cargo clean
