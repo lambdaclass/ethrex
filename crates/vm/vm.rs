@@ -141,6 +141,7 @@ cfg_if::cfg_if! {
                 store_wrapper,
                 CacheDB::new(),
                 vec![],
+                None
             )
             .map_err(EvmError::from)?;
 
@@ -325,6 +326,9 @@ cfg_if::cfg_if! {
                 db,
                 block_cache,
                 tx.access_list(),
+                // TODO: Here we should pass the tx.authorization_list
+                // We have to implement the EIP7702 tx in ethrex_core
+                None
             )?;
 
             vm.transact()
