@@ -420,11 +420,8 @@ pub struct EFTestReport {
     pub name: String,
     pub dir: String,
     pub test_hash: H256,
-    // pub failed_vectors: HashMap<TestVector, EFTestRunnerError>,
     pub re_run_report: Option<TestReRunReport>,
-    // Tracking of result per fork
     pub fork_results: HashMap<SpecId, EFTestReportForkResult>,
-    // pub re_run_report: Option<TestReRunReport>,
 }
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
@@ -452,19 +449,7 @@ impl EFTestReport {
         self.re_run_report = Some(re_run_report);
     }
 
-    // pub fn new_skipped() -> Self {
-    //     EFTestReport {
-    //         skipped: true,
-    //         ..Default::default()
-    //     }
-    // }
-
-    // pub fn iter_failed(&self) -> impl Iterator<Item = (&TestVector, &EFTestRunnerError)> {
-    //     self.failed_vectors.iter()
-    // }
-
     pub fn passed(&self) -> bool {
-        // self.failed_vectors.is_empty()
         self.fork_results
             .values()
             .all(|result| result.failed_vectors.is_empty())
@@ -495,11 +480,6 @@ impl EFTestReportForkResult {
         reason: String,
         failed_vector: TestVector,
     ) {
-        // let fork_result = self.fork_results.get_mut(&fork).unwrap();
-        // fork_result.failed_vectors.insert(
-        //     failed_vector,
-        //     EFTestRunnerError::VMInitializationFailed(reason),
-        // );
         self.failed_vectors.insert(
             failed_vector,
             EFTestRunnerError::VMInitializationFailed(reason),
@@ -856,11 +836,8 @@ pub struct TestReRunExecutionReport {
     pub re_runner_error: Option<(TxResult, String)>,
 }
 
-// we need to map (fork,vector) -> execution report
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
 pub struct TestReRunReport {
-    // pub execution_report: HashMap<TestVector, TestReRunExecutionReport>,
-    // pub account_updates_report: HashMap<TestVector, ComparisonReport>,
     pub execution_report: HashMap<(SpecId, TestVector), TestReRunExecutionReport>,
     pub account_updates_report: HashMap<(SpecId, TestVector), ComparisonReport>,
 }
