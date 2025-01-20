@@ -1,0 +1,200 @@
+Parsing EF Tests
+Parsing directory "state_tests"
+Parsing directory "constantinople"
+Parsing directory "eip1014_create2"
+Parsing directory "create_returndata"
+Parsing directory "homestead"
+Parsing directory "yul"
+Parsing directory "yul_example"
+Parsing directory "coverage"
+Parsing directory "coverage"
+Parsing directory "shanghai"
+Parsing directory "eip3860_initcode"
+Parsing directory "initcode"
+Parsing directory "eip3855_push0"
+Parsing directory "push0"
+Parsing directory "eip3651_warm_coinbase"
+Parsing directory "warm_coinbase"
+Parsing directory "cancun"
+Parsing directory "eip5656_mcopy"
+Parsing directory "mcopy_memory_expansion"
+Parsing directory "mcopy_contexts"
+Parsing directory "mcopy"
+Parsing directory "eip1153_tstore"
+Parsing directory "tstore_reentrancy"
+Parsing directory "tload_calls"
+Parsing directory "tstorage"
+Parsing directory "tstorage_reentrancy_contexts"
+Parsing directory "tstorage_execution_contexts"
+Parsing directory "basic_tload"
+Parsing directory "tstorage_selfdestruct"
+Parsing directory "tstorage_create_contexts"
+Parsing directory "tload_reentrancy"
+Parsing directory "eip4844_blobs"
+Parsing directory "point_evaluation_precompile"
+Parsing directory "blob_txs"
+Parsing directory "blobhash_opcode"
+Parsing directory "point_evaluation_precompile_gas"
+Parsing directory "eip6780_selfdestruct"
+Parsing directory "reentrancy_selfdestruct_revert"
+Parsing directory "selfdestruct"
+Parsing directory "dynamic_create2_selfdestruct_collision"
+Parsing directory "selfdestruct_revert"
+Parsing directory "eip7516_blobgasfee"
+Parsing directory "blobgasfee_opcode"
+Parsing directory "istanbul"
+Parsing directory "eip1344_chainid"
+Parsing directory "chainid"
+Parsing directory "frontier"
+Parsing directory "precompiles"
+Parsing directory "precompile_absence"
+Parsing directory "opcodes"
+Parsing directory "all_opcodes"
+Parsing directory "dup"
+Parsing directory "prague"
+Parsing directory "eip7623_increase_calldata_cost"
+Parsing directory "transaction_validity"
+Parsing directory "execution_gas"
+Parsing directory "eip2537_bls_12_381_precompiles"
+Parsing directory "bls12_g1mul"
+Parsing directory "bls12_g2msm"
+Parsing directory "bls12_precompiles_before_fork"
+Parsing directory "bls12_g2add"
+Parsing directory "bls12_g1add"
+Parsing directory "bls12_map_fp2_to_g2"
+Parsing directory "bls12_g1msm"
+Parsing directory "bls12_pairing"
+Parsing directory "bls12_g2mul"
+Parsing directory "bls12_map_fp_to_g1"
+Parsing directory "bls12_variable_length_input_contracts"
+Parsing directory "eip7702_set_code_tx"
+Parsing directory "gas"
+Parsing directory "set_code_txs"
+Parsing directory "berlin"
+Parsing directory "eip2930_access_list"
+Parsing directory "acl"
+Parsing directory "byzantium"
+Parsing directory "eip198_modexp_precompile"
+Parsing directory "modexp"
+Parsing directory "stEIP2537"
+Parsing directory "GeneralStateTests"
+Parsing directory "stTimeConsuming"
+Parsing directory "stRandom"
+Parsing directory "Shanghai"
+Parsing directory "stEIP3651-warmcoinbase"
+Parsing directory "stEIP3855-push0"
+Parsing directory "stEIP3860-limitmeterinitcode"
+Parsing directory "stRevertTest"
+Parsing directory "stInitCodeTest"
+Parsing directory "stCreateTest"
+Parsing directory "stSLoadTest"
+Parsing directory "stRandom2"
+Parsing directory "Cancun"
+Parsing directory "stEIP4844-blobtransactions"
+Parsing directory "stEIP5656-MCOPY"
+Parsing directory "stEIP1153-transientStorage"
+Parsing directory "stWalletTest"
+Parsing directory "stCodeCopyTest"
+Parsing directory "stEIP2930"
+Parsing directory "stRefundTest"
+Parsing directory "stRecursiveCreate"
+Parsing directory "stPreCompiledContracts"
+Parsing directory "stExtCodeHash"
+Parsing directory "stBugs"
+Parsing directory "stExample"
+Parsing directory "stTransitionTest"
+Parsing directory "stCallCodes"
+Parsing directory "stPreCompiledContracts2"
+Parsing directory "stZeroCallsTest"
+Parsing directory "stBadOpcode"
+Parsing directory "stMemoryStressTest"
+Parsing directory "stShift"
+Parsing directory "stSpecialTest"
+Parsing directory "stCallCreateCallCodeTest"
+Parsing directory "stQuadraticComplexityTest"
+Parsing directory "stStackTests"
+Parsing directory "stSolidityTest"
+Parsing directory "stMemoryTest"
+Parsing directory "stEIP3607"
+Parsing directory "stNonZeroCallsTest"
+Parsing directory "stCodeSizeLimit"
+Parsing directory "stSystemOperationsTest"
+Parsing directory "stEIP1559"
+Parsing directory "stHomesteadSpecific"
+Parsing directory "stCreate2"
+Parsing directory "stStaticFlagEnabled"
+Parsing directory "stCallDelegateCodesHomestead"
+Parsing directory "stSStoreTest"
+Parsing directory "stCallDelegateCodesCallCodeHomestead"
+Parsing directory "stDelegatecallTestHomestead"
+Parsing directory "stEIP150Specific"
+Parsing directory "stEIP150singleCodeGasPrices"
+Parsing directory "stZeroKnowledge2"
+Parsing directory "stLogTests"
+Parsing directory "stChainId"
+Parsing directory "stSelfBalance"
+Parsing directory "stEIP158Specific"
+Parsing directory "stZeroCallsRevert"
+Parsing directory "stTransactionTest"
+Parsing directory "stZeroKnowledge"
+Parsing directory "stStaticCall"
+Parsing directory "stMemExpandingEIP150Calls"
+Parsing directory "stArgsZeroOneBalance"
+Parsing directory "VMTests"
+Parsing directory "vmArithmeticTest"
+Parsing directory "vmBitwiseLogicOperation"
+Parsing directory "vmIOandFlowOperations"
+Parsing directory "vmLogTest"
+Parsing directory "vmPerformance"
+Parsing directory "vmTests"
+Parsing directory "stAttackTest"
+Parsing directory "Pyspecs"
+Parsing directory "homestead"
+Parsing directory "yul"
+Parsing directory "shanghai"
+Parsing directory "eip3860_initcode"
+Parsing directory "eip3855_push0"
+Parsing directory "eip3651_warm_coinbase"
+Parsing directory "cancun"
+Parsing directory "eip5656_mcopy"
+Parsing directory "eip1153_tstore"
+Parsing directory "eip4844_blobs"
+Parsing directory "eip6780_selfdestruct"
+Parsing directory "eip7516_blobgasfee"
+Parsing directory "istanbul"
+Parsing directory "eip1344_chainid"
+Parsing directory "frontier"
+Parsing directory "opcodes"
+Parsing directory "berlin"
+Parsing directory "eip2930_access_list"
+Parsing directory "byzantium"
+Parsing directory "eip198_modexp_precompile"
+Parsing directory "stReturnDataTest"
+Parsed EF Tests in 00:00
+✓ No cache found
+Ethereum Foundation Tests: 0 passed 0 failed 0 total run - 00:00
+Ethereum Foundation Tests: 0 passed 1 failed 1 total run - 00:00
+Ethereum Foundation Tests: 0 passed 1 failed 1 total run - 00:00
+Loading summary...
+Summary: 0/1 (0.00%)
+
+Prague: 0/1 (0.00%)
+Cancun: 0/0 (NaN%)
+Shanghai: 0/0 (NaN%)
+Merge: 0/0 (NaN%)
+London: 0/0 (NaN%)
+Berlin: 0/0 (NaN%)
+Istanbul: 0/0 (NaN%)
+Constantinople: 0/0 (NaN%)
+Byzantium: 0/0 (NaN%)
+Homestead: 0/0 (NaN%)
+Frontier: 0/0 (NaN%)
+
+
+bls12_g1msm: 0/1 (0.00%)
+
+
+Running failed tests with REVM...
+Re-running failed tests with REVM 1/1 - 00:00
+Re-ran failed tests with REVM in 00:00
+⠋ Loading report...                     ✓ Report written to file "./levm_ef_tests_report.txt"

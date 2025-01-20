@@ -1,5 +1,5 @@
 use crate::{
-    report::{EFTestReport, TestVector},
+    report::{EFTestReport, EFTestReportForkResult, TestVector},
     runner::{EFTestRunnerError, InternalError},
     types::{EFTest, TransactionExpectedException},
     utils::{self, effective_gas_price},
@@ -19,12 +19,6 @@ use ethrex_vm::{db::StoreWrapper, EvmState, SpecId};
 use keccak_hash::keccak;
 use std::{collections::HashMap, sync::Arc};
 
-//TODO:
-//- [ ] Implement the run_ef_test_multiple_forks function
-//- [x] EFTestPost now has a HashMap<Fork, PostState> instead of just PostState
-//- [x] The ideas is to iterate over all the forks and run the test for each one
-//- [ ] Then return a Vec<EFTestReport> with the results of each fork (wip)
-
 pub fn run_ef_test_multiple_forks(test: &EFTest) -> Result<EFTestReport, EFTestRunnerError> {
     // The hash is used to uniquely identify the test, some legacy test may not have a hash so we default to a random one
     let hash = test
@@ -33,39 +27,31 @@ pub fn run_ef_test_multiple_forks(test: &EFTest) -> Result<EFTestReport, EFTestR
         .or(test._info.hash)
         .unwrap_or_default();
 
-    let mut ef_tests_report = Vec::new();
+    let mut ef_test_report = EFTestReport::new(test.name.clone(), test.dir.clone(), hash);
 
     for fork in test.post.forks.keys() {
-        //dbg!("Running test for fork: ", fork);
-        let mut ef_test_report =
-            EFTestReport::new(test.name.clone(), test.dir.clone(), hash, *fork);
+        let mut fork_result = EFTestReportForkResult {
+            failed_vectors: HashMap::new(),
+            skipped: false,
+        };
         for (vector, _tx) in test.transactions.iter() {
             if !test.post.has_vector_for_fork(vector, *fork) {
-                // Print the name of the test
-                dbg!(&test.name);
                 continue;
             }
-            //     dbg!("this vector is not in the fork");
-            //     dbg!(vector);
-            //     // return Ok(());
-            //     continue;
-            // }
-            // dbg!("this vector is in the fork");
-            // dbg!(vector);
 
             match run_ef_test_tx(vector, test, *fork) {
                 Ok(_) => continue,
                 Err(EFTestRunnerError::VMInitializationFailed(reason)) => {
-                    ef_test_report.register_vm_initialization_failure(reason, *vector);
+                    fork_result.register_vm_initialization_failure(reason, *vector);
                 }
                 Err(EFTestRunnerError::FailedToEnsurePreState(reason)) => {
-                    ef_test_report.register_pre_state_validation_failure(reason, *vector);
+                    fork_result.register_pre_state_validation_failure(reason, *vector);
                 }
                 Err(EFTestRunnerError::ExecutionFailedUnexpectedly(error)) => {
-                    ef_test_report.register_unexpected_execution_failure(error, *vector);
+                    fork_result.register_unexpected_execution_failure(error, *vector);
                 }
                 Err(EFTestRunnerError::FailedToEnsurePostState(transaction_report, reason)) => {
-                    ef_test_report.register_post_state_validation_failure(
+                    fork_result.register_post_state_validation_failure(
                         transaction_report,
                         reason,
                         *vector,
@@ -78,80 +64,17 @@ pub fn run_ef_test_multiple_forks(test: &EFTest) -> Result<EFTestReport, EFTestR
                     )));
                 }
                 Err(EFTestRunnerError::ExpectedExceptionDoesNotMatchReceived(reason)) => {
-                    ef_test_report.register_post_state_validation_error_mismatch(reason, *vector);
+                    fork_result.register_post_state_validation_error_mismatch(reason, *vector);
                 }
                 Err(EFTestRunnerError::Internal(reason)) => {
                     return Err(EFTestRunnerError::Internal(reason));
                 }
             }
         }
-        ef_tests_report.push(ef_test_report);
+        ef_test_report.register_fork_result(*fork, fork_result);
     }
-    // Return just the first report for now
-    // We should return a vec of reports
-    ef_tests_report
-        .into_iter()
-        .next()
-        .ok_or(EFTestRunnerError::Internal(
-            InternalError::FirstRunInternal("No forks to test".to_owned()),
-        ))
+    Ok(ef_test_report)
 }
-
-// pub fn run_ef_test(test: &EFTest) -> Result<EFTestReport, EFTestRunnerError> {
-//     dbg!(test);
-//     dbg!(test._info.generated_test_hash);
-//     dbg!(test._info.hash);
-//     dbg!(&test._info);
-//     // What to do if the hash is None?
-//     // I found a test in legacy test that has a None hash
-//     // Link: https://github.com/ethereum/legacytests/blob/7e1f7e3b4e9b046dd05f9771980549490b16ca91/Constantinople/GeneralStateTests/stTimeConsuming/sstore_combinations_initial0_2.json
-//     // let hash = test._info.generated_test_hash.or(test._info.hash).unwrap();
-//     // if hash is none set a random hash momentarily
-//     let hash = test
-//         ._info
-//         .generated_test_hash
-//         .or(test._info.hash)
-//         .unwrap_or_default();
-
-//     // Since now we support Legacy Test where there could be more than one fork
-//     // we should iterate over all the forks and run the test for each one
-//     let mut ef_test_report =
-//         EFTestReport::new(test.name.clone(), test.dir.clone(), hash, test.fork());
-//     for (vector, _tx) in test.transactions.iter() {
-//         match run_ef_test_tx(vector, test) {
-//             Ok(_) => continue,
-//             Err(EFTestRunnerError::VMInitializationFailed(reason)) => {
-//                 ef_test_report.register_vm_initialization_failure(reason, *vector);
-//             }
-//             Err(EFTestRunnerError::FailedToEnsurePreState(reason)) => {
-//                 ef_test_report.register_pre_state_validation_failure(reason, *vector);
-//             }
-//             Err(EFTestRunnerError::ExecutionFailedUnexpectedly(error)) => {
-//                 ef_test_report.register_unexpected_execution_failure(error, *vector);
-//             }
-//             Err(EFTestRunnerError::FailedToEnsurePostState(transaction_report, reason)) => {
-//                 ef_test_report.register_post_state_validation_failure(
-//                     transaction_report,
-//                     reason,
-//                     *vector,
-//                 );
-//             }
-//             Err(EFTestRunnerError::VMExecutionMismatch(_)) => {
-//                 return Err(EFTestRunnerError::Internal(InternalError::FirstRunInternal(
-//                     "VM execution mismatch errors should only happen when running with revm. This failed during levm's execution."
-//                         .to_owned(),
-//                 )));
-//             }
-//             Err(EFTestRunnerError::ExpectedExceptionDoesNotMatchReceived(reason)) => {
-//                 ef_test_report.register_post_state_validation_error_mismatch(reason, *vector);
-//             }
-//             Err(EFTestRunnerError::Internal(reason)) => {
-//                 return Err(EFTestRunnerError::Internal(reason));
-//             }
-//         }
-//     }
-//     Ok(ef_test_report)
-// }
 
 pub fn run_ef_test_tx(
     vector: &TestVector,
@@ -159,26 +82,6 @@ pub fn run_ef_test_tx(
     fork: SpecId,
 ) -> Result<(), EFTestRunnerError> {
     let mut levm = prepare_vm_for_tx(vector, test, fork)?;
-    // if test.name == "OutOfGasPrefundedContractCreation" {
-    //     dbg!(&test.name);
-    //     dbg!(&test.transactions);
-    //     dbg!(vector);
-    //     dbg!(&test.post.forks.get(&fork).unwrap());
-    // }
-
-    // Check if vector is in the fork if not skip the test
-    // if !test.post.has_vector_for_fork(vector, fork) {
-    //     //Debug that print the name of tets, the vector and the current vectors that are in the fork.
-    //     dbg!("Im entering here");
-    //     dbg!(
-    //         &test.name,
-    //         &test.transactions,
-    //         vector,
-    //         test.post.forks.get(&fork).unwrap()
-    //     );
-    //     return Ok(());
-    // }
-
     ensure_pre_state(&levm, test)?;
     let levm_execution_result = levm.transact();
     ensure_post_state_multi_forks(&levm_execution_result, vector, test, fork)?;
@@ -215,7 +118,6 @@ pub fn prepare_vm_for_tx(
             origin: tx.sender,
             refunded_gas: 0,
             gas_limit: tx.gas_limit,
-            // spec_id: test.fork(),
             spec_id: fork,
             block_number: test.env.current_number,
             coinbase: test.env.current_coinbase,
@@ -351,96 +253,6 @@ fn exception_is_expected(
         )
     })
 }
-
-// pub fn ensure_post_state(
-//     levm_execution_result: &Result<TransactionReport, VMError>,
-//     vector: &TestVector,
-//     test: &EFTest,
-// ) -> Result<(), EFTestRunnerError> {
-//     match levm_execution_result {
-//         Ok(execution_report) => {
-//             match test.post.vector_post_value(vector).expect_exception {
-//                 // Execution result was successful but an exception was expected.
-//                 Some(expected_exceptions) => {
-//                     // Note: expected_exceptions is a vector because can only have 1 or 2 expected errors.
-//                     // Here I use a match bc if there is no second position I just print the first one.
-//                     let error_reason = match expected_exceptions.get(1) {
-//                         Some(second_exception) => {
-//                             format!(
-//                                 "Expected exception: {:?} or {:?}",
-//                                 expected_exceptions.first().unwrap(),
-//                                 second_exception
-//                             )
-//                         }
-//                         None => {
-//                             format!(
-//                                 "Expected exception: {:?}",
-//                                 expected_exceptions.first().unwrap()
-//                             )
-//                         }
-//                     };
-//                     return Err(EFTestRunnerError::FailedToEnsurePostState(
-//                         execution_report.clone(),
-//                         error_reason,
-//                     ));
-//                 }
-//                 // Execution result was successful and no exception was expected.
-//                 None => {
-//                     let (initial_state, block_hash) = utils::load_initial_state(test);
-//                     let levm_account_updates =
-//                         get_state_transitions(&initial_state, block_hash, execution_report);
-//                     let pos_state_root = post_state_root(&levm_account_updates, test);
-//                     let expected_post_state_root_hash = test.post.vector_post_value(vector).hash;
-//                     if expected_post_state_root_hash != pos_state_root {
-//                         let error_reason = format!(
-//                             "Post-state root mismatch: expected {expected_post_state_root_hash:#x}, got {pos_state_root:#x}",
-//                         );
-//                         return Err(EFTestRunnerError::FailedToEnsurePostState(
-//                             execution_report.clone(),
-//                             error_reason,
-//                         ));
-//                     }
-//                 }
-//             }
-//         }
-//         Err(err) => {
-//             match test.post.vector_post_value(vector).expect_exception {
-//                 // Execution result was unsuccessful and an exception was expected.
-//                 Some(expected_exceptions) => {
-//                     // Note: expected_exceptions is a vector because can only have 1 or 2 expected errors.
-//                     // So in exception_is_expected we find out if the obtained error matches one of the expected
-//                     if !exception_is_expected(expected_exceptions.clone(), err.clone()) {
-//                         let error_reason = match expected_exceptions.get(1) {
-//                             Some(second_exception) => {
-//                                 format!(
-//                                     "Returned exception is not the expected: Returned {:?} but expected {:?} or {:?}",
-//                                     err,
-//                                     expected_exceptions.first().unwrap(),
-//                                     second_exception
-//                                 )
-//                             }
-//                             None => {
-//                                 format!(
-//                                     "Returned exception is not the expected: Returned {:?} but expected {:?}",
-//                                     err,
-//                                     expected_exceptions.first().unwrap()
-//                                 )
-//                             }
-//                         };
-//                         return Err(EFTestRunnerError::ExpectedExceptionDoesNotMatchReceived(
-//                             format!("Post-state condition failed: {error_reason}"),
-//                         ));
-//                     }
-//                 }
-//                 // Execution result was unsuccessful but no exception was expected.
-//                 None => {
-//                     return Err(EFTestRunnerError::ExecutionFailedUnexpectedly(err.clone()));
-//                 }
-//             }
-//         }
-//     };
-//     Ok(())
-// }
 
 pub fn ensure_post_state_multi_forks(
     levm_execution_result: &Result<TransactionReport, VMError>,

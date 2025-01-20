@@ -139,12 +139,10 @@ where
     D: serde::Deserializer<'de>,
 {
     let aux: HashMap<String, u64> = HashMap::deserialize(deserializer)?;
-    //dbg!(aux.clone());
     let indexes = aux
         .iter()
         .map(|(key, value)| (key.clone(), U256::from(*value)))
         .collect();
-    //dbg!(&indexes);
     Ok(indexes)
 }
 
@@ -278,10 +276,7 @@ where
         .iter()
         .map(|s| {
             let mut s = s.trim_start_matches("0x:bigint ");
-            // if the len of the string could not 64 hex characters, it is invalid, so we want to skip it
             if s.len() > 64 {
-                //just use the first 64 characters
-                dbg!(s);
                 s = &s[..64];
             }
             U256::from_str(s).map_err(|err| {
@@ -396,8 +391,6 @@ impl<'de> Deserialize<'de> for EFTests {
                                 .cloned()
                                 .unwrap_or_default(),
                         };
-                        // dbg!(&tx);
-                        // dbg!(&data_id, &gas_limit_id, &value_id);
                         transactions.insert((data_id, gas_limit_id, value_id), tx);
                     }
                 }

@@ -27,38 +27,9 @@ pub struct EFTest {
     pub dir: String,
     pub _info: EFTestInfo,
     pub env: EFTestEnv,
-    // pub post: EFTestPost,
     pub post: EFTestPostStruct,
     pub pre: EFTestPre,
     pub transactions: HashMap<TestVector, EFTestTransaction>,
-}
-
-impl EFTest {
-    // this will not be needed
-    pub fn fork(&self) -> SpecId {
-        // unimplemented!()
-        // match &self.post {
-        //     EFTestPost::Prague(_) => SpecId::PRAGUE,
-        //     EFTestPost::Cancun(_) => SpecId::CANCUN,
-        //     EFTestPost::Shanghai(_) => SpecId::SHANGHAI,
-        //     EFTestPost::Homestead(_) => SpecId::HOMESTEAD,
-        //     EFTestPost::Istanbul(_) => SpecId::ISTANBUL,
-        //     EFTestPost::London(_) => SpecId::LONDON,
-        //     EFTestPost::Byzantium(_) => SpecId::BYZANTIUM,
-        //     EFTestPost::Berlin(_) => SpecId::BERLIN,
-        //     EFTestPost::Constantinople(_) | EFTestPost::ConstantinopleFix(_) => {
-        //         SpecId::CONSTANTINOPLE
-        //     }
-        //     EFTestPost::Paris(_) => SpecId::MERGE,
-        //     EFTestPost::Frontier(_) => SpecId::FRONTIER,
-        // }
-        if self.post.forks.len() == 1 {
-            // self.post.forks().first().unwrap().clone()
-            todo!()
-        } else {
-            todo!()
-        }
-    }
 }
 
 impl From<&EFTest> for Genesis {
@@ -171,20 +142,6 @@ pub struct EFTestPostStruct {
 }
 
 impl EFTestPostStruct {
-    // //Get all forks
-    // pub fn forks(&self) -> Vec<SpecId> {
-    //     self.forks.keys().cloned().collect()
-    // }
-
-    // // Get values for a specific fork
-    // pub fn values_for_fork(&self, fork: SpecId) -> Option<&Vec<EFTestPostValue>> {
-    //     self.forks.get(&fork)
-    // }
-
-    // pub fn values(&self) -> Vec<EFTestPostValue> {
-    //     self.forks.values().next().unwrap().clone()
-    // }
-
     // Helper method to check if a vector exists for a fork
     pub fn has_vector_for_fork(&self, vector: &TestVector, fork: SpecId) -> bool {
         self.forks
@@ -203,7 +160,6 @@ impl EFTestPostStruct {
         values: &[EFTestPostValue],
         vector: &TestVector,
     ) -> Option<EFTestPostValue> {
-        // dbg!(values);
         values
             .iter()
             .find(|v| {
@@ -213,72 +169,6 @@ impl EFTestPostStruct {
                 vector == &(data_index, gas_limit_index, value_index)
             })
             .cloned()
-    }
-}
-
-impl EFTestPost {
-    pub fn values(self) -> Vec<EFTestPostValue> {
-        match self {
-            EFTestPost::Prague(v) => v,
-            EFTestPost::Cancun(v) => v,
-            EFTestPost::Shanghai(v) => v,
-            EFTestPost::Homestead(v) => v,
-            EFTestPost::Istanbul(v) => v,
-            EFTestPost::London(v) => v,
-            EFTestPost::Byzantium(v) => v,
-            EFTestPost::Berlin(v) => v,
-            EFTestPost::Constantinople(v) => v,
-            EFTestPost::Paris(v) => v,
-            EFTestPost::ConstantinopleFix(v) => v,
-            EFTestPost::Frontier(v) => v,
-        }
-    }
-
-    pub fn vector_post_value(&self, vector: &TestVector) -> EFTestPostValue {
-        match self {
-            EFTestPost::Prague(v) => Self::find_vector_post_value(v, vector),
-            EFTestPost::Cancun(v) => Self::find_vector_post_value(v, vector),
-            EFTestPost::Shanghai(v) => Self::find_vector_post_value(v, vector),
-            EFTestPost::Homestead(v) => Self::find_vector_post_value(v, vector),
-            EFTestPost::Istanbul(v) => Self::find_vector_post_value(v, vector),
-            EFTestPost::London(v) => Self::find_vector_post_value(v, vector),
-            EFTestPost::Byzantium(v) => Self::find_vector_post_value(v, vector),
-            EFTestPost::Berlin(v) => Self::find_vector_post_value(v, vector),
-            EFTestPost::Constantinople(v) => Self::find_vector_post_value(v, vector),
-            EFTestPost::Paris(v) => Self::find_vector_post_value(v, vector),
-            EFTestPost::ConstantinopleFix(v) => Self::find_vector_post_value(v, vector),
-            EFTestPost::Frontier(v) => Self::find_vector_post_value(v, vector),
-        }
-    }
-
-    fn find_vector_post_value(values: &[EFTestPostValue], vector: &TestVector) -> EFTestPostValue {
-        values
-            .iter()
-            .find(|v| {
-                let data_index = v.indexes.get("data").unwrap().as_usize();
-                let gas_limit_index = v.indexes.get("gas").unwrap().as_usize();
-                let value_index = v.indexes.get("value").unwrap().as_usize();
-                vector == &(data_index, gas_limit_index, value_index)
-            })
-            .unwrap()
-            .clone()
-    }
-
-    pub fn iter(&self) -> impl Iterator<Item = &EFTestPostValue> {
-        match self {
-            EFTestPost::Prague(v) => v.iter(),
-            EFTestPost::Cancun(v) => v.iter(),
-            EFTestPost::Shanghai(v) => v.iter(),
-            EFTestPost::Homestead(v) => v.iter(),
-            EFTestPost::Istanbul(v) => v.iter(),
-            EFTestPost::London(v) => v.iter(),
-            EFTestPost::Byzantium(v) => v.iter(),
-            EFTestPost::Berlin(v) => v.iter(),
-            EFTestPost::Constantinople(v) => v.iter(),
-            EFTestPost::Paris(v) => v.iter(),
-            EFTestPost::ConstantinopleFix(v) => v.iter(),
-            EFTestPost::Frontier(v) => v.iter(),
-        }
     }
 }
 

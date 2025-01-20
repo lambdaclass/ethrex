@@ -28,8 +28,6 @@ const IGNORED_TESTS: [&str; 7] = [
     "RevertInCreateInInit_Paris.json", // Skip because it fails on REVM. See https://github.com/lambdaclass/ethrex/issues/1555
     "create2collisionStorageParis.json", // Skip because it fails on REVM
     "InitCollisionParis.json",         // Skip because it fails on REVM
-                                       // "OutOfGasContractCreation.json",
-                                       // "OutOfGasPrefundedContractCreation.json",
 ];
 
 pub fn parse_ef_tests(opts: &EFTestRunnerOptions) -> Result<Vec<EFTest>, EFTestParseError> {
