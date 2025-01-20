@@ -7,7 +7,7 @@ use crate::{
 use ethrex_core::{H256, H512, U256};
 use sha3::{Digest, Keccak256};
 use tokio::sync::mpsc::UnboundedSender;
-use tracing::{debug, info, warn};
+use tracing::{debug, info};
 
 pub const MAX_NODES_PER_BUCKET: usize = 16;
 const NUMBER_OF_BUCKETS: usize = 256;
