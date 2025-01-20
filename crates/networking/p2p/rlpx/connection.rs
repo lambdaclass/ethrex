@@ -411,15 +411,13 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
             Message::NewPooledTransactionHashes(new_pooled_transaction_hashes)
                 if peer_supports_eth =>
             {
-                if synced {
-                    //TODO(#1415): evaluate keeping track of requests to avoid sending the same twice.
-                    let hashes =
-                        new_pooled_transaction_hashes.get_transactions_to_request(&self.storage)?;
+                //TODO(#1415): evaluate keeping track of requests to avoid sending the same twice.
+                let hashes =
+                    new_pooled_transaction_hashes.get_transactions_to_request(&self.storage)?;
 
-                    //TODO(#1416): Evaluate keeping track of the request-id.
-                    let request = GetPooledTransactions::new(random(), hashes);
-                    self.send(Message::GetPooledTransactions(request)).await?;
-                }
+                //TODO(#1416): Evaluate keeping track of the request-id.
+                let request = GetPooledTransactions::new(random(), hashes);
+                self.send(Message::GetPooledTransactions(request)).await?;
             }
             Message::GetPooledTransactions(msg) => {
                 let response = msg.handle(&self.storage)?;
