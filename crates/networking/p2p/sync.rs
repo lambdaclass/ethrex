@@ -630,7 +630,7 @@ async fn fetch_storage_batch(
                 if keys.is_empty() {
                     info!("Large storage trie encountered, handling separately");
                     let (account_hash, storage_root) = batch.remove(0);
-                    handle_large_storage_range(
+                    if handle_large_storage_range(
                         state_root,
                         account_hash,
                         storage_root,
@@ -639,7 +639,13 @@ async fn fetch_storage_batch(
                         peers.clone(),
                         store.clone(),
                     )
-                    .await?;
+                    .await? {
+                        // Pivot became stale
+                        info!("[DEBUG] Pivot became stale during large trie fetch, scheduling for healing");
+                        // Add trie back to the queue and return stale pivot status
+                        batch.push((account_hash, storage_root));
+                        return Ok((batch, true))
+                    }
                 }
                 // The incomplete range is not the first, we cannot asume it is a large trie, so lets add it back to the queue
             }
@@ -664,6 +670,7 @@ async fn fetch_storage_batch(
 
 /// Handles the returned incomplete storage range of a large storage trie and
 /// fetches the rest of the trie using single requests
+/// Returns a boolean indicating is the pivot became stale during fetching
 // TODO: Later on this method can be refactored to use a separate queue process
 // instead of blocking the current thread for the remainder of the retrieval
 async fn handle_large_storage_range(
@@ -674,7 +681,7 @@ async fn handle_large_storage_range(
     values: Vec<U256>,
     peers: Arc<Mutex<KademliaTable>>,
     store: Store,
-) -> Result<(), SyncError> {
+) -> Result<bool, SyncError> {
     // First process the initial range
     // Keep hold of the last key as this will be the first key of the next range
     let mut next_key = *keys.last().unwrap();
@@ -711,14 +718,10 @@ async fn handle_large_storage_range(
             }
         }
     }
-    if retry_count > MAX_RETRIES {
-        return Err(SyncError::StalePivot);
-    }
-    if current_root != storage_root {
+    if current_root != storage_root && retry_count <= MAX_RETRIES {
         warn!("State sync failed for storage root {storage_root}");
     }
-    info!("Completely fetched large storage trie");
-    Ok(())
+    Ok(retry_count > MAX_RETRIES)
 }
 
 /// Heals the trie given its state_root by fetching any missing nodes in it via p2p
@@ -871,35 +874,29 @@ async fn storage_healer(
                 batch_size += val.1.len();
                 next_batch.insert(key, val);
             }
-            let return_batch = match heal_storage_batch(
+            let (return_batch, is_stale) = heal_storage_batch(
                 state_root,
                 next_batch.clone(),
                 peers.clone(),
                 store.clone(),
             )
-            .await
-            {
-                Ok(b) => b,
-                Err(SyncError::StalePivot) => {
-                    stale = true;
-                    next_batch
-                }
-                Err(err) => return Err(err),
-            };
+            .await?;
             pending_storages.extend(return_batch.into_iter());
+            stale |= is_stale;
         }
     }
     Ok(pending_storages.into_iter().map(|(h, _)| h).collect())
 }
 
 /// Receives a set of storage trie paths (grouped by their corresponding account's state trie path),
-/// fetches their respective nodes, stores them, and returns their children paths and the paths that couldn't be fetched so they can be returned to the queue
+/// fetches their respective nodes, stores their values, and returns their children paths and the paths that couldn't be fetched so they can be returned to the queue
+/// Also returns a boolean indicating if the pivot became stale during the request
 async fn heal_storage_batch(
     state_root: H256,
     mut batch: BTreeMap<H256, (H256, Vec<Nibbles>)>,
     peers: Arc<Mutex<KademliaTable>>,
     store: Store,
-) -> Result<BTreeMap<H256, (H256, Vec<Nibbles>)>, SyncError> {
+) -> Result<(BTreeMap<H256, (H256, Vec<Nibbles>)>, bool), SyncError> {
     for _ in 0..MAX_RETRIES {
         let peer = peers.lock().await.get_peer_channels(Capability::Snap).await;
         let req_batch = batch.iter().map(|(k, v)| (*k, v.1.clone())).collect();
@@ -932,11 +929,11 @@ async fn heal_storage_batch(
                 }
             }
             // Return remaining and added paths to be added to the queue
-            return Ok(batch);
+            return Ok((batch, false));
         }
     }
     // Pivot became stale, lets inform the fetcher
-    Err(SyncError::StalePivot)
+    Ok((batch, true))
 }
 
 /// Returns the partial paths to the node's children if they are not already part of the trie state
@@ -1018,7 +1015,4 @@ enum SyncError {
     JoinHandle(#[from] tokio::task::JoinError),
     #[error("Missing data from DB")]
     CorruptDB,
-    // This is an internal signal for fetcher processes and should not be returned by the main sync cycle
-    #[error("[INTERNAL] Stale Pivot")]
-    StalePivot,
 }
