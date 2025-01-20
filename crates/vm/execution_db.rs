@@ -73,7 +73,7 @@ impl ExecutionDB {
             // filter new accounts, we're only interested in already existing accounts.
             // new accounts are storage cleared, self-destructed accounts too but they're marked with "not
             // existing" status instead.
-            .filter(|(_, account)| !account.account_state.is_storage_cleared());
+            .filter(|(_, account)| account.account_state.is_storage_cleared());
         let db = Self {
             accounts: already_existing_accounts
                 .clone()
