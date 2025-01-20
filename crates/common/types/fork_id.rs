@@ -83,7 +83,7 @@ impl ForkId {
 
         for (fork_hash, fork_next) in valid_combinations {
             if is_subset {
-                // is a subset of the local past forks (rule #2)
+                // The remote hash is a subset of the local past forks (rule #2)
                 if incoming.fork_hash == fork_hash && incoming.fork_next == fork_next {
                     return true;
                 }
