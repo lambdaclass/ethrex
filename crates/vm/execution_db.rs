@@ -67,16 +67,15 @@ impl ExecutionDB {
         let store_wrapper = cache.db;
 
         // fetch initial state
-        let initial_state_accounts = cache
+        let already_existing_accounts = cache
             .accounts
             .iter()
-            // filter new accounts.
+            // filter new accounts, we're only interested in already existing accounts.
             // new accounts are storage cleared, self-destructed accounts too but they're marked with "not
             // existing" status instead.
             .filter(|(_, account)| !account.account_state.is_storage_cleared());
-
         let db = Self {
-            accounts: initial_state_accounts
+            accounts: already_existing_accounts
                 .clone()
                 .map(|(address, _)| {
                     // return error if account is missing
@@ -90,7 +89,7 @@ impl ExecutionDB {
                     Ok((*address, account?))
                 })
                 .collect::<Result<_, ExecutionDBError>>()?,
-            code: initial_state_accounts
+            code: already_existing_accounts
                 .clone()
                 .map(|(_, account)| {
                     // return error if code is missing
@@ -105,7 +104,7 @@ impl ExecutionDB {
                     ))
                 })
                 .collect::<Result<_, ExecutionDBError>>()?,
-            storage: initial_state_accounts
+            storage: already_existing_accounts
                 .map(|(address, account)| {
                     // return error if storage is missing
                     Ok((
