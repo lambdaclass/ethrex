@@ -11,6 +11,9 @@ use tracing::debug;
 
 use super::{BlockHash, BlockNumber, ChainConfig};
 
+// See https://github.com/ethereum/go-ethereum/blob/530adfc8e3ef9c8b6356facecdec10b30fb81d7d/core/forkid/forkid.go#L51
+const TIMESTAMP_THRESHOLD: u64 = 1438269973;
+
 #[derive(Debug, PartialEq)]
 pub struct ForkId {
     fork_hash: H32,
@@ -60,13 +63,14 @@ impl ForkId {
         genesis_hash: BlockHash,
     ) -> bool {
         let (block_number_based_forks, timestamp_based_forks) = chain_config.gather_forks();
-        // decide if our head is block or timestamp based.
-        let mut head = head_timestamp;
-        if let Some(last_block_number_based_fork) = block_number_based_forks.last() {
-            if *last_block_number_based_fork > latest_block_number {
-                head = latest_block_number;
-            }
-        }
+
+        // Determine whether to compare the remote fork_next using a block number or a timestamp.
+        let head = if head_timestamp > TIMESTAMP_THRESHOLD {
+            head_timestamp
+        } else {
+            latest_block_number
+        };
+
         if remote.fork_hash == self.fork_hash {
             // validation rule #1
             if remote.fork_next <= head && remote.fork_next != 0 {
