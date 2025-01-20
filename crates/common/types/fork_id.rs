@@ -453,7 +453,7 @@ mod tests {
         let local_time = 1706655072;
         // remote is in Shanghai fork and doesn't know about Cancun.
         let test_cases: Vec<TestCase> = vec![TestCase {
-            head: 1735372,
+            head: 5443392,
             time: local_time,
             fork_id: ForkId {
                 fork_hash: H32::from_str("0xf7f9bc08").unwrap(),
