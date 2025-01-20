@@ -79,12 +79,12 @@ impl SyncManager {
         match self.sync_cycle(current_head, sync_head, store).await {
             Ok(()) => {
                 info!(
-                    "Sync finished, time elapsed: {} secs",
+                    "Sync cycle finished, time elapsed: {} secs",
                     start_time.elapsed().as_secs()
                 );
             }
             Err(error) => warn!(
-                "Sync failed due to {error}, time elapsed: {} secs ",
+                "Sync cycle failed due to {error}, time elapsed: {} secs ",
                 start_time.elapsed().as_secs()
             ),
         }
@@ -108,7 +108,8 @@ impl SyncManager {
                 current_head = last_header;
             }
         }
-        loop {
+        let mut retry_count = 0;
+        while retry_count <= MAX_RETRIES {
             let peer = self
                 .peers
                 .lock()
@@ -121,6 +122,7 @@ impl SyncManager {
                 .request_block_headers(current_head, BlockRequestOrder::OldToNew)
                 .await
             {
+                retry_count = 0;
                 info!(
                     "Received {} block headers| Last Number: {}",
                     block_headers.len(),
@@ -155,6 +157,12 @@ impl SyncManager {
                     // No more headers to request
                     break;
                 }
+            } else {
+                retry_count += 1;
+            }
+            if retry_count > MAX_RETRIES {
+                warn!("Sync failed to find target block header, aborting");
+                return Ok(())
             }
         }
         // We finished fetching all headers, now we can process them
