@@ -69,10 +69,7 @@ impl ForkId {
         }
         if incoming.fork_hash == self.fork_hash {
             // validation rule #1
-            if incoming.fork_next == 0 {
-                return true;
-            }
-            if incoming.fork_next <= head {
+            if incoming.fork_next <= head && incoming.fork_next != 0 {
                 debug!("Future fork already passed locally.");
                 return false;
             }
