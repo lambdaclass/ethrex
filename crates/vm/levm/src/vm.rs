@@ -62,6 +62,7 @@ pub struct VM {
     pub cache: CacheDB,
     pub tx_kind: TxKind,
     pub access_list: AccessList,
+    pub authorization_list: Option<AuthorizationList>,
 }
 
 pub fn address_to_word(address: Address) -> U256 {
@@ -87,6 +88,19 @@ pub struct AccessListItem {
 }
 
 type AccessList = Vec<(Address, Vec<H256>)>;
+
+type AuthorizationList = Vec<AuthorizationTuple>;
+// TODO: We have to implement this in ethrex_core
+#[derive(Debug, Clone, Default, Copy)]
+pub struct AuthorizationTuple {
+    pub chain_id: U256,
+    pub address: Address,
+    pub nonce: u64,
+    pub v: U256,
+    pub r_signature: U256,
+    pub s_signature: U256,
+    pub signer: Address,
+}
 
 pub fn get_valid_jump_destinations(code: &Bytes) -> Result<HashSet<usize>, VMError> {
     let mut valid_jump_destinations = HashSet::new();
@@ -133,6 +147,7 @@ impl VM {
         db: Arc<dyn Database>,
         mut cache: CacheDB,
         access_list: AccessList,
+        authorization_list: Option<AuthorizationList>,
     ) -> Result<Self, VMError> {
         // Maybe this decision should be made in an upper layer
 
@@ -204,6 +219,7 @@ impl VM {
                     cache,
                     tx_kind: to,
                     access_list,
+                    authorization_list,
                 })
             }
             TxKind::Create => {
@@ -246,6 +262,7 @@ impl VM {
                     cache,
                     tx_kind: TxKind::Create,
                     access_list,
+                    authorization_list,
                 })
             }
         }
