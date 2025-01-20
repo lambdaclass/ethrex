@@ -94,7 +94,8 @@ impl ForkId {
                 }
             }
             if fork_hash == self.fork_hash {
-                // from this point, is a superset of the local past forks
+                // From this point on, if we have a match, it means the remote fork hash
+                // is a superset of our local past forks.
                 is_subset = false;
             }
         }
