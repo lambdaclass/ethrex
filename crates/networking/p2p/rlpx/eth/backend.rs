@@ -69,7 +69,7 @@ pub fn validate_status(msg_data: StatusMessage, storage: &Store) -> Result<(), R
         ));
     }
     // Check ForkID
-    if msg_data.fork_id.fork_hash != fork_id.fork_hash {
+    if msg_data.fork_id!= fork_id {
         warn!("Fork Id Hash does not match")
     }
 
