@@ -25,9 +25,6 @@ pub fn run_ef_test(test: &EFTest) -> Result<EFTestReport, EFTestRunnerError> {
     let mut ef_test_report =
         EFTestReport::new(test.name.clone(), test.dir.clone(), hash, test.fork());
     for (vector, _tx) in test.transactions.iter() {
-        if vector != &(0, 0, 0) {
-            continue;
-        }
         match run_ef_test_tx(vector, test) {
             Ok(_) => continue,
             Err(EFTestRunnerError::VMInitializationFailed(reason)) => {

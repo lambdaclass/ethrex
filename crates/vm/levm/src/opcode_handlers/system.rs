@@ -667,11 +667,12 @@ impl VM {
             0,
             new_depth,
             true,
+            false,
         );
 
         self.accrued_substate.created_accounts.insert(new_address); // Mostly for SELFDESTRUCT during initcode.
 
-        let tx_report = self.execute(&mut new_call_frame, false)?;
+        let tx_report = self.execute(&mut new_call_frame)?;
         let unused_gas = max_message_call_gas
             .checked_sub(tx_report.gas_used)
             .ok_or(InternalError::GasOverflow)?;
@@ -774,6 +775,7 @@ impl VM {
             0,
             new_depth,
             false,
+            is_delegation,
         );
 
         // Transfer value from caller to callee.
@@ -782,7 +784,7 @@ impl VM {
             self.increase_account_balance(to, value)?;
         }
 
-        let tx_report = self.execute(&mut new_call_frame, is_delegation)?;
+        let tx_report = self.execute(&mut new_call_frame)?;
 
         dbg!(new_call_frame.gas_limit);
         dbg!(tx_report.gas_used);

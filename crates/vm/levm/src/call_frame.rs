@@ -85,6 +85,8 @@ pub struct CallFrame {
     pub valid_jump_destinations: HashSet<usize>,
     /// This is set to true if the function that created this callframe is CREATE or CREATE2
     pub create_op_called: bool,
+    /// Set to true if the bytecode comes from an EIP7702 tx
+    pub is_delegation: bool,
 }
 
 impl CallFrame {
@@ -111,6 +113,7 @@ impl CallFrame {
         gas_used: u64,
         depth: usize,
         create_op_called: bool,
+        is_delegation: bool,
     ) -> Self {
         let valid_jump_destinations = get_valid_jump_destinations(&bytecode).unwrap_or_default();
         Self {
@@ -126,6 +129,7 @@ impl CallFrame {
             gas_used,
             valid_jump_destinations,
             create_op_called,
+            is_delegation,
             ..Default::default()
         }
     }

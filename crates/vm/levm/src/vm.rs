@@ -207,6 +207,7 @@ impl VM {
                     0,
                     0,
                     false,
+                    false,
                 );
 
                 let substate = Substate {
@@ -250,6 +251,7 @@ impl VM {
                     0,
                     0,
                     false,
+                    false,
                 );
 
                 let substate = Substate {
@@ -276,7 +278,6 @@ impl VM {
     pub fn execute(
         &mut self,
         current_call_frame: &mut CallFrame,
-        is_delegation: bool,
     ) -> Result<TransactionReport, VMError> {
         // Backup of Database, Substate, Gas Refunds and Transient Storage if sub-context is reverted
         let (backup_db, backup_substate, backup_refunded_gas, backup_transient_storage) = (
@@ -286,7 +287,7 @@ impl VM {
             self.env.transient_storage.clone(),
         );
 
-        if is_delegation && current_call_frame.bytecode.is_empty() {
+        if current_call_frame.is_delegation && current_call_frame.bytecode.is_empty() {
             self.call_frames.push(current_call_frame.clone());
 
             return Ok(TransactionReport {
@@ -1127,7 +1128,7 @@ impl VM {
             cache::insert_account(&mut self.cache, new_contract_address, created_contract);
         }
 
-        let mut report = self.execute(&mut initial_call_frame, false)?;
+        let mut report = self.execute(&mut initial_call_frame)?;
 
         self.post_execution_changes(&initial_call_frame, &mut report)?;
         // There shouldn't be any errors here but I don't know what the desired behavior is if something goes wrong.
