@@ -3,7 +3,7 @@ on:
   pull_request:
     branches: ["**"]
     paths:
-      ".github/**.yaml"
+      - ".github/**.yaml"
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
