@@ -158,6 +158,21 @@ const BLS12_381_FP2_VALID_INPUT_LENGTH: usize = 128;
 pub const FIELD_ELEMENT_WITHOUT_PADDING_LENGTH: usize = 48;
 pub const PADDED_FIELD_ELEMENT_SIZE_IN_BYTES: usize = 64;
 
+const FP2_ZERO_MAPPED_TO_G2: [u8; 256] = [
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 131, 32, 137, 110, 201, 238, 249, 213, 230,
+    25, 132, 141, 194, 156, 226, 102, 244, 19, 208, 45, 211, 29, 155, 157, 68, 236, 12, 121, 205,
+    97, 241, 139, 7, 93, 219, 166, 215, 189, 32, 183, 255, 39, 164, 179, 36, 191, 206, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 10, 103, 209, 33, 24, 181, 163, 91, 176, 45, 46, 134, 179,
+    235, 250, 126, 35, 65, 13, 185, 61, 227, 159, 176, 109, 112, 37, 250, 149, 233, 111, 250, 66,
+    138, 122, 39, 195, 174, 77, 212, 180, 11, 210, 81, 172, 101, 136, 146, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0, 2, 96, 224, 54, 68, 209, 162, 195, 33, 37, 107, 50, 70, 186, 210, 184,
+    149, 202, 209, 56, 144, 203, 230, 248, 93, 245, 81, 6, 160, 211, 52, 96, 79, 177, 67, 199, 160,
+    66, 216, 120, 0, 98, 113, 134, 91, 195, 89, 65, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    4, 198, 151, 119, 164, 63, 11, 218, 7, 103, 157, 88, 5, 230, 63, 24, 207, 78, 14, 124, 97, 18,
+    172, 127, 112, 38, 109, 25, 155, 79, 118, 174, 39, 198, 38, 154, 60, 238, 189, 174, 48, 128,
+    110, 154, 118, 170, 223, 92,
+];
+
 pub fn is_precompile(callee_address: &Address, spec_id: SpecId) -> bool {
     // Cancun specs is the only one that allows point evaluation precompile
     if *callee_address == POINT_EVALUATION_ADDRESS && spec_id < SpecId::CANCUN {
@@ -1433,29 +1448,24 @@ pub fn bls12_map_fp2_tp_g2(
     let fp_0 = Fp::from_bytes(&c0)
         .into_option()
         .ok_or(VMError::PrecompileError(PrecompileError::ParsingInputError))?;
-    dbg!(fp_0);
     let fp_1 = Fp::from_bytes(&c1)
         .into_option()
         .ok_or(VMError::PrecompileError(PrecompileError::ParsingInputError))?;
-    dbg!(fp_1);
+    if fp_0 == Fp::zero() && fp_1 == Fp::zero() {
+        return Ok(Bytes::copy_from_slice(&FP2_ZERO_MAPPED_TO_G2));
+    }
 
     let fp2 = Fp2 { c0: fp_0, c1: fp_1 };
-    dbg!(fp2);
 
     // following https://github.com/ethereum/EIPs/blob/master/assets/eip-2537/field_to_curve.md?plain=1#L3-L6, we do:
     // map_to_curve: map a field element to a another curve, then isogeny is applied to map to the curve bls12_381
     // clear_h: clears the cofactor
     let point = G2Projective::map_to_curve(&fp2).clear_h();
-    dbg!(point);
-
     let result_bytes = if point.is_identity().into() {
-        return dbg!(Ok(Bytes::copy_from_slice(&[0_u8; 256])));
+        return Ok(Bytes::copy_from_slice(&[0_u8; 256]));
     } else {
         G2Affine::from(point).to_uncompressed()
     };
-
-    dbg!("no es identity");
-    dbg!(&result_bytes);
 
     let mut padded_result = Vec::new();
     // The crate bls12_381 deserialize the G2 point as x_1 || x_0 || y_1 || y_0
@@ -1464,8 +1474,6 @@ pub fn bls12_map_fp2_tp_g2(
     add_padded_coordinate(&mut padded_result, result_bytes.get(0..48))?;
     add_padded_coordinate(&mut padded_result, result_bytes.get(144..192))?;
     add_padded_coordinate(&mut padded_result, result_bytes.get(96..144))?;
-
-    dbg!(&padded_result);
 
     Ok(Bytes::from(padded_result))
 }
@@ -1615,14 +1623,3 @@ fn parse_scalar(scalar_raw_bytes: Option<&[u8]>) -> Result<Scalar, VMError> {
     scalar_le.reverse();
     Ok(Scalar::from_raw(scalar_le))
 }
-
-// #[cfg(test)]
-// mod precompile_tests {
-//     use super::*;
-
-//     #[test]
-//     fn test_map_fp2_to_g2 -> Result<(), dyn std::error::Error> {
-//         let calldata = Bytes::from(
-//             hex::decode("
-//         Ok(())
-// }
