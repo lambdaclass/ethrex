@@ -158,6 +158,9 @@ const BLS12_381_FP_VALID_INPUT_LENGTH: usize = 64;
 pub const FIELD_ELEMENT_WITHOUT_PADDING_LENGTH: usize = 48;
 pub const PADDED_FIELD_ELEMENT_SIZE_IN_BYTES: usize = 64;
 
+pub const G1_POINT_AT_INFINITY: [u8; 128] = [0_u8; 128];
+pub const G2_POINT_AT_INFINITY: [u8; 256] = [0_u8; 256];
+
 pub fn is_precompile(callee_address: &Address, spec_id: SpecId) -> bool {
     // Cancun specs is the only one that allows point evaluation precompile
     if *callee_address == POINT_EVALUATION_ADDRESS && spec_id < SpecId::CANCUN {
@@ -1203,7 +1206,7 @@ pub fn bls12_g1add(
     let result_of_addition = G1Affine::from(first_g1_point.add(&second_g1_point));
 
     let result_bytes = if result_of_addition.is_identity().into() {
-        return Ok(Bytes::copy_from_slice(&[0_u8; 128]));
+        return Ok(Bytes::copy_from_slice(&G1_POINT_AT_INFINITY));
     } else {
         result_of_addition.to_uncompressed()
     };
@@ -1284,7 +1287,7 @@ pub fn bls12_g2add(
     let result_of_addition = G2Affine::from(first_g2_point.add(&second_g2_point));
 
     let result_bytes = if result_of_addition.is_identity().into() {
-        return Ok(Bytes::copy_from_slice(&[0_u8; 256]));
+        return Ok(Bytes::copy_from_slice(&G2_POINT_AT_INFINITY));
     } else {
         result_of_addition.to_uncompressed()
     };
@@ -1333,7 +1336,7 @@ pub fn bls12_g2msm(
     }
 
     let result_bytes = if result.is_identity().into() {
-        return Ok(Bytes::copy_from_slice(&[0_u8; 256]));
+        return Ok(Bytes::copy_from_slice(&G2_POINT_AT_INFINITY));
     } else {
         G2Affine::from(result).to_uncompressed()
     };
@@ -1428,7 +1431,7 @@ pub fn bls12_map_fp_to_g1(
     let point = G1Projective::map_to_curve(&fp).clear_h();
 
     let result_bytes = if point.is_identity().into() {
-        return Ok(Bytes::copy_from_slice(&[0_u8; 128]));
+        return Ok(Bytes::copy_from_slice(&G1_POINT_AT_INFINITY));
     } else {
         G1Affine::from(point).to_uncompressed()
     };
