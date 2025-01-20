@@ -462,6 +462,7 @@ fn apply_plain_transaction(
         Ok(receipt)
     }
 
+    // REVM Implementation
     #[cfg(not(feature = "levm"))]
     {
         let result = execute_tx(
