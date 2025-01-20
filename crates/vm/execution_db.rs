@@ -72,14 +72,14 @@ impl ExecutionDB {
         .map_err(|err| Box::new(EvmError::from(err)))?; // TODO: must be a better way
         let store_wrapper = cache.db;
 
-        // fetch initial state
+        // fetch all read/written values from store
         let already_existing_accounts = cache
             .accounts
             .iter()
-            // filter new accounts, we're only interested in already existing accounts.
+            // filter out new accounts, we're only interested in already existing accounts.
             // new accounts are storage cleared, self-destructed accounts too but they're marked with "not
             // existing" status instead.
-            .filter(|(_, account)| account.account_state.is_storage_cleared());
+            .filter(|(_, account)| !account.account_state.is_storage_cleared());
         let accounts = already_existing_accounts
             .clone()
             .map(|(address, _)| {
