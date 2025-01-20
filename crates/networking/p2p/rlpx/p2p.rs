@@ -7,7 +7,6 @@ use ethrex_rlp::{
     structs::{Decoder, Encoder},
 };
 use k256::PublicKey;
-use tracing::info;
 
 use crate::rlpx::utils::{id2pubkey, snappy_decompress};
 

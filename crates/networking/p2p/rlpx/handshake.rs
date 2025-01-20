@@ -13,7 +13,7 @@ use k256::{
     PublicKey, SecretKey,
 };
 use rand::Rng;
-use tracing::{debug, warn};
+use tracing::debug;
 
 use super::error::RLPxError;
 

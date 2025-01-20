@@ -62,6 +62,7 @@ pub struct VM {
     pub cache: CacheDB,
     pub tx_kind: TxKind,
     pub access_list: AccessList,
+    pub authorization_list: Option<AuthorizationList>,
 }
 
 pub fn address_to_word(address: Address) -> U256 {
@@ -87,6 +88,19 @@ pub struct AccessListItem {
 }
 
 type AccessList = Vec<(Address, Vec<H256>)>;
+
+type AuthorizationList = Vec<AuthorizationTuple>;
+// TODO: We have to implement this in ethrex_core
+#[derive(Debug, Clone, Default, Copy)]
+pub struct AuthorizationTuple {
+    pub chain_id: U256,
+    pub address: Address,
+    pub nonce: u64,
+    pub v: U256,
+    pub r_signature: U256,
+    pub s_signature: U256,
+    pub signer: Address,
+}
 
 pub fn get_valid_jump_destinations(code: &Bytes) -> Result<HashSet<usize>, VMError> {
     let mut valid_jump_destinations = HashSet::new();
@@ -133,6 +147,7 @@ impl VM {
         db: Arc<dyn Database>,
         mut cache: CacheDB,
         access_list: AccessList,
+        authorization_list: Option<AuthorizationList>,
     ) -> Result<Self, VMError> {
         // Maybe this decision should be made in an upper layer
 
@@ -204,6 +219,7 @@ impl VM {
                     cache,
                     tx_kind: to,
                     access_list,
+                    authorization_list,
                 })
             }
             TxKind::Create => {
@@ -246,6 +262,7 @@ impl VM {
                     cache,
                     tx_kind: TxKind::Create,
                     access_list,
+                    authorization_list,
                 })
             }
         }
@@ -272,8 +289,10 @@ impl VM {
 
                     return Ok(TransactionReport {
                         result: TxResult::Success,
-                        new_state: HashMap::default(),
-                        gas_used: self.gas_used(current_call_frame)?,
+                        new_state: self.cache.clone(),
+                        // Here we use the gas used and not check for the floor cost
+                        // for Prague fork because the precompiles have constant gas cost
+                        gas_used: current_call_frame.gas_used,
                         gas_refunded: 0,
                         output,
                         logs: std::mem::take(&mut current_call_frame.logs),
@@ -693,14 +712,9 @@ impl VM {
     pub fn get_base_fee_per_blob_gas(&self) -> Result<U256, VMError> {
         fake_exponential(
             MIN_BASE_FEE_PER_BLOB_GAS,
-            self.env
-                .block_excess_blob_gas
-                .unwrap_or_default()
-                .try_into()
-                .map_err(|_| VMError::VeryLargeNumber)?, //Maybe replace unwrap_or_default for sth else later.
+            self.env.block_excess_blob_gas.unwrap_or_default(),
             BLOB_BASE_FEE_UPDATE_FRACTION,
         )
-        .map(|ok_value| ok_value.into())
     }
 
     /// ## Description

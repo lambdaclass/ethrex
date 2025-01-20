@@ -25,7 +25,7 @@ use tokio::{
     sync::{broadcast, Mutex},
     try_join,
 };
-use tracing::{debug, error, info};
+use tracing::{debug, info};
 use types::{Endpoint, Node};
 
 pub mod bootnode;
@@ -823,7 +823,7 @@ async fn handle_peer_as_initiator(
     else {
         return;
     };
-    match RLPxConnection::initiator(signer, msg, stream, storage, connection_broadcast).await {
+    match RLPxConnection::initiator(signer, msg, stream, storage, connection_broadcast) {
         Ok(mut conn) => conn.start_peer(table).await,
         Err(e) => {
             debug!("Error: {e}, Could not start connection with {node:?}");
@@ -839,7 +839,7 @@ pub fn node_id_from_signing_key(signer: &SigningKey) -> H512 {
 
 /// Shows the amount of connected peers, active peers, and peers suitable for snap sync on a set interval
 pub async fn periodically_show_peer_stats(peer_table: Arc<Mutex<KademliaTable>>) {
-    const INTERVAL_DURATION: tokio::time::Duration = tokio::time::Duration::from_secs(200);
+    const INTERVAL_DURATION: tokio::time::Duration = tokio::time::Duration::from_secs(120);
     let mut interval = tokio::time::interval(INTERVAL_DURATION);
     loop {
         peer_table.lock().await.show_peer_stats();

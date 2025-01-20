@@ -89,6 +89,70 @@ cfg_if::cfg_if! {
         use std::{collections::HashMap, sync::Arc};
         use ethrex_core::types::code_hash;
 
+        /// Calls the eip4788 beacon block root system call contract
+        /// More info on https://eips.ethereum.org/EIPS/eip-4788
+        pub fn beacon_root_contract_call_levm(
+            store_wrapper: Arc<StoreWrapper>,
+            block_header: &BlockHeader,
+            spec_id: SpecId,
+        ) -> Result<TransactionReport, EvmError> {
+            lazy_static! {
+                static ref SYSTEM_ADDRESS: Address =
+                    Address::from_slice(&hex::decode("fffffffffffffffffffffffffffffffffffffffe").unwrap());
+                static ref CONTRACT_ADDRESS: Address =
+                    Address::from_slice(&hex::decode("000F3df6D732807Ef1319fB7B8bB8522d0Beac02").unwrap(),);
+            };
+            // This is OK
+            let beacon_root = match block_header.parent_beacon_block_root {
+                None => {
+                    return Err(EvmError::Header(
+                        "parent_beacon_block_root field is missing".to_string(),
+                    ))
+                }
+                Some(beacon_root) => beacon_root,
+            };
+
+            let env = Environment {
+                origin: *SYSTEM_ADDRESS,
+                gas_limit: 30_000_000,
+                block_number: block_header.number.into(),
+                coinbase: block_header.coinbase,
+                timestamp: block_header.timestamp.into(),
+                prev_randao: Some(block_header.prev_randao),
+                base_fee_per_gas: U256::zero(),
+                gas_price: U256::zero(),
+                block_excess_blob_gas: block_header.excess_blob_gas.map(U256::from),
+                block_blob_gas_used: block_header.blob_gas_used.map(U256::from),
+                block_gas_limit: 30_000_000,
+                transient_storage: HashMap::new(),
+                spec_id,
+                ..Default::default()
+            };
+
+            let calldata = Bytes::copy_from_slice(beacon_root.as_bytes()).into();
+
+            // Here execute with LEVM but just return transaction report. And I will handle it in the calling place.
+
+            let mut vm = VM::new(
+                TxKind::Call(*CONTRACT_ADDRESS),
+                env,
+                U256::zero(),
+                calldata,
+                store_wrapper,
+                CacheDB::new(),
+                vec![],
+                None
+            )
+            .map_err(EvmError::from)?;
+
+            let mut report = vm.transact().map_err(EvmError::from)?;
+
+            report.new_state.remove(&*SYSTEM_ADDRESS);
+
+            Ok(report)
+
+        }
+
         pub fn get_state_transitions_levm(
             initial_state: &EvmState,
             block_hash: H256,
@@ -150,28 +214,29 @@ cfg_if::cfg_if! {
             block: &Block,
             state: &mut EvmState,
         ) -> Result<(Vec<Receipt>, Vec<AccountUpdate>), EvmError> {
+            let store_wrapper = Arc::new(StoreWrapper {
+                store: state.database().unwrap().clone(),
+                block_hash: block.header.parent_hash,
+            });
+            let mut block_cache: CacheDB = HashMap::new();
             let block_header = &block.header;
             let spec_id = spec_id(&state.chain_config()?, block_header.timestamp);
             //eip 4788: execute beacon_root_contract_call before block transactions
             cfg_if::cfg_if! {
                 if #[cfg(not(feature = "l2"))] {
                     if block_header.parent_beacon_block_root.is_some() && spec_id == SpecId::CANCUN {
-                        beacon_root_contract_call(state, block_header, spec_id)?;
+                        let report = beacon_root_contract_call_levm(store_wrapper.clone(), block_header, spec_id)?;
+                        block_cache.extend(report.new_state);
                     }
                 }
             }
 
-            let store_wrapper = Arc::new(StoreWrapper {
-                store: state.database().unwrap().clone(),
-                block_hash: block.header.parent_hash,
-            });
 
             // Account updates are initialized like this because of the beacon_root_contract_call, it is going to be empty if it wasn't called.
             let mut account_updates = get_state_transitions(state);
 
             let mut receipts = Vec::new();
             let mut cumulative_gas_used = 0;
-            let mut block_cache: CacheDB = HashMap::new();
 
             for tx in block.body.transactions.iter() {
                 let report = execute_tx_levm(tx, block_header, store_wrapper.clone(), block_cache.clone(), spec_id).map_err(EvmError::from)?;
@@ -240,7 +305,7 @@ cfg_if::cfg_if! {
                 coinbase: block_header.coinbase,
                 timestamp: block_header.timestamp.into(),
                 prev_randao: Some(block_header.prev_randao),
-                chain_id: tx.chain_id().unwrap().into(),
+                chain_id: tx.chain_id().unwrap_or_default().into(),
                 base_fee_per_gas: block_header.base_fee_per_gas.unwrap_or_default().into(),
                 gas_price,
                 block_excess_blob_gas: block_header.excess_blob_gas.map(U256::from),
@@ -261,6 +326,9 @@ cfg_if::cfg_if! {
                 db,
                 block_cache,
                 tx.access_list(),
+                // TODO: Here we should pass the tx.authorization_list
+                // We have to implement the EIP7702 tx in ethrex_core
+                None
             )?;
 
             vm.transact()

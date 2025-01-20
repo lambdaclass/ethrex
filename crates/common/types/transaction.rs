@@ -298,7 +298,7 @@ impl Transaction {
             TxType::EIP4844 => {
                 let priority_fee_per_gas = min(
                     self.max_priority_fee()?,
-                    self.max_fee_per_gas()? - base_fee_per_gas?,
+                    self.max_fee_per_gas()?.saturating_sub(base_fee_per_gas?),
                 );
                 Some(priority_fee_per_gas + base_fee_per_gas?)
             }

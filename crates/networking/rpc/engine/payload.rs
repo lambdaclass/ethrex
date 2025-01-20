@@ -1,14 +1,21 @@
 use ethrex_blockchain::add_block;
 use ethrex_blockchain::error::ChainError;
 use ethrex_blockchain::payload::build_payload;
-use ethrex_core::types::{BlobsBundle, Block, Fork};
+use ethrex_core::types::{BlobsBundle, Block, BlockBody, BlockHash, BlockNumber, Fork};
 use ethrex_core::{H256, U256};
 use serde_json::Value;
 use tracing::{debug, error, warn};
 
-use crate::types::payload::{ExecutionPayload, ExecutionPayloadResponse, PayloadStatus};
-use crate::utils::RpcRequest;
+use crate::types::payload::{
+    ExecutionPayload, ExecutionPayloadBody, ExecutionPayloadResponse, PayloadStatus,
+};
+use crate::utils::{parse_json_hex, RpcRequest};
 use crate::{RpcApiContext, RpcErr, RpcHandler, SyncStatus};
+
+// Must support rquest sizes of at least 32 blocks
+// Chosen an arbitrary x4 value
+// -> https://github.com/ethereum/execution-apis/blob/main/src/engine/shanghai.md#specification-3
+const GET_PAYLOAD_BODIES_REQUEST_MAX_SIZE: usize = 128;
 
 // NewPayload V1-V2-V3 implementations
 pub struct NewPayloadV1Request {
@@ -23,7 +30,8 @@ impl RpcHandler for NewPayloadV1Request {
     }
 
     fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
-        handle_new_payload_v1_v2(&self.payload, Fork::Paris, context)
+        validate_execution_payload_v1(&self.payload)?;
+        handle_new_payload_v1_v2(&self.payload, context)
     }
 }
 
@@ -39,13 +47,15 @@ impl RpcHandler for NewPayloadV2Request {
     }
 
     fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
-        if self.payload.withdrawals.is_none() {
-            Err(RpcErr::WrongParam(
-                "forkChoiceV2 withdrawals is null".to_string(),
-            ))
+        let chain_config = &context.storage.get_chain_config()?;
+        if chain_config.is_shanghai_activated(self.payload.timestamp) {
+            validate_execution_payload_v2(&self.payload)?;
         } else {
-            handle_new_payload_v1_v2(&self.payload, Fork::Shanghai, context)
+            // Behave as a v1
+            validate_execution_payload_v1(&self.payload)?;
         }
+
+        handle_new_payload_v1_v2(&self.payload, context)
     }
 }
 
@@ -88,9 +98,9 @@ impl RpcHandler for NewPayloadV3Request {
     }
 
     fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
-        validate_execution_payload_v3(&self.payload)?;
         let block = get_block_from_payload(&self.payload, Some(self.parent_beacon_block_root))?;
         validate_fork(&block, Fork::Cancun, &context)?;
+        validate_execution_payload_v3(&self.payload)?;
         let payload_status = {
             // Ignore incoming
             match context.sync_status()? {
@@ -133,8 +143,12 @@ impl RpcHandler for GetPayloadV1Request {
     }
 
     fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
+        let payload = get_payload(self.payload_id, &context)?;
+        // NOTE: This validation is actually not required to run Hive tests. Not sure if it's
+        // necessary
+        validate_payload_v1_v2(&payload.0, &context)?;
         let execution_payload_response =
-            build_execution_payload_response(self.payload_id, Fork::Paris, None, context)?;
+            build_execution_payload_response(self.payload_id, payload, None, context)?;
         serde_json::to_value(execution_payload_response.execution_payload)
             .map_err(|error| RpcErr::Internal(error.to_string()))
     }
@@ -151,8 +165,10 @@ impl RpcHandler for GetPayloadV2Request {
     }
 
     fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
+        let payload = get_payload(self.payload_id, &context)?;
+        validate_payload_v1_v2(&payload.0, &context)?;
         let execution_payload_response =
-            build_execution_payload_response(self.payload_id, Fork::Shanghai, None, context)?;
+            build_execution_payload_response(self.payload_id, payload, None, context)?;
         serde_json::to_value(execution_payload_response)
             .map_err(|error| RpcErr::Internal(error.to_string()))
     }
@@ -179,11 +195,90 @@ impl RpcHandler for GetPayloadV3Request {
     }
 
     fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
+        let payload = get_payload(self.payload_id, &context)?;
+        validate_fork(&payload.0, Fork::Cancun, &context)?;
         let execution_payload_response =
-            build_execution_payload_response(self.payload_id, Fork::Cancun, Some(false), context)?;
+            build_execution_payload_response(self.payload_id, payload, Some(false), context)?;
+
         serde_json::to_value(execution_payload_response)
             .map_err(|error| RpcErr::Internal(error.to_string()))
     }
+}
+
+pub struct GetPayloadBodiesByHashV1Request {
+    pub hashes: Vec<BlockHash>,
+}
+
+impl RpcHandler for GetPayloadBodiesByHashV1Request {
+    fn parse(params: &Option<Vec<Value>>) -> Result<Self, RpcErr> {
+        let params = params
+            .as_ref()
+            .ok_or(RpcErr::BadParams("No params provided".to_owned()))?;
+        if params.len() != 1 {
+            return Err(RpcErr::BadParams("Expected 1 param".to_owned()));
+        };
+
+        Ok(GetPayloadBodiesByHashV1Request {
+            hashes: serde_json::from_value(params[0].clone())?,
+        })
+    }
+
+    fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
+        if self.hashes.len() >= GET_PAYLOAD_BODIES_REQUEST_MAX_SIZE {
+            return Err(RpcErr::TooLargeRequest);
+        }
+        let bodies = self
+            .hashes
+            .iter()
+            .map(|hash| context.storage.get_block_body_by_hash(*hash))
+            .collect::<Result<Vec<Option<BlockBody>>, _>>()?;
+        build_payload_body_response(bodies)
+    }
+}
+
+pub struct GetPayloadBodiesByRangeV1Request {
+    start: BlockNumber,
+    count: u64,
+}
+
+impl RpcHandler for GetPayloadBodiesByRangeV1Request {
+    fn parse(params: &Option<Vec<Value>>) -> Result<Self, RpcErr> {
+        let params = params
+            .as_ref()
+            .ok_or(RpcErr::BadParams("No params provided".to_owned()))?;
+        if params.len() != 2 {
+            return Err(RpcErr::BadParams("Expected 1 param".to_owned()));
+        };
+        let start = parse_json_hex(&params[0]).map_err(|_| RpcErr::BadHexFormat(0))?;
+        let count = parse_json_hex(&params[1]).map_err(|_| RpcErr::BadHexFormat(1))?;
+        if start < 1 {
+            return Err(RpcErr::WrongParam("start".to_owned()));
+        }
+        if count < 1 {
+            return Err(RpcErr::WrongParam("count".to_owned()));
+        }
+        Ok(GetPayloadBodiesByRangeV1Request { start, count })
+    }
+
+    fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
+        if self.count as usize >= GET_PAYLOAD_BODIES_REQUEST_MAX_SIZE {
+            return Err(RpcErr::TooLargeRequest);
+        }
+        let latest_block_number = context.storage.get_latest_block_number()?;
+        let last = latest_block_number.min(self.start + self.count - 1);
+        let bodies = (self.start..=last)
+            .map(|block_num| context.storage.get_block_body(block_num))
+            .collect::<Result<Vec<Option<BlockBody>>, _>>()?;
+        build_payload_body_response(bodies)
+    }
+}
+
+fn build_payload_body_response(bodies: Vec<Option<BlockBody>>) -> Result<Value, RpcErr> {
+    let response: Vec<Option<ExecutionPayloadBody>> = bodies
+        .into_iter()
+        .map(|body| body.map(Into::into))
+        .collect();
+    serde_json::to_value(response).map_err(|error| RpcErr::Internal(error.to_string()))
 }
 
 fn parse_execution_payload(params: &Option<Vec<Value>>) -> Result<ExecutionPayload, RpcErr> {
@@ -196,13 +291,66 @@ fn parse_execution_payload(params: &Option<Vec<Value>>) -> Result<ExecutionPaylo
     serde_json::from_value(params[0].clone()).map_err(|_| RpcErr::WrongParam("payload".to_string()))
 }
 
+fn validate_execution_payload_v1(payload: &ExecutionPayload) -> Result<(), RpcErr> {
+    // Validate that only the required arguments are present
+    if payload.withdrawals.is_some() {
+        return Err(RpcErr::WrongParam("withdrawals".to_string()));
+    }
+    if payload.blob_gas_used.is_some() {
+        return Err(RpcErr::WrongParam("blob_gas_used".to_string()));
+    }
+    if payload.excess_blob_gas.is_some() {
+        return Err(RpcErr::WrongParam("excess_blob_gas".to_string()));
+    }
+
+    Ok(())
+}
+
+fn validate_execution_payload_v2(payload: &ExecutionPayload) -> Result<(), RpcErr> {
+    // Validate that only the required arguments are present
+    if payload.withdrawals.is_none() {
+        return Err(RpcErr::WrongParam("withdrawals".to_string()));
+    }
+    if payload.blob_gas_used.is_some() {
+        return Err(RpcErr::WrongParam("blob_gas_used".to_string()));
+    }
+    if payload.excess_blob_gas.is_some() {
+        return Err(RpcErr::WrongParam("excess_blob_gas".to_string()));
+    }
+
+    Ok(())
+}
+
+fn validate_execution_payload_v3(payload: &ExecutionPayload) -> Result<(), RpcErr> {
+    // Validate that only the required arguments are present
+    if payload.withdrawals.is_none() {
+        return Err(RpcErr::WrongParam("withdrawals".to_string()));
+    }
+    if payload.blob_gas_used.is_none() {
+        return Err(RpcErr::WrongParam("blob_gas_used".to_string()));
+    }
+    if payload.excess_blob_gas.is_none() {
+        return Err(RpcErr::WrongParam("excess_blob_gas".to_string()));
+    }
+
+    Ok(())
+}
+
+fn validate_payload_v1_v2(block: &Block, context: &RpcApiContext) -> Result<(), RpcErr> {
+    let chain_config = &context.storage.get_chain_config()?;
+    if chain_config.is_cancun_activated(block.header.timestamp) {
+        return Err(RpcErr::UnsuportedFork(
+            "Cancun payload received".to_string(),
+        ));
+    }
+    Ok(())
+}
+
 fn handle_new_payload_v1_v2(
     payload: &ExecutionPayload,
-    fork: Fork,
     context: RpcApiContext,
 ) -> Result<Value, RpcErr> {
     let block = get_block_from_payload(payload, None)?;
-    validate_fork(&block, fork, &context)?;
     let payload_status = match context.sync_status()? {
         SyncStatus::Active | SyncStatus::Pending => PayloadStatus::syncing(),
         SyncStatus::Inactive => {
@@ -214,16 +362,6 @@ fn handle_new_payload_v1_v2(
         }
     };
     serde_json::to_value(payload_status).map_err(|error| RpcErr::Internal(error.to_string()))
-}
-
-fn validate_execution_payload_v3(payload: &ExecutionPayload) -> Result<(), RpcErr> {
-    if payload.excess_blob_gas.is_none() {
-        return Err(RpcErr::WrongParam("excess_blob_gas".to_string()));
-    }
-    if payload.blob_gas_used.is_none() {
-        return Err(RpcErr::WrongParam("blob_gas_used".to_string()));
-    }
-    Ok(())
 }
 
 fn get_block_from_payload(
@@ -349,15 +487,11 @@ fn validate_fork(block: &Block, fork: Fork, context: &RpcApiContext) -> Result<(
 
 fn build_execution_payload_response(
     payload_id: u64,
-    fork: Fork,
+    payload: (Block, U256, BlobsBundle, bool),
     should_override_builder: Option<bool>,
     context: RpcApiContext,
 ) -> Result<ExecutionPayloadResponse, RpcErr> {
-    let (mut payload_block, block_value, blobs_bundle, completed) =
-        get_payload(payload_id, &context)?;
-
-    validate_fork(&payload_block, fork, &context)?;
-
+    let (mut payload_block, block_value, blobs_bundle, completed) = payload;
     if completed {
         Ok(ExecutionPayloadResponse {
             execution_payload: ExecutionPayload::from_block(payload_block),
