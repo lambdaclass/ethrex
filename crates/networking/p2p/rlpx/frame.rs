@@ -1,4 +1,9 @@
-use super::{connection::Aes256Ctr64BE, error::RLPxError, message as rlpx, utils::ecdh_xchng};
+use super::{
+    connection::{Aes256Ctr64BE, LocalState, RemoteState},
+    error::RLPxError,
+    message as rlpx,
+    utils::ecdh_xchng,
+};
 use aes::{
     cipher::{BlockEncrypt as _, KeyInit as _, KeyIvInit, StreamCipher as _},
     Aes256Enc,
@@ -6,7 +11,6 @@ use aes::{
 use bytes::{Buf, BytesMut};
 use ethrex_core::{H128, H256};
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode as _};
-use k256::{PublicKey, SecretKey};
 use sha3::{Digest as _, Keccak256};
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio_util::codec::{Decoder, Encoder, Framed};
@@ -27,15 +31,12 @@ impl RLPxCodec {
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn update_secrets(
         &mut self,
-        local_init_message: Vec<u8>,
-        local_nonce: H256,
-        local_ephemeral_key: SecretKey,
+        local_state: LocalState,
+        remote_state: RemoteState,
         hashed_nonces: [u8; 32],
-        remote_init_message: Vec<u8>,
-        remote_nonce: H256,
-        remote_ephemeral_key: PublicKey,
     ) {
-        let ephemeral_key_secret = ecdh_xchng(&local_ephemeral_key, &remote_ephemeral_key);
+        let ephemeral_key_secret =
+            ecdh_xchng(&local_state.ephemeral_key, &remote_state.ephemeral_key);
 
         // shared-secret = keccak256(ephemeral-key || keccak256(nonce || initiator-nonce))
         let shared_secret =
@@ -48,13 +49,13 @@ impl RLPxCodec {
 
         // egress-mac = keccak256.init((mac-secret ^ remote-nonce) || auth)
         self.egress_mac = Keccak256::default()
-            .chain_update(self.mac_key ^ remote_nonce)
-            .chain_update(&local_init_message);
+            .chain_update(self.mac_key ^ remote_state.nonce)
+            .chain_update(&local_state.init_message);
 
         // ingress-mac = keccak256.init((mac-secret ^ initiator-nonce) || ack)
         self.ingress_mac = Keccak256::default()
-            .chain_update(self.mac_key ^ local_nonce)
-            .chain_update(&remote_init_message);
+            .chain_update(self.mac_key ^ local_state.nonce)
+            .chain_update(&remote_state.init_message);
 
         self.ingress_aes = <Aes256Ctr64BE as KeyIvInit>::new(&aes_key.0.into(), &[0; 16].into());
         self.egress_aes = self.ingress_aes.clone();

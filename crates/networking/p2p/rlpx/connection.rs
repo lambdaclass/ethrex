@@ -65,16 +65,16 @@ enum RLPxConnectionMode {
     Receiver,
 }
 
-struct RemoteState {
-    nonce: H256,
-    ephemeral_key: PublicKey,
-    init_message: Vec<u8>,
+pub(crate) struct RemoteState {
+    pub(crate) nonce: H256,
+    pub(crate) ephemeral_key: PublicKey,
+    pub(crate) init_message: Vec<u8>,
 }
 
-struct LocalState {
-    nonce: H256,
-    ephemeral_key: SecretKey,
-    init_message: Vec<u8>,
+pub(crate) struct LocalState {
+    pub(crate) nonce: H256,
+    pub(crate) ephemeral_key: SecretKey,
+    pub(crate) init_message: Vec<u8>,
 }
 
 /// Fully working RLPx connection.
@@ -216,16 +216,29 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
     }
 
     async fn handshake(&mut self) -> Result<(), RLPxError> {
-        match &self.mode {
+        let (local_state, remote_state, hashed_nonces) = match &self.mode {
             RLPxConnectionMode::Initiator => {
                 let local_state = self.send_auth().await?;
-                self.receive_ack(local_state).await?;
+                let remote_state = self.receive_ack().await?;
+                // Local node is initator
+                // keccak256(nonce || initiator-nonce)
+                let hashed_nonces: [u8; 32] =
+                    Keccak256::digest([local_state.nonce.0, local_state.nonce.0].concat()).into();
+                (local_state, remote_state, hashed_nonces)
             }
             RLPxConnectionMode::Receiver => {
                 let remote_state = self.receive_auth().await?;
-                self.send_ack(remote_state).await?;
+                let local_state = self.send_ack().await?;
+                // Remote node is initator
+                // keccak256(nonce || initiator-nonce)
+                let hashed_nonces: [u8; 32] =
+                    Keccak256::digest([local_state.nonce.0, remote_state.nonce.0].concat()).into();
+                (local_state, remote_state, hashed_nonces)
             }
         };
+        self.framed
+            .codec_mut()
+            .update_secrets(local_state, remote_state, hashed_nonces);
         debug!("Completed handshake!");
 
         self.exchange_hello_messages().await?;
@@ -509,7 +522,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
         })
     }
 
-    async fn send_ack(&mut self, remote_state: RemoteState) -> Result<(), RLPxError> {
+    async fn send_ack(&mut self) -> Result<LocalState, RLPxError> {
         let peer_pk = id2pubkey(self.remote_node_id).ok_or(RLPxError::InvalidPeerId())?;
 
         let local_nonce = H256::random_using(&mut rand::thread_rng());
@@ -518,21 +531,11 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
         let msg = encode_ack_message(&local_ephemeral_key, local_nonce, &peer_pk)?;
         self.send_handshake_msg(&msg).await?;
 
-        // keccak256(nonce || initiator-nonce)
-        // Remote node is initator
-        let hashed_nonces =
-            Keccak256::digest([local_nonce.0, remote_state.nonce.0].concat()).into();
-
-        self.framed.codec_mut().update_secrets(
-            msg,
-            local_nonce,
-            local_ephemeral_key,
-            hashed_nonces,
-            remote_state.init_message,
-            remote_state.nonce,
-            remote_state.ephemeral_key,
-        );
-        Ok(())
+        Ok(LocalState {
+            nonce: local_nonce,
+            ephemeral_key: local_ephemeral_key,
+            init_message: msg,
+        })
     }
 
     async fn receive_auth(&mut self) -> Result<RemoteState, RLPxError> {
@@ -555,7 +558,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
         })
     }
 
-    async fn receive_ack(&mut self, local_state: LocalState) -> Result<(), RLPxError> {
+    async fn receive_ack(&mut self) -> Result<RemoteState, RLPxError> {
         let secret_key: SecretKey = self.signer.clone().into();
         let msg_bytes = self.receive_handshake_msg().await?;
         let size_data = &msg_bytes
@@ -569,21 +572,11 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
             .get_ephemeral_pubkey()
             .ok_or(RLPxError::NotFound("Remote ephemeral key".to_string()))?;
 
-        // keccak256(nonce || initiator-nonce)
-        // Local node is initator
-        let hashed_nonces = Keccak256::digest([ack.nonce.0, local_state.nonce.0].concat()).into();
-
-        self.framed.codec_mut().update_secrets(
-            local_state.init_message,
-            local_state.nonce,
-            local_state.ephemeral_key,
-            hashed_nonces,
-            msg_bytes.to_owned(),
-            ack.nonce,
-            remote_ephemeral_key,
-        );
-
-        Ok(())
+        Ok(RemoteState {
+            nonce: ack.nonce,
+            ephemeral_key: remote_ephemeral_key,
+            init_message: msg_bytes.to_owned(),
+        })
     }
 
     async fn send_handshake_msg(&mut self, msg: &[u8]) -> Result<(), RLPxError> {
