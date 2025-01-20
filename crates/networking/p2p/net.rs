@@ -218,7 +218,6 @@ async fn discover_peers_server(
                         continue;
                     }
                     if peer.last_ping_hash.unwrap() == msg.ping_hash {
-                        debug!("Peer {} answered ping with pong", peer.node.node_id);
                         table.lock().await.pong_answered(peer.node.node_id);
                         if peer.channels.is_some() {
                             debug!(
@@ -409,16 +408,12 @@ async fn peers_revalidation(
         // first check that the peers we ping have responded
         for node_id in previously_pinged_peers {
             let mut table = table.lock().await;
-            let Some(peer) = table.get_by_node_id_mut(node_id) else {
-                continue;
-            };
+            let peer = table.get_by_node_id_mut(node_id).unwrap();
 
             if let Some(has_answered) = peer.revalidation {
                 if has_answered {
-                    debug!("Peer {node_id} answered revalidation ping");
                     peer.increment_liveness();
                 } else {
-                    debug!("Peer {node_id} hasn't answered revalidation ping");
                     peer.decrement_liveness();
                 }
             }
@@ -426,10 +421,9 @@ async fn peers_revalidation(
             peer.revalidation = None;
 
             if peer.liveness == 0 {
-                debug!("Replacing Peer {node_id} due to revalidation");
                 let new_peer = table.replace_peer(node_id);
                 if let Some(new_peer) = new_peer {
-                    let ping_hash: Option<H256> = ping(
+                    let ping_hash = ping(
                         &udp_socket,
                         udp_addr,
                         SocketAddr::new(new_peer.node.ip, new_peer.node.udp_port),
@@ -782,7 +776,6 @@ async fn serve_requests(
     let tcp_socket = TcpSocket::new_v4().unwrap();
     tcp_socket.bind(tcp_addr).unwrap();
     let listener = tcp_socket.listen(50).unwrap();
-    table.lock().await.show_peer_stats();
     loop {
         let (stream, _peer_addr) = listener.accept().await.unwrap();
 

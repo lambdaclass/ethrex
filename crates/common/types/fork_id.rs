@@ -12,8 +12,8 @@ use super::{BlockHash, BlockNumber, ChainConfig};
 
 #[derive(Debug, PartialEq)]
 pub struct ForkId {
-    pub fork_hash: H32,
-    pub fork_next: BlockNumber,
+    fork_hash: H32,
+    fork_next: BlockNumber,
 }
 
 impl ForkId {

@@ -2,27 +2,13 @@ use std::{cmp::Ordering, collections::HashMap};
 
 use ethereum_types::H256;
 use sha3::{Digest, Keccak256};
-use tracing::{info, warn};
 
 use crate::{
     nibbles::Nibbles, node::Node, node_hash::NodeHash, state::TrieState, Trie, TrieError, ValueRLP,
 };
-pub fn verify_range(
-    root: H256,
-    first_key: &H256,
-    keys: &[H256],
-    values: &[ValueRLP],
-    proof: &[Vec<u8>],
-) -> Result<bool, TrieError> {
-    let e = verify_range_i(root, first_key, keys, values, proof);
-    if let Err(ref e) = e {
-        warn!("Verify range failure: {e}");
-    }
-    e
-}
 /// Verifies that the key value range belongs to the trie with the given root given the edge proofs for the range
 /// Also returns true if there is more state to be fetched (aka if there are more keys to the right of the given range)
-pub fn verify_range_i(
+pub fn verify_range(
     root: H256,
     first_key: &H256,
     keys: &[H256],

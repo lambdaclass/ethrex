@@ -9,7 +9,6 @@ use ethrex_rlp::encode::RLPEncode;
 use ethrex_trie::Nibbles;
 use ethrex_trie::{verify_range, Node};
 use tokio::sync::{mpsc, Mutex};
-use tracing::{info, warn};
 
 use crate::{
     rlpx::{
@@ -92,25 +91,12 @@ impl PeerChannels {
                         return Some(block_headers)
                     }
                     // Ignore replies that don't match the expected id (such as late responses)
-                    Some(a) => {
-                        warn!("UNEXPECTED RESPONSE: {a:?}");
-                        continue;
-                    }
-                    None => {
-                        warn!("NO RESPONSE");
-                        return None;
-                    }
+                    Some(_) => continue,
+                    None => return None,
                 }
             }
         })
-        .await;
-        if block_headers.is_err() {
-            warn!("PEER TIMEOUT");
-        }
-        let block_headers = block_headers.ok()??;
-        if block_headers.is_empty() {
-            warn!("EMPTY BLOCK HEADERS RESPONSE");
-        }
+        .await.ok()??;
         (!block_headers.is_empty()).then_some(block_headers)
     }
 
@@ -217,9 +203,6 @@ impl PeerChannels {
         })
         .await
         .ok()??;
-        if accounts.is_empty() && proof.is_empty() {
-            info!("Peer returned empty account range");
-        }
         // Unzip & validate response
         let proof = encodable_to_proof(&proof);
         let (account_hashes, accounts): (Vec<_>, Vec<_>) = accounts
@@ -333,7 +316,6 @@ impl PeerChannels {
                 .unzip();
             // We won't accept empty storage ranges
             if hahsed_keys.is_empty() {
-                info!("Empty Slot");
                 return None;
             }
             let encoded_values = values

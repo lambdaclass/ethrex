@@ -308,7 +308,6 @@ impl KademliaTable {
     /// The peer is selected randomly, and doesn't guarantee that the selected peer is not currenlty busy
     /// If no peer is found, this method will try again after 10 seconds
     pub async fn get_peer_channels(&self, capability: Capability) -> PeerChannels {
-        //self.show_peer_stats();
         let filter = |peer: &PeerData| -> bool {
             // Search for peers with an active connection that support the required capabilities
             peer.channels.is_some() && peer.supported_capabilities.contains(&capability)
@@ -337,12 +336,6 @@ impl KademliaTable {
         let active_peers = self.filter_peers(&active_filter).count();
         let snap_active_peers = self.filter_peers(&snap_active_filter).count();
         info!("Snap Peers: {snap_active_peers} / Active Peers {active_peers} / Total Peers: {total_peers}");
-        let active_peers = self
-            .filter_peers(&active_filter)
-            .map(|peer| peer.node.node_id.to_string())
-            .collect::<Vec<_>>()
-            .join(", ");
-        info!("Active Peers ID: {active_peers}");
     }
 }
 
