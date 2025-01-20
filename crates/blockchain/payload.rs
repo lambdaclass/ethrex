@@ -20,9 +20,12 @@ use ethrex_vm::{db::StoreWrapper, execute_tx_levm};
 #[cfg(feature = "levm")]
 use std::sync::Arc;
 
+#[cfg(not(feature = "levm"))]
+use ethrex_vm::execute_tx;
+
 use ethrex_vm::{
-    beacon_root_contract_call, evm_state, execute_tx, get_state_transitions, process_withdrawals,
-    spec_id, EvmError, EvmState, SpecId,
+    beacon_root_contract_call, evm_state, get_state_transitions, process_withdrawals, spec_id,
+    EvmError, EvmState, SpecId,
 };
 
 use sha3::{Digest, Keccak256};
@@ -458,6 +461,7 @@ fn apply_plain_transaction(
         );
         Ok(receipt)
     }
+
     #[cfg(not(feature = "levm"))]
     {
         let result = execute_tx(
