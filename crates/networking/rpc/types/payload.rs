@@ -27,7 +27,7 @@ pub struct ExecutionPayload {
     #[serde(with = "serde_utils::u64::hex_str")]
     gas_used: u64,
     #[serde(with = "serde_utils::u64::hex_str")]
-    timestamp: u64,
+    pub timestamp: u64,
     #[serde(with = "serde_utils::bytes")]
     extra_data: Bytes,
     #[serde(with = "serde_utils::u64::hex_str")]
@@ -230,6 +230,26 @@ impl PayloadStatus {
             status: PayloadValidationStatus::Valid,
             latest_valid_hash: None,
             validation_error: None,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ExecutionPayloadBody {
+    pub transactions: Vec<EncodedTransaction>,
+    pub withdrawals: Option<Vec<Withdrawal>>,
+}
+
+impl From<BlockBody> for ExecutionPayloadBody {
+    fn from(body: BlockBody) -> Self {
+        Self {
+            transactions: body
+                .transactions
+                .iter()
+                .map(EncodedTransaction::encode)
+                .collect(),
+            withdrawals: body.withdrawals,
         }
     }
 }
