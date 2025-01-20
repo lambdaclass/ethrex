@@ -807,7 +807,7 @@ async fn handle_peer_as_initiator(
         .connect(SocketAddr::new(node.ip, node.tcp_port))
         .await
         .unwrap();
-    match RLPxConnection::initiator(signer, msg, stream, storage, connection_broadcast).await {
+    match RLPxConnection::initiator(signer, msg, stream, storage, connection_broadcast) {
         Ok(mut conn) => conn.start_peer(table).await,
         Err(e) => {
             error!("Error: {e}, Could not start connection with {node:?}");
@@ -819,6 +819,16 @@ pub fn node_id_from_signing_key(signer: &SigningKey) -> H512 {
     let public_key = PublicKey::from(signer.verifying_key());
     let encoded = public_key.to_encoded_point(false);
     H512::from_slice(&encoded.as_bytes()[1..])
+}
+
+/// Shows the amount of connected peers, active peers, and peers suitable for snap sync on a set interval
+pub async fn periodically_show_peer_stats(peer_table: Arc<Mutex<KademliaTable>>) {
+    const INTERVAL_DURATION: tokio::time::Duration = tokio::time::Duration::from_secs(60);
+    let mut interval = tokio::time::interval(INTERVAL_DURATION);
+    loop {
+        peer_table.lock().await.show_peer_stats();
+        interval.tick().await;
+    }
 }
 
 #[cfg(test)]

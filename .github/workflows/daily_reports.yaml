@@ -62,7 +62,7 @@ jobs:
           if-no-files-found: error
 
   hive-report:
-    name: Generate report and upload to slack (${{ matrix.vm }})
+    name: Generate report and upload to Slack (${{ matrix.vm }})
     needs: run-hive
     runs-on: ubuntu-latest
     strategy:
@@ -102,25 +102,27 @@ jobs:
           echo "# Hive coverage report (${{ matrix.vm }})" >> $GITHUB_STEP_SUMMARY
           cat results.md >> $GITHUB_STEP_SUMMARY
 
-      - name: Post results to ethrex L1 slack channel
+      - name: Post results to Slack
         env:
-          url: ${{ secrets.ETHREX_L1_SLACK_WEBHOOK }}
-        run: sh .github/scripts/publish.sh
-
-      - name: Post results to ethrex L2 slack channel
-        env:
-          url: ${{ secrets.ETHREX_L2_SLACK_WEBHOOK }}
-        run: sh .github/scripts/publish.sh
-
-      - name: Post results to levm slack channel
-        env:
-          url: ${{ secrets.LEVM_SLACK_WEBHOOK }}
+          SLACK_WEBHOOKS: >
+            ${{ github.event_name == 'workflow_dispatch'
+              && secrets.TEST_CHANNEL_SLACK
+              || format(
+                  '{0} {1} {2}',
+                  secrets.ETHREX_L1_SLACK_WEBHOOK,
+                  secrets.ETHREX_L2_SLACK_WEBHOOK,
+                  secrets.LEVM_SLACK_WEBHOOK
+                )
+            }}
+          SCRIPT: >
+            ${{ matrix.vm == 'levm'
+              && '.github/scripts/publish_levm_hive.sh'
+              || '.github/scripts/publish_hive.sh'
+            }}
         run: |
-          if [ "${{ matrix.vm }}" = "revm" ]; then
-            sh .github/scripts/publish.sh
-          elif [ "${{ matrix.vm }}" = "levm" ]; then
-            sh .github/scripts/publish_levm_hive.sh
-          fi
+          for webhook in $SLACK_WEBHOOKS; do
+            sh $SCRIPT "$webhook"
+          done
 
   hive-diff-report:
     name: Post tests diff to levm slack
@@ -134,21 +136,29 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: results_levm.md
-          path: ./results_levm.md
+
+      - name: Rename result (1)
+        run: cp results.md results_levm.md
 
       - name: Download results (revm)
         uses: actions/download-artifact@v4
         with:
           name: results_revm.md
-          path: ./results_revm.md
 
-      - name: Post results diff in LEVM channel
+      - name: Rename result (2)
+        run: cp results.md results_revm.md
+
+      - name: Post results diff to Slack
         env:
-          url: ${{ secrets.LEVM_SLACK_WEBHOOK }}
+          SLACK_WEBHOOK: >
+            ${{ github.event_name == 'workflow_dispatch'
+              && secrets.TEST_CHANNEL_SLACK
+              || secrets.LEVM_SLACK_WEBHOOK
+            }}
         run: |
           bash .github/scripts/levm_revm_diff.sh results_revm.md results_levm.md >> diff.md
           cat diff.md >> $GITHUB_STEP_SUMMARY
-          bash .github/scripts/publish_revm_levm_diff.sh
+          sh .github/scripts/publish_vms_diff.sh $SLACK_WEBHOOK
 
   levm-test:
     name: Generate Report for LEVM EF Tests
@@ -180,12 +190,11 @@ jobs:
           echo "# Daily LEVM EF Tests Run Report" >> $GITHUB_STEP_SUMMARY
           cat cmd/ef_tests/levm/levm_ef_tests_summary_github.txt >> $GITHUB_STEP_SUMMARY
 
-      # - name: Post results to ethrex L2 slack channel
-      #   env:
-      #     url: ${{ secrets.ETHREX_L2_SLACK_WEBHOOK }}
-      #   run: sh .github/scripts/publish_levm_ef_tests_summary.sh
-
-      - name: Post results to levm slack channel
+      - name: Post results to Slack
         env:
-          url: ${{ secrets.LEVM_SLACK_WEBHOOK }}
-        run: sh .github/scripts/publish_levm_ef_tests_summary.sh
+          SLACK_WEBHOOK: >
+            ${{ github.event_name == 'workflow_dispatch'
+              && secrets.TEST_CHANNEL_SLACK
+              || secrets.LEVM_SLACK_WEBHOOK
+            }}
+        run: sh .github/scripts/publish_levm_ef_tests.sh "$SLACK_WEBHOOK"

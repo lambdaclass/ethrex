@@ -1,6 +1,6 @@
 use crate::types::{
-    EFTest, EFTestAccessListItem, EFTestPostValue, EFTestRawTransaction, EFTestTransaction,
-    EFTests, TransactionExpectedException,
+    EFTest, EFTestAccessListItem, EFTestAuthorizationListTuple, EFTests,
+    TransactionExpectedException,EFTestPostValue,EFTestTransaction
 };
 use bytes::Bytes;
 use ethrex_core::{H256, U256};
@@ -251,6 +251,18 @@ where
     Ok(Some(final_access_lists))
 }
 
+pub fn deserialize_authorization_lists<'de, D>(
+    deserializer: D,
+) -> Result<Option<Vec<EFTestAuthorizationListTuple>>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let authorization_list: Option<Vec<EFTestAuthorizationListTuple>> =
+        Option::<Vec<EFTestAuthorizationListTuple>>::deserialize(deserializer)?;
+
+    Ok(authorization_list)
+}
+
 pub fn deserialize_u256_optional_safe<'de, D>(deserializer: D) -> Result<Option<U256>, D::Error>
 where
     D: serde::Deserializer<'de>,
@@ -390,6 +402,7 @@ impl<'de> Deserialize<'de> for EFTests {
                                 .get(data_id)
                                 .cloned()
                                 .unwrap_or_default(),
+                            authorization_list: raw_tx.authorization_list.clone(),
                         };
                         transactions.insert((data_id, gas_limit_id, value_id), tx);
                     }

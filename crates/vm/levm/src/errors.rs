@@ -112,6 +112,12 @@ pub enum TxValidationError {
     Type3TxBlobCountExceeded,
     #[error("Type3TxContractCreation")]
     Type3TxContractCreation,
+    #[error("Type 4 transactions are not supported before the Prague fork")]
+    Type4TxPreFork,
+    #[error("Type4TxAuthorizationListIsEmpty")]
+    Type4TxAuthorizationListIsEmpty,
+    #[error("Type4TxContractCreation")]
+    Type4TxContractCreation,
     #[error("Gas limit price product overflow")]
     GasLimitPriceProductOverflow,
     #[error("Gas limit is too low")]
@@ -148,7 +154,7 @@ pub enum InternalError {
     ArithmeticOperationUnderflow,
     #[error("Arithmetic operation divided by zero")]
     ArithmeticOperationDividedByZero,
-    #[error("Accound should have been cached")]
+    #[error("Account should have been cached")]
     AccountShouldHaveBeenCached,
     #[error("Tried to convert one type to another")]
     ConversionError,
@@ -198,6 +204,10 @@ pub enum PrecompileError {
     EvaluationError,
     #[error("This is a default error")]
     DefaultError,
+    #[error("The G1 point is not in the curve")]
+    BLS12381G1PointNotInCurve,
+    #[error("The G2 point is not in the curve")]
+    BLS12381G2PointNotInCurve,
 }
 
 #[derive(Debug, Clone)]

@@ -11,7 +11,7 @@ use ethrex_core::{
 use ethrex_levm::{
     db::CacheDB,
     errors::{TransactionReport, TxValidationError, VMError},
-    vm::VM,
+    vm::{AuthorizationTuple, VM},
     Environment,
 };
 use ethrex_storage::AccountUpdate;
@@ -112,6 +112,22 @@ pub fn prepare_vm_for_tx(
         .map(|arg| (arg.address, arg.storage_keys.clone()))
         .collect();
 
+    // Check if the tx has the authorization_lists field implemented by eip7702.
+    let authorization_list = tx.authorization_list.clone().map(|list| {
+        list.iter()
+            .map(|auth_tuple| AuthorizationTuple {
+                chain_id: auth_tuple.chain_id,
+                address: auth_tuple.address,
+                nonce: auth_tuple.nonce,
+                v: auth_tuple.v,
+                r_signature: auth_tuple.r,
+                s_signature: auth_tuple.s,
+                // If the signer is not present, set it to Address::zero()
+                signer: auth_tuple.signer.unwrap_or_default(),
+            })
+            .collect::<Vec<AuthorizationTuple>>()
+    });
+
     VM::new(
         tx.to.clone(),
         Environment {
@@ -140,6 +156,7 @@ pub fn prepare_vm_for_tx(
         db,
         CacheDB::default(),
         access_lists,
+        authorization_list,
     )
     .map_err(|err| EFTestRunnerError::VMInitializationFailed(err.to_string()))
 }

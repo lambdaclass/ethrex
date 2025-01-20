@@ -12,6 +12,7 @@ pub enum RpcErr {
     WrongParam(String),
     BadParams(String),
     MissingParam(String),
+    TooLargeRequest,
     BadHexFormat(u64),
     UnsuportedFork(String),
     Internal(String),
@@ -46,6 +47,11 @@ impl From<RpcErr> for RpcErrorMetadata {
                 code: -32000,
                 data: None,
                 message: format!("Expected parameter: {parameter_name} is missing"),
+            },
+            RpcErr::TooLargeRequest => RpcErrorMetadata {
+                code: -38004,
+                data: None,
+                message: "Too large request".to_string(),
             },
             RpcErr::UnsuportedFork(context) => RpcErrorMetadata {
                 code: -38005,
