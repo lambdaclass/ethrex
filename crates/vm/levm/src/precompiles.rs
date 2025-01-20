@@ -42,9 +42,9 @@ use crate::{
     errors::{InternalError, PrecompileError, VMError},
     gas_cost::{
         self, BLAKE2F_ROUND_COST, BLS12_381_G1ADD_COST, BLS12_381_G1_K_DISCOUNT,
-        BLS12_381_G2ADD_COST, BLS12_381_G2_K_DISCOUNT, BLS12_381_MAP_FP_TO_G1_COST, BLS12_381_MAP_FP2_TO_G2_COST, ECADD_COST,
-        ECMUL_COST, ECRECOVER_COST, G1_MUL_COST, G2_MUL_COST, MODEXP_STATIC_COST,
-        POINT_EVALUATION_COST,
+        BLS12_381_G2ADD_COST, BLS12_381_G2_K_DISCOUNT, BLS12_381_MAP_FP2_TO_G2_COST,
+        BLS12_381_MAP_FP_TO_G1_COST, ECADD_COST, ECMUL_COST, ECRECOVER_COST, G1_MUL_COST,
+        G2_MUL_COST, MODEXP_STATIC_COST, POINT_EVALUATION_COST,
     },
 };
 
@@ -1492,7 +1492,7 @@ pub fn bls12_map_fp2_tp_g2(
     // clear_h: clears the cofactor
     let point = G2Projective::map_to_curve(&fp2).clear_h();
     let result_bytes = if point.is_identity().into() {
-        return Ok(Bytes::copy_from_slice(&[0_u8; 256]));
+        return Ok(Bytes::copy_from_slice(&G2_POINT_AT_INFINITY));
     } else {
         G2Affine::from(point).to_uncompressed()
     };
