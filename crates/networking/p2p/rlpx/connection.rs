@@ -223,7 +223,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
                 // Local node is initator
                 // keccak256(nonce || initiator-nonce)
                 let hashed_nonces: [u8; 32] =
-                    Keccak256::digest([local_state.nonce.0, local_state.nonce.0].concat()).into();
+                    Keccak256::digest([remote_state.nonce.0, local_state.nonce.0].concat()).into();
                 (local_state, remote_state, hashed_nonces)
             }
             RLPxConnectionMode::Receiver => {
