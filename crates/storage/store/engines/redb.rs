@@ -701,7 +701,7 @@ impl StoreEngine for RedBStore {
     fn synced(&self) -> Result<bool, StoreError> {
         match self.read(CHAIN_DATA_TABLE, ChainDataIndex::Synced)? {
             None => Err(StoreError::Custom("Sync status not found".to_string())),
-            Some(ref rlp) => RLPDecode::decode(rlp).map_err(|_| StoreError::DecodeError),
+            Some(ref rlp) => RLPDecode::decode(&rlp.value()).map_err(|_| StoreError::DecodeError),
         }
     }
 
