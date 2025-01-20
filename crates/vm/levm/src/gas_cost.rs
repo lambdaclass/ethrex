@@ -173,6 +173,10 @@ pub const ACCESS_LIST_ADDRESS_COST: u64 = 2400;
 pub const ECRECOVER_COST: u64 = 3000;
 pub const BLS12_381_G1ADD_COST: u64 = 375;
 pub const BLS12_381_G2ADD_COST: u64 = 600;
+pub const BLS12_381_MAP_FP_TO_G1_COST: u64 = 5500;
+pub const BLS12_PAIRING_CHECK_MUL_COST: u64 = 32600;
+pub const BLS12_PAIRING_CHECK_FIXED_COST: u64 = 37700;
+pub const BLS12_381_MAP_FP2_TO_G2_COST: u64 = 23800;
 
 // Floor cost per token, specified in https://eips.ethereum.org/EIPS/eip-7623
 pub const TOTAL_COST_FLOOR_PER_TOKEN: u64 = 10;
@@ -213,6 +217,16 @@ pub const BLS12_381_G1_K_DISCOUNT: [u64; 128] = [
     528, 528, 527, 526, 525, 525, 524, 523, 522, 522, 521, 520, 520, 519,
 ];
 pub const G1_MUL_COST: u64 = 12000;
+pub const BLS12_381_G2_K_DISCOUNT: [u64; 128] = [
+    1000, 1000, 923, 884, 855, 832, 812, 796, 782, 770, 759, 749, 740, 732, 724, 717, 711, 704,
+    699, 693, 688, 683, 679, 674, 670, 666, 663, 659, 655, 652, 649, 646, 643, 640, 637, 634, 632,
+    629, 627, 624, 622, 620, 618, 615, 613, 611, 609, 607, 606, 604, 602, 600, 598, 597, 595, 593,
+    592, 590, 589, 587, 586, 584, 583, 582, 580, 579, 578, 576, 575, 574, 573, 571, 570, 569, 568,
+    567, 566, 565, 563, 562, 561, 560, 559, 558, 557, 556, 555, 554, 553, 552, 552, 551, 550, 549,
+    548, 547, 546, 545, 545, 544, 543, 542, 541, 541, 540, 539, 538, 537, 537, 536, 535, 535, 534,
+    533, 532, 532, 531, 530, 530, 529, 528, 528, 527, 526, 526, 525, 524, 524,
+];
+pub const G2_MUL_COST: u64 = 22500;
 
 pub fn exp(exponent: U256) -> Result<u64, VMError> {
     let exponent_byte_size = (exponent
@@ -789,16 +803,16 @@ pub fn staticcall(
     calculate_cost_and_gas_limit_call(true, gas_from_stack, gas_left, call_gas_costs, 0)
 }
 
-pub fn fake_exponential(factor: u64, numerator: u64, denominator: u64) -> Result<u64, VMError> {
-    let mut i = 1;
-    let mut output: u64 = 0;
+pub fn fake_exponential(factor: U256, numerator: U256, denominator: U256) -> Result<U256, VMError> {
+    let mut i = U256::one();
+    let mut output: U256 = U256::zero();
 
     // Initial multiplication: factor * denominator
     let mut numerator_accum = factor
         .checked_mul(denominator)
         .ok_or(InternalError::ArithmeticOperationOverflow)?;
 
-    while numerator_accum > 0 {
+    while !numerator_accum.is_zero() {
         // Safe addition to output
         output = output
             .checked_add(numerator_accum)
@@ -818,7 +832,7 @@ pub fn fake_exponential(factor: u64, numerator: u64, denominator: u64) -> Result
             ))?;
 
         i = i
-            .checked_add(1)
+            .checked_add(U256::one())
             .ok_or(InternalError::ArithmeticOperationOverflow)?;
     }
 
@@ -1047,20 +1061,20 @@ fn calculate_cost_and_gas_limit_call(
     ))
 }
 
-pub fn bls12_g1msm(k: usize) -> Result<u64, VMError> {
+pub fn bls12_msm(k: usize, discount_table: &[u64; 128], mul_cost: u64) -> Result<u64, VMError> {
     if k == 0 {
         return Ok(0);
     }
 
-    let discount = if k < BLS12_381_G1_K_DISCOUNT.len() {
-        BLS12_381_G1_K_DISCOUNT
+    let discount = if k < discount_table.len() {
+        discount_table
             .get(k.checked_sub(1).ok_or(VMError::Internal(
                 InternalError::ArithmeticOperationUnderflow,
             ))?)
             .copied()
             .ok_or(VMError::Internal(InternalError::SlicingError))?
     } else {
-        BLS12_381_G1_K_DISCOUNT
+        discount_table
             .last()
             .copied()
             .ok_or(VMError::Internal(InternalError::SlicingError))?
@@ -1068,11 +1082,25 @@ pub fn bls12_g1msm(k: usize) -> Result<u64, VMError> {
 
     let gas_cost = u64::try_from(k)
         .map_err(|_| VMError::VeryLargeNumber)?
-        .checked_mul(G1_MUL_COST)
+        .checked_mul(mul_cost)
         .ok_or(VMError::VeryLargeNumber)?
         .checked_mul(discount)
         .ok_or(VMError::VeryLargeNumber)?
         .checked_div(BLS12_381_MSM_MULTIPLIER)
         .ok_or(VMError::VeryLargeNumber)?;
+    Ok(gas_cost)
+}
+
+pub fn bls12_pairing_check(k: usize) -> Result<u64, VMError> {
+    let gas_cost = u64::try_from(k)
+        .map_err(|_| VMError::VeryLargeNumber)?
+        .checked_mul(BLS12_PAIRING_CHECK_MUL_COST)
+        .ok_or(VMError::PrecompileError(
+            PrecompileError::GasConsumedOverflow,
+        ))?
+        .checked_add(BLS12_PAIRING_CHECK_FIXED_COST)
+        .ok_or(VMError::PrecompileError(
+            PrecompileError::GasConsumedOverflow,
+        ))?;
     Ok(gas_cost)
 }
