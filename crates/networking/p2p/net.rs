@@ -78,6 +78,7 @@ pub async fn start_network(
     let server_handle = tokio::spawn(serve_requests(
         tcp_addr,
         udp_socket.clone(),
+        udp_addr,
         signer.clone(),
         storage.clone(),
         peer_table.clone(),
@@ -147,7 +148,6 @@ async fn discover_peers_server(
     let mut buf = vec![0; MAX_DISC_PACKET_SIZE];
 
     loop {
-        debug!("Waiting for a packet");
         let (read, from) = udp_socket.recv_from(&mut buf).await.unwrap();
         debug!("Received {read} bytes from {from}");
 
@@ -187,12 +187,13 @@ async fn discover_peers_server(
                 } else {
                     // send a ping to get the endpoint proof from our end
                     let node = Node {
-                        ip: from.ip(),
-                        udp_port: from.port(),
-                        tcp_port: 0,
+                        ip: msg.from.ip,
+                        udp_port: msg.from.udp_port,
+                        tcp_port: msg.from.tcp_port,
                         node_id: packet.get_node_id(),
                     };
-                    try_add_peer_and_ping(&udp_socket, &signer, table.clone(), node).await;
+                    try_add_peer_and_ping(&udp_socket, udp_addr, &signer, table.clone(), node)
+                        .await;
                 }
             }
             Message::Pong(msg) => {
@@ -340,9 +341,7 @@ async fn discovery_startup(
     signer: SigningKey,
     bootnodes: Vec<BootNode>,
 ) {
-    debug!("Starting discovery startup");
     for bootnode in bootnodes {
-        debug!("Inserting node {:?}", bootnode);
         table.lock().await.insert_node(Node {
             ip: bootnode.socket_address.ip(),
             udp_port: bootnode.socket_address.port(),
@@ -761,6 +760,7 @@ async fn pong(socket: &UdpSocket, to_addr: SocketAddr, ping_hash: H256, signer: 
 /// - If the node is **already present**, no action is taken.
 pub async fn try_add_peer_and_ping(
     udp_socket: &UdpSocket,
+    local_addr: SocketAddr,
     signer: &SigningKey,
     table: Arc<Mutex<KademliaTable>>,
     node: Node,
@@ -774,9 +774,7 @@ pub async fn try_add_peer_and_ping(
             "Peer was not previously stored. Adding it to the table and sending a ping message to verify connectivity."
         );
         let node_addr = std::net::SocketAddr::new(peer.node.ip, peer.node.udp_port);
-        let sockedt_addr =
-            std::net::SocketAddr::new(std::net::Ipv4Addr::new(127, 0, 0, 1).into(), 30303);
-        let ping_hash = crate::ping(udp_socket, sockedt_addr, node_addr, signer).await;
+        let ping_hash = crate::ping(udp_socket, local_addr, node_addr, signer).await;
         table
             .lock()
             .await
@@ -787,6 +785,7 @@ pub async fn try_add_peer_and_ping(
 async fn serve_requests(
     tcp_addr: SocketAddr,
     udp_socket: Arc<UdpSocket>,
+    udp_addr: SocketAddr,
     signer: SigningKey,
     storage: Store,
     table: Arc<Mutex<KademliaTable>>,
@@ -801,6 +800,7 @@ async fn serve_requests(
         tokio::spawn(handle_peer_as_receiver(
             peer_addr,
             udp_socket.clone(),
+            udp_addr,
             signer.clone(),
             stream,
             storage.clone(),
@@ -813,6 +813,7 @@ async fn serve_requests(
 async fn handle_peer_as_receiver(
     peer_addr: SocketAddr,
     udp_socket: Arc<UdpSocket>,
+    udp_addr: SocketAddr,
     signer: SigningKey,
     stream: TcpStream,
     storage: Store,
@@ -821,7 +822,7 @@ async fn handle_peer_as_receiver(
 ) {
     let mut conn = RLPxConnection::receiver(signer.clone(), stream, storage, connection_broadcast);
     debug!("[INCOMING] Starting RLPx connection with {peer_addr:?}");
-    conn.start_peer_receiver(peer_addr, udp_socket, signer, table)
+    conn.start_peer_receiver(peer_addr, udp_socket, udp_addr, signer, table)
         .await;
 }
 

@@ -152,6 +152,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
         &mut self,
         peer_addr: std::net::SocketAddr,
         udp_socket: Arc<tokio::net::UdpSocket>,
+        udp_addr: std::net::SocketAddr,
         signer: SigningKey,
         table: Arc<Mutex<crate::kademlia::KademliaTable>>,
     ) {
@@ -190,7 +191,8 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
                         udp_port: peer_addr.port(),
                         tcp_port: peer_addr.port(),
                     };
-                    try_add_peer_and_ping(&udp_socket, &signer, table.clone(), node).await;
+                    try_add_peer_and_ping(&udp_socket, udp_addr, &signer, table.clone(), node)
+                        .await;
                     table.lock().await.init_backend_communication(
                         node_id,
                         peer_channels,
