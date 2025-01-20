@@ -14,15 +14,20 @@ use ethrex_core::{
 };
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_storage::{error::StoreError, Store};
+#[cfg(feature = "levm")]
+use ethrex_vm::{db::StoreWrapper, execute_tx_levm};
+
+#[cfg(feature = "levm")]
+use std::sync::Arc;
+
 use ethrex_vm::{
-    beacon_root_contract_call, db::StoreWrapper, evm_state, execute_tx, execute_tx_levm,
-    get_state_transitions, process_withdrawals, spec_id, EvmError, EvmState, SpecId,
+    beacon_root_contract_call, evm_state, execute_tx, get_state_transitions, process_withdrawals,
+    spec_id, EvmError, EvmState, SpecId,
 };
+
 use sha3::{Digest, Keccak256};
 
 use ethrex_metrics::metrics;
-
-use std::sync::Arc;
 
 #[cfg(feature = "metrics")]
 use ethrex_metrics::metrics_transactions::{MetricsTxStatus, MetricsTxType, METRICS_TX};
