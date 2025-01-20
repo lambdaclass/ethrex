@@ -431,8 +431,6 @@ fn apply_plain_transaction(
 ) -> Result<Receipt, ChainError> {
     #[cfg(feature = "levm")]
     {
-        println!("USING LEVM",);
-
         let block_cache = HashMap::new();
 
         let store_wrapper = Arc::new(StoreWrapper {
@@ -462,7 +460,6 @@ fn apply_plain_transaction(
     }
     #[cfg(not(feature = "levm"))]
     {
-        println!("NOT USING LEVM",);
         let result = execute_tx(
             &head.tx,
             &context.payload.header,
