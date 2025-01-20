@@ -184,14 +184,25 @@ async fn discover_peers_server(
                     }
                 } else {
                     // send a ping to get the endpoint proof from our end
-                    let node = Node {
-                        ip: msg.from.ip,
-                        udp_port: msg.from.udp_port,
-                        tcp_port: msg.from.tcp_port,
-                        node_id: packet.get_node_id(),
+                    let (peer, inserted_to_table) = {
+                        let mut table = table.lock().await;
+                        table.insert_node(Node {
+                            ip: from.ip(),
+                            udp_port: from.port(),
+                            tcp_port: 0,
+                            node_id: packet.get_node_id(),
+                        })
                     };
-                    try_add_peer_and_ping(&udp_socket, udp_addr, &signer, table.clone(), node)
-                        .await;
+                    let hash = ping(&udp_socket, udp_addr, from, &signer).await;
+                    if let Some(hash) = hash {
+                        if inserted_to_table && peer.is_some() {
+                            let peer = peer.unwrap();
+                            table
+                                .lock()
+                                .await
+                                .update_peer_ping(peer.node.node_id, Some(hash));
+                        }
+                    }
                 }
             }
             Message::Pong(msg) => {
@@ -749,35 +760,6 @@ async fn pong(socket: &UdpSocket, to_addr: SocketAddr, ping_hash: H256, signer: 
 
     pong.encode_with_header(&mut buf, signer);
     let _ = socket.send_to(&buf, to_addr).await;
-}
-
-/// Attempts to add a node to the Kademlia table and send a ping if necessary.
-///
-/// - If the node is **not found** in the table and there is enough space, it will be added,  
-///   and a ping message will be sent to verify connectivity.
-/// - If the node is **already present**, no action is taken.
-pub async fn try_add_peer_and_ping(
-    udp_socket: &UdpSocket,
-    local_addr: SocketAddr,
-    signer: &SigningKey,
-    table: Arc<Mutex<KademliaTable>>,
-    node: Node,
-) {
-    debug!("Attempting to insert node: {:?} into Kademlia table", node);
-    let (Some(peer), inserted_to_table) = table.lock().await.insert_node(node) else {
-        return;
-    };
-    if inserted_to_table {
-        debug!(
-            "Peer was not previously stored. Adding it to the table and sending a ping message to verify connectivity."
-        );
-        let node_addr = std::net::SocketAddr::new(peer.node.ip, peer.node.udp_port);
-        let ping_hash = crate::ping(udp_socket, local_addr, node_addr, signer).await;
-        table
-            .lock()
-            .await
-            .update_peer_ping(peer.node.node_id, ping_hash);
-    };
 }
 
 async fn serve_requests(

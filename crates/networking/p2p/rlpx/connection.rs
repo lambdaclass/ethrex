@@ -224,7 +224,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
         match error {
             RLPxError::RLPDecodeError(_) => Some(2_u8),
             // TODO build a proper matching between error types and disconnection reasons
-            _ => Some(2_u8),
+            _ => None,
         }
     }
 
