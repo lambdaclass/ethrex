@@ -94,7 +94,7 @@ fn run_with_levm(
         levm_run_spinner.stop();
     }
     for test in ef_tests.iter() {
-        if test.name != "tests/prague/eip7702_set_code_tx/test_gas.py::test_gas_cost[fork_Prague-state_test-multiple_valid_authorizations_single_signer]" {
+        if test.name != "tests/prague/eip7702_set_code_tx/test_gas.py::test_account_warming[fork_Prague-state_test-single_valid_authorization_single_signer-check_delegated_account_first_True]" {
             continue;
         }
         if !opts.spinner && opts.verbose {

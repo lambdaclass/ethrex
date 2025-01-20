@@ -448,12 +448,13 @@ impl VM {
             // Gas refunds are applied at the end of a transaction. Should it be implemented here?
 
             match op_result {
-                Ok(OpcodeSuccess::Debug) => {
+                Ok(OpcodeSuccess::Debug(res)) => {
                     let opcode = current_call_frame.next_opcode();
                     dbg!(&current_call_frame);
                     let pretty_bytecode = format!("{:#x}", current_call_frame.bytecode);
                     dbg!(&pretty_bytecode);
                     dbg!(opcode);
+                    dbg!(res);
                 }
                 Ok(OpcodeSuccess::Continue) => {}
                 Ok(OpcodeSuccess::Result(_)) => {
@@ -533,6 +534,7 @@ impl VM {
                     self.call_frames.push(current_call_frame.clone());
 
                     if error.is_internal() {
+                        dbg!(&error);
                         return Err(error);
                     }
 
@@ -662,7 +664,7 @@ impl VM {
         Ok(())
     }
 
-    fn gas_used(&self, current_call_frame: &mut CallFrame) -> Result<u64, VMError> {
+    fn gas_used(&self, current_call_frame: &CallFrame) -> Result<u64, VMError> {
         if self.env.spec_id >= SpecId::PRAGUE {
             // tokens_in_calldata = nonzero_bytes_in_calldata * 4 + zero_bytes_in_calldata
             // tx_calldata = nonzero_bytes_in_calldata * 16 + zero_bytes_in_calldata * 4
@@ -1180,7 +1182,6 @@ impl VM {
             .checked_add(gas)
             .ok_or(OutOfGasError::ConsumedGasOverflow)?;
         if potential_consumed_gas > current_call_frame.gas_limit {
-            dbg!("GAS LIMIT EXCEEDED");
             return Err(VMError::OutOfGas(OutOfGasError::MaxGasLimitExceeded));
         }
 
@@ -1403,8 +1404,8 @@ impl VM {
                 continue;
             }
 
-            let mut rlp_buf = Vec::new();
-            (auth_tuple.chain_id, auth_tuple.address, auth_tuple.nonce).encode(&mut rlp_buf);
+            let rlp_buf =
+                (auth_tuple.chain_id, auth_tuple.address, auth_tuple.nonce).encode_to_vec();
 
             let mut hasher = Keccak256::new();
             hasher.update(&[MAGIC]);
@@ -1501,7 +1502,7 @@ impl VM {
             } else {
                 auth_account.info.bytecode = Bytes::new();
             }
-
+            dbg!(&authority_address);
             // 9. Increase the nonce of authority by one.
             self.increment_account_nonce(authority_address)
                 .map_err(|_| VMError::TxValidation(TxValidationError::NonceIsMax))?;
@@ -1510,6 +1511,9 @@ impl VM {
         let code_address_info = self.get_account(initial_call_frame.code_address).info;
 
         if was_delegated(&code_address_info)? {
+            self.accrued_substate
+                .touched_accounts
+                .insert(initial_call_frame.code_address);
             initial_call_frame.code_address = get_authorized_address(&code_address_info)?;
             let (auth_address_info, _) = self.access_account(initial_call_frame.code_address);
 
@@ -1517,6 +1521,10 @@ impl VM {
         } else {
             initial_call_frame.bytecode = code_address_info.bytecode.clone();
         }
+
+        let initial_bytecode = format!("{:#x}", initial_call_frame.bytecode);
+        dbg!(&initial_bytecode);
+        dbg!(&initial_call_frame.code_address);
 
         initial_call_frame.valid_jump_destinations =
             get_valid_jump_destinations(&initial_call_frame.bytecode).unwrap_or_default();

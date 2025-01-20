@@ -21,9 +21,31 @@ impl VM {
         &mut self,
         current_call_frame: &mut CallFrame,
     ) -> Result<OpcodeSuccess, VMError> {
+        dbg!(&current_call_frame.stack);
         // STACK
+        // TODO change it back
+        //GAS
+        //PUSH1 0x00
+        //PUSH1 0x00
+        //PUSH1 0x00
+        //PUSH1 0x00
+        //PUSH1 0x00
+        //PUSH20 0xa94f5374fce5edbc8e2a8697c15331677e6ebf0b
+        //PUSH1 0x00
+        //stack: [
+        //    883250,
+        //    0,
+        //    0,
+        //    0,
+        //    0,
+        //    0,
+        //    788065941775983272449444774641449473958132390328,
+        //    0,
+        //],
+        //let gas = *current_call_frame.stack.stack.first().unwrap();
         let gas = current_call_frame.stack.pop()?;
         let callee: Address = word_to_address(current_call_frame.stack.pop()?);
+        dbg!(&callee, gas);
         let value_to_transfer: U256 = current_call_frame.stack.pop()?;
         let args_start_offset = current_call_frame.stack.pop()?;
         let args_size = current_call_frame
@@ -55,12 +77,17 @@ impl VM {
         let (is_delegation, eip7702_gas_consumed, code_address, bytecode) =
             self.eip7702_get_code(callee)?;
 
+        let pretty_bytecode = format!("{bytecode:#x}");
+        dbg!(code_address, pretty_bytecode);
+
         let gas_left = current_call_frame
             .gas_limit
             .checked_sub(current_call_frame.gas_used)
             .ok_or(InternalError::GasOverflow)?
             .checked_sub(eip7702_gas_consumed)
             .ok_or(InternalError::GasOverflow)?;
+
+        dbg!(gas_left, eip7702_gas_consumed, current_call_frame.gas_used);
 
         let (cost, gas_limit) = gas_cost::call(
             new_memory_size,
@@ -72,6 +99,8 @@ impl VM {
             gas_left,
             self.env.spec_id,
         )?;
+
+        dbg!(gas_limit, cost);
 
         self.increase_consumed_gas(current_call_frame, cost)?;
         self.increase_consumed_gas(current_call_frame, eip7702_gas_consumed)?;
@@ -737,6 +766,7 @@ impl VM {
         if is_delegation && bytecode.is_empty() {
             empty = true;
             dbg!("BYTECODE EMPTY");
+
             current_call_frame
                 .gas_used
                 .checked_sub(gas_limit)
@@ -767,6 +797,9 @@ impl VM {
 
         let tx_report = self.execute(&mut new_call_frame)?;
 
+        dbg!(new_call_frame.gas_limit);
+        dbg!(tx_report.gas_used);
+        dbg!("FAILS BELOW");
         // Return gas left from subcontext
         let gas_left_from_new_call_frame = new_call_frame
             .gas_limit
@@ -805,8 +838,9 @@ impl VM {
 
         if empty {
             dbg!("CALL FINISHED");
-            return Ok(OpcodeSuccess::Continue);
+            return Ok(OpcodeSuccess::Debug(tx_report.result));
         }
+        dbg!("FINISHED CALL");
         Ok(OpcodeSuccess::Continue)
     }
 }
