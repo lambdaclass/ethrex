@@ -1,5 +1,6 @@
 use bls12_381::{
-    multi_miller_loop, G1Affine, G1Projective, G2Affine, G2Prepared, G2Projective, Gt, Scalar,
+    hash_to_curve::MapToCurve, multi_miller_loop, Fp, G1Affine, G1Projective, G2Affine, G2Prepared,
+    G2Projective, Gt, Scalar,
 };
 
 use bytes::Bytes;
@@ -41,8 +42,9 @@ use crate::{
     errors::{InternalError, PrecompileError, VMError},
     gas_cost::{
         self, BLAKE2F_ROUND_COST, BLS12_381_G1ADD_COST, BLS12_381_G1_K_DISCOUNT,
-        BLS12_381_G2ADD_COST, BLS12_381_G2_K_DISCOUNT, ECADD_COST, ECMUL_COST, ECRECOVER_COST,
-        G1_MUL_COST, G2_MUL_COST, MODEXP_STATIC_COST, POINT_EVALUATION_COST,
+        BLS12_381_G2ADD_COST, BLS12_381_G2_K_DISCOUNT, BLS12_381_MAP_FP_TO_G1_COST, ECADD_COST,
+        ECMUL_COST, ECRECOVER_COST, G1_MUL_COST, G2_MUL_COST, MODEXP_STATIC_COST,
+        POINT_EVALUATION_COST,
     },
 };
 
@@ -151,8 +153,13 @@ pub const BLS12_381_PAIRING_CHECK_PAIR_LENGTH: usize = 384;
 const BLS12_381_G1ADD_VALID_INPUT_LENGTH: usize = 256;
 const BLS12_381_G2ADD_VALID_INPUT_LENGTH: usize = 512;
 
+const BLS12_381_FP_VALID_INPUT_LENGTH: usize = 64;
+
 pub const FIELD_ELEMENT_WITHOUT_PADDING_LENGTH: usize = 48;
 pub const PADDED_FIELD_ELEMENT_SIZE_IN_BYTES: usize = 64;
+
+pub const G1_POINT_AT_INFINITY: [u8; 128] = [0_u8; 128];
+pub const G2_POINT_AT_INFINITY: [u8; 256] = [0_u8; 256];
 
 pub fn is_precompile(callee_address: &Address, spec_id: SpecId) -> bool {
     // Cancun specs is the only one that allows point evaluation precompile
@@ -1199,7 +1206,7 @@ pub fn bls12_g1add(
     let result_of_addition = G1Affine::from(first_g1_point.add(&second_g1_point));
 
     let result_bytes = if result_of_addition.is_identity().into() {
-        return Ok(Bytes::copy_from_slice(&[0_u8; 128]));
+        return Ok(Bytes::copy_from_slice(&G1_POINT_AT_INFINITY));
     } else {
         result_of_addition.to_uncompressed()
     };
@@ -1280,7 +1287,7 @@ pub fn bls12_g2add(
     let result_of_addition = G2Affine::from(first_g2_point.add(&second_g2_point));
 
     let result_bytes = if result_of_addition.is_identity().into() {
-        return Ok(Bytes::copy_from_slice(&[0_u8; 256]));
+        return Ok(Bytes::copy_from_slice(&G2_POINT_AT_INFINITY));
     } else {
         result_of_addition.to_uncompressed()
     };
@@ -1329,7 +1336,7 @@ pub fn bls12_g2msm(
     }
 
     let result_bytes = if result.is_identity().into() {
-        return Ok(Bytes::copy_from_slice(&[0_u8; 256]));
+        return Ok(Bytes::copy_from_slice(&G2_POINT_AT_INFINITY));
     } else {
         G2Affine::from(result).to_uncompressed()
     };
@@ -1402,11 +1409,38 @@ pub fn bls12_pairing_check(
 }
 
 pub fn bls12_map_fp_to_g1(
-    _calldata: &Bytes,
-    _gas_for_call: u64,
-    _consumed_gas: &mut u64,
+    calldata: &Bytes,
+    gas_for_call: u64,
+    consumed_gas: &mut u64,
 ) -> Result<Bytes, VMError> {
-    Ok(Bytes::new())
+    if calldata.len() != BLS12_381_FP_VALID_INPUT_LENGTH {
+        return Err(VMError::PrecompileError(PrecompileError::ParsingInputError));
+    }
+
+    // GAS
+    increase_precompile_consumed_gas(gas_for_call, BLS12_381_MAP_FP_TO_G1_COST, consumed_gas)?;
+
+    let coordinate_bytes = parse_coordinate(calldata.get(0..PADDED_FIELD_ELEMENT_SIZE_IN_BYTES))?;
+    let fp = Fp::from_bytes(&coordinate_bytes)
+        .into_option()
+        .ok_or(VMError::PrecompileError(PrecompileError::ParsingInputError))?;
+
+    // following https://github.com/ethereum/EIPs/blob/master/assets/eip-2537/field_to_curve.md?plain=1#L3-L6, we do:
+    // map_to_curve: map a field element to a another curve, then isogeny is applied to map to the curve bls12_381
+    // clear_h: clears the cofactor
+    let point = G1Projective::map_to_curve(&fp).clear_h();
+
+    let result_bytes = if point.is_identity().into() {
+        return Ok(Bytes::copy_from_slice(&G1_POINT_AT_INFINITY));
+    } else {
+        G1Affine::from(point).to_uncompressed()
+    };
+
+    let mut padded_result = Vec::new();
+    add_padded_coordinate(&mut padded_result, result_bytes.get(0..48))?;
+    add_padded_coordinate(&mut padded_result, result_bytes.get(48..96))?;
+
+    Ok(Bytes::from(padded_result))
 }
 
 pub fn bls12_map_fp2_tp_g2(
