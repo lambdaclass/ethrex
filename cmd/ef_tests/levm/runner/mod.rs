@@ -47,6 +47,8 @@ pub struct EFTestRunnerOptions {
     pub fork: Vec<SpecId>,
     #[arg(short, long, value_name = "TESTS", use_value_delimiter = true)]
     pub tests: Vec<String>,
+    #[arg(value_name = "SPECIFIC_TESTS", use_value_delimiter = true)]
+    pub specific_tests: Option<Vec<String>>,
     #[arg(short, long, value_name = "SUMMARY", default_value = "false")]
     pub summary: bool,
     #[arg(long, value_name = "SKIP", use_value_delimiter = true)]
@@ -94,6 +96,11 @@ fn run_with_levm(
         levm_run_spinner.stop();
     }
     for test in ef_tests.iter() {
+        if opts.specific_tests.is_some()
+            && !opts.specific_tests.clone().unwrap().contains(&test.name)
+        {
+            continue;
+        }
         if !opts.spinner && opts.verbose {
             println!("Running test: {:?}", test.name);
         }
