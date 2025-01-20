@@ -67,9 +67,6 @@ pub struct VM {
     pub cache: CacheDB,
     pub tx_kind: TxKind,
     pub access_list: AccessList,
-    // CHECK: check if we have to use an Option, if the AuthorizationList is not present in the tx.
-    // The node has to validate if the TxType is 0x4 and validate the AuthorizationList
-    // The Option is used with .is_some() and run the EIP7702 transaction.
     pub authorization_list: Option<AuthorizationList>,
 }
 

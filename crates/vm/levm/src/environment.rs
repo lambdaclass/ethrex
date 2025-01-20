@@ -34,7 +34,6 @@ impl Environment {
     pub fn default_from_address(origin: Address) -> Self {
         Self {
             origin,
-            refunded_gas: 0,
             gas_limit: u64::MAX,
             chain_id: U256::one(),
             ..Default::default()
