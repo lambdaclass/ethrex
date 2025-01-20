@@ -88,7 +88,7 @@ impl ForkId {
                     return true;
                 }
             } else {
-                // is a superset of the local past forks (rule #3)
+                // The remote hash is a superset of the local past forks (rule #3)
                 if incoming.fork_hash == fork_hash {
                     return true;
                 }
