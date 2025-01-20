@@ -64,11 +64,9 @@ pub async fn start_network(
         tokio::task::Id,
         Arc<RLPxMessage>,
     )>(MAX_MESSAGES_TO_BROADCAST);
-    let udp_socket = Arc::new(UdpSocket::bind(udp_addr).await.unwrap());
 
     let discovery_handle = tokio::spawn(discover_peers(
         udp_addr,
-        udp_socket.clone(),
         signer.clone(),
         storage.clone(),
         peer_table.clone(),
@@ -88,13 +86,14 @@ pub async fn start_network(
 
 async fn discover_peers(
     udp_addr: SocketAddr,
-    udp_socket: Arc<UdpSocket>,
     signer: SigningKey,
     storage: Store,
     table: Arc<Mutex<KademliaTable>>,
     bootnodes: Vec<BootNode>,
     connection_broadcast: broadcast::Sender<(tokio::task::Id, Arc<RLPxMessage>)>,
 ) {
+    let udp_socket = Arc::new(UdpSocket::bind(udp_addr).await.unwrap());
+
     let server_handler = tokio::spawn(discover_peers_server(
         udp_addr,
         udp_socket.clone(),
@@ -655,7 +654,7 @@ fn peers_to_ask_push(peers_to_ask: &mut Vec<Node>, target: H512, node: Node) {
 /// Sends a ping to the addr
 /// # Returns
 /// an optional hash corresponding to the message header hash to account if the send was successful
-pub async fn ping(
+async fn ping(
     socket: &UdpSocket,
     local_addr: SocketAddr,
     to_addr: SocketAddr,
