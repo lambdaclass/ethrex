@@ -15,19 +15,19 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        vm: [ levm, revm ]
+        vm: [levm, revm]
         test:
           - {
-            name: "Rpc Compat tests",
-            file_name: rpc-compat,
-            simulation: ethereum/rpc-compat,
-          }
+              name: "Rpc Compat tests",
+              file_name: rpc-compat,
+              simulation: ethereum/rpc-compat,
+            }
           - { name: "Devp2p eth tests", file_name: devp2p, simulation: devp2p }
           - {
-            name: "Cancun Engine tests",
-            file_name: engine,
-            simulation: ethereum/engine,
-          }
+              name: "Cancun Engine tests",
+              file_name: engine,
+              simulation: ethereum/engine,
+            }
           - { name: "Sync tests", file_name: sync, simulation: ethereum/sync }
 
     steps:
@@ -67,7 +67,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        vm: [ levm, revm ]
+        vm: [levm, revm]
     steps:
       - name: Checkout sources
         uses: actions/checkout@v4
@@ -108,8 +108,9 @@ jobs:
             ${{ github.event_name == 'workflow_dispatch'
               && secrets.TEST_CHANNEL_SLACK
               || format(
-                  '{0}, {1}',
-                  secrets.ETHREX_REPORTS_SLACK_WEBHOOK,
+                  '{0} {1} {2}',
+                  secrets.ETHREX_L1_SLACK_WEBHOOK,
+                  secrets.ETHREX_L2_SLACK_WEBHOOK,
                   secrets.LEVM_SLACK_WEBHOOK
                 )
             }}
@@ -135,13 +136,17 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: results_levm.md
-          path: ./results_levm.md
+
+      - name: Rename result (1)
+        run: cp results.md results_levm.md
 
       - name: Download results (revm)
         uses: actions/download-artifact@v4
         with:
           name: results_revm.md
-          path: ./results_revm.md
+
+      - name: Rename result (2)
+        run: cp results.md results_revm.md
 
       - name: Post results diff to Slack
         env:
@@ -192,7 +197,7 @@ jobs:
               && secrets.TEST_CHANNEL_SLACK
               || secrets.LEVM_SLACK_WEBHOOK
             }}
-        run: sh .github/scripts/publish_levm_ef_tests.sh $SLACK_WEBHOOK
+        run: sh .github/scripts/publish_levm_ef_tests.sh "$SLACK_WEBHOOK"
 
   flamegraphs-page:
     name: Post to Slack link to Flamegraphs Page
