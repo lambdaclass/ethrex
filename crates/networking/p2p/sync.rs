@@ -14,7 +14,7 @@ use tokio::{
     },
     time::Instant,
 };
-use tracing::{debug, error, info, warn};
+use tracing::{debug, info, warn};
 
 use crate::rlpx::p2p::Capability;
 use crate::{kademlia::KademliaTable, peer_channels::BlockRequestOrder};
@@ -73,20 +73,12 @@ impl SyncManager {
     pub async fn start_sync(&mut self, current_head: H256, sync_head: H256, store: Store) {
         info!("Syncing from current head {current_head} to sync_head {sync_head}");
         let start_time = Instant::now();
-        match self
-            .sync_cycle(current_head, sync_head, store.clone())
-            .await
-        {
+        match self.sync_cycle(current_head, sync_head, store).await {
             Ok(()) => {
                 info!(
                     "Sync finished, time elapsed: {} secs",
                     start_time.elapsed().as_secs()
                 );
-                if let Err(e) = store.update_sync_status(true) {
-                    error!(
-                        "Couldn't update sync status: {e}. Transactions from peers won't be added."
-                    );
-                }
             }
             Err(error) => warn!(
                 "Sync failed due to {error}, time elapsed: {} secs ",
