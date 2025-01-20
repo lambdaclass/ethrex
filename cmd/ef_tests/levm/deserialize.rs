@@ -1,7 +1,7 @@
 use crate::types::{
-    EFTest, EFTestAccessListItem, EFTestPostValue, EFTests, TransactionExpectedException,
+    EFTest, EFTestAccessListItem, EFTestPostValue, EFTestRawTransaction, EFTestTransaction,
+    EFTests, TransactionExpectedException,
 };
-use crate::types::{EFTestRawTransaction, EFTestTransaction};
 use bytes::Bytes;
 use ethrex_core::{H256, U256};
 use ethrex_vm::SpecId;
