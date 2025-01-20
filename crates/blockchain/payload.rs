@@ -422,24 +422,32 @@ fn apply_plain_transaction(
     head: &HeadTransaction,
     context: &mut PayloadBuildContext,
 ) -> Result<Receipt, ChainError> {
-    let result = execute_tx(
-        &head.tx,
-        &context.payload.header,
-        context.evm_state,
-        spec_id(
-            &context.chain_config().map_err(ChainError::from)?,
-            context.payload.header.timestamp,
-        ),
-    )?;
-    context.remaining_gas = context.remaining_gas.saturating_sub(result.gas_used());
-    context.block_value += U256::from(result.gas_used()) * head.tip;
-    let receipt = Receipt::new(
-        head.tx.tx_type(),
-        result.is_success(),
-        context.payload.header.gas_limit - context.remaining_gas,
-        result.logs(),
-    );
-    Ok(receipt)
+    #[cfg(feature = "levm")]
+    {
+        println!("USING LEVM",);
+    }
+    #[cfg(not(feature = "levm"))]
+    {
+        println!("NOT USING LEVM",);
+        let result = execute_tx(
+            &head.tx,
+            &context.payload.header,
+            context.evm_state,
+            spec_id(
+                &context.chain_config().map_err(ChainError::from)?,
+                context.payload.header.timestamp,
+            ),
+        )?;
+        context.remaining_gas = context.remaining_gas.saturating_sub(result.gas_used());
+        context.block_value += U256::from(result.gas_used()) * head.tip;
+        let receipt = Receipt::new(
+            head.tx.tx_type(),
+            result.is_success(),
+            context.payload.header.gas_limit - context.remaining_gas,
+            result.logs(),
+        );
+        Ok(receipt)
+    }
 }
 
 fn finalize_payload(context: &mut PayloadBuildContext) -> Result<(), StoreError> {
