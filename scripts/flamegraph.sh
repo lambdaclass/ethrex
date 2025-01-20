@@ -4,7 +4,7 @@
 # then polls the account balance until the expected balance has been reached
 # and then kills the process. It also measures the elapsed time of the test and
 # outputs it to Github Action's outputs.
-iterations=500
+iterations=3500
 value=1
 account=0x33c6b73432B3aeA0C1725E415CC40D04908B85fd
 end_val=$((171 * $iterations * $value))
