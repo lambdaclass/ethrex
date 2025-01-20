@@ -4,7 +4,7 @@
 # then polls the account balance until the expected balance has been reached
 # and then kills the process. It also measures the elapsed time of the test and
 # outputs it to Github Action's outputs.
-iterations=1500
+iterations=3500
 value=1
 account=0x33c6b73432B3aeA0C1725E415CC40D04908B85fd
 end_val=$((171 * $iterations * $value))
@@ -13,9 +13,11 @@ ethrex_l2 test load --path /home/runner/work/ethrex/ethrex/test_data/private_key
 
 start_time=$(date +%s)
 output=$(ethrex_l2 info -b -a $account --wei 2>&1)
+echo "balance: $output"
 while [[ $output -lt $end_val ]]; do
-    sleep 5
+    sleep 2
     output=$(ethrex_l2 info -b -a $account --wei 2>&1)
+    echo "balance: $output"
 done
 end_time=$(date +%s)
 elapsed=$((end_time - start_time))
