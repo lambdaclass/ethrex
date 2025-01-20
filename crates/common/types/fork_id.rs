@@ -53,7 +53,7 @@ impl ForkId {
     // See https://eips.ethereum.org/EIPS/eip-2124#validation-rules.
     pub fn is_valid(
         &self,
-        incoming: Self,
+        remote: Self,
         latest_block_number: u64,
         head_timestamp: u64,
         chain_config: ChainConfig,
@@ -67,9 +67,9 @@ impl ForkId {
                 head = latest_block_number;
             }
         }
-        if incoming.fork_hash == self.fork_hash {
+        if remote.fork_hash == self.fork_hash {
             // validation rule #1
-            if incoming.fork_next <= head && incoming.fork_next != 0 {
+            if remote.fork_next <= head && remote.fork_next != 0 {
                 debug!("Future fork already passed locally.");
                 return false;
             }
@@ -84,12 +84,12 @@ impl ForkId {
         for (fork_hash, fork_next) in valid_combinations {
             if is_subset {
                 // The remote hash is a subset of the local past forks (rule #2)
-                if incoming.fork_hash == fork_hash && incoming.fork_next == fork_next {
+                if remote.fork_hash == fork_hash && remote.fork_next == fork_next {
                     return true;
                 }
             } else {
                 // The remote hash is a superset of the local past forks (rule #3)
-                if incoming.fork_hash == fork_hash {
+                if remote.fork_hash == fork_hash {
                     return true;
                 }
             }
@@ -112,14 +112,16 @@ fn get_all_fork_id_combinations(forks: Vec<u64>, genesis_hash: BlockHash) -> Vec
     let mut hasher = Hasher::new();
     hasher.update(genesis_hash.as_bytes());
     for activation in forks {
-        if activation != last_activation {
-            combinations.push((
-                H32::from_slice(&hasher.clone().finalize().to_be_bytes()),
-                activation,
-            ));
-            hasher.update(&activation.to_be_bytes());
-            last_activation = activation;
+        // If the block number or timestamp is already added, skip it.
+        if activation == last_activation {
+            continue;
         }
+        combinations.push((
+            H32::from_slice(&hasher.clone().finalize().to_be_bytes()),
+            activation,
+        ));
+        hasher.update(&activation.to_be_bytes());
+        last_activation = activation;
     }
     combinations.push((H32::from_slice(&hasher.finalize().to_be_bytes()), 0));
     combinations
