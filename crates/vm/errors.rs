@@ -1,12 +1,10 @@
 use ethereum_types::{H160, H256};
 use ethrex_core::{types::BlockHash, Address};
-use ethrex_rlp::error::RLPDecodeError;
 use ethrex_storage::error::StoreError;
 use ethrex_trie::TrieError;
 use revm::primitives::{
     result::EVMError as RevmError, Address as RevmAddress, B256 as RevmB256, U256 as RevmU256,
 };
-use revm_primitives::BytecodeDecodeError;
 use thiserror::Error;
 
 #[derive(Debug, Error)]
