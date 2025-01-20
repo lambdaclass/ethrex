@@ -25,8 +25,7 @@ pub struct ForkChoiceUpdatedV1 {
 
 impl RpcHandler for ForkChoiceUpdatedV1 {
     fn parse(params: &Option<Vec<Value>>) -> Result<Self, RpcErr> {
-        let (fork_choice_state, payload_attributes) = parse(params)?;
-
+        let (fork_choice_state, payload_attributes) = parse(params, false)?;
         Ok(ForkChoiceUpdatedV1 {
             fork_choice_state,
             payload_attributes,
@@ -37,11 +36,16 @@ impl RpcHandler for ForkChoiceUpdatedV1 {
         let (head_block_opt, mut response) =
             handle_forkchoice(&self.fork_choice_state, context.clone(), 1)?;
         if let (Some(head_block), Some(attributes)) = (head_block_opt, &self.payload_attributes) {
-            validate_v1(attributes, head_block)?;
+            let chain_config = context.storage.get_chain_config()?;
+            if chain_config.is_cancun_activated(attributes.timestamp) {
+                return Err(RpcErr::UnsuportedFork(
+                    "forkChoiceV1 used to build Cancun payload".to_string(),
+                ));
+            }
+            validate_attributes_v1(attributes, &head_block)?;
             let payload_id = build_payload(attributes, context, &self.fork_choice_state, 1)?;
             response.set_id(payload_id);
         }
-
         serde_json::to_value(response).map_err(|error| RpcErr::Internal(error.to_string()))
     }
 }
@@ -54,8 +58,7 @@ pub struct ForkChoiceUpdatedV2 {
 
 impl RpcHandler for ForkChoiceUpdatedV2 {
     fn parse(params: &Option<Vec<Value>>) -> Result<Self, RpcErr> {
-        let (fork_choice_state, payload_attributes) = parse(params)?;
-
+        let (fork_choice_state, payload_attributes) = parse(params, false)?;
         Ok(ForkChoiceUpdatedV2 {
             fork_choice_state,
             payload_attributes,
@@ -66,11 +69,20 @@ impl RpcHandler for ForkChoiceUpdatedV2 {
         let (head_block_opt, mut response) =
             handle_forkchoice(&self.fork_choice_state, context.clone(), 2)?;
         if let (Some(head_block), Some(attributes)) = (head_block_opt, &self.payload_attributes) {
-            validate_v2(attributes, head_block, &context)?;
+            let chain_config = context.storage.get_chain_config()?;
+            if chain_config.is_cancun_activated(attributes.timestamp) {
+                return Err(RpcErr::UnsuportedFork(
+                    "forkChoiceV2 used to build Cancun payload".to_string(),
+                ));
+            } else if chain_config.is_shanghai_activated(attributes.timestamp) {
+                validate_attributes_v2(attributes, &head_block)?;
+            } else {
+                // Behave as a v1
+                validate_attributes_v1(attributes, &head_block)?;
+            }
             let payload_id = build_payload(attributes, context, &self.fork_choice_state, 2)?;
             response.set_id(payload_id);
         }
-
         serde_json::to_value(response).map_err(|error| RpcErr::Internal(error.to_string()))
     }
 }
@@ -96,8 +108,7 @@ impl From<ForkChoiceUpdatedV3> for RpcRequest {
 
 impl RpcHandler for ForkChoiceUpdatedV3 {
     fn parse(params: &Option<Vec<Value>>) -> Result<Self, RpcErr> {
-        let (fork_choice_state, payload_attributes) = parse(params)?;
-
+        let (fork_choice_state, payload_attributes) = parse(params, true)?;
         Ok(ForkChoiceUpdatedV3 {
             fork_choice_state,
             payload_attributes,
@@ -108,17 +119,17 @@ impl RpcHandler for ForkChoiceUpdatedV3 {
         let (head_block_opt, mut response) =
             handle_forkchoice(&self.fork_choice_state, context.clone(), 3)?;
         if let (Some(head_block), Some(attributes)) = (head_block_opt, &self.payload_attributes) {
-            validate_v3(attributes, head_block, &context)?;
+            validate_attributes_v3(attributes, &head_block, &context)?;
             let payload_id = build_payload(attributes, context, &self.fork_choice_state, 3)?;
             response.set_id(payload_id);
         }
-
         serde_json::to_value(response).map_err(|error| RpcErr::Internal(error.to_string()))
     }
 }
 
 fn parse(
     params: &Option<Vec<Value>>,
+    is_v3: bool,
 ) -> Result<(ForkChoiceState, Option<PayloadAttributesV3>), RpcErr> {
     let params = params
         .as_ref()
@@ -137,7 +148,13 @@ fn parse(
                 None
             }
         };
-
+    if let Some(attr) = &payload_attributes {
+        if !is_v3 && attr.parent_beacon_block_root.is_some() {
+            return Err(RpcErr::InvalidPayloadAttributes(
+                "Attribute parent_beacon_block_root is non-null".to_string(),
+            ));
+        }
+    }
     Ok((forkchoice_state, payload_attributes))
 }
 
@@ -204,48 +221,40 @@ fn handle_forkchoice(
     }
 }
 
-fn validate_v1(attributes: &PayloadAttributesV3, head_block: BlockHeader) -> Result<(), RpcErr> {
+fn validate_attributes_v1(
+    attributes: &PayloadAttributesV3,
+    head_block: &BlockHeader,
+) -> Result<(), RpcErr> {
+    if attributes.withdrawals.is_some() {
+        return Err(RpcErr::WrongParam("withdrawals".to_string()));
+    }
     validate_timestamp(attributes, head_block)
 }
 
-fn validate_v2(
+fn validate_attributes_v2(
     attributes: &PayloadAttributesV3,
-    head_block: BlockHeader,
-    context: &RpcApiContext,
+    head_block: &BlockHeader,
 ) -> Result<(), RpcErr> {
-    let chain_config = context.storage.get_chain_config()?;
     if attributes.withdrawals.is_none() {
-        return Err(RpcErr::WrongParam(
-            "forkChoiceV2 withdrawals is null".to_string(),
-        ));
-    }
-    if attributes.parent_beacon_block_root.is_some() {
-        return Err(RpcErr::InvalidPayloadAttributes(
-            "forkChoiceV2 with Beacon Root".to_string(),
-        ));
-    }
-    if !chain_config.is_shanghai_activated(attributes.timestamp) {
-        return Err(RpcErr::UnsuportedFork(
-            "forkChoiceV2 used to build pre-Shanghai payload".to_string(),
-        ));
-    }
-    if chain_config.is_cancun_activated(attributes.timestamp) {
-        return Err(RpcErr::UnsuportedFork(
-            "forkChoiceV2 used to build Cancun payload".to_string(),
-        ));
+        return Err(RpcErr::WrongParam("withdrawals".to_string()));
     }
     validate_timestamp(attributes, head_block)
 }
 
-fn validate_v3(
+fn validate_attributes_v3(
     attributes: &PayloadAttributesV3,
-    head_block: BlockHeader,
+    head_block: &BlockHeader,
     context: &RpcApiContext,
 ) -> Result<(), RpcErr> {
     let chain_config = context.storage.get_chain_config()?;
+    // Specification indicates this order of validations:
+    // https://github.com/ethereum/execution-apis/blob/main/src/engine/cancun.md#specification-1
+    if attributes.withdrawals.is_none() {
+        return Err(RpcErr::InvalidPayloadAttributes("withdrawals".to_string()));
+    }
     if attributes.parent_beacon_block_root.is_none() {
         return Err(RpcErr::InvalidPayloadAttributes(
-            "Null Parent Beacon Root".to_string(),
+            "Attribute parent_beacon_block_root is null".to_string(),
         ));
     }
     if !chain_config.is_cancun_activated(attributes.timestamp) {
@@ -258,7 +267,7 @@ fn validate_v3(
 
 fn validate_timestamp(
     attributes: &PayloadAttributesV3,
-    head_block: BlockHeader,
+    head_block: &BlockHeader,
 ) -> Result<(), RpcErr> {
     if attributes.timestamp <= head_block.timestamp {
         return Err(RpcErr::InvalidPayloadAttributes(
