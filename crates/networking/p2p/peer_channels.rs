@@ -330,7 +330,7 @@ impl PeerChannels {
                     verify_range(storage_root, &start, &hahsed_keys, &encoded_values, &proof)
                         .ok()?;
             } else {
-                verify_range(storage_root, &start, &hahsed_keys, &encoded_values, &[]).ok();
+                verify_range(storage_root, &start, &hahsed_keys, &encoded_values, &[]).ok()?;
             }
 
             storage_keys.push(hahsed_keys);
