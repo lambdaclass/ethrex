@@ -124,6 +124,8 @@ impl Decoder for RLPxCodec {
                 .map_err(|_| RLPxError::CryptographyError("Invalid header mac".to_owned()))?,
         );
 
+        // TODO: replace these assert_eq! by actual errors
+        // https://github.com/lambdaclass/ethrex/issues/1748
         assert_eq!(header_mac, expected_header_mac.0);
 
         let header_text = header_ciphertext;
@@ -148,12 +150,14 @@ impl Decoder for RLPxCodec {
             return Err(RLPxError::InvalidMessageLength());
         }
 
-        if src.len() < 32 + padded_size + 16 {
+        let total_message_size = 32 + padded_size + 16;
+
+        if src.len() < total_message_size {
             // The full string has not yet arrived.
             //
             // We reserve more space in the buffer. This is not strictly
             // necessary, but is a good idea performance-wise.
-            src.reserve(32 + padded_size - src.len());
+            src.reserve(total_message_size - src.len());
 
             // We inform the Framed that we need more bytes to form the next
             // frame.
@@ -162,8 +166,8 @@ impl Decoder for RLPxCodec {
 
         // Use advance to modify src such that it no longer contains
         // this frame.
-        let mut frame_data = src[32..32 + padded_size + 16].to_vec();
-        src.advance(32 + padded_size + 16);
+        let mut frame_data = src[32..total_message_size].to_vec();
+        src.advance(total_message_size);
 
         // The buffer contains the full message and will be consumed; update the ingress_mac and aes values
         self.ingress_mac = temp_ingress_mac;
@@ -186,6 +190,8 @@ impl Decoder for RLPxCodec {
             .try_into()
             .map_err(|_| RLPxError::CryptographyError("Invalid frame mac".to_owned()))?;
 
+        // TODO: replace these assert_eq! by actual errors
+        // https://github.com/lambdaclass/ethrex/issues/1748
         assert_eq!(frame_mac, expected_frame_mac);
 
         // decrypt frame

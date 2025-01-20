@@ -289,7 +289,8 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
     ) -> Result<(), RLPxError> {
         self.init_peer_conn().await?;
         debug!("Started peer main loop");
-        // Wait for eth status message or timeout.
+
+        // Subscribe this connection to the broadcasting channel.
         let mut broadcaster_receive = {
             if self.capabilities.contains(&CAP_ETH) {
                 Some(self.connection_broadcast_send.subscribe())
@@ -298,8 +299,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
             }
         };
 
-        // Status message received, start listening for connections,
-        // and subscribe this connection to the broadcasting.
+        // Start listening for messages,
         loop {
             tokio::select! {
                 // Expect a message from the remote peer
