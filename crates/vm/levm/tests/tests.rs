@@ -3891,7 +3891,7 @@ fn caller_op() {
         Arc::new(db),
         cache,
         Vec::new(),
-        None
+        None,
     )
     .unwrap();
 
@@ -3935,7 +3935,7 @@ fn origin_op() {
         Arc::new(db),
         cache,
         Vec::new(),
-        None
+        None,
     )
     .unwrap();
 
@@ -4006,7 +4006,7 @@ fn address_op() {
         Arc::new(db),
         cache,
         Vec::new(),
-        None
+        None,
     )
     .unwrap();
 
@@ -4054,7 +4054,7 @@ fn selfbalance_op() {
         Arc::new(db),
         cache,
         Vec::new(),
-        None
+        None,
     )
     .unwrap();
 
@@ -4099,7 +4099,7 @@ fn callvalue_op() {
         Arc::new(db),
         cache,
         Vec::new(),
-        None
+        None,
     )
     .unwrap();
 
@@ -4143,7 +4143,7 @@ fn codesize_op() {
         Arc::new(db),
         cache,
         Vec::new(),
-        None
+        None,
     )
     .unwrap();
 
@@ -4186,7 +4186,7 @@ fn gasprice_op() {
         Arc::new(db),
         cache,
         Vec::new(),
-        None
+        None,
     )
     .unwrap();
 
@@ -4245,7 +4245,7 @@ fn codecopy_op() {
         Arc::new(db),
         cache,
         Vec::new(),
-        None
+        None,
     )
     .unwrap();
 
