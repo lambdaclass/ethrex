@@ -568,6 +568,9 @@ async fn storage_fetcher(
         // If we have enough pending bytecodes to fill a batch
         // or if we have no more incoming batches, spawn a fetch process
         // If the pivot became stale don't process anything and just save incoming requests
+        if stale {
+            info!("Storage fetcher detected stale pivot");
+        }
         while !stale
             && (pending_storage.len() >= BATCH_SIZE || !incoming && !pending_storage.is_empty())
         {
