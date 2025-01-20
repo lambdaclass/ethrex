@@ -818,7 +818,7 @@ async fn handle_peer_as_initiator(
         .connect(SocketAddr::new(node.ip, node.tcp_port))
         .await
         .unwrap();
-    match RLPxConnection::initiator(signer, msg, stream, storage, connection_broadcast).await {
+    match RLPxConnection::initiator(signer, msg, stream, storage, connection_broadcast) {
         Ok(mut conn) => conn.start_peer(table).await,
         Err(e) => {
             error!("Error: {e}, Could not start connection with {node:?}");
