@@ -405,7 +405,8 @@ impl ProverServer {
 
         let block = Block::new(header, body);
 
-        let db = ExecutionDB::from_exec(&block, &self.store).map_err(EvmError::ExecutionDB)?;
+        let db =
+            ExecutionDB::from_store(&block, self.store.clone()).map_err(EvmError::ExecutionDB)?;
 
         let parent_block_header = self
             .store

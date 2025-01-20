@@ -20,8 +20,9 @@ fn main() {
 
     // Validate the initial state
     let (mut state_trie, mut storage_tries) = db
-        .build_tries()
+        .get_tries()
         .expect("failed to build state and storage tries or state is not valid");
+    // TODO: validate proofs
 
     let initial_state_hash = state_trie.hash_no_commit();
     if initial_state_hash != parent_block_header.state_root {
