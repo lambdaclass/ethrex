@@ -30,7 +30,7 @@ use crate::{
 
 pub const PEER_REPLY_TIMOUT: Duration = Duration::from_secs(45);
 pub const MAX_MESSAGES_IN_PEER_CHANNEL: usize = 25;
-pub const MAX_RESPONSE_BYTES: u64 = 512 * 1024 * 64;
+pub const MAX_RESPONSE_BYTES: u64 = 2 * 1024 * 1024;
 pub const HASH_MAX: H256 = H256([0xFF; 32]);
 
 #[derive(Debug, Clone)]
