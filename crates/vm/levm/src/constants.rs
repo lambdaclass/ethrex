@@ -53,10 +53,10 @@ pub const MAX_BLOCK_GAS_LIMIT: U256 = U256([30_000_000, 0, 0, 0]);
 
 // EIP7702 - EOA Load Code
 pub const MAGIC: u8 = 0x05;
-pub const SET_CODE_TX_TYPE: u64 = 0x04;
 pub const SET_CODE_DELEGATION_BYTES: [u8; 3] = [0xef, 0x01, 0x00];
 // Set the code of authority to be 0xef0100 || address. This is a delegation designation.
 // len(SET_CODE_DELEGATION_BYTES) == 3 + len(Address) == 20 -> 23
 pub const EIP7702_DELEGATED_CODE_LEN: usize = 23;
-pub const PER_AUTH_BASE_COST: U256 = U256([12500, 0, 0, 0]);
-pub const PER_EMPTY_ACCOUNT_COST: U256 = U256([25000, 0, 0, 0]);
+pub const PER_AUTH_BASE_COST: u64 = 12500;
+pub const PER_EMPTY_ACCOUNT_COST: u64 = 25000;
+

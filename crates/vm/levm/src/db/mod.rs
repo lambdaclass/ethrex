@@ -60,11 +60,7 @@ impl Database for Db {
     }
 
     fn account_exists(&self, address: Address) -> bool {
-        if let Some(_) = self.accounts.get(&address) {
-            true
-        } else {
-            false
-        }
+        self.accounts.contains_key(&address)
     }
 
     fn get_storage_slot(&self, address: Address, key: H256) -> U256 {

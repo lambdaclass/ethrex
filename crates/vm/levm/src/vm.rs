@@ -641,10 +641,16 @@ impl VM {
         // Authorization List Cost
         // When using unwrap_or_default we will get an empty vec in case the authorization_list field is None.
         // If the vec is empty, the len will be 0, thus the authorization_list_cost is 0.
-        let amount_of_auth_tuples = self.authorization_list.clone().unwrap_or_default().len();
-        let authorization_list_cost: u64 = (PER_EMPTY_ACCOUNT_COST * amount_of_auth_tuples)
+        let amount_of_auth_tuples: u64 = self
+            .authorization_list
+            .clone()
+            .unwrap_or_default()
+            .len()
             .try_into()
             .map_err(|_| VMError::Internal(InternalError::ConversionError))?;
+        let authorization_list_cost = PER_EMPTY_ACCOUNT_COST
+            .checked_mul(amount_of_auth_tuples)
+            .ok_or(VMError::Internal(InternalError::GasOverflow))?;
 
         intrinsic_gas = intrinsic_gas
             .checked_add(authorization_list_cost)
@@ -1370,7 +1376,7 @@ impl VM {
         &mut self,
         initial_call_frame: &mut CallFrame,
     ) -> Result<u64, VMError> {
-        let mut refunded_gas = 0;
+        let mut refunded_gas: u64 = 0;
         // Steps from the EIP7702:
         // IMPORTANT:
         // If any of the below steps fail, immediately stop processing that tuple and continue to the next tuple in the list. It will in the case of multiple tuples for the same authority, set the code using the address in the last valid occurrence.
@@ -1386,6 +1392,7 @@ impl VM {
             }
 
             // 2. Verify the nonce is less than 2**64 - 1.
+            // CHECK nonce is u64, should never be greater than u64::MAX
             if !(auth_tuple.nonce < u64::MAX) {
                 continue;
             }
@@ -1394,7 +1401,11 @@ impl VM {
             //      s value must be less than or equal to secp256k1n/2, as specified in EIP-2.
             let order_bytes = Secp256k1::ORDER.to_be_bytes();
             let n = U256::from_big_endian(&order_bytes);
-            if auth_tuple.s_signature > n / 2 || U256::zero() >= auth_tuple.s_signature {
+            let n_over_2 = n.checked_div(U256::from(2)).ok_or(VMError::Internal(
+                InternalError::ArithmeticOperationOverflow,
+            ))?;
+
+            if auth_tuple.s_signature > n_over_2 || U256::zero() >= auth_tuple.s_signature {
                 continue;
             }
             if auth_tuple.r_signature > n || U256::zero() >= auth_tuple.r_signature {
@@ -1408,7 +1419,7 @@ impl VM {
                 (auth_tuple.chain_id, auth_tuple.address, auth_tuple.nonce).encode_to_vec();
 
             let mut hasher = Keccak256::new();
-            hasher.update(&[MAGIC]);
+            hasher.update([MAGIC]);
             hasher.update(rlp_buf);
             let bytes = &mut hasher.finalize();
 
@@ -1481,10 +1492,10 @@ impl VM {
             dbg!(self.db.account_exists(authority_address));
             if self.db.account_exists(authority_address) {
                 dbg!("IN self.db.account_exists");
-                let refunded_gas_if_exists: u64 = (PER_EMPTY_ACCOUNT_COST - PER_AUTH_BASE_COST)
-                    .try_into()
-                    .map_err(|_| VMError::Internal(InternalError::ConversionError))?;
-                refunded_gas += refunded_gas_if_exists;
+                let refunded_gas_if_exists = PER_EMPTY_ACCOUNT_COST - PER_AUTH_BASE_COST;
+                refunded_gas = refunded_gas
+                    .checked_add(refunded_gas_if_exists)
+                    .ok_or(VMError::Internal(InternalError::GasOverflow))?;
             }
             dbg!("POS self.db.account_exists");
 
@@ -1616,16 +1627,14 @@ pub fn get_account(cache: &mut CacheDB, db: &Arc<dyn Database>, address: Address
 
 pub fn was_delegated(account_info: &AccountInfo) -> Result<bool, VMError> {
     let mut was_delegated = false;
-    if account_info.has_code() {
-        if account_info.bytecode.len() == EIP7702_DELEGATED_CODE_LEN {
-            let first_3_bytes = account_info
-                .bytecode
-                .get(..3)
-                .ok_or(VMError::Internal(InternalError::SlicingError))?;
+    if account_info.has_code() && account_info.bytecode.len() == EIP7702_DELEGATED_CODE_LEN {
+        let first_3_bytes = account_info
+            .bytecode
+            .get(..3)
+            .ok_or(VMError::Internal(InternalError::SlicingError))?;
 
-            if first_3_bytes == SET_CODE_DELEGATION_BYTES {
-                was_delegated = true;
-            }
+        if first_3_bytes == SET_CODE_DELEGATION_BYTES {
+            was_delegated = true;
         }
     }
     Ok(was_delegated)
