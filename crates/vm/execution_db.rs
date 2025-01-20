@@ -190,10 +190,7 @@ impl ExecutionDB {
         let mut db = CacheDB::new(db);
 
         for transaction in &block.body.transactions {
-            let mut tx_env = tx_env(transaction);
-
-            // disable nonce check (we're executing with empty accounts, nonce 0)
-            tx_env.nonce = None;
+            let tx_env = tx_env(transaction);
 
             // execute tx
             let evm_builder = Evm::builder()
@@ -201,8 +198,6 @@ impl ExecutionDB {
                 .with_tx_env(tx_env)
                 .modify_cfg_env(|cfg| {
                     cfg.chain_id = chain_id;
-                    // we're executing with empty accounts, balance 0
-                    cfg.disable_balance_check = true;
                 })
                 .with_spec_id(spec_id)
                 .with_external_context(
