@@ -428,7 +428,7 @@ fn apply_plain_transaction(
     {
         println!("USING LEVM",);
 
-        let mut block_cache = HashMap::new();
+        let block_cache = HashMap::new();
 
         let store_wrapper = Arc::new(StoreWrapper {
             store: context.evm_state.database().unwrap().clone(),
