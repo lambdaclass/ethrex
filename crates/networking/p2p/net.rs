@@ -77,8 +77,6 @@ pub async fn start_network(
     ));
     let server_handle = tokio::spawn(serve_requests(
         tcp_addr,
-        udp_socket.clone(),
-        udp_addr,
         signer.clone(),
         storage.clone(),
         peer_table.clone(),
@@ -784,8 +782,6 @@ pub async fn try_add_peer_and_ping(
 
 async fn serve_requests(
     tcp_addr: SocketAddr,
-    udp_socket: Arc<UdpSocket>,
-    udp_addr: SocketAddr,
     signer: SigningKey,
     storage: Store,
     table: Arc<Mutex<KademliaTable>>,
@@ -799,8 +795,6 @@ async fn serve_requests(
 
         tokio::spawn(handle_peer_as_receiver(
             peer_addr,
-            udp_socket.clone(),
-            udp_addr,
             signer.clone(),
             stream,
             storage.clone(),
@@ -812,8 +806,6 @@ async fn serve_requests(
 
 async fn handle_peer_as_receiver(
     peer_addr: SocketAddr,
-    udp_socket: Arc<UdpSocket>,
-    udp_addr: SocketAddr,
     signer: SigningKey,
     stream: TcpStream,
     storage: Store,
@@ -822,8 +814,7 @@ async fn handle_peer_as_receiver(
 ) {
     let mut conn = RLPxConnection::receiver(signer.clone(), stream, storage, connection_broadcast);
     debug!("[INCOMING] Starting RLPx connection with {peer_addr:?}");
-    conn.start_peer_receiver(peer_addr, udp_socket, udp_addr, signer, table)
-        .await;
+    conn.start_peer(peer_addr, table).await;
 }
 
 async fn handle_peer_as_initiator(
@@ -842,7 +833,10 @@ async fn handle_peer_as_initiator(
         .await
         .unwrap();
     match RLPxConnection::initiator(signer, msg, stream, storage, connection_broadcast).await {
-        Ok(mut conn) => conn.start_peer(table).await,
+        Ok(mut conn) => {
+            conn.start_peer(SocketAddr::new(node.ip, node.udp_port), table)
+                .await
+        }
         Err(e) => {
             error!("Error: {e}, Could not start connection with {node:?}");
         }

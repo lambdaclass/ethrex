@@ -18,7 +18,7 @@ use crate::{
         process_account_range_request, process_byte_codes_request, process_storage_ranges_request,
         process_trie_nodes_request,
     },
-    try_add_peer_and_ping, MAX_DISC_PACKET_SIZE,
+    MAX_DISC_PACKET_SIZE,
 };
 
 use super::{
@@ -149,71 +149,12 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
     }
 
     /// Starts a handshake and runs the peer connection.
-    /// Connections started from here mean that they didn't come from the discovery service
-    /// So it will try to add it to the kademlia table as well
     /// It runs in it's own task and blocks until the connection is dropped
-    pub async fn start_peer_receiver(
+    pub async fn start_peer(
         &mut self,
-        peer_addr: std::net::SocketAddr,
-        udp_socket: Arc<tokio::net::UdpSocket>,
-        udp_addr: std::net::SocketAddr,
-        signer: SigningKey,
+        peer_udp_addr: std::net::SocketAddr,
         table: Arc<Mutex<crate::kademlia::KademliaTable>>,
     ) {
-        // Perform handshake
-        debug!("Starting peer receiver");
-        if let Err(e) = self.handshake().await {
-            error!("Handshake failed: ({e})");
-            self.peer_conn_failed("Handshake failed", e, table).await;
-        } else {
-            // Handshake OK: handle connection
-            // Create channels to communicate directly to the peer
-            match self.get_remote_node_id() {
-                Err(e) => {
-                    debug!("Get remote id failed for {peer_addr:?}, with errror {e:?}");
-                    return self
-                        .peer_conn_failed(
-                            "Error during RLPx connection",
-                            RLPxError::InvalidState(),
-                            table,
-                        )
-                        .await;
-                }
-                Ok(node_id) => {
-                    debug!("Got remote id for {peer_addr:?}, with id {node_id:?}");
-                    debug!("Creating peer channels for peer {peer_addr:?}");
-                    let (peer_channels, sender, receiver) = PeerChannels::create();
-                    let node = crate::Node {
-                        node_id,
-                        ip: peer_addr.ip(),
-                        udp_port: peer_addr.port(),
-                        tcp_port: peer_addr.port(),
-                    };
-                    try_add_peer_and_ping(&udp_socket, udp_addr, &signer, table.clone(), node)
-                        .await;
-
-                    let capabilities = self
-                        .capabilities
-                        .iter()
-                        .map(|(cap, _)| cap.clone())
-                        .collect();
-                    table.lock().await.init_backend_communication(
-                        node_id,
-                        peer_channels,
-                        capabilities,
-                    );
-                    if let Err(e) = self.handle_peer_conn(sender, receiver).await {
-                        self.peer_conn_failed("Error during RLPx connection", e, table)
-                            .await;
-                    }
-                }
-            };
-        }
-    }
-
-    /// Starts a handshake and runs the peer connection.
-    /// It runs in it's own task and blocks until the connection is dropped
-    pub async fn start_peer(&mut self, table: Arc<Mutex<crate::kademlia::KademliaTable>>) {
         // Perform handshake
         debug!("Starting peer initiator");
         if let Err(e) = self.handshake().await {
@@ -237,6 +178,17 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
                 .iter()
                 .map(|(cap, _)| cap.clone())
                 .collect();
+
+            // NOTE: if the peer came from the discovery server it will already be inserted in the table
+            // but that might not always be the case, so we try to add it to the table
+            let node = crate::Node {
+                node_id,
+                ip: peer_udp_addr.ip(),
+                udp_port: peer_udp_addr.port(),
+                tcp_port: peer_udp_addr.port(),
+            };
+            // Note: we don't ping the node we let the validation service do its job
+            table.lock().await.insert_node(node);
             table
                 .lock()
                 .await
