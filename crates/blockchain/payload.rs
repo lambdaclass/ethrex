@@ -15,12 +15,14 @@ use ethrex_core::{
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_storage::{error::StoreError, Store};
 use ethrex_vm::{
-    beacon_root_contract_call, evm_state, execute_tx, get_state_transitions, process_withdrawals,
-    spec_id, EvmError, EvmState, SpecId,
+    beacon_root_contract_call, db::StoreWrapper, evm_state, execute_tx, execute_tx_levm,
+    get_state_transitions, process_withdrawals, spec_id, EvmError, EvmState, SpecId,
 };
 use sha3::{Digest, Keccak256};
 
 use ethrex_metrics::metrics;
+
+use std::sync::Arc;
 
 #[cfg(feature = "metrics")]
 use ethrex_metrics::metrics_transactions::{MetricsTxStatus, MetricsTxType, METRICS_TX};
@@ -425,6 +427,25 @@ fn apply_plain_transaction(
     #[cfg(feature = "levm")]
     {
         println!("USING LEVM",);
+
+        let mut block_cache: CacheDB = HashMap::new();
+        // let mut db = dB::default();
+
+        let store_wrapper = Arc::new(StoreWrapper {
+            store: context.evm_state.database().unwrap().clone(),
+            block_hash: context.payload.header.parent_hash,
+        });
+
+        let result = execute_tx_levm(
+            &head.tx,
+            &context.payload.header,
+            store_wrapper.clone(),
+            block_cache,
+            spec_id(
+                &context.chain_config().map_err(ChainError::from)?,
+                context.payload.header.timestamp,
+            ),
+        );
     }
     #[cfg(not(feature = "levm"))]
     {
