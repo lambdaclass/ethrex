@@ -428,8 +428,7 @@ fn apply_plain_transaction(
     {
         println!("USING LEVM",);
 
-        let mut block_cache: CacheDB = HashMap::new();
-        // let mut db = dB::default();
+        let mut block_cache = HashMap::new();
 
         let store_wrapper = Arc::new(StoreWrapper {
             store: context.evm_state.database().unwrap().clone(),
@@ -445,7 +444,16 @@ fn apply_plain_transaction(
                 &context.chain_config().map_err(ChainError::from)?,
                 context.payload.header.timestamp,
             ),
+        )
+        .map_err(EvmError::from)?;
+
+        let receipt = Receipt::new(
+            head.tx.tx_type(),
+            result.is_success(),
+            context.payload.header.gas_limit - context.remaining_gas,
+            result.logs,
         );
+        Ok(receipt)
     }
     #[cfg(not(feature = "levm"))]
     {
