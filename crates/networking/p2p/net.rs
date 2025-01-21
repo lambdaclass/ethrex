@@ -814,6 +814,7 @@ async fn handle_peer_as_initiator(
         .connect(SocketAddr::new(node.ip, node.tcp_port))
         .await
     else {
+        debug!("Failed to connect to peer via tcp");
         return;
     };
     match RLPxConnection::initiator(signer, msg, stream, storage, connection_broadcast) {
