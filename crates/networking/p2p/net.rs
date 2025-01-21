@@ -27,7 +27,7 @@ use tokio::{
     try_join,
 };
 use tokio_util::task::TaskTracker;
-use tracing::{debug, error, info};
+use tracing::{debug, info};
 use types::{Endpoint, Node};
 
 pub mod bootnode;
@@ -169,7 +169,7 @@ async fn discover_peers_server(
                             continue;
                         };
                         let ping_hash = packet.get_hash();
-                        pong(&udp_socket, from, ping_hash, &signer).await;
+                        pong(&udp_socket, from, ping_hash, &signer).await?;
                         let node = {
                             let table = table.lock().await;
                             table.get_by_node_id(packet.get_node_id()).cloned()
@@ -235,7 +235,11 @@ async fn discover_peers_server(
                                         table,
                                         broadcaster,
                                     )
-                                    .await;
+                                    .await.unwrap_or_else( | error | {
+                                        debug!(
+                                            "Could not start peer loop: {error}"
+                                        );
+                                    })
                                 });
                             } else {
                                 debug!(
@@ -405,7 +409,6 @@ async fn peers_revalidation(
         for node_id in previously_pinged_peers {
             let mut table = table.lock().await;
             if let Some(peer) = table.get_by_node_id_mut(node_id) {
-
                 if let Some(has_answered) = peer.revalidation {
                     if has_answered {
                         peer.increment_liveness();
@@ -589,18 +592,18 @@ async fn lookup(
 
     for node in nodes_to_ask {
         if !asked_peers.contains(&node.node_id) {
-                let mut table = table.lock().await;
-                if let Some(peer) = table.get_by_node_id_mut(node.node_id) {
-                    // if the peer has an ongoing find_node request, don't query
-                    if peer.find_node_request.is_some() {
-                        continue;
-                    }
+            let mut locked_table = table.lock().await;
+            if let Some(peer) = locked_table.get_by_node_id_mut(node.node_id) {
+                // if the peer has an ongoing find_node request, don't query
+                if peer.find_node_request.is_none() {
                     let (tx, mut receiver) = tokio::sync::mpsc::unbounded_channel::<Vec<Node>>();
                     peer.new_find_node_request_with_sender(tx);
 
+                    // Release the lock
+                    drop(locked_table);
+
                     queries += 1;
                     asked_peers.insert(node.node_id);
-
                     let mut found_nodes = find_node_and_wait_for_response(
                         &udp_socket,
                         SocketAddr::new(node.ip, node.udp_port),
@@ -609,7 +612,8 @@ async fn lookup(
                         &mut receiver,
                     )
                     .await?;
-                    nodes.append(&mut found_nodes);
+                    nodes.append(&mut found_nodes)
+                }
             }
         }
 
@@ -735,12 +739,16 @@ async fn find_node_and_wait_for_response(
     }
 }
 
-async fn pong(socket: &UdpSocket, to_addr: SocketAddr, ping_hash: H256, signer: &SigningKey) {
+async fn pong(
+    socket: &UdpSocket,
+    to_addr: SocketAddr,
+    ping_hash: H256,
+    signer: &SigningKey,
+) -> Result<(), Error> {
     let mut buf = Vec::new();
 
     let expiration: u64 = (SystemTime::now() + Duration::from_secs(20))
-        .duration_since(UNIX_EPOCH)
-        .unwrap()
+        .duration_since(UNIX_EPOCH)?
         .as_secs();
 
     let to = Endpoint {
@@ -752,6 +760,7 @@ async fn pong(socket: &UdpSocket, to_addr: SocketAddr, ping_hash: H256, signer: 
 
     pong.encode_with_header(&mut buf, signer);
     let _ = socket.send_to(&buf, to_addr).await;
+    Ok(())
 }
 
 async fn serve_p2p_requests(
@@ -761,12 +770,12 @@ async fn serve_p2p_requests(
     storage: Store,
     table: Arc<Mutex<KademliaTable>>,
     connection_broadcast: broadcast::Sender<(tokio::task::Id, Arc<RLPxMessage>)>,
-) {
-    let tcp_socket = TcpSocket::new_v4().unwrap();
-    tcp_socket.bind(tcp_addr).unwrap();
-    let listener = tcp_socket.listen(50).unwrap();
+) -> Result<(), Error> {
+    let tcp_socket = TcpSocket::new_v4()?;
+    tcp_socket.bind(tcp_addr)?;
+    let listener = tcp_socket.listen(50)?;
     loop {
-        let (stream, _peer_addr) = listener.accept().await.unwrap();
+        let (stream, _peer_addr) = listener.accept().await?;
 
         tracker.spawn(handle_peer_as_receiver(
             signer.clone(),
@@ -796,19 +805,14 @@ async fn handle_peer_as_initiator(
     storage: Store,
     table: Arc<Mutex<KademliaTable>>,
     connection_broadcast: broadcast::Sender<(tokio::task::Id, Arc<RLPxMessage>)>,
-) {
+) -> Result<(), Error> {
     debug!("Trying RLPx connection with {node:?}");
-    let stream = TcpSocket::new_v4()
-        .unwrap()
+    let stream = TcpSocket::new_v4()?
         .connect(SocketAddr::new(node.ip, node.tcp_port))
-        .await
-        .unwrap();
-    match RLPxConnection::initiator(signer, msg, stream, storage, connection_broadcast) {
-        Ok(mut conn) => conn.start_peer(table).await,
-        Err(e) => {
-            error!("Error: {e}, Could not start connection with {node:?}");
-        }
-    }
+        .await?;
+    let mut conn = RLPxConnection::initiator(signer, msg, stream, storage, connection_broadcast)?;
+    conn.start_peer(table).await;
+    Ok(())
 }
 
 pub fn node_id_from_signing_key(signer: &SigningKey) -> H512 {
@@ -872,10 +876,13 @@ mod tests {
         pub udp_socket: Arc<UdpSocket>,
     }
 
-    async fn start_mock_discovery_server(udp_port: u16, should_start_server: bool) -> MockServer {
+    async fn start_mock_discovery_server(
+        udp_port: u16,
+        should_start_server: bool,
+    ) -> Result<MockServer, Error> {
         let addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), udp_port);
         let signer = SigningKey::random(&mut OsRng);
-        let udp_socket = Arc::new(UdpSocket::bind(addr).await.unwrap());
+        let udp_socket = Arc::new(UdpSocket::bind(addr).await?);
         let node_id = node_id_from_signing_key(&signer);
         let storage =
             Store::new("temp.db", EngineType::InMemory).expect("Failed to create test DB");
@@ -897,17 +904,20 @@ mod tests {
             ));
         }
 
-        MockServer {
+        Ok(MockServer {
             addr,
             signer,
             table,
             node_id,
             udp_socket,
-        }
+        })
     }
 
     /// connects two mock servers by pinging a to b
-    async fn connect_servers(server_a: &mut MockServer, server_b: &mut MockServer) -> Result<(), Error> {
+    async fn connect_servers(
+        server_a: &mut MockServer,
+        server_b: &mut MockServer,
+    ) -> Result<(), Error> {
         let ping_hash = ping(
             &server_a.udp_socket,
             server_a.addr,
@@ -941,8 +951,8 @@ mod tests {
      * To make this run faster, we'll change the revalidation time to be every 2secs
      */
     async fn discovery_server_revalidation() -> Result<(), Error> {
-        let mut server_a = start_mock_discovery_server(7998, true).await;
-        let mut server_b = start_mock_discovery_server(7999, true).await;
+        let mut server_a = start_mock_discovery_server(7998, true).await?;
+        let mut server_b = start_mock_discovery_server(7999, true).await?;
 
         connect_servers(&mut server_a, &mut server_b).await?;
 
@@ -959,24 +969,24 @@ mod tests {
             sleep(Duration::from_millis(2500)).await;
             // by now, b should've send a revalidation to a
             let table = server_b.table.lock().await;
-            let node = table.get_by_node_id(server_a.node_id).unwrap();
-            assert!(node.revalidation.is_some());
+            let node = table.get_by_node_id(server_a.node_id);
+            assert!(node.is_some_and(|n| n.revalidation.is_some()));
         }
 
         // make sure that `a` has responded too all the re-validations
         // we can do that by checking the liveness
         {
             let table = server_b.table.lock().await;
-            let node = table.get_by_node_id(server_a.node_id).unwrap();
-            assert_eq!(node.liveness, 6);
+            let node = table.get_by_node_id(server_a.node_id);
+            assert_eq!(node.map_or(0, |n| n.liveness), 6);
         }
 
         // now, stopping server `a` is not trivial
         // so we'll instead change its port, so that no one responds
         {
             let mut table = server_b.table.lock().await;
-            let node = table.get_by_node_id_mut(server_a.node_id).unwrap();
-            node.node.udp_port = 0;
+            let node = table.get_by_node_id_mut(server_a.node_id);
+            node.map(|n| n.node.udp_port = 0);
         }
 
         // now the liveness field should start decreasing until it gets to 0
@@ -984,8 +994,8 @@ mod tests {
         for _ in 0..2 {
             sleep(Duration::from_millis(2500)).await;
             let table = server_b.table.lock().await;
-            let node = table.get_by_node_id(server_a.node_id).unwrap();
-            assert!(node.revalidation.is_some());
+            let node = table.get_by_node_id(server_a.node_id);
+            assert!(node.is_some_and(|n| n.revalidation.is_some()));
         }
         sleep(Duration::from_millis(2500)).await;
 
@@ -1005,8 +1015,8 @@ mod tests {
      * This test for only one lookup, and not recursively.
      */
     async fn discovery_server_lookup() -> Result<(), Error> {
-        let mut server_a = start_mock_discovery_server(8000, true).await;
-        let mut server_b = start_mock_discovery_server(8001, true).await;
+        let mut server_a = start_mock_discovery_server(8000, true).await?;
+        let mut server_b = start_mock_discovery_server(8001, true).await?;
 
         fill_table_with_random_nodes(server_a.table.clone()).await;
 
@@ -1064,10 +1074,10 @@ mod tests {
      * - We'll run a recursive lookup on server `a` and we expect to end with `b`, `c`, `d` and its mock nodes
      */
     async fn discovery_server_recursive_lookup() -> Result<(), Error> {
-        let mut server_a = start_mock_discovery_server(8002, true).await;
-        let mut server_b = start_mock_discovery_server(8003, true).await;
-        let mut server_c = start_mock_discovery_server(8004, true).await;
-        let mut server_d = start_mock_discovery_server(8005, true).await;
+        let mut server_a = start_mock_discovery_server(8002, true).await?;
+        let mut server_b = start_mock_discovery_server(8003, true).await?;
+        let mut server_c = start_mock_discovery_server(8004, true).await?;
+        let mut server_d = start_mock_discovery_server(8005, true).await?;
 
         connect_servers(&mut server_a, &mut server_b).await?;
         connect_servers(&mut server_b, &mut server_c).await?;
