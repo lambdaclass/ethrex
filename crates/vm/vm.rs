@@ -671,7 +671,7 @@ pub fn get_state_transitions(state: &mut EvmState) -> Vec<AccountUpdate> {
                 // Update account info in DB
                 if let Some(new_acc_info) = account.info() {
                     // If code changed, update
-                    if matches!(db.db.accounts.get(revm_address), Some(account) if account.code_hash != new_acc_info.code_hash)
+                    if matches!(db.db.accounts.get(&address), Some(account) if B256::from(account.code_hash.0) != new_acc_info.code_hash)
                     {
                         account_update.code = new_acc_info
                             .code

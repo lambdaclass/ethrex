@@ -1,9 +1,10 @@
 use std::collections::HashMap;
 
+use bytes::Bytes;
 use ethereum_types::H160;
 use ethrex_core::{
-    types::{Block, ChainConfig},
-    Address, H256,
+    types::{AccountInfo, Block, ChainConfig},
+    Address, H256, U256,
 };
 use ethrex_storage::{error::StoreError, hash_address, hash_key, AccountUpdate, Store};
 use ethrex_trie::{NodeRLP, Trie, TrieError};
@@ -12,7 +13,7 @@ use revm::{
     inspectors::TracerEip3155,
     primitives::{
         result::EVMError as RevmError, AccountInfo as RevmAccountInfo, Address as RevmAddress,
-        Bytecode as RevmBytecode, B256 as RevmB256, U256 as RevmU256,
+        Bytecode as RevmBytecode, Bytes as RevmBytes, B256 as RevmB256, U256 as RevmU256,
     },
     Database, DatabaseRef, Evm,
 };
@@ -31,13 +32,13 @@ use crate::{
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ExecutionDB {
     /// indexed by account address
-    pub accounts: HashMap<RevmAddress, RevmAccountInfo>,
+    pub accounts: HashMap<Address, AccountInfo>,
     /// indexed by code hash
-    pub code: HashMap<RevmB256, RevmBytecode>,
+    pub code: HashMap<H256, Bytes>,
     /// indexed by account address and storage key
-    pub storage: HashMap<RevmAddress, HashMap<RevmU256, RevmU256>>,
+    pub storage: HashMap<Address, HashMap<H256, U256>>,
     /// indexed by block number
-    pub block_hashes: HashMap<u64, RevmB256>,
+    pub block_hashes: HashMap<u64, H256>,
     /// stored chain config
     pub chain_config: ChainConfig,
     /// Encoded nodes to reconstruct a state trie, but only including relevant data ("pruned trie").
@@ -48,7 +49,7 @@ pub struct ExecutionDB {
     /// trie").
     ///
     /// Root node is stored separately from the rest as the first tuple member.
-    pub storage_proofs: HashMap<H160, (Option<NodeRLP>, Vec<NodeRLP>)>,
+    pub storage_proofs: HashMap<Address, (Option<NodeRLP>, Vec<NodeRLP>)>,
 }
 
 impl ExecutionDB {
@@ -79,32 +80,38 @@ impl ExecutionDB {
             // filter out new accounts, we're only interested in already existing accounts.
             // new accounts are storage cleared, self-destructed accounts too but they're marked with "not
             // existing" status instead.
-            .filter(|(_, account)| !account.account_state.is_storage_cleared());
+            .filter_map(|(address, account)| {
+                if !account.account_state.is_storage_cleared() {
+                    Some((Address::from(address.0.as_ref()), account))
+                } else {
+                    None
+                }
+            });
         let accounts = already_existing_accounts
             .clone()
             .map(|(address, _)| {
                 // return error if account is missing
-                let account = match store_wrapper.basic_ref(*address) {
-                    Ok(None) => Err(ExecutionDBError::NewMissingAccountInfo(
-                        Address::from_slice(address.as_slice()),
-                    )),
+                let account = match store_wrapper
+                    .store
+                    .get_account_info_by_hash(parent_hash, address)
+                {
+                    Ok(None) => Err(ExecutionDBError::NewMissingAccountInfo(address)),
                     Ok(Some(some)) => Ok(some),
                     Err(err) => Err(ExecutionDBError::Store(err)),
                 };
-                Ok((*address, account?))
+                Ok((address, account?))
             })
             .collect::<Result<HashMap<_, _>, ExecutionDBError>>()?;
         let code = already_existing_accounts
             .clone()
             .map(|(_, account)| {
                 // return error if code is missing
-                let hash = account.info.code_hash;
+                let hash = H256::from(account.info.code_hash.0);
                 Ok((
                     hash,
-                    cache
-                        .contracts
-                        .get(&hash)
-                        .cloned()
+                    store_wrapper
+                        .store
+                        .get_account_code(hash)?
                         .ok_or(ExecutionDBError::NewMissingCode(hash))?,
                 ))
             })
@@ -113,46 +120,46 @@ impl ExecutionDB {
             .map(|(address, account)| {
                 // return error if storage is missing
                 Ok((
-                    *address,
+                    address,
                     account
                         .storage
                         .keys()
-                        .map(|key| Ok((*key, store_wrapper.storage_ref(*address, *key)?)))
-                        .collect::<Result<HashMap<_, _>, StoreError>>()?,
+                        .map(|key| {
+                            let key = H256::from(key.to_be_bytes());
+                            let value = store_wrapper
+                                .store
+                                .get_storage_at_hash(parent_hash, address, key)
+                                .map_err(ExecutionDBError::Store)?
+                                .ok_or(ExecutionDBError::NewMissingStorage(address, key))?;
+                            Ok((key, value))
+                        })
+                        .collect::<Result<HashMap<_, _>, ExecutionDBError>>()?,
                 ))
             })
-            .collect::<Result<HashMap<_, _>, StoreError>>()?;
+            .collect::<Result<HashMap<_, _>, ExecutionDBError>>()?;
         let block_hashes = cache
             .block_hashes
             .into_iter()
-            .map(|(num, hash)| (num.try_into().unwrap(), hash))
+            .map(|(num, hash)| (num.try_into().unwrap(), H256::from(hash.0)))
             .collect();
+        // WARN: unwrapping because revm wraps a u64 as a U256
 
         // get proofs
         let state_trie = store
             .state_trie(parent_hash)?
             .ok_or(ExecutionDBError::NewMissingStateTrie(parent_hash))?;
 
-        let state_proofs = state_trie.get_proofs(
-            &accounts
-                .keys()
-                .map(|a| hash_address(&Address::from_slice(a.as_slice())))
-                .collect::<Vec<_>>(),
-        )?;
+        let state_proofs =
+            state_trie.get_proofs(&accounts.keys().map(hash_address).collect::<Vec<_>>())?;
 
         let mut storage_proofs = HashMap::new();
-        for (revm_address, storages) in &storage {
-            let address = Address::from_slice(revm_address.as_slice());
-
-            let storage_trie = store.storage_trie(parent_hash, address)?.ok_or(
-                ExecutionDBError::NewMissingStorageTrie(parent_hash, address),
+        for (address, storages) in &storage {
+            let storage_trie = store.storage_trie(parent_hash, *address)?.ok_or(
+                ExecutionDBError::NewMissingStorageTrie(parent_hash, *address),
             )?;
 
-            let paths = storages
-                .keys()
-                .map(|k| hash_key(&H256::from_slice(&k.to_be_bytes_vec())))
-                .collect::<Vec<_>>();
-            storage_proofs.insert(address, storage_trie.get_proofs(&paths)?);
+            let paths = storages.keys().map(hash_key).collect::<Vec<_>>();
+            storage_proofs.insert(*address, storage_trie.get_proofs(&paths)?);
         }
 
         Ok(Self {
@@ -249,14 +256,14 @@ impl DatabaseRef for ExecutionDB {
 
     /// Get basic account information.
     fn basic_ref(&self, address: RevmAddress) -> Result<Option<RevmAccountInfo>, Self::Error> {
-        let Some(account_state) = self.accounts.get(&address) else {
+        let Some(account_info) = self.accounts.get(&Address::from(address.0.as_ref())) else {
             return Ok(None);
         };
 
         Ok(Some(RevmAccountInfo {
-            balance: account_state.balance,
-            nonce: account_state.nonce,
-            code_hash: account_state.code_hash,
+            balance: RevmU256::from_limbs(account_info.balance.0),
+            nonce: account_info.nonce,
+            code_hash: RevmB256::from_slice(&account_info.code_hash.0),
             code: None,
         }))
     }
@@ -264,18 +271,18 @@ impl DatabaseRef for ExecutionDB {
     /// Get account code by its hash.
     fn code_by_hash_ref(&self, code_hash: RevmB256) -> Result<RevmBytecode, Self::Error> {
         self.code
-            .get(&code_hash)
-            .cloned()
+            .get(&H256::from(code_hash.as_ref()))
+            .map(|b| RevmBytecode::new_raw(RevmBytes(b.clone())))
             .ok_or(ExecutionDBError::CodeNotFound(code_hash))
     }
 
     /// Get storage value of address at index.
     fn storage_ref(&self, address: RevmAddress, index: RevmU256) -> Result<RevmU256, Self::Error> {
         self.storage
-            .get(&address)
+            .get(&Address::from(address.0.as_ref()))
             .ok_or(ExecutionDBError::AccountNotFound(address))?
-            .get(&index)
-            .cloned()
+            .get(&H256::from(index.to_be_bytes()))
+            .map(|v| RevmU256::from_limbs(v.0))
             .ok_or(ExecutionDBError::StorageValueNotFound(address, index))
     }
 
@@ -283,7 +290,7 @@ impl DatabaseRef for ExecutionDB {
     fn block_hash_ref(&self, number: u64) -> Result<RevmB256, Self::Error> {
         self.block_hashes
             .get(&number)
-            .cloned()
+            .map(|h| RevmB256::from_slice(&h.0))
             .ok_or(ExecutionDBError::BlockHashNotFound(number))
     }
 }

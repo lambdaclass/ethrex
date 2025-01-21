@@ -43,16 +43,18 @@ pub enum ExecutionDBError {
     StorageValueNotFound(RevmAddress, RevmU256),
     #[error("Hash of block with number {0} not found")]
     BlockHashNotFound(u64),
-    #[error("Missing account {0} info while trying to create ExecutionDB")]
-    NewMissingAccountInfo(Address),
     #[error("Missing state trie of block {0} while trying to create ExecutionDB")]
     NewMissingStateTrie(BlockHash),
     #[error(
         "Missing storage trie of block {0} and address {1} while trying to create ExecutionDB"
     )]
     NewMissingStorageTrie(BlockHash, Address),
+    #[error("Missing account {0} info while trying to create ExecutionDB")]
+    NewMissingAccountInfo(Address),
+    #[error("Missing storage of address {0} and key {1} while trying to create ExecutionDB")]
+    NewMissingStorage(Address, H256),
     #[error("Missing code of hash {0} while trying to create ExecutionDB")]
-    NewMissingCode(RevmB256),
+    NewMissingCode(H256),
     #[error("The account {0} is not included in the stored pruned state trie")]
     MissingAccountInStateTrie(H160),
     #[error("Missing storage trie of account {0}")]

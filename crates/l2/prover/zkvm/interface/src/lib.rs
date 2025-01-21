@@ -102,11 +102,10 @@ pub mod trie {
         state_trie: &Trie,
         storage_tries: &HashMap<H160, Trie>,
     ) -> Result<bool, Error> {
-        for (revm_address, account_info) in &db.accounts {
-            let address = Address::from_slice(revm_address.as_slice());
+        for (address, account_info) in &db.accounts {
             let storage_trie = storage_tries
                 .get(&address)
-                .ok_or(Error::MissingStorageTrie(address))?;
+                .ok_or(Error::MissingStorageTrie(*address))?;
             let storage_root = storage_trie.hash_no_commit();
 
             // verify account and storage trie are valid
@@ -117,8 +116,8 @@ pub mod trie {
             };
             let db_account_state = AccountState {
                 nonce: account_info.nonce,
-                balance: U256::from_big_endian(&account_info.balance.to_be_bytes_vec()),
-                code_hash: H256::from_slice(account_info.code_hash.as_slice()),
+                balance: account_info.balance,
+                code_hash: account_info.code_hash,
                 storage_root,
             };
             if db_account_state != trie_account_state {
@@ -128,17 +127,15 @@ pub mod trie {
             // verify storage
             for (key, db_value) in db
                 .storage
-                .get(revm_address)
-                .ok_or(Error::StorageNotFound(address))?
+                .get(address)
+                .ok_or(Error::StorageNotFound(*address))?
             {
-                let db_value = U256::from_big_endian(&db_value.to_be_bytes_vec());
-                let key = H256::from_slice(&key.to_be_bytes_vec());
-                let trie_value = match storage_trie.get(&hash_key(&key)) {
+                let trie_value = match storage_trie.get(&hash_key(key)) {
                     Ok(Some(encoded)) => U256::decode(&encoded)?,
                     Ok(None) | Err(TrieError::InconsistentTree) => return Ok(false), // value not in trie
                     Err(err) => return Err(err.into()),
                 };
-                if db_value != trie_value {
+                if *db_value != trie_value {
                     return Ok(false);
                 }
             }
