@@ -134,9 +134,7 @@ pub fn apply_fork_choice(
         store.update_safe_block_number(safe.header.number)?;
     }
     store.update_latest_block_number(head.number)?;
-    if let Err(e) = store.update_sync_status(true) {
-        error!("Failed to update sync status: {e}. Transactions from peers will be discarded.");
-    }
+    store.update_sync_status(true)?;
 
     Ok(head)
 }
