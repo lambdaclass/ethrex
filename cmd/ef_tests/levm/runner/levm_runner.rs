@@ -242,6 +242,9 @@ fn exception_is_expected(
             ) | (
                 TransactionExpectedException::InitcodeSizeExceeded,
                 VMError::TxValidation(TxValidationError::InitcodeSizeExceeded)
+            ) | (
+                TransactionExpectedException::Type4TxContractCreation,
+                VMError::TxValidation(TxValidationError::Type4TxContractCreation)
             )
         )
     })
