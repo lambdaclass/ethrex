@@ -2854,6 +2854,7 @@ dependencies = [
  "sha3",
  "thiserror 2.0.11",
  "tinyvec",
+ "tracing",
 ]
 
 [[package]]

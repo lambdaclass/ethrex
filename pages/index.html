@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Ethrex Flamegraph Comparison</title>
+    <link rel="stylesheet" type="text/css" href="style.css"/>
+
+    <!-- This shows in the Slack link preview -->
+    <meta content="Ethrex flamegraph comparison" property="og:title">
+    <meta content="Last updated {{LAST_UPDATE}}" property="og:description">
+    <meta property="og:image" content="flamegraph_ethrex.svg/flamegraph_ethrex.svg"/>
+    <meta name="twitter:label1" content="🕒 Ethrex"/>
+    <meta name="twitter:data1" content="{{ETHREX_TIME}}"/>
+    <meta name="twitter:label2" content="🕒 Reth"/>
+    <meta name="twitter:data2" content="{{RETH_TIME}}"/>
+</head>
+<body>
+<header>
+    <h1>Ethrex Flamegraph Comparison</h1>
+    <p class="last-updated">Last update: {{LAST_UPDATE}}</p>
+</header>
+<main class="container">
+    <div class="column">
+        <div class="col-header">
+            <h2>Ethrex</h2>
+            <a href="flamegraph_ethrex.svg/flamegraph_ethrex.svg"
+               download="flamegraph_ethrex.svg/flamegraph_ethrex.svg">Download</a>
+        </div>
+        <p class="time-elapsed">Time elapsed: {{ETHREX_TIME}}</p>
+        <div class="object-container">
+            <object id="svg1" data="flamegraph_ethrex.svg/flamegraph_ethrex.svg" type="image/svg+xml"></object>
+        </div>
+    </div>
+    <div class="column">
+        <div class="col-header">
+            <h2>Reth</h2>
+            <a href="flamegraph_reth.svg/flamegraph_reth.svg" download="flamegraph_reth.svg/flamegraph_reth.svg">
+                Download</a>
+        </div>
+        <p class="time-elapsed">Time elapsed: {{RETH_TIME}}</p>
+        <div class="object-container">
+            <object id="svg2" data="flamegraph_reth.svg/flamegraph_reth.svg" type="image/svg+xml"></object>
+        </div>
+    </div>
+</main>
+
+<script>
+    // We need this so that the SVG can scale to the container.
+    function adjustViewBox(objectId) {
+        const object = document.getElementById(objectId);
+        object.addEventListener('load', () => {
+            const svgDocument = object.contentDocument;
+            const svgElement = svgDocument?.querySelector('svg');
+            if (svgElement) {
+                // Remove explicit width and height attributes to allow scaling
+                svgElement.removeAttribute('width');
+                svgElement.removeAttribute('height');
+                // Ensure the aspect ratio is preserved during scaling
+                svgElement.setAttribute('preserveAspectRatio', 'xMidYMid meet');
+
+                // Get the current viewBox or calculate a new one based on the bounding box
+                const bbox = svgElement.getBBox();
+                svgElement.setAttribute(
+                    'viewBox',
+                    `${bbox.x} ${bbox.y} ${bbox.width} ${bbox.height}`
+                );
+            } else {
+                console.warn(`SVG element not found in object with ID: ${objectId}`);
+            }
+        });
+    }
+
+
+    adjustViewBox('svg1');
+    adjustViewBox('svg2');
+</script>
+</body>
+</html>
