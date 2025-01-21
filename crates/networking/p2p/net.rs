@@ -219,6 +219,7 @@ async fn discover_peers_server(
                     }
                     if peer.last_ping_hash.unwrap() == msg.ping_hash {
                         table.lock().await.pong_answered(peer.node.node_id);
+                        // TODO: This is a hacky fix for the problem reported in https://github.com/lambdaclass/ethrex/issues/1684
                         if peer.channels.is_some() {
                             debug!(
                                 "Skip trying to connect to already connected peer {}",

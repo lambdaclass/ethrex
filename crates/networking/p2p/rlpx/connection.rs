@@ -51,7 +51,7 @@ use tokio::{
 };
 use tokio_stream::StreamExt;
 use tokio_util::codec::Framed;
-use tracing::{debug, error};
+use tracing::{debug, error, warn};
 const CAP_P2P: (Capability, u8) = (Capability::P2p, 5);
 const CAP_ETH: (Capability, u8) = (Capability::Eth, 68);
 const CAP_SNAP: (Capability, u8) = (Capability::Snap, 1);
@@ -304,7 +304,11 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
             tokio::select! {
                 // Expect a message from the remote peer
                 message = self.receive() => {
-                    let _ = self.handle_message(message?, sender.clone()).await;
+                    // TODO: This is a hacky fix for the problem reported in https://github.com/lambdaclass/ethrex/issues/1685
+                    let res = self.handle_message(message?, sender.clone()).await;
+                    if let Err(err) = res {
+                        warn!("Handle message failed with {err:?}");
+                    }
                 }
                 // Expect a message from the backend
                 Some(message) = receiver.recv() => {

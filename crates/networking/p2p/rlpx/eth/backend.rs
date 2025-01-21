@@ -69,6 +69,7 @@ pub fn validate_status(msg_data: StatusMessage, storage: &Store) -> Result<(), R
         ));
     }
     // Check ForkID
+    // TODO: This is a hacky fix for the problem reported in https://github.com/lambdaclass/ethrex/issues/1685
     if msg_data.fork_id != fork_id {
         warn!("Fork Id Hash does not match")
     }
