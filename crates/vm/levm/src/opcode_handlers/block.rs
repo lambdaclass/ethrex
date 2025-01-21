@@ -9,7 +9,6 @@ use ethrex_core::{
     types::{Fork, BLOB_BASE_FEE_UPDATE_FRACTION, MIN_BASE_FEE_PER_BLOB_GAS},
     U256,
 };
-use revm_primitives::SpecId;
 
 // Block Information (11)
 // Opcodes: BLOCKHASH, COINBASE, TIMESTAMP, NUMBER, PREVRANDAO, GASLIMIT, CHAINID, SELFBALANCE, BASEFEE, BLOBHASH, BLOBBASEFEE
@@ -162,7 +161,7 @@ impl VM {
         current_call_frame: &mut CallFrame,
     ) -> Result<OpcodeSuccess, VMError> {
         // [EIP-4844] - BLOBHASH is only available from CANCUN
-        if self.env.spec_id < Fork::Cancun {
+        if self.env.fork < Fork::Cancun {
             return Err(VMError::InvalidOpcode);
         }
 
@@ -209,7 +208,7 @@ impl VM {
         current_call_frame: &mut CallFrame,
     ) -> Result<OpcodeSuccess, VMError> {
         // [EIP-7516] - BLOBBASEFEE is only available from CANCUN
-        if self.env.spec_id < Fork::Cancun {
+        if self.env.fork < Fork::Cancun {
             return Err(VMError::InvalidOpcode);
         }
         self.increase_consumed_gas(current_call_frame, gas_cost::BLOBBASEFEE)?;

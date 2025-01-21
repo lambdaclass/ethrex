@@ -10,7 +10,6 @@ use crate::{
 };
 use bytes::Bytes;
 use ethrex_core::{types::Fork, Address, U256};
-use revm_primitives::SpecId;
 
 // System Operations (10)
 // Opcodes: CREATE, CALL, CALLCODE, RETURN, DELEGATECALL, CREATE2, STATICCALL, REVERT, INVALID, SELFDESTRUCT
@@ -64,7 +63,7 @@ impl VM {
             value_to_transfer,
             gas,
             gas_left,
-            self.env.spec_id,
+            self.env.fork,
         )?;
         self.increase_consumed_gas(current_call_frame, cost)?;
 
@@ -342,7 +341,7 @@ impl VM {
                 new_size,
                 current_call_frame.memory.len(),
                 code_size_in_memory,
-                self.env.spec_id,
+                self.env.fork,
             )?,
         )?;
 
@@ -378,7 +377,7 @@ impl VM {
                 new_size,
                 current_call_frame.memory.len(),
                 code_size_in_memory,
-                self.env.spec_id,
+                self.env.fork,
             )?,
         )?;
 
@@ -468,7 +467,7 @@ impl VM {
         )?;
 
         // [EIP-6780] - SELFDESTRUCT only in same transaction from CANCUN
-        if self.env.spec_id >= Fork::Cancun {
+        if self.env.fork >= Fork::Cancun {
             self.increase_account_balance(target_address, balance_to_transfer)?;
             self.decrease_account_balance(current_call_frame.to, balance_to_transfer)?;
 
@@ -512,7 +511,7 @@ impl VM {
             return Err(VMError::OpcodeNotAllowedInStaticContext);
         }
         // 2. [EIP-3860] - Cant exceed init code max size
-        if code_size_in_memory > INIT_CODE_MAX_SIZE && self.env.spec_id >= Fork::Shanghai {
+        if code_size_in_memory > INIT_CODE_MAX_SIZE && self.env.fork >= Fork::Shanghai {
             return Err(VMError::OutOfGas(OutOfGasError::ConsumedGasOverflow));
         }
 

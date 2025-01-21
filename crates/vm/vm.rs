@@ -94,7 +94,7 @@ cfg_if::cfg_if! {
         pub fn beacon_root_contract_call_levm(
             store_wrapper: Arc<StoreWrapper>,
             block_header: &BlockHeader,
-            spec_id: Fork,
+            fork: Fork,
         ) -> Result<TransactionReport, EvmError> {
             lazy_static! {
                 static ref SYSTEM_ADDRESS: Address =
@@ -125,7 +125,7 @@ cfg_if::cfg_if! {
                 block_blob_gas_used: block_header.blob_gas_used.map(U256::from),
                 block_gas_limit: 30_000_000,
                 transient_storage: HashMap::new(),
-                spec_id,
+                fork,
                 ..Default::default()
             };
 
@@ -292,7 +292,7 @@ cfg_if::cfg_if! {
             block_header: &BlockHeader,
             db: Arc<dyn LevmDatabase>,
             block_cache: CacheDB,
-            spec_id: Fork
+            fork: Fork
         ) -> Result<TransactionReport, VMError> {
             let gas_price : U256 = tx.effective_gas_price(block_header.base_fee_per_gas).ok_or(VMError::InvalidTransaction)?.into();
 
@@ -300,7 +300,7 @@ cfg_if::cfg_if! {
                 origin: tx.sender(),
                 refunded_gas: 0,
                 gas_limit: tx.gas_limit(),
-                spec_id,
+                fork,
                 block_number: block_header.number.into(),
                 coinbase: block_header.coinbase,
                 timestamp: block_header.timestamp.into(),
@@ -981,27 +981,7 @@ fn access_list_inspector(
 /// Returns the spec id according to the block timestamp and the stored chain config
 /// WARNING: Assumes at least Merge fork is active
 pub fn spec_id(chain_config: &ChainConfig, block_timestamp: u64) -> SpecId {
-    match chain_config.get_fork(block_timestamp) {
-        Fork::Cancun => SpecId::CANCUN,
-        Fork::Shanghai => SpecId::SHANGHAI,
-        Fork::Paris => SpecId::MERGE,
-        Fork::Istanbul => SpecId::ISTANBUL,
-        Fork::Berlin => SpecId::BERLIN,
-        Fork::Prague => SpecId::PRAGUE,
-        Fork::Frontier => todo!(),
-        Fork::FrontierThawing => todo!(),
-        Fork::Homestead => todo!(),
-        Fork::DaoFork => todo!(),
-        Fork::Tangerine => todo!(),
-        Fork::SpuriousDragon => todo!(),
-        Fork::Byzantium => todo!(),
-        Fork::Constantinople => todo!(),
-        Fork::Petersburg => todo!(),
-        Fork::MuirGlacier => todo!(),
-        Fork::London => todo!(),
-        Fork::ArrowGlacier => todo!(),
-        Fork::GrayGlacier => todo!(),
-    }
+    fork_to_spec_id(chain_config.get_fork(block_timestamp))
 }
 
 pub fn fork_to_spec_id(fork: Fork) -> SpecId {

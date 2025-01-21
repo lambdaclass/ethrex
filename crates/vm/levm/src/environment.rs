@@ -12,7 +12,7 @@ pub struct Environment {
     pub origin: Address,
     pub refunded_gas: u64,
     pub gas_limit: u64,
-    pub spec_id: Fork,
+    pub fork: Fork,
     pub block_number: U256,
     pub coinbase: Address,
     pub timestamp: U256,
