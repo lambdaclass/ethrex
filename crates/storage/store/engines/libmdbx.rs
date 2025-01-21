@@ -514,14 +514,14 @@ impl StoreEngine for Store {
 
         Ok(receipts.into_iter().map(|receipt| receipt.to()).collect())
     }
-    fn synced(&self) -> Result<bool, StoreError> {
-        match self.read::<ChainData>(ChainDataIndex::Synced)? {
+    fn is_synced(&self) -> Result<bool, StoreError> {
+        match self.read::<ChainData>(ChainDataIndex::IsSynced)? {
             None => Err(StoreError::Custom("Sync status not found".to_string())),
             Some(ref rlp) => RLPDecode::decode(rlp).map_err(|_| StoreError::DecodeError),
         }
     }
     fn update_sync_status(&self, status: bool) -> Result<(), StoreError> {
-        self.write::<ChainData>(ChainDataIndex::Synced, status.encode_to_vec())
+        self.write::<ChainData>(ChainDataIndex::IsSynced, status.encode_to_vec())
     }
 }
 

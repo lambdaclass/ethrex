@@ -1001,8 +1001,8 @@ impl Store {
             .is_some())
     }
 
-    pub fn synced(&self) -> Result<bool, StoreError> {
-        self.engine.synced()
+    pub fn is_synced(&self) -> Result<bool, StoreError> {
+        self.engine.is_synced()
     }
     pub fn update_sync_status(&self, status: bool) -> Result<(), StoreError> {
         self.engine.update_sync_status(status)
