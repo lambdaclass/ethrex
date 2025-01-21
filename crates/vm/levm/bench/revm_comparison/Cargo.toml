@@ -30,3 +30,19 @@ path = "src/levm_fibonacci.rs"
 [[bin]]
 name = "revm_fibonacci"
 path = "src/revm_fibonacci.rs"
+
+[[bin]]
+name = "levm_ten_thousand_hashes"
+path = "src/levm_ten_thousand_hashes.rs"
+
+[[bin]]
+name = "revm_ten_thousand_hashes"
+path = "src/revm_ten_thousand_hashes.rs"
+
+[[bin]]
+name = "levm_snailtracer"
+path = "src/levm_snailtracer.rs"
+
+[[bin]]
+name = "revm_snailtracer"
+path = "src/revm_snailtracer.rs"
