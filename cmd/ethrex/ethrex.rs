@@ -150,7 +150,7 @@ async fn main() {
         .expect("Failed to create genesis block");
     // Fix latest corrupted state
     // Add block from this morning where state was okay
-    store.set_header_download_checkpoint(ethrex_core::H256::from_str("0x9adf8633ffff3f94ca0a5692bfedb9dcf961ecc71ddf9279773f961c4ec4e7db").unwrap()).unwrap();
+    // store.set_header_download_checkpoint(ethrex_core::H256::from_str("0x9adf8633ffff3f94ca0a5692bfedb9dcf961ecc71ddf9279773f961c4ec4e7db").unwrap()).unwrap();
 
     if let Some(chain_rlp_path) = matches.get_one::<String>("import") {
         info!("Importing blocks from chain file: {}", chain_rlp_path);
