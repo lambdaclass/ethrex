@@ -142,26 +142,23 @@ pub fn prepare_revm_for_tx<'state>(
     // Update it in every Cargo.toml.
     // revm-inspectors and revm-primitives have to be bumped too.
 
-    let revm_authorization_list: Vec<SignedAuthorization> = tx
-        .authorization_list
-        .clone()
-        .unwrap_or_default()
-        .iter()
-        .map(|auth_t| {
-            SignedAuthorization::new_unchecked(
-                Authorization {
-                    chain_id: RevmU256::from_le_bytes(auth_t.chain_id.to_little_endian()),
-                    address: RevmAddress(auth_t.address.0.into()),
-                    nonce: auth_t.nonce,
-                },
-                auth_t.v.as_u32() as u8,
-                RevmU256::from_le_bytes(auth_t.r.to_little_endian()),
-                RevmU256::from_le_bytes(auth_t.s.to_little_endian()),
-            )
-        })
-        .collect();
-
-    let authorization_list = Some(revm_authorization_list.into());
+    let authorization_list = tx.authorization_list.clone().map(|list| {
+        list.iter()
+            .map(|auth_t| {
+                SignedAuthorization::new_unchecked(
+                    Authorization {
+                        chain_id: RevmU256::from_le_bytes(auth_t.chain_id.to_little_endian()),
+                        address: RevmAddress(auth_t.address.0.into()),
+                        nonce: auth_t.nonce,
+                    },
+                    auth_t.v.as_u32() as u8,
+                    RevmU256::from_le_bytes(auth_t.r.to_little_endian()),
+                    RevmU256::from_le_bytes(auth_t.s.to_little_endian()),
+                )
+            })
+            .collect::<Vec<SignedAuthorization>>()
+            .into()
+    });
 
     let tx_env = RevmTxEnv {
         caller: tx.sender.0.into(),
