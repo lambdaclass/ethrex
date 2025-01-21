@@ -164,8 +164,13 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
 
     /// Starts a handshake and runs the peer connection.
     /// It runs in it's own task and blocks until the connection is dropped
-    pub async fn start_peer(&mut self, table: Arc<Mutex<crate::kademlia::KademliaTable>>) {
+    pub async fn start_peer(
+        &mut self,
+        peer_udp_addr: std::net::SocketAddr,
+        table: Arc<Mutex<crate::kademlia::KademliaTable>>,
+    ) {
         // Perform handshake
+        debug!("StartingRLPx connection with {}", self.remote_node_id);
         if let Err(e) = self.handshake().await {
             self.peer_conn_failed("Handshake failed", e, table).await;
         } else {
@@ -177,6 +182,17 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
                 .iter()
                 .map(|(cap, _)| cap.clone())
                 .collect();
+
+            // NOTE: if the peer came from the discovery server it will already be inserted in the table
+            // but that might not always be the case, so we try to add it to the table
+            let node = crate::Node {
+                node_id: self.remote_node_id,
+                ip: peer_udp_addr.ip(),
+                udp_port: peer_udp_addr.port(),
+                tcp_port: peer_udp_addr.port(),
+            };
+            // Note: we don't ping the node we let the validation service do its job
+            table.lock().await.insert_node(node);
             table.lock().await.init_backend_communication(
                 self.remote_node_id,
                 peer_channels,
