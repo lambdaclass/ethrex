@@ -309,6 +309,22 @@ impl VM {
                 logs: std::mem::take(&mut current_call_frame.logs),
                 created_address: None,
             });
+        } else if current_call_frame.is_delegation
+            && was_delegated_from_bytecode(&current_call_frame.bytecode)?
+        {
+            self.call_frames.push(current_call_frame.clone());
+
+            return Ok(TransactionReport {
+                result: TxResult::Success,
+                new_state: self.cache.clone(),
+                // Here we use the gas used and not check for the floor cost
+                // for Prague fork because the precompiles have constant gas cost
+                gas_used: current_call_frame.gas_used,
+                gas_refunded: self.env.refunded_gas,
+                output: Bytes::new(),
+                logs: std::mem::take(&mut current_call_frame.logs),
+                created_address: None,
+            });
         }
 
         if is_precompile(&current_call_frame.code_address, self.env.spec_id) {
@@ -1677,6 +1693,20 @@ pub fn get_account_no_push_cache(
             account
         }
     }
+}
+
+pub fn was_delegated_from_bytecode(bytecode: &Bytes) -> Result<bool, VMError> {
+    let mut was_delegated = false;
+    if !bytecode.is_empty() && bytecode.len() == EIP7702_DELEGATED_CODE_LEN {
+        let first_3_bytes = bytecode
+            .get(..3)
+            .ok_or(VMError::Internal(InternalError::SlicingError))?;
+
+        if first_3_bytes == SET_CODE_DELEGATION_BYTES {
+            was_delegated = true;
+        }
+    }
+    Ok(was_delegated)
 }
 
 pub fn was_delegated(account_info: &AccountInfo) -> Result<bool, VMError> {
