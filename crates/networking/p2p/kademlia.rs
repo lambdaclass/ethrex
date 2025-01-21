@@ -1,7 +1,5 @@
 use crate::{
-    discv4::{time_now_unix, FindNodeRequest},
-    peer_channels::PeerChannels,
-    rlpx::p2p::Capability,
+    discv4::messages::FindNodeRequest, peer_channels::PeerChannels, rlpx::p2p::Capability,
     types::Node,
 };
 use ethrex_core::{H256, H512, U256};
@@ -348,6 +346,13 @@ pub fn bucket_number(node_id_1: H512, node_id_2: H512) -> usize {
     let xor = H256(hash_1.into()) ^ H256(hash_2.into());
     let distance = U256::from_big_endian(xor.as_bytes());
     distance.bits().saturating_sub(1)
+}
+
+pub fn time_now_unix() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs()
 }
 
 #[derive(Debug, Clone)]
