@@ -310,7 +310,7 @@ async fn store_receipts(
     Ok(())
 }
 
-/// Rebuilds a Block's state trie by requesting snap state from peers, also performs state healing (TODO)
+/// Rebuilds a Block's state trie by requesting snap state from peers, also performs state healing
 /// Receives an optional checkpoint in case there was a previous snap sync process that became stale, in which
 /// case it will continue from the checkpoint and then apply healing to fix inconsistencies with the older state
 /// Returns true if all state was fetched or false if the block is too old and the state is no longer available
