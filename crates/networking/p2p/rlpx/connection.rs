@@ -170,7 +170,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
         table: Arc<Mutex<crate::kademlia::KademliaTable>>,
     ) {
         // Perform handshake
-        debug!("Starting peer initiator");
+        debug!("StartingRLPx connection with {}", self.remote_node_id);
         if let Err(e) = self.handshake().await {
             self.peer_conn_failed("Handshake failed", e, table).await;
         } else {

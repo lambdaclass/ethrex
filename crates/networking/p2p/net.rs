@@ -793,7 +793,6 @@ async fn handle_peer_as_receiver(
     connection_broadcast: broadcast::Sender<(tokio::task::Id, Arc<RLPxMessage>)>,
 ) {
     let mut conn = RLPxConnection::receiver(signer.clone(), stream, storage, connection_broadcast);
-    debug!("[INCOMING] Starting RLPx connection with {peer_addr:?}");
     conn.start_peer(peer_addr, table).await;
 }
 
@@ -805,8 +804,6 @@ async fn handle_peer_as_initiator(
     table: Arc<Mutex<KademliaTable>>,
     connection_broadcast: broadcast::Sender<(tokio::task::Id, Arc<RLPxMessage>)>,
 ) {
-    debug!("[INCOMING] Starting RLPx connection with {:?}", node);
-    debug!("Trying RLPx connection with {node:?}");
     let stream = TcpSocket::new_v4()
         .unwrap()
         .connect(SocketAddr::new(node.ip, node.tcp_port))
