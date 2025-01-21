@@ -767,11 +767,13 @@ async fn heal_state_trie(
     // Count the number of request retries so we don't get stuck requesting old state
     let mut retry_count = 0;
     while !paths.is_empty() && retry_count < MAX_RETRIES {
+        info!("Next paths to fetch: {paths:?}");
         let peer = peers.lock().await.get_peer_channels(Capability::Snap).await;
         if let Some(nodes) = peer
             .request_state_trienodes(state_root, paths.clone())
             .await
         {
+            info!("Received {} state nodes", nodes.len());
             // Reset retry counter for next request
             retry_count = 0;
             let mut hahsed_addresses = vec![];
@@ -887,6 +889,7 @@ async fn storage_healer(
                 batch_size += val.1.len();
                 next_batch.insert(key, val);
             }
+            info!("Sending storage heal batch of size {batch_size}");
             let (return_batch, is_stale) = heal_storage_batch(
                 state_root,
                 next_batch.clone(),
@@ -894,6 +897,7 @@ async fn storage_healer(
                 store.clone(),
             )
             .await?;
+            info!("Returned storage heal batch of size {}", return_batch.iter().map(|b| b.1.1.len()).sum::<usize>());
             pending_storages.extend(return_batch.into_iter());
             stale |= is_stale;
         }
@@ -914,7 +918,7 @@ async fn heal_storage_batch(
         let peer = peers.lock().await.get_peer_channels(Capability::Snap).await;
         let req_batch = batch.iter().map(|(k, v)| (*k, v.1.clone())).collect();
         if let Some(mut nodes) = peer.request_storage_trienodes(state_root, req_batch).await {
-            info!("Received {} nodes", nodes.len());
+            info!("Received {} storage nodes", nodes.len());
             // Process the nodes for each account path
             for (acc_path, (root, paths)) in batch.iter_mut() {
                 let mut trie = store.open_storage_trie(*acc_path, *root);
