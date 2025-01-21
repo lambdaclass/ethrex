@@ -173,8 +173,10 @@ pub const ACCESS_LIST_ADDRESS_COST: u64 = 2400;
 pub const ECRECOVER_COST: u64 = 3000;
 pub const BLS12_381_G1ADD_COST: u64 = 375;
 pub const BLS12_381_G2ADD_COST: u64 = 600;
+pub const BLS12_381_MAP_FP_TO_G1_COST: u64 = 5500;
 pub const BLS12_PAIRING_CHECK_MUL_COST: u64 = 32600;
 pub const BLS12_PAIRING_CHECK_FIXED_COST: u64 = 37700;
+pub const BLS12_381_MAP_FP2_TO_G2_COST: u64 = 23800;
 
 // Floor cost per token, specified in https://eips.ethereum.org/EIPS/eip-7623
 pub const TOTAL_COST_FLOOR_PER_TOKEN: u64 = 10;

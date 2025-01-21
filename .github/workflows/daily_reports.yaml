@@ -108,8 +108,9 @@ jobs:
             ${{ github.event_name == 'workflow_dispatch'
               && secrets.TEST_CHANNEL_SLACK
               || format(
-                  '{0}, {1}',
-                  secrets.ETHREX_REPORTS_SLACK_WEBHOOK,
+                  '{0} {1} {2}',
+                  secrets.ETHREX_L1_SLACK_WEBHOOK,
+                  secrets.ETHREX_L2_SLACK_WEBHOOK,
                   secrets.LEVM_SLACK_WEBHOOK
                 )
             }}
@@ -196,4 +197,25 @@ jobs:
               && secrets.TEST_CHANNEL_SLACK
               || secrets.LEVM_SLACK_WEBHOOK
             }}
-        run: sh .github/scripts/publish_levm_ef_tests.sh $SLACK_WEBHOOK
+        run: sh .github/scripts/publish_levm_ef_tests.sh "$SLACK_WEBHOOK"
+
+  flamegraphs-page:
+    name: Post to Slack link to Flamegraphs Page
+    runs-on: ubuntu-latest
+    steps:
+      - name: Post message to slack
+        env:
+          SLACK_WEBHOOKS: >
+            ${{ github.event_name == 'workflow_dispatch'
+              && secrets.TEST_CHANNEL_SLACK
+              || format(
+                  '{0} {1} {2}',
+                  secrets.ETHREX_L1_SLACK_WEBHOOK,
+                  secrets.ETHREX_L2_SLACK_WEBHOOK,
+                  secrets.LEVM_SLACK_WEBHOOK
+                )
+            }}
+        run: |
+          for webhook in $SLACK_WEBHOOKS; do
+            sh .github/scripts/publish_link_flamegraphs.sh "$webhook"
+          done

@@ -71,9 +71,12 @@ pub async fn load_selected_config() -> eyre::Result<EthrexL2Config> {
                 DEFAULT_CONFIG_NAME.to_owned(),
             )?
             .to_owned();
-            commands::config::Command::Create { config_name }
-                .run()
-                .await?;
+            commands::config::Command::Create {
+                config_name,
+                default: false,
+            }
+            .run()
+            .await?;
         }
     }
     let config = std::fs::read_to_string(config_path).context("Failed to read config file")?;
