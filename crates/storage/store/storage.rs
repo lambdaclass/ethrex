@@ -545,6 +545,9 @@ impl Store {
     }
 
     pub fn add_initial_state(&self, genesis: Genesis) -> Result<(), StoreError> {
+        info!("Setting initial sync status to false");
+        self.update_sync_status(false)?;
+
         info!("Storing initial state from genesis");
 
         // Obtain genesis block
@@ -576,7 +579,6 @@ impl Store {
         self.update_earliest_block_number(genesis_block_number)?;
         self.update_latest_block_number(genesis_block_number)?;
         self.set_canonical_block(genesis_block_number, genesis_hash)?;
-        self.update_sync_status(false)?;
 
         // Set chain config
         self.set_chain_config(&genesis.config)
