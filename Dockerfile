@@ -12,7 +12,9 @@ RUN cargo install cargo-chef
 WORKDIR /ethrex
 
 FROM chef AS planner
-COPY . .
+COPY crates ./crates
+COPY cmd ./cmd
+COPY Cargo.* .
 # Determine the crates that need to be built from dependencies
 RUN cargo chef prepare --recipe-path recipe.json
 
@@ -23,7 +25,9 @@ RUN cargo chef cook --release --recipe-path recipe.json
 
 # Optional build flags
 ARG BUILD_FLAGS=""
-COPY . .
+COPY crates ./crates
+COPY cmd ./cmd
+COPY Cargo.* ./
 RUN cargo build --release $BUILD_FLAGS
 
 FROM ubuntu:24.04

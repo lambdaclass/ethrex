@@ -197,3 +197,10 @@ load-node: install-cli ## 🚧 Runs a load-test. Run make start-node-with-flameg
 
 rm-test-db:  ## 🛑 Removes the DB used by the ethrex client used for testing
 	sudo cargo run --release --bin ethrex -- removedb --datadir test_ethrex
+
+flamegraph:
+	sudo -E CARGO_PROFILE_RELEASE_DEBUG=true cargo flamegraph --bin ethrex --features dev  --  --network test_data/genesis-l2.json --http.port 1729 >/dev/null &
+	bash scripts/flamegraph.sh
+
+test-load:
+	ethrex_l2 test load --path ./test_data/private_keys.txt -i 1000 -v  --value 10000000 --to 0xFCbaC0713ACf16708aB6BC977227041FA1BC618D
