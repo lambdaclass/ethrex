@@ -27,7 +27,7 @@ impl RpcHandler for Syncing {
     }
 
     fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
-        let synced = context.storage.synced()?;
-        Ok(Value::Bool(!synced))
+        let is_synced = context.storage.is_synced()?;
+        Ok(Value::Bool(!is_synced))
     }
 }
