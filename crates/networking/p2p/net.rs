@@ -64,6 +64,7 @@ pub async fn start_network(
         tokio::task::Id,
         Arc<RLPxMessage>,
     )>(MAX_MESSAGES_TO_BROADCAST);
+
     let discovery_handle = tokio::spawn(discover_peers(
         udp_addr,
         signer.clone(),
@@ -778,9 +779,10 @@ async fn serve_requests(
     tcp_socket.bind(tcp_addr).unwrap();
     let listener = tcp_socket.listen(50).unwrap();
     loop {
-        let (stream, _peer_addr) = listener.accept().await.unwrap();
+        let (stream, peer_addr) = listener.accept().await.unwrap();
 
         tokio::spawn(handle_peer_as_receiver(
+            peer_addr,
             signer.clone(),
             stream,
             storage.clone(),
@@ -791,6 +793,7 @@ async fn serve_requests(
 }
 
 async fn handle_peer_as_receiver(
+    peer_addr: SocketAddr,
     signer: SigningKey,
     stream: TcpStream,
     storage: Store,
@@ -798,7 +801,7 @@ async fn handle_peer_as_receiver(
     connection_broadcast: broadcast::Sender<(tokio::task::Id, Arc<RLPxMessage>)>,
 ) {
     let mut conn = RLPxConnection::receiver(signer, stream, storage, connection_broadcast);
-    conn.start_peer(table).await;
+    conn.start_peer(peer_addr, table).await;
 }
 
 async fn handle_peer_as_initiator(
@@ -809,7 +812,6 @@ async fn handle_peer_as_initiator(
     table: Arc<Mutex<KademliaTable>>,
     connection_broadcast: broadcast::Sender<(tokio::task::Id, Arc<RLPxMessage>)>,
 ) {
-    debug!("Trying RLPx connection with {node:?}");
     let Ok(stream) = TcpSocket::new_v4()
         .unwrap()
         .connect(SocketAddr::new(node.ip, node.tcp_port))
@@ -819,7 +821,10 @@ async fn handle_peer_as_initiator(
         return;
     };
     match RLPxConnection::initiator(signer, msg, stream, storage, connection_broadcast) {
-        Ok(mut conn) => conn.start_peer(table).await,
+        Ok(mut conn) => {
+            conn.start_peer(SocketAddr::new(node.ip, node.udp_port), table)
+                .await
+        }
         Err(e) => {
             debug!("Error: {e}, Could not start connection with {node:?}");
         }
