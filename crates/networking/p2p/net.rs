@@ -792,7 +792,7 @@ async fn handle_peer_as_receiver(
     table: Arc<Mutex<KademliaTable>>,
     connection_broadcast: broadcast::Sender<(tokio::task::Id, Arc<RLPxMessage>)>,
 ) {
-    let mut conn = RLPxConnection::receiver(signer.clone(), stream, storage, connection_broadcast);
+    let mut conn = RLPxConnection::receiver(signer, stream, storage, connection_broadcast);
     conn.start_peer(peer_addr, table).await;
 }
 
