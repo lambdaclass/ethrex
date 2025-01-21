@@ -837,7 +837,7 @@ async fn storage_healer(
             stale |= is_stale;
         }
     }
-    Ok(pending_storages.into_iter().map(|(h, _)| h).collect())
+    Ok(pending_storages.into_keys().collect())
 }
 
 /// Receives a set of storage trie paths (grouped by their corresponding account's state trie path),
