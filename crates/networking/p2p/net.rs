@@ -235,10 +235,9 @@ async fn discover_peers_server(
                                         table,
                                         broadcaster,
                                     )
-                                    .await.unwrap_or_else( | error | {
-                                        debug!(
-                                            "Could not start peer loop: {error}"
-                                        );
+                                    .await
+                                    .unwrap_or_else(|error| {
+                                        debug!("Could not start peer loop: {error}");
                                     })
                                 });
                             } else {
@@ -986,7 +985,9 @@ mod tests {
         {
             let mut table = server_b.table.lock().await;
             let node = table.get_by_node_id_mut(server_a.node_id);
-            node.map(|n| n.node.udp_port = 0);
+            if let Some(node) = node {
+                node.node.udp_port = 0
+            };
         }
 
         // now the liveness field should start decreasing until it gets to 0
