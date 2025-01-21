@@ -39,6 +39,7 @@ use std::{
     cmp::max,
     collections::{HashMap, HashSet},
     fmt::Debug,
+    str::FromStr,
     sync::Arc,
 };
 pub type Storage = HashMap<U256, H256>;
@@ -192,7 +193,9 @@ impl VM {
             TxKind::Call(address_to) => {
                 default_touched_accounts.insert(address_to);
 
-                let bytecode = get_account(&mut cache, &db, address_to).info.bytecode;
+                let bytecode = get_account_no_push_cache(&mut cache, &db, address_to)
+                    .info
+                    .bytecode;
 
                 // CALL tx
                 let initial_call_frame = CallFrame::new(
@@ -884,13 +887,6 @@ impl VM {
         self.decrease_account_balance(sender_address, up_front_cost)
             .map_err(|_| TxValidationError::InsufficientAccountFunds)?;
 
-        // Transfer value to receiver
-        let receiver_address = initial_call_frame.to;
-        // msg_value is already transferred into the created contract at creation.
-        if !self.is_create() {
-            self.increase_account_balance(receiver_address, initial_call_frame.msg_value)?;
-        }
-
         // (4) INSUFFICIENT_MAX_FEE_PER_GAS
         if self.env.tx_max_fee_per_gas.unwrap_or(self.env.gas_price) < self.env.base_fee_per_gas {
             return Err(VMError::TxValidation(
@@ -1015,6 +1011,10 @@ impl VM {
             initial_call_frame.bytecode = std::mem::take(&mut initial_call_frame.calldata);
             initial_call_frame.valid_jump_destinations =
                 get_valid_jump_destinations(&initial_call_frame.bytecode).unwrap_or_default();
+        } else {
+            // Transfer value to receiver
+            // It's here to avoid storing the "to" address in the cache before eip7702_set_access_code() step 7).
+            self.increase_account_balance(initial_call_frame.to, initial_call_frame.msg_value)?;
         }
         Ok(())
     }
@@ -1559,7 +1559,7 @@ impl VM {
                 .touched_accounts
                 .insert(initial_call_frame.code_address);
             initial_call_frame.code_address = get_authorized_address(&code_address_info)?;
-            let (auth_address_info, _) = self.access_account(initial_call_frame.code_address);
+            let auth_address_info = self.get_account(initial_call_frame.code_address).info;
 
             initial_call_frame.bytecode = auth_address_info.bytecode.clone();
         } else {
