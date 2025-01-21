@@ -767,13 +767,13 @@ async fn heal_state_trie(
     // Count the number of request retries so we don't get stuck requesting old state
     let mut retry_count = 0;
     while !paths.is_empty() && retry_count < MAX_RETRIES {
-        info!("Paths queued: {}", paths.len());
+        //info!("Paths queued: {}", paths.len());
         let peer = peers.lock().await.get_peer_channels(Capability::Snap).await;
         if let Some(nodes) = peer
             .request_state_trienodes(state_root, paths.clone())
             .await
         {
-            info!("Received {} state nodes", nodes.len());
+            //info!("Received {} state nodes", nodes.len());
             // Reset retry counter for next request
             retry_count = 0;
             let mut hahsed_addresses = vec![];
