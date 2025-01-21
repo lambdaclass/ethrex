@@ -104,6 +104,8 @@ impl SyncManager {
         // Check if we have some blocks downloaded from a previous sync attempt
         if matches!(self.sync_mode, SyncMode::Snap) {
             if let Some(last_header) = store.get_header_download_checkpoint()? {
+                let n = store.get_block_header_by_hash(last_header).unwrap().unwrap().number;
+                info!("Found checkpoint at {last_header}, number: {n}");
                 // Set latest downloaded header as current head for header fetching
                 current_head = last_header;
             }
