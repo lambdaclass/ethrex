@@ -448,7 +448,7 @@ async fn rebuild_state_trie(
         );
         store.set_pending_storage_heal_accounts(stored_pending_storages)?;
     }
-    if retry_count > MAX_RETRIES || !pending_storages {
+    if retry_count > MAX_RETRIES || pending_storages {
         // Skip healing and return stale status
         return Ok(false);
     }
