@@ -587,7 +587,7 @@ async fn fetch_storage_batch(
     peers: Arc<Mutex<KademliaTable>>,
     store: Store,
 ) -> Result<(Vec<(H256, H256)>, bool), SyncError> {
-    info!(
+    debug!(
         "Requesting storage ranges for addresses {}..{}",
         batch.first().unwrap().0,
         batch.last().unwrap().0
