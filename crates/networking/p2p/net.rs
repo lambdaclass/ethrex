@@ -24,7 +24,6 @@ use rlpx::{connection::RLPxConnection, message::Message as RLPxMessage};
 use tokio::{
     net::{TcpSocket, TcpStream, UdpSocket},
     sync::{broadcast, Mutex},
-    try_join,
 };
 use tokio_util::task::TaskTracker;
 use tracing::{debug, info};
@@ -39,8 +38,6 @@ pub mod rlpx;
 pub(crate) mod snap;
 pub mod sync;
 pub mod types;
-
-type Error = NetworkingError;
 
 const MAX_DISC_PACKET_SIZE: usize = 1280;
 
@@ -63,7 +60,7 @@ pub async fn start_network(
     signer: SigningKey,
     peer_table: Arc<Mutex<KademliaTable>>,
     storage: Store,
-) -> Result<(), Error> {
+) -> Result<(), NetworkingError> {
     info!("Starting discovery service at {udp_addr}");
     info!("Listening for requests at {tcp_addr}");
     let (channel_broadcast_send_end, _) = tokio::sync::broadcast::channel::<(
@@ -98,7 +95,7 @@ async fn discover_peers(
     table: Arc<Mutex<KademliaTable>>,
     bootnodes: Vec<BootNode>,
     connection_broadcast: broadcast::Sender<(tokio::task::Id, Arc<RLPxMessage>)>,
-) -> Result<(), Error> {
+) -> Result<(), NetworkingError> {
     let udp_socket = Arc::new(UdpSocket::bind(udp_addr).await?);
 
     tracker.spawn(discover_peers_server(
@@ -149,7 +146,7 @@ async fn discover_peers_server(
     table: Arc<Mutex<KademliaTable>>,
     signer: SigningKey,
     tx_broadcaster_send: broadcast::Sender<(tokio::task::Id, Arc<RLPxMessage>)>,
-) -> Result<(), Error> {
+) -> Result<(), NetworkingError> {
     let mut buf = vec![0; MAX_DISC_PACKET_SIZE];
 
     loop {
@@ -351,7 +348,7 @@ async fn discovery_startup(
     table: Arc<Mutex<KademliaTable>>,
     signer: SigningKey,
     bootnodes: Vec<BootNode>,
-) -> Result<(), Error> {
+) -> Result<(), NetworkingError> {
     for bootnode in bootnodes {
         table.lock().await.insert_node(Node {
             ip: bootnode.socket_address.ip(),
@@ -392,7 +389,7 @@ async fn peers_revalidation(
     table: Arc<Mutex<KademliaTable>>,
     signer: SigningKey,
     interval_time_in_seconds: u64,
-) -> Result<(), Error> {
+) -> Result<(), NetworkingError> {
     let mut interval = tokio::time::interval(Duration::from_secs(interval_time_in_seconds));
     // peers we have pinged in the previous iteration
     let mut previously_pinged_peers: HashSet<H512> = HashSet::default();
@@ -497,31 +494,25 @@ async fn peers_lookup(
 
         debug!("Starting lookup");
 
-        let mut handlers = vec![];
-
         // lookup closest to our pub key
-        handlers.push(tracker.spawn(recursive_lookup(
+        tracker.spawn(recursive_lookup(
             udp_socket.clone(),
             table.clone(),
             signer.clone(),
             local_node_id,
             local_node_id,
-        )));
+        ));
 
         // lookup closest to 3 random keys
         for _ in 0..3 {
             let random_pub_key = &SigningKey::random(&mut OsRng);
-            handlers.push(tracker.spawn(recursive_lookup(
+            tracker.spawn(recursive_lookup(
                 udp_socket.clone(),
                 table.clone(),
                 signer.clone(),
                 node_id_from_signing_key(random_pub_key),
                 local_node_id,
-            )));
-        }
-
-        for handle in handlers {
-            let _ = try_join!(handle);
+            ));
         }
 
         debug!("Lookup finished");
@@ -534,7 +525,7 @@ async fn recursive_lookup(
     signer: SigningKey,
     target: H512,
     local_node_id: H512,
-) -> Result<(), Error> {
+) -> Result<(), NetworkingError> {
     let mut asked_peers = HashSet::default();
     // lookups start with the closest from our table
     let closest_nodes = table.lock().await.get_closest_nodes(target);
@@ -584,7 +575,7 @@ async fn lookup(
     target: H512,
     asked_peers: &mut HashSet<H512>,
     nodes_to_ask: &Vec<Node>,
-) -> Result<(Vec<Node>, u32), Error> {
+) -> Result<(Vec<Node>, u32), NetworkingError> {
     let alpha = 3;
     let mut queries = 0;
     let mut nodes = vec![];
@@ -657,7 +648,7 @@ async fn ping(
     local_addr: SocketAddr,
     to_addr: SocketAddr,
     signer: &SigningKey,
-) -> Result<Option<H256>, Error> {
+) -> Result<Option<H256>, NetworkingError> {
     let mut buf = Vec::new();
 
     let expiration: u64 = (SystemTime::now() + Duration::from_secs(20))
@@ -700,7 +691,7 @@ async fn find_node_and_wait_for_response(
     signer: &SigningKey,
     target_node_id: H512,
     request_receiver: &mut tokio::sync::mpsc::UnboundedReceiver<Vec<Node>>,
-) -> Result<Vec<Node>, Error> {
+) -> Result<Vec<Node>, NetworkingError> {
     let expiration: u64 = (SystemTime::now() + Duration::from_secs(20))
         .duration_since(UNIX_EPOCH)?
         .as_secs();
@@ -743,7 +734,7 @@ async fn pong(
     to_addr: SocketAddr,
     ping_hash: H256,
     signer: &SigningKey,
-) -> Result<(), Error> {
+) -> Result<(), NetworkingError> {
     let mut buf = Vec::new();
 
     let expiration: u64 = (SystemTime::now() + Duration::from_secs(20))
@@ -769,14 +760,15 @@ async fn serve_p2p_requests(
     storage: Store,
     table: Arc<Mutex<KademliaTable>>,
     connection_broadcast: broadcast::Sender<(tokio::task::Id, Arc<RLPxMessage>)>,
-) -> Result<(), Error> {
+) -> Result<(), NetworkingError> {
     let tcp_socket = TcpSocket::new_v4()?;
     tcp_socket.bind(tcp_addr)?;
     let listener = tcp_socket.listen(50)?;
     loop {
-        let (stream, _peer_addr) = listener.accept().await?;
+        let (stream, peer_addr) = listener.accept().await.unwrap();
 
         tracker.spawn(handle_peer_as_receiver(
+            peer_addr,
             signer.clone(),
             stream,
             storage.clone(),
@@ -787,6 +779,7 @@ async fn serve_p2p_requests(
 }
 
 async fn handle_peer_as_receiver(
+    peer_addr: SocketAddr,
     signer: SigningKey,
     stream: TcpStream,
     storage: Store,
@@ -794,7 +787,7 @@ async fn handle_peer_as_receiver(
     connection_broadcast: broadcast::Sender<(tokio::task::Id, Arc<RLPxMessage>)>,
 ) {
     let mut conn = RLPxConnection::receiver(signer, stream, storage, connection_broadcast);
-    conn.start_peer(table).await;
+    conn.start_peer(peer_addr, table).await;
 }
 
 async fn handle_peer_as_initiator(
@@ -804,13 +797,13 @@ async fn handle_peer_as_initiator(
     storage: Store,
     table: Arc<Mutex<KademliaTable>>,
     connection_broadcast: broadcast::Sender<(tokio::task::Id, Arc<RLPxMessage>)>,
-) -> Result<(), Error> {
+) -> Result<(), NetworkingError> {
     debug!("Trying RLPx connection with {node:?}");
     let stream = TcpSocket::new_v4()?
         .connect(SocketAddr::new(node.ip, node.tcp_port))
         .await?;
     let mut conn = RLPxConnection::initiator(signer, msg, stream, storage, connection_broadcast)?;
-    conn.start_peer(table).await;
+    conn.start_peer(SocketAddr::new(node.ip, node.udp_port), table).await;
     Ok(())
 }
 
@@ -878,7 +871,7 @@ mod tests {
     async fn start_mock_discovery_server(
         udp_port: u16,
         should_start_server: bool,
-    ) -> Result<MockServer, Error> {
+    ) -> Result<MockServer, NetworkingError> {
         let addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), udp_port);
         let signer = SigningKey::random(&mut OsRng);
         let udp_socket = Arc::new(UdpSocket::bind(addr).await?);
@@ -916,7 +909,7 @@ mod tests {
     async fn connect_servers(
         server_a: &mut MockServer,
         server_b: &mut MockServer,
-    ) -> Result<(), Error> {
+    ) -> Result<(), NetworkingError> {
         let ping_hash = ping(
             &server_a.udp_socket,
             server_a.addr,
@@ -949,7 +942,7 @@ mod tests {
      * - We expect server `b` to remove node `a` from its table after 3 re-validations
      * To make this run faster, we'll change the revalidation time to be every 2secs
      */
-    async fn discovery_server_revalidation() -> Result<(), Error> {
+    async fn discovery_server_revalidation() -> Result<(), NetworkingError> {
         let mut server_a = start_mock_discovery_server(7998, true).await?;
         let mut server_b = start_mock_discovery_server(7999, true).await?;
 
@@ -1015,7 +1008,7 @@ mod tests {
      *
      * This test for only one lookup, and not recursively.
      */
-    async fn discovery_server_lookup() -> Result<(), Error> {
+    async fn discovery_server_lookup() -> Result<(), NetworkingError> {
         let mut server_a = start_mock_discovery_server(8000, true).await?;
         let mut server_b = start_mock_discovery_server(8001, true).await?;
 
@@ -1074,7 +1067,7 @@ mod tests {
      * - The server `d` will have its table filled with mock nodes
      * - We'll run a recursive lookup on server `a` and we expect to end with `b`, `c`, `d` and its mock nodes
      */
-    async fn discovery_server_recursive_lookup() -> Result<(), Error> {
+    async fn discovery_server_recursive_lookup() -> Result<(), NetworkingError> {
         let mut server_a = start_mock_discovery_server(8002, true).await?;
         let mut server_b = start_mock_discovery_server(8003, true).await?;
         let mut server_c = start_mock_discovery_server(8004, true).await?;
