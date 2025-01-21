@@ -132,14 +132,14 @@ impl SyncManager {
                     .iter()
                     .map(|header| header.compute_block_hash())
                     .collect::<Vec<_>>();
-                // Discard the first header as we already have it
-                block_hashes.remove(0);
-                block_headers.remove(0);
                 // Check if we already found the sync head
                 let sync_head_found = block_hashes.contains(&sync_head);
                 // Update current fetch head if needed
                 if !sync_head_found {
                     current_head = *block_hashes.last().unwrap();
+                    // Discard the first header as we already have it
+                    block_hashes.remove(0);
+                    block_headers.remove(0);
                     // Update snap state
                     store.set_header_download_checkpoint(current_head)?;
                 }
