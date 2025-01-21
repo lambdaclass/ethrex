@@ -1,7 +1,7 @@
 use ethrex_blockchain::find_parent_header;
 use ethrex_rlp::encode::RLPEncode;
 use serde_json::Value;
-use tracing::{debug, info};
+use tracing::info;
 
 use crate::{
     types::{
