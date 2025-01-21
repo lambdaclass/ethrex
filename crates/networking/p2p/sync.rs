@@ -880,6 +880,7 @@ async fn storage_healer(
         // If we have enough pending storages to fill a batch
         // or if we have no more incoming batches, spawn a fetch process
         // If the pivot became stale don't process anything and just save incoming requests
+        info!("Storage Healer, stale: {stale}");
         while !stale && !pending_storages.is_empty() {
             let mut next_batch: BTreeMap<H256, (H256, Vec<Nibbles>)> = BTreeMap::new();
             // Fill batch
@@ -950,6 +951,7 @@ async fn heal_storage_batch(
         }
     }
     // Pivot became stale, lets inform the fetcher
+    info!("Heal storage batch: stale pivot");
     Ok((batch, true))
 }
 
