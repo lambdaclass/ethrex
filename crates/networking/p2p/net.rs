@@ -25,7 +25,7 @@ use tokio::{
     sync::{broadcast, Mutex},
     try_join,
 };
-use tracing::{debug, info};
+use tracing::{debug, error, info};
 use types::{Endpoint, Node};
 
 pub mod bootnode;
@@ -214,14 +214,14 @@ async fn discover_peers_server(
                 };
                 if let Some(peer) = peer {
                     if peer.last_ping_hash.is_none() {
-                        debug!("Discarding pong as the node did not send a previous ping");
+                        error!("Discarding pong as the node did not send a previous ping");
                         continue;
                     }
                     if peer.last_ping_hash.unwrap() == msg.ping_hash {
                         table.lock().await.pong_answered(peer.node.node_id);
                         // TODO: This is a hacky fix for the problem reported in https://github.com/lambdaclass/ethrex/issues/1684
                         if peer.channels.is_some() {
-                            debug!(
+                            error!(
                                 "Skip trying to connect to already connected peer {}",
                                 peer.node.node_id
                             );

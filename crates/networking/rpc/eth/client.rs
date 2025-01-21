@@ -10,7 +10,7 @@ impl RpcHandler for ChainId {
     }
 
     fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
-        debug!("Requested chain id");
+        info!("Requested chain id");
         let chain_spec = context
             .storage
             .get_chain_config()
