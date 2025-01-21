@@ -436,6 +436,7 @@ impl PeerChannels {
         })
         .await
         .ok()??;
+        info!("Received: {} encoded storage nodes", node.len());
         (!nodes.is_empty() && nodes.len() <= expected_nodes)
             .then(|| {
                 nodes
