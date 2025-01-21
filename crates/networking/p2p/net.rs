@@ -408,7 +408,7 @@ async fn peers_revalidation(
         // first check that the peers we ping have responded
         for node_id in previously_pinged_peers {
             let mut table = table.lock().await;
-            let peer = table.get_by_node_id_mut(node_id) else {
+            let Some(peer) = table.get_by_node_id_mut(node_id) else {
                 continue
             };
 
