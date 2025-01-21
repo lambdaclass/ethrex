@@ -803,7 +803,8 @@ async fn handle_peer_as_initiator(
         .connect(SocketAddr::new(node.ip, node.tcp_port))
         .await?;
     let mut conn = RLPxConnection::initiator(signer, msg, stream, storage, connection_broadcast)?;
-    conn.start_peer(SocketAddr::new(node.ip, node.udp_port), table).await;
+    conn.start_peer(SocketAddr::new(node.ip, node.udp_port), table)
+        .await;
     Ok(())
 }
 
