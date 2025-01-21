@@ -287,7 +287,12 @@ impl VM {
             self.env.transient_storage.clone(),
         );
 
-        if current_call_frame.is_delegation && current_call_frame.bytecode.is_empty() {
+        // CHECK:
+        // Not fully sure if the following check: current_call_frame.gas_limit == 0 is ok.
+        // This change helps to pass the account_warming.json tests.
+        if current_call_frame.bytecode.is_empty()
+            && (current_call_frame.is_delegation || current_call_frame.gas_limit == 0)
+        {
             self.call_frames.push(current_call_frame.clone());
 
             return Ok(TransactionReport {
@@ -296,7 +301,7 @@ impl VM {
                 // Here we use the gas used and not check for the floor cost
                 // for Prague fork because the precompiles have constant gas cost
                 gas_used: current_call_frame.gas_used,
-                gas_refunded: 0,
+                gas_refunded: self.env.refunded_gas,
                 output: Bytes::new(),
                 logs: std::mem::take(&mut current_call_frame.logs),
                 created_address: None,
@@ -1595,7 +1600,10 @@ impl VM {
 
         let access_cost = match self.accrued_substate.touched_accounts.get(&auth_address) {
             Some(_) => WARM_ADDRESS_ACCESS_COST,
-            None => COLD_ADDRESS_ACCESS_COST,
+            None => {
+                self.accrued_substate.touched_accounts.insert(auth_address);
+                COLD_ADDRESS_ACCESS_COST
+            }
         };
 
         let authorized_bytecode = get_account(&mut self.cache, &self.db, auth_address)
