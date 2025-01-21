@@ -9,6 +9,7 @@ use ethrex_rlp::encode::RLPEncode;
 use ethrex_trie::Nibbles;
 use ethrex_trie::{verify_range, Node};
 use tokio::sync::{mpsc, Mutex};
+use tracing::info;
 
 use crate::{
     rlpx::{
