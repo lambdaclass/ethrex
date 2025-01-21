@@ -1006,7 +1006,6 @@ impl VM {
                 ));
             }
 
-            dbg!(self.env.refunded_gas);
             self.env.refunded_gas = self.eip7702_set_access_code(initial_call_frame)?;
             dbg!(self.env.refunded_gas);
         }
@@ -1372,6 +1371,10 @@ impl VM {
         get_account(&mut self.cache, &self.db, address)
     }
 
+    pub fn get_account_no_push_cache(&mut self, address: Address) -> Account {
+        get_account_no_push_cache(&mut self.cache, &self.db, address)
+    }
+
     fn handle_create_non_empty_account(
         &mut self,
         initial_call_frame: &CallFrame,
@@ -1490,7 +1493,7 @@ impl VM {
             self.accrued_substate
                 .touched_accounts
                 .insert(authority_address);
-            let authority_account_info = self.get_account(authority_address).info;
+            let authority_account_info = self.get_account_no_push_cache(authority_address).info;
 
             // 5. Verify the code of authority is either empty or already delegated.
             let empty_or_delegated = authority_account_info.bytecode.is_empty()
@@ -1510,7 +1513,10 @@ impl VM {
             dbg!("PRE self.db.account_exists");
             dbg!(authority_address);
             dbg!(self.db.account_exists(authority_address));
-            if self.db.account_exists(authority_address) {
+            // CHECK: we don't know if checking the cache is correct. More gas tests pass but the set_code_txs tests went to half.
+            if self.db.account_exists(authority_address)
+                || self.cache.contains_key(&authority_address)
+            {
                 dbg!("IN self.db.account_exists");
                 let refunded_gas_if_exists = PER_EMPTY_ACCOUNT_COST - PER_AUTH_BASE_COST;
                 refunded_gas = refunded_gas
@@ -1526,8 +1532,15 @@ impl VM {
 
             // As a special case, if address is 0x0000000000000000000000000000000000000000 do not write the designation.
             // Clear the account’s code and reset the account’s code hash to the empty hash.
-            let auth_account = get_account_mut(&mut self.cache, &authority_address)
-                .ok_or(VMError::Internal(InternalError::AccountNotFound))?;
+            let auth_account = match get_account_mut(&mut self.cache, &authority_address) {
+                Some(account_mut) => account_mut,
+                None => {
+                    // This is to add the account to the cache
+                    self.get_account(authority_address);
+                    self.get_account_mut(authority_address)?
+                }
+            };
+
             if auth_tuple.address != Address::zero() {
                 auth_account.info.bytecode = delegation_bytes.into();
             } else {
@@ -1643,6 +1656,24 @@ pub fn get_account(cache: &mut CacheDB, db: &Arc<dyn Database>, address: Address
                 storage: HashMap::new(),
             };
             cache::insert_account(cache, address, account.clone());
+            account
+        }
+    }
+}
+
+pub fn get_account_no_push_cache(
+    cache: &mut CacheDB,
+    db: &Arc<dyn Database>,
+    address: Address,
+) -> Account {
+    match cache::get_account(cache, &address) {
+        Some(acc) => acc.clone(),
+        None => {
+            let account_info = db.get_account_info(address);
+            let account = Account {
+                info: account_info,
+                storage: HashMap::new(),
+            };
             account
         }
     }
