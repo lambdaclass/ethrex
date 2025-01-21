@@ -1695,6 +1695,20 @@ pub fn get_account_no_push_cache(
     }
 }
 
+pub fn was_delegated_from_bytecode(bytecode: &Bytes) -> Result<bool, VMError> {
+    let mut was_delegated = false;
+    if !bytecode.is_empty() && bytecode.len() == EIP7702_DELEGATED_CODE_LEN {
+        let first_3_bytes = bytecode
+            .get(..3)
+            .ok_or(VMError::Internal(InternalError::SlicingError))?;
+
+        if first_3_bytes == SET_CODE_DELEGATION_BYTES {
+            was_delegated = true;
+        }
+    }
+    Ok(was_delegated)
+}
+
 pub fn was_delegated(account_info: &AccountInfo) -> Result<bool, VMError> {
     let mut was_delegated = false;
     if account_info.has_code() && account_info.bytecode.len() == EIP7702_DELEGATED_CODE_LEN {
