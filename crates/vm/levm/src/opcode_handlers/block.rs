@@ -6,7 +6,7 @@ use crate::{
     vm::{address_to_word, VM},
 };
 use ethrex_core::{
-    types::{BLOB_BASE_FEE_UPDATE_FRACTION, MIN_BASE_FEE_PER_BLOB_GAS},
+    types::{Fork, BLOB_BASE_FEE_UPDATE_FRACTION, MIN_BASE_FEE_PER_BLOB_GAS},
     U256,
 };
 use revm_primitives::SpecId;
@@ -162,7 +162,7 @@ impl VM {
         current_call_frame: &mut CallFrame,
     ) -> Result<OpcodeSuccess, VMError> {
         // [EIP-4844] - BLOBHASH is only available from CANCUN
-        if self.env.spec_id < SpecId::CANCUN {
+        if self.env.spec_id < Fork::Cancun {
             return Err(VMError::InvalidOpcode);
         }
 
@@ -209,7 +209,7 @@ impl VM {
         current_call_frame: &mut CallFrame,
     ) -> Result<OpcodeSuccess, VMError> {
         // [EIP-7516] - BLOBBASEFEE is only available from CANCUN
-        if self.env.spec_id < SpecId::CANCUN {
+        if self.env.spec_id < Fork::Cancun {
             return Err(VMError::InvalidOpcode);
         }
         self.increase_consumed_gas(current_call_frame, gas_cost::BLOBBASEFEE)?;

@@ -9,7 +9,7 @@ use crate::{
     Account,
 };
 use bytes::Bytes;
-use ethrex_core::{Address, U256};
+use ethrex_core::{types::Fork, Address, U256};
 use revm_primitives::SpecId;
 
 // System Operations (10)
@@ -468,7 +468,7 @@ impl VM {
         )?;
 
         // [EIP-6780] - SELFDESTRUCT only in same transaction from CANCUN
-        if self.env.spec_id >= SpecId::CANCUN {
+        if self.env.spec_id >= Fork::Cancun {
             self.increase_account_balance(target_address, balance_to_transfer)?;
             self.decrease_account_balance(current_call_frame.to, balance_to_transfer)?;
 
@@ -512,7 +512,7 @@ impl VM {
             return Err(VMError::OpcodeNotAllowedInStaticContext);
         }
         // 2. [EIP-3860] - Cant exceed init code max size
-        if code_size_in_memory > INIT_CODE_MAX_SIZE && self.env.spec_id >= SpecId::SHANGHAI {
+        if code_size_in_memory > INIT_CODE_MAX_SIZE && self.env.spec_id >= Fork::Shanghai {
             return Err(VMError::OutOfGas(OutOfGasError::ConsumedGasOverflow));
         }
 

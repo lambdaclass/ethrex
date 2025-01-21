@@ -2,7 +2,7 @@
 #![allow(clippy::unwrap_used)]
 
 use bytes::Bytes;
-use ethrex_core::{types::TxKind, Address, H256, U256};
+use ethrex_core::{types::{Fork, TxKind}, Address, H256, U256};
 use ethrex_levm::{
     account::Account,
     constants::*,
@@ -4562,7 +4562,7 @@ fn modexp_test() {
         &calldata,
         10000,
         &mut consumed_gas,
-        ethrex_levm::SpecId::CANCUN,
+        Fork::Cancun,
     )
     .unwrap();
 
@@ -4583,7 +4583,7 @@ fn modexp_test_2() {
         &calldata,
         10000,
         &mut consumed_gas,
-        ethrex_levm::SpecId::CANCUN,
+        Fork::Cancun,
     )
     .unwrap();
 

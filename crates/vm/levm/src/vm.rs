@@ -24,7 +24,7 @@ use crate::{
     AccountInfo, TransientStorage,
 };
 use bytes::Bytes;
-use ethrex_core::{types::TxKind, Address, H256, U256};
+use ethrex_core::{types::{Fork, TxKind}, Address, H256, U256};
 use ethrex_rlp;
 use ethrex_rlp::encode::RLPEncode;
 use keccak_hash::keccak;
@@ -155,7 +155,7 @@ impl VM {
         let mut default_touched_accounts = HashSet::from_iter([env.origin].iter().cloned());
 
         // [EIP-3651] - Add coinbase to cache if the spec is SHANGHAI or higher
-        if env.spec_id >= SpecId::SHANGHAI {
+        if env.spec_id >= Fork::Shanghai {
             default_touched_accounts.insert(env.coinbase);
         }
 
@@ -174,9 +174,9 @@ impl VM {
         // Add precompiled contracts addresses to cache.
         // TODO: Use the addresses from precompiles.rs in a future
         let max_precompile_address = match env.spec_id {
-            spec if spec >= SpecId::PRAGUE => SIZE_PRECOMPILES_PRAGUE,
-            spec if spec >= SpecId::CANCUN => SIZE_PRECOMPILES_CANCUN,
-            spec if spec < SpecId::CANCUN => SIZE_PRECOMPILES_PRE_CANCUN,
+            spec if spec >= Fork::Prague => SIZE_PRECOMPILES_PRAGUE,
+            spec if spec >= Fork::Cancun => SIZE_PRECOMPILES_CANCUN,
+            spec if spec < Fork::Cancun => SIZE_PRECOMPILES_PRE_CANCUN,
             _ => return Err(VMError::Internal(InternalError::InvalidSpecId)),
         };
         for i in 1..=max_precompile_address {
@@ -636,7 +636,7 @@ impl VM {
     }
 
     fn gas_used(&self, current_call_frame: &mut CallFrame) -> Result<u64, VMError> {
-        if self.env.spec_id >= SpecId::PRAGUE {
+        if self.env.spec_id >= Fork::Prague {
             // tokens_in_calldata = nonzero_bytes_in_calldata * 4 + zero_bytes_in_calldata
             // tx_calldata = nonzero_bytes_in_calldata * 16 + zero_bytes_in_calldata * 4
             // this is actually tokens_in_calldata * STANDARD_TOKEN_COST
@@ -729,7 +729,7 @@ impl VM {
         let sender_address = self.env.origin;
         let sender_account = self.get_account(sender_address);
 
-        if self.env.spec_id >= SpecId::PRAGUE {
+        if self.env.spec_id >= Fork::Prague {
             // check for gas limit is grater or equal than the minimum required
             let intrinsic_gas: u64 = self.get_intrinsic_gas(initial_call_frame)?;
 
@@ -847,7 +847,7 @@ impl VM {
         if self.is_create() {
             // [EIP-3860] - INITCODE_SIZE_EXCEEDED
             if initial_call_frame.calldata.len() > INIT_CODE_MAX_SIZE
-                && self.env.spec_id >= SpecId::SHANGHAI
+                && self.env.spec_id >= Fork::Shanghai
             {
                 return Err(VMError::TxValidation(
                     TxValidationError::InitcodeSizeExceeded,
@@ -889,7 +889,7 @@ impl VM {
         // Transaction is type 3 if tx_max_fee_per_blob_gas is Some
         if self.env.tx_max_fee_per_blob_gas.is_some() {
             // (11) TYPE_3_TX_PRE_FORK
-            if self.env.spec_id < SpecId::CANCUN {
+            if self.env.spec_id < Fork::Cancun {
                 return Err(VMError::TxValidation(TxValidationError::Type3TxPreFork));
             }
 
@@ -1149,7 +1149,7 @@ impl VM {
     ) -> Result<(StorageSlot, bool), VMError> {
         // [EIP-2929] - Introduced conditional tracking of accessed storage slots for Berlin and later specs.
         let mut storage_slot_was_cold = false;
-        if self.env.spec_id >= SpecId::BERLIN {
+        if self.env.spec_id >= Fork::Berlin {
             storage_slot_was_cold = self
                 .accrued_substate
                 .touched_storage_slots

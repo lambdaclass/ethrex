@@ -6,7 +6,7 @@ use crate::{
 };
 use bytes::Bytes;
 /// Contains the gas costs of the EVM instructions
-use ethrex_core::U256;
+use ethrex_core::{types::Fork, U256};
 use num_bigint::BigUint;
 use revm_primitives::SpecId;
 
@@ -464,7 +464,7 @@ pub fn create(
     new_memory_size: usize,
     current_memory_size: usize,
     code_size_in_memory: usize,
-    spec_id: SpecId,
+    spec_id: Fork,
 ) -> Result<u64, VMError> {
     compute_gas_create(
         new_memory_size,
@@ -479,7 +479,7 @@ pub fn create_2(
     new_memory_size: usize,
     current_memory_size: usize,
     code_size_in_memory: usize,
-    spec_id: SpecId,
+    spec_id: Fork,
 ) -> Result<u64, VMError> {
     compute_gas_create(
         new_memory_size,
@@ -495,7 +495,7 @@ fn compute_gas_create(
     current_memory_size: usize,
     code_size_in_memory: usize,
     is_create_2: bool,
-    spec_id: SpecId,
+    spec_id: Fork,
 ) -> Result<u64, VMError> {
     let minimum_word_size = (code_size_in_memory
         .checked_add(31)
@@ -508,7 +508,7 @@ fn compute_gas_create(
         .map_err(|_| VMError::VeryLargeNumber)?;
 
     // [EIP-3860] - Apply extra gas cost of 2 for every 32-byte chunk of initcode
-    let init_code_cost = if spec_id >= SpecId::SHANGHAI {
+    let init_code_cost = if spec_id >= Fork::Shanghai {
         minimum_word_size
             .checked_mul(INIT_CODE_WORD_COST)
             .ok_or(OutOfGasError::GasCostOverflow)? // will not panic since it's 2
@@ -560,13 +560,13 @@ pub fn selfdestruct(
     Ok(gas_cost)
 }
 
-pub fn tx_calldata(calldata: &Bytes, spec_id: SpecId) -> Result<u64, OutOfGasError> {
+pub fn tx_calldata(calldata: &Bytes, spec_id: Fork) -> Result<u64, OutOfGasError> {
     // This cost applies both for call and create
     // 4 gas for each zero byte in the transaction data 16 gas for each non-zero byte in the transaction.
     let mut calldata_cost: u64 = 0;
     for byte in calldata {
         calldata_cost = if *byte != 0 {
-            if spec_id >= SpecId::ISTANBUL {
+            if spec_id >= Fork::Istanbul {
                 calldata_cost
                     .checked_add(CALLDATA_COST_NON_ZERO_BYTE)
                     .ok_or(OutOfGasError::GasUsedOverflow)?
@@ -681,7 +681,7 @@ pub fn call(
     value_to_transfer: U256,
     gas_from_stack: U256,
     gas_left: u64,
-    spec_id: SpecId,
+    spec_id: Fork,
 ) -> Result<(u64, u64), VMError> {
     let memory_expansion_cost = memory::expansion_cost(new_memory_size, current_memory_size)?;
 
@@ -689,7 +689,7 @@ pub fn call(
         address_was_cold,
         CALL_STATIC,
         CALL_COLD_DYNAMIC,
-        if spec_id >= SpecId::BERLIN {
+        if spec_id >= Fork::Berlin {
             CALL_WARM_DYNAMIC
         } else {
             //https://eips.ethereum.org/EIPS/eip-2929
@@ -966,7 +966,7 @@ pub fn modexp(
     base_size: usize,
     exponent_size: usize,
     modulus_size: usize,
-    spec_id: SpecId,
+    spec_id: Fork,
 ) -> Result<u64, VMError> {
     let base_size: u64 = base_size
         .try_into()
@@ -980,7 +980,7 @@ pub fn modexp(
 
     let max_length = base_size.max(modulus_size);
 
-    if spec_id >= SpecId::BERLIN {
+    if spec_id >= Fork::Berlin {
         modexp_eip2565(max_length, exponent_first_32_bytes, exponent_size)
     } else {
         modexp_eip198(max_length, exponent_first_32_bytes, exponent_size)
