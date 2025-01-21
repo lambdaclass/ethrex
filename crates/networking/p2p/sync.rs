@@ -139,12 +139,12 @@ impl SyncManager {
                 // Update current fetch head if needed
                 if !sync_head_found {
                     current_head = *block_hashes.last().unwrap();
-                    // Discard the first header as we already have it
-                    block_hashes.remove(0);
-                    block_headers.remove(0);
                     // Update snap state
                     store.set_header_download_checkpoint(current_head)?;
                 }
+                // Discard the first header as we already have it
+                block_hashes.remove(0);
+                block_headers.remove(0);
                 // Store headers and save hashes for full block retrieval
                 all_block_hashes.extend_from_slice(&block_hashes[..]);
                 store.add_block_headers(block_hashes, block_headers.clone())?;
