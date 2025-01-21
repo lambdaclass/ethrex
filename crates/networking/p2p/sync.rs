@@ -156,7 +156,7 @@ impl SyncManager {
             }
             if retry_count > MAX_RETRIES {
                 warn!("Sync failed to find target block header, aborting");
-                return Ok(())
+                return Ok(());
             }
         }
         // We finished fetching all headers, now we can process them
@@ -478,9 +478,7 @@ async fn bytecode_fetcher(
                 pending_bytecodes.extend(code_hashes);
             }
             // Disconnect / Empty message signaling no more bytecodes to sync
-            _ => {
-                incoming = false
-            }
+            _ => incoming = false,
         }
         // If we have enough pending bytecodes to fill a batch
         // or if we have no more incoming batches, spawn a fetch process
@@ -538,9 +536,7 @@ async fn storage_fetcher(
                 pending_storage.extend(account_hashes_and_roots);
             }
             // Disconnect / Empty message signaling no more bytecodes to sync
-            _ => {
-                incoming = false
-            }
+            _ => incoming = false,
         }
         // If we have enough pending bytecodes to fill a batch
         // or if we have no more incoming batches, spawn a fetch process
@@ -618,11 +614,12 @@ async fn fetch_storage_batch(
                         peers.clone(),
                         store.clone(),
                     )
-                    .await? {
+                    .await?
+                    {
                         // Pivot became stale
                         // Add trie back to the queue and return stale pivot status
                         batch.push((account_hash, storage_root));
-                        return Ok((batch, true))
+                        return Ok((batch, true));
                     }
                 }
                 // The incomplete range is not the first, we cannot asume it is a large trie, so lets add it back to the queue
@@ -843,13 +840,9 @@ async fn storage_healer(
                 batch_size += val.1.len();
                 next_batch.insert(key, val);
             }
-            let (return_batch, is_stale) = heal_storage_batch(
-                state_root,
-                next_batch.clone(),
-                peers.clone(),
-                store.clone(),
-            )
-            .await?;
+            let (return_batch, is_stale) =
+                heal_storage_batch(state_root, next_batch.clone(), peers.clone(), store.clone())
+                    .await?;
             pending_storages.extend(return_batch.into_iter());
             stale |= is_stale;
         }
