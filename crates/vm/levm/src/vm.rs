@@ -1413,11 +1413,11 @@ impl VM {
 
             // 2. Verify the nonce is less than 2**64 - 1.
             // CHECK nonce is u64, should never be greater than u64::MAX
-            if !(auth_tuple.nonce < u64::MAX) {
+            if auth_tuple.nonce == u64::MAX {
                 continue;
             }
 
-            // 3. authority = ecrecover(keccak(MAGIC || rlp([chain_id, address, nonce])), y_parity, r, s]
+            // 3. authority = ecrecover(keccak(MAGIC || rlp([chain_id, address, nonce])), y_parity, r, s)
             //      s value must be less than or equal to secp256k1n/2, as specified in EIP-2.
             let order_bytes = Secp256k1::ORDER.to_be_bytes();
             let n = U256::from_big_endian(&order_bytes);
