@@ -402,6 +402,7 @@ impl PeerChannels {
     ) -> Option<Vec<Node>> {
         let request_id = rand::random();
         let expected_nodes = paths.iter().fold(0, |acc, item| acc + item.1.len());
+        info!("Requesting {expected_nodes} trie nodes");
         let request = RLPxMessage::GetTrieNodes(GetTrieNodes {
             id: request_id,
             root_hash: state_root,
