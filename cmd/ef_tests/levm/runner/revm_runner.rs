@@ -114,7 +114,7 @@ pub fn prepare_revm_for_tx<'state>(
         blob_excess_gas_and_price: test
             .env
             .current_excess_blob_gas
-            .map(|gas| BlobExcessGasAndPrice::new(gas.as_u64(), true)),
+            .map(|gas| BlobExcessGasAndPrice::new(gas.as_u64())),
     };
     let tx = &test
         .transactions
