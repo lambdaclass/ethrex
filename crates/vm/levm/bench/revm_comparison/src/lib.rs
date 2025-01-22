@@ -202,7 +202,7 @@ pub fn run_with_levm_calldata(program: &str, runs: usize, calldata: &str) {
 
     match tx_report.result {
         TxResult::Success => {
-            println!("\t\t0x{}", hex::encode(current_call_frame.output));
+            println!("output: \t\t0x{}", hex::encode(tx_report.output));
         }
         TxResult::Revert(error) => panic!("Execution failed: {:?}", error),
     }
