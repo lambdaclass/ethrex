@@ -1000,28 +1000,23 @@ impl VM {
         let sender_address = initial_call_frame.msg_sender;
         let receiver_address = initial_call_frame.to;
 
-        // 1. Undo value transfer if the transaction was reverted
+        // 1. Undo value transfer if the transaction has reverted
         if let TxResult::Revert(_) = report.result {
-            // We remove the receiver account from the cache, like nothing changed in it's state.
-            // I think this is wrong, we shouldn't remove the delegated accounts from cache, but if we send
-            // tokens to an account that has a delegation, but the tx reverts by any other reason, it will
-            // not remove the account.
-
             let existing_account = get_account(&mut self.cache, &self.db, receiver_address); //TO Account
 
-            // This is the case where the "to" address and the
-            // "signer" address are the same. We are setting the code
-            // and sending some balance to the "to"/"signer"
-            // address.
-            // See https://eips.ethereum.org/EIPS/eip-7702#behavior (last sentence).
-
-            // If transaction execution results in failure (any
-            // exceptional condition or code reverting), setting
-            // delegation designations is not rolled back.
-
             if was_delegated(&existing_account.info)? {
+                // This is the case where the "to" address and the
+                // "signer" address are the same. We are setting the code
+                // and sending some balance to the "to"/"signer"
+                // address.
+                // See https://eips.ethereum.org/EIPS/eip-7702#behavior (last sentence).
+
+                // If transaction execution results in failure (any
+                // exceptional condition or code reverting), setting
+                // delegation designations is not rolled back.
                 self.decrease_account_balance(receiver_address, initial_call_frame.msg_value)?;
             } else {
+                // We remove the receiver account from the cache, like nothing changed in it's state.
                 remove_account(&mut self.cache, &receiver_address);
             }
 
