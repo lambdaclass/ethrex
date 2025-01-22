@@ -626,7 +626,7 @@ impl VM {
             .ok_or(OutOfGasError::ConsumedGasOverflow)?;
 
         // Authorization List Cost
-        // When using unwrap_or_default we will get an empty vec in case the authorization_list field is None.
+        // `unwrap_or_default` will return an empty vec when the `authorization_list` field is None.
         // If the vec is empty, the len will be 0, thus the authorization_list_cost is 0.
         let amount_of_auth_tuples: u64 = self
             .authorization_list
@@ -1392,7 +1392,7 @@ impl VM {
             }
 
             // 2. Verify the nonce is less than 2**64 - 1.
-            // NOTE: nonce is a u64, is always less or equal to u64::MAX
+            // NOTE: nonce is a u64, it's always less or equal to u64::MAX
             if auth_tuple.nonce == u64::MAX {
                 continue;
             }
@@ -1508,6 +1508,7 @@ impl VM {
                 Some(account_mut) => account_mut,
                 None => {
                     // This is to add the account to the cache
+                    // NOTE: Refactor in the future
                     self.get_account(authority_address);
                     self.get_account_mut(authority_address)?
                 }
