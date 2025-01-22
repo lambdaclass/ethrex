@@ -137,9 +137,14 @@ pub fn prepare_revm_for_tx<'state>(
         .collect();
 
     let authorization_list = None;
+
+    // WARNING: Do not delete the following.
     // The latest version of revm(19.3.0) is needed.
     // Update it in every Cargo.toml.
     // revm-inspectors and revm-primitives have to be bumped too.
+    // NOTE:
+    // - rust 1.82.X is needed
+    // - rust-toolchain 1.82.X is needed (this can be found in ethrex/crates/vm/levm/rust-toolchain.toml)
     /*
     let authorization_list = tx.authorization_list.clone().map(|list| {
         list.iter()
