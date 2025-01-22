@@ -937,7 +937,7 @@ async fn heal_storage_batch(
                             // Something went wrong
                             return Err(SyncError::CorruptPath);
                         }
-                        info!("Touched Storage Leaf: {}, {}", H256::from_slice(&path), U256::decode(&leaf.value).unwrap());
+                        info!("Touched Storage Leaf: {}: {}, {}", acc_path, H256::from_slice(&path), U256::decode(&leaf.value).unwrap());
                         trie.insert(path.to_vec(), leaf.value.encode_to_vec())?;
                     }
                 }
