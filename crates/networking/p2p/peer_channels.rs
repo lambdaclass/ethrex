@@ -400,6 +400,8 @@ impl PeerChannels {
         state_root: H256,
         paths: BTreeMap<H256, Vec<Nibbles>>,
     ) -> Option<Vec<Node>> {
+        let paths_topography: Vec<String> = paths.iter().map(|(_, v)| format!("account[{}]", v.len())).collect();
+        info!("internal request topography {paths_topography:?}");
         let request_id = rand::random();
         let expected_nodes = paths.iter().fold(0, |acc, item| acc + item.1.len());
         info!("Requesting {expected_nodes} trie nodes");
@@ -422,6 +424,19 @@ impl PeerChannels {
                 .collect(),
             bytes: MAX_RESPONSE_BYTES,
         });
+        let paths_topography: Vec<String> = match request {
+            RLPxMessage::GetTrieNodes(ref msg) => {
+                msg.paths.iter().map(|paths| {
+                    match paths.len() {
+                        0 => format!("empty"),
+                        1 => format!("account[0]"),
+                        len => format!("account[{}]", len - 1),
+                    } 
+            }).collect()
+        }
+            _ => panic!("uh")
+        };
+        info!("external request topography {paths_topography:?}");
         let count: usize = match request {
             RLPxMessage::GetTrieNodes(ref msg) => {
                 msg.paths.iter().map(|paths| {
