@@ -3,7 +3,7 @@ use crate::{
     call_frame::CallFrame,
     constants::*,
     db::{
-        cache::{self, get_account_mut, remove_account},
+        cache::{self, get_account_mut, insert_account, remove_account},
         CacheDB, Database,
     },
     environment::Environment,
@@ -1007,8 +1007,13 @@ impl VM {
             // not remove the account.
 
             // If transaction execution results in failure (any exceptional condition or code reverting), setting delegation designations is not rolled back.
-            if !was_delegated(&get_account(&mut self.cache, &self.db, receiver_address).info)? {
-                remove_account(&mut self.cache, &receiver_address);
+            let existing_account = get_account(&mut self.cache, &self.db, receiver_address);
+            let mut new_account = Account::default();
+            new_account.info = existing_account.info.clone();
+            remove_account(&mut self.cache, &receiver_address);
+            if was_delegated(&existing_account.info)? {
+                insert_account(&mut self.cache, receiver_address, new_account);
+                self.decrease_account_balance(receiver_address, initial_call_frame.msg_value)?;
             }
 
             self.increase_account_balance(sender_address, initial_call_frame.msg_value)?;
