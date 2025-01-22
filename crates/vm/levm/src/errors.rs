@@ -212,12 +212,6 @@ pub enum PrecompileError {
     BLS12381G2PointNotInCurve,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error, Serialize, Deserialize)]
-pub enum EIP7702Error {
-    #[error("Internal Error while getting the authorized address")]
-    AuthorizedAddressError,
-}
-
 #[derive(Debug, Clone)]
 pub enum OpcodeSuccess {
     Continue,

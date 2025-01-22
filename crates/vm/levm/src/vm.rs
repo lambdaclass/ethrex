@@ -8,8 +8,8 @@ use crate::{
     },
     environment::Environment,
     errors::{
-        EIP7702Error, InternalError, OpcodeSuccess, OutOfGasError, ResultReason, TransactionReport,
-        TxResult, TxValidationError, VMError,
+        InternalError, OpcodeSuccess, OutOfGasError, ResultReason, TransactionReport, TxResult,
+        TxValidationError, VMError,
     },
     gas_cost::{
         self, fake_exponential, ACCESS_LIST_ADDRESS_COST, ACCESS_LIST_STORAGE_KEY_COST,
@@ -1671,8 +1671,6 @@ pub fn get_authorized_address(account_info: &AccountInfo) -> Result<Address, VME
         Ok(address)
     } else {
         // if we end up here, it means that the address wasn't previously delegated.
-        Err(VMError::Internal(InternalError::EIP7702Internal(
-            EIP7702Error::AuthorizedAddressError,
-        )))
+        Err(VMError::Internal(InternalError::AccountNotDelegated))
     }
 }
