@@ -169,17 +169,13 @@ impl ToExecDB for StoreWrapper {
     fn to_exec_db(&self, block: &Block) -> Result<ExecutionDB, ExecutionDBError> {
         let parent_hash = block.header.parent_hash;
         let chain_config = self.store.get_chain_config()?;
-        let store_wrapper = StoreWrapper {
-            store: self.store.clone(),
-            block_hash: parent_hash,
-        };
 
         // pre-execute and get all state changes
         let cache = ExecutionDB::pre_execute(
             block,
             chain_config.chain_id,
             spec_id(&chain_config, block.header.timestamp),
-            store_wrapper,
+            self,
         )
         .map_err(|err| Box::new(EvmError::from(err)))?; // TODO: must be a better way
         let store_wrapper = cache.db;
