@@ -1435,7 +1435,7 @@ impl VM {
             // 8. Set the code of authority to be 0xef0100 || address. This is a delegation designation.
             let delegation_bytes = [
                 &SET_CODE_DELEGATION_BYTES[..],
-                &auth_tuple.address.as_bytes(),
+                auth_tuple.address.as_bytes(),
             ]
             .concat();
 
