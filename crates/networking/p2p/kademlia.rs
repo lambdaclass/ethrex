@@ -225,7 +225,7 @@ impl KademliaTable {
     fn filter_peers<'a>(
         &'a self,
         filter: &'a dyn Fn(&'a PeerData) -> bool,
-    ) -> impl Iterator<Item = &PeerData> + 'a {
+    ) -> impl Iterator<Item = &'a PeerData> {
         self.iter_peers().filter(|peer| filter(peer))
     }
 
