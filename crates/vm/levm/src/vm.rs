@@ -1007,12 +1007,15 @@ impl VM {
             // not remove the account.
 
             // If transaction execution results in failure (any exceptional condition or code reverting), setting delegation designations is not rolled back.
-            let existing_account = get_account(&mut self.cache, &self.db, receiver_address);
-            let mut new_account = Account::default();
-            new_account.info = existing_account.info.clone();
+            let existing_account = get_account(&mut self.cache, &self.db, receiver_address); //TO Account
+
+            // let mut new_account = Account::default(); //TO Account
+            // new_account.info = existing_account.info.clone();
+
             remove_account(&mut self.cache, &receiver_address);
+
             if was_delegated(&existing_account.info)? {
-                insert_account(&mut self.cache, receiver_address, new_account);
+                insert_account(&mut self.cache, receiver_address, existing_account);
                 self.decrease_account_balance(receiver_address, initial_call_frame.msg_value)?;
             }
 
