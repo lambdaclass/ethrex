@@ -11,6 +11,4 @@ contract Factorial {
 
        result=n;
     }
-    fallback() external payable {
-    }
 }

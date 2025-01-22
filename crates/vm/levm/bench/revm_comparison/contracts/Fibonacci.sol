@@ -14,7 +14,4 @@ contract Fibonacci {
 
         result = b;
     }
-
-    fallback() external payable {
-    }
 }
