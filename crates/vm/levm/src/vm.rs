@@ -633,7 +633,11 @@ impl VM {
         Ok(())
     }
 
-    fn gas_used(&self, initial_call_frame: &CallFrame) -> Result<u64, VMError> {
+    fn gas_used(
+        &self,
+        initial_call_frame: &CallFrame,
+        report: &TransactionReport,
+    ) -> Result<u64, VMError> {
         if self.env.spec_id >= SpecId::PRAGUE {
             // tokens_in_calldata = nonzero_bytes_in_calldata * 4 + zero_bytes_in_calldata
             // tx_calldata = nonzero_bytes_in_calldata * 16 + zero_bytes_in_calldata * 4
@@ -654,10 +658,10 @@ impl VM {
                 .checked_add(TX_BASE_COST)
                 .ok_or(VMError::Internal(InternalError::GasOverflow))?;
 
-            let gas_used = max(floor_gas_price, initial_call_frame.gas_used);
+            let gas_used = max(floor_gas_price, report.gas_used);
             Ok(gas_used)
         } else {
-            Ok(initial_call_frame.gas_used)
+            Ok(report.gas_used)
         }
     }
 
@@ -1041,7 +1045,7 @@ impl VM {
 
         let mut report = self.execute(&mut initial_call_frame)?;
 
-        report.gas_used = self.gas_used(&initial_call_frame)?;
+        report.gas_used = self.gas_used(&initial_call_frame, &report)?;
 
         self.post_execution_changes(&initial_call_frame, &mut report)?;
         // There shouldn't be any errors here but I don't know what the desired behavior is if something goes wrong.
