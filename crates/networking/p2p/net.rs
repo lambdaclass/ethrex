@@ -203,6 +203,20 @@ async fn discover_peers_server(
                                         .update_peer_ping(peer.node.node_id, Some(hash));
                                 }
                             }
+
+                            // if it has updated its record, send a request to update it
+                            if let Some(enr_seq) = msg.enr_seq {
+                                if enr_seq > peer.record.seq {
+                                    debug!("enr-seq outdated, send an enr_request");
+                                    let req_hash =
+                                        send_enr_request(&udp_socket, from, &signer).await;
+                                    table.lock().await.update_peer_enr_seq(
+                                        peer.node.node_id,
+                                        enr_seq,
+                                        req_hash,
+                                    );
+                                }
+                            }
                         } else {
                             let mut table = table.lock().await;
                             let node = Node {
@@ -238,6 +252,19 @@ async fn discover_peers_server(
                                 .is_some_and(|hash| hash == msg.ping_hash)
                             {
                                 table.lock().await.pong_answered(peer.node.node_id);
+                                // if it has updated its record, send a request to update it
+                                if let Some(enr_seq) = msg.enr_seq {
+                                    if enr_seq > peer.record.seq {
+                                        debug!("enr-seq outdated, send an enr_request");
+                                        let req_hash =
+                                            send_enr_request(&udp_socket, from, &signer).await;
+                                        table.lock().await.update_peer_enr_seq(
+                                            peer.node.node_id,
+                                            enr_seq,
+                                            req_hash,
+                                        );
+                                    }
+                                }
 
                                 let mut msg_buf = vec![0; read - 32];
                                 buf[32..read].clone_into(&mut msg_buf);
@@ -875,7 +902,7 @@ async fn send_enr_request(
 
     let expiration: u64 = (SystemTime::now() + Duration::from_secs(20))
         .duration_since(UNIX_EPOCH)
-        .unwrap()
+        .unwrap_or_default()
         .as_secs();
 
     let enr_req = discv4::Message::ENRRequest(ENRRequestMessage::new(expiration));
