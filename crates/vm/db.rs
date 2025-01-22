@@ -1,8 +1,19 @@
-use ethrex_core::{types::BlockHash, Address as CoreAddress, H256 as CoreH256};
-use ethrex_storage::{error::StoreError, Store};
+use std::collections::HashMap;
+
+use ethrex_core::{
+    types::{Block, BlockHash},
+    Address as CoreAddress, H256 as CoreH256,
+};
+use ethrex_storage::{error::StoreError, hash_address, hash_key, Store};
 use revm::primitives::{
     AccountInfo as RevmAccountInfo, Address as RevmAddress, Bytecode as RevmBytecode,
     Bytes as RevmBytes, B256 as RevmB256, U256 as RevmU256,
+};
+
+use crate::{
+    errors::ExecutionDBError,
+    execution_db::{ExecutionDB, ToExecDB},
+    spec_id, EvmError,
 };
 
 pub struct StoreWrapper {
@@ -151,5 +162,126 @@ impl revm::DatabaseRef for StoreWrapper {
             .get_block_header(number)?
             .map(|header| RevmB256::from_slice(&header.compute_block_hash().0))
             .ok_or_else(|| StoreError::Custom(format!("Block {number} not found")))
+    }
+}
+
+impl ToExecDB for StoreWrapper {
+    fn to_exec_db(&self, block: &Block) -> Result<ExecutionDB, ExecutionDBError> {
+        let parent_hash = block.header.parent_hash;
+        let chain_config = self.store.get_chain_config()?;
+        let store_wrapper = StoreWrapper {
+            store: self.store.clone(),
+            block_hash: parent_hash,
+        };
+
+        // pre-execute and get all state changes
+        let cache = ExecutionDB::pre_execute(
+            block,
+            chain_config.chain_id,
+            spec_id(&chain_config, block.header.timestamp),
+            store_wrapper,
+        )
+        .map_err(|err| Box::new(EvmError::from(err)))?; // TODO: must be a better way
+        let store_wrapper = cache.db;
+
+        // fetch all read/written values from store
+        let already_existing_accounts = cache
+            .accounts
+            .iter()
+            // filter out new accounts, we're only interested in already existing accounts.
+            // new accounts are storage cleared, self-destructed accounts too but they're marked with "not
+            // existing" status instead.
+            .filter_map(|(address, account)| {
+                if !account.account_state.is_storage_cleared() {
+                    Some((CoreAddress::from(address.0.as_ref()), account))
+                } else {
+                    None
+                }
+            });
+        let accounts = already_existing_accounts
+            .clone()
+            .map(|(address, _)| {
+                // return error if account is missing
+                let account = match store_wrapper
+                    .store
+                    .get_account_info_by_hash(parent_hash, address)
+                {
+                    Ok(None) => Err(ExecutionDBError::NewMissingAccountInfo(address)),
+                    Ok(Some(some)) => Ok(some),
+                    Err(err) => Err(ExecutionDBError::Store(err)),
+                };
+                Ok((address, account?))
+            })
+            .collect::<Result<HashMap<_, _>, ExecutionDBError>>()?;
+        let code = already_existing_accounts
+            .clone()
+            .map(|(_, account)| {
+                // return error if code is missing
+                let hash = CoreH256::from(account.info.code_hash.0);
+                Ok((
+                    hash,
+                    store_wrapper
+                        .store
+                        .get_account_code(hash)?
+                        .ok_or(ExecutionDBError::NewMissingCode(hash))?,
+                ))
+            })
+            .collect::<Result<_, ExecutionDBError>>()?;
+        let storage = already_existing_accounts
+            .map(|(address, account)| {
+                // return error if storage is missing
+                Ok((
+                    address,
+                    account
+                        .storage
+                        .keys()
+                        .map(|key| {
+                            let key = CoreH256::from(key.to_be_bytes());
+                            let value = store_wrapper
+                                .store
+                                .get_storage_at_hash(parent_hash, address, key)
+                                .map_err(ExecutionDBError::Store)?
+                                .ok_or(ExecutionDBError::NewMissingStorage(address, key))?;
+                            Ok((key, value))
+                        })
+                        .collect::<Result<HashMap<_, _>, ExecutionDBError>>()?,
+                ))
+            })
+            .collect::<Result<HashMap<_, _>, ExecutionDBError>>()?;
+        let block_hashes = cache
+            .block_hashes
+            .into_iter()
+            .map(|(num, hash)| (num.try_into().unwrap(), CoreH256::from(hash.0)))
+            .collect();
+        // WARN: unwrapping because revm wraps a u64 as a U256
+
+        // get proofs
+        let state_trie = self
+            .store
+            .state_trie(parent_hash)?
+            .ok_or(ExecutionDBError::NewMissingStateTrie(parent_hash))?;
+
+        let state_proofs =
+            state_trie.get_proofs(&accounts.keys().map(hash_address).collect::<Vec<_>>())?;
+
+        let mut storage_proofs = HashMap::new();
+        for (address, storages) in &storage {
+            let storage_trie = self.store.storage_trie(parent_hash, *address)?.ok_or(
+                ExecutionDBError::NewMissingStorageTrie(parent_hash, *address),
+            )?;
+
+            let paths = storages.keys().map(hash_key).collect::<Vec<_>>();
+            storage_proofs.insert(*address, storage_trie.get_proofs(&paths)?);
+        }
+
+        Ok(ExecutionDB {
+            accounts,
+            code,
+            storage,
+            block_hashes,
+            chain_config,
+            state_proofs,
+            storage_proofs,
+        })
     }
 }
