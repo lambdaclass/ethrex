@@ -21,31 +21,8 @@ impl VM {
         &mut self,
         current_call_frame: &mut CallFrame,
     ) -> Result<OpcodeSuccess, VMError> {
-        dbg!(&current_call_frame.stack);
-        // STACK
-        // TODO change it back
-        //GAS
-        //PUSH1 0x00
-        //PUSH1 0x00
-        //PUSH1 0x00
-        //PUSH1 0x00
-        //PUSH1 0x00
-        //PUSH20 0xa94f5374fce5edbc8e2a8697c15331677e6ebf0b
-        //PUSH1 0x00
-        //stack: [
-        //    883250,
-        //    0,
-        //    0,
-        //    0,
-        //    0,
-        //    0,
-        //    788065941775983272449444774641449473958132390328,
-        //    0,
-        //],
-        //let gas = *current_call_frame.stack.stack.first().unwrap();
         let gas = current_call_frame.stack.pop()?;
         let callee: Address = word_to_address(current_call_frame.stack.pop()?);
-        dbg!(&callee, gas);
         let value_to_transfer: U256 = current_call_frame.stack.pop()?;
         let args_start_offset = current_call_frame.stack.pop()?;
         let args_size = current_call_frame
@@ -793,9 +770,6 @@ impl VM {
 
         let tx_report = self.execute(&mut new_call_frame)?;
 
-        dbg!(new_call_frame.gas_limit);
-        dbg!(tx_report.gas_used);
-        dbg!("FAILS BELOW");
         // Return gas left from subcontext
         let gas_left_from_new_call_frame = new_call_frame
             .gas_limit
@@ -832,11 +806,6 @@ impl VM {
             }
         }
 
-        if false {
-            dbg!("CALL FINISHED");
-            return Ok(OpcodeSuccess::Debug(tx_report.result));
-        }
-        dbg!("FINISHED CALL");
         Ok(OpcodeSuccess::Continue)
     }
 }

@@ -713,8 +713,6 @@ pub fn call(
         .checked_add(value_to_empty_account)
         .ok_or(OutOfGasError::GasCostOverflow)?;
 
-    dbg!(gas_from_stack, call_gas_costs);
-
     calculate_cost_and_gas_limit_call(
         value_to_transfer.is_zero(),
         gas_from_stack,

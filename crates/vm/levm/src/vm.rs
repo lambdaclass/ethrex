@@ -448,14 +448,6 @@ impl VM {
             // Gas refunds are applied at the end of a transaction. Should it be implemented here?
 
             match op_result {
-                Ok(OpcodeSuccess::Debug(res)) => {
-                    let opcode = current_call_frame.next_opcode();
-                    dbg!(&current_call_frame);
-                    let pretty_bytecode = format!("{:#x}", current_call_frame.bytecode);
-                    dbg!(&pretty_bytecode);
-                    dbg!(opcode);
-                    dbg!(res);
-                }
                 Ok(OpcodeSuccess::Continue) => {}
                 Ok(OpcodeSuccess::Result(_)) => {
                     self.call_frames.push(current_call_frame.clone());
@@ -1489,20 +1481,15 @@ impl VM {
             }
 
             // 7. Add PER_EMPTY_ACCOUNT_COST - PER_AUTH_BASE_COST gas to the global refund counter if authority exists in the trie.
-            dbg!("PRE self.db.account_exists");
-            dbg!(authority_address);
-            dbg!(self.db.account_exists(authority_address));
             // CHECK: we don't know if checking the cache is correct. More gas tests pass but the set_code_txs tests went to half.
             if self.db.account_exists(authority_address)
                 || self.cache.contains_key(&authority_address)
             {
-                dbg!("IN self.db.account_exists");
                 let refunded_gas_if_exists = PER_EMPTY_ACCOUNT_COST - PER_AUTH_BASE_COST;
                 refunded_gas = refunded_gas
                     .checked_add(refunded_gas_if_exists)
                     .ok_or(VMError::Internal(InternalError::GasOverflow))?;
             }
-            dbg!("POS self.db.account_exists");
 
             // 8. Set the code of authority to be 0xef0100 || address. This is a delegation designation.
             let mut delegation_bytes = Vec::new();
@@ -1544,10 +1531,6 @@ impl VM {
         } else {
             initial_call_frame.bytecode = code_address_info.bytecode.clone();
         }
-
-        let initial_bytecode = format!("{:#x}", initial_call_frame.bytecode);
-        dbg!(&initial_bytecode);
-        dbg!(&initial_call_frame.code_address);
 
         initial_call_frame.valid_jump_destinations =
             get_valid_jump_destinations(&initial_call_frame.bytecode).unwrap_or_default();
@@ -1593,6 +1576,7 @@ impl VM {
         let access_cost = match self.accrued_substate.touched_accounts.get(&auth_address) {
             Some(_) => WARM_ADDRESS_ACCESS_COST,
             None => {
+                dbg!(auth_address);
                 self.accrued_substate.touched_accounts.insert(auth_address);
                 COLD_ADDRESS_ACCESS_COST
             }
