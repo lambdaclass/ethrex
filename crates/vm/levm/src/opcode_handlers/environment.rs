@@ -285,15 +285,11 @@ impl VM {
 
         self.increase_consumed_gas(current_call_frame, gas_cost::extcodesize(address_was_cold)?)?;
 
-        if is_delegation {
-            current_call_frame
-                .stack
-                .push(SET_CODE_DELEGATION_BYTES[..2].len().into())?;
+        current_call_frame.stack.push(if is_delegation {
+            SET_CODE_DELEGATION_BYTES[..2].len().into()
         } else {
-            current_call_frame
-                .stack
-                .push(account_info.bytecode.len().into())?;
-        }
+            account_info.bytecode.len().into()
+        })?;
 
         Ok(OpcodeSuccess::Continue)
     }
