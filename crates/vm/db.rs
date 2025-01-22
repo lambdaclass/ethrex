@@ -42,11 +42,7 @@ cfg_if::cfg_if! {
                 .get_account_info_by_hash(self.block_hash, address)
                 .unwrap();
 
-                if let Some(_) = acc_info {
-                    true
-                } else {
-                    false
-                }
+                acc_info.is_some()
             }
 
             fn get_storage_slot(&self, address: CoreAddress, key: CoreH256) -> CoreU256 {
