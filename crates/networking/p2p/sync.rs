@@ -773,7 +773,7 @@ async fn heal_state_trie(
             .request_state_trienodes(state_root, paths.clone())
             .await
         {
-            //info!("Received {} state nodes", nodes.len());
+            info!("Received {} state nodes", nodes.len());
             // Reset retry counter for next request
             retry_count = 0;
             let mut hahsed_addresses = vec![];
@@ -881,7 +881,7 @@ async fn storage_healer(
         // If we have enough pending storages to fill a batch
         // or if we have no more incoming batches, spawn a fetch process
         // If the pivot became stale don't process anything and just save incoming requests
-        info!("Storage Healer, stale: {stale}");
+        //info!("Storage Healer, stale: {stale}");
         while !stale && !pending_storages.is_empty() {
             let mut next_batch: BTreeMap<H256, (H256, Vec<Nibbles>)> = BTreeMap::new();
             // Fill batch
@@ -891,7 +891,7 @@ async fn storage_healer(
                 batch_size += val.1.len();
                 next_batch.insert(key, val);
             }
-            info!("Sending storage heal batch of size {batch_size}");
+            //info!("Sending storage heal batch of size {batch_size}");
             let (return_batch, is_stale) = heal_storage_batch(
                 state_root,
                 next_batch.clone(),
@@ -899,7 +899,7 @@ async fn storage_healer(
                 store.clone(),
             )
             .await?;
-            info!("Returned storage heal batch of size {}", return_batch.iter().map(|b| b.1.1.len()).sum::<usize>());
+            //info!("Returned storage heal batch of size {}", return_batch.iter().map(|b| b.1.1.len()).sum::<usize>());
             pending_storages.extend(return_batch.into_iter());
             stale |= is_stale;
         }
@@ -937,7 +937,7 @@ async fn heal_storage_batch(
                             // Something went wrong
                             return Err(SyncError::CorruptPath);
                         }
-                        info!("Touched Storage Leaf: {}: {}, {}", acc_path, H256::from_slice(&path), U256::decode(&leaf.value).unwrap());
+                        //info!("Touched Storage Leaf: {}: {}, {}", acc_path, H256::from_slice(&path), U256::decode(&leaf.value).unwrap());
                         trie.insert(path.to_vec(), leaf.value.encode_to_vec())?;
                     }
                 }

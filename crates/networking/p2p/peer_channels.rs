@@ -9,7 +9,6 @@ use ethrex_rlp::encode::RLPEncode;
 use ethrex_trie::Nibbles;
 use ethrex_trie::{verify_range, Node};
 use tokio::sync::{mpsc, Mutex};
-use tracing::info;
 
 use crate::{
     rlpx::{
@@ -402,7 +401,6 @@ impl PeerChannels {
     ) -> Option<Vec<Node>> {
         let request_id = rand::random();
         let expected_nodes = paths.iter().fold(0, |acc, item| acc + item.1.len());
-        info!("Requesting {expected_nodes} trie nodes");
         let request = RLPxMessage::GetTrieNodes(GetTrieNodes {
             id: request_id,
             root_hash: state_root,
@@ -438,7 +436,6 @@ impl PeerChannels {
         })
         .await
         .ok()??;
-        info!("Received: {} encoded storage nodes", nodes.len());
         (!nodes.is_empty() && nodes.len() <= expected_nodes)
             .then(|| {
                 nodes
