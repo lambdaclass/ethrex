@@ -88,7 +88,7 @@ impl RpcApiContext {
     /// Returns the engine's current sync status, see [SyncStatus]
     pub fn sync_status(&self) -> Result<SyncStatus, StoreError> {
         // Try to get hold of the sync manager, if we can't then it means it is currently involved in a sync process
-        Ok(if self.syncer.try_lock().is_ok() {
+        Ok(if self.syncer.try_lock().is_err() {
             SyncStatus::Active
         // Check if there is a checkpoint left from a previous aborted sync
         } else if self.storage.get_header_download_checkpoint()?.is_some() {
