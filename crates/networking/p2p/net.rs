@@ -413,6 +413,7 @@ async fn peers_revalidation(
         // first check that the peers we ping have responded
         for node_id in previously_pinged_peers {
             let mut table = table.lock().await;
+<<<<<<< HEAD
             if let Some(peer) = table.get_by_node_id_mut(node_id) {
                 if let Some(has_answered) = peer.revalidation {
                     if has_answered {
@@ -420,6 +421,17 @@ async fn peers_revalidation(
                     } else {
                         peer.decrement_liveness();
                     }
+=======
+            let Some(peer) = table.get_by_node_id_mut(node_id) else {
+                continue;
+            };
+
+            if let Some(has_answered) = peer.revalidation {
+                if has_answered {
+                    peer.increment_liveness();
+                } else {
+                    peer.decrement_liveness();
+>>>>>>> 384f1b2c (Fix)
                 }
 
                 peer.revalidation = None;
