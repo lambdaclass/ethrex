@@ -808,6 +808,7 @@ async fn heal_state_trie(
                         code_hashes.push(account.code_hash);
                     }
                     // Write values to trie
+                    info!("Touched State Leaf: {}, {:?}", account_hash, account);
                     trie.insert(account_hash.0.to_vec(), account.encode_to_vec())?;
                     // Update current root
                     current_root = trie.hash()?;
@@ -936,6 +937,7 @@ async fn heal_storage_batch(
                             // Something went wrong
                             return Err(SyncError::CorruptPath);
                         }
+                        info!("Touched Storage Leaf: {}, {}", H256::from_slice(&path), U256::decode(&leaf.value).unwrap());
                         trie.insert(path.to_vec(), leaf.value.encode_to_vec())?;
                     }
                 }
