@@ -50,6 +50,7 @@ struct ChainData {
     // TODO (#307): Remove TotalDifficulty.
     latest_total_difficulty: Option<U256>,
     pending_block_number: Option<BlockNumber>,
+    is_synced: bool,
 }
 
 impl Store {
@@ -421,6 +422,15 @@ impl StoreEngine for Store {
         self.inner()
             .payloads
             .insert(payload_id, (block, block_value, blobs_bundle, completed));
+        Ok(())
+    }
+
+    fn is_synced(&self) -> Result<bool, StoreError> {
+        Ok(self.inner().chain_data.is_synced)
+    }
+
+    fn update_sync_status(&self, status: bool) -> Result<(), StoreError> {
+        self.inner().chain_data.is_synced = status;
         Ok(())
     }
 }

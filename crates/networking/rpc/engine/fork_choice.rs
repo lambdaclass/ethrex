@@ -192,6 +192,10 @@ fn handle_forkchoice(
                 }
                 InvalidForkChoice::Syncing => {
                     // Start sync
+                    context
+                        .storage
+                        .update_sync_status(false)
+                        .map_err(|e| RpcErr::Internal(e.to_string()))?;
                     let current_number = context.storage.get_latest_block_number()?;
                     let Some(current_head) =
                         context.storage.get_canonical_block_hash(current_number)?

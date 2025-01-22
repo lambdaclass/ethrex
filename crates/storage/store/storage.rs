@@ -545,6 +545,9 @@ impl Store {
     }
 
     pub fn add_initial_state(&self, genesis: Genesis) -> Result<(), StoreError> {
+        info!("Setting initial sync status to false");
+        self.update_sync_status(false)?;
+
         info!("Storing initial state from genesis");
 
         // Obtain genesis block
@@ -998,6 +1001,13 @@ impl Store {
             .state()
             .get_node(node_hash.into())?
             .is_some())
+    }
+
+    pub fn is_synced(&self) -> Result<bool, StoreError> {
+        self.engine.is_synced()
+    }
+    pub fn update_sync_status(&self, status: bool) -> Result<(), StoreError> {
+        self.engine.update_sync_status(status)
     }
 }
 
