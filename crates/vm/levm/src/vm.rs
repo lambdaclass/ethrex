@@ -1638,11 +1638,10 @@ pub fn get_account_no_push_cache(
         Some(acc) => acc.clone(),
         None => {
             let account_info = db.get_account_info(address);
-            let account = Account {
+            Account {
                 info: account_info,
                 storage: HashMap::new(),
-            };
-            account
+            }
         }
     }
 }
