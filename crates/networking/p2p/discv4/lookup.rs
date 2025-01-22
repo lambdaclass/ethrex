@@ -15,7 +15,7 @@ use crate::{
 
 use super::requests::find_node_and_wait_for_response;
 
-pub const PEERS_RANDOM_LOOKUP_TIME_IN_MIN: u64 = 30; // same as above
+pub const PEERS_RANDOM_LOOKUP_TIME_IN_MIN: u64 = 30;
 
 #[derive(Clone, Debug)]
 pub struct DiscoveryLookupHandler {
@@ -24,8 +24,6 @@ pub struct DiscoveryLookupHandler {
     udp_socket: Arc<UdpSocket>,
     table: Arc<Mutex<KademliaTable>>,
     lookup_interval_minutes: u64,
-    seen_peers: HashSet<H512>,
-    asked_peers: HashSet<H512>,
 }
 
 impl DiscoveryLookupHandler {
@@ -42,13 +40,12 @@ impl DiscoveryLookupHandler {
             udp_socket,
             table,
             lookup_interval_minutes,
-            seen_peers: HashSet::new(),
-            asked_peers: HashSet::new(),
         }
     }
 
     pub async fn start_lookup_task(&self) {
         let mut interval = tokio::time::interval(Duration::from_secs(self.lookup_interval_minutes));
+        let self_arc = Arc::new(self.clone());
 
         loop {
             // Notice that the first tick is immediate,
@@ -60,22 +57,18 @@ impl DiscoveryLookupHandler {
             let mut handlers = vec![];
 
             // lookup closest to our pub key
-            let self_clone = self.clone();
-            handlers.push(tokio::spawn(async move {
-                self_clone
-                    .recursive_lookup(self_clone.local_node.node_id)
-                    .await;
-            }));
+            handlers.push(tokio::spawn(
+                self_arc.clone().recursive_lookup(self.local_node.node_id),
+            ));
 
             // lookup closest to 3 random keys
             for _ in 0..3 {
                 let random_pub_key = SigningKey::random(&mut OsRng);
-                let self_clone = self.clone();
-                handlers.push(tokio::spawn(async move {
-                    self_clone
-                        .recursive_lookup(node_id_from_signing_key(&random_pub_key))
-                        .await
-                }))
+                handlers.push(tokio::spawn(
+                    self_arc
+                        .clone()
+                        .recursive_lookup(node_id_from_signing_key(&random_pub_key)),
+                ))
             }
 
             for handle in handlers {
@@ -86,7 +79,7 @@ impl DiscoveryLookupHandler {
         }
     }
 
-    async fn recursive_lookup(&self, target: H512) {
+    async fn recursive_lookup(self: Arc<Self>, target: H512) {
         let mut asked_peers = HashSet::default();
         // lookups start with the closest from our table
         let closest_nodes = self.table.lock().await.get_closest_nodes(target);
@@ -100,7 +93,10 @@ impl DiscoveryLookupHandler {
         let mut peers_to_ask: Vec<Node> = closest_nodes;
 
         loop {
-            let (nodes_found, queries) = self.lookup(target, &mut asked_peers, &peers_to_ask).await;
+            let (nodes_found, queries) = self
+                .clone()
+                .lookup(target, &mut asked_peers, &peers_to_ask)
+                .await;
 
             // only push the peers that have not been seen
             // that is those who have not been yet pushed, which also accounts for
@@ -120,6 +116,9 @@ impl DiscoveryLookupHandler {
         }
     }
 
+    /**
+     * TODO explain what this does
+     */
     fn peers_to_ask_push(&self, peers_to_ask: &mut Vec<Node>, target: H512, node: Node) {
         let distance = bucket_number(target, node.node_id);
 
@@ -145,6 +144,7 @@ impl DiscoveryLookupHandler {
         }
     }
 
+    // TODO lookup comment
     async fn lookup(
         &self,
         target: H512,

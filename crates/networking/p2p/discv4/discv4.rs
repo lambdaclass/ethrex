@@ -79,12 +79,14 @@ impl Discv4 {
     }
 
     pub async fn start_discovery_service(
-        self: Arc<Self>,
+        &self,
         bootnodes: Vec<BootNode>,
     ) -> Result<(), DiscoveryError> {
-        let server_handle = tokio::spawn(self.clone().receive());
+        let self_arc = Arc::new(self.clone());
+
+        let server_handle = tokio::spawn(self_arc.clone().receive());
         self.load_bootnodes(bootnodes).await;
-        let revalidation_handle = tokio::spawn(self.clone().start_revalidation_task());
+        let revalidation_handle = tokio::spawn(self_arc.clone().start_revalidation_task());
 
         // a first initial lookup runs without waiting for the interval
         // so we need to allow some time to the pinged peers to ping us back and acknowledge us
