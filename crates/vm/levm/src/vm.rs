@@ -1508,6 +1508,7 @@ impl VM {
                 Some(account_mut) => account_mut,
                 None => {
                     // This is to add the account to the cache
+                    // NOTE: Refactor in the future
                     self.get_account(authority_address);
                     self.get_account_mut(authority_address)?
                 }
