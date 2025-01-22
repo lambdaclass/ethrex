@@ -895,6 +895,8 @@ async fn heal_storage_batch(
                 }
             }
             // Return remaining and added paths to be added to the queue
+            // Filter out the storages we completely fetched
+            batch.retain(|_, v|!v.1.is_empty());
             return Ok((batch, false));
         }
     }
