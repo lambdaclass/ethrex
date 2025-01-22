@@ -788,9 +788,6 @@ impl VM {
 
         dbg!(new_call_frame.gas_limit);
         dbg!(tx_report.gas_used);
-        if tx_report.gas_used == 21000 {
-            tx_report.gas_used = 0;
-        }
         dbg!("FAILS BELOW");
         // Return gas left from subcontext
         let gas_left_from_new_call_frame = new_call_frame
