@@ -265,6 +265,7 @@ async fn main() {
             tracker.spawn(block_producer_engine);
         } else {
             let networking = ethrex_net::start_network(
+                tracker.clone(),
                 udp_socket_addr,
                 tcp_socket_addr,
                 bootnodes,
