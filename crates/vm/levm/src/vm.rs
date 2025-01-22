@@ -8,8 +8,8 @@ use crate::{
     },
     environment::Environment,
     errors::{
-        InternalError, OpcodeSuccess, OutOfGasError, ResultReason, TransactionReport, TxResult,
-        TxValidationError, VMError,
+        EIP7702Error, InternalError, OpcodeSuccess, OutOfGasError, ResultReason, TransactionReport,
+        TxResult, TxValidationError, VMError,
     },
     gas_cost::{
         self, fake_exponential, ACCESS_LIST_ADDRESS_COST, ACCESS_LIST_STORAGE_KEY_COST,
@@ -1648,20 +1648,6 @@ pub fn get_account_no_push_cache(
     }
 }
 
-pub fn was_delegated_from_bytecode(bytecode: &Bytes) -> Result<bool, VMError> {
-    let mut was_delegated = false;
-    if !bytecode.is_empty() && bytecode.len() == EIP7702_DELEGATED_CODE_LEN {
-        let first_3_bytes = bytecode
-            .get(..3)
-            .ok_or(VMError::Internal(InternalError::SlicingError))?;
-
-        if first_3_bytes == SET_CODE_DELEGATION_BYTES {
-            was_delegated = true;
-        }
-    }
-    Ok(was_delegated)
-}
-
 pub fn was_delegated(account_info: &AccountInfo) -> Result<bool, VMError> {
     let mut was_delegated = false;
     if account_info.has_code() && account_info.bytecode.len() == EIP7702_DELEGATED_CODE_LEN {
@@ -1683,11 +1669,14 @@ pub fn get_authorized_address(account_info: &AccountInfo) -> Result<Address, VME
             .bytecode
             .get(SET_CODE_DELEGATION_BYTES.len()..)
             .ok_or(VMError::Internal(InternalError::SlicingError))?;
+        // It shouldn't panic when doing Address::from_slice()
+        // because the length is checked inside the was_delegated() function
         let address = Address::from_slice(address_bytes);
         Ok(address)
     } else {
-        Err(VMError::EIP7702Error(
-            crate::errors::EIP7702Error::AuthorizedAddressError,
+        // if we end up here, it means that the address wasn't previously delegated.
+        Err(VMError::InternalError::EIP7702Internal(
+            EIP7702Error::AuthorizedAddressError,
         ))
     }
 }
