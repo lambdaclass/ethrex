@@ -1513,10 +1513,10 @@ impl VM {
                 }
             };
 
-            if auth_tuple.address != Address::zero() {
-                auth_account.info.bytecode = delegation_bytes.into();
+            auth_account.info.bytecode = if auth_tuple.address != Address::zero() {
+                delegation_bytes.into()
             } else {
-                auth_account.info.bytecode = Bytes::new();
+                Bytes::new()
             }
 
             // 9. Increase the nonce of authority by one.
