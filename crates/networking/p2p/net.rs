@@ -1,6 +1,8 @@
 use std::{
     collections::HashSet,
-    net::{IpAddr, Ipv4Addr, SocketAddr},
+    io,
+    net::SocketAddr,
+    net::{IpAddr, Ipv4Addr},
     sync::Arc,
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
@@ -22,10 +24,10 @@ use kademlia::{bucket_number, MAX_NODES_PER_BUCKET};
 use rand::rngs::OsRng;
 use rlpx::{connection::RLPxConnection, message::Message as RLPxMessage};
 use tokio::{
-    net::{TcpSocket, TcpStream, UdpSocket},
+    net::{TcpListener, TcpSocket, TcpStream, UdpSocket},
     sync::{broadcast, Mutex},
-    try_join,
 };
+use tokio_util::task::TaskTracker;
 use tracing::{debug, error, info};
 use types::{Endpoint, Node, NodeRecord};
 
@@ -53,6 +55,7 @@ pub fn peer_table(signer: SigningKey) -> Arc<Mutex<KademliaTable>> {
 
 pub async fn start_network(
     local_node: Node,
+    tracker: TaskTracker,
     udp_addr: SocketAddr,
     tcp_addr: SocketAddr,
     bootnodes: Vec<BootNode>,
@@ -66,8 +69,10 @@ pub async fn start_network(
         tokio::task::Id,
         Arc<RLPxMessage>,
     )>(MAX_MESSAGES_TO_BROADCAST);
-    let discovery_handle = tokio::spawn(discover_peers(
+
+    tracker.spawn(discover_peers(
         local_node,
+        tracker.clone(),
         udp_addr,
         signer.clone(),
         storage.clone(),
@@ -75,19 +80,20 @@ pub async fn start_network(
         bootnodes,
         channel_broadcast_send_end.clone(),
     ));
-    let server_handle = tokio::spawn(serve_requests(
+
+    tracker.spawn(serve_p2p_requests(
+        tracker.clone(),
         tcp_addr,
         signer.clone(),
         storage.clone(),
         peer_table.clone(),
         channel_broadcast_send_end,
     ));
-
-    try_join!(discovery_handle, server_handle).unwrap();
 }
 
 async fn discover_peers(
     local_node: Node,
+    tracker: TaskTracker,
     udp_addr: SocketAddr,
     signer: SigningKey,
     storage: Store,
@@ -95,10 +101,17 @@ async fn discover_peers(
     bootnodes: Vec<BootNode>,
     connection_broadcast: broadcast::Sender<(tokio::task::Id, Arc<RLPxMessage>)>,
 ) {
-    let udp_socket = Arc::new(UdpSocket::bind(udp_addr).await.unwrap());
+    let udp_socket = match UdpSocket::bind(udp_addr).await {
+        Ok(socket) => Arc::new(socket),
+        Err(e) => {
+            error!("Error binding udp socket {udp_addr}: {e}. Stopping discover peers task");
+            return;
+        }
+    };
 
-    let server_handler = tokio::spawn(discover_peers_server(
+    tracker.spawn(discover_peers_server(
         local_node,
+        tracker.clone(),
         udp_addr,
         udp_socket.clone(),
         storage,
@@ -106,7 +119,8 @@ async fn discover_peers(
         signer.clone(),
         connection_broadcast,
     ));
-    let revalidation_handler = tokio::spawn(peers_revalidation(
+
+    tracker.spawn(peers_revalidation(
         udp_addr,
         udp_socket.clone(),
         table.clone(),
@@ -126,19 +140,19 @@ async fn discover_peers(
     // a first initial lookup runs without waiting for the interval
     // so we need to allow some time to the pinged peers to ping us back and acknowledge us
     tokio::time::sleep(Duration::from_secs(10)).await;
-    let lookup_handler = tokio::spawn(peers_lookup(
+    tracker.spawn(peers_lookup(
+        tracker.clone(),
         udp_socket.clone(),
         table.clone(),
         signer.clone(),
         node_id_from_signing_key(&signer),
         PEERS_RANDOM_LOOKUP_TIME_IN_MIN as u64 * 60,
     ));
-
-    try_join!(server_handler, revalidation_handler, lookup_handler).unwrap();
 }
 
 async fn discover_peers_server(
     local_node: Node,
+    tracker: TaskTracker,
     udp_addr: SocketAddr,
     udp_socket: Arc<UdpSocket>,
     storage: Store,
@@ -149,305 +163,289 @@ async fn discover_peers_server(
     let mut buf = vec![0; MAX_DISC_PACKET_SIZE];
 
     loop {
-        let (read, from) = udp_socket.recv_from(&mut buf).await.unwrap();
+        let (read, from) = match udp_socket.recv_from(&mut buf).await {
+            Ok(result) => result,
+            Err(e) => {
+                error!(
+                    "Error receiving data from socket {udp_addr}: {e}. Stopping discovery server"
+                );
+                return;
+            }
+        };
         debug!("Received {read} bytes from {from}");
 
-        let packet = Packet::decode(&buf[..read]);
-        if packet.is_err() {
-            debug!("Could not decode packet: {:?}", packet.err().unwrap());
-            continue;
-        }
-        let packet = packet.unwrap();
+        match Packet::decode(&buf[..read]) {
+            Err(e) => error!("Could not decode packet: {:?}", e),
+            Ok(packet) => {
+                let msg = packet.get_message();
+                debug!("Message: {:?} from {}", msg, packet.get_node_id());
 
-        let msg = packet.get_message();
-        debug!("Message: {:?} from {}", msg, packet.get_node_id());
-
-        match msg {
-            Message::Ping(msg) => {
-                if is_expired(msg.expiration) {
-                    debug!("Ignoring ping as it is expired.");
-                    continue;
-                };
-                let ping_hash = packet.get_hash();
-                pong(&udp_socket, from, ping_hash, &signer).await;
-                let node = {
-                    let table = table.lock().await;
-                    table.get_by_node_id(packet.get_node_id()).cloned()
-                };
-                if let Some(peer) = node {
-                    // send a a ping to get an endpoint proof
-                    if time_since_in_hs(peer.last_ping) >= PROOF_EXPIRATION_IN_HS as u64 {
-                        let hash = ping(&udp_socket, udp_addr, from, &signer).await;
-                        if let Some(hash) = hash {
-                            table
-                                .lock()
-                                .await
-                                .update_peer_ping(peer.node.node_id, Some(hash));
-                        }
-                    }
-                    // if it has updated its record, send a request to update it
-                    if let Some(enr_seq) = msg.enr_seq {
-                        if enr_seq > peer.record.seq {
-                            debug!("enr-seq outdated, send an enr_request");
-                            let req_hash = send_enr_request(&udp_socket, from, &signer).await;
-                            table.lock().await.update_peer_enr_seq(
-                                peer.node.node_id,
-                                enr_seq,
-                                req_hash,
-                            );
-                        }
-                    }
-                } else {
-                    // send a ping to get the endpoint proof from our end
-                    let (peer, inserted_to_table) = {
-                        let mut table = table.lock().await;
-                        table.insert_node(Node {
-                            ip: from.ip(),
-                            udp_port: from.port(),
-                            tcp_port: 0,
-                            node_id: packet.get_node_id(),
-                        })
-                    };
-                    let hash = ping(&udp_socket, udp_addr, from, &signer).await;
-                    if let Some(hash) = hash {
-                        if inserted_to_table && peer.is_some() {
-                            let peer = peer.unwrap();
-                            table
-                                .lock()
-                                .await
-                                .update_peer_ping(peer.node.node_id, Some(hash));
-                        }
-                    }
-                }
-            }
-            Message::Pong(msg) => {
-                let table = table.clone();
-                if is_expired(msg.expiration) {
-                    debug!("Ignoring pong as it is expired.");
-                    continue;
-                }
-                let peer = {
-                    let table = table.lock().await;
-                    table.get_by_node_id(packet.get_node_id()).cloned()
-                };
-                if let Some(peer) = peer {
-                    if peer.last_ping_hash.is_none() {
-                        debug!("Discarding pong as the node did not send a previous ping");
-                        continue;
-                    }
-                    if peer.last_ping_hash.unwrap() == msg.ping_hash {
-                        table.lock().await.pong_answered(peer.node.node_id);
-                        if let Some(enr_seq) = msg.enr_seq {
-                            if enr_seq > peer.record.seq {
-                                debug!("enr-seq outdated, send an enr_request");
-                                let req_hash = send_enr_request(&udp_socket, from, &signer).await;
-                                table.lock().await.update_peer_enr_seq(
-                                    peer.node.node_id,
-                                    enr_seq,
-                                    req_hash,
-                                );
-                            }
-                        }
-                        let mut msg_buf = vec![0; read - 32];
-                        buf[32..read].clone_into(&mut msg_buf);
-                        let signer = signer.clone();
-                        let storage = storage.clone();
-                        let broadcaster = tx_broadcaster_send.clone();
-                        tokio::spawn(async move {
-                            handle_peer_as_initiator(
-                                signer,
-                                &msg_buf,
-                                &peer.node,
-                                storage,
-                                table,
-                                broadcaster,
-                            )
-                            .await;
-                        });
-                    } else {
-                        debug!(
-                            "Discarding pong as the hash did not match the last corresponding ping"
-                        );
-                    }
-                } else {
-                    debug!("Discarding pong as it is not a known node");
-                }
-            }
-            Message::FindNode(msg) => {
-                if is_expired(msg.expiration) {
-                    debug!("Ignoring find node msg as it is expired.");
-                    continue;
-                };
-                let node = {
-                    let table = table.lock().await;
-                    table.get_by_node_id(packet.get_node_id()).cloned()
-                };
-                if let Some(node) = node {
-                    if node.is_proven {
-                        let nodes = {
-                            let table = table.lock().await;
-                            table.get_closest_nodes(msg.target)
-                        };
-                        let nodes_chunks = nodes.chunks(4);
-                        let expiration = get_expiration(20);
-                        debug!("Sending neighbors!");
-                        // we are sending the neighbors in 4 different messages as not to exceed the
-                        // maximum packet size
-                        for nodes in nodes_chunks {
-                            let neighbors = discv4::Message::Neighbors(NeighborsMessage::new(
-                                nodes.to_vec(),
-                                expiration,
-                            ));
-                            let mut buf = Vec::new();
-                            neighbors.encode_with_header(&mut buf, &signer);
-                            udp_socket.send_to(&buf, from).await.unwrap();
-                        }
-                    } else {
-                        debug!("Ignoring find node message as the node isn't proven!");
-                    }
-                } else {
-                    debug!("Ignoring find node message as it is not a known node");
-                }
-            }
-            Message::Neighbors(neighbors_msg) => {
-                if is_expired(neighbors_msg.expiration) {
-                    debug!("Ignoring neighbor msg as it is expired.");
-                    continue;
-                };
-
-                let mut nodes_to_insert = None;
-                let mut table = table.lock().await;
-                if let Some(node) = table.get_by_node_id_mut(packet.get_node_id()) {
-                    if let Some(req) = &mut node.find_node_request {
-                        if time_now_unix().saturating_sub(req.sent_at) >= 60 {
-                            debug!("Ignoring neighbors message as the find_node request expires after one minute");
-                            node.find_node_request = None;
+                match msg {
+                    Message::Ping(msg) => {
+                        if is_expired(msg.expiration) {
+                            debug!("Ignoring ping as it is expired.");
                             continue;
-                        }
-                        let nodes = &neighbors_msg.nodes;
-                        let nodes_sent = req.nodes_sent + nodes.len();
-
-                        if nodes_sent <= MAX_NODES_PER_BUCKET {
-                            debug!("Storing neighbors in our table!");
-                            req.nodes_sent = nodes_sent;
-                            nodes_to_insert = Some(nodes.clone());
-                            if let Some(tx) = &req.tx {
-                                let _ = tx.send(nodes.clone());
+                        };
+                        let ping_hash = packet.get_hash();
+                        pong(&udp_socket, from, ping_hash, &signer).await;
+                        let node = {
+                            let table = table.lock().await;
+                            table.get_by_node_id(packet.get_node_id()).cloned()
+                        };
+                        if let Some(peer) = node {
+                            // send a a ping to get an endpoint proof
+                            if time_since_in_hs(peer.last_ping) >= PROOF_EXPIRATION_IN_HS as u64 {
+                                let hash = ping(&udp_socket, udp_addr, from, &signer).await;
+                                if let Some(hash) = hash {
+                                    table
+                                        .lock()
+                                        .await
+                                        .update_peer_ping(peer.node.node_id, Some(hash));
+                                }
                             }
                         } else {
-                            debug!("Ignoring neighbors message as the client sent more than the allowed nodes");
-                        }
-
-                        if nodes_sent == MAX_NODES_PER_BUCKET {
-                            debug!("Neighbors request has been fulfilled");
-                            node.find_node_request = None;
+                            let mut table = table.lock().await;
+                            let node = Node {
+                                ip: from.ip(),
+                                udp_port: from.port(),
+                                tcp_port: 0,
+                                node_id: packet.get_node_id(),
+                            };
+                            if let (Some(peer), true) = table.insert_node(node) {
+                                // send a ping to get the endpoint proof from our end
+                                let hash = ping(&udp_socket, udp_addr, from, &signer).await;
+                                table.update_peer_ping(peer.node.node_id, hash);
+                            }
                         }
                     }
-                } else {
-                    debug!("Ignoring neighbor msg as it is not a known node");
-                }
-
-                if let Some(nodes) = nodes_to_insert {
-                    for node in nodes {
-                        let (peer, inserted_to_table) = table.insert_node(node);
-                        if inserted_to_table && peer.is_some() {
-                            let peer = peer.unwrap();
-                            let node_addr = SocketAddr::new(peer.node.ip, peer.node.udp_port);
-                            let ping_hash = ping(&udp_socket, udp_addr, node_addr, &signer).await;
-                            table.update_peer_ping(peer.node.node_id, ping_hash);
+                    Message::Pong(msg) => {
+                        let table = table.clone();
+                        if is_expired(msg.expiration) {
+                            debug!("Ignoring pong as it is expired.");
+                            continue;
+                        }
+                        let peer = {
+                            let table = table.lock().await;
+                            table.get_by_node_id(packet.get_node_id()).cloned()
                         };
+                        if let Some(peer) = peer {
+                            if peer.last_ping_hash.is_none() {
+                                debug!("Discarding pong as the node did not send a previous ping");
+                                continue;
+                            }
+                            if peer
+                                .last_ping_hash
+                                .is_some_and(|hash| hash == msg.ping_hash)
+                            {
+                                table.lock().await.pong_answered(peer.node.node_id);
+
+                                let mut msg_buf = vec![0; read - 32];
+                                buf[32..read].clone_into(&mut msg_buf);
+                                let signer = signer.clone();
+                                let storage = storage.clone();
+                                let broadcaster = tx_broadcaster_send.clone();
+                                tracker.spawn(async move {
+                                    handle_peer_as_initiator(
+                                        signer,
+                                        &msg_buf,
+                                        &peer.node,
+                                        storage,
+                                        table,
+                                        broadcaster,
+                                    )
+                                    .await
+                                });
+                            } else {
+                                debug!(
+                                    "Discarding pong as the hash did not match the last corresponding ping"
+                                );
+                            }
+                        } else {
+                            debug!("Discarding pong as it is not a known node");
+                        }
                     }
-                }
-            }
-            Message::ENRRequest(msg) => {
-                if is_expired(msg.expiration) {
-                    debug!("Ignoring enr-request msg as it is expired.");
-                }
-                // Note we are passing the current timestamp as the sequence number
-                // This is because we are not storing our local_node updates in the db
-                let Ok(node_record) = NodeRecord::from_node(local_node, time_now_unix(), &signer)
-                else {
-                    debug!("Ignoring enr-request msg could not build local node record.");
-                    continue;
-                };
-                let msg = discv4::Message::ENRResponse(ENRResponseMessage::new(
-                    packet.get_hash(),
-                    node_record,
-                ));
-                let mut buf = vec![];
-                msg.encode_with_header(&mut buf, &signer);
-                let _ = udp_socket.send_to(&buf, from).await;
-            }
-            Message::ENRResponse(msg) => {
-                let mut table = table.lock().await;
-                let peer = table.get_by_node_id_mut(packet.get_node_id());
-                let Some(peer) = peer else {
-                    debug!("Discarding enr-response as we don't know the peer");
-                    continue;
-                };
+                    Message::FindNode(msg) => {
+                        if is_expired(msg.expiration) {
+                            debug!("Ignoring find node msg as it is expired.");
+                            continue;
+                        };
+                        let node = {
+                            let table = table.lock().await;
+                            table.get_by_node_id(packet.get_node_id()).cloned()
+                        };
+                        if let Some(node) = node {
+                            if node.is_proven {
+                                let nodes = {
+                                    let table = table.lock().await;
+                                    table.get_closest_nodes(msg.target)
+                                };
+                                let nodes_chunks = nodes.chunks(4);
+                                let expiration = get_expiration(20);
+                                debug!("Sending neighbors!");
+                                // we are sending the neighbors in 4 different messages as not to exceed the
+                                // maximum packet size
+                                for nodes in nodes_chunks {
+                                    let neighbors = discv4::Message::Neighbors(
+                                        NeighborsMessage::new(nodes.to_vec(), expiration),
+                                    );
+                                    let mut buf = Vec::new();
+                                    neighbors.encode_with_header(&mut buf, &signer);
+                                    if let Err(e) = udp_socket.send_to(&buf, from).await {
+                                        error!("Could not send Neighbors message {e}");
+                                    }
+                                }
+                            } else {
+                                debug!("Ignoring find node message as the node isn't proven!");
+                            }
+                        } else {
+                            debug!("Ignoring find node message as it is not a known node");
+                        }
+                    }
+                    Message::Neighbors(neighbors_msg) => {
+                        if is_expired(neighbors_msg.expiration) {
+                            debug!("Ignoring neighbor msg as it is expired.");
+                            continue;
+                        };
 
-                let Some(req_hash) = peer.enr_request_hash else {
-                    debug!("Discarding enr-response as it wasn't requested");
-                    continue;
-                };
-                if req_hash != msg.request_hash {
-                    debug!("Discarding enr-response as the request hash did not match");
-                    continue;
-                }
-                peer.enr_request_hash = None;
+                        let mut nodes_to_insert = None;
+                        let mut table = table.lock().await;
+                        if let Some(node) = table.get_by_node_id_mut(packet.get_node_id()) {
+                            if let Some(req) = &mut node.find_node_request {
+                                if time_now_unix().saturating_sub(req.sent_at) >= 60 {
+                                    debug!("Ignoring neighbors message as the find_node request expires after one minute");
+                                    node.find_node_request = None;
+                                    continue;
+                                }
+                                let nodes = &neighbors_msg.nodes;
+                                let nodes_sent = req.nodes_sent + nodes.len();
 
-                if msg.node_record.seq < peer.record.seq {
-                    debug!(
+                                if nodes_sent <= MAX_NODES_PER_BUCKET {
+                                    debug!("Storing neighbors in our table!");
+                                    req.nodes_sent = nodes_sent;
+                                    nodes_to_insert = Some(nodes.clone());
+                                    if let Some(tx) = &req.tx {
+                                        let _ = tx.send(nodes.clone());
+                                    }
+                                } else {
+                                    debug!("Ignoring neighbors message as the client sent more than the allowed nodes");
+                                }
+
+                                if nodes_sent == MAX_NODES_PER_BUCKET {
+                                    debug!("Neighbors request has been fulfilled");
+                                    node.find_node_request = None;
+                                }
+                            }
+                        } else {
+                            debug!("Ignoring neighbor msg as it is not a known node");
+                        }
+
+                        if let Some(nodes) = nodes_to_insert {
+                            for node in nodes {
+                                if let (Some(peer), true) = table.insert_node(node) {
+                                    let node_addr =
+                                        SocketAddr::new(peer.node.ip, peer.node.udp_port);
+                                    let ping_hash =
+                                        ping(&udp_socket, udp_addr, node_addr, &signer).await;
+                                    table.update_peer_ping(peer.node.node_id, ping_hash);
+                                }
+                            }
+                        }
+                    }
+                    Message::ENRRequest(msg) => {
+                        if is_expired(msg.expiration) {
+                            debug!("Ignoring enr-request msg as it is expired.");
+                        }
+                        // Note we are passing the current timestamp as the sequence number
+                        // This is because we are not storing our local_node updates in the db
+                        let Ok(node_record) =
+                            NodeRecord::from_node(local_node, time_now_unix(), &signer)
+                        else {
+                            debug!("Ignoring enr-request msg could not build local node record.");
+                            continue;
+                        };
+                        let msg = discv4::Message::ENRResponse(ENRResponseMessage::new(
+                            packet.get_hash(),
+                            node_record,
+                        ));
+                        let mut buf = vec![];
+                        msg.encode_with_header(&mut buf, &signer);
+                        let _ = udp_socket.send_to(&buf, from).await;
+                    }
+                    Message::ENRResponse(msg) => {
+                        let mut table = table.lock().await;
+                        let peer = table.get_by_node_id_mut(packet.get_node_id());
+                        let Some(peer) = peer else {
+                            debug!("Discarding enr-response as we don't know the peer");
+                            continue;
+                        };
+
+                        let Some(req_hash) = peer.enr_request_hash else {
+                            debug!("Discarding enr-response as it wasn't requested");
+                            continue;
+                        };
+                        if req_hash != msg.request_hash {
+                            debug!("Discarding enr-response as the request hash did not match");
+                            continue;
+                        }
+                        peer.enr_request_hash = None;
+
+                        if msg.node_record.seq < peer.record.seq {
+                            debug!(
                         "Discarding enr-response as the record seq is lower than the one we have"
                     );
-                    continue;
-                }
+                            continue;
+                        }
 
-                let record = msg.node_record.decode_pairs();
-                let Some(id) = record.id else {
-                    continue;
-                };
+                        let record = msg.node_record.decode_pairs();
+                        let Some(id) = record.id else {
+                            continue;
+                        };
 
-                // https://github.com/ethereum/devp2p/blob/master/enr.md#v4-identity-scheme
-                let signature_valid = match id.as_str() {
-                    "v4" => {
-                        let digest = msg.node_record.get_signature_digest();
-                        let Some(public_key) = record.secp256k1 else {
-                            debug!("Discarding enr-response as signature could not be verified because public key was not provided");
-                            continue;
+                        // https://github.com/ethereum/devp2p/blob/master/enr.md#v4-identity-scheme
+                        let signature_valid = match id.as_str() {
+                            "v4" => {
+                                let digest = msg.node_record.get_signature_digest();
+                                let Some(public_key) = record.secp256k1 else {
+                                    debug!("Discarding enr-response as signature could not be verified because public key was not provided");
+                                    continue;
+                                };
+                                let signature_bytes = msg.node_record.signature.as_bytes();
+                                let Ok(signature) = Signature::from_slice(&signature_bytes[0..64])
+                                else {
+                                    continue;
+                                };
+                                let Ok(verifying_key) =
+                                    VerifyingKey::from_sec1_bytes(public_key.as_bytes())
+                                else {
+                                    continue;
+                                };
+                                verifying_key.verify_prehash(&digest, &signature).is_ok()
+                            }
+                            _ => false,
                         };
-                        let signature_bytes = msg.node_record.signature.as_bytes();
-                        let Ok(signature) = Signature::from_slice(&signature_bytes[0..64]) else {
+                        if !signature_valid {
+                            debug!(
+                                "Discarding enr-response as the signature verification was invalid"
+                            );
                             continue;
-                        };
-                        let Ok(verifying_key) =
-                            VerifyingKey::from_sec1_bytes(public_key.as_bytes())
-                        else {
-                            continue;
-                        };
-                        verifying_key.verify_prehash(&digest, &signature).is_ok()
+                        }
+
+                        if let Some(ip) = record.ip {
+                            peer.node.ip = IpAddr::from(Ipv4Addr::from_bits(ip));
+                        }
+                        if let Some(tcp_port) = record.tcp_port {
+                            peer.node.tcp_port = tcp_port;
+                        }
+                        if let Some(udp_port) = record.udp_port {
+                            peer.node.udp_port = udp_port;
+                        }
+                        peer.record = msg.node_record.clone();
+                        debug!(
+                            "Node with id {:?} record has been successfully updated",
+                            peer.node.node_id
+                        );
                     }
-                    _ => false,
-                };
-                if !signature_valid {
-                    debug!("Discarding enr-response as the signature verification was invalid");
-                    continue;
                 }
-
-                if let Some(ip) = record.ip {
-                    peer.node.ip = IpAddr::from(Ipv4Addr::from_bits(ip));
-                }
-                if let Some(tcp_port) = record.tcp_port {
-                    peer.node.tcp_port = tcp_port;
-                }
-                if let Some(udp_port) = record.udp_port {
-                    peer.node.udp_port = udp_port;
-                }
-                peer.record = msg.node_record.clone();
-                debug!(
-                    "Node with id {:?} record has been successfully updated",
-                    peer.node.node_id
-                );
             }
         }
     }
@@ -518,29 +516,29 @@ async fn peers_revalidation(
         // first check that the peers we ping have responded
         for node_id in previously_pinged_peers {
             let mut table = table.lock().await;
-            let peer = table.get_by_node_id_mut(node_id).unwrap();
-
-            if let Some(has_answered) = peer.revalidation {
-                if has_answered {
-                    peer.increment_liveness();
-                } else {
-                    peer.decrement_liveness();
+            if let Some(peer) = table.get_by_node_id_mut(node_id) {
+                if let Some(has_answered) = peer.revalidation {
+                    if has_answered {
+                        peer.increment_liveness();
+                    } else {
+                        peer.decrement_liveness();
+                    }
                 }
-            }
 
-            peer.revalidation = None;
+                peer.revalidation = None;
 
-            if peer.liveness == 0 {
-                let new_peer = table.replace_peer(node_id);
-                if let Some(new_peer) = new_peer {
-                    let ping_hash = ping(
-                        &udp_socket,
-                        udp_addr,
-                        SocketAddr::new(new_peer.node.ip, new_peer.node.udp_port),
-                        &signer,
-                    )
-                    .await;
-                    table.update_peer_ping(new_peer.node.node_id, ping_hash);
+                if peer.liveness == 0 {
+                    let new_peer = table.replace_peer(node_id);
+                    if let Some(new_peer) = new_peer {
+                        let ping_hash = ping(
+                            &udp_socket,
+                            udp_addr,
+                            SocketAddr::new(new_peer.node.ip, new_peer.node.udp_port),
+                            &signer,
+                        )
+                        .await;
+                        table.update_peer_ping(new_peer.node.node_id, ping_hash);
+                    }
                 }
             }
         }
@@ -592,6 +590,7 @@ const PEERS_RANDOM_LOOKUP_TIME_IN_MIN: usize = 30;
 ///
 /// See more https://github.com/ethereum/devp2p/blob/master/discv4.md#recursive-lookup
 async fn peers_lookup(
+    tracker: TaskTracker,
     udp_socket: Arc<UdpSocket>,
     table: Arc<Mutex<KademliaTable>>,
     signer: SigningKey,
@@ -607,31 +606,25 @@ async fn peers_lookup(
 
         debug!("Starting lookup");
 
-        let mut handlers = vec![];
-
         // lookup closest to our pub key
-        handlers.push(tokio::spawn(recursive_lookup(
+        tracker.spawn(recursive_lookup(
             udp_socket.clone(),
             table.clone(),
             signer.clone(),
             local_node_id,
             local_node_id,
-        )));
+        ));
 
         // lookup closest to 3 random keys
         for _ in 0..3 {
             let random_pub_key = &SigningKey::random(&mut OsRng);
-            handlers.push(tokio::spawn(recursive_lookup(
+            tracker.spawn(recursive_lookup(
                 udp_socket.clone(),
                 table.clone(),
                 signer.clone(),
                 node_id_from_signing_key(random_pub_key),
                 local_node_id,
-            )));
-        }
-
-        for handle in handlers {
-            let _ = try_join!(handle);
+            ));
         }
 
         debug!("Lookup finished");
@@ -700,37 +693,29 @@ async fn lookup(
 
     for node in nodes_to_ask {
         if !asked_peers.contains(&node.node_id) {
-            #[allow(unused_assignments)]
-            let mut rx = None;
-            {
-                let mut table = table.lock().await;
-                let peer = table.get_by_node_id_mut(node.node_id);
-                if let Some(peer) = peer {
-                    // if the peer has an ongoing find_node request, don't query
-                    if peer.find_node_request.is_some() {
-                        continue;
-                    }
-                    let (tx, receiver) = tokio::sync::mpsc::unbounded_channel::<Vec<Node>>();
+            let mut locked_table = table.lock().await;
+            if let Some(peer) = locked_table.get_by_node_id_mut(node.node_id) {
+                // if the peer has an ongoing find_node request, don't query
+                if peer.find_node_request.is_none() {
+                    let (tx, mut receiver) = tokio::sync::mpsc::unbounded_channel::<Vec<Node>>();
                     peer.new_find_node_request_with_sender(tx);
-                    rx = Some(receiver);
-                } else {
-                    // if peer isn't inserted to table, don't query
-                    continue;
+
+                    // Release the lock
+                    drop(locked_table);
+
+                    queries += 1;
+                    asked_peers.insert(node.node_id);
+                    let mut found_nodes = find_node_and_wait_for_response(
+                        &udp_socket,
+                        SocketAddr::new(node.ip, node.udp_port),
+                        signer,
+                        target,
+                        &mut receiver,
+                    )
+                    .await;
+                    nodes.append(&mut found_nodes)
                 }
             }
-
-            queries += 1;
-            asked_peers.insert(node.node_id);
-
-            let mut found_nodes = find_node_and_wait_for_response(
-                &udp_socket,
-                SocketAddr::new(node.ip, node.udp_port),
-                signer,
-                target,
-                &mut rx.unwrap(),
-            )
-            .await;
-            nodes.append(&mut found_nodes);
         }
 
         if queries == alpha {
@@ -779,7 +764,7 @@ async fn ping(
 
     let expiration: u64 = (SystemTime::now() + Duration::from_secs(20))
         .duration_since(UNIX_EPOCH)
-        .unwrap()
+        .unwrap_or_default()
         .as_secs();
 
     // TODO: this should send our advertised TCP port
@@ -797,17 +782,17 @@ async fn ping(
     let ping =
         discv4::Message::Ping(PingMessage::new(from, to, expiration).with_enr_seq(time_now_unix()));
     ping.encode_with_header(&mut buf, signer);
-    let res = socket.send_to(&buf, to_addr).await;
 
-    if res.is_err() {
-        return None;
-    }
-    let bytes_sent = res.unwrap();
-
-    // sanity check to make sure the ping was well sent
-    // though idk if this is actually needed or if it might break other stuff
-    if bytes_sent == buf.len() {
-        return Some(H256::from_slice(&buf[0..32]));
+    // Send ping and log if error
+    match socket.send_to(&buf, to_addr).await {
+        Ok(bytes_sent) => {
+            // sanity check to make sure the ping was well sent
+            // though idk if this is actually needed or if it might break other stuff
+            if bytes_sent == buf.len() {
+                return Some(H256::from_slice(&buf[0..32]));
+            }
+        }
+        Err(e) => error!("Unable to send ping: {e}"),
     }
 
     None
@@ -822,7 +807,7 @@ async fn find_node_and_wait_for_response(
 ) -> Vec<Node> {
     let expiration: u64 = (SystemTime::now() + Duration::from_secs(20))
         .duration_since(UNIX_EPOCH)
-        .unwrap()
+        .unwrap_or_default()
         .as_secs();
 
     let msg: discv4::Message =
@@ -830,11 +815,9 @@ async fn find_node_and_wait_for_response(
 
     let mut buf = Vec::new();
     msg.encode_with_header(&mut buf, signer);
-    let res = socket.send_to(&buf, to_addr).await;
-
     let mut nodes = vec![];
 
-    if res.is_err() {
+    if socket.send_to(&buf, to_addr).await.is_err() {
         return nodes;
     }
 
@@ -863,7 +846,7 @@ async fn pong(socket: &UdpSocket, to_addr: SocketAddr, ping_hash: H256, signer: 
 
     let expiration: u64 = (SystemTime::now() + Duration::from_secs(20))
         .duration_since(UNIX_EPOCH)
-        .unwrap()
+        .unwrap_or_default()
         .as_secs();
 
     let to = Endpoint {
@@ -876,7 +859,11 @@ async fn pong(socket: &UdpSocket, to_addr: SocketAddr, ping_hash: H256, signer: 
     );
 
     pong.encode_with_header(&mut buf, signer);
-    let _ = socket.send_to(&buf, to_addr).await;
+
+    // Send pong and log if error
+    if let Err(e) = socket.send_to(&buf, to_addr).await {
+        error!("Unable to send pong: {e}")
+    }
 }
 
 async fn send_enr_request(
@@ -907,20 +894,32 @@ async fn send_enr_request(
     None
 }
 
-async fn serve_requests(
+async fn serve_p2p_requests(
+    tracker: TaskTracker,
     tcp_addr: SocketAddr,
     signer: SigningKey,
     storage: Store,
     table: Arc<Mutex<KademliaTable>>,
     connection_broadcast: broadcast::Sender<(tokio::task::Id, Arc<RLPxMessage>)>,
 ) {
-    let tcp_socket = TcpSocket::new_v4().unwrap();
-    tcp_socket.bind(tcp_addr).unwrap();
-    let listener = tcp_socket.listen(50).unwrap();
+    let listener = match listener(tcp_addr) {
+        Ok(result) => result,
+        Err(e) => {
+            error!("Error opening tcp socket at {tcp_addr}: {e}. Stopping p2p server");
+            return;
+        }
+    };
     loop {
-        let (stream, _peer_addr) = listener.accept().await.unwrap();
+        let (stream, peer_addr) = match listener.accept().await {
+            Ok(result) => result,
+            Err(e) => {
+                error!("Error receiving data from tcp socket {tcp_addr}: {e}. Stopping p2p server");
+                return;
+            }
+        };
 
-        tokio::spawn(handle_peer_as_receiver(
+        tracker.spawn(handle_peer_as_receiver(
+            peer_addr,
             signer.clone(),
             stream,
             storage.clone(),
@@ -930,7 +929,14 @@ async fn serve_requests(
     }
 }
 
+fn listener(tcp_addr: SocketAddr) -> Result<TcpListener, io::Error> {
+    let tcp_socket = TcpSocket::new_v4()?;
+    tcp_socket.bind(tcp_addr)?;
+    tcp_socket.listen(50)
+}
+
 async fn handle_peer_as_receiver(
+    peer_addr: SocketAddr,
     signer: SigningKey,
     stream: TcpStream,
     storage: Store,
@@ -938,7 +944,7 @@ async fn handle_peer_as_receiver(
     connection_broadcast: broadcast::Sender<(tokio::task::Id, Arc<RLPxMessage>)>,
 ) {
     let mut conn = RLPxConnection::receiver(signer, stream, storage, connection_broadcast);
-    conn.start_peer(table).await;
+    conn.start_peer(peer_addr, table).await;
 }
 
 async fn handle_peer_as_initiator(
@@ -949,18 +955,33 @@ async fn handle_peer_as_initiator(
     table: Arc<Mutex<KademliaTable>>,
     connection_broadcast: broadcast::Sender<(tokio::task::Id, Arc<RLPxMessage>)>,
 ) {
-    debug!("Trying RLPx connection with {node:?}");
-    let stream = TcpSocket::new_v4()
-        .unwrap()
-        .connect(SocketAddr::new(node.ip, node.tcp_port))
-        .await
-        .unwrap();
-    match RLPxConnection::initiator(signer, msg, stream, storage, connection_broadcast) {
-        Ok(mut conn) => conn.start_peer(table).await,
+    let addr = SocketAddr::new(node.ip, node.tcp_port);
+    let stream = match tcp_stream(addr).await {
+        Ok(result) => result,
         Err(e) => {
-            error!("Error: {e}, Could not start connection with {node:?}");
+            // TODO We should remove the peer from the table if connection failed
+            // but currently it will make the tests fail
+            // table.lock().await.replace_peer(node.node_id);
+            error!("Error establishing tcp connection with peer at {addr}: {e}");
+            return;
         }
-    }
+    };
+    match RLPxConnection::initiator(signer, msg, stream, storage, connection_broadcast) {
+        Ok(mut conn) => {
+            conn.start_peer(SocketAddr::new(node.ip, node.udp_port), table)
+                .await
+        }
+        Err(e) => {
+            // TODO We should remove the peer from the table if connection failed
+            // but currently it will make the tests fail
+            // table.lock().await.replace_peer(node.node_id);
+            error!("Error creating tcp connection with peer at {addr}: {e}")
+        }
+    };
+}
+
+async fn tcp_stream(addr: SocketAddr) -> Result<TcpStream, io::Error> {
+    TcpSocket::new_v4()?.connect(addr).await
 }
 
 pub fn node_id_from_signing_key(signer: &SigningKey) -> H512 {
@@ -1025,10 +1046,13 @@ mod tests {
         pub udp_socket: Arc<UdpSocket>,
     }
 
-    async fn start_mock_discovery_server(udp_port: u16, should_start_server: bool) -> MockServer {
+    async fn start_mock_discovery_server(
+        udp_port: u16,
+        should_start_server: bool,
+    ) -> Result<MockServer, io::Error> {
         let addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), udp_port);
         let signer = SigningKey::random(&mut OsRng);
-        let udp_socket = Arc::new(UdpSocket::bind(addr).await.unwrap());
+        let udp_socket = Arc::new(UdpSocket::bind(addr).await?);
         let node_id = node_id_from_signing_key(&signer);
         let storage =
             Store::new("temp.db", EngineType::InMemory).expect("Failed to create test DB");
@@ -1043,9 +1067,11 @@ mod tests {
             udp_port: addr.port(),
             node_id,
         };
+        let tracker = TaskTracker::new();
         if should_start_server {
-            tokio::spawn(discover_peers_server(
+            tracker.spawn(discover_peers_server(
                 local_node,
+                tracker.clone(),
                 addr,
                 udp_socket.clone(),
                 storage.clone(),
@@ -1055,14 +1081,14 @@ mod tests {
             ));
         }
 
-        MockServer {
+        Ok(MockServer {
             local_node,
             addr,
             signer,
             table,
             node_id,
             udp_socket,
-        }
+        })
     }
 
     /// connects two mock servers by pinging a to b
@@ -1098,9 +1124,9 @@ mod tests {
      * - We expect server `b` to remove node `a` from its table after 3 re-validations
      * To make this run faster, we'll change the revalidation time to be every 2secs
      */
-    async fn discovery_server_revalidation() {
-        let mut server_a = start_mock_discovery_server(7998, true).await;
-        let mut server_b = start_mock_discovery_server(7999, true).await;
+    async fn discovery_server_revalidation() -> Result<(), io::Error> {
+        let mut server_a = start_mock_discovery_server(7998, true).await?;
+        let mut server_b = start_mock_discovery_server(7999, true).await?;
 
         connect_servers(&mut server_a, &mut server_b).await;
 
@@ -1117,24 +1143,26 @@ mod tests {
             sleep(Duration::from_millis(2500)).await;
             // by now, b should've send a revalidation to a
             let table = server_b.table.lock().await;
-            let node = table.get_by_node_id(server_a.node_id).unwrap();
-            assert!(node.revalidation.is_some());
+            let node = table.get_by_node_id(server_a.node_id);
+            assert!(node.is_some_and(|n| n.revalidation.is_some()));
         }
 
         // make sure that `a` has responded too all the re-validations
         // we can do that by checking the liveness
         {
             let table = server_b.table.lock().await;
-            let node = table.get_by_node_id(server_a.node_id).unwrap();
-            assert_eq!(node.liveness, 6);
+            let node = table.get_by_node_id(server_a.node_id);
+            assert_eq!(node.map_or(0, |n| n.liveness), 6);
         }
 
         // now, stopping server `a` is not trivial
         // so we'll instead change its port, so that no one responds
         {
             let mut table = server_b.table.lock().await;
-            let node = table.get_by_node_id_mut(server_a.node_id).unwrap();
-            node.node.udp_port = 0;
+            let node = table.get_by_node_id_mut(server_a.node_id);
+            if let Some(node) = node {
+                node.node.udp_port = 0
+            };
         }
 
         // now the liveness field should start decreasing until it gets to 0
@@ -1142,14 +1170,15 @@ mod tests {
         for _ in 0..2 {
             sleep(Duration::from_millis(2500)).await;
             let table = server_b.table.lock().await;
-            let node = table.get_by_node_id(server_a.node_id).unwrap();
-            assert!(node.revalidation.is_some());
+            let node = table.get_by_node_id(server_a.node_id);
+            assert!(node.is_some_and(|n| n.revalidation.is_some()));
         }
         sleep(Duration::from_millis(2500)).await;
 
         // finally, `a`` should not exist anymore
         let table = server_b.table.lock().await;
         assert!(table.get_by_node_id(server_a.node_id).is_none());
+        Ok(())
     }
 
     #[tokio::test]
@@ -1161,9 +1190,9 @@ mod tests {
      *
      * This test for only one lookup, and not recursively.
      */
-    async fn discovery_server_lookup() {
-        let mut server_a = start_mock_discovery_server(8000, true).await;
-        let mut server_b = start_mock_discovery_server(8001, true).await;
+    async fn discovery_server_lookup() -> Result<(), io::Error> {
+        let mut server_a = start_mock_discovery_server(8000, true).await?;
+        let mut server_b = start_mock_discovery_server(8001, true).await?;
 
         fill_table_with_random_nodes(server_a.table.clone()).await;
 
@@ -1210,6 +1239,7 @@ mod tests {
             let table = server_b.table.lock().await;
             assert!(table.get_by_node_id(peer.node_id).is_some());
         }
+        Ok(())
     }
 
     #[tokio::test]
@@ -1219,11 +1249,11 @@ mod tests {
      * - The server `d` will have its table filled with mock nodes
      * - We'll run a recursive lookup on server `a` and we expect to end with `b`, `c`, `d` and its mock nodes
      */
-    async fn discovery_server_recursive_lookup() {
-        let mut server_a = start_mock_discovery_server(8002, true).await;
-        let mut server_b = start_mock_discovery_server(8003, true).await;
-        let mut server_c = start_mock_discovery_server(8004, true).await;
-        let mut server_d = start_mock_discovery_server(8005, true).await;
+    async fn discovery_server_recursive_lookup() -> Result<(), io::Error> {
+        let mut server_a = start_mock_discovery_server(8002, true).await?;
+        let mut server_b = start_mock_discovery_server(8003, true).await?;
+        let mut server_c = start_mock_discovery_server(8004, true).await?;
+        let mut server_d = start_mock_discovery_server(8005, true).await?;
 
         connect_servers(&mut server_a, &mut server_b).await;
         connect_servers(&mut server_b, &mut server_c).await;
@@ -1277,6 +1307,7 @@ mod tests {
                 .get_by_node_id(peer.node_id)
                 .is_some());
         }
+        Ok(())
     }
 
     #[tokio::test]
@@ -1291,9 +1322,9 @@ mod tests {
      * 4. Send a new ping message and check that an ENR request was triggered.
      * 5. Verify that the updated node record has been correctly received and stored.
      */
-    async fn discovery_enr_message() {
-        let mut server_a = start_mock_discovery_server(8006, true).await;
-        let mut server_b = start_mock_discovery_server(8007, true).await;
+    async fn discovery_enr_message() -> Result<(), io::Error> {
+        let mut server_a = start_mock_discovery_server(8006, true).await?;
+        let mut server_b = start_mock_discovery_server(8007, true).await?;
 
         connect_servers(&mut server_a, &mut server_b).await;
 
@@ -1301,7 +1332,8 @@ mod tests {
         sleep(Duration::from_millis(2500)).await;
 
         let expected_record =
-            NodeRecord::from_node(server_b.local_node, time_now_unix(), &server_b.signer).unwrap();
+            NodeRecord::from_node(server_b.local_node, time_now_unix(), &server_b.signer)
+                .expect("Node record is created from node");
 
         let server_a_peer_b = server_a
             .table
@@ -1351,5 +1383,7 @@ mod tests {
             .tcp_port;
 
         assert!(tcp_port == server_b.addr.port());
+
+        Ok(())
     }
 }

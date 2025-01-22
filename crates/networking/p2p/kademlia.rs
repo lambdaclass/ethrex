@@ -7,7 +7,7 @@ use crate::{
 use ethrex_core::{H256, H512, U256};
 use sha3::{Digest, Keccak256};
 use tokio::sync::mpsc::UnboundedSender;
-use tracing::info;
+use tracing::{debug, info};
 
 pub const MAX_NODES_PER_BUCKET: usize = 16;
 const NUMBER_OF_BUCKETS: usize = 256;
@@ -234,7 +234,7 @@ impl KademliaTable {
     fn filter_peers<'a>(
         &'a self,
         filter: &'a dyn Fn(&'a PeerData) -> bool,
-    ) -> impl Iterator<Item = &PeerData> + 'a {
+    ) -> impl Iterator<Item = &'a PeerData> {
         self.iter_peers().filter(|peer| filter(peer))
     }
 
@@ -310,28 +310,23 @@ impl KademliaTable {
         }) {
             peer.channels = Some(channels);
             peer.supported_capabilities = capabilities;
+        } else {
+            debug!(
+                "[PEERS] Peer with node_id {:?} not found in the kademlia table when trying to init backend communication",
+                node_id
+            );
         }
     }
 
     /// Returns the channel ends to an active peer connection that supports the given capability
-    /// The peer is selected randomly, and doesn't guarantee that the selected peer is not currenlty busy
-    /// If no peer is found, this method will try again after 10 seconds
-    pub async fn get_peer_channels(&self, capability: Capability) -> PeerChannels {
+    /// The peer is selected randomly, and doesn't guarantee that the selected peer is not currently busy
+    pub fn get_peer_channels(&self, capability: Capability) -> Option<PeerChannels> {
         let filter = |peer: &PeerData| -> bool {
             // Search for peers with an active connection that support the required capabilities
             peer.channels.is_some() && peer.supported_capabilities.contains(&capability)
         };
-        loop {
-            if let Some(channels) = self
-                .get_random_peer_with_filter(&filter)
-                .and_then(|peer| peer.channels.clone())
-            {
-                return channels;
-            }
-            info!("[Sync] No peers available, retrying in 10 sec");
-            // This is the unlikely case where we just started the node and don't have peers, wait a bit and try again
-            tokio::time::sleep(tokio::time::Duration::from_secs(10)).await;
-        }
+        self.get_random_peer_with_filter(&filter)
+            .and_then(|peer| peer.channels.clone())
     }
 
     /// Outputs total amount of peers, active peers, and active peers supporting the Snap Capability to the command line
