@@ -83,13 +83,13 @@ revm-comparison: ## 📊 Run benchmarks of fibonacci and factorial for both REVM
 		-n "revm_fibonacci" "target/release/revm_fibonacci 100000 6" \
 		-n "levm_fibonacci" "target/release/levm_fibonacci 100000 6"
 	@echo
-	@printf "%s\n" "revm_ten_thousand_hashes"
-	@target/release/revm_ten_thousand_hashes 1 1000
-	@printf "%s\n" "levm_ten_thousand_hashes"
-	@target/release/levm_ten_thousand_hashes 1 1000
+	@printf "%s\n" "revm_many_hashes"
+	@target/release/revm_many_hashes 1 1000
+	@printf "%s\n" "levm_many_hashes"
+	@target/release/levm_many_hashes 1 1000
 	hyperfine -w 5 -r 10 -N \
-		-n "revm_ten_thousand_hashes" "target/release/revm_ten_thousand_hashes 100000 1000" \
-		-n "levm_ten_thousand_hashes" "target/release/levm_ten_thousand_hashes 100000 1000"
+		-n "revm_many_hashes" "target/release/revm_many_hashes 100000 1000" \
+		-n "levm_many_hashes" "target/release/levm_many_hashes 100000 1000"
 	@echo
 
 revm-comparison-ci:
