@@ -1,6 +1,6 @@
 use bls12_381::{
-    hash_to_curve::MapToCurve, multi_miller_loop, Fp, G1Affine, G1Projective, G2Affine, G2Prepared,
-    G2Projective, Gt, Scalar,
+    hash_to_curve::MapToCurve, multi_miller_loop, Fp, Fp2, G1Affine, G1Projective, G2Affine,
+    G2Prepared, G2Projective, Gt, Scalar,
 };
 
 use bytes::Bytes;
@@ -42,9 +42,9 @@ use crate::{
     errors::{InternalError, PrecompileError, VMError},
     gas_cost::{
         self, BLAKE2F_ROUND_COST, BLS12_381_G1ADD_COST, BLS12_381_G1_K_DISCOUNT,
-        BLS12_381_G2ADD_COST, BLS12_381_G2_K_DISCOUNT, BLS12_381_MAP_FP_TO_G1_COST, ECADD_COST,
-        ECMUL_COST, ECRECOVER_COST, G1_MUL_COST, G2_MUL_COST, MODEXP_STATIC_COST,
-        POINT_EVALUATION_COST,
+        BLS12_381_G2ADD_COST, BLS12_381_G2_K_DISCOUNT, BLS12_381_MAP_FP2_TO_G2_COST,
+        BLS12_381_MAP_FP_TO_G1_COST, ECADD_COST, ECMUL_COST, ECRECOVER_COST, G1_MUL_COST,
+        G2_MUL_COST, MODEXP_STATIC_COST, POINT_EVALUATION_COST,
     },
 };
 
@@ -153,11 +153,26 @@ pub const BLS12_381_PAIRING_CHECK_PAIR_LENGTH: usize = 384;
 const BLS12_381_G1ADD_VALID_INPUT_LENGTH: usize = 256;
 const BLS12_381_G2ADD_VALID_INPUT_LENGTH: usize = 512;
 
+const BLS12_381_FP2_VALID_INPUT_LENGTH: usize = 128;
 const BLS12_381_FP_VALID_INPUT_LENGTH: usize = 64;
 
 pub const FIELD_ELEMENT_WITHOUT_PADDING_LENGTH: usize = 48;
 pub const PADDED_FIELD_ELEMENT_SIZE_IN_BYTES: usize = 64;
 
+const FP2_ZERO_MAPPED_TO_G2: [u8; 256] = [
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 131, 32, 137, 110, 201, 238, 249, 213, 230,
+    25, 132, 141, 194, 156, 226, 102, 244, 19, 208, 45, 211, 29, 155, 157, 68, 236, 12, 121, 205,
+    97, 241, 139, 7, 93, 219, 166, 215, 189, 32, 183, 255, 39, 164, 179, 36, 191, 206, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 10, 103, 209, 33, 24, 181, 163, 91, 176, 45, 46, 134, 179,
+    235, 250, 126, 35, 65, 13, 185, 61, 227, 159, 176, 109, 112, 37, 250, 149, 233, 111, 250, 66,
+    138, 122, 39, 195, 174, 77, 212, 180, 11, 210, 81, 172, 101, 136, 146, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0, 2, 96, 224, 54, 68, 209, 162, 195, 33, 37, 107, 50, 70, 186, 210, 184,
+    149, 202, 209, 56, 144, 203, 230, 248, 93, 245, 81, 6, 160, 211, 52, 96, 79, 177, 67, 199, 160,
+    66, 216, 120, 0, 98, 113, 134, 91, 195, 89, 65, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    4, 198, 151, 119, 164, 63, 11, 218, 7, 103, 157, 88, 5, 230, 63, 24, 207, 78, 14, 124, 97, 18,
+    172, 127, 112, 38, 109, 25, 155, 79, 118, 174, 39, 198, 38, 154, 60, 238, 189, 174, 48, 128,
+    110, 154, 118, 170, 223, 92,
+];
 pub const G1_POINT_AT_INFINITY: [u8; 128] = [0_u8; 128];
 pub const G2_POINT_AT_INFINITY: [u8; 256] = [0_u8; 256];
 
@@ -1444,11 +1459,53 @@ pub fn bls12_map_fp_to_g1(
 }
 
 pub fn bls12_map_fp2_tp_g2(
-    _calldata: &Bytes,
-    _gas_for_call: u64,
-    _consumed_gas: &mut u64,
+    calldata: &Bytes,
+    gas_for_call: u64,
+    consumed_gas: &mut u64,
 ) -> Result<Bytes, VMError> {
-    Ok(Bytes::new())
+    if calldata.len() != BLS12_381_FP2_VALID_INPUT_LENGTH {
+        return Err(VMError::PrecompileError(PrecompileError::ParsingInputError));
+    }
+
+    // GAS
+    increase_precompile_consumed_gas(gas_for_call, BLS12_381_MAP_FP2_TO_G2_COST, consumed_gas)?;
+
+    // Parse the input to two Fp and create a Fp2
+    let c0 = parse_coordinate(calldata.get(0..PADDED_FIELD_ELEMENT_SIZE_IN_BYTES))?;
+    let c1 = parse_coordinate(
+        calldata.get(PADDED_FIELD_ELEMENT_SIZE_IN_BYTES..BLS12_381_FP2_VALID_INPUT_LENGTH),
+    )?;
+    let fp_0 = Fp::from_bytes(&c0)
+        .into_option()
+        .ok_or(VMError::PrecompileError(PrecompileError::ParsingInputError))?;
+    let fp_1 = Fp::from_bytes(&c1)
+        .into_option()
+        .ok_or(VMError::PrecompileError(PrecompileError::ParsingInputError))?;
+    if fp_0 == Fp::zero() && fp_1 == Fp::zero() {
+        return Ok(Bytes::copy_from_slice(&FP2_ZERO_MAPPED_TO_G2));
+    }
+
+    let fp2 = Fp2 { c0: fp_0, c1: fp_1 };
+
+    // following https://github.com/ethereum/EIPs/blob/master/assets/eip-2537/field_to_curve.md?plain=1#L3-L6, we do:
+    // map_to_curve: map a field element to a another curve, then isogeny is applied to map to the curve bls12_381
+    // clear_h: clears the cofactor
+    let point = G2Projective::map_to_curve(&fp2).clear_h();
+    let result_bytes = if point.is_identity().into() {
+        return Ok(Bytes::copy_from_slice(&G2_POINT_AT_INFINITY));
+    } else {
+        G2Affine::from(point).to_uncompressed()
+    };
+
+    let mut padded_result = Vec::new();
+    // The crate bls12_381 deserialize the G2 point as x_1 || x_0 || y_1 || y_0
+    // https://docs.rs/bls12_381/0.8.0/src/bls12_381/g2.rs.html#284-299
+    add_padded_coordinate(&mut padded_result, result_bytes.get(48..96))?;
+    add_padded_coordinate(&mut padded_result, result_bytes.get(0..48))?;
+    add_padded_coordinate(&mut padded_result, result_bytes.get(144..192))?;
+    add_padded_coordinate(&mut padded_result, result_bytes.get(96..144))?;
+
+    Ok(Bytes::from(padded_result))
 }
 
 fn parse_coordinate(coordinate_raw_bytes: Option<&[u8]>) -> Result<[u8; 48], VMError> {
