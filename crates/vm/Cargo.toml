@@ -9,7 +9,7 @@ ethrex-storage = { path = "../storage/store", default-features = false }
 ethrex-levm = { path = "./levm", optional = true }
 ethrex-trie = { path = "../storage/trie", default-features = false }
 ethrex-rlp = { path = "../common/rlp", default-features = false }
-revm = { version = "19.3.0", features = [
+revm = { version = "14.0.3", features = [
   "serde",
   "std",
   "serde-json",
