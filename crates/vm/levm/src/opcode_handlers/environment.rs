@@ -280,6 +280,7 @@ impl VM {
 
         let (account_info, address_was_cold) = self.access_account(address);
 
+        // https://eips.ethereum.org/EIPS/eip-7702#delegation-designation
         let is_delegation = was_delegated(&account_info)?;
 
         self.increase_consumed_gas(current_call_frame, gas_cost::extcodesize(address_was_cold)?)?;
@@ -315,6 +316,7 @@ impl VM {
 
         let new_memory_size = calculate_memory_size(dest_offset, size)?;
 
+        // https://eips.ethereum.org/EIPS/eip-7702#delegation-designation
         let is_delegation = was_delegated(&account_info)?;
 
         self.increase_consumed_gas(
@@ -435,6 +437,7 @@ impl VM {
 
         let (account_info, address_was_cold) = self.access_account(address);
 
+        // https://eips.ethereum.org/EIPS/eip-7702#delegation-designation
         let is_delegation = was_delegated(&account_info)?;
 
         self.increase_consumed_gas(current_call_frame, gas_cost::extcodehash(address_was_cold)?)?;
