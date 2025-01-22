@@ -72,24 +72,16 @@ revm-comparison: ## 📊 Run benchmarks of fibonacci and factorial for both REVM
 	@printf "%s\n" "levm_factorial"
 	@target/release/levm_factorial 1 1000
 	hyperfine -w 5 -r 10 -N \
-		-n "revm_factorial" "target/release/revm_factorial 100000 1000" \
-		-n "levm_factorial" "target/release/levm_factorial 100000 1000"
+		-n "revm_factorial" "target/release/revm_factorial 100000 6" \
+		-n "levm_factorial" "target/release/levm_factorial 100000 6"
 	@echo
 	@printf "%s\n" "revm_fibonacci"
 	@target/release/revm_fibonacci 1 1000
 	@printf "%s\n" "levm_fibonacci"
 	@target/release/levm_fibonacci 1 1000
 	hyperfine -w 5 -r 10 -N \
-		-n "revm_fibonacci" "target/release/revm_fibonacci 100000 1000" \
-		-n "levm_fibonacci" "target/release/levm_fibonacci 100000 1000"
-	@echo
-	@printf "%s\n" "revm_snailtracer"
-	@target/release/revm_snailtracer 1 1000
-	@printf "%s\n" "levm_snailtracer"
-	@target/release/levm_snailtracer 1 1000
-	hyperfine -w 5 -r 10 -N \
-		-n "revm_snailtracer" "target/release/revm_snailtracer 100000 1000" \
-		-n "levm_snailtracer" "target/release/levm_snailtracer 100000 1000"
+		-n "revm_fibonacci" "target/release/revm_fibonacci 100000 6" \
+		-n "levm_fibonacci" "target/release/levm_fibonacci 100000 6"
 	@echo
 	@printf "%s\n" "revm_ten_thousand_hashes"
 	@target/release/revm_ten_thousand_hashes 1 1000
@@ -128,10 +120,8 @@ build-revm-comparison:
 		--bin levm_factorial \
 		--bin revm_fibonacci \
 		--bin levm_fibonacci \
-		--bin levm_ten_thousand_hashes \
-		--bin revm_ten_thousand_hashes \
-		--bin levm_snailtracer \
-		--bin revm_snailtracer
+		--bin levm_many_hashes \
+		--bin revm_many_hashes \
 
 ###### Build Client with LEVM ######
 
@@ -208,17 +198,11 @@ flamegraph-benchmarks: ## 🔥 Run benchmarks and create flamegraph
 	--root --output ../../../cmd/ef_tests/levm/levm_perfgraphs/flamegraph/bench/levm_factorial.svg \
 	-p revm_comparison --bin levm_factorial -- 100000 1000
 	CARGO_PROFILE_RELEASE_DEBUG=true cargo flamegraph \
-	--root --output ../../../cmd/ef_tests/levm/levm_perfgraphs/flamegraph/bench/levm_snailtracer.svg \
-    -p revm_comparison --bin levm_snailtracer -- 100000 1000
-    CARGO_PROFILE_RELEASE_DEBUG=true cargo flamegraph \
-    --root --output ../../../cmd/ef_tests/levm/levm_perfgraphs/flamegraph/bench/revm_snailtracer.svg \
-    -p revm_comparison --bin revm_snailtracer -- 100000 1000
+	--root --output ../../../cmd/ef_tests/levm/levm_perfgraphs/flamegraph/bench/levm_many_hashes.svg \
+	-p revm_comparison --bin levm_many_hashes -- 100000 1000
 	CARGO_PROFILE_RELEASE_DEBUG=true cargo flamegraph \
-	--root --output ../../../cmd/ef_tests/levm/levm_perfgraphs/flamegraph/bench/levm_ten_thousand_hashes.svg \
-	-p revm_comparison --bin levm_ten_thousand_hashes -- 100000 1000
-	CARGO_PROFILE_RELEASE_DEBUG=true cargo flamegraph \
-	--root --output ../../../cmd/ef_tests/levm/levm_perfgraphs/flamegraph/bench/revm_ten_thousand_hashes.svg \
-	-p revm_comparison --bin revm_ten_thousand_hashes -- 100000 1000
+	--root --output ../../../cmd/ef_tests/levm/levm_perfgraphs/flamegraph/bench/revm_many_hashes.svg \
+	-p revm_comparison --bin revm_many_hashes -- 100000 1000
 
 samply-benchmarks: ## ⚡️ Run benchmarks and create samply profiling file
 	cd ../../../cmd/ef_tests/levm &&\

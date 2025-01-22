@@ -1,4 +1,4 @@
-use revm_comparison::{generate_calldata, run_with_revm, FACTORIAL_BYTECODE};
+use revm_comparison::{generate_calldata, load_contract_bytecode, run_with_revm};
 use std::env;
 
 fn main() {
@@ -8,9 +8,10 @@ fn main() {
         .expect("Arg not present")
         .parse()
         .expect("Could not parse");
+    let bytecode = load_contract_bytecode("Factorial");
     let calldata = generate_calldata("factorial", number_of_iterations);
 
-    run_with_revm(FACTORIAL_BYTECODE, runs.parse().unwrap(), &calldata);
+    run_with_revm(&bytecode, runs.parse().unwrap(), &calldata);
     // NOTE: for really big numbers the result is zero due to
     // one every two iterations involving an even number.
 }

@@ -1,4 +1,4 @@
-use revm_comparison::{generate_calldata, run_with_revm, FIBONACCI_BYTECODE};
+use revm_comparison::{generate_calldata, load_contract_bytecode, run_with_revm};
 use std::env;
 
 fn main() {
@@ -8,7 +8,8 @@ fn main() {
         .expect("Arg not present")
         .parse()
         .expect("Could not parse");
+    let bytecode = load_contract_bytecode("Fibonacci");
     let calldata = generate_calldata("fibonacci", number_of_iterations);
 
-    run_with_revm(FIBONACCI_BYTECODE, runs.parse().unwrap(), &calldata);
+    run_with_revm(&bytecode, runs.parse().unwrap(), &calldata);
 }
