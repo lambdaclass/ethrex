@@ -701,7 +701,6 @@ impl StoreEngine for RedBStore {
             .collect())
     }
 
-<<<<<<< HEAD
     fn set_header_download_checkpoint(&self, block_hash: BlockHash) -> Result<(), StoreError> {
         self.write(
             SNAP_STATE_TABLE,
@@ -777,7 +776,7 @@ impl StoreEngine for RedBStore {
     fn clear_pending_storage_heal_accounts(&self) -> Result<(), StoreError> {
         self.delete(SNAP_STATE_TABLE, SnapStateIndex::PendingStorageHealAccounts)
     }
-=======
+    
     fn is_synced(&self) -> Result<bool, StoreError> {
         match self.read(CHAIN_DATA_TABLE, ChainDataIndex::IsSynced)? {
             None => Err(StoreError::Custom("Sync status not found".to_string())),
@@ -792,7 +791,6 @@ impl StoreEngine for RedBStore {
             status.encode_to_vec(),
         )
     }
->>>>>>> 042c24f77abf1d4950378b837ed1583370ec17cc
 }
 
 impl redb::Value for ChainDataIndex {
