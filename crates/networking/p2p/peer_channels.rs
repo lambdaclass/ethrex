@@ -422,6 +422,19 @@ impl PeerChannels {
                 .collect(),
             bytes: MAX_RESPONSE_BYTES,
         });
+        let count: usize = match request {
+            RLPxMessage::GetTrieNodes(ref msg) => {
+                msg.paths.iter().map(|paths| {
+                        match paths.len() {
+                            0 => panic!("absurd storage req of len 0"),
+                            1 => panic!("Oh no, state node mixed up in storage req"),
+                            len => len
+                        }
+                }).sum()
+            }
+            _ => panic!("uh")
+        };
+        info!("(Re) Requesting {count} trie nodes");
         let mut receiver = self.receiver.lock().await;
         self.sender.send(request).await.ok()?;
         let nodes = tokio::time::timeout(PEER_REPLY_TIMOUT, async move {
