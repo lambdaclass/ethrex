@@ -85,8 +85,6 @@ pub struct CallFrame {
     pub valid_jump_destinations: HashSet<usize>,
     /// This is set to true if the function that created this callframe is CREATE or CREATE2
     pub create_op_called: bool,
-    /// Set to true if the bytecode comes from an EIP7702 tx
-    pub is_delegation: bool,
 }
 
 impl CallFrame {
