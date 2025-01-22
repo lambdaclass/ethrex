@@ -1,7 +1,5 @@
 use crate::{
-    discv4::{time_now_unix, FindNodeRequest},
-    peer_channels::PeerChannels,
-    rlpx::p2p::Capability,
+    discv4::messages::FindNodeRequest, peer_channels::PeerChannels, rlpx::p2p::Capability,
     types::Node,
 };
 use ethrex_core::{H256, H512, U256};
@@ -12,6 +10,13 @@ use tracing::{debug, info};
 pub const MAX_NODES_PER_BUCKET: usize = 16;
 const NUMBER_OF_BUCKETS: usize = 256;
 const MAX_NUMBER_OF_REPLACEMENTS: usize = 10;
+
+pub fn time_now_unix() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs()
+}
 
 #[derive(Clone, Debug, Default)]
 pub struct Bucket {

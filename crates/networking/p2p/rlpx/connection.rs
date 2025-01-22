@@ -1,6 +1,8 @@
 use std::sync::Arc;
 
 use crate::{
+    //TODO is this right?
+    discv4::MAX_DISC_PACKET_SIZE,
     peer_channels::PeerChannels,
     rlpx::{
         eth::{
@@ -18,7 +20,6 @@ use crate::{
         process_account_range_request, process_byte_codes_request, process_storage_ranges_request,
         process_trie_nodes_request,
     },
-    MAX_DISC_PACKET_SIZE,
 };
 
 use super::{
@@ -60,6 +61,8 @@ const PERIODIC_TASKS_CHECK_INTERVAL: std::time::Duration = std::time::Duration::
 
 pub(crate) type Aes256Ctr64BE = ctr::Ctr64BE<aes::Aes256>;
 
+pub(crate) type RLPxConnBroadcastSender = broadcast::Sender<(tokio::task::Id, Arc<Message>)>;
+
 enum RLPxConnectionMode {
     Initiator,
     Receiver,
@@ -94,7 +97,7 @@ pub(crate) struct RLPxConnection<S> {
     /// messages from other connections (sent from other peers).
     /// The receive end is instantiated after the handshake is completed
     /// under `handle_peer`.
-    connection_broadcast_send: broadcast::Sender<(task::Id, Arc<Message>)>,
+    connection_broadcast_send: RLPxConnBroadcastSender,
 }
 
 impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
@@ -104,7 +107,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
         stream: S,
         mode: RLPxConnectionMode,
         storage: Store,
-        connection_broadcast: broadcast::Sender<(task::Id, Arc<Message>)>,
+        connection_broadcast: RLPxConnBroadcastSender,
     ) -> Self {
         Self {
             signer,
@@ -143,6 +146,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
         storage: Store,
         connection_broadcast_send: broadcast::Sender<(task::Id, Arc<Message>)>,
     ) -> Result<Self, RLPxError> {
+        //TODO remove this, it is already done on the discv4 packet decoding
         let digest = Keccak256::digest(msg.get(65..).ok_or(RLPxError::InvalidMessageLength())?);
         let signature = &Signature::from_bytes(
             msg.get(..64)
