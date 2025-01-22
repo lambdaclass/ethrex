@@ -53,6 +53,7 @@ pub fn peer_table(signer: SigningKey) -> Arc<Mutex<KademliaTable>> {
     Arc::new(Mutex::new(KademliaTable::new(local_node_id)))
 }
 
+#[allow(clippy::too_many_arguments)]
 pub async fn start_network(
     local_node: Node,
     tracker: TaskTracker,
@@ -91,6 +92,7 @@ pub async fn start_network(
     ));
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn discover_peers(
     local_node: Node,
     tracker: TaskTracker,
@@ -150,6 +152,7 @@ async fn discover_peers(
     ));
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn discover_peers_server(
     local_node: Node,
     tracker: TaskTracker,
