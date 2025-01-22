@@ -177,9 +177,8 @@ impl NodeRecord {
     }
 
     fn sign_record(&mut self, signer: &SigningKey) -> Result<H512, String> {
-        // note: v is ignored
         let digest = &self.get_signature_digest();
-        let Ok((signature, _)) = signer.sign_prehash_recoverable(digest) else {
+        let Ok((signature, _recover_id)) = signer.sign_prehash_recoverable(digest) else {
             return Err("Could not sign record.".to_string());
         };
         let signature_bytes = signature.to_bytes().to_vec();
