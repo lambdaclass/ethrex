@@ -15,7 +15,7 @@ use crate::{
 
 use super::requests::find_node_and_wait_for_response;
 
-const PEERS_RANDOM_LOOKUP_TIME_IN_MIN: u64 = 30; // same as above
+pub const PEERS_RANDOM_LOOKUP_TIME_IN_MIN: u64 = 30; // same as above
 
 #[derive(Clone, Debug)]
 pub struct DiscoveryLookupHandler {
@@ -34,13 +34,14 @@ impl DiscoveryLookupHandler {
         signer: SigningKey,
         udp_socket: Arc<UdpSocket>,
         table: Arc<Mutex<KademliaTable>>,
+        lookup_interval_minutes: u64,
     ) -> Self {
         Self {
             local_node,
             signer,
             udp_socket,
             table,
-            lookup_interval_minutes: PEERS_RANDOM_LOOKUP_TIME_IN_MIN,
+            lookup_interval_minutes,
             seen_peers: HashSet::new(),
             asked_peers: HashSet::new(),
         }

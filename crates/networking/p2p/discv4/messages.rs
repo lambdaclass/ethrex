@@ -21,7 +21,6 @@ pub enum PacketDecodeErr {
     InvalidSignature,
 }
 
-#[allow(unused)]
 #[derive(Debug)]
 pub struct Packet {
     hash: H256,
@@ -67,7 +66,7 @@ impl Packet {
         let node_id = H512::from_slice(&encoded.as_bytes()[1..]);
         let signature = H520::from_slice(signature_bytes);
         let message = Message::decode_with_type(packet_type, &encoded_msg[1..])
-            .map_err(PacketDecodeErr::RLPDecodeError)?;
+            .map_err(|e| PacketDecodeErr::RLPDecodeError(e))?;
 
         Ok(Self {
             hash,
@@ -98,10 +97,7 @@ impl Packet {
 #[derive(Debug, Eq, PartialEq)]
 // NOTE: All messages could have more fields than specified by the spec.
 // Those additional fields should be ignored, and the message must be accepted.
-// TODO: remove when all variants are used
-#[allow(dead_code)]
 pub(crate) enum Message {
-    /// A ping message. Should be responded to with a Pong message.
     Ping(PingMessage),
     Pong(PongMessage),
     FindNode(FindNodeMessage),
