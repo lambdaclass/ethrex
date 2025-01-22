@@ -737,13 +737,8 @@ async fn heal_state_trie(
     // Count the number of request retries so we don't get stuck requesting old state
     let mut retry_count = 0;
     while !paths.is_empty() && retry_count < MAX_RETRIES {
-        let batch: Vec<Nibbles> = if paths.len() <= NODE_BATCH_SIZE {
-            paths.drain(..)
-        } else {
-            // Take the latest paths first so we prioritize reaching leaves (depht search)
-            paths.drain(paths.len() - NODE_BATCH_SIZE..)
-            //paths[paths.len() - NODE_BATCH_SIZE..].to_vec()
-        }.collect();
+        // Fetch the latests paths first to prioritize reaching leaves as soon as possible
+        let batch: Vec<Nibbles> = paths.drain(paths.len().checked_sub(NODE_BATCH_SIZE).unwrap_or_default()..).collect();
         let peer = peers.lock().await.get_peer_channels(Capability::Snap).await;
         if let Some(nodes) = peer.request_state_trienodes(state_root, batch.clone()).await {
             debug!("Received {} state nodes", nodes.len());
