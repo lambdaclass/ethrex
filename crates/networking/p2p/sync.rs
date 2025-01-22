@@ -132,8 +132,23 @@ impl SyncManager {
                 // Update current fetch head if needed
                 if !sync_head_found {
                     current_head = *block_hashes.last().unwrap();
-                    // Update snap state
-                    store.set_header_download_checkpoint(current_head)?;
+                }
+                if matches!(self.sync_mode, SyncMode::Snap) {
+                    if !sync_head_found {
+                        // Update snap state
+                        store.set_header_download_checkpoint(current_head)?;
+                    } else {
+                        // If the sync head is less than 64 blocks away from our current head switch to full-sync
+                        let last_header_number = block_headers.last().unwrap().number;
+                        let latest_block_number = store.get_latest_block_number()?;
+                        if last_header_number.saturating_sub(latest_block_number)
+                            < MIN_FULL_BLOCKS as u64
+                        {
+                            // Too few blocks for a snap sync, switching to full sync
+                            store.clear_snap_state()?;
+                            self.sync_mode = SyncMode::Full
+                        }
+                    }
                 }
                 // Discard the first header as we already have it
                 block_hashes.remove(0);
@@ -161,7 +176,10 @@ impl SyncManager {
                 // - Fetch each block's body and its receipt via eth p2p requests
                 // - Fetch the pivot block's state via snap p2p requests
                 // - Execute blocks after the pivot (like in full-sync)
-                let pivot_idx = all_block_hashes.len().checked_sub(MIN_FULL_BLOCKS).unwrap_or_default();
+                let pivot_idx = all_block_hashes
+                    .len()
+                    .checked_sub(MIN_FULL_BLOCKS)
+                    .unwrap_or_default();
                 let pivot_header = store
                     .get_block_header_by_hash(all_block_hashes[pivot_idx])?
                     .ok_or(SyncError::CorruptDB)?;
@@ -170,7 +188,7 @@ impl SyncManager {
                     pivot_header.number
                 );
                 let store_bodies_handle = tokio::spawn(store_block_bodies(
-                    all_block_hashes[pivot_idx+1..].to_vec(),
+                    all_block_hashes[pivot_idx + 1..].to_vec(),
                     self.peers.clone(),
                     store.clone(),
                 ));
@@ -186,7 +204,7 @@ impl SyncManager {
                 // For all blocks before the pivot: Store the bodies and fetch the receipts (TODO)
                 // For all blocks after the pivot: Process them fully
                 info!("Executing blocks past pivot");
-                for hash in &all_block_hashes[pivot_idx+1..] {
+                for hash in &all_block_hashes[pivot_idx + 1..] {
                     let block = store
                         .get_block_by_hash(*hash)?
                         .ok_or(SyncError::CorruptDB)?;
