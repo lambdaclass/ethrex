@@ -1576,12 +1576,15 @@ impl VM {
         // The delegation code has the authorized address
         let auth_address = get_authorized_address(&account.info)?;
 
-        let access_cost = match self.accrued_substate.touched_accounts.get(&auth_address) {
-            Some(_) => WARM_ADDRESS_ACCESS_COST,
-            None => {
-                self.accrued_substate.touched_accounts.insert(auth_address);
-                COLD_ADDRESS_ACCESS_COST
-            }
+        let access_cost = if self
+            .accrued_substate
+            .touched_accounts
+            .contains(&auth_address)
+        {
+            WARM_ADDRESS_ACCESS_COST
+        } else {
+            self.accrued_substate.touched_accounts.insert(auth_address);
+            COLD_ADDRESS_ACCESS_COST
         };
 
         let authorized_bytecode = get_account(&mut self.cache, &self.db, auth_address)
