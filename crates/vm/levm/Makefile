@@ -44,6 +44,9 @@ run-evm-ef-tests: ## 🏃‍♂️ Run EF Tests
 	if [ "$(QUIET)" = "true" ]; then \
 		cd ../../../ && \
 		time cargo test --quiet -p ef_tests-levm --test ef_tests_levm --release -- $(flags) --summary;\
+	elif [ "$(DEBUG)" = "true" ]; then \
+		cd ../../../ && \
+		time cargo test -p ef_tests-levm --test ef_tests_levm -- $(flags);\
 	else \
 		cd ../../../ && \
 		time cargo test -p ef_tests-levm --test ef_tests_levm --release -- $(flags);\
