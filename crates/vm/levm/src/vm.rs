@@ -894,7 +894,7 @@ impl VM {
         }
 
         // (9) SENDER_NOT_EOA
-        if sender_account.has_code() && !was_delegated(&sender_account.info)? {
+        if sender_account.has_code() && !has_delegation(&sender_account.info)? {
             return Err(VMError::TxValidation(TxValidationError::SenderNotEOA));
         }
 
@@ -1004,7 +1004,7 @@ impl VM {
         if let TxResult::Revert(_) = report.result {
             let existing_account = get_account(&mut self.cache, &self.db, receiver_address); //TO Account
 
-            if was_delegated(&existing_account.info)? {
+            if has_delegation(&existing_account.info)? {
                 // This is the case where the "to" address and the
                 // "signer" address are the same. We are setting the code
                 // and sending some balance to the "to"/"signer"
@@ -1474,7 +1474,7 @@ impl VM {
 
             // 5. Verify the code of authority is either empty or already delegated.
             let empty_or_delegated = authority_account_info.bytecode.is_empty()
-                || was_delegated(&authority_account_info)?;
+                || has_delegation(&authority_account_info)?;
             if !empty_or_delegated {
                 continue;
             }
@@ -1527,7 +1527,7 @@ impl VM {
 
         let (code_address_info, _) = self.access_account(initial_call_frame.code_address);
 
-        if was_delegated(&code_address_info)? {
+        if has_delegation(&code_address_info)? {
             initial_call_frame.code_address = get_authorized_address(&code_address_info)?;
             let (auth_address_info, _) = self.access_account(initial_call_frame.code_address);
 
@@ -1569,7 +1569,7 @@ impl VM {
         // return false meaning that is not a delegation
         // return the same address given
         // return the bytecode of the given address
-        if !was_delegated(&account.info)? {
+        if !has_delegation(&account.info)? {
             return Ok((false, 0, address, bytecode));
         }
 
@@ -1644,8 +1644,8 @@ pub fn get_account_no_push_cache(
     }
 }
 
-pub fn was_delegated(account_info: &AccountInfo) -> Result<bool, VMError> {
-    let mut was_delegated = false;
+pub fn has_delegation(account_info: &AccountInfo) -> Result<bool, VMError> {
+    let mut has_delegation = false;
     if account_info.has_code() && account_info.bytecode.len() == EIP7702_DELEGATED_CODE_LEN {
         let first_3_bytes = account_info
             .bytecode
@@ -1653,20 +1653,20 @@ pub fn was_delegated(account_info: &AccountInfo) -> Result<bool, VMError> {
             .ok_or(VMError::Internal(InternalError::SlicingError))?;
 
         if first_3_bytes == SET_CODE_DELEGATION_BYTES {
-            was_delegated = true;
+            has_delegation = true;
         }
     }
-    Ok(was_delegated)
+    Ok(has_delegation)
 }
 
 pub fn get_authorized_address(account_info: &AccountInfo) -> Result<Address, VMError> {
-    if was_delegated(account_info)? {
+    if has_delegation(account_info)? {
         let address_bytes = account_info
             .bytecode
             .get(SET_CODE_DELEGATION_BYTES.len()..)
             .ok_or(VMError::Internal(InternalError::SlicingError))?;
         // It shouldn't panic when doing Address::from_slice()
-        // because the length is checked inside the was_delegated() function
+        // because the length is checked inside the has_delegation() function
         let address = Address::from_slice(address_bytes);
         Ok(address)
     } else {

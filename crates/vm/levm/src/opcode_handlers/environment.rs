@@ -4,7 +4,7 @@ use crate::{
     errors::{InternalError, OpcodeSuccess, VMError},
     gas_cost::{self},
     memory::{self, calculate_memory_size},
-    vm::{was_delegated, word_to_address, VM},
+    vm::{has_delegation, word_to_address, VM},
 };
 use ethrex_core::U256;
 use keccak_hash::keccak;
@@ -281,7 +281,7 @@ impl VM {
         let (account_info, address_was_cold) = self.access_account(address);
 
         // https://eips.ethereum.org/EIPS/eip-7702#delegation-designation
-        let is_delegation = was_delegated(&account_info)?;
+        let is_delegation = has_delegation(&account_info)?;
 
         self.increase_consumed_gas(current_call_frame, gas_cost::extcodesize(address_was_cold)?)?;
 
@@ -317,7 +317,7 @@ impl VM {
         let new_memory_size = calculate_memory_size(dest_offset, size)?;
 
         // https://eips.ethereum.org/EIPS/eip-7702#delegation-designation
-        let is_delegation = was_delegated(&account_info)?;
+        let is_delegation = has_delegation(&account_info)?;
 
         self.increase_consumed_gas(
             current_call_frame,
@@ -438,7 +438,7 @@ impl VM {
         let (account_info, address_was_cold) = self.access_account(address);
 
         // https://eips.ethereum.org/EIPS/eip-7702#delegation-designation
-        let is_delegation = was_delegated(&account_info)?;
+        let is_delegation = has_delegation(&account_info)?;
 
         self.increase_consumed_gas(current_call_frame, gas_cost::extcodehash(address_was_cold)?)?;
 
