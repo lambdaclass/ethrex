@@ -290,8 +290,6 @@ impl VM {
                     return Ok(TransactionReport {
                         result: TxResult::Success,
                         new_state: self.cache.clone(),
-                        // Here we use the gas used and not check for the floor cost
-                        // for Prague fork because the precompiles have constant gas cost
                         gas_used: current_call_frame.gas_used,
                         gas_refunded: 0,
                         output,
@@ -494,7 +492,7 @@ impl VM {
                                 return Ok(TransactionReport {
                                     result: TxResult::Revert(error),
                                     new_state: HashMap::default(),
-                                    gas_used: self.gas_used(current_call_frame)?,
+                                    gas_used: current_call_frame.gas_used,
                                     gas_refunded: self.env.refunded_gas,
                                     output: std::mem::take(&mut current_call_frame.output),
                                     logs: std::mem::take(&mut current_call_frame.logs),
@@ -507,7 +505,7 @@ impl VM {
                     return Ok(TransactionReport {
                         result: TxResult::Success,
                         new_state: HashMap::default(),
-                        gas_used: self.gas_used(current_call_frame)?,
+                        gas_used: current_call_frame.gas_used,
                         gas_refunded: self.env.refunded_gas,
                         output: std::mem::take(&mut current_call_frame.output),
                         logs: std::mem::take(&mut current_call_frame.logs),
@@ -540,7 +538,7 @@ impl VM {
                     return Ok(TransactionReport {
                         result: TxResult::Revert(error),
                         new_state: HashMap::default(),
-                        gas_used: self.gas_used(current_call_frame)?,
+                        gas_used: current_call_frame.gas_used,
                         gas_refunded: self.env.refunded_gas,
                         output: std::mem::take(&mut current_call_frame.output), // Bytes::new() if error is not RevertOpcode
                         logs: std::mem::take(&mut current_call_frame.logs),
@@ -635,14 +633,18 @@ impl VM {
         Ok(())
     }
 
-    fn gas_used(&self, current_call_frame: &mut CallFrame) -> Result<u64, VMError> {
+    fn gas_used(
+        &self,
+        initial_call_frame: &CallFrame,
+        report: &TransactionReport,
+    ) -> Result<u64, VMError> {
         if self.env.spec_id >= SpecId::PRAGUE {
             // tokens_in_calldata = nonzero_bytes_in_calldata * 4 + zero_bytes_in_calldata
             // tx_calldata = nonzero_bytes_in_calldata * 16 + zero_bytes_in_calldata * 4
             // this is actually tokens_in_calldata * STANDARD_TOKEN_COST
             // see it in https://eips.ethereum.org/EIPS/eip-7623
             let tokens_in_calldata: u64 =
-                gas_cost::tx_calldata(&current_call_frame.calldata, self.env.spec_id)
+                gas_cost::tx_calldata(&initial_call_frame.calldata, self.env.spec_id)
                     .map_err(VMError::OutOfGas)?
                     .checked_div(STANDARD_TOKEN_COST)
                     .ok_or(VMError::Internal(InternalError::DivisionError))?;
@@ -656,10 +658,10 @@ impl VM {
                 .checked_add(TX_BASE_COST)
                 .ok_or(VMError::Internal(InternalError::GasOverflow))?;
 
-            let gas_used = max(floor_gas_price, current_call_frame.gas_used);
+            let gas_used = max(floor_gas_price, report.gas_used);
             Ok(gas_used)
         } else {
-            Ok(current_call_frame.gas_used)
+            Ok(report.gas_used)
         }
     }
 
@@ -1042,6 +1044,8 @@ impl VM {
         }
 
         let mut report = self.execute(&mut initial_call_frame)?;
+
+        report.gas_used = self.gas_used(&initial_call_frame, &report)?;
 
         self.post_execution_changes(&initial_call_frame, &mut report)?;
         // There shouldn't be any errors here but I don't know what the desired behavior is if something goes wrong.
