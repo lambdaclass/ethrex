@@ -52,6 +52,7 @@ struct ChainData {
     // TODO (#307): Remove TotalDifficulty.
     latest_total_difficulty: Option<U256>,
     pending_block_number: Option<BlockNumber>,
+    is_synced: bool,
 }
 
 // Keeps track of the state left by the latest snap attempt
@@ -496,6 +497,15 @@ impl StoreEngine for Store {
 
     fn clear_pending_storage_heal_accounts(&self) -> Result<(), StoreError> {
         self.inner().snap_state.pending_storage_heal_accounts = None;
+        Ok(())
+    }
+
+    fn is_synced(&self) -> Result<bool, StoreError> {
+        Ok(self.inner().chain_data.is_synced)
+    }
+
+    fn update_sync_status(&self, status: bool) -> Result<(), StoreError> {
+        self.inner().chain_data.is_synced = status;
         Ok(())
     }
 }

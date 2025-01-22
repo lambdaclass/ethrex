@@ -130,6 +130,7 @@ pub fn apply_fork_choice(
         store.update_safe_block_number(safe.header.number)?;
     }
     store.update_latest_block_number(head.number)?;
+    store.update_sync_status(true)?;
 
     Ok(head)
 }

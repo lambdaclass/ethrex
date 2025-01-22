@@ -597,6 +597,16 @@ impl StoreEngine for Store {
     fn clear_pending_storage_heal_accounts(&self) -> Result<(), StoreError> {
         self.delete::<SnapState>(SnapStateIndex::PendingStorageHealAccounts)
     }
+    
+    fn is_synced(&self) -> Result<bool, StoreError> {
+        match self.read::<ChainData>(ChainDataIndex::IsSynced)? {
+            None => Err(StoreError::Custom("Sync status not found".to_string())),
+            Some(ref rlp) => RLPDecode::decode(rlp).map_err(|_| StoreError::DecodeError),
+        }
+    }
+    fn update_sync_status(&self, status: bool) -> Result<(), StoreError> {
+        self.write::<ChainData>(ChainDataIndex::IsSynced, status.encode_to_vec())
+    }
 }
 
 impl Debug for Store {

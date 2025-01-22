@@ -2,19 +2,21 @@ use std::{
     collections::HashSet,
     io,
     net::SocketAddr,
+    net::{IpAddr, Ipv4Addr},
     sync::Arc,
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
 use bootnode::BootNode;
 use discv4::{
-    get_expiration, is_expired, time_now_unix, time_since_in_hs, FindNodeMessage, Message,
-    NeighborsMessage, Packet, PingMessage, PongMessage,
+    get_expiration, is_expired, time_now_unix, time_since_in_hs, ENRRequestMessage,
+    ENRResponseMessage, FindNodeMessage, Message, NeighborsMessage, Packet, PingMessage,
+    PongMessage,
 };
 use ethrex_core::{H256, H512};
 use ethrex_storage::Store;
 use k256::{
-    ecdsa::SigningKey,
+    ecdsa::{signature::hazmat::PrehashVerifier, Signature, SigningKey, VerifyingKey},
     elliptic_curve::{sec1::ToEncodedPoint, PublicKey},
 };
 pub use kademlia::KademliaTable;
@@ -27,7 +29,7 @@ use tokio::{
 };
 use tokio_util::task::TaskTracker;
 use tracing::{debug, error, info};
-use types::{Endpoint, Node};
+use types::{Endpoint, Node, NodeRecord};
 
 pub mod bootnode;
 pub(crate) mod discv4;
@@ -51,7 +53,9 @@ pub fn peer_table(signer: SigningKey) -> Arc<Mutex<KademliaTable>> {
     Arc::new(Mutex::new(KademliaTable::new(local_node_id)))
 }
 
+#[allow(clippy::too_many_arguments)]
 pub async fn start_network(
+    local_node: Node,
     tracker: TaskTracker,
     udp_addr: SocketAddr,
     tcp_addr: SocketAddr,
@@ -66,7 +70,9 @@ pub async fn start_network(
         tokio::task::Id,
         Arc<RLPxMessage>,
     )>(MAX_MESSAGES_TO_BROADCAST);
+
     tracker.spawn(discover_peers(
+        local_node,
         tracker.clone(),
         udp_addr,
         signer.clone(),
@@ -75,6 +81,7 @@ pub async fn start_network(
         bootnodes,
         channel_broadcast_send_end.clone(),
     ));
+
     tracker.spawn(serve_p2p_requests(
         tracker.clone(),
         tcp_addr,
@@ -85,7 +92,9 @@ pub async fn start_network(
     ));
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn discover_peers(
+    local_node: Node,
     tracker: TaskTracker,
     udp_addr: SocketAddr,
     signer: SigningKey,
@@ -103,6 +112,7 @@ async fn discover_peers(
     };
 
     tracker.spawn(discover_peers_server(
+        local_node,
         tracker.clone(),
         udp_addr,
         udp_socket.clone(),
@@ -111,6 +121,7 @@ async fn discover_peers(
         signer.clone(),
         connection_broadcast,
     ));
+
     tracker.spawn(peers_revalidation(
         udp_addr,
         udp_socket.clone(),
@@ -141,7 +152,9 @@ async fn discover_peers(
     ));
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn discover_peers_server(
+    local_node: Node,
     tracker: TaskTracker,
     udp_addr: SocketAddr,
     udp_socket: Arc<UdpSocket>,
@@ -193,6 +206,20 @@ async fn discover_peers_server(
                                         .update_peer_ping(peer.node.node_id, Some(hash));
                                 }
                             }
+
+                            // if it has updated its record, send a request to update it
+                            if let Some(enr_seq) = msg.enr_seq {
+                                if enr_seq > peer.record.seq {
+                                    debug!("enr-seq outdated, send an enr_request");
+                                    let req_hash =
+                                        send_enr_request(&udp_socket, from, &signer).await;
+                                    table.lock().await.update_peer_enr_seq(
+                                        peer.node.node_id,
+                                        enr_seq,
+                                        req_hash,
+                                    );
+                                }
+                            }
                         } else {
                             let mut table = table.lock().await;
                             let node = Node {
@@ -228,6 +255,19 @@ async fn discover_peers_server(
                                 .is_some_and(|hash| hash == msg.ping_hash)
                             {
                                 table.lock().await.pong_answered(peer.node.node_id);
+                                // if it has updated its record, send a request to update it
+                                if let Some(enr_seq) = msg.enr_seq {
+                                    if enr_seq > peer.record.seq {
+                                        debug!("enr-seq outdated, send an enr_request");
+                                        let req_hash =
+                                            send_enr_request(&udp_socket, from, &signer).await;
+                                        table.lock().await.update_peer_enr_seq(
+                                            peer.node.node_id,
+                                            enr_seq,
+                                            req_hash,
+                                        );
+                                    }
+                                }
 
                                 let mut msg_buf = vec![0; read - 32];
                                 buf[32..read].clone_into(&mut msg_buf);
@@ -341,7 +381,106 @@ async fn discover_peers_server(
                             }
                         }
                     }
-                    _ => {}
+                    Message::ENRRequest(msg) => {
+                        if is_expired(msg.expiration) {
+                            debug!("Ignoring enr-request msg as it is expired.");
+                            continue;
+                        }
+                        // Note we are passing the current timestamp as the sequence number
+                        // This is because we are not storing our local_node updates in the db
+                        let Ok(node_record) =
+                            NodeRecord::from_node(local_node, time_now_unix(), &signer)
+                        else {
+                            debug!("Ignoring enr-request msg could not build local node record.");
+                            continue;
+                        };
+                        let msg = discv4::Message::ENRResponse(ENRResponseMessage::new(
+                            packet.get_hash(),
+                            node_record,
+                        ));
+                        let mut buf = vec![];
+                        msg.encode_with_header(&mut buf, &signer);
+                        let _ = udp_socket.send_to(&buf, from).await;
+                    }
+                    Message::ENRResponse(msg) => {
+                        let mut table = table.lock().await;
+                        let peer = table.get_by_node_id_mut(packet.get_node_id());
+                        let Some(peer) = peer else {
+                            debug!("Discarding enr-response as we don't know the peer");
+                            continue;
+                        };
+
+                        let Some(req_hash) = peer.enr_request_hash else {
+                            debug!("Discarding enr-response as it wasn't requested");
+                            continue;
+                        };
+                        if req_hash != msg.request_hash {
+                            debug!("Discarding enr-response as the request hash did not match");
+                            continue;
+                        }
+                        peer.enr_request_hash = None;
+
+                        if msg.node_record.seq < peer.record.seq {
+                            debug!(
+                        "Discarding enr-response as the record seq is lower than the one we have"
+                    );
+                            continue;
+                        }
+
+                        let record = msg.node_record.decode_pairs();
+                        let Some(id) = record.id else {
+                            debug!(
+                                "Discarding enr-response as record does not have the `id` field"
+                            );
+                            continue;
+                        };
+
+                        // https://github.com/ethereum/devp2p/blob/master/enr.md#v4-identity-scheme
+                        let signature_valid = match id.as_str() {
+                            "v4" => {
+                                let digest = msg.node_record.get_signature_digest();
+                                let Some(public_key) = record.secp256k1 else {
+                                    debug!("Discarding enr-response as signature could not be verified because public key was not provided");
+                                    continue;
+                                };
+                                let signature_bytes = msg.node_record.signature.as_bytes();
+                                let Ok(signature) = Signature::from_slice(&signature_bytes[0..64])
+                                else {
+                                    debug!("Discarding enr-response as signature could not be build from msg signature bytes");
+                                    continue;
+                                };
+                                let Ok(verifying_key) =
+                                    VerifyingKey::from_sec1_bytes(public_key.as_bytes())
+                                else {
+                                    debug!("Discarding enr-response as public key could no be built from msg pub key bytes");
+                                    continue;
+                                };
+                                verifying_key.verify_prehash(&digest, &signature).is_ok()
+                            }
+                            _ => false,
+                        };
+                        if !signature_valid {
+                            debug!(
+                                "Discarding enr-response as the signature verification was invalid"
+                            );
+                            continue;
+                        }
+
+                        if let Some(ip) = record.ip {
+                            peer.node.ip = IpAddr::from(Ipv4Addr::from_bits(ip));
+                        }
+                        if let Some(tcp_port) = record.tcp_port {
+                            peer.node.tcp_port = tcp_port;
+                        }
+                        if let Some(udp_port) = record.udp_port {
+                            peer.node.udp_port = udp_port;
+                        }
+                        peer.record = msg.node_record.clone();
+                        debug!(
+                            "Node with id {:?} record has been successfully updated",
+                            peer.node.node_id
+                        );
+                    }
                 }
             }
         }
@@ -676,7 +815,8 @@ async fn ping(
         tcp_port: 0,
     };
 
-    let ping: discv4::Message = discv4::Message::Ping(PingMessage::new(from, to, expiration));
+    let ping =
+        discv4::Message::Ping(PingMessage::new(from, to, expiration).with_enr_seq(time_now_unix()));
     ping.encode_with_header(&mut buf, signer);
 
     // Send ping and log if error
@@ -750,7 +890,9 @@ async fn pong(socket: &UdpSocket, to_addr: SocketAddr, ping_hash: H256, signer: 
         udp_port: to_addr.port(),
         tcp_port: 0,
     };
-    let pong: discv4::Message = discv4::Message::Pong(PongMessage::new(to, ping_hash, expiration));
+    let pong: discv4::Message = discv4::Message::Pong(
+        PongMessage::new(to, ping_hash, expiration).with_enr_seq(time_now_unix()),
+    );
 
     pong.encode_with_header(&mut buf, signer);
 
@@ -758,6 +900,35 @@ async fn pong(socket: &UdpSocket, to_addr: SocketAddr, ping_hash: H256, signer: 
     if let Err(e) = socket.send_to(&buf, to_addr).await {
         error!("Unable to send pong: {e}")
     }
+}
+
+async fn send_enr_request(
+    socket: &UdpSocket,
+    to_addr: SocketAddr,
+    signer: &SigningKey,
+) -> Option<H256> {
+    let mut buf = Vec::new();
+
+    let expiration: u64 = (SystemTime::now() + Duration::from_secs(20))
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+
+    let enr_req = discv4::Message::ENRRequest(ENRRequestMessage::new(expiration));
+
+    enr_req.encode_with_header(&mut buf, signer);
+
+    let bytes_sent = socket.send_to(&buf, to_addr).await.ok()?;
+    if bytes_sent != buf.len() {
+        debug!(
+            "ENR request message partially sent: {} out of {} bytes.",
+            bytes_sent,
+            buf.len()
+        );
+        return None;
+    }
+
+    Some(H256::from_slice(&buf[0..32]))
 }
 
 async fn serve_p2p_requests(
@@ -904,6 +1075,7 @@ mod tests {
     }
 
     struct MockServer {
+        pub local_node: Node,
         pub addr: SocketAddr,
         pub signer: SigningKey,
         pub table: Arc<Mutex<KademliaTable>>,
@@ -926,9 +1098,16 @@ mod tests {
             tokio::task::Id,
             Arc<RLPxMessage>,
         )>(MAX_MESSAGES_TO_BROADCAST);
+        let local_node = Node {
+            ip: addr.ip(),
+            tcp_port: addr.port(),
+            udp_port: addr.port(),
+            node_id,
+        };
         let tracker = TaskTracker::new();
         if should_start_server {
             tracker.spawn(discover_peers_server(
+                local_node,
                 tracker.clone(),
                 addr,
                 udp_socket.clone(),
@@ -940,6 +1119,7 @@ mod tests {
         }
 
         Ok(MockServer {
+            local_node,
             addr,
             signer,
             table,
@@ -1164,6 +1344,83 @@ mod tests {
                 .get_by_node_id(peer.node_id)
                 .is_some());
         }
+        Ok(())
+    }
+
+    #[tokio::test]
+    /**
+     * This test verifies the exchange and update of ENR (Ethereum Node Record) messages.
+     * The test follows these steps:
+     *
+     * 1. Start two nodes.
+     * 2. Wait until they establish a connection.
+     * 3. Assert that they exchange their records and store them
+     * 3. Modify the ENR (node record) of one of the nodes.
+     * 4. Send a new ping message and check that an ENR request was triggered.
+     * 5. Verify that the updated node record has been correctly received and stored.
+     */
+    async fn discovery_enr_message() -> Result<(), io::Error> {
+        let mut server_a = start_mock_discovery_server(8006, true).await?;
+        let mut server_b = start_mock_discovery_server(8007, true).await?;
+
+        connect_servers(&mut server_a, &mut server_b).await;
+
+        // wait some time for the enr request-response finishes
+        sleep(Duration::from_millis(2500)).await;
+
+        let expected_record =
+            NodeRecord::from_node(server_b.local_node, time_now_unix(), &server_b.signer)
+                .expect("Node record is created from node");
+
+        let server_a_peer_b = server_a
+            .table
+            .lock()
+            .await
+            .get_by_node_id(server_b.node_id)
+            .cloned()
+            .unwrap();
+
+        // we only match the pairs, as the signature and seq will change
+        // because they are calculated with the current time
+        assert!(server_a_peer_b.record.decode_pairs() == expected_record.decode_pairs());
+
+        // Modify server_a's record of server_b with an incorrect TCP port.
+        // This simulates an outdated or incorrect entry in the node table.
+        server_a
+            .table
+            .lock()
+            .await
+            .get_by_node_id_mut(server_b.node_id)
+            .unwrap()
+            .node
+            .tcp_port = 10;
+
+        // Send a ping from server_b to server_a.
+        // server_a should notice the enr_seq is outdated
+        // and trigger a enr-request to server_b to update the record.
+        ping(
+            &server_b.udp_socket,
+            server_b.addr,
+            server_a.addr,
+            &server_b.signer,
+        )
+        .await;
+
+        // Wait for the update to propagate.
+        sleep(Duration::from_millis(2500)).await;
+
+        // Verify that server_a has updated its record of server_b with the correct TCP port.
+        let tcp_port = server_a
+            .table
+            .lock()
+            .await
+            .get_by_node_id(server_b.node_id)
+            .unwrap()
+            .node
+            .tcp_port;
+
+        assert!(tcp_port == server_b.addr.port());
+
         Ok(())
     }
 }

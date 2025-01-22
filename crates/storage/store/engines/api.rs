@@ -287,4 +287,8 @@ pub trait StoreEngine: Debug + Send + Sync + RefUnwindSafe {
 
     /// Clears the list of account hashes whose storage needs healing
     fn clear_pending_storage_heal_accounts(&self) -> Result<(), StoreError>;
+    
+    fn is_synced(&self) -> Result<bool, StoreError>;
+
+    fn update_sync_status(&self, status: bool) -> Result<(), StoreError>;
 }
