@@ -47,9 +47,10 @@ Nowadays `ethrex L1` uses `revm` as the backend VM. We will replace `revm` with 
 
 | Task Description                                                                                                                                                     | Status |
 | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------ |
-| All the Hive tests that pass with `revm` also pass with `levm`                                                                                                       | ✅     |
+| All the Hive tests that pass with `revm` also pass with `levm`                                                                                                       | 🏗️     |
 | We have an insurance that if `levm` some time diverges from `revm`'s behavior, we will know it. And in such case, switching to `revm` while we fix the issue is easy | ✅     |
 | The feature flag `levm` is used as the default backend VM for `ethrex L1`                                                                                            | 🏗️     |
+| We switch which EVM `ethrex` uses using a `--vm` CLI flag                                                                                                            | 🏗️     |
 | We have a `EVM` trait or similar to standardize the VM interface. This trait should be implemented by `levm` and `revm`                                              | 🏗️     |
 
 ### Milestone 3: Support pre Merge forks
