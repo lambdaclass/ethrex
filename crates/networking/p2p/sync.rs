@@ -739,7 +739,7 @@ async fn heal_state_trie(
     while !paths.is_empty() && retry_count < MAX_RETRIES {
         // Fetch the latests paths first to prioritize reaching leaves as soon as possible
         let batch: Vec<Nibbles> = paths.drain(paths.len().checked_sub(NODE_BATCH_SIZE).unwrap_or_default()..).collect();
-        let peer = peers.lock().await.get_peer_channels(Capability::Snap).await;
+        let peer = get_peer_channel_with_retry(peers.clone(), Capability::Snap).await;
         if let Some(nodes) = peer.request_state_trienodes(state_root, batch.clone()).await {
             debug!("Received {} state nodes", nodes.len());
             // Reset retry counter for next request
