@@ -137,11 +137,11 @@ pub fn prepare_revm_for_tx<'state>(
         })
         .collect();
 
-    //let authorization_list = None;
+    let authorization_list = None;
     // The latest version of revm(19.3.0) is needed.
     // Update it in every Cargo.toml.
     // revm-inspectors and revm-primitives have to be bumped too.
-
+    /*
     let authorization_list = tx.authorization_list.clone().map(|list| {
         list.iter()
             .map(|auth_t| {
@@ -159,7 +159,7 @@ pub fn prepare_revm_for_tx<'state>(
             .collect::<Vec<SignedAuthorization>>()
             .into()
     });
-
+    */
     let tx_env = RevmTxEnv {
         caller: tx.sender.0.into(),
         gas_limit: tx.gas_limit,

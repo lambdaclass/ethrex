@@ -18,8 +18,8 @@ revm = { version = "19.3.0", features = [
 ], default-features = false }
 
 # These dependencies must be kept up to date with the corresponding revm version, otherwise errors may pop up because of trait implementation mismatches
-revm-inspectors = { version = "0.14.1" }
-revm-primitives = { version = "15.1.0", features = [
+revm-inspectors = { version = "0.8.1" }
+revm-primitives = { version = "10.0.0", features = [
   "std",
 ], default-features = false }
 bytes.workspace = true

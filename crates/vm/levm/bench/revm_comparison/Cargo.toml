@@ -10,7 +10,7 @@ path = "src/lib.rs"
 [dependencies]
 ethrex-levm = { path = "../../" }
 hex = "0.4.3"
-revm = "19.3.0"
+revm = "9.0.0"
 bytes = "1.8.0"
 
 [[bin]]

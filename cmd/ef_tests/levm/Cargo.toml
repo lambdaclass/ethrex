@@ -21,7 +21,7 @@ thiserror.workspace = true
 clap = { version = "4.3", features = ["derive"] }
 clap_complete = "4.5.17"
 itertools = "0.13.0"
-revm = { version = "19.3.0", features = [
+revm = { version = "14.0.3", features = [
     "serde",
     "std",
     "serde-json",
