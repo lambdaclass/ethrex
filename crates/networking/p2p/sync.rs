@@ -155,7 +155,7 @@ impl SyncManager {
                 block_headers.remove(0);
                 // Store headers and save hashes for full block retrieval
                 all_block_hashes.extend_from_slice(&block_hashes[..]);
-                store.add_block_headers(block_hashes, block_headers.clone())?;
+                store.add_block_headers(block_hashes, block_headers)?;
 
                 if sync_head_found {
                     // No more headers to request

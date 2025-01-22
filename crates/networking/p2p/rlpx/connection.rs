@@ -215,11 +215,11 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
             reason: self.match_disconnect_reason(&error),
         }))
         .await
-        .unwrap_or_else(|e| debug!("Could not send Disconnect message: ({e})."));
+        .unwrap_or_else(|e| error!("Could not send Disconnect message: ({e})."));
 
         // Discard peer from kademlia table
         let remote_node_id = self.remote_node_id;
-        debug!("{error_text}: ({error}), discarding peer {remote_node_id}");
+        error!("{error_text}: ({error}), discarding peer {remote_node_id}");
         table.lock().await.replace_peer(remote_node_id);
     }
 
