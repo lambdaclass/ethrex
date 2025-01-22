@@ -26,6 +26,8 @@ const MAX_RETRIES: usize = 5;
 const MIN_FULL_BLOCKS: usize = 64;
 /// Max size of a bach to stat a fetch request in queues
 const BATCH_SIZE: usize = 300;
+/// Max size of a bach to stat a fetch request in queues for nodes
+const NODE_BATCH_SIZE: usize = 900;
 
 #[derive(Debug)]
 pub enum SyncMode {
@@ -574,17 +576,19 @@ async fn storage_fetcher(
             info!("Storage fetcher detected stale pivot");
         }
         while !stale
-            && (pending_storage.len() >= BATCH_SIZE || !incoming && !pending_storage.is_empty())
+            && (pending_storage.len() >= NODE_BATCH_SIZE
+                || !incoming && !pending_storage.is_empty())
         {
             // We will be spawning multiple tasks and then collecting their results
             // This uses a loop inside the main loop as the result from these tasks may lead to more values in queue
             let mut storage_tasks = tokio::task::JoinSet::new();
             let mut task_num = 1;
             while !stale
-                && (pending_storage.len() >= BATCH_SIZE || !incoming && !pending_storage.is_empty())
+                && (pending_storage.len() >= NODE_BATCH_SIZE
+                    || !incoming && !pending_storage.is_empty())
             {
                 let next_batch = pending_storage
-                    .drain(..BATCH_SIZE.min(pending_storage.len()))
+                    .drain(..NODE_BATCH_SIZE.min(pending_storage.len()))
                     .collect::<Vec<_>>();
                 info!("Spawning storage fetcher number {task_num}");
                 storage_tasks.spawn(fetch_storage_batch(
@@ -767,12 +771,15 @@ async fn heal_state_trie(
     // Count the number of request retries so we don't get stuck requesting old state
     let mut retry_count = 0;
     while !paths.is_empty() && retry_count < MAX_RETRIES {
-        //info!("Paths queued: {}", paths.len());
+        let batch = if paths.len() <= NODE_BATCH_SIZE {
+            paths.clone()
+        } else {
+            // Take the latest paths first so we prioritize reaching leaves (depht search)
+            paths[paths.len() - NODE_BATCH_SIZE..].to_vec()
+        };
+        info!("Paths queued: {}", batch.len());
         let peer = peers.lock().await.get_peer_channels(Capability::Snap).await;
-        if let Some(nodes) = peer
-            .request_state_trienodes(state_root, paths.clone())
-            .await
-        {
+        if let Some(nodes) = peer.request_state_trienodes(state_root, batch).await {
             info!("Received {} state nodes", nodes.len());
             // Reset retry counter for next request
             retry_count = 0;
