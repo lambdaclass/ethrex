@@ -171,10 +171,7 @@ impl NodeRecord {
             .pairs
             .push(("udp".into(), node.udp_port.encode_to_vec().into()));
 
-        match record.sign_record(signer) {
-            Ok(sig) => record.signature = sig,
-            Err(e) => return Err(e),
-        };
+        record.signature = record.sign_record(signer)?;
 
         Ok(record)
     }
