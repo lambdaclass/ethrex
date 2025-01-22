@@ -178,9 +178,9 @@ impl NodeRecord {
 
     fn sign_record(&mut self, signer: &SigningKey) -> Result<H512, String> {
         let digest = &self.get_signature_digest();
-        let Ok((signature, _recover_id)) = signer.sign_prehash_recoverable(digest) else {
-            return Err("Could not sign record.".to_string());
-        };
+        let (signature, _recovery_id) = signer
+            .sign_prehash_recoverable(digest)
+            .map_err(|err| format!("Could not sign record: {err}"))?;
         let signature_bytes = signature.to_bytes().to_vec();
 
         Ok(H512::from_slice(&signature_bytes))
@@ -209,7 +209,7 @@ impl RLPDecode for NodeRecord {
 
         // all fields in pairs are optional except for id
         let id_pair = pairs.iter().find(|(k, _v)| k.eq("id".as_bytes()));
-        if let Some((_key, _)) = id_pair {
+        if id_pair.is_some() {
             let node_record = NodeRecord {
                 signature,
                 seq,
