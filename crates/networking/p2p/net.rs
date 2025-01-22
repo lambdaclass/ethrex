@@ -381,6 +381,7 @@ async fn discover_peers_server(
                     Message::ENRRequest(msg) => {
                         if is_expired(msg.expiration) {
                             debug!("Ignoring enr-request msg as it is expired.");
+                            continue;
                         }
                         // Note we are passing the current timestamp as the sequence number
                         // This is because we are not storing our local_node updates in the db
