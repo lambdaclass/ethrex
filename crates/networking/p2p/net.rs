@@ -56,22 +56,23 @@ pub async fn start_network(
     )>(MAX_MESSAGES_TO_BROADCAST);
 
     let udp_socket = UdpSocket::bind(udp_addr).await.unwrap();
+    let local_node = Node {
+        ip: udp_addr.ip(),
+        node_id: node_id_from_signing_key(&signer),
+        udp_port: udp_addr.port(),
+        tcp_port: tcp_addr.port(),
+    };
 
     let discv4 = Discv4::new(
-        Node {
-            ip: udp_addr.ip(),
-            node_id: node_id_from_signing_key(&signer),
-            udp_port: udp_addr.port(),
-            tcp_port: tcp_addr.port(),
-        },
+        local_node,
         signer.clone(),
         storage.clone(),
         peer_table.clone(),
         channel_broadcast_send_end.clone(),
         Arc::new(udp_socket),
     );
-    let discovery_handle =
-        tokio::spawn(async move { discv4.start_discovery_service(bootnodes).await });
+    let discv4 = Arc::new(discv4);
+    let discovery_handle = tokio::spawn(discv4.start_discovery_service(bootnodes));
 
     let server_handle = tokio::spawn(serve_requests(
         tcp_addr,
