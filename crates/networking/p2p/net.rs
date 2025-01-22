@@ -429,6 +429,9 @@ async fn discover_peers_server(
 
                         let record = msg.node_record.decode_pairs();
                         let Some(id) = record.id else {
+                            debug!(
+                                "Discarding enr-response as record does not have the `id` field"
+                            );
                             continue;
                         };
 
@@ -443,11 +446,13 @@ async fn discover_peers_server(
                                 let signature_bytes = msg.node_record.signature.as_bytes();
                                 let Ok(signature) = Signature::from_slice(&signature_bytes[0..64])
                                 else {
+                                    debug!("Discarding enr-response as signature could not be build from msg signature bytes");
                                     continue;
                                 };
                                 let Ok(verifying_key) =
                                     VerifyingKey::from_sec1_bytes(public_key.as_bytes())
                                 else {
+                                    debug!("Discarding enr-response as public key could no be built from msg pub key bytes");
                                     continue;
                                 };
                                 verifying_key.verify_prehash(&digest, &signature).is_ok()
