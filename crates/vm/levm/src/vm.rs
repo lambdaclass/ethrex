@@ -27,10 +27,6 @@ use bytes::Bytes;
 use ethrex_core::{types::TxKind, Address, H256, U256};
 use ethrex_rlp;
 use ethrex_rlp::encode::RLPEncode;
-use k256::{
-    elliptic_curve::{bigint::Encoding, Curve},
-    Secp256k1,
-};
 use keccak_hash::keccak;
 use libsecp256k1::{Message, RecoveryId, Signature};
 use revm_primitives::SpecId;
@@ -1372,12 +1368,12 @@ impl VM {
         Ok(report)
     }
 
+    /// Sets the account code as the EIP7702 determines.
     pub fn eip7702_set_access_code(
         &mut self,
         initial_call_frame: &mut CallFrame,
     ) -> Result<u64, VMError> {
         let mut refunded_gas: u64 = 0;
-        // Steps from the EIP7702:
         // IMPORTANT:
         // If any of the below steps fail, immediately stop processing that tuple and continue to the next tuple in the list. It will in the case of multiple tuples for the same authority, set the code using the address in the last valid occurrence.
         // If transaction execution results in failure (any exceptional condition or code reverting), setting delegation designations is not rolled back.
@@ -1399,72 +1395,11 @@ impl VM {
 
             // 3. authority = ecrecover(keccak(MAGIC || rlp([chain_id, address, nonce])), y_parity, r, s)
             //      s value must be less than or equal to secp256k1n/2, as specified in EIP-2.
-            let order_bytes = Secp256k1::ORDER.to_be_bytes();
-            let n = U256::from_big_endian(&order_bytes);
-            let n_over_2 = n.checked_div(U256::from(2)).ok_or(VMError::Internal(
-                InternalError::ArithmeticOperationOverflow,
-            ))?;
-
-            if auth_tuple.s_signature > n_over_2 || U256::zero() >= auth_tuple.s_signature {
-                continue;
-            }
-            if auth_tuple.r_signature > n || U256::zero() >= auth_tuple.r_signature {
-                continue;
-            }
-            if auth_tuple.v != U256::one() && auth_tuple.v != U256::zero() {
-                continue;
-            }
-
-            let rlp_buf =
-                (auth_tuple.chain_id, auth_tuple.address, auth_tuple.nonce).encode_to_vec();
-
-            let mut hasher = Keccak256::new();
-            hasher.update([MAGIC]);
-            hasher.update(rlp_buf);
-            let bytes = &mut hasher.finalize();
-
-            let Ok(message) = Message::parse_slice(bytes) else {
+            let authority_address = if let Some(address) = eip7702_recover_address(&auth_tuple)? {
+                address
+            } else {
                 continue;
             };
-
-            let mut bytes = Vec::new();
-            bytes.extend_from_slice(&auth_tuple.r_signature.to_big_endian());
-            bytes.extend_from_slice(&auth_tuple.s_signature.to_big_endian());
-
-            let Ok(signature) = Signature::parse_standard_slice(&bytes) else {
-                continue;
-            };
-
-            let Ok(recovery_id) = RecoveryId::parse(
-                auth_tuple
-                    .v
-                    .as_u32()
-                    .try_into()
-                    .map_err(|_| VMError::Internal(InternalError::ConversionError))?,
-            ) else {
-                continue;
-            };
-
-            let Ok(authority) = libsecp256k1::recover(&message, &signature, &recovery_id) else {
-                continue;
-            };
-
-            let public_key = authority.serialize();
-            let mut hasher = Keccak256::new();
-            hasher.update(
-                public_key
-                    .get(1..)
-                    .ok_or(VMError::Internal(InternalError::SlicingError))?,
-            );
-            let address_hash = hasher.finalize();
-
-            // Get the last 20 bytes of the hash -> Address
-            let authority_address_bytes: [u8; 20] = address_hash
-                .get(12..32)
-                .ok_or(VMError::Internal(InternalError::SlicingError))?
-                .try_into()
-                .map_err(|_| VMError::Internal(InternalError::ConversionError))?;
-            let authority_address = Address::from_slice(&authority_address_bytes);
 
             // 4. Add authority to accessed_addresses (as defined in EIP-2929).
             self.accrued_substate
@@ -1489,7 +1424,7 @@ impl VM {
             // 7. Add PER_EMPTY_ACCOUNT_COST - PER_AUTH_BASE_COST gas to the global refund counter if authority exists in the trie.
             // CHECK: we don't know if checking the cache is correct. More gas tests pass but the set_code_txs tests went to half.
             if self.db.account_exists(authority_address)
-                || self.cache.contains_key(&authority_address)
+                || cache::is_account_cached(&self.cache, &authority_address)
             {
                 let refunded_gas_if_exists = PER_EMPTY_ACCOUNT_COST - PER_AUTH_BASE_COST;
                 refunded_gas = refunded_gas
@@ -1498,9 +1433,11 @@ impl VM {
             }
 
             // 8. Set the code of authority to be 0xef0100 || address. This is a delegation designation.
-            let mut delegation_bytes = Vec::new();
-            delegation_bytes.extend_from_slice(&SET_CODE_DELEGATION_BYTES);
-            delegation_bytes.extend_from_slice(auth_tuple.address.as_bytes());
+            let delegation_bytes = [
+                &SET_CODE_DELEGATION_BYTES[..],
+                &auth_tuple.address.as_bytes(),
+            ]
+            .concat();
 
             // As a special case, if address is 0x0000000000000000000000000000000000000000 do not write the designation.
             // Clear the account’s code and reset the account’s code hash to the empty hash.
@@ -1514,11 +1451,11 @@ impl VM {
                 }
             };
 
-            if auth_tuple.address != Address::zero() {
-                auth_account.info.bytecode = delegation_bytes.into();
+            auth_account.info.bytecode = if auth_tuple.address != Address::zero() {
+                delegation_bytes.into()
             } else {
-                auth_account.info.bytecode = Bytes::new();
-            }
+                Bytes::new()
+            };
 
             // 9. Increase the nonce of authority by one.
             self.increment_account_nonce(authority_address)
@@ -1577,12 +1514,15 @@ impl VM {
         // The delegation code has the authorized address
         let auth_address = get_authorized_address(&account.info)?;
 
-        let access_cost = match self.accrued_substate.touched_accounts.get(&auth_address) {
-            Some(_) => WARM_ADDRESS_ACCESS_COST,
-            None => {
-                self.accrued_substate.touched_accounts.insert(auth_address);
-                COLD_ADDRESS_ACCESS_COST
-            }
+        let access_cost = if self
+            .accrued_substate
+            .touched_accounts
+            .contains(&auth_address)
+        {
+            WARM_ADDRESS_ACCESS_COST
+        } else {
+            self.accrued_substate.touched_accounts.insert(auth_address);
+            COLD_ADDRESS_ACCESS_COST
         };
 
         let authorized_bytecode = get_account(&mut self.cache, &self.db, auth_address)
@@ -1644,6 +1584,7 @@ pub fn get_account_no_push_cache(
     }
 }
 
+/// Checks if account.info.bytecode has been delegated as the EIP7702 determines.
 pub fn has_delegation(account_info: &AccountInfo) -> Result<bool, VMError> {
     let mut has_delegation = false;
     if account_info.has_code() && account_info.bytecode.len() == EIP7702_DELEGATED_CODE_LEN {
@@ -1659,6 +1600,7 @@ pub fn has_delegation(account_info: &AccountInfo) -> Result<bool, VMError> {
     Ok(has_delegation)
 }
 
+/// Gets the address inside the account.info.bytecode if it has been delegated as the EIP7702 determines.
 pub fn get_authorized_address(account_info: &AccountInfo) -> Result<Address, VMError> {
     if has_delegation(account_info)? {
         let address_bytes = account_info
@@ -1673,4 +1615,68 @@ pub fn get_authorized_address(account_info: &AccountInfo) -> Result<Address, VME
         // if we end up here, it means that the address wasn't previously delegated.
         Err(VMError::Internal(InternalError::AccountNotDelegated))
     }
+}
+
+fn eip7702_recover_address(auth_tuple: &AuthorizationTuple) -> Result<Option<Address>, VMError> {
+    if auth_tuple.s_signature > *SECP256K1_ORDER_OVER2 || U256::zero() >= auth_tuple.s_signature {
+        return Ok(None);
+    }
+    if auth_tuple.r_signature > *SECP256K1_ORDER || U256::zero() >= auth_tuple.r_signature {
+        return Ok(None);
+    }
+    if auth_tuple.v != U256::one() && auth_tuple.v != U256::zero() {
+        return Ok(None);
+    }
+
+    let rlp_buf = (auth_tuple.chain_id, auth_tuple.address, auth_tuple.nonce).encode_to_vec();
+
+    let mut hasher = Keccak256::new();
+    hasher.update([MAGIC]);
+    hasher.update(rlp_buf);
+    let bytes = &mut hasher.finalize();
+
+    let Ok(message) = Message::parse_slice(bytes) else {
+        return Ok(None);
+    };
+
+    let bytes = [
+        auth_tuple.r_signature.to_big_endian(),
+        auth_tuple.s_signature.to_big_endian(),
+    ]
+    .concat();
+
+    let Ok(signature) = Signature::parse_standard_slice(&bytes) else {
+        return Ok(None);
+    };
+
+    let Ok(recovery_id) = RecoveryId::parse(
+        auth_tuple
+            .v
+            .as_u32()
+            .try_into()
+            .map_err(|_| VMError::Internal(InternalError::ConversionError))?,
+    ) else {
+        return Ok(None);
+    };
+
+    let Ok(authority) = libsecp256k1::recover(&message, &signature, &recovery_id) else {
+        return Ok(None);
+    };
+
+    let public_key = authority.serialize();
+    let mut hasher = Keccak256::new();
+    hasher.update(
+        public_key
+            .get(1..)
+            .ok_or(VMError::Internal(InternalError::SlicingError))?,
+    );
+    let address_hash = hasher.finalize();
+
+    // Get the last 20 bytes of the hash -> Address
+    let authority_address_bytes: [u8; 20] = address_hash
+        .get(12..32)
+        .ok_or(VMError::Internal(InternalError::SlicingError))?
+        .try_into()
+        .map_err(|_| VMError::Internal(InternalError::ConversionError))?;
+    Ok(Some(Address::from_slice(&authority_address_bytes)))
 }
