@@ -972,7 +972,6 @@ impl VM {
             }
 
             self.env.refunded_gas = self.eip7702_set_access_code(initial_call_frame)?;
-            dbg!(self.env.refunded_gas);
         }
 
         if self.is_create() {
@@ -1518,14 +1517,11 @@ impl VM {
                 .map_err(|_| VMError::TxValidation(TxValidationError::NonceIsMax))?;
         }
 
-        let code_address_info = self.get_account(initial_call_frame.code_address).info;
+        let (code_address_info, _) = self.access_account(initial_call_frame.code_address);
 
         if was_delegated(&code_address_info)? {
-            self.accrued_substate
-                .touched_accounts
-                .insert(initial_call_frame.code_address);
             initial_call_frame.code_address = get_authorized_address(&code_address_info)?;
-            let auth_address_info = self.get_account(initial_call_frame.code_address).info;
+            let (auth_address_info, _) = self.access_account(initial_call_frame.code_address);
 
             initial_call_frame.bytecode = auth_address_info.bytecode.clone();
         } else {

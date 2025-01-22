@@ -77,8 +77,6 @@ impl VM {
             self.env.spec_id,
         )?;
 
-        dbg!(gas_limit, cost);
-
         self.increase_consumed_gas(current_call_frame, cost)?;
         self.increase_consumed_gas(current_call_frame, eip7702_gas_consumed)?;
 
