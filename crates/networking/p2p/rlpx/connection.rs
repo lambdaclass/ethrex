@@ -392,18 +392,10 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
             // TODO(#1129) Add the transaction to the mempool once received.
             Message::Transactions(txs) if peer_supports_eth => {
                 if is_synced {
-                    let mut valid_txs = vec![];
-
-                    for tx in txs.transactions {
-                        if let Err(e) = mempool::add_transaction(tx.clone(), &self.storage) {
-                            // TODO (#1774): improve MempoolError handling
-                            debug!("Error adding transaction to mempool: {e}");
-                            continue;
-                        }
-                        valid_txs.push(tx);
+                    for tx in &txs.transactions {
+                        mempool::add_transaction(tx.clone(), &self.storage)?;
                     }
-                    self.broadcast_message(Message::Transactions(Transactions::new(valid_txs)))
-                        .await?;
+                    self.broadcast_message(Message::Transactions(txs)).await?;
                 }
             }
             Message::GetBlockHeaders(msg_data) if peer_supports_eth => {
@@ -434,15 +426,13 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
             Message::NewPooledTransactionHashes(new_pooled_transaction_hashes)
                 if peer_supports_eth =>
             {
-                if is_synced {
-                    //TODO(#1415): evaluate keeping track of requests to avoid sending the same twice.
-                    let hashes =
-                        new_pooled_transaction_hashes.get_transactions_to_request(&self.storage)?;
+                //TODO(#1415): evaluate keeping track of requests to avoid sending the same twice.
+                let hashes =
+                    new_pooled_transaction_hashes.get_transactions_to_request(&self.storage)?;
 
-                    //TODO(#1416): Evaluate keeping track of the request-id.
-                    let request = GetPooledTransactions::new(random(), hashes);
-                    self.send(Message::GetPooledTransactions(request)).await?;
-                }
+                //TODO(#1416): Evaluate keeping track of the request-id.
+                let request = GetPooledTransactions::new(random(), hashes);
+                self.send(Message::GetPooledTransactions(request)).await?;
             }
             Message::GetPooledTransactions(msg) => {
                 let response = msg.handle(&self.storage)?;
