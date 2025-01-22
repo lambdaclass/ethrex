@@ -753,7 +753,7 @@ impl VM {
             let min_gas_limit = max(intrinsic_gas, floor_cost_by_tokens);
 
             if initial_call_frame.gas_limit < min_gas_limit {
-                return Err(VMError::TxValidation(TxValidationError::GasLimitTooLow));
+                return Err(VMError::TxValidation(TxValidationError::IntrinsicGasTooLow));
             }
         }
 
