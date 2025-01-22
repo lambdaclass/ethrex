@@ -290,45 +290,6 @@ impl VM {
             self.env.transient_storage.clone(),
         );
 
-        // CHECK:
-        // Not fully sure if the following check: current_call_frame.gas_limit == 0 is ok.
-        // This change helps to pass the account_warming.json tests.
-        if current_call_frame.bytecode.is_empty() {
-            if current_call_frame.is_delegation || current_call_frame.gas_limit == 0 {
-                self.call_frames.push(current_call_frame.clone());
-
-                return Ok(TransactionReport {
-                    result: TxResult::Success,
-                    new_state: self.cache.clone(),
-                    // Here we use the gas used and not check for the floor cost
-                    // for Prague fork because the precompiles have constant gas cost
-                    gas_used: current_call_frame.gas_used,
-                    gas_refunded: self.env.refunded_gas,
-                    output: Bytes::new(),
-                    logs: std::mem::take(&mut current_call_frame.logs),
-                    created_address: None,
-                });
-            }
-        } else {
-            if current_call_frame.is_delegation
-                && was_delegated_from_bytecode(&current_call_frame.bytecode)?
-            {
-                self.call_frames.push(current_call_frame.clone());
-
-                return Ok(TransactionReport {
-                    result: TxResult::Success,
-                    new_state: self.cache.clone(),
-                    // Here we use the gas used and not check for the floor cost
-                    // for Prague fork because the precompiles have constant gas cost
-                    gas_used: current_call_frame.gas_used,
-                    gas_refunded: self.env.refunded_gas,
-                    output: Bytes::new(),
-                    logs: std::mem::take(&mut current_call_frame.logs),
-                    created_address: None,
-                });
-            }
-        }
-
         if is_precompile(&current_call_frame.code_address, self.env.spec_id) {
             let precompile_result = execute_precompile(current_call_frame, self.env.spec_id);
 
@@ -551,7 +512,7 @@ impl VM {
                                 return Ok(TransactionReport {
                                     result: TxResult::Revert(error),
                                     new_state: HashMap::default(),
-                                    gas_used: self.gas_used(current_call_frame)?,
+                                    gas_used: current_call_frame.gas_used,
                                     gas_refunded: self.env.refunded_gas,
                                     output: std::mem::take(&mut current_call_frame.output),
                                     logs: std::mem::take(&mut current_call_frame.logs),
@@ -564,7 +525,7 @@ impl VM {
                     return Ok(TransactionReport {
                         result: TxResult::Success,
                         new_state: HashMap::default(),
-                        gas_used: self.gas_used(current_call_frame)?,
+                        gas_used: current_call_frame.gas_used,
                         gas_refunded: self.env.refunded_gas,
                         output: std::mem::take(&mut current_call_frame.output),
                         logs: std::mem::take(&mut current_call_frame.logs),
@@ -598,7 +559,7 @@ impl VM {
                     return Ok(TransactionReport {
                         result: TxResult::Revert(error),
                         new_state: HashMap::default(),
-                        gas_used: self.gas_used(current_call_frame)?,
+                        gas_used: current_call_frame.gas_used,
                         gas_refunded: self.env.refunded_gas,
                         output: std::mem::take(&mut current_call_frame.output), // Bytes::new() if error is not RevertOpcode
                         logs: std::mem::take(&mut current_call_frame.logs),
@@ -1151,6 +1112,8 @@ impl VM {
         }
 
         let mut report = self.execute(&mut initial_call_frame)?;
+
+        report.gas_used = self.gas_used(&initial_call_frame)?;
 
         self.post_execution_changes(&initial_call_frame, &mut report)?;
         // There shouldn't be any errors here but I don't know what the desired behavior is if something goes wrong.
