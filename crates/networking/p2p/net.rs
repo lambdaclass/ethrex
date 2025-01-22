@@ -909,17 +909,18 @@ async fn send_enr_request(
     let enr_req = discv4::Message::ENRRequest(ENRRequestMessage::new(expiration));
 
     enr_req.encode_with_header(&mut buf, signer);
-    let bytes_sent = socket.send_to(&buf, to_addr).await;
 
-    let Ok(bytes_sent) = bytes_sent else {
+    let bytes_sent = socket.send_to(&buf, to_addr).await.ok()?;
+    if bytes_sent != buf.len() {
+        debug!(
+            "ENR request message partially sent: {} out of {} bytes.",
+            bytes_sent,
+            buf.len()
+        );
         return None;
-    };
-
-    if bytes_sent == buf.len() {
-        return Some(H256::from_slice(&buf[0..32]));
     }
 
-    None
+    Some(H256::from_slice(&buf[0..32]))
 }
 
 async fn serve_p2p_requests(
