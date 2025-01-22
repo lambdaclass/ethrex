@@ -187,7 +187,7 @@ impl VM {
             TxKind::Call(address_to) => {
                 default_touched_accounts.insert(address_to);
 
-                let bytecode = get_account_no_push_cache(&mut cache, &db, address_to)
+                let bytecode = get_account_no_push_cache(&cache, &db, address_to)
                     .info
                     .bytecode;
 
