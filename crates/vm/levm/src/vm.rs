@@ -104,7 +104,6 @@ pub struct AuthorizationTuple {
     pub v: U256,
     pub r_signature: U256,
     pub s_signature: U256,
-    pub signer: Address,
 }
 
 pub fn get_valid_jump_destinations(code: &Bytes) -> Result<HashSet<usize>, VMError> {
@@ -1396,7 +1395,7 @@ impl VM {
             }
 
             // 2. Verify the nonce is less than 2**64 - 1.
-            // CHECK nonce is u64, should never be greater than u64::MAX
+            // NOTE: nonce is a u64, is always less or equal to u64::MAX
             if auth_tuple.nonce == u64::MAX {
                 continue;
             }
@@ -1675,8 +1674,8 @@ pub fn get_authorized_address(account_info: &AccountInfo) -> Result<Address, VME
         Ok(address)
     } else {
         // if we end up here, it means that the address wasn't previously delegated.
-        Err(VMError::InternalError::EIP7702Internal(
+        Err(VMError::Internal(InternalError::EIP7702Internal(
             EIP7702Error::AuthorizedAddressError,
-        ))
+        )))
     }
 }
