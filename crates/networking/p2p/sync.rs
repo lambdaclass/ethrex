@@ -203,7 +203,6 @@ impl SyncManager {
                 store_bodies_handle.await??;
                 // For all blocks before the pivot: Store the bodies and fetch the receipts (TODO)
                 // For all blocks after the pivot: Process them fully
-                info!("Executing blocks past pivot");
                 for hash in &all_block_hashes[pivot_idx + 1..] {
                     let block = store
                         .get_block_by_hash(*hash)?
