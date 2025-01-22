@@ -1348,8 +1348,8 @@ impl VM {
         get_account(&mut self.cache, &self.db, address)
     }
 
-    pub fn get_account_no_push_cache(&mut self, address: Address) -> Account {
-        get_account_no_push_cache(&mut self.cache, &self.db, address)
+    pub fn get_account_no_push_cache(&self, address: Address) -> Account {
+        get_account_no_push_cache(&self.cache, &self.db, address)
     }
 
     fn handle_create_non_empty_account(
@@ -1628,7 +1628,7 @@ pub fn get_account(cache: &mut CacheDB, db: &Arc<dyn Database>, address: Address
 }
 
 pub fn get_account_no_push_cache(
-    cache: &mut CacheDB,
+    cache: &CacheDB,
     db: &Arc<dyn Database>,
     address: Address,
 ) -> Account {
