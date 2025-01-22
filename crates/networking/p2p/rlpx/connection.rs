@@ -320,7 +320,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
             tokio::select! {
                 // Expect a message from the remote peer
                 message = self.receive() => {
-                    // TODO: This is a hacky fix for the problem reported in https://github.com/lambdaclass/ethrex/issues/1685
+                    // TODO: This is a hacky fix for the problem reported in https://github.com/lambdaclass/ethrex/issues/1686
                     let res = self.handle_message(message?, sender.clone()).await;
                     if let Err(err) = res {
                         warn!("Handle message failed with {err:?}");
