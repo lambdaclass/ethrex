@@ -39,7 +39,6 @@ use std::{
     cmp::max,
     collections::{HashMap, HashSet},
     fmt::Debug,
-    str::FromStr,
     sync::Arc,
 };
 pub type Storage = HashMap<U256, H256>;
@@ -526,7 +525,6 @@ impl VM {
                     self.call_frames.push(current_call_frame.clone());
 
                     if error.is_internal() {
-                        dbg!(&error);
                         return Err(error);
                     }
 
@@ -1511,7 +1509,7 @@ impl VM {
             } else {
                 auth_account.info.bytecode = Bytes::new();
             }
-            dbg!(&authority_address);
+
             // 9. Increase the nonce of authority by one.
             self.increment_account_nonce(authority_address)
                 .map_err(|_| VMError::TxValidation(TxValidationError::NonceIsMax))?;
@@ -1572,7 +1570,6 @@ impl VM {
         let access_cost = match self.accrued_substate.touched_accounts.get(&auth_address) {
             Some(_) => WARM_ADDRESS_ACCESS_COST,
             None => {
-                dbg!(auth_address);
                 self.accrued_substate.touched_accounts.insert(auth_address);
                 COLD_ADDRESS_ACCESS_COST
             }

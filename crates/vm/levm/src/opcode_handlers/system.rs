@@ -54,17 +54,12 @@ impl VM {
         let (is_delegation, eip7702_gas_consumed, code_address, bytecode) =
             self.eip7702_get_code(callee)?;
 
-        let pretty_bytecode = format!("{bytecode:#x}");
-        dbg!(code_address, pretty_bytecode, bytecode.is_empty());
-
         let gas_left = current_call_frame
             .gas_limit
             .checked_sub(current_call_frame.gas_used)
             .ok_or(InternalError::GasOverflow)?
             .checked_sub(eip7702_gas_consumed)
             .ok_or(InternalError::GasOverflow)?;
-
-        dbg!(gas_left, eip7702_gas_consumed, current_call_frame.gas_used);
 
         let (cost, gas_limit) = gas_cost::call(
             new_memory_size,
