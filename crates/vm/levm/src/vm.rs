@@ -1498,9 +1498,8 @@ impl VM {
             }
 
             // 8. Set the code of authority to be 0xef0100 || address. This is a delegation designation.
-            let mut delegation_bytes = Vec::new();
-            delegation_bytes.extend_from_slice(&SET_CODE_DELEGATION_BYTES);
-            delegation_bytes.extend_from_slice(auth_tuple.address.as_bytes());
+            let delegation_bytes =
+                [&SET_CODE_DELEGATION_BYTES[..], &authority_address_bytes].concat();
 
             // As a special case, if address is 0x0000000000000000000000000000000000000000 do not write the designation.
             // Clear the account’s code and reset the account’s code hash to the empty hash.
