@@ -6741,6 +6741,7 @@ dependencies = [
  "ethrex-levm",
  "hex",
  "revm 9.0.0",
+ "sha3",
 ]
 
 [[package]]

@@ -66,34 +66,34 @@ clean-evm-ef-tests: ## 🗑️  Clean test vectors
 
 revm-comparison: ## 📊 Run benchmarks of fibonacci and factorial for both REVM and LEVM
 	$(MAKE) build-revm-comparison
-	#@echo
-	#@printf "%s" "revm_factorial result: "
-	#@target/release/revm_factorial 1 1000
-	#@printf "%s" "levm_factorial result: "
-	#@target/release/levm_factorial 1 1000
-	#hyperfine -w 5 -r 10 -N \
-	#	-n "revm_factorial" "target/release/revm_factorial 100000 1000" \
-	#	-n "levm_factorial" "target/release/levm_factorial 100000 1000"
-	#@echo
-	#@printf "%s" "revm_fibonacci result: "
-	#@target/release/revm_fibonacci 1 1000
-	#@printf "%s" "levm_fibonacci result: "
-	#@target/release/levm_fibonacci 1 1000
-	#hyperfine -w 5 -r 10 -N \
-	#	-n "revm_fibonacci" "target/release/revm_fibonacci 100000 1000" \
-	#	-n "levm_fibonacci" "target/release/levm_fibonacci 100000 1000"
-	#@echo
-	@printf "%s" "revm_snailtracer result: "
+	@echo
+	@printf "%s\n" "revm_factorial"
+	@target/release/revm_factorial 1 1000
+	@printf "%s\n" "levm_factorial"
+	@target/release/levm_factorial 1 1000
+	hyperfine -w 5 -r 10 -N \
+		-n "revm_factorial" "target/release/revm_factorial 100000 1000" \
+		-n "levm_factorial" "target/release/levm_factorial 100000 1000"
+	@echo
+	@printf "%s\n" "revm_fibonacci"
+	@target/release/revm_fibonacci 1 1000
+	@printf "%s\n" "levm_fibonacci"
+	@target/release/levm_fibonacci 1 1000
+	hyperfine -w 5 -r 10 -N \
+		-n "revm_fibonacci" "target/release/revm_fibonacci 100000 1000" \
+		-n "levm_fibonacci" "target/release/levm_fibonacci 100000 1000"
+	@echo
+	@printf "%s\n" "revm_snailtracer"
 	@target/release/revm_snailtracer 1 1000
-	@printf "%s" "levm_snailtracer result: "
+	@printf "%s\n" "levm_snailtracer"
 	@target/release/levm_snailtracer 1 1000
 	hyperfine -w 5 -r 10 -N \
 		-n "revm_snailtracer" "target/release/revm_snailtracer 100000 1000" \
 		-n "levm_snailtracer" "target/release/levm_snailtracer 100000 1000"
 	@echo
-	@printf "%s" "revm_ten_thousand_hashes result: "
+	@printf "%s\n" "revm_ten_thousand_hashes"
 	@target/release/revm_ten_thousand_hashes 1 1000
-	@printf "%s" "levm_ten_thousand_hashes result: "
+	@printf "%s\n" "levm_ten_thousand_hashes"
 	@target/release/levm_ten_thousand_hashes 1 1000
 	hyperfine -w 5 -r 10 -N \
 		-n "revm_ten_thousand_hashes" "target/release/revm_ten_thousand_hashes 100000 1000" \
@@ -195,24 +195,24 @@ samply-run-ef-tests-levm:
 flamegraph-benchmarks: ## 🔥 Run benchmarks and create flamegraph
 	cd ../../../cmd/ef_tests/levm &&\
 	mkdir -p levm_perfgraphs/flamegraph/bench ||:
-	#CARGO_PROFILE_RELEASE_DEBUG=true cargo flamegraph \
-	#--root --output ../../../cmd/ef_tests/levm/levm_perfgraphs/flamegraph/bench/revm_fibonacci.svg \
-	#-p revm_comparison --bin revm_fibonacci -- 100000 1000
-	#CARGO_PROFILE_RELEASE_DEBUG=true cargo flamegraph \
-	#--root --output ../../../cmd/ef_tests/levm/levm_perfgraphs/flamegraph/bench/levm_fibonacci.svg \
-	#-p revm_comparison --bin levm_fibonacci -- 100000 1000
-	#CARGO_PROFILE_RELEASE_DEBUG=true cargo flamegraph \
-	#--root --output ../../../cmd/ef_tests/levm/levm_perfgraphs/flamegraph/bench/revm_factorial.svg \
-	#-p revm_comparison --bin revm_factorial -- 100000 1000
-	#CARGO_PROFILE_RELEASE_DEBUG=true cargo flamegraph \
-	#--root --output ../../../cmd/ef_tests/levm/levm_perfgraphs/flamegraph/bench/levm_factorial.svg \
-	#-p revm_comparison --bin levm_factorial -- 100000 1000
-	#CARGO_PROFILE_RELEASE_DEBUG=true cargo flamegraph \
-	#--root --output ../../../cmd/ef_tests/levm/levm_perfgraphs/flamegraph/bench/levm_snailtracer.svg \
-    #-p revm_comparison --bin levm_snailtracer -- 100000 1000
-    #CARGO_PROFILE_RELEASE_DEBUG=true cargo flamegraph \
-    #--root --output ../../../cmd/ef_tests/levm/levm_perfgraphs/flamegraph/bench/revm_snailtracer.svg \
-    #-p revm_comparison --bin revm_snailtracer -- 100000 1000
+	CARGO_PROFILE_RELEASE_DEBUG=true cargo flamegraph \
+	--root --output ../../../cmd/ef_tests/levm/levm_perfgraphs/flamegraph/bench/revm_fibonacci.svg \
+	-p revm_comparison --bin revm_fibonacci -- 100000 1000
+	CARGO_PROFILE_RELEASE_DEBUG=true cargo flamegraph \
+	--root --output ../../../cmd/ef_tests/levm/levm_perfgraphs/flamegraph/bench/levm_fibonacci.svg \
+	-p revm_comparison --bin levm_fibonacci -- 100000 1000
+	CARGO_PROFILE_RELEASE_DEBUG=true cargo flamegraph \
+	--root --output ../../../cmd/ef_tests/levm/levm_perfgraphs/flamegraph/bench/revm_factorial.svg \
+	-p revm_comparison --bin revm_factorial -- 100000 1000
+	CARGO_PROFILE_RELEASE_DEBUG=true cargo flamegraph \
+	--root --output ../../../cmd/ef_tests/levm/levm_perfgraphs/flamegraph/bench/levm_factorial.svg \
+	-p revm_comparison --bin levm_factorial -- 100000 1000
+	CARGO_PROFILE_RELEASE_DEBUG=true cargo flamegraph \
+	--root --output ../../../cmd/ef_tests/levm/levm_perfgraphs/flamegraph/bench/levm_snailtracer.svg \
+    -p revm_comparison --bin levm_snailtracer -- 100000 1000
+    CARGO_PROFILE_RELEASE_DEBUG=true cargo flamegraph \
+    --root --output ../../../cmd/ef_tests/levm/levm_perfgraphs/flamegraph/bench/revm_snailtracer.svg \
+    -p revm_comparison --bin revm_snailtracer -- 100000 1000
 	CARGO_PROFILE_RELEASE_DEBUG=true cargo flamegraph \
 	--root --output ../../../cmd/ef_tests/levm/levm_perfgraphs/flamegraph/bench/levm_ten_thousand_hashes.svg \
 	-p revm_comparison --bin levm_ten_thousand_hashes -- 100000 1000

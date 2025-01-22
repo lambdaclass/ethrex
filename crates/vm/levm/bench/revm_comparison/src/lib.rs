@@ -5,12 +5,13 @@ use revm::{
     primitives::{address, Bytecode, TransactTo},
     Evm,
 };
+use sha3::{Digest, Keccak256};
 use std::hint::black_box;
 
 pub const FIBONACCI_BYTECODE: &str =
-    "5f355f60015b8215601a578181019150909160019003916005565b9150505f5260205ff3";
+    "6080604052348015600e575f5ffd5b5061021f8061001c5f395ff3fe608060405234801561000f575f5ffd5b5060043610610029575f3560e01c806361047ff41461002d575b5f5ffd5b610047600480360381019061004291906100ef565b61005d565b6040516100549190610129565b60405180910390f35b5f6001821161006e578190506100b3565b5f5f90505f600190505f600290505b8481116100ac57818284610091919061016f565b809350819450505080806100a4906101a2565b91505061007d565b5080925050505b919050565b5f5ffd5b5f819050919050565b6100ce816100bc565b81146100d8575f5ffd5b50565b5f813590506100e9816100c5565b92915050565b5f60208284031215610104576101036100b8565b5b5f610111848285016100db565b91505092915050565b610123816100bc565b82525050565b5f60208201905061013c5f83018461011a565b92915050565b7f4e487b71000000000000000000000000000000000000000000000000000000005f52601160045260245ffd5b5f610179826100bc565b9150610184836100bc565b925082820190508082111561019c5761019b610142565b5b92915050565b5f6101ac826100bc565b91507fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff82036101de576101dd610142565b5b60018201905091905056fea2646970667358221220d61f52db5c9a8277f7d2eb160d516ed869153348377ff834895046a45447d93f64736f6c634300081c0033";
 pub const FACTORIAL_BYTECODE: &str =
-    "5f355f60015b8215601b57906001018091029160019003916005565b9150505f5260205ff3";
+    "6080604052348015600e575f5ffd5b506102258061001c5f395ff3fe608060405234801561000f575f5ffd5b5060043610610029575f3560e01c8063837148341461002d575b5f5ffd5b610047600480360381019061004291906100e7565b61005d565b6040516100549190610121565b60405180910390f35b5f5f82148061006c5750600182145b1561007a57600190506100ab565b5f600290505b8281116100a657808061009290610167565b91508361009f91906101ae565b9250610080565b829150505b919050565b5f5ffd5b5f819050919050565b6100c6816100b4565b81146100d0575f5ffd5b50565b5f813590506100e1816100bd565b92915050565b5f602082840312156100fc576100fb6100b0565b5b5f610109848285016100d3565b91505092915050565b61011b816100b4565b82525050565b5f6020820190506101345f830184610112565b92915050565b7f4e487b71000000000000000000000000000000000000000000000000000000005f52601160045260245ffd5b5f610171826100b4565b91507fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff82036101a3576101a261013a565b5b600182019050919050565b5f6101b8826100b4565b91506101c3836100b4565b92508282026101d1816100b4565b915082820484148315176101e8576101e761013a565b5b509291505056fea26469706673582212202ed1ae7763999c2dfc4a21717edafc849f2b27e729baa544f0d1f5fbc6ab438464736f6c634300081c0033";
 
 pub const TEN_THOUSAND_HASHES_BYTECODE: &str =
     "608060405234801561001057600080fd5b50610178806100206000396000f3fe60806040523480156100105760008\
@@ -130,59 +131,8 @@ pub const SNAILTRACER_BYTECODE: &str =
     20f4240615003848b614cc5565b81151561500c57fe5b05620f42400391505b6c0c9f2c9cd04674edea400000008283848586620ea600020202020281151561503a57fe5b05619c4001905060028b604001511315156150c7576150926150876080604051908101604052808d81526020018681526020018e6040015181526020018e60600151151515815250614004565b82620f424003613bef565b92506150b1836150ac6150a68e8e8e614ebc565b84613bef565b613f18565b92506150c083620f4240613c2d565b9450615196565b6002818115156150d357fe5b056203d09001620f42406150e5613fad565b63ffffffff168115156150f457fe5b0663ffffffff1612156151365761512f6151186151128d8d8d614ebc565b83613bef565b60028381151561512457fe5b056203d09001613c2d565b9450615196565b61519361517c6151716080604051908101604052808e81526020018781526020018f6040015181526020018f60600151151515815250614004565b83620f424003613bef565b60028381151561518857fe5b05620b71b003613c2d565b94505b505050509695505050505050565b6000808213156151b6578190506151bd565b8160000390505b919050565b6000806151ce836151ea565b90506151e281820264e8d4a5100003613f62565b915050919050565b60008060008060005b600086121561520957625fdfb0860195506151f3565b5b625fdfb08612151561522357625fdfb08603955061520a565b6001935085925060019150600290505b818313156152a7578183850281151561524857fe5b0585019450620f424080878886020281151561526057fe5b0581151561526a57fe5b059250600181018102820291507fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff84029350600281019050615233565b50505050919050565\
     b610260604051908101604052806152c56153c6565b81526020016152d26153c6565b81526020016152df6153c6565b81526020016152ec6153c6565b81526020016152f96153c6565b81526020016153066153c6565b81526020016000600281111561531857fe5b81525090565b6060604051908101604052806000815260200160008152602001600081525090565b610100604051908101604052806153556153c6565b81526020016153626153c6565b8152602001600081526020016000151581525090565b61016060405190810160405280600081526020016153946153c6565b81526020016153a16153c6565b81526020016153ae6153c6565b8152602001600060028111156153c057fe5b81525090565b60606040519081016040528060008152602001600081526020016000815250905600a165627a7a72305820194f384f1a7a2c122c5fb33da1e9c7053f3504de564bccf077da8b2d294aee190029";
 
-pub fn run_with_levm(program: &str, runs: usize, number_of_iterations: u32) {
-    let bytecode = Bytes::from(hex::decode(program).unwrap());
-    let mut call_frame = CallFrame::new_from_bytecode(bytecode);
-    let mut calldata = vec![0x00; 32];
-    calldata[28..32].copy_from_slice(&number_of_iterations.to_be_bytes());
-    call_frame.calldata = Bytes::from(calldata);
-
-    for _ in 0..runs - 1 {
-        let mut vm = new_vm_with_bytecode(Bytes::new()).unwrap();
-        *vm.current_call_frame_mut().unwrap() = call_frame.clone();
-        let mut current_call_frame = vm.call_frames.pop().unwrap();
-        let tx_report = black_box(vm.execute(&mut current_call_frame).unwrap());
-        assert!(tx_report.result == TxResult::Success);
-    }
-    let mut vm = new_vm_with_bytecode(Bytes::new()).unwrap();
-    *vm.current_call_frame_mut().unwrap() = call_frame.clone();
-    let mut current_call_frame = vm.call_frames.pop().unwrap();
-    let tx_report = black_box(vm.execute(&mut current_call_frame).unwrap());
-    assert!(tx_report.result == TxResult::Success);
-
-    match tx_report.result {
-        TxResult::Success => {
-            println!("\t\t0x{}", hex::encode(current_call_frame.output));
-        }
-        TxResult::Revert(error) => panic!("Execution failed: {:?}", error),
-    }
-}
-
-pub fn run_with_revm(program: &str, runs: usize, number_of_iterations: u32) {
-    let bytes = hex::decode(program).unwrap();
-    let raw = Bytecode::new_raw(bytes.into());
-    let mut calldata = [0; 32];
-    calldata[28..32].copy_from_slice(&number_of_iterations.to_be_bytes());
-    let mut evm = Evm::builder()
-        .with_db(BenchmarkDB::new_bytecode(raw))
-        .modify_tx_env(|tx| {
-            tx.caller = address!("1000000000000000000000000000000000000000");
-            tx.transact_to = TransactTo::Call(address!("0000000000000000000000000000000000000000"));
-            tx.data = calldata.into();
-        })
-        .build();
-
-    for _ in 0..runs - 1 {
-        let result = black_box(evm.transact()).unwrap();
-        assert!(result.result.is_success());
-    }
-    let result = black_box(evm.transact()).unwrap();
-    assert!(result.result.is_success());
-
-    println!("\t\t{}", result.result.into_output().unwrap());
-}
-
-pub fn run_with_levm_calldata(program: &str, runs: usize, calldata: &str) {
+pub fn run_with_levm(program: &str, runs: usize, calldata: &str) {
+    println!("calldata:\t\t0x{}", calldata);
     let bytecode = Bytes::from(hex::decode(program).unwrap());
     let mut call_frame = CallFrame::new_from_bytecode(bytecode);
     call_frame.calldata = Bytes::from(hex::decode(calldata).unwrap());
@@ -208,7 +158,8 @@ pub fn run_with_levm_calldata(program: &str, runs: usize, calldata: &str) {
     }
 }
 
-pub fn run_with_revm_calldata(program: &str, runs: usize, calldata: &str) {
+pub fn run_with_revm(program: &str, runs: usize, calldata: &str) {
+    println!("calldata:\t\t0x{}", calldata);
     let bytes = hex::decode(program).unwrap();
     let raw = Bytecode::new_raw(bytes.into());
     let mut evm = Evm::builder()
@@ -227,5 +178,24 @@ pub fn run_with_revm_calldata(program: &str, runs: usize, calldata: &str) {
     let result = black_box(evm.transact()).unwrap();
     assert!(result.result.is_success());
 
-    println!("\t\t{}", result.result.into_output().unwrap());
+    println!("output: \t\t{}", result.result.into_output().unwrap());
+}
+
+pub fn generate_calldata(function: &str, n: u64) -> String {
+    let function_signature = format!("{}(uint256)", function);
+    let hash = Keccak256::digest(function_signature.as_bytes());
+    let function_selector = &hash[..4];
+
+    // Encode argument n (uint256, padded to 32 bytes)
+    let mut encoded_n = vec![0u8; 32];
+    encoded_n[24..].copy_from_slice(&n.to_be_bytes());
+
+    // Combine the function selector and the encoded argument
+    let calldata: Vec<u8> = function_selector
+        .iter()
+        .chain(encoded_n.iter())
+        .copied()
+        .collect();
+
+    hex::encode(calldata)
 }
