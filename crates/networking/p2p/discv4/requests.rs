@@ -19,9 +19,8 @@ use super::messages::{FindNodeMessage, Message, PingMessage, PongMessage};
 /// an optional hash corresponding to the message header hash to account if the send was successful
 pub async fn ping(
     socket: &UdpSocket,
-    // TODO replace this with our node, so we can fill the tcp port
-    local_addr: SocketAddr,
-    to_addr: SocketAddr,
+    local_node: Node,
+    to_node: Node,
     signer: &SigningKey,
 ) -> Option<H256> {
     let mut buf = Vec::new();
@@ -31,21 +30,22 @@ pub async fn ping(
         .unwrap()
         .as_secs();
 
-    // TODO: this should send our advertised TCP port
     let from = Endpoint {
-        ip: local_addr.ip(),
-        udp_port: local_addr.port(),
-        tcp_port: 0,
+        ip: local_node.ip,
+        udp_port: local_node.udp_port,
+        tcp_port: local_node.tcp_port,
     };
     let to = Endpoint {
-        ip: to_addr.ip(),
-        udp_port: to_addr.port(),
-        tcp_port: 0,
+        ip: to_node.ip,
+        udp_port: to_node.udp_port,
+        tcp_port: to_node.tcp_port,
     };
 
     let ping = Message::Ping(PingMessage::new(from, to, expiration));
     ping.encode_with_header(&mut buf, signer);
-    let res = socket.send_to(&buf, to_addr).await;
+    let res = socket
+        .send_to(&buf, SocketAddr::new(to_node.ip, to_node.udp_port))
+        .await;
 
     if res.is_err() {
         return None;
@@ -59,7 +59,13 @@ pub async fn ping(
     None
 }
 
-pub async fn pong(socket: &UdpSocket, to_addr: SocketAddr, ping_hash: H256, signer: &SigningKey) {
+pub async fn pong(
+    socket: &UdpSocket,
+    to_addr: SocketAddr,
+    node: Node,
+    ping_hash: H256,
+    signer: &SigningKey,
+) {
     let mut buf = Vec::new();
 
     let expiration: u64 = (SystemTime::now() + Duration::from_secs(20))
@@ -68,9 +74,9 @@ pub async fn pong(socket: &UdpSocket, to_addr: SocketAddr, ping_hash: H256, sign
         .as_secs();
 
     let to = Endpoint {
-        ip: to_addr.ip(),
-        udp_port: to_addr.port(),
-        tcp_port: 0,
+        ip: node.ip,
+        udp_port: node.udp_port,
+        tcp_port: node.tcp_port,
     };
     let pong = Message::Pong(PongMessage::new(to, ping_hash, expiration));
 

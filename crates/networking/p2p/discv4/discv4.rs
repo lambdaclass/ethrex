@@ -22,12 +22,11 @@ use tokio::{
 };
 use tracing::debug;
 
-use super::lookup::DiscoveryLookupHandler;
+use super::lookup::{DiscoveryLookupHandler, PEERS_RANDOM_LOOKUP_TIME_IN_MIN};
 
 #[derive(Debug, Clone)]
 pub struct Discv4 {
     local_node: Node,
-    udp_addr: SocketAddr,
     udp_socket: Arc<UdpSocket>,
     signer: SigningKey,
     storage: Store,
@@ -58,12 +57,12 @@ impl Discv4 {
             storage,
             table,
             tx_broadcaster_send,
-            udp_addr: SocketAddr::new(local_node.ip, local_node.udp_port),
             udp_socket,
             revalidation_interval_seconds: REVALIDATION_INTERVAL_IN_SECONDS,
         }
     }
 
+    #[allow(unused)]
     pub fn with_revalidation_interval_of(self, seconds: u64) -> Self {
         Self {
             revalidation_interval_seconds: seconds,
@@ -71,6 +70,7 @@ impl Discv4 {
         }
     }
 
+    #[allow(unused)]
     pub fn with_lookup_interval_of(self, minutes: u64) -> Self {
         Self {
             revalidation_interval_seconds: minutes,
@@ -84,7 +84,6 @@ impl Discv4 {
     ) -> Result<(), DiscoveryError> {
         let server_handle = tokio::spawn(self.clone().receive());
         self.load_bootnodes(bootnodes).await;
-
         let revalidation_handle = tokio::spawn(self.clone().start_revalidation_task());
 
         // a first initial lookup runs without waiting for the interval
@@ -94,6 +93,7 @@ impl Discv4 {
             self.signer.clone(),
             self.udp_socket.clone(),
             self.table.clone(),
+            PEERS_RANDOM_LOOKUP_TIME_IN_MIN,
         );
         let lookup_handle = tokio::spawn(async move { lookup_handler.start_lookup_task().await });
 
@@ -108,25 +108,15 @@ impl Discv4 {
 
     async fn load_bootnodes(&self, bootnodes: Vec<BootNode>) {
         for bootnode in bootnodes {
-            self.table.lock().await.insert_node(Node {
+            let node = Node {
                 ip: bootnode.socket_address.ip(),
                 udp_port: bootnode.socket_address.port(),
                 // TODO: udp port can differ from tcp port.
                 // see https://github.com/lambdaclass/ethrex/issues/905
                 tcp_port: bootnode.socket_address.port(),
                 node_id: bootnode.node_id,
-            });
-            let ping_hash = ping(
-                &self.udp_socket,
-                self.udp_addr,
-                bootnode.socket_address,
-                &self.signer,
-            )
-            .await;
-            self.table
-                .lock()
-                .await
-                .update_peer_ping(bootnode.node_id, ping_hash);
+            };
+            self.try_add_peer_and_ping(node).await;
         }
     }
 
@@ -163,16 +153,23 @@ impl Discv4 {
                     debug!("Ignoring ping as it is expired.");
                     return;
                 };
+                let node = Node {
+                    ip: from.ip(),
+                    udp_port: msg.from.udp_port,
+                    tcp_port: msg.from.tcp_port,
+                    node_id: packet.get_node_id(),
+                };
                 let ping_hash = packet.get_hash();
-                pong(&self.udp_socket, from, ping_hash, &self.signer).await;
-                let node = {
+                pong(&self.udp_socket, from, node, ping_hash, &self.signer).await;
+                let peer = {
                     let table = self.table.lock().await;
                     table.get_by_node_id(packet.get_node_id()).cloned()
                 };
-                if let Some(peer) = node {
+                if let Some(peer) = peer {
                     // send a a ping to get an endpoint proof
                     if time_since_in_hs(peer.last_ping) >= PROOF_EXPIRATION_IN_HS as u64 {
-                        let hash = ping(&self.udp_socket, self.udp_addr, from, &self.signer).await;
+                        let hash =
+                            ping(&self.udp_socket, self.local_node, peer.node, &self.signer).await;
                         if let Some(hash) = hash {
                             self.table
                                 .lock()
@@ -182,25 +179,7 @@ impl Discv4 {
                     }
                 } else {
                     // send a ping to get the endpoint proof from our end
-                    let (peer, inserted_to_table) = {
-                        let mut table = self.table.lock().await;
-                        table.insert_node(Node {
-                            ip: from.ip(),
-                            udp_port: msg.from.udp_port,
-                            tcp_port: msg.from.tcp_port,
-                            node_id: packet.get_node_id(),
-                        })
-                    };
-                    let hash = ping(&self.udp_socket, self.udp_addr, from, &self.signer).await;
-                    if let Some(hash) = hash {
-                        if inserted_to_table && peer.is_some() {
-                            let peer = peer.unwrap();
-                            self.table
-                                .lock()
-                                .await
-                                .update_peer_ping(peer.node.node_id, Some(hash));
-                        }
-                    }
+                    self.try_add_peer_and_ping(node).await;
                 }
             }
             Message::Pong(msg) => {
@@ -301,7 +280,6 @@ impl Discv4 {
                         let nodes_sent = req.nodes_sent + nodes.len();
 
                         if nodes_sent <= MAX_NODES_PER_BUCKET {
-                            debug!("Storing neighbors in our table!");
                             req.nodes_sent = nodes_sent;
                             nodes_to_insert = Some(nodes.clone());
                             if let Some(tx) = &req.tx {
@@ -322,20 +300,33 @@ impl Discv4 {
 
                 if let Some(nodes) = nodes_to_insert {
                     for node in nodes {
-                        let (peer, inserted_to_table) = table.insert_node(node);
-                        if inserted_to_table && peer.is_some() {
-                            let peer = peer.unwrap();
-                            let node_addr = SocketAddr::new(peer.node.ip, peer.node.udp_port);
-                            let ping_hash =
-                                ping(&self.udp_socket, self.udp_addr, node_addr, &self.signer)
-                                    .await;
-                            table.update_peer_ping(peer.node.node_id, ping_hash);
-                        };
+                        if node.node_id != self.local_node.node_id {
+                            self.try_add_peer_and_ping(node).await;
+                        }
                     }
                 }
             }
             _ => {}
         }
+    }
+
+    /// Attempts to add a node to the Kademlia table and send a ping if necessary.
+    ///
+    /// - If the node is **not found** in the table and there is enough space, it will be added,  
+    ///   and a ping message will be sent to verify connectivity.
+    /// - If the node is **already present**, no action is taken.
+    pub async fn try_add_peer_and_ping(&self, node: Node) {
+        let (Some(peer), inserted_to_table) = self.table.lock().await.insert_node(node) else {
+            return;
+        };
+        if inserted_to_table {
+            debug!("Node {:?} was inserted to kademlia table", node);
+            let ping_hash = ping(&self.udp_socket, self.local_node, node, &self.signer).await;
+            self.table
+                .lock()
+                .await
+                .update_peer_ping(peer.node.node_id, ping_hash);
+        };
     }
 
     async fn start_revalidation_task(self: Arc<Self>) {
@@ -371,8 +362,8 @@ impl Discv4 {
                     if let Some(new_peer) = new_peer {
                         let ping_hash = ping(
                             &self.udp_socket,
-                            self.udp_addr,
-                            SocketAddr::new(new_peer.node.ip, new_peer.node.udp_port),
+                            self.local_node,
+                            new_peer.node,
                             &self.signer,
                         )
                         .await;
@@ -387,13 +378,8 @@ impl Discv4 {
             let peers = self.table.lock().await.get_least_recently_pinged_peers(3);
             previously_pinged_peers = HashSet::default();
             for peer in peers {
-                let ping_hash = ping(
-                    &self.udp_socket,
-                    self.udp_addr,
-                    SocketAddr::new(peer.node.ip, peer.node.udp_port),
-                    &self.signer,
-                )
-                .await;
+                let ping_hash =
+                    ping(&self.udp_socket, self.local_node, peer.node, &self.signer).await;
                 let mut table = self.table.lock().await;
                 table.update_peer_ping_with_revalidation(peer.node.node_id, ping_hash);
                 previously_pinged_peers.insert(peer.node.node_id);
