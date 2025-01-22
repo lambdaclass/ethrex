@@ -1489,7 +1489,7 @@ impl VM {
             // 7. Add PER_EMPTY_ACCOUNT_COST - PER_AUTH_BASE_COST gas to the global refund counter if authority exists in the trie.
             // CHECK: we don't know if checking the cache is correct. More gas tests pass but the set_code_txs tests went to half.
             if self.db.account_exists(authority_address)
-                || self.cache.contains_key(&authority_address)
+                || cache::is_account_cached(&self.cache, &authority_address)
             {
                 let refunded_gas_if_exists = PER_EMPTY_ACCOUNT_COST - PER_AUTH_BASE_COST;
                 refunded_gas = refunded_gas
