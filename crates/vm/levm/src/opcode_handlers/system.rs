@@ -667,7 +667,6 @@ impl VM {
             0,
             new_depth,
             true,
-            false,
         );
 
         self.accrued_substate.created_accounts.insert(new_address); // Mostly for SELFDESTRUCT during initcode.
@@ -763,6 +762,15 @@ impl VM {
             return Ok(OpcodeSuccess::Continue);
         }
 
+        if bytecode.is_empty() && is_delegation {
+            current_call_frame.gas_used = current_call_frame
+                .gas_used
+                .checked_sub(gas_limit)
+                .ok_or(InternalError::GasOverflow)?;
+            current_call_frame.stack.push(SUCCESS_FOR_CALL)?;
+            return Ok(OpcodeSuccess::Continue);
+        }
+
         let mut new_call_frame = CallFrame::new(
             msg_sender,
             to,
@@ -775,7 +783,6 @@ impl VM {
             0,
             new_depth,
             false,
-            is_delegation,
         );
 
         // Transfer value from caller to callee.
@@ -784,7 +791,7 @@ impl VM {
             self.increase_account_balance(to, value)?;
         }
 
-        let mut tx_report = self.execute(&mut new_call_frame)?;
+        let tx_report = self.execute(&mut new_call_frame)?;
 
         dbg!(new_call_frame.gas_limit);
         dbg!(tx_report.gas_used);

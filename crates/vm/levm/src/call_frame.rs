@@ -113,7 +113,6 @@ impl CallFrame {
         gas_used: u64,
         depth: usize,
         create_op_called: bool,
-        is_delegation: bool,
     ) -> Self {
         let valid_jump_destinations = get_valid_jump_destinations(&bytecode).unwrap_or_default();
         Self {
@@ -129,15 +128,11 @@ impl CallFrame {
             gas_used,
             valid_jump_destinations,
             create_op_called,
-            is_delegation,
             ..Default::default()
         }
     }
 
     pub fn next_opcode(&mut self) -> Opcode {
-        if self.bytecode.is_empty() {
-            dbg!("IS EMPTY");
-        }
         match self.bytecode.get(self.pc).copied().map(Opcode::from) {
             Some(opcode) => opcode,
             None => Opcode::STOP,

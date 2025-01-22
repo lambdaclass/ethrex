@@ -210,7 +210,6 @@ impl VM {
                     0,
                     0,
                     false,
-                    false,
                 );
 
                 let substate = Substate {
@@ -253,7 +252,6 @@ impl VM {
                     env.gas_limit,
                     0,
                     0,
-                    false,
                     false,
                 );
 
