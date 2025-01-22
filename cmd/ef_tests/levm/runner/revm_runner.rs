@@ -19,9 +19,8 @@ use revm::{
     db::State,
     inspectors::TracerEip3155 as RevmTracerEip3155,
     primitives::{
-        AccessListItem, Authorization, BlobExcessGasAndPrice, BlockEnv as RevmBlockEnv,
-        EVMError as REVMError, ExecutionResult as RevmExecutionResult, SignedAuthorization,
-        TxEnv as RevmTxEnv, TxKind as RevmTxKind, B256,
+        AccessListItem, BlobExcessGasAndPrice, BlockEnv as RevmBlockEnv, EVMError as REVMError,
+        ExecutionResult as RevmExecutionResult, TxEnv as RevmTxEnv, TxKind as RevmTxKind, B256,
     },
     Evm as Revm,
 };

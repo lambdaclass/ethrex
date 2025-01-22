@@ -3,7 +3,7 @@ use crate::{
     call_frame::CallFrame,
     constants::*,
     db::{
-        cache::{self, get_account_mut, insert_account, remove_account},
+        cache::{self, get_account_mut, remove_account},
         CacheDB, Database,
     },
     environment::Environment,
