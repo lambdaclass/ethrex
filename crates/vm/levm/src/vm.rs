@@ -1392,7 +1392,7 @@ impl VM {
             }
 
             // 2. Verify the nonce is less than 2**64 - 1.
-            // NOTE: nonce is a u64, is always less or equal to u64::MAX
+            // NOTE: nonce is a u64, it's always less or equal to u64::MAX
             if auth_tuple.nonce == u64::MAX {
                 continue;
             }
