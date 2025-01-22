@@ -409,7 +409,7 @@ async fn peers_revalidation(
         for node_id in previously_pinged_peers {
             let mut table = table.lock().await;
             let Some(peer) = table.get_by_node_id_mut(node_id) else {
-                continue
+                continue;
             };
 
             if let Some(has_answered) = peer.revalidation {
