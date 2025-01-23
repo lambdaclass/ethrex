@@ -1,7 +1,7 @@
 use ethrex_blockchain::find_parent_header;
 use ethrex_rlp::encode::RLPEncode;
 use serde_json::Value;
-use tracing::{debug, info};
+use tracing::info;
 
 use crate::{
     types::{
@@ -70,7 +70,7 @@ impl RpcHandler for GetBlockByNumberRequest {
     }
     fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
         let storage = &context.storage;
-        debug!("Requested block with number: {}", self.block);
+        info!("Requested block with number: {}", self.block);
         let block_number = match self.block.resolve_block_number(storage)? {
             Some(block_number) => block_number,
             _ => return Ok(Value::Null),

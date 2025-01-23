@@ -7,10 +7,14 @@ use ethrex_rlp::{
 };
 
 use ethereum_types::H32;
+use tracing::debug;
 
 use super::{BlockHash, BlockNumber, ChainConfig};
 
-#[derive(Debug, PartialEq)]
+// See https://github.com/ethereum/go-ethereum/blob/530adfc8e3ef9c8b6356facecdec10b30fb81d7d/core/forkid/forkid.go#L51
+const TIMESTAMP_THRESHOLD: u64 = 1438269973;
+
+#[derive(Clone, Debug, PartialEq)]
 pub struct ForkId {
     fork_hash: H32,
     fork_next: BlockNumber,
@@ -48,12 +52,89 @@ impl ForkId {
             fork_next,
         }
     }
+
+    // See https://eips.ethereum.org/EIPS/eip-2124#validation-rules.
+    pub fn is_valid(
+        &self,
+        remote: Self,
+        latest_block_number: u64,
+        head_timestamp: u64,
+        chain_config: ChainConfig,
+        genesis_hash: BlockHash,
+    ) -> bool {
+        let (block_number_based_forks, timestamp_based_forks) = chain_config.gather_forks();
+
+        // Determine whether to compare the remote fork_next using a block number or a timestamp.
+        let head = if head_timestamp >= TIMESTAMP_THRESHOLD {
+            head_timestamp
+        } else {
+            latest_block_number
+        };
+
+        if remote.fork_hash == self.fork_hash {
+            // validation rule #1
+            if remote.fork_next <= head && remote.fork_next != 0 {
+                debug!("Future fork already passed locally.");
+                return false;
+            }
+            return true;
+        }
+
+        let forks = [block_number_based_forks, timestamp_based_forks].concat();
+        let valid_combinations = get_all_fork_id_combinations(forks, genesis_hash);
+
+        let mut is_subset = true;
+
+        for (fork_hash, fork_next) in valid_combinations {
+            if is_subset {
+                // The remote hash is a subset of the local past forks (rule #2)
+                if remote.fork_hash == fork_hash && remote.fork_next == fork_next {
+                    return true;
+                }
+            } else {
+                // The remote hash is a superset of the local past forks (rule #3)
+                if remote.fork_hash == fork_hash {
+                    return true;
+                }
+            }
+            if fork_hash == self.fork_hash {
+                // From this point on, if we have a match, it means the remote fork hash
+                // is a superset of our local past forks.
+                is_subset = false;
+            }
+        }
+        // rule #4
+        debug!("Local or remote needs software update.");
+        false
+    }
 }
 
-fn update_checksum(forks: Vec<Option<u64>>, hasher: &mut Hasher, head: u64) -> u64 {
+fn get_all_fork_id_combinations(forks: Vec<u64>, genesis_hash: BlockHash) -> Vec<(H32, u64)> {
+    let mut combinations = vec![];
+    let mut last_activation = 0;
+
+    let mut hasher = Hasher::new();
+    hasher.update(genesis_hash.as_bytes());
+    for activation in forks {
+        // If the block number or timestamp is already added, skip it.
+        if activation == last_activation {
+            continue;
+        }
+        combinations.push((
+            H32::from_slice(&hasher.clone().finalize().to_be_bytes()),
+            activation,
+        ));
+        hasher.update(&activation.to_be_bytes());
+        last_activation = activation;
+    }
+    combinations.push((H32::from_slice(&hasher.finalize().to_be_bytes()), 0));
+    combinations
+}
+
+fn update_checksum(forks: Vec<u64>, hasher: &mut Hasher, head: u64) -> u64 {
     let mut last_included = 0;
 
-    for activation in forks.into_iter().flatten() {
+    for activation in forks {
         if activation <= head {
             if activation != last_included {
                 hasher.update(&activation.to_be_bytes());
@@ -93,9 +174,11 @@ impl RLPDecode for ForkId {
 #[cfg(test)]
 mod tests {
 
-    use std::str::FromStr;
+    use std::{io::BufReader, str::FromStr};
 
     use hex_literal::hex;
+
+    use crate::types::Genesis;
 
     use super::*;
 
@@ -125,5 +208,259 @@ mod tests {
         };
         let expected = hex!("ce84ffffffff88ffffffffffffffff");
         assert_eq!(fork.encode_to_vec(), expected);
+    }
+
+    struct TestCase {
+        head: u64,
+        time: u64,
+        fork_id: ForkId,
+        is_valid: bool,
+    }
+
+    fn assert_test_cases(
+        test_cases: Vec<TestCase>,
+        chain_config: ChainConfig,
+        genesis_hash: BlockHash,
+    ) {
+        for test_case in test_cases {
+            let fork_id = ForkId::new(chain_config, genesis_hash, test_case.time, test_case.head);
+            assert_eq!(
+                fork_id.is_valid(
+                    test_case.fork_id,
+                    test_case.head,
+                    test_case.time,
+                    chain_config,
+                    genesis_hash
+                ),
+                test_case.is_valid
+            )
+        }
+    }
+
+    #[test]
+    fn holesky_test_cases() {
+        let genesis_file = std::fs::File::open("../../cmd/ethrex/networks/holesky/genesis.json")
+            .expect("Failed to open genesis file");
+        let genesis_reader = BufReader::new(genesis_file);
+        let genesis: Genesis =
+            serde_json::from_reader(genesis_reader).expect("Failed to read genesis file");
+        let genesis_hash = genesis.get_block().hash();
+
+        // See https://github.com/ethereum/go-ethereum/blob/4d94bd83b20ce430e435f3107f29632c627cfb26/core/forkid/forkid_test.go#L98
+        let test_cases: Vec<TestCase> = vec![
+            TestCase {
+                head: 0,
+                time: 0,
+                fork_id: ForkId {
+                    fork_hash: H32::from_str("0xc61a6098").unwrap(),
+                    fork_next: 1696000704,
+                },
+                is_valid: true,
+            },
+            TestCase {
+                head: 123,
+                time: 0,
+                fork_id: ForkId {
+                    fork_hash: H32::from_str("0xc61a6098").unwrap(),
+                    fork_next: 1696000704,
+                },
+                is_valid: true,
+            },
+            TestCase {
+                head: 123,
+                time: 1696000704,
+                fork_id: ForkId {
+                    fork_hash: H32::from_str("0xfd4f016b").unwrap(),
+                    fork_next: 1707305664,
+                },
+                is_valid: true,
+            },
+            TestCase {
+                head: 123,
+                time: 1707305663,
+                fork_id: ForkId {
+                    fork_hash: H32::from_str("0xfd4f016b").unwrap(),
+                    fork_next: 1707305664,
+                },
+                is_valid: true,
+            },
+            TestCase {
+                head: 123,
+                time: 1707305664,
+                fork_id: ForkId {
+                    fork_hash: H32::from_str("0x9b192ad0").unwrap(),
+                    fork_next: 0,
+                },
+                is_valid: true,
+            },
+            TestCase {
+                head: 123,
+                time: 2707305664,
+                fork_id: ForkId {
+                    fork_hash: H32::from_str("0x9b192ad0").unwrap(),
+                    fork_next: 0,
+                },
+                is_valid: true,
+            },
+        ];
+        assert_test_cases(test_cases, genesis.config, genesis_hash);
+    }
+
+    fn get_sepolia_genesis() -> (Genesis, BlockHash) {
+        let genesis_file = std::fs::File::open("../../cmd/ethrex/networks/sepolia/genesis.json")
+            .expect("Failed to open genesis file");
+        let genesis_reader = BufReader::new(genesis_file);
+        let genesis: Genesis =
+            serde_json::from_reader(genesis_reader).expect("Failed to read genesis file");
+        let genesis_hash = genesis.get_block().hash();
+        (genesis, genesis_hash)
+    }
+    #[test]
+    fn sepolia_test_cases() {
+        let (genesis, genesis_hash) = get_sepolia_genesis();
+        // See https://github.com/ethereum/go-ethereum/blob/4d94bd83b20ce430e435f3107f29632c627cfb26/core/forkid/forkid_test.go#L83
+        let test_cases: Vec<TestCase> = vec![
+            TestCase {
+                head: 0,
+                time: 0,
+                fork_id: ForkId {
+                    fork_hash: H32::from_str("0xfe3366e7").unwrap(),
+                    fork_next: 1735371,
+                },
+                is_valid: true,
+            },
+            TestCase {
+                head: 1735370,
+                time: 0,
+                fork_id: ForkId {
+                    fork_hash: H32::from_str("0xfe3366e7").unwrap(),
+                    fork_next: 1735371,
+                },
+                is_valid: true,
+            },
+            TestCase {
+                head: 1735371,
+                time: 0,
+                fork_id: ForkId {
+                    fork_hash: H32::from_str("0xb96cbd13").unwrap(),
+                    fork_next: 1677557088,
+                },
+                is_valid: true,
+            },
+            TestCase {
+                head: 1735372,
+                time: 1677557087,
+                fork_id: ForkId {
+                    fork_hash: H32::from_str("0xb96cbd13").unwrap(),
+                    fork_next: 1677557088,
+                },
+                is_valid: true,
+            },
+            TestCase {
+                head: 1735372,
+                time: 1677557088,
+                fork_id: ForkId {
+                    fork_hash: H32::from_str("0xf7f9bc08").unwrap(),
+                    fork_next: 1706655072,
+                },
+                is_valid: true,
+            },
+            TestCase {
+                head: 1735372,
+                time: 1706655071,
+                fork_id: ForkId {
+                    fork_hash: H32::from_str("0xf7f9bc08").unwrap(),
+                    fork_next: 1706655072,
+                },
+                is_valid: true,
+            },
+            TestCase {
+                head: 1735372,
+                time: 1706655072,
+                fork_id: ForkId {
+                    fork_hash: H32::from_str("0x88cf81d9").unwrap(),
+                    fork_next: 0,
+                },
+                is_valid: true,
+            },
+            TestCase {
+                head: 1735372,
+                time: 2706655072,
+                fork_id: ForkId {
+                    fork_hash: H32::from_str("0x88cf81d9").unwrap(),
+                    fork_next: 0,
+                },
+                is_valid: true,
+            },
+        ];
+
+        assert_test_cases(test_cases, genesis.config, genesis_hash);
+    }
+
+    #[test]
+    fn remote_next_fork_passed_locally() {
+        let local_head_block_number = 1000;
+        let local_a = ForkId {
+            fork_hash: H32::from_str("0x88cf81d9").unwrap(),
+            fork_next: 0,
+        };
+        let local_b = ForkId {
+            fork_hash: H32::from_str("0x88cf81d9").unwrap(),
+            fork_next: 1500,
+        };
+        let remote = ForkId {
+            fork_hash: H32::from_str("0x88cf81d9").unwrap(),
+            fork_next: 100,
+        };
+        let result_a = local_a.is_valid(
+            remote.clone(),
+            local_head_block_number,
+            0,
+            ChainConfig::default(),
+            BlockHash::random(),
+        );
+        let result_b = local_b.is_valid(
+            remote,
+            local_head_block_number,
+            0,
+            ChainConfig::default(),
+            BlockHash::random(),
+        );
+        assert!(!result_a);
+        assert!(!result_b);
+    }
+
+    #[test]
+    fn local_needs_software_update() {
+        let (genesis, genesis_hash) = get_sepolia_genesis();
+        // in this case, we simply cannot build the fork_hash with all our valid combinations.
+        let test_cases: Vec<TestCase> = vec![TestCase {
+            head: 1735372,
+            time: 2706655072,
+            fork_id: ForkId {
+                fork_hash: H32::random(),
+                fork_next: 0,
+            },
+            is_valid: false,
+        }];
+        assert_test_cases(test_cases, genesis.config, genesis_hash);
+    }
+
+    #[test]
+    fn remote_needs_software_update() {
+        let (genesis, genesis_hash) = get_sepolia_genesis();
+        // local is in Cancun fork.
+        let local_time = 1706655072;
+        // remote is in Shanghai fork and doesn't know about Cancun.
+        let test_cases: Vec<TestCase> = vec![TestCase {
+            head: 5443392,
+            time: local_time,
+            fork_id: ForkId {
+                fork_hash: H32::from_str("0xf7f9bc08").unwrap(),
+                fork_next: 0,
+            },
+            is_valid: false,
+        }];
+        assert_test_cases(test_cases, genesis.config, genesis_hash);
     }
 }

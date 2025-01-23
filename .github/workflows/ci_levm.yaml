@@ -53,7 +53,7 @@ jobs:
         run: |
           {
             printf '```\n';
-            cd crates/vm/levm && awk '/Summary: /,0' test_result.txt;
+            cd crates/vm/levm && awk '/Summary: /,/Frontier/' test_result.txt;
             printf '```\n';
           } > test_summary.txt
 
