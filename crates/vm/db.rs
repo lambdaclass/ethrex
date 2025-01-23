@@ -36,6 +36,15 @@ cfg_if::cfg_if! {
                 }
             }
 
+            fn account_exists(&self, address: CoreAddress) -> bool {
+                let acc_info = self
+                .store
+                .get_account_info_by_hash(self.block_hash, address)
+                .unwrap();
+
+                acc_info.is_some()
+            }
+
             fn get_storage_slot(&self, address: CoreAddress, key: CoreH256) -> CoreU256 {
                 self.store
                     .get_storage_at_hash(self.block_hash, address, key)

@@ -697,6 +697,21 @@ impl StoreEngine for RedBStore {
             .map(|receipt| receipt.to())
             .collect())
     }
+
+    fn is_synced(&self) -> Result<bool, StoreError> {
+        match self.read(CHAIN_DATA_TABLE, ChainDataIndex::IsSynced)? {
+            None => Err(StoreError::Custom("Sync status not found".to_string())),
+            Some(ref rlp) => RLPDecode::decode(&rlp.value()).map_err(|_| StoreError::DecodeError),
+        }
+    }
+
+    fn update_sync_status(&self, status: bool) -> Result<(), StoreError> {
+        self.write(
+            CHAIN_DATA_TABLE,
+            ChainDataIndex::IsSynced,
+            status.encode_to_vec(),
+        )
+    }
 }
 
 impl redb::Value for ChainDataIndex {
