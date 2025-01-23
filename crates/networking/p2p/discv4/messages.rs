@@ -103,6 +103,20 @@ pub(crate) enum Message {
     ENRResponse(ENRResponseMessage),
 }
 
+impl std::fmt::Display for Message {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let variant = match self {
+            Message::Ping(_) => "Ping",
+            Message::Pong(_) => "Pong",
+            Message::FindNode(_) => "FindNode",
+            Message::Neighbors(_) => "Neighbors",
+            Message::ENRRequest(_) => "ENRRequest",
+            Message::ENRResponse(_) => "ENRResponse",
+        };
+        write!(f, "{}", variant)
+    }
+}
+
 impl Message {
     pub fn encode_with_header(&self, buf: &mut dyn BufMut, node_signer: &SigningKey) {
         let signature_size = 65_usize;

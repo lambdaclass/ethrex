@@ -162,9 +162,10 @@ impl Discv4 {
                 Err(e) => error!("Could not decode packet: {:?}", e),
                 Ok(packet) => {
                     let msg = packet.get_message();
+                    let msg_name = msg.to_string();
                     debug!("Message: {:?} from {}", msg, packet.get_node_id());
                     if let Err(e) = self.handle_message(packet, from, read, &buf).await {
-                        debug!("Error while processing message: {:?}", e);
+                        debug!("Error while processing {} message: {:?}", msg_name, e);
                     };
                 }
             }
