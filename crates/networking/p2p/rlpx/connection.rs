@@ -203,7 +203,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
 
         // Discard peer from kademlia table
         let remote_node_id = self.remote_node_id;
-        error!("{error_text}: ({error}), discarding peer {remote_node_id}");
+        debug!("{error_text}: ({error}), discarding peer {remote_node_id}");
         table.lock().await.replace_peer(remote_node_id);
     }
 
