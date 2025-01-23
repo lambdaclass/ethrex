@@ -209,11 +209,8 @@ impl Discv4 {
                     }
                 } else {
                     // otherwise add to the table
-                    let mut table = self.table.lock().await;
-                    if let (Some(peer), true) = table.insert_node(node) {
-                        // it was inserted, send ping to bond
-                        self.ping(peer.node, table).await?;
-                    }
+                    self.try_add_peer_and_ping(node, self.table.lock().await)
+                        .await?;
                 }
 
                 Ok(())
