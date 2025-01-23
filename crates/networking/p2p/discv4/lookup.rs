@@ -252,3 +252,156 @@ impl Discv4LookupHandler {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use tokio::time::sleep;
+
+    use super::*;
+    use crate::discv4::{
+        tests::{
+            connect_servers, fill_table_with_random_nodes, insert_random_node_on_custom_bucket,
+            start_discovery_server,
+        },
+        Discv4,
+    };
+
+    fn lookup_handler_from_server(server: Discv4) -> Discv4LookupHandler {
+        Discv4LookupHandler::new(
+            server.local_node,
+            server.signer.clone(),
+            server.udp_socket.clone(),
+            server.table.clone(),
+            server.lookup_interval_minutes,
+            server.tracker.clone(),
+        )
+    }
+
+    #[tokio::test]
+    /** This test tests the lookup function, the idea is as follows:
+     * - We'll start two discovery servers (`a` & `b`) that will connect between each other
+     * - We'll insert random nodes to the server `a`` to fill its table
+     * - We'll forcedly run `lookup` and validate that a `find_node` request was sent
+     *   by checking that new nodes have been inserted to the table
+     *
+     * This test for only one lookup, and not recursively.
+     */
+    async fn discovery_server_lookup() -> Result<(), DiscoveryError> {
+        let mut server_a = start_discovery_server(8000, true).await?;
+        let mut server_b = start_discovery_server(8001, true).await?;
+
+        fill_table_with_random_nodes(server_a.table.clone()).await;
+
+        // because the table is filled, before making the connection, remove a node from the `b` bucket
+        // otherwise it won't be added.
+        let b_bucket = bucket_number(server_a.local_node.node_id, server_b.local_node.node_id);
+        let node_id_to_remove = server_a.table.lock().await.buckets()[b_bucket].peers[0]
+            .node
+            .node_id;
+        server_a
+            .table
+            .lock()
+            .await
+            .replace_peer_on_custom_bucket(node_id_to_remove, b_bucket);
+
+        connect_servers(&mut server_a, &mut server_b).await?;
+
+        // now we are going to run a lookup with us as the target
+        let closets_peers_to_b_from_a = server_a
+            .table
+            .lock()
+            .await
+            .get_closest_nodes(server_b.local_node.node_id);
+        let nodes_to_ask = server_b
+            .table
+            .lock()
+            .await
+            .get_closest_nodes(server_b.local_node.node_id);
+
+        let lookup_handler = lookup_handler_from_server(server_b.clone());
+        println!("NODES TO ASK {:?}", nodes_to_ask);
+        lookup_handler
+            .lookup(
+                server_b.local_node.node_id,
+                &mut HashSet::default(),
+                &nodes_to_ask,
+            )
+            .await;
+
+        // find_node sent, allow some time for `a` to respond
+        sleep(Duration::from_secs(2)).await;
+
+        // now all peers should've been inserted
+        for peer in closets_peers_to_b_from_a {
+            let table = server_b.table.lock().await;
+            assert!(table.get_by_node_id(peer.node_id).is_some());
+        }
+        Ok(())
+    }
+
+    #[tokio::test]
+    /** This test tests the lookup function, the idea is as follows:
+     * - We'll start four discovery servers (`a`, `b`, `c` & `d`)
+     * - `a` will be connected to `b`, `b` will be connected to `c` and `c` will be connected to `d`.
+     * - The server `d` will have its table filled with mock nodes
+     * - We'll run a recursive lookup on server `a` and we expect to end with `b`, `c`, `d` and its mock nodes
+     */
+    async fn discovery_server_recursive_lookup() -> Result<(), DiscoveryError> {
+        let mut server_a = start_discovery_server(8002, true).await?;
+        let mut server_b = start_discovery_server(8003, true).await?;
+        let mut server_c = start_discovery_server(8004, true).await?;
+        let mut server_d = start_discovery_server(8005, true).await?;
+
+        connect_servers(&mut server_a, &mut server_b).await?;
+        connect_servers(&mut server_b, &mut server_c).await?;
+        connect_servers(&mut server_c, &mut server_d).await?;
+
+        // now we fill the server_d table with 3 random nodes
+        // the reason we don't put more is because this nodes won't respond (as they don't are not real servers)
+        // and so we will have to wait for the timeout on each node, which will only slow down the test
+        for _ in 0..3 {
+            insert_random_node_on_custom_bucket(server_d.table.clone(), 0).await;
+        }
+
+        let mut expected_peers = vec![];
+        expected_peers.extend(
+            server_b
+                .table
+                .lock()
+                .await
+                .get_closest_nodes(server_a.local_node.node_id),
+        );
+        expected_peers.extend(
+            server_c
+                .table
+                .lock()
+                .await
+                .get_closest_nodes(server_a.local_node.node_id),
+        );
+        expected_peers.extend(
+            server_d
+                .table
+                .lock()
+                .await
+                .get_closest_nodes(server_a.local_node.node_id),
+        );
+
+        let lookup_handler = lookup_handler_from_server(server_a.clone());
+
+        // we'll run a recursive lookup closest to the server itself
+        lookup_handler
+            .recursive_lookup(server_a.local_node.node_id)
+            .await;
+
+        for peer in expected_peers {
+            assert!(server_a
+                .table
+                .lock()
+                .await
+                .get_by_node_id(peer.node_id)
+                .is_some());
+        }
+
+        Ok(())
+    }
+}
