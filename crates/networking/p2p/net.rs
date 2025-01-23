@@ -40,18 +40,15 @@ pub fn peer_table(signer: SigningKey) -> Arc<Mutex<KademliaTable>> {
     Arc::new(Mutex::new(KademliaTable::new(local_node_id)))
 }
 
-#[allow(clippy::too_many_arguments)]
 pub async fn start_network(
     local_node: Node,
     tracker: TaskTracker,
-    udp_addr: SocketAddr,
-    tcp_addr: SocketAddr,
     bootnodes: Vec<BootNode>,
     signer: SigningKey,
     peer_table: Arc<Mutex<KademliaTable>>,
     storage: Store,
 ) {
-    info!("Starting discovery service at {udp_addr}");
+    let tcp_addr = SocketAddr::new(local_node.ip, local_node.tcp_port);
     info!("Listening for requests at {tcp_addr}");
     let (channel_broadcast_send_end, _) = tokio::sync::broadcast::channel::<(
         tokio::task::Id,
@@ -60,12 +57,7 @@ pub async fn start_network(
 
     // TODO handle errors here
     let discovery = Discv4::try_new(
-        Node {
-            ip: udp_addr.ip(),
-            udp_port: udp_addr.port(),
-            tcp_port: tcp_addr.port(),
-            node_id: H512::default(),
-        },
+        local_node,
         signer.clone(),
         storage.clone(),
         peer_table.clone(),
@@ -74,6 +66,7 @@ pub async fn start_network(
     )
     .await
     .unwrap();
+    info!("Starting discovery service at {}", discovery.addr());
     discovery.start(bootnodes).await.unwrap();
 
     tracker.spawn(serve_p2p_requests(

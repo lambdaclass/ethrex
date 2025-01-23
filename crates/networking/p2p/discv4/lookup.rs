@@ -62,7 +62,16 @@ impl Disv4LookupHandler {
         }
     }
 
-    pub async fn start(&self, initial_interval_wait_seconds: u64) {
+    pub fn start(&self, initial_interval_wait_seconds: u64) {
+        self.tracker.spawn({
+            let self_clone = self.clone();
+            async move {
+                self_clone.start_task(initial_interval_wait_seconds).await;
+            }
+        });
+    }
+
+    async fn start_task(&self, initial_interval_wait_seconds: u64) {
         let mut interval = tokio::time::interval(Duration::from_secs(self.interval_minutes));
         tokio::time::sleep(Duration::from_secs(initial_interval_wait_seconds)).await;
 

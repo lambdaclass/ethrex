@@ -267,8 +267,6 @@ async fn main() {
             let networking = ethrex_net::start_network(
                 local_p2p_node,
                 tracker.clone(),
-                udp_socket_addr,
-                tcp_socket_addr,
                 bootnodes,
                 signer,
                 peer_table.clone(),

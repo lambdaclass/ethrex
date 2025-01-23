@@ -1,3 +1,4 @@
+use super::helpers::time_now_unix;
 use crate::types::{Endpoint, Node, NodeRecord};
 use bytes::BufMut;
 use ethrex_core::{H256, H512, H520};
@@ -9,8 +10,6 @@ use ethrex_rlp::{
 };
 use k256::ecdsa::{RecoveryId, Signature, SigningKey, VerifyingKey};
 use sha3::{Digest, Keccak256};
-
-use super::helpers::time_now_unix;
 
 #[derive(Debug, PartialEq)]
 pub enum PacketDecodeErr {
@@ -66,7 +65,7 @@ impl Packet {
         let node_id = H512::from_slice(&encoded.as_bytes()[1..]);
         let signature = H520::from_slice(signature_bytes);
         let message = Message::decode_with_type(packet_type, &encoded_msg[1..])
-            .map_err(|e| PacketDecodeErr::RLPDecodeError(e))?;
+            .map_err(PacketDecodeErr::RLPDecodeError)?;
 
         Ok(Self {
             hash,
