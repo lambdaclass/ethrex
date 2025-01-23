@@ -659,16 +659,17 @@ impl VM {
         report: &TransactionReport,
     ) -> Result<u64, VMError> {
         if self.env.spec_id >= SpecId::PRAGUE {
-            // tokens_in_calldata = nonzero_bytes_in_calldata * 4 + zero_bytes_in_calldata
-            // tx_calldata = nonzero_bytes_in_calldata * 16 + zero_bytes_in_calldata * 4
-            // this is actually tokens_in_calldata * STANDARD_TOKEN_COST
-            // see it in https://eips.ethereum.org/EIPS/eip-7623
-
+            // If the transaction is a CREATE transaction, the calldata is emptied and the bytecode is assigned.
             let calldata = if self.is_create() {
                 &initial_call_frame.bytecode
             } else {
                 &initial_call_frame.calldata
             };
+
+            // tokens_in_calldata = nonzero_bytes_in_calldata * 4 + zero_bytes_in_calldata
+            // tx_calldata = nonzero_bytes_in_calldata * 16 + zero_bytes_in_calldata * 4
+            // this is actually tokens_in_calldata * STANDARD_TOKEN_COST
+            // see it in https://eips.ethereum.org/EIPS/eip-7623
             let tokens_in_calldata: u64 = gas_cost::tx_calldata(calldata, self.env.spec_id)
                 .map_err(VMError::OutOfGas)?
                 .checked_div(STANDARD_TOKEN_COST)
