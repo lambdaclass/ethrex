@@ -1,9 +1,10 @@
 use crate::{
     call_frame::CallFrame,
+    constants::SET_CODE_DELEGATION_BYTES,
     errors::{InternalError, OpcodeSuccess, VMError},
     gas_cost::{self},
     memory::{self, calculate_memory_size},
-    vm::{word_to_address, VM},
+    vm::{has_delegation, word_to_address, VM},
 };
 use ethrex_core::U256;
 use keccak_hash::keccak;
@@ -279,11 +280,16 @@ impl VM {
 
         let (account_info, address_was_cold) = self.access_account(address);
 
+        // https://eips.ethereum.org/EIPS/eip-7702#delegation-designation
+        let is_delegation = has_delegation(&account_info)?;
+
         self.increase_consumed_gas(current_call_frame, gas_cost::extcodesize(address_was_cold)?)?;
 
-        current_call_frame
-            .stack
-            .push(account_info.bytecode.len().into())?;
+        current_call_frame.stack.push(if is_delegation {
+            SET_CODE_DELEGATION_BYTES[..2].len().into()
+        } else {
+            account_info.bytecode.len().into()
+        })?;
 
         Ok(OpcodeSuccess::Continue)
     }
@@ -306,6 +312,9 @@ impl VM {
 
         let new_memory_size = calculate_memory_size(dest_offset, size)?;
 
+        // https://eips.ethereum.org/EIPS/eip-7702#delegation-designation
+        let is_delegation = has_delegation(&account_info)?;
+
         self.increase_consumed_gas(
             current_call_frame,
             gas_cost::extcodecopy(
@@ -320,18 +329,18 @@ impl VM {
             return Ok(OpcodeSuccess::Continue);
         }
 
+        let bytecode = if is_delegation {
+            SET_CODE_DELEGATION_BYTES[..2].into()
+        } else {
+            account_info.bytecode
+        };
+
         let mut data = vec![0u8; size];
-        if offset < account_info.bytecode.len().into() {
+        if offset < bytecode.len().into() {
             let offset: usize = offset
                 .try_into()
                 .map_err(|_| VMError::Internal(InternalError::ConversionError))?;
-            for (i, byte) in account_info
-                .bytecode
-                .iter()
-                .skip(offset)
-                .take(size)
-                .enumerate()
-            {
+            for (i, byte) in bytecode.iter().skip(offset).take(size).enumerate() {
                 if let Some(data_byte) = data.get_mut(i) {
                     *data_byte = *byte;
                 }
@@ -424,16 +433,26 @@ impl VM {
 
         let (account_info, address_was_cold) = self.access_account(address);
 
+        // https://eips.ethereum.org/EIPS/eip-7702#delegation-designation
+        let is_delegation = has_delegation(&account_info)?;
+
         self.increase_consumed_gas(current_call_frame, gas_cost::extcodehash(address_was_cold)?)?;
 
-        // An account is considered empty when it has no code and zero nonce and zero balance. [EIP-161]
-        if account_info.is_empty() {
-            current_call_frame.stack.push(U256::zero())?;
-            return Ok(OpcodeSuccess::Continue);
+        if is_delegation {
+            let hash =
+                U256::from_big_endian(keccak(&SET_CODE_DELEGATION_BYTES[..2]).as_fixed_bytes());
+            current_call_frame.stack.push(hash)?;
+        } else {
+            // An account is considered empty when it has no code and zero nonce and zero balance. [EIP-161]
+            if account_info.is_empty() {
+                current_call_frame.stack.push(U256::zero())?;
+                return Ok(OpcodeSuccess::Continue);
+            }
+
+            let hash = U256::from_big_endian(keccak(account_info.bytecode).as_fixed_bytes());
+            current_call_frame.stack.push(hash)?;
         }
 
-        let hash = U256::from_big_endian(keccak(account_info.bytecode).as_fixed_bytes());
-        current_call_frame.stack.push(hash)?;
         Ok(OpcodeSuccess::Continue)
     }
 }
