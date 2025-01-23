@@ -24,6 +24,8 @@ pub(crate) enum Command {
         l2: bool,
         #[arg(long = "l1", required = false)]
         l1: bool,
+        #[arg(long = "wei", required = false, default_value_t = false)]
+        wei: bool,
     },
     #[clap(about = "Deposit funds into some wallet.")]
     Deposit {
@@ -265,17 +267,24 @@ impl Command {
                 token_address,
                 l2,
                 l1,
+                wei,
             } => {
                 if token_address.is_some() {
                     todo!("Handle ERC20 balances")
                 }
                 if !l1 || l2 {
                     let account_balance = rollup_client.get_balance(from).await?;
-                    println!("[L2] Account balance: {account_balance}");
+                    println!(
+                        "[L2] Account balance: {}",
+                        balance_in_wei(wei, account_balance)
+                    );
                 }
                 if l1 {
                     let account_balance = eth_client.get_balance(from).await?;
-                    println!("[L1] Account balance: {account_balance}");
+                    println!(
+                        "[L1] Account balance: {}",
+                        balance_in_wei(wei, account_balance)
+                    );
                 }
             }
             Command::Deposit {
@@ -604,4 +613,66 @@ pub async fn wait_for_transaction_receipt(client: &EthClient, tx_hash: H256) -> 
     }
     println!("Transaction confirmed");
     Ok(())
+}
+
+pub fn balance_in_wei(wei: bool, balance: U256) -> String {
+    if wei {
+        format!("{balance}")
+    } else {
+        let mut balance = format!("{balance}");
+        let len = balance.len();
+
+        balance = match len {
+            18 => {
+                let mut front = "0.".to_owned();
+                front.push_str(&balance);
+                front
+            }
+            0..=17 => {
+                let mut front = "0.".to_owned();
+                let zeros = "0".repeat(18 - len);
+                front.push_str(&zeros);
+                front.push_str(&balance);
+                front
+            }
+            19.. => {
+                balance.insert(len - 18, '.');
+                balance
+            }
+        };
+        balance
+    }
+}
+
+#[test]
+fn test_balance_in_ether() {
+    // test more than 1 ether
+    assert_eq!(
+        "999999999.999003869993631450",
+        balance_in_wei(
+            false,
+            U256::from_dec_str("999999999999003869993631450").unwrap()
+        )
+    );
+
+    // test 0.5
+    assert_eq!(
+        "0.509003869993631450",
+        balance_in_wei(
+            false,
+            U256::from_dec_str("000000000509003869993631450").unwrap()
+        )
+    );
+
+    // test 0.005
+    assert_eq!(
+        "0.005090038699936314",
+        balance_in_wei(
+            false,
+            U256::from_dec_str("000000000005090038699936314").unwrap()
+        )
+    );
+
+    // test 0.0
+    assert_eq!("0.000000000000000000", balance_in_wei(false, U256::zero()));
 }

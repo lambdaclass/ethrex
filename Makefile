@@ -114,6 +114,7 @@ setup-hive: hive ## 🐝 Set up Hive testing framework
 	fi
 
 TEST_PATTERN ?= /
+SIM_LOG_LEVEL ?= 4
 
 # Runs a hive testing suite
 # The endpoints tested may be limited by supplying a test pattern in the form "/endpoint_1|enpoint_2|..|enpoint_n"
@@ -126,7 +127,7 @@ run-hive-all: build-image setup-hive ## 🧪 Run all Hive testing suites
 	cd hive && ./hive --client ethrex --sim ".*" --sim.parallelism 4
 
 run-hive-debug: build-image setup-hive ## 🐞 Run Hive testing suite in debug mode
-	cd hive && ./hive --sim $(SIMULATION) --client ethrex --sim.limit "$(TEST_PATTERN)" --docker.output
+	cd hive && ./hive --sim $(SIMULATION) --client ethrex --sim.loglevel $(SIM_LOG_LEVEL) --sim.limit "$(TEST_PATTERN)" --docker.output
 
 clean-hive-logs: ## 🧹 Clean Hive logs
 	rm -rf ./hive/workspace/logs
@@ -196,3 +197,10 @@ load-node: install-cli ## 🚧 Runs a load-test. Run make start-node-with-flameg
 
 rm-test-db:  ## 🛑 Removes the DB used by the ethrex client used for testing
 	sudo cargo run --release --bin ethrex -- removedb --datadir test_ethrex
+
+flamegraph:
+	sudo -E CARGO_PROFILE_RELEASE_DEBUG=true cargo flamegraph --bin ethrex --features dev  --  --network test_data/genesis-l2.json --http.port 1729 >/dev/null &
+	bash scripts/flamegraph.sh
+
+test-load:
+	ethrex_l2 test load --path ./test_data/private_keys.txt -i 1000 -v  --value 10000000 --to 0xFCbaC0713ACf16708aB6BC977227041FA1BC618D

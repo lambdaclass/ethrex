@@ -1,11 +1,13 @@
 use bytes::{BufMut, Bytes};
-use ethrex_core::H512;
+use ethrex_core::{H264, H512};
 use ethrex_rlp::{
     decode::RLPDecode,
     encode::RLPEncode,
     error::RLPDecodeError,
     structs::{self, Decoder, Encoder},
 };
+use k256::ecdsa::SigningKey;
+use sha3::{Digest, Keccak256};
 use std::net::{IpAddr, SocketAddr};
 
 const MAX_NODE_RECORD_ENCODED_SIZE: usize = 300;
@@ -91,12 +93,108 @@ impl Node {
 }
 
 /// Reference: [ENR records](https://github.com/ethereum/devp2p/blob/master/enr.md)
-#[derive(Debug, PartialEq, Eq, Default)]
+#[derive(Debug, PartialEq, Clone, Eq, Default)]
 pub struct NodeRecord {
     pub signature: H512,
     pub seq: u64,
-    pub id: String,
+    // holds optional values in (key, value) format
+    // value represents the rlp encoded bytes
     pub pairs: Vec<(Bytes, Bytes)>,
+}
+
+#[derive(Debug, Default, PartialEq)]
+pub struct NodeRecordDecodedPairs {
+    pub id: Option<String>,
+    pub ip: Option<u32>,
+    // the record structure reference says that tcp_port and udp_ports are big-endian integers
+    // but they are actually encoded as 2 bytes, see geth for example: https://github.com/ethereum/go-ethereum/blob/f544fc3b4659aeca24a6de83f820dd61ea9b39db/p2p/enr/entries.go#L60-L78
+    // I think the confusion comes from the fact that geth decodes the bytes and then builds an IPV4/6 big-integer structure.
+    pub tcp_port: Option<u16>,
+    pub udp_port: Option<u16>,
+    pub secp256k1: Option<H264>,
+    // TODO implement ipv6 addresses
+}
+
+impl NodeRecord {
+    pub fn decode_pairs(&self) -> NodeRecordDecodedPairs {
+        let mut decoded_pairs = NodeRecordDecodedPairs::default();
+        for (key, value) in &self.pairs {
+            let Ok(key) = String::from_utf8(key.to_vec()) else {
+                continue;
+            };
+            let value = value.to_vec();
+            match key.as_str() {
+                "id" => decoded_pairs.id = String::decode(&value).ok(),
+                "ip" => decoded_pairs.ip = u32::decode(&value).ok(),
+                "tcp" => decoded_pairs.tcp_port = u16::decode(&value).ok(),
+                "udp" => decoded_pairs.udp_port = u16::decode(&value).ok(),
+                "secp256k1" => {
+                    let Ok(bytes) = Bytes::decode(&value) else {
+                        continue;
+                    };
+                    if bytes.len() < 33 {
+                        continue;
+                    }
+                    decoded_pairs.secp256k1 = Some(H264::from_slice(&bytes))
+                }
+                _ => {}
+            }
+        }
+
+        decoded_pairs
+    }
+
+    pub fn from_node(node: Node, seq: u64, signer: &SigningKey) -> Result<Self, String> {
+        let mut record = NodeRecord {
+            seq,
+            ..Default::default()
+        };
+        record
+            .pairs
+            .push(("id".into(), "v4".encode_to_vec().into()));
+        record
+            .pairs
+            .push(("ip".into(), node.ip.encode_to_vec().into()));
+        record.pairs.push((
+            "secp256k1".into(),
+            signer
+                .verifying_key()
+                .to_encoded_point(true)
+                .as_bytes()
+                .encode_to_vec()
+                .into(),
+        ));
+        record
+            .pairs
+            .push(("tcp".into(), node.tcp_port.encode_to_vec().into()));
+        record
+            .pairs
+            .push(("udp".into(), node.udp_port.encode_to_vec().into()));
+
+        record.signature = record.sign_record(signer)?;
+
+        Ok(record)
+    }
+
+    fn sign_record(&mut self, signer: &SigningKey) -> Result<H512, String> {
+        let digest = &self.get_signature_digest();
+        let (signature, _recovery_id) = signer
+            .sign_prehash_recoverable(digest)
+            .map_err(|err| format!("Could not sign record: {err}"))?;
+        let signature_bytes = signature.to_bytes().to_vec();
+
+        Ok(H512::from_slice(&signature_bytes))
+    }
+
+    pub fn get_signature_digest(&self) -> Vec<u8> {
+        let mut rlp = vec![];
+        structs::Encoder::new(&mut rlp)
+            .encode_field(&self.seq)
+            .encode_key_value_list::<Bytes>(&self.pairs)
+            .finish();
+        let digest = Keccak256::digest(&rlp);
+        digest.to_vec()
+    }
 }
 
 impl RLPDecode for NodeRecord {
@@ -111,11 +209,10 @@ impl RLPDecode for NodeRecord {
 
         // all fields in pairs are optional except for id
         let id_pair = pairs.iter().find(|(k, _v)| k.eq("id".as_bytes()));
-        if let Some((_key, id)) = id_pair {
+        if id_pair.is_some() {
             let node_record = NodeRecord {
                 signature,
                 seq,
-                id: String::decode(id).unwrap(),
                 pairs,
             };
             let remaining = decoder.finish()?;
