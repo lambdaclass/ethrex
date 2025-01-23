@@ -51,7 +51,7 @@ use tokio::{
 };
 use tokio_stream::StreamExt;
 use tokio_util::codec::Framed;
-use tracing::{debug, error};
+use tracing::{debug, error, info};
 const CAP_P2P: (Capability, u8) = (Capability::P2p, 5);
 const CAP_ETH: (Capability, u8) = (Capability::Eth, 68);
 const CAP_SNAP: (Capability, u8) = (Capability::Snap, 1);
@@ -354,7 +354,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
         let peer_supports_eth = self.capabilities.contains(&CAP_ETH);
         match message {
             Message::Disconnect(msg_data) => {
-                debug!("Received Disconnect: {}", msg_data.reason());
+                info!("Received Disconnect: {}", msg_data.reason());
                 // Returning a Disconnect error to be handled later at the call stack
                 return Err(RLPxError::Disconnect());
             }
