@@ -205,7 +205,7 @@ impl RLPDecode for NodeRecord {
         let decoder = Decoder::new(rlp)?;
         let (signature, decoder) = decoder.decode_field("signature")?;
         let (seq, decoder) = decoder.decode_field("seq")?;
-        let (pairs, decoder) = decode_node_record_optional_fields(vec![], decoder);
+        let (pairs, decoder) = decode_node_record_optional_fields(vec![], decoder)?;
 
         // all fields in pairs are optional except for id
         let id_pair = pairs.iter().find(|(k, _v)| k.eq("id".as_bytes()));
@@ -232,14 +232,14 @@ impl RLPDecode for NodeRecord {
 fn decode_node_record_optional_fields(
     mut pairs: Vec<(Bytes, Bytes)>,
     decoder: Decoder,
-) -> (Vec<(Bytes, Bytes)>, Decoder) {
+) -> Result<(Vec<(Bytes, Bytes)>, Decoder), RLPDecodeError> {
     let (key, decoder): (Option<Bytes>, Decoder) = decoder.decode_optional_field();
     if let Some(k) = key {
-        let (value, decoder): (Vec<u8>, Decoder) = decoder.get_encoded_item().unwrap();
+        let (value, decoder): (Vec<u8>, Decoder) = decoder.get_encoded_item()?;
         pairs.push((k, Bytes::from(value)));
         decode_node_record_optional_fields(pairs, decoder)
     } else {
-        (pairs, decoder)
+        Ok((pairs, decoder))
     }
 }
 
