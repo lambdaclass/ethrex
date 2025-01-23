@@ -319,7 +319,6 @@ mod tests {
             .get_closest_nodes(server_b.local_node.node_id);
 
         let lookup_handler = lookup_handler_from_server(server_b.clone());
-        println!("NODES TO ASK {:?}", nodes_to_ask);
         lookup_handler
             .lookup(
                 server_b.local_node.node_id,

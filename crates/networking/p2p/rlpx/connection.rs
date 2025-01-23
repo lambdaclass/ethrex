@@ -606,7 +606,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
         if msg_size > P2P_MAX_MESSAGE_SIZE {
             return Err(RLPxError::InvalidMessageLength());
         }
-        buf.resize(msg_size, 0);
+        buf.resize(msg_size + 2, 0);
 
         // Read the rest of the message
         self.framed

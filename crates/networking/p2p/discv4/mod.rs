@@ -546,6 +546,12 @@ impl Discv4 {
         node: Node,
         mut table_lock: MutexGuard<'a, KademliaTable>,
     ) -> Result<(), DiscoveryError> {
+        // sanity check to make sure we are not storing ourselves
+        // a case that may happen in a neighbor message for example
+        if node.node_id == self.local_node.node_id {
+            return Ok(());
+        }
+
         if let (Some(peer), true) = table_lock.insert_node(node) {
             self.ping(peer.node, table_lock).await?;
         };
