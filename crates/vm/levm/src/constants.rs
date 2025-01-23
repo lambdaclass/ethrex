@@ -49,8 +49,12 @@ pub const TARGET_BLOB_GAS_PER_BLOCK: U256 = U256([393216, 0, 0, 0]); // TARGET_B
 pub const MIN_BASE_FEE_PER_BLOB_GAS: U256 = U256::one();
 pub const BLOB_BASE_FEE_UPDATE_FRACTION: U256 = U256([3338477, 0, 0, 0]);
 pub const BLOB_BASE_FEE_UPDATE_FRACTION_PRAGUE: U256 = U256([5007716, 0, 0, 0]); // Defined in [EIP-7691](https://eips.ethereum.org/EIPS/eip-7691)
+
+// WARNING: Do _not_ use the MAX_BLOB_COUNT_* family of constants as
+// is. Use the `max_blobs_per_block` function instead
 pub const MAX_BLOB_COUNT: usize = 6;
 pub const MAX_BLOB_COUNT_ELECTRA: usize = 9;
+
 pub const VALID_BLOB_PREFIXES: [u8; 2] = [0x01, 0x02];
 
 // Block constants
