@@ -1395,8 +1395,7 @@ impl VM {
 
             // 3. authority = ecrecover(keccak(MAGIC || rlp([chain_id, address, nonce])), y_parity, r, s)
             //      s value must be less than or equal to secp256k1n/2, as specified in EIP-2.
-            let Some(authority_address) = eip7702_recover_address(&auth_tuple)? {
-            } else {
+            let Some(authority_address) = eip7702_recover_address(&auth_tuple)? else {
                 continue;
             };
 
