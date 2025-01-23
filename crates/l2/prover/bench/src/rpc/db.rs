@@ -8,6 +8,7 @@ use crate::rpc;
 use ethrex_core::types::Block;
 use ethrex_core::types::TxKind;
 use ethrex_core::Address;
+use ethrex_core::H256;
 use ethrex_core::U256;
 use ethrex_vm::execution_db::{ExecutionDB, ToExecDB};
 use ethrex_vm::{spec_id, tx_env, EvmError};
@@ -29,7 +30,7 @@ pub struct RpcDB {
 }
 
 impl RpcDB {
-    pub async fn with_callers(
+    pub async fn with_cache(
         rpc_url: &str,
         block_number: usize,
         block: &Block,
@@ -40,21 +41,26 @@ impl RpcDB {
             accounts: HashMap::new(),
         };
 
-        db.cache_callers(block).await?;
+        db.cache_accounts(block).await?;
 
         Ok(db)
     }
 
-    async fn cache_callers(&mut self, block: &Block) -> Result<(), String> {
+    async fn cache_accounts(&mut self, block: &Block) -> Result<(), String> {
         let txs = &block.body.transactions;
+
         let callers = txs.iter().map(|tx| tx.sender());
         let to = txs.iter().filter_map(|tx| match tx.to() {
             TxKind::Call(to) => Some(to),
             TxKind::Create => None,
         });
+        let accessed_storage: Vec<_> = txs.iter().flat_map(|tx| tx.access_list()).collect();
 
-        let accounts = callers.chain(to).collect::<Vec<_>>();
-
+        let accounts: Vec<_> = callers
+            .chain(to)
+            .map(|address| (address, Vec::new()))
+            .chain(accessed_storage)
+            .collect();
         self.accounts = self.fetch_accounts(&accounts).await?;
 
         Ok(())
@@ -62,34 +68,39 @@ impl RpcDB {
 
     async fn fetch_accounts(
         &self,
-        addresses: &[Address],
+        accounts: &[(Address, Vec<H256>)],
     ) -> Result<HashMap<Address, Account>, String> {
-        let mut accounts = HashMap::new();
         let rate_limiter = RateLimiter::new(std::time::Duration::from_secs(1));
+        let mut fetched = HashMap::new();
 
         let mut counter = 0;
-        for chunk in addresses.chunks(RPC_RATE_LIMIT) {
-            let futures = chunk.iter().map(|address| async {
+        for chunk in accounts.chunks(RPC_RATE_LIMIT) {
+            let futures = chunk.iter().map(|(address, storage_keys)| async move {
                 Ok((
                     *address,
-                    rpc::asynch::get_account(&self.rpc_url, self.block_number, address, &[])
-                        .await?,
+                    rpc::asynch::get_account(
+                        &self.rpc_url,
+                        self.block_number,
+                        address,
+                        &storage_keys,
+                    )
+                    .await?,
                 ))
             });
 
-            let fetched = rate_limiter
+            let fetched_chunk = rate_limiter
                 .throttle(|| async { join_all(futures).await })
                 .await
                 .into_iter()
                 .collect::<Result<HashMap<_, _>, String>>()?;
 
-            accounts.extend(fetched);
+            fetched.extend(fetched_chunk);
 
             counter += chunk.len();
-            println!("fetched {} accounts of {}", counter, addresses.len());
+            println!("fetched {} accounts of {}", counter, accounts.len());
         }
 
-        Ok(accounts)
+        Ok(fetched)
     }
 }
 
@@ -121,24 +132,28 @@ impl DatabaseRef for RpcDB {
         Ok(RevmBytecode::default()) // code is stored in account info
     }
     fn storage_ref(&self, address: RevmAddress, index: RevmU256) -> Result<RevmU256, Self::Error> {
-        println!("retrieving storage value for address {address} and key {index}");
+        let address = Address::from(address.0.as_ref());
         let index = U256::from_big_endian(&index.to_be_bytes_vec());
-        rpc::blocking::get_account(
-            &self.rpc_url,
-            self.block_number,
-            &Address::from(address.0.as_ref()),
-            &[index],
-        )
-        .and_then(|account| {
-            account
-                .storage
-                .get(&index)
-                .ok_or(format!(
-                    "storage value not found for address {address} and key {index}"
-                ))
-                .cloned()
-        })
-        .map(|value| RevmU256::from_limbs(value.0))
+
+        let value = match self
+            .accounts
+            .get(&address)
+            .and_then(|account| account.storage.get(&index))
+        {
+            Some(value) => value.clone(),
+            None => {
+                println!("retrieving storage value for address {address} and key {index}");
+                rpc::blocking::get_account(&self.rpc_url, self.block_number, &address, &[index])?
+                    .storage
+                    .get(&index)
+                    .ok_or(format!(
+                        "storage value not found for address {address} and key {index}"
+                    ))
+                    .cloned()?
+            }
+        };
+
+        Ok(RevmU256::from_limbs(value.0))
     }
     fn block_hash_ref(&self, number: u64) -> Result<RevmB256, Self::Error> {
         println!("retrieving block hash for block number {number}");

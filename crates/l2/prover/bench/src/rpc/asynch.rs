@@ -3,7 +3,7 @@ use crate::rpc::*;
 use bytes::Bytes;
 use ethrex_core::{
     types::{AccountState, Block, EMPTY_KECCACK_HASH},
-    Address, U256,
+    Address, H256, U256,
 };
 use ethrex_rlp::decode::RLPDecode;
 
@@ -45,7 +45,7 @@ pub async fn get_account(
     rpc_url: &str,
     block_number: usize,
     address: &Address,
-    storage_keys: &[U256],
+    storage_keys: &[H256],
 ) -> Result<Account, String> {
     let client = reqwest::Client::new();
 

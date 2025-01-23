@@ -38,7 +38,7 @@ async fn main() {
         .header;
 
     println!("populating rpc db cache");
-    let rpc_db = RpcDB::with_callers(&rpc_url, block_number - 1, &block)
+    let rpc_db = RpcDB::with_cache(&rpc_url, block_number - 1, &block)
         .await
         .expect("failed to create rpc db");
 
