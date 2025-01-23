@@ -613,6 +613,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
         if let Some(message) = self.framed.next().await {
             message
         } else {
+            info!("Disconnect signal emitted from receive");
             Err(RLPxError::Disconnect())
         }
     }
