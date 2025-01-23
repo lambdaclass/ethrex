@@ -67,9 +67,9 @@ pub struct VM {
     pub authorization_list: Option<AuthorizationList>,
 }
 
-type AccessList = Vec<(Address, Vec<H256>)>;
+pub type AccessList = Vec<(Address, Vec<H256>)>;
 
-type AuthorizationList = Vec<AuthorizationTuple>;
+pub type AuthorizationList = Vec<AuthorizationTuple>;
 // TODO: We have to implement this in ethrex_core
 #[derive(Debug, Clone, Default, Copy)]
 pub struct AuthorizationTuple {
@@ -545,84 +545,16 @@ impl VM {
         matches!(self.tx_kind, TxKind::Create)
     }
 
-    fn get_intrinsic_gas(&self, initial_call_frame: &CallFrame) -> Result<u64, VMError> {
-        // Intrinsic Gas = Calldata cost + Create cost + Base cost + Access list cost
-        let mut intrinsic_gas: u64 = 0;
-
-        // Calldata Cost
-        // 4 gas for each zero byte in the transaction data 16 gas for each non-zero byte in the transaction.
-        let calldata_cost = gas_cost::tx_calldata(&initial_call_frame.calldata, self.env.spec_id)
-            .map_err(VMError::OutOfGas)?;
-
-        intrinsic_gas = intrinsic_gas
-            .checked_add(calldata_cost)
-            .ok_or(OutOfGasError::ConsumedGasOverflow)?;
-
-        // Base Cost
-        intrinsic_gas = intrinsic_gas
-            .checked_add(TX_BASE_COST)
-            .ok_or(OutOfGasError::ConsumedGasOverflow)?;
-
-        // Create Cost
-        if self.is_create() {
-            intrinsic_gas = intrinsic_gas
-                .checked_add(CREATE_BASE_COST)
-                .ok_or(OutOfGasError::ConsumedGasOverflow)?;
-
-            let number_of_words = initial_call_frame.calldata.len().div_ceil(WORD_SIZE);
-            let double_number_of_words: u64 = number_of_words
-                .checked_mul(2)
-                .ok_or(OutOfGasError::ConsumedGasOverflow)?
-                .try_into()
-                .map_err(|_| VMError::Internal(InternalError::ConversionError))?;
-
-            intrinsic_gas = intrinsic_gas
-                .checked_add(double_number_of_words)
-                .ok_or(OutOfGasError::ConsumedGasOverflow)?;
-        }
-
-        // Access List Cost
-        let mut access_lists_cost: u64 = 0;
-        for (_, keys) in self.access_list.clone() {
-            access_lists_cost = access_lists_cost
-                .checked_add(ACCESS_LIST_ADDRESS_COST)
-                .ok_or(OutOfGasError::ConsumedGasOverflow)?;
-            for _ in keys {
-                access_lists_cost = access_lists_cost
-                    .checked_add(ACCESS_LIST_STORAGE_KEY_COST)
-                    .ok_or(OutOfGasError::ConsumedGasOverflow)?;
-            }
-        }
-
-        intrinsic_gas = intrinsic_gas
-            .checked_add(access_lists_cost)
-            .ok_or(OutOfGasError::ConsumedGasOverflow)?;
-
-        // Authorization List Cost
-        // `unwrap_or_default` will return an empty vec when the `authorization_list` field is None.
-        // If the vec is empty, the len will be 0, thus the authorization_list_cost is 0.
-        let amount_of_auth_tuples: u64 = self
-            .authorization_list
-            .clone()
-            .unwrap_or_default()
-            .len()
-            .try_into()
-            .map_err(|_| VMError::Internal(InternalError::ConversionError))?;
-        let authorization_list_cost = PER_EMPTY_ACCOUNT_COST
-            .checked_mul(amount_of_auth_tuples)
-            .ok_or(VMError::Internal(InternalError::GasOverflow))?;
-
-        intrinsic_gas = intrinsic_gas
-            .checked_add(authorization_list_cost)
-            .ok_or(OutOfGasError::ConsumedGasOverflow)?;
-
-        Ok(intrinsic_gas)
-    }
-
     fn add_intrinsic_gas(&mut self, initial_call_frame: &mut CallFrame) -> Result<(), VMError> {
         // Intrinsic gas is the gas consumed by the transaction before the execution of the opcodes. Section 6.2 in the Yellow Paper.
 
-        let intrinsic_gas = self.get_intrinsic_gas(initial_call_frame)?;
+        let intrinsic_gas = get_intrinsic_gas(
+            self.is_create(),
+            self.env.spec_id,
+            &self.access_list,
+            &self.authorization_list,
+            initial_call_frame,
+        )?;
 
         self.increase_consumed_gas(initial_call_frame, intrinsic_gas)
             .map_err(|_| TxValidationError::IntrinsicGasTooLow)?;
@@ -736,7 +668,13 @@ impl VM {
 
         if self.env.spec_id >= SpecId::PRAGUE {
             // check for gas limit is grater or equal than the minimum required
-            let intrinsic_gas: u64 = self.get_intrinsic_gas(initial_call_frame)?;
+            let intrinsic_gas: u64 = get_intrinsic_gas(
+                self.is_create(),
+                self.env.spec_id,
+                &self.access_list,
+                &self.authorization_list,
+                initial_call_frame,
+            )?;
 
             // calldata_cost = tokens_in_calldata * 4
             let calldata_cost: u64 =

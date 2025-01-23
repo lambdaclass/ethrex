@@ -21,6 +21,7 @@ use crate::{
         execute_precompile, is_precompile, SIZE_PRECOMPILES_CANCUN, SIZE_PRECOMPILES_PRAGUE,
         SIZE_PRECOMPILES_PRE_CANCUN,
     },
+    vm::{AccessList, AuthorizationList},
     AccountInfo, TransientStorage,
 };
 use bytes::Bytes;
@@ -103,6 +104,87 @@ pub fn calculate_create2_address(
 // ==================== Word related functions =======================
 pub fn word_to_address(word: U256) -> Address {
     Address::from_slice(&word.to_big_endian()[12..])
+}
+
+// ==================== Gas related functions =======================
+
+pub fn get_intrinsic_gas(
+    is_create: bool,
+    spec_id: SpecId,
+    access_list: &AccessList,
+    authorization_list: &Option<AuthorizationList>,
+    initial_call_frame: &CallFrame,
+) -> Result<u64, VMError> {
+    // Intrinsic Gas = Calldata cost + Create cost + Base cost + Access list cost
+    let mut intrinsic_gas: u64 = 0;
+
+    // Calldata Cost
+    // 4 gas for each zero byte in the transaction data 16 gas for each non-zero byte in the transaction.
+    let calldata_cost =
+        gas_cost::tx_calldata(&initial_call_frame.calldata, spec_id).map_err(VMError::OutOfGas)?;
+
+    intrinsic_gas = intrinsic_gas
+        .checked_add(calldata_cost)
+        .ok_or(OutOfGasError::ConsumedGasOverflow)?;
+
+    // Base Cost
+    intrinsic_gas = intrinsic_gas
+        .checked_add(TX_BASE_COST)
+        .ok_or(OutOfGasError::ConsumedGasOverflow)?;
+
+    // Create Cost
+    if is_create {
+        intrinsic_gas = intrinsic_gas
+            .checked_add(CREATE_BASE_COST)
+            .ok_or(OutOfGasError::ConsumedGasOverflow)?;
+
+        let number_of_words = initial_call_frame.calldata.len().div_ceil(WORD_SIZE);
+        let double_number_of_words: u64 = number_of_words
+            .checked_mul(2)
+            .ok_or(OutOfGasError::ConsumedGasOverflow)?
+            .try_into()
+            .map_err(|_| VMError::Internal(InternalError::ConversionError))?;
+
+        intrinsic_gas = intrinsic_gas
+            .checked_add(double_number_of_words)
+            .ok_or(OutOfGasError::ConsumedGasOverflow)?;
+    }
+
+    // Access List Cost
+    let mut access_lists_cost: u64 = 0;
+    for (_, keys) in access_list {
+        access_lists_cost = access_lists_cost
+            .checked_add(ACCESS_LIST_ADDRESS_COST)
+            .ok_or(OutOfGasError::ConsumedGasOverflow)?;
+        for _ in keys {
+            access_lists_cost = access_lists_cost
+                .checked_add(ACCESS_LIST_STORAGE_KEY_COST)
+                .ok_or(OutOfGasError::ConsumedGasOverflow)?;
+        }
+    }
+
+    intrinsic_gas = intrinsic_gas
+        .checked_add(access_lists_cost)
+        .ok_or(OutOfGasError::ConsumedGasOverflow)?;
+
+    // Authorization List Cost
+    // `unwrap_or_default` will return an empty vec when the `authorization_list` field is None.
+    // If the vec is empty, the len will be 0, thus the authorization_list_cost is 0.
+    let amount_of_auth_tuples: u64 = authorization_list
+        .clone()
+        .unwrap_or_default()
+        .len()
+        .try_into()
+        .map_err(|_| VMError::Internal(InternalError::ConversionError))?;
+    let authorization_list_cost = PER_EMPTY_ACCOUNT_COST
+        .checked_mul(amount_of_auth_tuples)
+        .ok_or(VMError::Internal(InternalError::GasOverflow))?;
+
+    intrinsic_gas = intrinsic_gas
+        .checked_add(authorization_list_cost)
+        .ok_or(OutOfGasError::ConsumedGasOverflow)?;
+
+    Ok(intrinsic_gas)
 }
 
 // ================= Blob hash related functions =====================
