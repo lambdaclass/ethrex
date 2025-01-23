@@ -741,7 +741,7 @@ impl VM {
         fake_exponential(
             MIN_BASE_FEE_PER_BLOB_GAS,
             self.env.block_excess_blob_gas.unwrap_or_default(),
-            BLOB_BASE_FEE_UPDATE_FRACTION,
+            get_blob_base_fee_update_fraction_value(self.env.spec_id),
         )
     }
 
@@ -934,7 +934,7 @@ impl VM {
             }
 
             // (14) TYPE_3_TX_BLOB_COUNT_EXCEEDED
-            if blob_hashes.len() > MAX_BLOB_COUNT {
+            if blob_hashes.len() > max_blobs_per_block(self.env.spec_id) {
                 return Err(VMError::TxValidation(
                     TxValidationError::Type3TxBlobCountExceeded,
                 ));
@@ -1683,4 +1683,30 @@ fn eip7702_recover_address(auth_tuple: &AuthorizationTuple) -> Result<Option<Add
         .try_into()
         .map_err(|_| VMError::Internal(InternalError::ConversionError))?;
     Ok(Some(Address::from_slice(&authority_address_bytes)))
+}
+
+/// After EIP-7691 the maximum number of blob hashes changes. For more
+/// information see
+/// [EIP-7691](https://eips.ethereum.org/EIPS/eip-7691#specification).
+pub const fn max_blobs_per_block(specid: SpecId) -> usize {
+    match specid {
+        SpecId::PRAGUE => MAX_BLOB_COUNT_ELECTRA,
+        SpecId::PRAGUE_EOF => MAX_BLOB_COUNT_ELECTRA,
+        _ => MAX_BLOB_COUNT,
+    }
+}
+
+/// According to EIP-7691
+/// (https://eips.ethereum.org/EIPS/eip-7691#specification):
+///
+/// "These changes imply that get_base_fee_per_blob_gas and
+/// calc_excess_blob_gas functions defined in EIP-4844 use the new
+/// values for the first block of the fork (and for all subsequent
+/// blocks)."
+pub const fn get_blob_base_fee_update_fraction_value(specid: SpecId) -> U256 {
+    match specid {
+        SpecId::PRAGUE => BLOB_BASE_FEE_UPDATE_FRACTION_PRAGUE,
+        SpecId::PRAGUE_EOF => BLOB_BASE_FEE_UPDATE_FRACTION_PRAGUE,
+        _ => BLOB_BASE_FEE_UPDATE_FRACTION,
+    }
 }
