@@ -196,7 +196,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
         .unwrap_or_else(|e| debug!("Could not send Disconnect message: ({e})."));
         if let Ok(node_id) = self.get_remote_node_id() {
             // Discard peer from kademlia table
-            debug!("{error_text}: ({error}), discarding peer {node_id}");
+            error!("{error_text}: ({error}), discarding peer {node_id}");
             table.lock().await.replace_peer(node_id);
         } else {
             debug!("{error_text}: ({error}), unknown peer")
