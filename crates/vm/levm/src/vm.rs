@@ -67,13 +67,6 @@ pub struct VM {
     pub authorization_list: Option<AuthorizationList>,
 }
 
-// Taken from cmd/ef_tests/ethrex/types.rs, didn't want to fight dependencies yet
-#[derive(Debug, PartialEq, Eq, Clone)]
-pub struct AccessListItem {
-    pub address: Address,
-    pub storage_keys: Vec<H256>,
-}
-
 type AccessList = Vec<(Address, Vec<H256>)>;
 
 type AuthorizationList = Vec<AuthorizationTuple>;
