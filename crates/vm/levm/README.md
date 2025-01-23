@@ -78,6 +78,7 @@ There are a lot of EIPs schedule to include in this upgrade but for `levm` we'll
 
 - EIP-2537: Precompile for BLS12-381 curve operations
 - EIP-7623: Increase calldata cost
+- EIP-7691: Blob throughput increase
 - EIP-7702: Set EOA account code
 
 | Task Description          | Status |
