@@ -86,7 +86,7 @@ There are a lot of EIPs schedule to include in this upgrade but for `levm` we'll
 | Implement EIP-7623        | ✅     |
 | Implement EIP-7691        | ✅️     |
 | Implement EIP-7702        | ✅️     |
-| Make Prague EF tests pass | ❌     |
+| Make Prague EF tests pass | ✅     |
 
 ### Milestone 5: Integrate `ethrex L2` <> `levm`
 
