@@ -67,21 +67,6 @@ pub struct VM {
     pub authorization_list: Option<AuthorizationList>,
 }
 
-pub fn address_to_word(address: Address) -> U256 {
-    // This unwrap can't panic, as Address are 20 bytes long and U256 use 32 bytes
-    let mut word = [0u8; 32];
-
-    for (word_byte, address_byte) in word.iter_mut().skip(12).zip(address.as_bytes().iter()) {
-        *word_byte = *address_byte;
-    }
-
-    U256::from_big_endian(&word)
-}
-
-pub fn word_to_address(word: U256) -> Address {
-    Address::from_slice(&word.to_big_endian()[12..])
-}
-
 // Taken from cmd/ef_tests/ethrex/types.rs, didn't want to fight dependencies yet
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub struct AccessListItem {

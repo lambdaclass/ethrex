@@ -3,7 +3,8 @@ use crate::{
     constants::LAST_AVAILABLE_BLOCK_LIMIT,
     errors::{InternalError, OpcodeSuccess, VMError},
     gas_cost,
-    vm::{address_to_word, VM},
+    utils::address_to_word,
+    vm::VM,
 };
 use ethrex_core::{
     types::{BLOB_BASE_FEE_UPDATE_FRACTION, MIN_BASE_FEE_PER_BLOB_GAS},
