@@ -40,7 +40,9 @@ pub fn peer_table(signer: SigningKey) -> Arc<Mutex<KademliaTable>> {
     Arc::new(Mutex::new(KademliaTable::new(local_node_id)))
 }
 
+#[allow(clippy::too_many_arguments)]
 pub async fn start_network(
+    local_node: Node,
     tracker: TaskTracker,
     udp_addr: SocketAddr,
     tcp_addr: SocketAddr,

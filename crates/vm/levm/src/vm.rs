@@ -3,7 +3,7 @@ use crate::{
     call_frame::CallFrame,
     constants::*,
     db::{
-        cache::{self, remove_account},
+        cache::{self, get_account_mut, remove_account},
         CacheDB, Database,
     },
     environment::Environment,
@@ -13,8 +13,8 @@ use crate::{
     },
     gas_cost::{
         self, fake_exponential, ACCESS_LIST_ADDRESS_COST, ACCESS_LIST_STORAGE_KEY_COST,
-        BLOB_GAS_PER_BLOB, CODE_DEPOSIT_COST, CREATE_BASE_COST, STANDARD_TOKEN_COST,
-        TOTAL_COST_FLOOR_PER_TOKEN,
+        BLOB_GAS_PER_BLOB, CODE_DEPOSIT_COST, COLD_ADDRESS_ACCESS_COST, CREATE_BASE_COST,
+        STANDARD_TOKEN_COST, TOTAL_COST_FLOOR_PER_TOKEN, WARM_ADDRESS_ACCESS_COST,
     },
     opcodes::Opcode,
     precompiles::{
@@ -28,14 +28,15 @@ use ethrex_core::{types::TxKind, Address, H256, U256};
 use ethrex_rlp;
 use ethrex_rlp::encode::RLPEncode;
 use keccak_hash::keccak;
+use libsecp256k1::{Message, RecoveryId, Signature};
 use revm_primitives::SpecId;
 use sha3::{Digest, Keccak256};
 use std::{
     cmp::max,
     collections::{HashMap, HashSet},
+    fmt::Debug,
     sync::Arc,
 };
-
 pub type Storage = HashMap<U256, H256>;
 
 #[derive(Debug, Clone, Default)]
@@ -99,7 +100,6 @@ pub struct AuthorizationTuple {
     pub v: U256,
     pub r_signature: U256,
     pub s_signature: U256,
-    pub signer: Address,
 }
 
 pub fn get_valid_jump_destinations(code: &Bytes) -> Result<HashSet<usize>, VMError> {
@@ -187,7 +187,9 @@ impl VM {
             TxKind::Call(address_to) => {
                 default_touched_accounts.insert(address_to);
 
-                let bytecode = get_account(&mut cache, &db, address_to).info.bytecode;
+                let bytecode = get_account_no_push_cache(&cache, &db, address_to)
+                    .info
+                    .bytecode;
 
                 // CALL tx
                 let initial_call_frame = CallFrame::new(
@@ -290,8 +292,6 @@ impl VM {
                     return Ok(TransactionReport {
                         result: TxResult::Success,
                         new_state: self.cache.clone(),
-                        // Here we use the gas used and not check for the floor cost
-                        // for Prague fork because the precompiles have constant gas cost
                         gas_used: current_call_frame.gas_used,
                         gas_refunded: 0,
                         output,
@@ -494,7 +494,7 @@ impl VM {
                                 return Ok(TransactionReport {
                                     result: TxResult::Revert(error),
                                     new_state: HashMap::default(),
-                                    gas_used: self.gas_used(current_call_frame)?,
+                                    gas_used: current_call_frame.gas_used,
                                     gas_refunded: self.env.refunded_gas,
                                     output: std::mem::take(&mut current_call_frame.output),
                                     logs: std::mem::take(&mut current_call_frame.logs),
@@ -507,7 +507,7 @@ impl VM {
                     return Ok(TransactionReport {
                         result: TxResult::Success,
                         new_state: HashMap::default(),
-                        gas_used: self.gas_used(current_call_frame)?,
+                        gas_used: current_call_frame.gas_used,
                         gas_refunded: self.env.refunded_gas,
                         output: std::mem::take(&mut current_call_frame.output),
                         logs: std::mem::take(&mut current_call_frame.logs),
@@ -540,7 +540,7 @@ impl VM {
                     return Ok(TransactionReport {
                         result: TxResult::Revert(error),
                         new_state: HashMap::default(),
-                        gas_used: self.gas_used(current_call_frame)?,
+                        gas_used: current_call_frame.gas_used,
                         gas_refunded: self.env.refunded_gas,
                         output: std::mem::take(&mut current_call_frame.output), // Bytes::new() if error is not RevertOpcode
                         logs: std::mem::take(&mut current_call_frame.logs),
@@ -621,6 +621,24 @@ impl VM {
             .checked_add(access_lists_cost)
             .ok_or(OutOfGasError::ConsumedGasOverflow)?;
 
+        // Authorization List Cost
+        // `unwrap_or_default` will return an empty vec when the `authorization_list` field is None.
+        // If the vec is empty, the len will be 0, thus the authorization_list_cost is 0.
+        let amount_of_auth_tuples: u64 = self
+            .authorization_list
+            .clone()
+            .unwrap_or_default()
+            .len()
+            .try_into()
+            .map_err(|_| VMError::Internal(InternalError::ConversionError))?;
+        let authorization_list_cost = PER_EMPTY_ACCOUNT_COST
+            .checked_mul(amount_of_auth_tuples)
+            .ok_or(VMError::Internal(InternalError::GasOverflow))?;
+
+        intrinsic_gas = intrinsic_gas
+            .checked_add(authorization_list_cost)
+            .ok_or(OutOfGasError::ConsumedGasOverflow)?;
+
         Ok(intrinsic_gas)
     }
 
@@ -635,14 +653,18 @@ impl VM {
         Ok(())
     }
 
-    fn gas_used(&self, current_call_frame: &mut CallFrame) -> Result<u64, VMError> {
+    fn gas_used(
+        &self,
+        initial_call_frame: &CallFrame,
+        report: &TransactionReport,
+    ) -> Result<u64, VMError> {
         if self.env.spec_id >= SpecId::PRAGUE {
             // tokens_in_calldata = nonzero_bytes_in_calldata * 4 + zero_bytes_in_calldata
             // tx_calldata = nonzero_bytes_in_calldata * 16 + zero_bytes_in_calldata * 4
             // this is actually tokens_in_calldata * STANDARD_TOKEN_COST
             // see it in https://eips.ethereum.org/EIPS/eip-7623
             let tokens_in_calldata: u64 =
-                gas_cost::tx_calldata(&current_call_frame.calldata, self.env.spec_id)
+                gas_cost::tx_calldata(&initial_call_frame.calldata, self.env.spec_id)
                     .map_err(VMError::OutOfGas)?
                     .checked_div(STANDARD_TOKEN_COST)
                     .ok_or(VMError::Internal(InternalError::DivisionError))?;
@@ -656,10 +678,10 @@ impl VM {
                 .checked_add(TX_BASE_COST)
                 .ok_or(VMError::Internal(InternalError::GasOverflow))?;
 
-            let gas_used = max(floor_gas_price, current_call_frame.gas_used);
+            let gas_used = max(floor_gas_price, report.gas_used);
             Ok(gas_used)
         } else {
-            Ok(current_call_frame.gas_used)
+            Ok(report.gas_used)
         }
     }
 
@@ -829,13 +851,6 @@ impl VM {
         self.decrease_account_balance(sender_address, up_front_cost)
             .map_err(|_| TxValidationError::InsufficientAccountFunds)?;
 
-        // Transfer value to receiver
-        let receiver_address = initial_call_frame.to;
-        // msg_value is already transferred into the created contract at creation.
-        if !self.is_create() {
-            self.increase_account_balance(receiver_address, initial_call_frame.msg_value)?;
-        }
-
         // (4) INSUFFICIENT_MAX_FEE_PER_GAS
         if self.env.tx_max_fee_per_gas.unwrap_or(self.env.gas_price) < self.env.base_fee_per_gas {
             return Err(VMError::TxValidation(
@@ -875,7 +890,7 @@ impl VM {
         }
 
         // (9) SENDER_NOT_EOA
-        if sender_account.has_code() {
+        if sender_account.has_code() && !has_delegation(&sender_account.info)? {
             return Err(VMError::TxValidation(TxValidationError::SenderNotEOA));
         }
 
@@ -927,11 +942,42 @@ impl VM {
             }
         }
 
+        // [EIP-7702]: https://eips.ethereum.org/EIPS/eip-7702
+        // Transaction is type 4 if authorization_list is Some
+        if let Some(auth_list) = &self.authorization_list {
+            // (16) TYPE_4_TX_PRE_FORK
+            if self.env.spec_id < SpecId::PRAGUE {
+                return Err(VMError::TxValidation(TxValidationError::Type4TxPreFork));
+            }
+
+            // (17) TYPE_4_TX_CONTRACT_CREATION
+            // From the EIP docs: a null destination is not valid.
+            if self.is_create() {
+                return Err(VMError::TxValidation(
+                    TxValidationError::Type4TxContractCreation,
+                ));
+            }
+
+            // (18) TYPE_4_TX_LIST_EMPTY
+            // From the EIP docs: The transaction is considered invalid if the length of authorization_list is zero.
+            if auth_list.is_empty() {
+                return Err(VMError::TxValidation(
+                    TxValidationError::Type4TxAuthorizationListIsEmpty,
+                ));
+            }
+
+            self.env.refunded_gas = self.eip7702_set_access_code(initial_call_frame)?;
+        }
+
         if self.is_create() {
             // Assign bytecode to context and empty calldata
             initial_call_frame.bytecode = std::mem::take(&mut initial_call_frame.calldata);
             initial_call_frame.valid_jump_destinations =
                 get_valid_jump_destinations(&initial_call_frame.bytecode).unwrap_or_default();
+        } else {
+            // Transfer value to receiver
+            // It's here to avoid storing the "to" address in the cache before eip7702_set_access_code() step 7).
+            self.increase_account_balance(initial_call_frame.to, initial_call_frame.msg_value)?;
         }
         Ok(())
     }
@@ -950,10 +996,26 @@ impl VM {
         let sender_address = initial_call_frame.msg_sender;
         let receiver_address = initial_call_frame.to;
 
-        // 1. Undo value transfer if the transaction was reverted
+        // 1. Undo value transfer if the transaction has reverted
         if let TxResult::Revert(_) = report.result {
-            // We remove the receiver account from the cache, like nothing changed in it's state.
-            remove_account(&mut self.cache, &receiver_address);
+            let existing_account = get_account(&mut self.cache, &self.db, receiver_address); //TO Account
+
+            if has_delegation(&existing_account.info)? {
+                // This is the case where the "to" address and the
+                // "signer" address are the same. We are setting the code
+                // and sending some balance to the "to"/"signer"
+                // address.
+                // See https://eips.ethereum.org/EIPS/eip-7702#behavior (last sentence).
+
+                // If transaction execution results in failure (any
+                // exceptional condition or code reverting), setting
+                // delegation designations is not rolled back.
+                self.decrease_account_balance(receiver_address, initial_call_frame.msg_value)?;
+            } else {
+                // We remove the receiver account from the cache, like nothing changed in it's state.
+                remove_account(&mut self.cache, &receiver_address);
+            }
+
             self.increase_account_balance(sender_address, initial_call_frame.msg_value)?;
         }
 
@@ -1042,6 +1104,8 @@ impl VM {
         }
 
         let mut report = self.execute(&mut initial_call_frame)?;
+
+        report.gas_used = self.gas_used(&initial_call_frame, &report)?;
 
         self.post_execution_changes(&initial_call_frame, &mut report)?;
         // There shouldn't be any errors here but I don't know what the desired behavior is if something goes wrong.
@@ -1280,6 +1344,10 @@ impl VM {
         get_account(&mut self.cache, &self.db, address)
     }
 
+    pub fn get_account_no_push_cache(&self, address: Address) -> Account {
+        get_account_no_push_cache(&self.cache, &self.db, address)
+    }
+
     fn handle_create_non_empty_account(
         &mut self,
         initial_call_frame: &CallFrame,
@@ -1298,6 +1366,168 @@ impl VM {
         report.new_state.clone_from(&self.cache);
 
         Ok(report)
+    }
+
+    /// Sets the account code as the EIP7702 determines.
+    pub fn eip7702_set_access_code(
+        &mut self,
+        initial_call_frame: &mut CallFrame,
+    ) -> Result<u64, VMError> {
+        let mut refunded_gas: u64 = 0;
+        // IMPORTANT:
+        // If any of the below steps fail, immediately stop processing that tuple and continue to the next tuple in the list. It will in the case of multiple tuples for the same authority, set the code using the address in the last valid occurrence.
+        // If transaction execution results in failure (any exceptional condition or code reverting), setting delegation designations is not rolled back.
+        // TODO: avoid clone()
+        for auth_tuple in self.authorization_list.clone().unwrap_or_default() {
+            let chain_id_not_equals_this_chain_id = auth_tuple.chain_id != self.env.chain_id;
+            let chain_id_not_zero = !auth_tuple.chain_id.is_zero();
+
+            // 1. Verify the chain id is either 0 or the chain’s current ID.
+            if chain_id_not_zero && chain_id_not_equals_this_chain_id {
+                continue;
+            }
+
+            // 2. Verify the nonce is less than 2**64 - 1.
+            // NOTE: nonce is a u64, it's always less than or equal to u64::MAX
+            if auth_tuple.nonce == u64::MAX {
+                continue;
+            }
+
+            // 3. authority = ecrecover(keccak(MAGIC || rlp([chain_id, address, nonce])), y_parity, r, s)
+            //      s value must be less than or equal to secp256k1n/2, as specified in EIP-2.
+            let Some(authority_address) = eip7702_recover_address(&auth_tuple)? else {
+                continue;
+            };
+
+            // 4. Add authority to accessed_addresses (as defined in EIP-2929).
+            self.accrued_substate
+                .touched_accounts
+                .insert(authority_address);
+            let authority_account_info = self.get_account_no_push_cache(authority_address).info;
+
+            // 5. Verify the code of authority is either empty or already delegated.
+            let empty_or_delegated = authority_account_info.bytecode.is_empty()
+                || has_delegation(&authority_account_info)?;
+            if !empty_or_delegated {
+                continue;
+            }
+
+            // 6. Verify the nonce of authority is equal to nonce. In case authority does not exist in the trie, verify that nonce is equal to 0.
+            // If it doesn't exist, it means the nonce is zero. The access_account() function will return AccountInfo::default()
+            // If it has nonce, the account.info.nonce should equal auth_tuple.nonce
+            if authority_account_info.nonce != auth_tuple.nonce {
+                continue;
+            }
+
+            // 7. Add PER_EMPTY_ACCOUNT_COST - PER_AUTH_BASE_COST gas to the global refund counter if authority exists in the trie.
+            // CHECK: we don't know if checking the cache is correct. More gas tests pass but the set_code_txs tests went to half.
+            if cache::is_account_cached(&self.cache, &authority_address)
+                || self.db.account_exists(authority_address)
+            {
+                let refunded_gas_if_exists = PER_EMPTY_ACCOUNT_COST - PER_AUTH_BASE_COST;
+                refunded_gas = refunded_gas
+                    .checked_add(refunded_gas_if_exists)
+                    .ok_or(VMError::Internal(InternalError::GasOverflow))?;
+            }
+
+            // 8. Set the code of authority to be 0xef0100 || address. This is a delegation designation.
+            let delegation_bytes = [
+                &SET_CODE_DELEGATION_BYTES[..],
+                auth_tuple.address.as_bytes(),
+            ]
+            .concat();
+
+            // As a special case, if address is 0x0000000000000000000000000000000000000000 do not write the designation.
+            // Clear the account’s code and reset the account’s code hash to the empty hash.
+            let auth_account = match get_account_mut(&mut self.cache, &authority_address) {
+                Some(account_mut) => account_mut,
+                None => {
+                    // This is to add the account to the cache
+                    // NOTE: Refactor in the future
+                    self.get_account(authority_address);
+                    self.get_account_mut(authority_address)?
+                }
+            };
+
+            auth_account.info.bytecode = if auth_tuple.address != Address::zero() {
+                delegation_bytes.into()
+            } else {
+                Bytes::new()
+            };
+
+            // 9. Increase the nonce of authority by one.
+            self.increment_account_nonce(authority_address)
+                .map_err(|_| VMError::TxValidation(TxValidationError::NonceIsMax))?;
+        }
+
+        let (code_address_info, _) = self.access_account(initial_call_frame.code_address);
+
+        if has_delegation(&code_address_info)? {
+            initial_call_frame.code_address = get_authorized_address(&code_address_info)?;
+            let (auth_address_info, _) = self.access_account(initial_call_frame.code_address);
+
+            initial_call_frame.bytecode = auth_address_info.bytecode.clone();
+        } else {
+            initial_call_frame.bytecode = code_address_info.bytecode.clone();
+        }
+
+        initial_call_frame.valid_jump_destinations =
+            get_valid_jump_destinations(&initial_call_frame.bytecode).unwrap_or_default();
+        Ok(refunded_gas)
+    }
+
+    /// Used for the opcodes
+    /// The following reading instructions are impacted:
+    ///      EXTCODESIZE, EXTCODECOPY, EXTCODEHASH
+    /// and the following executing instructions are impacted:
+    ///      CALL, CALLCODE, STATICCALL, DELEGATECALL
+    /// In case a delegation designator points to another designator,
+    /// creating a potential chain or loop of designators,
+    /// clients must retrieve only the first code and then stop following the designator chain.
+    ///
+    /// For example,
+    /// EXTCODESIZE would return 2 (the size of 0xef01) instead of 23 which would represent the delegation designation,
+    /// EXTCODEHASH would return 0xeadcdba66a79ab5dce91622d1d75c8cff5cff0b96944c3bf1072cd08ce018329 (keccak256(0xef01)), and
+    /// CALL would load the code from address and execute it in the context of authority.
+    ///
+    /// The idea of this function comes from ethereum/execution-specs:
+    /// https://github.com/ethereum/execution-specs/blob/951fc43a709b493f27418a8e57d2d6f3608cef84/src/ethereum/prague/vm/eoa_delegation.py#L115
+    pub fn eip7702_get_code(
+        &mut self,
+        address: Address,
+    ) -> Result<(bool, u64, Address, Bytes), VMError> {
+        // Address is the delgated address
+        let account = get_account(&mut self.cache, &self.db, address);
+        let bytecode = account.info.bytecode.clone();
+
+        // If the Address doesn't have a delegation code
+        // return false meaning that is not a delegation
+        // return the same address given
+        // return the bytecode of the given address
+        if !has_delegation(&account.info)? {
+            return Ok((false, 0, address, bytecode));
+        }
+
+        // Here the address has a delegation code
+        // The delegation code has the authorized address
+        let auth_address = get_authorized_address(&account.info)?;
+
+        let access_cost = if self
+            .accrued_substate
+            .touched_accounts
+            .contains(&auth_address)
+        {
+            WARM_ADDRESS_ACCESS_COST
+        } else {
+            self.accrued_substate.touched_accounts.insert(auth_address);
+            COLD_ADDRESS_ACCESS_COST
+        };
+
+        let authorized_bytecode = get_account(&mut self.cache, &self.db, auth_address)
+            .info
+            .bytecode;
+
+        Ok((true, access_cost, auth_address, authorized_bytecode))
     }
 }
 
@@ -1333,4 +1563,118 @@ pub fn get_account(cache: &mut CacheDB, db: &Arc<dyn Database>, address: Address
             account
         }
     }
+}
+
+pub fn get_account_no_push_cache(
+    cache: &CacheDB,
+    db: &Arc<dyn Database>,
+    address: Address,
+) -> Account {
+    match cache::get_account(cache, &address) {
+        Some(acc) => acc.clone(),
+        None => {
+            let account_info = db.get_account_info(address);
+            Account {
+                info: account_info,
+                storage: HashMap::new(),
+            }
+        }
+    }
+}
+
+/// Checks if account.info.bytecode has been delegated as the EIP7702 determines.
+pub fn has_delegation(account_info: &AccountInfo) -> Result<bool, VMError> {
+    let mut has_delegation = false;
+    if account_info.has_code() && account_info.bytecode.len() == EIP7702_DELEGATED_CODE_LEN {
+        let first_3_bytes = account_info
+            .bytecode
+            .get(..3)
+            .ok_or(VMError::Internal(InternalError::SlicingError))?;
+
+        if first_3_bytes == SET_CODE_DELEGATION_BYTES {
+            has_delegation = true;
+        }
+    }
+    Ok(has_delegation)
+}
+
+/// Gets the address inside the account.info.bytecode if it has been delegated as the EIP7702 determines.
+pub fn get_authorized_address(account_info: &AccountInfo) -> Result<Address, VMError> {
+    if has_delegation(account_info)? {
+        let address_bytes = account_info
+            .bytecode
+            .get(SET_CODE_DELEGATION_BYTES.len()..)
+            .ok_or(VMError::Internal(InternalError::SlicingError))?;
+        // It shouldn't panic when doing Address::from_slice()
+        // because the length is checked inside the has_delegation() function
+        let address = Address::from_slice(address_bytes);
+        Ok(address)
+    } else {
+        // if we end up here, it means that the address wasn't previously delegated.
+        Err(VMError::Internal(InternalError::AccountNotDelegated))
+    }
+}
+
+fn eip7702_recover_address(auth_tuple: &AuthorizationTuple) -> Result<Option<Address>, VMError> {
+    if auth_tuple.s_signature > *SECP256K1_ORDER_OVER2 || U256::zero() >= auth_tuple.s_signature {
+        return Ok(None);
+    }
+    if auth_tuple.r_signature > *SECP256K1_ORDER || U256::zero() >= auth_tuple.r_signature {
+        return Ok(None);
+    }
+    if auth_tuple.v != U256::one() && auth_tuple.v != U256::zero() {
+        return Ok(None);
+    }
+
+    let rlp_buf = (auth_tuple.chain_id, auth_tuple.address, auth_tuple.nonce).encode_to_vec();
+
+    let mut hasher = Keccak256::new();
+    hasher.update([MAGIC]);
+    hasher.update(rlp_buf);
+    let bytes = &mut hasher.finalize();
+
+    let Ok(message) = Message::parse_slice(bytes) else {
+        return Ok(None);
+    };
+
+    let bytes = [
+        auth_tuple.r_signature.to_big_endian(),
+        auth_tuple.s_signature.to_big_endian(),
+    ]
+    .concat();
+
+    let Ok(signature) = Signature::parse_standard_slice(&bytes) else {
+        return Ok(None);
+    };
+
+    let Ok(recovery_id) = RecoveryId::parse(
+        auth_tuple
+            .v
+            .as_u32()
+            .try_into()
+            .map_err(|_| VMError::Internal(InternalError::ConversionError))?,
+    ) else {
+        return Ok(None);
+    };
+
+    let Ok(authority) = libsecp256k1::recover(&message, &signature, &recovery_id) else {
+        return Ok(None);
+    };
+
+    let public_key = authority.serialize();
+    let mut hasher = Keccak256::new();
+    hasher.update(
+        public_key
+            .get(1..)
+            .ok_or(VMError::Internal(InternalError::SlicingError))?,
+    );
+    let address_hash = hasher.finalize();
+
+    // Get the last 20 bytes of the hash -> Address
+    let authority_address_bytes: [u8; 20] = address_hash
+        .get(12..32)
+        .ok_or(VMError::Internal(InternalError::SlicingError))?
+        .try_into()
+        .map_err(|_| VMError::Internal(InternalError::ConversionError))?;
+    Ok(Some(Address::from_slice(&authority_address_bytes)))
 }

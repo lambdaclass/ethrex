@@ -249,4 +249,8 @@ pub trait StoreEngine: Debug + Send + Sync + RefUnwindSafe {
     ) -> Result<(), StoreError>;
 
     fn get_receipts_for_block(&self, block_hash: &BlockHash) -> Result<Vec<Receipt>, StoreError>;
+
+    fn is_synced(&self) -> Result<bool, StoreError>;
+
+    fn update_sync_status(&self, status: bool) -> Result<(), StoreError>;
 }

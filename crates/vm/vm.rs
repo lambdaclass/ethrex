@@ -1002,3 +1002,8 @@ fn calculate_gas_price(tx: &GenericTransaction, basefee: u64) -> Uint<256, 4> {
         ))
     }
 }
+
+// USED for revm ^19.0.0
+//pub fn is_prague(spec_id: SpecId) -> bool {
+//    spec_id >= SpecId::PRAGUE
+//}
