@@ -5,8 +5,6 @@ use k256::{
 };
 use std::sync::LazyLock;
 
-use revm_primitives::SpecId;
-
 pub const WORD_SIZE_IN_BYTES: U256 = U256([32, 0, 0, 0]);
 pub const WORD_SIZE_IN_BYTES_USIZE: usize = 32;
 pub const WORD_SIZE_IN_BYTES_U64: u64 = 32;
