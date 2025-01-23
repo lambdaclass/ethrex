@@ -15,111 +15,12 @@ on:
   workflow_dispatch:
 
 jobs:
-  flamegraph-levm:
-    name: Generate Flamegraph for LEVM
+  generate-flamegraph:
+    name: Generate Flamegraph
     runs-on: ubuntu-latest
-    # TODO set time
-    outputs:
-      time: ${{steps.generate-flamegraph-levm.outputs.time}}
-    steps:
-      - name: Checkout sources
-        uses: actions/checkout@v4
-
-      - name: Rustup toolchain install
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Caching
-        uses: Swatinem/rust-cache@v2
-
-      - name: Cache Extra Binaries
-        id: cache-binaries
-        uses: actions/cache@v4
-        with:
-          path: |
-            ${{ env.HOME }}/.cargo/bin/addr2line
-            ${{ env.HOME }}/.cargo/bin/flamegraph
-            ${{ env.HOME }}/.cargo/bin/inferno-*
-          key: ${{ runner.os }}-${{ env.RUST_VERSION }}-extra-binaries
-
-      - name: Change perf settings
-        run: |
-          sudo sysctl kernel.perf_event_paranoid=-1
-          sudo sysctl -w kernel.kptr_restrict=0
-          sudo chmod +r /proc/kallsyms
-          sudo perf list hw
-
-      - name: Check addr2line installation
-        id: check-addr2line
-        run: |
-          if [ -f "$HOME/.cargo/bin/addr2line" ]; then
-            echo "$HOME/.cargo/bin/addr2line found"
-            echo "addr2line_exists=true" >> $GITHUB_OUTPUT
-          else
-            echo "$HOME/.cargo/bin/addr2line NOT found"
-            echo "addr2line_exists=false" >> $GITHUB_OUTPUT
-          fi
-
-      - name: Checkout gimli addr2line
-        if: steps.check-addr2line.outputs.addr2line_exists != 'true'
-        uses: actions/checkout@v4
-        with:
-          repository: gimli-rs/addr2line
-          path: "addr2line"
-
-      - name: Build gimli addr2line
-        if: steps.check-addr2line.outputs.addr2line_exists != 'true'
-        working-directory: ./addr2line
-        run: |
-          # Little hack we need else it throws error building
-          echo "[workspace]" >> ./Cargo.toml
-          cargo install --force --features="bin" addr2line
-
-      - name: Install flamegraph
-        run: |
-          if [ ! -f "$HOME/.cargo/bin/flamegraph" ]; then
-            cargo install --force flamegraph
-          else
-            echo "$HOME/.cargo/bin/flamegraph" already found
-          fi
-          if [ ! -f "$HOME/.cargo/bin/inferno-collapse-perf" ]; then
-            cargo install --force inferno
-          else
-            echo "$HOME/.cargo/bin/inferno-collapse-perf" already found
-          fi
-
-      - name: Download EF Tests
-        run: |
-          cd crates/vm/levm
-          make download-evm-ef-tests
-
-      - id: generate-flamegraph-levm
-        name: Generate Flamegraph data for LEVM
-        shell: bash
-        run: |
-          rm -rf target/debug/ef_tests_levm
-          CARGO_PROFILE_RELEASE_DEBUG=true cargo flamegraph -c "record -o perf.data -F997 --call-graph dwarf,16384 -g" \
-          -p ef_tests-levm
-
-      - name: Generate SVG
-        shell: bash
-        run: |
-          PATH=$HOME/.cargo/bin:$PATH which addr2line
-          PATH=$HOME/.cargo/bin:$PATH perf script -v -i /home/runner/work/ethrex/ethrex/perf.data --no-inline > stack.data
-          PATH=$HOME/.cargo/bin:$PATH inferno-collapse-perf -q < stack.data > collapsed.data
-          PATH=$HOME/.cargo/bin:$PATH inferno-flamegraph --title "LEVM Flamegraph" < collapsed.data > flamegraph_levm.svg
-
-      - name: Upload artifacts - flamegraph_levm.svg
-        uses: actions/upload-artifact@v4
-        with:
-          name: flamegraph_levm.svg
-          path: ./flamegraph_levm.svg
-
-  flamegraph-revm:
-    name: Generate Flamegraph for REVM
-    runs-on: ubuntu-latest
-    # TODO set time
-    outputs:
-      time: ${{steps.generate-flamegraph-revm.outputs.time}}
+    strategy:
+      matrix:
+        name: ["levm", "revm"]
     steps:
       - name: Checkout sources
         uses: actions/checkout@v4
@@ -135,80 +36,46 @@ jobs:
             ${{ env.HOME }}/.cargo/bin/addr2line
             ${{ env.HOME }}/.cargo/bin/flamegraph
             ${{ env.HOME }}/.cargo/bin/inferno-*
+            ${{ env.HOME }}/ethrex/ethrex/cmd/ef_tests/levm/vectors
           key: ${{ runner.os }}-${{ env.RUST_VERSION }}-extra-binaries
 
-      - name: Change perf settings
-        run: |
-          sudo sysctl kernel.perf_event_paranoid=-1
-          sudo sysctl -w kernel.kptr_restrict=0
-          sudo chmod +r /proc/kallsyms
-          sudo perf list hw
-
-      - name: Check addr2line installation
-        id: check-addr2line
-        run: |
-          if [ -f "$HOME/.cargo/bin/addr2line" ]; then
-            echo "$HOME/.cargo/bin/addr2line found"
-            echo "addr2line_exists=true" >> $GITHUB_OUTPUT
-          else
-            echo "$HOME/.cargo/bin/addr2line NOT found"
-            echo "addr2line_exists=false" >> $GITHUB_OUTPUT
-          fi
-
-      - name: Checkout gimli addr2line
-        if: steps.check-addr2line.outputs.addr2line_exists != 'true'
-        uses: actions/checkout@v4
-        with:
-          repository: gimli-rs/addr2line
-          path: "addr2line"
-
-      - name: Build gimli addr2line
-        if: steps.check-addr2line.outputs.addr2line_exists != 'true'
-        working-directory: ./addr2line
-        run: |
-          # Little hack we need else it throws error building
-          echo "[workspace]" >> ./Cargo.toml
-          cargo install --force --features="bin" addr2line
-
-      - name: Install flamegraph
+      - name: Install flamegraph tools
         run: |
           if [ ! -f "$HOME/.cargo/bin/flamegraph" ]; then
             cargo install --force flamegraph
           else
-            echo "$HOME/.cargo/bin/flamegraph" already found
+            echo "$HOME/.cargo/bin/flamegraph already found"
           fi
           if [ ! -f "$HOME/.cargo/bin/inferno-collapse-perf" ]; then
             cargo install --force inferno
           else
-            echo "$HOME/.cargo/bin/inferno-collapse-perf" already found
+            echo "$HOME/.cargo/bin/inferno-collapse-perf already found"
           fi
 
       - name: Download EF Tests
         run: |
-          cd crates/vm/levm
-          make download-evm-ef-tests
+          if [ ! -f "$HOME/ethrex/ethrex/cmd/ef_tests/levm/vectors" ]; then
+            cd crates/vm/levm
+            make download-evm-ef-tests
+          fi
 
-      - id: generate-flamegraph-revm
-        name: Build and test REVM
-        shell: bash
-        # --dev.block-time 1000ms set to 1000ms to match ethrex block generation time
+      - name: Generate Flamegraph data for ${{ matrix.name }}
         run: |
-          CARGO_PROFILE_RELEASE_DEBUG=true cargo flamegraph -c "record -o perf.data -F997 --call-graph dwarf,16384 -g" \
-          -p ef_tests-levm -- --revm
+          if [ "${{ matrix.name }}" == "levm" ]; then
+            rm -rf target/debug/ef_tests_levm \
+            CARGO_PROFILE_RELEASE_DEBUG=true cargo flamegraph -c "record -o perf.data -F997 --call-graph dwarf,16384 -g" \
+            -p ef_tests-levm
+          elif [ "${{ matrix.name }}" == "revm" ]; then
+            rm -rf target/debug/ef_tests_levm \
+            CARGO_PROFILE_RELEASE_DEBUG=true cargo flamegraph -c "record -o perf.data -F997 --call-graph dwarf,16384 -g" \
+            -p ef_tests-levm -- --revm
+          fi
 
-      - name: Generate SVG
-        shell: bash
-        run: |
-          PATH=$HOME/.cargo/bin:$PATH which addr2line
-          PATH=$HOME/.cargo/bin:$PATH perf script -v -i /home/runner/work/ethrex/ethrex/perf.data --no-inline > stack.data
-          PATH=$HOME/.cargo/bin:$PATH inferno-collapse-perf -q < stack.data > collapsed.data
-          PATH=$HOME/.cargo/bin:$PATH inferno-flamegraph --title "Reth Flamegraph" < collapsed.data > flamegraph_revm.svg
-
-      - name: Upload artifacts - flamegraph_revm.svg
+      - name: Upload artifact - ${{ matrix.name }}
         uses: actions/upload-artifact@v4
         with:
-          name: flamegraph_revm.svg
-          path: ./flamegraph_revm.svg
+          name: flamegraph_${{ matrix.name }}.svg
+          path: ./flamegraph_${{ matrix.name }}.svg
 
   upload-static-page:
     name: Upload artifacts for static page
@@ -216,7 +83,7 @@ jobs:
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}/levm
-    needs: [flamegraph-levm, flamegraph-revm]
+    needs: [generate-flamegraph]
     steps:
       - name: Checkout sources
         uses: actions/checkout@v4
