@@ -48,6 +48,8 @@ pub enum SnapStateIndex {
     PendingStorageHealAccounts = 2,
     // Last key fetched from the state trie
     StateTrieKeyCheckpoint = 3,
+    // Paths from the state trie in need of healing
+    StateHealPaths = 4,
 }
 
 impl From<u8> for SnapStateIndex {
@@ -65,6 +67,7 @@ impl From<u8> for SnapStateIndex {
             x if x == SnapStateIndex::StateTrieKeyCheckpoint as u8 => {
                 SnapStateIndex::StateTrieKeyCheckpoint
             }
+            x if x == SnapStateIndex::StateHealPaths as u8 => SnapStateIndex::StateHealPaths,
             _ => panic!("Invalid value when casting to SnapDataIndex: {}", value),
         }
     }

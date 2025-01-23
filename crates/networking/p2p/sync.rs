@@ -104,7 +104,11 @@ impl SyncManager {
         // Check if we have some blocks downloaded from a previous sync attempt
         if matches!(self.sync_mode, SyncMode::Snap) {
             if let Some(last_header) = store.get_header_download_checkpoint()? {
-                let n = store.get_block_header_by_hash(last_header).unwrap().unwrap().number;
+                let n = store
+                    .get_block_header_by_hash(last_header)
+                    .unwrap()
+                    .unwrap()
+                    .number;
                 info!("Found checkpoint at {last_header}, number: {n}");
                 // Set latest downloaded header as current head for header fetching
                 current_head = last_header;
@@ -164,7 +168,7 @@ impl SyncManager {
             }
             if retry_count > MAX_RETRIES {
                 warn!("Sync failed to find target block header, aborting");
-                return Ok(())
+                return Ok(());
             }
         }
         // We finished fetching all headers, now we can process them
@@ -459,7 +463,6 @@ async fn rebuild_state_trie(
     let res = heal_state_trie(
         bytecode_sender.clone(),
         state_root,
-        current_state_root,
         store.clone(),
         peers.clone(),
     )
@@ -593,16 +596,21 @@ async fn storage_fetcher(
                     peers.clone(),
                     store.clone(),
                 ));
-                task_num +=1;
+                task_num += 1;
             }
             // Add unfetched accounts to queue and handle stale signal
             let mut ret_num = 1;
             for res in storage_tasks.join_all().await {
                 let (remaining, is_stale) = res?;
-                info!("Task {}/{} returned {} elements to the queue", ret_num, task_num, remaining.len());
+                info!(
+                    "Task {}/{} returned {} elements to the queue",
+                    ret_num,
+                    task_num,
+                    remaining.len()
+                );
                 pending_storage.extend(remaining);
                 stale |= is_stale;
-                ret_num +=1;
+                ret_num += 1;
             }
         }
     }
@@ -652,12 +660,13 @@ async fn fetch_storage_batch(
                         peers.clone(),
                         store.clone(),
                     )
-                    .await? {
+                    .await?
+                    {
                         // Pivot became stale
                         info!("[DEBUG] Pivot became stale during large trie fetch, scheduling for healing");
                         // Add trie back to the queue and return stale pivot status
                         batch.push((account_hash, storage_root));
-                        return Ok((batch, true))
+                        return Ok((batch, true));
                     }
                 }
                 // The incomplete range is not the first, we cannot asume it is a large trie, so lets add it back to the queue
@@ -742,7 +751,6 @@ async fn handle_large_storage_range(
 async fn heal_state_trie(
     bytecode_sender: Sender<Vec<H256>>,
     state_root: H256,
-    mut current_root: H256,
     store: Store,
     peers: Arc<Mutex<KademliaTable>>,
 ) -> Result<bool, SyncError> {
@@ -762,8 +770,10 @@ async fn heal_state_trie(
         );
         storage_sender.send(pending).await?;
     }
+    // Check if we have pending paths from a previous cycle
+    let mut paths = store.get_state_heal_paths()?.unwrap_or_default();
     // Begin by requesting the root node
-    let mut paths = vec![Nibbles::default()];
+    paths.push(Nibbles::default());
     // Count the number of request retries so we don't get stuck requesting old state
     let mut retry_count = 0;
     while !paths.is_empty() && retry_count < MAX_RETRIES {
@@ -784,7 +794,7 @@ async fn heal_state_trie(
             // - If it is a leaf, add its path & value to the trie
             for node in nodes {
                 // We cannot keep the trie state open
-                let mut trie = store.open_state_trie(current_root);
+                let mut trie = store.open_state_trie(*EMPTY_TRIE_HASH);
                 let path = paths.remove(0);
                 paths.extend(node_missing_children(&node, &path, trie.state())?);
                 if let Node::Leaf(node) = &node {
@@ -807,12 +817,10 @@ async fn heal_state_trie(
                     {
                         code_hashes.push(account.code_hash);
                     }
-                    // Write values to trie
-                    info!("Touched State Leaf: {}, {:?}", account_hash, account);
-                    trie.insert(account_hash.0.to_vec(), account.encode_to_vec())?;
-                    // Update current root
-                    current_root = trie.hash()?;
                 }
+                // Add node to trie
+                let hash = node.compute_hash();
+                trie.state_mut().write_node(node, hash)?;
             }
             // Send storage & bytecode requests
             if !hahsed_addresses.is_empty() {
@@ -826,6 +834,11 @@ async fn heal_state_trie(
         }
     }
     info!("State Healing stopped, signaling storage healer");
+    // Save paths for the next cycle
+    if !paths.is_empty() {
+        info!("Caching {} paths for the next cycle", paths.len());
+        store.set_state_heal_paths(paths)?;
+    }
     // Send empty batch to signal that no more batches are incoming
     storage_sender.send(vec![]).await?;
     let pending_storage_heal_accounts = storage_healer_handler.await??;
@@ -892,13 +905,9 @@ async fn storage_healer(
                 next_batch.insert(key, val);
             }
             //info!("Sending storage heal batch of size {batch_size}");
-            let (return_batch, is_stale) = heal_storage_batch(
-                state_root,
-                next_batch.clone(),
-                peers.clone(),
-                store.clone(),
-            )
-            .await?;
+            let (return_batch, is_stale) =
+                heal_storage_batch(state_root, next_batch.clone(), peers.clone(), store.clone())
+                    .await?;
             //info!("Returned storage heal batch of size {}", return_batch.iter().map(|b| b.1.1.len()).sum::<usize>());
             pending_storages.extend(return_batch.into_iter());
             stale |= is_stale;
@@ -950,7 +959,7 @@ async fn heal_storage_batch(
             }
             // Return remaining and added paths to be added to the queue
             // Filter out the storages we completely fetched
-            batch.retain(|_, v|!v.1.is_empty());
+            batch.retain(|_, v| !v.1.is_empty());
             return Ok((batch, false));
         }
     }

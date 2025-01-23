@@ -7,7 +7,7 @@ use ethrex_core::types::{
 use std::{fmt::Debug, panic::RefUnwindSafe};
 
 use crate::error::StoreError;
-use ethrex_trie::Trie;
+use ethrex_trie::{Nibbles, Trie};
 
 pub trait StoreEngine: Debug + Send + Sync + RefUnwindSafe {
     /// Add block header
@@ -275,4 +275,10 @@ pub trait StoreEngine: Debug + Send + Sync + RefUnwindSafe {
     fn get_pending_storage_heal_accounts(&self) -> Result<Option<Vec<H256>>, StoreError>;
 
     fn clear_pending_storage_heal_accounts(&self) -> Result<(), StoreError>;
+
+    fn set_state_heal_paths(&self, paths: Vec<Nibbles>) -> Result<(), StoreError>;
+
+    fn get_state_heal_paths(&self) -> Result<Option<Vec<Nibbles>>, StoreError>;
+
+    fn clear_state_heal_paths(&self) -> Result<(), StoreError>;
 }

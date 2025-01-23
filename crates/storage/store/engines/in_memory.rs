@@ -498,6 +498,18 @@ impl StoreEngine for Store {
         self.inner().snap_state.pending_storage_heal_accounts = None;
         Ok(())
     }
+
+    fn set_state_heal_paths(&self, paths: Vec<ethrex_trie::Nibbles>) -> Result<(), StoreError> {
+        todo!()
+    }
+
+    fn get_state_heal_paths(&self) -> Result<Option<Vec<ethrex_trie::Nibbles>>, StoreError> {
+        todo!()
+    }
+
+    fn clear_state_heal_paths(&self) -> Result<(), StoreError> {
+        todo!()
+    }
 }
 
 impl Debug for Store {

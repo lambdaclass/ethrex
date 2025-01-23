@@ -14,7 +14,7 @@ use ethrex_core::types::{
 };
 use ethrex_rlp::decode::RLPDecode;
 use ethrex_rlp::encode::RLPEncode;
-use ethrex_trie::{LibmdbxDupsortTrieDB, LibmdbxTrieDB, Trie};
+use ethrex_trie::{LibmdbxDupsortTrieDB, LibmdbxTrieDB, Nibbles, Trie};
 use libmdbx::orm::{Decodable, Encodable, Table};
 use libmdbx::{
     dupsort,
@@ -596,6 +596,21 @@ impl StoreEngine for Store {
 
     fn clear_pending_storage_heal_accounts(&self) -> Result<(), StoreError> {
         self.delete::<SnapState>(SnapStateIndex::PendingStorageHealAccounts)
+    }
+
+    fn set_state_heal_paths(&self, paths: Vec<Nibbles>) -> Result<(), StoreError> {
+        self.write::<SnapState>(SnapStateIndex::StateHealPaths, paths.encode_to_vec())
+    }
+
+    fn get_state_heal_paths(&self) -> Result<Option<Vec<Nibbles>>, StoreError> {
+        self.read::<SnapState>(SnapStateIndex::StateHealPaths)?
+            .map(|ref h| <Vec<Nibbles>>::decode(h))
+            .transpose()
+            .map_err(StoreError::RLPDecode)
+    }
+
+    fn clear_state_heal_paths(&self) -> Result<(), StoreError> {
+        self.delete::<SnapState>(SnapStateIndex::StateHealPaths)
     }
 }
 

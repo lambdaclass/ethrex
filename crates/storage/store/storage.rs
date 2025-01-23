@@ -14,7 +14,7 @@ use ethrex_core::types::{
 };
 use ethrex_rlp::decode::RLPDecode;
 use ethrex_rlp::encode::RLPEncode;
-use ethrex_trie::Trie;
+use ethrex_trie::{Nibbles, Trie};
 use serde::{Deserialize, Serialize};
 use sha3::{Digest as _, Keccak256};
 use std::collections::{HashMap, HashSet};
@@ -1030,6 +1030,18 @@ impl Store {
 
     pub fn get_pending_storage_heal_accounts(&self) -> Result<Option<Vec<H256>>, StoreError> {
         self.engine.get_pending_storage_heal_accounts()
+    }
+
+    pub fn set_state_heal_paths(&self, paths: Vec<Nibbles>) -> Result<(), StoreError> {
+        self.engine.set_state_heal_paths(paths)
+    }
+
+    pub fn get_state_heal_paths(&self) -> Result<Option<Vec<Nibbles>>, StoreError> {
+        self.engine.get_state_heal_paths()
+    }
+
+    pub fn clear_state_heal_paths(&self) -> Result<(), StoreError> {
+        self.engine.clear_state_heal_paths()
     }
 
     pub fn clear_snap_state(&self) -> Result<(), StoreError> {
