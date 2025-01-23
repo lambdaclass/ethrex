@@ -1,5 +1,9 @@
 use crate::rpc::*;
 
+use std::time::Duration;
+
+use tokio::time::timeout;
+
 use bytes::Bytes;
 use ethrex_core::{
     types::{AccountState, Block, EMPTY_KECCACK_HASH},
@@ -21,12 +25,15 @@ pub async fn get_block(rpc_url: &str, block_number: usize) -> Result<Block, Stri
         "params": [block_number]
     });
 
-    let response = client
-        .post(rpc_url)
-        .json(request)
-        .send()
-        .await
-        .map_err(|err| err.to_string())?;
+    let response = again::retry(|| {
+        timeout(
+            Duration::from_secs(15),
+            client.post(rpc_url).json(request).send(),
+        )
+    })
+    .await
+    .map_err(|_| "request timeout")?
+    .map_err(|err| err.to_string())?;
 
     response
         .json::<serde_json::Value>()
@@ -64,12 +71,15 @@ pub async fn get_account(
                "params":[address_str, storage_keys, block_number_str]
            }
     );
-    let response = client
-        .post(rpc_url)
-        .json(request)
-        .send()
-        .await
-        .map_err(|err| err.to_string())?;
+    let response = again::retry(|| {
+        timeout(
+            Duration::from_secs(15),
+            client.post(rpc_url).json(request).send(),
+        )
+    })
+    .await
+    .map_err(|_| "request timeout")?
+    .map_err(|err| err.to_string())?;
 
     #[derive(Deserialize)]
     #[serde(rename_all = "camelCase")]
@@ -168,12 +178,15 @@ async fn get_code(rpc_url: &str, block_number: usize, address: &Address) -> Resu
         "params": [address, block_number]
     });
 
-    let response = client
-        .post(rpc_url)
-        .json(request)
-        .send()
-        .await
-        .map_err(|err| err.to_string())?;
+    let response = again::retry(|| {
+        timeout(
+            Duration::from_secs(15),
+            client.post(rpc_url).json(request).send(),
+        )
+    })
+    .await
+    .map_err(|_| "request timeout")?
+    .map_err(|err| err.to_string())?;
 
     response
         .json::<serde_json::Value>()
