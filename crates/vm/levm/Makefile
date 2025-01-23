@@ -64,7 +64,13 @@ clean-evm-ef-tests: ## 🗑️  Clean test vectors
 
 ###### Benchmarks ######
 
-revm-comparison: ## 📊 Run benchmarks of fibonacci and factorial for both REVM and LEVM
+compile-contracts:
+	cd ../../../ && \
+	cargo run --package revm_comparison \
+	--bin compile \
+	--manifest-path crates/vm/levm/bench/revm_comparison/Cargo.toml
+
+revm-comparison: compile-contracts ## 📊 Run benchmarks of fibonacci and factorial for both REVM and LEVM
 	$(MAKE) build-revm-comparison
 	@echo
 	@printf "%s\n" "revm_factorial"
@@ -92,7 +98,7 @@ revm-comparison: ## 📊 Run benchmarks of fibonacci and factorial for both REVM
 		-n "levm_many_hashes" "target/release/levm_many_hashes 100000 1000"
 	@echo
 
-revm-comparison-ci:
+revm-comparison-ci: compile-contracts
 	$(MAKE) build-revm-comparison
 	@echo
 	@printf "%s" "revm_factorial result: "

@@ -1,4 +1,5 @@
-pragma solidity ^0.8.18;
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.17;
 
 contract Factorial {
     function factorial(uint256 n) public pure returns (uint256 result) {
@@ -10,10 +11,10 @@ contract Factorial {
         for (uint256 i = 2; i <= n; i++) {
             // Check for overflow
             if (result > (type(uint256).max / i)) {
-                //revert("Overflow: Factorial result exceeds maximum value");
                 return type(uint256).max;
+            } else {
+                result *= i;
             }
-            result *= i;
         }
 
         return result;

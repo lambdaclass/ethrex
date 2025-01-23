@@ -19,7 +19,7 @@ fn compile_contract(bench_name: &str) {
     );
     println!("compiling {}", path);
     let output = Command::new("solc")
-        .args(&["--bin", &path, "--overwrite", "-o", &outpath])
+        .args(&["--bin-runtime", &path, "--overwrite", "-o", &outpath])
         .output()
         .expect("Failed to compile contract");
 
