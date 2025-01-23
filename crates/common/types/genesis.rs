@@ -138,32 +138,32 @@ impl From<Fork> for &str {
     }
 }
 
-impl From<&str> for Fork {
-    fn from(s: &str) -> Self {
-        match s {
-            "Frontier" => Fork::Frontier,
-            "FrontierThawing" => Fork::FrontierThawing,
-            "Homestead" => Fork::Homestead,
-            "DaoFork" => Fork::DaoFork,
-            "Tangerine" => Fork::Tangerine,
-            "SpuriousDragon" => Fork::SpuriousDragon,
-            "Byzantium" => Fork::Byzantium,
-            "Constantinople" => Fork::Constantinople,
-            "Petersburg" => Fork::Petersburg,
-            "Istanbul" => Fork::Istanbul,
-            "MuirGlacier" => Fork::MuirGlacier,
-            "Berlin" => Fork::Berlin,
-            "London" => Fork::London,
-            "ArrowGlacier" => Fork::ArrowGlacier,
-            "GrayGlacier" => Fork::GrayGlacier,
-            "Paris" => Fork::Paris,
-            "Shanghai" => Fork::Shanghai,
-            "Cancun" => Fork::Cancun,
-            "Prague" => Fork::Prague,
-            _ => Fork::Cancun,
-        }
-    }
-}
+// impl From<&str> for Fork {
+//     fn from(s: &str) -> Self {
+//         match s {
+//             "Frontier" => Fork::Frontier,
+//             "FrontierThawing" => Fork::FrontierThawing,
+//             "Homestead" => Fork::Homestead,
+//             "DaoFork" => Fork::DaoFork,
+//             "Tangerine" => Fork::Tangerine,
+//             "SpuriousDragon" => Fork::SpuriousDragon,
+//             "Byzantium" => Fork::Byzantium,
+//             "Constantinople" => Fork::Constantinople,
+//             "Petersburg" => Fork::Petersburg,
+//             "Istanbul" => Fork::Istanbul,
+//             "MuirGlacier" => Fork::MuirGlacier,
+//             "Berlin" => Fork::Berlin,
+//             "London" => Fork::London,
+//             "ArrowGlacier" => Fork::ArrowGlacier,
+//             "GrayGlacier" => Fork::GrayGlacier,
+//             "Paris" => Fork::Paris,
+//             "Shanghai" => Fork::Shanghai,
+//             "Cancun" => Fork::Cancun,
+//             "Prague" => Fork::Prague,
+//             _ => Fork::Cancun,
+//         }
+//     }
+// }
 
 impl ChainConfig {
     pub fn is_shanghai_activated(&self, block_timestamp: u64) -> bool {
@@ -197,8 +197,8 @@ impl ChainConfig {
         self.get_fork(block_timestamp)
     }
 
-    pub fn gather_forks(&self) -> (Vec<Option<u64>>, Vec<Option<u64>>) {
-        let block_number_based_forks: Vec<Option<u64>> = vec![
+    pub fn gather_forks(&self) -> (Vec<u64>, Vec<u64>) {
+        let block_number_based_forks: Vec<u64> = vec![
             self.homestead_block,
             if self.dao_fork_support {
                 self.dao_fork_block
@@ -218,14 +218,20 @@ impl ChainConfig {
             self.arrow_glacier_block,
             self.gray_glacier_block,
             self.merge_netsplit_block,
-        ];
+        ]
+        .into_iter()
+        .flatten()
+        .collect();
 
-        let timestamp_based_forks: Vec<Option<u64>> = vec![
+        let timestamp_based_forks: Vec<u64> = vec![
             self.shanghai_time,
             self.cancun_time,
             self.prague_time,
             self.verkle_time,
-        ];
+        ]
+        .into_iter()
+        .flatten()
+        .collect();
 
         (block_number_based_forks, timestamp_based_forks)
     }

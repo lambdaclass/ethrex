@@ -135,13 +135,13 @@ pub fn summary_for_slack(reports: &[EFTestReport]) -> String {
         fork_summary_for_slack(reports, Fork::Prague),
         fork_summary_for_slack(reports, Fork::Cancun),
         fork_summary_for_slack(reports, Fork::Shanghai),
-        fork_summary_for_slack(reports, Fork::Homestead),
-        fork_summary_for_slack(reports, Fork::Istanbul),
-        fork_summary_for_slack(reports, Fork::London),
         fork_summary_for_slack(reports, Fork::Byzantium),
         fork_summary_for_slack(reports, Fork::Berlin),
         fork_summary_for_slack(reports, Fork::Constantinople),
         fork_summary_for_slack(reports, Fork::Paris),
+        fork_summary_for_slack(reports, Fork::Homestead),
+        fork_summary_for_slack(reports, Fork::Istanbul),
+        fork_summary_for_slack(reports, Fork::London),
         fork_summary_for_slack(reports, Fork::Frontier),
     )
 }
@@ -175,13 +175,13 @@ pub fn summary_for_github(reports: &[EFTestReport]) -> String {
         fork_summary_for_github(reports, Fork::Prague),
         fork_summary_for_github(reports, Fork::Cancun),
         fork_summary_for_github(reports, Fork::Shanghai),
-        fork_summary_for_github(reports, Fork::Homestead),
-        fork_summary_for_github(reports, Fork::Istanbul),
-        fork_summary_for_github(reports, Fork::London),
         fork_summary_for_github(reports, Fork::Byzantium),
         fork_summary_for_github(reports, Fork::Berlin),
         fork_summary_for_github(reports, Fork::Constantinople),
         fork_summary_for_github(reports, Fork::Paris),
+        fork_summary_for_github(reports, Fork::Homestead),
+        fork_summary_for_github(reports, Fork::Istanbul),
+        fork_summary_for_github(reports, Fork::London),
         fork_summary_for_github(reports, Fork::Frontier),
     )
 }
@@ -314,13 +314,13 @@ impl Display for EFTestsReport {
         writeln!(f, "{}", fork_summary_shell(&self.0, Fork::Prague))?;
         writeln!(f, "{}", fork_summary_shell(&self.0, Fork::Cancun))?;
         writeln!(f, "{}", fork_summary_shell(&self.0, Fork::Shanghai))?;
-        writeln!(f, "{}", fork_summary_shell(&self.0, Fork::Homestead))?;
-        writeln!(f, "{}", fork_summary_shell(&self.0, Fork::Istanbul))?;
-        writeln!(f, "{}", fork_summary_shell(&self.0, Fork::London))?;
         writeln!(f, "{}", fork_summary_shell(&self.0, Fork::Byzantium))?;
         writeln!(f, "{}", fork_summary_shell(&self.0, Fork::Berlin))?;
         writeln!(f, "{}", fork_summary_shell(&self.0, Fork::Constantinople))?;
         writeln!(f, "{}", fork_summary_shell(&self.0, Fork::Paris))?;
+        writeln!(f, "{}", fork_summary_shell(&self.0, Fork::Homestead))?;
+        writeln!(f, "{}", fork_summary_shell(&self.0, Fork::Istanbul))?;
+        writeln!(f, "{}", fork_summary_shell(&self.0, Fork::London))?;
         writeln!(f, "{}", fork_summary_shell(&self.0, Fork::Frontier))?;
         writeln!(f)?;
         writeln!(f, "Failed tests:")?;

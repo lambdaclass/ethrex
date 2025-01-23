@@ -461,6 +461,15 @@ pub struct ENRResponseMessage {
     pub node_record: NodeRecord,
 }
 
+impl ENRResponseMessage {
+    pub fn new(request_hash: H256, node_record: NodeRecord) -> Self {
+        Self {
+            request_hash,
+            node_record,
+        }
+    }
+}
+
 impl RLPDecode for ENRResponseMessage {
     fn decode_unfinished(rlp: &[u8]) -> Result<(Self, &[u8]), RLPDecodeError> {
         let decoder = Decoder::new(rlp)?;
@@ -477,7 +486,13 @@ impl RLPDecode for ENRResponseMessage {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct ENRRequestMessage {
-    expiration: u64,
+    pub expiration: u64,
+}
+
+impl ENRRequestMessage {
+    pub fn new(expiration: u64) -> Self {
+        Self { expiration }
+    }
 }
 
 impl RLPDecode for ENRRequestMessage {
@@ -751,7 +766,6 @@ mod tests {
         let node_record = NodeRecord {
             signature,
             seq,
-            id: String::from("v4"),
             pairs,
         };
         let msg = Message::ENRResponse(ENRResponseMessage {
@@ -878,7 +892,6 @@ mod tests {
         let node_record = NodeRecord {
             signature,
             seq,
-            id: String::from("v4"),
             pairs,
         };
         let expected = Message::ENRResponse(ENRResponseMessage {
