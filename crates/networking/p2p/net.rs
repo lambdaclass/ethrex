@@ -143,8 +143,7 @@ async fn handle_peer_as_receiver(
 
 async fn handle_peer_as_initiator(
     signer: SigningKey,
-    msg: &[u8],
-    node: &Node,
+    node: Node,
     storage: Store,
     table: Arc<Mutex<KademliaTable>>,
     connection_broadcast: RLPxConnBroadcastSender,
@@ -160,7 +159,7 @@ async fn handle_peer_as_initiator(
             return;
         }
     };
-    match RLPxConnection::initiator(signer, msg, stream, storage, connection_broadcast) {
+    match RLPxConnection::initiator(signer, node.node_id, stream, storage, connection_broadcast) {
         Ok(mut conn) => {
             conn.start_peer(SocketAddr::new(node.ip, node.udp_port), table)
                 .await

@@ -141,24 +141,14 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
 
     pub fn initiator(
         signer: SigningKey,
-        msg: &[u8],
+        remote_node_id: H512,
         stream: S,
         storage: Store,
         connection_broadcast_send: broadcast::Sender<(task::Id, Arc<Message>)>,
     ) -> Result<Self, RLPxError> {
-        //TODO remove this, it is already done on the discv4 packet decoding
-        let digest = Keccak256::digest(msg.get(65..).ok_or(RLPxError::InvalidMessageLength())?);
-        let signature = &Signature::from_bytes(
-            msg.get(..64)
-                .ok_or(RLPxError::InvalidMessageLength())?
-                .into(),
-        )?;
-        let rid = RecoveryId::from_byte(*msg.get(64).ok_or(RLPxError::InvalidMessageLength())?)
-            .ok_or(RLPxError::InvalidRecoveryId())?;
-        let peer_pk = VerifyingKey::recover_from_prehash(&digest, signature, rid)?;
         Ok(RLPxConnection::new(
             signer,
-            pubkey2id(&peer_pk.into()),
+            remote_node_id,
             stream,
             RLPxConnectionMode::Initiator,
             storage,

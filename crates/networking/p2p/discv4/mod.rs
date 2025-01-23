@@ -164,7 +164,7 @@ impl Discv4 {
                     let msg = packet.get_message();
                     let msg_name = msg.to_string();
                     debug!("Message: {:?} from {}", msg, packet.get_node_id());
-                    if let Err(e) = self.handle_message(packet, from, read, &buf).await {
+                    if let Err(e) = self.handle_message(packet, from).await {
                         debug!("Error while processing {} message: {:?}", msg_name, e);
                     };
                 }
@@ -172,13 +172,7 @@ impl Discv4 {
         }
     }
 
-    async fn handle_message(
-        &self,
-        packet: Packet,
-        from: SocketAddr,
-        msg_len: usize,
-        msg_bytes: &[u8],
-    ) -> Result<(), DiscoveryError> {
+    async fn handle_message(&self, packet: Packet, from: SocketAddr) -> Result<(), DiscoveryError> {
         match packet.get_message() {
             Message::Ping(msg) => {
                 if is_expired(msg.expiration) {
@@ -244,21 +238,12 @@ impl Discv4 {
                                 self.send_enr_request(peer.node, enr_seq).await?;
                             }
                         }
-                        let mut msg_buf = vec![0; msg_len - 32];
-                        msg_bytes[32..msg_len].clone_into(&mut msg_buf);
                         let signer = self.signer.clone();
                         let storage = self.storage.clone();
                         let broadcaster = self.rlxp_conn_sender.clone();
                         self.tracker.spawn(async move {
-                            handle_peer_as_initiator(
-                                signer,
-                                &msg_buf,
-                                &peer.node,
-                                storage,
-                                table,
-                                broadcaster,
-                            )
-                            .await
+                            handle_peer_as_initiator(signer, peer.node, storage, table, broadcaster)
+                                .await
                         });
                         Ok(())
                     } else {
