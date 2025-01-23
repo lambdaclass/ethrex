@@ -78,7 +78,7 @@ pub mod io {
 pub mod trie {
     use std::collections::HashMap;
 
-    use ethrex_core::{types::AccountState, Address, H160, H256, U256};
+    use ethrex_core::{types::AccountState, H160, U256};
     use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode, error::RLPDecodeError};
     use ethrex_storage::{hash_address, hash_key, AccountUpdate};
     use ethrex_trie::{Trie, TrieError};
@@ -104,12 +104,12 @@ pub mod trie {
     ) -> Result<bool, Error> {
         for (address, account_info) in &db.accounts {
             let storage_trie = storage_tries
-                .get(&address)
+                .get(address)
                 .ok_or(Error::MissingStorageTrie(*address))?;
             let storage_root = storage_trie.hash_no_commit();
 
             // verify account and storage trie are valid
-            let trie_account_state = match state_trie.get(&hash_address(&address)) {
+            let trie_account_state = match state_trie.get(&hash_address(address)) {
                 Ok(Some(encoded_state)) => AccountState::decode(&encoded_state)?,
                 Ok(None) | Err(TrieError::InconsistentTree) => return Ok(false), // account not in trie
                 Err(err) => return Err(err.into()),
