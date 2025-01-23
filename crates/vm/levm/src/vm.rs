@@ -741,7 +741,7 @@ impl VM {
         fake_exponential(
             MIN_BASE_FEE_PER_BLOB_GAS,
             self.env.block_excess_blob_gas.unwrap_or_default(),
-            BLOB_BASE_FEE_UPDATE_FRACTION,
+            blob_base_fee_update_fraction(self.env.spec_id),
         )
     }
 
@@ -1693,6 +1693,13 @@ pub const fn max_blobs_per_block(specid: SpecId) -> usize {
     }
 }
 
+/// According to EIP-7691
+/// (https://eips.ethereum.org/EIPS/eip-7691#specification):
+///
+/// "These changes imply that get_base_fee_per_blob_gas and
+/// calc_excess_blob_gas functions defined in EIP-4844 use the new
+/// values for the first block of the fork (and for all subsequent
+/// blocks)."
 pub const fn blob_base_fee_update_fraction(specid: SpecId) -> U256 {
     match specid {
         SpecId::PRAGUE => BLOB_BASE_FEE_UPDATE_FRACTION_PRAGUE,
