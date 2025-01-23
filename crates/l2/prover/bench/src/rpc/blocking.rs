@@ -108,11 +108,11 @@ pub fn get_account(
     let (storage, storage_proofs) = storage_proof
         .into_iter()
         .map(|proof| -> Result<_, String> {
-            let key = proof
+            let key: U256 = proof
                 .key
                 .parse()
                 .map_err(|_| "failed to parse storage key".to_string())?;
-            let value = proof
+            let value: U256 = proof
                 .value
                 .parse()
                 .map_err(|_| "failed to parse storage value".to_string())?;

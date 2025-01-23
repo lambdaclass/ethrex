@@ -7,7 +7,7 @@ use ethrex_core::{
 };
 use ethrex_rlp::decode::RLPDecode;
 
-use serde::{de::DeserializeOwned, Deserialize};
+use serde::Deserialize;
 use serde_json::json;
 
 pub async fn get_block(rpc_url: &str, block_number: usize) -> Result<Block, String> {
@@ -105,11 +105,11 @@ pub async fn get_account(
     let (storage, storage_proofs) = storage_proof
         .into_iter()
         .map(|proof| -> Result<_, String> {
-            let key = proof
+            let key: U256 = proof
                 .key
                 .parse()
                 .map_err(|_| "failed to parse storage key".to_string())?;
-            let value = proof
+            let value: U256 = proof
                 .value
                 .parse()
                 .map_err(|_| "failed to parse storage value".to_string())?;
@@ -197,7 +197,7 @@ mod test {
     #[ignore = "needs to manually set rpc url in constant"]
     #[tokio::test]
     async fn get_block_works() {
-        get_block(RPC_URL, &BLOCK_NUMBER).await.unwrap();
+        get_block(RPC_URL, BLOCK_NUMBER).await.unwrap();
     }
 
     #[ignore = "needs to manually set rpc url in constant"]

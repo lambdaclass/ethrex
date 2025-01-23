@@ -13,6 +13,7 @@ pub mod db;
 
 pub type NodeRLP = Vec<u8>;
 
+#[derive(Clone)]
 pub struct Account {
     pub account_state: AccountState,
     pub storage: HashMap<U256, U256>,
