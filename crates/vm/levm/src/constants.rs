@@ -1,4 +1,9 @@
 use ethrex_core::{H256, U256};
+use k256::{
+    elliptic_curve::{bigint::Encoding, Curve},
+    Secp256k1,
+};
+use std::sync::LazyLock;
 
 pub const WORD_SIZE_IN_BYTES: U256 = U256([32, 0, 0, 0]);
 pub const WORD_SIZE_IN_BYTES_USIZE: usize = 32;
@@ -50,3 +55,16 @@ pub const VALID_BLOB_PREFIXES: [u8; 2] = [0x01, 0x02];
 // Block constants
 pub const LAST_AVAILABLE_BLOCK_LIMIT: U256 = U256([256, 0, 0, 0]);
 pub const MAX_BLOCK_GAS_LIMIT: U256 = U256([30_000_000, 0, 0, 0]);
+
+// EIP7702 - EOA Load Code
+pub static SECP256K1_ORDER: LazyLock<U256> =
+    LazyLock::new(|| U256::from_big_endian(&Secp256k1::ORDER.to_be_bytes()));
+pub static SECP256K1_ORDER_OVER2: LazyLock<U256> =
+    LazyLock::new(|| *SECP256K1_ORDER / U256::from(2));
+pub const MAGIC: u8 = 0x05;
+pub const SET_CODE_DELEGATION_BYTES: [u8; 3] = [0xef, 0x01, 0x00];
+// Set the code of authority to be 0xef0100 || address. This is a delegation designation.
+// len(SET_CODE_DELEGATION_BYTES) == 3 + len(Address) == 20 -> 23
+pub const EIP7702_DELEGATED_CODE_LEN: usize = 23;
+pub const PER_AUTH_BASE_COST: u64 = 12500;
+pub const PER_EMPTY_ACCOUNT_COST: u64 = 25000;

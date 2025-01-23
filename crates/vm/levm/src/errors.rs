@@ -190,6 +190,8 @@ pub enum InternalError {
     InvalidPrecompileAddress,
     #[error("Spec Id doesn't match to any fork")]
     InvalidSpecId,
+    #[error("Account should had been delegated")]
+    AccountNotDelegated,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error, Serialize, Deserialize)]
