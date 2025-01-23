@@ -190,8 +190,8 @@ async fn discover_peers_server(
                             continue;
                         };
                         let node = Node {
-                            ip: msg.from.ip,
-                            udp_port: msg.from.udp_port,
+                            ip: from.ip(),
+                            udp_port: from.port(),
                             tcp_port: msg.from.tcp_port,
                             node_id: packet.get_node_id(),
                         };
