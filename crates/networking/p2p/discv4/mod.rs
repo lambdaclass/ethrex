@@ -14,7 +14,7 @@ use ethrex_core::H256;
 use ethrex_storage::Store;
 use helpers::{get_expiration, is_expired, time_now_unix, time_since_in_hs};
 use k256::ecdsa::{signature::hazmat::PrehashVerifier, Signature, SigningKey, VerifyingKey};
-use lookup::Disv4LookupHandler;
+use lookup::Discv4LookupHandler;
 use messages::{
     ENRRequestMessage, ENRResponseMessage, FindNodeMessage, Message, NeighborsMessage, Packet,
     PingMessage, PongMessage,
@@ -106,7 +106,7 @@ impl Discv4 {
     }
 
     pub async fn start(&self, bootnodes: Vec<BootNode>) -> Result<(), DiscoveryError> {
-        let lookup_handler = Disv4LookupHandler::new(
+        let lookup_handler = Discv4LookupHandler::new(
             self.local_node,
             self.signer.clone(),
             self.udp_socket.clone(),
@@ -474,12 +474,12 @@ impl Discv4 {
     }
 
     /// Starts a tokio scheduler that:
-    /// - performs periodic revalidation of the current nodes (sends a ping to the old nodes). Currently this is configured to happen every [`REVALIDATION_INTERVAL_IN_MINUTES`]
+    /// - performs periodic revalidation of the current nodes (sends a ping to the old nodes).
     ///
     /// **Peer revalidation**
     ///
     /// Peers revalidation works in the following manner:
-    /// 1. Every `REVALIDATION_INTERVAL_IN_SECONDS` we ping the 3 least recently pinged peers
+    /// 1. Every `revalidation_interval_seconds` we ping the 3 least recently pinged peers
     /// 2. In the next iteration we check if they have answered
     ///    - if they have: we increment the liveness field by one
     ///    - otherwise we decrement it by the current value / 3.
@@ -489,12 +489,11 @@ impl Discv4 {
     pub async fn start_revalidation(&self) {
         let mut interval =
             tokio::time::interval(Duration::from_secs(self.revalidation_interval_seconds));
-        // peers we have pinged in the previous iteration
-        let mut previously_pinged_peers = HashSet::new();
 
         // first tick starts immediately
         interval.tick().await;
 
+        let mut previously_pinged_peers = HashSet::new();
         loop {
             interval.tick().await;
             debug!("Running peer revalidation");
@@ -526,10 +525,10 @@ impl Discv4 {
             // this might be too expensive to run if our table is filled
             // maybe we could just pick them randomly
             let peers = self.table.lock().await.get_least_recently_pinged_peers(3);
-            previously_pinged_peers = HashSet::default(); // reset pinged peers
+            previously_pinged_peers = HashSet::default();
             for peer in peers {
                 debug!("Pinging peer {:?} to re-validate!", peer.node.node_id);
-                let _ = self.ping(peer.node);
+                let _ = self.ping(peer.node).await;
                 previously_pinged_peers.insert(peer.node.node_id);
                 let mut table = self.table.lock().await;
                 let peer = table.get_by_node_id_mut(peer.node.node_id);
@@ -554,9 +553,6 @@ impl Discv4 {
         Ok(())
     }
 
-    // Sends a ping to the addr
-    /// # Returns
-    /// an optional hash corresponding to the message header hash to account if the send was successful
     async fn ping(&self, node: Node) -> Result<(), DiscoveryError> {
         let mut buf = Vec::new();
         let expiration: u64 = get_expiration(20);
