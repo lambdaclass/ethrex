@@ -5,6 +5,8 @@ use k256::{
 };
 use std::sync::LazyLock;
 
+use revm_primitives::SpecId;
+
 pub const WORD_SIZE_IN_BYTES: U256 = U256([32, 0, 0, 0]);
 pub const WORD_SIZE_IN_BYTES_USIZE: usize = 32;
 pub const WORD_SIZE_IN_BYTES_U64: u64 = 32;
@@ -49,7 +51,8 @@ pub const MAX_BLOB_NUMBER_PER_BLOCK: usize = 6;
 pub const TARGET_BLOB_GAS_PER_BLOCK: U256 = U256([393216, 0, 0, 0]); // TARGET_BLOB_NUMBER_PER_BLOCK * GAS_PER_BLOB
 pub const MIN_BASE_FEE_PER_BLOB_GAS: U256 = U256::one();
 pub const BLOB_BASE_FEE_UPDATE_FRACTION: U256 = U256([3338477, 0, 0, 0]);
-pub const MAX_BLOB_COUNT: usize = 9;
+pub const MAX_BLOB_COUNT: usize = 6;
+pub const MAX_BLOB_COUNT_ELECTRA: usize = 9;
 pub const VALID_BLOB_PREFIXES: [u8; 2] = [0x01, 0x02];
 
 // Block constants
@@ -68,3 +71,11 @@ pub const SET_CODE_DELEGATION_BYTES: [u8; 3] = [0xef, 0x01, 0x00];
 pub const EIP7702_DELEGATED_CODE_LEN: usize = 23;
 pub const PER_AUTH_BASE_COST: u64 = 12500;
 pub const PER_EMPTY_ACCOUNT_COST: u64 = 25000;
+
+pub const fn max_blobs_per_block(specid: SpecId) -> usize {
+    match specid {
+        SpecId::PRAGUE => MAX_BLOB_COUNT_ELECTRA,
+        SpecId::PRAGUE_EOF => MAX_BLOB_COUNT_ELECTRA,
+        _ => MAX_BLOB_COUNT,
+    }
+}

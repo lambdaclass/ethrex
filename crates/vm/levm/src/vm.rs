@@ -928,7 +928,7 @@ impl VM {
             }
 
             // (14) TYPE_3_TX_BLOB_COUNT_EXCEEDED
-            if blob_hashes.len() > MAX_BLOB_COUNT {
+            if blob_hashes.len() > max_blobs_per_block(self.env.spec_id) {
                 return Err(VMError::TxValidation(
                     TxValidationError::Type3TxBlobCountExceeded,
                 ));
