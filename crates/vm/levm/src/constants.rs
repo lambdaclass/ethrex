@@ -45,7 +45,6 @@ pub mod create_opcode {
 }
 
 pub const VERSIONED_HASH_VERSION_KZG: u8 = 0x01;
-pub const MAX_BLOB_NUMBER_PER_BLOCK: usize = 6;
 
 // Blob constants
 pub const TARGET_BLOB_GAS_PER_BLOCK: U256 = U256([393216, 0, 0, 0]); // TARGET_BLOB_NUMBER_PER_BLOCK * GAS_PER_BLOB
