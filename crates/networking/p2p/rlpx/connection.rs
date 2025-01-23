@@ -1,8 +1,6 @@
 use std::sync::Arc;
 
 use crate::{
-    //TODO is this right?
-    discv4::MAX_DISC_PACKET_SIZE,
     peer_channels::PeerChannels,
     rlpx::{
         eth::{
@@ -29,16 +27,12 @@ use super::{
     handshake::{decode_ack_message, decode_auth_message, encode_auth_message},
     message as rlpx,
     p2p::Capability,
-    utils::pubkey2id,
 };
 use ethrex_blockchain::mempool::{self};
 use ethrex_core::{H256, H512};
 use ethrex_storage::Store;
 use futures::SinkExt;
-use k256::{
-    ecdsa::{RecoveryId, Signature, SigningKey, VerifyingKey},
-    PublicKey, SecretKey,
-};
+use k256::{ecdsa::SigningKey, PublicKey, SecretKey};
 use rand::random;
 use sha3::{Digest, Keccak256};
 use tokio::{
@@ -62,6 +56,9 @@ const PERIODIC_TASKS_CHECK_INTERVAL: std::time::Duration = std::time::Duration::
 pub(crate) type Aes256Ctr64BE = ctr::Ctr64BE<aes::Aes256>;
 
 pub(crate) type RLPxConnBroadcastSender = broadcast::Sender<(tokio::task::Id, Arc<Message>)>;
+
+// https://github.com/ethereum/go-ethereum/blob/master/p2p/peer.go#L44
+pub const P2P_MAX_MESSAGE_SIZE: usize = 2048;
 
 enum RLPxConnectionMode {
     Initiator,
@@ -600,12 +597,16 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
     }
 
     async fn receive_handshake_msg(&mut self) -> Result<Vec<u8>, RLPxError> {
-        let mut buf = vec![0; MAX_DISC_PACKET_SIZE];
+        let mut buf = vec![0; 2];
 
         // Read the message's size
         self.framed.get_mut().read_exact(&mut buf[..2]).await?;
         let ack_data = [buf[0], buf[1]];
         let msg_size = u16::from_be_bytes(ack_data) as usize;
+        if msg_size > P2P_MAX_MESSAGE_SIZE {
+            return Err(RLPxError::InvalidMessageLength());
+        }
+        buf.resize(msg_size, 0);
 
         // Read the rest of the message
         self.framed

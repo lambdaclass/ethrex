@@ -29,7 +29,7 @@ use tokio::{net::UdpSocket, sync::Mutex};
 use tokio_util::task::TaskTracker;
 use tracing::{debug, error};
 
-pub const MAX_DISC_PACKET_SIZE: usize = 1280;
+const MAX_DISC_PACKET_SIZE: usize = 1280;
 const PROOF_EXPIRATION_IN_HS: u64 = 12;
 
 // These interval times are arbitrary numbers, maybe we should read them from a cfg or a cli param
