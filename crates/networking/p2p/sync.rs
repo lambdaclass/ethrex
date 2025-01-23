@@ -771,16 +771,15 @@ async fn heal_state_trie(
     // Count the number of request retries so we don't get stuck requesting old state
     let mut retry_count = 0;
     while !paths.is_empty() && retry_count < MAX_RETRIES {
-        let batch: Vec<Nibbles> = if paths.len() <= NODE_BATCH_SIZE {
-            paths.drain(..)
+        let batch = if paths.len() <= NODE_BATCH_SIZE {
+            paths.clone()
         } else {
             // Take the latest paths first so we prioritize reaching leaves (depht search)
-            paths.drain(paths.len() - NODE_BATCH_SIZE..)
-            //paths[paths.len() - NODE_BATCH_SIZE..].to_vec()
-        }.collect();
+            paths[paths.len() - NODE_BATCH_SIZE..].to_vec()
+        };
         info!("Paths queued: {}", batch.len());
         let peer = peers.lock().await.get_peer_channels(Capability::Snap).await;
-        if let Some(nodes) = peer.request_state_trienodes(state_root, batch.clone()).await {
+        if let Some(nodes) = peer.request_state_trienodes(state_root, batch).await {
             info!("Received {} state nodes", nodes.len());
             // Reset retry counter for next request
             retry_count = 0;
@@ -790,11 +789,10 @@ async fn heal_state_trie(
             // - Add its children to the queue (if we don't have them already)
             // - If it is a leaf, request its bytecode & storage
             // - If it is a leaf, add its path & value to the trie
-            // Add unfetched nodes back to the queue (we do this first to ensure deph-focused fetching)
-            paths.extend_from_slice(&batch[nodes.len()..]);
-            for (node, path) in nodes.into_iter().zip(batch.into_iter()) {
+            for node in nodes {
                 // We cannot keep the trie state open
                 let mut trie = store.open_state_trie(current_root);
+                let path = paths.remove(0);
                 paths.extend(node_missing_children(&node, &path, trie.state())?);
                 if let Node::Leaf(node) = &node {
                     // Fetch bytecode & storage
