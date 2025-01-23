@@ -1,4 +1,4 @@
-pub(self) mod helpers;
+pub(super) mod helpers;
 mod lookup;
 pub(super) mod messages;
 
@@ -70,7 +70,7 @@ impl Discv4 {
     ) -> Result<Self, DiscoveryError> {
         let udp_socket = UdpSocket::bind(SocketAddr::new(local_node.ip, local_node.udp_port))
             .await
-            .map_err(|e| DiscoveryError::BindSocket(e))?;
+            .map_err(DiscoveryError::BindSocket)?;
 
         Ok(Self {
             local_node,
@@ -102,7 +102,7 @@ impl Discv4 {
     }
 
     pub fn addr(&self) -> SocketAddr {
-        return SocketAddr::new(self.local_node.ip, self.local_node.udp_port);
+        SocketAddr::new(self.local_node.ip, self.local_node.udp_port)
     }
 
     pub async fn start(&self, bootnodes: Vec<BootNode>) -> Result<(), DiscoveryError> {
@@ -197,7 +197,7 @@ impl Discv4 {
                 // if peer was already inserted, and last ping was 12 hs ago
                 //  we need to re ping to re-validate the endpoint proof
                 if let Some(peer) = peer {
-                    if time_since_in_hs(peer.last_ping) >= PROOF_EXPIRATION_IN_HS as u64 {
+                    if time_since_in_hs(peer.last_ping) >= PROOF_EXPIRATION_IN_HS {
                         self.ping(node).await?;
                     }
                     if let Some(enr_seq) = msg.enr_seq {
@@ -301,7 +301,7 @@ impl Discv4 {
                                 .udp_socket
                                 .send_to(&buf, from)
                                 .await
-                                .map_err(|e| DiscoveryError::MessageSendFailure(e))?;
+                                .map_err(DiscoveryError::MessageSendFailure)?;
 
                             if bytes_sent != buf.len() {
                                 return Err(DiscoveryError::PartialMessageSent);
@@ -355,7 +355,7 @@ impl Discv4 {
                 if let Some(nodes) = nodes_to_insert {
                     debug!("Storing neighbors in our table!");
                     for node in nodes {
-                        let _ = self.try_add_peer_and_ping(node);
+                        let _ = self.try_add_peer_and_ping(node).await;
                     }
                 }
 
@@ -516,7 +516,7 @@ impl Discv4 {
                 if peer.liveness == 0 {
                     let new_peer = table.replace_peer(node_id);
                     if let Some(new_peer) = new_peer {
-                        let _ = self.ping(new_peer.node);
+                        let _ = self.ping(new_peer.node).await;
                     }
                 }
             }
@@ -574,7 +574,7 @@ impl Discv4 {
             .udp_socket
             .send_to(&buf, SocketAddr::new(node.ip, node.udp_port))
             .await
-            .map_err(|e| DiscoveryError::MessageSendFailure(e))?;
+            .map_err(DiscoveryError::MessageSendFailure)?;
 
         if bytes_sent != buf.len() {
             return Err(DiscoveryError::PartialMessageSent);
@@ -607,7 +607,7 @@ impl Discv4 {
             .udp_socket
             .send_to(&buf, SocketAddr::new(node.ip, node.udp_port))
             .await
-            .map_err(|e| DiscoveryError::MessageSendFailure(e))?;
+            .map_err(DiscoveryError::MessageSendFailure)?;
 
         if bytes_sent != buf.len() {
             Err(DiscoveryError::PartialMessageSent)
@@ -627,7 +627,7 @@ impl Discv4 {
             .udp_socket
             .send_to(&buf, SocketAddr::new(node.ip, node.udp_port))
             .await
-            .map_err(|e| DiscoveryError::MessageSendFailure(e))?;
+            .map_err(DiscoveryError::MessageSendFailure)?;
         if bytes_sent != buf.len() {
             return Err(DiscoveryError::PartialMessageSent);
         }

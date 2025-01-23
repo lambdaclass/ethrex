@@ -225,7 +225,7 @@ impl Discv4LookupHandler {
             .udp_socket
             .send_to(&buf, SocketAddr::new(node.ip, node.udp_port))
             .await
-            .map_err(|e| DiscoveryError::MessageSendFailure(e))?;
+            .map_err(DiscoveryError::MessageSendFailure)?;
 
         if bytes_sent != buf.len() {
             return Err(DiscoveryError::PartialMessageSent);
