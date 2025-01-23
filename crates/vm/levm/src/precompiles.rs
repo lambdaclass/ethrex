@@ -464,13 +464,7 @@ pub fn modexp(
     // Use of unwrap_or_default because if e == 0 get_slice_or_default returns an empty vec
     let exp_first_32 = BigUint::from_bytes_be(e.get(0..bytes_to_take).unwrap_or_default());
 
-    let gas_cost = gas_cost::modexp(
-        &exp_first_32,
-        base_size,
-        exponent_size,
-        modulus_size,
-        fork,
-    )?;
+    let gas_cost = gas_cost::modexp(&exp_first_32, base_size, exponent_size, modulus_size, fork)?;
 
     increase_precompile_consumed_gas(gas_for_call, gas_cost, consumed_gas)?;
 

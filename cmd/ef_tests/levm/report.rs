@@ -187,7 +187,7 @@ pub fn summary_for_github(reports: &[EFTestReport]) -> String {
 }
 
 fn fork_summary_for_github(reports: &[EFTestReport], fork: Fork) -> String {
-    let fork_str:&str = fork.into();
+    let fork_str: &str = fork.into();
     let (fork_tests, fork_passed_tests, fork_success_percentage) = fork_statistics(reports, fork);
     format!("{fork_str}: {fork_passed_tests}/{fork_tests} ({fork_success_percentage:.2}%)")
 }

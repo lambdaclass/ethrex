@@ -20,7 +20,6 @@ impl VM {
         &mut self,
         current_call_frame: &mut CallFrame,
     ) -> Result<OpcodeSuccess, VMError> {
-        // STACK
         let gas = current_call_frame.stack.pop()?;
         let callee: Address = word_to_address(current_call_frame.stack.pop()?);
         let value_to_transfer: U256 = current_call_frame.stack.pop()?;
@@ -51,10 +50,16 @@ impl VM {
 
         let (account_info, address_was_cold) = self.access_account(callee);
 
+        let (is_delegation, eip7702_gas_consumed, code_address, bytecode) =
+            self.eip7702_get_code(callee)?;
+
         let gas_left = current_call_frame
             .gas_limit
             .checked_sub(current_call_frame.gas_used)
+            .ok_or(InternalError::GasOverflow)?
+            .checked_sub(eip7702_gas_consumed)
             .ok_or(InternalError::GasOverflow)?;
+
         let (cost, gas_limit) = gas_cost::call(
             new_memory_size,
             current_memory_size,
@@ -65,7 +70,9 @@ impl VM {
             gas_left,
             self.env.fork,
         )?;
+
         self.increase_consumed_gas(current_call_frame, cost)?;
+        self.increase_consumed_gas(current_call_frame, eip7702_gas_consumed)?;
 
         // OPERATION
         let msg_sender = current_call_frame.to; // The new sender will be the current contract.
@@ -78,18 +85,19 @@ impl VM {
             value_to_transfer,
             msg_sender,
             to,
-            callee,
+            code_address,
             true,
             is_static,
             args_start_offset,
             args_size,
             return_data_start_offset,
             return_data_size,
+            bytecode,
+            is_delegation,
         )
     }
 
     // CALLCODE operation
-    // TODO: https://github.com/lambdaclass/ethrex/issues/1086
     pub fn op_callcode(
         &mut self,
         current_call_frame: &mut CallFrame,
@@ -121,10 +129,16 @@ impl VM {
 
         let (_account_info, address_was_cold) = self.access_account(code_address);
 
+        let (is_delegation, eip7702_gas_consumed, code_address, bytecode) =
+            self.eip7702_get_code(code_address)?;
+
         let gas_left = current_call_frame
             .gas_limit
             .checked_sub(current_call_frame.gas_used)
+            .ok_or(InternalError::GasOverflow)?
+            .checked_sub(eip7702_gas_consumed)
             .ok_or(InternalError::GasOverflow)?;
+
         let (cost, gas_limit) = gas_cost::callcode(
             new_memory_size,
             current_memory_size,
@@ -133,7 +147,9 @@ impl VM {
             gas,
             gas_left,
         )?;
+
         self.increase_consumed_gas(current_call_frame, cost)?;
+        self.increase_consumed_gas(current_call_frame, eip7702_gas_consumed)?;
 
         // Sender and recipient are the same in this case. But the code executed is from another account.
         let msg_sender = current_call_frame.to;
@@ -153,6 +169,8 @@ impl VM {
             args_size,
             return_data_start_offset,
             return_data_size,
+            bytecode,
+            is_delegation,
         )
     }
 
@@ -189,7 +207,6 @@ impl VM {
     }
 
     // DELEGATECALL operation
-    // TODO: https://github.com/lambdaclass/ethrex/issues/1086
     pub fn op_delegatecall(
         &mut self,
         current_call_frame: &mut CallFrame,
@@ -219,10 +236,16 @@ impl VM {
             calculate_memory_size(return_data_start_offset, return_data_size)?;
         let new_memory_size = new_memory_size_for_args.max(new_memory_size_for_return_data);
 
+        let (is_delegation, eip7702_gas_consumed, code_address, bytecode) =
+            self.eip7702_get_code(code_address)?;
+
         let gas_left = current_call_frame
             .gas_limit
             .checked_sub(current_call_frame.gas_used)
+            .ok_or(InternalError::GasOverflow)?
+            .checked_sub(eip7702_gas_consumed)
             .ok_or(InternalError::GasOverflow)?;
+
         let (cost, gas_limit) = gas_cost::delegatecall(
             new_memory_size,
             current_memory_size,
@@ -230,7 +253,9 @@ impl VM {
             gas,
             gas_left,
         )?;
+
         self.increase_consumed_gas(current_call_frame, cost)?;
+        self.increase_consumed_gas(current_call_frame, eip7702_gas_consumed)?;
 
         // OPERATION
         let msg_sender = current_call_frame.msg_sender;
@@ -251,11 +276,12 @@ impl VM {
             args_size,
             return_data_start_offset,
             return_data_size,
+            bytecode,
+            is_delegation,
         )
     }
 
     // STATICCALL operation
-    // TODO: https://github.com/lambdaclass/ethrex/issues/1086
     pub fn op_staticcall(
         &mut self,
         current_call_frame: &mut CallFrame,
@@ -285,10 +311,16 @@ impl VM {
             calculate_memory_size(return_data_start_offset, return_data_size)?;
         let new_memory_size = new_memory_size_for_args.max(new_memory_size_for_return_data);
 
+        let (is_delegation, eip7702_gas_consumed, _, bytecode) =
+            self.eip7702_get_code(code_address)?;
+
         let gas_left = current_call_frame
             .gas_limit
             .checked_sub(current_call_frame.gas_used)
+            .ok_or(InternalError::GasOverflow)?
+            .checked_sub(eip7702_gas_consumed)
             .ok_or(InternalError::GasOverflow)?;
+
         let (cost, gas_limit) = gas_cost::staticcall(
             new_memory_size,
             current_memory_size,
@@ -296,7 +328,9 @@ impl VM {
             gas,
             gas_left,
         )?;
+
         self.increase_consumed_gas(current_call_frame, cost)?;
+        self.increase_consumed_gas(current_call_frame, eip7702_gas_consumed)?;
 
         // OPERATION
         let value = U256::zero();
@@ -316,11 +350,12 @@ impl VM {
             args_size,
             return_data_start_offset,
             return_data_size,
+            bytecode,
+            is_delegation,
         )
     }
 
     // CREATE operation
-    // TODO: https://github.com/lambdaclass/ethrex/issues/1086
     pub fn op_create(
         &mut self,
         current_call_frame: &mut CallFrame,
@@ -355,7 +390,6 @@ impl VM {
     }
 
     // CREATE2 operation
-    // TODO: https://github.com/lambdaclass/ethrex/issues/1086
     pub fn op_create2(
         &mut self,
         current_call_frame: &mut CallFrame,
@@ -662,6 +696,8 @@ impl VM {
         args_size: usize,
         ret_offset: U256,
         ret_size: usize,
+        bytecode: Bytes,
+        is_delegation: bool,
     ) -> Result<OpcodeSuccess, VMError> {
         // Clear callframe subreturn data
         current_call_frame.sub_return_data = Bytes::new();
@@ -695,13 +731,20 @@ impl VM {
             return Ok(OpcodeSuccess::Continue);
         }
 
-        let recipient_bytecode = self.access_account(code_address).0.bytecode;
+        if bytecode.is_empty() && is_delegation {
+            current_call_frame.gas_used = current_call_frame
+                .gas_used
+                .checked_sub(gas_limit)
+                .ok_or(InternalError::GasOverflow)?;
+            current_call_frame.stack.push(SUCCESS_FOR_CALL)?;
+            return Ok(OpcodeSuccess::Continue);
+        }
 
         let mut new_call_frame = CallFrame::new(
             msg_sender,
             to,
             code_address,
-            recipient_bytecode,
+            bytecode,
             value,
             calldata.into(),
             is_static,

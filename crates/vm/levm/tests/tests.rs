@@ -2,7 +2,10 @@
 #![allow(clippy::unwrap_used)]
 
 use bytes::Bytes;
-use ethrex_core::{types::{Fork, TxKind}, Address, H256, U256};
+use ethrex_core::{
+    types::{Fork, TxKind},
+    Address, H256, U256,
+};
 use ethrex_levm::{
     account::Account,
     constants::*,
@@ -4558,13 +4561,7 @@ fn modexp_test() {
     let calldata = Bytes::from(calldata);
 
     let mut consumed_gas = 0;
-    let result = modexp(
-        &calldata,
-        10000,
-        &mut consumed_gas,
-        Fork::Cancun,
-    )
-    .unwrap();
+    let result = modexp(&calldata, 10000, &mut consumed_gas, Fork::Cancun).unwrap();
 
     let expected_result = Bytes::from(hex::decode("08").unwrap());
 
@@ -4579,13 +4576,7 @@ fn modexp_test_2() {
     let calldata = Bytes::from(calldata);
 
     let mut consumed_gas = 0;
-    let result = modexp(
-        &calldata,
-        10000,
-        &mut consumed_gas,
-        Fork::Cancun,
-    )
-    .unwrap();
+    let result = modexp(&calldata, 10000, &mut consumed_gas, Fork::Cancun).unwrap();
 
     let expected_result = Bytes::from(
         hex::decode("3b01b01ac41f2d6e917c6d6a221ce793802469026d9ab7578fa2e79e4da6aaab").unwrap(),
