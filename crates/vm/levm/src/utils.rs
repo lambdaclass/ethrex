@@ -39,8 +39,7 @@ use std::{
 };
 pub type Storage = HashMap<U256, H256>;
 
-// ================== Word and Address related functions =============
-
+// ================== Address related functions ======================
 pub fn address_to_word(address: Address) -> U256 {
     // This unwrap can't panic, as Address are 20 bytes long and U256 use 32 bytes
     let mut word = [0u8; 32];
@@ -52,12 +51,12 @@ pub fn address_to_word(address: Address) -> U256 {
     U256::from_big_endian(&word)
 }
 
+// ==================== Word related functions =======================
 pub fn word_to_address(word: U256) -> Address {
     Address::from_slice(&word.to_big_endian()[12..])
 }
 
-// ================== Blob hash related functions ====================
-
+// ================= Blob hash related functions =====================
 /// After EIP-7691 the maximum number of blob hashes changes. For more
 /// information see
 /// [EIP-7691](https://eips.ethereum.org/EIPS/eip-7691#specification).
