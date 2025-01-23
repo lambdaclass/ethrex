@@ -1,5 +1,5 @@
 use bootnode::BootNode;
-use discv4::Discv4;
+use discv4::{DiscoveryError, Discv4};
 use ethrex_core::H512;
 use ethrex_storage::Store;
 use k256::{
@@ -40,6 +40,11 @@ pub fn peer_table(signer: SigningKey) -> Arc<Mutex<KademliaTable>> {
     Arc::new(Mutex::new(KademliaTable::new(local_node_id)))
 }
 
+#[derive(Debug)]
+pub enum NetworkError {
+    DiscoveryStart(DiscoveryError),
+}
+
 pub async fn start_network(
     local_node: Node,
     tracker: TaskTracker,
@@ -47,15 +52,11 @@ pub async fn start_network(
     signer: SigningKey,
     peer_table: Arc<Mutex<KademliaTable>>,
     storage: Store,
-) {
-    let tcp_addr = SocketAddr::new(local_node.ip, local_node.tcp_port);
-    info!("Listening for requests at {tcp_addr}");
+) -> Result<(), NetworkError> {
     let (channel_broadcast_send_end, _) = tokio::sync::broadcast::channel::<(
         tokio::task::Id,
         Arc<RLPxMessage>,
     )>(MAX_MESSAGES_TO_BROADCAST);
-
-    // TODO handle errors here
     let discovery = Discv4::try_new(
         local_node,
         signer.clone(),
@@ -65,10 +66,16 @@ pub async fn start_network(
         tracker.clone(),
     )
     .await
-    .unwrap();
-    info!("Starting discovery service at {}", discovery.addr());
-    discovery.start(bootnodes).await.unwrap();
+    .map_err(NetworkError::DiscoveryStart)?;
 
+    info!("Starting discovery service at {}", discovery.addr());
+    discovery
+        .start(bootnodes)
+        .await
+        .map_err(NetworkError::DiscoveryStart)?;
+
+    let tcp_addr = SocketAddr::new(local_node.ip, local_node.tcp_port);
+    info!("Listening for requests at {tcp_addr}");
     tracker.spawn(serve_p2p_requests(
         tracker.clone(),
         tcp_addr,
@@ -77,6 +84,8 @@ pub async fn start_network(
         peer_table.clone(),
         channel_broadcast_send_end,
     ));
+
+    Ok(())
 }
 
 async fn serve_p2p_requests(
