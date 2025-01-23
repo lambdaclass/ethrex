@@ -184,6 +184,7 @@ impl Discv4 {
                 if is_expired(msg.expiration) {
                     return Err(DiscoveryError::MessageExpired);
                 };
+
                 let node = Node {
                     ip: from.ip(),
                     udp_port: from.port(),
@@ -191,10 +192,12 @@ impl Discv4 {
                     node_id: packet.get_node_id(),
                 };
                 self.pong(packet.get_hash(), node).await?;
+
                 let peer = {
                     let table = self.table.lock().await;
                     table.get_by_node_id(packet.get_node_id()).cloned()
                 };
+
                 // if peer was already inserted, and last ping was 12 hs ago
                 //  we need to re ping to re-validate the endpoint proof
                 if let Some(peer) = peer {
@@ -220,45 +223,41 @@ impl Discv4 {
                 if is_expired(msg.expiration) {
                     return Err(DiscoveryError::MessageExpired);
                 }
+
                 let peer = {
                     let table = table.lock().await;
                     table.get_by_node_id(packet.get_node_id()).cloned()
                 };
-                if let Some(peer) = peer {
-                    if peer.last_ping_hash.is_none() {
-                        return Err(DiscoveryError::InvalidMessage(
-                            "node did not send a previous ping".into(),
-                        ));
-                    }
-                    if peer
-                        .last_ping_hash
-                        .is_some_and(|hash| hash == msg.ping_hash)
-                    {
-                        table.lock().await.pong_answered(peer.node.node_id);
-                        if let Some(enr_seq) = msg.enr_seq {
-                            if enr_seq > peer.record.seq {
-                                debug!("Found outdated enr-seq, send an enr_request");
-                                self.send_enr_request(peer.node, enr_seq).await?;
-                            }
-                        }
-                        let signer = self.signer.clone();
-                        let storage = self.storage.clone();
-                        let broadcaster = self.rlxp_conn_sender.clone();
-                        self.tracker.spawn(async move {
-                            handle_peer_as_initiator(signer, peer.node, storage, table, broadcaster)
-                                .await
-                        });
-                        Ok(())
-                    } else {
-                        Err(DiscoveryError::InvalidMessage(
-                            "pong as the hash did not match the last corresponding ping".into(),
-                        ))
-                    }
-                } else {
-                    Err(DiscoveryError::InvalidMessage(
-                        "pong from a not known node".into(),
-                    ))
+                let Some(peer) = peer else {
+                    return Err(DiscoveryError::InvalidMessage("not known node".into()));
+                };
+
+                let Some(ping_hash) = peer.last_ping_hash else {
+                    return Err(DiscoveryError::InvalidMessage(
+                        "node did not send a previous ping".into(),
+                    ));
+                };
+                if ping_hash != msg.ping_hash {
+                    return Err(DiscoveryError::InvalidMessage(
+                        "hash did not match the last corresponding ping".into(),
+                    ));
                 }
+
+                // all validations went well, mark as answered and start a rlpx connection
+                table.lock().await.pong_answered(peer.node.node_id);
+                if let Some(enr_seq) = msg.enr_seq {
+                    if enr_seq > peer.record.seq {
+                        debug!("Found outdated enr-seq, send an enr_request");
+                        self.send_enr_request(peer.node, enr_seq).await?;
+                    }
+                }
+                let signer = self.signer.clone();
+                let storage = self.storage.clone();
+                let broadcaster = self.rlxp_conn_sender.clone();
+                self.tracker.spawn(async move {
+                    handle_peer_as_initiator(signer, peer.node, storage, table, broadcaster).await
+                });
+                Ok(())
             }
             Message::FindNode(msg) => {
                 if is_expired(msg.expiration) {
@@ -268,87 +267,97 @@ impl Discv4 {
                     let table = self.table.lock().await;
                     table.get_by_node_id(packet.get_node_id()).cloned()
                 };
-                if let Some(node) = node {
-                    if node.is_proven {
-                        let nodes = {
-                            let table = self.table.lock().await;
-                            table.get_closest_nodes(msg.target)
-                        };
-                        let nodes_chunks = nodes.chunks(4);
-                        let expiration = get_expiration(20);
-                        debug!("Sending neighbors!");
-                        // we are sending the neighbors in 4 different messages as not to exceed the
-                        // maximum packet size
-                        for nodes in nodes_chunks {
-                            let neighbors = Message::Neighbors(NeighborsMessage::new(
-                                nodes.to_vec(),
-                                expiration,
-                            ));
-                            let mut buf = Vec::new();
-                            neighbors.encode_with_header(&mut buf, &self.signer);
-                            let bytes_sent = self
-                                .udp_socket
-                                .send_to(&buf, from)
-                                .await
-                                .map_err(DiscoveryError::MessageSendFailure)?;
 
-                            if bytes_sent != buf.len() {
-                                return Err(DiscoveryError::PartialMessageSent);
-                            }
-                        }
-                        Ok(())
-                    } else {
-                        Err(DiscoveryError::InvalidMessage("Node isn't proven.".into()))
-                    }
-                } else {
-                    Err(DiscoveryError::InvalidMessage("Node is not known".into()))
+                let Some(node) = node else {
+                    return Err(DiscoveryError::InvalidMessage("not a known node".into()));
+                };
+                if !node.is_proven {
+                    return Err(DiscoveryError::InvalidMessage("node isn't proven".into()));
                 }
+
+                let nodes = {
+                    let table = self.table.lock().await;
+                    table.get_closest_nodes(msg.target)
+                };
+                let nodes_chunks = nodes.chunks(4);
+                let expiration = get_expiration(20);
+
+                debug!("Sending neighbors!");
+                // we are sending the neighbors in 4 different messages as not to exceed the
+                // maximum packet size
+                for nodes in nodes_chunks {
+                    let neighbors =
+                        Message::Neighbors(NeighborsMessage::new(nodes.to_vec(), expiration));
+                    let mut buf = Vec::new();
+                    neighbors.encode_with_header(&mut buf, &self.signer);
+
+                    let bytes_sent = self
+                        .udp_socket
+                        .send_to(&buf, from)
+                        .await
+                        .map_err(DiscoveryError::MessageSendFailure)?;
+
+                    if bytes_sent != buf.len() {
+                        return Err(DiscoveryError::PartialMessageSent);
+                    }
+                }
+
+                Ok(())
             }
             Message::Neighbors(neighbors_msg) => {
                 if is_expired(neighbors_msg.expiration) {
                     return Err(DiscoveryError::MessageExpired);
                 };
 
-                let mut nodes_to_insert = None;
                 let mut table_lock = self.table.lock().await;
-                if let Some(node) = table_lock.get_by_node_id_mut(packet.get_node_id()) {
-                    if let Some(req) = &mut node.find_node_request {
-                        if time_now_unix().saturating_sub(req.sent_at) >= 60 {
-                            node.find_node_request = None;
-                            return Err(DiscoveryError::InvalidMessage(
-                                "find_node request expired after one minute".into(),
-                            ));
-                        }
-                        let nodes = &neighbors_msg.nodes;
-                        let nodes_sent = req.nodes_sent + nodes.len();
 
-                        if nodes_sent <= MAX_NODES_PER_BUCKET {
-                            req.nodes_sent = nodes_sent;
-                            nodes_to_insert = Some(nodes.clone());
-                            if let Some(tx) = &req.tx {
-                                let _ = tx.send(nodes.clone());
-                            }
-                        } else {
-                            debug!("Ignoring neighbors message as the client sent more than the allowed nodes");
-                        }
+                let Some(node) = table_lock.get_by_node_id_mut(packet.get_node_id()) else {
+                    return Err(DiscoveryError::InvalidMessage("not a known node".into()));
+                };
 
-                        if nodes_sent == MAX_NODES_PER_BUCKET {
-                            debug!("Neighbors request has been fulfilled");
-                            node.find_node_request = None;
-                        }
-                    }
-                } else {
-                    return Err(DiscoveryError::InvalidMessage("Unknown node".into()));
+                let Some(req) = &mut node.find_node_request else {
+                    return Err(DiscoveryError::InvalidMessage(
+                        "find node request not sent".into(),
+                    ));
+                };
+                if time_now_unix().saturating_sub(req.sent_at) >= 60 {
+                    node.find_node_request = None;
+                    return Err(DiscoveryError::InvalidMessage(
+                        "find_node request expired after one minute".into(),
+                    ));
                 }
+
+                let nodes = &neighbors_msg.nodes;
+                let total_nodes_sent = req.nodes_sent + nodes.len();
+
+                if total_nodes_sent > MAX_NODES_PER_BUCKET {
+                    node.find_node_request = None;
+                    return Err(DiscoveryError::InvalidMessage(
+                        "sent more than allowed nodes".into(),
+                    ));
+                }
+
+                // update the number of node_sent
+                // and forward the nodes sent if a channel is attached
+                req.nodes_sent = total_nodes_sent;
+                if let Some(tx) = &req.tx {
+                    let _ = tx.send(nodes.clone());
+                }
+
+                if total_nodes_sent == MAX_NODES_PER_BUCKET {
+                    debug!("Neighbors request has been fulfilled");
+                    node.find_node_request = None;
+                }
+
+                // release the lock early
+                // as we might be a long time pinging all the new nodes
                 drop(table_lock);
 
-                if let Some(nodes) = nodes_to_insert {
-                    debug!("Storing neighbors in our table!");
-                    for node in nodes {
-                        let _ = self
-                            .try_add_peer_and_ping(node, self.table.lock().await)
-                            .await;
-                    }
+                debug!("Storing neighbors in our table!");
+                for node in nodes {
+                    let _ = self
+                        .try_add_peer_and_ping(*node, self.table.lock().await)
+                        .await;
                 }
 
                 Ok(())
@@ -363,23 +372,25 @@ impl Discv4 {
                     NodeRecord::from_node(self.local_node, time_now_unix(), &self.signer)
                 else {
                     return Err(DiscoveryError::InvalidMessage(
-                        "Could not build local node record".into(),
+                        "could not build local node record".into(),
                     ));
                 };
                 let msg =
                     Message::ENRResponse(ENRResponseMessage::new(packet.get_hash(), node_record));
                 let mut buf = vec![];
                 msg.encode_with_header(&mut buf, &self.signer);
-                match self.udp_socket.send_to(&buf, from).await {
-                    Ok(bytes_sent) => {
-                        if bytes_sent == buf.len() {
-                            Ok(())
-                        } else {
-                            Err(DiscoveryError::PartialMessageSent)
-                        }
-                    }
-                    Err(e) => Err(DiscoveryError::MessageSendFailure(e)),
+
+                let bytes_sent = self
+                    .udp_socket
+                    .send_to(&buf, from)
+                    .await
+                    .map_err(DiscoveryError::MessageSendFailure)?;
+
+                if bytes_sent != buf.len() {
+                    return Err(DiscoveryError::PartialMessageSent);
                 }
+
+                Ok(())
             }
             Message::ENRResponse(msg) => {
                 let mut table = self.table.lock().await;
