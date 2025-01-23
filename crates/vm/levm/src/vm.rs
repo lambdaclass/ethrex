@@ -1692,3 +1692,11 @@ pub const fn max_blobs_per_block(specid: SpecId) -> usize {
         _ => MAX_BLOB_COUNT,
     }
 }
+
+pub const fn blob_base_fee_update_fraction(specid: SpecId) -> U256 {
+    match specid {
+        SpecId::PRAGUE => BLOB_BASE_FEE_UPDATE_FRACTION_PRAGUE,
+        SpecId::PRAGUE_EOF => BLOB_BASE_FEE_UPDATE_FRACTION_PRAGUE,
+        _ => BLOB_BASE_FEE_UPDATE_FRACTION,
+    }
+}
