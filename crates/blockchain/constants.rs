@@ -48,7 +48,7 @@ pub const TARGET_BLOB_GAS_PER_BLOCK: u64 = 393216;
 pub const TARGET_BLOB_NUMBER_PER_BLOCK: u64 = 3;
 
 /// Max number of blobs per block
-pub const MAX_BLOB_NUMBER_PER_BLOCK: u64 = 2 * TARGET_BLOB_NUMBER_PER_BLOCK;
+pub const MAX_BLOB_NUMBER_PER_BLOCK: u64 = 6;
 
 /// Maximum consumable blob gas for data blobs per block.
 pub const MAX_BLOB_GAS_PER_BLOCK: u64 = MAX_BLOB_NUMBER_PER_BLOCK * GAS_PER_BLOB;
