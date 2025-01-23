@@ -53,7 +53,7 @@ pub fn new_vm_with_ops_db(operations: &[Operation], db: Db) -> Result<VM, VMErro
     )
 }
 
-/// This function is for testing purposes only.
+// /// This function is for testing purposes only.
 pub fn new_vm_with_ops_addr_bal_db(
     contract_bytecode: Bytes,
     sender_address: Address,
