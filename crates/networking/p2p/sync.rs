@@ -178,10 +178,7 @@ impl SyncManager {
                 // - Fetch each block's body and its receipt via eth p2p requests
                 // - Fetch the pivot block's state via snap p2p requests
                 // - Execute blocks after the pivot (like in full-sync)
-                let pivot_idx = all_block_hashes
-                    .len()
-                    .checked_sub(MIN_FULL_BLOCKS)
-                    .unwrap_or_default();
+                let pivot_idx = all_block_hashes.len().saturating_sub(MIN_FULL_BLOCKS);
                 let pivot_header = store
                     .get_block_header_by_hash(all_block_hashes[pivot_idx])?
                     .ok_or(SyncError::CorruptDB)?;
@@ -738,9 +735,14 @@ async fn heal_state_trie(
     let mut retry_count = 0;
     while !paths.is_empty() && retry_count < MAX_RETRIES {
         // Fetch the latests paths first to prioritize reaching leaves as soon as possible
-        let batch: Vec<Nibbles> = paths.drain(paths.len().checked_sub(NODE_BATCH_SIZE).unwrap_or_default()..).collect();
+        let batch: Vec<Nibbles> = paths
+            .drain(paths.len().saturating_sub(NODE_BATCH_SIZE)..)
+            .collect();
         let peer = get_peer_channel_with_retry(peers.clone(), Capability::Snap).await;
-        if let Some(nodes) = peer.request_state_trienodes(state_root, batch.clone()).await {
+        if let Some(nodes) = peer
+            .request_state_trienodes(state_root, batch.clone())
+            .await
+        {
             debug!("Received {} state nodes", nodes.len());
             // Reset retry counter for next request
             retry_count = 0;

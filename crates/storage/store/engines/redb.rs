@@ -776,7 +776,7 @@ impl StoreEngine for RedBStore {
     fn clear_pending_storage_heal_accounts(&self) -> Result<(), StoreError> {
         self.delete(SNAP_STATE_TABLE, SnapStateIndex::PendingStorageHealAccounts)
     }
-    
+
     fn is_synced(&self) -> Result<bool, StoreError> {
         match self.read(CHAIN_DATA_TABLE, ChainDataIndex::IsSynced)? {
             None => Err(StoreError::Custom("Sync status not found".to_string())),

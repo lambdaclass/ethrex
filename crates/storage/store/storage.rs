@@ -1050,7 +1050,7 @@ impl Store {
         self.engine.clear_state_trie_root_checkpoint()?;
         self.engine.clear_state_trie_key_checkpoint()
     }
-    
+
     pub fn is_synced(&self) -> Result<bool, StoreError> {
         self.engine.is_synced()
     }
