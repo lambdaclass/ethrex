@@ -1106,7 +1106,8 @@ impl VM {
         ))
     }
 
-    /// Calculates the address of a new conctract using the CREATE opcode as follow
+    /// Calculates the address of a new conctract using the CREATE
+    /// opcode as follows:
     ///
     /// address = keccak256(rlp([sender_address,sender_nonce]))[12:]
     pub fn calculate_create_address(
