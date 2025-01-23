@@ -1,10 +1,9 @@
-use revm_comparison::{generate_calldata, load_contract_bytecode, run_with_levm};
-use std::env;
+use revm_comparison::{generate_calldata, load_contract_bytecode, parse_args, run_with_levm};
 
 fn main() {
-    let runs = env::args().nth(1).unwrap();
+    let (runs, number_of_iterations) = parse_args();
     let bytecode = load_contract_bytecode("ManyHashes");
-    let calldata = generate_calldata("manyHashes", 20);
+    let calldata = generate_calldata("Benchmark", number_of_iterations);
 
-    run_with_levm(&bytecode, runs.parse().unwrap(), &calldata);
+    run_with_levm(&bytecode, runs, &calldata);
 }

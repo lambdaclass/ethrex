@@ -74,28 +74,28 @@ revm-comparison: compile-contracts ## 📊 Run benchmarks of fibonacci and facto
 	$(MAKE) build-revm-comparison
 	@echo
 	@printf "%s\n" "revm_factorial"
-	@target/release/revm_factorial 1 1000
+	@target/release/revm_factorial 1 57
 	@printf "%s\n" "levm_factorial"
-	@target/release/levm_factorial 1 1000
+	@target/release/levm_factorial 1 57
 	hyperfine -w 5 -r 10 -N \
-		-n "revm_factorial" "target/release/revm_factorial 100000 6" \
-		-n "levm_factorial" "target/release/levm_factorial 100000 6"
+		-n "revm_factorial" "target/release/revm_factorial 100000 57" \
+		-n "levm_factorial" "target/release/levm_factorial 100000 57"
 	@echo
 	@printf "%s\n" "revm_fibonacci"
-	@target/release/revm_fibonacci 1 1000
+	@target/release/revm_fibonacci 1 370
 	@printf "%s\n" "levm_fibonacci"
-	@target/release/levm_fibonacci 1 1000
+	@target/release/levm_fibonacci 1 370
 	hyperfine -w 5 -r 10 -N \
-		-n "revm_fibonacci" "target/release/revm_fibonacci 100000 6" \
-		-n "levm_fibonacci" "target/release/levm_fibonacci 100000 6"
+		-n "revm_fibonacci" "target/release/revm_fibonacci 100000 370" \
+		-n "levm_fibonacci" "target/release/levm_fibonacci 100000 370"
 	@echo
 	@printf "%s\n" "revm_many_hashes"
-	@target/release/revm_many_hashes 1 1000
+	@target/release/revm_many_hashes 1 100
 	@printf "%s\n" "levm_many_hashes"
-	@target/release/levm_many_hashes 1 1000
+	@target/release/levm_many_hashes 1 100
 	hyperfine -w 5 -r 10 -N \
-		-n "revm_many_hashes" "target/release/revm_many_hashes 100000 1000" \
-		-n "levm_many_hashes" "target/release/levm_many_hashes 100000 1000"
+		-n "revm_many_hashes" "target/release/revm_many_hashes 100000 100" \
+		-n "levm_many_hashes" "target/release/levm_many_hashes 100000 100"
 	@echo
 
 revm-comparison-ci: compile-contracts

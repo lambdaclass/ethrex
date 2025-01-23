@@ -2,7 +2,7 @@
 pragma solidity ^0.8.17;
 
 contract Fibonacci {
-    function fibonacci(uint256 n) public pure returns (uint256 result) {
+    function Benchmark(uint256 n) public pure returns (uint256 result) {
         if (n <= 1) return n;
 
         uint256 a = 0;

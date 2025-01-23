@@ -105,3 +105,17 @@ pub fn load_contract_bytecode(bench_name: &str) -> String {
     file.read_to_string(&mut contents).unwrap();
     contents
 }
+
+pub fn parse_args() -> (usize, u64) {
+    let runs: usize = std::env::args()
+        .nth(1)
+        .unwrap_or_else(|| "1".to_string()) // Default to 1 run
+        .parse()
+        .expect("Could not parse runs as usize");
+    let number_of_iterations: u64 = std::env::args()
+        .nth(2)
+        .unwrap_or_else(|| "100".to_string()) // Default to 100 iterations
+        .parse()
+        .expect("Could not parse number_of_iterations as u64");
+    (runs, number_of_iterations)
+}
