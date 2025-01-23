@@ -545,9 +545,6 @@ impl Store {
     }
 
     pub fn add_initial_state(&self, genesis: Genesis) -> Result<(), StoreError> {
-        info!("Setting initial sync status to false");
-        self.update_sync_status(false)?;
-
         info!("Storing initial state from genesis");
 
         // Obtain genesis block
@@ -1003,59 +1000,43 @@ impl Store {
             .is_some())
     }
 
-    /// Sets the hash of the last header downloaded during a snap sync
     pub fn set_header_download_checkpoint(&self, block_hash: BlockHash) -> Result<(), StoreError> {
         self.engine.set_header_download_checkpoint(block_hash)
     }
 
-    /// Gets the hash of the last header downloaded during a snap sync
     pub fn get_header_download_checkpoint(&self) -> Result<Option<BlockHash>, StoreError> {
         self.engine.get_header_download_checkpoint()
     }
 
-    /// Sets the current state root of the state trie being rebuilt during snap sync
     pub fn set_state_trie_root_checkpoint(&self, current_root: H256) -> Result<(), StoreError> {
         self.engine.set_state_trie_root_checkpoint(current_root)
     }
 
-    /// Gets the current state root of the state trie being rebuilt during snap sync
     pub fn get_state_trie_root_checkpoint(&self) -> Result<Option<H256>, StoreError> {
         self.engine.get_state_trie_root_checkpoint()
     }
 
-    /// Sets the last key fetched from the state trie being fetched during snap sync
     pub fn set_state_trie_key_checkpoint(&self, last_key: H256) -> Result<(), StoreError> {
         self.engine.set_state_trie_key_checkpoint(last_key)
     }
 
-    /// Gets the last key fetched from the state trie being fetched during snap sync
     pub fn get_state_trie_key_checkpoint(&self) -> Result<Option<H256>, StoreError> {
         self.engine.get_state_trie_key_checkpoint()
     }
 
-    /// Sets the list of account hashes whose storage needs healing
     pub fn set_pending_storage_heal_accounts(&self, accounts: Vec<H256>) -> Result<(), StoreError> {
         self.engine.set_pending_storage_heal_accounts(accounts)
     }
 
-    /// Gets the list of account hashes whose storage needs healing
     pub fn get_pending_storage_heal_accounts(&self) -> Result<Option<Vec<H256>>, StoreError> {
         self.engine.get_pending_storage_heal_accounts()
     }
 
-    /// Clears all checkpoints written during a snap sync
     pub fn clear_snap_state(&self) -> Result<(), StoreError> {
-        self.engine.clear_header_download_checkpoint()?;
+        //self.engine.clear_header_download_checkpoint()?; TODO: Uncomment
         self.engine.clear_pending_storage_heal_accounts()?;
         self.engine.clear_state_trie_root_checkpoint()?;
         self.engine.clear_state_trie_key_checkpoint()
-    }
-
-    pub fn is_synced(&self) -> Result<bool, StoreError> {
-        self.engine.is_synced()
-    }
-    pub fn update_sync_status(&self, status: bool) -> Result<(), StoreError> {
-        self.engine.update_sync_status(status)
     }
 }
 

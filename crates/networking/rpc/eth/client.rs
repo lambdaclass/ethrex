@@ -1,5 +1,5 @@
 use serde_json::Value;
-use tracing::info;
+use tracing::{debug, info};
 
 use crate::{utils::RpcErr, RpcApiContext, RpcHandler};
 
@@ -10,7 +10,7 @@ impl RpcHandler for ChainId {
     }
 
     fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
-        info!("Requested chain id");
+        debug!("Requested chain id");
         let chain_spec = context
             .storage
             .get_chain_config()
@@ -26,8 +26,7 @@ impl RpcHandler for Syncing {
         Ok(Self {})
     }
 
-    fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
-        let is_synced = context.storage.is_synced()?;
-        Ok(Value::Bool(!is_synced))
+    fn handle(&self, _context: RpcApiContext) -> Result<Value, RpcErr> {
+        Ok(Value::Bool(false))
     }
 }

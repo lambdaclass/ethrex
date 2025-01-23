@@ -1,4 +1,3 @@
-use crate::utils::config::default_config;
 use crate::utils::{
     config::{
         config_file_names, config_path, config_path_interactive_selection, confirm,
@@ -29,11 +28,7 @@ pub(crate) enum Command {
         opts: Box<EditConfigOpts>,
     },
     #[clap(about = "Create a new config.")]
-    Create {
-        config_name: String,
-        #[arg(long = "default", required = false)]
-        default: bool,
-    },
+    Create { config_name: String },
     #[clap(about = "Set the config to use.")]
     Set {
         #[arg(
@@ -104,7 +99,7 @@ impl Command {
                 let (new_config, config_path) = if let Some(ref config_name) = config_name {
                     let config_path = config_path(config_name)?;
                     if !config_path.exists() {
-                        return confirm_config_creation(config_name.clone(), false).await;
+                        return confirm_config_creation(config_name.clone()).await;
                     }
                     let new_config = if opts.is_empty() {
                         edit_config_by_name_interactively(&config_path)?
@@ -122,10 +117,7 @@ impl Command {
                 }
                 set_new_config(config_path.clone(), show).await?;
             }
-            Command::Create {
-                config_name,
-                default,
-            } => {
+            Command::Create { config_name } => {
                 let config_path = config_path(&config_name)?;
                 if config_path.exists() {
                     let override_confirmation = confirm(CONFIG_OVERRIDE_PROMPT_MSG)?;
@@ -134,11 +126,7 @@ impl Command {
                         return Ok::<(), eyre::Error>(());
                     }
                 }
-                let config = if default {
-                    default_config()?
-                } else {
-                    prompt_config()?
-                };
+                let config = prompt_config()?;
                 let toml_config = toml::to_string_pretty(&config)?;
                 println!(
                     "Config created at: {}\n{toml_config}",
@@ -150,7 +138,7 @@ impl Command {
                 let config_path_to_select = if let Some(config_name) = config_name {
                     let config_path_to_select = config_path(&config_name)?;
                     if !config_path_to_select.exists() {
-                        return confirm_config_creation(config_name, false).await;
+                        return confirm_config_creation(config_name).await;
                     }
                     config_path_to_select
                 } else {
@@ -166,7 +154,7 @@ impl Command {
                 let config_to_display_path = if let Some(config_name) = config_name {
                     let config_to_display_path = config_path(&config_name)?;
                     if !config_to_display_path.exists() {
-                        return confirm_config_creation(config_name, false).await;
+                        return confirm_config_creation(config_name).await;
                     }
                     config_to_display_path
                 } else {

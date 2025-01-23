@@ -81,7 +81,7 @@ There are a lot of EIPs schedule to include in this upgrade but for `levm` we'll
 
 | Task Description          | Status |
 | ------------------------- | ------ |
-| Implement EIP-2537        | ✅     |
+| Implement EIP-2537        | 🏗️     |
 | Implement EIP-7623        | ✅     |
 | Implement EIP-7702        | 🏗️     |
 | Make Prague EF tests pass | ❌     |
@@ -117,8 +117,7 @@ We'll run flamegraph or Samply over the VM to identify bottlenecks and improve t
 | ----------------------------------------------------------------------------------------------------------------------------------------------------- | ------ |
 | We have a GitHub workflow that posts the benchmarks results comparison between the PR and the main branch in every PR that includes changes in `levm` | ✅     |
 | We have a GitHub workflow that generates a flamegraph over `levm` and `revm` and post the results in GitHub Pages                                     | ❌     |
-| Add more benchmarks to the current suite                                                                                                              | 🏗️     |
-| We add a table in the README comparing the benchmark results between multiple EVM implementations similar to the one in GitHub Pages                  | 🏗️     |
+| We add a table in the README comparing the benchmark results between multiple EVM implementations similar to the one in GitHub Pages                  | ❌     |
 | All the identified bottlenecks are fixed                                                                                                              | ❌     |
 
 ## Ethereum Foundation Tests (EF Tests)

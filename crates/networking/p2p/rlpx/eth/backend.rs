@@ -1,5 +1,6 @@
 use ethrex_core::{types::ForkId, U256};
 use ethrex_storage::Store;
+use tracing::warn;
 
 use crate::rlpx::error::RLPxError;
 
@@ -41,17 +42,13 @@ pub fn validate_status(msg_data: StatusMessage, storage: &Store) -> Result<(), R
     let genesis_header = storage
         .get_block_header(0)?
         .ok_or(RLPxError::NotFound("Genesis Block".to_string()))?;
-    let latest_block_number = storage.get_latest_block_number()?;
-    let latest_block_header = storage
-        .get_block_header(latest_block_number)?
-        .ok_or(RLPxError::NotFound(format!("Block {latest_block_number}")))?;
+    let block_number = storage.get_latest_block_number()?;
+    let block_header = storage
+        .get_block_header(block_number)?
+        .ok_or(RLPxError::NotFound(format!("Block {block_number}")))?;
+
     let genesis = genesis_header.compute_block_hash();
-    let fork_id = ForkId::new(
-        chain_config,
-        genesis,
-        latest_block_header.timestamp,
-        latest_block_number,
-    );
+    let fork_id = ForkId::new(chain_config, genesis, block_header.timestamp, block_number);
 
     //Check networkID
     if msg_data.network_id != chain_config.chain_id {
@@ -72,14 +69,8 @@ pub fn validate_status(msg_data: StatusMessage, storage: &Store) -> Result<(), R
         ));
     }
     // Check ForkID
-    if !fork_id.is_valid(
-        msg_data.fork_id,
-        latest_block_number,
-        latest_block_header.timestamp,
-        chain_config,
-        genesis,
-    ) {
-        return Err(RLPxError::HandshakeError("Invalid Fork Id".to_string()));
+    if msg_data.fork_id!= fork_id {
+        warn!("Fork Id Hash does not match")
     }
 
     Ok(())

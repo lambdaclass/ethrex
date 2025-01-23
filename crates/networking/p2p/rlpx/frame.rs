@@ -28,6 +28,7 @@ pub(crate) struct RLPxCodec {
 }
 
 impl RLPxCodec {
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn update_secrets(
         &mut self,
         local_state: LocalState,

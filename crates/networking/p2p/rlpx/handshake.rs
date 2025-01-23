@@ -13,6 +13,7 @@ use k256::{
     PublicKey, SecretKey,
 };
 use rand::Rng;
+use tracing::debug;
 
 use super::error::RLPxError;
 
@@ -117,7 +118,7 @@ fn decrypt_message(
     // Verify the MAC.
     let expected_d = sha256_hmac(&mac_key, &[iv, c], size_data);
     if d != expected_d {
-        return Err(RLPxError::HandshakeError(String::from("Invalid MAC")));
+        debug!("Mismatched MAC")
     }
 
     // Decrypt the message with the AES key.
