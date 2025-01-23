@@ -95,8 +95,6 @@ impl Packet {
 }
 
 #[derive(Debug, Eq, PartialEq)]
-// NOTE: All messages could have more fields than specified by the spec.
-// Those additional fields should be ignored, and the message must be accepted.
 pub(crate) enum Message {
     Ping(PingMessage),
     Pong(PongMessage),
@@ -346,8 +344,6 @@ impl PongMessage {
         }
     }
 
-    // TODO: remove when used
-    #[allow(unused)]
     pub fn with_enr_seq(self, enr_seq: u64) -> Self {
         Self {
             enr_seq: Some(enr_seq),

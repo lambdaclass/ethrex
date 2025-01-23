@@ -1,7 +1,5 @@
-use std::{net::SocketAddr, sync::Arc};
-
 use bootnode::BootNode;
-use discv4::discv4::Discv4;
+use discv4::Discv4;
 use ethrex_core::H512;
 use ethrex_storage::Store;
 use k256::{
@@ -9,13 +7,17 @@ use k256::{
     elliptic_curve::{sec1::ToEncodedPoint, PublicKey},
 };
 pub use kademlia::KademliaTable;
-use rlpx::{connection::RLPxConnection, message::Message as RLPxMessage};
-use tokio::{
-    net::{TcpSocket, TcpStream, UdpSocket},
-    sync::{broadcast, Mutex},
-    try_join,
+use rlpx::{
+    connection::{RLPxConnBroadcastSender, RLPxConnection},
+    message::Message as RLPxMessage,
 };
-use tracing::{debug, error, info};
+use std::{io, net::SocketAddr, sync::Arc};
+use tokio::{
+    net::{TcpListener, TcpSocket, TcpStream},
+    sync::Mutex,
+};
+use tokio_util::task::TaskTracker;
+use tracing::{error, info};
 use types::Node;
 
 pub mod bootnode;
@@ -26,8 +28,6 @@ pub mod rlpx;
 pub(crate) mod snap;
 pub mod sync;
 pub mod types;
-
-const MAX_DISC_PACKET_SIZE: usize = 1280;
 
 // Totally arbitrary limit on how
 // many messages the connections can queue,
@@ -41,6 +41,7 @@ pub fn peer_table(signer: SigningKey) -> Arc<Mutex<KademliaTable>> {
 }
 
 pub async fn start_network(
+    tracker: TaskTracker,
     udp_addr: SocketAddr,
     tcp_addr: SocketAddr,
     bootnodes: Vec<BootNode>,
@@ -55,50 +56,60 @@ pub async fn start_network(
         Arc<RLPxMessage>,
     )>(MAX_MESSAGES_TO_BROADCAST);
 
-    let udp_socket = UdpSocket::bind(udp_addr).await.unwrap();
-    let local_node = Node {
-        ip: udp_addr.ip(),
-        node_id: node_id_from_signing_key(&signer),
-        udp_port: udp_addr.port(),
-        tcp_port: tcp_addr.port(),
-    };
-
-    let discv4 = Discv4::new(
-        local_node,
+    // TODO handle errors here
+    let discovery = Discv4::try_new(
+        Node {
+            ip: udp_addr.ip(),
+            udp_port: udp_addr.port(),
+            tcp_port: tcp_addr.port(),
+            node_id: H512::default(),
+        },
         signer.clone(),
         storage.clone(),
         peer_table.clone(),
         channel_broadcast_send_end.clone(),
-        Arc::new(udp_socket),
-    );
-    let discv4 = Arc::new(discv4);
-    let discovery_handle = tokio::spawn(discv4.start_discovery_service(bootnodes));
+        tracker.clone(),
+    )
+    .await
+    .unwrap();
+    discovery.start(bootnodes).await.unwrap();
 
-    let server_handle = tokio::spawn(serve_requests(
+    tracker.spawn(serve_p2p_requests(
+        tracker.clone(),
         tcp_addr,
         signer.clone(),
         storage.clone(),
         peer_table.clone(),
         channel_broadcast_send_end,
     ));
-
-    let _ = try_join!(discovery_handle, server_handle).unwrap();
 }
 
-async fn serve_requests(
+async fn serve_p2p_requests(
+    tracker: TaskTracker,
     tcp_addr: SocketAddr,
     signer: SigningKey,
     storage: Store,
     table: Arc<Mutex<KademliaTable>>,
-    connection_broadcast: broadcast::Sender<(tokio::task::Id, Arc<RLPxMessage>)>,
+    connection_broadcast: RLPxConnBroadcastSender,
 ) {
-    let tcp_socket = TcpSocket::new_v4().unwrap();
-    tcp_socket.bind(tcp_addr).unwrap();
-    let listener = tcp_socket.listen(50).unwrap();
+    let listener = match listener(tcp_addr) {
+        Ok(result) => result,
+        Err(e) => {
+            error!("Error opening tcp socket at {tcp_addr}: {e}. Stopping p2p server");
+            return;
+        }
+    };
     loop {
-        let (stream, _peer_addr) = listener.accept().await.unwrap();
+        let (stream, peer_addr) = match listener.accept().await {
+            Ok(result) => result,
+            Err(e) => {
+                error!("Error receiving data from tcp socket {tcp_addr}: {e}. Stopping p2p server");
+                return;
+            }
+        };
 
-        tokio::spawn(handle_peer_as_receiver(
+        tracker.spawn(handle_peer_as_receiver(
+            peer_addr,
             signer.clone(),
             stream,
             storage.clone(),
@@ -108,15 +119,22 @@ async fn serve_requests(
     }
 }
 
+fn listener(tcp_addr: SocketAddr) -> Result<TcpListener, io::Error> {
+    let tcp_socket = TcpSocket::new_v4()?;
+    tcp_socket.bind(tcp_addr)?;
+    tcp_socket.listen(50)
+}
+
 async fn handle_peer_as_receiver(
+    peer_addr: SocketAddr,
     signer: SigningKey,
     stream: TcpStream,
     storage: Store,
     table: Arc<Mutex<KademliaTable>>,
-    connection_broadcast: broadcast::Sender<(tokio::task::Id, Arc<RLPxMessage>)>,
+    connection_broadcast: RLPxConnBroadcastSender,
 ) {
     let mut conn = RLPxConnection::receiver(signer, stream, storage, connection_broadcast);
-    conn.start_peer(table).await;
+    conn.start_peer(peer_addr, table).await;
 }
 
 async fn handle_peer_as_initiator(
@@ -125,20 +143,35 @@ async fn handle_peer_as_initiator(
     node: &Node,
     storage: Store,
     table: Arc<Mutex<KademliaTable>>,
-    connection_broadcast: broadcast::Sender<(tokio::task::Id, Arc<RLPxMessage>)>,
+    connection_broadcast: RLPxConnBroadcastSender,
 ) {
-    debug!("Trying RLPx connection with {node:?}");
-    let stream = TcpSocket::new_v4()
-        .unwrap()
-        .connect(SocketAddr::new(node.ip, node.tcp_port))
-        .await
-        .unwrap();
-    match RLPxConnection::initiator(signer, msg, stream, storage, connection_broadcast) {
-        Ok(mut conn) => conn.start_peer(table).await,
+    let addr = SocketAddr::new(node.ip, node.tcp_port);
+    let stream = match tcp_stream(addr).await {
+        Ok(result) => result,
         Err(e) => {
-            error!("Error: {e}, Could not start connection with {node:?}");
+            // TODO We should remove the peer from the table if connection failed
+            // but currently it will make the tests fail
+            // table.lock().await.replace_peer(node.node_id);
+            error!("Error establishing tcp connection with peer at {addr}: {e}");
+            return;
         }
-    }
+    };
+    match RLPxConnection::initiator(signer, msg, stream, storage, connection_broadcast) {
+        Ok(mut conn) => {
+            conn.start_peer(SocketAddr::new(node.ip, node.udp_port), table)
+                .await
+        }
+        Err(e) => {
+            // TODO We should remove the peer from the table if connection failed
+            // but currently it will make the tests fail
+            // table.lock().await.replace_peer(node.node_id);
+            error!("Error creating tcp connection with peer at {addr}: {e}")
+        }
+    };
+}
+
+async fn tcp_stream(addr: SocketAddr) -> Result<TcpStream, io::Error> {
+    TcpSocket::new_v4()?.connect(addr).await
 }
 
 pub fn node_id_from_signing_key(signer: &SigningKey) -> H512 {

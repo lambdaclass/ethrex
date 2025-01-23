@@ -1,6 +1,8 @@
 use std::sync::Arc;
 
 use crate::{
+    //TODO is this right?
+    discv4::MAX_DISC_PACKET_SIZE,
     peer_channels::PeerChannels,
     rlpx::{
         eth::{
@@ -18,7 +20,6 @@ use crate::{
         process_account_range_request, process_byte_codes_request, process_storage_ranges_request,
         process_trie_nodes_request,
     },
-    MAX_DISC_PACKET_SIZE,
 };
 
 use super::{
@@ -60,6 +61,8 @@ const PERIODIC_TASKS_CHECK_INTERVAL: std::time::Duration = std::time::Duration::
 
 pub(crate) type Aes256Ctr64BE = ctr::Ctr64BE<aes::Aes256>;
 
+pub(crate) type RLPxConnBroadcastSender = broadcast::Sender<(tokio::task::Id, Arc<Message>)>;
+
 enum RLPxConnectionMode {
     Initiator,
     Receiver,
@@ -94,7 +97,7 @@ pub(crate) struct RLPxConnection<S> {
     /// messages from other connections (sent from other peers).
     /// The receive end is instantiated after the handshake is completed
     /// under `handle_peer`.
-    connection_broadcast_send: broadcast::Sender<(task::Id, Arc<Message>)>,
+    connection_broadcast_send: RLPxConnBroadcastSender,
 }
 
 impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
@@ -104,7 +107,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
         stream: S,
         mode: RLPxConnectionMode,
         storage: Store,
-        connection_broadcast: broadcast::Sender<(task::Id, Arc<Message>)>,
+        connection_broadcast: RLPxConnBroadcastSender,
     ) -> Self {
         Self {
             signer,
@@ -143,6 +146,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
         storage: Store,
         connection_broadcast_send: broadcast::Sender<(task::Id, Arc<Message>)>,
     ) -> Result<Self, RLPxError> {
+        //TODO remove this, it is already done on the discv4 packet decoding
         let digest = Keccak256::digest(msg.get(65..).ok_or(RLPxError::InvalidMessageLength())?);
         let signature = &Signature::from_bytes(
             msg.get(..64)
@@ -164,8 +168,13 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
 
     /// Starts a handshake and runs the peer connection.
     /// It runs in it's own task and blocks until the connection is dropped
-    pub async fn start_peer(&mut self, table: Arc<Mutex<crate::kademlia::KademliaTable>>) {
+    pub async fn start_peer(
+        &mut self,
+        peer_udp_addr: std::net::SocketAddr,
+        table: Arc<Mutex<crate::kademlia::KademliaTable>>,
+    ) {
         // Perform handshake
+        debug!("StartingRLPx connection with {}", self.remote_node_id);
         if let Err(e) = self.handshake().await {
             self.peer_conn_failed("Handshake failed", e, table).await;
         } else {
@@ -177,6 +186,17 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
                 .iter()
                 .map(|(cap, _)| cap.clone())
                 .collect();
+
+            // NOTE: if the peer came from the discovery server it will already be inserted in the table
+            // but that might not always be the case, so we try to add it to the table
+            let node = crate::Node {
+                node_id: self.remote_node_id,
+                ip: peer_udp_addr.ip(),
+                udp_port: peer_udp_addr.port(),
+                tcp_port: peer_udp_addr.port(),
+            };
+            // Note: we don't ping the node we let the validation service do its job
+            table.lock().await.insert_node(node);
             table.lock().await.init_backend_communication(
                 self.remote_node_id,
                 peer_channels,

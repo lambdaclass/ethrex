@@ -30,12 +30,10 @@ STATETEST_URL := https://github.com/ethereum/execution-spec-tests/releases/downl
 download-evm-ef-tests: ## 📥 Download EF Tests
 	mkdir -p $(TMP_DIR)
 	mkdir -p $(VECTORS_DIR)/GeneralStateTests
-	mkdir -p $(VECTORS_DIR)/stEIP2537
 	mkdir -p $(VECTORS_DIR)/state_tests
 	curl -L -o $(SPECTEST_ARTIFACT) $(SPECTEST_URL)
 	tar -xzf $(SPECTEST_ARTIFACT) -C $(TMP_DIR)
 	mv $(TMP_DIR)/tests-14.1/GeneralStateTests/* $(VECTORS_DIR)/GeneralStateTests/
-	mv $(TMP_DIR)/tests-14.1/EIPTests/StateTests/stEIP2537/* $(VECTORS_DIR)/stEIP2537/
 	curl -L -o $(STATETEST_ARTIFACT) $(STATETEST_URL)
 	tar -xzf $(STATETEST_ARTIFACT) -C $(TMP_DIR)
 	mv $(TMP_DIR)/fixtures/state_tests/* $(VECTORS_DIR)/state_tests/
