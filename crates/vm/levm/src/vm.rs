@@ -1678,3 +1678,11 @@ fn eip7702_recover_address(auth_tuple: &AuthorizationTuple) -> Result<Option<Add
         .map_err(|_| VMError::Internal(InternalError::ConversionError))?;
     Ok(Some(Address::from_slice(&authority_address_bytes)))
 }
+
+pub const fn max_blobs_per_block(specid: SpecId) -> usize {
+    match specid {
+        SpecId::PRAGUE => MAX_BLOB_COUNT_ELECTRA,
+        SpecId::PRAGUE_EOF => MAX_BLOB_COUNT_ELECTRA,
+        _ => MAX_BLOB_COUNT,
+    }
+}

@@ -70,11 +70,3 @@ pub const SET_CODE_DELEGATION_BYTES: [u8; 3] = [0xef, 0x01, 0x00];
 pub const EIP7702_DELEGATED_CODE_LEN: usize = 23;
 pub const PER_AUTH_BASE_COST: u64 = 12500;
 pub const PER_EMPTY_ACCOUNT_COST: u64 = 25000;
-
-pub const fn max_blobs_per_block(specid: SpecId) -> usize {
-    match specid {
-        SpecId::PRAGUE => MAX_BLOB_COUNT_ELECTRA,
-        SpecId::PRAGUE_EOF => MAX_BLOB_COUNT_ELECTRA,
-        _ => MAX_BLOB_COUNT,
-    }
-}
