@@ -190,9 +190,9 @@ async fn discover_peers_server(
                             continue;
                         };
                         let node = Node {
-                            ip: msg.to.ip,
-                            udp_port: msg.to.udp_port,
-                            tcp_port: msg.to.tcp_port,
+                            ip: msg.from.ip,
+                            udp_port: msg.from.udp_port,
+                            tcp_port: msg.from.tcp_port,
                             node_id: packet.get_node_id(),
                         };
                         let ping_hash = packet.get_hash();
@@ -1132,9 +1132,9 @@ mod tests {
         {
             let mut table = server_a.table.lock().await;
             table.insert_node(Node {
-                ip: server_b.addr.ip(),
-                udp_port: server_b.addr.port(),
-                tcp_port: 0,
+                ip: server_b.local_node.ip,
+                udp_port: server_b.local_node.udp_port,
+                tcp_port: server_b.local_node.tcp_port,
                 node_id: server_b.node_id,
             });
             table.update_peer_ping(server_b.node_id, ping_hash);
