@@ -663,11 +663,16 @@ impl VM {
             // tx_calldata = nonzero_bytes_in_calldata * 16 + zero_bytes_in_calldata * 4
             // this is actually tokens_in_calldata * STANDARD_TOKEN_COST
             // see it in https://eips.ethereum.org/EIPS/eip-7623
-            let tokens_in_calldata: u64 =
-                gas_cost::tx_calldata(&initial_call_frame.calldata, self.env.spec_id)
-                    .map_err(VMError::OutOfGas)?
-                    .checked_div(STANDARD_TOKEN_COST)
-                    .ok_or(VMError::Internal(InternalError::DivisionError))?;
+
+            let calldata = if self.is_create() {
+                &initial_call_frame.bytecode
+            } else {
+                &initial_call_frame.calldata
+            };
+            let tokens_in_calldata: u64 = gas_cost::tx_calldata(calldata, self.env.spec_id)
+                .map_err(VMError::OutOfGas)?
+                .checked_div(STANDARD_TOKEN_COST)
+                .ok_or(VMError::Internal(InternalError::DivisionError))?;
 
             // floor_gas_price = TX_BASE_COST + TOTAL_COST_FLOOR_PER_TOKEN * tokens_in_calldata
             let mut floor_gas_price: u64 = tokens_in_calldata
