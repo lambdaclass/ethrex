@@ -5,6 +5,7 @@ use crate::{
     errors::{InternalError, OpcodeSuccess, OutOfGasError, ResultReason, TxResult, VMError},
     gas_cost::{self, max_message_call_gas},
     memory::{self, calculate_memory_size},
+    utils::*,
     utils::{address_to_word, word_to_address},
     vm::VM,
     Account,
@@ -572,8 +573,8 @@ impl VM {
         );
 
         let new_address = match salt {
-            Some(salt) => Self::calculate_create2_address(deployer_address, &code, salt)?,
-            None => Self::calculate_create_address(deployer_address, deployer_account_info.nonce)?,
+            Some(salt) => calculate_create2_address(deployer_address, &code, salt)?,
+            None => calculate_create_address(deployer_address, deployer_account_info.nonce)?,
         };
 
         // touch account

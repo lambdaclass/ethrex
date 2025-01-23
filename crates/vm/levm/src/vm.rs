@@ -207,10 +207,8 @@ impl VM {
                 // CREATE tx
 
                 let sender_nonce = get_account(&mut cache, &db, env.origin).info.nonce;
-                let new_contract_address = VM::calculate_create_address(env.origin, sender_nonce)
-                    .map_err(|_| {
-                    VMError::Internal(InternalError::CouldNotComputeCreateAddress)
-                })?;
+                let new_contract_address = calculate_create_address(env.origin, sender_nonce)
+                    .map_err(|_| VMError::Internal(InternalError::CouldNotComputeCreateAddress))?;
 
                 default_touched_accounts.insert(new_contract_address);
 
@@ -1104,55 +1102,6 @@ impl VM {
         self.call_frames.last_mut().ok_or(VMError::Internal(
             InternalError::CouldNotAccessLastCallframe,
         ))
-    }
-
-    /// Calculates the address of a new conctract using the CREATE
-    /// opcode as follows:
-    ///
-    /// address = keccak256(rlp([sender_address,sender_nonce]))[12:]
-    pub fn calculate_create_address(
-        sender_address: Address,
-        sender_nonce: u64,
-    ) -> Result<Address, VMError> {
-        let mut encoded = Vec::new();
-        (sender_address, sender_nonce).encode(&mut encoded);
-        let mut hasher = Keccak256::new();
-        hasher.update(encoded);
-        Ok(Address::from_slice(hasher.finalize().get(12..).ok_or(
-            VMError::Internal(InternalError::CouldNotComputeCreateAddress),
-        )?))
-    }
-
-    /// Calculates the address of a new contract using the CREATE2 opcode as follow
-    ///
-    /// initialization_code = memory[offset:offset+size]
-    ///
-    /// address = keccak256(0xff + sender_address + salt + keccak256(initialization_code))[12:]
-    ///
-    pub fn calculate_create2_address(
-        sender_address: Address,
-        initialization_code: &Bytes,
-        salt: U256,
-    ) -> Result<Address, VMError> {
-        let init_code_hash = keccak(initialization_code);
-
-        let generated_address = Address::from_slice(
-            keccak(
-                [
-                    &[0xff],
-                    sender_address.as_bytes(),
-                    &salt.to_big_endian(),
-                    init_code_hash.as_bytes(),
-                ]
-                .concat(),
-            )
-            .as_bytes()
-            .get(12..)
-            .ok_or(VMError::Internal(
-                InternalError::CouldNotComputeCreate2Address,
-            ))?,
-        );
-        Ok(generated_address)
     }
 
     /// Increases gas consumption of CallFrame and Environment, returning an error if the callframe gas limit is reached.
