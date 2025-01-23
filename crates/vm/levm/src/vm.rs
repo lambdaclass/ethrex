@@ -1685,6 +1685,9 @@ fn eip7702_recover_address(auth_tuple: &AuthorizationTuple) -> Result<Option<Add
     Ok(Some(Address::from_slice(&authority_address_bytes)))
 }
 
+/// After EIP-7691 the maximum number of blob hashes changes. For more
+/// information see
+/// [EIP-7691](https://eips.ethereum.org/EIPS/eip-7691#specification).
 pub const fn max_blobs_per_block(specid: SpecId) -> usize {
     match specid {
         SpecId::PRAGUE => MAX_BLOB_COUNT_ELECTRA,
