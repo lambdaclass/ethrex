@@ -1,14 +1,21 @@
-pragma solidity ^0.8.4;
+pragma solidity ^0.8.18;
 
 contract Factorial {
     function factorial(uint256 n) public pure returns (uint256 result) {
-        if (n == 0 || n == 1) return 1;
-
-        uint256 i = 2; // starting from 2
-        while(i <= n){
-            n *= i++;
+        if (n == 0 || n == 1) {
+            return 1;
         }
 
-       result=n;
+        result = 1;
+        for (uint256 i = 2; i <= n; i++) {
+            // Check for overflow
+            if (result > (type(uint256).max / i)) {
+                //revert("Overflow: Factorial result exceeds maximum value");
+                return type(uint256).max;
+            }
+            result *= i;
+        }
+
+        return result;
     }
 }

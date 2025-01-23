@@ -2,8 +2,11 @@ use bytes::Bytes;
 use ethrex_levm::{call_frame::CallFrame, errors::TxResult, utils::new_vm_with_bytecode};
 use revm::{
     db::BenchmarkDB,
-    primitives::{address, Bytecode, TransactTo},
-    Evm,
+    primitives::{
+        address, AccountInfo, Address, BlockEnv, Bytecode, JumpTable, ResultAndState, TransactTo,
+        U256,
+    },
+    Context, Database, Evm, InMemoryDB,
 };
 use sha3::{Digest, Keccak256};
 use std::fs::File;
@@ -40,16 +43,45 @@ pub fn run_with_levm(program: &str, runs: usize, calldata: &str) {
 pub fn run_with_revm(program: &str, runs: usize, calldata: &str) {
     println!("calldata:\t\t0x{}", calldata);
     println!("program:\t\t0x{}", program);
+    let rich_acc_address = address!("1000000000000000000000000000000000000000");
     let bytes = hex::decode(program).unwrap();
-    let raw = Bytecode::new_raw(bytes.into());
+    let raw = Bytecode::new_raw(bytes.clone().into());
+    let mut db = InMemoryDB::default();
+
+    let mut rich_acc_info = AccountInfo::default();
+    rich_acc_info.balance = U256::MAX;
+    db.insert_account_info(rich_acc_address, rich_acc_info);
+
     let mut evm = Evm::builder()
-        .with_db(BenchmarkDB::new_bytecode(raw))
         .modify_tx_env(|tx| {
-            tx.caller = address!("1000000000000000000000000000000000000000");
-            tx.transact_to = TransactTo::Call(address!("0000000000000000000000000000000000000000"));
+            tx.caller = rich_acc_address;
+            tx.transact_to = TransactTo::Create;
+            tx.data = bytes.into();
+        })
+        .with_db(db)
+        .build();
+
+    let result = evm.transact_commit().unwrap();
+
+    let address = match result {
+        revm::primitives::ExecutionResult::Success { ref output, .. } => *output.address().unwrap(),
+        _ => panic!(),
+    };
+
+    assert!(result.is_success());
+
+    let mut evm = evm
+        .modify()
+        .modify_tx_env(|tx| {
+            tx.caller = rich_acc_address;
+            tx.transact_to = TransactTo::Call(address);
             tx.data = hex::decode(calldata).unwrap().into();
         })
         .build();
+
+    let result = evm.transact().unwrap();
+
+    println!("{:#?}", result);
 
     for _ in 0..runs - 1 {
         let result = black_box(evm.transact()).unwrap();
@@ -90,7 +122,7 @@ pub fn generate_calldata_no_params(function: &str) -> String {
 
 pub fn load_contract_bytecode(bench_name: &str) -> String {
     let path = format!(
-        "bench/revm_comparison/contracts/{}/{}.bin-runtime",
+        "bench/revm_comparison/contracts/{}/{}.bin",
         bench_name, bench_name
     );
     println!("Current directory: {:?}", std::env::current_dir().unwrap());
