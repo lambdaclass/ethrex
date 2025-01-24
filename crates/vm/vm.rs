@@ -670,10 +670,8 @@ pub fn get_state_transitions(state: &mut EvmState) -> Vec<AccountUpdate> {
                 let mut account_update = AccountUpdate::new(address);
                 // Update account info in DB
                 if let Some(new_acc_info) = account.info() {
-                    let code_hash = H256::from_slice(new_acc_info.code_hash.as_slice());
-
                     // If code changed, update
-                    if matches!(db.db.accounts.get(revm_address), Some(account) if account.code_hash != code_hash)
+                    if matches!(db.db.accounts.get(&address), Some(account) if B256::from(account.code_hash.0) != new_acc_info.code_hash)
                     {
                         account_update.code = new_acc_info
                             .code
@@ -681,7 +679,7 @@ pub fn get_state_transitions(state: &mut EvmState) -> Vec<AccountUpdate> {
                     }
 
                     let account_info = AccountInfo {
-                        code_hash,
+                        code_hash: H256::from_slice(new_acc_info.code_hash.as_slice()),
                         balance: U256::from_little_endian(new_acc_info.balance.as_le_slice()),
                         nonce: new_acc_info.nonce,
                     };
@@ -1002,3 +1000,8 @@ fn calculate_gas_price(tx: &GenericTransaction, basefee: u64) -> Uint<256, 4> {
         ))
     }
 }
+
+// USED for revm ^19.0.0
+//pub fn is_prague(spec_id: SpecId) -> bool {
+//    spec_id >= SpecId::PRAGUE
+//}

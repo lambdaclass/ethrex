@@ -368,6 +368,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
         sender: mpsc::Sender<Message>,
     ) -> Result<(), RLPxError> {
         let peer_supports_eth = self.capabilities.contains(&CAP_ETH);
+        let is_synced = self.storage.is_synced()?;
         match message {
             Message::Disconnect(msg_data) => {
                 debug!("Received Disconnect: {}", msg_data.reason());
@@ -390,10 +391,12 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
             }
             // TODO(#1129) Add the transaction to the mempool once received.
             Message::Transactions(txs) if peer_supports_eth => {
-                for tx in &txs.transactions {
-                    mempool::add_transaction(tx.clone(), &self.storage)?;
+                if is_synced {
+                    for tx in &txs.transactions {
+                        mempool::add_transaction(tx.clone(), &self.storage)?;
+                    }
+                    self.broadcast_message(Message::Transactions(txs)).await?;
                 }
-                self.broadcast_message(Message::Transactions(txs)).await?;
             }
             Message::GetBlockHeaders(msg_data) if peer_supports_eth => {
                 let response = BlockHeaders {
@@ -436,7 +439,9 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
                 self.send(Message::PooledTransactions(response)).await?;
             }
             Message::PooledTransactions(msg) if peer_supports_eth => {
-                msg.handle(&self.storage)?;
+                if is_synced {
+                    msg.handle(&self.storage)?;
+                }
             }
             Message::GetStorageRanges(req) => {
                 let response = process_storage_ranges_request(req, self.storage.clone())?;

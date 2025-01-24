@@ -2,7 +2,7 @@ use crate::{
     discv4::{time_now_unix, FindNodeRequest},
     peer_channels::PeerChannels,
     rlpx::p2p::Capability,
-    types::Node,
+    types::{Node, NodeRecord},
 };
 use ethrex_core::{H256, H512, U256};
 use sha3::{Digest, Keccak256};
@@ -94,7 +94,7 @@ impl KademliaTable {
             return (None, false);
         }
 
-        let peer = PeerData::new(node, time_now_unix(), 0, false);
+        let peer = PeerData::new(node, NodeRecord::default(), time_now_unix(), 0, false);
 
         if self.buckets[bucket_idx].peers.len() == MAX_NODES_PER_BUCKET {
             self.insert_as_replacement(&peer, bucket_idx);
@@ -172,6 +172,15 @@ impl KademliaTable {
         peer.last_ping = time_now_unix();
     }
 
+    pub fn update_peer_enr_seq(&mut self, node_id: H512, enr_seq: u64, enr_req_hash: Option<H256>) {
+        let peer = self.get_by_node_id_mut(node_id);
+        let Some(peer) = peer else {
+            return;
+        };
+        peer.record.seq = enr_seq;
+        peer.enr_request_hash = enr_req_hash;
+    }
+
     pub fn update_peer_ping_with_revalidation(&mut self, node_id: H512, ping_hash: Option<H256>) {
         let Some(peer) = self.get_by_node_id_mut(node_id) else {
             return;
@@ -225,7 +234,7 @@ impl KademliaTable {
     fn filter_peers<'a>(
         &'a self,
         filter: &'a dyn Fn(&'a PeerData) -> bool,
-    ) -> impl Iterator<Item = &PeerData> + 'a {
+    ) -> impl Iterator<Item = &'a PeerData> {
         self.iter_peers().filter(|peer| filter(peer))
     }
 
@@ -348,11 +357,13 @@ pub fn bucket_number(node_id_1: H512, node_id_2: H512) -> usize {
 #[derive(Debug, Clone)]
 pub struct PeerData {
     pub node: Node,
+    pub record: NodeRecord,
     pub last_ping: u64,
     pub last_pong: u64,
     pub last_ping_hash: Option<H256>,
     pub is_proven: bool,
     pub find_node_request: Option<FindNodeRequest>,
+    pub enr_request_hash: Option<H256>,
     pub supported_capabilities: Vec<Capability>,
     /// a ration to track the peers's ping responses
     pub liveness: u16,
@@ -363,15 +374,23 @@ pub struct PeerData {
 }
 
 impl PeerData {
-    pub fn new(record: Node, last_ping: u64, last_pong: u64, is_proven: bool) -> Self {
+    pub fn new(
+        node: Node,
+        record: NodeRecord,
+        last_ping: u64,
+        last_pong: u64,
+        is_proven: bool,
+    ) -> Self {
         Self {
-            node: record,
+            node,
+            record,
             last_ping,
             last_pong,
             is_proven,
             liveness: 1,
             last_ping_hash: None,
             find_node_request: None,
+            enr_request_hash: None,
             revalidation: None,
             channels: None,
             supported_capabilities: vec![],
