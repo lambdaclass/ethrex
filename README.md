@@ -223,7 +223,7 @@ Hive tests are categorized by "simulations', and test instances can be filtered 
 ```bash
 make run-hive-debug SIMULATION=<simulation> TEST_PATTERN=<test-regex>
 ```
-This is an example of a Hive simulation called `ethereum/rpc-compat`, which will specificaly
+This is an example of a Hive simulation called `ethereum/rpc-compat`, which will specifically
 run chain id and transaction by hash rpc tests:
 ```bash
 make run-hive SIMULATION=ethereum/rpc-compat TEST_PATTERN="/eth_chainId|eth_getTransactionByHash"
