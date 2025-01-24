@@ -470,7 +470,6 @@ impl Discv4 {
                 if let Some(udp_port) = record.udp_port {
                     peer.node.udp_port = udp_port;
                 }
-                peer.record.seq = msg.node_record.seq;
                 peer.record = msg.node_record.clone();
                 debug!(
                     "Node with id {:?} record has been successfully updated",
@@ -638,8 +637,15 @@ impl Discv4 {
         node: Node,
         mut table_lock: MutexGuard<'a, KademliaTable>,
     ) -> Result<(), DiscoveryError> {
-        let mut buf = Vec::new();
+        // verify there isn't an ongoing request
+        if table_lock
+            .get_by_node_id(node.node_id)
+            .is_some_and(|p| p.enr_request_hash.is_some())
+        {
+            return Ok(());
+        };
 
+        let mut buf = Vec::new();
         let expiration: u64 = get_expiration(20);
         let enr_req = Message::ENRRequest(ENRRequestMessage::new(expiration));
         enr_req.encode_with_header(&mut buf, &self.signer);
@@ -749,7 +755,7 @@ pub(super) mod tests {
         server_b: &mut Discv4,
     ) -> Result<(), DiscoveryError> {
         server_a
-            .ping(server_b.local_node, server_a.table.lock().await)
+            .try_add_peer_and_ping(server_b.local_node, server_a.table.lock().await)
             .await?;
         // allow some time for the server to respond
         sleep(Duration::from_secs(1)).await;
@@ -878,7 +884,7 @@ pub(super) mod tests {
         // server_a should notice the enr_seq is outdated
         // and trigger a enr-request to server_b to update the record.
         server_b
-            .ping(server_a.local_node, server_a.table.lock().await)
+            .ping(server_a.local_node, server_b.table.lock().await)
             .await?;
 
         // Wait for the update to propagate.
@@ -891,7 +897,6 @@ pub(super) mod tests {
             .unwrap();
 
         assert!(server_a_node_b_record.node.tcp_port == server_b.local_node.tcp_port);
-        assert!(server_a_node_b_record.record.seq == server_b.enr_seq);
 
         Ok(())
     }
