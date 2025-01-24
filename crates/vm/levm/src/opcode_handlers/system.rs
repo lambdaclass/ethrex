@@ -603,7 +603,7 @@ impl VM {
         }
 
         // THIRD: Validations that push 0 to the stack without returning reserved gas but incrementing deployer's nonce
-        let new_account = self.get_account(new_address);
+        let new_account = get_account(&mut self.cache, &self.db, new_address);
         if new_account.has_code_or_nonce() {
             self.increment_account_nonce(deployer_address)?;
             current_call_frame.stack.push(CREATE_DEPLOYMENT_FAIL)?;

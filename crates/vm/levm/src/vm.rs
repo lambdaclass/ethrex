@@ -634,7 +634,7 @@ impl VM {
     ///   See 'docs' for more information about validations.
     fn prepare_execution(&mut self, initial_call_frame: &mut CallFrame) -> Result<(), VMError> {
         let sender_address = self.env.origin;
-        let sender_account = self.get_account(sender_address);
+        let sender_account = get_account(&mut self.cache, &self.db, sender_address);
 
         if self.env.spec_id >= SpecId::PRAGUE {
             // check for gas limit is grater or equal than the minimum required
@@ -982,7 +982,7 @@ impl VM {
         //  Add created contract to cache, reverting transaction if the address is already occupied
         if self.is_create() {
             let new_contract_address = initial_call_frame.to;
-            let new_account = self.get_account(new_contract_address);
+            let new_account = get_account(&mut self.cache, &self.db, new_contract_address);
 
             let value = initial_call_frame.msg_value;
             let balance = new_account
@@ -1187,15 +1187,6 @@ impl VM {
             .ok_or(VMError::Internal(InternalError::AccountNotFound))
     }
 
-    /// Gets account, first checking the cache and then the database (caching in the second case)
-    pub fn get_account(&mut self, address: Address) -> Account {
-        get_account(&mut self.cache, &self.db, address)
-    }
-
-    pub fn get_account_no_push_cache(&self, address: Address) -> Account {
-        get_account_no_push_cache(&self.cache, &self.db, address)
-    }
-
     fn handle_create_non_empty_account(
         &mut self,
         initial_call_frame: &CallFrame,
@@ -1251,7 +1242,8 @@ impl VM {
             self.accrued_substate
                 .touched_accounts
                 .insert(authority_address);
-            let authority_account_info = self.get_account_no_push_cache(authority_address).info;
+            let authority_account_info =
+                get_account_no_push_cache(&self.cache, &self.db, authority_address).info;
 
             // 5. Verify the code of authority is either empty or already delegated.
             let empty_or_delegated = authority_account_info.bytecode.is_empty()
@@ -1292,7 +1284,7 @@ impl VM {
                 None => {
                     // This is to add the account to the cache
                     // NOTE: Refactor in the future
-                    self.get_account(authority_address);
+                    get_account(&mut self.cache, &self.db, authority_address);
                     self.get_account_mut(authority_address)?
                 }
             };
