@@ -211,7 +211,8 @@ async fn discover_peers_server(context: P2PContext, udp_socket: Arc<UdpSocket>) 
                             if let (Some(peer), true) = table.insert_node(node) {
                                 // send a ping to get the endpoint proof from our end
                                 let hash =
-                                    ping(&udp_socket, udp_addr, local_node, &context.signer).await;
+                                    ping(&udp_socket, context.local_node, node, &context.signer)
+                                        .await;
                                 table.update_peer_ping(peer.node.node_id, hash);
                             }
                         }
@@ -354,9 +355,13 @@ async fn discover_peers_server(context: P2PContext, udp_socket: Arc<UdpSocket>) 
                         if let Some(nodes) = nodes_to_insert {
                             for node in nodes {
                                 if let (Some(peer), true) = table.insert_node(node) {
-                                    let ping_hash =
-                                        ping(&udp_socket, local_node, peer.node, &context.signer)
-                                            .await;
+                                    let ping_hash = ping(
+                                        &udp_socket,
+                                        context.local_node,
+                                        peer.node,
+                                        &context.signer,
+                                    )
+                                    .await;
                                     table.update_peer_ping(peer.node.node_id, ping_hash);
                                 }
                             }
@@ -489,7 +494,7 @@ async fn discovery_startup(
             node_id: bootnode.node_id,
         };
         context.table.lock().await.insert_node(node);
-        let ping_hash = ping(&udp_socket, context.local_node, node, &signer).await;
+        let ping_hash = ping(&udp_socket, context.local_node, node, &context.signer).await;
         context
             .table
             .lock()
