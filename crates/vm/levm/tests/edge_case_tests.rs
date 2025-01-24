@@ -7,7 +7,7 @@ use ethrex_core::U256;
 use ethrex_levm::{
     errors::{TxResult, VMError},
     operations::Operation,
-    utils::{new_vm_with_bytecode, new_vm_with_ops},
+    testing::{new_vm_with_bytecode, new_vm_with_ops},
 };
 
 #[test]
