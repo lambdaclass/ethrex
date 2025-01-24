@@ -624,7 +624,7 @@ impl VM {
         // THIRD: Validations that push 0 to the stack without returning reserved gas but incrementing deployer's nonce
         let new_account = get_account(&mut self.cache, &self.db, new_address);
         if new_account.has_code_or_nonce() {
-            self.increment_account_nonce(deployer_address)?;
+            increment_account_nonce(&mut self.cache, &mut self.db, deployer_address)?;
             current_call_frame.stack.push(CREATE_DEPLOYMENT_FAIL)?;
             return Ok(OpcodeSuccess::Continue);
         }
@@ -641,7 +641,7 @@ impl VM {
         cache::insert_account(&mut self.cache, new_address, new_account);
 
         // 2. Increment sender's nonce.
-        self.increment_account_nonce(deployer_address)?;
+        increment_account_nonce(&mut self.cache, &mut self.db, deployer_address)?;
 
         // 3. Decrease sender's balance.
         decrease_account_balance(

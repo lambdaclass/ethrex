@@ -721,7 +721,7 @@ impl VM {
         self.add_intrinsic_gas(initial_call_frame)?;
 
         // (7) NONCE_IS_MAX
-        self.increment_account_nonce(sender_address)
+        increment_account_nonce(&mut self.cache, &mut self.db, sender_address)
             .map_err(|_| VMError::TxValidation(TxValidationError::NonceIsMax))?;
 
         // (8) PRIORITY_GREATER_THAN_MAX_FEE_PER_GAS
@@ -1073,26 +1073,6 @@ impl VM {
         Ok((storage_slot, storage_slot_was_cold))
     }
 
-    pub fn increment_account_nonce(&mut self, address: Address) -> Result<u64, VMError> {
-        let account = get_account_mut_vm(&mut self.cache, &mut self.db, address)?;
-        account.info.nonce = account
-            .info
-            .nonce
-            .checked_add(1)
-            .ok_or(VMError::NonceOverflow)?;
-        Ok(account.info.nonce)
-    }
-
-    pub fn decrement_account_nonce(&mut self, address: Address) -> Result<(), VMError> {
-        let account = get_account_mut_vm(&mut self.cache, &mut self.db, address)?;
-        account.info.nonce = account
-            .info
-            .nonce
-            .checked_sub(1)
-            .ok_or(VMError::NonceUnderflow)?;
-        Ok(())
-    }
-
     pub fn update_account_storage(
         &mut self,
         address: Address,
@@ -1221,7 +1201,7 @@ impl VM {
             };
 
             // 9. Increase the nonce of authority by one.
-            self.increment_account_nonce(authority_address)
+            increment_account_nonce(&mut self.cache, &mut self.db, authority_address)
                 .map_err(|_| VMError::TxValidation(TxValidationError::NonceIsMax))?;
         }
 

@@ -412,6 +412,35 @@ pub fn get_number_of_topics(op: Opcode) -> Result<u8, VMError> {
     Ok(number_of_topics)
 }
 
+// =================== Nonce related functions ======================
+pub fn increment_account_nonce(
+    cache: &mut CacheDB,
+    db: &Arc<dyn Database>,
+    address: Address,
+) -> Result<u64, VMError> {
+    let account = get_account_mut_vm(cache, db, address)?;
+    account.info.nonce = account
+        .info
+        .nonce
+        .checked_add(1)
+        .ok_or(VMError::NonceOverflow)?;
+    Ok(account.info.nonce)
+}
+
+pub fn decrement_account_nonce(
+    cache: &mut CacheDB,
+    db: &Arc<dyn Database>,
+    address: Address,
+) -> Result<(), VMError> {
+    let account = get_account_mut_vm(cache, db, address)?;
+    account.info.nonce = account
+        .info
+        .nonce
+        .checked_sub(1)
+        .ok_or(VMError::NonceUnderflow)?;
+    Ok(())
+}
+
 // ==================== Word related functions =======================
 pub fn word_to_address(word: U256) -> Address {
     Address::from_slice(&word.to_big_endian()[12..])
