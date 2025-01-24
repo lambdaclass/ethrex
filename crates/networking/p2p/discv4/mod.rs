@@ -99,7 +99,7 @@ impl Discv4 {
     #[allow(unused)]
     pub fn with_lookup_interval_of(self, minutes: u64) -> Self {
         Self {
-            revalidation_interval_seconds: minutes,
+            lookup_interval_minutes: minutes,
             ..self
         }
     }
@@ -198,34 +198,34 @@ impl Discv4 {
                     table.get_by_node_id(packet.get_node_id()).cloned()
                 };
 
-                // if peer was already inserted, and last ping was 12 hs ago
-                //  we need to re ping to re-validate the endpoint proof
-                if let Some(peer) = peer {
-                    if time_since_in_hs(peer.last_ping) >= PROOF_EXPIRATION_IN_HS {
-                        self.ping(node, self.table.lock().await).await?;
-                    }
-                    if let Some(enr_seq) = msg.enr_seq {
-                        if enr_seq > peer.record.seq {
-                            debug!("Found outdated enr-seq, sending an enr_request");
-                            self.send_enr_request(peer.node, enr_seq).await?;
-                        }
-                    }
-                } else {
-                    // otherwise add to the table
+                let Some(peer) = peer else {
                     self.try_add_peer_and_ping(node, self.table.lock().await)
                         .await?;
+                    return Ok(());
+                };
+
+                // if peer was in the table and last ping was 12 hs ago
+                //  we need to re ping to re-validate the endpoint proof
+                if time_since_in_hs(peer.last_ping) >= PROOF_EXPIRATION_IN_HS {
+                    self.ping(node, self.table.lock().await).await?;
+                }
+                if let Some(enr_seq) = msg.enr_seq {
+                    if enr_seq > peer.record.seq {
+                        debug!("Found outdated enr-seq, sending an enr_request");
+                        self.send_enr_request(peer.node, enr_seq, self.table.lock().await)
+                            .await?;
+                    }
                 }
 
                 Ok(())
             }
             Message::Pong(msg) => {
-                let table = self.table.clone();
                 if is_expired(msg.expiration) {
                     return Err(DiscoveryError::MessageExpired);
                 }
 
                 let peer = {
-                    let table = table.lock().await;
+                    let table = self.table.lock().await;
                     table.get_by_node_id(packet.get_node_id()).cloned()
                 };
                 let Some(peer) = peer else {
@@ -244,16 +244,18 @@ impl Discv4 {
                 }
 
                 // all validations went well, mark as answered and start a rlpx connection
-                table.lock().await.pong_answered(peer.node.node_id);
+                self.table.lock().await.pong_answered(peer.node.node_id);
                 if let Some(enr_seq) = msg.enr_seq {
                     if enr_seq > peer.record.seq {
                         debug!("Found outdated enr-seq, send an enr_request");
-                        self.send_enr_request(peer.node, enr_seq).await?;
+                        self.send_enr_request(peer.node, enr_seq, self.table.lock().await)
+                            .await?;
                     }
                 }
                 let signer = self.signer.clone();
                 let storage = self.storage.clone();
                 let broadcaster = self.rlxp_conn_sender.clone();
+                let table = self.table.clone();
                 self.tracker.spawn(async move {
                     handle_peer_as_initiator(signer, peer.node, storage, table, broadcaster).await
                 });
@@ -393,8 +395,8 @@ impl Discv4 {
                 Ok(())
             }
             Message::ENRResponse(msg) => {
-                let mut table = self.table.lock().await;
-                let peer = table.get_by_node_id_mut(packet.get_node_id());
+                let mut table_lock = self.table.lock().await;
+                let peer = table_lock.get_by_node_id_mut(packet.get_node_id());
                 let Some(peer) = peer else {
                     return Err(DiscoveryError::InvalidMessage("Peer not known".into()));
                 };
@@ -630,7 +632,12 @@ impl Discv4 {
         }
     }
 
-    async fn send_enr_request(&self, node: Node, enr_seq: u64) -> Result<(), DiscoveryError> {
+    async fn send_enr_request<'a>(
+        &self,
+        node: Node,
+        enr_seq: u64,
+        mut table_lock: MutexGuard<'a, KademliaTable>,
+    ) -> Result<(), DiscoveryError> {
         let mut buf = Vec::new();
 
         let expiration: u64 = get_expiration(20);
@@ -647,10 +654,7 @@ impl Discv4 {
         }
 
         let hash = H256::from_slice(&buf[0..32]);
-        self.table
-            .lock()
-            .await
-            .update_peer_enr_seq(node.node_id, enr_seq, Some(hash));
+        table_lock.update_peer_enr_seq(node.node_id, enr_seq, Some(hash));
 
         Ok(())
     }
