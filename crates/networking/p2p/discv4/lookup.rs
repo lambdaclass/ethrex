@@ -3,42 +3,28 @@ use crate::{
     kademlia::{bucket_number, MAX_NODES_PER_BUCKET},
     node_id_from_signing_key,
     types::Node,
-    KademliaTable,
+    P2PContext,
 };
 use ethrex_core::H512;
 use k256::ecdsa::SigningKey;
 use rand::rngs::OsRng;
 use std::{collections::HashSet, net::SocketAddr, sync::Arc, time::Duration};
-use tokio::{net::UdpSocket, sync::Mutex};
-use tokio_util::task::TaskTracker;
+use tokio::net::UdpSocket;
 use tracing::debug;
 
 #[derive(Clone, Debug)]
 pub struct Discv4LookupHandler {
-    local_node: Node,
-    signer: SigningKey,
+    ctx: P2PContext,
     udp_socket: Arc<UdpSocket>,
-    table: Arc<Mutex<KademliaTable>>,
     interval_minutes: u64,
-    tracker: TaskTracker,
 }
 
 impl Discv4LookupHandler {
-    pub fn new(
-        local_node: Node,
-        signer: SigningKey,
-        udp_socket: Arc<UdpSocket>,
-        table: Arc<Mutex<KademliaTable>>,
-        interval_minutes: u64,
-        tracker: TaskTracker,
-    ) -> Self {
+    pub fn new(ctx: P2PContext, udp_socket: Arc<UdpSocket>, interval_minutes: u64) -> Self {
         Self {
-            local_node,
-            signer,
+            ctx,
             udp_socket,
-            table,
             interval_minutes,
-            tracker,
         }
     }
 
@@ -63,7 +49,7 @@ impl Discv4LookupHandler {
     ///
     /// See more https://github.com/ethereum/devp2p/blob/master/discv4.md#recursive-lookup
     pub fn start(&self, initial_interval_wait_seconds: u64) {
-        self.tracker.spawn({
+        self.ctx.tracker.spawn({
             let self_clone = self.clone();
             async move {
                 self_clone.start_task(initial_interval_wait_seconds).await;
@@ -82,11 +68,11 @@ impl Discv4LookupHandler {
             debug!("Starting lookup");
 
             // lookup closest to our node_id
-            self.tracker.spawn({
+            self.ctx.tracker.spawn({
                 let self_clone = self.clone();
                 async move {
                     self_clone
-                        .recursive_lookup(self_clone.local_node.node_id)
+                        .recursive_lookup(self_clone.ctx.local_node.node_id)
                         .await
                 }
             });
@@ -94,7 +80,7 @@ impl Discv4LookupHandler {
             // lookup closest to 3 random keys
             for _ in 0..3 {
                 let random_pub_key = SigningKey::random(&mut OsRng);
-                self.tracker.spawn({
+                self.ctx.tracker.spawn({
                     let self_clone = self.clone();
                     async move {
                         self_clone
@@ -110,12 +96,12 @@ impl Discv4LookupHandler {
 
     async fn recursive_lookup(&self, target: H512) {
         // lookups start with the closest nodes to the target from our table
-        let mut peers_to_ask: Vec<Node> = self.table.lock().await.get_closest_nodes(target);
+        let mut peers_to_ask: Vec<Node> = self.ctx.table.lock().await.get_closest_nodes(target);
         // stores the peers in peers_to_ask + the peers that were in peers_to_ask but were replaced by closer targets
         let mut seen_peers: HashSet<H512> = HashSet::default();
         let mut asked_peers = HashSet::default();
 
-        seen_peers.insert(self.local_node.node_id);
+        seen_peers.insert(self.ctx.local_node.node_id);
         for node in &peers_to_ask {
             seen_peers.insert(node.node_id);
         }
@@ -153,7 +139,7 @@ impl Discv4LookupHandler {
             if asked_peers.contains(&node.node_id) {
                 continue;
             }
-            let mut locked_table = self.table.lock().await;
+            let mut locked_table = self.ctx.table.lock().await;
             if let Some(peer) = locked_table.get_by_node_id_mut(node.node_id) {
                 // if the peer has an ongoing find_node request, don't query
                 if peer.find_node_request.is_none() {
@@ -220,7 +206,7 @@ impl Discv4LookupHandler {
         let msg = Message::FindNode(super::FindNodeMessage::new(target_id, expiration));
 
         let mut buf = Vec::new();
-        msg.encode_with_header(&mut buf, &self.signer);
+        msg.encode_with_header(&mut buf, &self.ctx.signer);
         let bytes_sent = self
             .udp_socket
             .send_to(&buf, SocketAddr::new(node.ip, node.udp_port))
@@ -268,12 +254,9 @@ mod tests {
 
     fn lookup_handler_from_server(server: Discv4) -> Discv4LookupHandler {
         Discv4LookupHandler::new(
-            server.local_node,
-            server.signer.clone(),
+            server.ctx.clone(),
             server.udp_socket.clone(),
-            server.table.clone(),
             server.lookup_interval_minutes,
-            server.tracker.clone(),
         )
     }
 
@@ -290,15 +273,19 @@ mod tests {
         let mut server_a = start_discovery_server(8000, true).await?;
         let mut server_b = start_discovery_server(8001, true).await?;
 
-        fill_table_with_random_nodes(server_a.table.clone()).await;
+        fill_table_with_random_nodes(server_a.ctx.table.clone()).await;
 
         // because the table is filled, before making the connection, remove a node from the `b` bucket
         // otherwise it won't be added.
-        let b_bucket = bucket_number(server_a.local_node.node_id, server_b.local_node.node_id);
-        let node_id_to_remove = server_a.table.lock().await.buckets()[b_bucket].peers[0]
+        let b_bucket = bucket_number(
+            server_a.ctx.local_node.node_id,
+            server_b.ctx.local_node.node_id,
+        );
+        let node_id_to_remove = server_a.ctx.table.lock().await.buckets()[b_bucket].peers[0]
             .node
             .node_id;
         server_a
+            .ctx
             .table
             .lock()
             .await
@@ -308,20 +295,22 @@ mod tests {
 
         // now we are going to run a lookup with us as the target
         let closets_peers_to_b_from_a = server_a
+            .ctx
             .table
             .lock()
             .await
-            .get_closest_nodes(server_b.local_node.node_id);
+            .get_closest_nodes(server_b.ctx.local_node.node_id);
         let nodes_to_ask = server_b
+            .ctx
             .table
             .lock()
             .await
-            .get_closest_nodes(server_b.local_node.node_id);
+            .get_closest_nodes(server_b.ctx.local_node.node_id);
 
         let lookup_handler = lookup_handler_from_server(server_b.clone());
         lookup_handler
             .lookup(
-                server_b.local_node.node_id,
+                server_b.ctx.local_node.node_id,
                 &mut HashSet::default(),
                 &nodes_to_ask,
             )
@@ -332,11 +321,11 @@ mod tests {
 
         // now all peers should've been inserted
         for peer in closets_peers_to_b_from_a {
-            let table = server_b.table.lock().await;
+            let table = server_b.ctx.table.lock().await;
             let node = table.get_by_node_id(peer.node_id);
             // sometimes nodes can send ourselves as a neighbor
             // make sure we don't add it
-            if peer.node_id == server_b.local_node.node_id {
+            if peer.node_id == server_b.ctx.local_node.node_id {
                 assert!(node.is_none());
             } else {
                 assert!(node.is_some());
@@ -366,46 +355,49 @@ mod tests {
         // the reason we don't put more is because this nodes won't respond (as they don't are not real servers)
         // and so we will have to wait for the timeout on each node, which will only slow down the test
         for _ in 0..3 {
-            insert_random_node_on_custom_bucket(server_d.table.clone(), 0).await;
+            insert_random_node_on_custom_bucket(server_d.ctx.table.clone(), 0).await;
         }
 
         let mut expected_peers = vec![];
         expected_peers.extend(
             server_b
+                .ctx
                 .table
                 .lock()
                 .await
-                .get_closest_nodes(server_a.local_node.node_id),
+                .get_closest_nodes(server_a.ctx.local_node.node_id),
         );
         expected_peers.extend(
             server_c
+                .ctx
                 .table
                 .lock()
                 .await
-                .get_closest_nodes(server_a.local_node.node_id),
+                .get_closest_nodes(server_a.ctx.local_node.node_id),
         );
         expected_peers.extend(
             server_d
+                .ctx
                 .table
                 .lock()
                 .await
-                .get_closest_nodes(server_a.local_node.node_id),
+                .get_closest_nodes(server_a.ctx.local_node.node_id),
         );
 
         let lookup_handler = lookup_handler_from_server(server_a.clone());
 
         // we'll run a recursive lookup closest to the server itself
         lookup_handler
-            .recursive_lookup(server_a.local_node.node_id)
+            .recursive_lookup(server_a.ctx.local_node.node_id)
             .await;
 
         // sometimes nodes can send ourselves as a neighbor
         // make sure we don't add it
         for peer in expected_peers {
-            let table = server_a.table.lock().await;
+            let table = server_a.ctx.table.lock().await;
             let node = table.get_by_node_id(peer.node_id);
 
-            if peer.node_id == server_a.local_node.node_id {
+            if peer.node_id == server_a.ctx.local_node.node_id {
                 assert!(node.is_none());
             } else {
                 assert!(node.is_some());
