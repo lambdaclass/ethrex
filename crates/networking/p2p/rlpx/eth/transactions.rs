@@ -396,12 +396,16 @@ mod tests {
     }
 
     fn setup_pool() -> (P2PTransaction, P2PTransaction, PooledTransactions) {
-        let mut tx1 = LegacyTransaction::default();
-        tx1.data = vec![0x01, 0x02].into();
+        let tx1 = LegacyTransaction {
+            data: vec![0x01, 0x02].into(),
+            ..Default::default()
+        };
         let tx1 = P2PTransaction::LegacyTransaction(tx1);
 
-        let mut tx2 = EIP2930Transaction::default();
-        tx2.data = vec![0x03, 0x04].into();
+        let tx2 = EIP2930Transaction {
+            data: vec![0x03, 0x04].into(),
+            ..Default::default()
+        };
         let tx2 = P2PTransaction::EIP2930Transaction(tx2);
 
         let pool_msg = PooledTransactions {
