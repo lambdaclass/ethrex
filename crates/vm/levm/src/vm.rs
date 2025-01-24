@@ -963,7 +963,7 @@ impl VM {
         // In Cancun the only addresses destroyed are contracts created in this transaction
         let selfdestruct_set = self.accrued_substate.selfdestruct_set.clone();
         for address in selfdestruct_set {
-            let account_to_remove = self.get_account_mut(address)?;
+            let account_to_remove = get_account_mut_vm(&mut self.cache, &mut self.db, address)?;
             *account_to_remove = Account::default();
         }
 
@@ -1091,7 +1091,7 @@ impl VM {
 
         // When updating account storage of an account that's not yet cached we need to store the StorageSlot in the account
         // Note: We end up caching the account because it is the most straightforward way of doing it.
-        let account = self.get_account_mut(address)?;
+        let account = get_account_mut_vm(&mut self.cache, &mut self.db, address)?;
         account.storage.insert(key, storage_slot.clone());
 
         Ok((storage_slot, storage_slot_was_cold))
@@ -1102,7 +1102,7 @@ impl VM {
         address: Address,
         increase: U256,
     ) -> Result<(), VMError> {
-        let account = self.get_account_mut(address)?;
+        let account = get_account_mut_vm(&mut self.cache, &mut self.db, address)?;
         account.info.balance = account
             .info
             .balance
@@ -1116,7 +1116,7 @@ impl VM {
         address: Address,
         decrease: U256,
     ) -> Result<(), VMError> {
-        let account = self.get_account_mut(address)?;
+        let account = get_account_mut_vm(&mut self.cache, &mut self.db, address)?;
         account.info.balance = account
             .info
             .balance
@@ -1126,7 +1126,7 @@ impl VM {
     }
 
     pub fn increment_account_nonce(&mut self, address: Address) -> Result<u64, VMError> {
-        let account = self.get_account_mut(address)?;
+        let account = get_account_mut_vm(&mut self.cache, &mut self.db, address)?;
         account.info.nonce = account
             .info
             .nonce
@@ -1136,7 +1136,7 @@ impl VM {
     }
 
     pub fn decrement_account_nonce(&mut self, address: Address) -> Result<(), VMError> {
-        let account = self.get_account_mut(address)?;
+        let account = get_account_mut_vm(&mut self.cache, &mut self.db, address)?;
         account.info.nonce = account
             .info
             .nonce
@@ -1150,7 +1150,7 @@ impl VM {
         address: Address,
         new_bytecode: Bytes,
     ) -> Result<(), VMError> {
-        let account = self.get_account_mut(address)?;
+        let account = get_account_mut_vm(&mut self.cache, &mut self.db, address)?;
         account.info.bytecode = new_bytecode;
         Ok(())
     }
@@ -1161,7 +1161,7 @@ impl VM {
         key: H256,
         new_value: U256,
     ) -> Result<(), VMError> {
-        let account = self.get_account_mut(address)?;
+        let account = get_account_mut_vm(&mut self.cache, &mut self.db, address)?;
         let account_original_storage_slot_value = account
             .storage
             .get(&key)
@@ -1172,19 +1172,6 @@ impl VM {
         });
         slot.current_value = new_value;
         Ok(())
-    }
-
-    pub fn get_account_mut(&mut self, address: Address) -> Result<&mut Account, VMError> {
-        if !cache::is_account_cached(&self.cache, &address) {
-            let account_info = self.db.get_account_info(address);
-            let account = Account {
-                info: account_info,
-                storage: HashMap::new(),
-            };
-            cache::insert_account(&mut self.cache, address, account.clone());
-        }
-        cache::get_account_mut(&mut self.cache, &address)
-            .ok_or(VMError::Internal(InternalError::AccountNotFound))
     }
 
     fn handle_create_non_empty_account(
@@ -1285,7 +1272,7 @@ impl VM {
                     // This is to add the account to the cache
                     // NOTE: Refactor in the future
                     get_account(&mut self.cache, &self.db, authority_address);
-                    self.get_account_mut(authority_address)?
+                    get_account_mut_vm(&mut self.cache, &mut self.db, authority_address)?
                 }
             };
 

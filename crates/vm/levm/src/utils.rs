@@ -134,6 +134,22 @@ pub fn get_account_no_push_cache(
     }
 }
 
+pub fn get_account_mut_vm<'vm>(
+    cache: &'vm mut CacheDB,
+    db: &'vm Arc<dyn Database>,
+    address: Address,
+) -> Result<&'vm mut Account, VMError> {
+    if !cache::is_account_cached(&cache, &address) {
+        let account_info = db.get_account_info(address);
+        let account = Account {
+            info: account_info,
+            storage: HashMap::new(),
+        };
+        cache::insert_account(cache, address, account.clone());
+    }
+    cache::get_account_mut(cache, &address).ok_or(VMError::Internal(InternalError::AccountNotFound))
+}
+
 // ==================== Word related functions =======================
 pub fn word_to_address(word: U256) -> Address {
     Address::from_slice(&word.to_big_endian()[12..])
