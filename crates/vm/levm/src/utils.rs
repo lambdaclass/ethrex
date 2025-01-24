@@ -224,3 +224,26 @@ pub fn get_base_fee_per_blob_gas(
         get_blob_base_fee_update_fraction_value(spec_id),
     )
 }
+
+/// Gets the max blob gas cost for a transaction that a user is
+/// willing to pay.
+pub fn get_max_blob_gas_price(
+    tx_blob_hashes: Vec<H256>,
+    tx_max_fee_per_blob_gas: Option<U256>,
+) -> Result<U256, VMError> {
+    let blobhash_amount: u64 = tx_blob_hashes
+        .len()
+        .try_into()
+        .map_err(|_| VMError::Internal(InternalError::ConversionError))?;
+
+    let blob_gas_used: u64 = blobhash_amount
+        .checked_mul(BLOB_GAS_PER_BLOB)
+        .unwrap_or_default();
+
+    let max_blob_gas_cost = tx_max_fee_per_blob_gas
+        .unwrap_or_default()
+        .checked_mul(blob_gas_used.into())
+        .ok_or(InternalError::UndefinedState(1))?;
+
+    Ok(max_blob_gas_cost)
+}

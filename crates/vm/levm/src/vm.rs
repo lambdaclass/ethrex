@@ -600,29 +600,6 @@ impl VM {
         }
     }
 
-    /// Gets the max blob gas cost for a transaction that a user is willing to pay.
-    fn get_max_blob_gas_price(&self) -> Result<U256, VMError> {
-        let blobhash_amount: u64 = self
-            .env
-            .tx_blob_hashes
-            .len()
-            .try_into()
-            .map_err(|_| VMError::Internal(InternalError::ConversionError))?;
-
-        let blob_gas_used: u64 = blobhash_amount
-            .checked_mul(BLOB_GAS_PER_BLOB)
-            .unwrap_or_default();
-
-        let max_blob_gas_cost = self
-            .env
-            .tx_max_fee_per_blob_gas
-            .unwrap_or_default()
-            .checked_mul(blob_gas_used.into())
-            .ok_or(InternalError::UndefinedState(1))?;
-
-        Ok(max_blob_gas_cost)
-    }
-
     /// Gets the actual blob gas cost.
     fn get_blob_gas_price(&self) -> Result<U256, VMError> {
         let blobhash_amount: u64 = self
@@ -707,7 +684,10 @@ impl VM {
 
         // blob gas cost = max fee per blob gas * blob gas used
         // https://eips.ethereum.org/EIPS/eip-4844
-        let max_blob_gas_cost = self.get_max_blob_gas_price()?;
+        let max_blob_gas_cost = get_max_blob_gas_price(
+            self.env.tx_blob_hashes.clone(),
+            self.env.tx_max_fee_per_blob_gas,
+        )?;
 
         // For the transaction to be valid the sender account has to have a balance >= gas_price * gas_limit + value if tx is type 0 and 1
         // balance >= max_fee_per_gas * gas_limit + value + blob_gas_cost if tx is type 2 or 3
