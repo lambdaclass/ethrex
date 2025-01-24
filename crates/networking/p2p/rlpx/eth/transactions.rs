@@ -265,11 +265,14 @@ impl PooledTransactions {
                 mempool::add_transaction(regular_tx, store)?;
             }
         }
-        // txs were added to mempool, its safe to remove it from pending_requests.
+        // txs were added to mempool, it's safe to remove it from pending_requests.
         store.remove_pending_request(remote_node_id, self.id)?;
         Ok(())
     }
 
+    // Matches the received message with the request made.
+    // Ensures the received txs are in order.
+    // Ensures the received types and sizes matches the announced ones.
     fn validate(&self, request: TransactionRequest) -> Result<(), RLPxError> {
         let mut last_index: i32 = -1;
         for received_tx in &self.pooled_transactions {
@@ -282,7 +285,7 @@ impl PooledTransactions {
                 .iter()
                 .position(|x| *x == received_tx_hash)
             {
-                // Ensure they are in order.
+                // Ensure the txs are in order.
                 // With this we also avoid repeated transactions.
                 if index as i32 <= last_index {
                     return Err(RLPxError::BadRequest(

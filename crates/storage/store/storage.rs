@@ -360,6 +360,8 @@ impl Store {
         Ok(txs_by_sender)
     }
 
+    /// Gets hashes from `transaction_hashes` that are neither already known in the mempool nor already requested from other peers.
+    /// Creates and stores a new transaction request from the filtered transactions.
     pub fn get_transactions_to_request(
         &self,
         remote_node_id: H512,

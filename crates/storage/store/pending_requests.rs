@@ -6,7 +6,7 @@ use std::{
 use ethereum_types::H256;
 use ethrex_core::H512;
 
-const TIME_FOR_STALE_REQUEST: Duration = Duration::from_secs(5);
+const STALE_REQUEST_TIMEOUT: Duration = Duration::from_secs(5);
 
 #[derive(Debug, Clone)]
 pub struct TransactionRequest {
@@ -33,7 +33,7 @@ impl TransactionRequest {
         }
     }
     fn is_stale(&self, time: Instant) -> bool {
-        self.timestamp + TIME_FOR_STALE_REQUEST < time
+        self.timestamp + STALE_REQUEST_TIMEOUT < time
     }
 }
 #[derive(Debug)]
