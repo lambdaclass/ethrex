@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use crate::constants::RPC_RATE_LIMIT;
-use crate::rpc::{get_account, get_block};
+use crate::rpc::{get_account, get_block, get_storage};
 
 use ethrex_core::{types::{Block, TxKind}, Address, H256};
 use revm::DatabaseRef;
@@ -136,20 +136,14 @@ impl DatabaseRef for RpcDB {
             .get(&address)
             .and_then(|account| account.storage.get(&index))
         {
-            Some(value) => value.clone(),
+            Some(value) => *value,
             None => {
                 println!("retrieving storage value for address {address} and key {index}");
                 let handle = tokio::runtime::Handle::current();
                 tokio::task::block_in_place(|| {
                     handle.block_on(
-                    get_account(&self.rpc_url, self.block_number, &address, &[index])
+                        get_storage(&self.rpc_url, self.block_number, &address, index)
                     )})?
-                    .storage
-                    .get(&index)
-                    .ok_or(format!(
-                        "storage value not found for address {address} and key {index}"
-                    ))
-                    .cloned()?
             }
         };
 

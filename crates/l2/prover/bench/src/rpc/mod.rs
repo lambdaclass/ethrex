@@ -179,6 +179,43 @@ pub async fn get_account(
     })
 }
 
+pub async fn get_storage(
+    rpc_url: &str,
+    block_number: usize,
+    address: &Address,
+    storage_key: H256,
+) -> Result<U256, String> {
+    let client = reqwest::Client::new();
+
+    let block_number_str = format!("0x{block_number:x}");
+    let address_str = format!("0x{address:x}");
+    let storage_key = format!("0x{storage_key:x}");
+
+    let request = &json!(
+           {
+               "id": 1,
+               "jsonrpc": "2.0",
+               "method": "eth_getStorageAt",
+               "params":[address_str, storage_key, block_number_str]
+           }
+    );
+    let response = again::retry(|| {
+        timeout(
+            Duration::from_secs(15),
+            client.post(rpc_url).json(request).send(),
+        )
+    })
+    .await
+    .map_err(|_| "request timeout")?
+    .map_err(|err| err.to_string())?;
+
+    response
+        .json::<serde_json::Value>()
+        .await
+        .map_err(|err| err.to_string())
+        .and_then(get_result)
+}
+
 async fn get_code(rpc_url: &str, block_number: usize, address: &Address) -> Result<Bytes, String> {
     let client = reqwest::Client::new();
 
