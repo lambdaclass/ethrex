@@ -1379,39 +1379,6 @@ impl VM {
     }
 }
 
-/// Gets account, first checking the cache and then the database (caching in the second case)
-pub fn get_account(cache: &mut CacheDB, db: &Arc<dyn Database>, address: Address) -> Account {
-    match cache::get_account(cache, &address) {
-        Some(acc) => acc.clone(),
-        None => {
-            let account_info = db.get_account_info(address);
-            let account = Account {
-                info: account_info,
-                storage: HashMap::new(),
-            };
-            cache::insert_account(cache, address, account.clone());
-            account
-        }
-    }
-}
-
-pub fn get_account_no_push_cache(
-    cache: &CacheDB,
-    db: &Arc<dyn Database>,
-    address: Address,
-) -> Account {
-    match cache::get_account(cache, &address) {
-        Some(acc) => acc.clone(),
-        None => {
-            let account_info = db.get_account_info(address);
-            Account {
-                info: account_info,
-                storage: HashMap::new(),
-            }
-        }
-    }
-}
-
 /// Checks if account.info.bytecode has been delegated as the EIP7702 determines.
 pub fn has_delegation(account_info: &AccountInfo) -> Result<bool, VMError> {
     let mut has_delegation = false;

@@ -100,6 +100,39 @@ pub fn calculate_create2_address(
     );
     Ok(generated_address)
 }
+// ================== Account related functions =====================
+/// Gets account, first checking the cache and then the database (caching in the second case)
+pub fn get_account(cache: &mut CacheDB, db: &Arc<dyn Database>, address: Address) -> Account {
+    match cache::get_account(cache, &address) {
+        Some(acc) => acc.clone(),
+        None => {
+            let account_info = db.get_account_info(address);
+            let account = Account {
+                info: account_info,
+                storage: HashMap::new(),
+            };
+            cache::insert_account(cache, address, account.clone());
+            account
+        }
+    }
+}
+
+pub fn get_account_no_push_cache(
+    cache: &CacheDB,
+    db: &Arc<dyn Database>,
+    address: Address,
+) -> Account {
+    match cache::get_account(cache, &address) {
+        Some(acc) => acc.clone(),
+        None => {
+            let account_info = db.get_account_info(address);
+            Account {
+                info: account_info,
+                storage: HashMap::new(),
+            }
+        }
+    }
+}
 
 // ==================== Word related functions =======================
 pub fn word_to_address(word: U256) -> Address {
@@ -107,7 +140,6 @@ pub fn word_to_address(word: U256) -> Address {
 }
 
 // ==================== Gas related functions =======================
-
 pub fn get_intrinsic_gas(
     is_create: bool,
     spec_id: SpecId,
