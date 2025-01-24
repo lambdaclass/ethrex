@@ -59,3 +59,11 @@ path = "src/levm_erc20_transfer.rs"
 [[bin]]
 name = "revm_erc20_transfer"
 path = "src/revm_erc20_transfer.rs"
+
+[[bin]]
+name = "levm_erc20_approval"
+path = "src/levm_erc20_approval.rs"
+
+[[bin]]
+name = "revm_erc20_approval"
+path = "src/revm_erc20_approval.rs"
