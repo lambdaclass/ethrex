@@ -52,6 +52,7 @@ pub enum DiscoveryError {
 #[derive(Debug, Clone)]
 pub struct Discv4 {
     local_node: Node,
+    enr_seq: u64,
     udp_socket: Arc<UdpSocket>,
     signer: SigningKey,
     storage: Store,
@@ -77,6 +78,10 @@ impl Discv4 {
 
         Ok(Self {
             local_node,
+            // Note we are passing the current timestamp as the sequence number
+            // This is because we are not storing our local_node updates in the db
+            // see #1756
+            enr_seq: time_now_unix(),
             signer,
             storage,
             table,
@@ -368,10 +373,8 @@ impl Discv4 {
                 if is_expired(msg.expiration) {
                     return Err(DiscoveryError::MessageExpired);
                 }
-                // Note we are passing the current timestamp as the sequence number
-                // This is because we are not storing our local_node updates in the db
                 let Ok(node_record) =
-                    NodeRecord::from_node(self.local_node, time_now_unix(), &self.signer)
+                    NodeRecord::from_node(self.local_node, self.enr_seq, &self.signer)
                 else {
                     return Err(DiscoveryError::InvalidMessage(
                         "could not build local node record".into(),
@@ -586,8 +589,7 @@ impl Discv4 {
             tcp_port: node.tcp_port,
         };
 
-        let ping =
-            Message::Ping(PingMessage::new(from, to, expiration).with_enr_seq(time_now_unix()));
+        let ping = Message::Ping(PingMessage::new(from, to, expiration).with_enr_seq(self.enr_seq));
         ping.encode_with_header(&mut buf, &self.signer);
         let bytes_sent = self
             .udp_socket
@@ -614,9 +616,8 @@ impl Discv4 {
             tcp_port: node.tcp_port,
         };
 
-        let pong = Message::Pong(
-            PongMessage::new(to, ping_hash, expiration).with_enr_seq(time_now_unix()),
-        );
+        let pong =
+            Message::Pong(PongMessage::new(to, ping_hash, expiration).with_enr_seq(self.enr_seq));
         pong.encode_with_header(&mut buf, &self.signer);
 
         let bytes_sent = self
