@@ -3,14 +3,17 @@ use std::collections::HashMap;
 use crate::constants::RPC_RATE_LIMIT;
 use crate::rpc::{get_account, get_block, get_storage};
 
-use ethrex_core::{types::{Block, TxKind}, Address, H256};
+use ethrex_core::{
+    types::{Block, TxKind},
+    Address, H256,
+};
+use futures_util::future::join_all;
 use revm::DatabaseRef;
 use revm_primitives::{
     AccountInfo as RevmAccountInfo, Address as RevmAddress, Bytecode as RevmBytecode,
     Bytes as RevmBytes, B256 as RevmB256, U256 as RevmU256,
 };
 use tokio_utils::RateLimiter;
-use futures_util::future::join_all;
 
 use super::Account;
 
@@ -48,11 +51,19 @@ impl RpcDB {
         });
         let accessed_storage: Vec<_> = txs.iter().flat_map(|tx| tx.access_list()).collect();
 
-        let accounts: Vec<_> = callers
+        // dedup accounts and concatenate accessed storage keys
+        let mut accounts = HashMap::new();
+        for (address, keys) in callers
             .chain(to)
             .map(|address| (address, Vec::new()))
             .chain(accessed_storage)
-            .collect();
+        {
+            accounts
+                .entry(address)
+                .or_insert_with(Vec::new)
+                .extend(keys);
+        }
+        let accounts: Vec<_> = accounts.into_iter().collect();
         self.accounts = self.fetch_accounts(&accounts).await?;
 
         Ok(())
@@ -70,13 +81,7 @@ impl RpcDB {
             let futures = chunk.iter().map(|(address, storage_keys)| async move {
                 Ok((
                     *address,
-                    get_account(
-                        &self.rpc_url,
-                        self.block_number,
-                        address,
-                        storage_keys,
-                    )
-                    .await?,
+                    get_account(&self.rpc_url, self.block_number, address, storage_keys).await?,
                 ))
             });
 
@@ -108,9 +113,8 @@ impl DatabaseRef for RpcDB {
                 println!("retrieving account info for address {address}");
                 let handle = tokio::runtime::Handle::current();
                 tokio::task::block_in_place(|| {
-                    handle.block_on(
-                    get_account(&self.rpc_url, self.block_number, &address, &[])
-                    )})?
+                    handle.block_on(get_account(&self.rpc_url, self.block_number, &address, &[]))
+                })?
             }
         };
 
@@ -141,9 +145,13 @@ impl DatabaseRef for RpcDB {
                 println!("retrieving storage value for address {address} and key {index}");
                 let handle = tokio::runtime::Handle::current();
                 tokio::task::block_in_place(|| {
-                    handle.block_on(
-                        get_storage(&self.rpc_url, self.block_number, &address, index)
-                    )})?
+                    handle.block_on(get_storage(
+                        &self.rpc_url,
+                        self.block_number,
+                        &address,
+                        index,
+                    ))
+                })?
             }
         };
 
@@ -151,11 +159,8 @@ impl DatabaseRef for RpcDB {
     }
     fn block_hash_ref(&self, number: u64) -> Result<RevmB256, Self::Error> {
         println!("retrieving block hash for block number {number}");
-                let handle = tokio::runtime::Handle::current();
-                tokio::task::block_in_place(|| {
-                    handle.block_on(
-        get_block(&self.rpc_url, number as usize)
-                    )})
+        let handle = tokio::runtime::Handle::current();
+        tokio::task::block_in_place(|| handle.block_on(get_block(&self.rpc_url, number as usize)))
             .map(|block| RevmB256::from(block.hash().0))
     }
 }
