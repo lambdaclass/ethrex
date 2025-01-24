@@ -78,10 +78,11 @@ pub mod io {
 pub mod trie {
     use std::collections::HashMap;
 
-    use ethrex_core::{types::AccountState, H160};
+    use ethrex_core::{types::AccountState, H160, U256};
     use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode, error::RLPDecodeError};
     use ethrex_storage::{hash_address, hash_key, AccountUpdate};
     use ethrex_trie::{Trie, TrieError};
+    use ethrex_vm::execution_db::ExecutionDB;
     use thiserror::Error;
 
     #[derive(Debug, Error)]
@@ -91,7 +92,56 @@ pub mod trie {
         #[error(transparent)]
         RLPDecode(#[from] RLPDecodeError),
         #[error("Missing storage trie for address {0}")]
+        MissingStorageTrie(H160),
+        #[error("Missing storage for address {0}")]
         StorageNotFound(H160),
+    }
+
+    pub fn verify_db(
+        db: &ExecutionDB,
+        state_trie: &Trie,
+        storage_tries: &HashMap<H160, Trie>,
+    ) -> Result<bool, Error> {
+        for (address, account_info) in &db.accounts {
+            let storage_trie = storage_tries
+                .get(address)
+                .ok_or(Error::MissingStorageTrie(*address))?;
+            let storage_root = storage_trie.hash_no_commit();
+
+            // verify account and storage trie are valid
+            let trie_account_state = match state_trie.get(&hash_address(address)) {
+                Ok(Some(encoded_state)) => AccountState::decode(&encoded_state)?,
+                Ok(None) | Err(TrieError::InconsistentTree) => return Ok(false), // account not in trie
+                Err(err) => return Err(err.into()),
+            };
+            let db_account_state = AccountState {
+                nonce: account_info.nonce,
+                balance: account_info.balance,
+                code_hash: account_info.code_hash,
+                storage_root,
+            };
+            if db_account_state != trie_account_state {
+                return Ok(false);
+            }
+
+            // verify storage
+            for (key, db_value) in db
+                .storage
+                .get(address)
+                .ok_or(Error::StorageNotFound(*address))?
+            {
+                let trie_value = match storage_trie.get(&hash_key(key)) {
+                    Ok(Some(encoded)) => U256::decode(&encoded)?,
+                    Ok(None) | Err(TrieError::InconsistentTree) => return Ok(false), // value not in trie
+                    Err(err) => return Err(err.into()),
+                };
+                if *db_value != trie_value {
+                    return Ok(false);
+                }
+            }
+        }
+
+        Ok(true)
     }
 
     pub fn update_tries(
@@ -133,7 +183,7 @@ pub mod trie {
                     } else {
                         storage_tries
                             .get_mut(&update.address)
-                            .ok_or(Error::StorageNotFound(update.address))?
+                            .ok_or(Error::MissingStorageTrie(update.address))?
                     };
                     for (storage_key, storage_value) in &update.added_storage {
                         let hashed_key = hash_key(storage_key);

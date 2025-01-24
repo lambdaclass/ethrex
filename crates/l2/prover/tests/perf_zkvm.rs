@@ -80,7 +80,7 @@ async fn setup() -> (ProgramInput, Block) {
     }
     let block_to_prove = blocks.last().unwrap();
 
-    let db = ExecutionDB::from_exec(block_to_prove, &store).unwrap();
+    let db = ExecutionDB::from_store(block_to_prove, store.clone()).unwrap();
 
     let parent_block_header = store
         .get_block_header_by_hash(block_to_prove.header.parent_hash)

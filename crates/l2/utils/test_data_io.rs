@@ -81,7 +81,7 @@ pub fn generate_program_input(
         .ok_or(ProverInputError::InvalidParentBlock(
             block.header.parent_hash,
         ))?;
-    let db = ExecutionDB::from_exec(&block, &store)?;
+    let db = ExecutionDB::from_store(&block, store)?;
 
     Ok(ProgramInput {
         db,
