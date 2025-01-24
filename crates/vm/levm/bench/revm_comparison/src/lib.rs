@@ -95,15 +95,10 @@ pub fn generate_calldata_no_params(function: &str) -> String {
 
 pub fn load_contract_bytecode(bench_name: &str) -> String {
     let path = format!(
-        "bench/revm_comparison/contracts/{}/{}.bin-runtime",
-        bench_name, bench_name
+        "bench/revm_comparison/contracts/bin/{}.bin-runtime",
+        bench_name
     );
-    println!("Current directory: {:?}", std::env::current_dir().unwrap());
-    println!("Loading bytecode from file {}", path);
-    let mut file = File::open(path).unwrap();
-    let mut contents = String::new();
-    file.read_to_string(&mut contents).unwrap();
-    contents
+    load_file_bytecode(&path)
 }
 
 pub fn load_contract_bytecode_erc20(bench_name: &str) -> String {
@@ -111,6 +106,10 @@ pub fn load_contract_bytecode_erc20(bench_name: &str) -> String {
         "bench/revm_comparison/contracts/erc20/bin/{}.bin-runtime",
         bench_name,
     );
+    load_file_bytecode(&path)
+}
+
+fn load_file_bytecode(path: &str) -> String {
     println!("Current directory: {:?}", std::env::current_dir().unwrap());
     println!("Loading bytecode from file {}", path);
     let mut file = File::open(path).unwrap();
