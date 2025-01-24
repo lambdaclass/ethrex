@@ -1,6 +1,6 @@
 use bench::{
     constants::{CANCUN_CONFIG, MAINNET_CHAIN_ID},
-    rpc::{db::RpcDB, get_block},
+    rpc::{db::RpcDB, get_block, get_latest_block_number},
 };
 use clap::Parser;
 use ethrex_vm::{execution_db::ExecutionDB, spec_id};
@@ -10,7 +10,7 @@ struct Args {
     #[arg(short, long)]
     rpc_url: String,
     #[arg(short, long)]
-    block_number: usize,
+    block_number: Option<usize>,
 }
 
 #[tokio::main]
@@ -19,6 +19,16 @@ async fn main() {
         rpc_url,
         block_number,
     } = Args::parse();
+
+    let block_number = match block_number {
+        Some(n) => n,
+        None => {
+            println!("fetching latest block number");
+            get_latest_block_number(&rpc_url)
+                .await
+                .expect("failed to fetch latest block number")
+        }
+    };
 
     println!("fetching block {block_number} and its parent header");
     let block = get_block(&rpc_url, block_number)

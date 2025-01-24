@@ -27,6 +27,42 @@ pub struct Account {
     pub code: Option<Bytes>,
 }
 
+pub async fn get_latest_block_number(rpc_url: &str) -> Result<usize, String> {
+    let client = reqwest::Client::new();
+
+    let request = &json!({
+        "id": 1,
+        "jsonrpc": "2.0",
+        "method": "eth_blockNumber",
+        "params": []
+    });
+
+    let response = again::retry(|| {
+        timeout(
+            Duration::from_secs(15),
+            client.post(rpc_url).json(request).send(),
+        )
+    })
+    .await
+    .map_err(|_| "request timeout")?
+    .map_err(|err| err.to_string())?;
+
+    response
+        .json::<serde_json::Value>()
+        .await
+        .map_err(|err| err.to_string())
+        .and_then(get_result)
+        .and_then(decode_hex)
+        .and_then(|mut bytes| {
+            bytes.reverse();
+            bytes.resize(8, 0);
+            bytes
+                .try_into()
+                .map_err(|_| "failed to deserialize block number".to_string())
+                .map(usize::from_le_bytes)
+        })
+}
+
 pub async fn get_block(rpc_url: &str, block_number: usize) -> Result<Block, String> {
     let client = reqwest::Client::new();
 
