@@ -636,7 +636,8 @@ impl VM {
             .checked_mul(BLOB_GAS_PER_BLOB)
             .unwrap_or_default();
 
-        let base_fee_per_blob_gas = self.get_base_fee_per_blob_gas()?;
+        let base_fee_per_blob_gas =
+            get_base_fee_per_blob_gas(self.env.block_excess_blob_gas, self.env.spec_id)?;
 
         let blob_gas_price: U256 = blob_gas_price.into();
         let blob_fee: U256 = blob_gas_price
@@ -644,14 +645,6 @@ impl VM {
             .ok_or(VMError::Internal(InternalError::UndefinedState(1)))?;
 
         Ok(blob_fee)
-    }
-
-    pub fn get_base_fee_per_blob_gas(&self) -> Result<U256, VMError> {
-        fake_exponential(
-            MIN_BASE_FEE_PER_BLOB_GAS,
-            self.env.block_excess_blob_gas.unwrap_or_default(),
-            get_blob_base_fee_update_fraction_value(self.env.spec_id),
-        )
     }
 
     /// ## Description
@@ -746,7 +739,9 @@ impl VM {
 
         // (2) INSUFFICIENT_MAX_FEE_PER_BLOB_GAS
         if let Some(tx_max_fee_per_blob_gas) = self.env.tx_max_fee_per_blob_gas {
-            if tx_max_fee_per_blob_gas < self.get_base_fee_per_blob_gas()? {
+            if tx_max_fee_per_blob_gas
+                < get_base_fee_per_blob_gas(self.env.block_excess_blob_gas, self.env.spec_id)?
+            {
                 return Err(VMError::TxValidation(
                     TxValidationError::InsufficientMaxFeePerBlobGas,
                 ));

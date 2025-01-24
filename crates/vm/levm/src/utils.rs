@@ -213,3 +213,14 @@ pub const fn get_blob_base_fee_update_fraction_value(specid: SpecId) -> U256 {
         _ => BLOB_BASE_FEE_UPDATE_FRACTION,
     }
 }
+
+pub fn get_base_fee_per_blob_gas(
+    block_excess_blob_gas: Option<U256>,
+    spec_id: SpecId,
+) -> Result<U256, VMError> {
+    fake_exponential(
+        MIN_BASE_FEE_PER_BLOB_GAS,
+        block_excess_blob_gas.unwrap_or_default(),
+        get_blob_base_fee_update_fraction_value(spec_id),
+    )
+}
