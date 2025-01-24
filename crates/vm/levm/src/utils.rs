@@ -227,11 +227,6 @@ pub fn update_account_bytecode(
     Ok(())
 }
 
-// ==================== Word related functions =======================
-pub fn word_to_address(word: U256) -> Address {
-    Address::from_slice(&word.to_big_endian()[12..])
-}
-
 // ==================== Gas related functions =======================
 pub fn get_intrinsic_gas(
     is_create: bool,
@@ -416,6 +411,12 @@ pub fn get_number_of_topics(op: Opcode) -> Result<u8, VMError> {
 
     Ok(number_of_topics)
 }
+
+// ==================== Word related functions =======================
+pub fn word_to_address(word: U256) -> Address {
+    Address::from_slice(&word.to_big_endian()[12..])
+}
+
 // ================== EIP-7702 related functions =====================
 
 /// Checks if account.info.bytecode has been delegated as the EIP7702
