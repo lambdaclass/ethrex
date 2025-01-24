@@ -300,7 +300,7 @@ impl PooledTransactions {
                 }
                 if received_tx_size != request.transaction_sizes[index] {
                     return Err(RLPxError::BadRequest(
-                        "Invalid size PoolTransactions message.".to_string(),
+                        "Invalid size in PoolTransactions message.".to_string(),
                     ));
                 }
                 last_index = index as i32;
@@ -444,7 +444,7 @@ mod tests {
         assert!(result.is_err());
         assert_eq!(
             result.unwrap_err().to_string(),
-            "Invalid order in PoolTransactions message.".to_string()
+            "Bad Request: Invalid order in PoolTransactions message.".to_string()
         );
     }
 
@@ -464,7 +464,7 @@ mod tests {
         assert!(result.is_err());
         assert_eq!(
             result.unwrap_err().to_string(),
-            "Invalid type in PoolTransactions message.".to_string()
+            "Bad Request: Invalid type in PoolTransactions message.".to_string()
         );
     }
     #[test]
@@ -483,7 +483,7 @@ mod tests {
         assert!(result.is_err());
         assert_eq!(
             result.unwrap_err().to_string(),
-            "Invalid size in PoolTransactions message.".to_string()
+            "Bad Request: Invalid size in PoolTransactions message.".to_string()
         );
     }
     #[test]
@@ -493,7 +493,7 @@ mod tests {
         let request = TransactionRequest {
             id: 0,
             transaction_hashes: vec![tx1.compute_hash()],
-            transaction_sizes: vec![1], // 1 + tx_data.len()
+            transaction_sizes: vec![3], // 1 + tx_data.len()
             transaction_types: vec![0],
             timestamp: Instant::now(),
         };
@@ -502,7 +502,8 @@ mod tests {
         assert!(result.is_err());
         assert_eq!(
             result.unwrap_err().to_string(),
-            "Transaction not requested received in PoolTransactions message".to_string()
+            "Bad Request: Transaction not requested received in PoolTransactions message"
+                .to_string()
         );
     }
 }
