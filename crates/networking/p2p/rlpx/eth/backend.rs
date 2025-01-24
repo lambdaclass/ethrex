@@ -55,21 +55,24 @@ pub fn validate_status(msg_data: StatusMessage, storage: &Store) -> Result<(), R
 
     //Check networkID
     if msg_data.network_id != chain_config.chain_id {
-        return Err(RLPxError::HandshakeError(
-            "Network Id does not match".to_string(),
-        ));
+        return Err(RLPxError::HandshakeError(format!(
+            "Network Id does not match. Theirs {} != ours {}",
+            msg_data.network_id, chain_config.chain_id
+        )));
     }
     //Check Protocol Version
     if msg_data.eth_version != ETH_VERSION {
-        return Err(RLPxError::HandshakeError(
-            "Eth protocol version does not match".to_string(),
-        ));
+        return Err(RLPxError::HandshakeError(format!(
+            "Eth protocol version does not match. Theirs {} != ours {}",
+            msg_data.eth_version, ETH_VERSION
+        )));
     }
     //Check Genesis
     if msg_data.genesis != genesis {
-        return Err(RLPxError::HandshakeError(
-            "Genesis does not match".to_string(),
-        ));
+        return Err(RLPxError::HandshakeError(format!(
+            "Genesis does not match. Theirs {} != ours {}",
+            msg_data.genesis, genesis
+        )));
     }
     // Check ForkID
     if !fork_id.is_valid(

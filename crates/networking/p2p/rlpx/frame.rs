@@ -14,6 +14,7 @@ use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode as _};
 use sha3::{Digest as _, Keccak256};
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio_util::codec::{Decoder, Encoder, Framed};
+use tracing::debug;
 
 // max RLPx Message size
 // Taken from https://github.com/ethereum/go-ethereum/blob/82e963e5c981e36dc4b607dd0685c64cf4aabea8/p2p/rlpx/rlpx.go#L152
@@ -204,11 +205,16 @@ impl Decoder for RLPxCodec {
 
     fn decode_eof(&mut self, buf: &mut BytesMut) -> Result<Option<Self::Item>, Self::Error> {
         match self.decode(buf)? {
-            Some(frame) => Ok(Some(frame)),
+            Some(frame) => {
+                debug!("(inside decode_of) frame: {:?}", frame);
+                Ok(Some(frame))
+            }
             None => {
                 if buf.is_empty() {
+                    debug!("(inside decode_of) buf is empty");
                     Ok(None)
                 } else {
+                    debug!("(inside decode_of) buf is not empty");
                     Err(
                         std::io::Error::new(std::io::ErrorKind::Other, "bytes remaining on stream")
                             .into(),

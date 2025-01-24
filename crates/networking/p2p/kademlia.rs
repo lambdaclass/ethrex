@@ -331,6 +331,7 @@ impl KademliaTable {
 
     /// Outputs total amount of peers, active peers, and active peers supporting the Snap Capability to the command line
     pub fn show_peer_stats(&self) {
+        // info!("Peer Channels {:#?}", self.iter_peers().collect::<Vec<_>>());
         let active_filter = |peer: &PeerData| -> bool { peer.channels.as_ref().is_some() };
         let snap_active_filter = |peer: &PeerData| -> bool {
             peer.channels.as_ref().is_some()

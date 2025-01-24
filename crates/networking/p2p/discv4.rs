@@ -32,11 +32,11 @@ pub fn is_expired(expiration: u64) -> bool {
 
 pub fn time_since_in_hs(time: u64) -> u64 {
     let time = SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(time);
-    SystemTime::now().duration_since(time).unwrap().as_secs() / 3600
+    (SystemTime::now()).duration_since(time).unwrap().as_secs() / 3600
 }
 
 pub fn time_now_unix() -> u64 {
-    SystemTime::now()
+    (SystemTime::now())
         .duration_since(UNIX_EPOCH)
         .unwrap()
         .as_secs()
