@@ -203,6 +203,9 @@ jobs:
     name: Post to Slack link to Flamegraphs Page
     runs-on: ubuntu-latest
     steps:
+      - name: Checkout sources
+        uses: actions/checkout@v4
+
       - name: Post message to slack
         env:
           SLACK_WEBHOOKS: >

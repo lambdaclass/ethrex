@@ -35,6 +35,10 @@ hex = "0.4.3"
 [lib]
 path = "./ef_tests.rs"
 
+[[bin]]
+name = "ef_tests_levm"
+path = "tests/ef_tests_levm.rs"
+
 [[test]]
 name = "ef_tests_levm"
 harness = false
