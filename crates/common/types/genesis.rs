@@ -140,33 +140,6 @@ impl From<Fork> for &str {
     }
 }
 
-// impl From<&str> for Fork {
-//     fn from(s: &str) -> Self {
-//         match s {
-//             "Frontier" => Fork::Frontier,
-//             "FrontierThawing" => Fork::FrontierThawing,
-//             "Homestead" => Fork::Homestead,
-//             "DaoFork" => Fork::DaoFork,
-//             "Tangerine" => Fork::Tangerine,
-//             "SpuriousDragon" => Fork::SpuriousDragon,
-//             "Byzantium" => Fork::Byzantium,
-//             "Constantinople" => Fork::Constantinople,
-//             "Petersburg" => Fork::Petersburg,
-//             "Istanbul" => Fork::Istanbul,
-//             "MuirGlacier" => Fork::MuirGlacier,
-//             "Berlin" => Fork::Berlin,
-//             "London" => Fork::London,
-//             "ArrowGlacier" => Fork::ArrowGlacier,
-//             "GrayGlacier" => Fork::GrayGlacier,
-//             "Paris" => Fork::Paris,
-//             "Shanghai" => Fork::Shanghai,
-//             "Cancun" => Fork::Cancun,
-//             "Prague" => Fork::Prague,
-//             _ => Fork::Cancun,
-//         }
-//     }
-// }
-
 impl ChainConfig {
     pub fn is_shanghai_activated(&self, block_timestamp: u64) -> bool {
         self.shanghai_time
