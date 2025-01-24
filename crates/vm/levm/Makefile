@@ -31,10 +31,13 @@ BENCH_FACT_REPETITIONS := 100000
 BENCH_FACT_ITERATIONS := 57
 
 BENCH_FIB_REPETITIONS := 100000
-BENCH_FIB_ITERATIONS := 370
+BENCH_FIB_ITERATIONS := 150
 
-BENCH_HASHES_REPETITIONS := 100000
+BENCH_HASHES_REPETITIONS := 10000
 BENCH_HASHES_ITERATIONS := 100
+
+BENCH_MINT_REPETITIONS := 10000
+BENCH_MINT_ITERATIONS := 1000
 
 download-evm-ef-tests: ## 📥 Download EF Tests
 	mkdir -p $(TMP_DIR)
@@ -81,6 +84,14 @@ compile-contracts:
 
 revm-comparison: compile-contracts ## 📊 Run benchmarks of fibonacci and factorial for both REVM and LEVM
 	$(MAKE) build-revm-comparison
+	@echo
+	@printf "%s\n" "revm_erc20_mint"
+	@target/release/revm_erc20_mint 1 $(BENCH_MINT_ITERATIONS)
+	@printf "%s\n" "levm_erc20_mint"
+	@target/release/levm_erc20_mint 1 $(BENCH_MINT_ITERATIONS)
+	hyperfine -w 5 -r 10 -N \
+		-n "revm_erc20_mint" "target/release/revm_erc20_mint $(BENCH_MINT_REPETITIONS) $(BENCH_MINT_ITERATIONS)" \
+		-n "levm_erc20_mint" "target/release/levm_erc20_mint $(BENCH_MINT_REPETITIONS) $(BENCH_MINT_ITERATIONS)"
 	@echo
 	@printf "%s\n" "revm_factorial"
 	@target/release/revm_factorial 1 $(BENCH_FACT_ITERATIONS)
@@ -137,6 +148,8 @@ build-revm-comparison:
 		--bin levm_fibonacci \
 		--bin levm_many_hashes \
 		--bin revm_many_hashes \
+		--bin revm_erc20_mint \
+		--bin levm_erc20_mint
 
 ###### Build Client with LEVM ######
 

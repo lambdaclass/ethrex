@@ -43,3 +43,11 @@ path = "src/levm_many_hashes.rs"
 [[bin]]
 name = "revm_many_hashes"
 path = "src/revm_many_hashes.rs"
+
+[[bin]]
+name = "levm_erc20_mint"
+path = "src/levm_erc20_mint.rs"
+
+[[bin]]
+name = "revm_erc20_mint"
+path = "src/revm_erc20_mint.rs"

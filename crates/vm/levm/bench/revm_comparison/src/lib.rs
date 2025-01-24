@@ -106,6 +106,19 @@ pub fn load_contract_bytecode(bench_name: &str) -> String {
     contents
 }
 
+pub fn load_contract_bytecode_erc20(bench_name: &str) -> String {
+    let path = format!(
+        "bench/revm_comparison/contracts/erc20/bin/{}.bin-runtime",
+        bench_name,
+    );
+    println!("Current directory: {:?}", std::env::current_dir().unwrap());
+    println!("Loading bytecode from file {}", path);
+    let mut file = File::open(path).unwrap();
+    let mut contents = String::new();
+    file.read_to_string(&mut contents).unwrap();
+    contents
+}
+
 pub fn parse_args() -> (usize, u64) {
     let runs: usize = std::env::args()
         .nth(1)
