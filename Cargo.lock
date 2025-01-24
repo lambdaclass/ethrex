@@ -1084,6 +1084,7 @@ dependencies = [
  "ethrex-vm",
  "futures-util",
  "hex",
+ "lazy_static",
  "reqwest 0.12.9",
  "revm 14.0.3",
  "revm-inspectors",

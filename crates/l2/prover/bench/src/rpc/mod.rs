@@ -14,9 +14,15 @@ use serde::de::DeserializeOwned;
 use serde::Deserialize;
 use serde_json::json;
 
+use lazy_static::lazy_static;
+
 pub mod db;
 
 pub type NodeRLP = Vec<u8>;
+
+lazy_static! {
+    static ref CLIENT: reqwest::Client = reqwest::Client::new();
+}
 
 #[derive(Clone)]
 pub struct Account {
@@ -28,8 +34,6 @@ pub struct Account {
 }
 
 pub async fn get_latest_block_number(rpc_url: &str) -> Result<usize, String> {
-    let client = reqwest::Client::new();
-
     let request = &json!({
         "id": 1,
         "jsonrpc": "2.0",
@@ -40,7 +44,7 @@ pub async fn get_latest_block_number(rpc_url: &str) -> Result<usize, String> {
     let response = again::retry(|| {
         timeout(
             Duration::from_secs(15),
-            client.post(rpc_url).json(request).send(),
+            CLIENT.post(rpc_url).json(request).send(),
         )
     })
     .await
@@ -64,8 +68,6 @@ pub async fn get_latest_block_number(rpc_url: &str) -> Result<usize, String> {
 }
 
 pub async fn get_block(rpc_url: &str, block_number: usize) -> Result<Block, String> {
-    let client = reqwest::Client::new();
-
     let block_number = format!("0x{block_number:x}");
     let request = &json!({
         "id": 1,
@@ -77,7 +79,7 @@ pub async fn get_block(rpc_url: &str, block_number: usize) -> Result<Block, Stri
     let response = again::retry(|| {
         timeout(
             Duration::from_secs(15),
-            client.post(rpc_url).json(request).send(),
+            CLIENT.post(rpc_url).json(request).send(),
         )
     })
     .await
@@ -103,8 +105,6 @@ pub async fn get_account(
     address: &Address,
     storage_keys: &[H256],
 ) -> Result<Account, String> {
-    let client = reqwest::Client::new();
-
     let block_number_str = format!("0x{block_number:x}");
     let address_str = format!("0x{address:x}");
     let storage_keys = storage_keys
@@ -123,7 +123,7 @@ pub async fn get_account(
     let response = again::retry(|| {
         timeout(
             Duration::from_secs(15),
-            client.post(rpc_url).json(request).send(),
+            CLIENT.post(rpc_url).json(request).send(),
         )
     })
     .await
@@ -221,8 +221,6 @@ pub async fn get_storage(
     address: &Address,
     storage_key: H256,
 ) -> Result<U256, String> {
-    let client = reqwest::Client::new();
-
     let block_number_str = format!("0x{block_number:x}");
     let address_str = format!("0x{address:x}");
     let storage_key = format!("0x{storage_key:x}");
@@ -238,7 +236,7 @@ pub async fn get_storage(
     let response = again::retry(|| {
         timeout(
             Duration::from_secs(15),
-            client.post(rpc_url).json(request).send(),
+            CLIENT.post(rpc_url).json(request).send(),
         )
     })
     .await
@@ -253,8 +251,6 @@ pub async fn get_storage(
 }
 
 async fn get_code(rpc_url: &str, block_number: usize, address: &Address) -> Result<Bytes, String> {
-    let client = reqwest::Client::new();
-
     let block_number = format!("0x{block_number:x}");
     let address = format!("0x{address:x}");
     let request = &json!({
@@ -267,7 +263,7 @@ async fn get_code(rpc_url: &str, block_number: usize, address: &Address) -> Resu
     let response = again::retry(|| {
         timeout(
             Duration::from_secs(15),
-            client.post(rpc_url).json(request).send(),
+            CLIENT.post(rpc_url).json(request).send(),
         )
     })
     .await

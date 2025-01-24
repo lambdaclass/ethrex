@@ -34,4 +34,4 @@ pub const MAINNET_SPEC_ID: SpecId = SpecId::CANCUN;
 
 // RPC related constants
 
-pub const RPC_RATE_LIMIT: usize = 100; // requests per second
+pub const RPC_RATE_LIMIT: usize = 70; // requests per second
