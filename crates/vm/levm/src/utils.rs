@@ -21,7 +21,7 @@ use crate::{
         execute_precompile, is_precompile, SIZE_PRECOMPILES_CANCUN, SIZE_PRECOMPILES_PRAGUE,
         SIZE_PRECOMPILES_PRE_CANCUN,
     },
-    vm::{AccessList, AuthorizationList},
+    vm::{AccessList, AuthorizationList, AuthorizationTuple},
     AccountInfo, TransientStorage,
 };
 use bytes::Bytes;
@@ -298,4 +298,106 @@ pub fn get_number_of_topics(op: Opcode) -> Result<u8, VMError> {
         .ok_or(VMError::InvalidOpcode)?;
 
     Ok(number_of_topics)
+}
+// ================== EIP-7702 related functions =====================
+
+/// Checks if account.info.bytecode has been delegated as the EIP7702
+/// determines.
+pub fn has_delegation(account_info: &AccountInfo) -> Result<bool, VMError> {
+    let mut has_delegation = false;
+    if account_info.has_code() && account_info.bytecode.len() == EIP7702_DELEGATED_CODE_LEN {
+        let first_3_bytes = account_info
+            .bytecode
+            .get(..3)
+            .ok_or(VMError::Internal(InternalError::SlicingError))?;
+
+        if first_3_bytes == SET_CODE_DELEGATION_BYTES {
+            has_delegation = true;
+        }
+    }
+    Ok(has_delegation)
+}
+
+/// Gets the address inside the account.info.bytecode if it has been
+/// delegated as the EIP7702 determines.
+pub fn get_authorized_address(account_info: &AccountInfo) -> Result<Address, VMError> {
+    if has_delegation(account_info)? {
+        let address_bytes = account_info
+            .bytecode
+            .get(SET_CODE_DELEGATION_BYTES.len()..)
+            .ok_or(VMError::Internal(InternalError::SlicingError))?;
+        // It shouldn't panic when doing Address::from_slice()
+        // because the length is checked inside the has_delegation() function
+        let address = Address::from_slice(address_bytes);
+        Ok(address)
+    } else {
+        // if we end up here, it means that the address wasn't previously delegated.
+        Err(VMError::Internal(InternalError::AccountNotDelegated))
+    }
+}
+
+pub fn eip7702_recover_address(
+    auth_tuple: &AuthorizationTuple,
+) -> Result<Option<Address>, VMError> {
+    if auth_tuple.s_signature > *SECP256K1_ORDER_OVER2 || U256::zero() >= auth_tuple.s_signature {
+        return Ok(None);
+    }
+    if auth_tuple.r_signature > *SECP256K1_ORDER || U256::zero() >= auth_tuple.r_signature {
+        return Ok(None);
+    }
+    if auth_tuple.v != U256::one() && auth_tuple.v != U256::zero() {
+        return Ok(None);
+    }
+
+    let rlp_buf = (auth_tuple.chain_id, auth_tuple.address, auth_tuple.nonce).encode_to_vec();
+
+    let mut hasher = Keccak256::new();
+    hasher.update([MAGIC]);
+    hasher.update(rlp_buf);
+    let bytes = &mut hasher.finalize();
+
+    let Ok(message) = Message::parse_slice(bytes) else {
+        return Ok(None);
+    };
+
+    let bytes = [
+        auth_tuple.r_signature.to_big_endian(),
+        auth_tuple.s_signature.to_big_endian(),
+    ]
+    .concat();
+
+    let Ok(signature) = Signature::parse_standard_slice(&bytes) else {
+        return Ok(None);
+    };
+
+    let Ok(recovery_id) = RecoveryId::parse(
+        auth_tuple
+            .v
+            .as_u32()
+            .try_into()
+            .map_err(|_| VMError::Internal(InternalError::ConversionError))?,
+    ) else {
+        return Ok(None);
+    };
+
+    let Ok(authority) = libsecp256k1::recover(&message, &signature, &recovery_id) else {
+        return Ok(None);
+    };
+
+    let public_key = authority.serialize();
+    let mut hasher = Keccak256::new();
+    hasher.update(
+        public_key
+            .get(1..)
+            .ok_or(VMError::Internal(InternalError::SlicingError))?,
+    );
+    let address_hash = hasher.finalize();
+
+    // Get the last 20 bytes of the hash -> Address
+    let authority_address_bytes: [u8; 20] = address_hash
+        .get(12..32)
+        .ok_or(VMError::Internal(InternalError::SlicingError))?
+        .try_into()
+        .map_err(|_| VMError::Internal(InternalError::ConversionError))?;
+    Ok(Some(Address::from_slice(&authority_address_bytes)))
 }

@@ -4,8 +4,8 @@ use crate::{
     errors::{InternalError, OpcodeSuccess, VMError},
     gas_cost::{self},
     memory::{self, calculate_memory_size},
-    utils::word_to_address,
-    vm::{has_delegation, VM},
+    utils::{has_delegation, word_to_address},
+    vm::VM,
 };
 use ethrex_core::U256;
 use keccak_hash::keccak;
