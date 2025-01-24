@@ -422,7 +422,12 @@ impl VM {
                         match validate_create {
                             Ok(new_address) => {
                                 // Set bytecode to new account if success
-                                self.update_account_bytecode(new_address, contract_code)?;
+                                update_account_bytecode(
+                                    &mut self.cache,
+                                    &mut self.db,
+                                    new_address,
+                                    contract_code,
+                                )?;
                             }
                             Err(error) => {
                                 // Revert if error
@@ -1085,16 +1090,6 @@ impl VM {
             .nonce
             .checked_sub(1)
             .ok_or(VMError::NonceUnderflow)?;
-        Ok(())
-    }
-
-    pub fn update_account_bytecode(
-        &mut self,
-        address: Address,
-        new_bytecode: Bytes,
-    ) -> Result<(), VMError> {
-        let account = get_account_mut_vm(&mut self.cache, &mut self.db, address)?;
-        account.info.bytecode = new_bytecode;
         Ok(())
     }
 

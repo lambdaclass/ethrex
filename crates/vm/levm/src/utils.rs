@@ -215,6 +215,18 @@ pub fn decrease_account_balance(
     Ok(())
 }
 
+// ================== Bytecode related functions =====================
+pub fn update_account_bytecode(
+    cache: &mut CacheDB,
+    db: &Arc<dyn Database>,
+    address: Address,
+    new_bytecode: Bytes,
+) -> Result<(), VMError> {
+    let account = get_account_mut_vm(cache, db, address)?;
+    account.info.bytecode = new_bytecode;
+    Ok(())
+}
+
 // ==================== Word related functions =======================
 pub fn word_to_address(word: U256) -> Address {
     Address::from_slice(&word.to_big_endian()[12..])
