@@ -505,8 +505,18 @@ impl VM {
 
         // [EIP-6780] - SELFDESTRUCT only in same transaction from CANCUN
         if self.env.spec_id >= SpecId::CANCUN {
-            self.increase_account_balance(target_address, balance_to_transfer)?;
-            self.decrease_account_balance(current_call_frame.to, balance_to_transfer)?;
+            increase_account_balance(
+                &mut self.cache,
+                &mut self.db,
+                target_address,
+                balance_to_transfer,
+            )?;
+            decrease_account_balance(
+                &mut self.cache,
+                &mut self.db,
+                current_call_frame.to,
+                balance_to_transfer,
+            )?;
 
             // Selfdestruct is executed in the same transaction as the contract was created
             if self
@@ -524,7 +534,12 @@ impl VM {
                     .insert(current_call_frame.to);
             }
         } else {
-            self.increase_account_balance(target_address, balance_to_transfer)?;
+            increase_account_balance(
+                &mut self.cache,
+                &mut self.db,
+                target_address,
+                balance_to_transfer,
+            )?;
             get_account_mut_vm(&mut self.cache, &mut self.db, current_call_frame.to)?
                 .info
                 .balance = U256::zero();
@@ -629,7 +644,12 @@ impl VM {
         self.increment_account_nonce(deployer_address)?;
 
         // 3. Decrease sender's balance.
-        self.decrease_account_balance(deployer_address, value_in_wei_to_send)?;
+        decrease_account_balance(
+            &mut self.cache,
+            &mut self.db,
+            deployer_address,
+            value_in_wei_to_send,
+        )?;
 
         let mut new_call_frame = CallFrame::new(
             deployer_address,
@@ -668,7 +688,12 @@ impl VM {
             }
             TxResult::Revert(err) => {
                 // Return value to sender
-                self.increase_account_balance(deployer_address, value_in_wei_to_send)?;
+                increase_account_balance(
+                    &mut self.cache,
+                    &mut self.db,
+                    deployer_address,
+                    value_in_wei_to_send,
+                )?;
 
                 // Deployment failed so account shouldn't exist
                 cache::remove_account(&mut self.cache, &new_address);
@@ -763,8 +788,8 @@ impl VM {
 
         // Transfer value from caller to callee.
         if should_transfer_value {
-            self.decrease_account_balance(msg_sender, value)?;
-            self.increase_account_balance(to, value)?;
+            decrease_account_balance(&mut self.cache, &mut self.db, msg_sender, value)?;
+            increase_account_balance(&mut self.cache, &mut self.db, to, value)?;
         }
 
         let tx_report = self.execute(&mut new_call_frame)?;
@@ -797,8 +822,8 @@ impl VM {
             TxResult::Revert(_) => {
                 // Revert value transfer
                 if should_transfer_value {
-                    self.decrease_account_balance(to, value)?;
-                    self.increase_account_balance(msg_sender, value)?;
+                    decrease_account_balance(&mut self.cache, &mut self.db, to, value)?;
+                    increase_account_balance(&mut self.cache, &mut self.db, msg_sender, value)?;
                 }
                 // Push 0 to stack
                 current_call_frame.stack.push(REVERT_FOR_CALL)?;

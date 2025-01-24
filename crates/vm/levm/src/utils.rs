@@ -150,6 +150,36 @@ pub fn get_account_mut_vm<'vm>(
     cache::get_account_mut(cache, &address).ok_or(VMError::Internal(InternalError::AccountNotFound))
 }
 
+pub fn increase_account_balance(
+    cache: &mut CacheDB,
+    db: &mut Arc<dyn Database>,
+    address: Address,
+    increase: U256,
+) -> Result<(), VMError> {
+    let account = get_account_mut_vm(cache, db, address)?;
+    account.info.balance = account
+        .info
+        .balance
+        .checked_add(increase)
+        .ok_or(VMError::BalanceOverflow)?;
+    Ok(())
+}
+
+pub fn decrease_account_balance(
+    cache: &mut CacheDB,
+    db: &mut Arc<dyn Database>,
+    address: Address,
+    decrease: U256,
+) -> Result<(), VMError> {
+    let account = get_account_mut_vm(cache, db, address)?;
+    account.info.balance = account
+        .info
+        .balance
+        .checked_sub(decrease)
+        .ok_or(VMError::BalanceUnderflow)?;
+    Ok(())
+}
+
 // ==================== Word related functions =======================
 pub fn word_to_address(word: U256) -> Address {
     Address::from_slice(&word.to_big_endian()[12..])

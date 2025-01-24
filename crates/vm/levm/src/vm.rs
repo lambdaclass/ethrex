@@ -744,7 +744,7 @@ impl VM {
         // technically, the sender will not be able to pay it.
 
         // (3) INSUFFICIENT_ACCOUNT_FUNDS
-        self.decrease_account_balance(sender_address, up_front_cost)
+        decrease_account_balance(&mut self.cache, &mut self.db, sender_address, up_front_cost)
             .map_err(|_| TxValidationError::InsufficientAccountFunds)?;
 
         // (4) INSUFFICIENT_MAX_FEE_PER_GAS
@@ -873,7 +873,12 @@ impl VM {
         } else {
             // Transfer value to receiver
             // It's here to avoid storing the "to" address in the cache before eip7702_set_access_code() step 7).
-            self.increase_account_balance(initial_call_frame.to, initial_call_frame.msg_value)?;
+            increase_account_balance(
+                &mut self.cache,
+                &mut self.db,
+                initial_call_frame.to,
+                initial_call_frame.msg_value,
+            )?;
         }
         Ok(())
     }
@@ -906,13 +911,23 @@ impl VM {
                 // If transaction execution results in failure (any
                 // exceptional condition or code reverting), setting
                 // delegation designations is not rolled back.
-                self.decrease_account_balance(receiver_address, initial_call_frame.msg_value)?;
+                decrease_account_balance(
+                    &mut self.cache,
+                    &mut self.db,
+                    receiver_address,
+                    initial_call_frame.msg_value,
+                )?;
             } else {
                 // We remove the receiver account from the cache, like nothing changed in it's state.
                 remove_account(&mut self.cache, &receiver_address);
             }
 
-            self.increase_account_balance(sender_address, initial_call_frame.msg_value)?;
+            increase_account_balance(
+                &mut self.cache,
+                &mut self.db,
+                sender_address,
+                initial_call_frame.msg_value,
+            )?;
         }
 
         // 2. Return unused gas + gas refunds to the sender.
@@ -937,7 +952,12 @@ impl VM {
             .checked_mul(U256::from(gas_to_return))
             .ok_or(VMError::Internal(InternalError::UndefinedState(1)))?;
 
-        self.increase_account_balance(sender_address, wei_return_amount)?;
+        increase_account_balance(
+            &mut self.cache,
+            &mut self.db,
+            sender_address,
+            wei_return_amount,
+        )?;
 
         // 3. Pay coinbase fee
         let coinbase_address = self.env.coinbase;
@@ -956,7 +976,12 @@ impl VM {
             .ok_or(VMError::BalanceOverflow)?;
 
         if coinbase_fee != U256::zero() {
-            self.increase_account_balance(coinbase_address, coinbase_fee)?;
+            increase_account_balance(
+                &mut self.cache,
+                &mut self.db,
+                coinbase_address,
+                coinbase_fee,
+            )?;
         };
 
         // 4. Destruct addresses in selfdestruct set.
@@ -1095,34 +1120,6 @@ impl VM {
         account.storage.insert(key, storage_slot.clone());
 
         Ok((storage_slot, storage_slot_was_cold))
-    }
-
-    pub fn increase_account_balance(
-        &mut self,
-        address: Address,
-        increase: U256,
-    ) -> Result<(), VMError> {
-        let account = get_account_mut_vm(&mut self.cache, &mut self.db, address)?;
-        account.info.balance = account
-            .info
-            .balance
-            .checked_add(increase)
-            .ok_or(VMError::BalanceOverflow)?;
-        Ok(())
-    }
-
-    pub fn decrease_account_balance(
-        &mut self,
-        address: Address,
-        decrease: U256,
-    ) -> Result<(), VMError> {
-        let account = get_account_mut_vm(&mut self.cache, &mut self.db, address)?;
-        account.info.balance = account
-            .info
-            .balance
-            .checked_sub(decrease)
-            .ok_or(VMError::BalanceUnderflow)?;
-        Ok(())
     }
 
     pub fn increment_account_nonce(&mut self, address: Address) -> Result<u64, VMError> {
