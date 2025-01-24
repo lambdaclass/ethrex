@@ -53,10 +53,9 @@ pub struct Discv4 {
 
 impl Discv4 {
     pub async fn try_new(ctx: P2PContext) -> Result<Self, DiscoveryError> {
-        let udp_socket =
-            UdpSocket::bind(SocketAddr::new(ctx.local_node.ip, ctx.local_node.udp_port))
-                .await
-                .map_err(DiscoveryError::BindSocket)?;
+        let udp_socket = UdpSocket::bind(ctx.local_node.udp_addr())
+            .await
+            .map_err(DiscoveryError::BindSocket)?;
 
         Ok(Self {
             ctx,
@@ -80,10 +79,6 @@ impl Discv4 {
             lookup_interval_minutes: minutes,
             ..self
         }
-    }
-
-    pub fn addr(&self) -> SocketAddr {
-        SocketAddr::new(self.ctx.local_node.ip, self.ctx.local_node.udp_port)
     }
 
     pub async fn start(&self, bootnodes: Vec<BootNode>) -> Result<(), DiscoveryError> {
@@ -565,7 +560,7 @@ impl Discv4 {
         ping.encode_with_header(&mut buf, &self.ctx.signer);
         let bytes_sent = self
             .udp_socket
-            .send_to(&buf, SocketAddr::new(node.ip, node.udp_port))
+            .send_to(&buf, node.udp_addr())
             .await
             .map_err(DiscoveryError::MessageSendFailure)?;
 
@@ -595,7 +590,7 @@ impl Discv4 {
 
         let bytes_sent = self
             .udp_socket
-            .send_to(&buf, SocketAddr::new(node.ip, node.udp_port))
+            .send_to(&buf, node.udp_addr())
             .await
             .map_err(DiscoveryError::MessageSendFailure)?;
 
@@ -626,7 +621,7 @@ impl Discv4 {
 
         let bytes_sent = self
             .udp_socket
-            .send_to(&buf, SocketAddr::new(node.ip, node.udp_port))
+            .send_to(&buf, node.udp_addr())
             .await
             .map_err(DiscoveryError::MessageSendFailure)?;
         if bytes_sent != buf.len() {

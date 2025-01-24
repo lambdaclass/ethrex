@@ -85,14 +85,19 @@ pub async fn start_network(
         .await
         .map_err(NetworkError::DiscoveryStart)?;
 
-    info!("Starting discovery service at {}", discovery.addr());
+    info!(
+        "Starting discovery service at {}",
+        context.local_node.udp_addr()
+    );
     discovery
         .start(bootnodes)
         .await
         .map_err(NetworkError::DiscoveryStart)?;
 
-    let tcp_addr = context.local_node.tcp_addr();
-    info!("Listening for requests at {tcp_addr}");
+    info!(
+        "Listening for requests at {}",
+        context.local_node.tcp_addr()
+    );
     context.tracker.spawn(serve_p2p_requests(context.clone()));
 
     Ok(())
@@ -153,10 +158,7 @@ async fn handle_peer_as_initiator(context: P2PContext, node: Node) {
         context.storage,
         context.broadcast,
     ) {
-        Ok(mut conn) => {
-            conn.start_peer(SocketAddr::new(node.ip, node.udp_port), context.table)
-                .await
-        }
+        Ok(mut conn) => conn.start_peer(node.udp_addr(), context.table).await,
         Err(e) => {
             // TODO We should remove the peer from the table if connection failed
             // but currently it will make the tests fail
