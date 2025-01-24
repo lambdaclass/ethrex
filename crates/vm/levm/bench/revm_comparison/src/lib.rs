@@ -15,6 +15,7 @@ pub fn run_with_levm(program: &str, runs: usize, calldata: &str) {
     let bytecode = Bytes::from(hex::decode(program).unwrap());
     let mut call_frame = CallFrame::new_from_bytecode(bytecode);
     call_frame.calldata = Bytes::from(hex::decode(calldata).unwrap());
+    call_frame.msg_sender = ethrex_core::Address::from_low_u64_be(1);
 
     for _ in 0..runs - 1 {
         let mut vm = new_vm_with_bytecode(Bytes::new()).unwrap();

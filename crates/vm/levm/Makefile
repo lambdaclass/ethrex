@@ -39,6 +39,9 @@ BENCH_HASHES_ITERATIONS := 100
 BENCH_MINT_REPETITIONS := 10000
 BENCH_MINT_ITERATIONS := 1000
 
+BENCH_TRANSFER_REPETITIONS := 100
+BENCH_TRANSFER_ITERATIONS := 500
+
 download-evm-ef-tests: ## 📥 Download EF Tests
 	mkdir -p $(TMP_DIR)
 	mkdir -p $(VECTORS_DIR)/GeneralStateTests
@@ -84,6 +87,14 @@ compile-contracts:
 
 revm-comparison: compile-contracts ## 📊 Run benchmarks of fibonacci and factorial for both REVM and LEVM
 	$(MAKE) build-revm-comparison
+	@echo
+	@printf "%s\n" "revm_erc20_transfer"
+	@target/release/revm_erc20_transfer 1 $(BENCH_FACT_ITERATIONS)
+	@printf "%s\n" "levm_erc20_transfer"
+	@target/release/levm_erc20_transfer 1 $(BENCH_TRANSFER_ITERATIONS)
+	hyperfine -w 5 -r 10 -N \
+		-n "revm_erc20_transfer" "target/release/revm_erc20_transfer $(BENCH_TRANSFER_REPETITIONS) $(BENCH_TRANSFER_ITERATIONS)" \
+		-n "levm_erc20_transfer" "target/release/levm_erc20_transfer $(BENCH_TRANSFER_REPETITIONS) $(BENCH_TRANSFER_ITERATIONS)"
 	@echo
 	@printf "%s\n" "revm_erc20_mint"
 	@target/release/revm_erc20_mint 1 $(BENCH_MINT_ITERATIONS)
@@ -149,7 +160,9 @@ build-revm-comparison:
 		--bin levm_many_hashes \
 		--bin revm_many_hashes \
 		--bin revm_erc20_mint \
-		--bin levm_erc20_mint
+		--bin levm_erc20_mint \
+		--bin revm_erc20_transfer \
+		--bin levm_erc20_transfer
 
 ###### Build Client with LEVM ######
 
@@ -213,6 +226,15 @@ samply-run-ef-tests-levm:
 flamegraph-benchmarks: ## 🔥 Run benchmarks and create flamegraph
 	cd ../../../cmd/ef_tests/levm &&\
 	mkdir -p levm_perfgraphs/flamegraph/bench ||:
+	# erc20_transfer - revm
+	CARGO_PROFILE_RELEASE_DEBUG=true cargo flamegraph \
+	--root --output ../../../cmd/ef_tests/levm/levm_perfgraphs/flamegraph/bench/revm_erc20_transfer.svg \
+	-p revm_comparison --bin revm_erc20_transfer -- $(BENCH_TRANSFER_REPETITIONS) $(BENCH_TRANSFER_ITERATIONS)
+    # erc20_transfer - levm
+    CARGO_PROFILE_RELEASE_DEBUG=true cargo flamegraph \
+	--root --output ../../../cmd/ef_tests/levm/levm_perfgraphs/flamegraph/bench/levm_erc20_transfer.svg \
+	-p revm_comparison --bin levm_erc20_transfer -- $(BENCH_TRANSFER_REPETITIONS) $(BENCH_TRANSFER_ITERATIONS)
+    # others
 	CARGO_PROFILE_RELEASE_DEBUG=true cargo flamegraph \
 	--root --output ../../../cmd/ef_tests/levm/levm_perfgraphs/flamegraph/bench/revm_fibonacci.svg \
 	-p revm_comparison --bin revm_fibonacci -- $(BENCH_FIB_REPETITIONS) $(BENCH_FIB_ITERATIONS)

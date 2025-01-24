@@ -9,7 +9,7 @@ path = "src/lib.rs"
 
 [dependencies]
 ethrex-levm = { path = "../../" }
-
+ethrex-core.workspace = true
 hex.workspace = true
 bytes.workspace = true
 
@@ -51,3 +51,11 @@ path = "src/levm_erc20_mint.rs"
 [[bin]]
 name = "revm_erc20_mint"
 path = "src/revm_erc20_mint.rs"
+
+[[bin]]
+name = "levm_erc20_transfer"
+path = "src/levm_erc20_transfer.rs"
+
+[[bin]]
+name = "revm_erc20_transfer"
+path = "src/revm_erc20_transfer.rs"
