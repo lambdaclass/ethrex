@@ -172,15 +172,6 @@ impl KademliaTable {
         peer.last_ping = time_now_unix();
     }
 
-    pub fn update_peer_enr_seq(&mut self, node_id: H512, enr_seq: u64, enr_req_hash: Option<H256>) {
-        let peer = self.get_by_node_id_mut(node_id);
-        let Some(peer) = peer else {
-            return;
-        };
-        peer.record.seq = enr_seq;
-        peer.enr_request_hash = enr_req_hash;
-    }
-
     pub fn update_peer_ping_with_revalidation(&mut self, node_id: H512, ping_hash: Option<H256>) {
         let Some(peer) = self.get_by_node_id_mut(node_id) else {
             return;

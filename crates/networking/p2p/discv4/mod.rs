@@ -217,7 +217,7 @@ impl Discv4 {
                 if let Some(enr_seq) = msg.enr_seq {
                     if enr_seq > peer.record.seq {
                         debug!("Found outdated enr-seq, sending an enr_request");
-                        self.send_enr_request(peer.node, enr_seq, self.table.lock().await)
+                        self.send_enr_request(peer.node, self.table.lock().await)
                             .await?;
                     }
                 }
@@ -253,7 +253,7 @@ impl Discv4 {
                 if let Some(enr_seq) = msg.enr_seq {
                     if enr_seq > peer.record.seq {
                         debug!("Found outdated enr-seq, send an enr_request");
-                        self.send_enr_request(peer.node, enr_seq, self.table.lock().await)
+                        self.send_enr_request(peer.node, self.table.lock().await)
                             .await?;
                     }
                 }
@@ -636,7 +636,6 @@ impl Discv4 {
     async fn send_enr_request<'a>(
         &self,
         node: Node,
-        enr_seq: u64,
         mut table_lock: MutexGuard<'a, KademliaTable>,
     ) -> Result<(), DiscoveryError> {
         let mut buf = Vec::new();
@@ -655,7 +654,9 @@ impl Discv4 {
         }
 
         let hash = H256::from_slice(&buf[0..32]);
-        table_lock.update_peer_enr_seq(node.node_id, enr_seq, Some(hash));
+        if let Some(peer) = table_lock.get_by_node_id_mut(node.node_id) {
+            peer.enr_request_hash = Some(hash);
+        };
 
         Ok(())
     }
@@ -869,6 +870,10 @@ pub(super) mod tests {
             .node
             .tcp_port = 10;
 
+        // update the enr_seq of server_b so that server_a notices it is outdated
+        // and sends a request to update it
+        server_b.enr_seq = time_now_unix();
+
         // Send a ping from server_b to server_a.
         // server_a should notice the enr_seq is outdated
         // and trigger a enr-request to server_b to update the record.
@@ -880,16 +885,13 @@ pub(super) mod tests {
         sleep(Duration::from_millis(2500)).await;
 
         // Verify that server_a has updated its record of server_b with the correct TCP port.
-        let tcp_port = server_a
-            .table
-            .lock()
-            .await
+        let table_lock = server_a.table.lock().await;
+        let server_a_node_b_record = table_lock
             .get_by_node_id(server_b.local_node.node_id)
-            .unwrap()
-            .node
-            .tcp_port;
+            .unwrap();
 
-        assert!(tcp_port == server_b.local_node.tcp_port);
+        assert!(server_a_node_b_record.node.tcp_port == server_b.local_node.tcp_port);
+        assert!(server_a_node_b_record.record.seq == server_b.enr_seq);
 
         Ok(())
     }
