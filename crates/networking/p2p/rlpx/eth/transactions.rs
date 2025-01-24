@@ -4,13 +4,15 @@ use ethrex_blockchain::error::MempoolError;
 use ethrex_blockchain::mempool;
 use ethrex_core::types::P2PTransaction;
 use ethrex_core::types::WrappedEIP4844Transaction;
+use ethrex_core::H512;
 use ethrex_core::{types::Transaction, H256};
 use ethrex_rlp::{
     error::{RLPDecodeError, RLPEncodeError},
     structs::{Decoder, Encoder},
 };
-use ethrex_storage::{error::StoreError, Store};
+use ethrex_storage::{error::StoreError, pending_requests::TransactionRequest, Store};
 
+use crate::rlpx::error::RLPxError;
 use crate::rlpx::{
     message::RLPxMessage,
     utils::{snappy_compress, snappy_decompress},
@@ -63,9 +65,9 @@ impl RLPxMessage for Transactions {
 // Broadcast message
 #[derive(Debug)]
 pub(crate) struct NewPooledTransactionHashes {
-    transaction_types: Bytes,
-    transaction_sizes: Vec<usize>,
-    transaction_hashes: Vec<H256>,
+    pub transaction_types: Bytes,
+    pub transaction_sizes: Vec<usize>,
+    pub transaction_hashes: Vec<H256>,
 }
 
 impl NewPooledTransactionHashes {
@@ -91,10 +93,6 @@ impl NewPooledTransactionHashes {
             transaction_sizes,
             transaction_hashes,
         }
-    }
-
-    pub fn get_transactions_to_request(&self, storage: &Store) -> Result<Vec<H256>, StoreError> {
-        storage.filter_unknown_transactions(&self.transaction_hashes)
     }
 }
 
@@ -250,7 +248,13 @@ impl PooledTransactions {
 
     /// Saves every incoming pooled transaction to the mempool.
 
-    pub fn handle(self, store: &Store) -> Result<(), MempoolError> {
+    pub fn handle(self, store: &Store, remote_node_id: &H512) -> Result<(), RLPxError> {
+        let request = store.get_pending_request(remote_node_id, self.id)?;
+        if request.is_none() {
+            // Unknown id. It may be a request from a previous run. Ignoring msg...
+            return Ok(());
+        }
+        self.validate(request.unwrap())?;
         for tx in self.pooled_transactions {
             if let P2PTransaction::EIP4844TransactionWithBlobs(itx) = tx {
                 mempool::add_blob_transaction(itx.tx, itx.blobs_bundle, store)?;
@@ -259,6 +263,47 @@ impl PooledTransactions {
                     .try_into()
                     .map_err(|error| MempoolError::StoreError(StoreError::Custom(error)))?;
                 mempool::add_transaction(regular_tx, store)?;
+            }
+        }
+        // txs were added to mempool, its safe to remove it from pending_requests.
+        store.remove_pending_request(remote_node_id, self.id)?;
+        Ok(())
+    }
+
+    fn validate(&self, request: TransactionRequest) -> Result<(), RLPxError> {
+        let mut last_index: i32 = -1;
+        for received_tx in &self.pooled_transactions {
+            let received_tx_hash = received_tx.compute_hash();
+            let received_tx_size = 1 + received_tx.tx_data().len();
+            let received_tx_type = received_tx.tx_type() as u8;
+
+            if let Some(index) = request
+                .transaction_hashes
+                .iter()
+                .position(|x| *x == received_tx_hash)
+            {
+                // Ensure they are in order.
+                // With this we also avoid repeated transactions.
+                if index as i32 <= last_index {
+                    return Err(RLPxError::BadRequest(
+                        "Invalid order in PoolTransactions message.".to_string(),
+                    ));
+                }
+                if received_tx_type != request.transaction_types[index] {
+                    return Err(RLPxError::BadRequest(
+                        "Invalid type in PoolTransactions message.".to_string(),
+                    ));
+                }
+                if received_tx_size != request.transaction_sizes[index] {
+                    return Err(RLPxError::BadRequest(
+                        "Invalid size PoolTransactions message.".to_string(),
+                    ));
+                }
+                last_index = index as i32;
+            } else {
+                return Err(RLPxError::BadRequest(
+                    "Transaction not requested received in PoolTransactions message".to_string(),
+                ));
             }
         }
         Ok(())
