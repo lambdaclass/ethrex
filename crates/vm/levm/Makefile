@@ -27,6 +27,15 @@ STATETEST_NET := pectra-devnet-5
 STATETEST_ARTIFACT := fixtures_$(STATETEST_NET).tar.gz
 STATETEST_URL := https://github.com/ethereum/execution-spec-tests/releases/download/$(STATETEST_VERSION)/fixtures_$(STATETEST_NET).tar.gz
 
+BENCH_FACT_REPETITIONS := 100000
+BENCH_FACT_ITERATIONS := 57
+
+BENCH_FIB_REPETITIONS := 100000
+BENCH_FIB_ITERATIONS := 370
+
+BENCH_HASHES_REPETITIONS := 100000
+BENCH_HASHES_ITERATIONS := 100
+
 download-evm-ef-tests: ## 📥 Download EF Tests
 	mkdir -p $(TMP_DIR)
 	mkdir -p $(VECTORS_DIR)/GeneralStateTests
@@ -74,48 +83,48 @@ revm-comparison: compile-contracts ## 📊 Run benchmarks of fibonacci and facto
 	$(MAKE) build-revm-comparison
 	@echo
 	@printf "%s\n" "revm_factorial"
-	@target/release/revm_factorial 1 57
+	@target/release/revm_factorial 1 $(BENCH_FACT_ITERATIONS)
 	@printf "%s\n" "levm_factorial"
-	@target/release/levm_factorial 1 57
+	@target/release/levm_factorial 1 $(BENCH_FACT_ITERATIONS)
 	hyperfine -w 5 -r 10 -N \
-		-n "revm_factorial" "target/release/revm_factorial 100000 57" \
-		-n "levm_factorial" "target/release/levm_factorial 100000 57"
+		-n "revm_factorial" "target/release/revm_factorial $(BENCH_FACT_REPETITIONS) $(BENCH_FACT_ITERATIONS)" \
+		-n "levm_factorial" "target/release/levm_factorial $(BENCH_FACT_REPETITIONS) $(BENCH_FACT_ITERATIONS)"
 	@echo
 	@printf "%s\n" "revm_fibonacci"
-	@target/release/revm_fibonacci 1 370
+	@target/release/revm_fibonacci 1 $(BENCH_FIB_ITERATIONS)
 	@printf "%s\n" "levm_fibonacci"
-	@target/release/levm_fibonacci 1 370
+	@target/release/levm_fibonacci 1 $(BENCH_FIB_ITERATIONS)
 	hyperfine -w 5 -r 10 -N \
-		-n "revm_fibonacci" "target/release/revm_fibonacci 100000 370" \
-		-n "levm_fibonacci" "target/release/levm_fibonacci 100000 370"
+		-n "revm_fibonacci" "target/release/revm_fibonacci $(BENCH_FIB_REPETITIONS) $(BENCH_FIB_ITERATIONS)" \
+		-n "levm_fibonacci" "target/release/levm_fibonacci $(BENCH_FIB_REPETITIONS) $(BENCH_FIB_ITERATIONS)"
 	@echo
 	@printf "%s\n" "revm_many_hashes"
-	@target/release/revm_many_hashes 1 100
+	@target/release/revm_many_hashes 1 $(BENCH_HASHES_ITERATIONS)
 	@printf "%s\n" "levm_many_hashes"
-	@target/release/levm_many_hashes 1 100
+	@target/release/levm_many_hashes 1 $(BENCH_HASHES_ITERATIONS)
 	hyperfine -w 5 -r 10 -N \
-		-n "revm_many_hashes" "target/release/revm_many_hashes 100000 100" \
-		-n "levm_many_hashes" "target/release/levm_many_hashes 100000 100"
+		-n "revm_many_hashes" "target/release/revm_many_hashes $(BENCH_HASHES_REPETITIONS) $(BENCH_HASHES_ITERATIONS)" \
+		-n "levm_many_hashes" "target/release/levm_many_hashes $(BENCH_HASHES_REPETITIONS) $(BENCH_HASHES_ITERATIONS)"
 	@echo
 
 revm-comparison-ci: compile-contracts
 	$(MAKE) build-revm-comparison
 	@echo
 	@printf "%s" "revm_factorial result: "
-	@target/release/revm_factorial 1 1000
+	@target/release/revm_factorial $(BENCH_FACT_REPETITIONS) $(BENCH_FACT_ITERATIONS)
 	@printf "%s" "levm_factorial result: "
-	@target/release/levm_factorial 1 1000
+	@target/release/levm_factorial $(BENCH_FACT_REPETITIONS) $(BENCH_FACT_ITERATIONS)
 	hyperfine -w 5 -r 10 -N --export-markdown factorial.md \
-		-n "revm_factorial" "target/release/revm_factorial 100000 1000" \
-		-n "levm_factorial" "target/release/levm_factorial 100000 1000"
+		-n "revm_factorial" "target/release/revm_factorial $(BENCH_FACT_REPETITIONS) $(BENCH_FACT_ITERATIONS)" \
+		-n "levm_factorial" "target/release/levm_factorial $(BENCH_FACT_REPETITIONS) $(BENCH_FACT_ITERATIONS)"
 	@echo
 	@printf "%s" "revm_fibonacci result: "
-	@target/release/revm_fibonacci 1 1000
+	@target/release/revm_fibonacci $(BENCH_FIB_REPETITIONS) $(BENCH_FIB_ITERATIONS)
 	@printf "%s" "levm_fibonacci result: "
-	@target/release/levm_fibonacci 1 1000
+	@target/release/levm_fibonacci $(BENCH_FIB_REPETITIONS) $(BENCH_FIB_ITERATIONS)
 	hyperfine -w 5 -r 10 -N --export-markdown fibonacci.md \
-		-n "revm_fibonacci" "target/release/revm_fibonacci 100000 1000" \
-		-n "levm_fibonacci" "target/release/levm_fibonacci 100000 1000"
+		-n "revm_fibonacci" "target/release/revm_fibonacci $(BENCH_FIB_REPETITIONS) $(BENCH_FIB_ITERATIONS)" \
+		-n "levm_fibonacci" "target/release/levm_fibonacci $(BENCH_FIB_REPETITIONS) $(BENCH_FIB_ITERATIONS)"
 	@echo
 
 build-revm-comparison:
@@ -193,35 +202,35 @@ flamegraph-benchmarks: ## 🔥 Run benchmarks and create flamegraph
 	mkdir -p levm_perfgraphs/flamegraph/bench ||:
 	CARGO_PROFILE_RELEASE_DEBUG=true cargo flamegraph \
 	--root --output ../../../cmd/ef_tests/levm/levm_perfgraphs/flamegraph/bench/revm_fibonacci.svg \
-	-p revm_comparison --bin revm_fibonacci -- 100000 1000
+	-p revm_comparison --bin revm_fibonacci -- $(BENCH_FIB_REPETITIONS) $(BENCH_FIB_ITERATIONS)
 	CARGO_PROFILE_RELEASE_DEBUG=true cargo flamegraph \
 	--root --output ../../../cmd/ef_tests/levm/levm_perfgraphs/flamegraph/bench/levm_fibonacci.svg \
-	-p revm_comparison --bin levm_fibonacci -- 100000 1000
+	-p revm_comparison --bin levm_fibonacci -- $(BENCH_FIB_REPETITIONS) $(BENCH_FIB_ITERATIONS)
 	CARGO_PROFILE_RELEASE_DEBUG=true cargo flamegraph \
 	--root --output ../../../cmd/ef_tests/levm/levm_perfgraphs/flamegraph/bench/revm_factorial.svg \
-	-p revm_comparison --bin revm_factorial -- 100000 1000
+	-p revm_comparison --bin revm_factorial -- $(BENCH_FACT_REPETITIONS) $(BENCH_FACT_ITERATIONS)
 	CARGO_PROFILE_RELEASE_DEBUG=true cargo flamegraph \
 	--root --output ../../../cmd/ef_tests/levm/levm_perfgraphs/flamegraph/bench/levm_factorial.svg \
-	-p revm_comparison --bin levm_factorial -- 100000 1000
+	-p revm_comparison --bin levm_factorial -- $(BENCH_FACT_REPETITIONS) $(BENCH_FACT_ITERATIONS)
 	CARGO_PROFILE_RELEASE_DEBUG=true cargo flamegraph \
 	--root --output ../../../cmd/ef_tests/levm/levm_perfgraphs/flamegraph/bench/levm_many_hashes.svg \
-	-p revm_comparison --bin levm_many_hashes -- 100000 1000
+	-p revm_comparison --bin levm_many_hashes -- $(BENCH_HASHES_REPETITIONS) $(BENCH_HASHES_ITERATIONS)
 	CARGO_PROFILE_RELEASE_DEBUG=true cargo flamegraph \
 	--root --output ../../../cmd/ef_tests/levm/levm_perfgraphs/flamegraph/bench/revm_many_hashes.svg \
-	-p revm_comparison --bin revm_many_hashes -- 100000 1000
+	-p revm_comparison --bin revm_many_hashes -- $(BENCH_HASHES_REPETITIONS) $(BENCH_HASHES_ITERATIONS)
 
 samply-benchmarks: ## ⚡️ Run benchmarks and create samply profiling file
 	cd ../../../cmd/ef_tests/levm &&\
 	mkdir -p levm_perfgraphs/samply/bench ||:
 	CARGO_PROFILE_RELEASE_DEBUG=true samply record --save-only \
 	-o ../../../cmd/ef_tests/levm/levm_perfgraphs/samply/bench/prof_revm_fibonacci.json \
-	cargo run --release -p revm_comparison --bin revm_fibonacci -- 100000 1000
+	cargo run --release -p revm_comparison --bin revm_fibonacci -- $(BENCH_FIB_REPETITIONS) $(BENCH_FIB_ITERATIONS)
 	CARGO_PROFILE_RELEASE_DEBUG=true samply record --save-only \
 	-o ../../../cmd/ef_tests/levm/levm_perfgraphs/samply/bench/prof_levm_fibonacci.json \
-	cargo run --release -p revm_comparison --bin levm_fibonacci -- 100000 1000
+	cargo run --release -p revm_comparison --bin levm_fibonacci -- $(BENCH_FIB_REPETITIONS) $(BENCH_FIB_ITERATIONS)
 	CARGO_PROFILE_RELEASE_DEBUG=true samply record --save-only \
 	-o ../../../cmd/ef_tests/levm/levm_perfgraphs/samply/bench/prof_revm_factorial.json \
-	cargo run --release -p revm_comparison --bin revm_factorial -- 100000 1000
+	cargo run --release -p revm_comparison --bin revm_factorial -- $(BENCH_FACT_REPETITIONS) $(BENCH_FACT_ITERATIONS)
 	CARGO_PROFILE_RELEASE_DEBUG=true samply record --save-only \
 	-o ../../../cmd/ef_tests/levm/levm_perfgraphs/samply/bench/prof_levm_factorial.json \
-	cargo run --release -p revm_comparison --bin levm_factorial -- 100000 1000
+	cargo run --release -p revm_comparison --bin levm_factorial -- $(BENCH_FACT_REPETITIONS) $(BENCH_FACT_ITERATIONS)
