@@ -659,15 +659,21 @@ impl VM {
         report: &TransactionReport,
     ) -> Result<u64, VMError> {
         if self.env.spec_id >= SpecId::PRAGUE {
+            // If the transaction is a CREATE transaction, the calldata is emptied and the bytecode is assigned.
+            let calldata = if self.is_create() {
+                &initial_call_frame.bytecode
+            } else {
+                &initial_call_frame.calldata
+            };
+
             // tokens_in_calldata = nonzero_bytes_in_calldata * 4 + zero_bytes_in_calldata
             // tx_calldata = nonzero_bytes_in_calldata * 16 + zero_bytes_in_calldata * 4
             // this is actually tokens_in_calldata * STANDARD_TOKEN_COST
             // see it in https://eips.ethereum.org/EIPS/eip-7623
-            let tokens_in_calldata: u64 =
-                gas_cost::tx_calldata(&initial_call_frame.calldata, self.env.spec_id)
-                    .map_err(VMError::OutOfGas)?
-                    .checked_div(STANDARD_TOKEN_COST)
-                    .ok_or(VMError::Internal(InternalError::DivisionError))?;
+            let tokens_in_calldata: u64 = gas_cost::tx_calldata(calldata, self.env.spec_id)
+                .map_err(VMError::OutOfGas)?
+                .checked_div(STANDARD_TOKEN_COST)
+                .ok_or(VMError::Internal(InternalError::DivisionError))?;
 
             // floor_gas_price = TX_BASE_COST + TOTAL_COST_FLOOR_PER_TOKEN * tokens_in_calldata
             let mut floor_gas_price: u64 = tokens_in_calldata
@@ -735,7 +741,7 @@ impl VM {
         fake_exponential(
             MIN_BASE_FEE_PER_BLOB_GAS,
             self.env.block_excess_blob_gas.unwrap_or_default(),
-            BLOB_BASE_FEE_UPDATE_FRACTION,
+            get_blob_base_fee_update_fraction_value(self.env.spec_id),
         )
     }
 
@@ -928,7 +934,7 @@ impl VM {
             }
 
             // (14) TYPE_3_TX_BLOB_COUNT_EXCEEDED
-            if blob_hashes.len() > MAX_BLOB_COUNT {
+            if blob_hashes.len() > max_blobs_per_block(self.env.spec_id) {
                 return Err(VMError::TxValidation(
                     TxValidationError::Type3TxBlobCountExceeded,
                 ));
@@ -1677,4 +1683,30 @@ fn eip7702_recover_address(auth_tuple: &AuthorizationTuple) -> Result<Option<Add
         .try_into()
         .map_err(|_| VMError::Internal(InternalError::ConversionError))?;
     Ok(Some(Address::from_slice(&authority_address_bytes)))
+}
+
+/// After EIP-7691 the maximum number of blob hashes changes. For more
+/// information see
+/// [EIP-7691](https://eips.ethereum.org/EIPS/eip-7691#specification).
+pub const fn max_blobs_per_block(specid: SpecId) -> usize {
+    match specid {
+        SpecId::PRAGUE => MAX_BLOB_COUNT_ELECTRA,
+        SpecId::PRAGUE_EOF => MAX_BLOB_COUNT_ELECTRA,
+        _ => MAX_BLOB_COUNT,
+    }
+}
+
+/// According to EIP-7691
+/// (https://eips.ethereum.org/EIPS/eip-7691#specification):
+///
+/// "These changes imply that get_base_fee_per_blob_gas and
+/// calc_excess_blob_gas functions defined in EIP-4844 use the new
+/// values for the first block of the fork (and for all subsequent
+/// blocks)."
+pub const fn get_blob_base_fee_update_fraction_value(specid: SpecId) -> U256 {
+    match specid {
+        SpecId::PRAGUE => BLOB_BASE_FEE_UPDATE_FRACTION_PRAGUE,
+        SpecId::PRAGUE_EOF => BLOB_BASE_FEE_UPDATE_FRACTION_PRAGUE,
+        _ => BLOB_BASE_FEE_UPDATE_FRACTION,
+    }
 }
