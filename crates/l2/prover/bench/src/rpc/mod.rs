@@ -3,12 +3,11 @@ use std::collections::HashMap;
 use bytes::Bytes;
 use ethrex_core::{
     types::{AccountState, Block, EMPTY_KECCACK_HASH},
-    Address, U256,
+    Address, H256, U256,
 };
 use serde::de::DeserializeOwned;
 
 pub mod asynch;
-pub mod blocking;
 pub mod db;
 
 pub type NodeRLP = Vec<u8>;
@@ -16,7 +15,7 @@ pub type NodeRLP = Vec<u8>;
 #[derive(Clone)]
 pub struct Account {
     pub account_state: AccountState,
-    pub storage: HashMap<U256, U256>,
+    pub storage: HashMap<H256, U256>,
     pub account_proof: Vec<NodeRLP>,
     pub storage_proofs: Vec<Vec<NodeRLP>>,
     pub code: Option<Bytes>,

@@ -115,7 +115,7 @@ pub async fn get_account(
     let (storage, storage_proofs) = storage_proof
         .into_iter()
         .map(|proof| -> Result<_, String> {
-            let key: U256 = proof
+            let key: H256 = proof
                 .key
                 .parse()
                 .map_err(|_| "failed to parse storage key".to_string())?;

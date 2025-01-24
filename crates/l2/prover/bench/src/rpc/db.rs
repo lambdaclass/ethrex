@@ -82,7 +82,7 @@ impl RpcDB {
                         &self.rpc_url,
                         self.block_number,
                         address,
-                        &storage_keys,
+                        storage_keys,
                     )
                     .await?,
                 ))
@@ -114,7 +114,11 @@ impl DatabaseRef for RpcDB {
             Some(account) => account.clone(),
             None => {
                 println!("retrieving account info for address {address}");
-                rpc::blocking::get_account(&self.rpc_url, self.block_number, &address, &[])?
+                let handle = tokio::runtime::Handle::current();
+                tokio::task::block_in_place(|| {
+                    handle.block_on(
+                    rpc::asynch::get_account(&self.rpc_url, self.block_number, &address, &[])
+                    )})?
             }
         };
 
@@ -133,7 +137,7 @@ impl DatabaseRef for RpcDB {
     }
     fn storage_ref(&self, address: RevmAddress, index: RevmU256) -> Result<RevmU256, Self::Error> {
         let address = Address::from(address.0.as_ref());
-        let index = U256::from_big_endian(&index.to_be_bytes_vec());
+        let index = H256::from_slice(&index.to_be_bytes_vec());
 
         let value = match self
             .accounts
@@ -143,7 +147,11 @@ impl DatabaseRef for RpcDB {
             Some(value) => value.clone(),
             None => {
                 println!("retrieving storage value for address {address} and key {index}");
-                rpc::blocking::get_account(&self.rpc_url, self.block_number, &address, &[index])?
+                let handle = tokio::runtime::Handle::current();
+                tokio::task::block_in_place(|| {
+                    handle.block_on(
+                    rpc::asynch::get_account(&self.rpc_url, self.block_number, &address, &[index])
+                    )})?
                     .storage
                     .get(&index)
                     .ok_or(format!(
@@ -157,7 +165,11 @@ impl DatabaseRef for RpcDB {
     }
     fn block_hash_ref(&self, number: u64) -> Result<RevmB256, Self::Error> {
         println!("retrieving block hash for block number {number}");
-        rpc::blocking::get_block(&self.rpc_url, number as usize)
+                let handle = tokio::runtime::Handle::current();
+                tokio::task::block_in_place(|| {
+                    handle.block_on(
+        rpc::asynch::get_block(&self.rpc_url, number as usize)
+                    )})
             .map(|block| RevmB256::from(block.hash().0))
     }
 }
