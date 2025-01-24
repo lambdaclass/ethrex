@@ -422,7 +422,7 @@ The L2 can also be deployed using a custom native token, meaning that a certain 
 | Task Description                                                                                                                                                                                                                                           | Status |
 | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------ |
 | On the `commonBridge`, keep track of the chain's native token. For custom native token withdrawals, infer the native token and reimburse the user in that token                                                                                            | ❌      |
-| On the `commonBridge`, for custom native token deposits, `msg.value` should always be zero, and the amount of the native token to mint should be a new `valueToMintOnL2` argument. The amount should be deducted from the caller thorugh a `transferFrom`. | ❌      |
+| On the `commonBridge`, for custom native token deposits, `msg.value` should always be zero, and the amount of the native token to mint should be a new `valueToMintOnL2` argument. The amount should be deducted from the caller through a `transferFrom`. | ❌      |
 | On the CLI, add support for custom native token deposits and withdrawals                                                                                                                                                                                   | ❌      |
 
 ### Milestone 8: Security (TEEs and Multi Prover support)
