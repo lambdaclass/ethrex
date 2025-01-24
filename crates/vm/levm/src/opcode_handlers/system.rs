@@ -55,7 +55,7 @@ impl VM {
 
         let (is_delegation, eip7702_gas_consumed, code_address, bytecode) = eip7702_get_code(
             &mut self.cache,
-            &mut self.db,
+            &self.db,
             &mut self.accrued_substate,
             callee,
         )?;
@@ -138,7 +138,7 @@ impl VM {
 
         let (is_delegation, eip7702_gas_consumed, code_address, bytecode) = eip7702_get_code(
             &mut self.cache,
-            &mut self.db,
+            &self.db,
             &mut self.accrued_substate,
             code_address,
         )?;
@@ -249,7 +249,7 @@ impl VM {
 
         let (is_delegation, eip7702_gas_consumed, code_address, bytecode) = eip7702_get_code(
             &mut self.cache,
-            &mut self.db,
+            &self.db,
             &mut self.accrued_substate,
             code_address,
         )?;
@@ -328,7 +328,7 @@ impl VM {
 
         let (is_delegation, eip7702_gas_consumed, _, bytecode) = eip7702_get_code(
             &mut self.cache,
-            &mut self.db,
+            &self.db,
             &mut self.accrued_substate,
             code_address,
         )?;
@@ -541,7 +541,7 @@ impl VM {
                 .contains(&current_call_frame.to)
             {
                 // If target is the same as the contract calling, Ether will be burnt.
-                get_account_mut_vm(&mut self.cache, &mut self.db, current_call_frame.to)?
+                get_account_mut_vm(&mut self.cache, &self.db, current_call_frame.to)?
                     .info
                     .balance = U256::zero();
 
@@ -556,7 +556,7 @@ impl VM {
                 target_address,
                 balance_to_transfer,
             )?;
-            get_account_mut_vm(&mut self.cache, &mut self.db, current_call_frame.to)?
+            get_account_mut_vm(&mut self.cache, &self.db, current_call_frame.to)?
                 .info
                 .balance = U256::zero();
 
@@ -640,7 +640,7 @@ impl VM {
         // THIRD: Validations that push 0 to the stack without returning reserved gas but incrementing deployer's nonce
         let new_account = get_account(&mut self.cache, &self.db, new_address);
         if new_account.has_code_or_nonce() {
-            increment_account_nonce(&mut self.cache, &mut self.db, deployer_address)?;
+            increment_account_nonce(&mut self.cache, &self.db, deployer_address)?;
             current_call_frame.stack.push(CREATE_DEPLOYMENT_FAIL)?;
             return Ok(OpcodeSuccess::Continue);
         }
@@ -657,7 +657,7 @@ impl VM {
         cache::insert_account(&mut self.cache, new_address, new_account);
 
         // 2. Increment sender's nonce.
-        increment_account_nonce(&mut self.cache, &mut self.db, deployer_address)?;
+        increment_account_nonce(&mut self.cache, &self.db, deployer_address)?;
 
         // 3. Decrease sender's balance.
         decrease_account_balance(

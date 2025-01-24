@@ -21,7 +21,7 @@ use ethrex_levm::{
         sha2_256,
     },
     testing::{new_vm_with_ops, new_vm_with_ops_addr_bal_db, new_vm_with_ops_db, ops_to_bytecode},
-    utils::word_to_address,
+    utils::{calculate_create_address, word_to_address},
     vm::{Storage, VM},
     Environment,
 };
@@ -3833,7 +3833,7 @@ fn create_happy_path() {
     let call_frame = vm.current_call_frame_mut().unwrap();
     let returned_address = call_frame.stack.pop().unwrap();
 
-    let expected_address = VM::calculate_create_address(
+    let expected_address = calculate_create_address(
         executing_contract_address,
         executing_contract_before.info.nonce,
     )

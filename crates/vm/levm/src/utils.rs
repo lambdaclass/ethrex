@@ -1,31 +1,22 @@
 use crate::{
-    account::{Account, StorageSlot},
+    account::Account,
     call_frame::CallFrame,
     constants::*,
     db::{
-        cache::{self, get_account_mut, remove_account},
+        cache::{self},
         CacheDB, Database,
     },
-    environment::Environment,
-    errors::{
-        InternalError, OpcodeSuccess, OutOfGasError, ResultReason, TransactionReport, TxResult,
-        TxValidationError, VMError,
-    },
+    errors::{InternalError, OutOfGasError, VMError},
     gas_cost::{
         self, fake_exponential, ACCESS_LIST_ADDRESS_COST, ACCESS_LIST_STORAGE_KEY_COST,
-        BLOB_GAS_PER_BLOB, CODE_DEPOSIT_COST, COLD_ADDRESS_ACCESS_COST, CREATE_BASE_COST,
-        STANDARD_TOKEN_COST, TOTAL_COST_FLOOR_PER_TOKEN, WARM_ADDRESS_ACCESS_COST,
+        BLOB_GAS_PER_BLOB, COLD_ADDRESS_ACCESS_COST, CREATE_BASE_COST, WARM_ADDRESS_ACCESS_COST,
     },
     opcodes::Opcode,
-    precompiles::{
-        execute_precompile, is_precompile, SIZE_PRECOMPILES_CANCUN, SIZE_PRECOMPILES_PRAGUE,
-        SIZE_PRECOMPILES_PRE_CANCUN,
-    },
     vm::{AccessList, AuthorizationList, AuthorizationTuple, Substate},
-    AccountInfo, TransientStorage,
+    AccountInfo,
 };
 use bytes::Bytes;
-use ethrex_core::{types::TxKind, Address, H256, U256};
+use ethrex_core::{Address, H256, U256};
 use ethrex_rlp;
 use ethrex_rlp::encode::RLPEncode;
 use keccak_hash::keccak;
@@ -33,9 +24,7 @@ use libsecp256k1::{Message, RecoveryId, Signature};
 use revm_primitives::SpecId;
 use sha3::{Digest, Keccak256};
 use std::{
-    cmp::max,
     collections::{HashMap, HashSet},
-    fmt::Debug,
     sync::Arc,
 };
 pub type Storage = HashMap<U256, H256>;
@@ -174,7 +163,7 @@ pub fn get_account_mut_vm<'vm>(
     db: &'vm Arc<dyn Database>,
     address: Address,
 ) -> Result<&'vm mut Account, VMError> {
-    if !cache::is_account_cached(&cache, &address) {
+    if !cache::is_account_cached(cache, &address) {
         let account_info = db.get_account_info(address);
         let account = Account {
             info: account_info,

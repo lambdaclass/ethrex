@@ -11,11 +11,7 @@ use crate::{
         InternalError, OpcodeSuccess, OutOfGasError, ResultReason, TransactionReport, TxResult,
         TxValidationError, VMError,
     },
-    gas_cost::{
-        self, fake_exponential, ACCESS_LIST_ADDRESS_COST, ACCESS_LIST_STORAGE_KEY_COST,
-        BLOB_GAS_PER_BLOB, CODE_DEPOSIT_COST, COLD_ADDRESS_ACCESS_COST, CREATE_BASE_COST,
-        STANDARD_TOKEN_COST, TOTAL_COST_FLOOR_PER_TOKEN, WARM_ADDRESS_ACCESS_COST,
-    },
+    gas_cost::{self, CODE_DEPOSIT_COST, STANDARD_TOKEN_COST, TOTAL_COST_FLOOR_PER_TOKEN},
     opcodes::Opcode,
     precompiles::{
         execute_precompile, is_precompile, SIZE_PRECOMPILES_CANCUN, SIZE_PRECOMPILES_PRAGUE,
@@ -26,12 +22,7 @@ use crate::{
 };
 use bytes::Bytes;
 use ethrex_core::{types::TxKind, Address, H256, U256};
-use ethrex_rlp;
-use ethrex_rlp::encode::RLPEncode;
-use keccak_hash::keccak;
-use libsecp256k1::{Message, RecoveryId, Signature};
 use revm_primitives::SpecId;
-use sha3::{Digest, Keccak256};
 use std::{
     cmp::max,
     collections::{HashMap, HashSet},
@@ -424,7 +415,7 @@ impl VM {
                                 // Set bytecode to new account if success
                                 update_account_bytecode(
                                     &mut self.cache,
-                                    &mut self.db,
+                                    &self.db,
                                     new_address,
                                     contract_code,
                                 )?;
@@ -721,7 +712,7 @@ impl VM {
         self.add_intrinsic_gas(initial_call_frame)?;
 
         // (7) NONCE_IS_MAX
-        increment_account_nonce(&mut self.cache, &mut self.db, sender_address)
+        increment_account_nonce(&mut self.cache, &self.db, sender_address)
             .map_err(|_| VMError::TxValidation(TxValidationError::NonceIsMax))?;
 
         // (8) PRIORITY_GREATER_THAN_MAX_FEE_PER_GAS
@@ -939,7 +930,7 @@ impl VM {
         // In Cancun the only addresses destroyed are contracts created in this transaction
         let selfdestruct_set = self.accrued_substate.selfdestruct_set.clone();
         for address in selfdestruct_set {
-            let account_to_remove = get_account_mut_vm(&mut self.cache, &mut self.db, address)?;
+            let account_to_remove = get_account_mut_vm(&mut self.cache, &self.db, address)?;
             *account_to_remove = Account::default();
         }
 
@@ -1067,7 +1058,7 @@ impl VM {
 
         // When updating account storage of an account that's not yet cached we need to store the StorageSlot in the account
         // Note: We end up caching the account because it is the most straightforward way of doing it.
-        let account = get_account_mut_vm(&mut self.cache, &mut self.db, address)?;
+        let account = get_account_mut_vm(&mut self.cache, &self.db, address)?;
         account.storage.insert(key, storage_slot.clone());
 
         Ok((storage_slot, storage_slot_was_cold))
@@ -1079,7 +1070,7 @@ impl VM {
         key: H256,
         new_value: U256,
     ) -> Result<(), VMError> {
-        let account = get_account_mut_vm(&mut self.cache, &mut self.db, address)?;
+        let account = get_account_mut_vm(&mut self.cache, &self.db, address)?;
         let account_original_storage_slot_value = account
             .storage
             .get(&key)
@@ -1190,7 +1181,7 @@ impl VM {
                     // This is to add the account to the cache
                     // NOTE: Refactor in the future
                     get_account(&mut self.cache, &self.db, authority_address);
-                    get_account_mut_vm(&mut self.cache, &mut self.db, authority_address)?
+                    get_account_mut_vm(&mut self.cache, &self.db, authority_address)?
                 }
             };
 
@@ -1201,7 +1192,7 @@ impl VM {
             };
 
             // 9. Increase the nonce of authority by one.
-            increment_account_nonce(&mut self.cache, &mut self.db, authority_address)
+            increment_account_nonce(&mut self.cache, &self.db, authority_address)
                 .map_err(|_| VMError::TxValidation(TxValidationError::NonceIsMax))?;
         }
 
