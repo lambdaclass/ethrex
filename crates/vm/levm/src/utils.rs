@@ -360,6 +360,30 @@ pub fn get_max_blob_gas_price(
 
     Ok(max_blob_gas_cost)
 }
+/// Gets the actual blob gas cost.
+pub fn get_blob_gas_price(
+    tx_blob_hashes: Vec<H256>,
+    block_excess_blob_gas: Option<U256>,
+    spec_id: SpecId,
+) -> Result<U256, VMError> {
+    let blobhash_amount: u64 = tx_blob_hashes
+        .len()
+        .try_into()
+        .map_err(|_| VMError::Internal(InternalError::ConversionError))?;
+
+    let blob_gas_price: u64 = blobhash_amount
+        .checked_mul(BLOB_GAS_PER_BLOB)
+        .unwrap_or_default();
+
+    let base_fee_per_blob_gas = get_base_fee_per_blob_gas(block_excess_blob_gas, spec_id)?;
+
+    let blob_gas_price: U256 = blob_gas_price.into();
+    let blob_fee: U256 = blob_gas_price
+        .checked_mul(base_fee_per_blob_gas)
+        .ok_or(VMError::Internal(InternalError::UndefinedState(1)))?;
+
+    Ok(blob_fee)
+}
 
 // =================== Opcode related functions ======================
 

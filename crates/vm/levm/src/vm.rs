@@ -566,30 +566,6 @@ impl VM {
         }
     }
 
-    /// Gets the actual blob gas cost.
-    fn get_blob_gas_price(&self) -> Result<U256, VMError> {
-        let blobhash_amount: u64 = self
-            .env
-            .tx_blob_hashes
-            .len()
-            .try_into()
-            .map_err(|_| VMError::Internal(InternalError::ConversionError))?;
-
-        let blob_gas_price: u64 = blobhash_amount
-            .checked_mul(BLOB_GAS_PER_BLOB)
-            .unwrap_or_default();
-
-        let base_fee_per_blob_gas =
-            get_base_fee_per_blob_gas(self.env.block_excess_blob_gas, self.env.spec_id)?;
-
-        let blob_gas_price: U256 = blob_gas_price.into();
-        let blob_fee: U256 = blob_gas_price
-            .checked_mul(base_fee_per_blob_gas)
-            .ok_or(VMError::Internal(InternalError::UndefinedState(1)))?;
-
-        Ok(blob_fee)
-    }
-
     /// ## Description
     /// This method performs validations and returns an error if any of the validations fail.
     /// It also makes pre-execution changes:
@@ -681,7 +657,11 @@ impl VM {
             ));
         }
 
-        let blob_gas_cost = self.get_blob_gas_price()?;
+        let blob_gas_cost = get_blob_gas_price(
+            self.env.tx_blob_hashes.clone(),
+            self.env.block_excess_blob_gas,
+            self.env.spec_id,
+        )?;
 
         // (2) INSUFFICIENT_MAX_FEE_PER_BLOB_GAS
         if let Some(tx_max_fee_per_blob_gas) = self.env.tx_max_fee_per_blob_gas {
