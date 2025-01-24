@@ -20,8 +20,9 @@ use ethrex_levm::{
         blake2f, bls12_g1msm, ecadd, ecmul, ecpairing, ecrecover, identity, modexp, ripemd_160,
         sha2_256,
     },
-    utils::{new_vm_with_ops, new_vm_with_ops_addr_bal_db, new_vm_with_ops_db, ops_to_bytecode},
-    vm::{word_to_address, Storage, VM},
+    testing::{new_vm_with_ops, new_vm_with_ops_addr_bal_db, new_vm_with_ops_db, ops_to_bytecode},
+    utils::word_to_address,
+    vm::{Storage, VM},
     Environment,
 };
 use std::{borrow::BorrowMut, collections::HashMap, sync::Arc};

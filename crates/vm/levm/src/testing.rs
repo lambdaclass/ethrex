@@ -10,16 +10,16 @@ use bytes::Bytes;
 use ethrex_core::{types::TxKind, Address, U256};
 use std::{collections::HashMap, sync::Arc};
 
-// pub fn ops_to_bytecode(operations: &[Operation]) -> Result<Bytes, VMError> {
-//     let mut bytecode = Vec::new();
-//     for op in operations {
-//         bytecode.extend_from_slice(
-//             &op.to_bytecode()
-//                 .map_err(|_| VMError::Internal(InternalError::UtilsError))?,
-//         ); // for now it is just a utils error...
-//     }
-//     Ok(bytecode.into())
-// }
+pub fn ops_to_bytecode(operations: &[Operation]) -> Result<Bytes, VMError> {
+    let mut bytecode = Vec::new();
+    for op in operations {
+        bytecode.extend_from_slice(
+            &op.to_bytecode()
+                .map_err(|_| VMError::Internal(InternalError::UtilsError))?,
+        ); // for now it is just a utils error...
+    }
+    Ok(bytecode.into())
+}
 
 pub fn new_vm_with_bytecode(bytecode: Bytes) -> Result<VM, VMError> {
     new_vm_with_ops_addr_bal_db(
@@ -31,27 +31,27 @@ pub fn new_vm_with_bytecode(bytecode: Bytes) -> Result<VM, VMError> {
     )
 }
 
-// pub fn new_vm_with_ops(operations: &[Operation]) -> Result<VM, VMError> {
-//     let bytecode = ops_to_bytecode(operations)?;
-//     new_vm_with_ops_addr_bal_db(
-//         bytecode,
-//         Address::from_low_u64_be(100),
-//         U256::MAX,
-//         Db::new(),
-//         CacheDB::default(),
-//     )
-// }
+pub fn new_vm_with_ops(operations: &[Operation]) -> Result<VM, VMError> {
+    let bytecode = ops_to_bytecode(operations)?;
+    new_vm_with_ops_addr_bal_db(
+        bytecode,
+        Address::from_low_u64_be(100),
+        U256::MAX,
+        Db::new(),
+        CacheDB::default(),
+    )
+}
 
-// pub fn new_vm_with_ops_db(operations: &[Operation], db: Db) -> Result<VM, VMError> {
-//     let bytecode = ops_to_bytecode(operations)?;
-//     new_vm_with_ops_addr_bal_db(
-//         bytecode,
-//         Address::from_low_u64_be(100),
-//         U256::MAX,
-//         db,
-//         CacheDB::default(),
-//     )
-// }
+pub fn new_vm_with_ops_db(operations: &[Operation], db: Db) -> Result<VM, VMError> {
+    let bytecode = ops_to_bytecode(operations)?;
+    new_vm_with_ops_addr_bal_db(
+        bytecode,
+        Address::from_low_u64_be(100),
+        U256::MAX,
+        db,
+        CacheDB::default(),
+    )
+}
 
 /// This function is for testing purposes only.
 pub fn new_vm_with_ops_addr_bal_db(
