@@ -273,6 +273,7 @@ impl PooledTransactions {
     // Matches the received message with the request made.
     // Ensures the received txs are in order.
     // Ensures the received types and sizes matches the announced ones.
+    // Some of the requested txs may not be responded.
     fn validate(&self, request: TransactionRequest) -> Result<(), RLPxError> {
         let mut last_index: i32 = -1;
         for received_tx in &self.pooled_transactions {
@@ -338,7 +339,13 @@ impl RLPxMessage for PooledTransactions {
 
 #[cfg(test)]
 mod tests {
-    use ethrex_core::{types::P2PTransaction, H256};
+    use std::time::Instant;
+
+    use ethrex_core::{
+        types::{EIP2930Transaction, LegacyTransaction, P2PTransaction},
+        H256,
+    };
+    use ethrex_storage::pending_requests::TransactionRequest;
 
     use crate::rlpx::{
         eth::transactions::{GetPooledTransactions, PooledTransactions},
@@ -386,5 +393,116 @@ mod tests {
         let decoded = PooledTransactions::decode(&buf).unwrap();
         assert_eq!(decoded.id, 1);
         assert_eq!(decoded.pooled_transactions, vec![transaction1]);
+    }
+
+    fn setup_pool() -> (P2PTransaction, P2PTransaction, PooledTransactions) {
+        let mut tx1 = LegacyTransaction::default();
+        tx1.data = vec![0x01, 0x02].into();
+        let tx1 = P2PTransaction::LegacyTransaction(tx1);
+
+        let mut tx2 = EIP2930Transaction::default();
+        tx2.data = vec![0x03, 0x04].into();
+        let tx2 = P2PTransaction::EIP2930Transaction(tx2);
+
+        let pool_msg = PooledTransactions {
+            id: 0,
+            pooled_transactions: vec![tx1.clone(), tx2.clone()],
+        };
+
+        (tx1, tx2, pool_msg)
+    }
+
+    #[test]
+    fn test_validate_successful() {
+        let (tx1, tx2, pool_msg) = setup_pool();
+        let request = TransactionRequest {
+            id: 0,
+            transaction_hashes: vec![tx1.compute_hash(), tx2.compute_hash()],
+            transaction_sizes: vec![3, 3], // 1 + tx_data.len()
+            transaction_types: vec![0, 1],
+            timestamp: Instant::now(),
+        };
+
+        let result = pool_msg.validate(request);
+
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_validate_invalid_order() {
+        let (tx1, tx2, pool_msg) = setup_pool();
+        let request = TransactionRequest {
+            id: 0,
+            transaction_hashes: vec![tx2.compute_hash(), tx1.compute_hash()],
+            transaction_sizes: vec![3, 3], // 1 + tx_data.len()
+            transaction_types: vec![1, 0],
+            timestamp: Instant::now(),
+        };
+
+        let result = pool_msg.validate(request);
+
+        assert!(result.is_err());
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            "Invalid order in PoolTransactions message.".to_string()
+        );
+    }
+
+    #[test]
+    fn test_validate_invalid_type() {
+        let (tx1, tx2, pool_msg) = setup_pool();
+
+        let request = TransactionRequest {
+            id: 0,
+            transaction_hashes: vec![tx1.compute_hash(), tx2.compute_hash()],
+            transaction_sizes: vec![3, 3], // 1 + tx_data.len()
+            transaction_types: vec![0, 2],
+            timestamp: Instant::now(),
+        };
+
+        let result = pool_msg.validate(request);
+        assert!(result.is_err());
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            "Invalid type in PoolTransactions message.".to_string()
+        );
+    }
+    #[test]
+    fn test_validate_invalid_size() {
+        let (tx1, tx2, pool_msg) = setup_pool();
+
+        let request = TransactionRequest {
+            id: 0,
+            transaction_hashes: vec![tx1.compute_hash(), tx2.compute_hash()],
+            transaction_sizes: vec![1, 3], // 1 + tx_data.len()
+            transaction_types: vec![0, 2],
+            timestamp: Instant::now(),
+        };
+
+        let result = pool_msg.validate(request);
+        assert!(result.is_err());
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            "Invalid size in PoolTransactions message.".to_string()
+        );
+    }
+    #[test]
+    fn test_validate_transaction_not_requested() {
+        let (tx1, _, pool_msg) = setup_pool();
+
+        let request = TransactionRequest {
+            id: 0,
+            transaction_hashes: vec![tx1.compute_hash()],
+            transaction_sizes: vec![1], // 1 + tx_data.len()
+            transaction_types: vec![0],
+            timestamp: Instant::now(),
+        };
+
+        let result = pool_msg.validate(request);
+        assert!(result.is_err());
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            "Transaction not requested received in PoolTransactions message".to_string()
+        );
     }
 }
