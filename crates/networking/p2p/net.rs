@@ -1309,13 +1309,6 @@ mod tests {
             local_node: server_a.local_node,
         };
 
-        // start revalidation server
-        tokio::spawn(peers_revalidation(
-            context.clone(),
-            server_b.udp_socket.clone(),
-            2,
-        ));
-
         // we'll run a recursive lookup closest to the server itself
         recursive_lookup(context, server_a.udp_socket.clone(), server_a.node_id).await;
 
