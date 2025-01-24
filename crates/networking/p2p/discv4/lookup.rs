@@ -333,7 +333,14 @@ mod tests {
         // now all peers should've been inserted
         for peer in closets_peers_to_b_from_a {
             let table = server_b.table.lock().await;
-            assert!(table.get_by_node_id(peer.node_id).is_some());
+            let node = table.get_by_node_id(peer.node_id);
+            // sometimes nodes can send ourselves as a neighbor
+            // make sure we don't add it
+            if peer.node_id == server_b.local_node.node_id {
+                assert!(node.is_none());
+            } else {
+                assert!(node.is_some());
+            }
         }
         Ok(())
     }
@@ -392,13 +399,17 @@ mod tests {
             .recursive_lookup(server_a.local_node.node_id)
             .await;
 
+        // sometimes nodes can send ourselves as a neighbor
+        // make sure we don't add it
         for peer in expected_peers {
-            assert!(server_a
-                .table
-                .lock()
-                .await
-                .get_by_node_id(peer.node_id)
-                .is_some());
+            let table = server_a.table.lock().await;
+            let node = table.get_by_node_id(peer.node_id);
+
+            if peer.node_id == server_a.local_node.node_id {
+                assert!(node.is_none());
+            } else {
+                assert!(node.is_some());
+            }
         }
 
         Ok(())
