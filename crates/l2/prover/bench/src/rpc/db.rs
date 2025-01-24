@@ -1,24 +1,16 @@
-use std::collections::hash_map::Entry;
 use std::collections::HashMap;
 
-use crate::constants::CANCUN_CONFIG;
 use crate::constants::RPC_RATE_LIMIT;
-use crate::rpc;
+use crate::rpc::{get_account, get_block};
 
-use ethrex_core::types::Block;
-use ethrex_core::types::TxKind;
-use ethrex_core::Address;
-use ethrex_core::H256;
-use ethrex_core::U256;
-use ethrex_vm::execution_db::{ExecutionDB, ToExecDB};
-use ethrex_vm::{spec_id, tx_env, EvmError};
-use futures_util::future::join_all;
+use ethrex_core::{types::{Block, TxKind}, Address, H256};
 use revm::DatabaseRef;
 use revm_primitives::{
     AccountInfo as RevmAccountInfo, Address as RevmAddress, Bytecode as RevmBytecode,
     Bytes as RevmBytes, B256 as RevmB256, U256 as RevmU256,
 };
 use tokio_utils::RateLimiter;
+use futures_util::future::join_all;
 
 use super::Account;
 
@@ -78,7 +70,7 @@ impl RpcDB {
             let futures = chunk.iter().map(|(address, storage_keys)| async move {
                 Ok((
                     *address,
-                    rpc::asynch::get_account(
+                    get_account(
                         &self.rpc_url,
                         self.block_number,
                         address,
@@ -117,7 +109,7 @@ impl DatabaseRef for RpcDB {
                 let handle = tokio::runtime::Handle::current();
                 tokio::task::block_in_place(|| {
                     handle.block_on(
-                    rpc::asynch::get_account(&self.rpc_url, self.block_number, &address, &[])
+                    get_account(&self.rpc_url, self.block_number, &address, &[])
                     )})?
             }
         };
@@ -150,7 +142,7 @@ impl DatabaseRef for RpcDB {
                 let handle = tokio::runtime::Handle::current();
                 tokio::task::block_in_place(|| {
                     handle.block_on(
-                    rpc::asynch::get_account(&self.rpc_url, self.block_number, &address, &[index])
+                    get_account(&self.rpc_url, self.block_number, &address, &[index])
                     )})?
                     .storage
                     .get(&index)
@@ -168,7 +160,7 @@ impl DatabaseRef for RpcDB {
                 let handle = tokio::runtime::Handle::current();
                 tokio::task::block_in_place(|| {
                     handle.block_on(
-        rpc::asynch::get_block(&self.rpc_url, number as usize)
+        get_block(&self.rpc_url, number as usize)
                     )})
             .map(|block| RevmB256::from(block.hash().0))
     }

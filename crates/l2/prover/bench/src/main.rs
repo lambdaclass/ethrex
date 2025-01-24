@@ -1,17 +1,9 @@
-use std::collections::HashMap;
-
 use bench::{
-    constants::{CANCUN_CONFIG, MAINNET_CHAIN_ID, MAINNET_SPEC_ID, RPC_RATE_LIMIT},
-    rpc::{asynch::*, db::RpcDB, Account, NodeRLP},
+    constants::{CANCUN_CONFIG, MAINNET_CHAIN_ID},
+    rpc::{db::RpcDB, get_block},
 };
 use clap::Parser;
-use ethrex_core::{Address, U256};
-use ethrex_l2::utils::prover::proving_systems::ProverType;
-use ethrex_prover_lib::prover::{create_prover, Prover};
 use ethrex_vm::{execution_db::ExecutionDB, spec_id};
-use futures_util::future::join_all;
-use tokio_utils::RateLimiter;
-use zkvm_interface::io::ProgramInput;
 
 #[derive(Parser, Debug)]
 struct Args {
