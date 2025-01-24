@@ -11,7 +11,7 @@ concurrency:
 
 on:
   push:
-    branches: ["main", "levm/perf/automate_flamegraph"]
+    branches: ["main"]
   workflow_dispatch:
 
 env:
