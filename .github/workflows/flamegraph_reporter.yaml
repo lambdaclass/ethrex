@@ -482,14 +482,19 @@ jobs:
           # LEVM HTML
           sed -i "s/{{LAST_UPDATE}}/$(TZ='Etc/GMT+3' date +'%Y-%m-%dT%H:%M:%S')/g" pages/levm.html
           time_levm=$(grep "time_levm" time_levm.txt/time_levm.txt | cut -d '=' -f2)
-          minutes=$((time_levm / 60))
-          seconds=$((time_levm % 60))
-          time_levm_str=${minutes} minutes ${seconds} seconds"
+
+          minutes=$(bc -l <<< "scale=0; $time_levm / 60")
+          seconds=$(bc -l <<< "scale=0; $time_levm % 60")
+
+          time_levm_str="${minutes} minutes ${seconds} seconds"
           sed -i "s/{{LEVM_TIME}}/${time_levm_str}/g" pages/levm.html
+
           time_revm=$(grep "time_revm" time_revm.txt/time_revm.txt | cut -d '=' -f2)
-          minutes=$((time_revm / 60))
-          seconds=$((time_revm % 60))
-          time_revm_str=${minutes} minutes ${seconds} seconds"
+
+          minutes=$(bc -l <<< "scale=0; $time_revm / 60")
+          seconds=$(bc -l <<< "scale=0; $time_revm % 60")
+
+          time_revm_str="${minutes} minutes ${seconds} seconds"
           sed -i "s/{{REVM_TIME}}/${time_revm_str}/g" pages/levm.html
 
       - name: Setup Pages
