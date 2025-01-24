@@ -1379,24 +1379,6 @@ impl VM {
     }
 }
 
-fn get_n_value(op: Opcode, base_opcode: Opcode) -> Result<usize, VMError> {
-    let offset = (usize::from(op))
-        .checked_sub(usize::from(base_opcode))
-        .ok_or(VMError::InvalidOpcode)?
-        .checked_add(1)
-        .ok_or(VMError::InvalidOpcode)?;
-
-    Ok(offset)
-}
-
-fn get_number_of_topics(op: Opcode) -> Result<u8, VMError> {
-    let number_of_topics = (u8::from(op))
-        .checked_sub(u8::from(Opcode::LOG0))
-        .ok_or(VMError::InvalidOpcode)?;
-
-    Ok(number_of_topics)
-}
-
 /// Gets account, first checking the cache and then the database (caching in the second case)
 pub fn get_account(cache: &mut CacheDB, db: &Arc<dyn Database>, address: Address) -> Account {
     match cache::get_account(cache, &address) {

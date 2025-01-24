@@ -247,3 +247,23 @@ pub fn get_max_blob_gas_price(
 
     Ok(max_blob_gas_cost)
 }
+
+// =================== Opcode related functions ======================
+
+pub fn get_n_value(op: Opcode, base_opcode: Opcode) -> Result<usize, VMError> {
+    let offset = (usize::from(op))
+        .checked_sub(usize::from(base_opcode))
+        .ok_or(VMError::InvalidOpcode)?
+        .checked_add(1)
+        .ok_or(VMError::InvalidOpcode)?;
+
+    Ok(offset)
+}
+
+pub fn get_number_of_topics(op: Opcode) -> Result<u8, VMError> {
+    let number_of_topics = (u8::from(op))
+        .checked_sub(u8::from(Opcode::LOG0))
+        .ok_or(VMError::InvalidOpcode)?;
+
+    Ok(number_of_topics)
+}
