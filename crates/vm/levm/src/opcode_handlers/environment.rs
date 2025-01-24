@@ -1,6 +1,6 @@
 use crate::{
     call_frame::CallFrame,
-    constants::SET_CODE_DELEGATION_BYTES,
+    constants::EIP7702_DELEGATED_CODE_LEN,
     errors::{InternalError, OpcodeSuccess, VMError},
     gas_cost::{self},
     memory::{self, calculate_memory_size},
@@ -286,7 +286,7 @@ impl VM {
         self.increase_consumed_gas(current_call_frame, gas_cost::extcodesize(address_was_cold)?)?;
 
         current_call_frame.stack.push(if is_delegation {
-            SET_CODE_DELEGATION_BYTES[..2].len().into()
+            EIP7702_DELEGATED_CODE_LEN.into()
         } else {
             account_info.bytecode.len().into()
         })?;
@@ -312,9 +312,6 @@ impl VM {
 
         let new_memory_size = calculate_memory_size(dest_offset, size)?;
 
-        // https://eips.ethereum.org/EIPS/eip-7702#delegation-designation
-        let is_delegation = has_delegation(&account_info)?;
-
         self.increase_consumed_gas(
             current_call_frame,
             gas_cost::extcodecopy(
@@ -329,11 +326,9 @@ impl VM {
             return Ok(OpcodeSuccess::Continue);
         }
 
-        let bytecode = if is_delegation {
-            SET_CODE_DELEGATION_BYTES[..2].into()
-        } else {
-            account_info.bytecode
-        };
+        // If the bytecode is a delegation designation, it will copy the marker (0xef0100) || address.
+        // https://eips.ethereum.org/EIPS/eip-7702#delegation-designation
+        let bytecode = account_info.bytecode;
 
         let mut data = vec![0u8; size];
         if offset < bytecode.len().into() {
@@ -433,25 +428,18 @@ impl VM {
 
         let (account_info, address_was_cold) = self.access_account(address);
 
-        // https://eips.ethereum.org/EIPS/eip-7702#delegation-designation
-        let is_delegation = has_delegation(&account_info)?;
-
         self.increase_consumed_gas(current_call_frame, gas_cost::extcodehash(address_was_cold)?)?;
 
-        if is_delegation {
-            let hash =
-                U256::from_big_endian(keccak(&SET_CODE_DELEGATION_BYTES[..2]).as_fixed_bytes());
-            current_call_frame.stack.push(hash)?;
-        } else {
-            // An account is considered empty when it has no code and zero nonce and zero balance. [EIP-161]
-            if account_info.is_empty() {
-                current_call_frame.stack.push(U256::zero())?;
-                return Ok(OpcodeSuccess::Continue);
-            }
-
-            let hash = U256::from_big_endian(keccak(account_info.bytecode).as_fixed_bytes());
-            current_call_frame.stack.push(hash)?;
+        // An account is considered empty when it has no code and zero nonce and zero balance. [EIP-161]
+        if account_info.is_empty() {
+            current_call_frame.stack.push(U256::zero())?;
+            return Ok(OpcodeSuccess::Continue);
         }
+
+        // If the bytecode is a delegation designation, it will return the hash of: the marker (0xef0100) || address.
+        // https://eips.ethereum.org/EIPS/eip-7702#delegation-designation
+        let hash = U256::from_big_endian(keccak(account_info.bytecode).as_fixed_bytes());
+        current_call_frame.stack.push(hash)?;
 
         Ok(OpcodeSuccess::Continue)
     }
