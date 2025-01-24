@@ -90,6 +90,14 @@ impl Node {
             format!("enode://{node_id}@{node_ip}:{listener_port}")
         }
     }
+
+    pub fn udp_addr(self) -> SocketAddr {
+        SocketAddr::new(self.ip, self.udp_port)
+    }
+
+    pub fn tcp_addr(self) -> SocketAddr {
+        SocketAddr::new(self.ip, self.tcp_port)
+    }
 }
 
 /// Reference: [ENR records](https://github.com/ethereum/devp2p/blob/master/enr.md)
