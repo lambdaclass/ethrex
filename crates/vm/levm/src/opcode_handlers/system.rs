@@ -53,8 +53,12 @@ impl VM {
 
         let (account_info, address_was_cold) = self.access_account(callee);
 
-        let (is_delegation, eip7702_gas_consumed, code_address, bytecode) =
-            self.eip7702_get_code(callee)?;
+        let (is_delegation, eip7702_gas_consumed, code_address, bytecode) = eip7702_get_code(
+            &mut self.cache,
+            &mut self.db,
+            &mut self.accrued_substate,
+            callee,
+        )?;
 
         let gas_left = current_call_frame
             .gas_limit
@@ -132,8 +136,12 @@ impl VM {
 
         let (_account_info, address_was_cold) = self.access_account(code_address);
 
-        let (is_delegation, eip7702_gas_consumed, code_address, bytecode) =
-            self.eip7702_get_code(code_address)?;
+        let (is_delegation, eip7702_gas_consumed, code_address, bytecode) = eip7702_get_code(
+            &mut self.cache,
+            &mut self.db,
+            &mut self.accrued_substate,
+            code_address,
+        )?;
 
         let gas_left = current_call_frame
             .gas_limit
@@ -239,8 +247,12 @@ impl VM {
             calculate_memory_size(return_data_start_offset, return_data_size)?;
         let new_memory_size = new_memory_size_for_args.max(new_memory_size_for_return_data);
 
-        let (is_delegation, eip7702_gas_consumed, code_address, bytecode) =
-            self.eip7702_get_code(code_address)?;
+        let (is_delegation, eip7702_gas_consumed, code_address, bytecode) = eip7702_get_code(
+            &mut self.cache,
+            &mut self.db,
+            &mut self.accrued_substate,
+            code_address,
+        )?;
 
         let gas_left = current_call_frame
             .gas_limit
@@ -314,8 +326,12 @@ impl VM {
             calculate_memory_size(return_data_start_offset, return_data_size)?;
         let new_memory_size = new_memory_size_for_args.max(new_memory_size_for_return_data);
 
-        let (is_delegation, eip7702_gas_consumed, _, bytecode) =
-            self.eip7702_get_code(code_address)?;
+        let (is_delegation, eip7702_gas_consumed, _, bytecode) = eip7702_get_code(
+            &mut self.cache,
+            &mut self.db,
+            &mut self.accrued_substate,
+            code_address,
+        )?;
 
         let gas_left = current_call_frame
             .gas_limit
