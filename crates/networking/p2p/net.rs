@@ -1,5 +1,5 @@
 use bootnode::BootNode;
-use discv4::{DiscoveryError, Discv4};
+use discv4::{helpers::time_now_unix, DiscoveryError, Discv4};
 use ethrex_core::H512;
 use ethrex_storage::Store;
 use k256::{
@@ -45,6 +45,17 @@ pub enum NetworkError {
     DiscoveryStart(DiscoveryError),
 }
 
+#[derive(Clone, Debug)]
+struct P2PContext {
+    tracker: TaskTracker,
+    signer: SigningKey,
+    table: Arc<Mutex<KademliaTable>>,
+    storage: Store,
+    broadcast: RLPxConnBroadcastSender,
+    local_node: Node,
+    enr_seq: u64,
+}
+
 pub async fn start_network(
     local_node: Node,
     tracker: TaskTracker,
@@ -57,16 +68,22 @@ pub async fn start_network(
         tokio::task::Id,
         Arc<RLPxMessage>,
     )>(MAX_MESSAGES_TO_BROADCAST);
-    let discovery = Discv4::try_new(
+
+    let context = P2PContext {
         local_node,
-        signer.clone(),
-        storage.clone(),
-        peer_table.clone(),
-        channel_broadcast_send_end.clone(),
-        tracker.clone(),
-    )
-    .await
-    .map_err(NetworkError::DiscoveryStart)?;
+        // Note we are passing the current timestamp as the sequence number
+        // This is because we are not storing our local_node updates in the db
+        // see #1756
+        enr_seq: time_now_unix(),
+        tracker,
+        signer,
+        table: peer_table,
+        storage,
+        broadcast: channel_broadcast_send_end,
+    };
+    let discovery = Discv4::try_new(context.clone())
+        .await
+        .map_err(NetworkError::DiscoveryStart)?;
 
     info!("Starting discovery service at {}", discovery.addr());
     discovery
@@ -74,28 +91,15 @@ pub async fn start_network(
         .await
         .map_err(NetworkError::DiscoveryStart)?;
 
-    let tcp_addr = SocketAddr::new(local_node.ip, local_node.tcp_port);
+    let tcp_addr = context.local_node.tcp_addr();
     info!("Listening for requests at {tcp_addr}");
-    tracker.spawn(serve_p2p_requests(
-        tracker.clone(),
-        tcp_addr,
-        signer.clone(),
-        storage.clone(),
-        peer_table.clone(),
-        channel_broadcast_send_end,
-    ));
+    context.tracker.spawn(serve_p2p_requests(context.clone()));
 
     Ok(())
 }
 
-async fn serve_p2p_requests(
-    tracker: TaskTracker,
-    tcp_addr: SocketAddr,
-    signer: SigningKey,
-    storage: Store,
-    table: Arc<Mutex<KademliaTable>>,
-    connection_broadcast: RLPxConnBroadcastSender,
-) {
+async fn serve_p2p_requests(context: P2PContext) {
+    let tcp_addr = context.local_node.tcp_addr();
     let listener = match listener(tcp_addr) {
         Ok(result) => result,
         Err(e) => {
@@ -112,14 +116,9 @@ async fn serve_p2p_requests(
             }
         };
 
-        tracker.spawn(handle_peer_as_receiver(
-            peer_addr,
-            signer.clone(),
-            stream,
-            storage.clone(),
-            table.clone(),
-            connection_broadcast.clone(),
-        ));
+        context
+            .tracker
+            .spawn(handle_peer_as_receiver(context.clone(), peer_addr, stream));
     }
 }
 
@@ -129,25 +128,13 @@ fn listener(tcp_addr: SocketAddr) -> Result<TcpListener, io::Error> {
     tcp_socket.listen(50)
 }
 
-async fn handle_peer_as_receiver(
-    peer_addr: SocketAddr,
-    signer: SigningKey,
-    stream: TcpStream,
-    storage: Store,
-    table: Arc<Mutex<KademliaTable>>,
-    connection_broadcast: RLPxConnBroadcastSender,
-) {
-    let mut conn = RLPxConnection::receiver(signer, stream, storage, connection_broadcast);
-    conn.start_peer(peer_addr, table).await;
+async fn handle_peer_as_receiver(context: P2PContext, peer_addr: SocketAddr, stream: TcpStream) {
+    let mut conn =
+        RLPxConnection::receiver(context.signer, stream, context.storage, context.broadcast);
+    conn.start_peer(peer_addr, context.table).await;
 }
 
-async fn handle_peer_as_initiator(
-    signer: SigningKey,
-    node: Node,
-    storage: Store,
-    table: Arc<Mutex<KademliaTable>>,
-    connection_broadcast: RLPxConnBroadcastSender,
-) {
+async fn handle_peer_as_initiator(context: P2PContext, node: Node) {
     let addr = SocketAddr::new(node.ip, node.tcp_port);
     let stream = match tcp_stream(addr).await {
         Ok(result) => result,
@@ -159,9 +146,15 @@ async fn handle_peer_as_initiator(
             return;
         }
     };
-    match RLPxConnection::initiator(signer, node.node_id, stream, storage, connection_broadcast) {
+    match RLPxConnection::initiator(
+        context.signer,
+        node.node_id,
+        stream,
+        context.storage,
+        context.broadcast,
+    ) {
         Ok(mut conn) => {
-            conn.start_peer(SocketAddr::new(node.ip, node.udp_port), table)
+            conn.start_peer(SocketAddr::new(node.ip, node.udp_port), context.table)
                 .await
         }
         Err(e) => {
