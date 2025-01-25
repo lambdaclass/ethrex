@@ -51,7 +51,7 @@ use tokio::{
 };
 use tokio_stream::StreamExt;
 use tokio_util::codec::Framed;
-use tracing::{debug, error};
+use tracing::{debug, error, warn};
 const CAP_P2P: (Capability, u8) = (Capability::P2p, 5);
 const CAP_ETH: (Capability, u8) = (Capability::Eth, 68);
 const CAP_SNAP: (Capability, u8) = (Capability::Snap, 1);
@@ -407,10 +407,19 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
             // TODO(#1129) Add the transaction to the mempool once received.
             Message::Transactions(txs) if peer_supports_eth => {
                 if is_synced {
+                    let mut valid_txs = vec![];
                     for tx in &txs.transactions {
-                        mempool::add_transaction(tx.clone(), &self.storage)?;
+                        if let Err(e) = mempool::add_transaction(tx.clone(), &self.storage) {
+                            warn!(
+                                "Error adding transaction from peer {}: {}",
+                                self.remote_node_id, e
+                            );
+                            continue;
+                        }
+                        valid_txs.push(tx.clone());
                     }
-                    self.broadcast_message(Message::Transactions(txs)).await?;
+                    self.broadcast_message(Message::Transactions(Transactions::new(valid_txs)))
+                        .await?;
                 }
             }
             Message::GetBlockHeaders(msg_data) if peer_supports_eth => {

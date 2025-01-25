@@ -11,6 +11,7 @@ use ethrex_rlp::{
     structs::{Decoder, Encoder},
 };
 use ethrex_storage::{error::StoreError, pending_requests::TransactionRequest, Store};
+use tracing::warn;
 
 use crate::rlpx::error::RLPxError;
 use crate::rlpx::{
@@ -257,12 +258,22 @@ impl PooledTransactions {
         self.validate(request.unwrap())?;
         for tx in self.pooled_transactions {
             if let P2PTransaction::EIP4844TransactionWithBlobs(itx) = tx {
-                mempool::add_blob_transaction(itx.tx, itx.blobs_bundle, store)?;
+                if let Err(e) = mempool::add_blob_transaction(itx.tx, itx.blobs_bundle, store) {
+                    warn!(
+                        "Error adding transaction from peer {}: {}",
+                        remote_node_id, e
+                    );
+                }
             } else {
                 let regular_tx = tx
                     .try_into()
                     .map_err(|error| MempoolError::StoreError(StoreError::Custom(error)))?;
-                mempool::add_transaction(regular_tx, store)?;
+                if let Err(e) = mempool::add_transaction(regular_tx, store) {
+                    warn!(
+                        "Error adding transaction from peer {}: {}",
+                        remote_node_id, e
+                    );
+                }
             }
         }
         // txs were added to mempool, it's safe to remove it from pending_requests.
