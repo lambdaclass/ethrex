@@ -5,11 +5,11 @@ pub mod mempool;
 pub mod payload;
 mod smoke_test;
 
-use constants::{GAS_PER_BLOB, MAX_BLOB_GAS_PER_BLOCK, MAX_BLOB_NUMBER_PER_BLOCK};
 use error::{ChainError, InvalidBlockError};
+use ethrex_core::constants::GAS_PER_BLOB;
 use ethrex_core::types::{
     compute_receipts_root, validate_block_header, validate_cancun_header_fields,
-    validate_no_cancun_header_fields, Block, BlockHash, BlockHeader, BlockNumber,
+    validate_no_cancun_header_fields, Block, BlockHash, BlockHeader, BlockNumber, ChainConfig,
     EIP4844Transaction, Receipt, Transaction,
 };
 use ethrex_core::H256;
@@ -151,10 +151,8 @@ pub fn validate_block(
     parent_header: &BlockHeader,
     state: &EvmState,
 ) -> Result<(), ChainError> {
-    let spec = spec_id(
-        &state.chain_config().map_err(ChainError::from)?,
-        block.header.timestamp,
-    );
+    let chain_config = state.chain_config().map_err(ChainError::from)?;
+    let spec = spec_id(&chain_config, block.header.timestamp);
 
     // Verify initial header validity against parent
     validate_block_header(&block.header, parent_header).map_err(InvalidBlockError::from)?;
@@ -168,7 +166,7 @@ pub fn validate_block(
     };
 
     if spec == SpecId::CANCUN {
-        verify_blob_gas_usage(block)?
+        verify_blob_gas_usage(block, &chain_config)?
     }
     Ok(())
 }
@@ -199,21 +197,29 @@ pub fn validate_gas_used(
     Ok(())
 }
 
-fn verify_blob_gas_usage(block: &Block) -> Result<(), ChainError> {
+// Perform validations over the block's blob gas usage.
+// Must be called only if the block has cancun activated
+fn verify_blob_gas_usage(block: &Block, config: &ChainConfig) -> Result<(), ChainError> {
     let mut blob_gas_used = 0_u64;
     let mut blobs_in_block = 0_u64;
+    let max_blob_gas_per_block = config
+        .get_max_blob_gas_per_block(block.header.timestamp)
+        .ok_or(ChainError::Custom("Provided block fork is invalid".into()))?;
+    let max_blob_number_per_block = config
+        .get_max_blob_number_per_block(block.header.timestamp)
+        .ok_or(ChainError::Custom("Provided block fork is invalid".into()))?;
     for transaction in block.body.transactions.iter() {
         if let Transaction::EIP4844Transaction(tx) = transaction {
             blob_gas_used += get_total_blob_gas(tx);
             blobs_in_block += tx.blob_versioned_hashes.len() as u64;
         }
     }
-    if blob_gas_used > MAX_BLOB_GAS_PER_BLOCK {
+    if blob_gas_used > max_blob_gas_per_block {
         return Err(ChainError::InvalidBlock(
             InvalidBlockError::ExceededMaxBlobGasPerBlock,
         ));
     }
-    if blobs_in_block > MAX_BLOB_NUMBER_PER_BLOCK {
+    if blobs_in_block > max_blob_number_per_block {
         return Err(ChainError::InvalidBlock(
             InvalidBlockError::ExceededMaxBlobNumberPerBlock,
         ));

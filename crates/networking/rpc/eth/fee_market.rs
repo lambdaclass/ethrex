@@ -1,4 +1,3 @@
-use ethrex_blockchain::constants::MAX_BLOB_GAS_PER_BLOCK;
 use ethrex_core::types::{Block, Transaction};
 use serde::Serialize;
 use serde_json::Value;
@@ -69,6 +68,7 @@ impl RpcHandler for FeeHistoryRequest {
 
     fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
         let storage = &context.storage;
+        let config = storage.get_chain_config()?;
         info!(
             "Requested fee history for {} blocks starting from {}",
             self.block_count, self.newest_block
@@ -100,15 +100,26 @@ impl RpcHandler for FeeHistoryRequest {
                 .ok_or(RpcErr::Internal(format!(
                     "Could not get body for block {block_number}"
                 )))?;
-            let blob_base_fee =
-                calculate_base_fee_per_blob_gas(header.excess_blob_gas.unwrap_or_default());
+
+            let blob_base_fee = calculate_base_fee_per_blob_gas(
+                header.excess_blob_gas.unwrap_or_default(),
+                config
+                    .get_blob_base_fee_update_fraction(header.timestamp)
+                    .unwrap_or_default(),
+            );
+
+            let max_blob_gas_per_block = config.get_max_blob_number_per_block(header.timestamp);
+            let blob_gas_used_r = match (header.blob_gas_used, max_blob_gas_per_block) {
+                (Some(blob_gas_used), Some(max_blob_gas)) => {
+                    blob_gas_used as f64 / max_blob_gas as f64
+                }
+                _ => 0.0,
+            };
 
             base_fee_per_gas.push(header.base_fee_per_gas.unwrap_or_default());
             base_fee_per_blob_gas.push(blob_base_fee);
             gas_used_ratio.push(header.gas_used as f64 / header.gas_limit as f64);
-            blob_gas_used_ratio.push(
-                header.blob_gas_used.unwrap_or_default() as f64 / MAX_BLOB_GAS_PER_BLOCK as f64,
-            );
+            blob_gas_used_ratio.push(blob_gas_used_r);
 
             if let Some(percentiles) = &self.reward_percentiles {
                 let block = Block::new(header, body);
@@ -123,8 +134,12 @@ impl RpcHandler for FeeHistoryRequest {
                 "Could not get header for block {end_block}"
             )))?;
 
-        let blob_base_fee =
-            calculate_base_fee_per_blob_gas(header.excess_blob_gas.unwrap_or_default());
+        let blob_base_fee = calculate_base_fee_per_blob_gas(
+            header.excess_blob_gas.unwrap_or_default(),
+            config
+                .get_blob_base_fee_update_fraction(header.timestamp)
+                .unwrap_or_default(),
+        );
         base_fee_per_gas.push(header.base_fee_per_gas.unwrap_or_default());
         base_fee_per_blob_gas.push(blob_base_fee);
 

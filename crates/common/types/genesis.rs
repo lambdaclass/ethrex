@@ -7,6 +7,8 @@ use std::collections::HashMap;
 
 use ethrex_rlp::encode::RLPEncode;
 
+use crate::constants::GAS_PER_BLOB;
+
 use super::{
     compute_receipts_root, compute_transactions_root, compute_withdrawals_root, AccountState,
     Block, BlockBody, BlockHeader, BlockNumber, DEFAULT_OMMERS_HASH, INITIAL_BASE_FEE,
@@ -39,6 +41,50 @@ pub struct Genesis {
     pub blob_gas_used: Option<u64>,
     #[serde(default, with = "crate::serde_utils::u64::hex_str_opt")]
     pub excess_blob_gas: Option<u64>,
+}
+
+#[allow(unused)]
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ForkBlobSchedule {
+    pub target: u64,
+    pub max: u64,
+    pub base_fee_update_fraction: u64,
+}
+
+#[allow(unused)]
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct BlobSchedule {
+    #[serde(default = "default_cancun_schedule")]
+    pub cancun: ForkBlobSchedule,
+    #[serde(default = "default_prague_schedule")]
+    pub prague: ForkBlobSchedule,
+}
+
+impl Default for BlobSchedule {
+    fn default() -> Self {
+        BlobSchedule {
+            cancun: default_cancun_schedule(),
+            prague: default_prague_schedule(),
+        }
+    }
+}
+
+fn default_cancun_schedule() -> ForkBlobSchedule {
+    ForkBlobSchedule {
+        target: 3,
+        max: 6,
+        base_fee_update_fraction: 3338477,
+    }
+}
+
+fn default_prague_schedule() -> ForkBlobSchedule {
+    ForkBlobSchedule {
+        target: 6,
+        max: 9,
+        base_fee_update_fraction: 5007716,
+    }
 }
 
 /// Blockchain settings defined per block
@@ -85,6 +131,8 @@ pub struct ChainConfig {
     /// Network has already passed the terminal total difficult
     #[serde(default)]
     pub terminal_total_difficulty_passed: bool,
+    #[serde(default)]
+    pub blob_schedule: BlobSchedule,
 }
 
 #[derive(Debug, PartialEq, PartialOrd)]
@@ -119,6 +167,50 @@ impl ChainConfig {
             Fork::Shanghai
         } else {
             Fork::Paris
+        }
+    }
+
+    pub fn get_fork_blob_schedule(&self, block_timestamp: u64) -> Option<ForkBlobSchedule> {
+        // TODO: Add prague here and on every fork call in the code
+        // - get_current_fork()
+        // - is_*_activated()
+        if self.is_cancun_activated(block_timestamp) {
+            Some(self.blob_schedule.cancun)
+        } else {
+            None
+        }
+    }
+
+    pub fn get_blob_base_fee_update_fraction(&self, block_timestamp: u64) -> Option<u64> {
+        // TODO: Add prague here and on every fork call in the code
+        // - get_current_fork()
+        // - is_*_activated()
+        if self.is_cancun_activated(block_timestamp) {
+            Some(self.blob_schedule.cancun.base_fee_update_fraction)
+        } else {
+            None
+        }
+    }
+
+    pub fn get_max_blob_gas_per_block(&self, block_timestamp: u64) -> Option<u64> {
+        // TODO: Add prague here and on every fork call in the code
+        // - get_current_fork()
+        // - is_*_activated()
+        if self.is_cancun_activated(block_timestamp) {
+            Some(self.blob_schedule.cancun.max * GAS_PER_BLOB)
+        } else {
+            None
+        }
+    }
+
+    pub fn get_max_blob_number_per_block(&self, block_timestamp: u64) -> Option<u64> {
+        // TODO: Add prague here and on every fork call in the code
+        // - get_current_fork()
+        // - is_*_activated()
+        if self.is_cancun_activated(block_timestamp) {
+            Some(self.blob_schedule.cancun.max)
+        } else {
+            None
         }
     }
 
@@ -277,6 +369,19 @@ mod tests {
             prague_time: Some(1718232101),
             terminal_total_difficulty: Some(0),
             terminal_total_difficulty_passed: true,
+            // Note this BlobSchedule config is not the default
+            blob_schedule: BlobSchedule {
+                cancun: ForkBlobSchedule {
+                    target: 2,
+                    max: 3,
+                    base_fee_update_fraction: 6676954,
+                },
+                prague: ForkBlobSchedule {
+                    target: 3,
+                    max: 4,
+                    base_fee_update_fraction: 13353908,
+                },
+            },
             ..Default::default()
         };
         assert_eq!(&genesis.config, &expected_chain_config);
@@ -412,5 +517,148 @@ mod tests {
             H256::from_str("0x30f516e34fc173bb5fc4daddcc7532c4aca10b702c7228f3c806b4df2646fb7e")
                 .unwrap();
         assert_eq!(genesis_block_hash, computed_block_hash)
+    }
+
+    #[test]
+    fn deserialize_chain_config_blob_schedule() {
+        let json = r#"
+            
+            {
+                "chainId": 123,
+                "blobSchedule": {
+                  "cancun": {
+                    "target": 1,
+                    "max": 2,
+                    "baseFeeUpdateFraction": 10000
+                  },
+                  "prague": {
+                    "target": 3,
+                    "max": 4,
+                    "baseFeeUpdateFraction": 20000
+                  }
+                }
+            }
+            "#;
+
+        let config: ChainConfig =
+            serde_json::from_str(json).expect("Failed to deserialize ChainConfig");
+        let expected_chain_config = ChainConfig {
+            chain_id: 123,
+            blob_schedule: BlobSchedule {
+                cancun: ForkBlobSchedule {
+                    target: 1,
+                    max: 2,
+                    base_fee_update_fraction: 10000,
+                },
+                prague: ForkBlobSchedule {
+                    target: 3,
+                    max: 4,
+                    base_fee_update_fraction: 20000,
+                },
+            },
+            ..Default::default()
+        };
+        assert_eq!(&config, &expected_chain_config);
+    }
+
+    #[test]
+    fn deserialize_chain_config_missing_entire_blob_schedule() {
+        let json = r#"
+            {
+                "chainId": 123
+            }
+            "#;
+
+        let config: ChainConfig =
+            serde_json::from_str(json).expect("Failed to deserialize ChainConfig");
+        let expected_chain_config = ChainConfig {
+            chain_id: 123,
+            blob_schedule: BlobSchedule {
+                cancun: ForkBlobSchedule {
+                    target: 3,
+                    max: 6,
+                    base_fee_update_fraction: 3338477,
+                },
+                prague: ForkBlobSchedule {
+                    target: 6,
+                    max: 9,
+                    base_fee_update_fraction: 5007716,
+                },
+            },
+            ..Default::default()
+        };
+        assert_eq!(&config, &expected_chain_config);
+    }
+
+    #[test]
+    fn deserialize_chain_config_missing_cancun_blob_schedule() {
+        let json = r#"
+            {
+                "chainId": 123,
+                "blobSchedule": {
+                    "prague": {
+                      "target": 3,
+                      "max": 4,
+                      "baseFeeUpdateFraction": 20000
+                    }
+                }
+            }
+            "#;
+
+        let config: ChainConfig =
+            serde_json::from_str(json).expect("Failed to deserialize ChainConfig");
+        let expected_chain_config = ChainConfig {
+            chain_id: 123,
+            blob_schedule: BlobSchedule {
+                cancun: ForkBlobSchedule {
+                    target: 3,
+                    max: 6,
+                    base_fee_update_fraction: 3338477,
+                },
+                prague: ForkBlobSchedule {
+                    target: 3,
+                    max: 4,
+                    base_fee_update_fraction: 20000,
+                },
+            },
+            ..Default::default()
+        };
+        assert_eq!(&config, &expected_chain_config);
+    }
+
+    #[test]
+    fn deserialize_chain_config_missing_prague_blob_schedule() {
+        let json = r#"
+            {
+                "chainId": 123,
+                "blobSchedule": {
+                  "cancun": {
+                    "target": 1,
+                    "max": 2,
+                    "baseFeeUpdateFraction": 10000
+                  }
+                }
+            }
+            "#;
+
+        let config: ChainConfig =
+            serde_json::from_str(json).expect("Failed to deserialize ChainConfig");
+        let expected_chain_config = ChainConfig {
+            chain_id: 123,
+            blob_schedule: BlobSchedule {
+                cancun: ForkBlobSchedule {
+                    target: 1,
+                    max: 2,
+                    base_fee_update_fraction: 10000,
+                },
+                prague: ForkBlobSchedule {
+                    target: 6,
+                    max: 9,
+                    base_fee_update_fraction: 5007716,
+                },
+            },
+            ..Default::default()
+        };
+        assert_eq!(&config, &expected_chain_config);
     }
 }

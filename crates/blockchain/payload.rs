@@ -4,6 +4,7 @@ use std::{
 };
 
 use ethrex_core::{
+    constants::GAS_PER_BLOB,
     types::{
         calculate_base_fee_per_blob_gas, calculate_base_fee_per_gas, compute_receipts_root,
         compute_transactions_root, compute_withdrawals_root, BlobsBundle, Block, BlockBody,
@@ -36,10 +37,7 @@ use ethrex_metrics::metrics;
 use ethrex_metrics::metrics_transactions::{MetricsTxStatus, MetricsTxType, METRICS_TX};
 
 use crate::{
-    constants::{
-        GAS_LIMIT_BOUND_DIVISOR, GAS_PER_BLOB, MAX_BLOB_GAS_PER_BLOCK, MIN_GAS_LIMIT,
-        TARGET_BLOB_GAS_PER_BLOCK, TX_GAS_COST,
-    },
+    constants::{GAS_LIMIT_BOUND_DIVISOR, MIN_GAS_LIMIT, TX_GAS_COST},
     error::{ChainError, InvalidBlockError},
     mempool::{self, PendingTxFilter},
 };
@@ -122,6 +120,7 @@ pub fn create_payload(args: &BuildPayloadArgs, storage: &Store) -> Result<Block,
             calc_excess_blob_gas(
                 parent_block.excess_blob_gas.unwrap_or_default(),
                 parent_block.blob_gas_used.unwrap_or_default(),
+                chain_config.blob_schedule.cancun.target,
             ),
         ),
         parent_beacon_block_root: args.beacon_root,
@@ -157,12 +156,17 @@ fn calc_gas_limit(parent_gas_limit: u64, desired_limit: u64) -> u64 {
     limit
 }
 
-fn calc_excess_blob_gas(parent_excess_blob_gas: u64, parent_blob_gas_used: u64) -> u64 {
+fn calc_excess_blob_gas(
+    parent_excess_blob_gas: u64,
+    parent_blob_gas_used: u64,
+    target: u64,
+) -> u64 {
     let excess_blob_gas = parent_excess_blob_gas + parent_blob_gas_used;
-    if excess_blob_gas < TARGET_BLOB_GAS_PER_BLOCK {
+    let target_blob_gas_per_block = target * GAS_PER_BLOB;
+    if excess_blob_gas < target_blob_gas_per_block {
         0
     } else {
-        excess_blob_gas - TARGET_BLOB_GAS_PER_BLOCK
+        excess_blob_gas - target_blob_gas_per_block
     }
 }
 
@@ -177,18 +181,24 @@ pub struct PayloadBuildContext<'a> {
 }
 
 impl<'a> PayloadBuildContext<'a> {
-    fn new(payload: &'a mut Block, evm_state: &'a mut EvmState) -> Self {
-        PayloadBuildContext {
+    fn new(payload: &'a mut Block, evm_state: &'a mut EvmState) -> Result<Self, EvmError> {
+        let config = evm_state.chain_config()?;
+        let base_fee_per_blob_gas = calculate_base_fee_per_blob_gas(
+            payload.header.excess_blob_gas.unwrap_or_default(),
+            config
+                .get_blob_base_fee_update_fraction(payload.header.timestamp)
+                .unwrap_or_default(),
+        );
+
+        Ok(PayloadBuildContext {
             remaining_gas: payload.header.gas_limit,
             receipts: vec![],
             block_value: U256::zero(),
-            base_fee_per_blob_gas: U256::from(calculate_base_fee_per_blob_gas(
-                payload.header.excess_blob_gas.unwrap_or_default(),
-            )),
+            base_fee_per_blob_gas: U256::from(base_fee_per_blob_gas),
             payload,
             evm_state,
             blobs_bundle: BlobsBundle::default(),
-        }
+        })
     }
 }
 
@@ -221,7 +231,7 @@ pub fn build_payload(
 ) -> Result<(BlobsBundle, U256), ChainError> {
     debug!("Building payload");
     let mut evm_state = evm_state(store.clone(), payload.header.parent_hash);
-    let mut context = PayloadBuildContext::new(payload, &mut evm_state);
+    let mut context = PayloadBuildContext::new(payload, &mut evm_state)?;
     apply_withdrawals(&mut context)?;
     fill_transactions(&mut context)?;
     finalize_payload(&mut context)?;
@@ -279,6 +289,10 @@ fn fetch_mempool_transactions(
 /// Returns the block value
 pub fn fill_transactions(context: &mut PayloadBuildContext) -> Result<(), ChainError> {
     let chain_config = context.chain_config()?;
+    let max_blob_number_per_block = chain_config
+        .get_max_blob_number_per_block(context.payload.header.timestamp)
+        .unwrap_or_default() as usize;
+
     debug!("Fetching transactions from mempool");
     // Fetch mempool transactions
     let (mut plain_txs, mut blob_txs) = fetch_mempool_transactions(context)?;
@@ -289,9 +303,7 @@ pub fn fill_transactions(context: &mut PayloadBuildContext) -> Result<(), ChainE
             debug!("No more gas to run transactions");
             break;
         };
-        if !blob_txs.is_empty()
-            && context.blobs_bundle.blobs.len() as u64 * GAS_PER_BLOB >= MAX_BLOB_GAS_PER_BLOCK
-        {
+        if !blob_txs.is_empty() && context.blobs_bundle.blobs.len() >= max_blob_number_per_block {
             debug!("No more blob gas to run blob transactions");
             blob_txs.clear();
         }
@@ -401,6 +413,11 @@ fn apply_blob_transaction(
 ) -> Result<Receipt, ChainError> {
     // Fetch blobs bundle
     let tx_hash = head.tx.compute_hash();
+    let chain_config = context.chain_config()?;
+    let max_blob_number_per_block = chain_config
+        .get_max_blob_number_per_block(context.payload.header.timestamp)
+        .unwrap_or_default() as usize;
+
     let Some(blobs_bundle) = context
         .store()
         .ok_or(ChainError::StoreError(StoreError::MissingStore))?
@@ -411,9 +428,7 @@ fn apply_blob_transaction(
             StoreError::Custom(format!("No blobs bundle found for blob tx {tx_hash}")).into(),
         );
     };
-    if (context.blobs_bundle.blobs.len() + blobs_bundle.blobs.len()) as u64 * GAS_PER_BLOB
-        > MAX_BLOB_GAS_PER_BLOCK
-    {
+    if context.blobs_bundle.blobs.len() + blobs_bundle.blobs.len() > max_blob_number_per_block {
         // This error will only be used for debug tracing
         return Err(EvmError::Custom("max data blobs reached".to_string()).into());
     };

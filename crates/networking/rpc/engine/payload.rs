@@ -418,6 +418,10 @@ fn execute_payload(block: &Block, context: &RpcApiContext) -> Result<PayloadStat
             warn!("Error storing block: {error}");
             Err(RpcErr::Internal(error.to_string()))
         }
+        Err(ChainError::Custom(e)) => {
+            error!("{e} for block {block_hash}");
+            Err(RpcErr::Internal(e.to_string()))
+        }
         Ok(()) => {
             info!("Block with hash {block_hash} executed and added to storage succesfully");
             Ok(PayloadStatus::valid_with_hash(block_hash))

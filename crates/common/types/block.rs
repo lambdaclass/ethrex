@@ -1,8 +1,9 @@
 use super::{
-    BASE_FEE_MAX_CHANGE_DENOMINATOR, BLOB_BASE_FEE_UPDATE_FRACTION, ELASTICITY_MULTIPLIER,
-    GAS_LIMIT_ADJUSTMENT_FACTOR, GAS_LIMIT_MINIMUM, INITIAL_BASE_FEE, MIN_BASE_FEE_PER_BLOB_GAS,
+    BASE_FEE_MAX_CHANGE_DENOMINATOR, ELASTICITY_MULTIPLIER, GAS_LIMIT_ADJUSTMENT_FACTOR,
+    GAS_LIMIT_MINIMUM, INITIAL_BASE_FEE,
 };
 use crate::{
+    constants::MIN_BASE_FEE_PER_BLOB_GAS,
     types::{Receipt, Transaction},
     Address, H256, U256,
 };
@@ -341,15 +342,12 @@ fn check_gas_limit(gas_limit: u64, parent_gas_limit: u64) -> bool {
 }
 
 /// Calculates the base fee per blob gas for the current block based on
-/// it's parent excess blob gas.
-/// NOTE: BLOB_BASE_FEE_UPDATE_FRACTION has a different value after
-/// prague fork. See
-/// [EIP-7691](https://eips.ethereum.org/EIPS/eip-7691#specification).
-pub fn calculate_base_fee_per_blob_gas(parent_excess_blob_gas: u64) -> u64 {
+/// it's parent excess blob gas and the update fraction, which depends on the fork.
+pub fn calculate_base_fee_per_blob_gas(parent_excess_blob_gas: u64, update_fraction: u64) -> u64 {
     fake_exponential(
         MIN_BASE_FEE_PER_BLOB_GAS,
         parent_excess_blob_gas,
-        BLOB_BASE_FEE_UPDATE_FRACTION,
+        update_fraction,
     )
 }
 
