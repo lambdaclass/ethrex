@@ -1,33 +1,58 @@
 use clap::Parser;
 use report::{shell_summary, LinesOfCodeReport, LinesOfCodeReporterOptions};
 use spinoff::{spinners::Dots, Color, Spinner};
-use std::{collections::HashMap, env::current_dir, path::PathBuf};
+use std::{collections::HashMap, env::current_dir, fs::DirEntry, path::PathBuf};
 use tokei::{Config, Language, LanguageType, Languages};
 
 mod report;
 
 fn count_crates_loc(crates_path: &PathBuf, config: &Config) -> Vec<(String, usize)> {
-    let mut ethrex_crates_loc: Vec<(String, usize)> = std::fs::read_dir(crates_path)
-        .into_iter()
-        .flatten()
-        .map(|crate_dir_entry| {
-            let crate_path = crate_dir_entry.unwrap().path();
-            let crate_loc = count_loc(crate_path.clone(), config);
-            (
-                crate_path.file_name().unwrap().to_str().unwrap().to_owned(),
-                crate_loc.code,
-            )
+    let nested_dirs = ["networking"];
+
+    let top_level_crate_dirs = std::fs::read_dir(crates_path)
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .filter(|e| !nested_dirs.contains(&e.file_name().to_str().unwrap()))
+        .collect::<Vec<DirEntry>>();
+
+    let nested_crate_dirs: Vec<DirEntry> = nested_dirs
+        .iter()
+        .flat_map(|nested_dir| {
+            std::fs::read_dir(crates_path.join(nested_dir))
+                .unwrap()
+                .filter_map(|e| e.ok())
+                .collect::<Vec<DirEntry>>()
         })
-        .collect::<Vec<(String, usize)>>();
+        .collect();
+
+    let mut crate_dirs = top_level_crate_dirs;
+    crate_dirs.extend(nested_crate_dirs);
+
+    let mut ethrex_crates_loc: Vec<(String, usize)> = crate_dirs
+        .into_iter()
+        .filter_map(|crate_dir_entry| {
+            let crate_path = crate_dir_entry.path();
+
+            if let Some(crate_loc) = count_loc(crate_path.clone(), config) {
+                Some((
+                    crate_path.file_name().unwrap().to_str().unwrap().to_owned(),
+                    crate_loc.code,
+                ))
+            } else {
+                None
+            }
+        })
+        .collect();
+
     ethrex_crates_loc.sort_by_key(|(_crate_name, loc)| *loc);
     ethrex_crates_loc.reverse();
     ethrex_crates_loc
 }
 
-fn count_loc(path: PathBuf, config: &Config) -> Language {
+fn count_loc(path: PathBuf, config: &Config) -> Option<Language> {
     let mut languages = Languages::new();
     languages.get_statistics(&[path], &["tests"], config);
-    languages.get(&LanguageType::Rust).unwrap().clone()
+    languages.get(&LanguageType::Rust).cloned()
 }
 
 fn main() {
@@ -42,9 +67,9 @@ fn main() {
 
     let config = Config::default();
 
-    let ethrex_loc = count_loc(ethrex_path, &config);
-    let levm_loc = count_loc(levm_path, &config);
-    let ethrex_l2_loc = count_loc(ethrex_l2_path, &config);
+    let ethrex_loc = count_loc(ethrex_path, &config).unwrap();
+    let levm_loc = count_loc(levm_path, &config).unwrap();
+    let ethrex_l2_loc = count_loc(ethrex_l2_path, &config).unwrap();
     let ethrex_crates_loc = count_crates_loc(&ethrex_crates_path, &config);
 
     spinner.success("Lines of code calculated!");
