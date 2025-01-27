@@ -3,7 +3,7 @@ use crate::{
     errors::{InternalError, VMError},
     memory::Memory,
     opcodes::Opcode,
-    vm::get_valid_jump_destinations,
+    utils::get_valid_jump_destinations,
 };
 use bytes::Bytes;
 use ethrex_core::{types::Log, Address, U256};

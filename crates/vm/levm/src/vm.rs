@@ -3,7 +3,7 @@ use crate::{
     call_frame::CallFrame,
     constants::*,
     db::{
-        cache::{self, remove_account},
+        cache::{self, get_account_mut, remove_account},
         CacheDB, Database,
     },
     environment::Environment,
@@ -11,31 +11,24 @@ use crate::{
         InternalError, OpcodeSuccess, OutOfGasError, ResultReason, TransactionReport, TxResult,
         TxValidationError, VMError,
     },
-    gas_cost::{
-        self, fake_exponential, ACCESS_LIST_ADDRESS_COST, ACCESS_LIST_STORAGE_KEY_COST,
-        BLOB_GAS_PER_BLOB, CODE_DEPOSIT_COST, CREATE_BASE_COST, STANDARD_TOKEN_COST,
-        TOTAL_COST_FLOOR_PER_TOKEN,
-    },
+    gas_cost::{self, CODE_DEPOSIT_COST, STANDARD_TOKEN_COST, TOTAL_COST_FLOOR_PER_TOKEN},
     opcodes::Opcode,
     precompiles::{
         execute_precompile, is_precompile, SIZE_PRECOMPILES_CANCUN, SIZE_PRECOMPILES_PRAGUE,
         SIZE_PRECOMPILES_PRE_CANCUN,
     },
+    utils::*,
     AccountInfo, TransientStorage,
 };
 use bytes::Bytes;
 use ethrex_core::{types::TxKind, Address, H256, U256};
-use ethrex_rlp;
-use ethrex_rlp::encode::RLPEncode;
-use keccak_hash::keccak;
 use revm_primitives::SpecId;
-use sha3::{Digest, Keccak256};
 use std::{
     cmp::max,
     collections::{HashMap, HashSet},
+    fmt::Debug,
     sync::Arc,
 };
-
 pub type Storage = HashMap<U256, H256>;
 
 #[derive(Debug, Clone, Default)]
@@ -65,31 +58,9 @@ pub struct VM {
     pub authorization_list: Option<AuthorizationList>,
 }
 
-pub fn address_to_word(address: Address) -> U256 {
-    // This unwrap can't panic, as Address are 20 bytes long and U256 use 32 bytes
-    let mut word = [0u8; 32];
+pub type AccessList = Vec<(Address, Vec<H256>)>;
 
-    for (word_byte, address_byte) in word.iter_mut().skip(12).zip(address.as_bytes().iter()) {
-        *word_byte = *address_byte;
-    }
-
-    U256::from_big_endian(&word)
-}
-
-pub fn word_to_address(word: U256) -> Address {
-    Address::from_slice(&word.to_big_endian()[12..])
-}
-
-// Taken from cmd/ef_tests/ethrex/types.rs, didn't want to fight dependencies yet
-#[derive(Debug, PartialEq, Eq, Clone)]
-pub struct AccessListItem {
-    pub address: Address,
-    pub storage_keys: Vec<H256>,
-}
-
-type AccessList = Vec<(Address, Vec<H256>)>;
-
-type AuthorizationList = Vec<AuthorizationTuple>;
+pub type AuthorizationList = Vec<AuthorizationTuple>;
 // TODO: We have to implement this in ethrex_core
 #[derive(Debug, Clone, Default, Copy)]
 pub struct AuthorizationTuple {
@@ -99,41 +70,6 @@ pub struct AuthorizationTuple {
     pub v: U256,
     pub r_signature: U256,
     pub s_signature: U256,
-    pub signer: Address,
-}
-
-pub fn get_valid_jump_destinations(code: &Bytes) -> Result<HashSet<usize>, VMError> {
-    let mut valid_jump_destinations = HashSet::new();
-    let mut pc = 0;
-
-    while let Some(&opcode_number) = code.get(pc) {
-        let current_opcode = Opcode::from(opcode_number);
-
-        if current_opcode == Opcode::JUMPDEST {
-            // If current opcode is jumpdest, add it to valid destinations set
-            valid_jump_destinations.insert(pc);
-        } else if (Opcode::PUSH1..=Opcode::PUSH32).contains(&current_opcode) {
-            // If current opcode is push, skip as many positions as the size of the push
-            let size_to_push =
-                opcode_number
-                    .checked_sub(u8::from(Opcode::PUSH1))
-                    .ok_or(VMError::Internal(
-                        InternalError::ArithmeticOperationUnderflow,
-                    ))?;
-            let skip_length = usize::from(size_to_push.checked_add(1).ok_or(VMError::Internal(
-                InternalError::ArithmeticOperationOverflow,
-            ))?);
-            pc = pc.checked_add(skip_length).ok_or(VMError::Internal(
-                InternalError::ArithmeticOperationOverflow, // to fail, pc should be at least usize max - 31
-            ))?;
-        }
-
-        pc = pc.checked_add(1).ok_or(VMError::Internal(
-            InternalError::ArithmeticOperationOverflow, // to fail, code len should be more than usize max
-        ))?;
-    }
-
-    Ok(valid_jump_destinations)
 }
 
 impl VM {
@@ -187,7 +123,9 @@ impl VM {
             TxKind::Call(address_to) => {
                 default_touched_accounts.insert(address_to);
 
-                let bytecode = get_account(&mut cache, &db, address_to).info.bytecode;
+                let bytecode = get_account_no_push_cache(&cache, &db, address_to)
+                    .info
+                    .bytecode;
 
                 // CALL tx
                 let initial_call_frame = CallFrame::new(
@@ -226,10 +164,8 @@ impl VM {
                 // CREATE tx
 
                 let sender_nonce = get_account(&mut cache, &db, env.origin).info.nonce;
-                let new_contract_address = VM::calculate_create_address(env.origin, sender_nonce)
-                    .map_err(|_| {
-                    VMError::Internal(InternalError::CouldNotComputeCreateAddress)
-                })?;
+                let new_contract_address = calculate_create_address(env.origin, sender_nonce)
+                    .map_err(|_| VMError::Internal(InternalError::CouldNotComputeCreateAddress))?;
 
                 default_touched_accounts.insert(new_contract_address);
 
@@ -477,7 +413,12 @@ impl VM {
                         match validate_create {
                             Ok(new_address) => {
                                 // Set bytecode to new account if success
-                                self.update_account_bytecode(new_address, contract_code)?;
+                                update_account_bytecode(
+                                    &mut self.cache,
+                                    &self.db,
+                                    new_address,
+                                    contract_code,
+                                )?;
                             }
                             Err(error) => {
                                 // Revert if error
@@ -566,66 +507,16 @@ impl VM {
         matches!(self.tx_kind, TxKind::Create)
     }
 
-    fn get_intrinsic_gas(&self, initial_call_frame: &CallFrame) -> Result<u64, VMError> {
-        // Intrinsic Gas = Calldata cost + Create cost + Base cost + Access list cost
-        let mut intrinsic_gas: u64 = 0;
-
-        // Calldata Cost
-        // 4 gas for each zero byte in the transaction data 16 gas for each non-zero byte in the transaction.
-        let calldata_cost = gas_cost::tx_calldata(&initial_call_frame.calldata, self.env.spec_id)
-            .map_err(VMError::OutOfGas)?;
-
-        intrinsic_gas = intrinsic_gas
-            .checked_add(calldata_cost)
-            .ok_or(OutOfGasError::ConsumedGasOverflow)?;
-
-        // Base Cost
-        intrinsic_gas = intrinsic_gas
-            .checked_add(TX_BASE_COST)
-            .ok_or(OutOfGasError::ConsumedGasOverflow)?;
-
-        // Create Cost
-        if self.is_create() {
-            intrinsic_gas = intrinsic_gas
-                .checked_add(CREATE_BASE_COST)
-                .ok_or(OutOfGasError::ConsumedGasOverflow)?;
-
-            let number_of_words = initial_call_frame.calldata.len().div_ceil(WORD_SIZE);
-            let double_number_of_words: u64 = number_of_words
-                .checked_mul(2)
-                .ok_or(OutOfGasError::ConsumedGasOverflow)?
-                .try_into()
-                .map_err(|_| VMError::Internal(InternalError::ConversionError))?;
-
-            intrinsic_gas = intrinsic_gas
-                .checked_add(double_number_of_words)
-                .ok_or(OutOfGasError::ConsumedGasOverflow)?;
-        }
-
-        // Access List Cost
-        let mut access_lists_cost: u64 = 0;
-        for (_, keys) in self.access_list.clone() {
-            access_lists_cost = access_lists_cost
-                .checked_add(ACCESS_LIST_ADDRESS_COST)
-                .ok_or(OutOfGasError::ConsumedGasOverflow)?;
-            for _ in keys {
-                access_lists_cost = access_lists_cost
-                    .checked_add(ACCESS_LIST_STORAGE_KEY_COST)
-                    .ok_or(OutOfGasError::ConsumedGasOverflow)?;
-            }
-        }
-
-        intrinsic_gas = intrinsic_gas
-            .checked_add(access_lists_cost)
-            .ok_or(OutOfGasError::ConsumedGasOverflow)?;
-
-        Ok(intrinsic_gas)
-    }
-
     fn add_intrinsic_gas(&mut self, initial_call_frame: &mut CallFrame) -> Result<(), VMError> {
         // Intrinsic gas is the gas consumed by the transaction before the execution of the opcodes. Section 6.2 in the Yellow Paper.
 
-        let intrinsic_gas = self.get_intrinsic_gas(initial_call_frame)?;
+        let intrinsic_gas = get_intrinsic_gas(
+            self.is_create(),
+            self.env.spec_id,
+            &self.access_list,
+            &self.authorization_list,
+            initial_call_frame,
+        )?;
 
         self.increase_consumed_gas(initial_call_frame, intrinsic_gas)
             .map_err(|_| TxValidationError::IntrinsicGasTooLow)?;
@@ -639,15 +530,21 @@ impl VM {
         report: &TransactionReport,
     ) -> Result<u64, VMError> {
         if self.env.spec_id >= SpecId::PRAGUE {
+            // If the transaction is a CREATE transaction, the calldata is emptied and the bytecode is assigned.
+            let calldata = if self.is_create() {
+                &initial_call_frame.bytecode
+            } else {
+                &initial_call_frame.calldata
+            };
+
             // tokens_in_calldata = nonzero_bytes_in_calldata * 4 + zero_bytes_in_calldata
             // tx_calldata = nonzero_bytes_in_calldata * 16 + zero_bytes_in_calldata * 4
             // this is actually tokens_in_calldata * STANDARD_TOKEN_COST
             // see it in https://eips.ethereum.org/EIPS/eip-7623
-            let tokens_in_calldata: u64 =
-                gas_cost::tx_calldata(&initial_call_frame.calldata, self.env.spec_id)
-                    .map_err(VMError::OutOfGas)?
-                    .checked_div(STANDARD_TOKEN_COST)
-                    .ok_or(VMError::Internal(InternalError::DivisionError))?;
+            let tokens_in_calldata: u64 = gas_cost::tx_calldata(calldata, self.env.spec_id)
+                .map_err(VMError::OutOfGas)?
+                .checked_div(STANDARD_TOKEN_COST)
+                .ok_or(VMError::Internal(InternalError::DivisionError))?;
 
             // floor_gas_price = TX_BASE_COST + TOTAL_COST_FLOOR_PER_TOKEN * tokens_in_calldata
             let mut floor_gas_price: u64 = tokens_in_calldata
@@ -665,60 +562,6 @@ impl VM {
         }
     }
 
-    /// Gets the max blob gas cost for a transaction that a user is willing to pay.
-    fn get_max_blob_gas_price(&self) -> Result<U256, VMError> {
-        let blobhash_amount: u64 = self
-            .env
-            .tx_blob_hashes
-            .len()
-            .try_into()
-            .map_err(|_| VMError::Internal(InternalError::ConversionError))?;
-
-        let blob_gas_used: u64 = blobhash_amount
-            .checked_mul(BLOB_GAS_PER_BLOB)
-            .unwrap_or_default();
-
-        let max_blob_gas_cost = self
-            .env
-            .tx_max_fee_per_blob_gas
-            .unwrap_or_default()
-            .checked_mul(blob_gas_used.into())
-            .ok_or(InternalError::UndefinedState(1))?;
-
-        Ok(max_blob_gas_cost)
-    }
-
-    /// Gets the actual blob gas cost.
-    fn get_blob_gas_price(&self) -> Result<U256, VMError> {
-        let blobhash_amount: u64 = self
-            .env
-            .tx_blob_hashes
-            .len()
-            .try_into()
-            .map_err(|_| VMError::Internal(InternalError::ConversionError))?;
-
-        let blob_gas_price: u64 = blobhash_amount
-            .checked_mul(BLOB_GAS_PER_BLOB)
-            .unwrap_or_default();
-
-        let base_fee_per_blob_gas = self.get_base_fee_per_blob_gas()?;
-
-        let blob_gas_price: U256 = blob_gas_price.into();
-        let blob_fee: U256 = blob_gas_price
-            .checked_mul(base_fee_per_blob_gas)
-            .ok_or(VMError::Internal(InternalError::UndefinedState(1)))?;
-
-        Ok(blob_fee)
-    }
-
-    pub fn get_base_fee_per_blob_gas(&self) -> Result<U256, VMError> {
-        fake_exponential(
-            MIN_BASE_FEE_PER_BLOB_GAS,
-            self.env.block_excess_blob_gas.unwrap_or_default(),
-            BLOB_BASE_FEE_UPDATE_FRACTION,
-        )
-    }
-
     /// ## Description
     /// This method performs validations and returns an error if any of the validations fail.
     /// It also makes pre-execution changes:
@@ -729,11 +572,17 @@ impl VM {
     ///   See 'docs' for more information about validations.
     fn prepare_execution(&mut self, initial_call_frame: &mut CallFrame) -> Result<(), VMError> {
         let sender_address = self.env.origin;
-        let sender_account = self.get_account(sender_address);
+        let sender_account = get_account(&mut self.cache, &self.db, sender_address);
 
         if self.env.spec_id >= SpecId::PRAGUE {
             // check for gas limit is grater or equal than the minimum required
-            let intrinsic_gas: u64 = self.get_intrinsic_gas(initial_call_frame)?;
+            let intrinsic_gas: u64 = get_intrinsic_gas(
+                self.is_create(),
+                self.env.spec_id,
+                &self.access_list,
+                &self.authorization_list,
+                initial_call_frame,
+            )?;
 
             // calldata_cost = tokens_in_calldata * 4
             let calldata_cost: u64 =
@@ -773,7 +622,10 @@ impl VM {
 
         // blob gas cost = max fee per blob gas * blob gas used
         // https://eips.ethereum.org/EIPS/eip-4844
-        let max_blob_gas_cost = self.get_max_blob_gas_price()?;
+        let max_blob_gas_cost = get_max_blob_gas_price(
+            self.env.tx_blob_hashes.clone(),
+            self.env.tx_max_fee_per_blob_gas,
+        )?;
 
         // For the transaction to be valid the sender account has to have a balance >= gas_price * gas_limit + value if tx is type 0 and 1
         // balance >= max_fee_per_gas * gas_limit + value + blob_gas_cost if tx is type 2 or 3
@@ -801,11 +653,17 @@ impl VM {
             ));
         }
 
-        let blob_gas_cost = self.get_blob_gas_price()?;
+        let blob_gas_cost = get_blob_gas_price(
+            self.env.tx_blob_hashes.clone(),
+            self.env.block_excess_blob_gas,
+            self.env.spec_id,
+        )?;
 
         // (2) INSUFFICIENT_MAX_FEE_PER_BLOB_GAS
         if let Some(tx_max_fee_per_blob_gas) = self.env.tx_max_fee_per_blob_gas {
-            if tx_max_fee_per_blob_gas < self.get_base_fee_per_blob_gas()? {
+            if tx_max_fee_per_blob_gas
+                < get_base_fee_per_blob_gas(self.env.block_excess_blob_gas, self.env.spec_id)?
+            {
                 return Err(VMError::TxValidation(
                     TxValidationError::InsufficientMaxFeePerBlobGas,
                 ));
@@ -828,15 +686,8 @@ impl VM {
         // technically, the sender will not be able to pay it.
 
         // (3) INSUFFICIENT_ACCOUNT_FUNDS
-        self.decrease_account_balance(sender_address, up_front_cost)
+        decrease_account_balance(&mut self.cache, &mut self.db, sender_address, up_front_cost)
             .map_err(|_| TxValidationError::InsufficientAccountFunds)?;
-
-        // Transfer value to receiver
-        let receiver_address = initial_call_frame.to;
-        // msg_value is already transferred into the created contract at creation.
-        if !self.is_create() {
-            self.increase_account_balance(receiver_address, initial_call_frame.msg_value)?;
-        }
 
         // (4) INSUFFICIENT_MAX_FEE_PER_GAS
         if self.env.tx_max_fee_per_gas.unwrap_or(self.env.gas_price) < self.env.base_fee_per_gas {
@@ -861,7 +712,7 @@ impl VM {
         self.add_intrinsic_gas(initial_call_frame)?;
 
         // (7) NONCE_IS_MAX
-        self.increment_account_nonce(sender_address)
+        increment_account_nonce(&mut self.cache, &self.db, sender_address)
             .map_err(|_| VMError::TxValidation(TxValidationError::NonceIsMax))?;
 
         // (8) PRIORITY_GREATER_THAN_MAX_FEE_PER_GAS
@@ -877,7 +728,7 @@ impl VM {
         }
 
         // (9) SENDER_NOT_EOA
-        if sender_account.has_code() {
+        if sender_account.has_code() && !has_delegation(&sender_account.info)? {
             return Err(VMError::TxValidation(TxValidationError::SenderNotEOA));
         }
 
@@ -915,7 +766,7 @@ impl VM {
             }
 
             // (14) TYPE_3_TX_BLOB_COUNT_EXCEEDED
-            if blob_hashes.len() > MAX_BLOB_COUNT {
+            if blob_hashes.len() > max_blobs_per_block(self.env.spec_id) {
                 return Err(VMError::TxValidation(
                     TxValidationError::Type3TxBlobCountExceeded,
                 ));
@@ -929,11 +780,47 @@ impl VM {
             }
         }
 
+        // [EIP-7702]: https://eips.ethereum.org/EIPS/eip-7702
+        // Transaction is type 4 if authorization_list is Some
+        if let Some(auth_list) = &self.authorization_list {
+            // (16) TYPE_4_TX_PRE_FORK
+            if self.env.spec_id < SpecId::PRAGUE {
+                return Err(VMError::TxValidation(TxValidationError::Type4TxPreFork));
+            }
+
+            // (17) TYPE_4_TX_CONTRACT_CREATION
+            // From the EIP docs: a null destination is not valid.
+            if self.is_create() {
+                return Err(VMError::TxValidation(
+                    TxValidationError::Type4TxContractCreation,
+                ));
+            }
+
+            // (18) TYPE_4_TX_LIST_EMPTY
+            // From the EIP docs: The transaction is considered invalid if the length of authorization_list is zero.
+            if auth_list.is_empty() {
+                return Err(VMError::TxValidation(
+                    TxValidationError::Type4TxAuthorizationListIsEmpty,
+                ));
+            }
+
+            self.env.refunded_gas = self.eip7702_set_access_code(initial_call_frame)?;
+        }
+
         if self.is_create() {
             // Assign bytecode to context and empty calldata
             initial_call_frame.bytecode = std::mem::take(&mut initial_call_frame.calldata);
             initial_call_frame.valid_jump_destinations =
                 get_valid_jump_destinations(&initial_call_frame.bytecode).unwrap_or_default();
+        } else {
+            // Transfer value to receiver
+            // It's here to avoid storing the "to" address in the cache before eip7702_set_access_code() step 7).
+            increase_account_balance(
+                &mut self.cache,
+                &mut self.db,
+                initial_call_frame.to,
+                initial_call_frame.msg_value,
+            )?;
         }
         Ok(())
     }
@@ -952,11 +839,37 @@ impl VM {
         let sender_address = initial_call_frame.msg_sender;
         let receiver_address = initial_call_frame.to;
 
-        // 1. Undo value transfer if the transaction was reverted
+        // 1. Undo value transfer if the transaction has reverted
         if let TxResult::Revert(_) = report.result {
-            // We remove the receiver account from the cache, like nothing changed in it's state.
-            remove_account(&mut self.cache, &receiver_address);
-            self.increase_account_balance(sender_address, initial_call_frame.msg_value)?;
+            let existing_account = get_account(&mut self.cache, &self.db, receiver_address); //TO Account
+
+            if has_delegation(&existing_account.info)? {
+                // This is the case where the "to" address and the
+                // "signer" address are the same. We are setting the code
+                // and sending some balance to the "to"/"signer"
+                // address.
+                // See https://eips.ethereum.org/EIPS/eip-7702#behavior (last sentence).
+
+                // If transaction execution results in failure (any
+                // exceptional condition or code reverting), setting
+                // delegation designations is not rolled back.
+                decrease_account_balance(
+                    &mut self.cache,
+                    &mut self.db,
+                    receiver_address,
+                    initial_call_frame.msg_value,
+                )?;
+            } else {
+                // We remove the receiver account from the cache, like nothing changed in it's state.
+                remove_account(&mut self.cache, &receiver_address);
+            }
+
+            increase_account_balance(
+                &mut self.cache,
+                &mut self.db,
+                sender_address,
+                initial_call_frame.msg_value,
+            )?;
         }
 
         // 2. Return unused gas + gas refunds to the sender.
@@ -981,7 +894,12 @@ impl VM {
             .checked_mul(U256::from(gas_to_return))
             .ok_or(VMError::Internal(InternalError::UndefinedState(1)))?;
 
-        self.increase_account_balance(sender_address, wei_return_amount)?;
+        increase_account_balance(
+            &mut self.cache,
+            &mut self.db,
+            sender_address,
+            wei_return_amount,
+        )?;
 
         // 3. Pay coinbase fee
         let coinbase_address = self.env.coinbase;
@@ -1000,14 +918,19 @@ impl VM {
             .ok_or(VMError::BalanceOverflow)?;
 
         if coinbase_fee != U256::zero() {
-            self.increase_account_balance(coinbase_address, coinbase_fee)?;
+            increase_account_balance(
+                &mut self.cache,
+                &mut self.db,
+                coinbase_address,
+                coinbase_fee,
+            )?;
         };
 
         // 4. Destruct addresses in selfdestruct set.
         // In Cancun the only addresses destroyed are contracts created in this transaction
         let selfdestruct_set = self.accrued_substate.selfdestruct_set.clone();
         for address in selfdestruct_set {
-            let account_to_remove = self.get_account_mut(address)?;
+            let account_to_remove = get_account_mut_vm(&mut self.cache, &self.db, address)?;
             *account_to_remove = Account::default();
         }
 
@@ -1026,7 +949,7 @@ impl VM {
         //  Add created contract to cache, reverting transaction if the address is already occupied
         if self.is_create() {
             let new_contract_address = initial_call_frame.to;
-            let new_account = self.get_account(new_contract_address);
+            let new_account = get_account(&mut self.cache, &self.db, new_contract_address);
 
             let value = initial_call_frame.msg_value;
             let balance = new_account
@@ -1059,54 +982,6 @@ impl VM {
         self.call_frames.last_mut().ok_or(VMError::Internal(
             InternalError::CouldNotAccessLastCallframe,
         ))
-    }
-
-    /// Calculates the address of a new conctract using the CREATE opcode as follow
-    ///
-    /// address = keccak256(rlp([sender_address,sender_nonce]))[12:]
-    pub fn calculate_create_address(
-        sender_address: Address,
-        sender_nonce: u64,
-    ) -> Result<Address, VMError> {
-        let mut encoded = Vec::new();
-        (sender_address, sender_nonce).encode(&mut encoded);
-        let mut hasher = Keccak256::new();
-        hasher.update(encoded);
-        Ok(Address::from_slice(hasher.finalize().get(12..).ok_or(
-            VMError::Internal(InternalError::CouldNotComputeCreateAddress),
-        )?))
-    }
-
-    /// Calculates the address of a new contract using the CREATE2 opcode as follow
-    ///
-    /// initialization_code = memory[offset:offset+size]
-    ///
-    /// address = keccak256(0xff + sender_address + salt + keccak256(initialization_code))[12:]
-    ///
-    pub fn calculate_create2_address(
-        sender_address: Address,
-        initialization_code: &Bytes,
-        salt: U256,
-    ) -> Result<Address, VMError> {
-        let init_code_hash = keccak(initialization_code);
-
-        let generated_address = Address::from_slice(
-            keccak(
-                [
-                    &[0xff],
-                    sender_address.as_bytes(),
-                    &salt.to_big_endian(),
-                    init_code_hash.as_bytes(),
-                ]
-                .concat(),
-            )
-            .as_bytes()
-            .get(12..)
-            .ok_or(VMError::Internal(
-                InternalError::CouldNotComputeCreate2Address,
-            ))?,
-        );
-        Ok(generated_address)
     }
 
     /// Increases gas consumption of CallFrame and Environment, returning an error if the callframe gas limit is reached.
@@ -1183,68 +1058,10 @@ impl VM {
 
         // When updating account storage of an account that's not yet cached we need to store the StorageSlot in the account
         // Note: We end up caching the account because it is the most straightforward way of doing it.
-        let account = self.get_account_mut(address)?;
+        let account = get_account_mut_vm(&mut self.cache, &self.db, address)?;
         account.storage.insert(key, storage_slot.clone());
 
         Ok((storage_slot, storage_slot_was_cold))
-    }
-
-    pub fn increase_account_balance(
-        &mut self,
-        address: Address,
-        increase: U256,
-    ) -> Result<(), VMError> {
-        let account = self.get_account_mut(address)?;
-        account.info.balance = account
-            .info
-            .balance
-            .checked_add(increase)
-            .ok_or(VMError::BalanceOverflow)?;
-        Ok(())
-    }
-
-    pub fn decrease_account_balance(
-        &mut self,
-        address: Address,
-        decrease: U256,
-    ) -> Result<(), VMError> {
-        let account = self.get_account_mut(address)?;
-        account.info.balance = account
-            .info
-            .balance
-            .checked_sub(decrease)
-            .ok_or(VMError::BalanceUnderflow)?;
-        Ok(())
-    }
-
-    pub fn increment_account_nonce(&mut self, address: Address) -> Result<u64, VMError> {
-        let account = self.get_account_mut(address)?;
-        account.info.nonce = account
-            .info
-            .nonce
-            .checked_add(1)
-            .ok_or(VMError::NonceOverflow)?;
-        Ok(account.info.nonce)
-    }
-
-    pub fn decrement_account_nonce(&mut self, address: Address) -> Result<(), VMError> {
-        let account = self.get_account_mut(address)?;
-        account.info.nonce = account
-            .info
-            .nonce
-            .checked_sub(1)
-            .ok_or(VMError::NonceUnderflow)?;
-        Ok(())
-    }
-
-    pub fn update_account_bytecode(
-        &mut self,
-        address: Address,
-        new_bytecode: Bytes,
-    ) -> Result<(), VMError> {
-        let account = self.get_account_mut(address)?;
-        account.info.bytecode = new_bytecode;
-        Ok(())
     }
 
     pub fn update_account_storage(
@@ -1253,7 +1070,7 @@ impl VM {
         key: H256,
         new_value: U256,
     ) -> Result<(), VMError> {
-        let account = self.get_account_mut(address)?;
+        let account = get_account_mut_vm(&mut self.cache, &self.db, address)?;
         let account_original_storage_slot_value = account
             .storage
             .get(&key)
@@ -1264,24 +1081,6 @@ impl VM {
         });
         slot.current_value = new_value;
         Ok(())
-    }
-
-    pub fn get_account_mut(&mut self, address: Address) -> Result<&mut Account, VMError> {
-        if !cache::is_account_cached(&self.cache, &address) {
-            let account_info = self.db.get_account_info(address);
-            let account = Account {
-                info: account_info,
-                storage: HashMap::new(),
-            };
-            cache::insert_account(&mut self.cache, address, account.clone());
-        }
-        cache::get_account_mut(&mut self.cache, &address)
-            .ok_or(VMError::Internal(InternalError::AccountNotFound))
-    }
-
-    /// Gets account, first checking the cache and then the database (caching in the second case)
-    pub fn get_account(&mut self, address: Address) -> Account {
-        get_account(&mut self.cache, &self.db, address)
     }
 
     fn handle_create_non_empty_account(
@@ -1303,38 +1102,113 @@ impl VM {
 
         Ok(report)
     }
-}
 
-fn get_n_value(op: Opcode, base_opcode: Opcode) -> Result<usize, VMError> {
-    let offset = (usize::from(op))
-        .checked_sub(usize::from(base_opcode))
-        .ok_or(VMError::InvalidOpcode)?
-        .checked_add(1)
-        .ok_or(VMError::InvalidOpcode)?;
+    /// Sets the account code as the EIP7702 determines.
+    pub fn eip7702_set_access_code(
+        &mut self,
+        initial_call_frame: &mut CallFrame,
+    ) -> Result<u64, VMError> {
+        let mut refunded_gas: u64 = 0;
+        // IMPORTANT:
+        // If any of the below steps fail, immediately stop processing that tuple and continue to the next tuple in the list. It will in the case of multiple tuples for the same authority, set the code using the address in the last valid occurrence.
+        // If transaction execution results in failure (any exceptional condition or code reverting), setting delegation designations is not rolled back.
+        // TODO: avoid clone()
+        for auth_tuple in self.authorization_list.clone().unwrap_or_default() {
+            let chain_id_not_equals_this_chain_id = auth_tuple.chain_id != self.env.chain_id;
+            let chain_id_not_zero = !auth_tuple.chain_id.is_zero();
 
-    Ok(offset)
-}
+            // 1. Verify the chain id is either 0 or the chain’s current ID.
+            if chain_id_not_zero && chain_id_not_equals_this_chain_id {
+                continue;
+            }
 
-fn get_number_of_topics(op: Opcode) -> Result<u8, VMError> {
-    let number_of_topics = (u8::from(op))
-        .checked_sub(u8::from(Opcode::LOG0))
-        .ok_or(VMError::InvalidOpcode)?;
+            // 2. Verify the nonce is less than 2**64 - 1.
+            // NOTE: nonce is a u64, it's always less than or equal to u64::MAX
+            if auth_tuple.nonce == u64::MAX {
+                continue;
+            }
 
-    Ok(number_of_topics)
-}
-
-/// Gets account, first checking the cache and then the database (caching in the second case)
-pub fn get_account(cache: &mut CacheDB, db: &Arc<dyn Database>, address: Address) -> Account {
-    match cache::get_account(cache, &address) {
-        Some(acc) => acc.clone(),
-        None => {
-            let account_info = db.get_account_info(address);
-            let account = Account {
-                info: account_info,
-                storage: HashMap::new(),
+            // 3. authority = ecrecover(keccak(MAGIC || rlp([chain_id, address, nonce])), y_parity, r, s)
+            //      s value must be less than or equal to secp256k1n/2, as specified in EIP-2.
+            let Some(authority_address) = eip7702_recover_address(&auth_tuple)? else {
+                continue;
             };
-            cache::insert_account(cache, address, account.clone());
-            account
+
+            // 4. Add authority to accessed_addresses (as defined in EIP-2929).
+            self.accrued_substate
+                .touched_accounts
+                .insert(authority_address);
+            let authority_account_info =
+                get_account_no_push_cache(&self.cache, &self.db, authority_address).info;
+
+            // 5. Verify the code of authority is either empty or already delegated.
+            let empty_or_delegated = authority_account_info.bytecode.is_empty()
+                || has_delegation(&authority_account_info)?;
+            if !empty_or_delegated {
+                continue;
+            }
+
+            // 6. Verify the nonce of authority is equal to nonce. In case authority does not exist in the trie, verify that nonce is equal to 0.
+            // If it doesn't exist, it means the nonce is zero. The access_account() function will return AccountInfo::default()
+            // If it has nonce, the account.info.nonce should equal auth_tuple.nonce
+            if authority_account_info.nonce != auth_tuple.nonce {
+                continue;
+            }
+
+            // 7. Add PER_EMPTY_ACCOUNT_COST - PER_AUTH_BASE_COST gas to the global refund counter if authority exists in the trie.
+            // CHECK: we don't know if checking the cache is correct. More gas tests pass but the set_code_txs tests went to half.
+            if cache::is_account_cached(&self.cache, &authority_address)
+                || self.db.account_exists(authority_address)
+            {
+                let refunded_gas_if_exists = PER_EMPTY_ACCOUNT_COST - PER_AUTH_BASE_COST;
+                refunded_gas = refunded_gas
+                    .checked_add(refunded_gas_if_exists)
+                    .ok_or(VMError::Internal(InternalError::GasOverflow))?;
+            }
+
+            // 8. Set the code of authority to be 0xef0100 || address. This is a delegation designation.
+            let delegation_bytes = [
+                &SET_CODE_DELEGATION_BYTES[..],
+                auth_tuple.address.as_bytes(),
+            ]
+            .concat();
+
+            // As a special case, if address is 0x0000000000000000000000000000000000000000 do not write the designation.
+            // Clear the account’s code and reset the account’s code hash to the empty hash.
+            let auth_account = match get_account_mut(&mut self.cache, &authority_address) {
+                Some(account_mut) => account_mut,
+                None => {
+                    // This is to add the account to the cache
+                    // NOTE: Refactor in the future
+                    get_account(&mut self.cache, &self.db, authority_address);
+                    get_account_mut_vm(&mut self.cache, &self.db, authority_address)?
+                }
+            };
+
+            auth_account.info.bytecode = if auth_tuple.address != Address::zero() {
+                delegation_bytes.into()
+            } else {
+                Bytes::new()
+            };
+
+            // 9. Increase the nonce of authority by one.
+            increment_account_nonce(&mut self.cache, &self.db, authority_address)
+                .map_err(|_| VMError::TxValidation(TxValidationError::NonceIsMax))?;
         }
+
+        let (code_address_info, _) = self.access_account(initial_call_frame.code_address);
+
+        if has_delegation(&code_address_info)? {
+            initial_call_frame.code_address = get_authorized_address(&code_address_info)?;
+            let (auth_address_info, _) = self.access_account(initial_call_frame.code_address);
+
+            initial_call_frame.bytecode = auth_address_info.bytecode.clone();
+        } else {
+            initial_call_frame.bytecode = code_address_info.bytecode.clone();
+        }
+
+        initial_call_frame.valid_jump_destinations =
+            get_valid_jump_destinations(&initial_call_frame.bytecode).unwrap_or_default();
+        Ok(refunded_gas)
     }
 }

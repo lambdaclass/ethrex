@@ -5,7 +5,9 @@ use crate::{
     errors::{InternalError, OpcodeSuccess, OutOfGasError, ResultReason, TxResult, VMError},
     gas_cost::{self, max_message_call_gas},
     memory::{self, calculate_memory_size},
-    vm::{address_to_word, word_to_address, VM},
+    utils::*,
+    utils::{address_to_word, word_to_address},
+    vm::VM,
     Account,
 };
 use bytes::Bytes;
@@ -21,7 +23,6 @@ impl VM {
         &mut self,
         current_call_frame: &mut CallFrame,
     ) -> Result<OpcodeSuccess, VMError> {
-        // STACK
         let gas = current_call_frame.stack.pop()?;
         let callee: Address = word_to_address(current_call_frame.stack.pop()?);
         let value_to_transfer: U256 = current_call_frame.stack.pop()?;
@@ -52,10 +53,20 @@ impl VM {
 
         let (account_info, address_was_cold) = self.access_account(callee);
 
+        let (is_delegation, eip7702_gas_consumed, code_address, bytecode) = eip7702_get_code(
+            &mut self.cache,
+            &self.db,
+            &mut self.accrued_substate,
+            callee,
+        )?;
+
         let gas_left = current_call_frame
             .gas_limit
             .checked_sub(current_call_frame.gas_used)
+            .ok_or(InternalError::GasOverflow)?
+            .checked_sub(eip7702_gas_consumed)
             .ok_or(InternalError::GasOverflow)?;
+
         let (cost, gas_limit) = gas_cost::call(
             new_memory_size,
             current_memory_size,
@@ -66,7 +77,9 @@ impl VM {
             gas_left,
             self.env.spec_id,
         )?;
+
         self.increase_consumed_gas(current_call_frame, cost)?;
+        self.increase_consumed_gas(current_call_frame, eip7702_gas_consumed)?;
 
         // OPERATION
         let msg_sender = current_call_frame.to; // The new sender will be the current contract.
@@ -79,18 +92,19 @@ impl VM {
             value_to_transfer,
             msg_sender,
             to,
-            callee,
+            code_address,
             true,
             is_static,
             args_start_offset,
             args_size,
             return_data_start_offset,
             return_data_size,
+            bytecode,
+            is_delegation,
         )
     }
 
     // CALLCODE operation
-    // TODO: https://github.com/lambdaclass/ethrex/issues/1086
     pub fn op_callcode(
         &mut self,
         current_call_frame: &mut CallFrame,
@@ -122,10 +136,20 @@ impl VM {
 
         let (_account_info, address_was_cold) = self.access_account(code_address);
 
+        let (is_delegation, eip7702_gas_consumed, code_address, bytecode) = eip7702_get_code(
+            &mut self.cache,
+            &self.db,
+            &mut self.accrued_substate,
+            code_address,
+        )?;
+
         let gas_left = current_call_frame
             .gas_limit
             .checked_sub(current_call_frame.gas_used)
+            .ok_or(InternalError::GasOverflow)?
+            .checked_sub(eip7702_gas_consumed)
             .ok_or(InternalError::GasOverflow)?;
+
         let (cost, gas_limit) = gas_cost::callcode(
             new_memory_size,
             current_memory_size,
@@ -134,7 +158,9 @@ impl VM {
             gas,
             gas_left,
         )?;
+
         self.increase_consumed_gas(current_call_frame, cost)?;
+        self.increase_consumed_gas(current_call_frame, eip7702_gas_consumed)?;
 
         // Sender and recipient are the same in this case. But the code executed is from another account.
         let msg_sender = current_call_frame.to;
@@ -154,6 +180,8 @@ impl VM {
             args_size,
             return_data_start_offset,
             return_data_size,
+            bytecode,
+            is_delegation,
         )
     }
 
@@ -190,7 +218,6 @@ impl VM {
     }
 
     // DELEGATECALL operation
-    // TODO: https://github.com/lambdaclass/ethrex/issues/1086
     pub fn op_delegatecall(
         &mut self,
         current_call_frame: &mut CallFrame,
@@ -220,10 +247,20 @@ impl VM {
             calculate_memory_size(return_data_start_offset, return_data_size)?;
         let new_memory_size = new_memory_size_for_args.max(new_memory_size_for_return_data);
 
+        let (is_delegation, eip7702_gas_consumed, code_address, bytecode) = eip7702_get_code(
+            &mut self.cache,
+            &self.db,
+            &mut self.accrued_substate,
+            code_address,
+        )?;
+
         let gas_left = current_call_frame
             .gas_limit
             .checked_sub(current_call_frame.gas_used)
+            .ok_or(InternalError::GasOverflow)?
+            .checked_sub(eip7702_gas_consumed)
             .ok_or(InternalError::GasOverflow)?;
+
         let (cost, gas_limit) = gas_cost::delegatecall(
             new_memory_size,
             current_memory_size,
@@ -231,7 +268,9 @@ impl VM {
             gas,
             gas_left,
         )?;
+
         self.increase_consumed_gas(current_call_frame, cost)?;
+        self.increase_consumed_gas(current_call_frame, eip7702_gas_consumed)?;
 
         // OPERATION
         let msg_sender = current_call_frame.msg_sender;
@@ -252,11 +291,12 @@ impl VM {
             args_size,
             return_data_start_offset,
             return_data_size,
+            bytecode,
+            is_delegation,
         )
     }
 
     // STATICCALL operation
-    // TODO: https://github.com/lambdaclass/ethrex/issues/1086
     pub fn op_staticcall(
         &mut self,
         current_call_frame: &mut CallFrame,
@@ -286,10 +326,20 @@ impl VM {
             calculate_memory_size(return_data_start_offset, return_data_size)?;
         let new_memory_size = new_memory_size_for_args.max(new_memory_size_for_return_data);
 
+        let (is_delegation, eip7702_gas_consumed, _, bytecode) = eip7702_get_code(
+            &mut self.cache,
+            &self.db,
+            &mut self.accrued_substate,
+            code_address,
+        )?;
+
         let gas_left = current_call_frame
             .gas_limit
             .checked_sub(current_call_frame.gas_used)
+            .ok_or(InternalError::GasOverflow)?
+            .checked_sub(eip7702_gas_consumed)
             .ok_or(InternalError::GasOverflow)?;
+
         let (cost, gas_limit) = gas_cost::staticcall(
             new_memory_size,
             current_memory_size,
@@ -297,7 +347,9 @@ impl VM {
             gas,
             gas_left,
         )?;
+
         self.increase_consumed_gas(current_call_frame, cost)?;
+        self.increase_consumed_gas(current_call_frame, eip7702_gas_consumed)?;
 
         // OPERATION
         let value = U256::zero();
@@ -317,11 +369,12 @@ impl VM {
             args_size,
             return_data_start_offset,
             return_data_size,
+            bytecode,
+            is_delegation,
         )
     }
 
     // CREATE operation
-    // TODO: https://github.com/lambdaclass/ethrex/issues/1086
     pub fn op_create(
         &mut self,
         current_call_frame: &mut CallFrame,
@@ -356,7 +409,6 @@ impl VM {
     }
 
     // CREATE2 operation
-    // TODO: https://github.com/lambdaclass/ethrex/issues/1086
     pub fn op_create2(
         &mut self,
         current_call_frame: &mut CallFrame,
@@ -469,8 +521,18 @@ impl VM {
 
         // [EIP-6780] - SELFDESTRUCT only in same transaction from CANCUN
         if self.env.spec_id >= SpecId::CANCUN {
-            self.increase_account_balance(target_address, balance_to_transfer)?;
-            self.decrease_account_balance(current_call_frame.to, balance_to_transfer)?;
+            increase_account_balance(
+                &mut self.cache,
+                &mut self.db,
+                target_address,
+                balance_to_transfer,
+            )?;
+            decrease_account_balance(
+                &mut self.cache,
+                &mut self.db,
+                current_call_frame.to,
+                balance_to_transfer,
+            )?;
 
             // Selfdestruct is executed in the same transaction as the contract was created
             if self
@@ -479,15 +541,24 @@ impl VM {
                 .contains(&current_call_frame.to)
             {
                 // If target is the same as the contract calling, Ether will be burnt.
-                self.get_account_mut(current_call_frame.to)?.info.balance = U256::zero();
+                get_account_mut_vm(&mut self.cache, &self.db, current_call_frame.to)?
+                    .info
+                    .balance = U256::zero();
 
                 self.accrued_substate
                     .selfdestruct_set
                     .insert(current_call_frame.to);
             }
         } else {
-            self.increase_account_balance(target_address, balance_to_transfer)?;
-            self.get_account_mut(current_call_frame.to)?.info.balance = U256::zero();
+            increase_account_balance(
+                &mut self.cache,
+                &mut self.db,
+                target_address,
+                balance_to_transfer,
+            )?;
+            get_account_mut_vm(&mut self.cache, &self.db, current_call_frame.to)?
+                .info
+                .balance = U256::zero();
 
             self.accrued_substate
                 .selfdestruct_set
@@ -537,8 +608,8 @@ impl VM {
         );
 
         let new_address = match salt {
-            Some(salt) => Self::calculate_create2_address(deployer_address, &code, salt)?,
-            None => Self::calculate_create_address(deployer_address, deployer_account_info.nonce)?,
+            Some(salt) => calculate_create2_address(deployer_address, &code, salt)?,
+            None => calculate_create_address(deployer_address, deployer_account_info.nonce)?,
         };
 
         // touch account
@@ -567,9 +638,9 @@ impl VM {
         }
 
         // THIRD: Validations that push 0 to the stack without returning reserved gas but incrementing deployer's nonce
-        let new_account = self.get_account(new_address);
+        let new_account = get_account(&mut self.cache, &self.db, new_address);
         if new_account.has_code_or_nonce() {
-            self.increment_account_nonce(deployer_address)?;
+            increment_account_nonce(&mut self.cache, &self.db, deployer_address)?;
             current_call_frame.stack.push(CREATE_DEPLOYMENT_FAIL)?;
             return Ok(OpcodeSuccess::Continue);
         }
@@ -586,10 +657,15 @@ impl VM {
         cache::insert_account(&mut self.cache, new_address, new_account);
 
         // 2. Increment sender's nonce.
-        self.increment_account_nonce(deployer_address)?;
+        increment_account_nonce(&mut self.cache, &self.db, deployer_address)?;
 
         // 3. Decrease sender's balance.
-        self.decrease_account_balance(deployer_address, value_in_wei_to_send)?;
+        decrease_account_balance(
+            &mut self.cache,
+            &mut self.db,
+            deployer_address,
+            value_in_wei_to_send,
+        )?;
 
         let mut new_call_frame = CallFrame::new(
             deployer_address,
@@ -628,7 +704,12 @@ impl VM {
             }
             TxResult::Revert(err) => {
                 // Return value to sender
-                self.increase_account_balance(deployer_address, value_in_wei_to_send)?;
+                increase_account_balance(
+                    &mut self.cache,
+                    &mut self.db,
+                    deployer_address,
+                    value_in_wei_to_send,
+                )?;
 
                 // Deployment failed so account shouldn't exist
                 cache::remove_account(&mut self.cache, &new_address);
@@ -663,6 +744,8 @@ impl VM {
         args_size: usize,
         ret_offset: U256,
         ret_size: usize,
+        bytecode: Bytes,
+        is_delegation: bool,
     ) -> Result<OpcodeSuccess, VMError> {
         // Clear callframe subreturn data
         current_call_frame.sub_return_data = Bytes::new();
@@ -696,13 +779,20 @@ impl VM {
             return Ok(OpcodeSuccess::Continue);
         }
 
-        let recipient_bytecode = self.access_account(code_address).0.bytecode;
+        if bytecode.is_empty() && is_delegation {
+            current_call_frame.gas_used = current_call_frame
+                .gas_used
+                .checked_sub(gas_limit)
+                .ok_or(InternalError::GasOverflow)?;
+            current_call_frame.stack.push(SUCCESS_FOR_CALL)?;
+            return Ok(OpcodeSuccess::Continue);
+        }
 
         let mut new_call_frame = CallFrame::new(
             msg_sender,
             to,
             code_address,
-            recipient_bytecode,
+            bytecode,
             value,
             calldata.into(),
             is_static,
@@ -714,8 +804,8 @@ impl VM {
 
         // Transfer value from caller to callee.
         if should_transfer_value {
-            self.decrease_account_balance(msg_sender, value)?;
-            self.increase_account_balance(to, value)?;
+            decrease_account_balance(&mut self.cache, &mut self.db, msg_sender, value)?;
+            increase_account_balance(&mut self.cache, &mut self.db, to, value)?;
         }
 
         let tx_report = self.execute(&mut new_call_frame)?;
@@ -748,8 +838,8 @@ impl VM {
             TxResult::Revert(_) => {
                 // Revert value transfer
                 if should_transfer_value {
-                    self.decrease_account_balance(to, value)?;
-                    self.increase_account_balance(msg_sender, value)?;
+                    decrease_account_balance(&mut self.cache, &mut self.db, to, value)?;
+                    increase_account_balance(&mut self.cache, &mut self.db, msg_sender, value)?;
                 }
                 // Push 0 to stack
                 current_call_frame.stack.push(REVERT_FOR_CALL)?;

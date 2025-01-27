@@ -3,7 +3,8 @@ use crate::{
     constants::LAST_AVAILABLE_BLOCK_LIMIT,
     errors::{InternalError, OpcodeSuccess, VMError},
     gas_cost,
-    vm::{address_to_word, VM},
+    utils::*,
+    vm::VM,
 };
 use ethrex_core::{
     types::{BLOB_BASE_FEE_UPDATE_FRACTION, MIN_BASE_FEE_PER_BLOB_GAS},
@@ -137,7 +138,9 @@ impl VM {
     ) -> Result<OpcodeSuccess, VMError> {
         self.increase_consumed_gas(current_call_frame, gas_cost::SELFBALANCE)?;
 
-        let balance = self.get_account(current_call_frame.to).info.balance;
+        let balance = get_account(&mut self.cache, &self.db, current_call_frame.to)
+            .info
+            .balance;
 
         current_call_frame.stack.push(balance)?;
         Ok(OpcodeSuccess::Continue)
