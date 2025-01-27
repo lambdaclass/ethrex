@@ -1,5 +1,8 @@
 use bootnode::BootNode;
-use discv4::{helpers::current_unix_time, DiscoveryError, Discv4Server};
+use discv4::{
+    helpers::current_unix_time,
+    server::{DiscoveryError, Discv4Server},
+};
 use ethrex_core::H512;
 use ethrex_storage::Store;
 use k256::{

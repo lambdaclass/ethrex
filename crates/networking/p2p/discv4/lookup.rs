@@ -1,4 +1,8 @@
-use super::{helpers::get_msg_expiration_from_seconds, DiscoveryError, Message};
+use super::{
+    helpers::get_msg_expiration_from_seconds,
+    messages::{FindNodeMessage, Message},
+    server::DiscoveryError,
+};
 use crate::{
     kademlia::{bucket_number, MAX_NODES_PER_BUCKET},
     node_id_from_signing_key,
@@ -210,7 +214,7 @@ impl Discv4LookupHandler {
     ) -> Result<Vec<Node>, DiscoveryError> {
         let expiration: u64 = get_msg_expiration_from_seconds(20);
 
-        let msg = Message::FindNode(super::FindNodeMessage::new(target_id, expiration));
+        let msg = Message::FindNode(FindNodeMessage::new(target_id, expiration));
 
         let mut buf = Vec::new();
         msg.encode_with_header(&mut buf, &self.ctx.signer);
@@ -251,7 +255,7 @@ mod tests {
     use tokio::time::sleep;
 
     use super::*;
-    use crate::discv4::{
+    use crate::discv4::server::{
         tests::{
             connect_servers, fill_table_with_random_nodes, insert_random_node_on_custom_bucket,
             start_discovery_server,
