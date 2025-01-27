@@ -1,3 +1,4 @@
+use std::cell::RefCell;
 use std::collections::hash_map::Entry;
 use std::collections::HashMap;
 
@@ -25,8 +26,8 @@ pub struct RpcDB {
     pub rpc_url: String,
     pub block_number: usize,
     // we concurrently download tx callers before pre-execution to minimize sequential RPC calls
-    pub accounts: HashMap<Address, Account>,
-    pub block_hashes: HashMap<u64, H256>,
+    pub cache: RefCell<HashMap<Address, Account>>,
+    pub block_hashes: RefCell<HashMap<u64, H256>>,
 }
 
 impl RpcDB {
@@ -38,8 +39,8 @@ impl RpcDB {
         let mut db = RpcDB {
             rpc_url: rpc_url.to_string(),
             block_number,
-            accounts: HashMap::new(),
-            block_hashes: HashMap::new(),
+            cache: RefCell::new(HashMap::new()),
+            block_hashes: RefCell::new(HashMap::new()),
         };
 
         db.cache_accounts(block).await?;
@@ -70,7 +71,7 @@ impl RpcDB {
                 .extend(keys);
         }
         let accounts: Vec<_> = accounts.into_iter().collect();
-        self.accounts = self.fetch_accounts(&accounts).await?;
+        *self.cache.borrow_mut() = self.fetch_accounts(&accounts).await?;
 
         Ok(())
     }
@@ -114,14 +115,16 @@ impl DatabaseRef for RpcDB {
     fn basic_ref(&self, address: RevmAddress) -> Result<Option<RevmAccountInfo>, Self::Error> {
         let address = Address::from(address.0.as_ref());
 
-        let account = match self.accounts.get(&address) {
-            Some(account) => account.clone(),
-            None => {
+        let account = match self.cache.borrow_mut().entry(address) {
+            Entry::Occupied(entry) => entry.get().clone(),
+            Entry::Vacant(entry) => {
                 println!("retrieving account info for address {address}");
                 let handle = tokio::runtime::Handle::current();
-                tokio::task::block_in_place(|| {
+                let account = tokio::task::block_in_place(|| {
                     handle.block_on(get_account(&self.rpc_url, self.block_number, &address, &[]))
-                })?
+                })?;
+                entry.insert(account.clone());
+                account
             }
         };
 
@@ -142,33 +145,59 @@ impl DatabaseRef for RpcDB {
         let address = Address::from(address.0.as_ref());
         let index = H256::from_slice(&index.to_be_bytes_vec());
 
-        let value = match self
-            .accounts
-            .get(&address)
-            .and_then(|account| account.storage.get(&index))
-        {
-            Some(value) => *value,
-            None => {
-                println!("retrieving storage value for address {address} and key {index}");
+        let value = match self.cache.borrow_mut().entry(address) {
+            Entry::Occupied(mut entry) => match entry.get().storage.get(&index) {
+                Some(value) => *value,
+                None => {
+                    println!("retrieving storage value for address {address} and key {index}");
+                    let handle = tokio::runtime::Handle::current();
+                    let value = tokio::task::block_in_place(|| {
+                        handle.block_on(get_storage(
+                            &self.rpc_url,
+                            self.block_number,
+                            &address,
+                            index,
+                        ))
+                    })?;
+                    entry.get_mut().storage.insert(index, value);
+                    value
+                }
+            },
+            Entry::Vacant(entry) => {
                 let handle = tokio::runtime::Handle::current();
-                tokio::task::block_in_place(|| {
-                    handle.block_on(get_storage(
+                let account = tokio::task::block_in_place(|| {
+                    handle.block_on(get_account(
                         &self.rpc_url,
                         self.block_number,
                         &address,
-                        index,
+                        &[index],
                     ))
-                })?
+                })?;
+                let value = *account
+                    .storage
+                    .get(&index)
+                    .expect("rpc account response didn't include requested storage value");
+                entry.insert(account);
+                value
             }
         };
 
         Ok(RevmU256::from_limbs(value.0))
     }
     fn block_hash_ref(&self, number: u64) -> Result<RevmB256, Self::Error> {
-        println!("retrieving block hash for block number {number}");
-        let handle = tokio::runtime::Handle::current();
-        tokio::task::block_in_place(|| handle.block_on(get_block(&self.rpc_url, number as usize)))
-            .map(|block| RevmB256::from(block.hash().0))
+        let hash = match self.block_hashes.borrow_mut().entry(number) {
+            Entry::Occupied(entry) => *entry.get(),
+            Entry::Vacant(entry) => {
+                println!("retrieving block hash for block number {number}");
+                let handle = tokio::runtime::Handle::current();
+                tokio::task::block_in_place(|| {
+                    handle.block_on(get_block(&self.rpc_url, number as usize))
+                })
+                .map(|block| block.hash())?
+            }
+        };
+
+        Ok(RevmB256::from(hash.0))
     }
 }
 
@@ -187,38 +216,12 @@ impl ToExecDB for RpcDB {
             spec_id(&chain_config, block.header.timestamp),
             self,
         )
-        .unwrap(); // TODO: fix evm, executiondb errors to remove this unwrap
+        .unwrap() // TODO: fix evm, executiondb errors to remove this unwrap
+        .db
+        .cache
+        .borrow();
 
-        // fetch all read/written values from store
-        let already_existing_accounts: Vec<_> = cache
-            .accounts
-            .iter()
-            // filter out new accounts, we're only interested in already existing accounts.
-            // new accounts are storage cleared, self-destructed accounts too but they're marked with "not
-            // existing" status instead.
-            .filter_map(|(address, account)| {
-                if !account.account_state.is_storage_cleared() {
-                    Some((
-                        Address::from(address.0.as_ref()),
-                        account
-                            .storage
-                            .keys()
-                            .map(|key| H256::from_slice(&key.to_be_bytes_vec()))
-                            .collect::<Vec<_>>(),
-                    ))
-                } else {
-                    None
-                }
-            })
-            .collect();
-
-        let handle = tokio::runtime::Handle::current();
-        let rpc_accounts = tokio::task::block_in_place(|| {
-            handle.block_on(self.fetch_accounts(&already_existing_accounts))
-        })
-        .unwrap(); // TODO: remove unwrap
-
-        let accounts = rpc_accounts
+        let accounts = cache
             .iter()
             .map(|(address, account)| {
                 (
@@ -231,7 +234,7 @@ impl ToExecDB for RpcDB {
                 )
             })
             .collect();
-        let code = rpc_accounts
+        let code = cache
             .values()
             .map(|account| {
                 (
@@ -240,28 +243,29 @@ impl ToExecDB for RpcDB {
                 )
             })
             .collect();
-        let storage = rpc_accounts
+        let storage = cache
             .iter()
             .map(|(address, account)| (*address, account.storage.clone()))
             .collect();
         let block_hashes = self
             .block_hashes
+            .borrow()
             .iter()
             .map(|(num, hash)| (*num, *hash))
             .collect();
         // WARN: unwrapping because revm wraps a u64 as a U256
 
-        let state_root = rpc_accounts
+        let state_root = cache
             .values()
             .next()
             .and_then(|account| account.account_proof.first().cloned());
-        let other_state_nodes = rpc_accounts
+        let other_state_nodes = cache
             .values()
             .flat_map(|(account)| account.account_proof.iter().skip(1).cloned())
             .collect();
         let state_proofs = (state_root, other_state_nodes);
 
-        let storage_proofs = rpc_accounts
+        let storage_proofs = cache
             .iter()
             .map(|(address, account)| {
                 let storage_root = account
