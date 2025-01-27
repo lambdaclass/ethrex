@@ -70,7 +70,7 @@ pub fn generate_calldata(function: &str, n: u64) -> String {
     let function_selector = &hash[..4];
 
     // Encode argument n (uint256, padded to 32 bytes)
-    let mut encoded_n = vec![0u8; 32];
+    let mut encoded_n = [0u8; 32];
     encoded_n[24..].copy_from_slice(&n.to_be_bytes());
 
     // Combine the function selector and the encoded argument

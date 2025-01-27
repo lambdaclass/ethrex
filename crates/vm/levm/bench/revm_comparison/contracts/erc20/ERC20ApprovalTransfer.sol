@@ -3,8 +3,8 @@ pragma solidity ^0.8.17;
 
 import "./lib/ERC20.sol";
 
-contract ERC20ApprovalTransfer is ERC20 {
-    constructor() ERC20("ERC20ApprovalTransfer", "E20_APP") {}
+contract ERC20Approval is ERC20 {
+    constructor() ERC20("ERC20Approval", "E20_APP") {}
 
     function Benchmark(uint256 n) external returns (uint256 result) {
         _mint(msg.sender, 1000000000 * 10**decimals());

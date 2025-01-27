@@ -5,7 +5,7 @@ fn main() {
     let contracts = ["Factorial", "Fibonacci", "ManyHashes"];
     println!("Current directory: {:?}", std::env::current_dir().unwrap());
     contracts.iter().for_each(|name| {
-        compile_contract(&name);
+        compile_contract(name);
     });
 
     compile_erc20_contracts();
@@ -33,7 +33,7 @@ fn compile_erc20_contracts() {
     let outpath = "crates/vm/levm/bench/revm_comparison/contracts/bin";
 
     // Collect all `.sol` files from the `erc20` directory
-    let paths = fs::read_dir(&basepath)
+    let paths = fs::read_dir(basepath)
         .expect("Failed to read erc20 directory")
         .filter_map(|entry| {
             let path = entry.ok()?.path();
