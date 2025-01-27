@@ -452,6 +452,8 @@ fn apply_plain_transaction(
             ),
         )
         .map_err(EvmError::from)?;
+        context.remaining_gas = context.remaining_gas.saturating_sub(result.gas_used);
+        context.block_value += U256::from(result.gas_used) * head.tip;
 
         let receipt = Receipt::new(
             head.tx.tx_type(),

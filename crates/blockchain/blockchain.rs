@@ -204,7 +204,7 @@ fn verify_blob_gas_usage(block: &Block) -> Result<(), ChainError> {
     let mut blobs_in_block = 0_u64;
     for transaction in block.body.transactions.iter() {
         if let Transaction::EIP4844Transaction(tx) = transaction {
-            blob_gas_used += get_total_blob_gas(tx);
+            blob_gas_used += get_total_blob_gas(&tx);
             blobs_in_block += tx.blob_versioned_hashes.len() as u64;
         }
     }
