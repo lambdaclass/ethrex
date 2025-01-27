@@ -83,26 +83,10 @@ pub fn generate_calldata(function: &str, n: u64) -> String {
     hex::encode(calldata)
 }
 
-pub fn generate_calldata_no_params(function: &str) -> String {
-    let function_signature = format!("{}()", function);
-    let hash = Keccak256::digest(function_signature.as_bytes());
-    let function_selector = &hash[..4];
-
-    hex::encode(function_selector)
-}
-
 pub fn load_contract_bytecode(bench_name: &str) -> String {
     let path = format!(
         "bench/revm_comparison/contracts/bin/{}.bin-runtime",
         bench_name
-    );
-    load_file_bytecode(&path)
-}
-
-pub fn load_contract_bytecode_erc20(bench_name: &str) -> String {
-    let path = format!(
-        "bench/revm_comparison/contracts/erc20/bin/{}.bin-runtime",
-        bench_name,
     );
     load_file_bytecode(&path)
 }
@@ -114,18 +98,4 @@ fn load_file_bytecode(path: &str) -> String {
     let mut contents = String::new();
     file.read_to_string(&mut contents).unwrap();
     contents
-}
-
-pub fn parse_args() -> (usize, u64) {
-    let runs: usize = std::env::args()
-        .nth(1)
-        .unwrap_or_else(|| "1".to_string()) // Default to 1 run
-        .parse()
-        .expect("Could not parse runs as usize");
-    let number_of_iterations: u64 = std::env::args()
-        .nth(2)
-        .unwrap_or_else(|| "100".to_string()) // Default to 100 iterations
-        .parse()
-        .expect("Could not parse number_of_iterations as u64");
-    (runs, number_of_iterations)
 }
