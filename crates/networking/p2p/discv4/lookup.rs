@@ -1,4 +1,4 @@
-use super::{helpers::get_expiration, DiscoveryError, Message};
+use super::{helpers::get_msg_expiration_from_seconds, DiscoveryError, Message};
 use crate::{
     kademlia::{bucket_number, MAX_NODES_PER_BUCKET},
     node_id_from_signing_key,
@@ -208,7 +208,7 @@ impl Discv4LookupHandler {
         target_id: H512,
         request_receiver: &mut tokio::sync::mpsc::UnboundedReceiver<Vec<Node>>,
     ) -> Result<Vec<Node>, DiscoveryError> {
-        let expiration: u64 = get_expiration(20);
+        let expiration: u64 = get_msg_expiration_from_seconds(20);
 
         let msg = Message::FindNode(super::FindNodeMessage::new(target_id, expiration));
 

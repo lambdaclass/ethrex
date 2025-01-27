@@ -10,7 +10,9 @@ use crate::{
     KademliaTable, P2PContext,
 };
 use ethrex_core::H256;
-use helpers::{current_unix_time, get_expiration, is_expired, time_since_in_hs};
+use helpers::{
+    current_unix_time, elapsed_time_since, get_msg_expiration_from_seconds, is_msg_expired,
+};
 use k256::ecdsa::{signature::hazmat::PrehashVerifier, Signature, VerifyingKey};
 use lookup::Discv4LookupHandler;
 use messages::{
@@ -142,7 +144,7 @@ impl Discv4Server {
     async fn handle_message(&self, packet: Packet, from: SocketAddr) -> Result<(), DiscoveryError> {
         match packet.get_message() {
             Message::Ping(msg) => {
-                if is_expired(msg.expiration) {
+                if is_msg_expired(msg.expiration) {
                     return Err(DiscoveryError::MessageExpired);
                 };
 
@@ -167,7 +169,7 @@ impl Discv4Server {
 
                 // if peer was in the table and last ping was 12 hs ago
                 //  we need to re ping to re-validate the endpoint proof
-                if time_since_in_hs(peer.last_ping) >= PROOF_EXPIRATION_IN_HS {
+                if elapsed_time_since(peer.last_ping) / 3600 >= PROOF_EXPIRATION_IN_HS {
                     self.ping(node, self.ctx.table.lock().await).await?;
                 }
                 if let Some(enr_seq) = msg.enr_seq {
@@ -181,7 +183,7 @@ impl Discv4Server {
                 Ok(())
             }
             Message::Pong(msg) => {
-                if is_expired(msg.expiration) {
+                if is_msg_expired(msg.expiration) {
                     return Err(DiscoveryError::MessageExpired);
                 }
 
@@ -224,7 +226,7 @@ impl Discv4Server {
                 Ok(())
             }
             Message::FindNode(msg) => {
-                if is_expired(msg.expiration) {
+                if is_msg_expired(msg.expiration) {
                     return Err(DiscoveryError::MessageExpired);
                 };
                 let node = {
@@ -244,7 +246,7 @@ impl Discv4Server {
                     table.get_closest_nodes(msg.target)
                 };
                 let nodes_chunks = nodes.chunks(4);
-                let expiration = get_expiration(20);
+                let expiration = get_msg_expiration_from_seconds(20);
 
                 debug!("Sending neighbors!");
                 // we are sending the neighbors in 4 different messages as not to exceed the
@@ -269,7 +271,7 @@ impl Discv4Server {
                 Ok(())
             }
             Message::Neighbors(neighbors_msg) => {
-                if is_expired(neighbors_msg.expiration) {
+                if is_msg_expired(neighbors_msg.expiration) {
                     return Err(DiscoveryError::MessageExpired);
                 };
 
@@ -327,7 +329,7 @@ impl Discv4Server {
                 Ok(())
             }
             Message::ENRRequest(msg) => {
-                if is_expired(msg.expiration) {
+                if is_msg_expired(msg.expiration) {
                     return Err(DiscoveryError::MessageExpired);
                 }
                 let Ok(node_record) =
@@ -540,7 +542,7 @@ impl Discv4Server {
         mut table_lock: MutexGuard<'a, KademliaTable>,
     ) -> Result<(), DiscoveryError> {
         let mut buf = Vec::new();
-        let expiration: u64 = get_expiration(20);
+        let expiration: u64 = get_msg_expiration_from_seconds(20);
         let from = Endpoint {
             ip: self.ctx.local_node.ip,
             udp_port: self.ctx.local_node.udp_port,
@@ -573,7 +575,7 @@ impl Discv4Server {
 
     async fn pong(&self, ping_hash: H256, node: Node) -> Result<(), DiscoveryError> {
         let mut buf = Vec::new();
-        let expiration: u64 = get_expiration(20);
+        let expiration: u64 = get_msg_expiration_from_seconds(20);
         let to = Endpoint {
             ip: node.ip,
             udp_port: node.udp_port,
@@ -604,7 +606,7 @@ impl Discv4Server {
         mut table_lock: MutexGuard<'a, KademliaTable>,
     ) -> Result<(), DiscoveryError> {
         let mut buf = Vec::new();
-        let expiration: u64 = get_expiration(20);
+        let expiration: u64 = get_msg_expiration_from_seconds(20);
         let enr_req = Message::ENRRequest(ENRRequestMessage::new(expiration));
         enr_req.encode_with_header(&mut buf, &self.ctx.signer);
 
