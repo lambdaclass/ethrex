@@ -94,7 +94,7 @@ impl KademliaTable {
             return (None, false);
         }
 
-        let peer = PeerData::new(node, NodeRecord::default(), time_now_unix(), 0, false);
+        let peer = PeerData::new(node, NodeRecord::default(), false);
 
         if self.buckets[bucket_idx].peers.len() == MAX_NODES_PER_BUCKET {
             self.insert_as_replacement(&peer, bucket_idx);
@@ -148,7 +148,7 @@ impl KademliaTable {
         nodes.iter().map(|a| a.0).collect()
     }
 
-    pub fn pong_answered(&mut self, node_id: H512) {
+    pub fn pong_answered(&mut self, node_id: H512, pong_at: u64) {
         let peer = self.get_by_node_id_mut(node_id);
         if peer.is_none() {
             return;
@@ -156,12 +156,12 @@ impl KademliaTable {
 
         let peer = peer.unwrap();
         peer.is_proven = true;
-        peer.last_pong = time_now_unix();
+        peer.last_pong = pong_at;
         peer.last_ping_hash = None;
         peer.revalidation = peer.revalidation.and(Some(true));
     }
 
-    pub fn update_peer_ping(&mut self, node_id: H512, ping_hash: Option<H256>) {
+    pub fn update_peer_ping(&mut self, node_id: H512, ping_hash: Option<H256>, ping_at: u64) {
         let peer = self.get_by_node_id_mut(node_id);
         if peer.is_none() {
             return;
@@ -169,17 +169,7 @@ impl KademliaTable {
 
         let peer = peer.unwrap();
         peer.last_ping_hash = ping_hash;
-        peer.last_ping = time_now_unix();
-    }
-
-    pub fn update_peer_ping_with_revalidation(&mut self, node_id: H512, ping_hash: Option<H256>) {
-        let Some(peer) = self.get_by_node_id_mut(node_id) else {
-            return;
-        };
-
-        peer.last_ping_hash = ping_hash;
-        peer.last_ping = time_now_unix();
-        peer.revalidation = Some(false);
+        peer.last_ping = ping_at;
     }
 
     /// ## Returns
@@ -345,13 +335,6 @@ pub fn bucket_number(node_id_1: H512, node_id_2: H512) -> usize {
     distance.bits().saturating_sub(1)
 }
 
-fn time_now_unix() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_secs()
-}
-
 #[derive(Debug, Clone)]
 pub struct PeerData {
     pub node: Node,
@@ -372,18 +355,12 @@ pub struct PeerData {
 }
 
 impl PeerData {
-    pub fn new(
-        node: Node,
-        record: NodeRecord,
-        last_ping: u64,
-        last_pong: u64,
-        is_proven: bool,
-    ) -> Self {
+    pub fn new(node: Node, record: NodeRecord, is_proven: bool) -> Self {
         Self {
             node,
             record,
-            last_ping,
-            last_pong,
+            last_ping: 0,
+            last_pong: 0,
             is_proven,
             liveness: 1,
             last_ping_hash: None,

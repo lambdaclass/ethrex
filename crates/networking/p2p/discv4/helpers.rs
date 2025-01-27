@@ -26,7 +26,7 @@ pub fn time_since_in_hs(time: u64) -> u64 {
         / 3600
 }
 
-pub fn time_now_unix() -> u64 {
+pub fn current_unix_time() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()

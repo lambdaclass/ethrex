@@ -10,7 +10,7 @@ use crate::{
     KademliaTable, P2PContext,
 };
 use ethrex_core::H256;
-use helpers::{get_expiration, is_expired, time_now_unix, time_since_in_hs};
+use helpers::{current_unix_time, get_expiration, is_expired, time_since_in_hs};
 use k256::ecdsa::{signature::hazmat::PrehashVerifier, Signature, VerifyingKey};
 use lookup::Discv4LookupHandler;
 use messages::{
@@ -205,7 +205,11 @@ impl Discv4Server {
                 }
 
                 // all validations went well, mark as answered and start a rlpx connection
-                self.ctx.table.lock().await.pong_answered(peer.node.node_id);
+                self.ctx
+                    .table
+                    .lock()
+                    .await
+                    .pong_answered(peer.node.node_id, current_unix_time());
                 if let Some(enr_seq) = msg.enr_seq {
                     if enr_seq > peer.record.seq {
                         debug!("Found outdated enr-seq, send an enr_request");
@@ -280,7 +284,7 @@ impl Discv4Server {
                         "find node request not sent".into(),
                     ));
                 };
-                if time_now_unix().saturating_sub(req.sent_at) >= 60 {
+                if current_unix_time().saturating_sub(req.sent_at) >= 60 {
                     node.find_node_request = None;
                     return Err(DiscoveryError::InvalidMessage(
                         "find_node request expired after one minute".into(),
@@ -562,7 +566,7 @@ impl Discv4Server {
         }
 
         let hash = H256::from_slice(&buf[0..32]);
-        table_lock.update_peer_ping(node.node_id, Some(hash));
+        table_lock.update_peer_ping(node.node_id, Some(hash), current_unix_time());
 
         Ok(())
     }
@@ -683,7 +687,7 @@ pub(super) mod tests {
 
         let ctx = P2PContext {
             local_node,
-            enr_seq: time_now_unix(),
+            enr_seq: current_unix_time(),
             tracker: tracker.clone(),
             signer,
             table,
@@ -809,7 +813,7 @@ pub(super) mod tests {
 
         let expected_record = NodeRecord::from_node(
             server_b.ctx.local_node,
-            time_now_unix(),
+            current_unix_time(),
             &server_b.ctx.signer,
         )
         .expect("Node record is created from node");
@@ -841,7 +845,7 @@ pub(super) mod tests {
 
         // update the enr_seq of server_b so that server_a notices it is outdated
         // and sends a request to update it
-        server_b.ctx.enr_seq = time_now_unix();
+        server_b.ctx.enr_seq = current_unix_time();
 
         // Send a ping from server_b to server_a.
         // server_a should notice the enr_seq is outdated

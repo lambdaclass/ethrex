@@ -1,4 +1,4 @@
-use super::helpers::time_now_unix;
+use super::helpers::current_unix_time;
 use crate::types::{Endpoint, Node, NodeRecord};
 use bytes::BufMut;
 use ethrex_core::{H256, H512, H520};
@@ -296,7 +296,7 @@ impl Default for FindNodeRequest {
     fn default() -> Self {
         Self {
             nodes_sent: 0,
-            sent_at: time_now_unix(),
+            sent_at: current_unix_time(),
             tx: None,
         }
     }

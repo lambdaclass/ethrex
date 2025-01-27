@@ -1,5 +1,5 @@
 use bootnode::BootNode;
-use discv4::{helpers::time_now_unix, DiscoveryError, Discv4Server};
+use discv4::{helpers::current_unix_time, DiscoveryError, Discv4Server};
 use ethrex_core::H512;
 use ethrex_storage::Store;
 use k256::{
@@ -74,7 +74,7 @@ pub async fn start_network(
         // Note we are passing the current timestamp as the sequence number
         // This is because we are not storing our local_node updates in the db
         // see #1756
-        enr_seq: time_now_unix(),
+        enr_seq: current_unix_time(),
         tracker,
         signer,
         table: peer_table,
