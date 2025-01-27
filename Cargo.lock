@@ -1075,6 +1075,7 @@ name = "bench"
 version = "0.1.0"
 dependencies = [
  "again",
+ "bincode",
  "bytes",
  "clap 4.5.21",
  "ethrex-core",
