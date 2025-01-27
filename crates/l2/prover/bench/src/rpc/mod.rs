@@ -245,7 +245,7 @@ pub async fn retry<F, I>(mut fut: F) -> Result<I, String>
 where
     F: Task<Item = I, Error = String>,
 {
-    let policy = RetryPolicy::exponential(Duration::from_secs(1)).with_max_retries(100);
+    let policy = RetryPolicy::exponential(Duration::from_secs(1));
     policy.retry(|| fut.call()).await
 }
 
