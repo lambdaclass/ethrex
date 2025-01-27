@@ -43,6 +43,7 @@ pub enum DiscoveryError {
     InvalidMessage(String),
 }
 
+/// Implements the discv4 protocol see: https://github.com/ethereum/devp2p/blob/master/discv4.md
 #[derive(Debug, Clone)]
 pub struct Discv4Server {
     ctx: P2PContext,
@@ -52,6 +53,8 @@ pub struct Discv4Server {
 }
 
 impl Discv4Server {
+    /// Initializes a Discv4 UDP socket and creates a new `Discv4Server` instance.  
+    /// Returns an error if the socket binding fails.  
     pub async fn try_new(ctx: P2PContext) -> Result<Self, DiscoveryError> {
         let udp_socket = UdpSocket::bind(ctx.local_node.udp_addr())
             .await
@@ -65,6 +68,10 @@ impl Discv4Server {
         })
     }
 
+    /// Initializes the discovery server. It:
+    /// - Spawns tasks to handle incoming messages and revalidate known nodes.
+    /// - Loads bootnodes to establish initial peer connections.
+    /// - Starts the lookup handler via [`Discv4LookupHandler`] to periodically search for new peers.
     pub async fn start(&self, bootnodes: Vec<BootNode>) -> Result<(), DiscoveryError> {
         let lookup_handler = Discv4LookupHandler::new(
             self.ctx.clone(),
