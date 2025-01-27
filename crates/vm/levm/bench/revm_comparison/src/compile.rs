@@ -30,7 +30,7 @@ fn compile_contract(bench_name: &str) {
 fn compile_erc20_contracts() {
     let basepath = "crates/vm/levm/bench/revm_comparison/contracts/erc20";
     let libpath = format!("{}/lib", basepath);
-    let outpath = format!("{}/bin", basepath);
+    let outpath = "crates/vm/levm/bench/revm_comparison/contracts/bin";
 
     // Collect all `.sol` files from the `erc20` directory
     let paths = fs::read_dir(&basepath)

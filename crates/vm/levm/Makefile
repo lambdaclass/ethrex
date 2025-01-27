@@ -43,7 +43,7 @@ BENCH_MINT_ITERATIONS := 1000
 BENCH_TRANSFER_REPETITIONS := 100
 BENCH_TRANSFER_ITERATIONS := 500
 
-BENCH_APPROVAL_REPETITIONS := 100
+BENCH_APPROVAL_REPETITIONS := 10000
 BENCH_APPROVAL_ITERATIONS := 2000
 
 download-evm-ef-tests: ## 📥 Download EF Tests
@@ -93,96 +93,123 @@ compile-contracts:
 revm-comparison: compile-contracts ## 📊 Run benchmarks of fibonacci and factorial for both REVM and LEVM
 	$(MAKE) build-revm-comparison
 	@echo
-	@printf "%s\n" "revm_erc20_approval"
-	@target/release/revm_erc20_approval 1 $(BENCH_APPROVAL_ITERATIONS)
-	@printf "%s\n" "levm_erc20_approval"
-	@target/release/levm_erc20_approval 1 $(BENCH_APPROVAL_ITERATIONS)
-	hyperfine -w 5 -r 10 -N \
-		-n "revm_erc20_approval" "target/release/revm_erc20_approval $(BENCH_APPROVAL_REPETITIONS) $(BENCH_APPROVAL_ITERATIONS)" \
-		-n "levm_erc20_approval" "target/release/levm_erc20_approval $(BENCH_APPROVAL_REPETITIONS) $(BENCH_APPROVAL_ITERATIONS)"
-	@echo
-	# erc20_transfer
-	@printf "%s\n" "revm_erc20_transfer"
-	@target/release/revm_erc20_transfer 1 $(BENCH_TRANSFER_ITERATIONS)
-	@printf "%s\n" "levm_erc20_transfer"
-	@target/release/levm_erc20_transfer 1 $(BENCH_TRANSFER_ITERATIONS)
-	hyperfine -w 5 -r 10 -N \
-		-n "revm_erc20_transfer" "target/release/revm_erc20_transfer $(BENCH_TRANSFER_REPETITIONS) $(BENCH_TRANSFER_ITERATIONS)" \
-		-n "levm_erc20_transfer" "target/release/levm_erc20_transfer $(BENCH_TRANSFER_REPETITIONS) $(BENCH_TRANSFER_ITERATIONS)"
-	@echo
-	# erc20_mint
-	@printf "%s\n" "revm_erc20_mint"
-	@target/release/revm_erc20_mint 1 $(BENCH_MINT_ITERATIONS)
-	@printf "%s\n" "levm_erc20_mint"
-	@target/release/levm_erc20_mint 1 $(BENCH_MINT_ITERATIONS)
-	hyperfine -w 5 -r 10 -N \
-		-n "revm_erc20_mint" "target/release/revm_erc20_mint $(BENCH_MINT_REPETITIONS) $(BENCH_MINT_ITERATIONS)" \
-		-n "levm_erc20_mint" "target/release/levm_erc20_mint $(BENCH_MINT_REPETITIONS) $(BENCH_MINT_ITERATIONS)"
-	@echo
 	# factorial
 	@printf "%s\n" "revm_factorial"
-	@target/release/revm_factorial 1 $(BENCH_FACT_ITERATIONS)
+	@target/release/benchmark revm Factorial 1 $(BENCH_FACT_ITERATIONS)
 	@printf "%s\n" "levm_factorial"
-	@target/release/levm_factorial 1 $(BENCH_FACT_ITERATIONS)
+	@target/release/benchmark levm Factorial 1 $(BENCH_FACT_ITERATIONS)
 	hyperfine -w 5 -r 10 -N \
-		-n "revm_factorial" "target/release/revm_factorial $(BENCH_FACT_REPETITIONS) $(BENCH_FACT_ITERATIONS)" \
-		-n "levm_factorial" "target/release/levm_factorial $(BENCH_FACT_REPETITIONS) $(BENCH_FACT_ITERATIONS)"
+		-n "revm_factorial" "target/release/benchmark revm Factorial $(BENCH_FACT_REPETITIONS) $(BENCH_FACT_ITERATIONS)" \
+		-n "levm_factorial" "target/release/benchmark levm Factorial $(BENCH_FACT_REPETITIONS) $(BENCH_FACT_ITERATIONS)"
 	@echo
 	# fibonacci
 	@printf "%s\n" "revm_fibonacci"
-	@target/release/revm_fibonacci 1 $(BENCH_FIB_ITERATIONS)
+	@target/release/benchmark revm Fibonacci 1 $(BENCH_FACT_ITERATIONS)
 	@printf "%s\n" "levm_fibonacci"
-	@target/release/levm_fibonacci 1 $(BENCH_FIB_ITERATIONS)
+	@target/release/benchmark levm Fibonacci 1 $(BENCH_FACT_ITERATIONS)
 	hyperfine -w 5 -r 10 -N \
-		-n "revm_fibonacci" "target/release/revm_fibonacci $(BENCH_FIB_REPETITIONS) $(BENCH_FIB_ITERATIONS)" \
-		-n "levm_fibonacci" "target/release/levm_fibonacci $(BENCH_FIB_REPETITIONS) $(BENCH_FIB_ITERATIONS)"
+		-n "revm_fibonacci" "target/release/benchmark revm Fibonacci $(BENCH_FIB_REPETITIONS) $(BENCH_FIB_ITERATIONS)" \
+		-n "levm_fibonacci" "target/release/benchmark levm Fibonacci $(BENCH_FIB_REPETITIONS) $(BENCH_FIB_ITERATIONS)"
 	@echo
 	# many_hashes
 	@printf "%s\n" "revm_many_hashes"
-	@target/release/revm_many_hashes 1 $(BENCH_HASHES_ITERATIONS)
+	target/release/benchmark revm ManyHashes 1 $(BENCH_HASHES_ITERATIONS)
 	@printf "%s\n" "levm_many_hashes"
-	@target/release/levm_many_hashes 1 $(BENCH_HASHES_ITERATIONS)
+	target/release/benchmark levm ManyHashes 1 $(BENCH_HASHES_ITERATIONS)
 	hyperfine -w 5 -r 10 -N \
-		-n "revm_many_hashes" "target/release/revm_many_hashes $(BENCH_HASHES_REPETITIONS) $(BENCH_HASHES_ITERATIONS)" \
-		-n "levm_many_hashes" "target/release/levm_many_hashes $(BENCH_HASHES_REPETITIONS) $(BENCH_HASHES_ITERATIONS)"
+		-n "revm_many_hashes" "target/release/benchmark revm ManyHashes $(BENCH_HASHES_REPETITIONS) $(BENCH_HASHES_ITERATIONS)" \
+		-n "levm_many_hashes" "target/release/benchmark levm ManyHashes $(BENCH_HASHES_REPETITIONS) $(BENCH_HASHES_ITERATIONS)"
+	@echo
+	# erc20_approval
+	@printf "%s\n" "revm_erc20_approval"
+	@target/release/benchmark revm ERC20ApprovalTransfer 1 $(BENCH_APPROVAL_ITERATIONS)
+	@printf "%s\n" "levm_erc20_approval"
+	@target/release/benchmark levm ERC20ApprovalTransfer 1 $(BENCH_APPROVAL_ITERATIONS)
+	hyperfine -w 5 -r 10 -N \
+		-n "revm_erc20_approval" "target/release/benchmark revm ERC20ApprovalTransfer $(BENCH_APPROVAL_REPETITIONS) $(BENCH_APPROVAL_ITERATIONS)" \
+		-n "levm_erc20_approval" "target/release/benchmark levm ERC20ApprovalTransfer $(BENCH_APPROVAL_REPETITIONS) $(BENCH_APPROVAL_ITERATIONS)"
+	@echo
+	# erc20_transfer
+	@printf "%s\n" "revm_erc20_transfer"
+	@target/release/benchmark revm ERC20Transfer 1 $(BENCH_TRANSFER_ITERATIONS)
+	@printf "%s\n" "levm_erc20_transfer"
+	@target/release/benchmark levm ERC20Transfer 1 $(BENCH_TRANSFER_ITERATIONS)
+	hyperfine -w 5 -r 10 -N \
+		-n "revm_erc20_transfer" "target/release/benchmark revm ERC20Transfer $(BENCH_TRANSFER_REPETITIONS) $(BENCH_TRANSFER_ITERATIONS)" \
+		-n "levm_erc20_transfer" "target/release/benchmark levm ERC20Transfer $(BENCH_TRANSFER_REPETITIONS) $(BENCH_TRANSFER_ITERATIONS)"
+	@echo
+	# erc20_mint
+	@printf "%s\n" "revm_erc20_mint"
+	@target/release/benchmark revm ERC20Mint 1 $(BENCH_MINT_ITERATIONS)
+	@printf "%s\n" "levm_erc20_mint"
+	@target/release/benchmark levm ERC20Mint 1 $(BENCH_MINT_ITERATIONS)
+	hyperfine -w 5 -r 10 -N \
+		-n "revm_erc20_mint" "target/release/benchmark revm ERC20Mint $(BENCH_MINT_REPETITIONS) $(BENCH_MINT_ITERATIONS)" \
+		-n "levm_erc20_mint" "target/release/benchmark levm ERC20Mint $(BENCH_MINT_REPETITIONS) $(BENCH_MINT_ITERATIONS)"
 	@echo
 
 revm-comparison-ci: compile-contracts
 	$(MAKE) build-revm-comparison
 	@echo
-	@printf "%s" "revm_factorial result: "
-	@target/release/revm_factorial $(BENCH_FACT_REPETITIONS) $(BENCH_FACT_ITERATIONS)
-	@printf "%s" "levm_factorial result: "
-	@target/release/levm_factorial $(BENCH_FACT_REPETITIONS) $(BENCH_FACT_ITERATIONS)
+	# factorial
+	@printf "%s\n" "revm_factorial"
+	@target/release/benchmark revm Factorial 1 $(BENCH_FACT_ITERATIONS)
+	@printf "%s\n" "levm_factorial"
+	@target/release/benchmark levm Factorial 1 $(BENCH_FACT_ITERATIONS)
 	hyperfine -w 5 -r 10 -N --export-markdown factorial.md \
-		-n "revm_factorial" "target/release/revm_factorial $(BENCH_FACT_REPETITIONS) $(BENCH_FACT_ITERATIONS)" \
-		-n "levm_factorial" "target/release/levm_factorial $(BENCH_FACT_REPETITIONS) $(BENCH_FACT_ITERATIONS)"
+		-n "revm_factorial" "target/release/benchmark revm Factorial $(BENCH_FACT_REPETITIONS) $(BENCH_FACT_ITERATIONS)" \
+		-n "levm_factorial" "target/release/benchmark levm Factorial $(BENCH_FACT_REPETITIONS) $(BENCH_FACT_ITERATIONS)"
 	@echo
-	@printf "%s" "revm_fibonacci result: "
-	@target/release/revm_fibonacci $(BENCH_FIB_REPETITIONS) $(BENCH_FIB_ITERATIONS)
-	@printf "%s" "levm_fibonacci result: "
-	@target/release/levm_fibonacci $(BENCH_FIB_REPETITIONS) $(BENCH_FIB_ITERATIONS)
+	# fibonacci
+	@printf "%s\n" "revm_fibonacci"
+	@target/release/benchmark revm Fibonacci 1 $(BENCH_FACT_ITERATIONS)
+	@printf "%s\n" "levm_fibonacci"
+	@target/release/benchmark levm Fibonacci 1 $(BENCH_FACT_ITERATIONS)
 	hyperfine -w 5 -r 10 -N --export-markdown fibonacci.md \
-		-n "revm_fibonacci" "target/release/revm_fibonacci $(BENCH_FIB_REPETITIONS) $(BENCH_FIB_ITERATIONS)" \
-		-n "levm_fibonacci" "target/release/levm_fibonacci $(BENCH_FIB_REPETITIONS) $(BENCH_FIB_ITERATIONS)"
+		-n "revm_fibonacci" "target/release/benchmark revm Fibonacci $(BENCH_FIB_REPETITIONS) $(BENCH_FIB_ITERATIONS)" \
+		-n "levm_fibonacci" "target/release/benchmark levm Fibonacci $(BENCH_FIB_REPETITIONS) $(BENCH_FIB_ITERATIONS)"
+	@echo
+	# many_hashes
+	@printf "%s\n" "revm_many_hashes"
+	target/release/benchmark revm ManyHashes 1 $(BENCH_HASHES_ITERATIONS)
+	@printf "%s\n" "levm_many_hashes"
+	target/release/benchmark levm ManyHashes 1 $(BENCH_HASHES_ITERATIONS)
+	hyperfine -w 5 -r 10 -N --export-markdown many_hashes.md \
+		-n "revm_many_hashes" "target/release/benchmark revm ManyHashes $(BENCH_HASHES_REPETITIONS) $(BENCH_HASHES_ITERATIONS)" \
+		-n "levm_many_hashes" "target/release/benchmark levm ManyHashes $(BENCH_HASHES_REPETITIONS) $(BENCH_HASHES_ITERATIONS)"
+	@echo
+	# erc20_approval
+	@printf "%s\n" "revm_erc20_approval"
+	@target/release/benchmark revm ERC20ApprovalTransfer 1 $(BENCH_APPROVAL_ITERATIONS)
+	@printf "%s\n" "levm_erc20_approval"
+	@target/release/benchmark levm ERC20ApprovalTransfer 1 $(BENCH_APPROVAL_ITERATIONS)
+	hyperfine -w 5 -r 10 -N --export-markdown erc20_approval.md \
+		-n "revm_erc20_approval" "target/release/benchmark revm ERC20ApprovalTransfer $(BENCH_APPROVAL_REPETITIONS) $(BENCH_APPROVAL_ITERATIONS)" \
+		-n "levm_erc20_approval" "target/release/benchmark levm ERC20ApprovalTransfer $(BENCH_APPROVAL_REPETITIONS) $(BENCH_APPROVAL_ITERATIONS)"
+	@echo
+	# erc20_transfer
+	@printf "%s\n" "revm_erc20_transfer"
+	@target/release/benchmark revm ERC20Transfer 1 $(BENCH_TRANSFER_ITERATIONS)
+	@printf "%s\n" "levm_erc20_transfer"
+	@target/release/benchmark levm ERC20Transfer 1 $(BENCH_TRANSFER_ITERATIONS)
+	hyperfine -w 5 -r 10 -N --export-markdown erc20_transfer.md \
+		-n "revm_erc20_transfer" "target/release/benchmark revm ERC20Transfer $(BENCH_TRANSFER_REPETITIONS) $(BENCH_TRANSFER_ITERATIONS)" \
+		-n "levm_erc20_transfer" "target/release/benchmark levm ERC20Transfer $(BENCH_TRANSFER_REPETITIONS) $(BENCH_TRANSFER_ITERATIONS)"
+	@echo
+	# erc20_mint
+	@printf "%s\n" "revm_erc20_mint"
+	@target/release/benchmark revm ERC20Mint 1 $(BENCH_MINT_ITERATIONS)
+	@printf "%s\n" "levm_erc20_mint"
+	@target/release/benchmark levm ERC20Mint 1 $(BENCH_MINT_ITERATIONS)
+	hyperfine -w 5 -r 10 -N --export-markdown erc20_mint.md \
+		-n "revm_erc20_mint" "target/release/benchmark revm ERC20Mint $(BENCH_MINT_REPETITIONS) $(BENCH_MINT_ITERATIONS)" \
+		-n "levm_erc20_mint" "target/release/benchmark levm ERC20Mint $(BENCH_MINT_REPETITIONS) $(BENCH_MINT_ITERATIONS)"
 	@echo
 
 build-revm-comparison:
 	cd bench/revm_comparison && \
 		CARGO_TARGET_DIR=../../target \
-		cargo build --release \
-		--bin revm_factorial \
-		--bin levm_factorial \
-		--bin revm_fibonacci \
-		--bin levm_fibonacci \
-		--bin levm_many_hashes \
-		--bin revm_many_hashes \
-		--bin revm_erc20_mint \
-		--bin levm_erc20_mint \
-		--bin revm_erc20_transfer \
-		--bin levm_erc20_transfer \
-		--bin revm_erc20_approval \
-        --bin levm_erc20_approval
+		cargo build --release --bin benchmark
 
 ###### Build Client with LEVM ######
 
@@ -250,51 +277,51 @@ flamegraph-benchmarks: ## 🔥 Run benchmarks and create flamegraph
     # fibonacci - revm
 	CARGO_PROFILE_RELEASE_DEBUG=true cargo flamegraph \
 	--root --output $(FLAMEGRAPH_DIR)/revm_fibonacci.svg \
-	-p revm_comparison --bin revm_fibonacci -- $(BENCH_FIB_REPETITIONS) $(BENCH_FIB_ITERATIONS)
+	-p revm_comparison --bin benchmark -- revm Fibonacci $(BENCH_FIB_REPETITIONS) $(BENCH_FIB_ITERATIONS)
 	# fibonacci - levm
 	CARGO_PROFILE_RELEASE_DEBUG=true cargo flamegraph \
 	--root --output $(FLAMEGRAPH_DIR)/levm_fibonacci.svg \
-	-p revm_comparison --bin levm_fibonacci -- $(BENCH_FIB_REPETITIONS) $(BENCH_FIB_ITERATIONS)
+	-p revm_comparison --bin benchmark -- levm Fibonacci $(BENCH_FIB_REPETITIONS) $(BENCH_FIB_ITERATIONS)
 	# factorial - revm
 	CARGO_PROFILE_RELEASE_DEBUG=true cargo flamegraph \
 	--root --output $(FLAMEGRAPH_DIR)/revm_factorial.svg \
-	-p revm_comparison --bin revm_factorial -- $(BENCH_FACT_REPETITIONS) $(BENCH_FACT_ITERATIONS)
+	-p revm_comparison --bin benchmark -- revm Factorial $(BENCH_FACT_REPETITIONS) $(BENCH_FACT_ITERATIONS)
 	# factorial - levm
 	CARGO_PROFILE_RELEASE_DEBUG=true cargo flamegraph \
 	--root --output $(FLAMEGRAPH_DIR)/levm_factorial.svg \
-	-p revm_comparison --bin levm_factorial -- $(BENCH_FACT_REPETITIONS) $(BENCH_FACT_ITERATIONS)
-	# many_hashes - levm
-	CARGO_PROFILE_RELEASE_DEBUG=true cargo flamegraph \
-	--root --output $(FLAMEGRAPH_DIR)/levm_many_hashes.svg \
-	-p revm_comparison --bin levm_many_hashes -- $(BENCH_HASHES_REPETITIONS) $(BENCH_HASHES_ITERATIONS)
+	-p revm_comparison --bin benchmark -- levm Factorial $(BENCH_FACT_REPETITIONS) $(BENCH_FACT_ITERATIONS)
 	# many_hashes - revm
 	CARGO_PROFILE_RELEASE_DEBUG=true cargo flamegraph \
 	--root --output $(FLAMEGRAPH_DIR)/revm_many_hashes.svg \
-	-p revm_comparison --bin revm_many_hashes -- $(BENCH_HASHES_REPETITIONS) $(BENCH_HASHES_ITERATIONS)
+	-p revm_comparison --bin benchmark -- revm ManyHashes $(BENCH_HASHES_REPETITIONS) $(BENCH_HASHES_ITERATIONS)
+	# many_hashes - levm
+	CARGO_PROFILE_RELEASE_DEBUG=true cargo flamegraph \
+	--root --output $(FLAMEGRAPH_DIR)/levm_many_hashes.svg \
+	-p revm_comparison --bin benchmark -- levm ManyHashes $(BENCH_HASHES_REPETITIONS) $(BENCH_HASHES_ITERATIONS)
 	# erc20_transfer - revm
 	CARGO_PROFILE_RELEASE_DEBUG=true cargo flamegraph \
 	--root --output $(FLAMEGRAPH_DIR)/revm_erc20_transfer.svg \
-	-p revm_comparison --bin revm_erc20_transfer -- $(BENCH_TRANSFER_REPETITIONS) $(BENCH_TRANSFER_ITERATIONS)
+	-p revm_comparison --bin benchmark -- revm ERC20Transfer $(BENCH_TRANSFER_REPETITIONS) $(BENCH_TRANSFER_ITERATIONS)
     # erc20_transfer - levm
 	CARGO_PROFILE_RELEASE_DEBUG=true cargo flamegraph \
 	--root --output $(FLAMEGRAPH_DIR)/levm_erc20_transfer.svg \
-	-p revm_comparison --bin levm_erc20_transfer -- $(BENCH_TRANSFER_REPETITIONS) $(BENCH_TRANSFER_ITERATIONS)
+	-p revm_comparison --bin benchmark -- levm ERC20Transfer $(BENCH_TRANSFER_REPETITIONS) $(BENCH_TRANSFER_ITERATIONS)
 	# erc20_mint - revm
 	CARGO_PROFILE_RELEASE_DEBUG=true cargo flamegraph \
 	--root --output $(FLAMEGRAPH_DIR)/revm_erc20_mint.svg \
-	-p revm_comparison --bin revm_erc20_mint -- $(BENCH_MINT_REPETITIONS) $(BENCH_MINT_ITERATIONS)
+	-p revm_comparison --bin benchmark -- revm ERC20Mint $(BENCH_MINT_REPETITIONS) $(BENCH_MINT_ITERATIONS)
 	# erc20_mint - levm
 	CARGO_PROFILE_RELEASE_DEBUG=true cargo flamegraph \
 	--root --output $(FLAMEGRAPH_DIR)/levm_erc20_mint.svg \
-	-p revm_comparison --bin levm_erc20_mint -- $(BENCH_MINT_REPETITIONS) $(BENCH_MINT_ITERATIONS)
+	-p revm_comparison --bin benchmark -- levm ERC20Mint $(BENCH_MINT_REPETITIONS) $(BENCH_MINT_ITERATIONS)
 	# erc20_approval - revm
 	CARGO_PROFILE_RELEASE_DEBUG=true cargo flamegraph \
 	--root --output $(FLAMEGRAPH_DIR)/revm_erc20_approval.svg \
-	-p revm_comparison --bin revm_erc20_approval -- $(BENCH_APPROVAL_REPETITIONS) $(BENCH_APPROVAL_ITERATIONS)
+	-p revm_comparison --bin benchmark -- revm ERC20ApprovalTransfer $(BENCH_APPROVAL_REPETITIONS) $(BENCH_APPROVAL_ITERATIONS)
 	# erc20_approval - levm
 	CARGO_PROFILE_RELEASE_DEBUG=true cargo flamegraph \
 	--root --output $(FLAMEGRAPH_DIR)/levm_erc20_approval.svg \
-	-p revm_comparison --bin levm_erc20_approval -- $(BENCH_APPROVAL_REPETITIONS) $(BENCH_APPROVAL_ITERATIONS)
+	-p revm_comparison --bin benchmark -- levm ERC20ApprovalTransfer $(BENCH_APPROVAL_REPETITIONS) $(BENCH_APPROVAL_ITERATIONS)
 
 SAMPLY_DIR := ../../../cmd/ef_tests/levm/levm_perfgraphs/samply/bench
 samply-benchmarks: ## ⚡️ Run benchmarks and create samply profiling file
@@ -303,40 +330,40 @@ samply-benchmarks: ## ⚡️ Run benchmarks and create samply profiling file
 	# fibonacci - revm
 	CARGO_PROFILE_RELEASE_DEBUG=true samply record --save-only \
 	-o $(SAMPLY_DIR)/prof_revm_fibonacci.json \
-	cargo run --release -p revm_comparison --bin revm_fibonacci -- $(BENCH_FIB_REPETITIONS) $(BENCH_FIB_ITERATIONS)
+	cargo run --release -p revm_comparison --bin benchmark -- revm Fibonacci $(BENCH_FIB_REPETITIONS) $(BENCH_FIB_ITERATIONS)
 	# fibonacci - levm
 	CARGO_PROFILE_RELEASE_DEBUG=true samply record --save-only \
 	-o $(SAMPLY_DIR)/prof_levm_fibonacci.json \
-	cargo run --release -p revm_comparison --bin levm_fibonacci -- $(BENCH_FIB_REPETITIONS) $(BENCH_FIB_ITERATIONS)
+	cargo run --release -p revm_comparison --bin benchmark -- levm Fibonacci $(BENCH_FIB_REPETITIONS) $(BENCH_FIB_ITERATIONS)
 	# factorial - revm
 	CARGO_PROFILE_RELEASE_DEBUG=true samply record --save-only \
 	-o $(SAMPLY_DIR)/prof_revm_factorial.json \
-	cargo run --release -p revm_comparison --bin revm_factorial -- $(BENCH_FACT_REPETITIONS) $(BENCH_FACT_ITERATIONS)
+	cargo run --release -p revm_comparison --bin benchmark -- revm Factorial $(BENCH_FACT_REPETITIONS) $(BENCH_FACT_ITERATIONS)
 	# factorial - revm
 	CARGO_PROFILE_RELEASE_DEBUG=true samply record --save-only \
 	-o $(SAMPLY_DIR)/prof_levm_factorial.json \
-	cargo run --release -p revm_comparison --bin levm_factorial -- $(BENCH_FACT_REPETITIONS) $(BENCH_FACT_ITERATIONS)
+	cargo run --release -p revm_comparison --bin benchmark -- levm Factorial $(BENCH_FACT_REPETITIONS) $(BENCH_FACT_ITERATIONS)
 	# erc20_approval - revm
 	CARGO_PROFILE_RELEASE_DEBUG=true samply record --save-only \
 	-o $(SAMPLY_DIR)/prof_revm_erc20_approval.json \
-	cargo run --release -p revm_comparison --bin revm_erc20_approval -- $(BENCH_APPROVAL_REPETITIONS) $(BENCH_APPROVAL_ITERATIONS)
+	cargo run --release -p revm_comparison --bin benchmark -- revm ERC20ApprovalTransfer $(BENCH_APPROVAL_REPETITIONS) $(BENCH_APPROVAL_ITERATIONS)
 	# erc20_approval - levm
 	CARGO_PROFILE_RELEASE_DEBUG=true samply record --save-only \
 	-o $(SAMPLY_DIR)/prof_levm_erc20_approval.json \
-	cargo run --release -p revm_comparison --bin levm_erc20_approval -- $(BENCH_APPROVAL_REPETITIONS) $(BENCH_APPROVAL_ITERATIONS)
+	cargo run --release -p revm_comparison --bin benchmark -- levm ERC20ApprovalTransfer  $(BENCH_APPROVAL_REPETITIONS) $(BENCH_APPROVAL_ITERATIONS)
 	# erc20_transfer - revm
 	CARGO_PROFILE_RELEASE_DEBUG=true samply record --save-only \
 	-o $(SAMPLY_DIR)/prof_revm_erc20_transfer.json \
-	cargo run --release -p revm_comparison --bin revm_erc20_transfer -- $(BENCH_TRANSFER_REPETITIONS) $(BENCH_TRANSFER_ITERATIONS)
+	cargo run --release -p revm_comparison --bin benchmark -- revm ERC20Transfer $(BENCH_TRANSFER_REPETITIONS) $(BENCH_TRANSFER_ITERATIONS)
 	# erc20_transfer - levm
 	CARGO_PROFILE_RELEASE_DEBUG=true samply record --save-only \
 	-o $(SAMPLY_DIR)/prof_levm_erc20_transfer.json \
-	cargo run --release -p revm_comparison --bin levm_erc20_transfer -- $(BENCH_TRANSFER_REPETITIONS) $(BENCH_TRANSFER_ITERATIONS)
+	cargo run --release -p revm_comparison --bin benchmark -- levm ERC20Transfer $(BENCH_TRANSFER_REPETITIONS) $(BENCH_TRANSFER_ITERATIONS)
 	# erc20_mint - revm
 	CARGO_PROFILE_RELEASE_DEBUG=true samply record --save-only \
 	-o $(SAMPLY_DIR)/prof_revm_erc20_mint.json \
-	cargo run --release -p revm_comparison --bin revm_erc20_mint -- $(BENCH_MINT_REPETITIONS) $(BENCH_MINT_ITERATIONS)
+	cargo run --release -p revm_comparison --bin benchmark -- revm ERC20Mint $(BENCH_MINT_REPETITIONS) $(BENCH_MINT_ITERATIONS)
 	# erc20_mint - levm
 	CARGO_PROFILE_RELEASE_DEBUG=true samply record --save-only \
 	-o $(SAMPLY_DIR)/prof_levm_erc20_mint.json \
-	cargo run --release -p revm_comparison --bin levm_erc20_mint -- $(BENCH_MINT_REPETITIONS) $(BENCH_MINT_ITERATIONS)
+	cargo run --release -p revm_comparison --bin benchmark -- levm ERC20Mint $(BENCH_MINT_REPETITIONS) $(BENCH_MINT_ITERATIONS)

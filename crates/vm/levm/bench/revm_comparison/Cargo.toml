@@ -21,49 +21,5 @@ name = "compile"
 path = "src/compile.rs"
 
 [[bin]]
-name = "levm_factorial"
-path = "src/levm_factorial.rs"
-
-[[bin]]
-name = "revm_factorial"
-path = "src/revm_factorial.rs"
-
-[[bin]]
-name = "levm_fibonacci"
-path = "src/levm_fibonacci.rs"
-
-[[bin]]
-name = "revm_fibonacci"
-path = "src/revm_fibonacci.rs"
-
-[[bin]]
-name = "levm_many_hashes"
-path = "src/levm_many_hashes.rs"
-
-[[bin]]
-name = "revm_many_hashes"
-path = "src/revm_many_hashes.rs"
-
-[[bin]]
-name = "levm_erc20_mint"
-path = "src/levm_erc20_mint.rs"
-
-[[bin]]
-name = "revm_erc20_mint"
-path = "src/revm_erc20_mint.rs"
-
-[[bin]]
-name = "levm_erc20_transfer"
-path = "src/levm_erc20_transfer.rs"
-
-[[bin]]
-name = "revm_erc20_transfer"
-path = "src/revm_erc20_transfer.rs"
-
-[[bin]]
-name = "levm_erc20_approval"
-path = "src/levm_erc20_approval.rs"
-
-[[bin]]
-name = "revm_erc20_approval"
-path = "src/revm_erc20_approval.rs"
+name = "benchmark"
+path = "src/benchmark.rs"
