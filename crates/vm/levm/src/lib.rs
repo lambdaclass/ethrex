@@ -10,6 +10,7 @@ pub mod opcode_handlers;
 pub mod opcodes;
 pub mod operations;
 pub mod precompiles;
+pub mod testing;
 pub mod utils;
 pub mod vm;
 pub use account::*;

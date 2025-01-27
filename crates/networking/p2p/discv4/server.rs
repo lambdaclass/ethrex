@@ -217,6 +217,13 @@ impl Discv4Server {
                             .await?;
                     }
                 }
+
+                // We won't initiate a connection if we are already connected.
+                // This will typically be the case when revalidating a node.
+                if peer.is_connected {
+                    return Ok(());
+                }
+
                 let ctx = self.ctx.clone();
                 self.ctx
                     .tracker
