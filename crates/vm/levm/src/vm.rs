@@ -296,77 +296,8 @@ impl VM {
 
             match op_result {
                 Ok(OpcodeSuccess::Continue) => {}
-                Ok(OpcodeSuccess::Result(_)) => {
-                    self.call_frames.push(current_call_frame.clone());
-                    // On successful create check output validity
-                    if (self.is_create() && current_call_frame.depth == 0)
-                        || current_call_frame.create_op_called
-                    {
-                        let contract_code = std::mem::take(&mut current_call_frame.output);
-                        let code_length = contract_code.len();
-
-                        let code_length_u64: u64 = code_length
-                            .try_into()
-                            .map_err(|_| VMError::Internal(InternalError::ConversionError))?;
-
-                        let code_deposit_cost: u64 =
-                            code_length_u64.checked_mul(CODE_DEPOSIT_COST).ok_or(
-                                VMError::Internal(InternalError::ArithmeticOperationOverflow),
-                            )?;
-
-                        // Revert
-                        // If the first byte of code is 0xef
-                        // If the code_length > MAX_CODE_SIZE
-                        // If current_consumed_gas + code_deposit_cost > gas_limit
-                        let validate_create = if code_length > MAX_CODE_SIZE {
-                            Err(VMError::ContractOutputTooBig)
-                        } else if contract_code.first().unwrap_or(&0) == &INVALID_CONTRACT_PREFIX {
-                            Err(VMError::InvalidContractPrefix)
-                        } else if self
-                            .increase_consumed_gas(current_call_frame, code_deposit_cost)
-                            .is_err()
-                        {
-                            Err(VMError::OutOfGas(OutOfGasError::MaxGasLimitExceeded))
-                        } else {
-                            Ok(current_call_frame.to)
-                        };
-
-                        match validate_create {
-                            Ok(new_address) => {
-                                // Set bytecode to new account if success
-                                update_account_bytecode(
-                                    &mut self.cache,
-                                    &self.db,
-                                    new_address,
-                                    contract_code,
-                                )?;
-                            }
-                            Err(error) => {
-                                // Revert if error
-                                current_call_frame.gas_used = current_call_frame.gas_limit;
-
-                                return Ok(TransactionReport {
-                                    result: TxResult::Revert(error),
-                                    new_state: HashMap::default(),
-                                    gas_used: current_call_frame.gas_used,
-                                    gas_refunded: self.env.refunded_gas,
-                                    output: std::mem::take(&mut current_call_frame.output),
-                                    logs: std::mem::take(&mut current_call_frame.logs),
-                                    created_address: None,
-                                });
-                            }
-                        }
-                    }
-
-                    return Ok(TransactionReport {
-                        result: TxResult::Success,
-                        new_state: HashMap::default(),
-                        gas_used: current_call_frame.gas_used,
-                        gas_refunded: self.env.refunded_gas,
-                        output: std::mem::take(&mut current_call_frame.output),
-                        logs: std::mem::take(&mut current_call_frame.logs),
-                        created_address: None,
-                    });
+                Ok(OpcodeSuccess::Result(reason)) => {
+                    return self.handle_opcode_result(reason, current_call_frame, backup);
                 }
                 Err(error) => {
                     self.call_frames.push(current_call_frame.clone());
@@ -1231,5 +1162,80 @@ impl VM {
 
         op_result
     }
+
+    fn handle_opcode_result(
+        &mut self,
+        reason: ResultReason,
+        current_call_frame: &mut CallFrame,
+        backup: Backup,
+    ) -> Result<TransactionReport, VMError> {
+        self.call_frames.push(current_call_frame.clone());
+        // On successful create check output validity
+        if (self.is_create() && current_call_frame.depth == 0)
+            || current_call_frame.create_op_called
+        {
+            let contract_code = std::mem::take(&mut current_call_frame.output);
+            let code_length = contract_code.len();
+
+            let code_length_u64: u64 = code_length
+                .try_into()
+                .map_err(|_| VMError::Internal(InternalError::ConversionError))?;
+
+            let code_deposit_cost: u64 =
+                code_length_u64
+                    .checked_mul(CODE_DEPOSIT_COST)
+                    .ok_or(VMError::Internal(
+                        InternalError::ArithmeticOperationOverflow,
+                    ))?;
+
+            // Revert
+            // If the first byte of code is 0xef
+            // If the code_length > MAX_CODE_SIZE
+            // If current_consumed_gas + code_deposit_cost > gas_limit
+            let validate_create = if code_length > MAX_CODE_SIZE {
+                Err(VMError::ContractOutputTooBig)
+            } else if contract_code.first().unwrap_or(&0) == &INVALID_CONTRACT_PREFIX {
+                Err(VMError::InvalidContractPrefix)
+            } else if self
+                .increase_consumed_gas(current_call_frame, code_deposit_cost)
+                .is_err()
+            {
+                Err(VMError::OutOfGas(OutOfGasError::MaxGasLimitExceeded))
+            } else {
+                Ok(current_call_frame.to)
+            };
+
+            match validate_create {
+                Ok(new_address) => {
+                    // Set bytecode to new account if success
+                    update_account_bytecode(&mut self.cache, &self.db, new_address, contract_code)?;
+                }
+                Err(error) => {
+                    // Revert if error
+                    current_call_frame.gas_used = current_call_frame.gas_limit;
                     self.restore_state(backup);
+
+                    return Ok(TransactionReport {
+                        result: TxResult::Revert(error),
+                        new_state: HashMap::default(),
+                        gas_used: current_call_frame.gas_used,
+                        gas_refunded: self.env.refunded_gas,
+                        output: std::mem::take(&mut current_call_frame.output),
+                        logs: std::mem::take(&mut current_call_frame.logs),
+                        created_address: None,
+                    });
+                }
+            }
+        }
+
+        return Ok(TransactionReport {
+            result: TxResult::Success,
+            new_state: HashMap::default(),
+            gas_used: current_call_frame.gas_used,
+            gas_refunded: self.env.refunded_gas,
+            output: std::mem::take(&mut current_call_frame.output),
+            logs: std::mem::take(&mut current_call_frame.logs),
+            created_address: None,
+        });
+    }
 }
