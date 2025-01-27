@@ -11,7 +11,6 @@ use std::hint::black_box;
 use std::io::Read;
 
 pub fn run_with_levm(program: &str, runs: usize, calldata: &str) {
-    println!("calldata:\t\t0x{}", calldata);
     let bytecode = Bytes::from(hex::decode(program).unwrap());
     let mut call_frame = CallFrame::new_from_bytecode(bytecode);
     call_frame.calldata = Bytes::from(hex::decode(calldata).unwrap());
@@ -39,8 +38,6 @@ pub fn run_with_levm(program: &str, runs: usize, calldata: &str) {
 }
 
 pub fn run_with_revm(program: &str, runs: usize, calldata: &str) {
-    println!("calldata:\t\t0x{}", calldata);
-    println!("program:\t\t0x{}", program);
     let rich_acc_address = address!("1000000000000000000000000000000000000000");
     let bytes = hex::decode(program).unwrap();
     let raw = Bytecode::new_raw(bytes.clone().into());

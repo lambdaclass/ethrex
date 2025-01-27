@@ -1,6 +1,4 @@
-use revm_comparison::{
-    generate_calldata, load_contract_bytecode, parse_args, run_with_levm, run_with_revm,
-};
+use revm_comparison::{generate_calldata, load_contract_bytecode, parse_args, run_with_revm};
 
 fn main() {
     let (runs, number_of_iterations) = parse_args();
