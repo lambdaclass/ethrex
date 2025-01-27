@@ -7,21 +7,25 @@ use tokei::{Config, Language, LanguageType, Languages};
 mod report;
 
 fn count_crates_loc(crates_path: &PathBuf, config: &Config) -> Vec<(String, usize)> {
-    let special_dirs = vec!["networking"];
+    let nested_dirs = vec!["networking"];
 
-    let mut crate_dirs = std::fs::read_dir(crates_path)
+    let top_level_crate_dirs = std::fs::read_dir(crates_path)
         .unwrap()
         .filter_map(|e| e.ok())
-        .filter(|e| !special_dirs.contains(&e.file_name().to_str().unwrap()))
+        .filter(|e| !nested_dirs.contains(&e.file_name().to_str().unwrap()))
         .collect::<Vec<DirEntry>>();
 
-    for special_dir in special_dirs {
-        let special_dir_entries = std::fs::read_dir(crates_path.join(special_dir))
-            .unwrap()
-            .filter_map(|e| e.ok())
-            .collect::<Vec<DirEntry>>();
-        crate_dirs.extend(special_dir_entries);
-    }
+    let nested_crate_dirs: Vec<DirEntry> = nested_dirs
+        .iter()
+        .flat_map(|nested_dir| {
+            std::fs::read_dir(crates_path.join(nested_dir))
+                .unwrap()
+                .filter_map(|e| e.ok())
+                .collect::<Vec<DirEntry>>()
+        })
+        .collect();
+
+    let crate_dirs = [top_level_crate_dirs, nested_crate_dirs].concat();
 
     let mut ethrex_crates_loc: Vec<(String, usize)> = crate_dirs
         .into_iter()
