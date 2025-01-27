@@ -25,7 +25,11 @@ use rand::rngs::OsRng;
 use rlpx::{connection::RLPxConnection, message::Message as RLPxMessage};
 use tokio::{
     net::{TcpListener, TcpSocket, TcpStream, UdpSocket},
-    sync::{broadcast, Mutex},
+    sync::{
+        broadcast::{self, Sender},
+        Mutex,
+    },
+    task::Id,
 };
 use tokio_util::task::TaskTracker;
 use tracing::{debug, error, info};
@@ -53,6 +57,16 @@ pub fn peer_table(signer: SigningKey) -> Arc<Mutex<KademliaTable>> {
     Arc::new(Mutex::new(KademliaTable::new(local_node_id)))
 }
 
+#[derive(Clone)]
+struct P2PContext {
+    tracker: TaskTracker,
+    signer: SigningKey,
+    table: Arc<Mutex<KademliaTable>>,
+    storage: Store,
+    broadcast: Sender<(Id, Arc<RLPxMessage>)>,
+    local_node: Node,
+}
+
 #[allow(clippy::too_many_arguments)]
 pub async fn start_network(
     local_node: Node,
@@ -71,38 +85,24 @@ pub async fn start_network(
         Arc<RLPxMessage>,
     )>(MAX_MESSAGES_TO_BROADCAST);
 
-    tracker.spawn(discover_peers(
+    let context = P2PContext {
+        tracker,
+        signer,
+        table: peer_table,
+        storage,
+        broadcast: channel_broadcast_send_end,
         local_node,
-        tracker.clone(),
-        udp_addr,
-        signer.clone(),
-        storage.clone(),
-        peer_table.clone(),
-        bootnodes,
-        channel_broadcast_send_end.clone(),
-    ));
+    };
 
-    tracker.spawn(serve_p2p_requests(
-        tracker.clone(),
-        tcp_addr,
-        signer.clone(),
-        storage.clone(),
-        peer_table.clone(),
-        channel_broadcast_send_end,
-    ));
+    context
+        .tracker
+        .spawn(discover_peers(context.clone(), bootnodes));
+    context.tracker.spawn(serve_p2p_requests(context.clone()));
 }
 
 #[allow(clippy::too_many_arguments)]
-async fn discover_peers(
-    local_node: Node,
-    tracker: TaskTracker,
-    udp_addr: SocketAddr,
-    signer: SigningKey,
-    storage: Store,
-    table: Arc<Mutex<KademliaTable>>,
-    bootnodes: Vec<BootNode>,
-    connection_broadcast: broadcast::Sender<(tokio::task::Id, Arc<RLPxMessage>)>,
-) {
+async fn discover_peers(context: P2PContext, bootnodes: Vec<BootNode>) {
+    let udp_addr = context.local_node.udp_addr();
     let udp_socket = match UdpSocket::bind(udp_addr).await {
         Ok(socket) => Arc::new(socket),
         Err(e) => {
@@ -111,59 +111,32 @@ async fn discover_peers(
         }
     };
 
-    tracker.spawn(discover_peers_server(
-        local_node,
-        tracker.clone(),
-        udp_addr,
-        udp_socket.clone(),
-        storage,
-        table.clone(),
-        signer.clone(),
-        connection_broadcast,
-    ));
+    context
+        .tracker
+        .spawn(discover_peers_server(context.clone(), udp_socket.clone()));
 
-    tracker.spawn(peers_revalidation(
-        local_node,
+    context.tracker.spawn(peers_revalidation(
+        context.clone(),
         udp_socket.clone(),
-        table.clone(),
-        signer.clone(),
         REVALIDATION_INTERVAL_IN_SECONDS as u64,
     ));
 
-    discovery_startup(
-        local_node,
-        udp_socket.clone(),
-        table.clone(),
-        signer.clone(),
-        bootnodes,
-    )
-    .await;
+    discovery_startup(context.clone(), udp_socket.clone(), bootnodes).await;
 
     // a first initial lookup runs without waiting for the interval
     // so we need to allow some time to the pinged peers to ping us back and acknowledge us
     tokio::time::sleep(Duration::from_secs(10)).await;
-    tracker.spawn(peers_lookup(
-        tracker.clone(),
+    context.tracker.spawn(peers_lookup(
+        context.clone(),
         udp_socket.clone(),
-        table.clone(),
-        signer.clone(),
-        node_id_from_signing_key(&signer),
         PEERS_RANDOM_LOOKUP_TIME_IN_MIN as u64 * 60,
     ));
 }
 
 #[allow(clippy::too_many_arguments)]
-async fn discover_peers_server(
-    local_node: Node,
-    tracker: TaskTracker,
-    udp_addr: SocketAddr,
-    udp_socket: Arc<UdpSocket>,
-    storage: Store,
-    table: Arc<Mutex<KademliaTable>>,
-    signer: SigningKey,
-    tx_broadcaster_send: broadcast::Sender<(tokio::task::Id, Arc<RLPxMessage>)>,
-) {
+async fn discover_peers_server(context: P2PContext, udp_socket: Arc<UdpSocket>) {
     let mut buf = vec![0; MAX_DISC_PACKET_SIZE];
+    let udp_addr = context.local_node.udp_addr();
 
     loop {
         let (read, from) = match udp_socket.recv_from(&mut buf).await {
@@ -196,17 +169,24 @@ async fn discover_peers_server(
                             node_id: packet.get_node_id(),
                         };
                         let ping_hash = packet.get_hash();
-                        pong(&udp_socket, node, ping_hash, &signer).await;
+                        pong(&udp_socket, node, ping_hash, &context.signer).await;
                         let peer = {
-                            let table = table.lock().await;
+                            let table = context.table.lock().await;
                             table.get_by_node_id(packet.get_node_id()).cloned()
                         };
                         if let Some(peer) = peer {
                             // send a a ping to get an endpoint proof
                             if time_since_in_hs(peer.last_ping) >= PROOF_EXPIRATION_IN_HS as u64 {
-                                let hash = ping(&udp_socket, local_node, peer.node, &signer).await;
+                                let hash = ping(
+                                    &udp_socket,
+                                    context.local_node,
+                                    peer.node,
+                                    &context.signer,
+                                )
+                                .await;
                                 if let Some(hash) = hash {
-                                    table
+                                    context
+                                        .table
                                         .lock()
                                         .await
                                         .update_peer_ping(peer.node.node_id, Some(hash));
@@ -218,8 +198,8 @@ async fn discover_peers_server(
                                 if enr_seq > peer.record.seq {
                                     debug!("enr-seq outdated, send an enr_request");
                                     let req_hash =
-                                        send_enr_request(&udp_socket, from, &signer).await;
-                                    table.lock().await.update_peer_enr_seq(
+                                        send_enr_request(&udp_socket, from, &context.signer).await;
+                                    context.table.lock().await.update_peer_enr_seq(
                                         peer.node.node_id,
                                         enr_seq,
                                         req_hash,
@@ -227,16 +207,18 @@ async fn discover_peers_server(
                                 }
                             }
                         } else {
-                            let mut table = table.lock().await;
+                            let mut table = context.table.lock().await;
                             if let (Some(peer), true) = table.insert_node(node) {
                                 // send a ping to get the endpoint proof from our end
-                                let hash = ping(&udp_socket, local_node, node, &signer).await;
+                                let hash =
+                                    ping(&udp_socket, context.local_node, node, &context.signer)
+                                        .await;
                                 table.update_peer_ping(peer.node.node_id, hash);
                             }
                         }
                     }
                     Message::Pong(msg) => {
-                        let table = table.clone();
+                        let table = context.table.clone();
                         if is_expired(msg.expiration) {
                             debug!("Ignoring pong as it is expired.");
                             continue;
@@ -250,6 +232,7 @@ async fn discover_peers_server(
                                 debug!("Discarding pong as the node did not send a previous ping");
                                 continue;
                             }
+
                             if peer
                                 .last_ping_hash
                                 .is_some_and(|hash| hash == msg.ping_hash)
@@ -260,7 +243,8 @@ async fn discover_peers_server(
                                     if enr_seq > peer.record.seq {
                                         debug!("enr-seq outdated, send an enr_request");
                                         let req_hash =
-                                            send_enr_request(&udp_socket, from, &signer).await;
+                                            send_enr_request(&udp_socket, from, &context.signer)
+                                                .await;
                                         table.lock().await.update_peer_enr_seq(
                                             peer.node.node_id,
                                             enr_seq,
@@ -269,12 +253,19 @@ async fn discover_peers_server(
                                     }
                                 }
 
+                                // We won't initiate a connection if we are already connected.
+                                // This will typically be the case when revalidating a node.
+                                if peer.is_connected {
+                                    continue;
+                                }
+
                                 let mut msg_buf = vec![0; read - 32];
                                 buf[32..read].clone_into(&mut msg_buf);
-                                let signer = signer.clone();
-                                let storage = storage.clone();
-                                let broadcaster = tx_broadcaster_send.clone();
-                                tracker.spawn(async move {
+                                let signer = context.signer.clone();
+                                let storage = context.storage.clone();
+                                let broadcaster = context.broadcast.clone();
+
+                                context.tracker.spawn(async move {
                                     handle_peer_as_initiator(
                                         signer,
                                         &msg_buf,
@@ -300,13 +291,13 @@ async fn discover_peers_server(
                             continue;
                         };
                         let node = {
-                            let table = table.lock().await;
+                            let table = context.table.lock().await;
                             table.get_by_node_id(packet.get_node_id()).cloned()
                         };
                         if let Some(node) = node {
                             if node.is_proven {
                                 let nodes = {
-                                    let table = table.lock().await;
+                                    let table = context.table.lock().await;
                                     table.get_closest_nodes(msg.target)
                                 };
                                 let nodes_chunks = nodes.chunks(4);
@@ -319,7 +310,7 @@ async fn discover_peers_server(
                                         NeighborsMessage::new(nodes.to_vec(), expiration),
                                     );
                                     let mut buf = Vec::new();
-                                    neighbors.encode_with_header(&mut buf, &signer);
+                                    neighbors.encode_with_header(&mut buf, &context.signer);
                                     if let Err(e) = udp_socket.send_to(&buf, from).await {
                                         error!("Could not send Neighbors message {e}");
                                     }
@@ -338,7 +329,7 @@ async fn discover_peers_server(
                         };
 
                         let mut nodes_to_insert = None;
-                        let mut table = table.lock().await;
+                        let mut table = context.table.lock().await;
                         if let Some(node) = table.get_by_node_id_mut(packet.get_node_id()) {
                             if let Some(req) = &mut node.find_node_request {
                                 if time_now_unix().saturating_sub(req.sent_at) >= 60 {
@@ -372,8 +363,13 @@ async fn discover_peers_server(
                         if let Some(nodes) = nodes_to_insert {
                             for node in nodes {
                                 if let (Some(peer), true) = table.insert_node(node) {
-                                    let ping_hash =
-                                        ping(&udp_socket, local_node, peer.node, &signer).await;
+                                    let ping_hash = ping(
+                                        &udp_socket,
+                                        context.local_node,
+                                        peer.node,
+                                        &context.signer,
+                                    )
+                                    .await;
                                     table.update_peer_ping(peer.node.node_id, ping_hash);
                                 }
                             }
@@ -386,9 +382,11 @@ async fn discover_peers_server(
                         }
                         // Note we are passing the current timestamp as the sequence number
                         // This is because we are not storing our local_node updates in the db
-                        let Ok(node_record) =
-                            NodeRecord::from_node(local_node, time_now_unix(), &signer)
-                        else {
+                        let Ok(node_record) = NodeRecord::from_node(
+                            context.local_node,
+                            time_now_unix(),
+                            &context.signer,
+                        ) else {
                             debug!("Ignoring enr-request msg could not build local node record.");
                             continue;
                         };
@@ -397,11 +395,11 @@ async fn discover_peers_server(
                             node_record,
                         ));
                         let mut buf = vec![];
-                        msg.encode_with_header(&mut buf, &signer);
+                        msg.encode_with_header(&mut buf, &context.signer);
                         let _ = udp_socket.send_to(&buf, from).await;
                     }
                     Message::ENRResponse(msg) => {
-                        let mut table = table.lock().await;
+                        let mut table = context.table.lock().await;
                         let peer = table.get_by_node_id_mut(packet.get_node_id());
                         let Some(peer) = peer else {
                             debug!("Discarding enr-response as we don't know the peer");
@@ -490,10 +488,8 @@ async fn discover_peers_server(
 /// currently, since we are not storing nodes, the only way to have startup nodes is by providing
 /// an array of bootnodes.
 async fn discovery_startup(
-    local_node: Node,
+    context: P2PContext,
     udp_socket: Arc<UdpSocket>,
-    table: Arc<Mutex<KademliaTable>>,
-    signer: SigningKey,
     bootnodes: Vec<BootNode>,
 ) {
     for bootnode in bootnodes {
@@ -505,9 +501,10 @@ async fn discovery_startup(
             tcp_port: bootnode.socket_address.port(),
             node_id: bootnode.node_id,
         };
-        table.lock().await.insert_node(node);
-        let ping_hash = ping(&udp_socket, local_node, node, &signer).await;
-        table
+        context.table.lock().await.insert_node(node);
+        let ping_hash = ping(&udp_socket, context.local_node, node, &context.signer).await;
+        context
+            .table
             .lock()
             .await
             .update_peer_ping(bootnode.node_id, ping_hash);
@@ -531,10 +528,8 @@ const PROOF_EXPIRATION_IN_HS: usize = 12;
 ///
 /// See more https://github.com/ethereum/devp2p/blob/master/discv4.md#kademlia-table
 async fn peers_revalidation(
-    local_node: Node,
+    context: P2PContext,
     udp_socket: Arc<UdpSocket>,
-    table: Arc<Mutex<KademliaTable>>,
-    signer: SigningKey,
     interval_time_in_seconds: u64,
 ) {
     let mut interval = tokio::time::interval(Duration::from_secs(interval_time_in_seconds));
@@ -550,7 +545,7 @@ async fn peers_revalidation(
 
         // first check that the peers we ping have responded
         for node_id in previously_pinged_peers {
-            let mut table = table.lock().await;
+            let mut table = context.table.lock().await;
             if let Some(peer) = table.get_by_node_id_mut(node_id) {
                 if let Some(has_answered) = peer.revalidation {
                     if has_answered {
@@ -565,7 +560,13 @@ async fn peers_revalidation(
                 if peer.liveness == 0 {
                     let new_peer = table.replace_peer(node_id);
                     if let Some(new_peer) = new_peer {
-                        let ping_hash = ping(&udp_socket, local_node, new_peer.node, &signer).await;
+                        let ping_hash = ping(
+                            &udp_socket,
+                            context.local_node,
+                            new_peer.node,
+                            &context.signer,
+                        )
+                        .await;
                         table.update_peer_ping(new_peer.node.node_id, ping_hash);
                     }
                 }
@@ -575,11 +576,15 @@ async fn peers_revalidation(
         // now send a ping to the least recently pinged peers
         // this might be too expensive to run if our table is filled
         // maybe we could just pick them randomly
-        let peers = table.lock().await.get_least_recently_pinged_peers(3);
+        let peers = context
+            .table
+            .lock()
+            .await
+            .get_least_recently_pinged_peers(3);
         previously_pinged_peers = HashSet::default();
         for peer in peers {
-            let ping_hash = ping(&udp_socket, local_node, peer.node, &signer).await;
-            let mut table = table.lock().await;
+            let ping_hash = ping(&udp_socket, context.local_node, peer.node, &context.signer).await;
+            let mut table = context.table.lock().await;
             table.update_peer_ping_with_revalidation(peer.node.node_id, ping_hash);
             previously_pinged_peers.insert(peer.node.node_id);
 
@@ -613,11 +618,8 @@ const PEERS_RANDOM_LOOKUP_TIME_IN_MIN: usize = 30;
 ///
 /// See more https://github.com/ethereum/devp2p/blob/master/discv4.md#recursive-lookup
 async fn peers_lookup(
-    tracker: TaskTracker,
+    context: P2PContext,
     udp_socket: Arc<UdpSocket>,
-    table: Arc<Mutex<KademliaTable>>,
-    signer: SigningKey,
-    local_node_id: H512,
     interval_time_in_seconds: u64,
 ) {
     let mut interval = tokio::time::interval(Duration::from_secs(interval_time_in_seconds));
@@ -630,23 +632,19 @@ async fn peers_lookup(
         debug!("Starting lookup");
 
         // lookup closest to our pub key
-        tracker.spawn(recursive_lookup(
+        context.tracker.spawn(recursive_lookup(
+            context.clone(),
             udp_socket.clone(),
-            table.clone(),
-            signer.clone(),
-            local_node_id,
-            local_node_id,
+            context.local_node.node_id,
         ));
 
         // lookup closest to 3 random keys
         for _ in 0..3 {
             let random_pub_key = &SigningKey::random(&mut OsRng);
-            tracker.spawn(recursive_lookup(
+            context.tracker.spawn(recursive_lookup(
+                context.clone(),
                 udp_socket.clone(),
-                table.clone(),
-                signer.clone(),
                 node_id_from_signing_key(random_pub_key),
-                local_node_id,
             ));
         }
 
@@ -654,19 +652,13 @@ async fn peers_lookup(
     }
 }
 
-async fn recursive_lookup(
-    udp_socket: Arc<UdpSocket>,
-    table: Arc<Mutex<KademliaTable>>,
-    signer: SigningKey,
-    target: H512,
-    local_node_id: H512,
-) {
+async fn recursive_lookup(context: P2PContext, udp_socket: Arc<UdpSocket>, target: H512) {
     let mut asked_peers = HashSet::default();
     // lookups start with the closest from our table
-    let closest_nodes = table.lock().await.get_closest_nodes(target);
+    let closest_nodes = context.table.lock().await.get_closest_nodes(target);
     let mut seen_peers: HashSet<H512> = HashSet::default();
 
-    seen_peers.insert(local_node_id);
+    seen_peers.insert(context.local_node.node_id);
     for node in &closest_nodes {
         seen_peers.insert(node.node_id);
     }
@@ -676,8 +668,8 @@ async fn recursive_lookup(
     loop {
         let (nodes_found, queries) = lookup(
             udp_socket.clone(),
-            table.clone(),
-            &signer,
+            context.table.clone(),
+            &context.signer,
             target,
             &mut asked_peers,
             &peers_to_ask,
@@ -923,14 +915,8 @@ async fn send_enr_request(
     Some(H256::from_slice(&buf[0..32]))
 }
 
-async fn serve_p2p_requests(
-    tracker: TaskTracker,
-    tcp_addr: SocketAddr,
-    signer: SigningKey,
-    storage: Store,
-    table: Arc<Mutex<KademliaTable>>,
-    connection_broadcast: broadcast::Sender<(tokio::task::Id, Arc<RLPxMessage>)>,
-) {
+async fn serve_p2p_requests(context: P2PContext) {
+    let tcp_addr = SocketAddr::new(context.local_node.ip, context.local_node.tcp_port);
     let listener = match listener(tcp_addr) {
         Ok(result) => result,
         Err(e) => {
@@ -947,14 +933,9 @@ async fn serve_p2p_requests(
             }
         };
 
-        tracker.spawn(handle_peer_as_receiver(
-            peer_addr,
-            signer.clone(),
-            stream,
-            storage.clone(),
-            table.clone(),
-            connection_broadcast.clone(),
-        ));
+        context
+            .tracker
+            .spawn(handle_peer_as_receiver(context.clone(), peer_addr, stream));
     }
 }
 
@@ -964,16 +945,10 @@ fn listener(tcp_addr: SocketAddr) -> Result<TcpListener, io::Error> {
     tcp_socket.listen(50)
 }
 
-async fn handle_peer_as_receiver(
-    peer_addr: SocketAddr,
-    signer: SigningKey,
-    stream: TcpStream,
-    storage: Store,
-    table: Arc<Mutex<KademliaTable>>,
-    connection_broadcast: broadcast::Sender<(tokio::task::Id, Arc<RLPxMessage>)>,
-) {
-    let mut conn = RLPxConnection::receiver(signer, stream, storage, connection_broadcast);
-    conn.start_peer(peer_addr, table).await;
+async fn handle_peer_as_receiver(context: P2PContext, peer_addr: SocketAddr, stream: TcpStream) {
+    let mut conn =
+        RLPxConnection::receiver(context.signer, stream, context.storage, context.broadcast);
+    conn.start_peer(peer_addr, context.table).await;
 }
 
 async fn handle_peer_as_initiator(
@@ -995,6 +970,7 @@ async fn handle_peer_as_initiator(
             return;
         }
     };
+
     match RLPxConnection::initiator(signer, msg, stream, storage, connection_broadcast) {
         Ok(mut conn) => {
             conn.start_peer(SocketAddr::new(node.ip, node.udp_port), table)
@@ -1097,24 +1073,26 @@ mod tests {
             node_id,
         };
         let tracker = TaskTracker::new();
+
+        let context = P2PContext {
+            tracker,
+            signer,
+            table,
+            storage,
+            broadcast: channel_broadcast_send_end,
+            local_node,
+        };
         if should_start_server {
-            tracker.spawn(discover_peers_server(
-                local_node,
-                tracker.clone(),
-                addr,
-                udp_socket.clone(),
-                storage.clone(),
-                table.clone(),
-                signer.clone(),
-                channel_broadcast_send_end,
-            ));
+            context
+                .tracker
+                .spawn(discover_peers_server(context.clone(), udp_socket.clone()));
         }
 
         Ok(MockServer {
             local_node,
             addr,
-            signer,
-            table,
+            signer: context.signer,
+            table: context.table,
             node_id,
             udp_socket,
         })
@@ -1159,14 +1137,24 @@ mod tests {
 
         connect_servers(&mut server_a, &mut server_b).await;
 
+        let (channel_broadcast_send_end, _) = tokio::sync::broadcast::channel::<(
+            tokio::task::Id,
+            Arc<RLPxMessage>,
+        )>(MAX_MESSAGES_TO_BROADCAST);
+        let storage =
+            Store::new("temp.db", EngineType::InMemory).expect("Failed to create test DB");
+
+        let context = P2PContext {
+            tracker: TaskTracker::new(),
+            signer: server_b.signer.clone(),
+            table: server_b.table.clone(),
+            storage,
+            broadcast: channel_broadcast_send_end,
+            local_node: server_b.local_node,
+        };
+
         // start revalidation server
-        tokio::spawn(peers_revalidation(
-            server_b.local_node,
-            server_b.udp_socket.clone(),
-            server_b.table.clone(),
-            server_b.signer.clone(),
-            2,
-        ));
+        tokio::spawn(peers_revalidation(context, server_b.udp_socket.clone(), 2));
 
         for _ in 0..5 {
             sleep(Duration::from_millis(2500)).await;
@@ -1318,15 +1306,24 @@ mod tests {
                 .get_closest_nodes(server_a.node_id),
         );
 
+        let (channel_broadcast_send_end, _) = tokio::sync::broadcast::channel::<(
+            tokio::task::Id,
+            Arc<RLPxMessage>,
+        )>(MAX_MESSAGES_TO_BROADCAST);
+        let storage =
+            Store::new("temp.db", EngineType::InMemory).expect("Failed to create test DB");
+
+        let context = P2PContext {
+            tracker: TaskTracker::new(),
+            signer: server_a.signer.clone(),
+            table: server_a.table.clone(),
+            storage,
+            broadcast: channel_broadcast_send_end,
+            local_node: server_a.local_node,
+        };
+
         // we'll run a recursive lookup closest to the server itself
-        recursive_lookup(
-            server_a.udp_socket.clone(),
-            server_a.table.clone(),
-            server_a.signer.clone(),
-            server_a.node_id,
-            server_a.node_id,
-        )
-        .await;
+        recursive_lookup(context, server_a.udp_socket.clone(), server_a.node_id).await;
 
         for peer in expected_peers {
             assert!(server_a
