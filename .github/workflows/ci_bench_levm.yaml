@@ -2,7 +2,7 @@ name: Benchmark LEVM vs REVM in PR
 
 on:
   pull_request:
-    branches: ["**"]
+    branches: [ "**" ]
     paths:
       - "crates/vm/levm/**"
 
@@ -35,9 +35,17 @@ jobs:
           make revm-comparison-ci
           {
             echo "#### Benchmark Results: Factorial";
-            cat factorial.md;
+            cat Factorial.md;
             echo "#### Benchmark Results: Fibonacci";
-            cat fibonacci.md;
+            cat Fibonacci.md;
+            echo "#### Benchmark Results: ManyHashes";
+            cat ManyHashes.md;
+            echo "#### Benchmark Results: ERC20 - Transfer";
+            cat ERC20Transfer.md;
+            echo "#### Benchmark Results: ERC20 - Mint";
+            cat ERC20Mint.md;
+            echo "#### Benchmark Results: ERC20 - Approval";
+            cat ERC20ApprovalTransfer.md;
           } > pr_result.md
 
       - name: Upload PR results
@@ -74,9 +82,17 @@ jobs:
           make revm-comparison-ci
           {
             echo "#### Benchmark Results: Factorial";
-            cat factorial.md;
+            cat Factorial.md;
             echo "#### Benchmark Results: Fibonacci";
-            cat fibonacci.md;
+            cat Fibonacci.md;
+            echo "#### Benchmark Results: ManyHashes";
+            cat ManyHashes.md;
+            echo "#### Benchmark Results: ERC20 - Transfer";
+            cat ERC20Transfer.md;
+            echo "#### Benchmark Results: ERC20 - Mint";
+            cat ERC20Mint.md;
+            echo "#### Benchmark Results: ERC20 - Approval";
+            cat ERC20ApprovalTransfer.md;
           } > main_result.md
 
       - name: Upload main results
@@ -88,7 +104,7 @@ jobs:
   combine-results:
     name: Combine Benchmark Results
     runs-on: ubuntu-latest
-    needs: [benchmark-pr, benchmark-main]
+    needs: [ benchmark-pr, benchmark-main ]
     steps:
       - name: Download PR results
         uses: actions/download-artifact@v4
