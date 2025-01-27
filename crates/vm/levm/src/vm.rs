@@ -265,10 +265,6 @@ impl VM {
 
             let op_result = self.handle_current_opcode(opcode, current_call_frame);
 
-            if opcode != Opcode::JUMP && opcode != Opcode::JUMPI {
-                current_call_frame.increment_pc()?;
-            }
-
             match op_result {
                 Ok(OpcodeSuccess::Continue) => {}
                 Ok(OpcodeSuccess::Result(_)) => {
@@ -1113,7 +1109,7 @@ impl VM {
         opcode: Opcode,
         current_call_frame: &mut CallFrame,
     ) -> Result<OpcodeSuccess, VMError> {
-        match opcode {
+        let op_result = match opcode {
             Opcode::STOP => Ok(OpcodeSuccess::Result(ResultReason::Stop)),
             Opcode::ADD => self.op_add(current_call_frame),
             Opcode::MUL => self.op_mul(current_call_frame),
@@ -1215,6 +1211,12 @@ impl VM {
             Opcode::SELFDESTRUCT => self.op_selfdestruct(current_call_frame),
 
             _ => Err(VMError::OpcodeNotFound),
+        };
+
+        if opcode != Opcode::JUMP && opcode != Opcode::JUMPI {
+            current_call_frame.increment_pc()?;
         }
+
+        op_result
     }
 }
