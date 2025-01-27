@@ -4,8 +4,8 @@ use super::{
     },
     lookup::Discv4LookupHandler,
     messages::{
-        ENRRequestMessage, ENRResponseMessage, FindNodeMessage, Message, NeighborsMessage, Packet,
-        PingMessage, PongMessage,
+        ENRRequestMessage, ENRResponseMessage, Message, NeighborsMessage, Packet, PingMessage,
+        PongMessage,
     },
 };
 use crate::{
