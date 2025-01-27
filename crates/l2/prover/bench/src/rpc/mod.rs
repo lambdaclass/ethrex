@@ -17,8 +17,6 @@ use serde_json::json;
 
 use lazy_static::lazy_static;
 
-use crate::constants::RPC_TIMEOUT;
-
 pub mod db;
 
 pub type NodeRLP = Vec<u8>;
