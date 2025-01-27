@@ -7,7 +7,7 @@ use tokei::{Config, Language, LanguageType, Languages};
 mod report;
 
 fn count_crates_loc(crates_path: &PathBuf, config: &Config) -> Vec<(String, usize)> {
-    let nested_dirs = vec!["networking"];
+    let nested_dirs = ["networking"];
 
     let top_level_crate_dirs = std::fs::read_dir(crates_path)
         .unwrap()
