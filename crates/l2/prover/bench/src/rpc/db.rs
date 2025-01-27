@@ -257,16 +257,24 @@ impl ToExecDB for RpcDB {
             .and_then(|account| account.account_proof.first().cloned());
         let other_state_nodes = rpc_accounts
             .values()
-            .flat_map(|(account)| account.account_proof.clone())
+            .flat_map(|(account)| account.account_proof.iter().skip(1).cloned())
             .collect();
         let state_proofs = (state_root, other_state_nodes);
 
         let storage_proofs = rpc_accounts
             .iter()
             .map(|(address, account)| {
-                let proofs: Vec<NodeRLP> =
-                    account.storage_proofs.iter().flatten().cloned().collect();
-                (*address, (proofs.first().cloned(), proofs))
+                let storage_root = account
+                    .storage_proofs
+                    .first()
+                    .and_then(|nodes| nodes.first())
+                    .cloned();
+                let other_storage_nodes: Vec<NodeRLP> = account
+                    .storage_proofs
+                    .iter()
+                    .flat_map(|proofs| proofs.iter().skip(1).cloned())
+                    .collect();
+                (*address, (storage_root, other_storage_nodes))
             })
             .collect();
 
