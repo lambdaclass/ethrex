@@ -17,7 +17,7 @@ use ethrex_rlp::{
     structs::{Decoder, Encoder},
 };
 
-use crate::types::{AccessList, AccessListItem, AuthorizationList, BlobsBundle};
+use crate::types::{AccessList, AuthorizationList, BlobsBundle};
 
 // The `#[serde(untagged)]` attribute allows the `Transaction` enum to be serialized without
 // a tag indicating the variant type. This means that Serde will serialize the enum's variants
@@ -393,7 +393,7 @@ impl RLPDecode for Transaction {
                 // EIP4844
                 0x3 => EIP4844Transaction::decode_unfinished(tx_encoding)
                     .map(|(tx, rem)| (Transaction::EIP4844Transaction(tx), rem)),
-                // EIP1559
+                // EIP7702
                 0x4 => EIP7702Transaction::decode_unfinished(tx_encoding)
                     .map(|(tx, rem)| (Transaction::EIP7702Transaction(tx), rem)),
                 // PriviligedL2
@@ -1363,6 +1363,7 @@ impl TxType {
             0x01 => Some(Self::EIP2930),
             0x02 => Some(Self::EIP1559),
             0x03 => Some(Self::EIP4844),
+            0x04 => Some(Self::EIP7702),
             0x7e => Some(Self::Privileged),
             _ => None,
         }
@@ -1922,18 +1923,18 @@ mod serde_impl {
                             serde::de::Error::custom(format!("Couldn't Deserialize EIP1559 {e}"))
                         })
                 }
-                TxType::EIP7702 => {
-                    EIP7702Transaction::deserialize(serde::de::value::MapDeserializer::new(iter))
-                        .map(Transaction::EIP7702Transaction)
-                        .map_err(|e| {
-                            serde::de::Error::custom(format!("Couldn't Deserialize EIP7702 {e}"))
-                        })
-                }
                 TxType::EIP4844 => {
                     EIP4844Transaction::deserialize(serde::de::value::MapDeserializer::new(iter))
                         .map(Transaction::EIP4844Transaction)
                         .map_err(|e| {
                             serde::de::Error::custom(format!("Couldn't Deserialize EIP4844 {e}"))
+                        })
+                }
+                TxType::EIP7702 => {
+                    EIP7702Transaction::deserialize(serde::de::value::MapDeserializer::new(iter))
+                        .map(Transaction::EIP7702Transaction)
+                        .map_err(|e| {
+                            serde::de::Error::custom(format!("Couldn't Deserialize EIP7702 {e}"))
                         })
                 }
                 TxType::Privileged => PrivilegedL2Transaction::deserialize(
@@ -2110,7 +2111,7 @@ mod serde_impl {
         }
     }
 
-    impl<'de> Deserialize<'de> for EIP7702Transaction {
+    impl<'de> Deserialize<'de> for EIP1559Transaction {
         fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
         where
             D: serde::Deserializer<'de>,
@@ -2144,7 +2145,7 @@ mod serde_impl {
             )
             .map_err(serde::de::Error::custom)?;
 
-            Ok(EIP7702Transaction {
+            Ok(EIP1559Transaction {
                 chain_id: serde_json::from_value::<U256>(
                     map.remove("chainId")
                         .ok_or_else(|| serde::de::Error::missing_field("chainId"))?,
@@ -2176,11 +2177,6 @@ mod serde_impl {
                 access_list: serde_json::from_value(
                     map.remove("accessList")
                         .ok_or_else(|| serde::de::Error::missing_field("accessList"))?,
-                )
-                .map_err(serde::de::Error::custom)?,
-                authorization_list: serde_json::from_value(
-                    map.remove("authorizationList")
-                        .ok_or_else(|| serde::de::Error::missing_field("authorizationList"))?,
                 )
                 .map_err(serde::de::Error::custom)?,
                 signature_y_parity: u8::from_str_radix(
@@ -2302,6 +2298,96 @@ mod serde_impl {
                 signature_y_parity,
                 signature_r,
                 signature_s,
+            })
+        }
+    }
+
+    impl<'de> Deserialize<'de> for EIP7702Transaction {
+        fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+        where
+            D: serde::Deserializer<'de>,
+        {
+            let mut map = <HashMap<String, serde_json::Value>>::deserialize(deserializer)?;
+            let nonce = serde_json::from_value::<U256>(
+                map.remove("nonce")
+                    .ok_or_else(|| serde::de::Error::missing_field("nonce"))?,
+            )
+            .map_err(serde::de::Error::custom)?
+            .as_u64();
+            let to = serde_json::from_value(
+                map.remove("to")
+                    .ok_or_else(|| serde::de::Error::missing_field("to"))?,
+            )
+            .map_err(serde::de::Error::custom)?;
+            let value = serde_json::from_value(
+                map.remove("value")
+                    .ok_or_else(|| serde::de::Error::missing_field("value"))?,
+            )
+            .map_err(serde::de::Error::custom)?;
+            let data = deserialize_input_field(&mut map).map_err(serde::de::Error::custom)?;
+            let r = serde_json::from_value(
+                map.remove("r")
+                    .ok_or_else(|| serde::de::Error::missing_field("r"))?,
+            )
+            .map_err(serde::de::Error::custom)?;
+            let s = serde_json::from_value(
+                map.remove("s")
+                    .ok_or_else(|| serde::de::Error::missing_field("s"))?,
+            )
+            .map_err(serde::de::Error::custom)?;
+
+            Ok(EIP7702Transaction {
+                chain_id: serde_json::from_value::<U256>(
+                    map.remove("chainId")
+                        .ok_or_else(|| serde::de::Error::missing_field("chainId"))?,
+                )
+                .map_err(serde::de::Error::custom)?
+                .as_u64(),
+                nonce,
+                max_priority_fee_per_gas: serde_json::from_value::<U256>(
+                    map.remove("maxPriorityFeePerGas")
+                        .ok_or_else(|| serde::de::Error::missing_field("maxPriorityFeePerGas"))?,
+                )
+                .map_err(serde::de::Error::custom)?
+                .as_u64(),
+                max_fee_per_gas: serde_json::from_value::<U256>(
+                    map.remove("maxFeePerGas")
+                        .ok_or_else(|| serde::de::Error::missing_field("maxFeePerGas"))?,
+                )
+                .map_err(serde::de::Error::custom)?
+                .as_u64(),
+                gas_limit: serde_json::from_value::<U256>(
+                    map.remove("gas")
+                        .ok_or_else(|| serde::de::Error::missing_field("gas"))?,
+                )
+                .map_err(serde::de::Error::custom)?
+                .as_u64(),
+                to,
+                value,
+                data,
+                access_list: serde_json::from_value(
+                    map.remove("accessList")
+                        .ok_or_else(|| serde::de::Error::missing_field("accessList"))?,
+                )
+                .map_err(serde::de::Error::custom)?,
+                authorization_list: serde_json::from_value(
+                    map.remove("authorizationList")
+                        .ok_or_else(|| serde::de::Error::missing_field("authorizationList"))?,
+                )
+                .map_err(serde::de::Error::custom)?,
+                signature_y_parity: u8::from_str_radix(
+                    serde_json::from_value::<String>(
+                        map.remove("yParity")
+                            .ok_or_else(|| serde::de::Error::missing_field("yParity"))?,
+                    )
+                    .map_err(serde::de::Error::custom)?
+                    .trim_start_matches("0x"),
+                    16,
+                )
+                .map_err(serde::de::Error::custom)?
+                    != 0,
+                signature_r: r,
+                signature_s: s,
             })
         }
     }
@@ -2993,10 +3079,12 @@ mod tests {
         let tx_to_serialize = Transaction::EIP7702Transaction(eip7702.clone());
         let serialized = serde_json::to_string(&tx_to_serialize).expect("Failed to serialize");
 
-        println!("{serialized:?}");
+        println!("{serialized:#?}");
 
         let deserialized_tx: Transaction =
             serde_json::from_str(&serialized).expect("Failed to deserialize");
+
+        println!("{deserialized_tx:#?}");
 
         assert!(deserialized_tx.tx_type() == TxType::EIP7702);
 
