@@ -29,7 +29,7 @@ use tokio::{
         broadcast::{self, Sender},
         Mutex,
     },
-    task::Id,
+    task::{self, Id, JoinHandle},
 };
 use tokio_util::task::TaskTracker;
 use tracing::{debug, error, info};
@@ -257,7 +257,8 @@ async fn discover_peers_server(context: P2PContext, udp_socket: Arc<UdpSocket>) 
                                 let signer = context.signer.clone();
                                 let storage = context.storage.clone();
                                 let broadcaster = context.broadcast.clone();
-                                context.tracker.spawn(async move {
+
+                                let connection_handle = context.tracker.spawn(async move {
                                     handle_peer_as_initiator(
                                         signer,
                                         &msg_buf,
@@ -268,6 +269,7 @@ async fn discover_peers_server(context: P2PContext, udp_socket: Arc<UdpSocket>) 
                                     )
                                     .await
                                 });
+                                monitor_connection(context.clone(), connection_handle);
                             } else {
                                 debug!(
                                     "Discarding pong as the hash did not match the last corresponding ping"
@@ -925,10 +927,25 @@ async fn serve_p2p_requests(context: P2PContext) {
             }
         };
 
-        context
-            .tracker
-            .spawn(handle_peer_as_receiver(context.clone(), peer_addr, stream));
+        let handle =
+            context
+                .tracker
+                .spawn(handle_peer_as_receiver(context.clone(), peer_addr, stream));
+
+        monitor_connection(context.clone(), handle);
     }
+}
+
+/// Waits until a conection task is finished and marks it as disconnected in the kademlia table.
+fn monitor_connection(context: P2PContext, connection_handle: JoinHandle<()>) {
+    task::spawn(async move {
+        _ = connection_handle.await;
+        context
+            .table
+            .lock()
+            .await
+            .node_disconnected(context.local_node.node_id);
+    });
 }
 
 fn listener(tcp_addr: SocketAddr) -> Result<TcpListener, io::Error> {
@@ -938,6 +955,12 @@ fn listener(tcp_addr: SocketAddr) -> Result<TcpListener, io::Error> {
 }
 
 async fn handle_peer_as_receiver(context: P2PContext, peer_addr: SocketAddr, stream: TcpStream) {
+    context
+        .table
+        .lock()
+        .await
+        .node_connected(context.local_node.node_id);
+
     let mut conn =
         RLPxConnection::receiver(context.signer, stream, context.storage, context.broadcast);
     conn.start_peer(peer_addr, context.table).await;
@@ -962,8 +985,10 @@ async fn handle_peer_as_initiator(
             return;
         }
     };
+
     match RLPxConnection::initiator(signer, msg, stream, storage, connection_broadcast) {
         Ok(mut conn) => {
+            table.lock().await.node_connected(node.node_id);
             conn.start_peer(SocketAddr::new(node.ip, node.udp_port), table)
                 .await
         }

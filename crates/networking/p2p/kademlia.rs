@@ -191,6 +191,24 @@ impl KademliaTable {
         peer.revalidation = Some(false);
     }
 
+    /// Marks a node as connected. Should be called when the TCP connection starts.
+    pub fn node_connected(&mut self, node_id: H512) {
+        let Some(peer) = self.get_by_node_id_mut(node_id) else {
+            return;
+        };
+
+        peer.set_is_connected(true);
+    }
+
+    /// Marks a node as diconnected. Should be called when the TCP connection stops.
+    pub fn node_disconnected(&mut self, node_id: H512) {
+        let Some(peer) = self.get_by_node_id_mut(node_id) else {
+            return;
+        };
+
+        peer.set_is_connected(false);
+    }
+
     /// ## Returns
     /// The a vector of length of the provided `limit` of the peers who have the highest `last_ping` timestamp,
     /// that is, those peers that were pinged least recently. Careful with the `limit` param, as a
@@ -371,6 +389,9 @@ pub struct PeerData {
     pub revalidation: Option<bool>,
     /// communication channels between the peer data and its active connection
     pub channels: Option<PeerChannels>,
+    /// Starts as false when a node is added. True when a connection is active. False when the
+    /// connection finishes or breaks. Useful to avoid connecting multiple times to a single peer.
+    pub is_connected: bool,
 }
 
 impl PeerData {
@@ -394,6 +415,7 @@ impl PeerData {
             revalidation: None,
             channels: None,
             supported_capabilities: vec![],
+            is_connected: false,
         }
     }
 
@@ -412,6 +434,10 @@ impl PeerData {
 
     pub fn decrement_liveness(&mut self) {
         self.liveness /= 3;
+    }
+
+    pub fn set_is_connected(&mut self, is_connected: bool) {
+        self.is_connected = is_connected;
     }
 }
 
