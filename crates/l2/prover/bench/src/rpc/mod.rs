@@ -1,6 +1,7 @@
-use std::collections::HashMap;
 use std::time::Duration;
+use std::{collections::HashMap, future::Future};
 
+use again::{RetryPolicy, Task};
 use tokio::time::timeout;
 
 use bytes::Bytes;
@@ -15,6 +16,8 @@ use serde::Deserialize;
 use serde_json::json;
 
 use lazy_static::lazy_static;
+
+use crate::constants::RPC_TIMEOUT;
 
 pub mod db;
 
@@ -41,15 +44,12 @@ pub async fn get_latest_block_number(rpc_url: &str) -> Result<usize, String> {
         "params": []
     });
 
-    let response = again::retry(|| {
-        timeout(
-            Duration::from_secs(15),
-            CLIENT.post(rpc_url).json(request).send(),
-        )
-    })
-    .await
-    .map_err(|_| "request timeout")?
-    .map_err(|err| err.to_string())?;
+    let response = CLIENT
+        .post(rpc_url)
+        .json(request)
+        .send()
+        .await
+        .map_err(|err| err.to_string())?;
 
     response
         .json::<serde_json::Value>()
@@ -76,15 +76,12 @@ pub async fn get_block(rpc_url: &str, block_number: usize) -> Result<Block, Stri
         "params": [block_number]
     });
 
-    let response = again::retry(|| {
-        timeout(
-            Duration::from_secs(15),
-            CLIENT.post(rpc_url).json(request).send(),
-        )
-    })
-    .await
-    .map_err(|_| "request timeout")?
-    .map_err(|err| err.to_string())?;
+    let response = CLIENT
+        .post(rpc_url)
+        .json(request)
+        .send()
+        .await
+        .map_err(|err| err.to_string())?;
 
     response
         .json::<serde_json::Value>()
@@ -120,15 +117,12 @@ pub async fn get_account(
                "params":[address_str, storage_keys, block_number_str]
            }
     );
-    let response = again::retry(|| {
-        timeout(
-            Duration::from_secs(15),
-            CLIENT.post(rpc_url).json(request).send(),
-        )
-    })
-    .await
-    .map_err(|_| "request timeout")?
-    .map_err(|err| err.to_string())?;
+    let response = CLIENT
+        .post(rpc_url)
+        .json(request)
+        .send()
+        .await
+        .map_err(|err| err.to_string())?;
 
     #[derive(Deserialize)]
     #[serde(rename_all = "camelCase")]
@@ -233,21 +227,26 @@ pub async fn get_storage(
                "params":[address_str, storage_key, block_number_str]
            }
     );
-    let response = again::retry(|| {
-        timeout(
-            Duration::from_secs(15),
-            CLIENT.post(rpc_url).json(request).send(),
-        )
-    })
-    .await
-    .map_err(|_| "request timeout")?
-    .map_err(|err| err.to_string())?;
+    let response = CLIENT
+        .post(rpc_url)
+        .json(request)
+        .send()
+        .await
+        .map_err(|err| err.to_string())?;
 
     response
         .json::<serde_json::Value>()
         .await
         .map_err(|err| err.to_string())
         .and_then(get_result)
+}
+
+pub async fn retry<F, I>(mut fut: F) -> Result<I, String>
+where
+    F: Task<Item = I, Error = String>,
+{
+    let policy = RetryPolicy::exponential(Duration::from_secs(1)).with_max_retries(100);
+    policy.retry(|| fut.call()).await
 }
 
 async fn get_code(rpc_url: &str, block_number: usize, address: &Address) -> Result<Bytes, String> {
@@ -260,15 +259,12 @@ async fn get_code(rpc_url: &str, block_number: usize, address: &Address) -> Resu
         "params": [address, block_number]
     });
 
-    let response = again::retry(|| {
-        timeout(
-            Duration::from_secs(15),
-            CLIENT.post(rpc_url).json(request).send(),
-        )
-    })
-    .await
-    .map_err(|_| "request timeout")?
-    .map_err(|err| err.to_string())?;
+    let response = CLIENT
+        .post(rpc_url)
+        .json(request)
+        .send()
+        .await
+        .map_err(|err| err.to_string())?;
 
     response
         .json::<serde_json::Value>()

@@ -2,7 +2,7 @@ use std::collections::hash_map::Entry;
 use std::collections::HashMap;
 
 use crate::constants::{CANCUN_CONFIG, RPC_RATE_LIMIT};
-use crate::rpc::{get_account, get_block, get_storage};
+use crate::rpc::{get_account, get_block, get_storage, retry};
 
 use ethrex_core::types::AccountInfo;
 use ethrex_core::{
@@ -87,7 +87,8 @@ impl RpcDB {
             let futures = chunk.iter().map(|(address, storage_keys)| async move {
                 Ok((
                     *address,
-                    get_account(&self.rpc_url, self.block_number, address, storage_keys).await?,
+                    retry(|| get_account(&self.rpc_url, self.block_number, address, storage_keys))
+                        .await?,
                 ))
             });
 
