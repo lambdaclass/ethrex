@@ -313,11 +313,11 @@ impl KademliaTable {
             peer.channels.is_some() && peer.supported_capabilities.contains(&capability)
         };
         loop {
-            if let Some(channels) = self
+            if let Some(peer) = self
                 .get_random_peer_with_filter(&filter)
-                .and_then(|peer| peer.channels.clone())
             {
-                return channels;
+                info!("Selected peer: {}", peer.node.node_id);
+                return peer.channels.clone().unwrap();
             }
             info!("[Sync] No peers available, retrying in 10 sec");
             // This is the unlikely case where we just started the node and don't have peers, wait a bit and try again
