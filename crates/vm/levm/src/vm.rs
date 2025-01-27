@@ -297,36 +297,9 @@ impl VM {
             match op_result {
                 Ok(OpcodeSuccess::Continue) => {}
                 Ok(OpcodeSuccess::Result(reason)) => {
-                    return self.handle_opcode_result(reason, current_call_frame, backup);
+                    return self.handle_opcode_result(reason, current_call_frame, backup)
                 }
-                Err(error) => {
-                    self.call_frames.push(current_call_frame.clone());
-
-                    if error.is_internal() {
-                        return Err(error);
-                    }
-
-                    // Unless error is from Revert opcode, all gas is consumed
-                    if error != VMError::RevertOpcode {
-                        let left_gas = current_call_frame
-                            .gas_limit
-                            .saturating_sub(current_call_frame.gas_used);
-                        current_call_frame.gas_used =
-                            current_call_frame.gas_used.saturating_add(left_gas);
-                    }
-
-                    self.restore_state(backup);
-
-                    return Ok(TransactionReport {
-                        result: TxResult::Revert(error),
-                        new_state: HashMap::default(),
-                        gas_used: current_call_frame.gas_used,
-                        gas_refunded: self.env.refunded_gas,
-                        output: std::mem::take(&mut current_call_frame.output), // Bytes::new() if error is not RevertOpcode
-                        logs: std::mem::take(&mut current_call_frame.logs),
-                        created_address: None,
-                    });
-                }
+                Err(error) => return self.handle_opcode_error(error, current_call_frame, backup),
             }
         }
     }
@@ -1234,6 +1207,39 @@ impl VM {
             gas_used: current_call_frame.gas_used,
             gas_refunded: self.env.refunded_gas,
             output: std::mem::take(&mut current_call_frame.output),
+            logs: std::mem::take(&mut current_call_frame.logs),
+            created_address: None,
+        });
+    }
+
+    fn handle_opcode_error(
+        &mut self,
+        error: VMError,
+        current_call_frame: &mut CallFrame,
+        backup: Backup,
+    ) -> Result<TransactionReport, VMError> {
+        self.call_frames.push(current_call_frame.clone());
+
+        if error.is_internal() {
+            return Err(error);
+        }
+
+        // Unless error is from Revert opcode, all gas is consumed
+        if error != VMError::RevertOpcode {
+            let left_gas = current_call_frame
+                .gas_limit
+                .saturating_sub(current_call_frame.gas_used);
+            current_call_frame.gas_used = current_call_frame.gas_used.saturating_add(left_gas);
+        }
+
+        self.restore_state(backup);
+
+        return Ok(TransactionReport {
+            result: TxResult::Revert(error),
+            new_state: HashMap::default(),
+            gas_used: current_call_frame.gas_used,
+            gas_refunded: self.env.refunded_gas,
+            output: std::mem::take(&mut current_call_frame.output), // Bytes::new() if error is not RevertOpcode
             logs: std::mem::take(&mut current_call_frame.logs),
             created_address: None,
         });
