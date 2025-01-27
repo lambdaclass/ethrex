@@ -199,7 +199,7 @@ run-hive-debug-levm: build-image-levm ## 🐝 Run Hive with LEVM in debug mode
 	cd ../../../hive && ./hive --sim ethereum/sync --client ethrex --sim.limit "$(TEST_PATTERN)" --docker.output || exit 0
 	cargo run --release -p hive_report
 
-SUBDIRS := $(shell find $(SPECTEST_VECTORS_DIR)/GeneralStateTests -maxdepth 1 -type d ! -path "$(SPECTEST_VECTORS_DIR)/GeneralStateTests" -exec basename {} \;)
+SUBDIRS := $(shell find $(VECTORS_DIR)/GeneralStateTests -maxdepth 1 -type d ! -path "$(VECTORS_DIR)/GeneralStateTests" -exec basename {} \;)
 
 flamegraph-run-ef-tests: ## 🔥 Run EF tests and create a flamegraph per test folder
 	cd ../../../cmd/ef_tests/levm &&\
