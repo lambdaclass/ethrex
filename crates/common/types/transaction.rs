@@ -1555,6 +1555,7 @@ mod canonic_encoding {
 // This is used for RPC messaging and passing data into a RISC-V zkVM
 
 mod serde_impl {
+    use serde::de::Error;
     use serde::Deserialize;
     use serde_json::Value;
     use std::{collections::HashMap, str::FromStr};
@@ -1983,64 +1984,38 @@ mod serde_impl {
         }
     }
 
+    fn deserialize_field<'de, T, D>(
+        map: &mut HashMap<String, serde_json::Value>,
+        key: &str,
+    ) -> Result<T, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+        T: serde::de::DeserializeOwned,
+    {
+        map.remove(key)
+            .ok_or_else(|| D::Error::custom(format!("Missing field: {}", key)))
+            .and_then(|value| {
+                serde_json::from_value(value).map_err(|err| D::Error::custom(err.to_string()))
+            })
+    }
+
     impl<'de> Deserialize<'de> for LegacyTransaction {
         fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
         where
             D: serde::Deserializer<'de>,
         {
             let mut map = <HashMap<String, serde_json::Value>>::deserialize(deserializer)?;
-            let nonce = serde_json::from_value::<U256>(
-                map.remove("nonce")
-                    .ok_or_else(|| serde::de::Error::missing_field("nonce"))?,
-            )
-            .map_err(serde::de::Error::custom)?
-            .as_u64();
-            let to = serde_json::from_value(
-                map.remove("to")
-                    .ok_or_else(|| serde::de::Error::missing_field("to"))?,
-            )
-            .map_err(serde::de::Error::custom)?;
-            let value = serde_json::from_value(
-                map.remove("value")
-                    .ok_or_else(|| serde::de::Error::missing_field("value"))?,
-            )
-            .map_err(serde::de::Error::custom)?;
-            let data = deserialize_input_field(&mut map).map_err(serde::de::Error::custom)?;
-            let r = serde_json::from_value(
-                map.remove("r")
-                    .ok_or_else(|| serde::de::Error::missing_field("r"))?,
-            )
-            .map_err(serde::de::Error::custom)?;
-            let s = serde_json::from_value(
-                map.remove("s")
-                    .ok_or_else(|| serde::de::Error::missing_field("s"))?,
-            )
-            .map_err(serde::de::Error::custom)?;
 
             Ok(LegacyTransaction {
-                nonce,
-                gas_price: serde_json::from_value::<U256>(
-                    map.remove("gasPrice")
-                        .ok_or_else(|| serde::de::Error::missing_field("gasPrice"))?,
-                )
-                .map_err(serde::de::Error::custom)?
-                .as_u64(),
-                gas: serde_json::from_value::<U256>(
-                    map.remove("gas")
-                        .ok_or_else(|| serde::de::Error::missing_field("gas"))?,
-                )
-                .map_err(serde::de::Error::custom)?
-                .as_u64(),
-                to,
-                value,
-                data,
-                v: serde_json::from_value(
-                    map.remove("v")
-                        .ok_or_else(|| serde::de::Error::missing_field("v"))?,
-                )
-                .map_err(serde::de::Error::custom)?,
-                r,
-                s,
+                nonce: deserialize_field::<U256, D>(&mut map, "nonce")?.as_u64(),
+                gas_price: deserialize_field::<U256, D>(&mut map, "gasPrice")?.as_u64(),
+                gas: deserialize_field::<U256, D>(&mut map, "gas")?.as_u64(),
+                to: deserialize_field::<TxKind, D>(&mut map, "to")?,
+                value: deserialize_field::<U256, D>(&mut map, "value")?,
+                data: deserialize_input_field(&mut map).map_err(serde::de::Error::custom)?,
+                v: deserialize_field::<U256, D>(&mut map, "v")?,
+                r: deserialize_field::<U256, D>(&mut map, "r")?,
+                s: deserialize_field::<U256, D>(&mut map, "s")?,
             })
         }
     }
@@ -2051,78 +2026,27 @@ mod serde_impl {
             D: serde::Deserializer<'de>,
         {
             let mut map = <HashMap<String, serde_json::Value>>::deserialize(deserializer)?;
-            let nonce = serde_json::from_value::<U256>(
-                map.remove("nonce")
-                    .ok_or_else(|| serde::de::Error::missing_field("nonce"))?,
-            )
-            .map_err(serde::de::Error::custom)?
-            .as_u64();
-            let to = serde_json::from_value(
-                map.remove("to")
-                    .ok_or_else(|| serde::de::Error::missing_field("to"))?,
-            )
-            .map_err(serde::de::Error::custom)?;
-            let value = serde_json::from_value(
-                map.remove("value")
-                    .ok_or_else(|| serde::de::Error::missing_field("value"))?,
-            )
-            .map_err(serde::de::Error::custom)?;
-            let data = deserialize_input_field(&mut map).map_err(serde::de::Error::custom)?;
-            let r = serde_json::from_value(
-                map.remove("r")
-                    .ok_or_else(|| serde::de::Error::missing_field("r"))?,
-            )
-            .map_err(serde::de::Error::custom)?;
-            let s = serde_json::from_value(
-                map.remove("s")
-                    .ok_or_else(|| serde::de::Error::missing_field("s"))?,
-            )
-            .map_err(serde::de::Error::custom)?;
 
             Ok(EIP2930Transaction {
-                chain_id: serde_json::from_value::<U256>(
-                    map.remove("chainId")
-                        .ok_or_else(|| serde::de::Error::missing_field("chainId"))?,
-                )
-                .map_err(serde::de::Error::custom)?
-                .as_u64(),
-                nonce,
-                gas_price: serde_json::from_value::<U256>(
-                    map.remove("gasPrice")
-                        .ok_or_else(|| serde::de::Error::missing_field("gasPrice"))?,
-                )
-                .map_err(serde::de::Error::custom)?
-                .as_u64(),
-                gas_limit: serde_json::from_value::<U256>(
-                    map.remove("gas")
-                        .ok_or_else(|| serde::de::Error::missing_field("gas"))?,
-                )
-                .map_err(serde::de::Error::custom)?
-                .as_u64(),
-                to,
-                value,
-                data,
-                access_list: serde_json::from_value::<Vec<AccessListEntry>>(
-                    map.remove("accessList")
-                        .ok_or_else(|| serde::de::Error::missing_field("accessList"))?,
-                )
-                .map_err(serde::de::Error::custom)?
-                .into_iter()
-                .map(|v| (v.address, v.storage_keys))
-                .collect::<Vec<_>>(),
+                chain_id: deserialize_field::<U256, D>(&mut map, "chainId")?.as_u64(),
+                nonce: deserialize_field::<U256, D>(&mut map, "nonce")?.as_u64(),
+                gas_price: deserialize_field::<U256, D>(&mut map, "gasPrice")?.as_u64(),
+                gas_limit: deserialize_field::<U256, D>(&mut map, "gas")?.as_u64(),
+                to: deserialize_field::<TxKind, D>(&mut map, "to")?,
+                value: deserialize_field::<U256, D>(&mut map, "value")?,
+                data: deserialize_input_field(&mut map).map_err(serde::de::Error::custom)?,
+                access_list: deserialize_field::<Vec<AccessListEntry>, D>(&mut map, "accessList")?
+                    .into_iter()
+                    .map(|v| (v.address, v.storage_keys))
+                    .collect::<Vec<_>>(),
                 signature_y_parity: u8::from_str_radix(
-                    serde_json::from_value::<String>(
-                        map.remove("yParity")
-                            .ok_or_else(|| serde::de::Error::missing_field("yParity"))?,
-                    )
-                    .map_err(serde::de::Error::custom)?
-                    .trim_start_matches("0x"),
+                    deserialize_field::<String, D>(&mut map, "yParity")?.trim_start_matches("0x"),
                     16,
                 )
                 .map_err(serde::de::Error::custom)?
                     != 0,
-                signature_r: r,
-                signature_s: s,
+                signature_r: deserialize_field::<U256, D>(&mut map, "r")?,
+                signature_s: deserialize_field::<U256, D>(&mut map, "s")?,
             })
         }
     }
@@ -2133,84 +2057,32 @@ mod serde_impl {
             D: serde::Deserializer<'de>,
         {
             let mut map = <HashMap<String, serde_json::Value>>::deserialize(deserializer)?;
-            let nonce = serde_json::from_value::<U256>(
-                map.remove("nonce")
-                    .ok_or_else(|| serde::de::Error::missing_field("nonce"))?,
-            )
-            .map_err(serde::de::Error::custom)?
-            .as_u64();
-            let to = serde_json::from_value(
-                map.remove("to")
-                    .ok_or_else(|| serde::de::Error::missing_field("to"))?,
-            )
-            .map_err(serde::de::Error::custom)?;
-            let value = serde_json::from_value(
-                map.remove("value")
-                    .ok_or_else(|| serde::de::Error::missing_field("value"))?,
-            )
-            .map_err(serde::de::Error::custom)?;
-            let data = deserialize_input_field(&mut map).map_err(serde::de::Error::custom)?;
-            let r = serde_json::from_value(
-                map.remove("r")
-                    .ok_or_else(|| serde::de::Error::missing_field("r"))?,
-            )
-            .map_err(serde::de::Error::custom)?;
-            let s = serde_json::from_value(
-                map.remove("s")
-                    .ok_or_else(|| serde::de::Error::missing_field("s"))?,
-            )
-            .map_err(serde::de::Error::custom)?;
 
             Ok(EIP1559Transaction {
-                chain_id: serde_json::from_value::<U256>(
-                    map.remove("chainId")
-                        .ok_or_else(|| serde::de::Error::missing_field("chainId"))?,
-                )
-                .map_err(serde::de::Error::custom)?
+                chain_id: deserialize_field::<U256, D>(&mut map, "chainId")?.as_u64(),
+                nonce: deserialize_field::<U256, D>(&mut map, "nonce")?.as_u64(),
+                max_priority_fee_per_gas: deserialize_field::<U256, D>(
+                    &mut map,
+                    "maxPriorityFeePerGas",
+                )?
                 .as_u64(),
-                nonce,
-                max_priority_fee_per_gas: serde_json::from_value::<U256>(
-                    map.remove("maxPriorityFeePerGas")
-                        .ok_or_else(|| serde::de::Error::missing_field("maxPriorityFeePerGas"))?,
-                )
-                .map_err(serde::de::Error::custom)?
-                .as_u64(),
-                max_fee_per_gas: serde_json::from_value::<U256>(
-                    map.remove("maxFeePerGas")
-                        .ok_or_else(|| serde::de::Error::missing_field("maxFeePerGas"))?,
-                )
-                .map_err(serde::de::Error::custom)?
-                .as_u64(),
-                gas_limit: serde_json::from_value::<U256>(
-                    map.remove("gas")
-                        .ok_or_else(|| serde::de::Error::missing_field("gas"))?,
-                )
-                .map_err(serde::de::Error::custom)?
-                .as_u64(),
-                to,
-                value,
-                data,
-                access_list: serde_json::from_value::<Vec<AccessListEntry>>(
-                    map.remove("accessList")
-                        .ok_or_else(|| serde::de::Error::missing_field("accessList"))?,
-                )
-                .map_err(serde::de::Error::custom)?
-                .into_iter()
-                .map(|v| (v.address, v.storage_keys))
-                .collect::<Vec<_>>(),
+                max_fee_per_gas: deserialize_field::<U256, D>(&mut map, "maxFeePerGas")?.as_u64(),
+                gas_limit: deserialize_field::<U256, D>(&mut map, "gas")?.as_u64(),
+                to: deserialize_field::<TxKind, D>(&mut map, "to")?,
+                value: deserialize_field::<U256, D>(&mut map, "value")?,
+                data: deserialize_input_field(&mut map).map_err(serde::de::Error::custom)?,
+                access_list: deserialize_field::<Vec<AccessListEntry>, D>(&mut map, "accessList")?
+                    .into_iter()
+                    .map(|v| (v.address, v.storage_keys))
+                    .collect::<Vec<_>>(),
                 signature_y_parity: u8::from_str_radix(
-                    serde_json::from_value::<String>(
-                        map.remove("yParity")
-                            .ok_or_else(|| serde::de::Error::missing_field("yParity"))?,
-                    )
-                    .map_err(serde::de::Error::custom)?
-                    .trim_start_matches("0x"),
+                    deserialize_field::<String, D>(&mut map, "yParity")?.trim_start_matches("0x"),
                     16,
                 )
                 .map_err(serde::de::Error::custom)?
                     != 0,
-                signature_r: r,
-                signature_s: s,
+                signature_r: deserialize_field::<U256, D>(&mut map, "r")?,
+                signature_s: deserialize_field::<U256, D>(&mut map, "s")?,
             })
         }
     }
@@ -2221,102 +2093,37 @@ mod serde_impl {
             D: serde::Deserializer<'de>,
         {
             let mut map = <HashMap<String, serde_json::Value>>::deserialize(deserializer)?;
-            let chain_id = serde_json::from_value::<U256>(
-                map.remove("chainId")
-                    .ok_or_else(|| serde::de::Error::missing_field("chainId"))?,
-            )
-            .map_err(serde::de::Error::custom)?
-            .as_u64();
-            let nonce = serde_json::from_value::<U256>(
-                map.remove("nonce")
-                    .ok_or_else(|| serde::de::Error::missing_field("nonce"))?,
-            )
-            .map_err(serde::de::Error::custom)?
-            .as_u64();
-            let max_priority_fee_per_gas = serde_json::from_value::<U256>(
-                map.remove("maxPriorityFeePerGas")
-                    .ok_or_else(|| serde::de::Error::missing_field("maxPriorityFeePerGas"))?,
-            )
-            .map_err(serde::de::Error::custom)?
-            .as_u64();
-            let max_fee_per_gas = serde_json::from_value::<U256>(
-                map.remove("maxFeePerGas")
-                    .ok_or_else(|| serde::de::Error::missing_field("maxFeePerGas"))?,
-            )
-            .map_err(serde::de::Error::custom)?
-            .as_u64();
-            let gas = serde_json::from_value::<U256>(
-                map.remove("gas")
-                    .ok_or_else(|| serde::de::Error::missing_field("gas"))?,
-            )
-            .map_err(serde::de::Error::custom)?
-            .as_u64();
-            let to = serde_json::from_value(
-                map.remove("to")
-                    .ok_or_else(|| serde::de::Error::missing_field("to"))?,
-            )
-            .map_err(serde::de::Error::custom)?;
-            let value = serde_json::from_value(
-                map.remove("value")
-                    .ok_or_else(|| serde::de::Error::missing_field("value"))?,
-            )
-            .map_err(serde::de::Error::custom)?;
-            let data = deserialize_input_field(&mut map).map_err(serde::de::Error::custom)?;
-            let access_list = serde_json::from_value::<Vec<AccessListEntry>>(
-                map.remove("accessList")
-                    .ok_or_else(|| serde::de::Error::missing_field("accessList"))?,
-            )
-            .map_err(serde::de::Error::custom)?
-            .into_iter()
-            .map(|v| (v.address, v.storage_keys))
-            .collect::<Vec<_>>();
-            let max_fee_per_blob_gas = serde_json::from_value::<U256>(
-                map.remove("maxFeePerBlobGas")
-                    .ok_or_else(|| serde::de::Error::missing_field("maxFeePerBlobGas"))?,
-            )
-            .map_err(serde::de::Error::custom)?;
-            let blob_versioned_hashes = serde_json::from_value(
-                map.remove("blobVersionedHashes")
-                    .ok_or_else(|| serde::de::Error::missing_field("blobVersionedHashes"))?,
-            )
-            .map_err(serde::de::Error::custom)?;
-            let signature_y_parity = u8::from_str_radix(
-                serde_json::from_value::<String>(
-                    map.remove("yParity")
-                        .ok_or_else(|| serde::de::Error::missing_field("yParity"))?,
-                )
-                .map_err(serde::de::Error::custom)?
-                .trim_start_matches("0x"),
-                16,
-            )
-            .map_err(serde::de::Error::custom)?
-                != 0;
-            let signature_r = serde_json::from_value(
-                map.remove("r")
-                    .ok_or_else(|| serde::de::Error::missing_field("r"))?,
-            )
-            .map_err(serde::de::Error::custom)?;
-            let signature_s = serde_json::from_value(
-                map.remove("s")
-                    .ok_or_else(|| serde::de::Error::missing_field("s"))?,
-            )
-            .map_err(serde::de::Error::custom)?;
 
             Ok(EIP4844Transaction {
-                chain_id,
-                nonce,
-                max_priority_fee_per_gas,
-                max_fee_per_gas,
-                gas,
-                to,
-                value,
-                data,
-                access_list,
-                max_fee_per_blob_gas,
-                blob_versioned_hashes,
-                signature_y_parity,
-                signature_r,
-                signature_s,
+                chain_id: deserialize_field::<U256, D>(&mut map, "chainId")?.as_u64(),
+                nonce: deserialize_field::<U256, D>(&mut map, "nonce")?.as_u64(),
+                max_priority_fee_per_gas: deserialize_field::<U256, D>(
+                    &mut map,
+                    "maxPriorityFeePerGas",
+                )?
+                .as_u64(),
+                max_fee_per_gas: deserialize_field::<U256, D>(&mut map, "maxFeePerGas")?.as_u64(),
+                gas: deserialize_field::<U256, D>(&mut map, "gas")?.as_u64(),
+                to: deserialize_field::<Address, D>(&mut map, "to")?,
+                value: deserialize_field::<U256, D>(&mut map, "value")?,
+                data: deserialize_input_field(&mut map).map_err(serde::de::Error::custom)?,
+                access_list: deserialize_field::<Vec<AccessListEntry>, D>(&mut map, "accessList")?
+                    .into_iter()
+                    .map(|v| (v.address, v.storage_keys))
+                    .collect::<Vec<_>>(),
+                max_fee_per_blob_gas: deserialize_field::<U256, D>(&mut map, "maxFeePerBlobGas")?,
+                blob_versioned_hashes: deserialize_field::<Vec<H256>, D>(
+                    &mut map,
+                    "blobVersionedHashes",
+                )?,
+                signature_y_parity: u8::from_str_radix(
+                    deserialize_field::<String, D>(&mut map, "yParity")?.trim_start_matches("0x"),
+                    16,
+                )
+                .map_err(serde::de::Error::custom)?
+                    != 0,
+                signature_r: deserialize_field::<U256, D>(&mut map, "r")?,
+                signature_s: deserialize_field::<U256, D>(&mut map, "s")?,
             })
         }
     }
@@ -2327,92 +2134,39 @@ mod serde_impl {
             D: serde::Deserializer<'de>,
         {
             let mut map = <HashMap<String, serde_json::Value>>::deserialize(deserializer)?;
-            let nonce = serde_json::from_value::<U256>(
-                map.remove("nonce")
-                    .ok_or_else(|| serde::de::Error::missing_field("nonce"))?,
-            )
-            .map_err(serde::de::Error::custom)?
-            .as_u64();
-            let to = serde_json::from_value(
-                map.remove("to")
-                    .ok_or_else(|| serde::de::Error::missing_field("to"))?,
-            )
-            .map_err(serde::de::Error::custom)?;
-            let value = serde_json::from_value(
-                map.remove("value")
-                    .ok_or_else(|| serde::de::Error::missing_field("value"))?,
-            )
-            .map_err(serde::de::Error::custom)?;
-            let data = deserialize_input_field(&mut map).map_err(serde::de::Error::custom)?;
-            let r = serde_json::from_value(
-                map.remove("r")
-                    .ok_or_else(|| serde::de::Error::missing_field("r"))?,
-            )
-            .map_err(serde::de::Error::custom)?;
-            let s = serde_json::from_value(
-                map.remove("s")
-                    .ok_or_else(|| serde::de::Error::missing_field("s"))?,
-            )
-            .map_err(serde::de::Error::custom)?;
 
             Ok(EIP7702Transaction {
-                chain_id: serde_json::from_value::<U256>(
-                    map.remove("chainId")
-                        .ok_or_else(|| serde::de::Error::missing_field("chainId"))?,
-                )
-                .map_err(serde::de::Error::custom)?
+                chain_id: deserialize_field::<U256, D>(&mut map, "chainId")?.as_u64(),
+                nonce: deserialize_field::<U256, D>(&mut map, "nonce")?.as_u64(),
+                max_priority_fee_per_gas: deserialize_field::<U256, D>(
+                    &mut map,
+                    "maxPriorityFeePerGas",
+                )?
                 .as_u64(),
-                nonce,
-                max_priority_fee_per_gas: serde_json::from_value::<U256>(
-                    map.remove("maxPriorityFeePerGas")
-                        .ok_or_else(|| serde::de::Error::missing_field("maxPriorityFeePerGas"))?,
-                )
-                .map_err(serde::de::Error::custom)?
-                .as_u64(),
-                max_fee_per_gas: serde_json::from_value::<U256>(
-                    map.remove("maxFeePerGas")
-                        .ok_or_else(|| serde::de::Error::missing_field("maxFeePerGas"))?,
-                )
-                .map_err(serde::de::Error::custom)?
-                .as_u64(),
-                gas_limit: serde_json::from_value::<U256>(
-                    map.remove("gas")
-                        .ok_or_else(|| serde::de::Error::missing_field("gas"))?,
-                )
-                .map_err(serde::de::Error::custom)?
-                .as_u64(),
-                to,
-                value,
-                data,
-                access_list: serde_json::from_value::<Vec<AccessListEntry>>(
-                    map.remove("accessList")
-                        .ok_or_else(|| serde::de::Error::missing_field("accessList"))?,
-                )
-                .map_err(serde::de::Error::custom)?
-                .into_iter()
-                .map(|v| (v.address, v.storage_keys))
-                .collect::<Vec<_>>(),
-                authorization_list: serde_json::from_value::<Vec<AuthorizationTupleEntry>>(
-                    map.remove("authorizationList")
-                        .ok_or_else(|| serde::de::Error::missing_field("authorizationList"))?,
-                )
-                .unwrap()
+                max_fee_per_gas: deserialize_field::<U256, D>(&mut map, "maxFeePerGas")?.as_u64(),
+                gas_limit: deserialize_field::<U256, D>(&mut map, "gas")?.as_u64(),
+                to: deserialize_field::<Address, D>(&mut map, "to")?,
+                value: deserialize_field::<U256, D>(&mut map, "value")?,
+                data: deserialize_input_field(&mut map).map_err(serde::de::Error::custom)?,
+                access_list: deserialize_field::<Vec<AccessListEntry>, D>(&mut map, "accessList")?
+                    .into_iter()
+                    .map(|v| (v.address, v.storage_keys))
+                    .collect::<Vec<_>>(),
+                authorization_list: deserialize_field::<Vec<AuthorizationTupleEntry>, D>(
+                    &mut map,
+                    "authorizationList",
+                )?
                 .into_iter()
                 .map(AuthorizationTuple::from)
                 .collect::<Vec<_>>(),
                 signature_y_parity: u8::from_str_radix(
-                    serde_json::from_value::<String>(
-                        map.remove("yParity")
-                            .ok_or_else(|| serde::de::Error::missing_field("yParity"))?,
-                    )
-                    .map_err(serde::de::Error::custom)?
-                    .trim_start_matches("0x"),
+                    deserialize_field::<String, D>(&mut map, "yParity")?.trim_start_matches("0x"),
                     16,
                 )
                 .map_err(serde::de::Error::custom)?
                     != 0,
-                signature_r: r,
-                signature_s: s,
+                signature_r: deserialize_field::<U256, D>(&mut map, "r")?,
+                signature_s: deserialize_field::<U256, D>(&mut map, "s")?,
             })
         }
     }
@@ -2423,86 +2177,33 @@ mod serde_impl {
             D: serde::Deserializer<'de>,
         {
             let mut map = <HashMap<String, serde_json::Value>>::deserialize(deserializer)?;
-            let nonce = serde_json::from_value::<U256>(
-                map.remove("nonce")
-                    .ok_or_else(|| serde::de::Error::missing_field("nonce"))?,
-            )
-            .map_err(serde::de::Error::custom)?
-            .as_u64();
-            let to = serde_json::from_value(
-                map.remove("to")
-                    .ok_or_else(|| serde::de::Error::missing_field("to"))?,
-            )
-            .map_err(serde::de::Error::custom)?;
-            let value = serde_json::from_value(
-                map.remove("value")
-                    .ok_or_else(|| serde::de::Error::missing_field("value"))?,
-            )
-            .map_err(serde::de::Error::custom)?;
-            let data = deserialize_input_field(&mut map).map_err(serde::de::Error::custom)?;
-            let r = serde_json::from_value(
-                map.remove("r")
-                    .ok_or_else(|| serde::de::Error::missing_field("r"))?,
-            )
-            .map_err(serde::de::Error::custom)?;
-            let s = serde_json::from_value(
-                map.remove("s")
-                    .ok_or_else(|| serde::de::Error::missing_field("s"))?,
-            )
-            .map_err(serde::de::Error::custom)?;
 
             Ok(PrivilegedL2Transaction {
-                chain_id: serde_json::from_value::<U256>(
-                    map.remove("chainId")
-                        .ok_or_else(|| serde::de::Error::missing_field("chainId"))?,
-                )
-                .map_err(serde::de::Error::custom)?
+                chain_id: deserialize_field::<U256, D>(&mut map, "chainId")?.as_u64(),
+                nonce: deserialize_field::<U256, D>(&mut map, "nonce")?.as_u64(),
+                max_priority_fee_per_gas: deserialize_field::<U256, D>(
+                    &mut map,
+                    "maxPriorityFeePerGas",
+                )?
                 .as_u64(),
-                nonce,
-                max_priority_fee_per_gas: serde_json::from_value::<U256>(
-                    map.remove("maxPriorityFeePerGas")
-                        .ok_or_else(|| serde::de::Error::missing_field("maxPriorityFeePerGas"))?,
-                )
-                .map_err(serde::de::Error::custom)?
-                .as_u64(),
-                max_fee_per_gas: serde_json::from_value::<U256>(
-                    map.remove("maxFeePerGas")
-                        .ok_or_else(|| serde::de::Error::missing_field("maxFeePerGas"))?,
-                )
-                .map_err(serde::de::Error::custom)?
-                .as_u64(),
-                gas_limit: serde_json::from_value::<U256>(
-                    map.remove("gas")
-                        .ok_or_else(|| serde::de::Error::missing_field("gas"))?,
-                )
-                .map_err(serde::de::Error::custom)?
-                .as_u64(),
-                to,
-                value,
-                data,
-                access_list: serde_json::from_value(
-                    map.remove("accessList")
-                        .ok_or_else(|| serde::de::Error::missing_field("accessList"))?,
-                )
-                .map_err(serde::de::Error::custom)?,
+                max_fee_per_gas: deserialize_field::<U256, D>(&mut map, "maxFeePerGas")?.as_u64(),
+                gas_limit: deserialize_field::<U256, D>(&mut map, "gas")?.as_u64(),
+                to: deserialize_field::<TxKind, D>(&mut map, "to")?,
+                value: deserialize_field::<U256, D>(&mut map, "value")?,
+                data: deserialize_input_field(&mut map).map_err(serde::de::Error::custom)?,
+                access_list: deserialize_field::<Vec<AccessListEntry>, D>(&mut map, "accessList")?
+                    .into_iter()
+                    .map(|v| (v.address, v.storage_keys))
+                    .collect::<Vec<_>>(),
                 signature_y_parity: u8::from_str_radix(
-                    serde_json::from_value::<String>(
-                        map.remove("yParity")
-                            .ok_or_else(|| serde::de::Error::missing_field("yParity"))?,
-                    )
-                    .map_err(serde::de::Error::custom)?
-                    .trim_start_matches("0x"),
+                    deserialize_field::<String, D>(&mut map, "yParity")?.trim_start_matches("0x"),
                     16,
                 )
                 .map_err(serde::de::Error::custom)?
                     != 0,
-                signature_r: r,
-                signature_s: s,
-                tx_type: serde_json::from_value(
-                    map.remove("tx_type")
-                        .ok_or_else(|| serde::de::Error::missing_field("tx_type"))?,
-                )
-                .map_err(serde::de::Error::custom)?,
+                signature_r: deserialize_field::<U256, D>(&mut map, "r")?,
+                signature_s: deserialize_field::<U256, D>(&mut map, "s")?,
+                tx_type: deserialize_field::<PrivilegedTxType, D>(&mut map, "tx_type")?,
             })
         }
     }
@@ -3108,8 +2809,6 @@ mod tests {
 
         let deserialized_tx: Transaction =
             serde_json::from_str(&serialized).expect("Failed to deserialize");
-
-        println!("{deserialized_tx:#?}");
 
         assert!(deserialized_tx.tx_type() == TxType::EIP7702);
 
