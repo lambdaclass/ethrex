@@ -157,6 +157,7 @@ pub fn validate_block(
     // Verify initial header validity against parent
     validate_block_header(&block.header, parent_header).map_err(InvalidBlockError::from)?;
 
+    // TODO: Add Prague header validation here
     match spec {
         SpecId::CANCUN => validate_cancun_header_fields(&block.header, parent_header)
             .map_err(InvalidBlockError::from)?,
@@ -165,9 +166,10 @@ pub fn validate_block(
         }
     };
 
-    if spec == SpecId::CANCUN {
-        verify_blob_gas_usage(block, &chain_config)?
+    if spec == SpecId::CANCUN || spec == SpecId::PRAGUE {
+        verify_blob_gas_usage(block, &chain_config)?;
     }
+
     Ok(())
 }
 

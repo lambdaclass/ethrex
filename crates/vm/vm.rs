@@ -983,6 +983,7 @@ pub fn spec_id(chain_config: &ChainConfig, block_timestamp: u64) -> SpecId {
         Fork::Cancun => SpecId::CANCUN,
         Fork::Shanghai => SpecId::SHANGHAI,
         Fork::Paris => SpecId::MERGE,
+        Fork::Prague => SpecId::PRAGUE,
     }
 }
 

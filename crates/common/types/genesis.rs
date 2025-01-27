@@ -140,9 +140,14 @@ pub enum Fork {
     Paris = 0,
     Shanghai = 1,
     Cancun = 2,
+    Prague = 3,
 }
 
 impl ChainConfig {
+    pub fn is_prague_activated(&self, block_timestamp: u64) -> bool {
+        self.prague_time.is_some_and(|time| time <= block_timestamp)
+    }
+
     pub fn is_shanghai_activated(&self, block_timestamp: u64) -> bool {
         self.shanghai_time
             .is_some_and(|time| time <= block_timestamp)
@@ -161,7 +166,9 @@ impl ChainConfig {
     }
 
     pub fn get_fork(&self, block_timestamp: u64) -> Fork {
-        if self.is_cancun_activated(block_timestamp) {
+        if self.is_prague_activated(block_timestamp) {
+            Fork::Prague
+        } else if self.is_cancun_activated(block_timestamp) {
             Fork::Cancun
         } else if self.is_shanghai_activated(block_timestamp) {
             Fork::Shanghai
@@ -171,10 +178,9 @@ impl ChainConfig {
     }
 
     pub fn get_fork_blob_schedule(&self, block_timestamp: u64) -> Option<ForkBlobSchedule> {
-        // TODO: Add prague here and on every fork call in the code
-        // - get_current_fork()
-        // - is_*_activated()
-        if self.is_cancun_activated(block_timestamp) {
+        if self.is_prague_activated(block_timestamp) {
+            Some(self.blob_schedule.prague)
+        } else if self.is_cancun_activated(block_timestamp) {
             Some(self.blob_schedule.cancun)
         } else {
             None
@@ -182,10 +188,9 @@ impl ChainConfig {
     }
 
     pub fn get_blob_base_fee_update_fraction(&self, block_timestamp: u64) -> Option<u64> {
-        // TODO: Add prague here and on every fork call in the code
-        // - get_current_fork()
-        // - is_*_activated()
-        if self.is_cancun_activated(block_timestamp) {
+        if self.is_prague_activated(block_timestamp) {
+            Some(self.blob_schedule.prague.base_fee_update_fraction)
+        } else if self.is_cancun_activated(block_timestamp) {
             Some(self.blob_schedule.cancun.base_fee_update_fraction)
         } else {
             None
@@ -193,21 +198,14 @@ impl ChainConfig {
     }
 
     pub fn get_max_blob_gas_per_block(&self, block_timestamp: u64) -> Option<u64> {
-        // TODO: Add prague here and on every fork call in the code
-        // - get_current_fork()
-        // - is_*_activated()
-        if self.is_cancun_activated(block_timestamp) {
-            Some(self.blob_schedule.cancun.max * GAS_PER_BLOB)
-        } else {
-            None
-        }
+        self.get_max_blob_number_per_block(block_timestamp)
+            .map(|number| number * GAS_PER_BLOB)
     }
 
     pub fn get_max_blob_number_per_block(&self, block_timestamp: u64) -> Option<u64> {
-        // TODO: Add prague here and on every fork call in the code
-        // - get_current_fork()
-        // - is_*_activated()
-        if self.is_cancun_activated(block_timestamp) {
+        if self.is_prague_activated(block_timestamp) {
+            Some(self.blob_schedule.prague.max)
+        } else if self.is_cancun_activated(block_timestamp) {
             Some(self.blob_schedule.cancun.max)
         } else {
             None
