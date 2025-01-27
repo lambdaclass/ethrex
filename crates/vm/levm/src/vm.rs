@@ -237,12 +237,6 @@ impl VM {
         current_call_frame: &mut CallFrame,
     ) -> Result<TransactionReport, VMError> {
         // Backup of Database, Substate, Gas Refunds and Transient Storage if sub-context is reverted
-        // let (backup_db, backup_substate, backup_refunded_gas, backup_transient_storage) = (
-        //     self.cache.clone(),
-        //     self.accrued_substate.clone(),
-        //     self.env.refunded_gas,
-        //     self.env.transient_storage.clone(),
-        // );
         let backup = Backup::new(
             self.cache.clone(),
             self.accrued_substate.clone(),
@@ -252,41 +246,7 @@ impl VM {
 
         if is_precompile(&current_call_frame.code_address, self.env.spec_id) {
             let precompile_result = execute_precompile(current_call_frame, self.env.spec_id);
-
-            match precompile_result {
-                Ok(output) => {
-                    self.call_frames.push(current_call_frame.clone());
-
-                    return Ok(TransactionReport {
-                        result: TxResult::Success,
-                        new_state: self.cache.clone(),
-                        gas_used: current_call_frame.gas_used,
-                        gas_refunded: 0,
-                        output,
-                        logs: std::mem::take(&mut current_call_frame.logs),
-                        created_address: None,
-                    });
-                }
-                Err(error) => {
-                    if error.is_internal() {
-                        return Err(error);
-                    }
-
-                    self.call_frames.push(current_call_frame.clone());
-
-                    self.restore_state(backup);
-
-                    return Ok(TransactionReport {
-                        result: TxResult::Revert(error),
-                        new_state: HashMap::default(),
-                        gas_used: current_call_frame.gas_limit,
-                        gas_refunded: 0,
-                        output: Bytes::new(),
-                        logs: std::mem::take(&mut current_call_frame.logs),
-                        created_address: None,
-                    });
-                }
-            }
+            return self.handle_precompile_result(precompile_result, current_call_frame, backup);
         }
 
         loop {
@@ -1243,5 +1203,47 @@ impl VM {
             logs: std::mem::take(&mut current_call_frame.logs),
             created_address: None,
         });
+    }
+
+    fn handle_precompile_result(
+        &mut self,
+        precompile_result: Result<Bytes, VMError>,
+        current_call_frame: &mut CallFrame,
+        backup: Backup,
+    ) -> Result<TransactionReport, VMError> {
+        match precompile_result {
+            Ok(output) => {
+                self.call_frames.push(current_call_frame.clone());
+
+                return Ok(TransactionReport {
+                    result: TxResult::Success,
+                    new_state: self.cache.clone(),
+                    gas_used: current_call_frame.gas_used,
+                    gas_refunded: 0,
+                    output,
+                    logs: std::mem::take(&mut current_call_frame.logs),
+                    created_address: None,
+                });
+            }
+            Err(error) => {
+                if error.is_internal() {
+                    return Err(error);
+                }
+
+                self.call_frames.push(current_call_frame.clone());
+
+                self.restore_state(backup);
+
+                return Ok(TransactionReport {
+                    result: TxResult::Revert(error),
+                    new_state: HashMap::default(),
+                    gas_used: current_call_frame.gas_limit,
+                    gas_refunded: 0,
+                    output: Bytes::new(),
+                    logs: std::mem::take(&mut current_call_frame.logs),
+                    created_address: None,
+                });
+            }
+        }
     }
 }
