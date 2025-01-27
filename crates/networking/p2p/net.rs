@@ -946,12 +946,6 @@ fn listener(tcp_addr: SocketAddr) -> Result<TcpListener, io::Error> {
 }
 
 async fn handle_peer_as_receiver(context: P2PContext, peer_addr: SocketAddr, stream: TcpStream) {
-    context
-        .table
-        .lock()
-        .await
-        .node_connected(context.local_node.node_id);
-
     let mut conn =
         RLPxConnection::receiver(context.signer, stream, context.storage, context.broadcast);
     conn.start_peer(peer_addr, context.table).await;
@@ -979,7 +973,6 @@ async fn handle_peer_as_initiator(
 
     match RLPxConnection::initiator(signer, msg, stream, storage, connection_broadcast) {
         Ok(mut conn) => {
-            table.lock().await.node_connected(node.node_id);
             conn.start_peer(SocketAddr::new(node.ip, node.udp_port), table)
                 .await
         }
