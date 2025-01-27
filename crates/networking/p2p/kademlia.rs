@@ -310,6 +310,7 @@ impl KademliaTable {
         }) {
             peer.channels = Some(channels);
             peer.supported_capabilities = capabilities;
+            peer.is_connected = true;
         } else {
             debug!(
                 "[PEERS] Peer with node_id {:?} not found in the kademlia table when trying to init backend communication",
@@ -371,6 +372,9 @@ pub struct PeerData {
     pub revalidation: Option<bool>,
     /// communication channels between the peer data and its active connection
     pub channels: Option<PeerChannels>,
+    /// Starts as false when a node is added. Set to true when a connection si active. When a
+    /// connection fails, the peer record is removed, so no need to set it to false.
+    pub is_connected: bool,
 }
 
 impl PeerData {
@@ -394,6 +398,7 @@ impl PeerData {
             revalidation: None,
             channels: None,
             supported_capabilities: vec![],
+            is_connected: false,
         }
     }
 

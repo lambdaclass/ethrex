@@ -232,6 +232,7 @@ async fn discover_peers_server(context: P2PContext, udp_socket: Arc<UdpSocket>) 
                                 debug!("Discarding pong as the node did not send a previous ping");
                                 continue;
                             }
+
                             if peer
                                 .last_ping_hash
                                 .is_some_and(|hash| hash == msg.ping_hash)
@@ -252,11 +253,18 @@ async fn discover_peers_server(context: P2PContext, udp_socket: Arc<UdpSocket>) 
                                     }
                                 }
 
+                                // We won't initiate a connection if we are already connected.
+                                // This will typically be the case when revalidating a node.
+                                if peer.is_connected {
+                                    continue;
+                                }
+
                                 let mut msg_buf = vec![0; read - 32];
                                 buf[32..read].clone_into(&mut msg_buf);
                                 let signer = context.signer.clone();
                                 let storage = context.storage.clone();
                                 let broadcaster = context.broadcast.clone();
+
                                 context.tracker.spawn(async move {
                                     handle_peer_as_initiator(
                                         signer,
@@ -962,6 +970,7 @@ async fn handle_peer_as_initiator(
             return;
         }
     };
+
     match RLPxConnection::initiator(signer, msg, stream, storage, connection_broadcast) {
         Ok(mut conn) => {
             conn.start_peer(SocketAddr::new(node.ip, node.udp_port), table)
