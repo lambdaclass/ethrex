@@ -265,7 +265,7 @@ async fn discover_peers_server(context: P2PContext, udp_socket: Arc<UdpSocket>) 
                                 let storage = context.storage.clone();
                                 let broadcaster = context.broadcast.clone();
 
-                                let connection_handle = context.tracker.spawn(async move {
+                                context.tracker.spawn(async move {
                                     handle_peer_as_initiator(
                                         signer,
                                         &msg_buf,
@@ -276,7 +276,6 @@ async fn discover_peers_server(context: P2PContext, udp_socket: Arc<UdpSocket>) 
                                     )
                                     .await
                                 });
-                                monitor_connection(context.clone(), connection_handle);
                             } else {
                                 debug!(
                                     "Discarding pong as the hash did not match the last corresponding ping"
@@ -934,25 +933,10 @@ async fn serve_p2p_requests(context: P2PContext) {
             }
         };
 
-        let handle =
-            context
-                .tracker
-                .spawn(handle_peer_as_receiver(context.clone(), peer_addr, stream));
-
-        monitor_connection(context.clone(), handle);
-    }
-}
-
-/// Waits until a conection task is finished and marks it as disconnected in the kademlia table.
-fn monitor_connection(context: P2PContext, connection_handle: JoinHandle<()>) {
-    task::spawn(async move {
-        _ = connection_handle.await;
         context
-            .table
-            .lock()
-            .await
-            .node_disconnected(context.local_node.node_id);
-    });
+            .tracker
+            .spawn(handle_peer_as_receiver(context.clone(), peer_addr, stream));
+    }
 }
 
 fn listener(tcp_addr: SocketAddr) -> Result<TcpListener, io::Error> {
