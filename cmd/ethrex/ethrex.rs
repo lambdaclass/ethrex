@@ -151,7 +151,8 @@ async fn main() {
     // Fix latest corrupted state
     // Add block from this morning where state was okay
     // store.set_header_download_checkpoint(ethrex_core::H256::from_str("0x9adf8633ffff3f94ca0a5692bfedb9dcf961ecc71ddf9279773f961c4ec4e7db").unwrap()).unwrap();
-
+    // Soft reset
+    store.clear_snap_state().unwrap();
     if let Some(chain_rlp_path) = matches.get_one::<String>("import") {
         info!("Importing blocks from chain file: {}", chain_rlp_path);
         let blocks = read_chain_file(chain_rlp_path);
