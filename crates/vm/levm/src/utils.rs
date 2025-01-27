@@ -125,7 +125,8 @@ pub fn get_valid_jump_destinations(code: &Bytes) -> Result<HashSet<usize>, VMErr
 }
 
 // ================== Account related functions =====================
-/// Gets account, first checking the cache and then the database (caching in the second case)
+/// Gets account, first checking the cache and then the database
+/// (caching in the second case)
 pub fn get_account(cache: &mut CacheDB, db: &Arc<dyn Database>, address: Address) -> Account {
     match cache::get_account(cache, &address) {
         Some(acc) => acc.clone(),
