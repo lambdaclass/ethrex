@@ -84,6 +84,15 @@ pub fn create_payload(args: &BuildPayloadArgs, storage: &Store) -> Result<Block,
         .ok_or_else(|| ChainError::ParentNotFound)?;
     let chain_config = storage.get_chain_config()?;
     let gas_limit = calc_gas_limit(parent_block.gas_limit, DEFAULT_BUILDER_GAS_CEIL);
+    let excess_blob_gas = chain_config
+        .get_blob_base_fee_target(args.timestamp)
+        .map(|target| {
+            calc_excess_blob_gas(
+                parent_block.excess_blob_gas.unwrap_or_default(),
+                parent_block.blob_gas_used.unwrap_or_default(),
+                target,
+            )
+        });
 
     let header = BlockHeader {
         parent_hash: args.parent,
@@ -116,13 +125,7 @@ pub fn create_payload(args: &BuildPayloadArgs, storage: &Store) -> Result<Block,
         blob_gas_used: chain_config
             .is_cancun_activated(args.timestamp)
             .then_some(0),
-        excess_blob_gas: chain_config.is_cancun_activated(args.timestamp).then_some(
-            calc_excess_blob_gas(
-                parent_block.excess_blob_gas.unwrap_or_default(),
-                parent_block.blob_gas_used.unwrap_or_default(),
-                chain_config.blob_schedule.cancun.target,
-            ),
-        ),
+        excess_blob_gas,
         parent_beacon_block_root: args.beacon_root,
     };
 

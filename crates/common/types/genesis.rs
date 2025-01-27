@@ -177,11 +177,11 @@ impl ChainConfig {
         }
     }
 
-    pub fn get_fork_blob_schedule(&self, block_timestamp: u64) -> Option<ForkBlobSchedule> {
+    pub fn get_blob_base_fee_target(&self, block_timestamp: u64) -> Option<u64> {
         if self.is_prague_activated(block_timestamp) {
-            Some(self.blob_schedule.prague)
+            Some(self.blob_schedule.prague.target)
         } else if self.is_cancun_activated(block_timestamp) {
-            Some(self.blob_schedule.cancun)
+            Some(self.blob_schedule.cancun.target)
         } else {
             None
         }
