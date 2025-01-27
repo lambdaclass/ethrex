@@ -1218,7 +1218,7 @@ impl Transaction {
         }
     }
 
-    pub fn access_list(&self) -> Vec<(Address, Vec<H256>)> {
+    pub fn access_list(&self) -> AccessList {
         match self {
             Transaction::LegacyTransaction(_tx) => Vec::new(),
             Transaction::EIP2930Transaction(tx) => tx.access_list.clone(),
@@ -1226,6 +1226,13 @@ impl Transaction {
             Transaction::EIP4844Transaction(tx) => tx.access_list.clone(),
             Transaction::EIP7702Transaction(tx) => tx.access_list.clone(),
             Transaction::PrivilegedL2Transaction(tx) => tx.access_list.clone(),
+        }
+    }
+
+    pub fn authorization_list(&self) -> Option<AuthorizationList> {
+        match self {
+            Transaction::EIP7702Transaction(tx) => Some(tx.authorization_list.clone()),
+            _ => None,
         }
     }
 
@@ -2236,7 +2243,7 @@ mod serde_impl {
         #[serde(default)]
         pub access_list: Vec<AccessListEntry>,
         #[serde(default)]
-        pub authorization_list: Vec<AuthorizationTupleEntry>,
+        pub authorization_list: Option<Vec<AuthorizationTupleEntry>>,
         #[serde(default)]
         pub blob_versioned_hashes: Vec<H256>,
         #[serde(default, with = "crate::serde_utils::bytes::vec")]
@@ -2263,7 +2270,7 @@ mod serde_impl {
                     .iter()
                     .map(AccessListEntry::from)
                     .collect(),
-                authorization_list: vec![],
+                authorization_list: None,
                 blob_versioned_hashes: vec![],
                 blobs: vec![],
                 chain_id: Some(value.chain_id),
@@ -2290,7 +2297,7 @@ mod serde_impl {
                     .iter()
                     .map(AccessListEntry::from)
                     .collect(),
-                authorization_list: vec![],
+                authorization_list: None,
                 blob_versioned_hashes: value.blob_versioned_hashes,
                 blobs: vec![],
                 chain_id: Some(value.chain_id),
@@ -2317,11 +2324,13 @@ mod serde_impl {
                     .iter()
                     .map(AccessListEntry::from)
                     .collect(),
-                authorization_list: value
-                    .authorization_list
-                    .iter()
-                    .map(AuthorizationTupleEntry::from)
-                    .collect(),
+                authorization_list: Some(
+                    value
+                        .authorization_list
+                        .iter()
+                        .map(AuthorizationTupleEntry::from)
+                        .collect(),
+                ),
                 blob_versioned_hashes: vec![],
                 blobs: vec![],
                 chain_id: Some(value.chain_id),
@@ -2348,7 +2357,7 @@ mod serde_impl {
                     .iter()
                     .map(AccessListEntry::from)
                     .collect(),
-                authorization_list: vec![],
+                authorization_list: None,
                 blob_versioned_hashes: vec![],
                 blobs: vec![],
                 chain_id: Some(value.chain_id),
@@ -2678,7 +2687,7 @@ mod tests {
             blob_versioned_hashes: Default::default(),
             blobs: Default::default(),
             chain_id: Default::default(),
-            authorization_list: vec![],
+            authorization_list: None,
         };
         assert_eq!(
             deserialized_generic_transaction,
@@ -2804,8 +2813,6 @@ mod tests {
         };
         let tx_to_serialize = Transaction::EIP7702Transaction(eip7702.clone());
         let serialized = serde_json::to_string(&tx_to_serialize).expect("Failed to serialize");
-
-        println!("{serialized:#?}");
 
         let deserialized_tx: Transaction =
             serde_json::from_str(&serialized).expect("Failed to deserialize");

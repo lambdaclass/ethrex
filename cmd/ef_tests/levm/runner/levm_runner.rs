@@ -5,13 +5,13 @@ use crate::{
     utils::{self, effective_gas_price},
 };
 use ethrex_core::{
-    types::{code_hash, AccountInfo},
+    types::{code_hash, tx_fields::*, AccountInfo},
     H256, U256,
 };
 use ethrex_levm::{
     db::CacheDB,
     errors::{TransactionReport, TxValidationError, VMError},
-    vm::{AuthorizationTuple, VM},
+    vm::VM,
     Environment,
 };
 use ethrex_storage::AccountUpdate;

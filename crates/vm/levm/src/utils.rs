@@ -12,11 +12,11 @@ use crate::{
         BLOB_GAS_PER_BLOB, COLD_ADDRESS_ACCESS_COST, CREATE_BASE_COST, WARM_ADDRESS_ACCESS_COST,
     },
     opcodes::Opcode,
-    vm::{AccessList, AuthorizationList, AuthorizationTuple, Substate},
+    vm::Substate,
     AccountInfo,
 };
 use bytes::Bytes;
-use ethrex_core::{Address, H256, U256};
+use ethrex_core::{types::tx_fields::*, Address, H256, U256};
 use ethrex_rlp;
 use ethrex_rlp::encode::RLPEncode;
 use keccak_hash::keccak;
@@ -303,7 +303,7 @@ pub fn get_intrinsic_gas(
 pub const fn max_blobs_per_block(specid: SpecId) -> usize {
     match specid {
         SpecId::PRAGUE => MAX_BLOB_COUNT_ELECTRA,
-        SpecId::PRAGUE_EOF => MAX_BLOB_COUNT_ELECTRA,
+        SpecId::OSAKA => MAX_BLOB_COUNT_ELECTRA,
         _ => MAX_BLOB_COUNT,
     }
 }
@@ -318,7 +318,7 @@ pub const fn max_blobs_per_block(specid: SpecId) -> usize {
 pub const fn get_blob_base_fee_update_fraction_value(specid: SpecId) -> U256 {
     match specid {
         SpecId::PRAGUE => BLOB_BASE_FEE_UPDATE_FRACTION_PRAGUE,
-        SpecId::PRAGUE_EOF => BLOB_BASE_FEE_UPDATE_FRACTION_PRAGUE,
+        SpecId::OSAKA => BLOB_BASE_FEE_UPDATE_FRACTION_PRAGUE,
         _ => BLOB_BASE_FEE_UPDATE_FRACTION,
     }
 }
