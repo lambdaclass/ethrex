@@ -739,7 +739,6 @@ impl VM {
         report.gas_used = self.gas_used(&initial_call_frame, &report)?;
 
         self.post_execution_changes(&initial_call_frame, &mut report)?;
-        // There shouldn't be any errors here but I don't know what the desired behavior is if something goes wrong.
 
         report.new_state.clone_from(&self.cache);
 
