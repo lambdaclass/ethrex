@@ -242,61 +242,100 @@ samply-run-ef-tests-levm:
 		cargo test --release -p ef_tests-levm --test ef_tests_levm -- --summary --tests $$dir;\
 	done
 
+FLAMEGRAPH_DIR := ../../../cmd/ef_tests/levm/levm_perfgraphs/flamegraph/bench
 flamegraph-benchmarks: ## 🔥 Run benchmarks and create flamegraph
 	cd ../../../cmd/ef_tests/levm &&\
 	mkdir -p levm_perfgraphs/flamegraph/bench ||:
+    # fibonacci - revm
+	CARGO_PROFILE_RELEASE_DEBUG=true cargo flamegraph \
+	--root --output $(FLAMEGRAPH_DIR)/revm_fibonacci.svg \
+	-p revm_comparison --bin revm_fibonacci -- $(BENCH_FIB_REPETITIONS) $(BENCH_FIB_ITERATIONS)
+	# fibonacci - levm
+	CARGO_PROFILE_RELEASE_DEBUG=true cargo flamegraph \
+	--root --output $(FLAMEGRAPH_DIR)/levm_fibonacci.svg \
+	-p revm_comparison --bin levm_fibonacci -- $(BENCH_FIB_REPETITIONS) $(BENCH_FIB_ITERATIONS)
+	# factorial - revm
+	CARGO_PROFILE_RELEASE_DEBUG=true cargo flamegraph \
+	--root --output $(FLAMEGRAPH_DIR)/revm_factorial.svg \
+	-p revm_comparison --bin revm_factorial -- $(BENCH_FACT_REPETITIONS) $(BENCH_FACT_ITERATIONS)
+	# factorial - levm
+	CARGO_PROFILE_RELEASE_DEBUG=true cargo flamegraph \
+	--root --output $(FLAMEGRAPH_DIR)/levm_factorial.svg \
+	-p revm_comparison --bin levm_factorial -- $(BENCH_FACT_REPETITIONS) $(BENCH_FACT_ITERATIONS)
+	# many_hashes - levm
+	CARGO_PROFILE_RELEASE_DEBUG=true cargo flamegraph \
+	--root --output $(FLAMEGRAPH_DIR)/levm_many_hashes.svg \
+	-p revm_comparison --bin levm_many_hashes -- $(BENCH_HASHES_REPETITIONS) $(BENCH_HASHES_ITERATIONS)
+	# many_hashes - revm
+	CARGO_PROFILE_RELEASE_DEBUG=true cargo flamegraph \
+	--root --output $(FLAMEGRAPH_DIR)/revm_many_hashes.svg \
+	-p revm_comparison --bin revm_many_hashes -- $(BENCH_HASHES_REPETITIONS) $(BENCH_HASHES_ITERATIONS)
 	# erc20_transfer - revm
 	CARGO_PROFILE_RELEASE_DEBUG=true cargo flamegraph \
-	--root --output ../../../cmd/ef_tests/levm/levm_perfgraphs/flamegraph/bench/revm_erc20_transfer.svg \
+	--root --output $(FLAMEGRAPH_DIR)/revm_erc20_transfer.svg \
 	-p revm_comparison --bin revm_erc20_transfer -- $(BENCH_TRANSFER_REPETITIONS) $(BENCH_TRANSFER_ITERATIONS)
     # erc20_transfer - levm
-    CARGO_PROFILE_RELEASE_DEBUG=true cargo flamegraph \
-	--root --output ../../../cmd/ef_tests/levm/levm_perfgraphs/flamegraph/bench/levm_erc20_transfer.svg \
+	CARGO_PROFILE_RELEASE_DEBUG=true cargo flamegraph \
+	--root --output $(FLAMEGRAPH_DIR)/levm_erc20_transfer.svg \
 	-p revm_comparison --bin levm_erc20_transfer -- $(BENCH_TRANSFER_REPETITIONS) $(BENCH_TRANSFER_ITERATIONS)
-    # others
+	# erc20_mint - revm
 	CARGO_PROFILE_RELEASE_DEBUG=true cargo flamegraph \
-	--root --output ../../../cmd/ef_tests/levm/levm_perfgraphs/flamegraph/bench/revm_fibonacci.svg \
-	-p revm_comparison --bin revm_fibonacci -- $(BENCH_FIB_REPETITIONS) $(BENCH_FIB_ITERATIONS)
+	--root --output $(FLAMEGRAPH_DIR)/revm_erc20_mint.svg \
+	-p revm_comparison --bin revm_erc20_mint -- $(BENCH_MINT_REPETITIONS) $(BENCH_MINT_ITERATIONS)
+	# erc20_mint - levm
 	CARGO_PROFILE_RELEASE_DEBUG=true cargo flamegraph \
-	--root --output ../../../cmd/ef_tests/levm/levm_perfgraphs/flamegraph/bench/levm_fibonacci.svg \
-	-p revm_comparison --bin levm_fibonacci -- $(BENCH_FIB_REPETITIONS) $(BENCH_FIB_ITERATIONS)
+	--root --output $(FLAMEGRAPH_DIR)/levm_erc20_mint.svg \
+	-p revm_comparison --bin levm_erc20_mint -- $(BENCH_MINT_REPETITIONS) $(BENCH_MINT_ITERATIONS)
+	# erc20_approval - revm
 	CARGO_PROFILE_RELEASE_DEBUG=true cargo flamegraph \
-	--root --output ../../../cmd/ef_tests/levm/levm_perfgraphs/flamegraph/bench/revm_factorial.svg \
-	-p revm_comparison --bin revm_factorial -- $(BENCH_FACT_REPETITIONS) $(BENCH_FACT_ITERATIONS)
+	--root --output $(FLAMEGRAPH_DIR)/revm_erc20_approval.svg \
+	-p revm_comparison --bin revm_erc20_approval -- $(BENCH_APPROVAL_REPETITIONS) $(BENCH_APPROVAL_ITERATIONS)
+	# erc20_approval - levm
 	CARGO_PROFILE_RELEASE_DEBUG=true cargo flamegraph \
-	--root --output ../../../cmd/ef_tests/levm/levm_perfgraphs/flamegraph/bench/levm_factorial.svg \
-	-p revm_comparison --bin levm_factorial -- $(BENCH_FACT_REPETITIONS) $(BENCH_FACT_ITERATIONS)
-	CARGO_PROFILE_RELEASE_DEBUG=true cargo flamegraph \
-	--root --output ../../../cmd/ef_tests/levm/levm_perfgraphs/flamegraph/bench/levm_many_hashes.svg \
-	-p revm_comparison --bin levm_many_hashes -- $(BENCH_HASHES_REPETITIONS) $(BENCH_HASHES_ITERATIONS)
-	CARGO_PROFILE_RELEASE_DEBUG=true cargo flamegraph \
-	--root --output ../../../cmd/ef_tests/levm/levm_perfgraphs/flamegraph/bench/revm_many_hashes.svg \
-	-p revm_comparison --bin revm_many_hashes -- $(BENCH_HASHES_REPETITIONS) $(BENCH_HASHES_ITERATIONS)
+	--root --output $(FLAMEGRAPH_DIR)/levm_erc20_approval.svg \
+	-p revm_comparison --bin levm_erc20_approval -- $(BENCH_APPROVAL_REPETITIONS) $(BENCH_APPROVAL_ITERATIONS)
 
+SAMPLY_DIR := ../../../cmd/ef_tests/levm/levm_perfgraphs/samply/bench
 samply-benchmarks: ## ⚡️ Run benchmarks and create samply profiling file
 	cd ../../../cmd/ef_tests/levm &&\
 	mkdir -p levm_perfgraphs/samply/bench ||:
 	# fibonacci - revm
 	CARGO_PROFILE_RELEASE_DEBUG=true samply record --save-only \
-	-o ../../../cmd/ef_tests/levm/levm_perfgraphs/samply/bench/prof_revm_fibonacci.json \
+	-o $(SAMPLY_DIR)/prof_revm_fibonacci.json \
 	cargo run --release -p revm_comparison --bin revm_fibonacci -- $(BENCH_FIB_REPETITIONS) $(BENCH_FIB_ITERATIONS)
 	# fibonacci - levm
 	CARGO_PROFILE_RELEASE_DEBUG=true samply record --save-only \
-	-o ../../../cmd/ef_tests/levm/levm_perfgraphs/samply/bench/prof_levm_fibonacci.json \
+	-o $(SAMPLY_DIR)/prof_levm_fibonacci.json \
 	cargo run --release -p revm_comparison --bin levm_fibonacci -- $(BENCH_FIB_REPETITIONS) $(BENCH_FIB_ITERATIONS)
 	# factorial - revm
 	CARGO_PROFILE_RELEASE_DEBUG=true samply record --save-only \
-	-o ../../../cmd/ef_tests/levm/levm_perfgraphs/samply/bench/prof_revm_factorial.json \
+	-o $(SAMPLY_DIR)/prof_revm_factorial.json \
 	cargo run --release -p revm_comparison --bin revm_factorial -- $(BENCH_FACT_REPETITIONS) $(BENCH_FACT_ITERATIONS)
 	# factorial - revm
 	CARGO_PROFILE_RELEASE_DEBUG=true samply record --save-only \
-	-o ../../../cmd/ef_tests/levm/levm_perfgraphs/samply/bench/prof_levm_factorial.json \
+	-o $(SAMPLY_DIR)/prof_levm_factorial.json \
 	cargo run --release -p revm_comparison --bin levm_factorial -- $(BENCH_FACT_REPETITIONS) $(BENCH_FACT_ITERATIONS)
 	# erc20_approval - revm
 	CARGO_PROFILE_RELEASE_DEBUG=true samply record --save-only \
-	-o ../../../cmd/ef_tests/levm/levm_perfgraphs/samply/bench/prof_revm_erc20_approval.json \
+	-o $(SAMPLY_DIR)/prof_revm_erc20_approval.json \
 	cargo run --release -p revm_comparison --bin revm_erc20_approval -- $(BENCH_APPROVAL_REPETITIONS) $(BENCH_APPROVAL_ITERATIONS)
 	# erc20_approval - levm
 	CARGO_PROFILE_RELEASE_DEBUG=true samply record --save-only \
-	-o ../../../cmd/ef_tests/levm/levm_perfgraphs/samply/bench/prof_levm_erc20_approval.json \
+	-o $(SAMPLY_DIR)/prof_levm_erc20_approval.json \
 	cargo run --release -p revm_comparison --bin levm_erc20_approval -- $(BENCH_APPROVAL_REPETITIONS) $(BENCH_APPROVAL_ITERATIONS)
+	# erc20_transfer - revm
+	CARGO_PROFILE_RELEASE_DEBUG=true samply record --save-only \
+	-o $(SAMPLY_DIR)/prof_revm_erc20_transfer.json \
+	cargo run --release -p revm_comparison --bin revm_erc20_transfer -- $(BENCH_TRANSFER_REPETITIONS) $(BENCH_TRANSFER_ITERATIONS)
+	# erc20_transfer - levm
+	CARGO_PROFILE_RELEASE_DEBUG=true samply record --save-only \
+	-o $(SAMPLY_DIR)/prof_levm_erc20_transfer.json \
+	cargo run --release -p revm_comparison --bin levm_erc20_transfer -- $(BENCH_TRANSFER_REPETITIONS) $(BENCH_TRANSFER_ITERATIONS)
+	# erc20_mint - revm
+	CARGO_PROFILE_RELEASE_DEBUG=true samply record --save-only \
+	-o $(SAMPLY_DIR)/prof_revm_erc20_mint.json \
+	cargo run --release -p revm_comparison --bin revm_erc20_mint -- $(BENCH_MINT_REPETITIONS) $(BENCH_MINT_ITERATIONS)
+	# erc20_mint - levm
+	CARGO_PROFILE_RELEASE_DEBUG=true samply record --save-only \
+	-o $(SAMPLY_DIR)/prof_levm_erc20_mint.json \
+	cargo run --release -p revm_comparison --bin levm_erc20_mint -- $(BENCH_MINT_REPETITIONS) $(BENCH_MINT_ITERATIONS)
