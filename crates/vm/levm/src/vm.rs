@@ -43,6 +43,34 @@ pub struct Substate {
     pub created_accounts: HashSet<Address>,
 }
 
+/// Backup if sub-context is reverted. It consists of a copy of:
+///   - Database
+///   - Substate
+///   - Gas Refunds
+///   - Transient Storage
+struct Backup {
+    cache: CacheDB,
+    substate: Substate,
+    refunded_gas: u64,
+    transient_storage: TransientStorage,
+}
+
+impl Backup {
+    pub fn new(
+        cache: CacheDB,
+        substate: Substate,
+        refunded_gas: u64,
+        transient_storage: TransientStorage,
+    ) -> Backup {
+        Backup {
+            cache,
+            substate,
+            refunded_gas,
+            transient_storage,
+        }
+    }
+}
+
 pub struct VM {
     pub call_frames: Vec<CallFrame>,
     pub env: Environment,
@@ -209,7 +237,13 @@ impl VM {
         current_call_frame: &mut CallFrame,
     ) -> Result<TransactionReport, VMError> {
         // Backup of Database, Substate, Gas Refunds and Transient Storage if sub-context is reverted
-        let (backup_db, backup_substate, backup_refunded_gas, backup_transient_storage) = (
+        // let (backup_db, backup_substate, backup_refunded_gas, backup_transient_storage) = (
+        //     self.cache.clone(),
+        //     self.accrued_substate.clone(),
+        //     self.env.refunded_gas,
+        //     self.env.transient_storage.clone(),
+        // );
+        let backup = Backup::new(
             self.cache.clone(),
             self.accrued_substate.clone(),
             self.env.refunded_gas,
@@ -240,12 +274,7 @@ impl VM {
 
                     self.call_frames.push(current_call_frame.clone());
 
-                    self.restore_state(
-                        backup_db,
-                        backup_substate,
-                        backup_refunded_gas,
-                        backup_transient_storage,
-                    );
+                    self.restore_state(backup);
 
                     return Ok(TransactionReport {
                         result: TxResult::Revert(error),
@@ -315,12 +344,6 @@ impl VM {
                             Err(error) => {
                                 // Revert if error
                                 current_call_frame.gas_used = current_call_frame.gas_limit;
-                                self.restore_state(
-                                    backup_db,
-                                    backup_substate,
-                                    backup_refunded_gas,
-                                    backup_transient_storage,
-                                );
 
                                 return Ok(TransactionReport {
                                     result: TxResult::Revert(error),
@@ -361,12 +384,7 @@ impl VM {
                             current_call_frame.gas_used.saturating_add(left_gas);
                     }
 
-                    self.restore_state(
-                        backup_db,
-                        backup_substate,
-                        backup_refunded_gas,
-                        backup_transient_storage,
-                    );
+                    self.restore_state(backup);
 
                     return Ok(TransactionReport {
                         result: TxResult::Revert(error),
@@ -382,17 +400,11 @@ impl VM {
         }
     }
 
-    fn restore_state(
-        &mut self,
-        backup_cache: CacheDB,
-        backup_substate: Substate,
-        backup_refunded_gas: u64,
-        backup_transient_storage: TransientStorage,
-    ) {
-        self.cache = backup_cache;
-        self.accrued_substate = backup_substate;
-        self.env.refunded_gas = backup_refunded_gas;
-        self.env.transient_storage = backup_transient_storage;
+    fn restore_state(&mut self, backup: Backup) {
+        self.cache = backup.cache;
+        self.accrued_substate = backup.substate;
+        self.env.refunded_gas = backup.refunded_gas;
+        self.env.transient_storage = backup.transient_storage;
     }
 
     fn is_create(&self) -> bool {
@@ -1219,4 +1231,5 @@ impl VM {
 
         op_result
     }
+                    self.restore_state(backup);
 }
