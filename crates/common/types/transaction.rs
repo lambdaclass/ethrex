@@ -1658,6 +1658,19 @@ mod serde_impl {
         }
     }
 
+    impl From<AuthorizationTupleEntry> for AuthorizationTuple {
+        fn from(entry: AuthorizationTupleEntry) -> AuthorizationTuple {
+            AuthorizationTuple {
+                chain_id: entry.chain_id,
+                address: entry.address,
+                nonce: entry.nonce,
+                v: entry.v,
+                r_signature: entry.r,
+                s_signature: entry.s,
+            }
+        }
+    }
+
     impl Serialize for LegacyTransaction {
         fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
         where
@@ -2089,11 +2102,14 @@ mod serde_impl {
                 to,
                 value,
                 data,
-                access_list: serde_json::from_value(
+                access_list: serde_json::from_value::<Vec<AccessListEntry>>(
                     map.remove("accessList")
                         .ok_or_else(|| serde::de::Error::missing_field("accessList"))?,
                 )
-                .map_err(serde::de::Error::custom)?,
+                .map_err(serde::de::Error::custom)?
+                .into_iter()
+                .map(|v| (v.address, v.storage_keys))
+                .collect::<Vec<_>>(),
                 signature_y_parity: u8::from_str_radix(
                     serde_json::from_value::<String>(
                         map.remove("yParity")
@@ -2174,11 +2190,14 @@ mod serde_impl {
                 to,
                 value,
                 data,
-                access_list: serde_json::from_value(
+                access_list: serde_json::from_value::<Vec<AccessListEntry>>(
                     map.remove("accessList")
                         .ok_or_else(|| serde::de::Error::missing_field("accessList"))?,
                 )
-                .map_err(serde::de::Error::custom)?,
+                .map_err(serde::de::Error::custom)?
+                .into_iter()
+                .map(|v| (v.address, v.storage_keys))
+                .collect::<Vec<_>>(),
                 signature_y_parity: u8::from_str_radix(
                     serde_json::from_value::<String>(
                         map.remove("yParity")
@@ -2365,16 +2384,22 @@ mod serde_impl {
                 to,
                 value,
                 data,
-                access_list: serde_json::from_value(
+                access_list: serde_json::from_value::<Vec<AccessListEntry>>(
                     map.remove("accessList")
                         .ok_or_else(|| serde::de::Error::missing_field("accessList"))?,
                 )
-                .map_err(serde::de::Error::custom)?,
-                authorization_list: serde_json::from_value(
+                .map_err(serde::de::Error::custom)?
+                .into_iter()
+                .map(|v| (v.address, v.storage_keys))
+                .collect::<Vec<_>>(),
+                authorization_list: serde_json::from_value::<Vec<AuthorizationTupleEntry>>(
                     map.remove("authorizationList")
                         .ok_or_else(|| serde::de::Error::missing_field("authorizationList"))?,
                 )
-                .map_err(serde::de::Error::custom)?,
+                .unwrap()
+                .into_iter()
+                .map(AuthorizationTuple::from)
+                .collect::<Vec<_>>(),
                 signature_y_parity: u8::from_str_radix(
                     serde_json::from_value::<String>(
                         map.remove("yParity")
@@ -2510,7 +2535,6 @@ mod serde_impl {
         #[serde(default)]
         pub access_list: Vec<AccessListEntry>,
         #[serde(default)]
-        // CHECK: Don't know if i have to wrap it in an Option
         pub authorization_list: Vec<AuthorizationTupleEntry>,
         #[serde(default)]
         pub blob_versioned_hashes: Vec<H256>,
@@ -3032,15 +3056,16 @@ mod tests {
             to: TxKind::Call(H160::from_str("0x000a52D537c4150ec274dcE3962a0d179B7E71B0").unwrap()),
             value: U256::from(100000),
             data: Bytes::from_static(b"03"),
-            access_list: vec![],
+            access_list: vec![(
+                H160::from_str("0x000a52D537c4150ec274dcE3962a0d179B7E71B3").unwrap(),
+                vec![H256::zero()],
+            )],
             signature_y_parity: true,
             signature_r: U256::one(),
             signature_s: U256::zero(),
         };
         let tx_to_serialize = Transaction::EIP1559Transaction(eip1559.clone());
         let serialized = serde_json::to_string(&tx_to_serialize).expect("Failed to serialize");
-
-        println!("{serialized:?}");
 
         let deserialized_tx: Transaction =
             serde_json::from_str(&serialized).expect("Failed to deserialize");
