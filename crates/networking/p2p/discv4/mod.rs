@@ -180,7 +180,7 @@ impl Discv4 {
                     self.ping(node, self.ctx.table.lock().await).await?;
                 }
                 if let Some(enr_seq) = msg.enr_seq {
-                    if enr_seq > peer.record.seq {
+                    if enr_seq > peer.record.seq && peer.is_proven {
                         debug!("Found outdated enr-seq, sending an enr_request");
                         self.send_enr_request(peer.node, self.ctx.table.lock().await)
                             .await?;
@@ -606,14 +606,6 @@ impl Discv4 {
         node: Node,
         mut table_lock: MutexGuard<'a, KademliaTable>,
     ) -> Result<(), DiscoveryError> {
-        // verify there isn't an ongoing request
-        if table_lock
-            .get_by_node_id(node.node_id)
-            .is_some_and(|p| p.enr_request_hash.is_some())
-        {
-            return Ok(());
-        };
-
         let mut buf = Vec::new();
         let expiration: u64 = get_expiration(20);
         let enr_req = Message::ENRRequest(ENRRequestMessage::new(expiration));

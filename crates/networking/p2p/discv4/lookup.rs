@@ -157,6 +157,11 @@ impl Discv4LookupHandler {
                     {
                         nodes.append(&mut found_nodes);
                     }
+
+                    if let Some(peer) = self.ctx.table.lock().await.get_by_node_id_mut(node.node_id)
+                    {
+                        peer.find_node_request = None;
+                    };
                 }
             }
 
