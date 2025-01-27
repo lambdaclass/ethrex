@@ -25,7 +25,8 @@ fn count_crates_loc(crates_path: &PathBuf, config: &Config) -> Vec<(String, usiz
         })
         .collect();
 
-    let crate_dirs = [top_level_crate_dirs, nested_crate_dirs].concat();
+    let mut crate_dirs = top_level_crate_dirs;
+    crate_dirs.extend(nested_crate_dirs);
 
     let mut ethrex_crates_loc: Vec<(String, usize)> = crate_dirs
         .into_iter()
