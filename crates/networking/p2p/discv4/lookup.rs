@@ -43,7 +43,7 @@ impl Discv4LookupHandler {
     ///    - Potential peers to query for nodes: a vector of up to 16 entries holding the closest peers to the pubkey.
     ///      This vector is initially filled with nodes from our table.
     /// 3. We send a `find_node` to the closest 3 nodes (that we have not yet asked) from the pubkey.
-    /// 4. We wait for the neighbors response and pushed or replace those that are closer to the potential peers.
+    /// 4. We wait for the neighbors response and push or replace those that are closer to the potential peers array.
     /// 5. We select three other nodes from the potential peers vector and do the same until one lookup
     ///    doesn't have any node to ask.
     ///
@@ -52,12 +52,14 @@ impl Discv4LookupHandler {
         self.ctx.tracker.spawn({
             let self_clone = self.clone();
             async move {
-                self_clone.start_task(initial_interval_wait_seconds).await;
+                self_clone
+                    .start_lookup_loop(initial_interval_wait_seconds)
+                    .await;
             }
         });
     }
 
-    async fn start_task(&self, initial_interval_wait_seconds: u64) {
+    async fn start_lookup_loop(&self, initial_interval_wait_seconds: u64) {
         let mut interval = tokio::time::interval(Duration::from_secs(self.interval_minutes));
         tokio::time::sleep(Duration::from_secs(initial_interval_wait_seconds)).await;
 
@@ -254,10 +256,10 @@ mod tests {
             connect_servers, fill_table_with_random_nodes, insert_random_node_on_custom_bucket,
             start_discovery_server,
         },
-        Discv4,
+        Discv4Server,
     };
 
-    fn lookup_handler_from_server(server: Discv4) -> Discv4LookupHandler {
+    fn lookup_handler_from_server(server: Discv4Server) -> Discv4LookupHandler {
         Discv4LookupHandler::new(
             server.ctx.clone(),
             server.udp_socket.clone(),

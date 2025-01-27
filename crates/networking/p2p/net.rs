@@ -1,5 +1,5 @@
 use bootnode::BootNode;
-use discv4::{helpers::time_now_unix, DiscoveryError, Discv4};
+use discv4::{helpers::time_now_unix, DiscoveryError, Discv4Server};
 use ethrex_core::H512;
 use ethrex_storage::Store;
 use k256::{
@@ -81,7 +81,7 @@ pub async fn start_network(
         storage,
         broadcast: channel_broadcast_send_end,
     };
-    let discovery = Discv4::try_new(context.clone())
+    let discovery = Discv4Server::try_new(context.clone())
         .await
         .map_err(NetworkError::DiscoveryStart)?;
 

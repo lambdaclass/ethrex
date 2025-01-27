@@ -600,7 +600,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
         let mut buf = vec![0; 2];
 
         // Read the message's size
-        self.framed.get_mut().read_exact(&mut buf[..2]).await?;
+        self.framed.get_mut().read_exact(&mut buf).await?;
         let ack_data = [buf[0], buf[1]];
         let msg_size = u16::from_be_bytes(ack_data) as usize;
         if msg_size > P2P_MAX_MESSAGE_SIZE {

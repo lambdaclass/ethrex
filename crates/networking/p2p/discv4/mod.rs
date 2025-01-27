@@ -44,14 +44,14 @@ pub enum DiscoveryError {
 }
 
 #[derive(Debug, Clone)]
-pub struct Discv4 {
+pub struct Discv4Server {
     ctx: P2PContext,
     udp_socket: Arc<UdpSocket>,
     revalidation_interval_seconds: u64,
     lookup_interval_minutes: u64,
 }
 
-impl Discv4 {
+impl Discv4Server {
     pub async fn try_new(ctx: P2PContext) -> Result<Self, DiscoveryError> {
         let udp_socket = UdpSocket::bind(ctx.local_node.udp_addr())
             .await
@@ -63,22 +63,6 @@ impl Discv4 {
             revalidation_interval_seconds: REVALIDATION_INTERVAL_IN_SECONDS,
             lookup_interval_minutes: PEERS_RANDOM_LOOKUP_TIME_IN_MIN,
         })
-    }
-
-    #[allow(unused)]
-    pub fn with_revalidation_interval_of(self, seconds: u64) -> Self {
-        Self {
-            revalidation_interval_seconds: seconds,
-            ..self
-        }
-    }
-
-    #[allow(unused)]
-    pub fn with_lookup_interval_of(self, minutes: u64) -> Self {
-        Self {
-            lookup_interval_minutes: minutes,
-            ..self
-        }
     }
 
     pub async fn start(&self, bootnodes: Vec<BootNode>) -> Result<(), DiscoveryError> {
@@ -470,7 +454,9 @@ impl Discv4 {
             // first check that the peers we ping have responded
             for node_id in previously_pinged_peers {
                 let mut table_lock = self.ctx.table.lock().await;
-                let peer = table_lock.get_by_node_id_mut(node_id).unwrap();
+                let Some(peer) = table_lock.get_by_node_id_mut(node_id) else {
+                    continue;
+                };
 
                 if let Some(has_answered) = peer.revalidation {
                     if has_answered {
@@ -669,7 +655,7 @@ pub(super) mod tests {
     pub async fn start_discovery_server(
         udp_port: u16,
         should_start_server: bool,
-    ) -> Result<Discv4, DiscoveryError> {
+    ) -> Result<Discv4Server, DiscoveryError> {
         let addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), udp_port);
         let signer = SigningKey::random(&mut OsRng);
         let node_id = node_id_from_signing_key(&signer);
@@ -698,7 +684,7 @@ pub(super) mod tests {
             broadcast,
         };
 
-        let discv4 = Discv4::try_new(ctx).await?;
+        let discv4 = Discv4Server::try_new(ctx).await?;
 
         if should_start_server {
             tracker.spawn({
@@ -714,8 +700,8 @@ pub(super) mod tests {
 
     /// connects two mock servers by pinging a to b
     pub async fn connect_servers(
-        server_a: &mut Discv4,
-        server_b: &mut Discv4,
+        server_a: &mut Discv4Server,
+        server_b: &mut Discv4Server,
     ) -> Result<(), DiscoveryError> {
         server_a
             .try_add_peer_and_ping(server_b.ctx.local_node, server_a.ctx.table.lock().await)
@@ -741,7 +727,7 @@ pub(super) mod tests {
 
         connect_servers(&mut server_a, &mut server_b).await?;
 
-        server_b = server_b.with_revalidation_interval_of(2);
+        server_b.revalidation_interval_seconds = 2;
 
         // start revalidation server
         server_b.ctx.tracker.spawn({
