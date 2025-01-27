@@ -232,6 +232,7 @@ async fn discover_peers_server(context: P2PContext, udp_socket: Arc<UdpSocket>) 
                                 debug!("Discarding pong as the node did not send a previous ping");
                                 continue;
                             }
+
                             if peer
                                 .last_ping_hash
                                 .is_some_and(|hash| hash == msg.ping_hash)
@@ -250,6 +251,12 @@ async fn discover_peers_server(context: P2PContext, udp_socket: Arc<UdpSocket>) 
                                             req_hash,
                                         );
                                     }
+                                }
+
+                                // We won't initiate a connection if we are already connected.
+                                // This will typically be the case when revalidating a node.
+                                if peer.is_connected {
+                                    continue;
                                 }
 
                                 let mut msg_buf = vec![0; read - 32];
