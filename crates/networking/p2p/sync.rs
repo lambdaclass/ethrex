@@ -432,11 +432,9 @@ async fn rebuild_state_trie(
             retry_count += 1;
         }
     }
-    if retry_count > MAX_RETRIES {
-        // Store current checkpoint
-        store.set_state_trie_root_checkpoint(current_state_root)?;
-        store.set_state_trie_key_checkpoint(start_account_hash)?;
-    }
+    // Store current checkpoint
+    store.set_state_trie_root_checkpoint(current_state_root)?;
+    store.set_state_trie_key_checkpoint(start_account_hash)?;
     info!("Account Trie Fetching ended, signaling storage fetcher process");
     // Send empty batch to signal that no more batches are incoming
     storage_sender.send(vec![]).await?;
