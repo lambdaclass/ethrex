@@ -449,10 +449,9 @@ fn apply_plain_transaction(
             &context.payload.header,
             store_wrapper.clone(),
             block_cache,
-            spec_id(
-                &context.chain_config().map_err(ChainError::from)?,
-                context.payload.header.timestamp,
-            ),
+            context
+                .chain_config()?
+                .fork(context.payload.header.timestamp),
         )
         .map_err(EvmError::from)?;
 
