@@ -226,7 +226,7 @@ impl Genesis {
             requests_hash: self
                 .config
                 .is_prague_activated(self.timestamp)
-                .then_some(H256::zero()),
+                .then_some(H256::zero()), // TODO: set the value properly
         }
     }
 

@@ -128,6 +128,7 @@ impl ExecutionPayload {
             blob_gas_used: self.blob_gas_used,
             excess_blob_gas: self.excess_blob_gas,
             parent_beacon_block_root,
+            // TODO: set the value properly
             requests_hash: None,
         };
 
