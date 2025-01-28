@@ -138,9 +138,7 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Rustup toolchain install
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          toolchain: ${{ env.RUST_VERSION }}
+        uses: dtolnay/rust-toolchain@1.81.0
 
       - name: Caching
         uses: Swatinem/rust-cache@v2
