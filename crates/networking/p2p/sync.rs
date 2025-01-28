@@ -534,12 +534,19 @@ async fn storage_fetcher(
     let mut incoming = true;
     while incoming {
         // Fetch incoming requests
-        match receiver.recv().await {
-            Some(account_hashes_and_roots) if !account_hashes_and_roots.is_empty() => {
-                pending_storage.extend(account_hashes_and_roots);
+        let mut msg_buffer = vec![];
+        if receiver.recv_many(&mut msg_buffer, 25).await != 0 {
+            for account_hashes_and_roots in msg_buffer {
+                if !account_hashes_and_roots.is_empty() {
+                    pending_storage.extend(account_hashes_and_roots);
+                } else {
+                    // Empty message signaling no more bytecodes to sync
+                    incoming = false
+                }
             }
-            // Disconnect / Empty message signaling no more bytecodes to sync
-            _ => incoming = false,
+        } else {
+            // Disconnect
+            incoming = false
         }
         // If we have enough pending bytecodes to fill a batch
         // or if we have no more incoming batches, spawn a fetch process
