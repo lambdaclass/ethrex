@@ -108,7 +108,7 @@ pub fn prepare_vm_for_tx(vector: &TestVector, test: &EFTest) -> Result<VM, EFTes
             origin: tx.sender,
             refunded_gas: 0,
             gas_limit: tx.gas_limit,
-            spec_id: test.fork(),
+            fork: test.fork(),
             block_number: test.env.current_number,
             coinbase: test.env.current_coinbase,
             timestamp: test.env.current_timestamp,
