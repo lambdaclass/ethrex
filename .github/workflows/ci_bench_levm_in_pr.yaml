@@ -145,3 +145,67 @@ jobs:
           issue-number: ${{ github.event.pull_request.number }}
           body-path: combined_result.md
           edit-mode: replace
+
+  ef-test:
+    name: EF-Test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v4
+
+      - name: Rustup toolchain install
+        uses: dtolnay/rust-toolchain@1.81.0
+
+      - name: Caching
+        uses: Swatinem/rust-cache@v2
+
+      - name: Download EF Tests
+        run: |
+          cd crates/vm/levm
+          make download-evm-ef-tests
+
+      - name: Run tests
+        run: |
+          cd crates/vm/levm
+          make run-evm-ef-tests-ci | tee test_result.txt
+
+      - name: Show test summary -- short
+        run: |
+          cd crates/vm/levm && awk '/Summary: /,/Frontier/' test_result.txt;
+
+      - name: Check EF-TESTS status is 100%
+        run: |
+          cd crates/vm/levm
+          if [ "$(awk '/Summary:/ {print $(NF)}' test_result.txt)" != "(100.00%)" ]; then
+              echo "Percentage is not 100%."
+              exit 1
+          fi
+
+      - name: Create test summary
+        if: ${{ github.event_name == 'pull_request' }}
+        run: |
+          {
+            printf '```\n';
+            cd crates/vm/levm && awk '/Summary: /,/Frontier/' test_result.txt;
+            printf '```\n';
+          } > test_summary.txt
+
+      - name: Find comment
+        if: ${{ github.event_name == 'pull_request' }}
+        continue-on-error: true
+        uses: peter-evans/find-comment@v3
+        id: fc
+        with:
+          issue-number: ${{ github.event.pull_request.number }}
+          comment-author: "github-actions[bot]"
+          body-includes: "Summary:"
+
+      - name: Create Comment
+        if: ${{ github.event_name == 'pull_request' }}
+        uses: peter-evans/create-or-update-comment@v4
+        with:
+          comment-id: ${{ steps.fc.outputs.comment-id }}
+          token: ${{ secrets.GITHUB_TOKEN }}
+          issue-number: ${{ github.event.pull_request.number }}
+          body-path: test_summary.txt
+          edit-mode: replace
