@@ -190,10 +190,12 @@ impl DatabaseRef for RpcDB {
             Entry::Vacant(entry) => {
                 println!("retrieving block hash for block number {number}");
                 let handle = tokio::runtime::Handle::current();
-                tokio::task::block_in_place(|| {
+                let hash = tokio::task::block_in_place(|| {
                     handle.block_on(get_block(&self.rpc_url, number as usize))
                 })
-                .map(|block| block.hash())?
+                .map(|block| block.hash())?;
+                entry.insert(hash);
+                hash
             }
         };
 
