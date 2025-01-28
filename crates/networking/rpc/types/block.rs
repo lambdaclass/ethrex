@@ -152,6 +152,7 @@ mod test {
             blob_gas_used: Some(0x00),
             excess_blob_gas: Some(0x00),
             parent_beacon_block_root: Some(H256::zero()),
+            requests_hash: None,
         };
 
         let tx = EIP1559Transaction {

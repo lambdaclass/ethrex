@@ -128,7 +128,7 @@ pub struct Header {
     pub blob_gas_used: Option<U256>,
     pub excess_blob_gas: Option<U256>,
     pub parent_beacon_block_root: Option<H256>,
-    pub requests_root: Option<H256>,
+    pub requests_hash: Option<H256>,
 }
 
 #[derive(Debug, PartialEq, Eq, Deserialize, Clone)]
@@ -235,6 +235,7 @@ impl From<Header> for BlockHeader {
             blob_gas_used: val.blob_gas_used.map(|x| x.as_u64()),
             excess_blob_gas: val.excess_blob_gas.map(|x| x.as_u64()),
             parent_beacon_block_root: val.parent_beacon_block_root,
+            requests_hash: val.requests_hash,
         }
     }
 }
