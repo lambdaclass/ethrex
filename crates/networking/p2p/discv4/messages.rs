@@ -1,5 +1,4 @@
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
-
+use super::helpers::current_unix_time;
 use crate::types::{Endpoint, Node, NodeRecord};
 use bytes::BufMut;
 use ethrex_core::{H256, H512, H520};
@@ -12,36 +11,6 @@ use ethrex_rlp::{
 use k256::ecdsa::{RecoveryId, Signature, SigningKey, VerifyingKey};
 use sha3::{Digest, Keccak256};
 
-//todo add tests
-pub fn get_expiration(seconds: u64) -> u64 {
-    (SystemTime::now() + Duration::from_secs(seconds))
-        .duration_since(UNIX_EPOCH)
-        .unwrap()
-        .as_secs()
-}
-
-pub fn is_expired(expiration: u64) -> bool {
-    // this cast to a signed integer is needed as the rlp decoder doesn't take into account the sign
-    // otherwise a potential negative expiration would pass since it would take 2^64.
-    (expiration as i64)
-        < SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_secs() as i64
-}
-
-pub fn time_since_in_hs(time: u64) -> u64 {
-    let time = SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(time);
-    SystemTime::now().duration_since(time).unwrap().as_secs() / 3600
-}
-
-pub fn time_now_unix() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap()
-        .as_secs()
-}
-
 #[derive(Debug, PartialEq)]
 pub enum PacketDecodeErr {
     #[allow(unused)]
@@ -51,7 +20,6 @@ pub enum PacketDecodeErr {
     InvalidSignature,
 }
 
-#[allow(unused)]
 #[derive(Debug)]
 pub struct Packet {
     hash: H256,
@@ -126,18 +94,27 @@ impl Packet {
 }
 
 #[derive(Debug, Eq, PartialEq)]
-// NOTE: All messages could have more fields than specified by the spec.
-// Those additional fields should be ignored, and the message must be accepted.
-// TODO: remove when all variants are used
-#[allow(dead_code)]
 pub(crate) enum Message {
-    /// A ping message. Should be responded to with a Pong message.
     Ping(PingMessage),
     Pong(PongMessage),
     FindNode(FindNodeMessage),
     Neighbors(NeighborsMessage),
     ENRRequest(ENRRequestMessage),
     ENRResponse(ENRResponseMessage),
+}
+
+impl std::fmt::Display for Message {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let variant = match self {
+            Message::Ping(_) => "Ping",
+            Message::Pong(_) => "Pong",
+            Message::FindNode(_) => "FindNode",
+            Message::Neighbors(_) => "Neighbors",
+            Message::ENRRequest(_) => "ENRRequest",
+            Message::ENRResponse(_) => "ENRResponse",
+        };
+        write!(f, "{}", variant)
+    }
 }
 
 impl Message {
@@ -319,7 +296,7 @@ impl Default for FindNodeRequest {
     fn default() -> Self {
         Self {
             nodes_sent: 0,
-            sent_at: time_now_unix(),
+            sent_at: current_unix_time(),
             tx: None,
         }
     }
@@ -380,8 +357,6 @@ impl PongMessage {
         }
     }
 
-    // TODO: remove when used
-    #[allow(unused)]
     pub fn with_enr_seq(self, enr_seq: u64) -> Self {
         Self {
             enr_seq: Some(enr_seq),
