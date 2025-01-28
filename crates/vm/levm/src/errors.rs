@@ -215,7 +215,15 @@ pub enum PrecompileError {
 #[derive(Debug, Clone)]
 pub enum OpcodeSuccess {
     Continue,
-    Result(ResultReason),
+    // Result(ResultReason),
+}
+
+#[derive(Debug, Clone)]
+pub enum InstructionExecutionResolution {
+    Continue,
+    Stop,
+    Return,
+    Revert,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

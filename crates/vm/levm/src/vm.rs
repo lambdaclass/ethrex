@@ -8,8 +8,8 @@ use crate::{
     },
     environment::Environment,
     errors::{
-        InternalError, OpcodeSuccess, OutOfGasError, ResultReason, TransactionReport, TxResult,
-        TxValidationError, VMError,
+        InstructionExecutionResolution, InternalError, OpcodeSuccess, OutOfGasError, ResultReason,
+        TransactionReport, TxResult, TxValidationError, VMError,
     },
     gas_cost::{self, CODE_DEPOSIT_COST, STANDARD_TOKEN_COST, TOTAL_COST_FLOOR_PER_TOKEN},
     opcodes::Opcode,
@@ -254,13 +254,14 @@ impl VM {
 
             let op_result = self.handle_current_opcode(opcode, current_call_frame);
 
-            match op_result {
-                Ok(OpcodeSuccess::Continue) => {}
-                Ok(OpcodeSuccess::Result(reason)) => {
-                    return self.handle_opcode_result(reason, current_call_frame, backup)
-                }
-                Err(error) => return self.handle_opcode_error(error, current_call_frame, backup),
-            }
+            let _ = self.resolve_execution(opcode, op_result);
+            // match op_result {
+            //     Ok(OpcodeSuccess::Continue) => {}
+            //     Ok(OpcodeSuccess::Result(reason)) => {
+            //         return self.handle_opcode_result(reason, current_call_frame, backup)
+            //     }
+            //     Err(error) => return self.handle_opcode_error(error, current_call_frame, backup),
+            // }
         }
     }
 
@@ -985,7 +986,7 @@ impl VM {
         current_call_frame: &mut CallFrame,
     ) -> Result<OpcodeSuccess, VMError> {
         let op_result = match opcode {
-            Opcode::STOP => Ok(OpcodeSuccess::Result(ResultReason::Stop)),
+            Opcode::STOP => Ok(OpcodeSuccess::Continue),
             Opcode::ADD => self.op_add(current_call_frame),
             Opcode::MUL => self.op_mul(current_call_frame),
             Opcode::SUB => self.op_sub(current_call_frame),
@@ -1243,6 +1244,17 @@ impl VM {
                     created_address: None,
                 });
             }
+        }
+    }
+
+    fn resolve_execution(
+        &mut self,
+        opcode: Opcode,
+        op_result: Result<OpcodeSuccess, VMError>,
+    ) -> Result<InstructionExecutionResolution, VMError> {
+        match (opcode, op_result) {
+            (Opcode::STOP, Ok(OpcodeSuccess::Continue)) => Ok(InstructionExecutionResolution::Stop),
+            (_) => panic!("HElo"),
         }
     }
 }
