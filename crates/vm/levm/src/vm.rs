@@ -24,7 +24,7 @@ use bytes::Bytes;
 use ethrex_core::{
     types::{
         tx_fields::{AccessList, AuthorizationList},
-        TxKind,
+        Fork, TxKind,
     },
     Address, H256, U256,
 };
@@ -38,11 +38,7 @@ use std::{
 pub type Storage = HashMap<U256, H256>;
 
 #[derive(Debug, Clone, Default)]
-// TODO: https://github.com/lambdaclass/ethrex/issues/604
 pub struct Substate {
-    // accessed addresses and storage keys are considered WARM
-    // pub accessed_addresses: HashSet<Address>,
-    // pub accessed_storage_keys: HashSet<(Address, U256)>,
     pub selfdestruct_set: HashSet<Address>,
     pub touched_accounts: HashSet<Address>,
     pub touched_storage_slots: HashMap<Address, HashSet<H256>>,
@@ -83,7 +79,7 @@ impl VM {
         let mut default_touched_accounts = HashSet::from_iter([env.origin].iter().cloned());
 
         // [EIP-3651] - Add coinbase to cache if the spec is SHANGHAI or higher
-        if env.spec_id >= SpecId::SHANGHAI {
+        if env.fork >= Fork::Shanghai {
             default_touched_accounts.insert(env.coinbase);
         }
 
@@ -101,10 +97,10 @@ impl VM {
 
         // Add precompiled contracts addresses to cache.
         // TODO: Use the addresses from precompiles.rs in a future
-        let max_precompile_address = match env.spec_id {
-            spec if spec >= SpecId::PRAGUE => SIZE_PRECOMPILES_PRAGUE,
-            spec if spec >= SpecId::CANCUN => SIZE_PRECOMPILES_CANCUN,
-            spec if spec < SpecId::CANCUN => SIZE_PRECOMPILES_PRE_CANCUN,
+        let max_precompile_address = match env.fork {
+            spec if spec >= Fork::Prague => SIZE_PRECOMPILES_PRAGUE,
+            spec if spec >= Fork::Cancun => SIZE_PRECOMPILES_CANCUN,
+            spec if spec < Fork::Cancun => SIZE_PRECOMPILES_PRE_CANCUN,
             _ => return Err(VMError::Internal(InternalError::InvalidSpecId)),
         };
         for i in 1..=max_precompile_address {
@@ -208,8 +204,8 @@ impl VM {
             self.env.transient_storage.clone(),
         );
 
-        if is_precompile(&current_call_frame.code_address, self.env.spec_id) {
-            let precompile_result = execute_precompile(current_call_frame, self.env.spec_id);
+        if is_precompile(&current_call_frame.code_address, self.env.fork) {
+            let precompile_result = execute_precompile(current_call_frame, self.env.fork);
 
             match precompile_result {
                 Ok(output) => {
@@ -504,7 +500,7 @@ impl VM {
 
         let intrinsic_gas = get_intrinsic_gas(
             self.is_create(),
-            self.env.spec_id,
+            self.env.fork,
             &self.access_list,
             &self.authorization_list,
             initial_call_frame,
@@ -521,7 +517,7 @@ impl VM {
         initial_call_frame: &CallFrame,
         report: &TransactionReport,
     ) -> Result<u64, VMError> {
-        if self.env.spec_id >= SpecId::PRAGUE {
+        if self.env.fork >= Fork::Prague {
             // If the transaction is a CREATE transaction, the calldata is emptied and the bytecode is assigned.
             let calldata = if self.is_create() {
                 &initial_call_frame.bytecode
@@ -533,7 +529,7 @@ impl VM {
             // tx_calldata = nonzero_bytes_in_calldata * 16 + zero_bytes_in_calldata * 4
             // this is actually tokens_in_calldata * STANDARD_TOKEN_COST
             // see it in https://eips.ethereum.org/EIPS/eip-7623
-            let tokens_in_calldata: u64 = gas_cost::tx_calldata(calldata, self.env.spec_id)
+            let tokens_in_calldata: u64 = gas_cost::tx_calldata(calldata, self.env.fork)
                 .map_err(VMError::OutOfGas)?
                 .checked_div(STANDARD_TOKEN_COST)
                 .ok_or(VMError::Internal(InternalError::DivisionError))?;
@@ -566,11 +562,11 @@ impl VM {
         let sender_address = self.env.origin;
         let sender_account = get_account(&mut self.cache, &self.db, sender_address);
 
-        if self.env.spec_id >= SpecId::PRAGUE {
+        if self.env.fork >= Fork::Prague {
             // check for gas limit is grater or equal than the minimum required
             let intrinsic_gas: u64 = get_intrinsic_gas(
                 self.is_create(),
-                self.env.spec_id,
+                self.env.fork,
                 &self.access_list,
                 &self.authorization_list,
                 initial_call_frame,
@@ -578,7 +574,7 @@ impl VM {
 
             // calldata_cost = tokens_in_calldata * 4
             let calldata_cost: u64 =
-                gas_cost::tx_calldata(&initial_call_frame.calldata, self.env.spec_id)
+                gas_cost::tx_calldata(&initial_call_frame.calldata, self.env.fork)
                     .map_err(VMError::OutOfGas)?;
 
             // same as calculated in gas_used()
@@ -648,13 +644,13 @@ impl VM {
         let blob_gas_cost = get_blob_gas_price(
             self.env.tx_blob_hashes.clone(),
             self.env.block_excess_blob_gas,
-            self.env.spec_id,
+            self.env.fork,
         )?;
 
         // (2) INSUFFICIENT_MAX_FEE_PER_BLOB_GAS
         if let Some(tx_max_fee_per_blob_gas) = self.env.tx_max_fee_per_blob_gas {
             if tx_max_fee_per_blob_gas
-                < get_base_fee_per_blob_gas(self.env.block_excess_blob_gas, self.env.spec_id)?
+                < get_base_fee_per_blob_gas(self.env.block_excess_blob_gas, self.env.fork)?
             {
                 return Err(VMError::TxValidation(
                     TxValidationError::InsufficientMaxFeePerBlobGas,
@@ -692,7 +688,7 @@ impl VM {
         if self.is_create() {
             // [EIP-3860] - INITCODE_SIZE_EXCEEDED
             if initial_call_frame.calldata.len() > INIT_CODE_MAX_SIZE
-                && self.env.spec_id >= SpecId::SHANGHAI
+                && self.env.fork >= Fork::Shanghai
             {
                 return Err(VMError::TxValidation(
                     TxValidationError::InitcodeSizeExceeded,
@@ -734,7 +730,7 @@ impl VM {
         // Transaction is type 3 if tx_max_fee_per_blob_gas is Some
         if self.env.tx_max_fee_per_blob_gas.is_some() {
             // (11) TYPE_3_TX_PRE_FORK
-            if self.env.spec_id < SpecId::CANCUN {
+            if self.env.fork < Fork::Cancun {
                 return Err(VMError::TxValidation(TxValidationError::Type3TxPreFork));
             }
 
@@ -758,7 +754,7 @@ impl VM {
             }
 
             // (14) TYPE_3_TX_BLOB_COUNT_EXCEEDED
-            if blob_hashes.len() > max_blobs_per_block(self.env.spec_id) {
+            if blob_hashes.len() > max_blobs_per_block(self.env.fork) {
                 return Err(VMError::TxValidation(
                     TxValidationError::Type3TxBlobCountExceeded,
                 ));
@@ -776,7 +772,7 @@ impl VM {
         // Transaction is type 4 if authorization_list is Some
         if let Some(auth_list) = &self.authorization_list {
             // (16) TYPE_4_TX_PRE_FORK
-            if self.env.spec_id < SpecId::PRAGUE {
+            if self.env.fork < Fork::Prague {
                 return Err(VMError::TxValidation(TxValidationError::Type4TxPreFork));
             }
 
@@ -1020,7 +1016,7 @@ impl VM {
     ) -> Result<(StorageSlot, bool), VMError> {
         // [EIP-2929] - Introduced conditional tracking of accessed storage slots for Berlin and later specs.
         let mut storage_slot_was_cold = false;
-        if self.env.spec_id >= SpecId::BERLIN {
+        if self.env.fork >= Fork::Berlin {
             storage_slot_was_cold = self
                 .accrued_substate
                 .touched_storage_slots
