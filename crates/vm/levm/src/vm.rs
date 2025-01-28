@@ -34,11 +34,7 @@ use std::{
 pub type Storage = HashMap<U256, H256>;
 
 #[derive(Debug, Clone, Default)]
-// TODO: https://github.com/lambdaclass/ethrex/issues/604
 pub struct Substate {
-    // accessed addresses and storage keys are considered WARM
-    // pub accessed_addresses: HashSet<Address>,
-    // pub accessed_storage_keys: HashSet<(Address, U256)>,
     pub selfdestruct_set: HashSet<Address>,
     pub touched_accounts: HashSet<Address>,
     pub touched_storage_slots: HashMap<Address, HashSet<H256>>,
