@@ -21,7 +21,7 @@ use crate::{
     AccountInfo, TransientStorage,
 };
 use bytes::Bytes;
-use ethrex_core::{types::TxKind, Address, H256, U256};
+use ethrex_core::{types::Log, types::TxKind, Address, H256, U256};
 use revm_primitives::SpecId;
 use std::{
     cmp::max,
@@ -31,9 +31,11 @@ use std::{
 };
 pub type Storage = HashMap<U256, H256>;
 
-enum ExecutionResult {
-    Oke,
-    Revert,
+pub struct ExecutionResultVM {
+    pub result: TxResult,
+    pub gas_used: u64,
+    pub logs: Vec<Log>,
+    pub output: Bytes,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -240,7 +242,7 @@ impl VM {
     pub fn execute(
         &mut self,
         current_call_frame: &mut CallFrame,
-    ) -> Result<TransactionReport, VMError> {
+    ) -> Result<ExecutionResultVM, VMError> {
         // Backup of Database, Substate, Gas Refunds and Transient Storage if sub-context is reverted
         let backup = Backup::new(
             self.cache.clone(),
@@ -249,43 +251,37 @@ impl VM {
             self.env.transient_storage.clone(),
         );
 
-        if is_precompile(&current_call_frame.code_address, self.env.spec_id) {
-            let precompile_result = execute_precompile(current_call_frame, self.env.spec_id);
-            return self.handle_precompile_result(precompile_result, current_call_frame, backup);
-        }
+        // if is_precompile(&current_call_frame.code_address, self.env.spec_id) {
+        //     let precompile_result = execute_precompile(current_call_frame, self.env.spec_id);
+        //     return self.handle_precompile_result(precompile_result, current_call_frame, backup);
+        // }
 
-        loop {
+        let result = loop {
             let opcode = current_call_frame.next_opcode();
 
             let op_result = self.execute_opcode(opcode, current_call_frame);
 
             let instruction_result = self.resolve_execution(opcode, op_result)?;
 
-            // let _ = match instruction_result {
-            //     InstructionExecutionResolution::Continue => {}
-            //     InstructionExecutionResolution::Stop => return ExecutionResult::Oke,
-            //     InstructionExecutionResolution::Return => return ExecutionResult::Oke,
-            //     InstructionExecutionResolution::Revert => return ExecutionResult::Revert,
-            // };
+            // If the instruction result is none, then that means that it's not ready
+            match instruction_result {
+                InstructionExecutionResolution::Continue => {}
+                InstructionExecutionResolution::Revert => {
+                    break TxResult::Revert(VMError::RevertOpcode)
+                }
+                InstructionExecutionResolution::Stop => break TxResult::Success,
+                InstructionExecutionResolution::Return => break TxResult::Success,
+            };
+        };
 
-            return Ok(TransactionReport {
-                result: TxResult::Revert(VMError::AddressAlreadyOccupied),
-                gas_used: self.env.gas_limit,
-                gas_refunded: 0,
-                logs: vec![],
-                new_state: HashMap::default(),
-                output: Bytes::new(),
-                created_address: None,
-            });
-            // return self.handle_opcode_result(reason, current_call_frame, backup);
-            // match op_result {
-            //     Ok(OpcodeSuccess::Continue) => {}
-            //     Ok(OpcodeSuccess::Result(reason)) => {
-            //         return self.handle_opcode_result(reason, current_call_frame, backup)
-            //     }
-            //     Err(error) => return self.handle_opcode_error(error, current_call_frame, backup),
-            // }
-        }
+        let execution_result = ExecutionResultVM {
+            result,
+            gas_used: current_call_frame.gas_used,
+            output: std::mem::take(&mut current_call_frame.output),
+            logs: std::mem::take(&mut current_call_frame.logs),
+        };
+
+        Ok(execution_result)
     }
 
     fn restore_state(&mut self, backup: Backup) {
@@ -760,13 +756,14 @@ impl VM {
 
         let mut report = self.execute(&mut initial_call_frame)?;
 
-        report.gas_used = self.gas_used(&initial_call_frame, &report)?;
+        todo!();
+        // report.gas_used = self.gas_used(&initial_call_frame, &report)?;
 
-        self.post_execution_changes(&initial_call_frame, &mut report)?;
+        // self.post_execution_changes(&initial_call_frame, &mut report)?;
 
-        report.new_state.clone_from(&self.cache);
+        // report.new_state.clone_from(&self.cache);
 
-        Ok(report)
+        // Ok(report)
     }
 
     pub fn current_call_frame_mut(&mut self) -> Result<&mut CallFrame, VMError> {
