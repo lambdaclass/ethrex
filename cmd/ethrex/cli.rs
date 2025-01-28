@@ -93,6 +93,14 @@ pub fn cli() -> Command {
                 .action(ArgAction::Set),
         )
         .arg(
+            Arg::new("peers_file")
+                .long("peers_file")
+                .value_name("PEERS_FILE")
+                .help("File to which successful p2p connections will be stored when terminating the program and read from when starting up. By default is stored under <datadir>/peers.json")
+                .num_args(1..)
+                .action(ArgAction::Set),
+        )
+        .arg(
             Arg::new("datadir")
                 .long("datadir")
                 .value_name("DATABASE_DIRECTORY")
