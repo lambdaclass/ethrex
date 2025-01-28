@@ -550,23 +550,26 @@ async fn storage_fetcher(
     while incoming {
         // Fetch incoming requests
         let awaiting_batch = Instant::now();
-        match receiver.recv().await {
-            Some(account_hashes_and_roots) if !account_hashes_and_roots.is_empty() => {
-                info!(
-                    "Spent {} secs waiting for incoming batch",
-                    awaiting_batch.elapsed().as_secs()
-                );
-                pending_storage.extend(account_hashes_and_roots);
-                info!(
-                    "Received incoming storage range request, current batch: {}/{BATCH_SIZE}",
-                    pending_storage.len()
-                );
-                info!("Number of messages in receiver: {}", receiver.len());
-            }
-            // Disconnect / Empty message signaling no more bytecodes to sync
-            _ => {
-                info!("Final storage batch");
-                incoming = false
+        let mut msg_buffer = vec![];
+        if receiver.recv_many(&mut msg_buffer, 25).await != 0 {
+            for account_hashes_and_roots in msg_buffer {
+                if !account_hashes_and_roots.is_empty() {
+                    info!(
+                        "Spent {} secs waiting for incoming batch",
+                        awaiting_batch.elapsed().as_secs()
+                    );
+                    pending_storage.extend(account_hashes_and_roots);
+                    info!(
+                        "Received incoming storage range request, current batch: {}/{BATCH_SIZE}",
+                        pending_storage.len()
+                    );
+                    info!("Number of messages in receiver: {}", receiver.len());
+                }
+                // Disconnect / Empty message signaling no more bytecodes to sync
+                else {
+                    info!("Final storage batch");
+                    incoming = false
+                }
             }
         }
         info!("Processing current batches");
