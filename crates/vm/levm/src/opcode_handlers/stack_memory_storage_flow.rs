@@ -6,8 +6,7 @@ use crate::{
     memory::{self, calculate_memory_size},
     vm::VM,
 };
-use ethrex_core::{H256, U256};
-use revm_primitives::SpecId;
+use ethrex_core::{types::Fork, H256, U256};
 
 // Stack, Memory, Storage and Flow Operations (15)
 // Opcodes: POP, MLOAD, MSTORE, MSTORE8, SLOAD, SSTORE, JUMP, JUMPI, PC, MSIZE, GAS, JUMPDEST, TLOAD, TSTORE, MCOPY
@@ -26,7 +25,7 @@ impl VM {
         current_call_frame: &mut CallFrame,
     ) -> Result<OpcodeSuccess, VMError> {
         // [EIP-1153] - TLOAD is only available from CANCUN
-        if self.env.spec_id < SpecId::CANCUN {
+        if self.env.fork < Fork::Cancun {
             return Err(VMError::InvalidOpcode);
         }
 
@@ -50,7 +49,7 @@ impl VM {
         current_call_frame: &mut CallFrame,
     ) -> Result<OpcodeSuccess, VMError> {
         // [EIP-1153] - TLOAD is only available from CANCUN
-        if self.env.spec_id < SpecId::CANCUN {
+        if self.env.fork < Fork::Cancun {
             return Err(VMError::InvalidOpcode);
         }
 
@@ -264,7 +263,7 @@ impl VM {
         current_call_frame: &mut CallFrame,
     ) -> Result<OpcodeSuccess, VMError> {
         // [EIP-5656] - MCOPY is only available from CANCUN
-        if self.env.spec_id < SpecId::CANCUN {
+        if self.env.fork < Fork::Cancun {
             return Err(VMError::InvalidOpcode);
         }
 

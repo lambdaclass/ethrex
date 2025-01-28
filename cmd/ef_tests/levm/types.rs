@@ -11,10 +11,9 @@ use crate::{
 };
 use bytes::Bytes;
 use ethrex_core::{
-    types::{Genesis, GenesisAccount, TxKind},
+    types::{Fork, Genesis, GenesisAccount, TxKind},
     Address, H256, U256,
 };
-use ethrex_vm::SpecId;
 use serde::Deserialize;
 use std::collections::HashMap;
 
@@ -33,21 +32,21 @@ pub struct EFTest {
 }
 
 impl EFTest {
-    pub fn fork(&self) -> SpecId {
+    pub fn fork(&self) -> Fork {
         match &self.post {
-            EFTestPost::Prague(_) => SpecId::PRAGUE,
-            EFTestPost::Cancun(_) => SpecId::CANCUN,
-            EFTestPost::Shanghai(_) => SpecId::SHANGHAI,
-            EFTestPost::Homestead(_) => SpecId::HOMESTEAD,
-            EFTestPost::Istanbul(_) => SpecId::ISTANBUL,
-            EFTestPost::London(_) => SpecId::LONDON,
-            EFTestPost::Byzantium(_) => SpecId::BYZANTIUM,
-            EFTestPost::Berlin(_) => SpecId::BERLIN,
+            EFTestPost::Prague(_) => Fork::Prague,
+            EFTestPost::Cancun(_) => Fork::Cancun,
+            EFTestPost::Shanghai(_) => Fork::Shanghai,
+            EFTestPost::Homestead(_) => Fork::Homestead,
+            EFTestPost::Istanbul(_) => Fork::Istanbul,
+            EFTestPost::London(_) => Fork::London,
+            EFTestPost::Byzantium(_) => Fork::Byzantium,
+            EFTestPost::Berlin(_) => Fork::Berlin,
             EFTestPost::Constantinople(_) | EFTestPost::ConstantinopleFix(_) => {
-                SpecId::CONSTANTINOPLE
+                Fork::Constantinople
             }
-            EFTestPost::Paris(_) => SpecId::MERGE,
-            EFTestPost::Frontier(_) => SpecId::FRONTIER,
+            EFTestPost::Paris(_) => Fork::Paris,
+            EFTestPost::Frontier(_) => Fork::Frontier,
         }
     }
 }

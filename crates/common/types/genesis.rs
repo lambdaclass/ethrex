@@ -87,11 +87,57 @@ pub struct ChainConfig {
     pub terminal_total_difficulty_passed: bool,
 }
 
-#[derive(Debug, PartialEq, PartialOrd)]
+#[repr(u8)]
+#[derive(Debug, PartialEq, PartialOrd, Default, Clone, Copy, Serialize, Deserialize)]
 pub enum Fork {
-    Paris = 0,
-    Shanghai = 1,
-    Cancun = 2,
+    Frontier = 0,
+    FrontierThawing = 1,
+    Homestead = 2,
+    DaoFork = 3,
+    Tangerine = 4,
+    SpuriousDragon = 5,
+    Byzantium = 6,
+    Constantinople = 7,
+    Petersburg = 8,
+    Istanbul = 9,
+    MuirGlacier = 10,
+    Berlin = 11,
+    London = 12,
+    ArrowGlacier = 13,
+    GrayGlacier = 14,
+    Paris = 15,
+    Shanghai = 16,
+    #[default]
+    Cancun = 17,
+    Prague = 18,
+    PragueEof = 19,
+}
+
+impl From<Fork> for &str {
+    fn from(fork: Fork) -> Self {
+        match fork {
+            Fork::Frontier => "Frontier",
+            Fork::FrontierThawing => "FrontierThawing",
+            Fork::Homestead => "Homestead",
+            Fork::DaoFork => "DaoFork",
+            Fork::Tangerine => "Tangerine",
+            Fork::SpuriousDragon => "SpuriousDragon",
+            Fork::Byzantium => "Byzantium",
+            Fork::Constantinople => "Constantinople",
+            Fork::Petersburg => "Petersburg",
+            Fork::Istanbul => "Istanbul",
+            Fork::MuirGlacier => "MuirGlacier",
+            Fork::Berlin => "Berlin",
+            Fork::London => "London",
+            Fork::ArrowGlacier => "ArrowGlacier",
+            Fork::GrayGlacier => "GrayGlacier",
+            Fork::Paris => "Paris",
+            Fork::Shanghai => "Shanghai",
+            Fork::Cancun => "Cancun",
+            Fork::Prague => "Prague",
+            Fork::PragueEof => "Prague EOF",
+        }
+    }
 }
 
 impl ChainConfig {
@@ -120,6 +166,10 @@ impl ChainConfig {
         } else {
             Fork::Paris
         }
+    }
+
+    pub fn fork(&self, block_timestamp: u64) -> Fork {
+        self.get_fork(block_timestamp)
     }
 
     pub fn gather_forks(&self) -> (Vec<u64>, Vec<u64>) {
