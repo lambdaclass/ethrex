@@ -78,7 +78,10 @@ pub mod io {
 pub mod trie {
     use std::collections::HashMap;
 
-    use ethrex_core::{types::AccountState, Address, H160, H256, U256};
+    use ethrex_core::{
+        types::{AccountInfo, AccountState},
+        H160, U256,
+    };
     use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode, error::RLPDecodeError};
     use ethrex_storage::{hash_address, hash_key, AccountUpdate};
     use ethrex_trie::{Trie, TrieError};
@@ -102,42 +105,63 @@ pub mod trie {
         state_trie: &Trie,
         storage_tries: &HashMap<H160, Trie>,
     ) -> Result<bool, Error> {
-        for (address, account_info) in &db.accounts {
-            let storage_trie = storage_tries
-                .get(&address)
-                .ok_or(Error::MissingStorageTrie(*address))?;
-            let storage_root = storage_trie.hash_no_commit();
-
-            // verify account and storage trie are valid
-            let trie_account_state = match state_trie.get(&hash_address(&address)) {
+        // verifies that, for each stored account:
+        //  1. account is in state trie
+        //  2. account info (nonce, balance, code hash) is correct (the same as encoded in trie)
+        //  3. if there's any storage:
+        //      3.a. storage root is correct (the same as encoded in trie)
+        //      3.b. every value is in the storage trie
+        //      3.c. every value is correct (the same as encoded in trie)
+        for (address, db_account_info) in &db.accounts {
+            // 1. account is in state trie
+            let trie_account_state = match state_trie.get(&hash_address(address)) {
                 Ok(Some(encoded_state)) => AccountState::decode(&encoded_state)?,
-                Ok(None) | Err(TrieError::InconsistentTree) => return Ok(false), // account not in trie
+                Ok(None) | Err(TrieError::InconsistentTree) => {
+                    return Ok(false);
+                }
                 Err(err) => return Err(err.into()),
             };
-            let db_account_state = AccountState {
-                nonce: account_info.nonce,
-                balance: account_info.balance,
-                code_hash: account_info.code_hash,
-                storage_root,
+            let trie_account_info = AccountInfo {
+                nonce: trie_account_state.nonce,
+                balance: trie_account_state.balance,
+                code_hash: trie_account_state.code_hash,
             };
-            if db_account_state != trie_account_state {
+
+            // 2. account info is correct
+            if db_account_info != &trie_account_info {
                 return Ok(false);
             }
 
-            // verify storage
-            for (key, db_value) in db
-                .storage
-                .get(address)
-                .ok_or(Error::StorageNotFound(*address))?
-            {
-                let trie_value = match storage_trie.get(&hash_key(key)) {
-                    Ok(Some(encoded)) => U256::decode(&encoded)?,
-                    Ok(None) | Err(TrieError::InconsistentTree) => return Ok(false), // value not in trie
-                    Err(err) => return Err(err.into()),
-                };
-                if *db_value != trie_value {
-                    return Ok(false);
+            // 3. if there's any storage
+            match db.storage.get(address) {
+                Some(storage) if !storage.is_empty() => {
+                    let storage_trie = storage_tries
+                        .get(address)
+                        .ok_or(Error::MissingStorageTrie(*address))?;
+                    let storage_root = storage_trie.hash_no_commit();
+
+                    // 3.a. storage root is correct
+                    if storage_root != trie_account_state.storage_root {
+                        return Ok(false);
+                    }
+
+                    for (key, db_value) in storage {
+                        // 3.b. every value is in storage trie
+                        let trie_value = match storage_trie.get(&hash_key(key)) {
+                            Ok(Some(encoded)) => U256::decode(&encoded)?,
+                            Ok(None) | Err(TrieError::InconsistentTree) => {
+                                return Ok(false);
+                            }
+                            Err(err) => return Err(err.into()),
+                        };
+
+                        // 3.c. every value is correct
+                        if db_value != &trie_value {
+                            return Ok(false);
+                        }
+                    }
                 }
+                _ => {}
             }
         }
 
