@@ -1254,6 +1254,12 @@ impl VM {
     ) -> Result<InstructionExecutionResolution, VMError> {
         match (opcode, op_result) {
             (Opcode::STOP, Ok(OpcodeSuccess::Continue)) => Ok(InstructionExecutionResolution::Stop),
+            (Opcode::RETURN, Ok(OpcodeSuccess::Continue)) => {
+                Ok(InstructionExecutionResolution::Return)
+            }
+            (Opcode::INVALID, Ok(OpcodeSuccess::Continue)) => {
+                Ok(InstructionExecutionResolution::Revert)
+            }
             (_) => panic!("HElo"),
         }
     }
