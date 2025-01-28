@@ -16,8 +16,8 @@ use tokio::{
 };
 use tracing::{info, warn};
 
-use crate::rlpx::p2p::Capability;
 use crate::{kademlia::KademliaTable, peer_channels::BlockRequestOrder};
+use crate::{peer_channels::HASH_MAX, rlpx::p2p::Capability};
 
 /// Maximum amount of times we will ask a peer for an account/storage range
 /// If the max amount of retries is exceeded we will asume that the state we are requesting is old and no longer available
