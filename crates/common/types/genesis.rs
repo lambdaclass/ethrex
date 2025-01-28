@@ -4,6 +4,7 @@ use ethrex_trie::Trie;
 use serde::{Deserialize, Serialize};
 use sha3::{Digest, Keccak256};
 use std::collections::HashMap;
+use tracing::info;
 
 use ethrex_rlp::encode::RLPEncode;
 
@@ -102,6 +103,9 @@ impl ChainConfig {
 
     pub fn is_cancun_activated(&self, block_timestamp: u64) -> bool {
         self.cancun_time.is_some_and(|time| time <= block_timestamp)
+    }
+    pub fn is_prague_activated(&self, block_timestamp: u64) -> bool {
+        self.prague_time.is_some_and(|time| time <= block_timestamp)
     }
 
     pub fn is_istanbul_activated(&self, block_number: BlockNumber) -> bool {
@@ -217,6 +221,10 @@ impl Genesis {
             parent_beacon_block_root: self
                 .config
                 .is_cancun_activated(self.timestamp)
+                .then_some(H256::zero()),
+            requests_hash: self
+                .config
+                .is_prague_activated(self.timestamp)
                 .then_some(H256::zero()),
         }
     }
