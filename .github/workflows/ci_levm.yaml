@@ -53,6 +53,7 @@ jobs:
 
       - name: Check EF-TESTS status is 100%
         run: |
+          cd crates/vm/levm
           if [ "$(awk '/Summary:/ {print $(NF)}' test_result.txt)" != "(100.00%)" ]; then
               echo "Percentage is not 100%."
               exit 1
