@@ -1,7 +1,7 @@
 use crate::{
     call_frame::CallFrame,
     constants::WORD_SIZE,
-    errors::{InternalError, OpcodeSuccess, VMError},
+    errors::{InternalError, OpcodeResult, VMError},
     gas_cost,
     vm::VM,
 };
@@ -17,7 +17,7 @@ impl VM {
         &mut self,
         current_call_frame: &mut CallFrame,
         n_bytes: usize,
-    ) -> Result<OpcodeSuccess, VMError> {
+    ) -> Result<OpcodeResult, VMError> {
         self.increase_consumed_gas(current_call_frame, gas_cost::PUSHN)?;
 
         let read_n_bytes = read_bytcode_slice(current_call_frame, n_bytes)?;
@@ -29,14 +29,14 @@ impl VM {
 
         current_call_frame.increment_pc_by(n_bytes)?;
 
-        Ok(OpcodeSuccess::Continue)
+        Ok(OpcodeResult::Continue)
     }
 
     // PUSH0
     pub fn op_push0(
         &mut self,
         current_call_frame: &mut CallFrame,
-    ) -> Result<OpcodeSuccess, VMError> {
+    ) -> Result<OpcodeResult, VMError> {
         // [EIP-3855] - PUSH0 is only available from SHANGHAI
         if self.env.spec_id < SpecId::SHANGHAI {
             return Err(VMError::InvalidOpcode);
@@ -46,7 +46,7 @@ impl VM {
 
         current_call_frame.stack.push(U256::zero())?;
 
-        Ok(OpcodeSuccess::Continue)
+        Ok(OpcodeResult::Continue)
     }
 }
 

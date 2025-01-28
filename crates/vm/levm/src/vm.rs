@@ -8,7 +8,7 @@ use crate::{
     },
     environment::Environment,
     errors::{
-        InstructionExecutionResolution, InternalError, OpcodeSuccess, OutOfGasError, ResultReason,
+        InstructionExecutionResolution, InternalError, OpcodeResult, OutOfGasError, ResultReason,
         TransactionReport, TxResult, TxValidationError, VMError,
     },
     gas_cost::{self, CODE_DEPOSIT_COST, STANDARD_TOKEN_COST, TOTAL_COST_FLOOR_PER_TOKEN},
@@ -261,18 +261,15 @@ impl VM {
 
             let op_result = self.execute_opcode(opcode, current_call_frame);
 
-            let instruction_result = self.resolve_execution(opcode, op_result)?;
-
             // If the instruction result is none, then that means that it's not ready
-            match instruction_result {
-                InstructionExecutionResolution::Continue => {}
-                InstructionExecutionResolution::Revert => {
-                    break TxResult::Revert(VMError::RevertOpcode)
+            match op_result {
+                Ok(OpcodeResult::Continue) => {}
+                Ok(OpcodeResult::Result(reason)) => {
+                    break self.handle_opcode_result(reason, current_call_frame, backup)
                 }
-                InstructionExecutionResolution::Stop => break TxResult::Success,
-                InstructionExecutionResolution::Return => break TxResult::Success,
+                Err(error) => break self.handle_opcode_error(error, current_call_frame, backup),
             };
-        };
+        }?;
 
         let execution_result = ExecutionResultVM {
             result,
@@ -315,7 +312,7 @@ impl VM {
     fn gas_used(
         &self,
         initial_call_frame: &CallFrame,
-        report: &TransactionReport,
+        execution_result: &ExecutionResultVM,
     ) -> Result<u64, VMError> {
         if self.env.spec_id >= SpecId::PRAGUE {
             // If the transaction is a CREATE transaction, the calldata is emptied and the bytecode is assigned.
@@ -343,10 +340,10 @@ impl VM {
                 .checked_add(TX_BASE_COST)
                 .ok_or(VMError::Internal(InternalError::GasOverflow))?;
 
-            let gas_used = max(floor_gas_price, report.gas_used);
+            let gas_used = max(floor_gas_price, execution_result.gas_used);
             Ok(gas_used)
         } else {
-            Ok(report.gas_used)
+            Ok(execution_result.gas_used)
         }
     }
 
@@ -1004,9 +1001,9 @@ impl VM {
         &mut self,
         opcode: Opcode,
         current_call_frame: &mut CallFrame,
-    ) -> Result<OpcodeSuccess, VMError> {
+    ) -> Result<OpcodeResult, VMError> {
         let op_result = match opcode {
-            Opcode::STOP => Ok(OpcodeSuccess::Continue),
+            Opcode::STOP => Ok(OpcodeResult::Continue),
             Opcode::ADD => self.op_add(current_call_frame),
             Opcode::MUL => self.op_mul(current_call_frame),
             Opcode::SUB => self.op_sub(current_call_frame),
@@ -1121,7 +1118,7 @@ impl VM {
         reason: ResultReason,
         current_call_frame: &mut CallFrame,
         backup: Backup,
-    ) -> Result<TransactionReport, VMError> {
+    ) -> Result<TxResult, VMError> {
         self.call_frames.push(current_call_frame.clone());
         // On successful create check output validity
         if (self.is_create() && current_call_frame.depth == 0)
@@ -1168,28 +1165,12 @@ impl VM {
                     current_call_frame.gas_used = current_call_frame.gas_limit;
                     self.restore_state(backup);
 
-                    return Ok(TransactionReport {
-                        result: TxResult::Revert(error),
-                        new_state: HashMap::default(),
-                        gas_used: current_call_frame.gas_used,
-                        gas_refunded: self.env.refunded_gas,
-                        output: std::mem::take(&mut current_call_frame.output),
-                        logs: std::mem::take(&mut current_call_frame.logs),
-                        created_address: None,
-                    });
+                    return Ok(TxResult::Revert(error));
                 }
             }
         }
 
-        return Ok(TransactionReport {
-            result: TxResult::Success,
-            new_state: HashMap::default(),
-            gas_used: current_call_frame.gas_used,
-            gas_refunded: self.env.refunded_gas,
-            output: std::mem::take(&mut current_call_frame.output),
-            logs: std::mem::take(&mut current_call_frame.logs),
-            created_address: None,
-        });
+        Ok(TxResult::Success)
     }
 
     fn handle_opcode_error(
@@ -1197,7 +1178,7 @@ impl VM {
         error: VMError,
         current_call_frame: &mut CallFrame,
         backup: Backup,
-    ) -> Result<TransactionReport, VMError> {
+    ) -> Result<TxResult, VMError> {
         self.call_frames.push(current_call_frame.clone());
 
         if error.is_internal() {
@@ -1214,15 +1195,7 @@ impl VM {
 
         self.restore_state(backup);
 
-        return Ok(TransactionReport {
-            result: TxResult::Revert(error),
-            new_state: HashMap::default(),
-            gas_used: current_call_frame.gas_used,
-            gas_refunded: self.env.refunded_gas,
-            output: std::mem::take(&mut current_call_frame.output), // Bytes::new() if error is not RevertOpcode
-            logs: std::mem::take(&mut current_call_frame.logs),
-            created_address: None,
-        });
+        return Ok(TxResult::Revert(error));
     }
 
     fn handle_precompile_result(
@@ -1270,14 +1243,14 @@ impl VM {
     fn resolve_execution(
         &mut self,
         opcode: Opcode,
-        op_result: Result<OpcodeSuccess, VMError>,
+        op_result: Result<OpcodeResult, VMError>,
     ) -> Result<InstructionExecutionResolution, VMError> {
         match (opcode, op_result) {
-            (Opcode::STOP, Ok(OpcodeSuccess::Continue)) => Ok(InstructionExecutionResolution::Stop),
-            (Opcode::RETURN, Ok(OpcodeSuccess::Continue)) => {
+            (Opcode::STOP, Ok(OpcodeResult::Continue)) => Ok(InstructionExecutionResolution::Stop),
+            (Opcode::RETURN, Ok(OpcodeResult::Continue)) => {
                 Ok(InstructionExecutionResolution::Return)
             }
-            (Opcode::INVALID, Ok(OpcodeSuccess::Continue)) => {
+            (Opcode::INVALID, Ok(OpcodeResult::Continue)) => {
                 Ok(InstructionExecutionResolution::Revert)
             }
             (_) => panic!("HElo"),

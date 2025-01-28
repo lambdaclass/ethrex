@@ -213,9 +213,9 @@ pub enum PrecompileError {
 }
 
 #[derive(Debug, Clone)]
-pub enum OpcodeSuccess {
+pub enum OpcodeResult {
     Continue,
-    // Result(ResultReason),
+    Result(ResultReason),
 }
 
 #[derive(Debug, Clone)]
