@@ -179,6 +179,26 @@ impl VM {
         self.increase_consumed_gas(current_call_frame, gas_cost::SHL)?;
         let shift = current_call_frame.stack.pop()?;
         let value = current_call_frame.stack.pop()?;
+        
+        if shift.is_zero() {
+            current_call_frame.stack.push(value)?;
+            return Ok(OpcodeSuccess::Continue);
+        }
+        if value.is_zero() {
+            current_call_frame.stack.push(U256::zero())?;
+            return Ok(OpcodeSuccess::Continue);
+        }
+
+        // For 1 << n, we can use 2^n directly
+        if value == U256::one() {
+            let res = if shift >= U256::from(256) {
+                U256::zero()
+            } else {
+                U256::from(2).pow(shift)
+            };
+            current_call_frame.stack.push(res)?;
+            return Ok(OpcodeSuccess::Continue);
+        }
 
         if shift < U256::from(256) {
             current_call_frame
@@ -187,7 +207,6 @@ impl VM {
         } else {
             current_call_frame.stack.push(U256::zero())?;
         }
-
         Ok(OpcodeSuccess::Continue)
     }
 
