@@ -264,18 +264,15 @@ async fn main() {
             let block_producer_engine = ethrex_dev::block_producer::start_block_producer(url, authrpc_jwtsecret.into(), head_block_hash, max_tries, 1000, ethrex_core::Address::default());
             tracker.spawn(block_producer_engine);
         } else {
-            let networking = ethrex_net::start_network(
+            ethrex_net::start_network(
                 local_p2p_node,
                 tracker.clone(),
-                udp_socket_addr,
-                tcp_socket_addr,
                 bootnodes,
                 signer,
                 peer_table.clone(),
                 store,
             )
-            .into_future();
-            tracker.spawn(networking);
+            .await.expect("Network starts");
             tracker.spawn(ethrex_net::periodically_show_peer_stats(peer_table));
         }
     }
