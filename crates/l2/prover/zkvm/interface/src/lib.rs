@@ -110,13 +110,17 @@ pub mod trie {
         //  2. account info (nonce, balance, code hash) is correct (the same as encoded in trie)
         //  3. if there's any storage:
         //      3.a. storage root is correct (the same as encoded in trie)
-        //      3.b. every value is in the storage trie
-        //      3.c. every value is correct (the same as encoded in trie)
+        //      3.b. for each storage value:
+        //          3.b.1. every value is in the storage trie, except for zero values which are absent
+        //          3.b.2. every value in trie is correct (the same as encoded in trie)
         for (address, db_account_info) in &db.accounts {
             // 1. account is in state trie
             let trie_account_state = match state_trie.get(&hash_address(address)) {
                 Ok(Some(encoded_state)) => AccountState::decode(&encoded_state)?,
-                Ok(None) | Err(TrieError::InconsistentTree) => {
+                Ok(None) => {
+                    return Ok(false);
+                }
+                Err(TrieError::InconsistentTree) => {
                     return Ok(false);
                 }
                 Err(err) => return Err(err.into()),
@@ -146,17 +150,23 @@ pub mod trie {
                     }
 
                     for (key, db_value) in storage {
-                        // 3.b. every value is in storage trie
+                        // 3.b. every value is in storage trie, except for zero values which are
+                        //      absent
                         let trie_value = match storage_trie.get(&hash_key(key)) {
                             Ok(Some(encoded)) => U256::decode(&encoded)?,
+                            Ok(None) if db_value.is_zero() => {
+                                // an absent value must be zero
+                                continue;
+                            }
                             Ok(None) | Err(TrieError::InconsistentTree) => {
+                                // a non-zero value must be encoded in the trie
                                 return Ok(false);
                             }
                             Err(err) => return Err(err.into()),
                         };
 
                         // 3.c. every value is correct
-                        if db_value != &trie_value {
+                        if *db_value != trie_value {
                             return Ok(false);
                         }
                     }
