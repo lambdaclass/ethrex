@@ -21,7 +21,6 @@ use ethrex_rlp;
 use ethrex_rlp::encode::RLPEncode;
 use keccak_hash::keccak;
 use libsecp256k1::{Message, RecoveryId, Signature};
-use revm_primitives::SpecId;
 use sha3::{Digest, Keccak256};
 use std::{
     collections::{HashMap, HashSet},
