@@ -329,6 +329,7 @@ impl RLPEncode for Node {
     }
 }
 
+#[cfg(test)]
 mod tests {
     use crate::types::Node;
     use ethrex_core::H512;
