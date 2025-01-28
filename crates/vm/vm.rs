@@ -1042,7 +1042,7 @@ pub fn fork_to_spec_id(fork: Fork) -> SpecId {
         Fork::Shanghai => SpecId::SHANGHAI,
         Fork::Cancun => SpecId::CANCUN,
         Fork::Prague => SpecId::PRAGUE,
-        Fork::PragueEof => SpecId::PRAGUE_EOF,
+        Fork::Osaka => SpecId::OSAKA,
     }
 }
 

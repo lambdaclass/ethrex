@@ -110,7 +110,7 @@ pub enum Fork {
     #[default]
     Cancun = 17,
     Prague = 18,
-    PragueEof = 19,
+    Osaka = 19,
 }
 
 impl From<Fork> for &str {
@@ -135,7 +135,7 @@ impl From<Fork> for &str {
             Fork::Shanghai => "Shanghai",
             Fork::Cancun => "Cancun",
             Fork::Prague => "Prague",
-            Fork::PragueEof => "Prague EOF",
+            Fork::Osaka => "Osaka",
         }
     }
 }

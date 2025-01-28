@@ -28,7 +28,6 @@ use ethrex_core::{
     },
     Address, H256, U256,
 };
-use revm_primitives::SpecId;
 use std::{
     cmp::max,
     collections::{HashMap, HashSet},
