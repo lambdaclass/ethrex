@@ -1,4 +1,3 @@
-use bootnode::BootNode;
 use discv4::{
     helpers::current_unix_time,
     server::{DiscoveryError, Discv4Server},
@@ -23,7 +22,6 @@ use tokio_util::task::TaskTracker;
 use tracing::{error, info};
 use types::Node;
 
-pub mod bootnode;
 pub(crate) mod discv4;
 pub(crate) mod kademlia;
 pub mod peer_channels;
@@ -62,7 +60,7 @@ struct P2PContext {
 pub async fn start_network(
     local_node: Node,
     tracker: TaskTracker,
-    bootnodes: Vec<BootNode>,
+    bootnodes: Vec<Node>,
     signer: SigningKey,
     peer_table: Arc<Mutex<KademliaTable>>,
     storage: Store,

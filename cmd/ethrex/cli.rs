@@ -1,5 +1,5 @@
 use clap::{Arg, ArgAction, Command};
-use ethrex_net::bootnode::BootNode;
+use ethrex_net::types::Node;
 use tracing::Level;
 
 pub fn cli() -> Command {
@@ -87,8 +87,16 @@ pub fn cli() -> Command {
             Arg::new("bootnodes")
                 .long("bootnodes")
                 .value_name("BOOTNODE_LIST")
-                .value_parser(clap::value_parser!(BootNode))
+                .value_parser(clap::value_parser!(Node))
                 .value_delimiter(',')
+                .num_args(1..)
+                .action(ArgAction::Set),
+        )
+        .arg(
+            Arg::new("peers_file")
+                .long("peers_file")
+                .value_name("PEERS_FILE")
+                .help("File to which successful p2p connections will be stored when terminating the program and read from when starting up. By default is stored under <datadir>/peers.json")
                 .num_args(1..)
                 .action(ArgAction::Set),
         )

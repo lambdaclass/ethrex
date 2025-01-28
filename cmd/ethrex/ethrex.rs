@@ -3,10 +3,10 @@ use directories::ProjectDirs;
 use ethrex_blockchain::{add_block, fork_choice::apply_fork_choice};
 use ethrex_core::types::{Block, Genesis};
 use ethrex_net::{
-    bootnode::BootNode,
     node_id_from_signing_key, peer_table,
     sync::{SyncManager, SyncMode},
     types::Node,
+    KademliaTable,
 };
 use ethrex_rlp::decode::RLPDecode;
 use ethrex_storage::{EngineType, Store};
@@ -18,10 +18,12 @@ use std::{
     future::IntoFuture,
     io,
     net::{Ipv4Addr, SocketAddr, ToSocketAddrs},
-    path::Path,
+    path::{Path, PathBuf},
     str::FromStr as _,
+    sync::Arc,
     time::Duration,
 };
+use tokio::sync::Mutex;
 use tokio_util::task::TaskTracker;
 use tracing::{error, info, warn};
 use tracing_subscriber::{filter::Directive, EnvFilter, FmtSubscriber};
@@ -94,7 +96,7 @@ async fn main() {
         .expect("network is required")
         .clone();
 
-    let mut bootnodes: Vec<BootNode> = matches
+    let mut bootnodes: Vec<Node> = matches
         .get_many("bootnodes")
         .map(Iterator::copied)
         .map(Iterator::collect)
@@ -131,6 +133,17 @@ async fn main() {
     let data_dir = matches
         .get_one::<String>("datadir")
         .map_or(set_datadir(DEFAULT_DATADIR), |datadir| set_datadir(datadir));
+
+    let peers_file = if let Some(file) = matches.get_one::<String>("peers_file") {
+        PathBuf::from(file)
+    } else {
+        PathBuf::from(data_dir.clone() + "/peers.json")
+    };
+    info!("Reading known peers from {:?}", peers_file);
+    match read_known_peers(peers_file.clone()) {
+        Ok(ref mut known_peers) => bootnodes.append(known_peers),
+        Err(e) => error!("Could not read from peers file: {}", e),
+    };
 
     let sync_mode = sync_mode(&matches);
 
@@ -273,13 +286,15 @@ async fn main() {
                 store,
             )
             .await.expect("Network starts");
-            tracker.spawn(ethrex_net::periodically_show_peer_stats(peer_table));
+            tracker.spawn(ethrex_net::periodically_show_peer_stats(peer_table.clone()));
         }
     }
 
     tokio::select! {
         _ = tokio::signal::ctrl_c() => {
             info!("Server shut down started...");
+            info!("Storing known peers at {:?}...", peers_file);
+            store_known_peers(peer_table, peers_file).await;
             tokio::time::sleep(Duration::from_secs(1)).await;
             info!("Server shutting down!");
             return;
@@ -405,4 +420,37 @@ fn import_blocks(store: &Store, blocks: &Vec<Block>) {
         }
     }
     info!("Added {} blocks to blockchain", size);
+}
+
+async fn store_known_peers(table: Arc<Mutex<KademliaTable>>, file_path: PathBuf) {
+    let mut connected_peers = vec![];
+
+    for peer in table.lock().await.iter_peers() {
+        if peer.is_connected {
+            connected_peers.push(peer.node.enode_url());
+        }
+    }
+
+    let json = match serde_json::to_string(&connected_peers) {
+        Ok(json) => json,
+        Err(e) => {
+            error!("Could not store peers in file: {:?}", e);
+            return;
+        }
+    };
+
+    if let Err(e) = std::fs::write(file_path, json) {
+        error!("Could not store peers in file: {:?}", e);
+    };
+}
+
+fn read_known_peers(file_path: PathBuf) -> Result<Vec<Node>, String> {
+    let Ok(file) = std::fs::File::open(file_path) else {
+        return Ok(vec![]);
+    };
+
+    match serde_json::from_reader(file) {
+        Ok(nodes) => Ok(nodes),
+        Err(_) => Err("Could not read peers from file".into()),
+    }
 }
