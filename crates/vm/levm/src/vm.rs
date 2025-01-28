@@ -751,16 +751,17 @@ impl VM {
             cache::insert_account(&mut self.cache, new_contract_address, created_contract);
         }
 
-        let mut report = self.execute(&mut initial_call_frame)?;
+        let mut execution_result_vm = self.execute(&mut initial_call_frame)?;
 
-        todo!();
-        // report.gas_used = self.gas_used(&initial_call_frame, &report)?;
+        let mut report = self.resolve_execution_result(&mut execution_result_vm);
 
-        // self.post_execution_changes(&initial_call_frame, &mut report)?;
+        report.gas_used = self.gas_used(&initial_call_frame, &execution_result_vm)?;
 
-        // report.new_state.clone_from(&self.cache);
+        self.post_execution_changes(&initial_call_frame, &mut report)?;
 
-        // Ok(report)
+        report.new_state.clone_from(&self.cache);
+
+        Ok(report)
     }
 
     pub fn current_call_frame_mut(&mut self) -> Result<&mut CallFrame, VMError> {
@@ -1255,5 +1256,12 @@ impl VM {
             }
             (_) => panic!("HElo"),
         }
+    }
+
+    fn resolve_execution_result(
+        &mut self,
+        execution_result: &mut ExecutionResultVM,
+    ) -> TransactionReport {
+        todo!()
     }
 }
