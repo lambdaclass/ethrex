@@ -198,7 +198,7 @@ impl VM {
             .map_err(|_err| VMError::VeryLargeNumber)?;
 
         if size == 0 {
-            return Ok(OpcodeSuccess::Result(ResultReason::Return));
+            return Ok(OpcodeSuccess::Continue);
         }
 
         let new_memory_size = calculate_memory_size(offset, size)?;
@@ -214,7 +214,7 @@ impl VM {
                 .to_vec()
                 .into();
 
-        Ok(OpcodeSuccess::Result(ResultReason::Return))
+        Ok(OpcodeSuccess::Continue)
     }
 
     // DELEGATECALL operation
@@ -565,7 +565,7 @@ impl VM {
                 .insert(current_call_frame.to);
         }
 
-        Ok(OpcodeSuccess::Result(ResultReason::SelfDestruct))
+        Ok(OpcodeSuccess::Continue)
     }
 
     /// Common behavior for CREATE and CREATE2 opcodes
