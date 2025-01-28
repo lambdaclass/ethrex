@@ -980,6 +980,7 @@ fn access_list_inspector(
 /// WARNING: Assumes at least Merge fork is active
 pub fn spec_id(chain_config: &ChainConfig, block_timestamp: u64) -> SpecId {
     match chain_config.get_fork(block_timestamp) {
+        Fork::Prague => SpecId::PRAGUE,
         Fork::Cancun => SpecId::CANCUN,
         Fork::Shanghai => SpecId::SHANGHAI,
         Fork::Paris => SpecId::MERGE,

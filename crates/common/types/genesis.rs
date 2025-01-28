@@ -1,12 +1,10 @@
 use bytes::Bytes;
 use ethereum_types::{Address, Bloom, H256, U256};
+use ethrex_rlp::encode::RLPEncode;
 use ethrex_trie::Trie;
 use serde::{Deserialize, Serialize};
 use sha3::{Digest, Keccak256};
 use std::collections::HashMap;
-use tracing::info;
-
-use ethrex_rlp::encode::RLPEncode;
 
 use super::{
     compute_receipts_root, compute_transactions_root, compute_withdrawals_root, AccountState,
@@ -93,6 +91,7 @@ pub enum Fork {
     Paris = 0,
     Shanghai = 1,
     Cancun = 2,
+    Prague = 3,
 }
 
 impl ChainConfig {
@@ -117,7 +116,9 @@ impl ChainConfig {
     }
 
     pub fn get_fork(&self, block_timestamp: u64) -> Fork {
-        if self.is_cancun_activated(block_timestamp) {
+        if self.is_prague_activated(block_timestamp) {
+            Fork::Prague
+        } else if self.is_cancun_activated(block_timestamp) {
             Fork::Cancun
         } else if self.is_shanghai_activated(block_timestamp) {
             Fork::Shanghai
