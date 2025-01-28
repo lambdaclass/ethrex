@@ -39,6 +39,8 @@ jobs:
           {
             echo "#### Benchmark Results: Factorial";
             cat Factorial.md;
+            echo "#### Benchmark Results: Factorial - Recursive";
+            cat FactorialRecursive.md;
             echo "#### Benchmark Results: Fibonacci";
             cat Fibonacci.md;
             echo "#### Benchmark Results: ManyHashes";

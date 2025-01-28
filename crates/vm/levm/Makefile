@@ -106,9 +106,9 @@ compile-contracts:
 
 revm-comparison: compile-contracts ## 📊 Run benchmarks of fibonacci and factorial for both REVM and LEVM
 	$(MAKE) build-revm-comparison
-	$(call run_benchmark,FactorialRecursive,REPETITIONS,BENCH_FACT_REC_ITERATIONS)
-	$(call run_benchmark,Factorial,REPETITIONS,BENCH_FACT_ITERATIONS)
 	$(call run_benchmark,Fibonacci,REPETITIONS,BENCH_FIB_ITERATIONS)
+	$(call run_benchmark,Factorial,REPETITIONS,BENCH_FACT_ITERATIONS)
+	$(call run_benchmark,FactorialRecursive,REPETITIONS,BENCH_FACT_REC_ITERATIONS)
 	$(call run_benchmark,ManyHashes,REPETITIONS_SLOW,BENCH_HASHES_ITERATIONS)
 	$(call run_benchmark,ERC20Approval,REPETITIONS_SLOW,BENCH_APPROVAL_ITERATIONS)
 	$(call run_benchmark,ERC20Transfer,REPETITIONS_SLOW,BENCH_TRANSFER_ITERATIONS)

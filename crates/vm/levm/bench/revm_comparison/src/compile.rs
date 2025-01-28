@@ -2,7 +2,7 @@ use std::fs;
 use std::process::Command;
 
 fn main() {
-    let contracts = ["Factorial", "Fibonacci", "ManyHashes"];
+    let contracts = ["Factorial", "FactorialRecursive", "Fibonacci", "ManyHashes"];
     println!("Current directory: {:?}", std::env::current_dir().unwrap());
     contracts.iter().for_each(|name| {
         compile_contract(name);
