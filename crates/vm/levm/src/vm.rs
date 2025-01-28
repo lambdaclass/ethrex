@@ -31,6 +31,11 @@ use std::{
 };
 pub type Storage = HashMap<U256, H256>;
 
+enum ExecutionResult {
+    Oke,
+    Revert,
+}
+
 #[derive(Debug, Clone, Default)]
 // TODO: https://github.com/lambdaclass/ethrex/issues/604
 pub struct Substate {
@@ -252,9 +257,27 @@ impl VM {
         loop {
             let opcode = current_call_frame.next_opcode();
 
-            let op_result = self.handle_current_opcode(opcode, current_call_frame);
+            let op_result = self.execute_opcode(opcode, current_call_frame);
 
-            let _ = self.resolve_execution(opcode, op_result);
+            let instruction_result = self.resolve_execution(opcode, op_result)?;
+
+            // let _ = match instruction_result {
+            //     InstructionExecutionResolution::Continue => {}
+            //     InstructionExecutionResolution::Stop => return ExecutionResult::Oke,
+            //     InstructionExecutionResolution::Return => return ExecutionResult::Oke,
+            //     InstructionExecutionResolution::Revert => return ExecutionResult::Revert,
+            // };
+
+            return Ok(TransactionReport {
+                result: TxResult::Revert(VMError::AddressAlreadyOccupied),
+                gas_used: self.env.gas_limit,
+                gas_refunded: 0,
+                logs: vec![],
+                new_state: HashMap::default(),
+                output: Bytes::new(),
+                created_address: None,
+            });
+            // return self.handle_opcode_result(reason, current_call_frame, backup);
             // match op_result {
             //     Ok(OpcodeSuccess::Continue) => {}
             //     Ok(OpcodeSuccess::Result(reason)) => {
@@ -980,7 +1003,7 @@ impl VM {
         Ok(refunded_gas)
     }
 
-    fn handle_current_opcode(
+    fn execute_opcode(
         &mut self,
         opcode: Opcode,
         current_call_frame: &mut CallFrame,
