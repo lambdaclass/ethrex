@@ -252,7 +252,9 @@ impl VM {
             let op_result = self.handle_current_opcode(opcode, current_call_frame);
 
             match op_result {
-                Ok(OpcodeResult::Continue) => {}
+                Ok(OpcodeResult::Continue { pc_increment }) => {
+                    current_call_frame.increment_pc_by(pc_increment)?
+                }
                 Ok(OpcodeResult::Halt(reason)) => {
                     return self.handle_opcode_result(reason, current_call_frame, backup)
                 }

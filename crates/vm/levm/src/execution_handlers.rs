@@ -165,9 +165,9 @@ impl VM {
             _ => Err(VMError::OpcodeNotFound),
         };
 
-        if opcode != Opcode::JUMP && opcode != Opcode::JUMPI {
-            current_call_frame.increment_pc()?;
-        }
+        // if opcode != Opcode::JUMP && opcode != Opcode::JUMPI {
+        //     current_call_frame.increment_pc()?;
+        // }
 
         op_result
     }

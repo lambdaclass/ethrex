@@ -630,7 +630,7 @@ impl VM {
                 .ok_or(VMError::Internal(InternalError::GasOverflow))?;
             // Push 0
             current_call_frame.stack.push(CREATE_DEPLOYMENT_FAIL)?;
-            return Ok(OpcodeResult::Continue);
+            return Ok(OpcodeResult::Continue { pc_increment: 1 });
         }
 
         // THIRD: Validations that push 0 to the stack without returning reserved gas but incrementing deployer's nonce
@@ -638,7 +638,7 @@ impl VM {
         if new_account.has_code_or_nonce() {
             increment_account_nonce(&mut self.cache, &self.db, deployer_address)?;
             current_call_frame.stack.push(CREATE_DEPLOYMENT_FAIL)?;
-            return Ok(OpcodeResult::Continue);
+            return Ok(OpcodeResult::Continue { pc_increment: 1 });
         }
 
         // FOURTH: Changes to the state
@@ -719,7 +719,7 @@ impl VM {
             }
         }
 
-        Ok(OpcodeResult::Continue)
+        Ok(OpcodeResult::Continue { pc_increment: 1 })
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -757,7 +757,7 @@ impl VM {
                 .checked_sub(gas_limit)
                 .ok_or(InternalError::GasOverflow)?;
             current_call_frame.stack.push(REVERT_FOR_CALL)?;
-            return Ok(OpcodeResult::Continue);
+            return Ok(OpcodeResult::Continue { pc_increment: 1 });
         }
 
         // 2. Validate max depth has not been reached yet.
@@ -772,7 +772,7 @@ impl VM {
                 .checked_sub(gas_limit)
                 .ok_or(InternalError::GasOverflow)?;
             current_call_frame.stack.push(REVERT_FOR_CALL)?;
-            return Ok(OpcodeResult::Continue);
+            return Ok(OpcodeResult::Continue { pc_increment: 1 });
         }
 
         if bytecode.is_empty() && is_delegation {
@@ -781,7 +781,7 @@ impl VM {
                 .checked_sub(gas_limit)
                 .ok_or(InternalError::GasOverflow)?;
             current_call_frame.stack.push(SUCCESS_FOR_CALL)?;
-            return Ok(OpcodeResult::Continue);
+            return Ok(OpcodeResult::Continue { pc_increment: 1 });
         }
 
         let mut new_call_frame = CallFrame::new(
@@ -842,6 +842,6 @@ impl VM {
             }
         }
 
-        Ok(OpcodeResult::Continue)
+        Ok(OpcodeResult::Continue { pc_increment: 1 })
     }
 }

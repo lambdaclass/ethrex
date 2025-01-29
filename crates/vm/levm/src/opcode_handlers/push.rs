@@ -26,9 +26,12 @@ impl VM {
             .stack
             .push(U256::from_big_endian(value_to_push.as_slice()))?;
 
-        current_call_frame.increment_pc_by(n_bytes)?;
+        // The n_bytes that you push to the stack + 1 for the next instruction
+        let increment_pc_by = n_bytes + 1;
 
-        Ok(OpcodeResult::Continue)
+        Ok(OpcodeResult::Continue {
+            pc_increment: increment_pc_by,
+        })
     }
 
     // PUSH0
@@ -45,7 +48,7 @@ impl VM {
 
         current_call_frame.stack.push(U256::zero())?;
 
-        Ok(OpcodeResult::Continue)
+        Ok(OpcodeResult::Continue { pc_increment: 1 })
     }
 }
 

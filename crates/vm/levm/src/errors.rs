@@ -217,7 +217,7 @@ pub enum PrecompileError {
 /// means that the execution stopped. It's not called "Stop" because
 /// "Stop" is an Opcode
 pub enum OpcodeResult {
-    Continue,
+    Continue { pc_increment: usize },
     Halt(HaltReason),
 }
 
