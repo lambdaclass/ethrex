@@ -53,8 +53,8 @@ impl VM {
 }
 
 fn read_bytcode_slice(current_call_frame: &CallFrame, n_bytes: usize) -> Result<&[u8], VMError> {
-    let pc_offset = current_call_frame
-        .pc()
+    let current_pc = current_call_frame.pc;
+    let pc_offset = current_pc
         // Add 1 to the PC because we don't want to include the
         // Bytecode of the current instruction in the data we're about
         // to read. We only want to read the data _NEXT_ to that

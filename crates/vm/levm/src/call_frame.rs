@@ -144,8 +144,4 @@ impl CallFrame {
             .ok_or(VMError::Internal(InternalError::PCOverflowed))?;
         Ok(())
     }
-
-    pub fn pc(&self) -> usize {
-        self.pc
-    }
 }
