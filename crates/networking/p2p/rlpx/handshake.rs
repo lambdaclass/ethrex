@@ -1,7 +1,10 @@
-use crate::rlpx::{
-    connection::{LocalState, RemoteState},
-    error::RLPxError,
-    utils::{ecdh_xchng, id2pubkey, kdf, pubkey2id, sha256, sha256_hmac},
+use crate::{
+    rlpx::{
+        connection::{LocalState, RemoteState},
+        error::RLPxError,
+        utils::{ecdh_xchng, id2pubkey, kdf, pubkey2id, sha256, sha256_hmac},
+    },
+    P2PContext,
 };
 use aes::cipher::{KeyIvInit, StreamCipher};
 use ethrex_core::{Signature, H128, H256, H512};
@@ -17,14 +20,67 @@ use k256::{
     PublicKey, SecretKey,
 };
 use rand::Rng;
+use sha3::{Digest, Keccak256};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
+use tracing::debug;
+
+use super::{connection::RLPxConnection, frame::RLPxCodec};
 
 type Aes128Ctr64BE = ctr::Ctr64BE<aes::Aes128>;
 
 // https://github.com/ethereum/go-ethereum/blob/master/p2p/peer.go#L44
 pub const P2P_MAX_MESSAGE_SIZE: usize = 2048;
 
-pub(crate) async fn send_auth<S: AsyncWrite + std::marker::Unpin>(
+pub(crate) async fn as_receiver<S>(
+    context: P2PContext,
+    mut stream: S,
+) -> Result<RLPxConnection<S>, RLPxError>
+where
+    S: AsyncRead + AsyncWrite + std::marker::Unpin,
+{
+    let remote_state = receive_auth(&context.signer, &mut stream).await?;
+    let local_state = send_ack(remote_state.node_id, &mut stream).await?;
+    let hashed_nonces: [u8; 32] =
+        Keccak256::digest([local_state.nonce.0, remote_state.nonce.0].concat()).into();
+    let codec = RLPxCodec::new(&local_state, &remote_state, hashed_nonces);
+    debug!("Completed handshake!");
+    Ok(RLPxConnection::new(
+        context.signer,
+        remote_state.node_id,
+        stream,
+        codec,
+        context.storage,
+        context.broadcast,
+    ))
+}
+
+pub(crate) async fn as_initiator<S>(
+    context: P2PContext,
+    remote_node_id: H512,
+    mut stream: S,
+) -> Result<RLPxConnection<S>, RLPxError>
+where
+    S: AsyncRead + AsyncWrite + std::marker::Unpin,
+{
+    let local_state = send_auth(&context.signer, remote_node_id, &mut stream).await?;
+    let remote_state = receive_ack(&context.signer, remote_node_id, &mut stream).await?;
+    // Local node is initator
+    // keccak256(nonce || initiator-nonce)
+    let hashed_nonces: [u8; 32] =
+        Keccak256::digest([remote_state.nonce.0, local_state.nonce.0].concat()).into();
+    let codec = RLPxCodec::new(&local_state, &remote_state, hashed_nonces);
+    debug!("Completed handshake!");
+    Ok(RLPxConnection::new(
+        context.signer,
+        remote_state.node_id,
+        stream,
+        codec,
+        context.storage,
+        context.broadcast,
+    ))
+}
+
+async fn send_auth<S: AsyncWrite + std::marker::Unpin>(
     signer: &SigningKey,
     remote_node_id: H512,
     stream: S,
@@ -45,7 +101,7 @@ pub(crate) async fn send_auth<S: AsyncWrite + std::marker::Unpin>(
     })
 }
 
-pub(crate) async fn send_ack<S: AsyncWrite + std::marker::Unpin>(
+async fn send_ack<S: AsyncWrite + std::marker::Unpin>(
     remote_node_id: H512,
     stream: S,
 ) -> Result<LocalState, RLPxError> {
@@ -64,7 +120,7 @@ pub(crate) async fn send_ack<S: AsyncWrite + std::marker::Unpin>(
     })
 }
 
-pub(crate) async fn receive_auth<S: AsyncRead + std::marker::Unpin>(
+async fn receive_auth<S: AsyncRead + std::marker::Unpin>(
     signer: &SigningKey,
     stream: S,
 ) -> Result<RemoteState, RLPxError> {
@@ -87,7 +143,7 @@ pub(crate) async fn receive_auth<S: AsyncRead + std::marker::Unpin>(
     })
 }
 
-pub(crate) async fn receive_ack<S: AsyncRead + std::marker::Unpin>(
+async fn receive_ack<S: AsyncRead + std::marker::Unpin>(
     signer: &SigningKey,
     remote_node_id: H512,
     stream: S,

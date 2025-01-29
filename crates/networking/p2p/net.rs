@@ -10,10 +10,7 @@ use k256::{
     elliptic_curve::{sec1::ToEncodedPoint, PublicKey},
 };
 pub use kademlia::KademliaTable;
-use rlpx::{
-    connection::{RLPxConnBroadcastSender, RLPxConnection},
-    message::Message as RLPxMessage,
-};
+use rlpx::{connection::RLPxConnBroadcastSender, handshake, message::Message as RLPxMessage};
 use std::{io, net::SocketAddr, sync::Arc};
 use tokio::{
     net::{TcpListener, TcpSocket, TcpStream},
@@ -137,9 +134,16 @@ fn listener(tcp_addr: SocketAddr) -> Result<TcpListener, io::Error> {
 }
 
 async fn handle_peer_as_receiver(context: P2PContext, peer_addr: SocketAddr, stream: TcpStream) {
-    let mut conn =
-        RLPxConnection::receiver(context.signer, stream, context.storage, context.broadcast);
-    conn.start_peer(peer_addr, context.table).await;
+    let table = context.table.clone();
+    match handshake::as_receiver(context, stream).await {
+        Ok(mut conn) => conn.start_peer(peer_addr, table).await,
+        Err(e) => {
+            // TODO We should remove the peer from the table if connection failed
+            // but currently it will make the tests fail
+            // table.lock().await.replace_peer(node.node_id);
+            error!("Error creating tcp connection with peer at {peer_addr}: {e}")
+        }
+    }
 }
 
 async fn handle_peer_as_initiator(context: P2PContext, node: Node) {
@@ -154,14 +158,9 @@ async fn handle_peer_as_initiator(context: P2PContext, node: Node) {
             return;
         }
     };
-    match RLPxConnection::initiator(
-        context.signer,
-        node.node_id,
-        stream,
-        context.storage,
-        context.broadcast,
-    ) {
-        Ok(mut conn) => conn.start_peer(node.udp_addr(), context.table).await,
+    let table = context.table.clone();
+    match handshake::as_initiator(context, node.node_id, stream).await {
+        Ok(mut conn) => conn.start_peer(node.udp_addr(), table).await,
         Err(e) => {
             // TODO We should remove the peer from the table if connection failed
             // but currently it will make the tests fail

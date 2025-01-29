@@ -1,5 +1,3 @@
-use std::sync::Arc;
-
 use crate::{
     peer_channels::PeerChannels,
     rlpx::{
@@ -11,7 +9,6 @@ use crate::{
             transactions::{GetPooledTransactions, Transactions},
         },
         frame::RLPxCodec,
-        handshake,
         message::Message,
         p2p::{self, Capability, DisconnectMessage, PingMessage, PongMessage},
     },
@@ -20,14 +17,13 @@ use crate::{
         process_trie_nodes_request,
     },
 };
-
 use ethrex_blockchain::mempool::{self};
 use ethrex_core::{H256, H512};
 use ethrex_storage::Store;
 use futures::SinkExt;
 use k256::{ecdsa::SigningKey, PublicKey, SecretKey};
 use rand::random;
-use sha3::{Digest, Keccak256};
+use std::sync::Arc;
 use tokio::{
     io::{AsyncRead, AsyncWrite},
     sync::{
@@ -40,6 +36,7 @@ use tokio::{
 use tokio_stream::StreamExt;
 use tokio_util::codec::Framed;
 use tracing::{debug, error};
+
 const CAP_P2P: (Capability, u8) = (Capability::P2p, 5);
 const CAP_ETH: (Capability, u8) = (Capability::Eth, 68);
 const CAP_SNAP: (Capability, u8) = (Capability::Snap, 1);
@@ -49,11 +46,6 @@ const PERIODIC_TASKS_CHECK_INTERVAL: std::time::Duration = std::time::Duration::
 pub(crate) type Aes256Ctr64BE = ctr::Ctr64BE<aes::Aes256>;
 
 pub(crate) type RLPxConnBroadcastSender = broadcast::Sender<(tokio::task::Id, Arc<Message>)>;
-
-enum RLPxConnectionMode {
-    Initiator,
-    Receiver,
-}
 
 pub(crate) struct RemoteState {
     pub(crate) node_id: H512,
@@ -72,7 +64,6 @@ pub(crate) struct LocalState {
 pub(crate) struct RLPxConnection<S> {
     signer: SigningKey,
     remote_node_id: H512,
-    mode: RLPxConnectionMode,
     framed: Framed<S, RLPxCodec>,
     storage: Store,
     capabilities: Vec<(Capability, u8)>,
@@ -89,59 +80,23 @@ pub(crate) struct RLPxConnection<S> {
 }
 
 impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
-    fn new(
+    pub fn new(
         signer: SigningKey,
         remote_node_id: H512,
         stream: S,
-        mode: RLPxConnectionMode,
+        codec: RLPxCodec,
         storage: Store,
         connection_broadcast: RLPxConnBroadcastSender,
     ) -> Self {
         Self {
             signer,
             remote_node_id,
-            mode,
-            // Creating RLPxCodec with default values. They will be updated during the handshake
-            framed: Framed::new(stream, RLPxCodec::default()),
+            framed: Framed::new(stream, codec),
             storage,
             capabilities: vec![],
             next_periodic_task_check: Instant::now() + PERIODIC_TASKS_CHECK_INTERVAL,
             connection_broadcast_send: connection_broadcast,
         }
-    }
-
-    pub fn receiver(
-        signer: SigningKey,
-        stream: S,
-        storage: Store,
-        connection_broadcast: broadcast::Sender<(task::Id, Arc<Message>)>,
-    ) -> Self {
-        Self::new(
-            signer,
-            // remote_node_id not yet provided. It will be replaced later with correct one.
-            H512::default(),
-            stream,
-            RLPxConnectionMode::Receiver,
-            storage,
-            connection_broadcast,
-        )
-    }
-
-    pub fn initiator(
-        signer: SigningKey,
-        remote_node_id: H512,
-        stream: S,
-        storage: Store,
-        connection_broadcast_send: broadcast::Sender<(task::Id, Arc<Message>)>,
-    ) -> Result<Self, RLPxError> {
-        Ok(RLPxConnection::new(
-            signer,
-            remote_node_id,
-            stream,
-            RLPxConnectionMode::Initiator,
-            storage,
-            connection_broadcast_send,
-        ))
     }
 
     /// Starts a handshake and runs the peer connection.
@@ -153,8 +108,9 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
     ) {
         // Perform handshake
         debug!("StartingRLPx connection with {}", self.remote_node_id);
-        if let Err(e) = self.handshake().await {
-            self.peer_conn_failed("Handshake failed", e, table).await;
+        if let Err(e) = self.exchange_hello_messages().await {
+            self.peer_conn_failed("Hello messages exchange failed", e, table)
+                .await;
         } else {
             // Handshake OK: handle connection
             // Create channels to communicate directly to the peer
@@ -211,48 +167,6 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
             // TODO build a proper matching between error types and disconnection reasons
             _ => None,
         }
-    }
-
-    async fn handshake(&mut self) -> Result<(), RLPxError> {
-        let (local_state, remote_state, hashed_nonces) = match &self.mode {
-            RLPxConnectionMode::Initiator => {
-                // Remote id is already initialized
-                let local_state =
-                    handshake::send_auth(&self.signer, self.remote_node_id, self.framed.get_mut())
-                        .await?;
-                let remote_state = handshake::receive_ack(
-                    &self.signer,
-                    self.remote_node_id,
-                    self.framed.get_mut(),
-                )
-                .await?;
-                // Local node is initator
-                // keccak256(nonce || initiator-nonce)
-                let hashed_nonces: [u8; 32] =
-                    Keccak256::digest([remote_state.nonce.0, local_state.nonce.0].concat()).into();
-                (local_state, remote_state, hashed_nonces)
-            }
-            RLPxConnectionMode::Receiver => {
-                let remote_state =
-                    handshake::receive_auth(&self.signer, self.framed.get_mut()).await?;
-                // Remote id is not yet initialized
-                self.remote_node_id = remote_state.node_id;
-                let local_state =
-                    handshake::send_ack(remote_state.node_id, self.framed.get_mut()).await?;
-                // Remote node is initator
-                // keccak256(nonce || initiator-nonce)
-                let hashed_nonces: [u8; 32] =
-                    Keccak256::digest([local_state.nonce.0, remote_state.nonce.0].concat()).into();
-                (local_state, remote_state, hashed_nonces)
-            }
-        };
-        self.framed
-            .codec_mut()
-            .update_secrets(local_state, remote_state, hashed_nonces);
-        debug!("Completed handshake!");
-
-        self.exchange_hello_messages().await?;
-        Ok(())
     }
 
     async fn exchange_hello_messages(&mut self) -> Result<(), RLPxError> {
