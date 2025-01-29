@@ -72,6 +72,7 @@ BENCH_FACT_ITERATIONS := 57
 BENCH_FACT_REC_ITERATIONS := 57
 BENCH_FIB_ITERATIONS := 57
 BENCH_HASHES_ITERATIONS := 57
+BENCH_BUBBLESORT_ITERATIONS := 100 # Size of the array to sort
 BENCH_MINT_ITERATIONS := 500
 BENCH_TRANSFER_ITERATIONS := 500
 BENCH_APPROVAL_ITERATIONS := 500
@@ -110,6 +111,7 @@ revm-comparison: compile-contracts ## 📊 Run benchmarks of fibonacci and facto
 	$(call run_benchmark,Factorial,REPETITIONS,BENCH_FACT_ITERATIONS)
 	$(call run_benchmark,FactorialRecursive,REPETITIONS,BENCH_FACT_REC_ITERATIONS)
 	$(call run_benchmark,ManyHashes,REPETITIONS_SLOW,BENCH_HASHES_ITERATIONS)
+	$(call run_benchmark,BubbleSort,REPETITIONS_SLOW,BENCH_BUBBLESORT_ITERATIONS)
 	$(call run_benchmark,ERC20Approval,REPETITIONS_SLOW,BENCH_APPROVAL_ITERATIONS)
 	$(call run_benchmark,ERC20Transfer,REPETITIONS_SLOW,BENCH_TRANSFER_ITERATIONS)
 	$(call run_benchmark,ERC20Mint,REPETITIONS_SLOW,BENCH_MINT_ITERATIONS)
@@ -120,6 +122,7 @@ revm-comparison-ci: compile-contracts
 	$(call run_benchmark_ci,Factorial,REPETITIONS,BENCH_FACT_ITERATIONS)
 	$(call run_benchmark_ci,FactorialRecursive,REPETITIONS,BENCH_FACT_ITERATIONS)
 	$(call run_benchmark_ci,ManyHashes,REPETITIONS_SLOW,BENCH_HASHES_ITERATIONS)
+	$(call run_benchmark_ci,BubbleSort,REPETITIONS_SLOW,BENCH_BUBBLESORT_ITERATIONS)
 	$(call run_benchmark_ci,ERC20Approval,REPETITIONS_SLOW,BENCH_APPROVAL_ITERATIONS)
 	$(call run_benchmark_ci,ERC20Transfer,REPETITIONS_SLOW,BENCH_TRANSFER_ITERATIONS)
 	$(call run_benchmark_ci,ERC20Mint,REPETITIONS_SLOW,BENCH_MINT_ITERATIONS)
@@ -221,6 +224,7 @@ flamegraph-benchmarks: ## 🔥 Run benchmarks and create flamegraph
 	$(call run_flamegraph,Factorial,REPETITIONS,BENCH_FACT_ITERATIONS)
 	$(call run_flamegraph,FactorialRecursive,REPETITIONS,BENCH_FACT_ITERATIONS)
 	$(call run_flamegraph,ManyHashes,REPETITIONS_SLOW,BENCH_HASHES_ITERATIONS)
+	$(call run_flamegraph,BubbleSort,REPETITIONS,BENCH_BUBBLESORT_ITERATIONS)
 	$(call run_flamegraph,ERC20Approval,REPETITIONS_SLOW,BENCH_APPROVAL_ITERATIONS)
 	$(call run_flamegraph,ERC20Transfer,REPETITIONS_SLOW,BENCH_TRANSFER_ITERATIONS)
 	$(call run_flamegraph,ERC20Mint,REPETITIONS_SLOW,BENCH_MINT_ITERATIONS)
@@ -233,6 +237,7 @@ samply-benchmarks: ## ⚡️ Run benchmarks and create samply profiling file
 	$(call run_samply,Factorial,REPETITIONS,BENCH_FACT_ITERATIONS)
 	$(call run_samply,FactorialRecursive,REPETITIONS,BENCH_FACT_ITERATIONS)
 	$(call run_samply,ManyHashes,REPETITIONS_SLOW,BENCH_HASHES_ITERATIONS)
+	$(call run_samply,BubbleSort,REPETITIONS,BENCH_BUBBLESORT_ITERATIONS)
 	$(call run_samply,ERC20Approval,REPETITIONS_SLOW,BENCH_APPROVAL_ITERATIONS)
 	$(call run_samply,ERC20Transfer,REPETITIONS_SLOW,BENCH_TRANSFER_ITERATIONS)
 	$(call run_samply,ERC20Mint,REPETITIONS_SLOW,BENCH_MINT_ITERATIONS)
