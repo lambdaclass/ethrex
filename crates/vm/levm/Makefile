@@ -65,30 +65,22 @@ clean-evm-ef-tests: ## 🗑️  Clean test vectors
 	rm -rf $(VECTORS_DIR)
 
 ###### Benchmarks ######
-BENCH_FACT_REPETITIONS := 100000
+REPETITIONS := 10000
+REPETITIONS_SLOW := 200
+
 BENCH_FACT_ITERATIONS := 57
-
-BENCH_FIB_REPETITIONS := 100000
-BENCH_FIB_ITERATIONS := 150
-
-BENCH_HASHES_REPETITIONS := 10000
-BENCH_HASHES_ITERATIONS := 500
-
-# These take a long time, so lower them for now
-BENCH_MINT_REPETITIONS := 200
+BENCH_FACT_REC_ITERATIONS := 57
+BENCH_FIB_ITERATIONS := 57
+BENCH_HASHES_ITERATIONS := 57
 BENCH_MINT_ITERATIONS := 500
-
-BENCH_TRANSFER_REPETITIONS := 200
 BENCH_TRANSFER_ITERATIONS := 500
-
-BENCH_APPROVAL_REPETITIONS := 200
 BENCH_APPROVAL_ITERATIONS := 500
 
 define run_benchmark
 	@printf "%s\n" "revm_$(1)"
-	@target/release/benchmark revm $(1) 1 $($(2))
+	@target/release/benchmark revm $(1) 1 $($(3))
 	@printf "%s\n" "levm_$(1)"
-	@target/release/benchmark levm $(1) 1 $($(2))
+	@target/release/benchmark levm $(1) 1 $($(3))
 	hyperfine -w 5 -r 10 -N \
 		-n "revm_$(1)" "target/release/benchmark revm $(1) $($(2)) $($(3))" \
 		-n "levm_$(1)" "target/release/benchmark levm $(1) $($(2)) $($(3))"
@@ -97,9 +89,9 @@ endef
 
 define run_benchmark_ci
 	@printf "%s\n" "revm_$(1)"
-	@target/release/benchmark revm $(1) 1 $($(2))
+	@target/release/benchmark revm $(1) 1 $($(3))
 	@printf "%s\n" "levm_$(1)"
-	@target/release/benchmark levm $(1) 1 $($(2))
+	@target/release/benchmark levm $(1) 1 $($(3))
 	hyperfine -w 5 -r 10 -N --export-markdown $(1).md \
 		-n "revm_$(1)" "target/release/benchmark revm $(1) $($(2)) $($(3))" \
 		-n "levm_$(1)" "target/release/benchmark levm $(1) $($(2)) $($(3))"
@@ -114,21 +106,23 @@ compile-contracts:
 
 revm-comparison: compile-contracts ## 📊 Run benchmarks of fibonacci and factorial for both REVM and LEVM
 	$(MAKE) build-revm-comparison
-	$(call run_benchmark,Factorial,BENCH_FACT_REPETITIONS,BENCH_FACT_ITERATIONS)
-	$(call run_benchmark,Fibonacci,BENCH_FIB_REPETITIONS,BENCH_FIB_ITERATIONS)
-	$(call run_benchmark,ManyHashes,BENCH_HASHES_REPETITIONS,BENCH_HASHES_ITERATIONS)
-	$(call run_benchmark,ERC20Approval,BENCH_APPROVAL_REPETITIONS,BENCH_APPROVAL_ITERATIONS)
-	$(call run_benchmark,ERC20Transfer,BENCH_TRANSFER_REPETITIONS,BENCH_TRANSFER_ITERATIONS)
-	$(call run_benchmark,ERC20Mint,BENCH_MINT_REPETITIONS,BENCH_MINT_ITERATIONS)
+	$(call run_benchmark,Fibonacci,REPETITIONS,BENCH_FIB_ITERATIONS)
+	$(call run_benchmark,Factorial,REPETITIONS,BENCH_FACT_ITERATIONS)
+	$(call run_benchmark,FactorialRecursive,REPETITIONS,BENCH_FACT_REC_ITERATIONS)
+	$(call run_benchmark,ManyHashes,REPETITIONS_SLOW,BENCH_HASHES_ITERATIONS)
+	$(call run_benchmark,ERC20Approval,REPETITIONS_SLOW,BENCH_APPROVAL_ITERATIONS)
+	$(call run_benchmark,ERC20Transfer,REPETITIONS_SLOW,BENCH_TRANSFER_ITERATIONS)
+	$(call run_benchmark,ERC20Mint,REPETITIONS_SLOW,BENCH_MINT_ITERATIONS)
 
 revm-comparison-ci: compile-contracts
 	$(MAKE) build-revm-comparison
-	$(call run_benchmark_ci,Factorial,BENCH_FACT_REPETITIONS,BENCH_FACT_ITERATIONS)
-	$(call run_benchmark_ci,Fibonacci,BENCH_FIB_REPETITIONS,BENCH_FIB_ITERATIONS)
-	$(call run_benchmark_ci,ManyHashes,BENCH_HASHES_REPETITIONS,BENCH_HASHES_ITERATIONS)
-	$(call run_benchmark_ci,ERC20Approval,BENCH_APPROVAL_REPETITIONS,BENCH_APPROVAL_ITERATIONS)
-	$(call run_benchmark_ci,ERC20Transfer,BENCH_TRANSFER_REPETITIONS,BENCH_TRANSFER_ITERATIONS)
-	$(call run_benchmark_ci,ERC20Mint,BENCH_MINT_REPETITIONS,BENCH_MINT_ITERATIONS)
+	$(call run_benchmark_ci,Fibonacci,REPETITIONS,BENCH_FIB_ITERATIONS)
+	$(call run_benchmark_ci,Factorial,REPETITIONS,BENCH_FACT_ITERATIONS)
+	$(call run_benchmark_ci,FactorialRecursive,REPETITIONS,BENCH_FACT_ITERATIONS)
+	$(call run_benchmark_ci,ManyHashes,REPETITIONS_SLOW,BENCH_HASHES_ITERATIONS)
+	$(call run_benchmark_ci,ERC20Approval,REPETITIONS_SLOW,BENCH_APPROVAL_ITERATIONS)
+	$(call run_benchmark_ci,ERC20Transfer,REPETITIONS_SLOW,BENCH_TRANSFER_ITERATIONS)
+	$(call run_benchmark_ci,ERC20Mint,REPETITIONS_SLOW,BENCH_MINT_ITERATIONS)
 
 build-revm-comparison:
 	cd bench/revm_comparison && \
@@ -223,20 +217,22 @@ FLAMEGRAPH_DIR := $(EFTEST_DIR)/levm_perfgraphs/flamegraph/bench
 flamegraph-benchmarks: ## 🔥 Run benchmarks and create flamegraph
 	cd ../../../cmd/ef_tests/levm &&\
 	mkdir -p levm_perfgraphs/flamegraph/bench ||:
-	$(call run_flamegraph,Factorial,BENCH_FACT_REPETITIONS,BENCH_FACT_ITERATIONS)
-	$(call run_flamegraph,Fibonacci,BENCH_FIB_REPETITIONS,BENCH_FIB_ITERATIONS)
-	$(call run_flamegraph,ManyHashes,BENCH_HASHES_REPETITIONS,BENCH_HASHES_ITERATIONS)
-	$(call run_flamegraph,ERC20Approval,BENCH_APPROVAL_REPETITIONS,BENCH_APPROVAL_ITERATIONS)
-	$(call run_flamegraph,ERC20Transfer,BENCH_TRANSFER_REPETITIONS,BENCH_TRANSFER_ITERATIONS)
-	$(call run_flamegraph,ERC20Mint,BENCH_MINT_REPETITIONS,BENCH_MINT_ITERATIONS)
+	$(call run_flamegraph,Fibonacci,REPETITIONS,BENCH_FIB_ITERATIONS)
+	$(call run_flamegraph,Factorial,REPETITIONS,BENCH_FACT_ITERATIONS)
+	$(call run_flamegraph,FactorialRecursive,REPETITIONS,BENCH_FACT_ITERATIONS)
+	$(call run_flamegraph,ManyHashes,REPETITIONS_SLOW,BENCH_HASHES_ITERATIONS)
+	$(call run_flamegraph,ERC20Approval,REPETITIONS_SLOW,BENCH_APPROVAL_ITERATIONS)
+	$(call run_flamegraph,ERC20Transfer,REPETITIONS_SLOW,BENCH_TRANSFER_ITERATIONS)
+	$(call run_flamegraph,ERC20Mint,REPETITIONS_SLOW,BENCH_MINT_ITERATIONS)
 
 SAMPLY_DIR := ../../../cmd/ef_tests/levm/levm_perfgraphs/samply/bench
 samply-benchmarks: ## ⚡️ Run benchmarks and create samply profiling file
 	cd ../../../cmd/ef_tests/levm &&\
 	mkdir -p levm_perfgraphs/samply/bench ||:
-	$(call run_samply,Factorial,BENCH_FACT_REPETITIONS,BENCH_FACT_ITERATIONS)
-	$(call run_samply,Fibonacci,BENCH_FIB_REPETITIONS,BENCH_FIB_ITERATIONS)
-	$(call run_samply,ManyHashes,BENCH_HASHES_REPETITIONS,BENCH_HASHES_ITERATIONS)
-	$(call run_samply,ERC20Approval,BENCH_APPROVAL_REPETITIONS,BENCH_APPROVAL_ITERATIONS)
-	$(call run_samply,ERC20Transfer,BENCH_TRANSFER_REPETITIONS,BENCH_TRANSFER_ITERATIONS)
-	$(call run_samply,ERC20Mint,BENCH_MINT_REPETITIONS,BENCH_MINT_ITERATIONS)
+	$(call run_samply,Fibonacci,REPETITIONS,BENCH_FIB_ITERATIONS)
+	$(call run_samply,Factorial,REPETITIONS,BENCH_FACT_ITERATIONS)
+	$(call run_samply,FactorialRecursive,REPETITIONS,BENCH_FACT_ITERATIONS)
+	$(call run_samply,ManyHashes,REPETITIONS_SLOW,BENCH_HASHES_ITERATIONS)
+	$(call run_samply,ERC20Approval,REPETITIONS_SLOW,BENCH_APPROVAL_ITERATIONS)
+	$(call run_samply,ERC20Transfer,REPETITIONS_SLOW,BENCH_TRANSFER_ITERATIONS)
+	$(call run_samply,ERC20Mint,REPETITIONS_SLOW,BENCH_MINT_ITERATIONS)

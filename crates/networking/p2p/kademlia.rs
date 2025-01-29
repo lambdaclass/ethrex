@@ -1,5 +1,5 @@
 use crate::{
-    discv4::{time_now_unix, FindNodeRequest},
+    discv4::messages::FindNodeRequest,
     peer_channels::PeerChannels,
     rlpx::p2p::Capability,
     types::{Node, NodeRecord},
@@ -94,7 +94,7 @@ impl KademliaTable {
             return (None, false);
         }
 
-        let peer = PeerData::new(node, NodeRecord::default(), time_now_unix(), 0, false);
+        let peer = PeerData::new(node, NodeRecord::default(), false);
 
         if self.buckets[bucket_idx].peers.len() == MAX_NODES_PER_BUCKET {
             self.insert_as_replacement(&peer, bucket_idx);
@@ -148,7 +148,7 @@ impl KademliaTable {
         nodes.iter().map(|a| a.0).collect()
     }
 
-    pub fn pong_answered(&mut self, node_id: H512) {
+    pub fn pong_answered(&mut self, node_id: H512, pong_at: u64) {
         let peer = self.get_by_node_id_mut(node_id);
         if peer.is_none() {
             return;
@@ -156,12 +156,12 @@ impl KademliaTable {
 
         let peer = peer.unwrap();
         peer.is_proven = true;
-        peer.last_pong = time_now_unix();
+        peer.last_pong = pong_at;
         peer.last_ping_hash = None;
         peer.revalidation = peer.revalidation.and(Some(true));
     }
 
-    pub fn update_peer_ping(&mut self, node_id: H512, ping_hash: Option<H256>) {
+    pub fn update_peer_ping(&mut self, node_id: H512, ping_hash: Option<H256>, ping_at: u64) {
         let peer = self.get_by_node_id_mut(node_id);
         if peer.is_none() {
             return;
@@ -169,26 +169,7 @@ impl KademliaTable {
 
         let peer = peer.unwrap();
         peer.last_ping_hash = ping_hash;
-        peer.last_ping = time_now_unix();
-    }
-
-    pub fn update_peer_enr_seq(&mut self, node_id: H512, enr_seq: u64, enr_req_hash: Option<H256>) {
-        let peer = self.get_by_node_id_mut(node_id);
-        let Some(peer) = peer else {
-            return;
-        };
-        peer.record.seq = enr_seq;
-        peer.enr_request_hash = enr_req_hash;
-    }
-
-    pub fn update_peer_ping_with_revalidation(&mut self, node_id: H512, ping_hash: Option<H256>) {
-        let Some(peer) = self.get_by_node_id_mut(node_id) else {
-            return;
-        };
-
-        peer.last_ping_hash = ping_hash;
-        peer.last_ping = time_now_unix();
-        peer.revalidation = Some(false);
+        peer.last_ping = ping_at;
     }
 
     /// ## Returns
@@ -310,6 +291,7 @@ impl KademliaTable {
         }) {
             peer.channels = Some(channels);
             peer.supported_capabilities = capabilities;
+            peer.is_connected = true;
         } else {
             debug!(
                 "[PEERS] Peer with node_id {:?} not found in the kademlia table when trying to init backend communication",
@@ -371,21 +353,18 @@ pub struct PeerData {
     pub revalidation: Option<bool>,
     /// communication channels between the peer data and its active connection
     pub channels: Option<PeerChannels>,
+    /// Starts as false when a node is added. Set to true when a connection si active. When a
+    /// connection fails, the peer record is removed, so no need to set it to false.
+    pub is_connected: bool,
 }
 
 impl PeerData {
-    pub fn new(
-        node: Node,
-        record: NodeRecord,
-        last_ping: u64,
-        last_pong: u64,
-        is_proven: bool,
-    ) -> Self {
+    pub fn new(node: Node, record: NodeRecord, is_proven: bool) -> Self {
         Self {
             node,
             record,
-            last_ping,
-            last_pong,
+            last_ping: 0,
+            last_pong: 0,
             is_proven,
             liveness: 1,
             last_ping_hash: None,
@@ -394,6 +373,7 @@ impl PeerData {
             revalidation: None,
             channels: None,
             supported_capabilities: vec![],
+            is_connected: false,
         }
     }
 
