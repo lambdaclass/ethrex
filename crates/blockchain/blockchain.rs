@@ -8,8 +8,8 @@ mod smoke_test;
 use constants::{GAS_PER_BLOB, MAX_BLOB_GAS_PER_BLOCK, MAX_BLOB_NUMBER_PER_BLOCK};
 use error::{ChainError, InvalidBlockError};
 use ethrex_core::types::{
-    compute_receipts_root, validate_block_header, validate_cancun_header_fields,
-    validate_no_cancun_header_fields, Block, BlockHash, BlockHeader, BlockNumber,
+    compute_receipts_root, validate_block_header, validate_post_cancun_header_fields,
+    validate_pre_cancun_header_fields, Block, BlockHash, BlockHeader, BlockNumber,
     EIP4844Transaction, Receipt, Transaction,
 };
 use ethrex_core::H256;
@@ -160,14 +160,16 @@ pub fn validate_block(
     validate_block_header(&block.header, parent_header).map_err(InvalidBlockError::from)?;
 
     match spec {
-        SpecId::CANCUN => validate_cancun_header_fields(&block.header, parent_header)
-            .map_err(InvalidBlockError::from)?,
+        spec if spec >= SpecId::CANCUN => {
+            validate_post_cancun_header_fields(&block.header, parent_header)
+                .map_err(InvalidBlockError::from)?
+        }
         _other_specs => {
-            validate_no_cancun_header_fields(&block.header).map_err(InvalidBlockError::from)?
+            validate_pre_cancun_header_fields(&block.header).map_err(InvalidBlockError::from)?
         }
     };
 
-    if spec == SpecId::CANCUN {
+    if spec >= SpecId::CANCUN {
         verify_blob_gas_usage(block)?
     }
     Ok(())

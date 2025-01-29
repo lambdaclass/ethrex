@@ -548,7 +548,7 @@ pub fn validate_block_header(
 /// Validates that excess_blob_gas and blob_gas_used are present in the header and
 /// validates that excess_blob_gas value is correct on the block header
 /// according to the values in the parent header.
-pub fn validate_cancun_header_fields(
+pub fn validate_post_cancun_header_fields(
     header: &BlockHeader,
     parent_header: &BlockHeader,
 ) -> Result<(), InvalidBlockHeaderError> {
@@ -569,7 +569,7 @@ pub fn validate_cancun_header_fields(
 
 /// Validates that the excess blob gas value is correct on the block header
 /// according to the values in the parent header.
-pub fn validate_no_cancun_header_fields(
+pub fn validate_pre_cancun_header_fields(
     header: &BlockHeader,
 ) -> Result<(), InvalidBlockHeaderError> {
     if header.excess_blob_gas.is_some() {

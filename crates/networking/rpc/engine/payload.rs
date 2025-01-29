@@ -479,7 +479,8 @@ fn validate_fork(block: &Block, fork: Fork, context: &RpcApiContext) -> Result<(
     // Check timestamp matches valid fork
     let chain_config = &context.storage.get_chain_config()?;
     let current_fork = chain_config.get_fork(block.header.timestamp);
-    if current_fork != fork {
+    // If current_fork is less than Fork::Cancun, return an error.
+    if current_fork < fork {
         return Err(RpcErr::UnsuportedFork(format!("{current_fork:?}")));
     }
     Ok(())
