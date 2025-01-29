@@ -40,7 +40,7 @@ jwt.hex
 # Used by the make test target
 /tmp
 
-tests_v3.0.0.tar.gz
+tests*.tar.gz
 
 .env
 

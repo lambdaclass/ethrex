@@ -8,7 +8,7 @@ use ethrex_core::{
         calculate_base_fee_per_blob_gas, calculate_base_fee_per_gas, compute_receipts_root,
         compute_transactions_root, compute_withdrawals_root, BlobsBundle, Block, BlockBody,
         BlockHash, BlockHeader, BlockNumber, ChainConfig, MempoolTransaction, Receipt, Transaction,
-        Withdrawal, DEFAULT_OMMERS_HASH,
+        Withdrawal, DEFAULT_OMMERS_HASH, DEFAULT_REQUESTS_HASH,
     },
     Address, Bloom, Bytes, H256, U256,
 };
@@ -125,8 +125,9 @@ pub fn create_payload(args: &BuildPayloadArgs, storage: &Store) -> Result<Block,
             ),
         ),
         parent_beacon_block_root: args.beacon_root,
-        // TODO: set the value properly
-        requests_hash: None,
+        requests_hash: chain_config
+            .is_prague_activated(args.timestamp)
+            .then_some(*DEFAULT_REQUESTS_HASH),
     };
 
     let body = BlockBody {

@@ -159,6 +159,7 @@ pub fn validate_block(
     // Verify initial header validity against parent
     validate_block_header(&block.header, parent_header).map_err(InvalidBlockError::from)?;
 
+    // TODO: Properly handle these validations for Cancun and Prague
     match spec {
         spec if spec >= SpecId::CANCUN => {
             validate_post_cancun_header_fields(&block.header, parent_header)
