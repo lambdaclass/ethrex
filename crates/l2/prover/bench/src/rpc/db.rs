@@ -300,8 +300,8 @@ impl ToExecDB for RpcDB {
             })
             .collect();
 
-        let mut cache_iter = cache_iter;
         let state_root = cache_iter
+            .clone()
             .next()
             .clone()
             .and_then(|(_, account)| account.account_proof.first().cloned());
