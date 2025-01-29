@@ -16,8 +16,10 @@ use tokio::{
 };
 use tracing::{debug, info, warn};
 
-use crate::{kademlia::KademliaTable, peer_channels::{BlockRequestOrder, PeerHandler}};
-use crate::{peer_channels::PeerChannels, rlpx::p2p::Capability};
+use crate::{
+    kademlia::KademliaTable,
+    peer_channels::{BlockRequestOrder, PeerHandler},
+};
 
 /// Maximum amount of times we will ask a peer for an account/storage range
 /// If the max amount of retries is exceeded we will asume that the state we are requesting is old and no longer available
@@ -48,7 +50,7 @@ pub struct SyncManager {
 }
 
 impl SyncManager {
-    pub fn new(peers: PeerHandler, sync_mode: SyncMode) -> Self {
+    pub fn new(peer_table: Arc<Mutex<KademliaTable>>, sync_mode: SyncMode) -> Self {
         Self {
             sync_mode,
             peers: PeerHandler::new(peer_table),
@@ -114,7 +116,8 @@ impl SyncManager {
         while retry_count <= MAX_RETRIES {
             debug!("Requesting Block Headers from {current_head}");
             // Request Block Headers from Peer
-            if let Some(mut block_headers) = peer
+            if let Some(mut block_headers) = self
+                .peers
                 .request_block_headers(current_head, BlockRequestOrder::OldToNew)
                 .await
             {
@@ -232,9 +235,8 @@ async fn download_and_run_blocks(
     store: Store,
 ) -> Result<(), SyncError> {
     loop {
-
         debug!("Requesting Block Bodies ");
-        if let Some(block_bodies) = peer.request_block_bodies(block_hashes.clone()).await {
+        if let Some(block_bodies) = peers.request_block_bodies(block_hashes.clone()).await {
             let block_bodies_len = block_bodies.len();
             debug!("Received {} Block Bodies", block_bodies_len);
             // Execute and store blocks
@@ -271,9 +273,8 @@ async fn store_block_bodies(
     store: Store,
 ) -> Result<(), SyncError> {
     loop {
-
         debug!("Requesting Block Headers ");
-        if let Some(block_bodies) = peer.request_block_bodies(block_hashes.clone()).await {
+        if let Some(block_bodies) = peers.request_block_bodies(block_hashes.clone()).await {
             debug!(" Received {} Block Bodies", block_bodies.len());
             // Track which bodies we have already fetched
             let current_block_hashes = block_hashes.drain(..block_bodies.len());
@@ -300,9 +301,8 @@ async fn store_receipts(
     store: Store,
 ) -> Result<(), SyncError> {
     loop {
-
         debug!("Requesting Block Headers ");
-        if let Some(receipts) = peer.request_receipts(block_hashes.clone()).await {
+        if let Some(receipts) = peers.request_receipts(block_hashes.clone()).await {
             debug!(" Received {} Receipts", receipts.len());
             // Track which blocks we have already fetched receipts for
             for (block_hash, receipts) in block_hashes.drain(0..receipts.len()).zip(receipts) {
@@ -365,9 +365,9 @@ async fn rebuild_state_trie(
                 initial_timestamp,
             ));
         }
-        
+
         debug!("Requesting Account Range for state root {state_root}, starting hash: {start_account_hash}");
-        if let Some((account_hashes, accounts, should_continue)) = peer
+        if let Some((account_hashes, accounts, should_continue)) = peers
             .request_account_range(state_root, start_account_hash)
             .await
         {
@@ -503,8 +503,7 @@ async fn fetch_bytecode_batch(
     store: Store,
 ) -> Result<Vec<H256>, StoreError> {
     loop {
-        
-        if let Some(bytecodes) = peer.request_bytecodes(batch.clone()).await {
+        if let Some(bytecodes) = peers.request_bytecodes(batch.clone()).await {
             debug!("Received {} bytecodes", bytecodes.len());
             // Store the bytecodes
             for code in bytecodes.into_iter() {
@@ -593,9 +592,8 @@ async fn fetch_storage_batch(
         batch.last().unwrap().0
     );
     for _ in 0..MAX_RETRIES {
-        
         let (batch_hahses, batch_roots) = batch.clone().into_iter().unzip();
-        if let Some((mut keys, mut values, incomplete)) = peer
+        if let Some((mut keys, mut values, incomplete)) = peers
             .request_storage_ranges(state_root, batch_roots, batch_hahses, H256::zero())
             .await
         {
@@ -678,8 +676,8 @@ async fn handle_large_storage_range(
     while should_continue {
         while retry_count <= MAX_RETRIES {
             debug!("Fetching large storage trie, current key: {}", next_key);
-            
-            if let Some((keys, values, incomplete)) = peer
+
+            if let Some((keys, values, incomplete)) = peers
                 .request_storage_range(state_root, storage_root, account_hash, next_key)
                 .await
             {
@@ -737,8 +735,8 @@ async fn heal_state_trie(
         let batch: Vec<Nibbles> = paths
             .drain(paths.len().saturating_sub(NODE_BATCH_SIZE)..)
             .collect();
-        
-        if let Some(nodes) = peer
+
+        if let Some(nodes) = peers
             .request_state_trienodes(state_root, batch.clone())
             .await
         {
@@ -870,9 +868,8 @@ async fn heal_storage_batch(
     store: Store,
 ) -> Result<(BTreeMap<H256, (H256, Vec<Nibbles>)>, bool), SyncError> {
     for _ in 0..MAX_RETRIES {
-        
         let req_batch = batch.iter().map(|(k, v)| (*k, v.1.clone())).collect();
-        if let Some(mut nodes) = peer.request_storage_trienodes(state_root, req_batch).await {
+        if let Some(mut nodes) = peers.request_storage_trienodes(state_root, req_batch).await {
             debug!("Received {} nodes", nodes.len());
             // Process the nodes for each account path
             for (acc_path, (root, paths)) in batch.iter_mut() {
