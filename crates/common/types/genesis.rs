@@ -273,11 +273,10 @@ impl Genesis {
                 .is_cancun_activated(self.timestamp)
                 .then_some(H256::zero()),
             // TODO: set the value properly
-            requests_hash: if self.config.is_prague_activated(self.timestamp) {
-                None
-            } else {
-                Some(H256::zero())
-            },
+            requests_hash: self
+                .config
+                .is_prague_activated(self.timestamp)
+                .then_some(H256::zero()),
         }
     }
 
