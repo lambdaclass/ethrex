@@ -145,7 +145,7 @@ cfg_if::cfg_if! {
             )
             .map_err(EvmError::from)?;
 
-            let mut report = vm.transact().map_err(EvmError::from)?;
+            let mut report = vm.execute().map_err(EvmError::from)?;
 
             report.new_state.remove(&*SYSTEM_ADDRESS);
 
@@ -331,7 +331,7 @@ cfg_if::cfg_if! {
                 None
             )?;
 
-            vm.transact()
+            vm.execute()
         }
     } else if #[cfg(not(feature = "levm"))] {
         /// Executes all transactions in a block and returns their receipts.

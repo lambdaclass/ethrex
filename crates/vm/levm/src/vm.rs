@@ -702,7 +702,7 @@ impl VM {
         Ok(())
     }
 
-    pub fn transact(&mut self) -> Result<TransactionReport, VMError> {
+    pub fn execute(&mut self) -> Result<TransactionReport, VMError> {
         let mut initial_call_frame = self
             .call_frames
             .pop()

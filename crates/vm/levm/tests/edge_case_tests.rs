@@ -295,6 +295,6 @@ fn test_non_compliance_log_gas_cost() {
     vm.env.gas_price = U256::zero();
     vm.env.gas_limit = 100_000_000;
     vm.env.block_gas_limit = 100_000_001;
-    let res = vm.transact().unwrap();
+    let res = vm.execute().unwrap();
     assert_eq!(res.gas_used, 22511);
 }
