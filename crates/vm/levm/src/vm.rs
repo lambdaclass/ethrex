@@ -8,8 +8,8 @@ use crate::{
     },
     environment::Environment,
     errors::{
-        InternalError, OpcodeSuccess, OutOfGasError, TransactionReport, TxResult,
-        TxValidationError, VMError,
+        InternalError, OpcodeResult, OutOfGasError, TransactionReport, TxResult, TxValidationError,
+        VMError,
     },
     gas_cost::{self, STANDARD_TOKEN_COST, TOTAL_COST_FLOOR_PER_TOKEN},
     precompiles::{
@@ -252,8 +252,8 @@ impl VM {
             let op_result = self.handle_current_opcode(opcode, current_call_frame);
 
             match op_result {
-                Ok(OpcodeSuccess::Continue) => {}
-                Ok(OpcodeSuccess::Result(reason)) => {
+                Ok(OpcodeResult::Continue) => {}
+                Ok(OpcodeResult::Result(reason)) => {
                     return self.handle_opcode_result(reason, current_call_frame, backup)
                 }
                 Err(error) => return self.handle_opcode_error(error, current_call_frame, backup),

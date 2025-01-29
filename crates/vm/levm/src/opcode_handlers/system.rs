@@ -2,7 +2,7 @@ use crate::{
     call_frame::CallFrame,
     constants::{CREATE_DEPLOYMENT_FAIL, INIT_CODE_MAX_SIZE, REVERT_FOR_CALL, SUCCESS_FOR_CALL},
     db::cache,
-    errors::{InternalError, OpcodeSuccess, OutOfGasError, ResultReason, TxResult, VMError},
+    errors::{InternalError, OpcodeResult, OutOfGasError, ResultReason, TxResult, VMError},
     gas_cost::{self, max_message_call_gas},
     memory::{self, calculate_memory_size},
     utils::*,
@@ -18,10 +18,7 @@ use ethrex_core::{types::Fork, Address, U256};
 
 impl VM {
     // CALL operation
-    pub fn op_call(
-        &mut self,
-        current_call_frame: &mut CallFrame,
-    ) -> Result<OpcodeSuccess, VMError> {
+    pub fn op_call(&mut self, current_call_frame: &mut CallFrame) -> Result<OpcodeResult, VMError> {
         let gas = current_call_frame.stack.pop()?;
         let callee: Address = word_to_address(current_call_frame.stack.pop()?);
         let value_to_transfer: U256 = current_call_frame.stack.pop()?;
@@ -107,7 +104,7 @@ impl VM {
     pub fn op_callcode(
         &mut self,
         current_call_frame: &mut CallFrame,
-    ) -> Result<OpcodeSuccess, VMError> {
+    ) -> Result<OpcodeResult, VMError> {
         // STACK
         let gas = current_call_frame.stack.pop()?;
         let code_address = word_to_address(current_call_frame.stack.pop()?);
@@ -188,7 +185,7 @@ impl VM {
     pub fn op_return(
         &mut self,
         current_call_frame: &mut CallFrame,
-    ) -> Result<OpcodeSuccess, VMError> {
+    ) -> Result<OpcodeResult, VMError> {
         let offset = current_call_frame.stack.pop()?;
         let size = current_call_frame
             .stack
@@ -197,7 +194,7 @@ impl VM {
             .map_err(|_err| VMError::VeryLargeNumber)?;
 
         if size == 0 {
-            return Ok(OpcodeSuccess::Result(ResultReason::Return));
+            return Ok(OpcodeResult::Result(ResultReason::Return));
         }
 
         let new_memory_size = calculate_memory_size(offset, size)?;
@@ -213,14 +210,14 @@ impl VM {
                 .to_vec()
                 .into();
 
-        Ok(OpcodeSuccess::Result(ResultReason::Return))
+        Ok(OpcodeResult::Result(ResultReason::Return))
     }
 
     // DELEGATECALL operation
     pub fn op_delegatecall(
         &mut self,
         current_call_frame: &mut CallFrame,
-    ) -> Result<OpcodeSuccess, VMError> {
+    ) -> Result<OpcodeResult, VMError> {
         // STACK
         let gas = current_call_frame.stack.pop()?;
         let code_address = word_to_address(current_call_frame.stack.pop()?);
@@ -299,7 +296,7 @@ impl VM {
     pub fn op_staticcall(
         &mut self,
         current_call_frame: &mut CallFrame,
-    ) -> Result<OpcodeSuccess, VMError> {
+    ) -> Result<OpcodeResult, VMError> {
         // STACK
         let gas = current_call_frame.stack.pop()?;
         let code_address = word_to_address(current_call_frame.stack.pop()?);
@@ -377,7 +374,7 @@ impl VM {
     pub fn op_create(
         &mut self,
         current_call_frame: &mut CallFrame,
-    ) -> Result<OpcodeSuccess, VMError> {
+    ) -> Result<OpcodeResult, VMError> {
         let value_in_wei_to_send = current_call_frame.stack.pop()?;
         let code_offset_in_memory = current_call_frame.stack.pop()?;
         let code_size_in_memory: usize = current_call_frame
@@ -411,7 +408,7 @@ impl VM {
     pub fn op_create2(
         &mut self,
         current_call_frame: &mut CallFrame,
-    ) -> Result<OpcodeSuccess, VMError> {
+    ) -> Result<OpcodeResult, VMError> {
         let value_in_wei_to_send = current_call_frame.stack.pop()?;
         let code_offset_in_memory = current_call_frame.stack.pop()?;
         let code_size_in_memory: usize = current_call_frame
@@ -446,7 +443,7 @@ impl VM {
     pub fn op_revert(
         &mut self,
         current_call_frame: &mut CallFrame,
-    ) -> Result<OpcodeSuccess, VMError> {
+    ) -> Result<OpcodeResult, VMError> {
         // Description: Gets values from stack, calculates gas cost and sets return data.
         // Returns: VMError RevertOpcode if executed correctly.
         // Notes:
@@ -478,7 +475,7 @@ impl VM {
 
     /// ### INVALID operation
     /// Reverts consuming all gas, no return data.
-    pub fn op_invalid(&mut self) -> Result<OpcodeSuccess, VMError> {
+    pub fn op_invalid(&mut self) -> Result<OpcodeResult, VMError> {
         Err(VMError::InvalidOpcode)
     }
 
@@ -486,7 +483,7 @@ impl VM {
     pub fn op_selfdestruct(
         &mut self,
         current_call_frame: &mut CallFrame,
-    ) -> Result<OpcodeSuccess, VMError> {
+    ) -> Result<OpcodeResult, VMError> {
         // Sends all ether in the account to the target address
         // Steps:
         // 1. Pop the target address from the stack
@@ -564,7 +561,7 @@ impl VM {
                 .insert(current_call_frame.to);
         }
 
-        Ok(OpcodeSuccess::Result(ResultReason::SelfDestruct))
+        Ok(OpcodeResult::Result(ResultReason::SelfDestruct))
     }
 
     /// Common behavior for CREATE and CREATE2 opcodes
@@ -575,7 +572,7 @@ impl VM {
         code_size_in_memory: usize,
         salt: Option<U256>,
         current_call_frame: &mut CallFrame,
-    ) -> Result<OpcodeSuccess, VMError> {
+    ) -> Result<OpcodeResult, VMError> {
         // First: Validations that can cause out of gas.
         // 1. Cant be called in a static context
         if current_call_frame.is_static {
@@ -633,7 +630,7 @@ impl VM {
                 .ok_or(VMError::Internal(InternalError::GasOverflow))?;
             // Push 0
             current_call_frame.stack.push(CREATE_DEPLOYMENT_FAIL)?;
-            return Ok(OpcodeSuccess::Continue);
+            return Ok(OpcodeResult::Continue);
         }
 
         // THIRD: Validations that push 0 to the stack without returning reserved gas but incrementing deployer's nonce
@@ -641,7 +638,7 @@ impl VM {
         if new_account.has_code_or_nonce() {
             increment_account_nonce(&mut self.cache, &self.db, deployer_address)?;
             current_call_frame.stack.push(CREATE_DEPLOYMENT_FAIL)?;
-            return Ok(OpcodeSuccess::Continue);
+            return Ok(OpcodeResult::Continue);
         }
 
         // FOURTH: Changes to the state
@@ -722,7 +719,7 @@ impl VM {
             }
         }
 
-        Ok(OpcodeSuccess::Continue)
+        Ok(OpcodeResult::Continue)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -745,7 +742,7 @@ impl VM {
         ret_size: usize,
         bytecode: Bytes,
         is_delegation: bool,
-    ) -> Result<OpcodeSuccess, VMError> {
+    ) -> Result<OpcodeResult, VMError> {
         // Clear callframe subreturn data
         current_call_frame.sub_return_data = Bytes::new();
 
@@ -760,7 +757,7 @@ impl VM {
                 .checked_sub(gas_limit)
                 .ok_or(InternalError::GasOverflow)?;
             current_call_frame.stack.push(REVERT_FOR_CALL)?;
-            return Ok(OpcodeSuccess::Continue);
+            return Ok(OpcodeResult::Continue);
         }
 
         // 2. Validate max depth has not been reached yet.
@@ -775,7 +772,7 @@ impl VM {
                 .checked_sub(gas_limit)
                 .ok_or(InternalError::GasOverflow)?;
             current_call_frame.stack.push(REVERT_FOR_CALL)?;
-            return Ok(OpcodeSuccess::Continue);
+            return Ok(OpcodeResult::Continue);
         }
 
         if bytecode.is_empty() && is_delegation {
@@ -784,7 +781,7 @@ impl VM {
                 .checked_sub(gas_limit)
                 .ok_or(InternalError::GasOverflow)?;
             current_call_frame.stack.push(SUCCESS_FOR_CALL)?;
-            return Ok(OpcodeSuccess::Continue);
+            return Ok(OpcodeResult::Continue);
         }
 
         let mut new_call_frame = CallFrame::new(
@@ -845,6 +842,6 @@ impl VM {
             }
         }
 
-        Ok(OpcodeSuccess::Continue)
+        Ok(OpcodeResult::Continue)
     }
 }

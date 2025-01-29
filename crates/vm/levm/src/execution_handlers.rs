@@ -3,7 +3,7 @@ use crate::{
     constants::*,
     db::CacheDB,
     errors::{
-        InternalError, OpcodeSuccess, OutOfGasError, ResultReason, TransactionReport, TxResult,
+        InternalError, OpcodeResult, OutOfGasError, ResultReason, TransactionReport, TxResult,
         VMError,
     },
     gas_cost::CODE_DEPOSIT_COST,
@@ -60,9 +60,9 @@ impl VM {
         &mut self,
         opcode: Opcode,
         current_call_frame: &mut CallFrame,
-    ) -> Result<OpcodeSuccess, VMError> {
+    ) -> Result<OpcodeResult, VMError> {
         let op_result = match opcode {
-            Opcode::STOP => Ok(OpcodeSuccess::Result(ResultReason::Stop)),
+            Opcode::STOP => Ok(OpcodeResult::Result(ResultReason::Stop)),
             Opcode::ADD => self.op_add(current_call_frame),
             Opcode::MUL => self.op_mul(current_call_frame),
             Opcode::SUB => self.op_sub(current_call_frame),
