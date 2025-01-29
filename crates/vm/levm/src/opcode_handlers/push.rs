@@ -5,8 +5,7 @@ use crate::{
     gas_cost,
     vm::VM,
 };
-use ethrex_core::U256;
-use revm_primitives::SpecId;
+use ethrex_core::{types::Fork, U256};
 
 // Push Operations
 // Opcodes: PUSH0, PUSH1 ... PUSH32
@@ -38,7 +37,7 @@ impl VM {
         current_call_frame: &mut CallFrame,
     ) -> Result<OpcodeSuccess, VMError> {
         // [EIP-3855] - PUSH0 is only available from SHANGHAI
-        if self.env.spec_id < SpecId::SHANGHAI {
+        if self.env.fork < Fork::Shanghai {
             return Err(VMError::InvalidOpcode);
         }
 
