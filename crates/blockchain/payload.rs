@@ -125,6 +125,9 @@ pub fn create_payload(args: &BuildPayloadArgs, storage: &Store) -> Result<Block,
             ),
         ),
         parent_beacon_block_root: args.beacon_root,
+        requests_hash: chain_config
+            .is_prague_activated(args.timestamp)
+            .then_some(H256::zero()), // TODO: set the value properly
     };
 
     let body = BlockBody {
@@ -446,10 +449,9 @@ fn apply_plain_transaction(
             &context.payload.header,
             store_wrapper.clone(),
             block_cache,
-            spec_id(
-                &context.chain_config().map_err(ChainError::from)?,
-                context.payload.header.timestamp,
-            ),
+            context
+                .chain_config()?
+                .fork(context.payload.header.timestamp),
         )
         .map_err(EvmError::from)?;
 

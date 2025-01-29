@@ -1,11 +1,10 @@
 use bytes::Bytes;
 use ethereum_types::{Address, Bloom, H256, U256};
+use ethrex_rlp::encode::RLPEncode;
 use ethrex_trie::Trie;
 use serde::{Deserialize, Serialize};
 use sha3::{Digest, Keccak256};
 use std::collections::HashMap;
-
-use ethrex_rlp::encode::RLPEncode;
 
 use super::{
     compute_receipts_root, compute_transactions_root, compute_withdrawals_root, AccountState,
@@ -87,11 +86,57 @@ pub struct ChainConfig {
     pub terminal_total_difficulty_passed: bool,
 }
 
-#[derive(Debug, PartialEq, PartialOrd)]
+#[repr(u8)]
+#[derive(Debug, PartialEq, PartialOrd, Default, Clone, Copy, Serialize, Deserialize)]
 pub enum Fork {
-    Paris = 0,
-    Shanghai = 1,
-    Cancun = 2,
+    Frontier = 0,
+    FrontierThawing = 1,
+    Homestead = 2,
+    DaoFork = 3,
+    Tangerine = 4,
+    SpuriousDragon = 5,
+    Byzantium = 6,
+    Constantinople = 7,
+    Petersburg = 8,
+    Istanbul = 9,
+    MuirGlacier = 10,
+    Berlin = 11,
+    London = 12,
+    ArrowGlacier = 13,
+    GrayGlacier = 14,
+    Paris = 15,
+    Shanghai = 16,
+    #[default]
+    Cancun = 17,
+    Prague = 18,
+    PragueEof = 19,
+}
+
+impl From<Fork> for &str {
+    fn from(fork: Fork) -> Self {
+        match fork {
+            Fork::Frontier => "Frontier",
+            Fork::FrontierThawing => "FrontierThawing",
+            Fork::Homestead => "Homestead",
+            Fork::DaoFork => "DaoFork",
+            Fork::Tangerine => "Tangerine",
+            Fork::SpuriousDragon => "SpuriousDragon",
+            Fork::Byzantium => "Byzantium",
+            Fork::Constantinople => "Constantinople",
+            Fork::Petersburg => "Petersburg",
+            Fork::Istanbul => "Istanbul",
+            Fork::MuirGlacier => "MuirGlacier",
+            Fork::Berlin => "Berlin",
+            Fork::London => "London",
+            Fork::ArrowGlacier => "ArrowGlacier",
+            Fork::GrayGlacier => "GrayGlacier",
+            Fork::Paris => "Paris",
+            Fork::Shanghai => "Shanghai",
+            Fork::Cancun => "Cancun",
+            Fork::Prague => "Prague",
+            Fork::PragueEof => "Prague EOF",
+        }
+    }
 }
 
 impl ChainConfig {
@@ -103,6 +148,9 @@ impl ChainConfig {
     pub fn is_cancun_activated(&self, block_timestamp: u64) -> bool {
         self.cancun_time.is_some_and(|time| time <= block_timestamp)
     }
+    pub fn is_prague_activated(&self, block_timestamp: u64) -> bool {
+        self.prague_time.is_some_and(|time| time <= block_timestamp)
+    }
 
     pub fn is_istanbul_activated(&self, block_number: BlockNumber) -> bool {
         self.istanbul_block.is_some_and(|num| num <= block_number)
@@ -113,13 +161,19 @@ impl ChainConfig {
     }
 
     pub fn get_fork(&self, block_timestamp: u64) -> Fork {
-        if self.is_cancun_activated(block_timestamp) {
+        if self.is_prague_activated(block_timestamp) {
+            Fork::Prague
+        } else if self.is_cancun_activated(block_timestamp) {
             Fork::Cancun
         } else if self.is_shanghai_activated(block_timestamp) {
             Fork::Shanghai
         } else {
             Fork::Paris
         }
+    }
+
+    pub fn fork(&self, block_timestamp: u64) -> Fork {
+        self.get_fork(block_timestamp)
     }
 
     pub fn gather_forks(&self) -> (Vec<u64>, Vec<u64>) {
@@ -218,6 +272,10 @@ impl Genesis {
                 .config
                 .is_cancun_activated(self.timestamp)
                 .then_some(H256::zero()),
+            requests_hash: self
+                .config
+                .is_prague_activated(self.timestamp)
+                .then_some(H256::zero()), // TODO: set the value properly
         }
     }
 
