@@ -213,13 +213,16 @@ pub enum PrecompileError {
 }
 
 #[derive(Debug, Clone)]
-pub enum OpcodeSuccess {
+/// Note: "Halt" does not mean "Error during execution" it simply
+/// means that the execution stopped. It's not called "Stop" because
+/// "Stop" is an Opcode
+pub enum OpcodeResult {
     Continue,
-    Result(ResultReason),
+    Halt(HaltReason),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum ResultReason {
+pub enum HaltReason {
     Stop,
     Revert,
     Return,

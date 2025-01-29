@@ -1,7 +1,7 @@
 use crate::{
     call_frame::CallFrame,
     constants::{WORD_SIZE, WORD_SIZE_IN_BYTES_USIZE},
-    errors::{OpcodeSuccess, OutOfGasError, VMError},
+    errors::{OpcodeResult, OutOfGasError, VMError},
     gas_cost::{self, SSTORE_STIPEND},
     memory::{self, calculate_memory_size},
     vm::VM,
@@ -13,17 +13,17 @@ use ethrex_core::{types::Fork, H256, U256};
 
 impl VM {
     // POP operation
-    pub fn op_pop(&mut self, current_call_frame: &mut CallFrame) -> Result<OpcodeSuccess, VMError> {
+    pub fn op_pop(&mut self, current_call_frame: &mut CallFrame) -> Result<OpcodeResult, VMError> {
         self.increase_consumed_gas(current_call_frame, gas_cost::POP)?;
         current_call_frame.stack.pop()?;
-        Ok(OpcodeSuccess::Continue)
+        Ok(OpcodeResult::Continue)
     }
 
     // TLOAD operation
     pub fn op_tload(
         &mut self,
         current_call_frame: &mut CallFrame,
-    ) -> Result<OpcodeSuccess, VMError> {
+    ) -> Result<OpcodeResult, VMError> {
         // [EIP-1153] - TLOAD is only available from CANCUN
         if self.env.fork < Fork::Cancun {
             return Err(VMError::InvalidOpcode);
@@ -40,14 +40,14 @@ impl VM {
             .unwrap_or(U256::zero());
 
         current_call_frame.stack.push(value)?;
-        Ok(OpcodeSuccess::Continue)
+        Ok(OpcodeResult::Continue)
     }
 
     // TSTORE operation
     pub fn op_tstore(
         &mut self,
         current_call_frame: &mut CallFrame,
-    ) -> Result<OpcodeSuccess, VMError> {
+    ) -> Result<OpcodeResult, VMError> {
         // [EIP-1153] - TLOAD is only available from CANCUN
         if self.env.fork < Fork::Cancun {
             return Err(VMError::InvalidOpcode);
@@ -65,14 +65,14 @@ impl VM {
             .transient_storage
             .insert((current_call_frame.to, key), value);
 
-        Ok(OpcodeSuccess::Continue)
+        Ok(OpcodeResult::Continue)
     }
 
     // MLOAD operation
     pub fn op_mload(
         &mut self,
         current_call_frame: &mut CallFrame,
-    ) -> Result<OpcodeSuccess, VMError> {
+    ) -> Result<OpcodeResult, VMError> {
         let offset = current_call_frame.stack.pop()?;
 
         let new_memory_size = calculate_memory_size(offset, WORD_SIZE_IN_BYTES_USIZE)?;
@@ -86,14 +86,14 @@ impl VM {
             .stack
             .push(memory::load_word(&mut current_call_frame.memory, offset)?)?;
 
-        Ok(OpcodeSuccess::Continue)
+        Ok(OpcodeResult::Continue)
     }
 
     // MSTORE operation
     pub fn op_mstore(
         &mut self,
         current_call_frame: &mut CallFrame,
-    ) -> Result<OpcodeSuccess, VMError> {
+    ) -> Result<OpcodeResult, VMError> {
         let offset = current_call_frame.stack.pop()?;
 
         let new_memory_size = calculate_memory_size(offset, WORD_SIZE_IN_BYTES_USIZE)?;
@@ -111,14 +111,14 @@ impl VM {
             &value.to_big_endian(),
         )?;
 
-        Ok(OpcodeSuccess::Continue)
+        Ok(OpcodeResult::Continue)
     }
 
     // MSTORE8 operation
     pub fn op_mstore8(
         &mut self,
         current_call_frame: &mut CallFrame,
-    ) -> Result<OpcodeSuccess, VMError> {
+    ) -> Result<OpcodeResult, VMError> {
         // TODO: modify expansion cost to accept U256
         let offset = current_call_frame.stack.pop()?;
 
@@ -137,14 +137,14 @@ impl VM {
             &value.to_big_endian()[WORD_SIZE - 1..WORD_SIZE],
         )?;
 
-        Ok(OpcodeSuccess::Continue)
+        Ok(OpcodeResult::Continue)
     }
 
     // SLOAD operation
     pub fn op_sload(
         &mut self,
         current_call_frame: &mut CallFrame,
-    ) -> Result<OpcodeSuccess, VMError> {
+    ) -> Result<OpcodeResult, VMError> {
         let storage_slot_key = current_call_frame.stack.pop()?;
         let address = current_call_frame.to;
 
@@ -156,7 +156,7 @@ impl VM {
         self.increase_consumed_gas(current_call_frame, gas_cost::sload(storage_slot_was_cold)?)?;
 
         current_call_frame.stack.push(storage_slot.current_value)?;
-        Ok(OpcodeSuccess::Continue)
+        Ok(OpcodeResult::Continue)
     }
 
     // SSTORE operation
@@ -164,7 +164,7 @@ impl VM {
     pub fn op_sstore(
         &mut self,
         current_call_frame: &mut CallFrame,
-    ) -> Result<OpcodeSuccess, VMError> {
+    ) -> Result<OpcodeResult, VMError> {
         if current_call_frame.is_static {
             return Err(VMError::OpcodeNotAllowedInStaticContext);
         }
@@ -228,23 +228,23 @@ impl VM {
         )?;
 
         self.update_account_storage(current_call_frame.to, key, new_storage_slot_value)?;
-        Ok(OpcodeSuccess::Continue)
+        Ok(OpcodeResult::Continue)
     }
 
     // MSIZE operation
     pub fn op_msize(
         &mut self,
         current_call_frame: &mut CallFrame,
-    ) -> Result<OpcodeSuccess, VMError> {
+    ) -> Result<OpcodeResult, VMError> {
         self.increase_consumed_gas(current_call_frame, gas_cost::MSIZE)?;
         current_call_frame
             .stack
             .push(current_call_frame.memory.len().into())?;
-        Ok(OpcodeSuccess::Continue)
+        Ok(OpcodeResult::Continue)
     }
 
     // GAS operation
-    pub fn op_gas(&mut self, current_call_frame: &mut CallFrame) -> Result<OpcodeSuccess, VMError> {
+    pub fn op_gas(&mut self, current_call_frame: &mut CallFrame) -> Result<OpcodeResult, VMError> {
         self.increase_consumed_gas(current_call_frame, gas_cost::GAS)?;
 
         let remaining_gas = current_call_frame
@@ -254,14 +254,14 @@ impl VM {
         // Note: These are not consumed gas calculations, but are related, so I used this wrapping here
         current_call_frame.stack.push(remaining_gas.into())?;
 
-        Ok(OpcodeSuccess::Continue)
+        Ok(OpcodeResult::Continue)
     }
 
     // MCOPY operation
     pub fn op_mcopy(
         &mut self,
         current_call_frame: &mut CallFrame,
-    ) -> Result<OpcodeSuccess, VMError> {
+    ) -> Result<OpcodeResult, VMError> {
         // [EIP-5656] - MCOPY is only available from CANCUN
         if self.env.fork < Fork::Cancun {
             return Err(VMError::InvalidOpcode);
@@ -295,20 +295,17 @@ impl VM {
             size,
         )?;
 
-        Ok(OpcodeSuccess::Continue)
+        Ok(OpcodeResult::Continue)
     }
 
     // JUMP operation
-    pub fn op_jump(
-        &mut self,
-        current_call_frame: &mut CallFrame,
-    ) -> Result<OpcodeSuccess, VMError> {
+    pub fn op_jump(&mut self, current_call_frame: &mut CallFrame) -> Result<OpcodeResult, VMError> {
         self.increase_consumed_gas(current_call_frame, gas_cost::JUMP)?;
 
         let jump_address = current_call_frame.stack.pop()?;
         Self::jump(current_call_frame, jump_address)?;
 
-        Ok(OpcodeSuccess::Continue)
+        Ok(OpcodeResult::Continue)
     }
 
     /// JUMP* family (`JUMP` and `JUMP` ATTOW [DEC 2024]) helper
@@ -342,7 +339,7 @@ impl VM {
     pub fn op_jumpi(
         &mut self,
         current_call_frame: &mut CallFrame,
-    ) -> Result<OpcodeSuccess, VMError> {
+    ) -> Result<OpcodeResult, VMError> {
         let jump_address = current_call_frame.stack.pop()?;
         let condition = current_call_frame.stack.pop()?;
 
@@ -353,26 +350,26 @@ impl VM {
         } else {
             current_call_frame.increment_pc()?;
         }
-        Ok(OpcodeSuccess::Continue)
+        Ok(OpcodeResult::Continue)
     }
 
     // JUMPDEST operation
     pub fn op_jumpdest(
         &mut self,
         current_call_frame: &mut CallFrame,
-    ) -> Result<OpcodeSuccess, VMError> {
+    ) -> Result<OpcodeResult, VMError> {
         self.increase_consumed_gas(current_call_frame, gas_cost::JUMPDEST)?;
-        Ok(OpcodeSuccess::Continue)
+        Ok(OpcodeResult::Continue)
     }
 
     // PC operation
-    pub fn op_pc(&mut self, current_call_frame: &mut CallFrame) -> Result<OpcodeSuccess, VMError> {
+    pub fn op_pc(&mut self, current_call_frame: &mut CallFrame) -> Result<OpcodeResult, VMError> {
         self.increase_consumed_gas(current_call_frame, gas_cost::PC)?;
 
         current_call_frame
             .stack
             .push(U256::from(current_call_frame.pc))?;
 
-        Ok(OpcodeSuccess::Continue)
+        Ok(OpcodeResult::Continue)
     }
 }
