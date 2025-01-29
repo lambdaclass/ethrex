@@ -2,8 +2,9 @@ use std::net::SocketAddr;
 
 use crate::{
     rlpx::{
-        connection::{LocalState, RemoteState},
+        connection::{LocalState, RLPxConnection, RemoteState},
         error::RLPxError,
+        frame::RLPxCodec,
         utils::{ecdh_xchng, id2pubkey, kdf, log_debug, pubkey2id, sha256, sha256_hmac},
     },
     types::Node,
@@ -25,8 +26,6 @@ use k256::{
 use rand::Rng;
 use sha3::{Digest, Keccak256};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
-
-use super::{connection::RLPxConnection, frame::RLPxCodec};
 
 type Aes128Ctr64BE = ctr::Ctr64BE<aes::Aes128>;
 
