@@ -17,7 +17,10 @@ use tokio::{
 use tracing::{debug, info, warn};
 
 use crate::{kademlia::KademliaTable, peer_channels::BlockRequestOrder};
-use crate::{peer_channels::PeerChannels, rlpx::p2p::Capability};
+use crate::{
+    peer_channels::{PeerChannels, HASH_MAX},
+    rlpx::p2p::Capability,
+};
 
 /// Maximum amount of times we will ask a peer for an account/storage range
 /// If the max amount of retries is exceeded we will asume that the state we are requesting is old and no longer available
@@ -367,12 +370,7 @@ async fn rebuild_state_trie(
                     initial_timestamp,
                 ));
             }
-            let peer = peers
-                .clone()
-                .lock()
-                .await
-                .get_peer_channels(Capability::Snap)
-                .await;
+            let peer = get_peer_channel_with_retry(table, Capability::Snap).await;
             debug!("Requesting Account Range for state root {state_root}, starting hash: {start_account_hash}");
             if let Some((account_hashes, accounts, should_continue)) = peer
                 .request_account_range(state_root, start_account_hash)
