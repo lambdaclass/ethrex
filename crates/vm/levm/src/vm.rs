@@ -595,7 +595,7 @@ impl VM {
     /// 2. Return unused gas + gas refunds to the sender.
     /// 3. Pay coinbase fee
     /// 4. Destruct addresses in selfdestruct set.
-    fn post_execution_changes(
+    fn finalize_execution(
         &mut self,
         initial_call_frame: &CallFrame,
         report: &mut TransactionReport,
@@ -735,7 +735,7 @@ impl VM {
 
         report.gas_used = self.gas_used(&initial_call_frame, &report)?;
 
-        self.post_execution_changes(&initial_call_frame, &mut report)?;
+        self.finalize_execution(&initial_call_frame, &mut report)?;
 
         report.new_state.clone_from(&self.cache);
 
@@ -861,7 +861,7 @@ impl VM {
             created_address: None,
         };
 
-        self.post_execution_changes(initial_call_frame, &mut report)?;
+        self.finalize_execution(initial_call_frame, &mut report)?;
         report.new_state.clone_from(&self.cache);
 
         Ok(report)
