@@ -1082,6 +1082,8 @@ dependencies = [
  "ethrex-l2",
  "ethrex-prover",
  "ethrex-rlp",
+ "ethrex-storage",
+ "ethrex-trie",
  "ethrex-vm",
  "futures-util",
  "hex",

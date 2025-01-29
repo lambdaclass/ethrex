@@ -13,6 +13,7 @@ use ethrex_core::{
 use ethrex_vm::execution_db::{ExecutionDB, ToExecDB};
 use ethrex_vm::spec_id;
 use futures_util::future::join_all;
+use revm::db::CacheDB;
 use revm::DatabaseRef;
 use revm_primitives::{
     AccountInfo as RevmAccountInfo, Address as RevmAddress, Bytecode as RevmBytecode,
@@ -26,7 +27,7 @@ pub struct RpcDB {
     pub rpc_url: String,
     pub block_number: usize,
     // we concurrently download tx callers before pre-execution to minimize sequential RPC calls
-    pub cache: RefCell<HashMap<Address, Account>>,
+    pub cache: RefCell<HashMap<Address, Option<Account>>>,
     pub block_hashes: RefCell<HashMap<u64, H256>>,
 }
 
@@ -79,7 +80,7 @@ impl RpcDB {
     async fn fetch_accounts(
         &self,
         accounts: &[(Address, Vec<H256>)],
-    ) -> Result<HashMap<Address, Account>, String> {
+    ) -> Result<HashMap<Address, Option<Account>>, String> {
         let rate_limiter = RateLimiter::new(std::time::Duration::from_secs(1));
         let mut fetched = HashMap::new();
 
@@ -128,14 +129,16 @@ impl DatabaseRef for RpcDB {
             }
         };
 
-        Ok(Some(RevmAccountInfo {
+        let account = account.map(|account| RevmAccountInfo {
             nonce: account.account_state.nonce,
             balance: RevmU256::from_limbs(account.account_state.balance.0),
             code_hash: RevmB256::from(account.account_state.code_hash.0),
             code: account
                 .code
                 .map(|code| RevmBytecode::new_raw(RevmBytes(code))),
-        }))
+        });
+
+        Ok(account)
     }
     #[allow(unused_variables)]
     fn code_by_hash_ref(&self, code_hash: RevmB256) -> Result<RevmBytecode, Self::Error> {
@@ -146,23 +149,38 @@ impl DatabaseRef for RpcDB {
         let index = H256::from_slice(&index.to_be_bytes_vec());
 
         let value = match self.cache.borrow_mut().entry(address) {
-            Entry::Occupied(mut entry) => match entry.get().storage.get(&index) {
-                Some(value) => *value,
-                None => {
-                    println!("retrieving storage value for address {address} and key {index}");
-                    let handle = tokio::runtime::Handle::current();
-                    let value = tokio::task::block_in_place(|| {
-                        handle.block_on(get_storage(
-                            &self.rpc_url,
-                            self.block_number,
-                            &address,
-                            index,
-                        ))
-                    })?;
-                    entry.get_mut().storage.insert(index, value);
-                    value
+            Entry::Occupied(mut entry) => {
+                let Some(account) = entry.get() else {
+                    return Err("account doesn't exists".to_string());
+                };
+                match account.storage.get(&index) {
+                    Some(value) => *value,
+                    None => {
+                        println!("retrieving storage value for address {address} and key {index}");
+                        let handle = tokio::runtime::Handle::current();
+                        let account = tokio::task::block_in_place(|| {
+                            handle.block_on(get_account(
+                                &self.rpc_url,
+                                self.block_number,
+                                &address,
+                                &account
+                                    .storage
+                                    .keys()
+                                    .chain(&[index])
+                                    .cloned()
+                                    .collect::<Vec<_>>(),
+                            ))
+                        })?
+                        .expect("previously downloaded account doesn't exists");
+                        let value = *account
+                            .storage
+                            .get(&index)
+                            .expect("rpc account response didn't include requested storage value");
+                        entry.insert(Some(account));
+                        value
+                    }
                 }
-            },
+            }
             Entry::Vacant(entry) => {
                 let handle = tokio::runtime::Handle::current();
                 let account = tokio::task::block_in_place(|| {
@@ -173,12 +191,15 @@ impl DatabaseRef for RpcDB {
                         &[index],
                     ))
                 })?;
-                let value = *account
-                    .storage
-                    .get(&index)
-                    .expect("rpc account response didn't include requested storage value");
-                entry.insert(account);
-                value
+
+                if let Some(account) = entry.insert(account) {
+                    *account
+                        .storage
+                        .get(&index)
+                        .expect("rpc account response didn't include requested storage value")
+                } else {
+                    return Err("account doesn't exists".to_string());
+                }
             }
         };
 
@@ -211,20 +232,26 @@ impl ToExecDB for RpcDB {
         let parent_hash = block.header.parent_hash;
         let chain_config = CANCUN_CONFIG;
 
-        // pre-execute and get all state changes
-        let cache = ExecutionDB::pre_execute(
+        // pre-execute and get all downloaded accounts
+        let CacheDB { db, .. } = ExecutionDB::pre_execute(
             block,
             chain_config.chain_id,
             spec_id(&chain_config, block.header.timestamp),
             self,
         )
-        .unwrap() // TODO: fix evm, executiondb errors to remove this unwrap
-        .db
-        .cache
-        .borrow();
+        .unwrap(); // TODO: remove unwrap
+        let cache = db.cache.borrow();
 
-        let accounts = cache
-            .iter()
+        let cache_iter = cache.iter().filter_map(|(address, account)| {
+            if let Some(account) = account {
+                Some((address, account))
+            } else {
+                None
+            }
+        });
+
+        let accounts: HashMap<_, _> = cache_iter
+            .clone()
             .map(|(address, account)| {
                 (
                     *address,
@@ -236,17 +263,17 @@ impl ToExecDB for RpcDB {
                 )
             })
             .collect();
-        let code = cache
-            .values()
-            .map(|account| {
+        let code = cache_iter
+            .clone()
+            .map(|(_, account)| {
                 (
                     account.account_state.code_hash,
                     account.code.clone().unwrap_or_default(),
                 )
             })
             .collect();
-        let storage = cache
-            .iter()
+        let storage = cache_iter
+            .clone()
             .map(|(address, account)| (*address, account.storage.clone()))
             .collect();
         let block_hashes = self
@@ -255,20 +282,9 @@ impl ToExecDB for RpcDB {
             .iter()
             .map(|(num, hash)| (*num, *hash))
             .collect();
-        // WARN: unwrapping because revm wraps a u64 as a U256
 
-        let state_root = cache
-            .values()
-            .next()
-            .and_then(|account| account.account_proof.first().cloned());
-        let other_state_nodes = cache
-            .values()
-            .flat_map(|(account)| account.account_proof.iter().skip(1).cloned())
-            .collect();
-        let state_proofs = (state_root, other_state_nodes);
-
-        let storage_proofs = cache
-            .iter()
+        let storage_proofs = cache_iter
+            .clone()
             .map(|(address, account)| {
                 let storage_root = account
                     .storage_proofs
@@ -283,6 +299,16 @@ impl ToExecDB for RpcDB {
                 (*address, (storage_root, other_storage_nodes))
             })
             .collect();
+
+        let mut cache_iter = cache_iter;
+        let state_root = cache_iter
+            .next()
+            .clone()
+            .and_then(|(_, account)| account.account_proof.first().cloned());
+        let other_state_nodes = cache_iter
+            .flat_map(|(_, account)| account.account_proof.iter().skip(1).cloned())
+            .collect();
+        let state_proofs = (state_root, other_state_nodes);
 
         Ok(ExecutionDB {
             accounts,
