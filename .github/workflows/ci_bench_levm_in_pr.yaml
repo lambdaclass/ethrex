@@ -90,9 +90,19 @@ jobs:
           make revm-comparison-ci
           {
             echo "#### Benchmark Results: Factorial";
-            cat factorial.md;
+            cat Factorial.md;
+            echo "#### Benchmark Results: Factorial - Recursive";
+            cat FactorialRecursive.md;
             echo "#### Benchmark Results: Fibonacci";
-            cat fibonacci.md;
+            cat Fibonacci.md;
+            echo "#### Benchmark Results: ManyHashes";
+            cat ManyHashes.md;
+            echo "#### Benchmark Results: ERC20 - Transfer";
+            cat ERC20Transfer.md;
+            echo "#### Benchmark Results: ERC20 - Mint";
+            cat ERC20Mint.md;
+            echo "#### Benchmark Results: ERC20 - Approval";
+            cat ERC20Approval.md;
           } > main_result.md
 
       - name: Upload main results
