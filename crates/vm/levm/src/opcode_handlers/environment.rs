@@ -19,7 +19,7 @@ impl VM {
         &mut self,
         current_call_frame: &mut CallFrame,
     ) -> Result<OpcodeResult, VMError> {
-        self.increase_consumed_gas(current_call_frame, gas_cost::ADDRESS)?;
+        current_call_frame.increase_consumed_gas(gas_cost::ADDRESS)?;
 
         let addr = current_call_frame.to; // The recipient of the current call.
 
@@ -39,7 +39,7 @@ impl VM {
 
         let (account_info, address_was_cold) = self.access_account(address);
 
-        self.increase_consumed_gas(current_call_frame, gas_cost::balance(address_was_cold)?)?;
+        current_call_frame.increase_consumed_gas(gas_cost::balance(address_was_cold)?)?;
 
         current_call_frame.stack.push(account_info.balance)?;
 
@@ -51,7 +51,7 @@ impl VM {
         &mut self,
         current_call_frame: &mut CallFrame,
     ) -> Result<OpcodeResult, VMError> {
-        self.increase_consumed_gas(current_call_frame, gas_cost::ORIGIN)?;
+        current_call_frame.increase_consumed_gas(gas_cost::ORIGIN)?;
 
         let origin = self.env.origin;
         current_call_frame
@@ -66,7 +66,7 @@ impl VM {
         &mut self,
         current_call_frame: &mut CallFrame,
     ) -> Result<OpcodeResult, VMError> {
-        self.increase_consumed_gas(current_call_frame, gas_cost::CALLER)?;
+        current_call_frame.increase_consumed_gas(gas_cost::CALLER)?;
 
         let caller = current_call_frame.msg_sender;
         current_call_frame
@@ -81,7 +81,7 @@ impl VM {
         &mut self,
         current_call_frame: &mut CallFrame,
     ) -> Result<OpcodeResult, VMError> {
-        self.increase_consumed_gas(current_call_frame, gas_cost::CALLVALUE)?;
+        current_call_frame.increase_consumed_gas(gas_cost::CALLVALUE)?;
 
         let callvalue = current_call_frame.msg_value;
 
@@ -95,7 +95,7 @@ impl VM {
         &mut self,
         current_call_frame: &mut CallFrame,
     ) -> Result<OpcodeResult, VMError> {
-        self.increase_consumed_gas(current_call_frame, gas_cost::CALLDATALOAD)?;
+        current_call_frame.increase_consumed_gas(gas_cost::CALLDATALOAD)?;
 
         let calldata_size: U256 = current_call_frame.calldata.len().into();
 
@@ -136,7 +136,7 @@ impl VM {
         &mut self,
         current_call_frame: &mut CallFrame,
     ) -> Result<OpcodeResult, VMError> {
-        self.increase_consumed_gas(current_call_frame, gas_cost::CALLDATASIZE)?;
+        current_call_frame.increase_consumed_gas(gas_cost::CALLDATASIZE)?;
 
         current_call_frame
             .stack
@@ -160,10 +160,11 @@ impl VM {
 
         let new_memory_size = calculate_memory_size(dest_offset, size)?;
 
-        self.increase_consumed_gas(
-            current_call_frame,
-            gas_cost::calldatacopy(new_memory_size, current_call_frame.memory.len(), size)?,
-        )?;
+        current_call_frame.increase_consumed_gas(gas_cost::calldatacopy(
+            new_memory_size,
+            current_call_frame.memory.len(),
+            size,
+        )?)?;
 
         if size == 0 {
             return Ok(OpcodeResult::Continue);
@@ -201,7 +202,7 @@ impl VM {
         &mut self,
         current_call_frame: &mut CallFrame,
     ) -> Result<OpcodeResult, VMError> {
-        self.increase_consumed_gas(current_call_frame, gas_cost::CODESIZE)?;
+        current_call_frame.increase_consumed_gas(gas_cost::CODESIZE)?;
 
         current_call_frame
             .stack
@@ -227,10 +228,11 @@ impl VM {
 
         let new_memory_size = calculate_memory_size(destination_offset, size)?;
 
-        self.increase_consumed_gas(
-            current_call_frame,
-            gas_cost::codecopy(new_memory_size, current_call_frame.memory.len(), size)?,
-        )?;
+        current_call_frame.increase_consumed_gas(gas_cost::codecopy(
+            new_memory_size,
+            current_call_frame.memory.len(),
+            size,
+        )?)?;
 
         if size == 0 {
             return Ok(OpcodeResult::Continue);
@@ -265,7 +267,7 @@ impl VM {
         &mut self,
         current_call_frame: &mut CallFrame,
     ) -> Result<OpcodeResult, VMError> {
-        self.increase_consumed_gas(current_call_frame, gas_cost::GASPRICE)?;
+        current_call_frame.increase_consumed_gas(gas_cost::GASPRICE)?;
 
         current_call_frame.stack.push(self.env.gas_price)?;
 
@@ -284,7 +286,7 @@ impl VM {
         // https://eips.ethereum.org/EIPS/eip-7702#delegation-designation
         let is_delegation = has_delegation(&account_info)?;
 
-        self.increase_consumed_gas(current_call_frame, gas_cost::extcodesize(address_was_cold)?)?;
+        current_call_frame.increase_consumed_gas(gas_cost::extcodesize(address_was_cold)?)?;
 
         current_call_frame.stack.push(if is_delegation {
             SET_CODE_DELEGATION_BYTES[..2].len().into()
@@ -316,15 +318,12 @@ impl VM {
         // https://eips.ethereum.org/EIPS/eip-7702#delegation-designation
         let is_delegation = has_delegation(&account_info)?;
 
-        self.increase_consumed_gas(
-            current_call_frame,
-            gas_cost::extcodecopy(
-                size,
-                new_memory_size,
-                current_call_frame.memory.len(),
-                address_was_cold,
-            )?,
-        )?;
+        current_call_frame.increase_consumed_gas(gas_cost::extcodecopy(
+            size,
+            new_memory_size,
+            current_call_frame.memory.len(),
+            address_was_cold,
+        )?)?;
 
         if size == 0 {
             return Ok(OpcodeResult::Continue);
@@ -358,7 +357,7 @@ impl VM {
         &mut self,
         current_call_frame: &mut CallFrame,
     ) -> Result<OpcodeResult, VMError> {
-        self.increase_consumed_gas(current_call_frame, gas_cost::RETURNDATASIZE)?;
+        current_call_frame.increase_consumed_gas(gas_cost::RETURNDATASIZE)?;
 
         current_call_frame
             .stack
@@ -386,10 +385,11 @@ impl VM {
 
         let new_memory_size = calculate_memory_size(dest_offset, size)?;
 
-        self.increase_consumed_gas(
-            current_call_frame,
-            gas_cost::returndatacopy(new_memory_size, current_call_frame.memory.len(), size)?,
-        )?;
+        current_call_frame.increase_consumed_gas(gas_cost::returndatacopy(
+            new_memory_size,
+            current_call_frame.memory.len(),
+            size,
+        )?)?;
 
         if size == 0 && returndata_offset == 0 {
             return Ok(OpcodeResult::Continue);
@@ -437,7 +437,7 @@ impl VM {
         // https://eips.ethereum.org/EIPS/eip-7702#delegation-designation
         let is_delegation = has_delegation(&account_info)?;
 
-        self.increase_consumed_gas(current_call_frame, gas_cost::extcodehash(address_was_cold)?)?;
+        current_call_frame.increase_consumed_gas(gas_cost::extcodehash(address_was_cold)?)?;
 
         if is_delegation {
             let hash =

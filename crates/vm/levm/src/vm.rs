@@ -283,7 +283,8 @@ impl VM {
             initial_call_frame,
         )?;
 
-        self.increase_consumed_gas(initial_call_frame, intrinsic_gas)
+        initial_call_frame
+            .increase_consumed_gas(intrinsic_gas)
             .map_err(|_| TxValidationError::IntrinsicGasTooLow)?;
 
         Ok(())
@@ -746,25 +747,6 @@ impl VM {
         self.call_frames.last_mut().ok_or(VMError::Internal(
             InternalError::CouldNotAccessLastCallframe,
         ))
-    }
-
-    /// Increases gas consumption of CallFrame and Environment, returning an error if the callframe gas limit is reached.
-    pub fn increase_consumed_gas(
-        &mut self,
-        current_call_frame: &mut CallFrame,
-        gas: u64,
-    ) -> Result<(), VMError> {
-        let potential_consumed_gas = current_call_frame
-            .gas_used
-            .checked_add(gas)
-            .ok_or(OutOfGasError::ConsumedGasOverflow)?;
-        if potential_consumed_gas > current_call_frame.gas_limit {
-            return Err(VMError::OutOfGas(OutOfGasError::MaxGasLimitExceeded));
-        }
-
-        current_call_frame.gas_used = potential_consumed_gas;
-
-        Ok(())
     }
 
     /// Accesses to an account's information.

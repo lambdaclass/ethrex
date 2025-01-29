@@ -17,7 +17,7 @@ impl VM {
         current_call_frame: &mut CallFrame,
         n_bytes: usize,
     ) -> Result<OpcodeResult, VMError> {
-        self.increase_consumed_gas(current_call_frame, gas_cost::PUSHN)?;
+        current_call_frame.increase_consumed_gas(gas_cost::PUSHN)?;
 
         let read_n_bytes = read_bytcode_slice(current_call_frame, n_bytes)?;
         let value_to_push = bytes_to_word(read_n_bytes, n_bytes)?;
@@ -41,7 +41,7 @@ impl VM {
             return Err(VMError::InvalidOpcode);
         }
 
-        self.increase_consumed_gas(current_call_frame, gas_cost::PUSH0)?;
+        current_call_frame.increase_consumed_gas(gas_cost::PUSH0)?;
 
         current_call_frame.stack.push(U256::zero())?;
 

@@ -36,15 +36,12 @@ impl VM {
 
         let new_memory_size = calculate_memory_size(offset, size)?;
 
-        self.increase_consumed_gas(
-            current_call_frame,
-            gas_cost::log(
-                new_memory_size,
-                current_call_frame.memory.len(),
-                size,
-                number_of_topics,
-            )?,
-        )?;
+        current_call_frame.increase_consumed_gas(gas_cost::log(
+            new_memory_size,
+            current_call_frame.memory.len(),
+            size,
+            number_of_topics,
+        )?)?;
 
         let log = Log {
             address: current_call_frame.to,
