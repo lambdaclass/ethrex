@@ -216,11 +216,14 @@ impl VM {
 
         // For 1 << n, we can check if we have a precomputed value, and if not use 2^n directly
         if value == U256::one() {
-            let res = if shift >= U256::from(256) { // Overflow
+            let res = if shift >= U256::from(256) {
+                // Overflow
                 U256::zero()
-            } else if let Some(precomputed_val) = shl_get_precomputed_value(shift) { // Precomputed value in our table
-                precomputed_val.clone()
-            } else { // 1<<n but not precomputed, we can calculate 2^n
+            } else if let Some(precomputed_val) = shl_get_precomputed_value(shift) {
+                // Precomputed value in our table
+                precomputed_val
+            } else {
+                // 1<<n but not precomputed, we can calculate 2^n
                 // Safe since shift < 256 and 2^255 is the max possible value which fits in U256
                 U256::from(2).pow(shift)
             };
