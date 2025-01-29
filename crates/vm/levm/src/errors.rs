@@ -215,7 +215,7 @@ pub enum PrecompileError {
 #[derive(Debug, Clone)]
 pub enum OpcodeResult {
     Continue,
-    Result(ResultReason),
+    Halt(ResultReason),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

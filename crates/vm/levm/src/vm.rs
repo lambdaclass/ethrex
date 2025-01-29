@@ -253,7 +253,7 @@ impl VM {
 
             match op_result {
                 Ok(OpcodeResult::Continue) => {}
-                Ok(OpcodeResult::Result(reason)) => {
+                Ok(OpcodeResult::Halt(reason)) => {
                     return self.handle_opcode_result(reason, current_call_frame, backup)
                 }
                 Err(error) => return self.handle_opcode_error(error, current_call_frame, backup),

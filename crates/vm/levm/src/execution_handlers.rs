@@ -62,7 +62,7 @@ impl VM {
         current_call_frame: &mut CallFrame,
     ) -> Result<OpcodeResult, VMError> {
         let op_result = match opcode {
-            Opcode::STOP => Ok(OpcodeResult::Result(ResultReason::Stop)),
+            Opcode::STOP => Ok(OpcodeResult::Halt(ResultReason::Stop)),
             Opcode::ADD => self.op_add(current_call_frame),
             Opcode::MUL => self.op_mul(current_call_frame),
             Opcode::SUB => self.op_sub(current_call_frame),
