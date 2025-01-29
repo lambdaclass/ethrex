@@ -2,9 +2,9 @@ name: LEVM
 
 on:
   push:
-    branches: ["main"]
+    branches: [ "main" ]
   pull_request:
-    branches: ["**"]
+    branches: [ "**" ]
     paths:
       - "crates/vm/levm/**"
 
@@ -98,6 +98,9 @@ jobs:
         uses: taiki-e/install-action@v2
         with:
           tool: hyperfine@1.16
+
+      - name: Install solc
+        uses: pontem-network/get-solc@master
 
       - name: Run benchmarks
         run: |

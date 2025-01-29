@@ -6738,9 +6738,11 @@ name = "revm_comparison"
 version = "0.1.0"
 dependencies = [
  "bytes",
+ "ethrex-core",
  "ethrex-levm",
  "hex",
  "revm 9.0.0",
+ "sha3",
 ]
 
 [[package]]
