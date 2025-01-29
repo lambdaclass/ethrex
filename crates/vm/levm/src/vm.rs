@@ -45,21 +45,21 @@ pub struct Substate {
 ///   - Substate
 ///   - Gas Refunds
 ///   - Transient Storage
-pub struct Backup {
+pub struct StateBackup {
     cache: CacheDB,
     substate: Substate,
     refunded_gas: u64,
     transient_storage: TransientStorage,
 }
 
-impl Backup {
+impl StateBackup {
     pub fn new(
         cache: CacheDB,
         substate: Substate,
         refunded_gas: u64,
         transient_storage: TransientStorage,
-    ) -> Backup {
-        Backup {
+    ) -> StateBackup {
+        StateBackup {
             cache,
             substate,
             refunded_gas,
@@ -234,7 +234,7 @@ impl VM {
         current_call_frame: &mut CallFrame,
     ) -> Result<TransactionReport, VMError> {
         // Backup of Database, Substate, Gas Refunds and Transient Storage if sub-context is reverted
-        let backup = Backup::new(
+        let backup = StateBackup::new(
             self.cache.clone(),
             self.accrued_substate.clone(),
             self.env.refunded_gas,
@@ -261,7 +261,7 @@ impl VM {
         }
     }
 
-    pub fn restore_state(&mut self, backup: Backup) {
+    pub fn restore_state(&mut self, backup: StateBackup) {
         self.cache = backup.cache;
         self.accrued_substate = backup.substate;
         self.env.refunded_gas = backup.refunded_gas;

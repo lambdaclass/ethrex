@@ -9,7 +9,7 @@ use crate::{
     gas_cost::CODE_DEPOSIT_COST,
     opcodes::Opcode,
     utils::*,
-    vm::{Backup, VM},
+    vm::{StateBackup, VM},
 };
 
 use bytes::Bytes;
@@ -19,7 +19,7 @@ impl VM {
         &mut self,
         precompile_result: Result<Bytes, VMError>,
         current_call_frame: &mut CallFrame,
-        backup: Backup,
+        backup: StateBackup,
     ) -> Result<TransactionReport, VMError> {
         match precompile_result {
             Ok(output) => {
@@ -176,7 +176,7 @@ impl VM {
         &mut self,
         _reason: ResultReason,
         current_call_frame: &mut CallFrame,
-        backup: Backup,
+        backup: StateBackup,
     ) -> Result<TransactionReport, VMError> {
         self.call_frames.push(current_call_frame.clone());
         // On successful create check output validity
@@ -252,7 +252,7 @@ impl VM {
         &mut self,
         error: VMError,
         current_call_frame: &mut CallFrame,
-        backup: Backup,
+        backup: StateBackup,
     ) -> Result<TransactionReport, VMError> {
         self.call_frames.push(current_call_frame.clone());
 
