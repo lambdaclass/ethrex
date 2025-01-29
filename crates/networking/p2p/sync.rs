@@ -6,7 +6,7 @@ use ethrex_core::{
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode, error::RLPDecodeError};
 use ethrex_storage::{error::StoreError, Store};
 use ethrex_trie::{Nibbles, Node, TrieError, TrieState, EMPTY_TRIE_HASH};
-use std::{collections::BTreeMap, sync::Arc};
+use std::{cmp::min, collections::BTreeMap, sync::Arc};
 use tokio::{
     sync::{
         mpsc::{self, error::SendError, Receiver, Sender},
@@ -26,6 +26,7 @@ const MAX_RETRIES: usize = 5;
 const MIN_FULL_BLOCKS: usize = 64;
 /// Max size of a bach to stat a fetch request in queues
 const BATCH_SIZE: usize = 300;
+const NODE_BATCH_SIZE: usize = 900;
 
 #[derive(Debug)]
 pub enum SyncMode {
@@ -795,10 +796,12 @@ async fn heal_state_trie(
     // Count the number of request retries so we don't get stuck requesting old state
     let mut retry_count = 0;
     while !paths.is_empty() && retry_count < MAX_RETRIES {
-        //info!("Paths queued: {}", paths.len());
+        info!("Paths queued: {}", paths.len());
+        // Take at most one batch so we don't overload the peer
+        let batch = paths[0..min(paths.len(), NODE_BATCH_SIZE)].to_vec();
         let peer = peers.lock().await.get_peer_channels(Capability::Snap).await;
         if let Some(nodes) = peer
-            .request_state_trienodes(state_root, paths.clone())
+            .request_state_trienodes(state_root, batch)
             .await
         {
             info!("Received {} state nodes", nodes.len());
@@ -904,7 +907,7 @@ async fn storage_healer(
                         .map(|acc_path| (acc_path, vec![Nibbles::default()])),
                 );
                 info!(
-                    "Received incoming storage heal request, current batch: {}/{BATCH_SIZE}",
+                    "Received incoming storage heal request, current batch: {}/{NODE_BATCH_SIZE}",
                     pending_storages.len()
                 );
                 info!("Number of messages in receiver: {}", receiver.len());
