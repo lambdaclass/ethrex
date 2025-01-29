@@ -6,11 +6,7 @@ use ethrex_core::{
     types::{AccountInfo, Block, ChainConfig},
     Address, H256, U256,
 };
-<<<<<<< HEAD
 use ethrex_storage::{AccountUpdate, Store};
-=======
-use ethrex_storage::{hash_address, hash_key, AccountUpdate, Store};
->>>>>>> main
 use ethrex_trie::{NodeRLP, Trie, TrieError};
 use revm::{
     db::CacheDB,
