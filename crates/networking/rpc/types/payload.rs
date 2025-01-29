@@ -49,6 +49,7 @@ pub struct ExecutionPayload {
         default
     )]
     pub excess_blob_gas: Option<u64>,
+    pub requests_hash: Option<H256>,
 }
 
 #[derive(Clone, Debug)]
@@ -159,6 +160,7 @@ impl ExecutionPayload {
             withdrawals: block.body.withdrawals,
             blob_gas_used: block.header.blob_gas_used,
             excess_blob_gas: block.header.excess_blob_gas,
+            requests_hash: block.header.requests_hash,
         }
     }
 }
