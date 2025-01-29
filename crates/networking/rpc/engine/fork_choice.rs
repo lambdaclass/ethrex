@@ -6,7 +6,7 @@ use ethrex_blockchain::{
 };
 use ethrex_core::types::BlockHeader;
 use serde_json::Value;
-use tracing::{info, warn};
+use tracing::{debug, info, warn};
 
 use crate::{
     types::{
@@ -14,7 +14,7 @@ use crate::{
         payload::PayloadStatus,
     },
     utils::RpcRequest,
-    RpcApiContext, RpcErr, RpcHandler,
+    RpcApiContext, RpcErr, RpcHandler, SyncStatus,
 };
 
 #[derive(Debug)]
@@ -163,20 +163,27 @@ fn handle_forkchoice(
     context: RpcApiContext,
     version: usize,
 ) -> Result<(Option<BlockHeader>, ForkChoiceResponse), RpcErr> {
-    info!(
+    debug!(
         "New fork choice request v{} with head: {:#x}, safe: {:#x}, finalized: {:#x}.",
         version,
         fork_choice_state.head_block_hash,
         fork_choice_state.safe_block_hash,
         fork_choice_state.finalized_block_hash
     );
+    // Check if there is an ongoing sync before applying the forkchoice
+    let fork_choice_res = match context.sync_status()? {
+        // Apply current fork choice
+        SyncStatus::Inactive => apply_fork_choice(
+            &context.storage,
+            fork_choice_state.head_block_hash,
+            fork_choice_state.safe_block_hash,
+            fork_choice_state.finalized_block_hash,
+        ),
+        // Restart sync if needed
+        _ => Err(InvalidForkChoice::Syncing),
+    };
 
-    match apply_fork_choice(
-        &context.storage,
-        fork_choice_state.head_block_hash,
-        fork_choice_state.safe_block_hash,
-        fork_choice_state.finalized_block_hash,
-    ) {
+    match fork_choice_res {
         Ok(head) => Ok((
             Some(head),
             ForkChoiceResponse::from(PayloadStatus::valid_with_hash(
@@ -192,6 +199,10 @@ fn handle_forkchoice(
                 }
                 InvalidForkChoice::Syncing => {
                     // Start sync
+                    context
+                        .storage
+                        .update_sync_status(false)
+                        .map_err(|e| RpcErr::Internal(e.to_string()))?;
                     let current_number = context.storage.get_latest_block_number()?;
                     let Some(current_head) =
                         context.storage.get_canonical_block_hash(current_number)?

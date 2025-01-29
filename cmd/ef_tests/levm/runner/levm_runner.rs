@@ -98,8 +98,6 @@ pub fn prepare_vm_for_tx(vector: &TestVector, test: &EFTest) -> Result<VM, EFTes
                 v: auth_tuple.v,
                 r_signature: auth_tuple.r,
                 s_signature: auth_tuple.s,
-                // If the signer is not present, set it to Address::zero()
-                signer: auth_tuple.signer.unwrap_or_default(),
             })
             .collect::<Vec<AuthorizationTuple>>()
     });
@@ -110,7 +108,7 @@ pub fn prepare_vm_for_tx(vector: &TestVector, test: &EFTest) -> Result<VM, EFTes
             origin: tx.sender,
             refunded_gas: 0,
             gas_limit: tx.gas_limit,
-            spec_id: test.fork(),
+            fork: test.fork(),
             block_number: test.env.current_number,
             coinbase: test.env.current_coinbase,
             timestamp: test.env.current_timestamp,
@@ -242,6 +240,9 @@ fn exception_is_expected(
             ) | (
                 TransactionExpectedException::InitcodeSizeExceeded,
                 VMError::TxValidation(TxValidationError::InitcodeSizeExceeded)
+            ) | (
+                TransactionExpectedException::Type4TxContractCreation,
+                VMError::TxValidation(TxValidationError::Type4TxContractCreation)
             )
         )
     })

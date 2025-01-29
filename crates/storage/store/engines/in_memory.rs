@@ -38,6 +38,8 @@ struct StoreInner {
     // Stores local blocks by payload id
     payloads: HashMap<u64, (Block, U256, BlobsBundle, bool)>,
     pending_blocks: HashMap<BlockHash, Block>,
+    // Stores current Snap Sate
+    snap_state: SnapState,
 }
 
 #[derive(Default, Debug)]
@@ -50,6 +52,20 @@ struct ChainData {
     // TODO (#307): Remove TotalDifficulty.
     latest_total_difficulty: Option<U256>,
     pending_block_number: Option<BlockNumber>,
+    is_synced: bool,
+}
+
+// Keeps track of the state left by the latest snap attempt
+#[derive(Default, Debug)]
+pub struct SnapState {
+    /// Latest downloaded block header's hash from a previously aborted sync
+    header_download_checkpoint: Option<BlockHash>,
+    /// Current root hash of the latest State Trie (Used for both fetching and healing)
+    state_trie_root_checkpoint: Option<H256>,
+    /// Last downloaded key of the latest State Trie
+    state_trie_key_checkpoint: Option<H256>,
+    /// Accounts which storage needs healing
+    pending_storage_heal_accounts: Option<Vec<H256>>,
 }
 
 impl Store {
@@ -421,6 +437,75 @@ impl StoreEngine for Store {
         self.inner()
             .payloads
             .insert(payload_id, (block, block_value, blobs_bundle, completed));
+        Ok(())
+    }
+
+    fn set_header_download_checkpoint(&self, block_hash: BlockHash) -> Result<(), StoreError> {
+        self.inner().snap_state.header_download_checkpoint = Some(block_hash);
+        Ok(())
+    }
+
+    fn get_header_download_checkpoint(&self) -> Result<Option<BlockHash>, StoreError> {
+        Ok(self.inner().snap_state.header_download_checkpoint)
+    }
+
+    fn clear_header_download_checkpoint(&self) -> Result<(), StoreError> {
+        self.inner().snap_state.header_download_checkpoint = None;
+        Ok(())
+    }
+
+    fn set_state_trie_root_checkpoint(&self, current_root: H256) -> Result<(), StoreError> {
+        self.inner().snap_state.state_trie_root_checkpoint = Some(current_root);
+        Ok(())
+    }
+
+    fn get_state_trie_root_checkpoint(&self) -> Result<Option<H256>, StoreError> {
+        Ok(self.inner().snap_state.state_trie_root_checkpoint)
+    }
+
+    fn clear_state_trie_root_checkpoint(&self) -> Result<(), StoreError> {
+        self.inner().snap_state.state_trie_root_checkpoint = None;
+        Ok(())
+    }
+
+    fn set_state_trie_key_checkpoint(&self, last_key: H256) -> Result<(), StoreError> {
+        self.inner().snap_state.state_trie_key_checkpoint = Some(last_key);
+        Ok(())
+    }
+
+    fn get_state_trie_key_checkpoint(&self) -> Result<Option<H256>, StoreError> {
+        Ok(self.inner().snap_state.state_trie_key_checkpoint)
+    }
+
+    fn clear_state_trie_key_checkpoint(&self) -> Result<(), StoreError> {
+        self.inner().snap_state.state_trie_key_checkpoint = None;
+        Ok(())
+    }
+
+    fn set_pending_storage_heal_accounts(&self, accounts: Vec<H256>) -> Result<(), StoreError> {
+        self.inner().snap_state.pending_storage_heal_accounts = Some(accounts);
+        Ok(())
+    }
+
+    fn get_pending_storage_heal_accounts(&self) -> Result<Option<Vec<H256>>, StoreError> {
+        Ok(self
+            .inner()
+            .snap_state
+            .pending_storage_heal_accounts
+            .clone())
+    }
+
+    fn clear_pending_storage_heal_accounts(&self) -> Result<(), StoreError> {
+        self.inner().snap_state.pending_storage_heal_accounts = None;
+        Ok(())
+    }
+
+    fn is_synced(&self) -> Result<bool, StoreError> {
+        Ok(self.inner().chain_data.is_synced)
+    }
+
+    fn update_sync_status(&self, status: bool) -> Result<(), StoreError> {
+        self.inner().chain_data.is_synced = status;
         Ok(())
     }
 }

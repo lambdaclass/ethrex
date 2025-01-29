@@ -15,7 +15,8 @@ fmt: ## 📄 Runs rustfmt
 	cargo fmt --all
 
 ###### EF Tests ######
-VECTORS_DIR := ../../../cmd/ef_tests/levm/vectors
+EFTEST_DIR := ../../../cmd/ef_tests/levm
+VECTORS_DIR := $(EFTEST_DIR)/vectors
 TMP_DIR := tmp
 
 SPECTEST_VERSION := v14.1
@@ -30,12 +31,10 @@ STATETEST_URL := https://github.com/ethereum/execution-spec-tests/releases/downl
 download-evm-ef-tests: ## 📥 Download EF Tests
 	mkdir -p $(TMP_DIR)
 	mkdir -p $(VECTORS_DIR)/GeneralStateTests
-	mkdir -p $(VECTORS_DIR)/stEIP2537
 	mkdir -p $(VECTORS_DIR)/state_tests
 	curl -L -o $(SPECTEST_ARTIFACT) $(SPECTEST_URL)
 	tar -xzf $(SPECTEST_ARTIFACT) -C $(TMP_DIR)
 	mv $(TMP_DIR)/tests-14.1/GeneralStateTests/* $(VECTORS_DIR)/GeneralStateTests/
-	mv $(TMP_DIR)/tests-14.1/EIPTests/StateTests/stEIP2537/* $(VECTORS_DIR)/stEIP2537/
 	curl -L -o $(STATETEST_ARTIFACT) $(STATETEST_URL)
 	tar -xzf $(STATETEST_ARTIFACT) -C $(TMP_DIR)
 	mv $(TMP_DIR)/fixtures/state_tests/* $(VECTORS_DIR)/state_tests/
@@ -46,6 +45,9 @@ run-evm-ef-tests: ## 🏃‍♂️ Run EF Tests
 	if [ "$(QUIET)" = "true" ]; then \
 		cd ../../../ && \
 		time cargo test --quiet -p ef_tests-levm --test ef_tests_levm --release -- $(flags) --summary;\
+	elif [ "$(DEBUG)" = "true" ]; then \
+		cd ../../../ && \
+		time cargo test -p ef_tests-levm --test ef_tests_levm -- $(flags);\
 	else \
 		cd ../../../ && \
 		time cargo test -p ef_tests-levm --test ef_tests_levm --release -- $(flags);\
@@ -63,55 +65,69 @@ clean-evm-ef-tests: ## 🗑️  Clean test vectors
 	rm -rf $(VECTORS_DIR)
 
 ###### Benchmarks ######
+REPETITIONS := 10000
+REPETITIONS_SLOW := 200
 
-revm-comparison: ## 📊 Run benchmarks of fibonacci and factorial for both REVM and LEVM
-	$(MAKE) build-revm-comparison
-	@echo
-	@printf "%s" "revm_factorial result: "
-	@target/release/revm_factorial 1 1000
-	@printf "%s" "levm_factorial result: "
-	@target/release/levm_factorial 1 1000
-	hyperfine -w 5 -r 10 -N \
-		-n "revm_factorial" "target/release/revm_factorial 100000 1000" \
-		-n "levm_factorial" "target/release/levm_factorial 100000 1000"
-	@echo
-	@printf "%s" "revm_fibonacci result: "
-	@target/release/revm_fibonacci 1 1000
-	@printf "%s" "levm_fibonacci result: "
-	@target/release/levm_fibonacci 1 1000
-	hyperfine -w 5 -r 10 -N \
-		-n "revm_fibonacci" "target/release/revm_fibonacci 100000 1000" \
-		-n "levm_fibonacci" "target/release/levm_fibonacci 100000 1000"
-	@echo
+BENCH_FACT_ITERATIONS := 57
+BENCH_FACT_REC_ITERATIONS := 57
+BENCH_FIB_ITERATIONS := 57
+BENCH_HASHES_ITERATIONS := 57
+BENCH_MINT_ITERATIONS := 500
+BENCH_TRANSFER_ITERATIONS := 500
+BENCH_APPROVAL_ITERATIONS := 500
 
-revm-comparison-ci:
+define run_benchmark
+	@printf "%s\n" "revm_$(1)"
+	@target/release/benchmark revm $(1) 1 $($(3))
+	@printf "%s\n" "levm_$(1)"
+	@target/release/benchmark levm $(1) 1 $($(3))
+	hyperfine -w 5 -r 10 -N \
+		-n "revm_$(1)" "target/release/benchmark revm $(1) $($(2)) $($(3))" \
+		-n "levm_$(1)" "target/release/benchmark levm $(1) $($(2)) $($(3))"
+	@echo
+endef
+
+define run_benchmark_ci
+	@printf "%s\n" "revm_$(1)"
+	@target/release/benchmark revm $(1) 1 $($(3))
+	@printf "%s\n" "levm_$(1)"
+	@target/release/benchmark levm $(1) 1 $($(3))
+	hyperfine -w 5 -r 10 -N --export-markdown $(1).md \
+		-n "revm_$(1)" "target/release/benchmark revm $(1) $($(2)) $($(3))" \
+		-n "levm_$(1)" "target/release/benchmark levm $(1) $($(2)) $($(3))"
+	@echo
+endef
+
+compile-contracts:
+	cd ../../../ && \
+	cargo run --package revm_comparison \
+	--bin compile \
+	--manifest-path crates/vm/levm/bench/revm_comparison/Cargo.toml
+
+revm-comparison: compile-contracts ## 📊 Run benchmarks of fibonacci and factorial for both REVM and LEVM
 	$(MAKE) build-revm-comparison
-	@echo
-	@printf "%s" "revm_factorial result: "
-	@target/release/revm_factorial 1 1000
-	@printf "%s" "levm_factorial result: "
-	@target/release/levm_factorial 1 1000
-	hyperfine -w 5 -r 10 -N --export-markdown factorial.md \
-		-n "revm_factorial" "target/release/revm_factorial 100000 1000" \
-		-n "levm_factorial" "target/release/levm_factorial 100000 1000"
-	@echo
-	@printf "%s" "revm_fibonacci result: "
-	@target/release/revm_fibonacci 1 1000
-	@printf "%s" "levm_fibonacci result: "
-	@target/release/levm_fibonacci 1 1000
-	hyperfine -w 5 -r 10 -N --export-markdown fibonacci.md \
-		-n "revm_fibonacci" "target/release/revm_fibonacci 100000 1000" \
-		-n "levm_fibonacci" "target/release/levm_fibonacci 100000 1000"
-	@echo
+	$(call run_benchmark,Fibonacci,REPETITIONS,BENCH_FIB_ITERATIONS)
+	$(call run_benchmark,Factorial,REPETITIONS,BENCH_FACT_ITERATIONS)
+	$(call run_benchmark,FactorialRecursive,REPETITIONS,BENCH_FACT_REC_ITERATIONS)
+	$(call run_benchmark,ManyHashes,REPETITIONS_SLOW,BENCH_HASHES_ITERATIONS)
+	$(call run_benchmark,ERC20Approval,REPETITIONS_SLOW,BENCH_APPROVAL_ITERATIONS)
+	$(call run_benchmark,ERC20Transfer,REPETITIONS_SLOW,BENCH_TRANSFER_ITERATIONS)
+	$(call run_benchmark,ERC20Mint,REPETITIONS_SLOW,BENCH_MINT_ITERATIONS)
+
+revm-comparison-ci: compile-contracts
+	$(MAKE) build-revm-comparison
+	$(call run_benchmark_ci,Fibonacci,REPETITIONS,BENCH_FIB_ITERATIONS)
+	$(call run_benchmark_ci,Factorial,REPETITIONS,BENCH_FACT_ITERATIONS)
+	$(call run_benchmark_ci,FactorialRecursive,REPETITIONS,BENCH_FACT_ITERATIONS)
+	$(call run_benchmark_ci,ManyHashes,REPETITIONS_SLOW,BENCH_HASHES_ITERATIONS)
+	$(call run_benchmark_ci,ERC20Approval,REPETITIONS_SLOW,BENCH_APPROVAL_ITERATIONS)
+	$(call run_benchmark_ci,ERC20Transfer,REPETITIONS_SLOW,BENCH_TRANSFER_ITERATIONS)
+	$(call run_benchmark_ci,ERC20Mint,REPETITIONS_SLOW,BENCH_MINT_ITERATIONS)
 
 build-revm-comparison:
 	cd bench/revm_comparison && \
 		CARGO_TARGET_DIR=../../target \
-		cargo build --release \
-		--bin revm_factorial \
-		--bin levm_factorial \
-		--bin revm_fibonacci \
-		--bin levm_fibonacci
+		cargo build --release --bin benchmark
 
 ###### Build Client with LEVM ######
 
@@ -129,10 +145,10 @@ run-hive-debug-levm: build-image-levm ## 🐝 Run Hive with LEVM in debug mode
 	cd ../../../hive && ./hive --sim ethereum/sync --client ethrex --sim.limit "$(TEST_PATTERN)" --docker.output || exit 0
 	cargo run --release -p hive_report
 
-SUBDIRS := $(shell find $(SPECTEST_VECTORS_DIR)/GeneralStateTests -maxdepth 1 -type d ! -path "$(SPECTEST_VECTORS_DIR)/GeneralStateTests" -exec basename {} \;)
+SUBDIRS := $(shell find $(VECTORS_DIR)/GeneralStateTests -maxdepth 1 -type d ! -path "$(VECTORS_DIR)/GeneralStateTests" -exec basename {} \;)
 
 flamegraph-run-ef-tests: ## 🔥 Run EF tests and create a flamegraph per test folder
-	cd ../../../cmd/ef_tests/levm &&\
+	cd $(EFTEST_DIR) &&\
 	mkdir -p levm_perfgraphs/flamegraph/ef_tests/levm ||: && \
 	mkdir -p levm_perfgraphs/flamegraph/ef_tests/revm ||:
 	$(MAKE) flamegraph-run-ef-tests-revm
@@ -141,18 +157,18 @@ flamegraph-run-ef-tests: ## 🔥 Run EF tests and create a flamegraph per test f
 flamegraph-run-ef-tests-revm:
 	@for dir in $(SUBDIRS); do\
 		CARGO_PROFILE_RELEASE_DEBUG=true cargo flamegraph --root \
-		--output ../../../cmd/ef_tests/levm/levm_perfgraphs/flamegraph/ef_tests/revm/$$dir.svg\
+		--output $(EFTEST_DIR)/levm_perfgraphs/flamegraph/ef_tests/revm/$$dir.svg\
 		-p ef_tests-levm --test ef_tests_levm -- --summary --revm --tests $$dir;\
 	done
 flamegraph-run-ef-tests-levm:
 	@for dir in $(SUBDIRS); do\
 		CARGO_PROFILE_RELEASE_DEBUG=true cargo flamegraph --root \
-		--output ../../../cmd/ef_tests/levm/levm_perfgraphs/flamegraph/ef_tests/levm/$$dir.svg\
+		--output $(EFTEST_DIR)/levm_perfgraphs/flamegraph/ef_tests/levm/$$dir.svg\
 		-p ef_tests-levm --test ef_tests_levm -- --summary --tests $$dir;\
 	done
 
 samply-run-ef-tests: ## ⚡️ Run EF tests and create a samply profiling file per test folder
-	cd ../../../cmd/ef_tests/levm && \
+	cd $(EFTEST_DIR) && \
 	mkdir -p levm_perfgraphs/samply/ef_tests/levm ||: && \
 	mkdir -p levm_perfgraphs/samply/ef_tests/revm ||:
 	$(MAKE) samply-run-ef-tests-revm
@@ -161,45 +177,62 @@ samply-run-ef-tests: ## ⚡️ Run EF tests and create a samply profiling file p
 samply-run-ef-tests-revm:
 	@for dir in $(SUBDIRS); do\
 		CARGO_PROFILE_RELEASE_DEBUG=true samply record --save-only \
-		-o ../../../cmd/ef_tests/levm/levm_perfgraphs/samply/ef_tests/revm/prof_$$dir.json \
+		-o $(EFTEST_DIR)/levm_perfgraphs/samply/ef_tests/revm/prof_$$dir.json \
 		cargo test --release -p ef_tests-levm --test ef_tests_levm -- --summary --revm --tests $$dir;\
 	done
 
 samply-run-ef-tests-levm:
 	@for dir in $(SUBDIRS); do\
 		CARGO_PROFILE_RELEASE_DEBUG=true samply record --save-only \
-		-o ../../../cmd/ef_tests/levm/levm_perfgraphs/samply/ef_tests/levm/prof_$$dir.json \
+		-o $(EFTEST_DIR)/levm_perfgraphs/samply/ef_tests/levm/prof_$$dir.json \
 		cargo test --release -p ef_tests-levm --test ef_tests_levm -- --summary --tests $$dir;\
 	done
 
+################
+# FLAMEGRAPHS
+################
+define run_flamegraph
+	# revm
+	CARGO_PROFILE_RELEASE_DEBUG=true cargo flamegraph \
+	--root --output $(FLAMEGRAPH_DIR)/revm_$(1).svg \
+	-p revm_comparison --bin benchmark -- revm $(1) $($(2)) $($(3))
+	# levm
+	CARGO_PROFILE_RELEASE_DEBUG=true cargo flamegraph \
+	--root --output $(FLAMEGRAPH_DIR)/levm_$(1).svg \
+	-p revm_comparison --bin benchmark -- levm $(1) $($(2)) $($(3))
+endef
+
+define run_samply
+	# revm
+	CARGO_PROFILE_RELEASE_DEBUG=true samply record --save-only \
+	-o $(SAMPLY_DIR)/prof_revm_$(1).json \
+	cargo run --release -p revm_comparison --bin benchmark -- revm $(1) $($(2)) $($(3))
+	# levm
+	CARGO_PROFILE_RELEASE_DEBUG=true samply record --save-only \
+	-o $(SAMPLY_DIR)/prof_levm_$(1).json \
+	cargo run --release -p revm_comparison --bin benchmark -- levm $(1) $($(2)) $($(3))
+endef
+
+FLAMEGRAPH_DIR := $(EFTEST_DIR)/levm_perfgraphs/flamegraph/bench
 flamegraph-benchmarks: ## 🔥 Run benchmarks and create flamegraph
 	cd ../../../cmd/ef_tests/levm &&\
 	mkdir -p levm_perfgraphs/flamegraph/bench ||:
-	CARGO_PROFILE_RELEASE_DEBUG=true cargo flamegraph \
-	--root --output ../../../cmd/ef_tests/levm/levm_perfgraphs/flamegraph/bench/revm_fibonacci.svg \
-	-p revm_comparison --bin revm_fibonacci -- 100000 1000
-	CARGO_PROFILE_RELEASE_DEBUG=true cargo flamegraph \
-	--root --output ../../../cmd/ef_tests/levm/levm_perfgraphs/flamegraph/bench/levm_fibonacci.svg \
-	-p revm_comparison --bin levm_fibonacci -- 100000 1000
-	CARGO_PROFILE_RELEASE_DEBUG=true cargo flamegraph \
-	--root --output ../../../cmd/ef_tests/levm/levm_perfgraphs/flamegraph/bench/revm_factorial.svg \
-	-p revm_comparison --bin revm_factorial -- 100000 1000
-	CARGO_PROFILE_RELEASE_DEBUG=true cargo flamegraph \
-	--root --output ../../../cmd/ef_tests/levm/levm_perfgraphs/flamegraph/bench/levm_factorial.svg \
-	-p revm_comparison --bin levm_factorial -- 100000 1000
+	$(call run_flamegraph,Fibonacci,REPETITIONS,BENCH_FIB_ITERATIONS)
+	$(call run_flamegraph,Factorial,REPETITIONS,BENCH_FACT_ITERATIONS)
+	$(call run_flamegraph,FactorialRecursive,REPETITIONS,BENCH_FACT_ITERATIONS)
+	$(call run_flamegraph,ManyHashes,REPETITIONS_SLOW,BENCH_HASHES_ITERATIONS)
+	$(call run_flamegraph,ERC20Approval,REPETITIONS_SLOW,BENCH_APPROVAL_ITERATIONS)
+	$(call run_flamegraph,ERC20Transfer,REPETITIONS_SLOW,BENCH_TRANSFER_ITERATIONS)
+	$(call run_flamegraph,ERC20Mint,REPETITIONS_SLOW,BENCH_MINT_ITERATIONS)
 
+SAMPLY_DIR := ../../../cmd/ef_tests/levm/levm_perfgraphs/samply/bench
 samply-benchmarks: ## ⚡️ Run benchmarks and create samply profiling file
 	cd ../../../cmd/ef_tests/levm &&\
 	mkdir -p levm_perfgraphs/samply/bench ||:
-	CARGO_PROFILE_RELEASE_DEBUG=true samply record --save-only \
-	-o ../../../cmd/ef_tests/levm/levm_perfgraphs/samply/bench/prof_revm_fibonacci.json \
-	cargo run --release -p revm_comparison --bin revm_fibonacci -- 100000 1000
-	CARGO_PROFILE_RELEASE_DEBUG=true samply record --save-only \
-	-o ../../../cmd/ef_tests/levm/levm_perfgraphs/samply/bench/prof_levm_fibonacci.json \
-	cargo run --release -p revm_comparison --bin levm_fibonacci -- 100000 1000
-	CARGO_PROFILE_RELEASE_DEBUG=true samply record --save-only \
-	-o ../../../cmd/ef_tests/levm/levm_perfgraphs/samply/bench/prof_revm_factorial.json \
-	cargo run --release -p revm_comparison --bin revm_factorial -- 100000 1000
-	CARGO_PROFILE_RELEASE_DEBUG=true samply record --save-only \
-	-o ../../../cmd/ef_tests/levm/levm_perfgraphs/samply/bench/prof_levm_factorial.json \
-	cargo run --release -p revm_comparison --bin levm_factorial -- 100000 1000
+	$(call run_samply,Fibonacci,REPETITIONS,BENCH_FIB_ITERATIONS)
+	$(call run_samply,Factorial,REPETITIONS,BENCH_FACT_ITERATIONS)
+	$(call run_samply,FactorialRecursive,REPETITIONS,BENCH_FACT_ITERATIONS)
+	$(call run_samply,ManyHashes,REPETITIONS_SLOW,BENCH_HASHES_ITERATIONS)
+	$(call run_samply,ERC20Approval,REPETITIONS_SLOW,BENCH_APPROVAL_ITERATIONS)
+	$(call run_samply,ERC20Transfer,REPETITIONS_SLOW,BENCH_TRANSFER_ITERATIONS)
+	$(call run_samply,ERC20Mint,REPETITIONS_SLOW,BENCH_MINT_ITERATIONS)

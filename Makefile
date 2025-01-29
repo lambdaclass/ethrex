@@ -83,7 +83,7 @@ stop-localnet-silent:
 	@kurtosis enclave stop $(ENCLAVE) >/dev/null 2>&1 || true
 	@kurtosis enclave rm $(ENCLAVE) --force >/dev/null 2>&1 || true
 
-HIVE_REVISION := 37bde6deee7044b86fff88a39a52b33be460ae9c
+HIVE_REVISION := e95ca293cc3fb95a6d964938cd24958e8afa55fa
 # Shallow clones can't specify a single revision, but at least we avoid working
 # the whole history by making it shallow since a given date (one day before our
 # target revision).
@@ -114,6 +114,7 @@ setup-hive: hive ## 🐝 Set up Hive testing framework
 	fi
 
 TEST_PATTERN ?= /
+SIM_LOG_LEVEL ?= 4
 
 # Runs a hive testing suite
 # The endpoints tested may be limited by supplying a test pattern in the form "/endpoint_1|enpoint_2|..|enpoint_n"
@@ -126,7 +127,7 @@ run-hive-all: build-image setup-hive ## 🧪 Run all Hive testing suites
 	cd hive && ./hive --client ethrex --sim ".*" --sim.parallelism 4
 
 run-hive-debug: build-image setup-hive ## 🐞 Run Hive testing suite in debug mode
-	cd hive && ./hive --sim $(SIMULATION) --client ethrex --sim.limit "$(TEST_PATTERN)" --docker.output
+	cd hive && ./hive --sim $(SIMULATION) --client ethrex --sim.loglevel $(SIM_LOG_LEVEL) --sim.limit "$(TEST_PATTERN)" --docker.output
 
 clean-hive-logs: ## 🧹 Clean Hive logs
 	rm -rf ./hive/workspace/logs

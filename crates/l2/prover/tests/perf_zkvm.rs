@@ -81,10 +81,10 @@ async fn setup() -> (ProgramInput, Block) {
     let block_to_prove = blocks.last().unwrap();
 
     let store = StoreWrapper {
-        store: self.store.clone(),
+        store: store.clone(),
         block_hash: block_to_prove.header.parent_hash,
     };
-    let db = store.to_exec_db(&block).unwrap();
+    let db = store.to_exec_db(&block_to_prove).unwrap();
 
     let parent_block_header = store
         .get_block_header_by_hash(block_to_prove.header.parent_hash)
