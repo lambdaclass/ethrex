@@ -8,7 +8,8 @@ use std::collections::HashMap;
 
 use super::{
     compute_receipts_root, compute_transactions_root, compute_withdrawals_root, AccountState,
-    Block, BlockBody, BlockHeader, BlockNumber, DEFAULT_OMMERS_HASH, INITIAL_BASE_FEE,
+    Block, BlockBody, BlockHeader, BlockNumber, DEFAULT_OMMERS_HASH, DEFAULT_REQUESTS_HASH,
+    INITIAL_BASE_FEE,
 };
 
 #[allow(unused)]
@@ -38,6 +39,7 @@ pub struct Genesis {
     pub blob_gas_used: Option<u64>,
     #[serde(default, with = "crate::serde_utils::u64::hex_str_opt")]
     pub excess_blob_gas: Option<u64>,
+    pub requests_hash: Option<H256>,
 }
 
 /// Blockchain settings defined per block
@@ -226,7 +228,7 @@ impl Genesis {
             requests_hash: self
                 .config
                 .is_prague_activated(self.timestamp)
-                .then_some(H256::zero()), // TODO: set the value properly
+                .then_some(self.requests_hash.unwrap_or(*DEFAULT_REQUESTS_HASH)),
         }
     }
 

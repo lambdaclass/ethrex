@@ -41,27 +41,44 @@ lazy_static! {
         cancun_time: Some(0),
         ..*SHANGHAI_CONFIG
     };
+    pub static ref CANCUN_TO_PRAGUE_AT_15K_CONFIG: ChainConfig = ChainConfig {
+        prague_time: Some(0x3a98),
+        ..*CANCUN_CONFIG
+    };
+    pub static ref PRAGUE_CONFIG: ChainConfig = ChainConfig {
+        prague_time: Some(0),
+        ..*CANCUN_CONFIG
+    };
 }
 
-#[derive(Debug, Deserialize)]
+// NOTE: We implement some dummy forks which won't be implemented, just so we can parse the tests
+#[derive(Debug, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Network {
+    London = 0, // Dummy fork
+    Berlin = 1, // Dummy fork
     #[serde(alias = "Paris")]
-    Merge,
+    Merge = 2,
     #[serde(alias = "ParisToShanghaiAtTime15k")]
-    MergeToShanghaiAtTime15k,
-    Shanghai,
-    ShanghaiToCancunAtTime15k,
-    Cancun,
+    MergeToShanghaiAtTime15k = 3,
+    Shanghai = 4,
+    ShanghaiToCancunAtTime15k = 5,
+    Cancun = 6,
+    CancunToPragueAtTime15k = 7,
+    Prague = 8,
 }
 
 impl Network {
     pub fn chain_config(&self) -> &ChainConfig {
         match self {
+            Network::London => &MERGE_CONFIG, // Dummy fork
+            Network::Berlin => &MERGE_CONFIG, // Dummy fork
             Network::Merge => &MERGE_CONFIG,
             Network::MergeToShanghaiAtTime15k => &MERGE_TO_SHANGHAI_AT_15K_CONFIG,
             Network::Shanghai => &SHANGHAI_CONFIG,
             Network::ShanghaiToCancunAtTime15k => &SHANGHAI_TO_CANCUN_AT_15K_CONFIG,
             Network::Cancun => &CANCUN_CONFIG,
+            Network::CancunToPragueAtTime15k => &CANCUN_TO_PRAGUE_AT_15K_CONFIG,
+            Network::Prague => &PRAGUE_CONFIG,
         }
     }
 }

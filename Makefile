@@ -12,7 +12,8 @@ lint: ## 🧹 Linter check
 	cargo clippy --all-targets --all-features --workspace --exclude ethrex-prover -- -D warnings
 
 SPECTEST_VERSION := v3.0.0
-SPECTEST_ARTIFACT := tests_$(SPECTEST_VERSION).tar.gz
+SPECTEST_LINK := https://github.com/ethereum/execution-spec-tests/releases/download/pectra-devnet-5%40v1.3.0/fixtures_pectra-devnet-5.tar.gz
+SPECTEST_ARTIFACT := tests.tar.gz
 SPECTEST_VECTORS_DIR := cmd/ef_tests/ethrex/vectors
 
 CRATE ?= *
@@ -35,7 +36,7 @@ run-image: build-image ## 🏃 Run the Docker image
 
 $(SPECTEST_ARTIFACT):
 	rm -f tests_*.tar.gz # Delete older versions
-	curl -L -o $(SPECTEST_ARTIFACT) "https://github.com/ethereum/execution-spec-tests/releases/download/$(SPECTEST_VERSION)/fixtures_stable.tar.gz"
+	curl -L -o $(SPECTEST_ARTIFACT) $(SPECTEST_LINK)
 
 $(SPECTEST_VECTORS_DIR): $(SPECTEST_ARTIFACT)
 	mkdir -p $(SPECTEST_VECTORS_DIR) tmp
