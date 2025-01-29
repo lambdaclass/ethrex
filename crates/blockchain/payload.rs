@@ -14,20 +14,10 @@ use ethrex_core::{
 };
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_storage::{error::StoreError, Store};
-#[cfg(feature = "levm")]
-use ethrex_vm::{db::StoreWrapper, execute_tx_levm};
-
-#[cfg(feature = "levm")]
-use std::sync::Arc;
-
-#[cfg(not(feature = "levm"))]
-use ethrex_vm::execute_tx;
-
 use ethrex_vm::{
-    beacon_root_contract_call, evm_state, get_state_transitions, process_withdrawals, spec_id,
-    EvmError, EvmState, SpecId,
+    beacon_root_contract_call, evm_state, execute_tx, get_state_transitions, process_withdrawals,
+    spec_id, EvmError, EvmState, SpecId,
 };
-
 use sha3::{Digest, Keccak256};
 
 use ethrex_metrics::metrics;
@@ -435,57 +425,24 @@ fn apply_plain_transaction(
     head: &HeadTransaction,
     context: &mut PayloadBuildContext,
 ) -> Result<Receipt, ChainError> {
-    #[cfg(feature = "levm")]
-    {
-        let block_cache = HashMap::new();
-
-        let store_wrapper = Arc::new(StoreWrapper {
-            store: context.evm_state.database().unwrap().clone(),
-            block_hash: context.payload.header.parent_hash,
-        });
-
-        let result = execute_tx_levm(
-            &head.tx,
-            &context.payload.header,
-            store_wrapper.clone(),
-            block_cache,
-            context
-                .chain_config()?
-                .fork(context.payload.header.timestamp),
-        )
-        .map_err(EvmError::from)?;
-
-        let receipt = Receipt::new(
-            head.tx.tx_type(),
-            result.is_success(),
-            context.payload.header.gas_limit - context.remaining_gas,
-            result.logs,
-        );
-        Ok(receipt)
-    }
-
-    // REVM Implementation
-    #[cfg(not(feature = "levm"))]
-    {
-        let result = execute_tx(
-            &head.tx,
-            &context.payload.header,
-            context.evm_state,
-            spec_id(
-                &context.chain_config().map_err(ChainError::from)?,
-                context.payload.header.timestamp,
-            ),
-        )?;
-        context.remaining_gas = context.remaining_gas.saturating_sub(result.gas_used());
-        context.block_value += U256::from(result.gas_used()) * head.tip;
-        let receipt = Receipt::new(
-            head.tx.tx_type(),
-            result.is_success(),
-            context.payload.header.gas_limit - context.remaining_gas,
-            result.logs(),
-        );
-        Ok(receipt)
-    }
+    let result = execute_tx(
+        &head.tx,
+        &context.payload.header,
+        context.evm_state,
+        spec_id(
+            &context.chain_config().map_err(ChainError::from)?,
+            context.payload.header.timestamp,
+        ),
+    )?;
+    context.remaining_gas = context.remaining_gas.saturating_sub(result.gas_used());
+    context.block_value += U256::from(result.gas_used()) * head.tip;
+    let receipt = Receipt::new(
+        head.tx.tx_type(),
+        result.is_success(),
+        context.payload.header.gas_limit - context.remaining_gas,
+        result.logs(),
+    );
+    Ok(receipt)
 }
 
 fn finalize_payload(context: &mut PayloadBuildContext) -> Result<(), StoreError> {
