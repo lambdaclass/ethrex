@@ -15,7 +15,9 @@ use ethrex_core::{
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_storage::{error::StoreError, AccountUpdate, Store};
 #[cfg(feature = "levm")]
-use ethrex_vm::{db::StoreWrapper, execute_tx_levm, get_state_transitions_levm};
+use ethrex_vm::{
+    beacon_root_contract_call_levm, db::StoreWrapper, execute_tx_levm, get_state_transitions_levm,
+};
 
 #[cfg(feature = "levm")]
 use std::sync::Arc;
@@ -222,22 +224,65 @@ pub fn build_payload(
     debug!("Building payload");
     let mut evm_state = evm_state(store.clone(), payload.header.parent_hash);
     let mut context = PayloadBuildContext::new(payload, &mut evm_state);
-    apply_withdrawals(&mut context)?;
+    let account_updates_after_beacon_call = apply_withdrawals(&mut context)?;
     let account_updates = fill_transactions(&mut context)?;
-    finalize_payload(&mut context, &account_updates)?;
+    finalize_payload(
+        &mut context,
+        &account_updates,
+        &account_updates_after_beacon_call,
+    )?;
 
     Ok((context.blobs_bundle, context.block_value))
 }
 
-pub fn apply_withdrawals(context: &mut PayloadBuildContext) -> Result<(), EvmError> {
-    // Apply withdrawals & call beacon root contract, and obtain the new state root
-    let spec_id = spec_id(&context.chain_config()?, context.payload.header.timestamp);
-    if context.payload.header.parent_beacon_block_root.is_some() && spec_id == SpecId::CANCUN {
-        beacon_root_contract_call(context.evm_state, &context.payload.header, spec_id)?;
+pub fn apply_withdrawals(
+    context: &mut PayloadBuildContext,
+) -> Result<Vec<AccountUpdate>, EvmError> {
+    #[cfg(feature = "levm")]
+    {
+        // Apply withdrawals & call beacon root contract, and obtain the new state root
+        let spec_id = spec_id(&context.chain_config()?, context.payload.header.timestamp);
+        let new_state_after_beacon_call = if context
+            .payload
+            .header
+            .parent_beacon_block_root
+            .is_some()
+            && spec_id == SpecId::CANCUN
+        {
+            let store_wrapper = Arc::new(StoreWrapper {
+                store: context.evm_state.database().unwrap().clone(),
+                block_hash: context.payload.header.parent_hash,
+            });
+            beacon_root_contract_call_levm(store_wrapper.clone(), &context.payload.header, spec_id)?
+                .new_state
+        } else {
+            HashMap::new()
+        };
+        let account_updates_after_beacon_call = get_state_transitions_levm(
+            context.evm_state,
+            context.payload.header.parent_hash,
+            &new_state_after_beacon_call,
+        );
+        let withdrawals = context.payload.body.withdrawals.clone().unwrap_or_default();
+        process_withdrawals(context.evm_state, &withdrawals)?;
+        dbg!(
+            "account_updates_after_beacon_call",
+            &account_updates_after_beacon_call
+        );
+        Ok(account_updates_after_beacon_call)
     }
-    let withdrawals = context.payload.body.withdrawals.clone().unwrap_or_default();
-    process_withdrawals(context.evm_state, &withdrawals)?;
-    Ok(())
+    #[cfg(not(feature = "levm"))]
+    {
+        // Apply withdrawals & call beacon root contract, and obtain the new state root
+        let spec_id = spec_id(&context.chain_config()?, context.payload.header.timestamp);
+        if context.payload.header.parent_beacon_block_root.is_some() && spec_id == SpecId::CANCUN {
+            beacon_root_contract_call(context.evm_state, &context.payload.header, spec_id)?;
+            // We don't handle if it fails?
+        }
+        let withdrawals = context.payload.body.withdrawals.clone().unwrap_or_default();
+        process_withdrawals(context.evm_state, &withdrawals)?;
+        Ok(Vec::new())
+    }
 }
 
 /// Fetches suitable transactions from the mempool
@@ -511,6 +556,8 @@ fn apply_plain_transaction(
             context.payload.header.gas_limit - context.remaining_gas,
             result.logs(),
         );
+        let account_updates = get_state_transitions(context.evm_state);
+        dbg!(&account_updates);
         let account_updates = Vec::new();
         Ok((receipt, account_updates))
     }
@@ -518,7 +565,8 @@ fn apply_plain_transaction(
 
 fn finalize_payload(
     context: &mut PayloadBuildContext,
-    account_updates: &Vec<AccountUpdate>,
+    account_updates: &[AccountUpdate],
+    account_updates_beacon: &[AccountUpdate],
 ) -> Result<(), StoreError> {
     #[cfg(feature = "levm")]
     {
@@ -558,6 +606,11 @@ fn finalize_payload(
                 new_account_updates.insert(update.address, update.clone());
             }
         }
+        // Add the beacon updates, if address match, add the value of both (the new account update and the beacon update)
+        for update in account_updates_beacon.iter() {
+            new_account_updates.insert(update.address, update.clone());
+        }
+
         let account_updates: Vec<AccountUpdate> = new_account_updates.into_values().collect();
         dbg!("COMBINED UPDATES LEVM:", &account_updates);
 
@@ -575,6 +628,7 @@ fn finalize_payload(
     #[cfg(not(feature = "levm"))]
     {
         let account_updates = get_state_transitions(context.evm_state);
+        dbg!("COMBINED UPDATES REVM:", &account_updates);
         // Note: This is commented because it is still being used in development.
         // dbg!(&account_updates);
         context.payload.header.state_root = context
