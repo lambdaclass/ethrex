@@ -145,10 +145,6 @@ impl CallFrame {
         Ok(())
     }
 
-    pub fn increment_pc(&mut self) -> Result<(), VMError> {
-        self.increment_pc_by(1)
-    }
-
     pub fn pc(&self) -> usize {
         self.pc
     }

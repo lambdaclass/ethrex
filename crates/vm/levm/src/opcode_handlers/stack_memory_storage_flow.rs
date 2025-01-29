@@ -345,12 +345,14 @@ impl VM {
 
         self.increase_consumed_gas(current_call_frame, gas_cost::JUMPI)?;
 
-        if !condition.is_zero() {
-            Self::jump(current_call_frame, jump_address)?
+        let pc_increment = if !condition.is_zero() {
+            // Move the PC but don't increment it afterwards
+            Self::jump(current_call_frame, jump_address)?;
+            0
         } else {
-            current_call_frame.increment_pc()?;
-        }
-        Ok(OpcodeResult::Continue { pc_increment: 0 })
+            1
+        };
+        Ok(OpcodeResult::Continue { pc_increment })
     }
 
     // JUMPDEST operation
