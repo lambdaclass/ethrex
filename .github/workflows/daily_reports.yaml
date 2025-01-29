@@ -190,7 +190,17 @@ jobs:
           echo "# Daily LEVM EF Tests Run Report" >> $GITHUB_STEP_SUMMARY
           cat cmd/ef_tests/levm/levm_ef_tests_summary_github.txt >> $GITHUB_STEP_SUMMARY
 
+      - name: Check EF-TESTS status is 100%
+        id: check_tests
+        run: |
+          cd crates/vm/levm
+          if [ "$(awk '/**Summary**:/ {print $(NF)}' cmd/ef_tests/levm/levm_ef_tests_summary_github.txt)" != "(100.00%)" ]; then
+              echo "Percentage is not 100%."
+              exit 1
+          fi
+
       - name: Post results to Slack
+        if: ${{steps.check_tests.outcome == 'failure'}}
         env:
           SLACK_WEBHOOK: >
             ${{ github.event_name == 'workflow_dispatch'

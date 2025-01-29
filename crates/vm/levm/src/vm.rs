@@ -950,11 +950,9 @@ impl VM {
             };
 
             auth_account.info.bytecode = if auth_tuple.address != Address::zero() {
-                //delegation_bytes.into()
-                Bytes::new()
-            } else {
-                //Bytes::new()
                 delegation_bytes.into()
+            } else {
+                Bytes::new()
             };
 
             // 9. Increase the nonce of authority by one.
