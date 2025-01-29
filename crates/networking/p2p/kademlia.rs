@@ -313,9 +313,7 @@ impl KademliaTable {
             peer.channels.is_some() && peer.supported_capabilities.contains(&capability)
         };
         loop {
-            if let Some(peer) = self
-                .get_random_peer_with_filter(&filter)
-            {
+            if let Some(peer) = self.get_random_peer_with_filter(&filter) {
                 info!("Selected peer: {}", peer.node.node_id);
                 return peer.channels.clone().unwrap();
             }
@@ -336,7 +334,10 @@ impl KademliaTable {
         let active_peers = self.filter_peers(&active_filter).count();
         let snap_active_peers = self.filter_peers(&snap_active_filter).count();
         info!("Snap Peers: {snap_active_peers} / Active Peers {active_peers} / Total Peers: {total_peers}");
-        let active_peers = self.filter_peers(&snap_active_filter).map(|p| p.node.node_id.to_string()).collect::<Vec<_>>();
+        let active_peers = self
+            .filter_peers(&snap_active_filter)
+            .map(|p| p.node.node_id.to_string())
+            .collect::<Vec<_>>();
         info!("Active Peer IDs: {active_peers:?}");
     }
 }

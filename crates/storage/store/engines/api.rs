@@ -270,9 +270,14 @@ pub trait StoreEngine: Debug + Send + Sync + RefUnwindSafe {
 
     fn clear_state_trie_key_checkpoint(&self) -> Result<(), StoreError>;
 
-    fn set_pending_storage_heal_accounts(&self, accounts: Vec<H256>) -> Result<(), StoreError>;
+    fn set_pending_storage_heal_accounts(
+        &self,
+        accounts: Vec<(H256, Vec<Nibbles>)>,
+    ) -> Result<(), StoreError>;
 
-    fn get_pending_storage_heal_accounts(&self) -> Result<Option<Vec<H256>>, StoreError>;
+    fn get_pending_storage_heal_accounts(
+        &self,
+    ) -> Result<Option<Vec<(H256, Vec<Nibbles>)>>, StoreError>;
 
     fn clear_pending_storage_heal_accounts(&self) -> Result<(), StoreError>;
 

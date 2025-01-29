@@ -452,7 +452,11 @@ async fn rebuild_state_trie(
             let mut stored_pending_storages = store
                 .get_pending_storage_heal_accounts()?
                 .unwrap_or_default();
-            stored_pending_storages.extend(pending_storage_accounts);
+            stored_pending_storages.extend(
+                pending_storage_accounts
+                    .iter()
+                    .map(|k| (*k, vec![Nibbles::default()])),
+            );
             info!(
                 "Current pending storage accounts: {}",
                 stored_pending_storages.len()
@@ -765,22 +769,25 @@ async fn heal_state_trie(
     store: Store,
     peers: Arc<Mutex<KademliaTable>>,
 ) -> Result<bool, SyncError> {
-    // Spawn a storage healer for this blocks's storage
-    let (storage_sender, storage_receiver) = mpsc::channel::<Vec<H256>>(500);
-    let storage_healer_handler = tokio::spawn(storage_healer(
-        state_root,
-        storage_receiver,
-        peers.clone(),
-        store.clone(),
-    ));
     // Check if we have pending storages to heal from a previous cycle
-    if let Some(pending) = store.get_pending_storage_heal_accounts()? {
+    let pending = if let Some(pending) = store.get_pending_storage_heal_accounts()? {
         info!(
             "Retrieved {} pending storage healing requests",
             pending.len()
         );
-        storage_sender.send(pending).await?;
-    }
+        pending.into_iter().collect()
+    } else {
+        Default::default()
+    };
+    // Spawn a storage healer for this blocks's storage
+    let (storage_sender, storage_receiver) = mpsc::channel::<Vec<H256>>(500);
+    let storage_healer_handler = tokio::spawn(storage_healer(
+        state_root,
+        pending,
+        storage_receiver,
+        peers.clone(),
+        store.clone(),
+    ));
     // Check if we have pending paths from a previous cycle
     let mut paths = store.get_state_heal_paths()?.unwrap_or_default();
     // Begin by requesting the root node
@@ -861,7 +868,9 @@ async fn heal_state_trie(
             "{} storages with pending healing",
             pending_storage_heal_accounts.len()
         );
-        store.set_pending_storage_heal_accounts(pending_storage_heal_accounts)?;
+        store.set_pending_storage_heal_accounts(
+            pending_storage_heal_accounts.into_iter().collect(),
+        )?;
     }
     Ok(retry_count < MAX_RETRIES && storage_healing_succesful)
 }
@@ -869,15 +878,16 @@ async fn heal_state_trie(
 /// Waits for incoming hashed addresses from the receiver channel endpoint and queues the associated root nodes for state retrieval
 /// Also retrieves their children nodes until we have the full storage trie stored
 /// If the state becomes stale while fetching, returns its current queued account hashes
+/// Receives the prending storages from a previous iteration
 async fn storage_healer(
     state_root: H256,
+    mut pending_storages: BTreeMap<H256, Vec<Nibbles>>,
     mut receiver: Receiver<Vec<H256>>,
     peers: Arc<Mutex<KademliaTable>>,
     store: Store,
-) -> Result<Vec<H256>, SyncError> {
+) -> Result<BTreeMap<H256, Vec<Nibbles>>, SyncError> {
     // Pending list of storages to fetch
     // Each entry is made up of AccountHash -> (CurrentRoot, Paths)
-    let mut pending_storages: BTreeMap<H256, (H256, Vec<Nibbles>)> = BTreeMap::new();
     //let mut pending_storages: Vec<(H256, Nibbles)> = vec![];
     // The pivot may become stale while the fetcher is active, we will still keep the process
     // alive until the end signal so we don't lose queued messages
@@ -891,7 +901,7 @@ async fn storage_healer(
                 pending_storages.extend(
                     account_paths
                         .into_iter()
-                        .map(|acc_path| (acc_path, (*EMPTY_TRIE_HASH, vec![Nibbles::default()]))),
+                        .map(|acc_path| (acc_path, vec![Nibbles::default()])),
                 );
                 info!(
                     "Received incoming storage heal request, current batch: {}/{BATCH_SIZE}",
@@ -907,12 +917,12 @@ async fn storage_healer(
         // If the pivot became stale don't process anything and just save incoming requests
         //info!("Storage Healer, stale: {stale}");
         while !stale && !pending_storages.is_empty() {
-            let mut next_batch: BTreeMap<H256, (H256, Vec<Nibbles>)> = BTreeMap::new();
+            let mut next_batch: BTreeMap<H256, Vec<Nibbles>> = BTreeMap::new();
             // Fill batch
             let mut batch_size = 0;
             while batch_size < BATCH_SIZE {
                 let (key, val) = pending_storages.pop_first().unwrap();
-                batch_size += val.1.len();
+                batch_size += val.len();
                 next_batch.insert(key, val);
             }
             //info!("Sending storage heal batch of size {batch_size}");
@@ -924,7 +934,7 @@ async fn storage_healer(
             stale |= is_stale;
         }
     }
-    Ok(pending_storages.into_iter().map(|(h, _)| h).collect())
+    Ok(pending_storages)
 }
 
 /// Receives a set of storage trie paths (grouped by their corresponding account's state trie path),
@@ -932,37 +942,27 @@ async fn storage_healer(
 /// Also returns a boolean indicating if the pivot became stale during the request
 async fn heal_storage_batch(
     state_root: H256,
-    mut batch: BTreeMap<H256, (H256, Vec<Nibbles>)>,
+    mut batch: BTreeMap<H256, Vec<Nibbles>>,
     peers: Arc<Mutex<KademliaTable>>,
     store: Store,
-) -> Result<(BTreeMap<H256, (H256, Vec<Nibbles>)>, bool), SyncError> {
+) -> Result<(BTreeMap<H256, Vec<Nibbles>>, bool), SyncError> {
     for _ in 0..MAX_RETRIES {
         let peer = peers.lock().await.get_peer_channels(Capability::Snap).await;
-        let req_batch = batch.iter().map(|(k, v)| (*k, v.1.clone())).collect();
+        let req_batch = batch.iter().map(|(k, v)| (*k, v.clone())).collect();
         if let Some(mut nodes) = peer.request_storage_trienodes(state_root, req_batch).await {
             info!("Received {} storage nodes", nodes.len());
             // Process the nodes for each account path
-            for (acc_path, (root, paths)) in batch.iter_mut() {
-                let mut trie = store.open_storage_trie(*acc_path, *root);
+            for (acc_path, paths) in batch.iter_mut() {
+                let mut trie = store.open_storage_trie(*acc_path, *EMPTY_TRIE_HASH);
                 // Get the corresponding nodes
                 for node in nodes.drain(..paths.len().min(nodes.len())) {
                     let path = paths.remove(0);
                     // Add children to batch
                     let children = node_missing_children(&node, &path, trie.state())?;
                     paths.extend(children);
-                    // If it is a leaf node, insert values into the trie
-                    if let Node::Leaf(leaf) = node {
-                        let path = &path.concat(leaf.partial.clone()).to_bytes();
-                        if path.len() != 32 {
-                            // Something went wrong
-                            return Err(SyncError::CorruptPath);
-                        }
-                        //info!("Touched Storage Leaf: {}: {}, {}", acc_path, H256::from_slice(&path), U256::decode(&leaf.value).unwrap());
-                        trie.insert(path.to_vec(), leaf.value.encode_to_vec())?;
-                    }
+                    let hash = node.compute_hash();
+                    trie.state_mut().write_node(node, hash)?;
                 }
-                // Update current root
-                *root = trie.hash()?;
                 // Cut the loop if we ran out of nodes
                 if nodes.is_empty() {
                     break;
@@ -970,7 +970,7 @@ async fn heal_storage_batch(
             }
             // Return remaining and added paths to be added to the queue
             // Filter out the storages we completely fetched
-            batch.retain(|_, v| !v.1.is_empty());
+            batch.retain(|_, v| !v.is_empty());
             return Ok((batch, false));
         }
     }

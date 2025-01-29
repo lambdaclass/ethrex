@@ -1024,11 +1024,16 @@ impl Store {
         self.engine.get_state_trie_key_checkpoint()
     }
 
-    pub fn set_pending_storage_heal_accounts(&self, accounts: Vec<H256>) -> Result<(), StoreError> {
+    pub fn set_pending_storage_heal_accounts(
+        &self,
+        accounts: Vec<(H256, Vec<Nibbles>)>,
+    ) -> Result<(), StoreError> {
         self.engine.set_pending_storage_heal_accounts(accounts)
     }
 
-    pub fn get_pending_storage_heal_accounts(&self) -> Result<Option<Vec<H256>>, StoreError> {
+    pub fn get_pending_storage_heal_accounts(
+        &self,
+    ) -> Result<Option<Vec<(H256, Vec<Nibbles>)>>, StoreError> {
         self.engine.get_pending_storage_heal_accounts()
     }
 

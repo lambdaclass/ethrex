@@ -580,16 +580,21 @@ impl StoreEngine for Store {
         self.delete::<SnapState>(SnapStateIndex::StateTrieRootCheckpoint)
     }
 
-    fn set_pending_storage_heal_accounts(&self, accounts: Vec<H256>) -> Result<(), StoreError> {
+    fn set_pending_storage_heal_accounts(
+        &self,
+        accounts: Vec<(H256, Vec<Nibbles>)>,
+    ) -> Result<(), StoreError> {
         self.write::<SnapState>(
             SnapStateIndex::PendingStorageHealAccounts,
             accounts.encode_to_vec(),
         )
     }
 
-    fn get_pending_storage_heal_accounts(&self) -> Result<Option<Vec<H256>>, StoreError> {
+    fn get_pending_storage_heal_accounts(
+        &self,
+    ) -> Result<Option<Vec<(H256, Vec<Nibbles>)>>, StoreError> {
         self.read::<SnapState>(SnapStateIndex::PendingStorageHealAccounts)?
-            .map(|ref h| <Vec<H256>>::decode(h))
+            .map(|ref h| <Vec<(H256, Vec<Nibbles>)>>::decode(h))
             .transpose()
             .map_err(StoreError::RLPDecode)
     }
