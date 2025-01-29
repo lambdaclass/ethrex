@@ -504,7 +504,7 @@ async fn fetch_bytecode_batch(
         }
     }
     // Return remaining code hashes in the batch if we couldn't fetch all of them
-    return Ok(batch);
+    Ok(batch)
 }
 
 /// Waits for incoming account hashes & storage roots from the receiver channel endpoint, queues them, and fetches and stores their bytecodes in batches

@@ -278,14 +278,13 @@ impl PeerHandler {
                     .iter()
                     .map(|acc| acc.encode_to_vec())
                     .collect::<Vec<_>>();
-                if let Some(should_continue) = verify_range(
+                if let Ok(should_continue) = verify_range(
                     state_root,
                     &start,
                     &account_hashes,
                     &encoded_accounts,
                     &proof,
                 )
-                .ok()
                 {
                     return Some((account_hashes, accounts, should_continue));
                 }
@@ -420,12 +419,10 @@ impl PeerHandler {
                             continue;
                         };
                         should_continue = sc;
-                    } else {
-                        if verify_range(storage_root, &start, &hahsed_keys, &encoded_values, &[])
-                            .is_err()
-                        {
-                            continue;
-                        }
+                    } else if verify_range(storage_root, &start, &hahsed_keys, &encoded_values, &[])
+                        .is_err()
+                    {
+                        continue;
                     }
 
                     storage_keys.push(hahsed_keys);
@@ -521,7 +518,7 @@ impl PeerHandler {
                         [
                             vec![Bytes::from(acc_path.0.to_vec())],
                             paths
-                                .into_iter()
+                                .iter()
                                 .map(|path| Bytes::from(path.encode_compact()))
                                 .collect(),
                         ]
@@ -630,8 +627,8 @@ impl PeerHandler {
                     .map(|val| val.encode_to_vec())
                     .collect::<Vec<_>>();
                 // Verify storage range
-                if let Some(should_continue) =
-                    verify_range(storage_root, &start, &storage_keys, &encoded_values, &proof).ok()
+                if let Ok(should_continue) =
+                    verify_range(storage_root, &start, &storage_keys, &encoded_values, &proof)
                 {
                     return Some((storage_keys, storage_values, should_continue));
                 }
