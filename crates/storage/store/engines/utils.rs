@@ -1,5 +1,5 @@
 /// Represents the key for each unique value of the chain data stored in the db
-// (TODO: Remove this comment once full) Will store chain-specific data such as chain id and latest finalized/pending/safe block number
+//  Stores chain-specific data such as chain id and latest finalized/pending/safe block number
 #[derive(Debug, Copy, Clone)]
 pub enum ChainDataIndex {
     ChainConfig = 0,
@@ -33,6 +33,41 @@ impl From<u8> for ChainDataIndex {
             }
             x if x == ChainDataIndex::IsSynced as u8 => ChainDataIndex::IsSynced,
             _ => panic!("Invalid value when casting to ChainDataIndex: {}", value),
+        }
+    }
+}
+
+/// Represents the key for each unique value of the snap state stored in the db
+//  Stores the snap state from previous sync cycles. Currently stores the header & state trie download checkpoint
+//, but will later on also include the body download checkpoint and the last pivot used
+#[derive(Debug, Copy, Clone)]
+pub enum SnapStateIndex {
+    // Hash of the last downloaded header in a previous sync cycle that was aborted
+    HeaderDownloadCheckpoint = 0,
+    // Current root hash of the latest State Trie (Used for both fetch & heal)
+    StateTrieRootCheckpoint = 1,
+    // Accounts which storage needs healing
+    PendingStorageHealAccounts = 2,
+    // Last key fetched from the state trie
+    StateTrieKeyCheckpoint = 3,
+}
+
+impl From<u8> for SnapStateIndex {
+    fn from(value: u8) -> Self {
+        match value {
+            x if x == SnapStateIndex::HeaderDownloadCheckpoint as u8 => {
+                SnapStateIndex::HeaderDownloadCheckpoint
+            }
+            x if x == SnapStateIndex::StateTrieRootCheckpoint as u8 => {
+                SnapStateIndex::StateTrieRootCheckpoint
+            }
+            x if x == SnapStateIndex::PendingStorageHealAccounts as u8 => {
+                SnapStateIndex::PendingStorageHealAccounts
+            }
+            x if x == SnapStateIndex::StateTrieKeyCheckpoint as u8 => {
+                SnapStateIndex::StateTrieKeyCheckpoint
+            }
+            _ => panic!("Invalid value when casting to SnapDataIndex: {}", value),
         }
     }
 }

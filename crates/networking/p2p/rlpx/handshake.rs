@@ -116,7 +116,9 @@ fn decrypt_message(
 
     // Verify the MAC.
     let expected_d = sha256_hmac(&mac_key, &[iv, c], size_data);
-    assert_eq!(d, expected_d);
+    if d != expected_d {
+        return Err(RLPxError::HandshakeError(String::from("Invalid MAC")));
+    }
 
     // Decrypt the message with the AES key.
     let mut stream_cipher = Aes128Ctr64BE::new_from_slices(aes_key, iv)?;

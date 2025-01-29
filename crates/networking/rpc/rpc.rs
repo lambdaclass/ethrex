@@ -63,7 +63,7 @@ mod web3;
 
 use axum::extract::State;
 use ethrex_net::types::Node;
-use ethrex_storage::Store;
+use ethrex_storage::{error::StoreError, Store};
 
 #[derive(Debug, Clone)]
 pub struct RpcApiContext {
@@ -72,6 +72,32 @@ pub struct RpcApiContext {
     local_p2p_node: Node,
     active_filters: ActiveFilters,
     syncer: Arc<TokioMutex<SyncManager>>,
+}
+
+/// Describes the client's current sync status:
+/// Inactive: There is no active sync process
+/// Active: The client is currently syncing
+/// Pending: The previous sync process became stale, awaiting restart
+pub enum SyncStatus {
+    Inactive,
+    Active,
+    Pending,
+}
+
+impl RpcApiContext {
+    /// Returns the engine's current sync status, see [SyncStatus]
+    pub fn sync_status(&self) -> Result<SyncStatus, StoreError> {
+        // Try to get hold of the sync manager, if we can't then it means it is currently involved in a sync process
+        Ok(if self.syncer.try_lock().is_err() {
+            SyncStatus::Active
+        // Check if there is a checkpoint left from a previous aborted sync
+        } else if self.storage.get_header_download_checkpoint()?.is_some() {
+            SyncStatus::Pending
+        // No trace of a sync being handled
+        } else {
+            SyncStatus::Inactive
+        })
+    }
 }
 
 trait RpcHandler: Sized {
