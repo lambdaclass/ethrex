@@ -305,7 +305,7 @@ impl VM {
         let jump_address = current_call_frame.stack.pop()?;
         Self::jump(current_call_frame, jump_address)?;
 
-        Ok(OpcodeResult::Continue { pc_increment: 1 })
+        Ok(OpcodeResult::Continue { pc_increment: 0 })
     }
 
     /// JUMP* family (`JUMP` and `JUMP` ATTOW [DEC 2024]) helper
@@ -350,7 +350,7 @@ impl VM {
         } else {
             current_call_frame.increment_pc()?;
         }
-        Ok(OpcodeResult::Continue { pc_increment: 1 })
+        Ok(OpcodeResult::Continue { pc_increment: 0 })
     }
 
     // JUMPDEST operation
