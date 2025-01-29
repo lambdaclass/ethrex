@@ -16,7 +16,7 @@ use tokio::{
 };
 use tracing::{debug, info, warn};
 
-use crate::{kademlia::KademliaTable, peer_channels::BlockRequestOrder};
+use crate::{kademlia::KademliaTable, peer_channels::{BlockRequestOrder, PeerHandler}};
 use crate::{peer_channels::PeerChannels, rlpx::p2p::Capability};
 
 /// Maximum amount of times we will ask a peer for an account/storage range
@@ -40,7 +40,7 @@ pub enum SyncMode {
 #[derive(Debug)]
 pub struct SyncManager {
     sync_mode: SyncMode,
-    peers: Arc<Mutex<KademliaTable>>,
+    peers: PeerHandler,
     /// The last block number used as a pivot for snap-sync
     /// Syncing beyond this pivot should re-enable snap-sync (as we will not have that state stored)
     /// TODO: Reorgs
@@ -48,10 +48,10 @@ pub struct SyncManager {
 }
 
 impl SyncManager {
-    pub fn new(peers: Arc<Mutex<KademliaTable>>, sync_mode: SyncMode) -> Self {
+    pub fn new(peers: PeerHandler, sync_mode: SyncMode) -> Self {
         Self {
             sync_mode,
-            peers,
+            peers: PeerHandler::new(peer_table),
             last_snap_pivot: 0,
         }
     }
@@ -62,7 +62,7 @@ impl SyncManager {
         let dummy_peer_table = Arc::new(Mutex::new(KademliaTable::new(Default::default())));
         Self {
             sync_mode: SyncMode::Full,
-            peers: dummy_peer_table,
+            peers: PeerHandler::new(dummy_peer_table),
             last_snap_pivot: 0,
         }
     }
@@ -112,7 +112,6 @@ impl SyncManager {
         }
         let mut retry_count = 0;
         while retry_count <= MAX_RETRIES {
-            let peer = get_peer_channel_with_retry(self.peers.clone(), Capability::Eth).await;
             debug!("Requesting Block Headers from {current_head}");
             // Request Block Headers from Peer
             if let Some(mut block_headers) = peer
@@ -229,11 +228,11 @@ impl SyncManager {
 /// Returns an error if there was a problem while executing or validating the blocks
 async fn download_and_run_blocks(
     mut block_hashes: Vec<BlockHash>,
-    peers: Arc<Mutex<KademliaTable>>,
+    peers: PeerHandler,
     store: Store,
 ) -> Result<(), SyncError> {
     loop {
-        let peer = get_peer_channel_with_retry(peers.clone(), Capability::Eth).await;
+
         debug!("Requesting Block Bodies ");
         if let Some(block_bodies) = peer.request_block_bodies(block_hashes.clone()).await {
             let block_bodies_len = block_bodies.len();
@@ -268,11 +267,11 @@ async fn download_and_run_blocks(
 /// Fetches all block bodies for the given block hashes via p2p and stores them
 async fn store_block_bodies(
     mut block_hashes: Vec<BlockHash>,
-    peers: Arc<Mutex<KademliaTable>>,
+    peers: PeerHandler,
     store: Store,
 ) -> Result<(), SyncError> {
     loop {
-        let peer = get_peer_channel_with_retry(peers.clone(), Capability::Eth).await;
+
         debug!("Requesting Block Headers ");
         if let Some(block_bodies) = peer.request_block_bodies(block_hashes.clone()).await {
             debug!(" Received {} Block Bodies", block_bodies.len());
@@ -297,11 +296,11 @@ async fn store_block_bodies(
 #[allow(unused)]
 async fn store_receipts(
     mut block_hashes: Vec<BlockHash>,
-    peers: Arc<Mutex<KademliaTable>>,
+    peers: PeerHandler,
     store: Store,
 ) -> Result<(), SyncError> {
     loop {
-        let peer = get_peer_channel_with_retry(peers.clone(), Capability::Eth).await;
+
         debug!("Requesting Block Headers ");
         if let Some(receipts) = peer.request_receipts(block_hashes.clone()).await {
             debug!(" Received {} Receipts", receipts.len());
@@ -324,7 +323,7 @@ async fn store_receipts(
 /// Returns true if all state was fetched or false if the block is too old and the state is no longer available
 async fn rebuild_state_trie(
     state_root: H256,
-    peers: Arc<Mutex<KademliaTable>>,
+    peers: PeerHandler,
     store: Store,
 ) -> Result<bool, SyncError> {
     debug!("Rebuilding State Trie");
@@ -366,7 +365,7 @@ async fn rebuild_state_trie(
                 initial_timestamp,
             ));
         }
-        let peer = get_peer_channel_with_retry(peers.clone(), Capability::Snap).await;
+        
         debug!("Requesting Account Range for state root {state_root}, starting hash: {start_account_hash}");
         if let Some((account_hashes, accounts, should_continue)) = peer
             .request_account_range(state_root, start_account_hash)
@@ -469,7 +468,7 @@ async fn rebuild_state_trie(
 /// Waits for incoming code hashes from the receiver channel endpoint, queues them, and fetches and stores their bytecodes in batches
 async fn bytecode_fetcher(
     mut receiver: Receiver<Vec<H256>>,
-    peers: Arc<Mutex<KademliaTable>>,
+    peers: PeerHandler,
     store: Store,
 ) -> Result<(), SyncError> {
     let mut pending_bytecodes: Vec<H256> = vec![];
@@ -500,11 +499,11 @@ async fn bytecode_fetcher(
 /// Receives a batch of code hahses, fetches their respective bytecodes via p2p and returns a list of the code hashes that couldn't be fetched in the request (if applicable)
 async fn fetch_bytecode_batch(
     mut batch: Vec<H256>,
-    peers: Arc<Mutex<KademliaTable>>,
+    peers: PeerHandler,
     store: Store,
 ) -> Result<Vec<H256>, StoreError> {
     loop {
-        let peer = get_peer_channel_with_retry(peers.clone(), Capability::Snap).await;
+        
         if let Some(bytecodes) = peer.request_bytecodes(batch.clone()).await {
             debug!("Received {} bytecodes", bytecodes.len());
             // Store the bytecodes
@@ -522,7 +521,7 @@ async fn fetch_bytecode_batch(
 /// In the last case, the fetcher will return the account hashes of the accounts in the queue
 async fn storage_fetcher(
     mut receiver: Receiver<Vec<(H256, H256)>>,
-    peers: Arc<Mutex<KademliaTable>>,
+    peers: PeerHandler,
     store: Store,
     state_root: H256,
 ) -> Result<Vec<H256>, SyncError> {
@@ -585,7 +584,7 @@ async fn storage_fetcher(
 async fn fetch_storage_batch(
     mut batch: Vec<(H256, H256)>,
     state_root: H256,
-    peers: Arc<Mutex<KademliaTable>>,
+    peers: PeerHandler,
     store: Store,
 ) -> Result<(Vec<(H256, H256)>, bool), SyncError> {
     debug!(
@@ -594,7 +593,7 @@ async fn fetch_storage_batch(
         batch.last().unwrap().0
     );
     for _ in 0..MAX_RETRIES {
-        let peer = get_peer_channel_with_retry(peers.clone(), Capability::Snap).await;
+        
         let (batch_hahses, batch_roots) = batch.clone().into_iter().unzip();
         if let Some((mut keys, mut values, incomplete)) = peer
             .request_storage_ranges(state_root, batch_roots, batch_hahses, H256::zero())
@@ -659,7 +658,7 @@ async fn handle_large_storage_range(
     storage_root: H256,
     keys: Vec<H256>,
     values: Vec<U256>,
-    peers: Arc<Mutex<KademliaTable>>,
+    peers: PeerHandler,
     store: Store,
 ) -> Result<bool, SyncError> {
     // First process the initial range
@@ -679,7 +678,7 @@ async fn handle_large_storage_range(
     while should_continue {
         while retry_count <= MAX_RETRIES {
             debug!("Fetching large storage trie, current key: {}", next_key);
-            let peer = get_peer_channel_with_retry(peers.clone(), Capability::Snap).await;
+            
             if let Some((keys, values, incomplete)) = peer
                 .request_storage_range(state_root, storage_root, account_hash, next_key)
                 .await
@@ -711,7 +710,7 @@ async fn heal_state_trie(
     state_root: H256,
     mut current_root: H256,
     store: Store,
-    peers: Arc<Mutex<KademliaTable>>,
+    peers: PeerHandler,
 ) -> Result<bool, SyncError> {
     // Spawn a storage healer for this blocks's storage
     let (storage_sender, storage_receiver) = mpsc::channel::<Vec<H256>>(500);
@@ -738,7 +737,7 @@ async fn heal_state_trie(
         let batch: Vec<Nibbles> = paths
             .drain(paths.len().saturating_sub(NODE_BATCH_SIZE)..)
             .collect();
-        let peer = get_peer_channel_with_retry(peers.clone(), Capability::Snap).await;
+        
         if let Some(nodes) = peer
             .request_state_trienodes(state_root, batch.clone())
             .await
@@ -814,7 +813,7 @@ async fn heal_state_trie(
 async fn storage_healer(
     state_root: H256,
     mut receiver: Receiver<Vec<H256>>,
-    peers: Arc<Mutex<KademliaTable>>,
+    peers: PeerHandler,
     store: Store,
 ) -> Result<Vec<H256>, SyncError> {
     // Pending list of storages to fetch
@@ -867,11 +866,11 @@ async fn storage_healer(
 async fn heal_storage_batch(
     state_root: H256,
     mut batch: BTreeMap<H256, (H256, Vec<Nibbles>)>,
-    peers: Arc<Mutex<KademliaTable>>,
+    peers: PeerHandler,
     store: Store,
 ) -> Result<(BTreeMap<H256, (H256, Vec<Nibbles>)>, bool), SyncError> {
     for _ in 0..MAX_RETRIES {
-        let peer = get_peer_channel_with_retry(peers.clone(), Capability::Snap).await;
+        
         let req_batch = batch.iter().map(|(k, v)| (*k, v.1.clone())).collect();
         if let Some(mut nodes) = peer.request_storage_trienodes(state_root, req_batch).await {
             debug!("Received {} nodes", nodes.len());
@@ -970,27 +969,6 @@ fn seconds_to_readable(seconds: U512) -> String {
         return format!("Over {days} days");
     }
     format!("{hours}h{minutes}m{seconds}s")
-}
-/// Returns the channel ends to an active peer connection that supports the given capability
-/// The peer is selected randomly, and doesn't guarantee that the selected peer is not currently busy
-/// If no peer is found, this method will try again after 10 seconds
-async fn get_peer_channel_with_retry(
-    table: Arc<Mutex<KademliaTable>>,
-    capability: Capability,
-) -> PeerChannels {
-    tokio::time::sleep(tokio::time::Duration::from_secs(3)).await;
-    loop {
-        let table = table.lock().await;
-        table.show_peer_stats();
-        if let Some(channels) = table.get_peer_channels(capability.clone()) {
-            return channels;
-        };
-        // drop the lock early to no block the rest of processes
-        drop(table);
-        info!("[Sync] No peers available, retrying in 10 sec");
-        // This is the unlikely case where we just started the node and don't have peers, wait a bit and try again
-        tokio::time::sleep(tokio::time::Duration::from_secs(10)).await;
-    }
 }
 
 #[derive(thiserror::Error, Debug)]

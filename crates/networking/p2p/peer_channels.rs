@@ -17,20 +17,24 @@ use crate::{
                 BlockBodies, BlockHeaders, GetBlockBodies, GetBlockHeaders, BLOCK_HEADER_LIMIT,
             },
             receipts::{GetReceipts, Receipts},
-        },
-        snap::{
+        }, p2p::Capability, snap::{
             AccountRange, ByteCodes, GetAccountRange, GetByteCodes, GetStorageRanges, GetTrieNodes,
             StorageRanges, TrieNodes,
-        },
-    },
-    snap::encodable_to_proof,
-    RLPxMessage,
+        }
+    }, snap::encodable_to_proof, KademliaTable, RLPxMessage
 };
 
 pub const PEER_REPLY_TIMOUT: Duration = Duration::from_secs(45);
+pub const PEER_SELECT_RETRY_ATTEMPTS: usize = 3;
+pub const REQUEST_RETRY_ATTEMPTS: usize = 5;
 pub const MAX_MESSAGES_IN_PEER_CHANNEL: usize = 25;
 pub const MAX_RESPONSE_BYTES: u64 = 512 * 1024;
 pub const HASH_MAX: H256 = H256([0xFF; 32]);
+
+#[derive(Debug, Clone)]
+pub struct PeerHandler {
+    peer_table: Arc<Mutex<KademliaTable>>
+}
 
 #[derive(Debug, Clone)]
 /// Holds the respective sender and receiver ends of the communication channels bewteen the peer data and its active connection
@@ -61,6 +65,37 @@ impl PeerChannels {
             connection_receiver,
         )
     }
+}
+
+impl PeerHandler {
+
+    pub fn new(peer_table: Arc<Mutex<KademliaTable>>) -> PeerHandler {
+        Self { peer_table }
+    }
+/// Returns the channel ends to an active peer connection that supports the given capability
+/// The peer is selected randomly, and doesn't guarantee that the selected peer is not currently busy
+/// If no peer is found, this method will try again after 10 seconds
+async fn get_peer_channel_with_retry(&self, capability: Capability) -> Option<PeerChannels> {
+    for _ in 0..PEER_SELECT_RETRY_ATTEMPTS {
+        let table = self.peer_table.lock().await;
+        table.show_peer_stats();
+        if let Some(channels) = table.get_peer_channels(capability.clone()) {
+            return Some(channels);
+        };
+        // drop the lock early to no block the rest of processes
+        drop(table);
+        info!("[Sync] No peers available, retrying in 10 sec");
+        // This is the unlikely case where we just started the node and don't have peers, wait a bit and try again
+        tokio::time::sleep(tokio::time::Duration::from_secs(10)).await;
+    }
+    None
+}
+
+    async fn request<T>(&self, request_func: &dyn Fn(PeerChannels) -> Option<T>) -> Option<T> {
+        // Get peer
+        let peer = self.get_peer_channel_with_retry(Capability::Eth).await?;
+        None
+    }
 
     /// Requests block headers from the peer, starting from the `start` block hash towards either older or newer blocks depending on the order
     /// Returns the block headers or None if:
@@ -80,8 +115,9 @@ impl PeerChannels {
             skip: 0,
             reverse: matches!(order, BlockRequestOrder::NewToOld),
         });
-        let mut receiver = self.receiver.lock().await;
-        self.sender.send(request).await.ok()?;
+        let peer = self.get_peer_channel_with_retry(Capability::Eth).await?;
+        let mut receiver = peer.receiver.lock().await;
+        peer.sender.send(request).await.ok()?;
         let block_headers = tokio::time::timeout(PEER_REPLY_TIMOUT, async move {
             loop {
                 match receiver.recv().await {
@@ -113,8 +149,9 @@ impl PeerChannels {
             id: request_id,
             block_hashes,
         });
-        let mut receiver = self.receiver.lock().await;
-        self.sender.send(request).await.ok()?;
+        let peer = self.get_peer_channel_with_retry(Capability::Eth).await?;
+        let mut receiver = peer.receiver.lock().await;
+        peer.sender.send(request).await.ok()?;
         let block_bodies = tokio::time::timeout(PEER_REPLY_TIMOUT, async move {
             loop {
                 match receiver.recv().await {
@@ -147,8 +184,9 @@ impl PeerChannels {
             id: request_id,
             block_hashes,
         });
-        let mut receiver = self.receiver.lock().await;
-        self.sender.send(request).await.ok()?;
+        let peer = self.get_peer_channel_with_retry(Capability::Eth).await?;
+        let mut receiver = peer.receiver.lock().await;
+        peer.sender.send(request).await.ok()?;
         let receipts = tokio::time::timeout(PEER_REPLY_TIMOUT, async move {
             loop {
                 match receiver.recv().await {
@@ -186,8 +224,9 @@ impl PeerChannels {
             limit_hash: HASH_MAX,
             response_bytes: MAX_RESPONSE_BYTES,
         });
-        let mut receiver = self.receiver.lock().await;
-        self.sender.send(request).await.ok()?;
+        let peer = self.get_peer_channel_with_retry(Capability::Snap).await?;
+        let mut receiver = peer.receiver.lock().await;
+        peer.sender.send(request).await.ok()?;
         let (accounts, proof) = tokio::time::timeout(PEER_REPLY_TIMOUT, async move {
             loop {
                 match receiver.recv().await {
@@ -238,8 +277,9 @@ impl PeerChannels {
             hashes,
             bytes: MAX_RESPONSE_BYTES,
         });
-        let mut receiver = self.receiver.lock().await;
-        self.sender.send(request).await.ok()?;
+        let peer = self.get_peer_channel_with_retry(Capability::Snap).await?;
+        let mut receiver = peer.receiver.lock().await;
+        peer.sender.send(request).await.ok()?;
         let codes = tokio::time::timeout(PEER_REPLY_TIMOUT, async move {
             loop {
                 match receiver.recv().await {
@@ -281,8 +321,9 @@ impl PeerChannels {
             limit_hash: HASH_MAX,
             response_bytes: MAX_RESPONSE_BYTES,
         });
-        let mut receiver = self.receiver.lock().await;
-        self.sender.send(request).await.ok()?;
+        let peer = self.get_peer_channel_with_retry(Capability::Snap).await?;
+        let mut receiver = peer.receiver.lock().await;
+        peer.sender.send(request).await.ok()?;
         let (mut slots, proof) = tokio::time::timeout(PEER_REPLY_TIMOUT, async move {
             loop {
                 match receiver.recv().await {
@@ -362,8 +403,9 @@ impl PeerChannels {
                 .collect(),
             bytes: MAX_RESPONSE_BYTES,
         });
-        let mut receiver = self.receiver.lock().await;
-        self.sender.send(request).await.ok()?;
+        let peer = self.get_peer_channel_with_retry(Capability::Snap).await?;
+        let mut receiver = peer.receiver.lock().await;
+        peer.sender.send(request).await.ok()?;
         let nodes = tokio::time::timeout(PEER_REPLY_TIMOUT, async move {
             loop {
                 match receiver.recv().await {
@@ -421,8 +463,9 @@ impl PeerChannels {
                 .collect(),
             bytes: MAX_RESPONSE_BYTES,
         });
-        let mut receiver = self.receiver.lock().await;
-        self.sender.send(request).await.ok()?;
+        let peer = self.get_peer_channel_with_retry(Capability::Snap).await?;
+        let mut receiver = peer.receiver.lock().await;
+        peer.sender.send(request).await.ok()?;
         let nodes = tokio::time::timeout(PEER_REPLY_TIMOUT, async move {
             loop {
                 match receiver.recv().await {
@@ -473,8 +516,9 @@ impl PeerChannels {
             limit_hash: HASH_MAX,
             response_bytes: MAX_RESPONSE_BYTES,
         });
-        let mut receiver = self.receiver.lock().await;
-        self.sender.send(request).await.ok()?;
+        let peer = self.get_peer_channel_with_retry(Capability::Snap).await?;
+        let mut receiver = peer.receiver.lock().await;
+        peer.sender.send(request).await.ok()?;
         let (mut slots, proof) = tokio::time::timeout(PEER_REPLY_TIMOUT, async move {
             loop {
                 match receiver.recv().await {
