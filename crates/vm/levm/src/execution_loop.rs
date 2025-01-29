@@ -1,28 +1,16 @@
 use crate::{
-    account::{Account, StorageSlot},
     call_frame::CallFrame,
     constants::*,
-    db::{
-        cache::{self, get_account_mut, remove_account},
-        CacheDB, Database,
-    },
-    environment::Environment,
+    db::CacheDB,
     errors::{
         InternalError, OpcodeSuccess, OutOfGasError, ResultReason, TransactionReport, TxResult,
-        TxValidationError, VMError,
+        VMError,
     },
-    gas_cost::{self, CODE_DEPOSIT_COST, STANDARD_TOKEN_COST, TOTAL_COST_FLOOR_PER_TOKEN},
+    gas_cost::CODE_DEPOSIT_COST,
     opcodes::Opcode,
-    precompiles::{
-        execute_precompile, is_precompile, SIZE_PRECOMPILES_CANCUN, SIZE_PRECOMPILES_PRAGUE,
-        SIZE_PRECOMPILES_PRE_CANCUN,
-    },
     utils::*,
-    vm::{AuthorizationList, AuthorizationTuple, Backup, Substate, VM},
-    AccountInfo, TransientStorage,
+    vm::{Backup, VM},
 };
-
-use ethrex_core::{U256, U512};
 
 use bytes::Bytes;
 
@@ -37,7 +25,7 @@ impl VM {
             Ok(output) => {
                 self.call_frames.push(current_call_frame.clone());
 
-                return Ok(TransactionReport {
+                Ok(TransactionReport {
                     result: TxResult::Success,
                     new_state: self.cache.clone(),
                     gas_used: current_call_frame.gas_used,
@@ -45,7 +33,7 @@ impl VM {
                     output,
                     logs: std::mem::take(&mut current_call_frame.logs),
                     created_address: None,
-                });
+                })
             }
             Err(error) => {
                 if error.is_internal() {
@@ -56,7 +44,7 @@ impl VM {
 
                 self.restore_state(backup);
 
-                return Ok(TransactionReport {
+                Ok(TransactionReport {
                     result: TxResult::Revert(error),
                     new_state: CacheDB::default(),
                     gas_used: current_call_frame.gas_limit,
@@ -64,7 +52,7 @@ impl VM {
                     output: Bytes::new(),
                     logs: std::mem::take(&mut current_call_frame.logs),
                     created_address: None,
-                });
+                })
             }
         }
     }
@@ -186,7 +174,7 @@ impl VM {
 
     pub fn handle_opcode_result(
         &mut self,
-        reason: ResultReason,
+        _reason: ResultReason,
         current_call_frame: &mut CallFrame,
         backup: Backup,
     ) -> Result<TransactionReport, VMError> {
@@ -249,7 +237,7 @@ impl VM {
             }
         }
 
-        return Ok(TransactionReport {
+        Ok(TransactionReport {
             result: TxResult::Success,
             new_state: CacheDB::default(),
             gas_used: current_call_frame.gas_used,
@@ -257,7 +245,7 @@ impl VM {
             output: std::mem::take(&mut current_call_frame.output),
             logs: std::mem::take(&mut current_call_frame.logs),
             created_address: None,
-        });
+        })
     }
 
     pub fn handle_opcode_error(
@@ -282,14 +270,14 @@ impl VM {
 
         self.restore_state(backup);
 
-        return Ok(TransactionReport {
+        Ok(TransactionReport {
             result: TxResult::Revert(error),
-            new_state: HashMap::default(),
+            new_state: CacheDB::default(),
             gas_used: current_call_frame.gas_used,
             gas_refunded: self.env.refunded_gas,
             output: std::mem::take(&mut current_call_frame.output), // Bytes::new() if error is not RevertOpcode
             logs: std::mem::take(&mut current_call_frame.logs),
             created_address: None,
-        });
+        })
     }
 }

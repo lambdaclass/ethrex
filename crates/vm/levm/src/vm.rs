@@ -8,11 +8,10 @@ use crate::{
     },
     environment::Environment,
     errors::{
-        InternalError, OpcodeSuccess, OutOfGasError, ResultReason, TransactionReport, TxResult,
+        InternalError, OpcodeSuccess, OutOfGasError, TransactionReport, TxResult,
         TxValidationError, VMError,
     },
-    gas_cost::{self, CODE_DEPOSIT_COST, STANDARD_TOKEN_COST, TOTAL_COST_FLOOR_PER_TOKEN},
-    opcodes::Opcode,
+    gas_cost::{self, STANDARD_TOKEN_COST, TOTAL_COST_FLOOR_PER_TOKEN},
     precompiles::{
         execute_precompile, is_precompile, SIZE_PRECOMPILES_CANCUN, SIZE_PRECOMPILES_PRAGUE,
         SIZE_PRECOMPILES_PRE_CANCUN,
