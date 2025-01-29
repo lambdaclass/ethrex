@@ -511,71 +511,83 @@ fn apply_plain_transaction(
             context.payload.header.gas_limit - context.remaining_gas,
             result.logs(),
         );
-        let account_updates = get_state_transitions(context.evm_state);
+        let account_updates = Vec::new();
         Ok((receipt, account_updates))
     }
 }
 
-// #[cfg(not(feature = "levm"))]
 fn finalize_payload(
     context: &mut PayloadBuildContext,
     account_updates: &Vec<AccountUpdate>,
 ) -> Result<(), StoreError> {
-    // get withdrawals
-    let withdrawals = context.payload.body.withdrawals.clone().unwrap_or_default();
-    let mut filtered = HashMap::new();
-    for withdrawal in withdrawals.iter() {
-        if withdrawal.amount > 0 {
-            filtered.insert(
-                withdrawal.address,
-                u128::from(withdrawal.amount) * u128::from(GWEI_TO_WEI),
-            );
-        }
-    }
-    let mut new_account_updates: HashMap<Address, AccountUpdate> = HashMap::new();
-    // this gets the state transitions from the DB, not the EVM state, this should be replaced
-    let account_updates_state = get_state_transitions(context.evm_state);
-    for update in account_updates_state.iter() {
-        new_account_updates.insert(update.address, update.clone());
-    }
-    for update in account_updates.iter() {
-        if let Some(existing_update) = new_account_updates.get(&update.address) {
-            // Create new update with combined balance
-            let mut combined_update = existing_update.clone();
-
-            if let Some(update_info) = &update.info {
-                if let (Some(new_info), Some(withdrawal)) =
-                    (combined_update.info.as_mut(), filtered.get(&update.address))
-                {
-                    new_info.balance = U256::from(*withdrawal) + update_info.balance;
-                    dbg!(
-                        "UPDATE VALUES: ",
-                        &withdrawal,
-                        &update_info.balance,
-                        &new_info.balance
-                    );
-                }
+    #[cfg(feature = "levm")]
+    {
+        // get withdrawals
+        let withdrawals = context.payload.body.withdrawals.clone().unwrap_or_default();
+        let mut filtered = HashMap::new();
+        for withdrawal in withdrawals.iter() {
+            if withdrawal.amount > 0 {
+                filtered.insert(
+                    withdrawal.address,
+                    u128::from(withdrawal.amount) * u128::from(GWEI_TO_WEI),
+                );
             }
-
-            new_account_updates.insert(update.address, combined_update);
-        } else {
-            // If address doesn't exist, just insert the new update
+        }
+        let mut new_account_updates: HashMap<Address, AccountUpdate> = HashMap::new();
+        // this gets the state transitions from the DB, not the EVM state, this should be replaced
+        let account_updates_state = get_state_transitions(context.evm_state);
+        for update in account_updates_state.iter() {
             new_account_updates.insert(update.address, update.clone());
         }
-    }
-    let account_updates: Vec<AccountUpdate> = new_account_updates.into_values().collect();
-    dbg!("COMBINED UPDATES:", &account_updates);
+        for update in account_updates.iter() {
+            if let Some(existing_update) = new_account_updates.get(&update.address) {
+                // Create new update with combined balance
+                let mut combined_update = existing_update.clone();
 
-    context.payload.header.state_root = context
-        .store()
-        .ok_or(StoreError::MissingStore)?
-        .apply_account_updates(context.parent_hash(), &account_updates)?
-        .unwrap_or_default();
-    context.payload.header.transactions_root =
-        compute_transactions_root(&context.payload.body.transactions);
-    context.payload.header.receipts_root = compute_receipts_root(&context.receipts);
-    context.payload.header.gas_used = context.payload.header.gas_limit - context.remaining_gas;
-    Ok(())
+                if let Some(update_info) = &update.info {
+                    if let (Some(new_info), Some(withdrawal)) =
+                        (combined_update.info.as_mut(), filtered.get(&update.address))
+                    {
+                        new_info.balance = U256::from(*withdrawal) + update_info.balance;
+                    }
+                }
+
+                new_account_updates.insert(update.address, combined_update);
+            } else {
+                // If address doesn't exist, just insert the new update
+                new_account_updates.insert(update.address, update.clone());
+            }
+        }
+        let account_updates: Vec<AccountUpdate> = new_account_updates.into_values().collect();
+        dbg!("COMBINED UPDATES LEVM:", &account_updates);
+
+        context.payload.header.state_root = context
+            .store()
+            .ok_or(StoreError::MissingStore)?
+            .apply_account_updates(context.parent_hash(), &account_updates)?
+            .unwrap_or_default();
+        context.payload.header.transactions_root =
+            compute_transactions_root(&context.payload.body.transactions);
+        context.payload.header.receipts_root = compute_receipts_root(&context.receipts);
+        context.payload.header.gas_used = context.payload.header.gas_limit - context.remaining_gas;
+        Ok(())
+    }
+    #[cfg(not(feature = "levm"))]
+    {
+        let account_updates = get_state_transitions(context.evm_state);
+        // Note: This is commented because it is still being used in development.
+        // dbg!(&account_updates);
+        context.payload.header.state_root = context
+            .store()
+            .ok_or(StoreError::MissingStore)?
+            .apply_account_updates(context.parent_hash(), &account_updates)?
+            .unwrap_or_default();
+        context.payload.header.transactions_root =
+            compute_transactions_root(&context.payload.body.transactions);
+        context.payload.header.receipts_root = compute_receipts_root(&context.receipts);
+        context.payload.header.gas_used = context.payload.header.gas_limit - context.remaining_gas;
+        Ok(())
+    }
 }
 
 /// A struct representing suitable mempool transactions waiting to be included in a block
