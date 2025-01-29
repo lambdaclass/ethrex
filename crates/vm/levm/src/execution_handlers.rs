@@ -62,7 +62,7 @@ impl VM {
         current_call_frame: &mut CallFrame,
     ) -> Result<OpcodeResult, VMError> {
         match opcode {
-            Opcode::STOP => Ok(OpcodeResult::Halt(HaltReason::Stop)),
+            Opcode::STOP => Ok(OpcodeResult::Halt),
             Opcode::ADD => self.op_add(current_call_frame),
             Opcode::MUL => self.op_mul(current_call_frame),
             Opcode::SUB => self.op_sub(current_call_frame),
@@ -168,7 +168,7 @@ impl VM {
 
     pub fn handle_opcode_result(
         &mut self,
-        _reason: HaltReason,
+        // _reason: HaltReason,
         current_call_frame: &mut CallFrame,
         backup: StateBackup,
     ) -> Result<TransactionReport, VMError> {

@@ -218,7 +218,7 @@ pub enum PrecompileError {
 /// "Stop" is an Opcode
 pub enum OpcodeResult {
     Continue { pc_increment: usize },
-    Halt(HaltReason),
+    Halt,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

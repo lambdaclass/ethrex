@@ -255,8 +255,8 @@ impl VM {
                 Ok(OpcodeResult::Continue { pc_increment }) => {
                     current_call_frame.increment_pc_by(pc_increment)?
                 }
-                Ok(OpcodeResult::Halt(reason)) => {
-                    return self.handle_opcode_result(reason, current_call_frame, backup)
+                Ok(OpcodeResult::Halt) => {
+                    return self.handle_opcode_result(current_call_frame, backup)
                 }
                 Err(error) => return self.handle_opcode_error(error, current_call_frame, backup),
             }
