@@ -215,11 +215,11 @@ pub enum PrecompileError {
 #[derive(Debug, Clone)]
 pub enum OpcodeResult {
     Continue,
-    Halt(ResultReason),
+    Halt(HaltReason),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum ResultReason {
+pub enum HaltReason {
     Stop,
     Revert,
     Return,

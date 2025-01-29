@@ -2,7 +2,7 @@ use crate::{
     call_frame::CallFrame,
     constants::{CREATE_DEPLOYMENT_FAIL, INIT_CODE_MAX_SIZE, REVERT_FOR_CALL, SUCCESS_FOR_CALL},
     db::cache,
-    errors::{InternalError, OpcodeResult, OutOfGasError, ResultReason, TxResult, VMError},
+    errors::{HaltReason, InternalError, OpcodeResult, OutOfGasError, TxResult, VMError},
     gas_cost::{self, max_message_call_gas},
     memory::{self, calculate_memory_size},
     utils::*,
@@ -194,7 +194,7 @@ impl VM {
             .map_err(|_err| VMError::VeryLargeNumber)?;
 
         if size == 0 {
-            return Ok(OpcodeResult::Halt(ResultReason::Return));
+            return Ok(OpcodeResult::Halt(HaltReason::Return));
         }
 
         let new_memory_size = calculate_memory_size(offset, size)?;
@@ -210,7 +210,7 @@ impl VM {
                 .to_vec()
                 .into();
 
-        Ok(OpcodeResult::Halt(ResultReason::Return))
+        Ok(OpcodeResult::Halt(HaltReason::Return))
     }
 
     // DELEGATECALL operation
@@ -561,7 +561,7 @@ impl VM {
                 .insert(current_call_frame.to);
         }
 
-        Ok(OpcodeResult::Halt(ResultReason::SelfDestruct))
+        Ok(OpcodeResult::Halt(HaltReason::SelfDestruct))
     }
 
     /// Common behavior for CREATE and CREATE2 opcodes
