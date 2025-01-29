@@ -1,6 +1,6 @@
 use crate::{
     call_frame::CallFrame,
-    errors::{InternalError, OpcodeSuccess, VMError},
+    errors::{InternalError, OpcodeResult, VMError},
     gas_cost,
     opcode_handlers::bitwise_comparison::checked_shift_left,
     vm::VM,
@@ -14,7 +14,7 @@ use super::bitwise_comparison::checked_shift_right;
 
 impl VM {
     // ADD operation
-    pub fn op_add(&mut self, current_call_frame: &mut CallFrame) -> Result<OpcodeSuccess, VMError> {
+    pub fn op_add(&mut self, current_call_frame: &mut CallFrame) -> Result<OpcodeResult, VMError> {
         self.increase_consumed_gas(current_call_frame, gas_cost::ADD)?;
 
         let augend = current_call_frame.stack.pop()?;
@@ -22,11 +22,11 @@ impl VM {
         let sum = augend.overflowing_add(addend).0;
         current_call_frame.stack.push(sum)?;
 
-        Ok(OpcodeSuccess::Continue)
+        Ok(OpcodeResult::Continue)
     }
 
     // SUB operation
-    pub fn op_sub(&mut self, current_call_frame: &mut CallFrame) -> Result<OpcodeSuccess, VMError> {
+    pub fn op_sub(&mut self, current_call_frame: &mut CallFrame) -> Result<OpcodeResult, VMError> {
         self.increase_consumed_gas(current_call_frame, gas_cost::SUB)?;
 
         let minuend = current_call_frame.stack.pop()?;
@@ -34,11 +34,11 @@ impl VM {
         let difference = minuend.overflowing_sub(subtrahend).0;
         current_call_frame.stack.push(difference)?;
 
-        Ok(OpcodeSuccess::Continue)
+        Ok(OpcodeResult::Continue)
     }
 
     // MUL operation
-    pub fn op_mul(&mut self, current_call_frame: &mut CallFrame) -> Result<OpcodeSuccess, VMError> {
+    pub fn op_mul(&mut self, current_call_frame: &mut CallFrame) -> Result<OpcodeResult, VMError> {
         self.increase_consumed_gas(current_call_frame, gas_cost::MUL)?;
 
         let multiplicand = current_call_frame.stack.pop()?;
@@ -46,36 +46,33 @@ impl VM {
         let product = multiplicand.overflowing_mul(multiplier).0;
         current_call_frame.stack.push(product)?;
 
-        Ok(OpcodeSuccess::Continue)
+        Ok(OpcodeResult::Continue)
     }
 
     // DIV operation
-    pub fn op_div(&mut self, current_call_frame: &mut CallFrame) -> Result<OpcodeSuccess, VMError> {
+    pub fn op_div(&mut self, current_call_frame: &mut CallFrame) -> Result<OpcodeResult, VMError> {
         self.increase_consumed_gas(current_call_frame, gas_cost::DIV)?;
 
         let dividend = current_call_frame.stack.pop()?;
         let divisor = current_call_frame.stack.pop()?;
         let Some(quotient) = dividend.checked_div(divisor) else {
             current_call_frame.stack.push(U256::zero())?;
-            return Ok(OpcodeSuccess::Continue);
+            return Ok(OpcodeResult::Continue);
         };
         current_call_frame.stack.push(quotient)?;
 
-        Ok(OpcodeSuccess::Continue)
+        Ok(OpcodeResult::Continue)
     }
 
     // SDIV operation
-    pub fn op_sdiv(
-        &mut self,
-        current_call_frame: &mut CallFrame,
-    ) -> Result<OpcodeSuccess, VMError> {
+    pub fn op_sdiv(&mut self, current_call_frame: &mut CallFrame) -> Result<OpcodeResult, VMError> {
         self.increase_consumed_gas(current_call_frame, gas_cost::SDIV)?;
 
         let dividend = current_call_frame.stack.pop()?;
         let divisor = current_call_frame.stack.pop()?;
         if divisor.is_zero() || dividend.is_zero() {
             current_call_frame.stack.push(U256::zero())?;
-            return Ok(OpcodeSuccess::Continue);
+            return Ok(OpcodeResult::Continue);
         }
 
         let abs_dividend = abs(dividend);
@@ -95,11 +92,11 @@ impl VM {
 
         current_call_frame.stack.push(quotient)?;
 
-        Ok(OpcodeSuccess::Continue)
+        Ok(OpcodeResult::Continue)
     }
 
     // MOD operation
-    pub fn op_mod(&mut self, current_call_frame: &mut CallFrame) -> Result<OpcodeSuccess, VMError> {
+    pub fn op_mod(&mut self, current_call_frame: &mut CallFrame) -> Result<OpcodeResult, VMError> {
         self.increase_consumed_gas(current_call_frame, gas_cost::MOD)?;
 
         let dividend = current_call_frame.stack.pop()?;
@@ -109,14 +106,11 @@ impl VM {
 
         current_call_frame.stack.push(remainder)?;
 
-        Ok(OpcodeSuccess::Continue)
+        Ok(OpcodeResult::Continue)
     }
 
     // SMOD operation
-    pub fn op_smod(
-        &mut self,
-        current_call_frame: &mut CallFrame,
-    ) -> Result<OpcodeSuccess, VMError> {
+    pub fn op_smod(&mut self, current_call_frame: &mut CallFrame) -> Result<OpcodeResult, VMError> {
         self.increase_consumed_gas(current_call_frame, gas_cost::SMOD)?;
 
         let unchecked_dividend = current_call_frame.stack.pop()?;
@@ -124,7 +118,7 @@ impl VM {
 
         if unchecked_divisor.is_zero() || unchecked_dividend.is_zero() {
             current_call_frame.stack.push(U256::zero())?;
-            return Ok(OpcodeSuccess::Continue);
+            return Ok(OpcodeResult::Continue);
         }
 
         let divisor = abs(unchecked_divisor);
@@ -134,7 +128,7 @@ impl VM {
             Some(remainder) => remainder,
             None => {
                 current_call_frame.stack.push(U256::zero())?;
-                return Ok(OpcodeSuccess::Continue);
+                return Ok(OpcodeResult::Continue);
             }
         };
 
@@ -146,14 +140,14 @@ impl VM {
 
         current_call_frame.stack.push(remainder)?;
 
-        Ok(OpcodeSuccess::Continue)
+        Ok(OpcodeResult::Continue)
     }
 
     // ADDMOD operation
     pub fn op_addmod(
         &mut self,
         current_call_frame: &mut CallFrame,
-    ) -> Result<OpcodeSuccess, VMError> {
+    ) -> Result<OpcodeResult, VMError> {
         self.increase_consumed_gas(current_call_frame, gas_cost::ADDMOD)?;
 
         let augend = current_call_frame.stack.pop()?;
@@ -162,7 +156,7 @@ impl VM {
 
         if modulus.is_zero() {
             current_call_frame.stack.push(U256::zero())?;
-            return Ok(OpcodeSuccess::Continue);
+            return Ok(OpcodeResult::Continue);
         }
 
         let new_augend: U512 = augend.into();
@@ -182,14 +176,14 @@ impl VM {
 
         current_call_frame.stack.push(sum_mod)?;
 
-        Ok(OpcodeSuccess::Continue)
+        Ok(OpcodeResult::Continue)
     }
 
     // MULMOD operation
     pub fn op_mulmod(
         &mut self,
         current_call_frame: &mut CallFrame,
-    ) -> Result<OpcodeSuccess, VMError> {
+    ) -> Result<OpcodeResult, VMError> {
         self.increase_consumed_gas(current_call_frame, gas_cost::MULMOD)?;
 
         let multiplicand = current_call_frame.stack.pop()?;
@@ -198,7 +192,7 @@ impl VM {
 
         if modulus.is_zero() || multiplicand.is_zero() || multiplier.is_zero() {
             current_call_frame.stack.push(U256::zero())?;
-            return Ok(OpcodeSuccess::Continue);
+            return Ok(OpcodeResult::Continue);
         }
 
         let multiplicand: U512 = multiplicand.into();
@@ -219,11 +213,11 @@ impl VM {
 
         current_call_frame.stack.push(product_mod)?;
 
-        Ok(OpcodeSuccess::Continue)
+        Ok(OpcodeResult::Continue)
     }
 
     // EXP operation
-    pub fn op_exp(&mut self, current_call_frame: &mut CallFrame) -> Result<OpcodeSuccess, VMError> {
+    pub fn op_exp(&mut self, current_call_frame: &mut CallFrame) -> Result<OpcodeResult, VMError> {
         let base = current_call_frame.stack.pop()?;
         let exponent = current_call_frame.stack.pop()?;
 
@@ -234,14 +228,14 @@ impl VM {
         let power = base.overflowing_pow(exponent).0;
         current_call_frame.stack.push(power)?;
 
-        Ok(OpcodeSuccess::Continue)
+        Ok(OpcodeResult::Continue)
     }
 
     // SIGNEXTEND operation
     pub fn op_signextend(
         &mut self,
         current_call_frame: &mut CallFrame,
-    ) -> Result<OpcodeSuccess, VMError> {
+    ) -> Result<OpcodeResult, VMError> {
         self.increase_consumed_gas(current_call_frame, gas_cost::SIGNEXTEND)?;
 
         let byte_size_minus_one = current_call_frame.stack.pop()?;
@@ -249,7 +243,7 @@ impl VM {
 
         if byte_size_minus_one > U256::from(31) {
             current_call_frame.stack.push(value_to_extend)?;
-            return Ok(OpcodeSuccess::Continue);
+            return Ok(OpcodeResult::Continue);
         }
 
         let bits_per_byte = U256::from(8);
@@ -278,7 +272,7 @@ impl VM {
         };
         current_call_frame.stack.push(result)?;
 
-        Ok(OpcodeSuccess::Continue)
+        Ok(OpcodeResult::Continue)
     }
 }
 
