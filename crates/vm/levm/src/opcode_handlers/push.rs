@@ -27,7 +27,7 @@ impl VM {
             .push(U256::from_big_endian(value_to_push.as_slice()))?;
 
         // The n_bytes that you push to the stack + 1 for the next instruction
-        let increment_pc_by = n_bytes + 1;
+        let increment_pc_by = n_bytes.wrapping_add(1);
 
         Ok(OpcodeResult::Continue {
             pc_increment: increment_pc_by,
