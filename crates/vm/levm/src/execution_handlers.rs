@@ -2,10 +2,7 @@ use crate::{
     call_frame::CallFrame,
     constants::*,
     db::CacheDB,
-    errors::{
-        HaltReason, InternalError, OpcodeResult, OutOfGasError, TransactionReport, TxResult,
-        VMError,
-    },
+    errors::{InternalError, OpcodeResult, OutOfGasError, TransactionReport, TxResult, VMError},
     gas_cost::CODE_DEPOSIT_COST,
     opcodes::Opcode,
     utils::*,
