@@ -3,16 +3,17 @@ use std::sync::Arc;
 use crate::{
     peer_channels::PeerChannels,
     rlpx::{
+        error::RLPxError,
         eth::{
             backend,
             blocks::{BlockBodies, BlockHeaders},
-            receipts::Receipts,
-            transactions::Transactions,
+            receipts::{GetReceipts, Receipts},
+            transactions::{GetPooledTransactions, Transactions},
         },
-        handshake::encode_ack_message,
+        frame::RLPxCodec,
+        handshake,
         message::Message,
-        p2p::{self, DisconnectMessage, PingMessage, PongMessage},
-        utils::id2pubkey,
+        p2p::{self, Capability, DisconnectMessage, PingMessage, PongMessage},
     },
     snap::{
         process_account_range_request, process_byte_codes_request, process_storage_ranges_request,
@@ -20,14 +21,6 @@ use crate::{
     },
 };
 
-use super::{
-    error::RLPxError,
-    eth::{receipts::GetReceipts, transactions::GetPooledTransactions},
-    frame::RLPxCodec,
-    handshake::{decode_ack_message, decode_auth_message, encode_auth_message},
-    message as rlpx,
-    p2p::Capability,
-};
 use ethrex_blockchain::mempool::{self};
 use ethrex_core::{H256, H512};
 use ethrex_storage::Store;
@@ -36,7 +29,7 @@ use k256::{ecdsa::SigningKey, PublicKey, SecretKey};
 use rand::random;
 use sha3::{Digest, Keccak256};
 use tokio::{
-    io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt},
+    io::{AsyncRead, AsyncWrite},
     sync::{
         broadcast::{self, error::RecvError},
         mpsc, Mutex,
@@ -57,15 +50,13 @@ pub(crate) type Aes256Ctr64BE = ctr::Ctr64BE<aes::Aes256>;
 
 pub(crate) type RLPxConnBroadcastSender = broadcast::Sender<(tokio::task::Id, Arc<Message>)>;
 
-// https://github.com/ethereum/go-ethereum/blob/master/p2p/peer.go#L44
-pub const P2P_MAX_MESSAGE_SIZE: usize = 2048;
-
 enum RLPxConnectionMode {
     Initiator,
     Receiver,
 }
 
 pub(crate) struct RemoteState {
+    pub(crate) node_id: H512,
     pub(crate) nonce: H256,
     pub(crate) ephemeral_key: PublicKey,
     pub(crate) init_message: Vec<u8>,
@@ -225,8 +216,16 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
     async fn handshake(&mut self) -> Result<(), RLPxError> {
         let (local_state, remote_state, hashed_nonces) = match &self.mode {
             RLPxConnectionMode::Initiator => {
-                let local_state = self.send_auth().await?;
-                let remote_state = self.receive_ack().await?;
+                // Remote id is already initialized
+                let local_state =
+                    handshake::send_auth(&self.signer, self.remote_node_id, self.framed.get_mut())
+                        .await?;
+                let remote_state = handshake::receive_ack(
+                    &self.signer,
+                    self.remote_node_id,
+                    self.framed.get_mut(),
+                )
+                .await?;
                 // Local node is initator
                 // keccak256(nonce || initiator-nonce)
                 let hashed_nonces: [u8; 32] =
@@ -234,8 +233,12 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
                 (local_state, remote_state, hashed_nonces)
             }
             RLPxConnectionMode::Receiver => {
-                let remote_state = self.receive_auth().await?;
-                let local_state = self.send_ack().await?;
+                let remote_state =
+                    handshake::receive_auth(&self.signer, self.framed.get_mut()).await?;
+                // Remote id is not yet initialized
+                self.remote_node_id = remote_state.node_id;
+                let local_state =
+                    handshake::send_ack(remote_state.node_id, self.framed.get_mut()).await?;
                 // Remote node is initator
                 // keccak256(nonce || initiator-nonce)
                 let hashed_nonces: [u8; 32] =
@@ -291,8 +294,8 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
 
     async fn handle_peer_conn(
         &mut self,
-        sender: mpsc::Sender<rlpx::Message>,
-        mut receiver: mpsc::Receiver<rlpx::Message>,
+        sender: mpsc::Sender<Message>,
+        mut receiver: mpsc::Receiver<Message>,
     ) -> Result<(), RLPxError> {
         self.init_peer_conn().await?;
         debug!("Started peer main loop");
@@ -517,115 +520,11 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
         Ok(())
     }
 
-    async fn send_auth(&mut self) -> Result<LocalState, RLPxError> {
-        let secret_key: SecretKey = self.signer.clone().into();
-        let peer_pk = id2pubkey(self.remote_node_id).ok_or(RLPxError::InvalidPeerId())?;
-
-        let local_nonce = H256::random_using(&mut rand::thread_rng());
-        let local_ephemeral_key = SecretKey::random(&mut rand::thread_rng());
-
-        let msg = encode_auth_message(&secret_key, local_nonce, &peer_pk, &local_ephemeral_key)?;
-        self.send_handshake_msg(&msg).await?;
-
-        Ok(LocalState {
-            nonce: local_nonce,
-            ephemeral_key: local_ephemeral_key,
-            init_message: msg,
-        })
-    }
-
-    async fn send_ack(&mut self) -> Result<LocalState, RLPxError> {
-        let peer_pk = id2pubkey(self.remote_node_id).ok_or(RLPxError::InvalidPeerId())?;
-
-        let local_nonce = H256::random_using(&mut rand::thread_rng());
-        let local_ephemeral_key = SecretKey::random(&mut rand::thread_rng());
-
-        let msg = encode_ack_message(&local_ephemeral_key, local_nonce, &peer_pk)?;
-        self.send_handshake_msg(&msg).await?;
-
-        Ok(LocalState {
-            nonce: local_nonce,
-            ephemeral_key: local_ephemeral_key,
-            init_message: msg,
-        })
-    }
-
-    async fn receive_auth(&mut self) -> Result<RemoteState, RLPxError> {
-        let secret_key: SecretKey = self.signer.clone().into();
-
-        let msg_bytes = self.receive_handshake_msg().await?;
-        let size_data = &msg_bytes
-            .get(..2)
-            .ok_or(RLPxError::InvalidMessageLength())?;
-        let msg = &msg_bytes
-            .get(2..)
-            .ok_or(RLPxError::InvalidMessageLength())?;
-        let (auth, remote_ephemeral_key) = decode_auth_message(&secret_key, msg, size_data)?;
-        self.remote_node_id = auth.node_id;
-
-        Ok(RemoteState {
-            nonce: auth.nonce,
-            ephemeral_key: remote_ephemeral_key,
-            init_message: msg_bytes.to_owned(),
-        })
-    }
-
-    async fn receive_ack(&mut self) -> Result<RemoteState, RLPxError> {
-        let secret_key: SecretKey = self.signer.clone().into();
-        let msg_bytes = self.receive_handshake_msg().await?;
-        let size_data = &msg_bytes
-            .get(..2)
-            .ok_or(RLPxError::InvalidMessageLength())?;
-        let msg = &msg_bytes
-            .get(2..)
-            .ok_or(RLPxError::InvalidMessageLength())?;
-        let ack = decode_ack_message(&secret_key, msg, size_data)?;
-        let remote_ephemeral_key = ack
-            .get_ephemeral_pubkey()
-            .ok_or(RLPxError::NotFound("Remote ephemeral key".to_string()))?;
-
-        Ok(RemoteState {
-            nonce: ack.nonce,
-            ephemeral_key: remote_ephemeral_key,
-            init_message: msg_bytes.to_owned(),
-        })
-    }
-
-    async fn send_handshake_msg(&mut self, msg: &[u8]) -> Result<(), RLPxError> {
-        self.framed.get_mut().write_all(msg).await?;
-        Ok(())
-    }
-
-    async fn receive_handshake_msg(&mut self) -> Result<Vec<u8>, RLPxError> {
-        let mut buf = vec![0; 2];
-
-        // Read the message's size
-        self.framed.get_mut().read_exact(&mut buf).await?;
-        let ack_data = [buf[0], buf[1]];
-        let msg_size = u16::from_be_bytes(ack_data) as usize;
-        if msg_size > P2P_MAX_MESSAGE_SIZE {
-            return Err(RLPxError::InvalidMessageLength());
-        }
-        buf.resize(msg_size + 2, 0);
-
-        // Read the rest of the message
-        // Guard unwrap
-        if buf.len() < msg_size + 2 {
-            return Err(RLPxError::CryptographyError(String::from("bad buf size")));
-        }
-        self.framed
-            .get_mut()
-            .read_exact(&mut buf[2..msg_size + 2])
-            .await?;
-        let ack_bytes = &buf[..msg_size + 2];
-        Ok(ack_bytes.to_vec())
-    }
-
-    async fn send(&mut self, message: rlpx::Message) -> Result<(), RLPxError> {
+    async fn send(&mut self, message: Message) -> Result<(), RLPxError> {
         self.framed.send(message).await
     }
 
-    async fn receive(&mut self) -> Result<rlpx::Message, RLPxError> {
+    async fn receive(&mut self) -> Result<Message, RLPxError> {
         if let Some(message) = self.framed.next().await {
             message
         } else {
