@@ -135,8 +135,8 @@ fn listener(tcp_addr: SocketAddr) -> Result<TcpListener, io::Error> {
 
 async fn handle_peer_as_receiver(context: P2PContext, peer_addr: SocketAddr, stream: TcpStream) {
     let table = context.table.clone();
-    match handshake::as_receiver(context, stream).await {
-        Ok(mut conn) => conn.start_peer(peer_addr, table).await,
+    match handshake::as_receiver(context, peer_addr, stream).await {
+        Ok(mut conn) => conn.start(table).await,
         Err(e) => {
             // TODO We should remove the peer from the table if connection failed
             // but currently it will make the tests fail
@@ -159,8 +159,8 @@ async fn handle_peer_as_initiator(context: P2PContext, node: Node) {
         }
     };
     let table = context.table.clone();
-    match handshake::as_initiator(context, node.node_id, stream).await {
-        Ok(mut conn) => conn.start_peer(node.udp_addr(), table).await,
+    match handshake::as_initiator(context, node, stream).await {
+        Ok(mut conn) => conn.start(table).await,
         Err(e) => {
             // TODO We should remove the peer from the table if connection failed
             // but currently it will make the tests fail

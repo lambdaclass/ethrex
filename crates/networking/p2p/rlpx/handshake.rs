@@ -1,9 +1,12 @@
+use std::net::SocketAddr;
+
 use crate::{
     rlpx::{
         connection::{LocalState, RemoteState},
         error::RLPxError,
-        utils::{ecdh_xchng, id2pubkey, kdf, pubkey2id, sha256, sha256_hmac},
+        utils::{ecdh_xchng, id2pubkey, kdf, log_debug, pubkey2id, sha256, sha256_hmac},
     },
+    types::Node,
     P2PContext,
 };
 use aes::cipher::{KeyIvInit, StreamCipher};
@@ -22,7 +25,6 @@ use k256::{
 use rand::Rng;
 use sha3::{Digest, Keccak256};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
-use tracing::debug;
 
 use super::{connection::RLPxConnection, frame::RLPxCodec};
 
@@ -33,6 +35,7 @@ pub const P2P_MAX_MESSAGE_SIZE: usize = 2048;
 
 pub(crate) async fn as_receiver<S>(
     context: P2PContext,
+    peer_addr: SocketAddr,
     mut stream: S,
 ) -> Result<RLPxConnection<S>, RLPxError>
 where
@@ -42,11 +45,17 @@ where
     let local_state = send_ack(remote_state.node_id, &mut stream).await?;
     let hashed_nonces: [u8; 32] =
         Keccak256::digest([local_state.nonce.0, remote_state.nonce.0].concat()).into();
+    let node = Node {
+        ip: peer_addr.ip(),
+        udp_port: peer_addr.port(),
+        tcp_port: peer_addr.port(),
+        node_id: remote_state.node_id,
+    };
     let codec = RLPxCodec::new(&local_state, &remote_state, hashed_nonces);
-    debug!("Completed handshake!");
+    log_debug(&node, "Completed handshake!");
     Ok(RLPxConnection::new(
         context.signer,
-        remote_state.node_id,
+        node,
         stream,
         codec,
         context.storage,
@@ -56,23 +65,23 @@ where
 
 pub(crate) async fn as_initiator<S>(
     context: P2PContext,
-    remote_node_id: H512,
+    node: Node,
     mut stream: S,
 ) -> Result<RLPxConnection<S>, RLPxError>
 where
     S: AsyncRead + AsyncWrite + std::marker::Unpin,
 {
-    let local_state = send_auth(&context.signer, remote_node_id, &mut stream).await?;
-    let remote_state = receive_ack(&context.signer, remote_node_id, &mut stream).await?;
+    let local_state = send_auth(&context.signer, node.node_id, &mut stream).await?;
+    let remote_state = receive_ack(&context.signer, node.node_id, &mut stream).await?;
     // Local node is initator
     // keccak256(nonce || initiator-nonce)
     let hashed_nonces: [u8; 32] =
         Keccak256::digest([remote_state.nonce.0, local_state.nonce.0].concat()).into();
     let codec = RLPxCodec::new(&local_state, &remote_state, hashed_nonces);
-    debug!("Completed handshake!");
+    log_debug(&node, "Completed handshake!");
     Ok(RLPxConnection::new(
         context.signer,
-        remote_state.node_id,
+        node,
         stream,
         codec,
         context.storage,
