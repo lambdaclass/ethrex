@@ -125,9 +125,12 @@ pub fn create_payload(args: &BuildPayloadArgs, storage: &Store) -> Result<Block,
             ),
         ),
         parent_beacon_block_root: args.beacon_root,
-        requests_hash: chain_config
-            .is_prague_activated(args.timestamp)
-            .then_some(H256::zero()), // TODO: set the value properly
+        // TODO: set the value properly
+        requests_hash: if chain_config.is_prague_activated(args.timestamp) {
+            None
+        } else {
+            Some(H256::zero())
+        },
     };
 
     let body = BlockBody {

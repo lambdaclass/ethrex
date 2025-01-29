@@ -99,7 +99,11 @@ impl RpcHandler for NewPayloadV3Request {
 
     fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
         let block = get_block_from_payload(&self.payload, Some(self.parent_beacon_block_root))?;
-        validate_fork(&block, Fork::Cancun, &context)?;
+        let fork = context
+            .storage
+            .get_chain_config()?
+            .get_fork(block.header.timestamp);
+        validate_fork(&block, fork, &context)?;
         validate_execution_payload_v3(&self.payload)?;
         let payload_status = {
             if let Err(RpcErr::Internal(error_msg)) = validate_block_hash(&self.payload, &block) {
@@ -188,7 +192,11 @@ impl RpcHandler for GetPayloadV3Request {
 
     fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
         let payload = get_payload(self.payload_id, &context)?;
-        validate_fork(&payload.0, Fork::Cancun, &context)?;
+        let fork = context
+            .storage
+            .get_chain_config()?
+            .fork(payload.0.header.timestamp);
+        validate_fork(&payload.0, fork, &context)?;
         let execution_payload_response =
             build_execution_payload_response(self.payload_id, payload, Some(false), context)?;
 
