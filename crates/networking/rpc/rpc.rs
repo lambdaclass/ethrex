@@ -36,7 +36,7 @@ use eth::{
         GetTransactionByHashRequest, GetTransactionReceiptRequest,
     },
 };
-use ethrex_net::sync::SyncManager;
+use ethrex_net::{sync::SyncManager, types::NodeRecord};
 use serde_json::Value;
 use std::{
     collections::HashMap,
@@ -70,6 +70,7 @@ pub struct RpcApiContext {
     storage: Store,
     jwt_secret: Bytes,
     local_p2p_node: Node,
+    local_node_record: NodeRecord,
     active_filters: ActiveFilters,
     syncer: Arc<TokioMutex<SyncManager>>,
 }
@@ -125,6 +126,7 @@ pub async fn start_api(
     storage: Store,
     jwt_secret: Bytes,
     local_p2p_node: Node,
+    local_node_record: NodeRecord,
     syncer: SyncManager,
 ) {
     // TODO: Refactor how filters are handled,
@@ -134,6 +136,7 @@ pub async fn start_api(
         storage: storage.clone(),
         jwt_secret,
         local_p2p_node,
+        local_node_record,
         active_filters: active_filters.clone(),
         syncer: Arc::new(TokioMutex::new(syncer)),
     };
@@ -306,7 +309,11 @@ pub fn map_engine_requests(req: &RpcRequest, context: RpcApiContext) -> Result<V
 
 pub fn map_admin_requests(req: &RpcRequest, context: RpcApiContext) -> Result<Value, RpcErr> {
     match req.method.as_str() {
-        "admin_nodeInfo" => admin::node_info(context.storage, context.local_p2p_node),
+        "admin_nodeInfo" => admin::node_info(
+            context.storage,
+            context.local_p2p_node,
+            context.local_node_record,
+        ),
         unknown_admin_method => Err(RpcErr::MethodNotFound(unknown_admin_method.to_owned())),
     }
 }
@@ -352,7 +359,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::utils::test_utils::example_p2p_node;
+    use crate::utils::test_utils::{example_local_node_record, example_p2p_node};
     use ethrex_core::types::{ChainConfig, Genesis};
     use ethrex_storage::EngineType;
     use std::fs::File;
@@ -374,6 +381,7 @@ mod tests {
         storage.set_chain_config(&example_chain_config()).unwrap();
         let context = RpcApiContext {
             local_p2p_node,
+            local_node_record: example_local_node_record(),
             storage,
             jwt_secret: Default::default(),
             active_filters: Default::default(),
@@ -413,6 +421,7 @@ mod tests {
         // Process request
         let context = RpcApiContext {
             local_p2p_node,
+            local_node_record: example_local_node_record(),
             storage,
             jwt_secret: Default::default(),
             active_filters: Default::default(),
@@ -443,6 +452,7 @@ mod tests {
         // Process request
         let context = RpcApiContext {
             local_p2p_node,
+            local_node_record: example_local_node_record(),
             storage,
             jwt_secret: Default::default(),
             active_filters: Default::default(),
@@ -504,6 +514,7 @@ mod tests {
         let context = RpcApiContext {
             storage,
             local_p2p_node,
+            local_node_record: example_local_node_record(),
             jwt_secret: Default::default(),
             active_filters: Default::default(),
             syncer: Arc::new(TokioMutex::new(SyncManager::dummy())),

@@ -5,7 +5,7 @@ use ethrex_core::types::{Block, Genesis};
 use ethrex_net::{
     node_id_from_signing_key, peer_table,
     sync::{SyncManager, SyncMode},
-    types::Node,
+    types::{Node, NodeRecord},
     KademliaTable,
 };
 use ethrex_rlp::decode::RLPDecode;
@@ -220,6 +220,12 @@ async fn main() {
         tcp_port: tcp_socket_addr.port(),
         node_id: local_node_id,
     };
+    let enr_seq = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    let local_node_record = NodeRecord::from_node(local_p2p_node, enr_seq, &signer)
+        .expect("Node record could not be created from local node");
     // Create Kademlia Table here so we can access it from rpc server (for syncing)
     let peer_table = peer_table(signer.clone());
     // Create SyncManager
@@ -233,6 +239,7 @@ async fn main() {
         store.clone(),
         jwt_secret,
         local_p2p_node,
+        local_node_record,
         syncer,
     )
     .into_future();

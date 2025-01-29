@@ -1,5 +1,5 @@
 use ethrex_core::types::ChainConfig;
-use ethrex_net::types::Node;
+use ethrex_net::types::{Node, NodeRecord};
 use ethrex_storage::Store;
 use serde::Serialize;
 use serde_json::Value;
@@ -10,6 +10,7 @@ use crate::utils::RpcErr;
 #[derive(Serialize, Debug)]
 struct NodeInfo {
     enode: String,
+    enr: String,
     id: String,
     ip: String,
     name: String,
@@ -29,8 +30,13 @@ enum Protocol {
     Eth(ChainConfig),
 }
 
-pub fn node_info(storage: Store, local_node: Node) -> Result<Value, RpcErr> {
+pub fn node_info(
+    storage: Store,
+    local_node: Node,
+    local_node_record: NodeRecord,
+) -> Result<Value, RpcErr> {
     let enode_url = local_node.enode_url();
+    let enr_url = local_node_record.enr_url();
     let mut protocols = HashMap::new();
 
     let chain_config = storage
@@ -40,6 +46,7 @@ pub fn node_info(storage: Store, local_node: Node) -> Result<Value, RpcErr> {
 
     let node_info = NodeInfo {
         enode: enode_url,
+        enr: enr_url,
         id: hex::encode(local_node.node_id),
         name: "ethrex/0.1.0/rust1.81".to_string(),
         ip: local_node.ip.to_string(),
