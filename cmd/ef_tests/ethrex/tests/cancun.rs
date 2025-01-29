@@ -6,7 +6,7 @@ use std::path::Path;
 
 // NOTE: There are many tests which are failing due to the usage of Prague fork.
 // These tests are distributed in almost all json test files.
-// The `parse_and_execute_only_cancun` function will filter those tests after parsing them
+// The `parse_and_execute_until_cancun` function will filter those tests after parsing them
 // this will mark said tests as passed, so they will become a false positive.
 // The idea is to move those tests to be executed with the `parse_and_execute_all` function once
 // Prague development starts.
