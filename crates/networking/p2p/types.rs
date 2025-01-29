@@ -6,11 +6,11 @@ use ethrex_rlp::{
     error::RLPDecodeError,
     structs::{self, Decoder, Encoder},
 };
-use k256::ecdsa::SigningKey;
+use k256::ecdsa::{SigningKey, VerifyingKey};
 use sha3::{Digest, Keccak256};
 use std::{
     fmt::Display,
-    net::{IpAddr, SocketAddr},
+    net::{IpAddr, Ipv4Addr, SocketAddr},
     str::FromStr,
 };
 
@@ -97,7 +97,7 @@ impl FromStr for Node {
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
             s if s.starts_with("enode://") => Self::from_enode_url(s),
-            // TODO implement enr strings, see #1757
+            s if s.starts_with("enr:") => Self::from_enr_url(s),
             _ => Err("Invalid network address format".into()),
         }
     }
@@ -134,6 +134,29 @@ impl Node {
             ip,
             tcp_port: port,
             udp_port,
+        })
+    }
+
+    pub fn from_enr_url(enr: &str) -> Result<Self, String> {
+        let base64_decoded = ethrex_core::base64::decode(enr.as_bytes());
+        let record = NodeRecord::decode(&base64_decoded).unwrap();
+        let pairs = record.decode_pairs();
+        let Some(public_key) = pairs.secp256k1 else {
+            return Err(
+                "signature could not be verified because public key was not provided".into(),
+            );
+        };
+        let Ok(verifying_key) = VerifyingKey::from_sec1_bytes(public_key.as_bytes()) else {
+            return Err("public key could no be built from msg pub key bytes".into());
+        };
+        let encoded = verifying_key.to_encoded_point(false);
+        let node_id = H512::from_slice(&encoded.as_bytes()[1..]);
+
+        Ok(Self {
+            ip: IpAddr::from(Ipv4Addr::from_bits(pairs.ip.unwrap())),
+            node_id,
+            tcp_port: pairs.tcp_port.unwrap(),
+            udp_port: pairs.udp_port.unwrap(),
         })
     }
 
@@ -217,6 +240,14 @@ impl NodeRecord {
         }
 
         decoded_pairs
+    }
+
+    pub fn enr_url(&self) -> String {
+        let rlp_encoded = self.encode_to_vec();
+        let base64_encoded = ethrex_core::base64::encode(&rlp_encoded);
+        let mut result: String = "enr:".into();
+        result.push_str(&String::from_utf8(base64_encoded).unwrap());
+        result
     }
 
     pub fn from_node(node: Node, seq: u64, signer: &SigningKey) -> Result<Self, String> {
