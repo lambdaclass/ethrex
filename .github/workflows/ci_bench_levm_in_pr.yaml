@@ -38,19 +38,19 @@ jobs:
           make revm-comparison-ci
           {
             echo "#### Benchmark Results: Factorial";
-            cat Factorial.md;
+            cat Factorial.md || echo "No results";
             echo "#### Benchmark Results: Factorial - Recursive";
-            cat FactorialRecursive.md;
+            cat FactorialRecursive.md || echo "No results";
             echo "#### Benchmark Results: Fibonacci";
-            cat Fibonacci.md;
+            cat Fibonacci.md || echo "No results";
             echo "#### Benchmark Results: ManyHashes";
-            cat ManyHashes.md;
+            cat ManyHashes.md || echo "No results";
             echo "#### Benchmark Results: ERC20 - Transfer";
-            cat ERC20Transfer.md;
+            cat ERC20Transfer.md || echo "No results";
             echo "#### Benchmark Results: ERC20 - Mint";
-            cat ERC20Mint.md;
+            cat ERC20Mint.md || echo "No results";
             echo "#### Benchmark Results: ERC20 - Approval";
-            cat ERC20Approval.md;
+            cat ERC20Approval.md || echo "No results";
           } > pr_result.md
 
       - name: Upload PR results
@@ -90,9 +90,19 @@ jobs:
           make revm-comparison-ci
           {
             echo "#### Benchmark Results: Factorial";
-            cat factorial.md;
+            cat Factorial.md || echo "No results";
+            echo "#### Benchmark Results: Factorial - Recursive";
+            cat FactorialRecursive.md || echo "No results";
             echo "#### Benchmark Results: Fibonacci";
-            cat fibonacci.md;
+            cat Fibonacci.md || echo "No results";
+            echo "#### Benchmark Results: ManyHashes";
+            cat ManyHashes.md || echo "No results";
+            echo "#### Benchmark Results: ERC20 - Transfer";
+            cat ERC20Transfer.md || echo "No results";
+            echo "#### Benchmark Results: ERC20 - Mint";
+            cat ERC20Mint.md || echo "No results";
+            echo "#### Benchmark Results: ERC20 - Approval";
+            cat ERC20Approval.md || echo "No results";
           } > main_result.md
 
       - name: Upload main results
