@@ -62,7 +62,7 @@ jobs:
           if-no-files-found: error
 
   hive-report:
-    name: Generate report and upload to Slack (${{ matrix.vm }})
+    name: Generate and Save report (${{ matrix.vm }})
     needs: run-hive
     runs-on: ubuntu-latest
     strategy:
@@ -102,28 +102,6 @@ jobs:
           echo "# Hive coverage report (${{ matrix.vm }})" >> $GITHUB_STEP_SUMMARY
           cat results.md >> $GITHUB_STEP_SUMMARY
 
-      - name: Post results to Slack
-        env:
-          SLACK_WEBHOOKS: >
-            ${{ github.event_name == 'workflow_dispatch'
-              && secrets.TEST_CHANNEL_SLACK
-              || format(
-                  '{0} {1} {2}',
-                  secrets.ETHREX_L1_SLACK_WEBHOOK,
-                  secrets.ETHREX_L2_SLACK_WEBHOOK,
-                  secrets.LEVM_SLACK_WEBHOOK
-                )
-            }}
-          SCRIPT: >
-            ${{ matrix.vm == 'levm'
-              && '.github/scripts/publish_levm_hive.sh'
-              || '.github/scripts/publish_hive.sh'
-            }}
-        run: |
-          for webhook in $SLACK_WEBHOOKS; do
-            sh $SCRIPT "$webhook"
-          done
-
   hive-diff-report:
     name: Post tests diff to levm slack
     needs: hive-report
@@ -148,7 +126,7 @@ jobs:
       - name: Rename result (2)
         run: cp results.md results_revm.md
 
-      - name: Post results diff to Slack
+      - name: Create diff message
         env:
           SLACK_WEBHOOK: >
             ${{ github.event_name == 'workflow_dispatch'
@@ -158,7 +136,42 @@ jobs:
         run: |
           bash .github/scripts/levm_revm_diff.sh results_revm.md results_levm.md >> diff.md
           cat diff.md >> $GITHUB_STEP_SUMMARY
-          sh .github/scripts/publish_vms_diff.sh $SLACK_WEBHOOK
+
+      - name: Post results to Slack
+        env:
+          SLACK_WEBHOOKS: >
+            ${{ github.event_name == 'workflow_dispatch'
+              && secrets.TEST_CHANNEL_SLACK
+              || format(
+                  '{0} {1} {2}',
+                  secrets.ETHREX_L1_SLACK_WEBHOOK,
+                  secrets.ETHREX_L2_SLACK_WEBHOOK,
+                  secrets.LEVM_SLACK_WEBHOOK
+                )
+            }}
+        run: |
+          for webhook in $SLACK_WEBHOOKS; do
+            sh .github/scripts/publish_levm_hive.sh "$webhook"
+            sh .github/scripts/publish_hive.sh "$webhook"
+          done
+          echo "Sending Results" >> $GITHUB_STEP_SUMMARY
+
+      - name: Post results diff to Slack
+        env:
+          SLACK_WEBHOOK: >
+            ${{ github.event_name == 'workflow_dispatch'
+              && secrets.TEST_CHANNEL_SLACK
+              || secrets.LEVM_SLACK_WEBHOOK
+            }}
+        # Only send diff message if the diff has changed
+        run: |
+          DIFF_CONTENT=$(cat diff.md)
+          if [ "$DIFF_CONTENT" == "No differences found" ]; then
+            echo "No differences to post" >> $GITHUB_STEP_SUMMARY
+          else
+            sh .github/scripts/publish_vms_diff.sh $SLACK_WEBHOOK
+            echo "Sending Results" >> $GITHUB_STEP_SUMMARY
+          fi
 
   levm-test:
     name: Generate Report for LEVM EF Tests
