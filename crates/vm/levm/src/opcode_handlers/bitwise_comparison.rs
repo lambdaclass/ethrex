@@ -6,37 +6,32 @@ use crate::{
     vm::VM,
 };
 use ethrex_core::U256;
-use lazy_static::lazy_static;
 use std::collections::HashMap;
+use std::sync::LazyLock;
 
 // Comparison and Bitwise Logic Operations (14)
 // Opcodes: LT, GT, SLT, SGT, EQ, ISZERO, AND, OR, XOR, NOT, BYTE, SHL, SHR, SAR
 
-lazy_static! {
-    // This is a precomputed table of certain 1<<n values which are commonly used in EVM
-    // This allows us to avoid calculating 2^n for certain values of n since op_shl was a bottleneck
-    static ref SHL_PRECALC: HashMap<u8, U256> = {
-        let mut m = HashMap::new();
-        // Safe shifts (<=63 bits)
-        m.insert(8, U256::from(1u64 << 8));    // byte
-        m.insert(9, U256::from(1u64 << 9));    // Gwei
-        m.insert(12, U256::from(1u64 << 12));  // Szabo
-        m.insert(15, U256::from(1u64 << 15));  // Finney
-        m.insert(16, U256::from(1u64 << 16));  // uint16
-        m.insert(18, U256::from(1u64 << 18));  // Ether
-        m.insert(24, U256::from(1u64 << 24));  // 3 bytes
-        m.insert(32, U256::from(1u64 << 32));  // uint32
-        m.insert(40, U256::from(1u64 << 40));  // 5 bytes
-        m.insert(48, U256::from(1u64 << 48));  // 6 bytes
-        m.insert(56, U256::from(1u64 << 56));  // 7 bytes
-        // Large shifts (>63 bits)
-        m.insert(64, U256::from(2).pow(U256::from(64)));   // uint64
-        m.insert(128, U256::from(2).pow(U256::from(128))); // uint128
-        m.insert(160, U256::from(2).pow(U256::from(160))); // address
-        m.insert(248, U256::from(2).pow(U256::from(248))); // storage
-        m
-    };
-}
+static SHL_PRECALC: LazyLock<HashMap<u8, U256>> = LazyLock::new(|| {
+    let mut m = HashMap::new();
+    // Safe shifts (<=63 bits)
+    m.insert(8, U256::from(1u64 << 8)); // byte
+    m.insert(9, U256::from(1u64 << 9)); // Gwei
+    m.insert(12, U256::from(1u64 << 12)); // Szabo
+    m.insert(15, U256::from(1u64 << 15)); // Finney
+    m.insert(16, U256::from(1u64 << 16)); // uint16
+    m.insert(18, U256::from(1u64 << 18)); // Ether
+    m.insert(24, U256::from(1u64 << 24)); // 3 bytes
+    m.insert(32, U256::from(1u64 << 32)); // uint32
+    m.insert(40, U256::from(1u64 << 40)); // 5 bytes
+    m.insert(48, U256::from(1u64 << 48)); // 6 bytes
+    m.insert(56, U256::from(1u64 << 56)); // 7 bytes
+    m.insert(64, U256::from(2).pow(U256::from(64))); // uint64
+    m.insert(128, U256::from(2).pow(U256::from(128))); // uint128
+    m.insert(160, U256::from(2).pow(U256::from(160))); // address
+    m.insert(248, U256::from(2).pow(U256::from(248))); // storage
+    m
+});
 
 impl VM {
     // LT operation
