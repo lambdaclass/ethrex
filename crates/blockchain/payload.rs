@@ -277,7 +277,6 @@ pub fn apply_withdrawals(
         let spec_id = spec_id(&context.chain_config()?, context.payload.header.timestamp);
         if context.payload.header.parent_beacon_block_root.is_some() && spec_id == SpecId::CANCUN {
             beacon_root_contract_call(context.evm_state, &context.payload.header, spec_id)?;
-            // We don't handle if it fails?
         }
         let withdrawals = context.payload.body.withdrawals.clone().unwrap_or_default();
         process_withdrawals(context.evm_state, &withdrawals)?;
