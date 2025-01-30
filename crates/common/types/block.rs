@@ -125,7 +125,7 @@ pub struct BlockHeader {
     )]
     pub excess_blob_gas: Option<u64>,
     pub parent_beacon_block_root: Option<H256>,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing_if = "Option::is_none", default = "Option::default")]
     pub requests_hash: Option<H256>,
 }
 

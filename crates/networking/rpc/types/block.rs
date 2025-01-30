@@ -102,7 +102,7 @@ mod test {
 
     use bytes::Bytes;
     use ethrex_core::{
-        types::{EIP1559Transaction, Transaction, TxKind},
+        types::{EIP1559Transaction, Transaction, TxKind, EMPTY_KECCACK_HASH},
         Address, Bloom, H256, U256,
     };
     use std::str::FromStr;
@@ -152,7 +152,7 @@ mod test {
             blob_gas_used: Some(0x00),
             excess_blob_gas: Some(0x00),
             parent_beacon_block_root: Some(H256::zero()),
-            requests_hash: None,
+            requests_hash: Some(*EMPTY_KECCACK_HASH),
         };
 
         let tx = EIP1559Transaction {
