@@ -370,7 +370,7 @@ async fn rebuild_state_trie(
                     initial_timestamp,
                 ));
             }
-            let peer = get_peer_channel_with_retry(table, Capability::Snap).await;
+            let peer = get_peer_channel_with_retry(peers.clone(), Capability::Snap).await;
             debug!("Requesting Account Range for state root {state_root}, starting hash: {start_account_hash}");
             if let Some((account_hashes, accounts, should_continue)) = peer
                 .request_account_range(state_root, start_account_hash)
