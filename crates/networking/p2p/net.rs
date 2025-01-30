@@ -3,7 +3,7 @@ use discv4::{
     helpers::current_unix_time,
     server::{DiscoveryError, Discv4Server},
 };
-use ethrex_core::H512;
+use ethrex_core::{H256, H512};
 use ethrex_storage::Store;
 use k256::{
     ecdsa::SigningKey,
@@ -14,7 +14,7 @@ use rlpx::{
     connection::{RLPxConnBroadcastSender, RLPxConnection},
     message::Message as RLPxMessage,
 };
-use std::{io, net::SocketAddr, sync::Arc};
+use std::{collections::HashSet, io, net::SocketAddr, sync::Arc};
 use tokio::{
     net::{TcpListener, TcpSocket, TcpStream},
     sync::Mutex,
@@ -54,6 +54,7 @@ struct P2PContext {
     signer: SigningKey,
     table: Arc<Mutex<KademliaTable>>,
     storage: Store,
+    global_requested_transactions: Arc<Mutex<HashSet<H256>>>,
     broadcast: RLPxConnBroadcastSender,
     local_node: Node,
     enr_seq: u64,
@@ -82,6 +83,7 @@ pub async fn start_network(
         signer,
         table: peer_table,
         storage,
+        global_requested_transactions: Arc::new(Mutex::new(HashSet::new())),
         broadcast: channel_broadcast_send_end,
     };
     let discovery = Discv4Server::try_new(context.clone())
@@ -137,8 +139,13 @@ fn listener(tcp_addr: SocketAddr) -> Result<TcpListener, io::Error> {
 }
 
 async fn handle_peer_as_receiver(context: P2PContext, peer_addr: SocketAddr, stream: TcpStream) {
-    let mut conn =
-        RLPxConnection::receiver(context.signer, stream, context.storage, context.broadcast);
+    let mut conn = RLPxConnection::receiver(
+        context.signer,
+        stream,
+        context.storage,
+        context.global_requested_transactions.clone(),
+        context.broadcast,
+    );
     conn.start_peer(peer_addr, context.table).await;
 }
 
@@ -159,6 +166,7 @@ async fn handle_peer_as_initiator(context: P2PContext, node: Node) {
         node.node_id,
         stream,
         context.storage,
+        context.global_requested_transactions.clone(),
         context.broadcast,
     ) {
         Ok(mut conn) => conn.start_peer(node.udp_addr(), context.table).await,

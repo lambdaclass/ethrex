@@ -1,19 +1,14 @@
 use bytes::BufMut;
 use bytes::Bytes;
-use ethrex_blockchain::error::MempoolError;
-use ethrex_blockchain::mempool;
 use ethrex_core::types::P2PTransaction;
 use ethrex_core::types::WrappedEIP4844Transaction;
-use ethrex_core::H512;
 use ethrex_core::{types::Transaction, H256};
 use ethrex_rlp::{
     error::{RLPDecodeError, RLPEncodeError},
     structs::{Decoder, Encoder},
 };
-use ethrex_storage::{error::StoreError, pending_requests::TransactionRequest, Store};
-use tracing::warn;
+use ethrex_storage::{error::StoreError, Store};
 
-use crate::rlpx::error::RLPxError;
 use crate::rlpx::{
     message::RLPxMessage,
     utils::{snappy_compress, snappy_decompress},
@@ -235,8 +230,8 @@ impl RLPxMessage for GetPooledTransactions {
 pub(crate) struct PooledTransactions {
     // id is a u64 chosen by the requesting peer, the responding peer must mirror the value for the response
     // https://github.com/ethereum/devp2p/blob/master/caps/eth.md#protocol-messages
-    id: u64,
-    pooled_transactions: Vec<P2PTransaction>,
+    pub id: u64,
+    pub pooled_transactions: Vec<P2PTransaction>,
 }
 
 impl PooledTransactions {
@@ -245,83 +240,6 @@ impl PooledTransactions {
             pooled_transactions,
             id,
         }
-    }
-
-    /// Saves every incoming pooled transaction to the mempool.
-
-    pub fn handle(self, store: &Store, remote_node_id: &H512) -> Result<(), RLPxError> {
-        let request = store.get_pending_request(remote_node_id, self.id)?;
-        if request.is_none() {
-            // Unknown id. It may be a request from a previous run. Ignoring msg...
-            return Ok(());
-        }
-        self.validate(request.unwrap())?;
-        for tx in self.pooled_transactions {
-            if let P2PTransaction::EIP4844TransactionWithBlobs(itx) = tx {
-                if let Err(e) = mempool::add_blob_transaction(itx.tx, itx.blobs_bundle, store) {
-                    warn!(
-                        "Error adding transaction from peer {}: {}",
-                        remote_node_id, e
-                    );
-                }
-            } else {
-                let regular_tx = tx
-                    .try_into()
-                    .map_err(|error| MempoolError::StoreError(StoreError::Custom(error)))?;
-                if let Err(e) = mempool::add_transaction(regular_tx, store) {
-                    warn!(
-                        "Error adding transaction from peer {}: {}",
-                        remote_node_id, e
-                    );
-                }
-            }
-        }
-        // txs were added to mempool, it's safe to remove it from pending_requests.
-        store.remove_pending_request(remote_node_id, self.id)?;
-        Ok(())
-    }
-
-    // Matches the received message with the request made.
-    // Ensures the received txs are in order.
-    // Ensures the received types and sizes matches the announced ones.
-    // Some of the requested txs may not be responded.
-    fn validate(&self, request: TransactionRequest) -> Result<(), RLPxError> {
-        let mut last_index: i32 = -1;
-        for received_tx in &self.pooled_transactions {
-            let received_tx_hash = received_tx.compute_hash();
-            let received_tx_size = 1 + received_tx.tx_data().len();
-            let received_tx_type = received_tx.tx_type() as u8;
-
-            if let Some(index) = request
-                .transaction_hashes
-                .iter()
-                .position(|x| *x == received_tx_hash)
-            {
-                // Ensure the txs are in order.
-                // With this we also avoid repeated transactions.
-                if index as i32 <= last_index {
-                    return Err(RLPxError::BadRequest(
-                        "Invalid order in PoolTransactions message.".to_string(),
-                    ));
-                }
-                if received_tx_type != request.transaction_types[index] {
-                    return Err(RLPxError::BadRequest(
-                        "Invalid type in PoolTransactions message.".to_string(),
-                    ));
-                }
-                if received_tx_size != request.transaction_sizes[index] {
-                    return Err(RLPxError::BadRequest(
-                        "Invalid size in PoolTransactions message.".to_string(),
-                    ));
-                }
-                last_index = index as i32;
-            } else {
-                return Err(RLPxError::BadRequest(
-                    "Transaction not requested received in PoolTransactions message".to_string(),
-                ));
-            }
-        }
-        Ok(())
     }
 }
 
@@ -350,13 +268,8 @@ impl RLPxMessage for PooledTransactions {
 
 #[cfg(test)]
 mod tests {
-    use std::time::Instant;
 
-    use ethrex_core::{
-        types::{EIP2930Transaction, LegacyTransaction, P2PTransaction},
-        H256,
-    };
-    use ethrex_storage::pending_requests::TransactionRequest;
+    use ethrex_core::{types::P2PTransaction, H256};
 
     use crate::rlpx::{
         eth::transactions::{GetPooledTransactions, PooledTransactions},
@@ -404,121 +317,5 @@ mod tests {
         let decoded = PooledTransactions::decode(&buf).unwrap();
         assert_eq!(decoded.id, 1);
         assert_eq!(decoded.pooled_transactions, vec![transaction1]);
-    }
-
-    fn setup_pool() -> (P2PTransaction, P2PTransaction, PooledTransactions) {
-        let tx1 = LegacyTransaction {
-            data: vec![0x01, 0x02].into(),
-            ..Default::default()
-        };
-        let tx1 = P2PTransaction::LegacyTransaction(tx1);
-
-        let tx2 = EIP2930Transaction {
-            data: vec![0x03, 0x04].into(),
-            ..Default::default()
-        };
-        let tx2 = P2PTransaction::EIP2930Transaction(tx2);
-
-        let pool_msg = PooledTransactions {
-            id: 0,
-            pooled_transactions: vec![tx1.clone(), tx2.clone()],
-        };
-
-        (tx1, tx2, pool_msg)
-    }
-
-    #[test]
-    fn test_validate_successful() {
-        let (tx1, tx2, pool_msg) = setup_pool();
-        let request = TransactionRequest {
-            id: 0,
-            transaction_hashes: vec![tx1.compute_hash(), tx2.compute_hash()],
-            transaction_sizes: vec![3, 3], // 1 + tx_data.len()
-            transaction_types: vec![0, 1],
-            timestamp: Instant::now(),
-        };
-
-        let result = pool_msg.validate(request);
-
-        assert!(result.is_ok());
-    }
-
-    #[test]
-    fn test_validate_invalid_order() {
-        let (tx1, tx2, pool_msg) = setup_pool();
-        let request = TransactionRequest {
-            id: 0,
-            transaction_hashes: vec![tx2.compute_hash(), tx1.compute_hash()],
-            transaction_sizes: vec![3, 3], // 1 + tx_data.len()
-            transaction_types: vec![1, 0],
-            timestamp: Instant::now(),
-        };
-
-        let result = pool_msg.validate(request);
-
-        assert!(result.is_err());
-        assert_eq!(
-            result.unwrap_err().to_string(),
-            "Bad Request: Invalid order in PoolTransactions message.".to_string()
-        );
-    }
-
-    #[test]
-    fn test_validate_invalid_type() {
-        let (tx1, tx2, pool_msg) = setup_pool();
-
-        let request = TransactionRequest {
-            id: 0,
-            transaction_hashes: vec![tx1.compute_hash(), tx2.compute_hash()],
-            transaction_sizes: vec![3, 3], // 1 + tx_data.len()
-            transaction_types: vec![0, 2],
-            timestamp: Instant::now(),
-        };
-
-        let result = pool_msg.validate(request);
-        assert!(result.is_err());
-        assert_eq!(
-            result.unwrap_err().to_string(),
-            "Bad Request: Invalid type in PoolTransactions message.".to_string()
-        );
-    }
-    #[test]
-    fn test_validate_invalid_size() {
-        let (tx1, tx2, pool_msg) = setup_pool();
-
-        let request = TransactionRequest {
-            id: 0,
-            transaction_hashes: vec![tx1.compute_hash(), tx2.compute_hash()],
-            transaction_sizes: vec![1, 3], // 1 + tx_data.len()
-            transaction_types: vec![0, 2],
-            timestamp: Instant::now(),
-        };
-
-        let result = pool_msg.validate(request);
-        assert!(result.is_err());
-        assert_eq!(
-            result.unwrap_err().to_string(),
-            "Bad Request: Invalid size in PoolTransactions message.".to_string()
-        );
-    }
-    #[test]
-    fn test_validate_transaction_not_requested() {
-        let (tx1, _, pool_msg) = setup_pool();
-
-        let request = TransactionRequest {
-            id: 0,
-            transaction_hashes: vec![tx1.compute_hash()],
-            transaction_sizes: vec![3], // 1 + tx_data.len()
-            transaction_types: vec![0],
-            timestamp: Instant::now(),
-        };
-
-        let result = pool_msg.validate(request);
-        assert!(result.is_err());
-        assert_eq!(
-            result.unwrap_err().to_string(),
-            "Bad Request: Transaction not requested received in PoolTransactions message"
-                .to_string()
-        );
     }
 }

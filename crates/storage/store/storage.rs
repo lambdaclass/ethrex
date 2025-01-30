@@ -12,21 +12,18 @@ use ethrex_core::types::{
     BlockNumber, ChainConfig, Genesis, GenesisAccount, Index, MempoolTransaction, Receipt,
     Transaction, TxType, EMPTY_TRIE_HASH,
 };
-use ethrex_core::H512;
 use ethrex_rlp::decode::RLPDecode;
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_trie::Trie;
-use pending_requests::{PendingRequests, TransactionRequest};
 use serde::{Deserialize, Serialize};
 use sha3::{Digest as _, Keccak256};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fmt::Debug;
 use std::sync::{Arc, Mutex};
 use tracing::info;
 
 mod engines;
 pub mod error;
-pub mod pending_requests;
 mod rlp;
 
 #[derive(Debug, Clone)]
@@ -35,7 +32,6 @@ pub struct Store {
     engine: Arc<dyn StoreEngine>,
     pub mempool: Arc<Mutex<HashMap<H256, MempoolTransaction>>>,
     pub blobs_bundle_pool: Arc<Mutex<HashMap<H256, BlobsBundle>>>,
-    tx_pending_requests: Arc<Mutex<PendingRequests>>,
 }
 
 #[allow(dead_code)]
@@ -87,20 +83,17 @@ impl Store {
                 engine: Arc::new(LibmdbxStore::new(path)?),
                 mempool: Arc::new(Mutex::new(HashMap::new())),
                 blobs_bundle_pool: Arc::new(Mutex::new(HashMap::new())),
-                tx_pending_requests: Arc::new(Mutex::new(PendingRequests::new())),
             },
             EngineType::InMemory => Self {
                 engine: Arc::new(InMemoryStore::new()),
                 mempool: Arc::new(Mutex::new(HashMap::new())),
                 blobs_bundle_pool: Arc::new(Mutex::new(HashMap::new())),
-                tx_pending_requests: Arc::new(Mutex::new(PendingRequests::new())),
             },
             #[cfg(feature = "redb")]
             EngineType::RedB => Self {
                 engine: Arc::new(RedBStore::new()?),
                 mempool: Arc::new(Mutex::new(HashMap::new())),
                 blobs_bundle_pool: Arc::new(Mutex::new(HashMap::new())),
-                tx_pending_requests: Arc::new(Mutex::new(PendingRequests::new())),
             },
         };
         info!("Started store engine");
@@ -364,86 +357,67 @@ impl Store {
     /// Creates and stores a new transaction request from the filtered transactions.
     pub fn get_transactions_to_request(
         &self,
-        remote_node_id: H512,
-        request_id: u64,
-        transaction_hashes: Vec<H256>,
-        transaction_types: Vec<u8>,
-        transaction_sizes: Vec<usize>,
-    ) -> Result<Option<TransactionRequest>, StoreError> {
+        transaction_hashes: &[H256],
+    ) -> Result<Option<HashSet<H256>>, StoreError> {
         let mempool = self
             .mempool
             .lock()
             .map_err(|error| StoreError::Custom(error.to_string()))?;
-        let mut tx_pending_requests = self
-            .tx_pending_requests
-            .lock()
-            .map_err(|error| StoreError::Custom(error.to_string()))?;
-        let mut unknown_tx_hashes = vec![];
-        let mut unknown_tx_types = vec![];
-        let mut unknown_tx_sizes = vec![];
-        for (index, hash) in transaction_hashes.iter().enumerate() {
-            if !mempool.contains_key(hash) && !tx_pending_requests.contains_txs(hash) {
-                unknown_tx_hashes.push(transaction_hashes[index]);
-                unknown_tx_types.push(transaction_types[index]);
-                unknown_tx_sizes.push(transaction_sizes[index]);
+        let mut unknown_tx_hashes = HashSet::new();
+        for hash in transaction_hashes.iter() {
+            if !mempool.contains_key(hash) {
+                unknown_tx_hashes.insert(*hash);
             }
         }
         if unknown_tx_hashes.is_empty() {
             return Ok(None);
         }
-        let new_request = TransactionRequest::new(
-            request_id,
-            unknown_tx_hashes,
-            unknown_tx_types,
-            unknown_tx_sizes,
-        );
-        tx_pending_requests.store_request(remote_node_id, new_request.clone());
-        Ok(Some(new_request))
+        Ok(Some(unknown_tx_hashes))
     }
 
-    pub fn get_pending_request(
-        &self,
-        remote_node_id: &H512,
-        request_id: u64,
-    ) -> Result<Option<TransactionRequest>, StoreError> {
-        let tx_pending_requests = self
-            .tx_pending_requests
-            .lock()
-            .map_err(|error| StoreError::Custom(error.to_string()))?;
-        Ok(tx_pending_requests.get_pending_request(remote_node_id, request_id))
-    }
+    // pub fn get_pending_request(
+    //     &self,
+    //     remote_node_id: &H512,
+    //     request_id: u64,
+    // ) -> Result<Option<TransactionRequest>, StoreError> {
+    //     let tx_pending_requests = self
+    //         .tx_pending_requests
+    //         .lock()
+    //         .map_err(|error| StoreError::Custom(error.to_string()))?;
+    //     Ok(tx_pending_requests.get_pending_request(remote_node_id, request_id))
+    // }
 
-    pub fn remove_pending_request(
-        &self,
-        remote_node_id: &H512,
-        request_id: u64,
-    ) -> Result<(), StoreError> {
-        let mut tx_pending_requests = self
-            .tx_pending_requests
-            .lock()
-            .map_err(|error| StoreError::Custom(error.to_string()))?;
-        tx_pending_requests.remove_pending_request(remote_node_id, request_id);
-        Ok(())
-    }
+    // pub fn remove_pending_request(
+    //     &self,
+    //     remote_node_id: &H512,
+    //     request_id: u64,
+    // ) -> Result<(), StoreError> {
+    //     let mut tx_pending_requests = self
+    //         .tx_pending_requests
+    //         .lock()
+    //         .map_err(|error| StoreError::Custom(error.to_string()))?;
+    //     tx_pending_requests.remove_pending_request(remote_node_id, request_id);
+    //     Ok(())
+    // }
 
-    pub fn remove_peer_requests(&self, remote_node_id: &H512) -> Result<(), StoreError> {
-        let mut tx_pending_requests = self
-            .tx_pending_requests
-            .lock()
-            .map_err(|error| StoreError::Custom(error.to_string()))?;
-        tx_pending_requests.remove_peer_requests(remote_node_id);
-        Ok(())
-    }
+    // pub fn remove_peer_requests(&self, remote_node_id: &H512) -> Result<(), StoreError> {
+    //     let mut tx_pending_requests = self
+    //         .tx_pending_requests
+    //         .lock()
+    //         .map_err(|error| StoreError::Custom(error.to_string()))?;
+    //     tx_pending_requests.remove_peer_requests(remote_node_id);
+    //     Ok(())
+    // }
 
-    pub fn remove_stale_requests(&self, remote_node_id: &H512) -> Result<(), StoreError> {
-        let mut tx_pending_requests = self
-            .tx_pending_requests
-            .lock()
-            .map_err(|error| StoreError::Custom(error.to_string()))?;
+    // pub fn remove_stale_requests(&self, remote_node_id: &H512) -> Result<(), StoreError> {
+    //     let mut tx_pending_requests = self
+    //         .tx_pending_requests
+    //         .lock()
+    //         .map_err(|error| StoreError::Custom(error.to_string()))?;
 
-        tx_pending_requests.remove_stale_requests(remote_node_id);
-        Ok(())
-    }
+    //     tx_pending_requests.remove_stale_requests(remote_node_id);
+    //     Ok(())
+    // }
 
     pub fn add_account_code(&self, code_hash: H256, code: Bytes) -> Result<(), StoreError> {
         self.engine.add_account_code(code_hash, code)
