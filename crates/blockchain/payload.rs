@@ -214,7 +214,8 @@ impl<'a> PayloadBuildContext<'a> {
             payload,
             evm_state,
             blobs_bundle: BlobsBundle::default(),
-            block_cache: HashMap::new(),
+            #[cfg(feature = "levm")]
+            block_cache: CacheDB::new(),
         })
     }
 }
@@ -296,7 +297,7 @@ pub fn apply_withdrawals(context: &mut PayloadBuildContext) -> Result<(), EvmErr
         }
         let withdrawals = context.payload.body.withdrawals.clone().unwrap_or_default();
         process_withdrawals(context.evm_state, &withdrawals)?;
-        Ok(HashMap::new())
+        Ok(())
     }
 }
 
