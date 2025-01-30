@@ -13,13 +13,13 @@ jobs:
   hive-report-creation-levm:
     uses: ./.github/workflows/common/hive_reports.yaml
     with:
-      evm: "levm"
-      job_type: "daily"
+      evm: levm
+      job_type: daily
   hive-report-creation-revm:
     uses: ./.github/workflows/common/hive_reports.yaml
     with:
-      evm: "revm"
-      job_type: "daily"
+      evm: revm
+      job_type: daily
 
   hive-diff-report:
     name: Post tests diff to levm slack

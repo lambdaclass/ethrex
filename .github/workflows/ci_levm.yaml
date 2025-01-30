@@ -18,6 +18,7 @@ env:
 
 jobs:
   ef-test:
+    if: ${{ github.event_name != 'merge_group' }}
     name: EF Tests Check
     runs-on: ubuntu-latest
     steps:
@@ -59,13 +60,14 @@ jobs:
           fi
 
   hive-report-creation:
-    uses: ./.github/workflows/common/hive_reports.yaml
+    uses: ./.github/workflows/common_hive_reports.yaml
     with:
-      evm: "levm"
-      job_type: "trigger"
+      evm: levm
+      job_type: trigger
 
   # Check we don't have a regression against main
   hive-test:
+    if: ${{ github.event_name != 'merge_group' }}
     name: Hive Tests Check
     needs: hive-report-creation
     runs-on: ubuntu-latest

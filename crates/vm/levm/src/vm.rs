@@ -949,6 +949,7 @@ impl VM {
                 }
             };
 
+            // TESTING LEVM CI
             auth_account.info.bytecode = if auth_tuple.address != Address::zero() {
                 delegation_bytes.into()
             } else {
