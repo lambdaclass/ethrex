@@ -252,9 +252,11 @@ impl VM {
             let op_result = self.handle_current_opcode(opcode, current_call_frame);
 
             match op_result {
-                Ok(OpcodeResult::Continue) => {}
-                Ok(OpcodeResult::Halt(reason)) => {
-                    return self.handle_opcode_result(reason, current_call_frame, backup)
+                Ok(OpcodeResult::Continue { pc_increment }) => {
+                    current_call_frame.increment_pc_by(pc_increment)?
+                }
+                Ok(OpcodeResult::Halt) => {
+                    return self.handle_opcode_result(current_call_frame, backup)
                 }
                 Err(error) => return self.handle_opcode_error(error, current_call_frame, backup),
             }
@@ -858,7 +860,6 @@ impl VM {
             logs: vec![],
             new_state: HashMap::default(),
             output: Bytes::new(),
-            created_address: None,
         };
 
         self.post_execution_changes(initial_call_frame, &mut report)?;
