@@ -2,7 +2,7 @@ use std::net::SocketAddr;
 
 use tokio::sync::mpsc;
 
-use crate::discovery::packet::{Packet, PacketData};
+use crate::{discovery::packet::Packet, types::NodeId};
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
@@ -12,12 +12,9 @@ pub enum Error {
 
 #[derive(Debug, Clone)]
 pub enum Message {
-    Ping(Packet),
-    Pong(Packet),
-    FindNode(Packet, SocketAddr),
-    Neighbors(Packet),
-    ENRRequest(Packet),
-    ENRResponse(Packet),
+    Serve(Packet, SocketAddr),
+    Lookup(NodeId),
+    Revalidate,
     Terminate,
 }
 
@@ -32,15 +29,15 @@ impl Mailbox {
     }
 
     pub async fn serve(&self, packet: Packet, from: SocketAddr) -> Result<(), Error> {
-        let message = match packet.data {
-            PacketData::Ping { .. } => Message::Ping(packet),
-            PacketData::Pong { .. } => Message::Pong(packet),
-            PacketData::FindNode { .. } => Message::FindNode(packet, from),
-            PacketData::Neighbors { .. } => Message::Neighbors(packet),
-            PacketData::ENRRequest { .. } => Message::ENRRequest(packet),
-            PacketData::ENRResponse { .. } => Message::ENRResponse(packet),
-        };
-        self.send(message).await
+        self.send(Message::Serve(packet, from)).await
+    }
+
+    pub async fn lookup(&self, target: NodeId) -> Result<(), Error> {
+        self.send(Message::Lookup(target)).await
+    }
+
+    pub async fn revalidate(&self) -> Result<(), Error> {
+        self.send(Message::Revalidate).await
     }
 
     pub async fn terminate(&self) -> Result<(), Error> {

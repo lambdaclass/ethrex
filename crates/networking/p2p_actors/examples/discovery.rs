@@ -38,156 +38,40 @@ fn main() {
             .unwrap(),
         );
 
-        let this_endpoint = Endpoint::new(IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)), 30303, 0);
-        let signer = SecretKey::random(&mut rand::thread_rng());
-        let this_node_id = NodeId::from_secret_key(&signer);
-
-        let (mut router, router_mailbox) = ethereum_p2p::discovery::router::actor::Actor::new(
-            runtime.clone(),
-            ethereum_p2p::discovery::router::actor::Config {
-                endpoint: this_endpoint.clone(),
-                timeout_duration,
-            }
-        ).unwrap();
-
         let kademlia = Arc::new(Mutex::new(BTreeMap::new()));
         kademlia.lock().await.insert(bootnode_socket_address, bootnode);
 
-        let (seeker, seeker_mailbox) = ethereum_p2p::discovery::seeker::Actor::new(
-            runtime.clone(),
-            router_mailbox.clone(),
-            kademlia.clone(),
-            ethereum_p2p::discovery::seeker::Config {
-                signer,
-                node_id: this_node_id,
-                timeout_duration,
-                seek_interval: Duration::from_secs(1),
-            }
-        );
-
-        let (server, server_mailbox) = ethereum_p2p::discovery::server::Actor::new(
-            router_mailbox.clone(),
-            seeker_mailbox.clone(),
-            kademlia.clone(),
-            ethereum_p2p::discovery::server::Config {
-                signer,
-                node_id: this_node_id,
-            }
-        );
-
-        router.register_discovery_server(server_mailbox.clone());
-
-        let (validator, validator_mailbox) = ethereum_p2p::discovery::validator::Actor::new(
-            runtime.clone(),
-            router_mailbox.clone(),
-            kademlia.clone(),
-            ethereum_p2p::discovery::validator::Config {
-                signer,
-                node_id: this_node_id,
-                endpoint: this_endpoint,
-                timeout_duration,
-                revalidation_interval: Duration::from_secs(1),
-            }
-        );
+        let signer = SecretKey::random(&mut rand::thread_rng());
         
-        let mut server_handle = runtime.spawn("server", async move {
-            server.run().await
+        let (discovery, discovery_mailbox) = ethereum_p2p::discovery::Actor::new(
+            runtime.clone(),
+            kademlia, 
+            ethereum_p2p::discovery::Config {
+                endpoint: Endpoint::new(IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)), 30303, 0),
+                signer,
+                node_id: NodeId::from_secret_key(&signer),
+                seek_interval: Duration::from_secs(1),
+                revalidation_interval: Duration::from_secs(1),
+                timeout_duration,
+            }
+        );
+        let mut discovery_handle = runtime.spawn("discovery", async move {
+            discovery.run().await
         });
-        let mut router_handle = runtime.spawn("router", async move {
-            router.run().await
-        });
-        let mut seeker_handle = runtime.spawn("seeker", async move {
-            seeker.run().await
-        });
-        let mut validator_handle = runtime.spawn("validator", async move {
-            validator.run().await
-        });
-
 
         tokio::select! {
-            server_handle_result = &mut server_handle => {
-                tracing::error!(?server_handle_result, "Server handle failed, terminating other handles");
-                let _ = router_mailbox.terminate().await;
-                let _ = seeker_mailbox.terminate().await;
-                let _ = validator_mailbox.terminate().await;
-                if let Err(err) = timeout(timeout_duration, router_handle).await {
-                    tracing::error!(error = ?err, "Failed to terminate router handle");
-                }
-                if let Err(err) = timeout(timeout_duration, seeker_handle).await {
-                    tracing::error!(error = ?err, "Failed to terminate seeker handle");
-                }
-                if let Err(err) = timeout(timeout_duration, validator_handle).await {
-                    tracing::error!(error = ?err, "Failed to terminate validator handle");
-                }
-            }
-
-            router_handle_result = &mut router_handle => {
-                tracing::error!(?router_handle_result, "Router handle failed, shutting down");
-                let _ = server_mailbox.terminate().await;
-                let _ = seeker_mailbox.terminate().await;
-                let _ = validator_mailbox.terminate().await;
-                if let Err(err) = timeout(timeout_duration, server_handle).await {
-                    tracing::error!(error = ?err, "Failed to terminate server handle");
-                }
-                if let Err(err) = timeout(timeout_duration, seeker_handle).await {
-                    tracing::error!(error = ?err, "Failed to terminate seeker handle");
-                }
-                if let Err(err) = timeout(timeout_duration, validator_handle).await {
-                    tracing::error!(error = ?err, "Failed to terminate validator handle");
-                }
-            }
-
-            seeker_handle_result = &mut seeker_handle => {
-                tracing::error!(?seeker_handle_result, "Seeker handle failed, shutting down");
-                let _ = server_mailbox.terminate().await;
-                let _ = router_mailbox.terminate().await;
-                let _ = validator_mailbox.terminate().await;
-                if let Err(err) = timeout(timeout_duration, server_handle).await {
-                    tracing::error!(error = ?err, "Failed to terminate server handle");
-                }
-                if let Err(err) = timeout(timeout_duration, router_handle).await {
-                    tracing::error!(error = ?err, "Failed to terminate router handle");
-                }
-                if let Err(err) = timeout(timeout_duration, validator_handle).await {
-                    tracing::error!(error = ?err, "Failed to terminate validator handle");
-                }
-            }
-
-            validator_handle_result = &mut validator_handle => {
-                tracing::error!(?validator_handle_result, "Validator handle failed, shutting down");
-                let _ = server_mailbox.terminate().await;
-                let _ = router_mailbox.terminate().await;
-                let _ = seeker_mailbox.terminate().await;
-                if let Err(err) = timeout(timeout_duration, server_handle).await {
-                    tracing::error!(error = ?err, "Failed to terminate server handle");
-                }
-                if let Err(err) = timeout(timeout_duration, router_handle).await {
-                    tracing::error!(error = ?err, "Failed to terminate router handle");
-                }
-                if let Err(err) = timeout(timeout_duration, seeker_handle).await {
-                    tracing::error!(error = ?err, "Failed to terminate seeker handle");
+            discovery_handle_result = &mut discovery_handle => {
+                if let Err(err) = discovery_handle_result {
+                    tracing::error!(error = ?err, "Discovery handle failed");
                 }
             }
 
             _ = tokio::signal::ctrl_c() => {
                 tracing::info!("Received CTRL+C, shutting down");
-                let _ = server_mailbox.terminate().await;
-                let _ = router_mailbox.terminate().await;
-                let _ = seeker_mailbox.terminate().await;
-                let _ = validator_mailbox.terminate().await;
-                if let Err(err) = timeout(timeout_duration, server_handle).await {
-                    tracing::error!(error = ?err, "Failed to terminate server handle");
+                let _ = discovery_mailbox.terminate().await;
+                if let Err(err) = timeout(timeout_duration, discovery_handle).await {
+                    tracing::error!(error = ?err, "Failed to terminate discovery handle");
                 }
-                if let Err(err) = timeout(timeout_duration, router_handle).await {
-                    tracing::error!(error = ?err, "Failed to terminate router handle");
-                }
-                if let Err(err) = timeout(timeout_duration, seeker_handle).await {
-                    tracing::error!(error = ?err, "Failed to terminate seeker handle");
-                }
-                if let Err(err) = timeout(timeout_duration, validator_handle).await {
-                    tracing::error!(error = ?err, "Failed to terminate validator handle");
-                }
-
             }
         }
 
