@@ -29,7 +29,6 @@ impl VM {
                     gas_refunded: 0,
                     output,
                     logs: std::mem::take(&mut current_call_frame.logs),
-                    created_address: None,
                 })
             }
             Err(error) => {
@@ -48,7 +47,6 @@ impl VM {
                     gas_refunded: 0,
                     output: Bytes::new(),
                     logs: std::mem::take(&mut current_call_frame.logs),
-                    created_address: None,
                 })
             }
         }
@@ -221,7 +219,6 @@ impl VM {
                         gas_refunded: self.env.refunded_gas,
                         output: std::mem::take(&mut current_call_frame.output),
                         logs: std::mem::take(&mut current_call_frame.logs),
-                        created_address: None,
                     });
                 }
             }
@@ -234,7 +231,6 @@ impl VM {
             gas_refunded: self.env.refunded_gas,
             output: std::mem::take(&mut current_call_frame.output),
             logs: std::mem::take(&mut current_call_frame.logs),
-            created_address: None,
         })
     }
 
@@ -267,7 +263,6 @@ impl VM {
             gas_refunded: self.env.refunded_gas,
             output: std::mem::take(&mut current_call_frame.output), // Bytes::new() if error is not RevertOpcode
             logs: std::mem::take(&mut current_call_frame.logs),
-            created_address: None,
         })
     }
 }

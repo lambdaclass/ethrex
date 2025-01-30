@@ -235,9 +235,6 @@ pub struct TransactionReport {
     pub gas_refunded: u64,
     pub output: Bytes,
     pub logs: Vec<Log>,
-    // This only applies to create transactions. It's fundamentally ambiguous since
-    // a transaction could create multiple new contracts, but whatever.
-    pub created_address: Option<Address>,
 }
 
 impl TransactionReport {

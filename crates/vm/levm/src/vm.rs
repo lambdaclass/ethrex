@@ -860,7 +860,6 @@ impl VM {
             logs: vec![],
             new_state: HashMap::default(),
             output: Bytes::new(),
-            created_address: None,
         };
 
         self.post_execution_changes(initial_call_frame, &mut report)?;
