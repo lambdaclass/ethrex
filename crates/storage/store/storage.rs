@@ -1055,6 +1055,15 @@ impl Store {
         self.engine.clear_state_trie_root_checkpoint()?;
         self.engine.clear_state_trie_key_checkpoint()
     }
+
+    pub fn write_snapshot_account(
+        &self,
+        account_hash: H256,
+        account_state: AccountState,
+    ) -> Result<(), StoreError> {
+        self.engine
+            .write_snapshot_account(account_hash, account_state)
+    }
 }
 
 pub fn hash_address(address: &Address) -> Vec<u8> {

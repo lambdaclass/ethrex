@@ -800,10 +800,7 @@ async fn heal_state_trie(
         // Take at most one batch so we don't overload the peer
         let batch = paths[0..min(paths.len(), NODE_BATCH_SIZE)].to_vec();
         let peer = peers.lock().await.get_peer_channels(Capability::Snap).await;
-        if let Some(nodes) = peer
-            .request_state_trienodes(state_root, batch)
-            .await
-        {
+        if let Some(nodes) = peer.request_state_trienodes(state_root, batch).await {
             info!("Received {} state nodes", nodes.len());
             // Reset retry counter for next request
             retry_count = 0;

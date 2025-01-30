@@ -2,15 +2,16 @@ use super::api::StoreEngine;
 use super::utils::{ChainDataIndex, SnapStateIndex};
 use crate::error::StoreError;
 use crate::rlp::{
-    AccountCodeHashRLP, AccountCodeRLP, BlockBodyRLP, BlockHashRLP, BlockHeaderRLP, BlockRLP,
-    BlockTotalDifficultyRLP, ReceiptRLP, Rlp, TransactionHashRLP, TupleRLP,
+    AccountCodeHashRLP, AccountCodeRLP, AccountHashRLP, AccountStateRLP, BlockBodyRLP,
+    BlockHashRLP, BlockHeaderRLP, BlockRLP, BlockTotalDifficultyRLP, ReceiptRLP, Rlp,
+    TransactionHashRLP, TupleRLP,
 };
 use anyhow::Result;
 use bytes::Bytes;
 use ethereum_types::{H256, U256};
 use ethrex_core::types::{
-    BlobsBundle, Block, BlockBody, BlockHash, BlockHeader, BlockNumber, ChainConfig, Index,
-    Receipt, Transaction,
+    AccountState, BlobsBundle, Block, BlockBody, BlockHash, BlockHeader, BlockNumber, ChainConfig,
+    Index, Receipt, Transaction, EMPTY_KECCACK_HASH,
 };
 use ethrex_rlp::decode::RLPDecode;
 use ethrex_rlp::encode::RLPEncode;
@@ -617,6 +618,40 @@ impl StoreEngine for Store {
     fn clear_state_heal_paths(&self) -> Result<(), StoreError> {
         self.delete::<SnapState>(SnapStateIndex::StateHealPaths)
     }
+
+    fn write_snapshot_account_batch(
+        &self,
+        account_hashes: Vec<H256>,
+        account_states: Vec<AccountState>,
+    ) -> Result<(), StoreError> {
+        self.write_batch::<StateSnapShot>(
+            account_hashes
+                .into_iter()
+                .map(|h| h.into())
+                .zip(account_states.into_iter().map(|a| a.into())),
+        )
+    }
+
+    fn rebuild_state_trie_from_snapshot(&self) -> Result<H256, StoreError> {
+        // Open a new state trie
+        let mut state_trie = self.open_state_trie(*EMPTY_KECCACK_HASH);
+        // Add all accounts
+        let txn = self
+            .db
+            .begin_readwrite()
+            .map_err(StoreError::LibmdbxError)?;
+        let cursor = txn
+            .cursor::<StateSnapShot>()
+            .map_err(StoreError::LibmdbxError)?;
+        for (hash, account) in cursor
+            .walk(None)
+            .map_while(|res| res.ok().map(|(hash, acc)| (hash.to(), acc.to())))
+        {
+            state_trie.insert(hash.to_fixed_bytes().to_vec(), account.encode_to_vec())?;
+        }
+        txn.clear_table::<StateSnapShot>();
+        Ok(state_trie.hash()?)
+    }
 }
 
 impl Debug for Store {
@@ -701,6 +736,10 @@ table!(
 table!(
     /// Stores blocks that are pending validation.
     ( PendingBlocks ) BlockHashRLP => BlockRLP
+);
+table!(
+    /// State Snapshot used by an ongoing sync process
+    ( StateSnapShot ) AccountHashRLP => AccountStateRLP
 );
 
 // Storage values are stored as bytes instead of using their rlp encoding
@@ -794,6 +833,7 @@ pub fn init_db(path: Option<impl AsRef<Path>>) -> Database {
         table_info!(Payloads),
         table_info!(PendingBlocks),
         table_info!(SnapState),
+        table_info!(StateSnapShot),
     ]
     .into_iter()
     .collect();

@@ -1,8 +1,8 @@
 use bytes::Bytes;
 use ethereum_types::{H256, U256};
 use ethrex_core::types::{
-    BlobsBundle, Block, BlockBody, BlockHash, BlockHeader, BlockNumber, ChainConfig, Index,
-    Receipt, Transaction,
+    AccountState, BlobsBundle, Block, BlockBody, BlockHash, BlockHeader, BlockNumber, ChainConfig,
+    Index, Receipt, Transaction,
 };
 use std::{fmt::Debug, panic::RefUnwindSafe};
 
@@ -286,4 +286,15 @@ pub trait StoreEngine: Debug + Send + Sync + RefUnwindSafe {
     fn get_state_heal_paths(&self) -> Result<Option<Vec<Nibbles>>, StoreError>;
 
     fn clear_state_heal_paths(&self) -> Result<(), StoreError>;
+
+    // Write an account into the current state snapshot
+    fn write_snapshot_account_batch(
+        &self,
+        account_hashes: Vec<H256>,
+        account_states: Vec<AccountState>,
+    ) -> Result<(), StoreError>;
+
+    // Rebuild the state trie from the current state snapshot and return its root
+    // Clears snapshot
+    fn rebuild_state_trie_from_snapshot(&self) -> Result<H256, StoreError>;
 }
