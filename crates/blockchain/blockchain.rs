@@ -199,14 +199,12 @@ pub fn validate_gas_used(
 fn verify_blob_gas_usage(block: &Block, config: &ChainConfig) -> Result<(), ChainError> {
     let mut blob_gas_used = 0_u64;
     let mut blobs_in_block = 0_u64;
-    let max_blob_gas_per_block = config
-        .get_fork_blob_schedule(block.header.timestamp)
-        .map(|schedule| schedule.max * GAS_PER_BLOB)
-        .ok_or(ChainError::Custom("Provided block fork is invalid".into()))?;
     let max_blob_number_per_block = config
         .get_fork_blob_schedule(block.header.timestamp)
         .map(|schedule| schedule.max)
         .ok_or(ChainError::Custom("Provided block fork is invalid".into()))?;
+    let max_blob_gas_per_block = max_blob_number_per_block * GAS_PER_BLOB
+    
     for transaction in block.body.transactions.iter() {
         if let Transaction::EIP4844Transaction(tx) = transaction {
             blob_gas_used += get_total_blob_gas(tx);
