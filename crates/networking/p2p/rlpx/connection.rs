@@ -681,6 +681,10 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
         buf.resize(msg_size + 2, 0);
 
         // Read the rest of the message
+        // Guard unwrap
+        if buf.len() < msg_size + 2 {
+            return Err(RLPxError::CryptographyError(String::from("bad buf size")));
+        }
         self.framed
             .get_mut()
             .read_exact(&mut buf[2..msg_size + 2])

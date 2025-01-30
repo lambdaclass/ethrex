@@ -260,7 +260,7 @@ impl PeerChannels {
     /// Requests storage ranges for accounts given their hashed address and storage roots, and the root of their state trie
     /// account_hashes & storage_roots must have the same length
     /// storage_roots must not contain empty trie hashes, we will treat empty ranges as invalid responses
-    /// Returns true if the last accoun't storage was not completely fetched by the request
+    /// Returns true if the last account's storage was not completely fetched by the request
     /// Returns the list of hashed storage keys and values for each account's storage or None if:
     /// - There are no available peers (the node just started up or was rejected by all other nodes)
     /// - The response timed out
@@ -446,5 +446,69 @@ impl PeerChannels {
                     .ok()
             })
             .flatten()
+    }
+
+    /// Requests a single storage range for an accouns given its hashed address and storage root, and the root of its state trie
+    /// This is a simplified version of `request_storage_range` meant to be used for large tries that require their own single requests
+    /// account_hashes & storage_roots must have the same length
+    /// storage_root must not be an empty trie hash, we will treat empty ranges as invalid responses
+    /// Returns true if the account's storage was not completely fetched by the request
+    /// Returns the list of hashed storage keys and values for the account's storage or None if:
+    /// - There are no available peers (the node just started up or was rejected by all other nodes)
+    /// - The response timed out
+    /// - The response was empty or not valid
+    pub async fn request_storage_range(
+        &self,
+        state_root: H256,
+        storage_root: H256,
+        account_hash: H256,
+        start: H256,
+    ) -> Option<(Vec<H256>, Vec<U256>, bool)> {
+        let request_id = rand::random();
+        let request = RLPxMessage::GetStorageRanges(GetStorageRanges {
+            id: request_id,
+            root_hash: state_root,
+            account_hashes: vec![account_hash],
+            starting_hash: start,
+            limit_hash: HASH_MAX,
+            response_bytes: MAX_RESPONSE_BYTES,
+        });
+        let mut receiver = self.receiver.lock().await;
+        self.sender.send(request).await.ok()?;
+        let (mut slots, proof) = tokio::time::timeout(PEER_REPLY_TIMOUT, async move {
+            loop {
+                match receiver.recv().await {
+                    Some(RLPxMessage::StorageRanges(StorageRanges { id, slots, proof }))
+                        if id == request_id =>
+                    {
+                        return Some((slots, proof))
+                    }
+                    // Ignore replies that don't match the expected id (such as late responses)
+                    Some(_) => continue,
+                    None => return None,
+                }
+            }
+        })
+        .await
+        .ok()??;
+        // Check we got a reasonable amount of storage ranges
+        if slots.len() != 1 {
+            return None;
+        }
+        // Unzip & validate response
+        let proof = encodable_to_proof(&proof);
+        let (storage_keys, storage_values): (Vec<H256>, Vec<U256>) = slots
+            .remove(0)
+            .into_iter()
+            .map(|slot| (slot.hash, slot.data))
+            .unzip();
+        let encoded_values = storage_values
+            .iter()
+            .map(|val| val.encode_to_vec())
+            .collect::<Vec<_>>();
+        // Verify storage range
+        let should_continue =
+            verify_range(storage_root, &start, &storage_keys, &encoded_values, &proof).ok()?;
+        Some((storage_keys, storage_values, should_continue))
     }
 }
