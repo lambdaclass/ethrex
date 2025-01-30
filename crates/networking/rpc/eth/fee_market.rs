@@ -52,8 +52,7 @@ impl RpcHandler for FeeHistoryRequest {
                 params.len()
             )));
         };
-        let block_count: u64 =
-            parse_json_hex(&params[0]).map_err(|error| RpcErr::BadParams(error))?;
+        let block_count: u64 = parse_json_hex(&params[0]).map_err(RpcErr::BadParams)?;
         // NOTE: This check is offspec
         if block_count > MAX_BLOCK_COUNT {
             return Err(RpcErr::BadParams(
@@ -127,7 +126,7 @@ impl RpcHandler for FeeHistoryRequest {
                 (base_fee_per_gas[idx + 1], base_fee_per_blob_gas[idx + 1]) =
                     project_next_block_base_fee_values(&header);
             }
-            if self.reward_percentiles.len() > 0 {
+            if !self.reward_percentiles.is_empty() {
                 reward.push(calculate_percentiles_for_block(
                     Block::new(header, body),
                     &self.reward_percentiles,
