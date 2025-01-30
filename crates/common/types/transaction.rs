@@ -1658,8 +1658,8 @@ mod serde_impl {
                 chain_id: value.chain_id,
                 address: value.address,
                 nonce: value.nonce,
-                v: value.v,
-                y_parity: value.v,
+                v: value.y_parity,
+                y_parity: value.y_parity,
                 r: value.r_signature,
                 s: value.s_signature,
             }
@@ -1672,7 +1672,7 @@ mod serde_impl {
                 chain_id: entry.chain_id,
                 address: entry.address,
                 nonce: entry.nonce,
-                v: entry.v,
+                y_parity: entry.y_parity,
                 r_signature: entry.r,
                 s_signature: entry.s,
             }
@@ -2806,7 +2806,7 @@ mod tests {
                 chain_id: U256::from(1729),
                 address: H160::from_str("0x000a52D537c4150ec274dcE3962a0d179B7E71B1").unwrap(),
                 nonce: 2,
-                v: U256::one(),
+                y_parity: U256::one(),
                 r_signature: U256::from(22),
                 s_signature: U256::from(37),
             }],

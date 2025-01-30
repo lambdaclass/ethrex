@@ -905,7 +905,7 @@ pub fn tx_env(tx: &Transaction) -> TxEnv {
                             address: RevmAddress(auth_t.address.0.into()),
                             nonce: auth_t.nonce,
                         },
-                        auth_t.v.as_u32() as u8,
+                        auth_t.y_parity.as_u32() as u8,
                         RevmU256::from_le_bytes(auth_t.r_signature.to_little_endian()),
                         RevmU256::from_le_bytes(auth_t.s_signature.to_little_endian()),
                     )
@@ -971,7 +971,7 @@ fn tx_env_from_generic(tx: &GenericTransaction, basefee: u64) -> TxEnv {
                             address: RevmAddress(auth_t.address.0.into()),
                             nonce: auth_t.nonce,
                         },
-                        auth_t.v.as_u32() as u8,
+                        auth_t.y_parity.as_u32() as u8,
                         RevmU256::from_le_bytes(auth_t.r.to_little_endian()),
                         RevmU256::from_le_bytes(auth_t.s.to_little_endian()),
                     )

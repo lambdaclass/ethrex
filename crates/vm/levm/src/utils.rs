@@ -316,7 +316,6 @@ pub const fn max_blobs_per_block(fork: Fork) -> usize {
 /// calc_excess_blob_gas functions defined in EIP-4844 use the new
 /// values for the first block of the fork (and for all subsequent
 /// blocks)."
-
 pub const fn get_blob_base_fee_update_fraction_value(fork: Fork) -> U256 {
     match fork {
         Fork::Prague | Fork::Osaka => BLOB_BASE_FEE_UPDATE_FRACTION_PRAGUE,
@@ -482,7 +481,7 @@ pub fn eip7702_recover_address(
     if auth_tuple.r_signature > *SECP256K1_ORDER || U256::zero() >= auth_tuple.r_signature {
         return Ok(None);
     }
-    if auth_tuple.v != U256::one() && auth_tuple.v != U256::zero() {
+    if auth_tuple.y_parity != U256::one() && auth_tuple.y_parity != U256::zero() {
         return Ok(None);
     }
 
@@ -509,7 +508,7 @@ pub fn eip7702_recover_address(
 
     let Ok(recovery_id) = RecoveryId::parse(
         auth_tuple
-            .v
+            .y_parity
             .as_u32()
             .try_into()
             .map_err(|_| VMError::Internal(InternalError::ConversionError))?,

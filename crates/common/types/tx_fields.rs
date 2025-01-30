@@ -16,7 +16,7 @@ pub struct AuthorizationTuple {
     pub chain_id: U256,
     pub address: Address,
     pub nonce: u64,
-    pub v: U256,
+    pub y_parity: U256,
     pub r_signature: U256,
     pub s_signature: U256,
 }
@@ -27,7 +27,7 @@ impl RLPEncode for AuthorizationTuple {
             .encode_field(&self.chain_id)
             .encode_field(&self.address)
             .encode_field(&self.nonce)
-            .encode_field(&self.v)
+            .encode_field(&self.y_parity)
             .encode_field(&self.r_signature)
             .encode_field(&self.s_signature)
             .finish();
@@ -40,7 +40,7 @@ impl RLPDecode for AuthorizationTuple {
         let (chain_id, decoder) = decoder.decode_field("chain_id").unwrap();
         let (address, decoder) = decoder.decode_field("address").unwrap();
         let (nonce, decoder) = decoder.decode_field("nonce").unwrap();
-        let (v, decoder) = decoder.decode_field("v").unwrap();
+        let (y_parity, decoder) = decoder.decode_field("y_parity").unwrap();
         let (r_signature, decoder) = decoder.decode_field("r_signature").unwrap();
         let (s_signature, decoder) = decoder.decode_field("s_signature").unwrap();
         let rest = decoder.finish().unwrap();
@@ -49,7 +49,7 @@ impl RLPDecode for AuthorizationTuple {
                 chain_id,
                 address,
                 nonce,
-                v,
+                y_parity,
                 r_signature,
                 s_signature,
             },
