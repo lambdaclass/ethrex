@@ -2,9 +2,9 @@ name: LEVM
 
 on:
   push:
-    branches: [ "main" ]
+    branches: ["main"]
   pull_request:
-    branches: [ "**" ]
+    branches: ["**"]
     paths:
       - "crates/vm/levm/**"
 
@@ -58,6 +58,48 @@ jobs:
               echo "Percentage is not 100%."
               exit 1
           fi
+
+  hive-report-creation:
+    uses: ./.github/workflows/common_hive_reports.yaml
+  # Check we don't have a regression
+  hive-test-check:
+    # "Integration Test" is a required check, don't change the name
+    name: Integration Test
+    needs: hive-report-creation
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v4
+
+      - name: Download results (levm)
+        uses: actions/download-artifact@v4
+        with:
+          name: results_levm.md
+
+      - name: Rename result (1)
+        run: cp results.md results_levm.md
+
+      - name: Download results (revm)
+        uses: actions/download-artifact@v4
+        with:
+          name: results_revm.md
+
+      - name: Rename result (2)
+        run: cp results.md results_revm.md
+
+      - name: Create diff message
+        run: |
+          bash .github/scripts/levm_revm_diff.sh results_revm.md results_levm.md >> diff.md
+          cat diff.md >> $GITHUB_STEP_SUMMARY
+
+      - name: Check Regression
+        run: |
+          DIFF_CONTENT=$(cat diff.md)
+          if [ "$DIFF_CONTENT" != "No differences found" ]; then
+            echo "Regression found."
+            exit 1;
+          fi
+
   test:
     # "Test" is a required check, don't change the name
     name: Test
