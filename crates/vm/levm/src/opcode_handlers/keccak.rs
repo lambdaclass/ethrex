@@ -40,6 +40,6 @@ impl VM {
             .stack
             .push(U256::from_big_endian(&hasher.finalize()))?;
 
-        Ok(OpcodeResult::Continue)
+        Ok(OpcodeResult::Continue { pc_increment: 1 })
     }
 }

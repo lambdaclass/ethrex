@@ -22,7 +22,7 @@ impl VM {
         let sum = augend.overflowing_add(addend).0;
         current_call_frame.stack.push(sum)?;
 
-        Ok(OpcodeResult::Continue)
+        Ok(OpcodeResult::Continue { pc_increment: 1 })
     }
 
     // SUB operation
@@ -34,7 +34,7 @@ impl VM {
         let difference = minuend.overflowing_sub(subtrahend).0;
         current_call_frame.stack.push(difference)?;
 
-        Ok(OpcodeResult::Continue)
+        Ok(OpcodeResult::Continue { pc_increment: 1 })
     }
 
     // MUL operation
@@ -46,7 +46,7 @@ impl VM {
         let product = multiplicand.overflowing_mul(multiplier).0;
         current_call_frame.stack.push(product)?;
 
-        Ok(OpcodeResult::Continue)
+        Ok(OpcodeResult::Continue { pc_increment: 1 })
     }
 
     // DIV operation
@@ -57,11 +57,11 @@ impl VM {
         let divisor = current_call_frame.stack.pop()?;
         let Some(quotient) = dividend.checked_div(divisor) else {
             current_call_frame.stack.push(U256::zero())?;
-            return Ok(OpcodeResult::Continue);
+            return Ok(OpcodeResult::Continue { pc_increment: 1 });
         };
         current_call_frame.stack.push(quotient)?;
 
-        Ok(OpcodeResult::Continue)
+        Ok(OpcodeResult::Continue { pc_increment: 1 })
     }
 
     // SDIV operation
@@ -72,7 +72,7 @@ impl VM {
         let divisor = current_call_frame.stack.pop()?;
         if divisor.is_zero() || dividend.is_zero() {
             current_call_frame.stack.push(U256::zero())?;
-            return Ok(OpcodeResult::Continue);
+            return Ok(OpcodeResult::Continue { pc_increment: 1 });
         }
 
         let abs_dividend = abs(dividend);
@@ -92,7 +92,7 @@ impl VM {
 
         current_call_frame.stack.push(quotient)?;
 
-        Ok(OpcodeResult::Continue)
+        Ok(OpcodeResult::Continue { pc_increment: 1 })
     }
 
     // MOD operation
@@ -106,7 +106,7 @@ impl VM {
 
         current_call_frame.stack.push(remainder)?;
 
-        Ok(OpcodeResult::Continue)
+        Ok(OpcodeResult::Continue { pc_increment: 1 })
     }
 
     // SMOD operation
@@ -118,7 +118,7 @@ impl VM {
 
         if unchecked_divisor.is_zero() || unchecked_dividend.is_zero() {
             current_call_frame.stack.push(U256::zero())?;
-            return Ok(OpcodeResult::Continue);
+            return Ok(OpcodeResult::Continue { pc_increment: 1 });
         }
 
         let divisor = abs(unchecked_divisor);
@@ -128,7 +128,7 @@ impl VM {
             Some(remainder) => remainder,
             None => {
                 current_call_frame.stack.push(U256::zero())?;
-                return Ok(OpcodeResult::Continue);
+                return Ok(OpcodeResult::Continue { pc_increment: 1 });
             }
         };
 
@@ -140,7 +140,7 @@ impl VM {
 
         current_call_frame.stack.push(remainder)?;
 
-        Ok(OpcodeResult::Continue)
+        Ok(OpcodeResult::Continue { pc_increment: 1 })
     }
 
     // ADDMOD operation
@@ -156,7 +156,7 @@ impl VM {
 
         if modulus.is_zero() {
             current_call_frame.stack.push(U256::zero())?;
-            return Ok(OpcodeResult::Continue);
+            return Ok(OpcodeResult::Continue { pc_increment: 1 });
         }
 
         let new_augend: U512 = augend.into();
@@ -176,7 +176,7 @@ impl VM {
 
         current_call_frame.stack.push(sum_mod)?;
 
-        Ok(OpcodeResult::Continue)
+        Ok(OpcodeResult::Continue { pc_increment: 1 })
     }
 
     // MULMOD operation
@@ -192,7 +192,7 @@ impl VM {
 
         if modulus.is_zero() || multiplicand.is_zero() || multiplier.is_zero() {
             current_call_frame.stack.push(U256::zero())?;
-            return Ok(OpcodeResult::Continue);
+            return Ok(OpcodeResult::Continue { pc_increment: 1 });
         }
 
         let multiplicand: U512 = multiplicand.into();
@@ -213,7 +213,7 @@ impl VM {
 
         current_call_frame.stack.push(product_mod)?;
 
-        Ok(OpcodeResult::Continue)
+        Ok(OpcodeResult::Continue { pc_increment: 1 })
     }
 
     // EXP operation
@@ -228,7 +228,7 @@ impl VM {
         let power = base.overflowing_pow(exponent).0;
         current_call_frame.stack.push(power)?;
 
-        Ok(OpcodeResult::Continue)
+        Ok(OpcodeResult::Continue { pc_increment: 1 })
     }
 
     // SIGNEXTEND operation
@@ -243,7 +243,7 @@ impl VM {
 
         if byte_size_minus_one > U256::from(31) {
             current_call_frame.stack.push(value_to_extend)?;
-            return Ok(OpcodeResult::Continue);
+            return Ok(OpcodeResult::Continue { pc_increment: 1 });
         }
 
         let bits_per_byte = U256::from(8);
@@ -272,7 +272,7 @@ impl VM {
         };
         current_call_frame.stack.push(result)?;
 
-        Ok(OpcodeResult::Continue)
+        Ok(OpcodeResult::Continue { pc_increment: 1 })
     }
 }
 

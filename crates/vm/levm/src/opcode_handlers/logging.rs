@@ -55,6 +55,6 @@ impl VM {
         };
         current_call_frame.logs.push(log);
 
-        Ok(OpcodeResult::Continue)
+        Ok(OpcodeResult::Continue { pc_increment: 1 })
     }
 }
