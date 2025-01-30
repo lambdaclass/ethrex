@@ -679,7 +679,7 @@ impl VM {
 
         self.accrued_substate.created_accounts.insert(new_address); // Mostly for SELFDESTRUCT during initcode.
 
-        let tx_report = self.execute(&mut new_call_frame)?;
+        let tx_report = self.run_execute(&mut new_call_frame)?;
         let unused_gas = max_message_call_gas
             .checked_sub(tx_report.gas_used)
             .ok_or(InternalError::GasOverflow)?;
@@ -804,7 +804,7 @@ impl VM {
             increase_account_balance(&mut self.cache, &mut self.db, to, value)?;
         }
 
-        let tx_report = self.execute(&mut new_call_frame)?;
+        let tx_report = self.run_execute(&mut new_call_frame)?;
 
         // Return gas left from subcontext
         let gas_left_from_new_call_frame = new_call_frame
