@@ -10,12 +10,20 @@ env:
   RUST_VERSION: 1.81.0
 
 jobs:
-  hive-report-creation:
+  hive-report-creation-levm:
     uses: ./.github/workflows/common/hive_reports.yaml
+    with:
+      evm: "levm"
+      job_type: "daily"
+  hive-report-creation-revm:
+    uses: ./.github/workflows/common/hive_reports.yaml
+    with:
+      evm: "revm"
+      job_type: "daily"
 
   hive-diff-report:
     name: Post tests diff to levm slack
-    needs: hive-report-creation
+    needs: [hive-report-creation-levm, hive-report-creation-revm]
     runs-on: ubuntu-latest
     steps:
       - name: Checkout sources
@@ -24,7 +32,7 @@ jobs:
       - name: Download results (levm)
         uses: actions/download-artifact@v4
         with:
-          name: results_levm.md
+          name: results_levm_daily_main.md
 
       - name: Rename result (1)
         run: cp results.md results_levm.md
@@ -32,14 +40,14 @@ jobs:
       - name: Download results (revm)
         uses: actions/download-artifact@v4
         with:
-          name: results_revm.md
+          name: results_revm_daily_main.md
 
       - name: Rename result (2)
         run: cp results.md results_revm.md
 
       - name: Create diff message
         run: |
-          bash .github/scripts/levm_revm_diff.sh results_revm.md results_levm.md >> diff.md
+          bash .github/scripts/hive_levm_revm_diff.sh results_revm.md results_levm.md >> diff.md
           cat diff.md >> $GITHUB_STEP_SUMMARY
 
       - name: Post results to Slack

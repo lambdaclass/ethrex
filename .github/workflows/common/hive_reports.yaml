@@ -1,6 +1,17 @@
 name: Run Hive Tests
 
-on: workflow_call
+on:
+  workflow_call:
+    inputs:
+      # Must be 'levm' or 'revm'
+      evm:
+        required: true
+        type: string
+      # Must be 'daily' or 'trigger'
+      # If it's daily, it is assumed that the CI is checking out the main branch
+      job_type:
+        required: true
+        type: string
 
 env:
   CARGO_TERM_COLOR: always
@@ -8,11 +19,10 @@ env:
 
 jobs:
   run-hive:
-    name: Hive (${{ matrix.vm }}) - ${{ matrix.test.name }}
+    name: Hive (${{ inputs.evm }}) - ${{ matrix.test.name }}
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        vm: [levm, revm]
         test:
           - {
               name: "Rpc Compat tests",
@@ -29,7 +39,7 @@ jobs:
 
     steps:
       - name: Pull image
-        if: ${{ matrix.vm == 'revm' }}
+        if: ${{ inputs.evm == 'revm' }}
         run: |
           docker pull ghcr.io/lambdaclass/ethrex:latest
           docker tag ghcr.io/lambdaclass/ethrex:latest ethrex:latest
@@ -38,7 +48,7 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Build Image with LEVM
-        if: ${{ matrix.vm == 'levm' }}
+        if: ${{ inputs.evm == 'levm' }}
         run: cd crates/vm/levm && make build-image-levm
 
       - name: Setup Go
@@ -54,17 +64,14 @@ jobs:
       - name: Upload results
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.test.file_name }}_${{ matrix.vm }}_logs
+          name: ${{ matrix.test.file_name }}_${{ inputs.evm }}_${{ inputs.job_type }}_logs
           path: hive/workspace/logs/*-*.json
           if-no-files-found: error
 
   hive-report:
-    name: Generate and Save report (${{ matrix.vm }})
+    name: Generate and Save report (${{ inputs.evm }})
     needs: run-hive
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        vm: [levm, revm]
     steps:
       - name: Checkout sources
         uses: actions/checkout@v4
@@ -78,7 +85,7 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           path: hive/workspace/logs
-          pattern: "*_${{ matrix.vm }}_logs"
+          pattern: "*_${{ inputs.evm }}_${{ inputs.job_type }}_logs"
           merge-multiple: true
 
       - name: Caching
@@ -87,14 +94,15 @@ jobs:
       - name: Generate the hive report
         run: cargo run -p hive_report > results.md
 
-      - name: Upload ${{matrix.vm}} result
+      - name: Upload ${{inputs.evm}}_${{ inputs.job_type }} result
+        if: ${{ inputs.main_branch != 'true' }}
         uses: actions/upload-artifact@v4
         with:
-          name: results_${{matrix.vm}}.md
+          name: results_${{inputs.evm}}_${{ inputs.job_type }}.md
           path: results.md
           if-no-files-found: error
 
       - name: Post results in summary
         run: |
-          echo "# Hive coverage report (${{ matrix.vm }})" >> $GITHUB_STEP_SUMMARY
+          echo "# Hive coverage report (${{ inputs.evm }})" >> $GITHUB_STEP_SUMMARY
           cat results.md >> $GITHUB_STEP_SUMMARY

@@ -60,9 +60,12 @@ jobs:
 
   hive-report-creation:
     uses: ./.github/workflows/common/hive_reports.yaml
-  # Check we don't have a regression
+    with:
+      evm: "levm"
+      job_type: "trigger"
+
+  # Check we don't have a regression against main
   hive-test:
-    # "Integration Test" is a required check, don't change the name
     name: Hive Tests Check
     needs: hive-report-creation
     runs-on: ubuntu-latest
@@ -70,34 +73,38 @@ jobs:
       - name: Checkout sources
         uses: actions/checkout@v4
 
-      - name: Download results (levm)
+      - name: Download results (pr)
         uses: actions/download-artifact@v4
         with:
-          name: results_levm.md
+          name: results_levm_trigger.md
 
       - name: Rename result (1)
         run: cp results.md results_levm.md
 
-      - name: Download results (revm)
+      - name: Download results (main)
         uses: actions/download-artifact@v4
         with:
-          name: results_revm.md
+          name: results_levm_daily.md
+        # If we don't have the file it will use the result(1) file
+        continue-on-error: true
 
       - name: Rename result (2)
-        run: cp results.md results_revm.md
+        run: cp results.md results_levm_daily.md
 
       - name: Create diff message
         run: |
-          bash .github/scripts/levm_revm_diff.sh results_revm.md results_levm.md >> diff.md
+          bash .github/scripts/hive_levm_revm_diff.sh results_levm_daily.md results_levm.md >> diff.md
           cat diff.md >> $GITHUB_STEP_SUMMARY
 
       - name: Check Regression
         run: |
           if grep -q "No differences found" diff.md; then
             echo "No regression found."
+          elif ! grep -q "regression" diff.md; then
+            echo "No regression found."
           else
-            echo "Regression found."
-            exit 1;
+            echo "Differences found."
+            exit 1
           fi
 
   # The purpose of this job is to add it as a required check in GitHub so that we don't have to add every individual job as a required check
