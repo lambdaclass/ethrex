@@ -8,12 +8,13 @@ use ethrex_core::{
         calculate_base_fee_per_blob_gas, calculate_base_fee_per_gas, compute_receipts_root,
         compute_transactions_root, compute_withdrawals_root, BlobsBundle, Block, BlockBody,
         BlockHash, BlockHeader, BlockNumber, ChainConfig, MempoolTransaction, Receipt, Transaction,
-        Withdrawal, DEFAULT_OMMERS_HASH, GWEI_TO_WEI,
+        Withdrawal, DEFAULT_OMMERS_HASH,
     },
     Address, Bloom, Bytes, H256, U256,
 };
 #[cfg(feature = "levm")]
 use ethrex_levm::AccountInfo;
+
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_storage::{error::StoreError, Store};
 #[cfg(feature = "levm")]
@@ -23,6 +24,9 @@ use ethrex_vm::{
 
 #[cfg(feature = "levm")]
 use ethrex_levm::Account;
+
+#[cfg(feature = "levm")]
+use ethrex_core::types::GWEI_TO_WEI;
 
 #[cfg(feature = "levm")]
 use std::sync::Arc;
