@@ -51,31 +51,27 @@ pub async fn get_new_request_from_msg(
     storage: &Store,
 ) -> Result<Option<TransactionRequest>, RLPxError> {
     let mut global_requested_transactions = global_requested_transactions.lock().await;
-    if let Some(unknown_for_mempool) =
-        storage.get_transactions_to_request(&msg.transaction_hashes)?
-    {
-        let mut unknown_tx_hashes = vec![];
-        let mut unknown_tx_types = vec![];
-        let mut unknown_tx_sizes = vec![];
-        for (index, hash) in msg.transaction_hashes.iter().enumerate() {
-            if unknown_for_mempool.contains(hash) && !global_requested_transactions.contains(hash) {
-                unknown_tx_hashes.push(*hash);
-                unknown_tx_types.push(msg.transaction_types[index]);
-                unknown_tx_sizes.push(msg.transaction_sizes[index]);
-                global_requested_transactions.insert(*hash);
-            }
+    let unknown_for_mempool = storage.filter_unknown_transactions(&msg.transaction_hashes)?;
+    let mut unknown_tx_hashes = vec![];
+    let mut unknown_tx_types = vec![];
+    let mut unknown_tx_sizes = vec![];
+    for (index, hash) in msg.transaction_hashes.iter().enumerate() {
+        if unknown_for_mempool.contains(hash) && !global_requested_transactions.contains(hash) {
+            unknown_tx_hashes.push(*hash);
+            unknown_tx_types.push(msg.transaction_types[index]);
+            unknown_tx_sizes.push(msg.transaction_sizes[index]);
+            global_requested_transactions.insert(*hash);
         }
-        if !unknown_tx_hashes.is_empty() {
-            return Ok(None);
-        }
-        return Ok(Some(TransactionRequest::new(
-            unknown_tx_hashes,
-            unknown_tx_types,
-            unknown_tx_sizes,
-        )));
     }
-    // All txs already known
-    Ok(None)
+    if !unknown_tx_hashes.is_empty() {
+        // All txs already known
+        return Ok(None);
+    }
+    Ok(Some(TransactionRequest::new(
+        unknown_tx_hashes,
+        unknown_tx_types,
+        unknown_tx_sizes,
+    )))
 }
 
 pub async fn remove_stale_requests(
