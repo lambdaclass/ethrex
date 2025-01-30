@@ -10,7 +10,7 @@ use ethrex_core::{
         BlockHash, BlockHeader, BlockNumber, ChainConfig, MempoolTransaction, Receipt, Transaction,
         Withdrawal, DEFAULT_OMMERS_HASH, GWEI_TO_WEI,
     },
-    Address, Bloom, Bytes, H160, H256, U256,
+    Address, Bloom, Bytes, H256, U256,
 };
 #[cfg(feature = "levm")]
 use ethrex_levm::AccountInfo;
@@ -325,15 +325,12 @@ fn fetch_mempool_transactions(
 /// Returns the block value
 pub fn fill_transactions(
     context: &mut PayloadBuildContext,
-    block_cache: &mut HashMap<H160, Account>,
+    block_cache: &mut HashMap<Address, Account>,
 ) -> Result<(), ChainError> {
     let chain_config = context.chain_config()?;
     debug!("Fetching transactions from mempool");
     // Fetch mempool transactions
     let (mut plain_txs, mut blob_txs) = fetch_mempool_transactions(context)?;
-    // there is no problem of a hashmap in non levm  implementation because we return empty updates
-    // let mut all_account_updates: HashMap<Address, AccountUpdate> = HashMap::new();
-    // let mut block_cache: HashMap<H160, Account> = HashMap::new();
     // Execute and add transactions to payload (if suitable)
     loop {
         // Check if we have enough gas to run more transactions
@@ -439,7 +436,7 @@ pub fn fill_transactions(
 fn apply_transaction(
     head: &HeadTransaction,
     context: &mut PayloadBuildContext,
-    block_cache: &mut HashMap<H160, Account>,
+    block_cache: &mut HashMap<Address, Account>,
 ) -> Result<Receipt, ChainError> {
     match **head {
         Transaction::EIP4844Transaction(_) => apply_blob_transaction(head, context, block_cache),
@@ -451,7 +448,7 @@ fn apply_transaction(
 fn apply_blob_transaction(
     head: &HeadTransaction,
     context: &mut PayloadBuildContext,
-    block_cache: &mut HashMap<H160, Account>,
+    block_cache: &mut HashMap<Address, Account>,
 ) -> Result<Receipt, ChainError> {
     // Fetch blobs bundle
     let tx_hash = head.tx.compute_hash();
@@ -485,7 +482,7 @@ fn apply_blob_transaction(
 fn apply_plain_transaction(
     head: &HeadTransaction,
     context: &mut PayloadBuildContext,
-    block_cache: &mut HashMap<H160, Account>,
+    block_cache: &mut HashMap<Address, Account>,
 ) -> Result<Receipt, ChainError> {
     #[cfg(feature = "levm")]
     {
@@ -555,7 +552,7 @@ fn apply_plain_transaction(
 
 fn finalize_payload(
     context: &mut PayloadBuildContext,
-    block_cache: &mut HashMap<H160, Account>,
+    block_cache: &mut HashMap<Address, Account>,
 ) -> Result<(), StoreError> {
     #[cfg(feature = "levm")]
     {
