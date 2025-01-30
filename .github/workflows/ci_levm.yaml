@@ -101,7 +101,7 @@ jobs:
       - name: Check Regression
         run: |
           if grep -q "No differences found" diff.md; then
-            echo "No regression found."
+            echo "No differences found."
           elif ! grep -q "regression" diff.md; then
             echo "No regression found."
           else

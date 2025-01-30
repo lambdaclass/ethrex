@@ -11,12 +11,12 @@ env:
 
 jobs:
   hive-report-creation-levm:
-    uses: ./.github/workflows/common/hive_reports.yaml
+    uses: ./.github/workflows/common_hive_reports.yaml
     with:
       evm: levm
       job_type: daily
   hive-report-creation-revm:
-    uses: ./.github/workflows/common/hive_reports.yaml
+    uses: ./.github/workflows/common_hive_reports.yaml
     with:
       evm: revm
       job_type: daily
