@@ -165,7 +165,6 @@ impl VM {
 
     pub fn handle_opcode_result(
         &mut self,
-        // _reason: HaltReason,
         current_call_frame: &mut CallFrame,
         backup: StateBackup,
     ) -> Result<TransactionReport, VMError> {
