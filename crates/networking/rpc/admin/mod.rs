@@ -36,7 +36,10 @@ pub fn node_info(
     local_node_record: NodeRecord,
 ) -> Result<Value, RpcErr> {
     let enode_url = local_node.enode_url();
-    let enr_url = local_node_record.enr_url();
+    let enr_url = match local_node_record.enr_url() {
+        Ok(enr) => enr,
+        Err(_) => "".into(),
+    };
     let mut protocols = HashMap::new();
 
     let chain_config = storage
