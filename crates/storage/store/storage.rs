@@ -1008,14 +1008,6 @@ impl Store {
         self.engine.get_header_download_checkpoint()
     }
 
-    pub fn set_state_trie_root_checkpoint(&self, current_root: H256) -> Result<(), StoreError> {
-        self.engine.set_state_trie_root_checkpoint(current_root)
-    }
-
-    pub fn get_state_trie_root_checkpoint(&self) -> Result<Option<H256>, StoreError> {
-        self.engine.get_state_trie_root_checkpoint()
-    }
-
     pub fn set_state_trie_key_checkpoint(&self, last_key: H256) -> Result<(), StoreError> {
         self.engine.set_state_trie_key_checkpoint(last_key)
     }
@@ -1052,7 +1044,6 @@ impl Store {
     pub fn clear_snap_state(&self) -> Result<(), StoreError> {
         //self.engine.clear_header_download_checkpoint()?; TODO: Uncomment
         self.engine.clear_pending_storage_heal_accounts()?;
-        self.engine.clear_state_trie_root_checkpoint()?;
         self.engine.clear_state_trie_key_checkpoint()
     }
 
