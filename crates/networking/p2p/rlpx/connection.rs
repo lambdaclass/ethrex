@@ -239,7 +239,8 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
         error!("{error_text}: ({error}), discarding peer {remote_node_id}");
         table.lock().await.replace_peer(remote_node_id);
 
-        pending_requests::remove_peer_requests(
+        // Clear pending requested transactions from peer.
+        pending_requests::remove_peer_pending_requests(
             &self.global_requested_transactions,
             pending_requests,
         )

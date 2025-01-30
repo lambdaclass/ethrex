@@ -43,8 +43,9 @@ impl TransactionRequest {
     }
 }
 
-// TODO: add description
-// adds unknown transactions to `global_requested_transactions`.
+/// Keeps only transactions from the received message that are neither in the mempool nor already requested.  
+/// Adds unknown transactions to `global_requested_transactions` to prevent re-requesting them.  
+/// Returns a new `TransactionRequest`.  
 pub async fn get_new_request_from_msg(
     msg: NewPooledTransactionHashes,
     global_requested_transactions: &Arc<Mutex<HashSet<H256>>>,
@@ -74,23 +75,37 @@ pub async fn get_new_request_from_msg(
     )))
 }
 
+/// Removes stale transaction requests from `peer_pending_requests`.  
+/// If stale requests exist, their transaction hashes are removed from `global_requested_transactions`.
 pub async fn remove_stale_requests(
     global_requested_transactions: &Arc<Mutex<HashSet<H256>>>,
     peer_pending_requests: &mut HashMap<u64, TransactionRequest>,
 ) {
-    let mut global_requested_transactions = global_requested_transactions.lock().await;
     let time = Instant::now();
-    for (_, request) in peer_pending_requests.iter() {
-        if request.is_stale(time) {
-            for hash in &request.transaction_hashes {
+
+    // Collect stale request IDs first (no lock needed yet)
+    let stale_requests: Vec<u64> = peer_pending_requests
+        .iter()
+        .filter_map(|(id, req)| req.is_stale(time).then_some(*id))
+        .collect();
+
+    if stale_requests.is_empty() {
+        return;
+    }
+
+    // Remove stale requests and update global transactions
+    let mut global_requested_transactions = global_requested_transactions.lock().await;
+
+    for request_id in &stale_requests {
+        if let Some(stale_request) = peer_pending_requests.remove(request_id) {
+            for hash in &stale_request.transaction_hashes {
                 global_requested_transactions.remove(hash);
             }
         }
     }
-    peer_pending_requests.retain(|_, req| !req.is_stale(time));
 }
 
-pub async fn remove_peer_requests(
+pub async fn remove_peer_pending_requests(
     global_requested_transactions: &Arc<Mutex<HashSet<H256>>>,
     peer_pending_requests: &mut HashMap<u64, TransactionRequest>,
 ) {
@@ -102,7 +117,9 @@ pub async fn remove_peer_requests(
     }
 }
 
+/// Validates the received transactions against the previous request.
 /// Saves every incoming pooled transaction to the mempool.
+/// Removes all requested transactions from `global_requested_transactions`.
 pub async fn handle_response(
     response: PooledTransactions,
     store: &Store,
@@ -137,7 +154,7 @@ pub async fn handle_response(
             }
         }
     }
-    // txs were added to mempool, it's safe to remove it from pending_requests.
+    // The received txs were added to the mempool, it's safe to remove them from `global_requested_transactions`.
     let mut global_requested_transactions = global_requested_transactions.lock().await;
     let request = peer_pending_requests.remove(&response.id).unwrap();
     for hash in request.transaction_hashes {
@@ -209,18 +226,18 @@ mod tests {
         Vec<H256>,
         u64,
     ) {
-        let mut requested_transactions = HashSet::new();
+        let mut global_requested_transactions = HashSet::new();
         let mut peer_pending_requests = HashMap::new();
         let tx_1 = H256::random();
         let tx_2 = H256::random();
         let transactions = vec![tx_1, tx_2];
-        requested_transactions.insert(tx_1);
-        requested_transactions.insert(tx_2);
+        global_requested_transactions.insert(tx_1);
+        global_requested_transactions.insert(tx_2);
         let request = TransactionRequest::new(transactions.clone(), vec![], vec![]);
         let request_id = random();
         peer_pending_requests.insert(request_id, request);
         (
-            Arc::new(Mutex::new(requested_transactions)),
+            Arc::new(Mutex::new(global_requested_transactions)),
             peer_pending_requests,
             transactions,
             request_id,
@@ -238,7 +255,7 @@ mod tests {
     async fn test_remove_peer_request() {
         let (global_requested_transactions, mut pending_requests, tx_hashes, _request_id) = setup();
 
-        remove_peer_requests(&global_requested_transactions, &mut pending_requests).await;
+        remove_peer_pending_requests(&global_requested_transactions, &mut pending_requests).await;
 
         assert!(!global_requested_transactions
             .lock()
@@ -263,14 +280,16 @@ mod tests {
 
         let (_, mut fresh_pending_requests, fresh_tx_hashes, fresh_request_id) = setup();
 
+        // Insert the fresh request along with the stale one.
         pending_requests.insert(
             fresh_request_id,
             fresh_pending_requests.remove(&fresh_request_id).unwrap(),
         );
+        // Insert the fresh tx hashes along with the stale ones.
         {
             let mut global_requested_transactions = global_requested_transactions.lock().await;
-            global_requested_transactions.insert(*fresh_tx_hashes.first().unwrap());
-            global_requested_transactions.insert(*fresh_tx_hashes.get(1).unwrap());
+            global_requested_transactions.insert(fresh_tx_hashes[0]);
+            global_requested_transactions.insert(fresh_tx_hashes[1]);
         }
 
         remove_stale_requests(&global_requested_transactions, &mut pending_requests).await;
@@ -286,7 +305,7 @@ mod tests {
         assert!(global_requested_transactions.contains(&fresh_tx_hashes[1]));
     }
 
-    fn setup_pool() -> (P2PTransaction, P2PTransaction, PooledTransactions) {
+    fn setup_validation() -> (P2PTransaction, P2PTransaction, PooledTransactions) {
         let tx1 = LegacyTransaction {
             data: vec![0x01, 0x02].into(),
             ..Default::default()
@@ -309,7 +328,7 @@ mod tests {
 
     #[test]
     fn test_validate_successful() {
-        let (tx1, tx2, pool_msg) = setup_pool();
+        let (tx1, tx2, pool_msg) = setup_validation();
         let request = TransactionRequest {
             transaction_hashes: vec![tx1.compute_hash(), tx2.compute_hash()],
             transaction_sizes: vec![3, 3], // 1 + tx_data.len()
@@ -324,7 +343,7 @@ mod tests {
 
     #[test]
     fn test_validate_invalid_order() {
-        let (tx1, tx2, pool_msg) = setup_pool();
+        let (tx1, tx2, pool_msg) = setup_validation();
         let request = TransactionRequest {
             transaction_hashes: vec![tx2.compute_hash(), tx1.compute_hash()],
             transaction_sizes: vec![3, 3], // 1 + tx_data.len()
@@ -343,7 +362,7 @@ mod tests {
 
     #[test]
     fn test_validate_invalid_type() {
-        let (tx1, tx2, pool_msg) = setup_pool();
+        let (tx1, tx2, pool_msg) = setup_validation();
 
         let request = TransactionRequest {
             transaction_hashes: vec![tx1.compute_hash(), tx2.compute_hash()],
@@ -362,7 +381,7 @@ mod tests {
 
     #[test]
     fn test_validate_invalid_size() {
-        let (tx1, tx2, pool_msg) = setup_pool();
+        let (tx1, tx2, pool_msg) = setup_validation();
 
         let request = TransactionRequest {
             transaction_hashes: vec![tx1.compute_hash(), tx2.compute_hash()],
@@ -381,7 +400,7 @@ mod tests {
 
     #[test]
     fn test_validate_transaction_not_requested() {
-        let (tx1, _, pool_msg) = setup_pool();
+        let (tx1, _, pool_msg) = setup_validation();
 
         let request = TransactionRequest {
             transaction_hashes: vec![tx1.compute_hash()],
