@@ -1,4 +1,7 @@
-use ethrex_core::types::{Block, Transaction};
+use ethrex_core::{
+    constants::GAS_PER_BLOB,
+    types::{Block, Transaction},
+};
 use serde::Serialize;
 use serde_json::Value;
 use tracing::info;
@@ -104,11 +107,14 @@ impl RpcHandler for FeeHistoryRequest {
             let blob_base_fee = calculate_base_fee_per_blob_gas(
                 header.excess_blob_gas.unwrap_or_default(),
                 config
-                    .get_blob_base_fee_update_fraction(header.timestamp)
+                    .get_fork_blob_schedule(header.timestamp)
+                    .map(|schedule| schedule.base_fee_update_fraction)
                     .unwrap_or_default(),
             );
 
-            let max_blob_gas_per_block = config.get_max_blob_number_per_block(header.timestamp);
+            let max_blob_gas_per_block = config
+                .get_fork_blob_schedule(header.timestamp)
+                .map(|schedule| schedule.max * GAS_PER_BLOB);
             let blob_gas_used_r = match (header.blob_gas_used, max_blob_gas_per_block) {
                 (Some(blob_gas_used), Some(max_blob_gas)) => {
                     blob_gas_used as f64 / max_blob_gas as f64
@@ -137,7 +143,8 @@ impl RpcHandler for FeeHistoryRequest {
         let blob_base_fee = calculate_base_fee_per_blob_gas(
             header.excess_blob_gas.unwrap_or_default(),
             config
-                .get_blob_base_fee_update_fraction(header.timestamp)
+                .get_fork_blob_schedule(header.timestamp)
+                .map(|schedule| schedule.base_fee_update_fraction)
                 .unwrap_or_default(),
         );
         base_fee_per_gas.push(header.base_fee_per_gas.unwrap_or_default());

@@ -1,4 +1,3 @@
-use crate::constants::GAS_PER_BLOB;
 use bytes::Bytes;
 use ethereum_types::{Address, Bloom, H256, U256};
 use ethrex_rlp::encode::RLPEncode;
@@ -220,36 +219,11 @@ impl ChainConfig {
         }
     }
 
-    pub fn get_blob_base_fee_target(&self, block_timestamp: u64) -> Option<u64> {
+    pub fn get_fork_blob_schedule(&self, block_timestamp: u64) -> Option<ForkBlobSchedule> {
         if self.is_prague_activated(block_timestamp) {
-            Some(self.blob_schedule.prague.target)
+            Some(self.blob_schedule.prague)
         } else if self.is_cancun_activated(block_timestamp) {
-            Some(self.blob_schedule.cancun.target)
-        } else {
-            None
-        }
-    }
-
-    pub fn get_blob_base_fee_update_fraction(&self, block_timestamp: u64) -> Option<u64> {
-        if self.is_prague_activated(block_timestamp) {
-            Some(self.blob_schedule.prague.base_fee_update_fraction)
-        } else if self.is_cancun_activated(block_timestamp) {
-            Some(self.blob_schedule.cancun.base_fee_update_fraction)
-        } else {
-            None
-        }
-    }
-
-    pub fn get_max_blob_gas_per_block(&self, block_timestamp: u64) -> Option<u64> {
-        self.get_max_blob_number_per_block(block_timestamp)
-            .map(|number| number * GAS_PER_BLOB)
-    }
-
-    pub fn get_max_blob_number_per_block(&self, block_timestamp: u64) -> Option<u64> {
-        if self.is_prague_activated(block_timestamp) {
-            Some(self.blob_schedule.prague.max)
-        } else if self.is_cancun_activated(block_timestamp) {
-            Some(self.blob_schedule.cancun.max)
+            Some(self.blob_schedule.cancun)
         } else {
             None
         }

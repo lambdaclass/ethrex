@@ -336,7 +336,8 @@ impl RpcHandler for GetBlobBaseFee {
         let blob_base_fee = calculate_base_fee_per_blob_gas(
             parent_header.excess_blob_gas.unwrap_or_default(),
             config
-                .get_blob_base_fee_update_fraction(header.timestamp)
+                .get_fork_blob_schedule(header.timestamp)
+                .map(|schedule| schedule.base_fee_update_fraction)
                 .unwrap_or_default(),
         );
 
@@ -362,7 +363,8 @@ pub fn get_all_block_rpc_receipts(
     let blob_base_fee = calculate_base_fee_per_blob_gas(
         header.excess_blob_gas.unwrap_or_default(),
         config
-            .get_blob_base_fee_update_fraction(header.timestamp)
+            .get_fork_blob_schedule(header.timestamp)
+            .map(|schedule| schedule.base_fee_update_fraction)
             .unwrap_or_default(),
     );
 

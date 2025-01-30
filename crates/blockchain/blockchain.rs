@@ -200,10 +200,12 @@ fn verify_blob_gas_usage(block: &Block, config: &ChainConfig) -> Result<(), Chai
     let mut blob_gas_used = 0_u64;
     let mut blobs_in_block = 0_u64;
     let max_blob_gas_per_block = config
-        .get_max_blob_gas_per_block(block.header.timestamp)
+        .get_fork_blob_schedule(block.header.timestamp)
+        .map(|schedule| schedule.max * GAS_PER_BLOB)
         .ok_or(ChainError::Custom("Provided block fork is invalid".into()))?;
     let max_blob_number_per_block = config
-        .get_max_blob_number_per_block(block.header.timestamp)
+        .get_fork_blob_schedule(block.header.timestamp)
+        .map(|schedule| schedule.max)
         .ok_or(ChainError::Custom("Provided block fork is invalid".into()))?;
     for transaction in block.body.transactions.iter() {
         if let Transaction::EIP4844Transaction(tx) = transaction {

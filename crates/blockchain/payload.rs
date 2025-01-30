@@ -75,12 +75,12 @@ pub fn create_payload(args: &BuildPayloadArgs, storage: &Store) -> Result<Block,
     let chain_config = storage.get_chain_config()?;
     let gas_limit = calc_gas_limit(parent_block.gas_limit, DEFAULT_BUILDER_GAS_CEIL);
     let excess_blob_gas = chain_config
-        .get_blob_base_fee_target(args.timestamp)
-        .map(|target| {
+        .get_fork_blob_schedule(args.timestamp)
+        .map(|schedule| {
             calc_excess_blob_gas(
                 parent_block.excess_blob_gas.unwrap_or_default(),
                 parent_block.blob_gas_used.unwrap_or_default(),
-                target,
+                schedule.target,
             )
         });
 
@@ -181,7 +181,8 @@ impl<'a> PayloadBuildContext<'a> {
         let base_fee_per_blob_gas = calculate_base_fee_per_blob_gas(
             payload.header.excess_blob_gas.unwrap_or_default(),
             config
-                .get_blob_base_fee_update_fraction(payload.header.timestamp)
+                .get_fork_blob_schedule(payload.header.timestamp)
+                .map(|schedule| schedule.base_fee_update_fraction)
                 .unwrap_or_default(),
         );
 
@@ -285,7 +286,8 @@ fn fetch_mempool_transactions(
 pub fn fill_transactions(context: &mut PayloadBuildContext) -> Result<(), ChainError> {
     let chain_config = context.chain_config()?;
     let max_blob_number_per_block = chain_config
-        .get_max_blob_number_per_block(context.payload.header.timestamp)
+        .get_fork_blob_schedule(context.payload.header.timestamp)
+        .map(|schedule| schedule.max)
         .unwrap_or_default() as usize;
 
     debug!("Fetching transactions from mempool");
@@ -410,7 +412,8 @@ fn apply_blob_transaction(
     let tx_hash = head.tx.compute_hash();
     let chain_config = context.chain_config()?;
     let max_blob_number_per_block = chain_config
-        .get_max_blob_number_per_block(context.payload.header.timestamp)
+        .get_fork_blob_schedule(context.payload.header.timestamp)
+        .map(|schedule| schedule.max)
         .unwrap_or_default() as usize;
 
     let Some(blobs_bundle) = context
