@@ -255,7 +255,7 @@ pub fn apply_withdrawals(
         let fork = context
             .chain_config()?
             .fork(context.payload.header.timestamp);
-        if context.payload.header.parent_beacon_block_root.is_some() && fork == Fork::Cancun {
+        if context.payload.header.parent_beacon_block_root.is_some() && fork >= Fork::Cancun {
             let store_wrapper = Arc::new(StoreWrapper {
                 store: context.evm_state.database().unwrap().clone(),
                 block_hash: context.payload.header.parent_hash,
@@ -284,7 +284,7 @@ pub fn apply_withdrawals(
     {
         // Apply withdrawals & call beacon root contract, and obtain the new state root
         let spec_id = spec_id(&context.chain_config()?, context.payload.header.timestamp);
-        if context.payload.header.parent_beacon_block_root.is_some() && spec_id == SpecId::CANCUN {
+        if context.payload.header.parent_beacon_block_root.is_some() && spec_id >= SpecId::CANCUN {
             beacon_root_contract_call(context.evm_state, &context.payload.header, spec_id)?;
         }
         let withdrawals = context.payload.body.withdrawals.clone().unwrap_or_default();
