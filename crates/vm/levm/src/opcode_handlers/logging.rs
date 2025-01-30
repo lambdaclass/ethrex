@@ -1,6 +1,6 @@
 use crate::{
     call_frame::CallFrame,
-    errors::{OpcodeSuccess, VMError},
+    errors::{OpcodeResult, VMError},
     gas_cost,
     memory::{self, calculate_memory_size},
     vm::VM,
@@ -17,7 +17,7 @@ impl VM {
         &mut self,
         current_call_frame: &mut CallFrame,
         number_of_topics: u8,
-    ) -> Result<OpcodeSuccess, VMError> {
+    ) -> Result<OpcodeResult, VMError> {
         if current_call_frame.is_static {
             return Err(VMError::OpcodeNotAllowedInStaticContext);
         }
@@ -55,6 +55,6 @@ impl VM {
         };
         current_call_frame.logs.push(log);
 
-        Ok(OpcodeSuccess::Continue)
+        Ok(OpcodeResult::Continue { pc_increment: 1 })
     }
 }

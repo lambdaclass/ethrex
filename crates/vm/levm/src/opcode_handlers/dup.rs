@@ -1,6 +1,6 @@
 use crate::{
     call_frame::CallFrame,
-    errors::{OpcodeSuccess, VMError},
+    errors::{OpcodeResult, VMError},
     gas_cost,
     vm::VM,
 };
@@ -14,7 +14,7 @@ impl VM {
         &mut self,
         current_call_frame: &mut CallFrame,
         depth: usize,
-    ) -> Result<OpcodeSuccess, VMError> {
+    ) -> Result<OpcodeResult, VMError> {
         // Increase the consumed gas
         self.increase_consumed_gas(current_call_frame, gas_cost::DUPN)?;
 
@@ -35,6 +35,6 @@ impl VM {
         // Push the duplicated value onto the stack
         current_call_frame.stack.push(*value_at_depth)?;
 
-        Ok(OpcodeSuccess::Continue)
+        Ok(OpcodeResult::Continue { pc_increment: 1 })
     }
 }

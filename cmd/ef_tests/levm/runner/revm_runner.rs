@@ -462,7 +462,6 @@ pub fn _ensure_post_state_revm(
                             logs: vec![],
                             output: Bytes::new(),
                             new_state: HashMap::new(),
-                            created_address: None,
                         },
                         //TODO: This is not a TransactionReport because it is REVM
                         error_reason,
@@ -488,7 +487,6 @@ pub fn _ensure_post_state_revm(
                                 logs: vec![],
                                 output: Bytes::new(),
                                 new_state: HashMap::new(),
-                                created_address: None,
                             },
                             //TODO: This is not a TransactionReport because it is REVM
                             error_reason,

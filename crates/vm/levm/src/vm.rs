@@ -8,11 +8,10 @@ use crate::{
     },
     environment::Environment,
     errors::{
-        InternalError, OpcodeSuccess, OutOfGasError, ResultReason, TransactionReport, TxResult,
-        TxValidationError, VMError,
+        InternalError, OpcodeResult, OutOfGasError, TransactionReport, TxResult, TxValidationError,
+        VMError,
     },
-    gas_cost::{self, CODE_DEPOSIT_COST, STANDARD_TOKEN_COST, TOTAL_COST_FLOOR_PER_TOKEN},
-    opcodes::Opcode,
+    gas_cost::{self, STANDARD_TOKEN_COST, TOTAL_COST_FLOOR_PER_TOKEN},
     precompiles::{
         execute_precompile, is_precompile, SIZE_PRECOMPILES_CANCUN, SIZE_PRECOMPILES_PRAGUE,
         SIZE_PRECOMPILES_PRE_CANCUN,
@@ -42,6 +41,34 @@ pub struct Substate {
     pub touched_accounts: HashSet<Address>,
     pub touched_storage_slots: HashMap<Address, HashSet<H256>>,
     pub created_accounts: HashSet<Address>,
+}
+
+/// Backup if sub-context is reverted. It consists of a copy of:
+///   - Database
+///   - Substate
+///   - Gas Refunds
+///   - Transient Storage
+pub struct StateBackup {
+    cache: CacheDB,
+    substate: Substate,
+    refunded_gas: u64,
+    transient_storage: TransientStorage,
+}
+
+impl StateBackup {
+    pub fn new(
+        cache: CacheDB,
+        substate: Substate,
+        refunded_gas: u64,
+        transient_storage: TransientStorage,
+    ) -> StateBackup {
+        StateBackup {
+            cache,
+            substate,
+            refunded_gas,
+            transient_storage,
+        }
+    }
 }
 
 pub struct VM {
@@ -196,7 +223,7 @@ impl VM {
         current_call_frame: &mut CallFrame,
     ) -> Result<TransactionReport, VMError> {
         // Backup of Database, Substate, Gas Refunds and Transient Storage if sub-context is reverted
-        let (backup_db, backup_substate, backup_refunded_gas, backup_transient_storage) = (
+        let backup = StateBackup::new(
             self.cache.clone(),
             self.accrued_substate.clone(),
             self.env.refunded_gas,
@@ -205,292 +232,34 @@ impl VM {
 
         if is_precompile(&current_call_frame.code_address, self.env.fork) {
             let precompile_result = execute_precompile(current_call_frame, self.env.fork);
-
-            match precompile_result {
-                Ok(output) => {
-                    self.call_frames.push(current_call_frame.clone());
-
-                    return Ok(TransactionReport {
-                        result: TxResult::Success,
-                        new_state: self.cache.clone(),
-                        gas_used: current_call_frame.gas_used,
-                        gas_refunded: 0,
-                        output,
-                        logs: std::mem::take(&mut current_call_frame.logs),
-                        created_address: None,
-                    });
-                }
-                Err(error) => {
-                    if error.is_internal() {
-                        return Err(error);
-                    }
-
-                    self.call_frames.push(current_call_frame.clone());
-
-                    self.restore_state(
-                        backup_db,
-                        backup_substate,
-                        backup_refunded_gas,
-                        backup_transient_storage,
-                    );
-
-                    return Ok(TransactionReport {
-                        result: TxResult::Revert(error),
-                        new_state: HashMap::default(),
-                        gas_used: current_call_frame.gas_limit,
-                        gas_refunded: 0,
-                        output: Bytes::new(),
-                        logs: std::mem::take(&mut current_call_frame.logs),
-                        created_address: None,
-                    });
-                }
-            }
+            return self.handle_precompile_result(precompile_result, current_call_frame, backup);
         }
 
         loop {
             let opcode = current_call_frame.next_opcode();
 
-            let op_result: Result<OpcodeSuccess, VMError> = match opcode {
-                Opcode::STOP => Ok(OpcodeSuccess::Result(ResultReason::Stop)),
-                Opcode::ADD => self.op_add(current_call_frame),
-                Opcode::MUL => self.op_mul(current_call_frame),
-                Opcode::SUB => self.op_sub(current_call_frame),
-                Opcode::DIV => self.op_div(current_call_frame),
-                Opcode::SDIV => self.op_sdiv(current_call_frame),
-                Opcode::MOD => self.op_mod(current_call_frame),
-                Opcode::SMOD => self.op_smod(current_call_frame),
-                Opcode::ADDMOD => self.op_addmod(current_call_frame),
-                Opcode::MULMOD => self.op_mulmod(current_call_frame),
-                Opcode::EXP => self.op_exp(current_call_frame),
-                Opcode::SIGNEXTEND => self.op_signextend(current_call_frame),
-                Opcode::LT => self.op_lt(current_call_frame),
-                Opcode::GT => self.op_gt(current_call_frame),
-                Opcode::SLT => self.op_slt(current_call_frame),
-                Opcode::SGT => self.op_sgt(current_call_frame),
-                Opcode::EQ => self.op_eq(current_call_frame),
-                Opcode::ISZERO => self.op_iszero(current_call_frame),
-                Opcode::KECCAK256 => self.op_keccak256(current_call_frame),
-                Opcode::CALLDATALOAD => self.op_calldataload(current_call_frame),
-                Opcode::CALLDATASIZE => self.op_calldatasize(current_call_frame),
-                Opcode::CALLDATACOPY => self.op_calldatacopy(current_call_frame),
-                Opcode::RETURNDATASIZE => self.op_returndatasize(current_call_frame),
-                Opcode::RETURNDATACOPY => self.op_returndatacopy(current_call_frame),
-                Opcode::JUMP => self.op_jump(current_call_frame),
-                Opcode::JUMPI => self.op_jumpi(current_call_frame),
-                Opcode::JUMPDEST => self.op_jumpdest(current_call_frame),
-                Opcode::PC => self.op_pc(current_call_frame),
-                Opcode::BLOCKHASH => self.op_blockhash(current_call_frame),
-                Opcode::COINBASE => self.op_coinbase(current_call_frame),
-                Opcode::TIMESTAMP => self.op_timestamp(current_call_frame),
-                Opcode::NUMBER => self.op_number(current_call_frame),
-                Opcode::PREVRANDAO => self.op_prevrandao(current_call_frame),
-                Opcode::GASLIMIT => self.op_gaslimit(current_call_frame),
-                Opcode::CHAINID => self.op_chainid(current_call_frame),
-                Opcode::BASEFEE => self.op_basefee(current_call_frame),
-                Opcode::BLOBHASH => self.op_blobhash(current_call_frame),
-                Opcode::BLOBBASEFEE => self.op_blobbasefee(current_call_frame),
-                Opcode::PUSH0 => self.op_push0(current_call_frame),
-                // PUSHn
-                op if (Opcode::PUSH1..=Opcode::PUSH32).contains(&op) => {
-                    let n_bytes = get_n_value(op, Opcode::PUSH1)?;
-                    self.op_push(current_call_frame, n_bytes)
-                }
-                Opcode::AND => self.op_and(current_call_frame),
-                Opcode::OR => self.op_or(current_call_frame),
-                Opcode::XOR => self.op_xor(current_call_frame),
-                Opcode::NOT => self.op_not(current_call_frame),
-                Opcode::BYTE => self.op_byte(current_call_frame),
-                Opcode::SHL => self.op_shl(current_call_frame),
-                Opcode::SHR => self.op_shr(current_call_frame),
-                Opcode::SAR => self.op_sar(current_call_frame),
-                // DUPn
-                op if (Opcode::DUP1..=Opcode::DUP16).contains(&op) => {
-                    let depth = get_n_value(op, Opcode::DUP1)?;
-                    self.op_dup(current_call_frame, depth)
-                }
-                // SWAPn
-                op if (Opcode::SWAP1..=Opcode::SWAP16).contains(&op) => {
-                    let depth = get_n_value(op, Opcode::SWAP1)?;
-                    self.op_swap(current_call_frame, depth)
-                }
-                Opcode::POP => self.op_pop(current_call_frame),
-                op if (Opcode::LOG0..=Opcode::LOG4).contains(&op) => {
-                    let number_of_topics = get_number_of_topics(op)?;
-                    self.op_log(current_call_frame, number_of_topics)
-                }
-                Opcode::MLOAD => self.op_mload(current_call_frame),
-                Opcode::MSTORE => self.op_mstore(current_call_frame),
-                Opcode::MSTORE8 => self.op_mstore8(current_call_frame),
-                Opcode::SLOAD => self.op_sload(current_call_frame),
-                Opcode::SSTORE => self.op_sstore(current_call_frame),
-                Opcode::MSIZE => self.op_msize(current_call_frame),
-                Opcode::GAS => self.op_gas(current_call_frame),
-                Opcode::MCOPY => self.op_mcopy(current_call_frame),
-                Opcode::CALL => self.op_call(current_call_frame),
-                Opcode::CALLCODE => self.op_callcode(current_call_frame),
-                Opcode::RETURN => self.op_return(current_call_frame),
-                Opcode::DELEGATECALL => self.op_delegatecall(current_call_frame),
-                Opcode::STATICCALL => self.op_staticcall(current_call_frame),
-                Opcode::CREATE => self.op_create(current_call_frame),
-                Opcode::CREATE2 => self.op_create2(current_call_frame),
-                Opcode::TLOAD => self.op_tload(current_call_frame),
-                Opcode::TSTORE => self.op_tstore(current_call_frame),
-                Opcode::SELFBALANCE => self.op_selfbalance(current_call_frame),
-                Opcode::ADDRESS => self.op_address(current_call_frame),
-                Opcode::ORIGIN => self.op_origin(current_call_frame),
-                Opcode::BALANCE => self.op_balance(current_call_frame),
-                Opcode::CALLER => self.op_caller(current_call_frame),
-                Opcode::CALLVALUE => self.op_callvalue(current_call_frame),
-                Opcode::CODECOPY => self.op_codecopy(current_call_frame),
-                Opcode::CODESIZE => self.op_codesize(current_call_frame),
-                Opcode::GASPRICE => self.op_gasprice(current_call_frame),
-                Opcode::EXTCODESIZE => self.op_extcodesize(current_call_frame),
-                Opcode::EXTCODECOPY => self.op_extcodecopy(current_call_frame),
-                Opcode::EXTCODEHASH => self.op_extcodehash(current_call_frame),
-                Opcode::REVERT => self.op_revert(current_call_frame),
-                Opcode::INVALID => self.op_invalid(),
-                Opcode::SELFDESTRUCT => self.op_selfdestruct(current_call_frame),
-
-                _ => Err(VMError::OpcodeNotFound),
-            };
-
-            if opcode != Opcode::JUMP && opcode != Opcode::JUMPI {
-                current_call_frame.increment_pc()?;
-            }
-
-            // Gas refunds are applied at the end of a transaction. Should it be implemented here?
+            let op_result = self.handle_current_opcode(opcode, current_call_frame);
 
             match op_result {
-                Ok(OpcodeSuccess::Continue) => {}
-                Ok(OpcodeSuccess::Result(_)) => {
-                    self.call_frames.push(current_call_frame.clone());
-                    // On successful create check output validity
-                    if (self.is_create() && current_call_frame.depth == 0)
-                        || current_call_frame.create_op_called
-                    {
-                        let contract_code = std::mem::take(&mut current_call_frame.output);
-                        let code_length = contract_code.len();
-
-                        let code_length_u64: u64 = code_length
-                            .try_into()
-                            .map_err(|_| VMError::Internal(InternalError::ConversionError))?;
-
-                        let code_deposit_cost: u64 =
-                            code_length_u64.checked_mul(CODE_DEPOSIT_COST).ok_or(
-                                VMError::Internal(InternalError::ArithmeticOperationOverflow),
-                            )?;
-
-                        // Revert
-                        // If the first byte of code is 0xef
-                        // If the code_length > MAX_CODE_SIZE
-                        // If current_consumed_gas + code_deposit_cost > gas_limit
-                        let validate_create = if code_length > MAX_CODE_SIZE {
-                            Err(VMError::ContractOutputTooBig)
-                        } else if contract_code.first().unwrap_or(&0) == &INVALID_CONTRACT_PREFIX {
-                            Err(VMError::InvalidContractPrefix)
-                        } else if self
-                            .increase_consumed_gas(current_call_frame, code_deposit_cost)
-                            .is_err()
-                        {
-                            Err(VMError::OutOfGas(OutOfGasError::MaxGasLimitExceeded))
-                        } else {
-                            Ok(current_call_frame.to)
-                        };
-
-                        match validate_create {
-                            Ok(new_address) => {
-                                // Set bytecode to new account if success
-                                update_account_bytecode(
-                                    &mut self.cache,
-                                    &self.db,
-                                    new_address,
-                                    contract_code,
-                                )?;
-                            }
-                            Err(error) => {
-                                // Revert if error
-                                current_call_frame.gas_used = current_call_frame.gas_limit;
-                                self.restore_state(
-                                    backup_db,
-                                    backup_substate,
-                                    backup_refunded_gas,
-                                    backup_transient_storage,
-                                );
-
-                                return Ok(TransactionReport {
-                                    result: TxResult::Revert(error),
-                                    new_state: HashMap::default(),
-                                    gas_used: current_call_frame.gas_used,
-                                    gas_refunded: self.env.refunded_gas,
-                                    output: std::mem::take(&mut current_call_frame.output),
-                                    logs: std::mem::take(&mut current_call_frame.logs),
-                                    created_address: None,
-                                });
-                            }
-                        }
-                    }
-
-                    return Ok(TransactionReport {
-                        result: TxResult::Success,
-                        new_state: HashMap::default(),
-                        gas_used: current_call_frame.gas_used,
-                        gas_refunded: self.env.refunded_gas,
-                        output: std::mem::take(&mut current_call_frame.output),
-                        logs: std::mem::take(&mut current_call_frame.logs),
-                        created_address: None,
-                    });
+                Ok(OpcodeResult::Continue { pc_increment }) => {
+                    current_call_frame.increment_pc_by(pc_increment)?
                 }
-                Err(error) => {
-                    self.call_frames.push(current_call_frame.clone());
-
-                    if error.is_internal() {
-                        return Err(error);
-                    }
-
-                    // Unless error is from Revert opcode, all gas is consumed
-                    if error != VMError::RevertOpcode {
-                        let left_gas = current_call_frame
-                            .gas_limit
-                            .saturating_sub(current_call_frame.gas_used);
-                        current_call_frame.gas_used =
-                            current_call_frame.gas_used.saturating_add(left_gas);
-                    }
-
-                    self.restore_state(
-                        backup_db,
-                        backup_substate,
-                        backup_refunded_gas,
-                        backup_transient_storage,
-                    );
-
-                    return Ok(TransactionReport {
-                        result: TxResult::Revert(error),
-                        new_state: HashMap::default(),
-                        gas_used: current_call_frame.gas_used,
-                        gas_refunded: self.env.refunded_gas,
-                        output: std::mem::take(&mut current_call_frame.output), // Bytes::new() if error is not RevertOpcode
-                        logs: std::mem::take(&mut current_call_frame.logs),
-                        created_address: None,
-                    });
+                Ok(OpcodeResult::Halt) => {
+                    return self.handle_opcode_result(current_call_frame, backup)
                 }
+                Err(error) => return self.handle_opcode_error(error, current_call_frame, backup),
             }
         }
     }
 
-    fn restore_state(
-        &mut self,
-        backup_cache: CacheDB,
-        backup_substate: Substate,
-        backup_refunded_gas: u64,
-        backup_transient_storage: TransientStorage,
-    ) {
-        self.cache = backup_cache;
-        self.accrued_substate = backup_substate;
-        self.env.refunded_gas = backup_refunded_gas;
-        self.env.transient_storage = backup_transient_storage;
+    pub fn restore_state(&mut self, backup: StateBackup) {
+        self.cache = backup.cache;
+        self.accrued_substate = backup.substate;
+        self.env.refunded_gas = backup.refunded_gas;
+        self.env.transient_storage = backup.transient_storage;
     }
 
-    fn is_create(&self) -> bool {
+    pub fn is_create(&self) -> bool {
         matches!(self.tx_kind, TxKind::Create)
     }
 
@@ -958,7 +727,6 @@ impl VM {
         report.gas_used = self.gas_used(&initial_call_frame, &report)?;
 
         self.post_execution_changes(&initial_call_frame, &mut report)?;
-        // There shouldn't be any errors here but I don't know what the desired behavior is if something goes wrong.
 
         report.new_state.clone_from(&self.cache);
 
@@ -1081,7 +849,6 @@ impl VM {
             logs: vec![],
             new_state: HashMap::default(),
             output: Bytes::new(),
-            created_address: None,
         };
 
         self.post_execution_changes(initial_call_frame, &mut report)?;
