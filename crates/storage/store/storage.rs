@@ -353,71 +353,23 @@ impl Store {
         Ok(txs_by_sender)
     }
 
-    /// Gets hashes from `transaction_hashes` that are neither already known in the mempool nor already requested from other peers.
-    /// Creates and stores a new transaction request from the filtered transactions.
-    pub fn get_transactions_to_request(
+    /// Gets hashes from possible_hashes that are not already known in the mempool.
+    pub fn filter_unknown_transactions(
         &self,
-        transaction_hashes: &[H256],
-    ) -> Result<Option<HashSet<H256>>, StoreError> {
+        possible_hashes: &[H256],
+    ) -> Result<Vec<H256>, StoreError> {
         let mempool = self
             .mempool
             .lock()
             .map_err(|error| StoreError::Custom(error.to_string()))?;
-        let mut unknown_tx_hashes = HashSet::new();
-        for hash in transaction_hashes.iter() {
-            if !mempool.contains_key(hash) {
-                unknown_tx_hashes.insert(*hash);
-            }
-        }
-        if unknown_tx_hashes.is_empty() {
-            return Ok(None);
-        }
-        Ok(Some(unknown_tx_hashes))
+
+        let tx_set: HashSet<_> = mempool.iter().map(|(hash, _)| hash).collect();
+        Ok(possible_hashes
+            .iter()
+            .filter(|hash| !tx_set.contains(hash))
+            .copied()
+            .collect())
     }
-
-    // pub fn get_pending_request(
-    //     &self,
-    //     remote_node_id: &H512,
-    //     request_id: u64,
-    // ) -> Result<Option<TransactionRequest>, StoreError> {
-    //     let tx_pending_requests = self
-    //         .tx_pending_requests
-    //         .lock()
-    //         .map_err(|error| StoreError::Custom(error.to_string()))?;
-    //     Ok(tx_pending_requests.get_pending_request(remote_node_id, request_id))
-    // }
-
-    // pub fn remove_pending_request(
-    //     &self,
-    //     remote_node_id: &H512,
-    //     request_id: u64,
-    // ) -> Result<(), StoreError> {
-    //     let mut tx_pending_requests = self
-    //         .tx_pending_requests
-    //         .lock()
-    //         .map_err(|error| StoreError::Custom(error.to_string()))?;
-    //     tx_pending_requests.remove_pending_request(remote_node_id, request_id);
-    //     Ok(())
-    // }
-
-    // pub fn remove_peer_requests(&self, remote_node_id: &H512) -> Result<(), StoreError> {
-    //     let mut tx_pending_requests = self
-    //         .tx_pending_requests
-    //         .lock()
-    //         .map_err(|error| StoreError::Custom(error.to_string()))?;
-    //     tx_pending_requests.remove_peer_requests(remote_node_id);
-    //     Ok(())
-    // }
-
-    // pub fn remove_stale_requests(&self, remote_node_id: &H512) -> Result<(), StoreError> {
-    //     let mut tx_pending_requests = self
-    //         .tx_pending_requests
-    //         .lock()
-    //         .map_err(|error| StoreError::Custom(error.to_string()))?;
-
-    //     tx_pending_requests.remove_stale_requests(remote_node_id);
-    //     Ok(())
-    // }
 
     pub fn add_account_code(&self, code_hash: H256, code: Bytes) -> Result<(), StoreError> {
         self.engine.add_account_code(code_hash, code)
