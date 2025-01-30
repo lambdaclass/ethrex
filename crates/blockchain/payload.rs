@@ -33,7 +33,8 @@ use std::sync::Arc;
 
 #[cfg(not(feature = "levm"))]
 use ethrex_vm::{
-    beacon_root_contract_call, execute_tx, get_state_transitions, process_withdrawals,
+    beacon_root_contract_call, execute_tx, get_state_transitions, process_withdrawals, spec_id,
+    SpecId,
 };
 
 #[cfg(not(feature = "levm"))]
