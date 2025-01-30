@@ -2,6 +2,10 @@ name: Run Hive Tests
 
 on: workflow_call
 
+env:
+  CARGO_TERM_COLOR: always
+  RUST_VERSION: 1.81.0
+
 jobs:
   run-hive:
     name: Hive (${{ matrix.vm }}) - ${{ matrix.test.name }}
