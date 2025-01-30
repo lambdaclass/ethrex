@@ -19,7 +19,7 @@ impl VM {
         let result = u256_from_bool(lho < rho);
         current_call_frame.stack.push(result)?;
 
-        Ok(OpcodeResult::Continue)
+        Ok(OpcodeResult::Continue { pc_increment: 1 })
     }
 
     // GT operation
@@ -30,7 +30,7 @@ impl VM {
         let result = u256_from_bool(lho > rho);
         current_call_frame.stack.push(result)?;
 
-        Ok(OpcodeResult::Continue)
+        Ok(OpcodeResult::Continue { pc_increment: 1 })
     }
 
     // SLT operation (signed less than)
@@ -49,7 +49,7 @@ impl VM {
         };
         current_call_frame.stack.push(result)?;
 
-        Ok(OpcodeResult::Continue)
+        Ok(OpcodeResult::Continue { pc_increment: 1 })
     }
 
     // SGT operation (signed greater than)
@@ -68,7 +68,7 @@ impl VM {
         };
         current_call_frame.stack.push(result)?;
 
-        Ok(OpcodeResult::Continue)
+        Ok(OpcodeResult::Continue { pc_increment: 1 })
     }
 
     // EQ operation (equality check)
@@ -80,7 +80,7 @@ impl VM {
 
         current_call_frame.stack.push(result)?;
 
-        Ok(OpcodeResult::Continue)
+        Ok(OpcodeResult::Continue { pc_increment: 1 })
     }
 
     // ISZERO operation (check if zero)
@@ -95,7 +95,7 @@ impl VM {
 
         current_call_frame.stack.push(result)?;
 
-        Ok(OpcodeResult::Continue)
+        Ok(OpcodeResult::Continue { pc_increment: 1 })
     }
 
     // AND operation
@@ -105,7 +105,7 @@ impl VM {
         let b = current_call_frame.stack.pop()?;
         current_call_frame.stack.push(a & b)?;
 
-        Ok(OpcodeResult::Continue)
+        Ok(OpcodeResult::Continue { pc_increment: 1 })
     }
 
     // OR operation
@@ -115,7 +115,7 @@ impl VM {
         let b = current_call_frame.stack.pop()?;
         current_call_frame.stack.push(a | b)?;
 
-        Ok(OpcodeResult::Continue)
+        Ok(OpcodeResult::Continue { pc_increment: 1 })
     }
 
     // XOR operation
@@ -125,7 +125,7 @@ impl VM {
         let b = current_call_frame.stack.pop()?;
         current_call_frame.stack.push(a ^ b)?;
 
-        Ok(OpcodeResult::Continue)
+        Ok(OpcodeResult::Continue { pc_increment: 1 })
     }
 
     // NOT operation
@@ -134,7 +134,7 @@ impl VM {
         let a = current_call_frame.stack.pop()?;
         current_call_frame.stack.push(!a)?;
 
-        Ok(OpcodeResult::Continue)
+        Ok(OpcodeResult::Continue { pc_increment: 1 })
     }
 
     // BYTE operation
@@ -147,7 +147,7 @@ impl VM {
             Err(_) => {
                 // Index is out of bounds, then push 0
                 current_call_frame.stack.push(U256::zero())?;
-                return Ok(OpcodeResult::Continue);
+                return Ok(OpcodeResult::Continue { pc_increment: 1 });
             }
         };
 
@@ -168,7 +168,7 @@ impl VM {
             current_call_frame.stack.push(U256::zero())?;
         }
 
-        Ok(OpcodeResult::Continue)
+        Ok(OpcodeResult::Continue { pc_increment: 1 })
     }
 
     // SHL operation (shift left)
@@ -185,7 +185,7 @@ impl VM {
             current_call_frame.stack.push(U256::zero())?;
         }
 
-        Ok(OpcodeResult::Continue)
+        Ok(OpcodeResult::Continue { pc_increment: 1 })
     }
 
     // SHR operation (shift right)
@@ -202,7 +202,7 @@ impl VM {
             current_call_frame.stack.push(U256::zero())?;
         }
 
-        Ok(OpcodeResult::Continue)
+        Ok(OpcodeResult::Continue { pc_increment: 1 })
     }
 
     // SAR operation (arithmetic shift right)
@@ -219,7 +219,7 @@ impl VM {
         };
         current_call_frame.stack.push(res)?;
 
-        Ok(OpcodeResult::Continue)
+        Ok(OpcodeResult::Continue { pc_increment: 1 })
     }
 }
 
