@@ -11,7 +11,7 @@ env:
 
 jobs:
   hive-report-creation:
-    uses: ./.github/workflows/common_hive_reports.yaml
+    uses: ./.github/workflows/common/hive_reports.yaml
 
   hive-diff-report:
     name: Post tests diff to levm slack

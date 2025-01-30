@@ -59,7 +59,7 @@ jobs:
           fi
 
   hive-report-creation:
-    uses: ./.github/workflows/common_hive_reports.yaml
+    uses: ./.github/workflows/common/hive_reports.yaml
   # Check we don't have a regression
   hive-test:
     # "Integration Test" is a required check, don't change the name
