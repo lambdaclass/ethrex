@@ -221,14 +221,6 @@ pub enum OpcodeResult {
     Halt,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum HaltReason {
-    Stop,
-    Revert,
-    Return,
-    SelfDestruct,
-}
-
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum TxResult {
     Success,
