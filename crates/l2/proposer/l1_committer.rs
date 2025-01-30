@@ -41,7 +41,7 @@ pub struct Committer {
     arbitrary_base_blob_gas_price: u64,
 }
 
-pub async fn start_l1_commiter(store: Store) -> Result<(), ConfigError> {
+pub async fn start_l1_committer(store: Store) -> Result<(), ConfigError> {
     let eth_config = EthConfig::from_env()?;
     let committer_config = CommitterConfig::from_env()?;
     let committer = Committer::new_from_config(&committer_config, eth_config, store);
