@@ -3,7 +3,7 @@
 use std::time::Duration;
 
 use ethrex_core::types::ChainConfig;
-use revm_primitives::SpecId;
+use ethrex_vm::SpecId;
 
 // Chain config for different forks as defined on https://ethereum.github.io/execution-spec-tests/v3.0.0/consuming_tests/common_types/#fork
 pub static CANCUN_CONFIG: ChainConfig = ChainConfig {

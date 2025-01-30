@@ -1,0 +1,41 @@
+[package]
+name = "ethrex-rpc-client"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+serde = { version = "1.0.203", features = ["derive"] }
+serde_json = "1.0.117"
+tokio.workspace = true
+bytes.workspace = true
+ethrex-core.workspace = true
+ethrex-storage.workspace = true
+ethrex-vm.workspace = true
+ethrex-rlp.workspace = true
+hex.workspace = true
+reqwest.workspace = true
+lazy_static.workspace = true
+ethrex-trie.workspace = true
+futures-util = "0.3.31"
+again = "0.1.2"
+tokio-utils = "0.1.2"
+
+revm = { version = "14.0.3", features = [
+    "serde",
+    "std",
+    "serde-json",
+    "optional_no_base_fee",
+    "optional_block_gas_limit",
+], default-features = false }
+
+# These dependencies must be kept up to date with the corresponding revm version, otherwise errors may pop up because of trait implementation mismatches
+revm-primitives = { version = "10.0.0", features = [
+    "std",
+], default-features = false }
+
+[dev-dependencies]
+
+[lib]
+path = "./rpc_client.rs"

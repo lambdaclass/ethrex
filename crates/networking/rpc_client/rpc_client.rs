@@ -1,25 +1,23 @@
-use std::time::Duration;
-use std::{collections::HashMap, future::Future};
+pub mod constants;
+pub mod db;
 
 use again::{RetryPolicy, Task};
-use tokio::time::timeout;
-
 use bytes::Bytes;
 use ethrex_core::{
     types::{AccountState, Block, EMPTY_KECCACK_HASH},
     Address, H256, U256,
 };
 use ethrex_rlp::decode::RLPDecode;
-use ethrex_trie::Trie;
 use ethrex_storage::hash_address;
+use ethrex_trie::Trie;
+use std::time::Duration;
+use std::{collections::HashMap, future::Future};
 
 use serde::de::DeserializeOwned;
 use serde::Deserialize;
 use serde_json::json;
 
 use lazy_static::lazy_static;
-
-pub mod db;
 
 pub type NodeRLP = Vec<u8>;
 
@@ -34,6 +32,14 @@ pub struct Account {
     pub account_proof: Vec<NodeRLP>,
     pub storage_proofs: Vec<Vec<NodeRLP>>,
     pub code: Option<Bytes>,
+}
+
+pub async fn retry<F, I>(mut fut: F) -> Result<I, String>
+where
+    F: Task<Item = I, Error = String>,
+{
+    let policy = RetryPolicy::exponential(Duration::from_secs(1));
+    policy.retry(|| fut.call()).await
 }
 
 pub async fn get_latest_block_number(rpc_url: &str) -> Result<usize, String> {
@@ -164,15 +170,14 @@ pub async fn get_account(
     let root = account_proof
         .first()
         .ok_or("account proof is empty".to_string())?;
-    let other: Vec<_> = account_proof
-        .iter()
-        .skip(1)
-        .cloned()
-        .collect();
+    let other: Vec<_> = account_proof.iter().skip(1).cloned().collect();
     let trie = Trie::from_nodes(Some(root), &other)
         .map_err(|err| format!("failed to build account proof trie: {err}"))?;
-    if trie.get(&hash_address(address))
-        .map_err(|err| format!("failed get account from proof trie: {err}"))?.is_none() {
+    if trie
+        .get(&hash_address(address))
+        .map_err(|err| format!("failed get account from proof trie: {err}"))?
+        .is_none()
+    {
         return Ok(None);
     }
 
@@ -255,14 +260,6 @@ pub async fn get_storage(
         .await
         .map_err(|err| err.to_string())
         .and_then(get_result)
-}
-
-pub async fn retry<F, I>(mut fut: F) -> Result<I, String>
-where
-    F: Task<Item = I, Error = String>,
-{
-    let policy = RetryPolicy::exponential(Duration::from_secs(1));
-    policy.retry(|| fut.call()).await
 }
 
 async fn get_code(rpc_url: &str, block_number: usize, address: &Address) -> Result<Bytes, String> {

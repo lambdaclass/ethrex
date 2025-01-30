@@ -1,13 +1,15 @@
+use crate::NodeRLP;
 use std::cell::RefCell;
 use std::collections::hash_map::Entry;
 use std::collections::HashMap;
 
 use crate::constants::{CANCUN_CONFIG, RPC_RATE_LIMIT};
-use crate::rpc::{get_account, get_block, get_storage, retry};
+use crate::{get_account, get_block, get_storage, retry};
 
+use crate::Account;
 use ethrex_core::types::AccountInfo;
 use ethrex_core::{
-    types::{Account as CoreAccount, Block, TxKind},
+    types::{Block, TxKind},
     Address, H256,
 };
 use ethrex_vm::execution_db::{ExecutionDB, ToExecDB};
@@ -20,8 +22,6 @@ use revm_primitives::{
     Bytes as RevmBytes, B256 as RevmB256, U256 as RevmU256,
 };
 use tokio_utils::RateLimiter;
-
-use super::{Account, NodeRLP};
 
 pub struct RpcDB {
     pub rpc_url: String,

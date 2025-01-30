@@ -1074,28 +1074,13 @@ checksum = "d86b93f97252c47b41663388e6d155714a9d0c398b99f1005cbc5f978b29f445"
 name = "bench"
 version = "0.1.0"
 dependencies = [
- "again",
  "bincode",
- "bytes",
  "clap 4.5.21",
- "ethrex-core",
  "ethrex-l2",
  "ethrex-prover",
- "ethrex-rlp",
- "ethrex-storage",
- "ethrex-trie",
+ "ethrex-rpc-client",
  "ethrex-vm",
- "futures-util",
- "hex",
- "lazy_static",
- "reqwest 0.12.9",
- "revm 14.0.3",
- "revm-inspectors",
- "revm-primitives 10.0.0",
- "serde",
- "serde_json",
  "tokio",
- "tokio-utils",
  "zkvm_interface",
 ]
 
@@ -3107,6 +3092,29 @@ dependencies = [
  "tokio-util",
  "tracing",
  "tracing-subscriber 0.3.18",
+]
+
+[[package]]
+name = "ethrex-rpc-client"
+version = "0.1.0"
+dependencies = [
+ "again",
+ "bytes",
+ "ethrex-core",
+ "ethrex-rlp",
+ "ethrex-storage",
+ "ethrex-trie",
+ "ethrex-vm",
+ "futures-util",
+ "hex",
+ "lazy_static",
+ "reqwest 0.12.9",
+ "revm 14.0.3",
+ "revm-primitives 10.0.0",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tokio-utils",
 ]
 
 [[package]]
