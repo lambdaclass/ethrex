@@ -431,10 +431,10 @@ mod tests {
     #[test]
     fn parse_node_from_enr_string() {
         // https://github.com/ethereum/devp2p/blob/master/enr.md#test-vectors
-        let enr_string = "enr:-Iu4QDOLZWVEdbtRUtrZ8PU1vxUJ0t_TUpVghJhJuakBUyYKE_ZfvhR2EKxDyJ8Z5wwoJE4mTSItAcYsErU0NrB7uzCAgmlkgnY0gmlwhH8AAAGJc2VjcDI1NmsxoQJtSDUljLLg3EYuRCp8QJvH8G2F9rmUAQtPKlZjq_O7loN0Y3CCdl-DdWRwgnZf";
+        let enr_string = "enr:-IS4QHCYrYZbAKWCBRlAy5zzaDZXJBGkcnh4MHcBFZntXNFrdvJjX04jRzjzCBOonrkTfj499SZuOh8R33Ls8RRcy5wBgmlkgnY0gmlwhH8AAAGJc2VjcDI1NmsxoQPKY0yuDUmstAHYpMa2_oxVtw0RW_QAdpzBQA8yWM0xOIN1ZHCCdl8";
         let node = Node::from_enr_url(enr_string).unwrap();
         let node_id =
-            H512::from_str("6d4835258cb2e0dc462e442a7c409bc7f06d85f6b994010b4f2a5663abf3bb96ac2c8fc3b79174b43e0d4408114e0058ba9f5ce77ec4e7954fc21ecf9fbc1740")
+            H512::from_str("0xca634cae0d49acb401d8a4c6b6fe8c55b70d115bf400769cc1400f3258cd31387574077f301b421bc84df7266c44e9e6d569fc56be00812904767bf5ccd1fc7f")
                 .unwrap();
         let socket_address = SocketAddr::from_str("127.0.0.1:30303").unwrap();
         let expected_node = Node {
