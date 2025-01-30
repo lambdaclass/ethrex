@@ -100,6 +100,10 @@ impl PacketData {
         <PacketData as RLPDecode>::decode(rlp).map_err(Error::from)
     }
 
+    pub fn decode_unfinished(rlp: &[u8]) -> Result<(Self, &[u8]), RLPDecodeError> {
+        <PacketData as RLPDecode>::decode_unfinished(rlp)
+    }
+
     pub fn r#type(&self) -> u8 {
         match self {
             PacketData::Auth { .. } => todo!(),
@@ -137,7 +141,7 @@ impl RLPEncode for PacketData {
 
 impl RLPDecode for PacketData {
     fn decode_unfinished(rlp: &[u8]) -> Result<(Self, &[u8]), RLPDecodeError> {
-        try_rlp_decode_auth(rlp)
+        try_rlp_decode_auth(rlp).or(try_rlp_decode_auth_ack(rlp))
     }
 }
 
@@ -153,6 +157,21 @@ fn try_rlp_decode_auth(rlp: &[u8]) -> Result<(PacketData, &[u8]), RLPDecodeError
             initiator_pubkey,
             nonce,
             version,
+        }),
+        decoder.finish_unchecked(),
+    ))
+}
+
+fn try_rlp_decode_auth_ack(rlp: &[u8]) -> Result<(PacketData, &[u8]), RLPDecodeError> {
+    let decoder = Decoder::new(rlp)?;
+    let (recipient_ephemeral_pubk, decoder) = decoder.decode_field("recipient_ephemeral_pubk")?;
+    let (recipient_nonce, decoder) = decoder.decode_field("recipient_nonce")?;
+    let (ack_vsn, decoder) = decoder.decode_field("ack_vsn")?;
+    Ok((
+        PacketData::AuthAck(AuthAck {
+            recipient_ephemeral_pubk,
+            recipient_nonce,
+            ack_vsn,
         }),
         decoder.finish_unchecked(),
     ))

@@ -216,6 +216,32 @@ impl Actor {
         Ok(())
     }
 
+    pub fn wait_auth_ack(&mut self) -> Result<()> {
+        let mut size_buf = [0u8; 2];
+        if let Err(e) = self.stream.read_exact(&mut size_buf) {
+            tracing::error!(error = ?e, "Failed to read size of message");
+            return Err(Error::ReadError);
+        }
+        let ack_size = u16::from_be_bytes(size_buf);
+
+        let mut enc_ack_body = vec![0u8; ack_size as usize];
+        if self.stream.read(&mut enc_ack_body).is_err() {
+            tracing::error!("Failed to read message");
+            return Err(Error::ReadError);
+        }
+
+        let ack_body = decrypt_message(&self.config.secret_key, &enc_ack_body, &size_buf)
+            .map_err(|_| Error::CryptographyError)?;
+
+        // TODO: We'll need to save this
+        let ack_msg = match PacketData::decode_unfinished(ack_body.as_slice()) {
+            Ok((PacketData::AuthAck(ack_msg), _)) => ack_msg,
+            _ => return Err(Error::InvalidMessage(hex::encode(ack_body))),
+        };
+
+        Ok(())
+    }
+
     pub async fn run(mut self) -> Result<Error> {
         match self.status {
             ConnectionStatus::WaitingAuth => {
@@ -223,6 +249,9 @@ impl Actor {
                 if let Err(e) = self.send_auth_ack(auth_msg) {
                     tracing::error!("{e}");
                 };
+            }
+            ConnectionStatus::WaitingAuthAck => {
+                self.wait_auth_ack()?;
             }
             _ => todo!(),
         }
