@@ -35,40 +35,16 @@ pub const MAX_MESSAGES_IN_PEER_CHANNEL: usize = 25;
 pub const MAX_RESPONSE_BYTES: u64 = 512 * 1024;
 pub const HASH_MAX: H256 = H256([0xFF; 32]);
 
+
+/// An abstraction over the [KademliaTable] containing logic to make requests to peers
 #[derive(Debug, Clone)]
 pub struct PeerHandler {
     peer_table: Arc<Mutex<KademliaTable>>,
 }
 
-#[derive(Debug, Clone)]
-/// Holds the respective sender and receiver ends of the communication channels bewteen the peer data and its active connection
-pub struct PeerChannels {
-    sender: mpsc::Sender<RLPxMessage>,
-    receiver: Arc<Mutex<mpsc::Receiver<RLPxMessage>>>,
-}
-
 pub enum BlockRequestOrder {
     OldToNew,
     NewToOld,
-}
-
-impl PeerChannels {
-    /// Sets up the communication channels for the peer
-    /// Returns the channel endpoints to send to the active connection's listen loop
-    pub(crate) fn create() -> (Self, mpsc::Sender<RLPxMessage>, mpsc::Receiver<RLPxMessage>) {
-        let (sender, connection_receiver) =
-            mpsc::channel::<RLPxMessage>(MAX_MESSAGES_IN_PEER_CHANNEL);
-        let (connection_sender, receiver) =
-            mpsc::channel::<RLPxMessage>(MAX_MESSAGES_IN_PEER_CHANNEL);
-        (
-            Self {
-                sender,
-                receiver: Arc::new(Mutex::new(receiver)),
-            },
-            connection_sender,
-            connection_receiver,
-        )
-    }
 }
 
 impl PeerHandler {
@@ -94,11 +70,10 @@ impl PeerHandler {
         None
     }
 
-    /// Requests block headers from the peer, starting from the `start` block hash towards either older or newer blocks depending on the order
+    /// Requests block headers from any suitable peer, starting from the `start` block hash towards either older or newer blocks depending on the order
     /// Returns the block headers or None if:
     /// - There are no available peers (the node just started up or was rejected by all other nodes)
-    /// - The response timed out
-    /// - The response was empty or not valid
+    /// - No peer returned a valid response in the given time and retry limits
     pub async fn request_block_headers(
         &self,
         start: H256,
@@ -141,11 +116,10 @@ impl PeerHandler {
         None
     }
 
-    /// Requests block bodies from the peer given their block hashes
+    /// Requests block bodies from any suitable peer given their block hashes
     /// Returns the block bodies or None if:
     /// - There are no available peers (the node just started up or was rejected by all other nodes)
-    /// - The response timed out
-    /// - The response was empty or not valid
+    /// - No peer returned a valid response in the given time and retry limits
     pub async fn request_block_bodies(&self, block_hashes: Vec<H256>) -> Option<Vec<BlockBody>> {
         let block_hashes_len = block_hashes.len();
         for _ in 0..REQUEST_RETRY_ATTEMPTS {
@@ -184,11 +158,10 @@ impl PeerHandler {
         None
     }
 
-    /// Requests all receipts in a set of blocks from the peer given their block hashes
+    /// Requests all receipts in a set of blocks from any suitable peer given their block hashes
     /// Returns the lists of receipts or None if:
     /// - There are no available peers (the node just started up or was rejected by all other nodes)
-    /// - The response timed out
-    /// - The response was empty or not valid
+    /// - No peer returned a valid response in the given time and retry limits
     pub async fn request_receipts(&self, block_hashes: Vec<H256>) -> Option<Vec<Vec<Receipt>>> {
         let block_hashes_len = block_hashes.len();
         for _ in 0..REQUEST_RETRY_ATTEMPTS {
@@ -227,12 +200,11 @@ impl PeerHandler {
         None
     }
 
-    /// Requests an account range from the peer given the state trie's root and the starting hash (the limit hash will be the maximum value of H256)
+    /// Requests an account range from any suitable peer given the state trie's root and the starting hash (the limit hash will be the maximum value of H256)
     /// Will also return a boolean indicating if there is more state to be fetched towards the right of the trie
-    /// Returns the response message or None if:
+    /// Returns the account ranges or None if:
     /// - There are no available peers (the node just started up or was rejected by all other nodes)
-    /// - The response timed out
-    /// - The response was not valid
+    /// - No peer returned a valid response in the given time and retry limits
     pub async fn request_account_range(
         &self,
         state_root: H256,
@@ -284,8 +256,7 @@ impl PeerHandler {
                     &account_hashes,
                     &encoded_accounts,
                     &proof,
-                )
-                {
+                ) {
                     return Some((account_hashes, accounts, should_continue));
                 }
             }
@@ -296,8 +267,7 @@ impl PeerHandler {
     /// Requests bytecodes for the given code hashes
     /// Returns the bytecodes or None if:
     /// - There are no available peers (the node just started up or was rejected by all other nodes)
-    /// - The response timed out
-    /// - The response was empty or not valid
+    /// - No peer returned a valid response in the given time and retry limits
     pub async fn request_bytecodes(&self, hashes: Vec<H256>) -> Option<Vec<Bytes>> {
         let hashes_len = hashes.len();
         for _ in 0..REQUEST_RETRY_ATTEMPTS {
@@ -341,8 +311,7 @@ impl PeerHandler {
     /// Returns true if the last account's storage was not completely fetched by the request
     /// Returns the list of hashed storage keys and values for each account's storage or None if:
     /// - There are no available peers (the node just started up or was rejected by all other nodes)
-    /// - The response timed out
-    /// - The response was empty or not valid
+    /// - No peer returned a valid response in the given time and retry limits
     pub async fn request_storage_ranges(
         &self,
         state_root: H256,
@@ -437,8 +406,7 @@ impl PeerHandler {
     /// Requests state trie nodes given the root of the trie where they are contained and their path (be them full or partial)
     /// Returns the nodes or None if:
     /// - There are no available peers (the node just started up or was rejected by all other nodes)
-    /// - The response timed out
-    /// - The response was empty or not valid
+    /// - No peer returned a valid response in the given time and retry limits
     pub async fn request_state_trienodes(
         &self,
         state_root: H256,
@@ -498,8 +466,7 @@ impl PeerHandler {
     /// a hashmap mapping the path to the account in the state trie (aka hashed address) to the paths to the nodes in its storage trie (can be full or partial)
     /// Returns the nodes or None if:
     /// - There are no available peers (the node just started up or was rejected by all other nodes)
-    /// - The response timed out
-    /// - The response was empty or not valid
+    /// - No peer returned a valid response in the given time and retry limits
     pub async fn request_storage_trienodes(
         &self,
         state_root: H256,
@@ -571,8 +538,7 @@ impl PeerHandler {
     /// Returns true if the account's storage was not completely fetched by the request
     /// Returns the list of hashed storage keys and values for the account's storage or None if:
     /// - There are no available peers (the node just started up or was rejected by all other nodes)
-    /// - The response timed out
-    /// - The response was empty or not valid
+    /// - No peer returned a valid response in the given time and retry limits
     pub async fn request_storage_range(
         &self,
         state_root: H256,
