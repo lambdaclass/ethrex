@@ -950,7 +950,6 @@ impl VM {
             };
 
             auth_account.info.bytecode = if auth_tuple.address != Address::zero() {
-                //test
                 delegation_bytes.into()
             } else {
                 Bytes::new()
