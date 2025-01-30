@@ -1,6 +1,7 @@
 use std::{
     cmp::{max, Ordering},
     collections::HashMap,
+    hash::Hash,
 };
 
 use ethrex_core::{
@@ -10,8 +11,9 @@ use ethrex_core::{
         BlockHash, BlockHeader, BlockNumber, ChainConfig, MempoolTransaction, Receipt, Transaction,
         Withdrawal, DEFAULT_OMMERS_HASH, GWEI_TO_WEI,
     },
-    Address, Bloom, Bytes, H256, U256,
+    Address, Bloom, Bytes, H160, H256, U256,
 };
+use ethrex_levm::{opcode_handlers::block, AccountInfo};
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_storage::{error::StoreError, AccountUpdate, Store};
 #[cfg(feature = "levm")]
@@ -20,10 +22,16 @@ use ethrex_vm::{
 };
 
 #[cfg(feature = "levm")]
+use ethrex_levm::Account;
+
+#[cfg(feature = "levm")]
 use std::sync::Arc;
 
 #[cfg(not(feature = "levm"))]
 use ethrex_vm::execute_tx;
+
+#[cfg(not(feature = "levm"))]
+use ethrex_core::types::Account;
 
 use ethrex_vm::{
     beacon_root_contract_call, evm_state, get_state_transitions, process_withdrawals, spec_id,
@@ -224,52 +232,45 @@ pub fn build_payload(
     debug!("Building payload");
     let mut evm_state = evm_state(store.clone(), payload.header.parent_hash);
     let mut context = PayloadBuildContext::new(payload, &mut evm_state);
-    let account_updates_after_beacon_call = apply_withdrawals(&mut context)?;
-    let account_updates = fill_transactions(&mut context)?;
-    finalize_payload(
-        &mut context,
-        &account_updates,
-        &account_updates_after_beacon_call,
-    )?;
+    let mut block_cache = apply_withdrawals(&mut context)?;
+    fill_transactions(&mut context, &mut block_cache)?;
+    finalize_payload(&mut context, &mut block_cache)?;
 
     Ok((context.blobs_bundle, context.block_value))
 }
 
 pub fn apply_withdrawals(
     context: &mut PayloadBuildContext,
-) -> Result<Vec<AccountUpdate>, EvmError> {
+) -> Result<HashMap<Address, Account>, EvmError> {
     #[cfg(feature = "levm")]
     {
+        let mut block_cache = HashMap::new();
         // Apply withdrawals & call beacon root contract, and obtain the new state root
         let spec_id = spec_id(&context.chain_config()?, context.payload.header.timestamp);
-        let new_state_after_beacon_call = if context
-            .payload
-            .header
-            .parent_beacon_block_root
-            .is_some()
-            && spec_id == SpecId::CANCUN
-        {
+        if context.payload.header.parent_beacon_block_root.is_some() && spec_id == SpecId::CANCUN {
             let store_wrapper = Arc::new(StoreWrapper {
                 store: context.evm_state.database().unwrap().clone(),
                 block_hash: context.payload.header.parent_hash,
             });
-            beacon_root_contract_call_levm(store_wrapper.clone(), &context.payload.header, spec_id)?
-                .new_state
-        } else {
-            HashMap::new()
-        };
-        let account_updates_after_beacon_call = get_state_transitions_levm(
-            context.evm_state,
-            context.payload.header.parent_hash,
-            &new_state_after_beacon_call,
-        );
-        let withdrawals = context.payload.body.withdrawals.clone().unwrap_or_default();
-        process_withdrawals(context.evm_state, &withdrawals)?;
-        dbg!(
-            "account_updates_after_beacon_call",
-            &account_updates_after_beacon_call
-        );
-        Ok(account_updates_after_beacon_call)
+            let report = beacon_root_contract_call_levm(
+                store_wrapper.clone(),
+                &context.payload.header,
+                spec_id,
+            )?;
+
+            let mut new_state = report.new_state.clone();
+
+            // Now original_value is going to be the same as the current_value, for the next transaction.
+            // It should have only one value but it is convenient to keep on using our CacheDB structure
+            for account in new_state.values_mut() {
+                for storage_slot in account.storage.values_mut() {
+                    storage_slot.original_value = storage_slot.current_value;
+                }
+            }
+
+            block_cache.extend(new_state);
+        }
+        Ok(block_cache)
     }
     #[cfg(not(feature = "levm"))]
     {
@@ -281,7 +282,7 @@ pub fn apply_withdrawals(
         }
         let withdrawals = context.payload.body.withdrawals.clone().unwrap_or_default();
         process_withdrawals(context.evm_state, &withdrawals)?;
-        Ok(Vec::new())
+        Ok(HashMap::new())
     }
 }
 
@@ -325,12 +326,15 @@ fn fetch_mempool_transactions(
 /// Returns the block value
 pub fn fill_transactions(
     context: &mut PayloadBuildContext,
-) -> Result<Vec<AccountUpdate>, ChainError> {
+    mut block_cache: &mut HashMap<H160, Account>,
+) -> Result<(), ChainError> {
     let chain_config = context.chain_config()?;
     debug!("Fetching transactions from mempool");
     // Fetch mempool transactions
     let (mut plain_txs, mut blob_txs) = fetch_mempool_transactions(context)?;
-    let mut all_account_updates = Vec::new();
+    // there is no problem of a hashmap in non levm  implementation because we return empty updates
+    // let mut all_account_updates: HashMap<Address, AccountUpdate> = HashMap::new();
+    // let mut block_cache: HashMap<H160, Account> = HashMap::new();
     // Execute and add transactions to payload (if suitable)
     loop {
         // Check if we have enough gas to run more transactions
@@ -402,42 +406,42 @@ pub fn fill_transactions(
 
         dbg!("8");
         // Execute tx
-        let (receipt, account_updates) = match apply_transaction(&head_tx, context) {
-            Ok((receipt, account_updates)) => {
-                txs.shift()?;
-                // Pull transaction from the mempool
-                mempool::remove_transaction(
-                    &head_tx.tx.compute_hash(),
-                    context
-                        .store()
-                        .ok_or(ChainError::StoreError(StoreError::MissingStore))?,
-                )?;
+        let (receipt, account_updates) =
+            match apply_transaction(&head_tx, context, &mut block_cache) {
+                Ok((receipt, account_updates)) => {
+                    txs.shift()?;
+                    // Pull transaction from the mempool
+                    mempool::remove_transaction(
+                        &head_tx.tx.compute_hash(),
+                        context
+                            .store()
+                            .ok_or(ChainError::StoreError(StoreError::MissingStore))?,
+                    )?;
 
-                metrics!(METRICS_TX.inc_tx_with_status_and_type(
-                    MetricsTxStatus::Succeeded,
-                    MetricsTxType(head_tx.tx_type())
-                ));
-                (receipt, account_updates)
-            }
-            // Ignore following txs from sender
-            Err(e) => {
-                debug!("Failed to execute transaction: {}, {e}", tx_hash);
-                metrics!(METRICS_TX.inc_tx_with_status_and_type(
-                    MetricsTxStatus::Failed,
-                    MetricsTxType(head_tx.tx_type())
-                ));
-                txs.pop();
-                continue;
-            }
-        };
+                    metrics!(METRICS_TX.inc_tx_with_status_and_type(
+                        MetricsTxStatus::Succeeded,
+                        MetricsTxType(head_tx.tx_type())
+                    ));
+                    (receipt, account_updates)
+                }
+                // Ignore following txs from sender
+                Err(e) => {
+                    debug!("Failed to execute transaction: {}, {e}", tx_hash);
+                    metrics!(METRICS_TX.inc_tx_with_status_and_type(
+                        MetricsTxStatus::Failed,
+                        MetricsTxType(head_tx.tx_type())
+                    ));
+                    txs.pop();
+                    continue;
+                }
+            };
         // Add transaction to block
         debug!("Adding transaction: {} to payload", tx_hash);
         context.payload.body.transactions.push(head_tx.into());
         // Save receipt for hash calculation
         context.receipts.push(receipt);
-        all_account_updates.extend(account_updates);
     }
-    Ok(all_account_updates)
+    Ok(())
 }
 
 /// Executes the transaction, updates gas-related context values & return the receipt
@@ -445,10 +449,13 @@ pub fn fill_transactions(
 fn apply_transaction(
     head: &HeadTransaction,
     context: &mut PayloadBuildContext,
+    mut block_cache: &mut HashMap<H160, Account>,
 ) -> Result<(Receipt, Vec<AccountUpdate>), ChainError> {
     match **head {
-        Transaction::EIP4844Transaction(_) => apply_blob_transaction(head, context),
-        _ => apply_plain_transaction(head, context),
+        Transaction::EIP4844Transaction(_) => {
+            apply_blob_transaction(head, context, &mut block_cache)
+        }
+        _ => apply_plain_transaction(head, context, &mut block_cache),
     }
 }
 
@@ -456,6 +463,7 @@ fn apply_transaction(
 fn apply_blob_transaction(
     head: &HeadTransaction,
     context: &mut PayloadBuildContext,
+    mut block_cache: &mut HashMap<H160, Account>,
 ) -> Result<(Receipt, Vec<AccountUpdate>), ChainError> {
     // Fetch blobs bundle
     let tx_hash = head.tx.compute_hash();
@@ -476,7 +484,7 @@ fn apply_blob_transaction(
         return Err(EvmError::Custom("max data blobs reached".to_string()).into());
     };
     // Apply transaction
-    let (receipt, account_updates) = apply_plain_transaction(head, context)?;
+    let (receipt, account_updates) = apply_plain_transaction(head, context, &mut block_cache)?;
     // Update context with blob data
     let prev_blob_gas = context.payload.header.blob_gas_used.unwrap_or_default();
     context.payload.header.blob_gas_used =
@@ -489,6 +497,7 @@ fn apply_blob_transaction(
 fn apply_plain_transaction(
     head: &HeadTransaction,
     context: &mut PayloadBuildContext,
+    mut block_cache: &mut HashMap<H160, Account>,
 ) -> Result<(Receipt, Vec<AccountUpdate>), ChainError> {
     cfg_if::cfg_if! {
         if #[cfg(feature = "levm")] {
@@ -499,7 +508,7 @@ fn apply_plain_transaction(
     }
     #[cfg(feature = "levm")]
     {
-        let block_cache = HashMap::new();
+        // let block_cache = HashMap::new();
 
         let store_wrapper = Arc::new(StoreWrapper {
             store: context.evm_state.database().unwrap().clone(),
@@ -510,7 +519,7 @@ fn apply_plain_transaction(
             &head.tx,
             &context.payload.header,
             store_wrapper.clone(),
-            block_cache,
+            block_cache.clone(),
             spec_id(
                 &context.chain_config().map_err(ChainError::from)?,
                 context.payload.header.timestamp,
@@ -520,7 +529,17 @@ fn apply_plain_transaction(
         context.remaining_gas = context.remaining_gas.saturating_sub(result.gas_used);
         context.block_value += U256::from(result.gas_used) * head.tip;
 
-        dbg!(&result.new_state);
+        let mut new_state = result.new_state.clone();
+
+        // Now original_value is going to be the same as the current_value, for the next transaction.
+        // It should have only one value but it is convenient to keep on using our CacheDB structure
+        for account in new_state.values_mut() {
+            for storage_slot in account.storage.values_mut() {
+                storage_slot.original_value = storage_slot.current_value;
+            }
+        }
+
+        block_cache.extend(new_state);
 
         let receipt = Receipt::new(
             head.tx.tx_type(),
@@ -556,8 +575,8 @@ fn apply_plain_transaction(
             context.payload.header.gas_limit - context.remaining_gas,
             result.logs(),
         );
-        let account_updates = get_state_transitions(context.evm_state);
-        dbg!(&account_updates);
+        // let account_updates = get_state_transitions(context.evm_state);
+        // dbg!(&account_updates);
         let account_updates = Vec::new();
         Ok((receipt, account_updates))
     }
@@ -565,54 +584,96 @@ fn apply_plain_transaction(
 
 fn finalize_payload(
     context: &mut PayloadBuildContext,
-    account_updates: &[AccountUpdate],
-    account_updates_beacon: &[AccountUpdate],
+    mut block_cache: &mut HashMap<H160, Account>,
 ) -> Result<(), StoreError> {
     #[cfg(feature = "levm")]
     {
-        // get withdrawals
-        let withdrawals = context.payload.body.withdrawals.clone().unwrap_or_default();
-        let mut filtered = HashMap::new();
-        for withdrawal in withdrawals.iter() {
-            if withdrawal.amount > 0 {
-                filtered.insert(
-                    withdrawal.address,
-                    u128::from(withdrawal.amount) * u128::from(GWEI_TO_WEI),
-                );
-            }
-        }
-        let mut new_account_updates: HashMap<Address, AccountUpdate> = HashMap::new();
-        // this gets the state transitions from the DB, not the EVM state, this should be replaced
-        let account_updates_state = get_state_transitions(context.evm_state);
-        for update in account_updates_state.iter() {
-            new_account_updates.insert(update.address, update.clone());
-        }
-        for update in account_updates.iter() {
-            if let Some(existing_update) = new_account_updates.get(&update.address) {
-                // Create new update with combined balance
-                let mut combined_update = existing_update.clone();
+        // // get withdrawals
+        // let withdrawals = context.payload.body.withdrawals.clone().unwrap_or_default();
+        // let mut filtered = HashMap::new();
+        // for withdrawal in withdrawals.iter() {
+        //     if withdrawal.amount > 0 {
+        //         filtered.insert(
+        //             withdrawal.address,
+        //             u128::from(withdrawal.amount) * u128::from(GWEI_TO_WEI),
+        //         );
+        //     }
+        // }
+        // let mut new_account_updates: HashMap<Address, AccountUpdate> = HashMap::new();
+        // // this gets the state transitions from the DB, not the EVM state, this should be replaced
+        // let account_updates_state = get_state_transitions(context.evm_state);
+        // for update in account_updates_state.iter() {
+        //     new_account_updates.insert(update.address, update.clone());
+        // }
+        // for update in account_updates.iter() {
+        //     if let Some(existing_update) = new_account_updates.get(&update.address) {
+        //         // Create new update with combined balance
+        //         let mut combined_update = existing_update.clone();
 
-                if let Some(update_info) = &update.info {
-                    if let (Some(new_info), Some(withdrawal)) =
-                        (combined_update.info.as_mut(), filtered.get(&update.address))
-                    {
-                        new_info.balance = U256::from(*withdrawal) + update_info.balance;
+        //         if let Some(update_info) = &update.info {
+        //             if let (Some(new_info), Some(withdrawal)) =
+        //                 (combined_update.info.as_mut(), filtered.get(&update.address))
+        //             {
+        //                 new_info.balance = U256::from(*withdrawal) + update_info.balance;
+        //             }
+        //         }
+
+        //         new_account_updates.insert(update.address, combined_update);
+        //     } else {
+        //         // If address doesn't exist, just insert the new update
+        //         new_account_updates.insert(update.address, update.clone());
+        //     }
+        // }
+        // // Add the beacon updates, if address match, add the value of both (the new account update and the beacon update)
+        // for update in account_updates_beacon.iter() {
+        //     new_account_updates.insert(update.address, update.clone());
+        // }
+
+        // let account_updates: Vec<AccountUpdate> = new_account_updates.into_values().collect();
+        // Here we update block_cache with balance increments caused by withdrawals.
+        let block_cache = if let Some(withdrawals) = &context.payload.body.withdrawals {
+            // For every withdrawal we increment the target account's balance
+            for (address, increment) in withdrawals
+                .iter()
+                .filter(|withdrawal| withdrawal.amount > 0)
+                .map(|w| (w.address, u128::from(w.amount) * u128::from(GWEI_TO_WEI)))
+            {
+                // We check if it was in block_cache, if not, we get it from DB.
+                let mut account = block_cache.get(&address).cloned().unwrap_or({
+                    let acc_info = context
+                        .store()
+                        .unwrap()
+                        .get_account_info_by_hash(context.parent_hash(), address)?
+                        .unwrap_or_default();
+                    let acc_code = context
+                        .store()
+                        .unwrap()
+                        .get_account_code(acc_info.code_hash)?
+                        .unwrap_or_default();
+
+                    Account {
+                        info: AccountInfo {
+                            balance: acc_info.balance,
+                            bytecode: acc_code,
+                            nonce: acc_info.nonce,
+                        },
+                        storage: HashMap::new(), // this must be changed, get the storage from the DB
                     }
-                }
+                });
 
-                new_account_updates.insert(update.address, combined_update);
-            } else {
-                // If address doesn't exist, just insert the new update
-                new_account_updates.insert(update.address, update.clone());
+                account.info.balance += increment.into();
+                block_cache.insert(address, account);
             }
-        }
-        // Add the beacon updates, if address match, add the value of both (the new account update and the beacon update)
-        for update in account_updates_beacon.iter() {
-            new_account_updates.insert(update.address, update.clone());
-        }
+            block_cache.clone()
+        } else {
+            block_cache.clone()
+        };
 
-        let account_updates: Vec<AccountUpdate> = new_account_updates.into_values().collect();
-        dbg!("COMBINED UPDATES LEVM:", &account_updates);
+        let account_updates = get_state_transitions_levm(
+            context.evm_state,
+            context.parent_hash(),
+            &block_cache.clone(),
+        );
 
         context.payload.header.state_root = context
             .store()
@@ -628,7 +689,6 @@ fn finalize_payload(
     #[cfg(not(feature = "levm"))]
     {
         let account_updates = get_state_transitions(context.evm_state);
-        dbg!("COMBINED UPDATES REVM:", &account_updates);
         // Note: This is commented because it is still being used in development.
         // dbg!(&account_updates);
         context.payload.header.state_root = context

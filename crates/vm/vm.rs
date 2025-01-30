@@ -152,6 +152,83 @@ cfg_if::cfg_if! {
             Ok(report)
 
         }
+        pub fn get_state_transitions_levm_runner(
+            initial_state: &EvmState,
+            block_hash: H256,
+            execution_report: &TransactionReport,
+        ) -> Vec<AccountUpdate> {
+            let current_db = match initial_state {
+                EvmState::Store(state) => state.database.store.clone(),
+                EvmState::Execution(_cache_db) => unreachable!("Execution state should not be passed here"),
+            };
+            let mut account_updates: Vec<AccountUpdate> = vec![];
+            for (new_state_account_address, new_state_account) in &execution_report.new_state {
+                let initial_account_state = current_db
+                    .get_account_info_by_hash(block_hash, *new_state_account_address)
+                    .expect("Error getting account info by address")
+                    .unwrap_or_default();
+                let mut updates = 0;
+                if initial_account_state.balance != new_state_account.info.balance {
+                    updates += 1;
+                }
+                if initial_account_state.nonce != new_state_account.info.nonce {
+                    updates += 1;
+                }
+                let code = if new_state_account.info.bytecode.is_empty() {
+                    // The new state account has no code
+                    None
+                } else {
+                    // Get the code hash of the new state account bytecode
+                    let potential_new_bytecode_hash = code_hash(&new_state_account.info.bytecode);
+                    // Look into the current database to see if the bytecode hash is already present
+                    let current_bytecode = current_db
+                        .get_account_code(potential_new_bytecode_hash)
+                        .expect("Error getting account code by hash");
+                    let code = new_state_account.info.bytecode.clone();
+                    // The code is present in the current database
+                    if let Some(current_bytecode) = current_bytecode {
+                        if current_bytecode != code {
+                            // The code has changed
+                            Some(code)
+                        } else {
+                            // The code has not changed
+                            None
+                        }
+                    } else {
+                        // The new state account code is not present in the current
+                        // database, then it must be new
+                        Some(code)
+                    }
+                };
+                if code.is_some() {
+                    updates += 1;
+                }
+                let mut added_storage = HashMap::new();
+                for (key, value) in &new_state_account.storage {
+                    added_storage.insert(*key, value.current_value);
+                    updates += 1;
+                }
+
+                if updates == 0 && !new_state_account.is_empty() {
+                    continue;
+                }
+
+                let account_update = AccountUpdate {
+                    address: *new_state_account_address,
+                    removed: new_state_account.is_empty(),
+                    info: Some(AccountInfo {
+                        code_hash: code_hash(&new_state_account.info.bytecode),
+                        balance: new_state_account.info.balance,
+                        nonce: new_state_account.info.nonce,
+                    }),
+                    code,
+                    added_storage,
+                };
+
+                account_updates.push(account_update);
+            }
+            account_updates
+        }
 
         pub fn get_state_transitions_levm(
             initial_state: &EvmState,
@@ -291,7 +368,7 @@ cfg_if::cfg_if! {
             tx: &Transaction,
             block_header: &BlockHeader,
             db: Arc<dyn LevmDatabase>,
-            block_cache: CacheDB,
+            block_cache: HashMap<ethrex_core::H160, Account>,
             spec_id: SpecId
         ) -> Result<TransactionReport, VMError> {
             let gas_price : U256 = tx.effective_gas_price(block_header.base_fee_per_gas).ok_or(VMError::InvalidTransaction)?.into();
