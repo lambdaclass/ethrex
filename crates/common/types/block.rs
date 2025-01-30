@@ -595,11 +595,11 @@ fn calc_excess_blob_gas(parent_header: &BlockHeader) -> u64 {
 
 #[cfg(test)]
 mod test {
-    use std::str::FromStr;
-
     use super::*;
+    use crate::types::EMPTY_KECCACK_HASH;
     use ethereum_types::H160;
     use hex_literal::hex;
+    use std::str::FromStr;
 
     #[test]
     fn test_compute_withdrawals_root() {
@@ -669,11 +669,11 @@ mod test {
             blob_gas_used: Some(0x00),
             excess_blob_gas: Some(0x00),
             parent_beacon_block_root: Some(H256::zero()),
-            requests_hash: None,
+            requests_hash: Some(*EMPTY_KECCACK_HASH),
         };
         let block = BlockHeader {
             parent_hash: H256::from_str(
-                "0x1ac1bf1eef97dc6b03daba5af3b89881b7ae4bc1600dc434f450a9ec34d44999",
+                "0x48e29e7357408113a4166e04e9f1aeff0680daa2b97ba93df6512a73ddf7a154",
             )
             .unwrap(),
             ommers_hash: H256::from_str(
@@ -712,7 +712,7 @@ mod test {
             blob_gas_used: Some(0x00),
             excess_blob_gas: Some(0x00),
             parent_beacon_block_root: Some(H256::zero()),
-            requests_hash: None,
+            requests_hash: Some(*EMPTY_KECCACK_HASH),
         };
         assert!(validate_block_header(&block, &parent_block).is_ok())
     }
