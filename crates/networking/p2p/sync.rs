@@ -800,10 +800,7 @@ async fn heal_state_trie(
         // Take at most one batch so we don't overload the peer
         let batch = paths[0..min(paths.len(), NODE_BATCH_SIZE)].to_vec();
         let peer = peers.lock().await.get_peer_channels(Capability::Snap).await;
-        if let Some(nodes) = peer
-            .request_state_trienodes(state_root, batch)
-            .await
-        {
+        if let Some(nodes) = peer.request_state_trienodes(state_root, batch).await {
             info!("Received {} state nodes", nodes.len());
             // Reset retry counter for next request
             retry_count = 0;
@@ -896,24 +893,31 @@ async fn storage_healer(
     // alive until the end signal so we don't lose queued messages
     let mut stale = false;
     let mut incoming = true;
+    // This boolean exists only so that we skip waiting for messages on the first loop iteration
+    // TODO: find prettier solution
+    let mut startup = true;
     while incoming {
-        // Fetch incoming requests
-        match receiver.recv().await {
-            Some(account_paths) if !account_paths.is_empty() => {
-                // Add the root paths of each account trie to the queue
-                pending_storages.extend(
-                    account_paths
-                        .into_iter()
-                        .map(|acc_path| (acc_path, vec![Nibbles::default()])),
-                );
-                info!(
+        if startup {
+            startup = false;
+        } else {
+            // Fetch incoming requests
+            match receiver.recv().await {
+                Some(account_paths) if !account_paths.is_empty() => {
+                    // Add the root paths of each account trie to the queue
+                    pending_storages.extend(
+                        account_paths
+                            .into_iter()
+                            .map(|acc_path| (acc_path, vec![Nibbles::default()])),
+                    );
+                    info!(
                     "Received incoming storage heal request, current batch: {}/{NODE_BATCH_SIZE}",
                     pending_storages.len()
                 );
-                info!("Number of messages in receiver: {}", receiver.len());
+                    info!("Number of messages in receiver: {}", receiver.len());
+                }
+                // Disconnect / Empty message signaling no more bytecodes to sync
+                _ => incoming = false,
             }
-            // Disconnect / Empty message signaling no more bytecodes to sync
-            _ => incoming = false,
         }
         // If we have enough pending storages to fill a batch
         // or if we have no more incoming batches, spawn a fetch process
