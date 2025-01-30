@@ -1,8 +1,10 @@
 use ethrex_core::types::ChainConfig;
 use ethrex_net::types::{Node, NodeRecord};
 use ethrex_storage::Store;
+use hex::ToHex;
 use serde::Serialize;
 use serde_json::Value;
+use sha3::{Digest, Keccak256};
 use std::collections::HashMap;
 
 use crate::utils::RpcErr;
@@ -50,7 +52,7 @@ pub fn node_info(
     let node_info = NodeInfo {
         enode: enode_url,
         enr: enr_url,
-        id: hex::encode(local_node.node_id),
+        id: hex::encode(Keccak256::digest(local_node.node_id.as_bytes())),
         name: "ethrex/0.1.0/rust1.81".to_string(),
         ip: local_node.ip.to_string(),
         ports: Ports {
