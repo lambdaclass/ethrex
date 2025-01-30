@@ -193,8 +193,8 @@ impl VM {
                 Err(VMError::ContractOutputTooBig)
             } else if contract_code.first().unwrap_or(&0) == &INVALID_CONTRACT_PREFIX {
                 Err(VMError::InvalidContractPrefix)
-            } else if self
-                .increase_consumed_gas(current_call_frame, code_deposit_cost)
+            } else if current_call_frame
+                .increase_consumed_gas(code_deposit_cost)
                 .is_err()
             {
                 Err(VMError::OutOfGas(OutOfGasError::MaxGasLimitExceeded))

@@ -20,7 +20,7 @@ impl VM {
         &mut self,
         current_call_frame: &mut CallFrame,
     ) -> Result<OpcodeResult, VMError> {
-        self.increase_consumed_gas(current_call_frame, gas_cost::BLOCKHASH)?;
+        current_call_frame.increase_consumed_gas(gas_cost::BLOCKHASH)?;
 
         let block_number = current_call_frame.stack.pop()?;
 
@@ -56,7 +56,7 @@ impl VM {
         &mut self,
         current_call_frame: &mut CallFrame,
     ) -> Result<OpcodeResult, VMError> {
-        self.increase_consumed_gas(current_call_frame, gas_cost::COINBASE)?;
+        current_call_frame.increase_consumed_gas(gas_cost::COINBASE)?;
 
         current_call_frame
             .stack
@@ -70,7 +70,7 @@ impl VM {
         &mut self,
         current_call_frame: &mut CallFrame,
     ) -> Result<OpcodeResult, VMError> {
-        self.increase_consumed_gas(current_call_frame, gas_cost::TIMESTAMP)?;
+        current_call_frame.increase_consumed_gas(gas_cost::TIMESTAMP)?;
 
         current_call_frame.stack.push(self.env.timestamp)?;
 
@@ -82,7 +82,7 @@ impl VM {
         &mut self,
         current_call_frame: &mut CallFrame,
     ) -> Result<OpcodeResult, VMError> {
-        self.increase_consumed_gas(current_call_frame, gas_cost::NUMBER)?;
+        current_call_frame.increase_consumed_gas(gas_cost::NUMBER)?;
 
         current_call_frame.stack.push(self.env.block_number)?;
 
@@ -94,7 +94,7 @@ impl VM {
         &mut self,
         current_call_frame: &mut CallFrame,
     ) -> Result<OpcodeResult, VMError> {
-        self.increase_consumed_gas(current_call_frame, gas_cost::PREVRANDAO)?;
+        current_call_frame.increase_consumed_gas(gas_cost::PREVRANDAO)?;
 
         let randao = self.env.prev_randao.unwrap_or_default(); // Assuming block_env has been integrated
         current_call_frame
@@ -109,7 +109,7 @@ impl VM {
         &mut self,
         current_call_frame: &mut CallFrame,
     ) -> Result<OpcodeResult, VMError> {
-        self.increase_consumed_gas(current_call_frame, gas_cost::GASLIMIT)?;
+        current_call_frame.increase_consumed_gas(gas_cost::GASLIMIT)?;
 
         current_call_frame
             .stack
@@ -123,7 +123,7 @@ impl VM {
         &mut self,
         current_call_frame: &mut CallFrame,
     ) -> Result<OpcodeResult, VMError> {
-        self.increase_consumed_gas(current_call_frame, gas_cost::CHAINID)?;
+        current_call_frame.increase_consumed_gas(gas_cost::CHAINID)?;
 
         current_call_frame.stack.push(self.env.chain_id)?;
 
@@ -135,7 +135,7 @@ impl VM {
         &mut self,
         current_call_frame: &mut CallFrame,
     ) -> Result<OpcodeResult, VMError> {
-        self.increase_consumed_gas(current_call_frame, gas_cost::SELFBALANCE)?;
+        current_call_frame.increase_consumed_gas(gas_cost::SELFBALANCE)?;
 
         let balance = get_account(&mut self.cache, &self.db, current_call_frame.to)
             .info
@@ -150,7 +150,7 @@ impl VM {
         &mut self,
         current_call_frame: &mut CallFrame,
     ) -> Result<OpcodeResult, VMError> {
-        self.increase_consumed_gas(current_call_frame, gas_cost::BASEFEE)?;
+        current_call_frame.increase_consumed_gas(gas_cost::BASEFEE)?;
 
         current_call_frame.stack.push(self.env.base_fee_per_gas)?;
 
@@ -168,7 +168,7 @@ impl VM {
             return Err(VMError::InvalidOpcode);
         }
 
-        self.increase_consumed_gas(current_call_frame, gas_cost::BLOBHASH)?;
+        current_call_frame.increase_consumed_gas(gas_cost::BLOBHASH)?;
 
         let index = current_call_frame.stack.pop()?;
 
@@ -214,7 +214,7 @@ impl VM {
         if self.env.fork < Fork::Cancun {
             return Err(VMError::InvalidOpcode);
         }
-        self.increase_consumed_gas(current_call_frame, gas_cost::BLOBBASEFEE)?;
+        current_call_frame.increase_consumed_gas(gas_cost::BLOBBASEFEE)?;
 
         let blob_base_fee = self.get_blob_gasprice()?;
 
