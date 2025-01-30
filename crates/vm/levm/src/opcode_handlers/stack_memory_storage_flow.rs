@@ -1,32 +1,31 @@
 use crate::{
     call_frame::CallFrame,
     constants::{WORD_SIZE, WORD_SIZE_IN_BYTES_USIZE},
-    errors::{OpcodeSuccess, OutOfGasError, VMError},
+    errors::{OpcodeResult, OutOfGasError, VMError},
     gas_cost::{self, SSTORE_STIPEND},
     memory::{self, calculate_memory_size},
     vm::VM,
 };
-use ethrex_core::{H256, U256};
-use revm_primitives::SpecId;
+use ethrex_core::{types::Fork, H256, U256};
 
 // Stack, Memory, Storage and Flow Operations (15)
 // Opcodes: POP, MLOAD, MSTORE, MSTORE8, SLOAD, SSTORE, JUMP, JUMPI, PC, MSIZE, GAS, JUMPDEST, TLOAD, TSTORE, MCOPY
 
 impl VM {
     // POP operation
-    pub fn op_pop(&mut self, current_call_frame: &mut CallFrame) -> Result<OpcodeSuccess, VMError> {
+    pub fn op_pop(&mut self, current_call_frame: &mut CallFrame) -> Result<OpcodeResult, VMError> {
         self.increase_consumed_gas(current_call_frame, gas_cost::POP)?;
         current_call_frame.stack.pop()?;
-        Ok(OpcodeSuccess::Continue)
+        Ok(OpcodeResult::Continue { pc_increment: 1 })
     }
 
     // TLOAD operation
     pub fn op_tload(
         &mut self,
         current_call_frame: &mut CallFrame,
-    ) -> Result<OpcodeSuccess, VMError> {
+    ) -> Result<OpcodeResult, VMError> {
         // [EIP-1153] - TLOAD is only available from CANCUN
-        if self.env.spec_id < SpecId::CANCUN {
+        if self.env.fork < Fork::Cancun {
             return Err(VMError::InvalidOpcode);
         }
 
@@ -41,16 +40,16 @@ impl VM {
             .unwrap_or(U256::zero());
 
         current_call_frame.stack.push(value)?;
-        Ok(OpcodeSuccess::Continue)
+        Ok(OpcodeResult::Continue { pc_increment: 1 })
     }
 
     // TSTORE operation
     pub fn op_tstore(
         &mut self,
         current_call_frame: &mut CallFrame,
-    ) -> Result<OpcodeSuccess, VMError> {
+    ) -> Result<OpcodeResult, VMError> {
         // [EIP-1153] - TLOAD is only available from CANCUN
-        if self.env.spec_id < SpecId::CANCUN {
+        if self.env.fork < Fork::Cancun {
             return Err(VMError::InvalidOpcode);
         }
 
@@ -66,14 +65,14 @@ impl VM {
             .transient_storage
             .insert((current_call_frame.to, key), value);
 
-        Ok(OpcodeSuccess::Continue)
+        Ok(OpcodeResult::Continue { pc_increment: 1 })
     }
 
     // MLOAD operation
     pub fn op_mload(
         &mut self,
         current_call_frame: &mut CallFrame,
-    ) -> Result<OpcodeSuccess, VMError> {
+    ) -> Result<OpcodeResult, VMError> {
         let offset = current_call_frame.stack.pop()?;
 
         let new_memory_size = calculate_memory_size(offset, WORD_SIZE_IN_BYTES_USIZE)?;
@@ -87,14 +86,14 @@ impl VM {
             .stack
             .push(memory::load_word(&mut current_call_frame.memory, offset)?)?;
 
-        Ok(OpcodeSuccess::Continue)
+        Ok(OpcodeResult::Continue { pc_increment: 1 })
     }
 
     // MSTORE operation
     pub fn op_mstore(
         &mut self,
         current_call_frame: &mut CallFrame,
-    ) -> Result<OpcodeSuccess, VMError> {
+    ) -> Result<OpcodeResult, VMError> {
         let offset = current_call_frame.stack.pop()?;
 
         let new_memory_size = calculate_memory_size(offset, WORD_SIZE_IN_BYTES_USIZE)?;
@@ -112,14 +111,14 @@ impl VM {
             &value.to_big_endian(),
         )?;
 
-        Ok(OpcodeSuccess::Continue)
+        Ok(OpcodeResult::Continue { pc_increment: 1 })
     }
 
     // MSTORE8 operation
     pub fn op_mstore8(
         &mut self,
         current_call_frame: &mut CallFrame,
-    ) -> Result<OpcodeSuccess, VMError> {
+    ) -> Result<OpcodeResult, VMError> {
         // TODO: modify expansion cost to accept U256
         let offset = current_call_frame.stack.pop()?;
 
@@ -138,14 +137,14 @@ impl VM {
             &value.to_big_endian()[WORD_SIZE - 1..WORD_SIZE],
         )?;
 
-        Ok(OpcodeSuccess::Continue)
+        Ok(OpcodeResult::Continue { pc_increment: 1 })
     }
 
     // SLOAD operation
     pub fn op_sload(
         &mut self,
         current_call_frame: &mut CallFrame,
-    ) -> Result<OpcodeSuccess, VMError> {
+    ) -> Result<OpcodeResult, VMError> {
         let storage_slot_key = current_call_frame.stack.pop()?;
         let address = current_call_frame.to;
 
@@ -157,7 +156,7 @@ impl VM {
         self.increase_consumed_gas(current_call_frame, gas_cost::sload(storage_slot_was_cold)?)?;
 
         current_call_frame.stack.push(storage_slot.current_value)?;
-        Ok(OpcodeSuccess::Continue)
+        Ok(OpcodeResult::Continue { pc_increment: 1 })
     }
 
     // SSTORE operation
@@ -165,7 +164,7 @@ impl VM {
     pub fn op_sstore(
         &mut self,
         current_call_frame: &mut CallFrame,
-    ) -> Result<OpcodeSuccess, VMError> {
+    ) -> Result<OpcodeResult, VMError> {
         if current_call_frame.is_static {
             return Err(VMError::OpcodeNotAllowedInStaticContext);
         }
@@ -229,23 +228,23 @@ impl VM {
         )?;
 
         self.update_account_storage(current_call_frame.to, key, new_storage_slot_value)?;
-        Ok(OpcodeSuccess::Continue)
+        Ok(OpcodeResult::Continue { pc_increment: 1 })
     }
 
     // MSIZE operation
     pub fn op_msize(
         &mut self,
         current_call_frame: &mut CallFrame,
-    ) -> Result<OpcodeSuccess, VMError> {
+    ) -> Result<OpcodeResult, VMError> {
         self.increase_consumed_gas(current_call_frame, gas_cost::MSIZE)?;
         current_call_frame
             .stack
             .push(current_call_frame.memory.len().into())?;
-        Ok(OpcodeSuccess::Continue)
+        Ok(OpcodeResult::Continue { pc_increment: 1 })
     }
 
     // GAS operation
-    pub fn op_gas(&mut self, current_call_frame: &mut CallFrame) -> Result<OpcodeSuccess, VMError> {
+    pub fn op_gas(&mut self, current_call_frame: &mut CallFrame) -> Result<OpcodeResult, VMError> {
         self.increase_consumed_gas(current_call_frame, gas_cost::GAS)?;
 
         let remaining_gas = current_call_frame
@@ -255,16 +254,16 @@ impl VM {
         // Note: These are not consumed gas calculations, but are related, so I used this wrapping here
         current_call_frame.stack.push(remaining_gas.into())?;
 
-        Ok(OpcodeSuccess::Continue)
+        Ok(OpcodeResult::Continue { pc_increment: 1 })
     }
 
     // MCOPY operation
     pub fn op_mcopy(
         &mut self,
         current_call_frame: &mut CallFrame,
-    ) -> Result<OpcodeSuccess, VMError> {
+    ) -> Result<OpcodeResult, VMError> {
         // [EIP-5656] - MCOPY is only available from CANCUN
-        if self.env.spec_id < SpecId::CANCUN {
+        if self.env.fork < Fork::Cancun {
             return Err(VMError::InvalidOpcode);
         }
 
@@ -296,20 +295,17 @@ impl VM {
             size,
         )?;
 
-        Ok(OpcodeSuccess::Continue)
+        Ok(OpcodeResult::Continue { pc_increment: 1 })
     }
 
     // JUMP operation
-    pub fn op_jump(
-        &mut self,
-        current_call_frame: &mut CallFrame,
-    ) -> Result<OpcodeSuccess, VMError> {
+    pub fn op_jump(&mut self, current_call_frame: &mut CallFrame) -> Result<OpcodeResult, VMError> {
         self.increase_consumed_gas(current_call_frame, gas_cost::JUMP)?;
 
         let jump_address = current_call_frame.stack.pop()?;
         Self::jump(current_call_frame, jump_address)?;
 
-        Ok(OpcodeSuccess::Continue)
+        Ok(OpcodeResult::Continue { pc_increment: 0 })
     }
 
     /// JUMP* family (`JUMP` and `JUMP` ATTOW [DEC 2024]) helper
@@ -343,37 +339,39 @@ impl VM {
     pub fn op_jumpi(
         &mut self,
         current_call_frame: &mut CallFrame,
-    ) -> Result<OpcodeSuccess, VMError> {
+    ) -> Result<OpcodeResult, VMError> {
         let jump_address = current_call_frame.stack.pop()?;
         let condition = current_call_frame.stack.pop()?;
 
         self.increase_consumed_gas(current_call_frame, gas_cost::JUMPI)?;
 
-        if !condition.is_zero() {
-            Self::jump(current_call_frame, jump_address)?
+        let pc_increment = if !condition.is_zero() {
+            // Move the PC but don't increment it afterwards
+            Self::jump(current_call_frame, jump_address)?;
+            0
         } else {
-            current_call_frame.increment_pc()?;
-        }
-        Ok(OpcodeSuccess::Continue)
+            1
+        };
+        Ok(OpcodeResult::Continue { pc_increment })
     }
 
     // JUMPDEST operation
     pub fn op_jumpdest(
         &mut self,
         current_call_frame: &mut CallFrame,
-    ) -> Result<OpcodeSuccess, VMError> {
+    ) -> Result<OpcodeResult, VMError> {
         self.increase_consumed_gas(current_call_frame, gas_cost::JUMPDEST)?;
-        Ok(OpcodeSuccess::Continue)
+        Ok(OpcodeResult::Continue { pc_increment: 1 })
     }
 
     // PC operation
-    pub fn op_pc(&mut self, current_call_frame: &mut CallFrame) -> Result<OpcodeSuccess, VMError> {
+    pub fn op_pc(&mut self, current_call_frame: &mut CallFrame) -> Result<OpcodeResult, VMError> {
         self.increase_consumed_gas(current_call_frame, gas_cost::PC)?;
 
         current_call_frame
             .stack
             .push(U256::from(current_call_frame.pc))?;
 
-        Ok(OpcodeSuccess::Continue)
+        Ok(OpcodeResult::Continue { pc_increment: 1 })
     }
 }

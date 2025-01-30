@@ -1003,6 +1003,54 @@ impl Store {
             .is_some())
     }
 
+    /// Sets the hash of the last header downloaded during a snap sync
+    pub fn set_header_download_checkpoint(&self, block_hash: BlockHash) -> Result<(), StoreError> {
+        self.engine.set_header_download_checkpoint(block_hash)
+    }
+
+    /// Gets the hash of the last header downloaded during a snap sync
+    pub fn get_header_download_checkpoint(&self) -> Result<Option<BlockHash>, StoreError> {
+        self.engine.get_header_download_checkpoint()
+    }
+
+    /// Sets the current state root of the state trie being rebuilt during snap sync
+    pub fn set_state_trie_root_checkpoint(&self, current_root: H256) -> Result<(), StoreError> {
+        self.engine.set_state_trie_root_checkpoint(current_root)
+    }
+
+    /// Gets the current state root of the state trie being rebuilt during snap sync
+    pub fn get_state_trie_root_checkpoint(&self) -> Result<Option<H256>, StoreError> {
+        self.engine.get_state_trie_root_checkpoint()
+    }
+
+    /// Sets the last key fetched from the state trie being fetched during snap sync
+    pub fn set_state_trie_key_checkpoint(&self, last_key: H256) -> Result<(), StoreError> {
+        self.engine.set_state_trie_key_checkpoint(last_key)
+    }
+
+    /// Gets the last key fetched from the state trie being fetched during snap sync
+    pub fn get_state_trie_key_checkpoint(&self) -> Result<Option<H256>, StoreError> {
+        self.engine.get_state_trie_key_checkpoint()
+    }
+
+    /// Sets the list of account hashes whose storage needs healing
+    pub fn set_pending_storage_heal_accounts(&self, accounts: Vec<H256>) -> Result<(), StoreError> {
+        self.engine.set_pending_storage_heal_accounts(accounts)
+    }
+
+    /// Gets the list of account hashes whose storage needs healing
+    pub fn get_pending_storage_heal_accounts(&self) -> Result<Option<Vec<H256>>, StoreError> {
+        self.engine.get_pending_storage_heal_accounts()
+    }
+
+    /// Clears all checkpoints written during a snap sync
+    pub fn clear_snap_state(&self) -> Result<(), StoreError> {
+        self.engine.clear_header_download_checkpoint()?;
+        self.engine.clear_pending_storage_heal_accounts()?;
+        self.engine.clear_state_trie_root_checkpoint()?;
+        self.engine.clear_state_trie_key_checkpoint()
+    }
+
     pub fn is_synced(&self) -> Result<bool, StoreError> {
         self.engine.is_synced()
     }
@@ -1176,6 +1224,7 @@ mod tests {
             blob_gas_used: Some(0x00),
             excess_blob_gas: Some(0x00),
             parent_beacon_block_root: Some(H256::zero()),
+            requests_hash: None,
         };
         let block_body = BlockBody {
             transactions: vec![Transaction::decode(&hex::decode("b86f02f86c8330182480114e82f618946177843db3138ae69679a54b95cf345ed759450d870aa87bee53800080c080a0151ccc02146b9b11adf516e6787b59acae3e76544fdcd75e77e67c6b598ce65da064c5dd5aae2fbb535830ebbdad0234975cd7ece3562013b63ea18cc0df6c97d4").unwrap()).unwrap(),

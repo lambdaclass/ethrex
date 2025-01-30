@@ -14,7 +14,7 @@ use ethrex_levm::{
     Account, StorageSlot,
 };
 use ethrex_storage::{error::StoreError, AccountUpdate};
-use ethrex_vm::{db::StoreWrapper, EvmState, RevmAddress, RevmU256};
+use ethrex_vm::{db::StoreWrapper, fork_to_spec_id, EvmState, RevmAddress, RevmU256};
 use revm::{
     db::State,
     inspectors::TracerEip3155 as RevmTracerEip3155,
@@ -195,7 +195,7 @@ pub fn prepare_revm_for_tx<'state>(
         .with_block_env(block_env)
         .with_tx_env(tx_env)
         .modify_cfg_env(|cfg| cfg.chain_id = chain_spec.chain_id)
-        .with_spec_id(test.fork())
+        .with_spec_id(fork_to_spec_id(test.fork()))
         .with_external_context(
             RevmTracerEip3155::new(Box::new(std::io::stderr())).without_summary(),
         );
@@ -463,7 +463,6 @@ pub fn _ensure_post_state_revm(
                             logs: vec![],
                             output: Bytes::new(),
                             new_state: HashMap::new(),
-                            created_address: None,
                         },
                         //TODO: This is not a TransactionReport because it is REVM
                         error_reason,
@@ -489,7 +488,6 @@ pub fn _ensure_post_state_revm(
                                 logs: vec![],
                                 output: Bytes::new(),
                                 new_state: HashMap::new(),
-                                created_address: None,
                             },
                             //TODO: This is not a TransactionReport because it is REVM
                             error_reason,

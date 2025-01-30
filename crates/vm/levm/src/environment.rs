@@ -1,4 +1,4 @@
-use ethrex_core::{Address, H256, U256};
+use ethrex_core::{types::Fork, Address, H256, U256};
 pub use revm_primitives::SpecId;
 
 use std::collections::HashMap;
@@ -12,7 +12,7 @@ pub struct Environment {
     pub origin: Address,
     pub refunded_gas: u64,
     pub gas_limit: u64,
-    pub spec_id: SpecId,
+    pub fork: Fork,
     pub block_number: U256,
     pub coinbase: Address,
     pub timestamp: U256,

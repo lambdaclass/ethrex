@@ -1,58 +1,58 @@
 use bytes::Bytes;
-use ethrex_levm::{call_frame::CallFrame, errors::TxResult, testing::new_vm_with_bytecode};
+use ethrex_levm::{errors::TxResult, testing::new_vm_with_bytecode};
 use revm::{
     db::BenchmarkDB,
-    primitives::{address, Bytecode, TransactTo},
+    primitives::{address, Address, Bytecode, TransactTo},
     Evm,
 };
+use sha3::{Digest, Keccak256};
+use std::fs::File;
 use std::hint::black_box;
+use std::io::Read;
 
-pub const FIBONACCI_BYTECODE: &str =
-    "5f355f60015b8215601a578181019150909160019003916005565b9150505f5260205ff3";
-pub const FACTORIAL_BYTECODE: &str =
-    "5f355f60015b8215601b57906001018091029160019003916005565b9150505f5260205ff3";
-
-pub fn run_with_levm(program: &str, runs: usize, number_of_iterations: u32) {
+pub fn run_with_levm(program: &str, runs: usize, calldata: &str) {
     let bytecode = Bytes::from(hex::decode(program).unwrap());
-    let mut call_frame = CallFrame::new_from_bytecode(bytecode);
-    let mut calldata = vec![0x00; 32];
-    calldata[28..32].copy_from_slice(&number_of_iterations.to_be_bytes());
-    call_frame.calldata = Bytes::from(calldata);
+    let calldata = Bytes::from(hex::decode(calldata).unwrap());
 
     for _ in 0..runs - 1 {
-        let mut vm = new_vm_with_bytecode(Bytes::new()).unwrap();
-        *vm.current_call_frame_mut().unwrap() = call_frame.clone();
-        let mut current_call_frame = vm.call_frames.pop().unwrap();
-        let tx_report = black_box(vm.execute(&mut current_call_frame).unwrap());
+        let mut vm = new_vm_with_bytecode(bytecode.clone()).unwrap();
+        vm.call_frames.last_mut().unwrap().calldata = calldata.clone();
+        vm.env.gas_limit = 100_000_000;
+        vm.env.block_gas_limit = 100_000_001;
+        let tx_report = black_box(vm.transact().unwrap());
         assert!(tx_report.result == TxResult::Success);
     }
-    let mut vm = new_vm_with_bytecode(Bytes::new()).unwrap();
-    *vm.current_call_frame_mut().unwrap() = call_frame.clone();
-    let mut current_call_frame = vm.call_frames.pop().unwrap();
-    let tx_report = black_box(vm.execute(&mut current_call_frame).unwrap());
+    let mut vm = new_vm_with_bytecode(bytecode.clone()).unwrap();
+    vm.call_frames.last_mut().unwrap().calldata = calldata.clone();
+    vm.env.gas_limit = 100_000_000;
+    vm.env.block_gas_limit = 100_000_001;
+    let tx_report = black_box(vm.transact().unwrap());
     assert!(tx_report.result == TxResult::Success);
 
     match tx_report.result {
         TxResult::Success => {
-            println!("\t\t0x{}", hex::encode(tx_report.output));
+            println!("output: \t\t0x{}", hex::encode(tx_report.output));
         }
         TxResult::Revert(error) => panic!("Execution failed: {:?}", error),
     }
 }
 
-pub fn run_with_revm(program: &str, runs: usize, number_of_iterations: u32) {
+pub fn run_with_revm(program: &str, runs: usize, calldata: &str) {
+    let rich_acc_address = address!("1000000000000000000000000000000000000000");
     let bytes = hex::decode(program).unwrap();
-    let raw = Bytecode::new_raw(bytes.into());
-    let mut calldata = [0; 32];
-    calldata[28..32].copy_from_slice(&number_of_iterations.to_be_bytes());
+    let raw = Bytecode::new_raw(bytes.clone().into());
+
     let mut evm = Evm::builder()
-        .with_db(BenchmarkDB::new_bytecode(raw))
         .modify_tx_env(|tx| {
-            tx.caller = address!("1000000000000000000000000000000000000000");
-            tx.transact_to = TransactTo::Call(address!("0000000000000000000000000000000000000000"));
-            tx.data = calldata.into();
+            tx.caller = rich_acc_address;
+            tx.transact_to = TransactTo::Call(Address::ZERO);
+            tx.data = hex::decode(calldata).unwrap().into();
         })
+        .with_db(BenchmarkDB::new_bytecode(raw))
         .build();
+
+    let result = evm.transact().unwrap();
+    assert!(result.result.is_success());
 
     for _ in 0..runs - 1 {
         let result = black_box(evm.transact()).unwrap();
@@ -61,5 +61,41 @@ pub fn run_with_revm(program: &str, runs: usize, number_of_iterations: u32) {
     let result = black_box(evm.transact()).unwrap();
     assert!(result.result.is_success());
 
-    println!("\t\t{}", result.result.into_output().unwrap());
+    println!("output: \t\t{}", result.result.into_output().unwrap());
+}
+
+pub fn generate_calldata(function: &str, n: u64) -> String {
+    let function_signature = format!("{}(uint256)", function);
+    let hash = Keccak256::digest(function_signature.as_bytes());
+    let function_selector = &hash[..4];
+
+    // Encode argument n (uint256, padded to 32 bytes)
+    let mut encoded_n = [0u8; 32];
+    encoded_n[24..].copy_from_slice(&n.to_be_bytes());
+
+    // Combine the function selector and the encoded argument
+    let calldata: Vec<u8> = function_selector
+        .iter()
+        .chain(encoded_n.iter())
+        .copied()
+        .collect();
+
+    hex::encode(calldata)
+}
+
+pub fn load_contract_bytecode(bench_name: &str) -> String {
+    let path = format!(
+        "bench/revm_comparison/contracts/bin/{}.bin-runtime",
+        bench_name
+    );
+    load_file_bytecode(&path)
+}
+
+fn load_file_bytecode(path: &str) -> String {
+    println!("Current directory: {:?}", std::env::current_dir().unwrap());
+    println!("Loading bytecode from file {}", path);
+    let mut file = File::open(path).unwrap();
+    let mut contents = String::new();
+    file.read_to_string(&mut contents).unwrap();
+    contents
 }

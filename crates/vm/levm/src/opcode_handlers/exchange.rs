@@ -1,6 +1,6 @@
 use crate::{
     call_frame::CallFrame,
-    errors::{OpcodeSuccess, VMError},
+    errors::{OpcodeResult, VMError},
     gas_cost,
     vm::VM,
 };
@@ -14,7 +14,7 @@ impl VM {
         &mut self,
         current_call_frame: &mut CallFrame,
         depth: usize,
-    ) -> Result<OpcodeSuccess, VMError> {
+    ) -> Result<OpcodeResult, VMError> {
         self.increase_consumed_gas(current_call_frame, gas_cost::SWAPN)?;
 
         let stack_top_index = current_call_frame
@@ -33,6 +33,6 @@ impl VM {
             .stack
             .swap(stack_top_index, to_swap_index)?;
 
-        Ok(OpcodeSuccess::Continue)
+        Ok(OpcodeResult::Continue { pc_increment: 1 })
     }
 }
