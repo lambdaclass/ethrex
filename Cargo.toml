@@ -4,6 +4,7 @@ members = [
     "crates/blockchain/dev",
     "crates/common",
     "crates/networking/p2p",
+    "crates/networking/p2p_actors",
     "crates/networking/rpc",
     "crates/storage/store",
     "crates/vm",

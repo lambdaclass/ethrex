@@ -1,0 +1,1 @@
+pub const RLPX_PROTOCOL_VERSION: u8 = 5;
