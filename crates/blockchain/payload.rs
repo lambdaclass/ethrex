@@ -14,7 +14,7 @@ use ethrex_core::{
     Address, Bloom, Bytes, H256, U256,
 };
 #[cfg(feature = "levm")]
-use ethrex_levm::{db::CacheDB, AccountInfo};
+use ethrex_levm::AccountInfo;
 
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_storage::{error::StoreError, Store};
@@ -260,10 +260,10 @@ pub fn build_payload(
 
 pub fn apply_withdrawals(
     context: &mut PayloadBuildContext,
-) -> Result<CacheDB, EvmError> {
+) -> Result<HashMap<Address, Account>, EvmError> {
     #[cfg(feature = "levm")]
     {
-        let mut block_cache = CacheDB::new();
+        let mut block_cache = HashMap::new();
         // Apply withdrawals & call beacon root contract, and obtain the new state root
         let fork = context
             .chain_config()?
@@ -346,7 +346,7 @@ fn fetch_mempool_transactions(
 /// Returns the block value
 pub fn fill_transactions(
     context: &mut PayloadBuildContext,
-    block_cache: &mut CacheDB,
+    block_cache: &mut HashMap<Address, Account>,
 ) -> Result<(), ChainError> {
     let chain_config = context.chain_config()?;
     let max_blob_number_per_block = chain_config
@@ -472,7 +472,7 @@ fn apply_transaction(
 fn apply_blob_transaction(
     head: &HeadTransaction,
     context: &mut PayloadBuildContext,
-    block_cache: &mut CacheDB,
+    block_cache: &mut HashMap<Address, Account>,
 ) -> Result<Receipt, ChainError> {
     // Fetch blobs bundle
     let tx_hash = head.tx.compute_hash();
@@ -580,7 +580,7 @@ fn apply_plain_transaction(
 
 fn finalize_payload(
     context: &mut PayloadBuildContext,
-    block_cache: &mut CacheDB,
+    block_cache: &mut HashMap<Address, Account>,
 ) -> Result<(), StoreError> {
     #[cfg(feature = "levm")]
     {
