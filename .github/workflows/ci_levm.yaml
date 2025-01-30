@@ -94,8 +94,9 @@ jobs:
 
       - name: Check Regression
         run: |
-          DIFF_CONTENT=$(cat diff.md)
-          if [ "$DIFF_CONTENT" != "No differences found" ]; then
+          if grep -q "No differences found" diff.md; then
+            echo "No regression found."
+          else
             echo "Regression found."
             exit 1;
           fi

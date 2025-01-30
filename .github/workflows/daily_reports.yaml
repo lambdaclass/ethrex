@@ -70,8 +70,7 @@ jobs:
             }}
         # Only send diff message if the diff has changed
         run: |
-          DIFF_CONTENT=$(cat diff.md)
-          if [ "$DIFF_CONTENT" == "No differences found" ]; then
+          if grep -q "No differences found" diff.md; then
             echo "No differences to post" >> $GITHUB_STEP_SUMMARY
           else
             sh .github/scripts/publish_vms_diff.sh $SLACK_WEBHOOK
