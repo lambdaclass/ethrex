@@ -1056,8 +1056,8 @@ impl Store {
             .write_snapshot_account_batch(account_hashes, account_states)
     }
 
-    pub fn rebuild_state_trie_from_snapshot(&self) -> Result<H256, StoreError>{
-        self.engine.rebuild_state_trie_from_snapshot()
+    pub fn rebuild_state_from_snapshot(&self) -> Result<(H256, Vec<H256>), StoreError> {
+        self.engine.rebuild_state_from_snapshot()
     }
 }
 

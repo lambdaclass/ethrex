@@ -59,8 +59,6 @@ struct ChainData {
 pub struct SnapState {
     /// Latest downloaded block header's hash from a previously aborted sync
     header_download_checkpoint: Option<BlockHash>,
-    /// Current root hash of the latest State Trie (Used for both fetching and healing)
-    state_trie_root_checkpoint: Option<H256>,
     /// Last downloaded key of the latest State Trie
     state_trie_key_checkpoint: Option<H256>,
     /// Accounts which storage needs healing
@@ -453,20 +451,6 @@ impl StoreEngine for Store {
         Ok(())
     }
 
-    fn set_state_trie_root_checkpoint(&self, current_root: H256) -> Result<(), StoreError> {
-        self.inner().snap_state.state_trie_root_checkpoint = Some(current_root);
-        Ok(())
-    }
-
-    fn get_state_trie_root_checkpoint(&self) -> Result<Option<H256>, StoreError> {
-        Ok(self.inner().snap_state.state_trie_root_checkpoint)
-    }
-
-    fn clear_state_trie_root_checkpoint(&self) -> Result<(), StoreError> {
-        self.inner().snap_state.state_trie_root_checkpoint = None;
-        Ok(())
-    }
-
     fn set_state_trie_key_checkpoint(&self, last_key: H256) -> Result<(), StoreError> {
         self.inner().snap_state.state_trie_key_checkpoint = Some(last_key);
         Ok(())
@@ -513,6 +497,27 @@ impl StoreEngine for Store {
     }
 
     fn clear_state_heal_paths(&self) -> Result<(), StoreError> {
+        todo!()
+    }
+
+    fn write_snapshot_account_batch(
+        &self,
+        account_hashes: Vec<H256>,
+        account_states: Vec<ethrex_core::types::AccountState>,
+    ) -> Result<(), StoreError> {
+        todo!()
+    }
+
+    fn write_snapshot_storage_batch(
+        &self,
+        account_hash: H256,
+        storage_keys: Vec<H256>,
+        storage_values: Vec<U256>,
+    ) -> Result<(), StoreError> {
+        todo!()
+    }
+
+    fn rebuild_state_from_snapshot(&self) -> Result<(H256, Vec<H256>), StoreError> {
         todo!()
     }
 }

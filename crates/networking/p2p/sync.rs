@@ -437,33 +437,29 @@ async fn rebuild_state_trie(
         info!("Account Trie Fetching ended, signaling storage fetcher process");
         // Send empty batch to signal that no more batches are incoming
         storage_sender.send(vec![]).await?;
-        let pending_storage_accounts = storage_fetcher_handle.await??;
-        let pending_storages = !pending_storage_accounts.is_empty();
-        // Next cycle may have different storage roots for these accounts so we will leave them to healing
-        if pending_storages {
-            let mut stored_pending_storages = store
-                .get_pending_storage_heal_accounts()?
-                .unwrap_or_default();
-            stored_pending_storages.extend(
-                pending_storage_accounts
-                    .iter()
-                    .map(|k| (*k, vec![Nibbles::default()])),
-            );
-            info!(
-                "Current pending storage accounts: {}",
-                stored_pending_storages.len()
-            );
-            store.set_pending_storage_heal_accounts(stored_pending_storages)?;
-        }
-        if retry_count > MAX_RETRIES || pending_storages {
+        storage_fetcher_handle.await??;
+        if retry_count > MAX_RETRIES {
             // Skip healing and return stale status
             return Ok(false);
         }
         info!("Rebuilding State Trie");
-        let rebuilt_root = store.rebuild_state_trie_from_snapshot()?;
-        if rebuilt_root == state_root {
+        let (rebuilt_root, pending_storages) = store.rebuild_state_from_snapshot()?;
+        if rebuilt_root == state_root && pending_storages.is_empty() {
             // Unlikely case where we don't need healing (probably a test case)
-            return Ok(true)
+            return Ok(true);
+        }
+        info!(
+            "State trie rebuilt from snapshot, identified {} incomplete storage tries",
+            pending_storages.len()
+        );
+        if !pending_storages.is_empty() {
+            // Heal mismatched storages
+            store.set_pending_storage_heal_accounts(
+                pending_storages
+                    .into_iter()
+                    .map(|acc| (acc, vec![Nibbles::default()]))
+                    .collect(),
+            )?;
         }
         info!("Healing Start")
     } else {
@@ -550,7 +546,7 @@ async fn storage_fetcher(
     peers: Arc<Mutex<KademliaTable>>,
     store: Store,
     state_root: H256,
-) -> Result<Vec<H256>, SyncError> {
+) -> Result<(), SyncError> {
     // Pending list of storages to fetch
     let mut pending_storage: Vec<(H256, H256)> = vec![];
     // The pivot may become stale while the fetcher is active, we will still keep the process
@@ -631,7 +627,7 @@ async fn storage_fetcher(
         "Concluding storage fetcher, {} storages left in queue to be healed later",
         pending_storage.len()
     );
-    Ok(pending_storage.into_iter().map(|(acc, _)| acc).collect())
+    Ok(())
 }
 
 /// Receives a batch of account hashes with their storage roots, fetches their respective storage ranges via p2p and returns a list of the code hashes that couldn't be fetched in the request (if applicable)

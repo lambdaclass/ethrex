@@ -614,7 +614,29 @@ impl StoreEngine for Store {
         )
     }
 
-    fn rebuild_state_trie_from_snapshot(&self) -> Result<H256, StoreError> {
+    fn write_snapshot_storage_batch(
+        &self,
+        account_hash: H256,
+        storage_keys: Vec<H256>,
+        storage_values: Vec<U256>,
+    ) -> Result<(), StoreError> {
+        let txn = self
+            .db
+            .begin_readwrite()
+            .map_err(StoreError::LibmdbxError)?;
+
+        for (key, value) in storage_keys.into_iter().zip(storage_values.into_iter()) {
+            txn.upsert::<StorageSnapShot>(account_hash.into(), (key.into(), value.into()))
+                .map_err(StoreError::LibmdbxError)?;
+        }
+
+        txn.commit().map_err(StoreError::LibmdbxError)
+    }
+
+    /// Rebuilds state trie from a snapshot, returns the resulting trie's root
+    /// and the addresses of the storages whose root doesn't match the one in the account state
+    fn rebuild_state_from_snapshot(&self) -> Result<(H256, Vec<H256>), StoreError> {
+        let mut mismatched_storage_accounts = vec![];
         // Open a new state trie
         let mut state_trie = self.open_state_trie(*EMPTY_KECCACK_HASH);
         // Add all accounts
@@ -629,10 +651,46 @@ impl StoreEngine for Store {
             .walk(None)
             .map_while(|res| res.ok().map(|(hash, acc)| (hash.to(), acc.to())))
         {
+            // Rebuild storage trie and check for mismatches
+            let rebuilt_root = self.rebuild_storage_trie_from_snapshot(hash)?;
+            if rebuilt_root != account.storage_root {
+                mismatched_storage_accounts.push(hash);
+            }
+            // Add account to trie
             state_trie.insert(hash.to_fixed_bytes().to_vec(), account.encode_to_vec())?;
         }
+        Ok((state_trie.hash()?, mismatched_storage_accounts))
+    }
+}
+
+impl Store {
+    fn clear_snapshot(&self) -> Result<(), StoreError> {
+        let txn = self
+            .db
+            .begin_readwrite()
+            .map_err(StoreError::LibmdbxError)?;
         txn.clear_table::<StateSnapShot>();
-        Ok(state_trie.hash()?)
+        Ok(())
+    }
+
+    fn rebuild_storage_trie_from_snapshot(&self, account_hash: H256) -> Result<H256, StoreError> {
+        // Open a new storage trie
+        let mut storage_trie = self.open_storage_trie(account_hash, *EMPTY_KECCACK_HASH);
+        // Add all accounts
+        let txn = self
+            .db
+            .begin_readwrite()
+            .map_err(StoreError::LibmdbxError)?;
+        let cursor = txn
+            .cursor::<StorageSnapShot>()
+            .map_err(StoreError::LibmdbxError)?;
+        for (key, value) in cursor.walk_key(account_hash.into(), None).map_while(|res| {
+            res.ok()
+                .map(|(k, v)| (k.0.to_vec(), U256::from_big_endian(&v.0).encode_to_vec()))
+        }) {
+            storage_trie.insert(key, value)?;
+        }
+        Ok(storage_trie.hash()?)
     }
 }
 
@@ -722,6 +780,11 @@ table!(
 table!(
     /// State Snapshot used by an ongoing sync process
     ( StateSnapShot ) AccountHashRLP => AccountStateRLP
+);
+
+dupsort!(
+    /// Storage Snapshot used by an ongoing sync process
+    ( StorageSnapShot ) AccountHashRLP => (AccountStorageKeyBytes, AccountStorageValueBytes)[AccountStorageKeyBytes]
 );
 
 // Storage values are stored as bytes instead of using their rlp encoding

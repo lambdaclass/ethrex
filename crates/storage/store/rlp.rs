@@ -38,6 +38,10 @@ pub type TransactionHashRLP = Rlp<H256>;
 // Wrapper for tuples. Used mostly for indexed keys.
 pub type TupleRLP<A, B> = Rlp<(A, B)>;
 
+// Storage Types
+pub type StorageKeyRLP = Rlp<H256>;
+pub type StorageValueRLP = Rlp<U256>;
+
 #[derive(Clone, Debug)]
 pub struct Rlp<T>(Vec<u8>, PhantomData<T>);
 

@@ -281,14 +281,22 @@ pub trait StoreEngine: Debug + Send + Sync + RefUnwindSafe {
 
     fn clear_state_heal_paths(&self) -> Result<(), StoreError>;
 
-    // Write an account into the current state snapshot
+    /// Write an account batch into the current state snapshot
     fn write_snapshot_account_batch(
         &self,
         account_hashes: Vec<H256>,
         account_states: Vec<AccountState>,
     ) -> Result<(), StoreError>;
 
-    // Rebuild the state trie from the current state snapshot and return its root
-    // Clears snapshot
-    fn rebuild_state_trie_from_snapshot(&self) -> Result<H256, StoreError>;
+    // Write a storage batch into the current storage snapshot
+    fn write_snapshot_storage_batch(
+        &self,
+        account_hash: H256,
+        storage_keys: Vec<H256>,
+        storage_values: Vec<U256>,
+    ) -> Result<(), StoreError>;
+
+    /// Rebuilds state trie from a snapshot, returns the resulting trie's root
+    /// and the addresses of the storages whose root doesn't match the one in the account state
+    fn rebuild_state_from_snapshot(&self) -> Result<(H256, Vec<H256>), StoreError>;
 }
