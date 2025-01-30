@@ -203,8 +203,8 @@ fn verify_blob_gas_usage(block: &Block, config: &ChainConfig) -> Result<(), Chai
         .get_fork_blob_schedule(block.header.timestamp)
         .map(|schedule| schedule.max)
         .ok_or(ChainError::Custom("Provided block fork is invalid".into()))?;
-    let max_blob_gas_per_block = max_blob_number_per_block * GAS_PER_BLOB
-    
+    let max_blob_gas_per_block = max_blob_number_per_block * GAS_PER_BLOB;
+
     for transaction in block.body.transactions.iter() {
         if let Transaction::EIP4844Transaction(tx) = transaction {
             blob_gas_used += get_total_blob_gas(tx);
