@@ -610,7 +610,9 @@ fn finalize_payload(
                             bytecode: acc_code,
                             nonce: acc_info.nonce,
                         },
-                        storage: HashMap::new(), // this must be changed, get the storage from the DB
+                        // TODO: this must be changed, get the storage from the DB.
+                        // See: https://github.com/lambdaclass/ethrex/issues/1853
+                        storage: HashMap::new(),
                     }
                 });
 
