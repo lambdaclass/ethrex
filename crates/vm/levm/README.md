@@ -6,7 +6,7 @@ Implementation of a simple Ethereum Virtual Machine in Rust.
 
 | Fork           | Status |
 | -------------- | ------ |
-| Prague         | ✅️    |
+| Prague         | 🏗️    |
 | Cancun         | ✅     |
 | Shanghai       | ✅     |
 | Paris (Merge)  | ✅     |
