@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use crate::{
-    peer_channels::PeerChannels,
+    kademlia::PeerChannels,
     rlpx::{
         eth::{
             backend,

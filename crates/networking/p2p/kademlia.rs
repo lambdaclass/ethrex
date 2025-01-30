@@ -1,12 +1,15 @@
+use std::sync::Arc;
+
 use crate::{
     discv4::messages::FindNodeRequest,
-    peer_channels::PeerChannels,
     rlpx::p2p::Capability,
     types::{Node, NodeRecord},
+    RLPxMessage,
 };
 use ethrex_core::{H256, H512, U256};
 use sha3::{Digest, Keccak256};
 use tokio::sync::mpsc::UnboundedSender;
+use tokio::sync::{mpsc, Mutex};
 use tracing::{debug, info};
 
 pub const MAX_NODES_PER_BUCKET: usize = 16;
@@ -395,11 +398,13 @@ impl PeerData {
     }
 }
 
+pub const MAX_MESSAGES_IN_PEER_CHANNEL: usize = 25;
+
 #[derive(Debug, Clone)]
 /// Holds the respective sender and receiver ends of the communication channels bewteen the peer data and its active connection
 pub struct PeerChannels {
-    sender: mpsc::Sender<RLPxMessage>,
-    receiver: Arc<Mutex<mpsc::Receiver<RLPxMessage>>>,
+    pub(crate) sender: mpsc::Sender<RLPxMessage>,
+    pub(crate) receiver: Arc<Mutex<mpsc::Receiver<RLPxMessage>>>,
 }
 
 impl PeerChannels {

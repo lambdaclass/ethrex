@@ -18,7 +18,7 @@ use tracing::{debug, info, warn};
 
 use crate::{
     kademlia::KademliaTable,
-    peer_channels::{BlockRequestOrder, PeerHandler},
+    peer_handler::{BlockRequestOrder, PeerHandler},
 };
 
 /// The minimum amount of blocks from the head that we want to full sync during a snap sync
