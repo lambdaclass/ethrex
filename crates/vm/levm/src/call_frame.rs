@@ -144,7 +144,7 @@ impl CallFrame {
             .ok_or(VMError::Internal(InternalError::PCOverflowed))?;
         Ok(())
     }
-  
+
     pub fn increment_pc(&mut self) -> Result<(), VMError> {
         self.increment_pc_by(1)
     }
