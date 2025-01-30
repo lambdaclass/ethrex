@@ -314,7 +314,6 @@ impl KademliaTable {
         };
         loop {
             if let Some(peer) = self.get_random_peer_with_filter(&filter) {
-                info!("Selected peer: {}", peer.node.node_id);
                 return peer.channels.clone().unwrap();
             }
             info!("[Sync] No peers available, retrying in 10 sec");
