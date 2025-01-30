@@ -31,7 +31,7 @@ version = "0.1.0"
 edition = "2021"
 
 [workspace.dependencies]
-ethrex-blockchain = { path = "./crates/blockchain", features = ["levm"] }
+ethrex-blockchain = { path = "./crates/blockchain" }
 ethrex-core = { path = "./crates/common" }
 ethrex-net = { path = "./crates/networking/p2p" }
 ethrex-rpc = { path = "./crates/networking/rpc" }
