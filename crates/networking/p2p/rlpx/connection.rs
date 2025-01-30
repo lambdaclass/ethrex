@@ -18,7 +18,6 @@ use crate::{
         process_account_range_request, process_byte_codes_request, process_storage_ranges_request,
         process_trie_nodes_request,
     },
-    MAX_DISC_PACKET_SIZE,
 };
 
 use super::{
@@ -28,16 +27,12 @@ use super::{
     handshake::{decode_ack_message, decode_auth_message, encode_auth_message},
     message as rlpx,
     p2p::Capability,
-    utils::pubkey2id,
 };
 use ethrex_blockchain::mempool::{self};
 use ethrex_core::{H256, H512};
 use ethrex_storage::Store;
 use futures::SinkExt;
-use k256::{
-    ecdsa::{RecoveryId, Signature, SigningKey, VerifyingKey},
-    PublicKey, SecretKey,
-};
+use k256::{ecdsa::SigningKey, PublicKey, SecretKey};
 use rand::random;
 use sha3::{Digest, Keccak256};
 use tokio::{
@@ -59,6 +54,11 @@ const SUPPORTED_CAPABILITIES: [(Capability, u8); 3] = [CAP_P2P, CAP_ETH, CAP_SNA
 const PERIODIC_TASKS_CHECK_INTERVAL: std::time::Duration = std::time::Duration::from_secs(15);
 
 pub(crate) type Aes256Ctr64BE = ctr::Ctr64BE<aes::Aes256>;
+
+pub(crate) type RLPxConnBroadcastSender = broadcast::Sender<(tokio::task::Id, Arc<Message>)>;
+
+// https://github.com/ethereum/go-ethereum/blob/master/p2p/peer.go#L44
+pub const P2P_MAX_MESSAGE_SIZE: usize = 2048;
 
 enum RLPxConnectionMode {
     Initiator,
@@ -94,7 +94,7 @@ pub(crate) struct RLPxConnection<S> {
     /// messages from other connections (sent from other peers).
     /// The receive end is instantiated after the handshake is completed
     /// under `handle_peer`.
-    connection_broadcast_send: broadcast::Sender<(task::Id, Arc<Message>)>,
+    connection_broadcast_send: RLPxConnBroadcastSender,
 }
 
 impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
@@ -104,7 +104,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
         stream: S,
         mode: RLPxConnectionMode,
         storage: Store,
-        connection_broadcast: broadcast::Sender<(task::Id, Arc<Message>)>,
+        connection_broadcast: RLPxConnBroadcastSender,
     ) -> Self {
         Self {
             signer,
@@ -138,23 +138,14 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
 
     pub fn initiator(
         signer: SigningKey,
-        msg: &[u8],
+        remote_node_id: H512,
         stream: S,
         storage: Store,
         connection_broadcast_send: broadcast::Sender<(task::Id, Arc<Message>)>,
     ) -> Result<Self, RLPxError> {
-        let digest = Keccak256::digest(msg.get(65..).ok_or(RLPxError::InvalidMessageLength())?);
-        let signature = &Signature::from_bytes(
-            msg.get(..64)
-                .ok_or(RLPxError::InvalidMessageLength())?
-                .into(),
-        )?;
-        let rid = RecoveryId::from_byte(*msg.get(64).ok_or(RLPxError::InvalidMessageLength())?)
-            .ok_or(RLPxError::InvalidRecoveryId())?;
-        let peer_pk = VerifyingKey::recover_from_prehash(&digest, signature, rid)?;
         Ok(RLPxConnection::new(
             signer,
-            pubkey2id(&peer_pk.into()),
+            remote_node_id,
             stream,
             RLPxConnectionMode::Initiator,
             storage,
@@ -606,14 +597,22 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
     }
 
     async fn receive_handshake_msg(&mut self) -> Result<Vec<u8>, RLPxError> {
-        let mut buf = vec![0; MAX_DISC_PACKET_SIZE];
+        let mut buf = vec![0; 2];
 
         // Read the message's size
-        self.framed.get_mut().read_exact(&mut buf[..2]).await?;
+        self.framed.get_mut().read_exact(&mut buf).await?;
         let ack_data = [buf[0], buf[1]];
         let msg_size = u16::from_be_bytes(ack_data) as usize;
+        if msg_size > P2P_MAX_MESSAGE_SIZE {
+            return Err(RLPxError::InvalidMessageLength());
+        }
+        buf.resize(msg_size + 2, 0);
 
         // Read the rest of the message
+        // Guard unwrap
+        if buf.len() < msg_size + 2 {
+            return Err(RLPxError::CryptographyError(String::from("bad buf size")));
+        }
         self.framed
             .get_mut()
             .read_exact(&mut buf[2..msg_size + 2])

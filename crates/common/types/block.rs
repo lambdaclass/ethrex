@@ -126,6 +126,8 @@ pub struct BlockHeader {
     )]
     pub excess_blob_gas: Option<u64>,
     pub parent_beacon_block_root: Option<H256>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub requests_hash: Option<H256>,
 }
 
 impl RLPEncode for BlockHeader {
@@ -151,6 +153,7 @@ impl RLPEncode for BlockHeader {
             .encode_optional_field(&self.blob_gas_used)
             .encode_optional_field(&self.excess_blob_gas)
             .encode_optional_field(&self.parent_beacon_block_root)
+            .encode_optional_field(&self.requests_hash)
             .finish();
     }
 }
@@ -179,6 +182,7 @@ impl RLPDecode for BlockHeader {
         let (blob_gas_used, decoder) = decoder.decode_optional_field();
         let (excess_blob_gas, decoder) = decoder.decode_optional_field();
         let (parent_beacon_block_root, decoder) = decoder.decode_optional_field();
+        let (requests_hash, decoder) = decoder.decode_optional_field();
 
         Ok((
             BlockHeader {
@@ -202,6 +206,7 @@ impl RLPDecode for BlockHeader {
                 blob_gas_used,
                 excess_blob_gas,
                 parent_beacon_block_root,
+                requests_hash,
             },
             decoder.finish()?,
         ))
@@ -544,7 +549,7 @@ pub fn validate_block_header(
 /// Validates that excess_blob_gas and blob_gas_used are present in the header and
 /// validates that excess_blob_gas value is correct on the block header
 /// according to the values in the parent header.
-pub fn validate_cancun_header_fields(
+pub fn validate_post_cancun_header_fields(
     header: &BlockHeader,
     parent_header: &BlockHeader,
 ) -> Result<(), InvalidBlockHeaderError> {
@@ -565,7 +570,7 @@ pub fn validate_cancun_header_fields(
 
 /// Validates that the excess blob gas value is correct on the block header
 /// according to the values in the parent header.
-pub fn validate_no_cancun_header_fields(
+pub fn validate_pre_cancun_header_fields(
     header: &BlockHeader,
 ) -> Result<(), InvalidBlockHeaderError> {
     if header.excess_blob_gas.is_some() {
@@ -665,6 +670,7 @@ mod test {
             blob_gas_used: Some(0x00),
             excess_blob_gas: Some(0x00),
             parent_beacon_block_root: Some(H256::zero()),
+            requests_hash: None,
         };
         let block = BlockHeader {
             parent_hash: H256::from_str(
@@ -707,6 +713,7 @@ mod test {
             blob_gas_used: Some(0x00),
             excess_blob_gas: Some(0x00),
             parent_beacon_block_root: Some(H256::zero()),
+            requests_hash: None,
         };
         assert!(validate_block_header(&block, &parent_block).is_ok())
     }

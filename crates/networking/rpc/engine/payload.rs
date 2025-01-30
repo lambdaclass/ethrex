@@ -4,13 +4,13 @@ use ethrex_blockchain::payload::build_payload;
 use ethrex_core::types::{BlobsBundle, Block, BlockBody, BlockHash, BlockNumber, Fork};
 use ethrex_core::{H256, U256};
 use serde_json::Value;
-use tracing::{error, info, warn};
+use tracing::{debug, error, info, warn};
 
 use crate::types::payload::{
     ExecutionPayload, ExecutionPayloadBody, ExecutionPayloadResponse, PayloadStatus,
 };
 use crate::utils::{parse_json_hex, RpcRequest};
-use crate::{RpcApiContext, RpcErr, RpcHandler};
+use crate::{RpcApiContext, RpcErr, RpcHandler, SyncStatus};
 
 // Must support rquest sizes of at least 32 blocks
 // Chosen an arbitrary x4 value
@@ -102,20 +102,28 @@ impl RpcHandler for NewPayloadV3Request {
         validate_fork(&block, Fork::Cancun, &context)?;
         validate_execution_payload_v3(&self.payload)?;
         let payload_status = {
-            if let Err(RpcErr::Internal(error_msg)) = validate_block_hash(&self.payload, &block) {
-                PayloadStatus::invalid_with_err(&error_msg)
-            } else {
-                let blob_versioned_hashes: Vec<H256> = block
-                    .body
-                    .transactions
-                    .iter()
-                    .flat_map(|tx| tx.blob_versioned_hashes())
-                    .collect();
+            // Ignore incoming
+            match context.sync_status()? {
+                SyncStatus::Active | SyncStatus::Pending => PayloadStatus::syncing(),
+                SyncStatus::Inactive => {
+                    if let Err(RpcErr::Internal(error_msg)) =
+                        validate_block_hash(&self.payload, &block)
+                    {
+                        PayloadStatus::invalid_with_err(&error_msg)
+                    } else {
+                        let blob_versioned_hashes: Vec<H256> = block
+                            .body
+                            .transactions
+                            .iter()
+                            .flat_map(|tx| tx.blob_versioned_hashes())
+                            .collect();
 
-                if self.expected_blob_versioned_hashes != blob_versioned_hashes {
-                    PayloadStatus::invalid_with_err("Invalid blob_versioned_hashes")
-                } else {
-                    execute_payload(&block, &context)?
+                        if self.expected_blob_versioned_hashes != blob_versioned_hashes {
+                            PayloadStatus::invalid_with_err("Invalid blob_versioned_hashes")
+                        } else {
+                            execute_payload(&block, &context)?
+                        }
+                    }
                 }
             }
         };
@@ -343,11 +351,14 @@ fn handle_new_payload_v1_v2(
     context: RpcApiContext,
 ) -> Result<Value, RpcErr> {
     let block = get_block_from_payload(payload, None)?;
-    let payload_status = {
-        if let Err(RpcErr::Internal(error_msg)) = validate_block_hash(payload, &block) {
-            PayloadStatus::invalid_with_err(&error_msg)
-        } else {
-            execute_payload(&block, &context)?
+    let payload_status = match context.sync_status()? {
+        SyncStatus::Active | SyncStatus::Pending => PayloadStatus::syncing(),
+        SyncStatus::Inactive => {
+            if let Err(RpcErr::Internal(error_msg)) = validate_block_hash(payload, &block) {
+                PayloadStatus::invalid_with_err(&error_msg)
+            } else {
+                execute_payload(&block, &context)?
+            }
         }
     };
     serde_json::to_value(payload_status).map_err(|error| RpcErr::Internal(error.to_string()))
@@ -374,7 +385,7 @@ fn validate_block_hash(payload: &ExecutionPayload, block: &Block) -> Result<(), 
             "Invalid block hash. Expected {actual_block_hash:#x}, got {block_hash:#x}"
         )));
     }
-    info!("Block hash {block_hash} is valid");
+    debug!("Block hash {block_hash} is valid");
     Ok(())
 }
 
@@ -472,7 +483,8 @@ fn validate_fork(block: &Block, fork: Fork, context: &RpcApiContext) -> Result<(
     // Check timestamp matches valid fork
     let chain_config = &context.storage.get_chain_config()?;
     let current_fork = chain_config.get_fork(block.header.timestamp);
-    if current_fork != fork {
+    // If current_fork is less than Fork::Cancun, return an error.
+    if current_fork < fork {
         return Err(RpcErr::UnsuportedFork(format!("{current_fork:?}")));
     }
     Ok(())

@@ -94,7 +94,7 @@ cfg_if::cfg_if! {
         pub fn beacon_root_contract_call_levm(
             store_wrapper: Arc<StoreWrapper>,
             block_header: &BlockHeader,
-            spec_id: SpecId,
+            fork: Fork,
         ) -> Result<TransactionReport, EvmError> {
             lazy_static! {
                 static ref SYSTEM_ADDRESS: Address =
@@ -125,7 +125,7 @@ cfg_if::cfg_if! {
                 block_blob_gas_used: block_header.blob_gas_used.map(U256::from),
                 block_gas_limit: 30_000_000,
                 transient_storage: HashMap::new(),
-                spec_id,
+                fork,
                 ..Default::default()
             };
 
@@ -220,12 +220,12 @@ cfg_if::cfg_if! {
             });
             let mut block_cache: CacheDB = HashMap::new();
             let block_header = &block.header;
-            let spec_id = spec_id(&state.chain_config()?, block_header.timestamp);
+            let fork = state.chain_config()?.fork(block_header.timestamp);
             //eip 4788: execute beacon_root_contract_call before block transactions
             cfg_if::cfg_if! {
                 if #[cfg(not(feature = "l2"))] {
-                    if block_header.parent_beacon_block_root.is_some() && spec_id == SpecId::CANCUN {
-                        let report = beacon_root_contract_call_levm(store_wrapper.clone(), block_header, spec_id)?;
+                    if block_header.parent_beacon_block_root.is_some() && fork == Fork::Cancun {
+                        let report = beacon_root_contract_call_levm(store_wrapper.clone(), block_header, fork)?;
                         block_cache.extend(report.new_state);
                     }
                 }
@@ -239,7 +239,7 @@ cfg_if::cfg_if! {
             let mut cumulative_gas_used = 0;
 
             for tx in block.body.transactions.iter() {
-                let report = execute_tx_levm(tx, block_header, store_wrapper.clone(), block_cache.clone(), spec_id).map_err(EvmError::from)?;
+                let report = execute_tx_levm(tx, block_header, store_wrapper.clone(), block_cache.clone(), fork).map_err(EvmError::from)?;
 
                 let mut new_state = report.new_state.clone();
 
@@ -292,7 +292,7 @@ cfg_if::cfg_if! {
             block_header: &BlockHeader,
             db: Arc<dyn LevmDatabase>,
             block_cache: CacheDB,
-            spec_id: SpecId
+            fork: Fork
         ) -> Result<TransactionReport, VMError> {
             let gas_price : U256 = tx.effective_gas_price(block_header.base_fee_per_gas).ok_or(VMError::InvalidTransaction)?.into();
 
@@ -300,7 +300,7 @@ cfg_if::cfg_if! {
                 origin: tx.sender(),
                 refunded_gas: 0,
                 gas_limit: tx.gas_limit(),
-                spec_id,
+                fork,
                 block_number: block_header.number.into(),
                 coinbase: block_header.coinbase,
                 timestamp: block_header.timestamp.into(),
@@ -979,11 +979,31 @@ fn access_list_inspector(
 /// Returns the spec id according to the block timestamp and the stored chain config
 /// WARNING: Assumes at least Merge fork is active
 pub fn spec_id(chain_config: &ChainConfig, block_timestamp: u64) -> SpecId {
-    match chain_config.get_fork(block_timestamp) {
-        Fork::Cancun => SpecId::CANCUN,
-        Fork::Shanghai => SpecId::SHANGHAI,
+    fork_to_spec_id(chain_config.get_fork(block_timestamp))
+}
+
+pub fn fork_to_spec_id(fork: Fork) -> SpecId {
+    match fork {
+        Fork::Frontier => SpecId::FRONTIER,
+        Fork::FrontierThawing => SpecId::FRONTIER_THAWING,
+        Fork::Homestead => SpecId::HOMESTEAD,
+        Fork::DaoFork => SpecId::DAO_FORK,
+        Fork::Tangerine => SpecId::TANGERINE,
+        Fork::SpuriousDragon => SpecId::SPURIOUS_DRAGON,
+        Fork::Byzantium => SpecId::BYZANTIUM,
+        Fork::Constantinople => SpecId::CONSTANTINOPLE,
+        Fork::Petersburg => SpecId::PETERSBURG,
+        Fork::Istanbul => SpecId::ISTANBUL,
+        Fork::MuirGlacier => SpecId::MUIR_GLACIER,
+        Fork::Berlin => SpecId::BERLIN,
+        Fork::London => SpecId::LONDON,
+        Fork::ArrowGlacier => SpecId::ARROW_GLACIER,
+        Fork::GrayGlacier => SpecId::GRAY_GLACIER,
         Fork::Paris => SpecId::MERGE,
+        Fork::Shanghai => SpecId::SHANGHAI,
+        Fork::Cancun => SpecId::CANCUN,
         Fork::Prague => SpecId::PRAGUE,
+        Fork::PragueEof => SpecId::PRAGUE_EOF,
     }
 }
 

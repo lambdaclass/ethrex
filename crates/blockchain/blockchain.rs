@@ -8,8 +8,8 @@ mod smoke_test;
 use error::{ChainError, InvalidBlockError};
 use ethrex_core::constants::GAS_PER_BLOB;
 use ethrex_core::types::{
-    compute_receipts_root, validate_block_header, validate_cancun_header_fields,
-    validate_no_cancun_header_fields, Block, BlockHash, BlockHeader, BlockNumber, ChainConfig,
+    compute_receipts_root, validate_block_header, validate_post_cancun_header_fields,
+    validate_pre_cancun_header_fields, Block, BlockHash, BlockHeader, BlockNumber, ChainConfig,
     EIP4844Transaction, Receipt, Transaction,
 };
 use ethrex_core::H256;
@@ -159,15 +159,17 @@ pub fn validate_block(
 
     // TODO: Add Prague header validation here
     match spec {
-        SpecId::CANCUN => validate_cancun_header_fields(&block.header, parent_header)
-            .map_err(InvalidBlockError::from)?,
+        spec if spec >= SpecId::CANCUN => {
+            validate_post_cancun_header_fields(&block.header, parent_header)
+                .map_err(InvalidBlockError::from)?
+        }
         _other_specs => {
-            validate_no_cancun_header_fields(&block.header).map_err(InvalidBlockError::from)?
+            validate_pre_cancun_header_fields(&block.header).map_err(InvalidBlockError::from)?
         }
     };
 
-    if spec == SpecId::CANCUN || spec == SpecId::PRAGUE {
-        verify_blob_gas_usage(block, &chain_config)?;
+    if spec >= SpecId::CANCUN {
+        verify_blob_gas_usage(block, &chain_config)?
     }
 
     Ok(())
