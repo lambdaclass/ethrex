@@ -16,7 +16,7 @@ use ethrex_core::H256;
 
 use ethrex_storage::error::StoreError;
 use ethrex_storage::{AccountUpdate, Store};
-use ethrex_vm::{evm_state, execute_block, spec_id, EvmState, SpecId};
+use ethrex_vm::{evm_state, execute_block, EvmState};
 
 //TODO: Implement a struct Chain or BlockChain to encapsulate
 //functionality and canonical chain state and config
@@ -152,24 +152,17 @@ pub fn validate_block(
     state: &EvmState,
 ) -> Result<(), ChainError> {
     let chain_config = state.chain_config().map_err(ChainError::from)?;
-    let spec = spec_id(&chain_config, block.header.timestamp);
 
     // Verify initial header validity against parent
     validate_block_header(&block.header, parent_header).map_err(InvalidBlockError::from)?;
 
     // TODO: Add Prague header validation here
-    match spec {
-        spec if spec >= SpecId::CANCUN => {
-            validate_post_cancun_header_fields(&block.header, parent_header)
-                .map_err(InvalidBlockError::from)?
-        }
-        _other_specs => {
-            validate_pre_cancun_header_fields(&block.header).map_err(InvalidBlockError::from)?
-        }
-    };
-
-    if spec >= SpecId::CANCUN {
-        verify_blob_gas_usage(block, &chain_config)?
+    if chain_config.is_cancun_activated(block.header.timestamp) {
+        validate_post_cancun_header_fields(&block.header, parent_header)
+            .map_err(InvalidBlockError::from)?;
+        verify_blob_gas_usage(block, &chain_config)?;
+    } else {
+        validate_pre_cancun_header_fields(&block.header).map_err(InvalidBlockError::from)?
     }
 
     Ok(())
