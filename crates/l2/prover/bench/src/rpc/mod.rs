@@ -10,8 +10,8 @@ use ethrex_core::{
     Address, H256, U256,
 };
 use ethrex_rlp::decode::RLPDecode;
-use ethrex_trie::Trie;
 use ethrex_storage::hash_address;
+use ethrex_trie::Trie;
 
 use serde::de::DeserializeOwned;
 use serde::Deserialize;
@@ -28,12 +28,17 @@ lazy_static! {
 }
 
 #[derive(Clone)]
-pub struct Account {
-    pub account_state: AccountState,
-    pub storage: HashMap<H256, U256>,
-    pub account_proof: Vec<NodeRLP>,
-    pub storage_proofs: Vec<Vec<NodeRLP>>,
-    pub code: Option<Bytes>,
+pub enum Account {
+    Existing {
+        account_state: AccountState,
+        storage: HashMap<H256, U256>,
+        account_proof: Vec<NodeRLP>,
+        storage_proofs: Vec<Vec<NodeRLP>>,
+        code: Option<Bytes>,
+    },
+    NonExisting {
+        proof: Vec<NodeRLP>,
+    },
 }
 
 pub async fn get_latest_block_number(rpc_url: &str) -> Result<usize, String> {
@@ -101,7 +106,7 @@ pub async fn get_account(
     block_number: usize,
     address: &Address,
     storage_keys: &[H256],
-) -> Result<Option<Account>, String> {
+) -> Result<Account, String> {
     let block_number_str = format!("0x{block_number:x}");
     let address_str = format!("0x{address:x}");
     let storage_keys = storage_keys
@@ -164,16 +169,17 @@ pub async fn get_account(
     let root = account_proof
         .first()
         .ok_or("account proof is empty".to_string())?;
-    let other: Vec<_> = account_proof
-        .iter()
-        .skip(1)
-        .cloned()
-        .collect();
+    let other: Vec<_> = account_proof.iter().skip(1).cloned().collect();
     let trie = Trie::from_nodes(Some(root), &other)
         .map_err(|err| format!("failed to build account proof trie: {err}"))?;
-    if trie.get(&hash_address(address))
-        .map_err(|err| format!("failed get account from proof trie: {err}"))?.is_none() {
-        return Ok(None);
+    if trie
+        .get(&hash_address(address))
+        .map_err(|err| format!("failed get account from proof trie: {err}"))?
+        .is_none()
+    {
+        return Ok(Account::NonExisting {
+            proof: account_proof,
+        });
     }
 
     let (storage, storage_proofs) = storage_proof
@@ -216,13 +222,13 @@ pub async fn get_account(
         None
     };
 
-    Ok(Some(Account {
+    Ok(Account::Existing {
         account_state,
         storage,
         account_proof,
         storage_proofs,
         code,
-    }))
+    })
 }
 
 pub async fn get_storage(

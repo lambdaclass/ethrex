@@ -5,7 +5,9 @@ use std::collections::HashMap;
 use crate::constants::{CANCUN_CONFIG, RPC_RATE_LIMIT};
 use crate::rpc::{get_account, get_block, get_storage, retry};
 
-use ethrex_core::types::AccountInfo;
+use bytes::Bytes;
+use ethrex_core::types::{AccountInfo, AccountState};
+use ethrex_core::U256;
 use ethrex_core::{
     types::{Account as CoreAccount, Block, TxKind},
     Address, H256,
@@ -27,7 +29,7 @@ pub struct RpcDB {
     pub rpc_url: String,
     pub block_number: usize,
     // we concurrently download tx callers before pre-execution to minimize sequential RPC calls
-    pub cache: RefCell<HashMap<Address, Option<Account>>>,
+    pub cache: RefCell<HashMap<Address, Account>>,
     pub block_hashes: RefCell<HashMap<u64, H256>>,
 }
 
@@ -80,7 +82,7 @@ impl RpcDB {
     async fn fetch_accounts(
         &self,
         accounts: &[(Address, Vec<H256>)],
-    ) -> Result<HashMap<Address, Option<Account>>, String> {
+    ) -> Result<HashMap<Address, Account>, String> {
         let rate_limiter = RateLimiter::new(std::time::Duration::from_secs(1));
         let mut fetched = HashMap::new();
 
@@ -129,16 +131,22 @@ impl DatabaseRef for RpcDB {
             }
         };
 
-        let account = account.map(|account| RevmAccountInfo {
-            nonce: account.account_state.nonce,
-            balance: RevmU256::from_limbs(account.account_state.balance.0),
-            code_hash: RevmB256::from(account.account_state.code_hash.0),
-            code: account
-                .code
-                .map(|code| RevmBytecode::new_raw(RevmBytes(code))),
-        });
-
-        Ok(account)
+        if let Account::Existing {
+            account_state,
+            storage,
+            code,
+            ..
+        } = account
+        {
+            Ok(Some(RevmAccountInfo {
+                nonce: account_state.nonce,
+                balance: RevmU256::from_limbs(account_state.balance.0),
+                code_hash: RevmB256::from(account_state.code_hash.0),
+                code: code.map(|code| RevmBytecode::new_raw(RevmBytes(code))),
+            }))
+        } else {
+            Ok(None)
+        }
     }
     #[allow(unused_variables)]
     fn code_by_hash_ref(&self, code_hash: RevmB256) -> Result<RevmBytecode, Self::Error> {
@@ -150,10 +158,10 @@ impl DatabaseRef for RpcDB {
 
         let value = match self.cache.borrow_mut().entry(address) {
             Entry::Occupied(mut entry) => {
-                let Some(account) = entry.get() else {
+                let Account::Existing { storage, .. } = entry.get() else {
                     return Err("account doesn't exists".to_string());
                 };
-                match account.storage.get(&index) {
+                match storage.get(&index) {
                     Some(value) => *value,
                     None => {
                         println!("retrieving storage value for address {address} and key {index}");
@@ -163,20 +171,19 @@ impl DatabaseRef for RpcDB {
                                 &self.rpc_url,
                                 self.block_number,
                                 &address,
-                                &account
-                                    .storage
-                                    .keys()
-                                    .chain(&[index])
-                                    .cloned()
-                                    .collect::<Vec<_>>(),
+                                &storage.keys().chain(&[index]).cloned().collect::<Vec<_>>(),
                             ))
-                        })?
-                        .expect("previously downloaded account doesn't exists");
-                        let value = *account
-                            .storage
-                            .get(&index)
-                            .expect("rpc account response didn't include requested storage value");
-                        entry.insert(Some(account));
+                        })?;
+                        let value = match &account {
+                            Account::Existing { storage, .. } => *storage.get(&index).expect(
+                                "rpc account response didn't include requested storage value",
+                            ),
+
+                            Account::NonExisting { .. } => {
+                                return Err("account doesn't exists".to_string());
+                            }
+                        };
+                        entry.insert(account);
                         value
                     }
                 }
@@ -192,9 +199,8 @@ impl DatabaseRef for RpcDB {
                     ))
                 })?;
 
-                if let Some(account) = entry.insert(account) {
-                    *account
-                        .storage
+                if let Account::Existing { storage, .. } = entry.insert(account) {
+                    *storage
                         .get(&index)
                         .expect("rpc account response didn't include requested storage value")
                 } else {
@@ -242,15 +248,38 @@ impl ToExecDB for RpcDB {
         .unwrap(); // TODO: remove unwrap
         let cache = db.cache.borrow();
 
-        let cache_iter = cache.iter().filter_map(|(address, account)| {
-            if let Some(account) = account {
-                Some((address, account))
+        #[derive(Clone)]
+        struct ExistingAccount<'a> {
+            pub account_state: &'a AccountState,
+            pub storage: &'a HashMap<H256, U256>,
+            pub code: &'a Option<Bytes>,
+            pub storage_proofs: &'a Vec<Vec<NodeRLP>>,
+        };
+
+        let existing_accs = cache.iter().filter_map(|(address, account)| {
+            if let Account::Existing {
+                account_state,
+                storage,
+                code,
+                storage_proofs,
+                ..
+            } = account
+            {
+                Some((
+                    address,
+                    ExistingAccount {
+                        account_state,
+                        storage,
+                        code,
+                        storage_proofs,
+                    },
+                ))
             } else {
                 None
             }
         });
 
-        let accounts: HashMap<_, _> = cache_iter
+        let accounts: HashMap<_, _> = existing_accs
             .clone()
             .map(|(address, account)| {
                 (
@@ -263,7 +292,7 @@ impl ToExecDB for RpcDB {
                 )
             })
             .collect();
-        let code = cache_iter
+        let code = existing_accs
             .clone()
             .map(|(_, account)| {
                 (
@@ -272,7 +301,7 @@ impl ToExecDB for RpcDB {
                 )
             })
             .collect();
-        let storage = cache_iter
+        let storage = existing_accs
             .clone()
             .map(|(address, account)| (*address, account.storage.clone()))
             .collect();
@@ -283,7 +312,7 @@ impl ToExecDB for RpcDB {
             .map(|(num, hash)| (*num, *hash))
             .collect();
 
-        let storage_proofs = cache_iter
+        let storage_proofs = existing_accs
             .clone()
             .map(|(address, account)| {
                 let storage_root = account
@@ -300,13 +329,17 @@ impl ToExecDB for RpcDB {
             })
             .collect();
 
-        let state_root = cache_iter
+        let account_proofs = cache.iter().map(|(_, account)| match account {
+            Account::Existing { account_proof, .. } => account_proof,
+            Account::NonExisting { proof } => proof,
+        });
+        let state_root = account_proofs
             .clone()
             .next()
             .clone()
-            .and_then(|(_, account)| account.account_proof.first().cloned());
-        let other_state_nodes = cache_iter
-            .flat_map(|(_, account)| account.account_proof.iter().skip(1).cloned())
+            .and_then(|proof| proof.first().cloned());
+        let other_state_nodes = account_proofs
+            .flat_map(|proof| proof.iter().skip(1).cloned())
             .collect();
         let state_proofs = (state_root, other_state_nodes);
 

@@ -134,6 +134,9 @@ impl<'a> Prover for Sp1Prover<'a> {
         let client = ProverClient::new();
         let (pk, vk) = client.setup(self.elf);
 
+        info!("executing");
+        client.execute(self.elf, stdin.clone()).run()?;
+
         // Proof information by proving the specified ELF binary.
         // This struct contains the receipt along with statistics about execution of the guest
         let proof = client.prove(&pk, stdin).groth16().run()?;
