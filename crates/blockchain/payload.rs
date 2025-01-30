@@ -7,8 +7,8 @@ use ethrex_core::{
     types::{
         calculate_base_fee_per_blob_gas, calculate_base_fee_per_gas, compute_receipts_root,
         compute_transactions_root, compute_withdrawals_root, BlobsBundle, Block, BlockBody,
-        BlockHash, BlockHeader, BlockNumber, ChainConfig, MempoolTransaction, Receipt, Transaction,
-        Withdrawal, DEFAULT_OMMERS_HASH,
+        BlockHash, BlockHeader, BlockNumber, ChainConfig, Fork, MempoolTransaction, Receipt,
+        Transaction, Withdrawal, DEFAULT_OMMERS_HASH,
     },
     Address, Bloom, Bytes, H256, U256,
 };
@@ -39,7 +39,7 @@ use ethrex_vm::{
 #[cfg(not(feature = "levm"))]
 use ethrex_core::types::Account;
 
-use ethrex_vm::{evm_state, spec_id, EvmError, EvmState, SpecId};
+use ethrex_vm::{evm_state, EvmError, EvmState};
 
 use sha3::{Digest, Keccak256};
 
@@ -251,8 +251,10 @@ pub fn apply_withdrawals(
     {
         let mut block_cache = HashMap::new();
         // Apply withdrawals & call beacon root contract, and obtain the new state root
-        let spec_id = spec_id(&context.chain_config()?, context.payload.header.timestamp);
-        if context.payload.header.parent_beacon_block_root.is_some() && spec_id == SpecId::CANCUN {
+        let fork = context
+            .chain_config()?
+            .fork(context.payload.header.timestamp);
+        if context.payload.header.parent_beacon_block_root.is_some() && fork == Fork::Cancun {
             let store_wrapper = Arc::new(StoreWrapper {
                 store: context.evm_state.database().unwrap().clone(),
                 block_hash: context.payload.header.parent_hash,
@@ -260,7 +262,7 @@ pub fn apply_withdrawals(
             let report = beacon_root_contract_call_levm(
                 store_wrapper.clone(),
                 &context.payload.header,
-                spec_id,
+                fork,
             )?;
 
             let mut new_state = report.new_state.clone();
@@ -496,21 +498,21 @@ fn apply_plain_transaction(
             block_hash: context.payload.header.parent_hash,
         });
 
-        let result = execute_tx_levm(
+        let report = execute_tx_levm(
             &head.tx,
             &context.payload.header,
             store_wrapper.clone(),
             block_cache.clone(),
-            spec_id(
-                &context.chain_config().map_err(ChainError::from)?,
-                context.payload.header.timestamp,
-            ),
+            context
+                .chain_config()
+                .map_err(ChainError::from)?
+                .fork(context.payload.header.timestamp),
         )
         .map_err(|e| EvmError::Transaction(format!("Invalid Transaction: {:?}", e)))?;
-        context.remaining_gas = context.remaining_gas.saturating_sub(result.gas_used);
-        context.block_value += U256::from(result.gas_used) * head.tip;
+        context.remaining_gas = context.remaining_gas.saturating_sub(report.gas_used);
+        context.block_value += U256::from(report.gas_used) * head.tip;
 
-        let mut new_state = result.new_state.clone();
+        let mut new_state = report.new_state.clone();
 
         // Now original_value is going to be the same as the current_value, for the next transaction.
         // It should have only one value but it is convenient to keep on using our CacheDB structure
@@ -524,9 +526,9 @@ fn apply_plain_transaction(
 
         let receipt = Receipt::new(
             head.tx.tx_type(),
-            result.is_success(),
+            report.is_success(),
             context.payload.header.gas_limit - context.remaining_gas,
-            result.logs.clone(),
+            report.logs.clone(),
         );
         Ok(receipt)
     }
@@ -534,7 +536,7 @@ fn apply_plain_transaction(
     // REVM Implementation
     #[cfg(not(feature = "levm"))]
     {
-        let result = execute_tx(
+        let report = execute_tx(
             &head.tx,
             &context.payload.header,
             context.evm_state,
@@ -543,13 +545,13 @@ fn apply_plain_transaction(
                 context.payload.header.timestamp,
             ),
         )?;
-        context.remaining_gas = context.remaining_gas.saturating_sub(result.gas_used());
-        context.block_value += U256::from(result.gas_used()) * head.tip;
+        context.remaining_gas = context.remaining_gas.saturating_sub(report.gas_used());
+        context.block_value += U256::from(report.gas_used()) * head.tip;
         let receipt = Receipt::new(
             head.tx.tx_type(),
-            result.is_success(),
+            report.is_success(),
             context.payload.header.gas_limit - context.remaining_gas,
-            result.logs(),
+            report.logs(),
         );
         Ok(receipt)
     }
