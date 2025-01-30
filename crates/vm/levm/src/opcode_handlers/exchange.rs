@@ -33,6 +33,6 @@ impl VM {
             .stack
             .swap(stack_top_index, to_swap_index)?;
 
-        Ok(OpcodeResult::Continue)
+        Ok(OpcodeResult::Continue { pc_increment: 1 })
     }
 }

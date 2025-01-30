@@ -33,7 +33,7 @@ impl VM {
             || block_number >= self.env.block_number
         {
             current_call_frame.stack.push(U256::zero())?;
-            return Ok(OpcodeResult::Continue);
+            return Ok(OpcodeResult::Continue { pc_increment: 1 });
         }
 
         let block_number: u64 = block_number
@@ -48,7 +48,7 @@ impl VM {
             current_call_frame.stack.push(U256::zero())?;
         }
 
-        Ok(OpcodeResult::Continue)
+        Ok(OpcodeResult::Continue { pc_increment: 1 })
     }
 
     // COINBASE operation
@@ -62,7 +62,7 @@ impl VM {
             .stack
             .push(address_to_word(self.env.coinbase))?;
 
-        Ok(OpcodeResult::Continue)
+        Ok(OpcodeResult::Continue { pc_increment: 1 })
     }
 
     // TIMESTAMP operation
@@ -74,7 +74,7 @@ impl VM {
 
         current_call_frame.stack.push(self.env.timestamp)?;
 
-        Ok(OpcodeResult::Continue)
+        Ok(OpcodeResult::Continue { pc_increment: 1 })
     }
 
     // NUMBER operation
@@ -86,7 +86,7 @@ impl VM {
 
         current_call_frame.stack.push(self.env.block_number)?;
 
-        Ok(OpcodeResult::Continue)
+        Ok(OpcodeResult::Continue { pc_increment: 1 })
     }
 
     // PREVRANDAO operation
@@ -101,7 +101,7 @@ impl VM {
             .stack
             .push(U256::from_big_endian(randao.0.as_slice()))?;
 
-        Ok(OpcodeResult::Continue)
+        Ok(OpcodeResult::Continue { pc_increment: 1 })
     }
 
     // GASLIMIT operation
@@ -115,7 +115,7 @@ impl VM {
             .stack
             .push(self.env.block_gas_limit.into())?;
 
-        Ok(OpcodeResult::Continue)
+        Ok(OpcodeResult::Continue { pc_increment: 1 })
     }
 
     // CHAINID operation
@@ -127,7 +127,7 @@ impl VM {
 
         current_call_frame.stack.push(self.env.chain_id)?;
 
-        Ok(OpcodeResult::Continue)
+        Ok(OpcodeResult::Continue { pc_increment: 1 })
     }
 
     // SELFBALANCE operation
@@ -142,7 +142,7 @@ impl VM {
             .balance;
 
         current_call_frame.stack.push(balance)?;
-        Ok(OpcodeResult::Continue)
+        Ok(OpcodeResult::Continue { pc_increment: 1 })
     }
 
     // BASEFEE operation
@@ -154,7 +154,7 @@ impl VM {
 
         current_call_frame.stack.push(self.env.base_fee_per_gas)?;
 
-        Ok(OpcodeResult::Continue)
+        Ok(OpcodeResult::Continue { pc_increment: 1 })
     }
 
     // BLOBHASH operation
@@ -175,7 +175,7 @@ impl VM {
         let blob_hashes = &self.env.tx_blob_hashes;
         if index >= blob_hashes.len().into() {
             current_call_frame.stack.push(U256::zero())?;
-            return Ok(OpcodeResult::Continue);
+            return Ok(OpcodeResult::Continue { pc_increment: 1 });
         }
 
         let index: usize = index
@@ -191,7 +191,7 @@ impl VM {
             .stack
             .push(U256::from_big_endian(blob_hash.as_bytes()))?;
 
-        Ok(OpcodeResult::Continue)
+        Ok(OpcodeResult::Continue { pc_increment: 1 })
     }
 
     fn get_blob_gasprice(&mut self) -> Result<U256, VMError> {
@@ -220,7 +220,7 @@ impl VM {
 
         current_call_frame.stack.push(blob_base_fee)?;
 
-        Ok(OpcodeResult::Continue)
+        Ok(OpcodeResult::Continue { pc_increment: 1 })
     }
 }
 

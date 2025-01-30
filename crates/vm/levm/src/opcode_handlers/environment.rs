@@ -27,7 +27,7 @@ impl VM {
             .stack
             .push(U256::from_big_endian(addr.as_bytes()))?;
 
-        Ok(OpcodeResult::Continue)
+        Ok(OpcodeResult::Continue { pc_increment: 1 })
     }
 
     // BALANCE operation
@@ -43,7 +43,7 @@ impl VM {
 
         current_call_frame.stack.push(account_info.balance)?;
 
-        Ok(OpcodeResult::Continue)
+        Ok(OpcodeResult::Continue { pc_increment: 1 })
     }
 
     // ORIGIN operation
@@ -58,7 +58,7 @@ impl VM {
             .stack
             .push(U256::from_big_endian(origin.as_bytes()))?;
 
-        Ok(OpcodeResult::Continue)
+        Ok(OpcodeResult::Continue { pc_increment: 1 })
     }
 
     // CALLER operation
@@ -73,7 +73,7 @@ impl VM {
             .stack
             .push(U256::from_big_endian(caller.as_bytes()))?;
 
-        Ok(OpcodeResult::Continue)
+        Ok(OpcodeResult::Continue { pc_increment: 1 })
     }
 
     // CALLVALUE operation
@@ -87,7 +87,7 @@ impl VM {
 
         current_call_frame.stack.push(callvalue)?;
 
-        Ok(OpcodeResult::Continue)
+        Ok(OpcodeResult::Continue { pc_increment: 1 })
     }
 
     // CALLDATALOAD operation
@@ -105,7 +105,7 @@ impl VM {
         // have no data to return.
         if offset > calldata_size {
             current_call_frame.stack.push(U256::zero())?;
-            return Ok(OpcodeResult::Continue);
+            return Ok(OpcodeResult::Continue { pc_increment: 1 });
         };
         let offset: usize = offset
             .try_into()
@@ -128,7 +128,7 @@ impl VM {
 
         current_call_frame.stack.push(result)?;
 
-        Ok(OpcodeResult::Continue)
+        Ok(OpcodeResult::Continue { pc_increment: 1 })
     }
 
     // CALLDATASIZE operation
@@ -142,7 +142,7 @@ impl VM {
             .stack
             .push(U256::from(current_call_frame.calldata.len()))?;
 
-        Ok(OpcodeResult::Continue)
+        Ok(OpcodeResult::Continue { pc_increment: 1 })
     }
 
     // CALLDATACOPY operation
@@ -167,13 +167,13 @@ impl VM {
         )?)?;
 
         if size == 0 {
-            return Ok(OpcodeResult::Continue);
+            return Ok(OpcodeResult::Continue { pc_increment: 1 });
         }
 
         let mut data = vec![0u8; size];
         if calldata_offset > current_call_frame.calldata.len().into() {
             memory::try_store_data(&mut current_call_frame.memory, dest_offset, &data)?;
-            return Ok(OpcodeResult::Continue);
+            return Ok(OpcodeResult::Continue { pc_increment: 1 });
         }
 
         let calldata_offset: usize = calldata_offset
@@ -194,7 +194,7 @@ impl VM {
 
         memory::try_store_data(&mut current_call_frame.memory, dest_offset, &data)?;
 
-        Ok(OpcodeResult::Continue)
+        Ok(OpcodeResult::Continue { pc_increment: 1 })
     }
 
     // CODESIZE operation
@@ -208,7 +208,7 @@ impl VM {
             .stack
             .push(U256::from(current_call_frame.bytecode.len()))?;
 
-        Ok(OpcodeResult::Continue)
+        Ok(OpcodeResult::Continue { pc_increment: 1 })
     }
 
     // CODECOPY operation
@@ -235,7 +235,7 @@ impl VM {
         )?)?;
 
         if size == 0 {
-            return Ok(OpcodeResult::Continue);
+            return Ok(OpcodeResult::Continue { pc_increment: 1 });
         }
 
         let mut data = vec![0u8; size];
@@ -259,7 +259,7 @@ impl VM {
 
         memory::try_store_data(&mut current_call_frame.memory, destination_offset, &data)?;
 
-        Ok(OpcodeResult::Continue)
+        Ok(OpcodeResult::Continue { pc_increment: 1 })
     }
 
     // GASPRICE operation
@@ -271,7 +271,7 @@ impl VM {
 
         current_call_frame.stack.push(self.env.gas_price)?;
 
-        Ok(OpcodeResult::Continue)
+        Ok(OpcodeResult::Continue { pc_increment: 1 })
     }
 
     // EXTCODESIZE operation
@@ -294,7 +294,7 @@ impl VM {
             account_info.bytecode.len().into()
         })?;
 
-        Ok(OpcodeResult::Continue)
+        Ok(OpcodeResult::Continue { pc_increment: 1 })
     }
 
     // EXTCODECOPY operation
@@ -326,7 +326,7 @@ impl VM {
         )?)?;
 
         if size == 0 {
-            return Ok(OpcodeResult::Continue);
+            return Ok(OpcodeResult::Continue { pc_increment: 1 });
         }
 
         let bytecode = if is_delegation {
@@ -349,7 +349,7 @@ impl VM {
 
         memory::try_store_data(&mut current_call_frame.memory, dest_offset, &data)?;
 
-        Ok(OpcodeResult::Continue)
+        Ok(OpcodeResult::Continue { pc_increment: 1 })
     }
 
     // RETURNDATASIZE operation
@@ -363,7 +363,7 @@ impl VM {
             .stack
             .push(U256::from(current_call_frame.sub_return_data.len()))?;
 
-        Ok(OpcodeResult::Continue)
+        Ok(OpcodeResult::Continue { pc_increment: 1 })
     }
 
     // RETURNDATACOPY operation
@@ -392,7 +392,7 @@ impl VM {
         )?)?;
 
         if size == 0 && returndata_offset == 0 {
-            return Ok(OpcodeResult::Continue);
+            return Ok(OpcodeResult::Continue { pc_increment: 1 });
         }
 
         let sub_return_data_len = current_call_frame.sub_return_data.len();
@@ -422,7 +422,7 @@ impl VM {
 
         memory::try_store_data(&mut current_call_frame.memory, dest_offset, &data)?;
 
-        Ok(OpcodeResult::Continue)
+        Ok(OpcodeResult::Continue { pc_increment: 1 })
     }
 
     // EXTCODEHASH operation
@@ -447,13 +447,13 @@ impl VM {
             // An account is considered empty when it has no code and zero nonce and zero balance. [EIP-161]
             if account_info.is_empty() {
                 current_call_frame.stack.push(U256::zero())?;
-                return Ok(OpcodeResult::Continue);
+                return Ok(OpcodeResult::Continue { pc_increment: 1 });
             }
 
             let hash = U256::from_big_endian(keccak(account_info.bytecode).as_fixed_bytes());
             current_call_frame.stack.push(hash)?;
         }
 
-        Ok(OpcodeResult::Continue)
+        Ok(OpcodeResult::Continue { pc_increment: 1 })
     }
 }

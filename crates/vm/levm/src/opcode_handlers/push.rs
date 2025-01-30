@@ -26,9 +26,12 @@ impl VM {
             .stack
             .push(U256::from_big_endian(value_to_push.as_slice()))?;
 
-        current_call_frame.increment_pc_by(n_bytes)?;
+        // The n_bytes that you push to the stack + 1 for the next instruction
+        let increment_pc_by = n_bytes.wrapping_add(1);
 
-        Ok(OpcodeResult::Continue)
+        Ok(OpcodeResult::Continue {
+            pc_increment: increment_pc_by,
+        })
     }
 
     // PUSH0
@@ -45,13 +48,13 @@ impl VM {
 
         current_call_frame.stack.push(U256::zero())?;
 
-        Ok(OpcodeResult::Continue)
+        Ok(OpcodeResult::Continue { pc_increment: 1 })
     }
 }
 
 fn read_bytcode_slice(current_call_frame: &CallFrame, n_bytes: usize) -> Result<&[u8], VMError> {
-    let pc_offset = current_call_frame
-        .pc()
+    let current_pc = current_call_frame.pc;
+    let pc_offset = current_pc
         // Add 1 to the PC because we don't want to include the
         // Bytecode of the current instruction in the data we're about
         // to read. We only want to read the data _NEXT_ to that
