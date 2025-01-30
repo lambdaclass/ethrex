@@ -340,10 +340,6 @@ async fn rebuild_state_trie(
         store.clone(),
     ));
     // Resume download from checkpoint if available or start from an empty trie
-    // We cannot keep an open trie here so we will track the root between lookups
-    let mut current_state_root = store
-        .get_state_trie_root_checkpoint()?
-        .unwrap_or(*EMPTY_TRIE_HASH);
     let mut start_account_hash = store.get_state_trie_key_checkpoint()?.unwrap_or_default();
     // Skip state sync if we are already on healing
     if start_account_hash != HASH_MAX {
@@ -420,12 +416,8 @@ async fn rebuild_state_trie(
                         .send(account_hashes_and_storage_roots)
                         .await?;
                 }
-                // Update trie
-                let mut trie = store.open_state_trie(current_state_root);
-                for (account_hash, account) in account_hashes.iter().zip(accounts.iter()) {
-                    trie.insert(account_hash.0.to_vec(), account.encode_to_vec())?;
-                }
-                current_state_root = trie.hash()?;
+                // Update Snapshot
+                store.write_snapshot_account_batch(account_hashes, accounts)?;
 
                 if !should_continue {
                     // All accounts fetched!
@@ -436,7 +428,6 @@ async fn rebuild_state_trie(
             }
         }
         // Store current checkpoint
-        store.set_state_trie_root_checkpoint(current_state_root)?;
         if retry_count > MAX_RETRIES {
             store.set_state_trie_key_checkpoint(start_account_hash)?;
         } else {
@@ -467,6 +458,12 @@ async fn rebuild_state_trie(
         if retry_count > MAX_RETRIES || pending_storages {
             // Skip healing and return stale status
             return Ok(false);
+        }
+        info!("Rebuilding State Trie");
+        let rebuilt_root = store.rebuild_state_trie_from_snapshot()?;
+        if rebuilt_root == state_root {
+            // Unlikely case where we don't need healing (probably a test case)
+            return Ok(true)
         }
         info!("Healing Start")
     } else {

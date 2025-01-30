@@ -1056,13 +1056,17 @@ impl Store {
         self.engine.clear_state_trie_key_checkpoint()
     }
 
-    pub fn write_snapshot_account(
+    pub fn write_snapshot_account_batch(
         &self,
-        account_hash: H256,
-        account_state: AccountState,
+        account_hashes: Vec<H256>,
+        account_states: Vec<AccountState>,
     ) -> Result<(), StoreError> {
         self.engine
-            .write_snapshot_account(account_hash, account_state)
+            .write_snapshot_account_batch(account_hashes, account_states)
+    }
+
+    pub fn rebuild_state_trie_from_snapshot(&self) -> Result<H256, StoreError>{
+        self.engine.rebuild_state_trie_from_snapshot()
     }
 }
 
