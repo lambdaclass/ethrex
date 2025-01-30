@@ -251,7 +251,7 @@ pub fn build_payload(
 ) -> Result<(BlobsBundle, U256), ChainError> {
     debug!("Building payload");
     let mut evm_state = evm_state(store.clone(), payload.header.parent_hash);
-    let mut context = PayloadBuildContext::new(payload, &mut evm_state);
+    let mut context = PayloadBuildContext::new(payload, &mut evm_state)?;
     let mut block_cache = apply_withdrawals(&mut context)?;
     fill_transactions(&mut context, &mut block_cache)?;
     finalize_payload(&mut context, &mut block_cache)?;
