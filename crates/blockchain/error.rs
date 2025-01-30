@@ -16,6 +16,8 @@ pub enum ChainError {
     StoreError(#[from] StoreError),
     #[error("EVM error: {0}")]
     EvmError(#[from] EvmError),
+    #[error("{0}")]
+    Custom(String),
 }
 
 #[derive(Debug, thiserror::Error)]
