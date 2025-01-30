@@ -8,8 +8,7 @@ use crate::{
     },
     environment::Environment,
     errors::{
-        InternalError, OpcodeResult, OutOfGasError, TransactionReport, TxResult, TxValidationError,
-        VMError,
+        InternalError, OpcodeResult, TransactionReport, TxResult, TxValidationError, VMError,
     },
     gas_cost::{self, STANDARD_TOKEN_COST, TOTAL_COST_FLOOR_PER_TOKEN},
     precompiles::{
@@ -252,9 +251,11 @@ impl VM {
             let op_result = self.handle_current_opcode(opcode, current_call_frame);
 
             match op_result {
-                Ok(OpcodeResult::Continue) => {}
-                Ok(OpcodeResult::Halt(reason)) => {
-                    return self.handle_opcode_result(reason, current_call_frame, backup)
+                Ok(OpcodeResult::Continue { pc_increment }) => {
+                    current_call_frame.increment_pc_by(pc_increment)?
+                }
+                Ok(OpcodeResult::Halt) => {
+                    return self.handle_opcode_result(current_call_frame, backup)
                 }
                 Err(error) => return self.handle_opcode_error(error, current_call_frame, backup),
             }
@@ -283,7 +284,8 @@ impl VM {
             initial_call_frame,
         )?;
 
-        self.increase_consumed_gas(initial_call_frame, intrinsic_gas)
+        initial_call_frame
+            .increase_consumed_gas(intrinsic_gas)
             .map_err(|_| TxValidationError::IntrinsicGasTooLow)?;
 
         Ok(())
@@ -748,25 +750,6 @@ impl VM {
         ))
     }
 
-    /// Increases gas consumption of CallFrame and Environment, returning an error if the callframe gas limit is reached.
-    pub fn increase_consumed_gas(
-        &mut self,
-        current_call_frame: &mut CallFrame,
-        gas: u64,
-    ) -> Result<(), VMError> {
-        let potential_consumed_gas = current_call_frame
-            .gas_used
-            .checked_add(gas)
-            .ok_or(OutOfGasError::ConsumedGasOverflow)?;
-        if potential_consumed_gas > current_call_frame.gas_limit {
-            return Err(VMError::OutOfGas(OutOfGasError::MaxGasLimitExceeded));
-        }
-
-        current_call_frame.gas_used = potential_consumed_gas;
-
-        Ok(())
-    }
-
     /// Accesses to an account's information.
     ///
     /// Accessed accounts are stored in the `touched_accounts` set.
@@ -858,7 +841,6 @@ impl VM {
             logs: vec![],
             new_state: HashMap::default(),
             output: Bytes::new(),
-            created_address: None,
         };
 
         self.post_execution_changes(initial_call_frame, &mut report)?;

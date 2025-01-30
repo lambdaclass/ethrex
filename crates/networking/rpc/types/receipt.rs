@@ -1,5 +1,5 @@
-use ethrex_blockchain::constants::GAS_PER_BLOB;
 use ethrex_core::{
+    constants::GAS_PER_BLOB,
     serde_utils,
     types::{BlockHash, BlockHeader, BlockNumber, Log, Receipt, Transaction, TxKind, TxType},
     Address, Bloom, Bytes, H256,
