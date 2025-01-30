@@ -416,7 +416,7 @@ mod tests {
         let input = "enode://d860a01f9722d78051619d1e2351aba3f43f943f6f00718d1b9baa4101932a1f5011f16bb2b1bb35db20d6fe28fa0bf09636d26a87d31de9ec6203eeedb1f666@18.138.108.67:30303?discport=30305";
         let node = Node::from_enode_url(input).unwrap();
         let node_id = H512::from_str(
-            "6d860a01f9722d78051619d1e2351aba3f43f943f6f00718d1b9baa4101932a1f5011f16bb2b1bb35db20d6fe28fa0bf09636d26a87d31de9ec6203eeedb1f666")
+            "d860a01f9722d78051619d1e2351aba3f43f943f6f00718d1b9baa4101932a1f5011f16bb2b1bb35db20d6fe28fa0bf09636d26a87d31de9ec6203eeedb1f666")
             .unwrap();
         let socket_address = SocketAddr::from_str("18.138.108.67:30303").unwrap();
         let expected_bootnode = Node {
@@ -434,7 +434,7 @@ mod tests {
         let enr_string = "enr:-Iu4QDOLZWVEdbtRUtrZ8PU1vxUJ0t_TUpVghJhJuakBUyYKE_ZfvhR2EKxDyJ8Z5wwoJE4mTSItAcYsErU0NrB7uzCAgmlkgnY0gmlwhH8AAAGJc2VjcDI1NmsxoQJtSDUljLLg3EYuRCp8QJvH8G2F9rmUAQtPKlZjq_O7loN0Y3CCdl-DdWRwgnZf";
         let node = Node::from_enr_url(enr_string).unwrap();
         let node_id =
-            H512::from_str("d4835258cb2e0dc462e442a7c409bc7f06d85f6b994010b4f2a5663abf3bb96ac2c8fc3b79174b43e0d4408114e0058ba9f5ce77ec4e7954fc21ecf9fbc1740")
+            H512::from_str("6d4835258cb2e0dc462e442a7c409bc7f06d85f6b994010b4f2a5663abf3bb96ac2c8fc3b79174b43e0d4408114e0058ba9f5ce77ec4e7954fc21ecf9fbc1740")
                 .unwrap();
         let socket_address = SocketAddr::from_str("127.0.0.1:30303").unwrap();
         let expected_node = Node {
