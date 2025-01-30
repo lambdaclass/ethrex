@@ -13,33 +13,27 @@ use ethrex_core::{
     },
     Address, Bloom, Bytes, H256, U256,
 };
+#[cfg(not(feature = "levm"))]
+use {
+    ethrex_core::types::Account,
+    ethrex_vm::{
+        beacon_root_contract_call, execute_tx, get_state_transitions, process_withdrawals, spec_id,
+        SpecId,
+    },
+};
 #[cfg(feature = "levm")]
-use ethrex_levm::AccountInfo;
+use {
+    ethrex_core::types::GWEI_TO_WEI,
+    ethrex_levm::{Account, AccountInfo},
+    ethrex_vm::{
+        beacon_root_contract_call_levm, db::StoreWrapper, execute_tx_levm,
+        get_state_transitions_levm,
+    },
+    std::sync::Arc,
+};
 
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_storage::{error::StoreError, Store};
-#[cfg(feature = "levm")]
-use ethrex_vm::{
-    beacon_root_contract_call_levm, db::StoreWrapper, execute_tx_levm, get_state_transitions_levm,
-};
-
-#[cfg(feature = "levm")]
-use ethrex_levm::Account;
-
-#[cfg(feature = "levm")]
-use ethrex_core::types::GWEI_TO_WEI;
-
-#[cfg(feature = "levm")]
-use std::sync::Arc;
-
-#[cfg(not(feature = "levm"))]
-use ethrex_vm::{
-    beacon_root_contract_call, execute_tx, get_state_transitions, process_withdrawals, spec_id,
-    SpecId,
-};
-
-#[cfg(not(feature = "levm"))]
-use ethrex_core::types::Account;
 
 use ethrex_vm::{evm_state, EvmError, EvmState};
 
