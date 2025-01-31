@@ -18,9 +18,11 @@ pub enum EvmError {
     #[error("Execution DB error: {0}")]
     ExecutionDB(#[from] ExecutionDBError),
     #[error("{0}")]
-    Custom(String),
-    #[error("{0}")]
     Precompile(String),
+    #[error("Invalid EVM or EVM not supported: {0}")]
+    InvalidEVM(String),
+    #[error("{0}")]
+    Custom(String),
 }
 
 #[derive(Debug, Error)]
