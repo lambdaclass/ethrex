@@ -39,7 +39,7 @@ perf-sp1-gpu:
 ETHREX_L2_BIN := ./target/release/ethrex_l2
 RSP_BIN := ./target/release/rsp
 
-GENESIS_FILE := $(ROOT_DIRECTORY)/test_data/genesis-l2-old.json
+GENESIS_FILE := $(ROOT_DIRECTORY)/test_data/genesis-l2.json
 CHAIN_FILE := $(ROOT_DIRECTORY)/test_data/l2-loadtest.rlp
 RSP_CACHE := $(ROOT_DIRECTORY)/test_data/rsp
 

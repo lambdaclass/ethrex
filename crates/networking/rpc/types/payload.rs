@@ -130,7 +130,7 @@ impl ExecutionPayload {
             excess_blob_gas: self.excess_blob_gas,
             parent_beacon_block_root,
             // TODO: set the value properly
-            requests_hash: None,
+            requests_hash: self.requests_hash,
         };
 
         Ok(Block::new(header, body))
