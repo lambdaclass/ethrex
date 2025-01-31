@@ -152,7 +152,7 @@ async fn handle_peer_as_initiator(context: P2PContext, node: Node) {
             // TODO We should remove the peer from the table if connection failed
             // but currently it will make the tests fail
             // table.lock().await.replace_peer(node.node_id);
-            error!("Error establishing tcp connection with peer at {addr}: {e}");
+            debug!("Error establishing tcp connection with peer at {addr}: {e}");
             return;
         }
     };
@@ -163,7 +163,7 @@ async fn handle_peer_as_initiator(context: P2PContext, node: Node) {
             // TODO We should remove the peer from the table if connection failed
             // but currently it will make the tests fail
             // table.lock().await.replace_peer(node.node_id);
-            error!("Error creating tcp connection with peer at {addr}: {e}")
+            debug!("Error creating tcp connection with peer at {addr}: {e}")
         }
     };
 }
