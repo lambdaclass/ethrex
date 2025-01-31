@@ -7,7 +7,7 @@ mod mods;
 
 use db::StoreWrapper;
 use execution_db::ExecutionDB;
-use std::cmp::min;
+use std::{cmp::min, str::FromStr};
 
 use ethrex_core::{
     types::{
@@ -37,6 +37,24 @@ pub use errors::EvmError;
 pub use execution_result::*;
 pub use revm::primitives::{Address as RevmAddress, SpecId, U256 as RevmU256};
 
+#[derive(Debug, Clone)]
+pub enum EVM {
+    LEVM,
+    REVM,
+}
+
+impl FromStr for EVM {
+    type Err = EvmError;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "levm" => Ok(EVM::LEVM),
+            "revm" => Ok(EVM::REVM),
+            _ => Err(EvmError::InvalidEVM(s.to_string())),
+        }
+    }
+}
+
+// TODO use the type inside ethrex_core
 type AccessList = Vec<(Address, Vec<H256>)>;
 
 pub const WITHDRAWAL_MAGIC_DATA: &[u8] = b"burn";
