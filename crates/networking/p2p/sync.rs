@@ -353,7 +353,7 @@ async fn rebuild_state_trie(
         const PROGRESS_OUTPUT_TIMER: std::time::Duration = std::time::Duration::from_secs(30);
         loop {
             info!("Sleeping");
-            sleep(Duration::from_secs(200));
+            tokio::time::sleep(Duration::from_secs(200));
             info!("Woke Up!");
             // Show Progress stats (this task is not vital so we can detach it)
             if Instant::now().duration_since(progress_timer) >= PROGRESS_OUTPUT_TIMER {
