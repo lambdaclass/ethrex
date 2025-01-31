@@ -74,7 +74,7 @@ impl StateBackup {
 /// specified Fork. The "intended" way to do this is the following:
 ///
 /// ```
-/// let fork: Fork = <some fork>;
+/// let fork: Fork = get_current_fork();
 /// let blob_schedule = EVMConfig::canonical_values(fork);
 /// let config = EVMConfig::new(fork, blob_schedule);
 /// ```
