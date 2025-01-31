@@ -47,7 +47,7 @@ fn main() {
             runtime.clone(),
             kademlia, 
             ethereum_p2p::discovery::Config {
-                endpoint: Endpoint::new(IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)), 30304, 0),
+                endpoint: Endpoint::new(IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)), 30303, 30303),
                 signer,
                 node_id: NodeId::from_secret_key(&signer),
                 seek_interval: Duration::from_secs(15),
