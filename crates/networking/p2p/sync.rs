@@ -6,7 +6,7 @@ use ethrex_core::{
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode, error::RLPDecodeError};
 use ethrex_storage::{error::StoreError, Store};
 use ethrex_trie::{Nibbles, Node, TrieError, TrieState, EMPTY_TRIE_HASH};
-use std::{cmp::min, collections::BTreeMap, sync::Arc};
+use std::{cmp::min, collections::BTreeMap, sync::Arc, time::Duration};
 use tokio::{
     sync::{
         mpsc::{self, error::SendError, Receiver, Sender},
@@ -352,6 +352,9 @@ async fn rebuild_state_trie(
         let mut stale = false;
         const PROGRESS_OUTPUT_TIMER: std::time::Duration = std::time::Duration::from_secs(30);
         loop {
+            info!("Sleeping");
+            sleep(Duration::from_secs(200));
+            info!("Woke Up!");
             // Show Progress stats (this task is not vital so we can detach it)
             if Instant::now().duration_since(progress_timer) >= PROGRESS_OUTPUT_TIMER {
                 progress_timer = Instant::now();
