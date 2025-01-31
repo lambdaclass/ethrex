@@ -249,18 +249,28 @@ impl Actor {
                         }
                     }
                     Message::Revalidate => {
-                        let peers = self.peers.lock().await;
-                        for (peer_address, peer) in peers.iter() {
-                            let packet_data = new_ping(
-                                self.endpoint.clone(),
-                                &peer.endpoint.clone().udp_socket_addr(),
-                            );
-                            let packet = Packet::new(packet_data, self.node_id);
-                            let content = packet.encode(&self.signer);
-                            main_loop_conn
-                                .send_to(&content, *peer_address)
-                                .await
-                                .map_err(|err| Error::FailedToRevalidate(err.to_string()))?;
+                        let mut peers = self.peers.lock().await;
+                        for (peer_address, peer_data) in peers.iter_mut() {
+                            if matches!(peer_data.state, NodeState::Known)
+                                || peer_data.last_ping.is_none()
+                                || peer_data.last_ping.is_some_and(is_last_ping_expired)
+                            {
+                                let packet_data = new_ping(
+                                    self.endpoint.clone(),
+                                    &peer_data.endpoint.clone().udp_socket_addr(),
+                                );
+                                let packet = Packet::new(packet_data, self.node_id);
+                                let content = packet.encode(&self.signer);
+                                if matches!(peer_data.state, NodeState::Known) {
+                                    peer_data.state = NodeState::Pinged;
+                                    peer_data.last_ping = Some(current_unix_time());
+                                    peer_data.last_ping_hash = Some(packet.hash(&self.signer));
+                                }
+                                main_loop_conn
+                                    .send_to(&content, *peer_address)
+                                    .await
+                                    .map_err(|err| Error::FailedToRevalidate(err.to_string()))?;
+                            }
                         }
                     }
                     Message::Terminate => {
