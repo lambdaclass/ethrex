@@ -1,5 +1,5 @@
 use commonware_runtime::{Runner, Spawner};
-use ethereum_p2p::types::{Endpoint, Node, NodeId};
+use ethereum_p2p::types::{Endpoint, Node, NodeId, PeerData};
 use libsecp256k1::{PublicKeyFormat, SecretKey};
 use std::{
     collections::BTreeMap,
@@ -25,7 +25,7 @@ fn main() {
     let (executor, runtime) = commonware_runtime::tokio::Executor::default();
 
     executor.start(async move {
-        let bootnode_enode = "enode://ac906289e4b7f12df423d654c5a962b6ebe5b3a74cc9e06292a85221f9a64a6f1cfdd6b714ed6dacef51578f92b34c60ee91e9ede9c7f8fadc4d347326d95e2b@146.190.13.128:30303";
+        let bootnode_enode = "enode://bdcf92f566bc180a10355b7c0bc25cd049ede640ab6ac850ab56ef51441523dd98b59e78e594db1d82212ca3b16e5e83bef16a4a1b26db78713fc8ca99409c8e@127.0.0.1:30303";
         let bootnode_socket_address: SocketAddr = bootnode_enode[137..].parse().unwrap();
         let bootnode = Node::new(
             bootnode_socket_address.ip(),
@@ -39,7 +39,7 @@ fn main() {
         );
 
         let kademlia = Arc::new(Mutex::new(BTreeMap::new()));
-        kademlia.lock().await.insert(bootnode_socket_address, bootnode);
+        kademlia.lock().await.insert(bootnode_socket_address, PeerData::new_known(bootnode.endpoint));
 
         let signer = SecretKey::random(&mut rand::thread_rng());
         
@@ -47,11 +47,11 @@ fn main() {
             runtime.clone(),
             kademlia, 
             ethereum_p2p::discovery::Config {
-                endpoint: Endpoint::new(IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)), 30303, 0),
+                endpoint: Endpoint::new(IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)), 30304, 0),
                 signer,
                 node_id: NodeId::from_secret_key(&signer),
-                seek_interval: Duration::from_secs(1),
-                revalidation_interval: Duration::from_secs(1),
+                seek_interval: Duration::from_secs(15),
+                revalidation_interval: Duration::from_secs(10),
                 timeout_duration,
             }
         );
