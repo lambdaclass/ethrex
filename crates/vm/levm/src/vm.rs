@@ -99,7 +99,7 @@ impl EVMConfig {
         }
     }
 
-    /// After EIP-7691 the maximum number of blob hashes changes. For more
+    /// After EIP-7691 the maximum number of blob hashes changed. For more
     /// information see
     /// [EIP-7691](https://eips.ethereum.org/EIPS/eip-7691#specification).
     const fn max_blobs_per_block(fork: Fork) -> u64 {
