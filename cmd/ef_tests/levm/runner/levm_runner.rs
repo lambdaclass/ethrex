@@ -102,7 +102,14 @@ pub fn prepare_vm_for_tx(vector: &TestVector, test: &EFTest) -> Result<VM, EFTes
             .collect::<Vec<AuthorizationTuple>>()
     });
 
-    let config = EVMConfig { fork: test.fork() };
+    let fork = test.fork();
+    let blob_schedule = EVMConfig::canonical_values(fork).map_err(|_| {
+        EFTestRunnerError::VMInitializationFailed("Failed to cast error".to_string())
+    })?;
+    let config = EVMConfig {
+        fork,
+        blob_schedule: Some(blob_schedule),
+    };
 
     VM::new(
         tx.to.clone(),

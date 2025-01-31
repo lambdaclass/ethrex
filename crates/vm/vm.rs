@@ -222,7 +222,8 @@ cfg_if::cfg_if! {
             let mut block_cache: CacheDB = HashMap::new();
             let block_header = &block.header;
             let fork = state.chain_config()?.fork(block_header.timestamp);
-            let config = EVMConfig {fork};
+            let blob_schedule = state.chain_config()?.get_fork_blob_schedule(block_header.timestamp);
+            let config = EVMConfig {fork, blob_schedule};
 
             //eip 4788: execute beacon_root_contract_call before block transactions
             cfg_if::cfg_if! {
