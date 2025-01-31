@@ -1,6 +1,6 @@
 use clap::{Arg, ArgAction, Command};
 use ethrex_net::bootnode::BootNode;
-use ethrex_vm::EVM;
+use ethrex_vm::evm_backends::EVM;
 use tracing::Level;
 
 pub fn cli() -> Command {

@@ -10,7 +10,7 @@ use ethrex_net::{
 };
 use ethrex_rlp::decode::RLPDecode;
 use ethrex_storage::{EngineType, Store};
-use ethrex_vm::EVM;
+use ethrex_vm::evm_backends::EVM;
 use k256::ecdsa::SigningKey;
 use local_ip_address::local_ip;
 use rand::rngs::OsRng;
@@ -135,7 +135,7 @@ async fn main() {
 
     let sync_mode = sync_mode(&matches);
 
-    let evm = matches.get_one::<EVM>("evm").unwrap_or(&EVM::REVM);
+    let _evm = matches.get_one::<EVM>("evm").unwrap_or(&EVM::REVM);
 
     cfg_if::cfg_if! {
         if #[cfg(feature = "redb")] {

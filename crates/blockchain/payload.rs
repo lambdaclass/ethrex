@@ -16,8 +16,9 @@ use ethrex_core::{
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_storage::{error::StoreError, Store};
 use ethrex_vm::{
-    beacon_root_contract_call, evm_state, execute_tx, get_state_transitions, process_withdrawals,
-    spec_id, EvmError, EvmState, SpecId,
+    db::{evm_state, EvmState},
+    evm_backends::revm,
+    get_state_transitions, spec_id, EvmError, SpecId,
 };
 use sha3::{Digest, Keccak256};
 
@@ -238,10 +239,10 @@ pub fn apply_withdrawals(context: &mut PayloadBuildContext) -> Result<(), EvmErr
     // Apply withdrawals & call beacon root contract, and obtain the new state root
     let spec_id = spec_id(&context.chain_config()?, context.payload.header.timestamp);
     if context.payload.header.parent_beacon_block_root.is_some() && spec_id == SpecId::CANCUN {
-        beacon_root_contract_call(context.evm_state, &context.payload.header, spec_id)?;
+        revm::beacon_root_contract_call(context.evm_state, &context.payload.header, spec_id)?;
     }
     let withdrawals = context.payload.body.withdrawals.clone().unwrap_or_default();
-    process_withdrawals(context.evm_state, &withdrawals)?;
+    revm::process_withdrawals(context.evm_state, &withdrawals)?;
     Ok(())
 }
 
@@ -445,7 +446,7 @@ fn apply_plain_transaction(
     head: &HeadTransaction,
     context: &mut PayloadBuildContext,
 ) -> Result<Receipt, ChainError> {
-    let result = execute_tx(
+    let result = revm::execute_tx(
         &head.tx,
         &context.payload.header,
         context.evm_state,
