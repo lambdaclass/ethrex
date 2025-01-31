@@ -68,6 +68,21 @@ impl StateBackup {
 }
 
 #[derive(Debug, Clone, Copy)]
+/// This structs holds special configuration variables specific to the
+/// EVM. In most cases, at least at the time of writing (February
+/// 2025), you want to use the default blob_schedule values for the
+/// specified Fork. The "intended" way to do this is the following:
+///
+/// ```
+/// let fork: Fork = <some fork>;
+/// let blob_schedule = EVMConfig::canonical_values(fork);
+/// let config = EVMConfig::new(fork, blob_schedule);
+/// ```
+///
+/// This is NOT the case IF you want to use a custom ForkBlobSchedule,
+/// like it's described in
+/// EIP-7840(https://eips.ethereum.org/EIPS/eip-7840). For more
+/// information read the EIP
 pub struct EVMConfig {
     pub fork: Fork,
     pub blob_schedule: ForkBlobSchedule,
