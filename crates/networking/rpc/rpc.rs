@@ -391,6 +391,10 @@ mod tests {
         let enr_url = context.local_node_record.enr_url().unwrap();
         let result = map_http_requests(&request, context);
         let rpc_response = rpc_response(request.id, result);
+        let blob_schedule = serde_json::json!({
+            "cancun": { "target": 3, "max": 6, "baseFeeUpdateFraction": 3338477 },
+            "prague": { "target": 6, "max": 9, "baseFeeUpdateFraction": 5007716 }
+        });
         let json = serde_json::json!({
             "jsonrpc": "2.0",
             "id": 1,
@@ -428,9 +432,10 @@ mod tests {
                         "pragueTime": 1718232101,
                         "verkleTime": null,
                         "terminalTotalDifficulty": 0,
-                        "terminalTotalDifficultyPassed": true
+                        "terminalTotalDifficultyPassed": true,
+                        "blobSchedule": blob_schedule
                     }
-                }
+                },
             }
         }).to_string();
         let expected_response = to_rpc_response_success_value(&json);
