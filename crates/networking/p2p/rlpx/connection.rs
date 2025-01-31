@@ -413,7 +413,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
                     pending_requests::handle_response(
                         msg,
                         &self.storage,
-                        self.node.node_id,
+                        self.node,
                         &self.global_requested_transactions,
                         pending_requests,
                     )

@@ -5,14 +5,17 @@ use std::{
 };
 
 use ethrex_blockchain::{error::MempoolError, mempool};
-use ethrex_core::{types::P2PTransaction, H256, H512};
+use ethrex_core::{types::P2PTransaction, H256};
 use ethrex_storage::{error::StoreError, Store};
 use tokio::sync::Mutex;
-use tracing::warn;
 
-use crate::rlpx::{
-    error::RLPxError,
-    eth::transactions::{NewPooledTransactionHashes, PooledTransactions},
+use crate::{
+    rlpx::{
+        error::RLPxError,
+        eth::transactions::{NewPooledTransactionHashes, PooledTransactions},
+        utils::log_peer_warn,
+    },
+    types::Node,
 };
 
 const STALE_REQUEST_TIMEOUT: Duration = Duration::from_secs(5);
@@ -105,6 +108,7 @@ pub async fn remove_stale_requests(
     }
 }
 
+/// Removes all pending requests of a peer from global_requested_transactions`
 pub async fn remove_peer_pending_requests(
     global_requested_transactions: &Arc<Mutex<HashSet<H256>>>,
     peer_pending_requests: &mut HashMap<u64, TransactionRequest>,
@@ -123,7 +127,7 @@ pub async fn remove_peer_pending_requests(
 pub async fn handle_response(
     response: PooledTransactions,
     store: &Store,
-    remote_node_id: H512,
+    node: Node,
     global_requested_transactions: &Arc<Mutex<HashSet<H256>>>,
     peer_pending_requests: &mut HashMap<u64, TransactionRequest>,
 ) -> Result<(), RLPxError> {
@@ -137,20 +141,14 @@ pub async fn handle_response(
     for tx in response.pooled_transactions {
         if let P2PTransaction::EIP4844TransactionWithBlobs(itx) = tx {
             if let Err(e) = mempool::add_blob_transaction(itx.tx, itx.blobs_bundle, store) {
-                warn!(
-                    "Error adding transaction from peer {}: {}",
-                    remote_node_id, e
-                );
+                log_peer_warn(&node, &format!("Error adding transaction: {}", e));
             }
         } else {
             let regular_tx = tx
                 .try_into()
                 .map_err(|error| MempoolError::StoreError(StoreError::Custom(error)))?;
             if let Err(e) = mempool::add_transaction(regular_tx, store) {
-                warn!(
-                    "Error adding transaction from peer {}: {}",
-                    remote_node_id, e
-                );
+                log_peer_warn(&node, &format!("Error adding transaction: {}", e));
             }
         }
     }
