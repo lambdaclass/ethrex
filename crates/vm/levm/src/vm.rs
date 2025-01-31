@@ -8,8 +8,7 @@ use crate::{
     },
     environment::Environment,
     errors::{
-        EVMConfigError, InternalError, OpcodeResult, TransactionReport, TxResult,
-        TxValidationError, VMError,
+        InternalError, OpcodeResult, TransactionReport, TxResult, TxValidationError, VMError,
     },
     gas_cost::{self, STANDARD_TOKEN_COST, TOTAL_COST_FLOOR_PER_TOKEN},
     precompiles::{
@@ -87,7 +86,7 @@ impl EVMConfig {
     /// genesis.json file) you can use this function to get the
     /// "Default" ForkBlobSchedule for that specific Fork.
     /// NOTE: This function could potentially be expanded to include
-    /// other types of "default" data given a specific fork
+    /// other types of "default"s.
     pub fn canonical_values(fork: Fork) -> Result<ForkBlobSchedule, VMError> {
         let max_blobs_per_block: u64 = Self::max_blobs_per_block(fork)
             .try_into()

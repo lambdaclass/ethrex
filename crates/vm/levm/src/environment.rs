@@ -14,7 +14,6 @@ pub struct Environment {
     pub origin: Address,
     pub refunded_gas: u64,
     pub gas_limit: u64,
-    // pub fork: Fork,
     pub config: EVMConfig,
     pub block_number: U256,
     pub coinbase: Address,
