@@ -70,15 +70,36 @@ impl StateBackup {
 #[derive(Debug, Default, Clone, Copy)]
 pub struct EVMConfig {
     pub fork: Fork,
-    // pub blobSchedule: ForkBlobSchedule,
+    pub blob_schedule: Option<ForkBlobSchedule>,
 }
 
 impl EVMConfig {
-    // pub fn new(fork: Fork, blobSchedule: ForkBlobSchedule) -> EVMConfig {
-    //     EVMConfig { fork, blobSchedule }
-    // }
-    pub fn new(fork: Fork) -> EVMConfig {
-        EVMConfig { fork }
+    pub fn new(fork: Fork, blob_schedule: Option<ForkBlobSchedule>) -> EVMConfig {
+        EVMConfig {
+            fork,
+            blob_schedule,
+        }
+    }
+
+    /// This function is used for running the EF tests. If you don't
+    /// have acces to a EVMConfig (mainly in the form of a
+    /// genesis.json file) you can use this function to get the
+    /// "Default" ForkBlobSchedule for that specific Fork.
+    pub fn canonical_values(fork: Fork) -> Result<ForkBlobSchedule, VMError> {
+        let max_blobs_per_block: u64 = max_blobs_per_block(fork)
+            .try_into()
+            .map_err(|_| VMError::Internal(InternalError::ConversionError))?;
+        let target: u64 = get_target_blob_gas_per_block_(fork)
+            .try_into()
+            .map_err(|_| VMError::Internal(InternalError::ConversionError))?;
+        let base_fee_update_fraction: u64 = get_blob_base_fee_update_fraction_value(fork)
+            .try_into()
+            .map_err(|_| VMError::Internal(InternalError::ConversionError))?;
+        Ok(ForkBlobSchedule {
+            target,
+            max: max_blobs_per_block,
+            base_fee_update_fraction,
+        })
     }
 }
 
