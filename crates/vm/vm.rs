@@ -226,7 +226,7 @@ cfg_if::cfg_if! {
             // default/canonical values
             let blob_schedule = state.chain_config()?.get_fork_blob_schedule(block_header.timestamp)
                 .unwrap_or(EVMConfig::canonical_values(fork));
-            let config = EVMConfig {fork , blob_schedule};
+            let config = EVMConfig::new(fork , blob_schedule);
             cfg_if::cfg_if! {
                 if #[cfg(not(feature = "l2"))] {
                     if block_header.parent_beacon_block_root.is_some() && fork == Fork::Cancun {
