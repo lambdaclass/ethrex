@@ -1,3 +1,4 @@
+use crate::types::Node;
 use ethrex_core::H512;
 use ethrex_rlp::error::{RLPDecodeError, RLPEncodeError};
 use k256::{
@@ -5,6 +6,7 @@ use k256::{
     EncodedPoint, PublicKey, SecretKey,
 };
 use snap::raw::{max_compress_len, Decoder as SnappyDecoder, Encoder as SnappyEncoder};
+use tracing::{debug, error};
 
 pub fn sha256(data: &[u8]) -> [u8; 32] {
     use k256::sha2::Digest;
@@ -62,6 +64,14 @@ pub fn snappy_compress(encoded_data: Vec<u8>) -> Result<Vec<u8>, RLPEncodeError>
 pub fn snappy_decompress(msg_data: &[u8]) -> Result<Vec<u8>, RLPDecodeError> {
     let mut snappy_decoder = SnappyDecoder::new();
     Ok(snappy_decoder.decompress_vec(msg_data)?)
+}
+
+pub(crate) fn log_peer_debug(node: &Node, text: &str) {
+    debug!("[{0}]: {1}", node, text)
+}
+
+pub(crate) fn log_peer_error(node: &Node, text: &str) {
+    error!("[{0}]: {1}", node, text)
 }
 
 #[cfg(test)]
