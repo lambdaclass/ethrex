@@ -162,8 +162,50 @@ impl Actor {
                                     .send_to(&content, from_endpoint.udp_socket_addr())
                                     .await
                                     .map_err(Error::FailedToReplayMessage)?;
+                                tracing::info!(packet = ?pong_packet, "replied to ping");
                             }
-                            PacketData::Pong { .. } => {}
+                            PacketData::Pong { ping_hash, .. } => {
+                                let mut table = self.peers.lock().await;
+                                match table.entry(from) {
+                                    Entry::Vacant(_entry) => {
+                                        tracing::debug!("received pong from unknown peer");
+                                        continue;
+                                    }
+                                    Entry::Occupied(mut entry) => {
+                                        let peer_data = entry.get_mut();
+                                        if peer_data.last_ping_hash != Some(ping_hash) {
+                                            tracing::warn!("received invalid pong");
+                                            continue;
+                                        }
+                                        tracing::debug!("pong sender is {}", peer_data.state);
+                                        match peer_data.state {
+                                            NodeState::Known { .. } => {
+                                                tracing::warn!(
+                                                    "received pong from non-pinged known peer"
+                                                );
+                                            }
+                                            NodeState::Pinged => {
+                                                tracing::debug!("updating peer to proven");
+                                                peer_data.state = NodeState::Proven {
+                                                    last_pong: current_unix_time(),
+                                                }
+                            }
+                                            NodeState::Proven { .. } => {
+                                                tracing::debug!("updating peer last pong");
+                                                peer_data.state = NodeState::Proven {
+                                                    last_pong: current_unix_time(),
+                                                }
+                                            }
+                                            NodeState::Connected { .. } => {
+                                                tracing::debug!("updating peer last pong");
+                                                peer_data.state = NodeState::Connected {
+                                                    last_pong: current_unix_time(),
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
                             PacketData::FindNode { target, .. } => {
                                 let neighbors = neighbors(target, self.peers.clone()).await;
                                 let packet_data = new_neighbors(neighbors);
