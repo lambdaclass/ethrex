@@ -8,7 +8,8 @@ use crate::{
     },
     environment::Environment,
     errors::{
-        InternalError, OpcodeResult, TransactionReport, TxResult, TxValidationError, VMError,
+        EVMConfigError, InternalError, OpcodeResult, TransactionReport, TxResult,
+        TxValidationError, VMError,
     },
     gas_cost::{self, STANDARD_TOKEN_COST, TOTAL_COST_FLOOR_PER_TOKEN},
     precompiles::{
@@ -87,16 +88,16 @@ impl EVMConfig {
     /// "Default" ForkBlobSchedule for that specific Fork.
     /// NOTE: This function could potentially be expanded to include
     /// other types of "default"s.
-    pub fn canonical_values(fork: Fork) -> Result<ForkBlobSchedule, VMError> {
+    pub fn canonical_values(fork: Fork) -> Result<ForkBlobSchedule, EVMConfigError> {
         let max_blobs_per_block: u64 = Self::max_blobs_per_block(fork)
             .try_into()
-            .map_err(|_| VMError::Internal(InternalError::ConversionError))?;
+            .map_err(|_| EVMConfigError::ConversionError)?;
         let target: u64 = Self::get_target_blob_gas_per_block_(fork)
             .try_into()
-            .map_err(|_| VMError::Internal(InternalError::ConversionError))?;
+            .map_err(|_| EVMConfigError::ConversionError)?;
         let base_fee_update_fraction: u64 = Self::get_blob_base_fee_update_fraction_value(fork)
             .try_into()
-            .map_err(|_| VMError::Internal(InternalError::ConversionError))?;
+            .map_err(|_| EVMConfigError::ConversionError)?;
         Ok(ForkBlobSchedule {
             target,
             max: max_blobs_per_block,

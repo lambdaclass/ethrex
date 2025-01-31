@@ -214,8 +214,8 @@ pub enum PrecompileError {
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error, Serialize, Deserialize)]
 pub enum EVMConfigError {
-    #[error("Stack Underflow")]
-    StackUnderflow,
+    #[error("Tried to convert one type to another")]
+    ConversionError,
 }
 
 #[derive(Debug, Clone)]
