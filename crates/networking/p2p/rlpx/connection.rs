@@ -32,7 +32,6 @@ use futures::SinkExt;
 use k256::{ecdsa::SigningKey, PublicKey, SecretKey};
 use pending_requests::TransactionRequest;
 use rand::random;
-use std::sync::Arc;
 use tokio::{
     io::{AsyncRead, AsyncWrite},
     sync::{
@@ -44,7 +43,8 @@ use tokio::{
 };
 use tokio_stream::StreamExt;
 use tokio_util::codec::Framed;
-use tracing::{debug, error, warn};
+
+use super::utils::log_peer_warn;
 const CAP_P2P: (Capability, u8) = (Capability::P2p, 5);
 const CAP_ETH: (Capability, u8) = (Capability::Eth, 68);
 const CAP_SNAP: (Capability, u8) = (Capability::Snap, 1);
@@ -353,10 +353,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
                     let mut valid_txs = vec![];
                     for tx in &txs.transactions {
                         if let Err(e) = mempool::add_transaction(tx.clone(), &self.storage) {
-                            warn!(
-                                "Error adding transaction from peer {}: {}",
-                                self.remote_node_id, e
-                            );
+                            log_peer_warn(&self.node, &format!("Error adding transaction: {}", e));
                             continue;
                         }
                         valid_txs.push(tx.clone());
@@ -416,7 +413,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
                     pending_requests::handle_response(
                         msg,
                         &self.storage,
-                        self.remote_node_id,
+                        self.node.node_id,
                         &self.global_requested_transactions,
                         pending_requests,
                     )

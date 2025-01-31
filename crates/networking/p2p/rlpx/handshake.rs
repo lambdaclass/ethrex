@@ -58,6 +58,7 @@ where
         stream,
         codec,
         context.storage,
+        context.global_requested_transactions,
         context.broadcast,
     ))
 }
@@ -84,6 +85,7 @@ where
         stream,
         codec,
         context.storage,
+        context.global_requested_transactions,
         context.broadcast,
     ))
 }
