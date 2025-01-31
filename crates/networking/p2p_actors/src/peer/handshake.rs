@@ -13,7 +13,7 @@ use super::{
         decrypt_message, ecdh_xchng, encrypt_message, retrieve_remote_ephemeral_key,
         sign_shared_secret,
     },
-    ingress::{Auth, AuthAck, PacketData},
+    packet::{Auth, AuthAck, Packet},
     utils::{id2pubkey, pubkey2id},
     Error,
 };
@@ -50,7 +50,7 @@ pub fn send_auth(
 
     auth_msg.signature = auth_signature(local_secret_key, &remote_pubkey, auth_msg.nonce)?;
 
-    let auth_body = PacketData::Auth(auth_msg.clone()).encode_to_vec();
+    let auth_body = auth_msg.encode_to_vec();
 
     let enc_auth_body =
         encrypt_message(&remote_pubkey, auth_body).map_err(|_| Error::CryptographyError)?;
@@ -79,10 +79,8 @@ pub fn receive_auth(stream: &mut TcpStream, local_secret_key: &SecretKey) -> Res
     let auth_body = decrypt_message(local_secret_key, &enc_auth_body, &size_buf)
         .map_err(|_| Error::CryptographyError)?;
 
-    let auth_msg = match PacketData::decode(auth_body.as_slice()) {
-        Ok(PacketData::Auth(auth_msg)) => auth_msg,
-        _ => return Err(Error::InvalidMessage(hex::encode(auth_body))),
-    };
+    let (auth_msg, _) = Auth::try_rlp_decode(auth_body.as_slice())
+        .map_err(|_| Error::InvalidMessage("Failed to decode auth message".to_string()))?;
 
     return Ok(auth_msg);
 }
@@ -107,11 +105,11 @@ pub fn send_ack(
 
     let local_ephemeral_key = SecretKey::random(&mut rand::thread_rng());
 
-    let auth_ack_msg = PacketData::AuthAck(AuthAck {
+    let auth_ack_msg = AuthAck {
         recipient_ephemeral_pubk: pubkey2id(&local_ephemeral_key.public_key()),
         recipient_nonce: H256::random(),
-        ack_vsn: RLPX_PROTOCOL_VERSION,
-    });
+        version: RLPX_PROTOCOL_VERSION,
+    };
 
     let auth_ack_body = auth_ack_msg.encode_to_vec();
     let enc_auth_ack_body = encrypt_message(
@@ -147,10 +145,9 @@ pub fn receive_ack(stream: &mut TcpStream, local_secret_key: &SecretKey) -> Resu
         .map_err(|_| Error::CryptographyError)?;
 
     // TODO: We'll need to save this
-    let ack_msg = match PacketData::decode_unfinished(ack_body.as_slice()) {
-        Ok((PacketData::AuthAck(ack_msg), _)) => ack_msg,
-        _ => return Err(Error::InvalidMessage(hex::encode(ack_body))),
-    };
+    let (ack_msg, _) = AuthAck::try_rlp_decode(ack_body.as_slice())
+        .map_err(|_| Error::InvalidMessage("Failed to decode ACK message".to_string()))
+        .unwrap();
 
     Ok(())
 }
