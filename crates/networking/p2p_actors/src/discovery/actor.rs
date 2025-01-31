@@ -153,7 +153,10 @@ impl Actor {
                                 let mut table = self.peers.lock().await;
                                 match table.entry(from) {
                                     Entry::Vacant(entry) => {
-                                        entry.insert(PeerData::new_known(from_endpoint.clone()));
+                                        entry.insert(PeerData::new_known(
+                                            packet.node_id,
+                                            from_endpoint.clone(),
+                                        ));
                                     }
                                     Entry::Occupied(mut entry) => {
                                         let peer_data = entry.get_mut();
@@ -229,7 +232,10 @@ impl Actor {
                                 for node in nodes {
                                     match table.entry(node.endpoint.clone().udp_socket_addr()) {
                                         Entry::Vacant(entry) => {
-                                            entry.insert(PeerData::new_known(node.endpoint));
+                                            entry.insert(PeerData::new_known(
+                                                node.id,
+                                                node.endpoint,
+                                            ));
                                         }
                                         Entry::Occupied(mut _entry) => {
                                             // TODO: What should we do here?
@@ -250,11 +256,11 @@ impl Actor {
                         let content = packet.encode(&self.signer);
 
                         for neighbor in target_neighbors.iter() {
-                            tracing::debug!(from = ?neighbor, "looking up for neighbors");
                             main_loop_conn
                                 .send_to(&content, neighbor.endpoint.clone().udp_socket_addr())
                                 .await
                                 .map_err(|err| Error::FailedToLookup(err.to_string()))?;
+                            tracing::debug!(packet = ?packet, "looking up for neighbors");
                         }
                     }
                     Message::Revalidate => {
@@ -344,84 +350,84 @@ impl Actor {
         )
         .await;
 
-        tracing::info!("Discovery started");
+        tracing::info!("discovery started");
 
         let result = tokio::select! {
             lookup_handle_result = &mut lookup_handle => {
-                tracing::debug!("Lookup task finished, shutting down");
+                tracing::debug!("lookup task finished, shutting down");
                 // We abort these because we do not have channels to send message them to terminate.
                 revalidation_handle.abort();
                 listener_handle.abort();
                 if let Err(_err) = tokio::time::timeout(self.timeout_duration, revalidation_handle).await {
-                    tracing::error!("Failed to stop heart beat");
+                    tracing::error!("failed to stop heart beat");
                     return Err(Error::CommonwareRuntimeError(commonware_runtime::Error::Timeout));
                 }
                 if let Err(_err) = tokio::time::timeout(self.timeout_duration, listener_handle).await {
-                    tracing::error!("Failed to stop listener");
+                    tracing::error!("failed to stop listener");
                     return Err(Error::CommonwareRuntimeError(commonware_runtime::Error::Timeout));
                 }
                 if let Err(_err) = tokio::time::timeout(self.timeout_duration, self.mailbox.terminate()).await {
-                    tracing::error!("Failed to stop listener");
+                    tracing::error!("failed to stop listener");
                     return Err(Error::CommonwareRuntimeError(commonware_runtime::Error::Timeout));
                 }
                 lookup_handle_result
             },
 
             revalidation_handle_result = &mut revalidation_handle => {
-                tracing::debug!("Revalidation task finished, shutting down");
+                tracing::debug!("revalidation task finished, shutting down");
                 // We abort these because we do not have channels to send message them to terminate.
                 lookup_handle.abort();
                 listener_handle.abort();
                 if let Err(_err) = tokio::time::timeout(self.timeout_duration, lookup_handle).await {
-                    tracing::error!("Failed to stop lookup");
+                    tracing::error!("failed to stop lookup");
                     return Err(Error::CommonwareRuntimeError(commonware_runtime::Error::Timeout));
                 }
                 if let Err(_err) = tokio::time::timeout(self.timeout_duration, listener_handle).await {
-                    tracing::error!("Failed to stop listener");
+                    tracing::error!("failed to stop listener");
                     return Err(Error::CommonwareRuntimeError(commonware_runtime::Error::Timeout));
                 }
                 if let Err(_err) = tokio::time::timeout(self.timeout_duration, self.mailbox.terminate()).await {
-                    tracing::error!("Failed to stop listener");
+                    tracing::error!("failed to stop listener");
                     return Err(Error::CommonwareRuntimeError(commonware_runtime::Error::Timeout));
                 }
                 revalidation_handle_result
             },
 
             listener_handle_result = &mut listener_handle => {
-                tracing::debug!("Listener task finished, shutting down");
+                tracing::debug!("listener task finished, shutting down");
                 // We abort these because we do not have channels to send message them to terminate.
                 lookup_handle.abort();
                 revalidation_handle.abort();
                 if let Err(_err) = tokio::time::timeout(self.timeout_duration, lookup_handle).await {
-                    tracing::error!("Failed to stop lookup");
+                    tracing::error!("failed to stop lookup");
                     return Err(Error::CommonwareRuntimeError(commonware_runtime::Error::Timeout));
                 }
                 if let Err(_err) = tokio::time::timeout(self.timeout_duration, revalidation_handle).await {
-                    tracing::error!("Failed to stop heart beat");
+                    tracing::error!("failed to stop heart beat");
                     return Err(Error::CommonwareRuntimeError(commonware_runtime::Error::Timeout));
                 }
                 if let Err(_err) = tokio::time::timeout(self.timeout_duration, self.mailbox.terminate()).await {
-                    tracing::error!("Failed to stop listener");
+                    tracing::error!("failed to stop listener");
                     return Err(Error::CommonwareRuntimeError(commonware_runtime::Error::Timeout));
                 }
                 listener_handle_result
             },
 
             main_loop_handle_result = &mut main_loop_handle => {
-                tracing::debug!("Main loop task finished, shutting down");
+                tracing::debug!("main loop task finished, shutting down");
                 // We abort these because we do not have channels to send message them to terminate.
                 lookup_handle.abort();
                 revalidation_handle.abort();
                 if let Err(_err) = tokio::time::timeout(self.timeout_duration, lookup_handle).await {
-                    tracing::error!("Failed to stop lookup");
+                    tracing::error!("failed to stop lookup");
                     return Err(Error::CommonwareRuntimeError(commonware_runtime::Error::Timeout));
                 }
                 if let Err(_err) = tokio::time::timeout(self.timeout_duration, revalidation_handle).await {
-                    tracing::error!("Failed to stop heart beat");
+                    tracing::error!("failed to stop heart beat");
                     return Err(Error::CommonwareRuntimeError(commonware_runtime::Error::Timeout));
                 }
                 if let Err(_err) = tokio::time::timeout(self.timeout_duration, self.mailbox.terminate()).await {
-                    tracing::error!("Failed to stop listener");
+                    tracing::error!("failed to stop listener");
                     return Err(Error::CommonwareRuntimeError(commonware_runtime::Error::Timeout));
                 }
                 main_loop_handle_result
@@ -430,15 +436,15 @@ impl Actor {
 
         match result {
             Ok(Ok(())) => {
-                tracing::info!("Actor shutdown");
+                tracing::info!("actor shutdown");
                 Ok(())
             }
             Ok(Err(actor_error)) => {
-                tracing::error!(error = ?actor_error, "Actor failed");
+                tracing::error!(error = ?actor_error, "actor failed");
                 Err(actor_error)
             }
             Err(commonware_runtime_error) => {
-                tracing::error!(error = ?commonware_runtime_error, "Actor runtime failed");
+                tracing::error!(error = ?commonware_runtime_error, "actor runtime failed");
                 Err(Error::CommonwareRuntimeError(commonware_runtime_error))
             }
         }

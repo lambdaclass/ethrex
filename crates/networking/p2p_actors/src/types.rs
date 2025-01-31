@@ -283,7 +283,7 @@ fn decode_node_record_optional_fields(
 
 #[derive(Debug, Clone)]
 pub struct PeerData {
-    pub id: Option<NodeId>,
+    pub id: NodeId,
     pub endpoint: Endpoint,
     // pub record: NodeRecord,
     pub last_ping_hash: Option<H256>,
@@ -297,9 +297,9 @@ pub struct PeerData {
 }
 
 impl PeerData {
-    pub fn new_known(endpoint: Endpoint) -> Self {
+    pub fn new_known(id: NodeId, endpoint: Endpoint) -> Self {
         Self {
-            id: None,
+            id,
             endpoint,
             last_ping_hash: None,
             last_ping: None,

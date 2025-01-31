@@ -117,24 +117,22 @@ pub async fn neighbors(of: NodeId, from: Arc<Mutex<BTreeMap<SocketAddr, PeerData
     let table_lock = from.lock().await;
     let mut distances_to_target = Vec::new();
     for known_peer in table_lock.values() {
-        if let Some(known_peer_id) = &known_peer.id {
-            let n1 = keccak(serialize_node_id(&of));
-            let n2 = keccak(serialize_node_id(known_peer_id));
-            let distance = U256::from_big_endian((n1 ^ n2).as_bytes());
-            distances_to_target.push((distance, known_peer, known_peer_id));
-        }
+        let n1 = keccak(serialize_node_id(&of));
+        let n2 = keccak(serialize_node_id(&known_peer.id));
+        let distance = U256::from_big_endian((n1 ^ n2).as_bytes());
+        distances_to_target.push((distance, known_peer));
     }
 
-    distances_to_target.sort_by_key(|(distance, _, _)| Reverse(*distance));
+    distances_to_target.sort_by_key(|(distance, _)| Reverse(*distance));
 
     distances_to_target
         .iter()
-        .filter(|(_, peer, _)| matches!(peer.state, NodeState::Proven { .. }))
+        .filter(|(_, peer)| matches!(peer.state, NodeState::Proven { .. }))
         .take(16)
         .cloned()
-        .map(|(_, peer, peer_id)| Node {
+        .map(|(_, peer)| Node {
             endpoint: peer.endpoint.clone(),
-            id: *peer_id,
+            id: peer.id,
         })
         .collect()
 }
