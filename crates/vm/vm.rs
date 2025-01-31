@@ -225,8 +225,7 @@ cfg_if::cfg_if! {
             // If there's no blob schedule in chain_config use the
             // default/canonical values
             let blob_schedule = state.chain_config()?.get_fork_blob_schedule(block_header.timestamp)
-                .unwrap_or(EVMConfig::canonical_values(fork)
-                .map_err(|_| EvmError::Custom("Failed to get default values for the blob schedule".to_string()))?);
+                .unwrap_or(EVMConfig::canonical_values(fork));
             let config = EVMConfig {fork , blob_schedule};
             cfg_if::cfg_if! {
                 if #[cfg(not(feature = "l2"))] {

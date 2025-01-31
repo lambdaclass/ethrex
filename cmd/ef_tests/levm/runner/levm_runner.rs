@@ -103,9 +103,7 @@ pub fn prepare_vm_for_tx(vector: &TestVector, test: &EFTest) -> Result<VM, EFTes
     });
 
     let fork = test.fork();
-    let blob_schedule = EVMConfig::canonical_values(fork).map_err(|_| {
-        EFTestRunnerError::VMInitializationFailed("Failed to cast error".to_string())
-    })?;
+    let blob_schedule = EVMConfig::canonical_values(fork);
     let config = EVMConfig {
         fork,
         blob_schedule,
