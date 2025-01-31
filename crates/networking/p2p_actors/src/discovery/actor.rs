@@ -51,7 +51,7 @@ pub struct Actor {
     receiver: mpsc::Receiver<Message>,
 
     // TODO: This should be the mailbox of a separate process
-    peers: Arc<Mutex<BTreeMap<SocketAddr, Node>>>,
+    peers: Arc<Mutex<BTreeMap<SocketAddr, PeerData>>>,
 
     endpoint: Endpoint,
     signer: SecretKey,
@@ -65,7 +65,7 @@ pub struct Actor {
 impl Actor {
     pub fn new(
         runtime: commonware_runtime::tokio::Context,
-        peers: Arc<Mutex<BTreeMap<SocketAddr, Node>>>,
+        peers: Arc<Mutex<BTreeMap<SocketAddr, PeerData>>>,
         cfg: Config,
     ) -> (Self, Mailbox) {
         let (sender, receiver) = mpsc::channel(1);

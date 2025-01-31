@@ -1,5 +1,5 @@
 use bytes::{BufMut, Bytes};
-use ethrex_core::H512;
+use ethrex_core::{H256, H512};
 use ethrex_rlp::{
     decode::RLPDecode,
     encode::RLPEncode,
@@ -281,12 +281,56 @@ fn decode_node_record_optional_fields(
     }
 }
 
-pub struct NodeData {
+#[derive(Debug, Clone)]
+pub struct PeerData {
+    pub id: Option<NodeId>,
     pub endpoint: Endpoint,
-    pub id: NodeId,
+    // pub record: NodeRecord,
+    pub last_ping_hash: Option<H256>,
+    pub last_ping: Option<u64>,
     pub state: NodeState,
+    // pub find_node_request: Option<FindNodeRequest>,
+    // pub enr_request_hash: Option<H256>,
+    // pub supported_capabilities: Vec<Capability>,
+    // pub revalidated: Option<bool>,
+    // pub channels: Option<PeerChannels>,
 }
 
+impl PeerData {
+    pub fn new_known(endpoint: Endpoint) -> Self {
+        Self {
+            id: None,
+            endpoint,
+            last_ping_hash: None,
+            last_ping: None,
+            state: NodeState::Known,
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
 pub enum NodeState {
-    Proven,
+    /// The node is known to us, but we haven't pinged it yet.
+    /// These are neighbors of our neighbors that we did not know.
+    Known,
+    /// The node has been pinged.
+    /// We are waiting for a pong message.
+    Pinged,
+    /// A node turns into proven in either of these cases:
+    /// * We received a pong message from the node (as a response to our ping).
+    /// * We replied to a ping message from the node.
+    Proven { last_pong: u64 },
+    /// A node is considered connected if we have established an RLPx connection with it.
+    Connected { last_pong: u64 },
+}
+
+impl std::fmt::Display for NodeState {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            NodeState::Known => write!(f, "known"),
+            NodeState::Pinged => write!(f, "pinged"),
+            NodeState::Proven { .. } => write!(f, "proven"),
+            NodeState::Connected { .. } => write!(f, "connected"),
+        }
+    }
 }
