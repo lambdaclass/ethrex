@@ -367,8 +367,6 @@ async fn rebuild_state_trie(
                 .await
             {
                 debug!("Received {} account ranges", accounts.len());
-                // Reset retry counter
-                retry_count = 0;
                 // Update starting hash for next batch
                 if should_continue {
                     start_account_hash = *account_hashes.last().unwrap();
@@ -741,7 +739,6 @@ async fn heal_state_trie(
             .await
         {
             debug!("Received {} state nodes", nodes.len());
-            // Reset retry counter for next request
             let mut hahsed_addresses = vec![];
             let mut code_hashes = vec![];
             // For each fetched node:
