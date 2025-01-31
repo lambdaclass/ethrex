@@ -45,6 +45,8 @@ jobs:
             cat Fibonacci.md || echo "No results";
             echo "#### Benchmark Results: ManyHashes";
             cat ManyHashes.md || echo "No results";
+            echo "#### Benchmark Results: BubbleSort";
+            cat BubbleSort.md || echo "No results";
             echo "#### Benchmark Results: ERC20 - Transfer";
             cat ERC20Transfer.md || echo "No results";
             echo "#### Benchmark Results: ERC20 - Mint";
@@ -97,6 +99,8 @@ jobs:
             cat Fibonacci.md || echo "No results";
             echo "#### Benchmark Results: ManyHashes";
             cat ManyHashes.md || echo "No results";
+            echo "#### Benchmark Results: BubbleSort";
+            cat BubbleSort.md || echo "No results";
             echo "#### Benchmark Results: ERC20 - Transfer";
             cat ERC20Transfer.md || echo "No results";
             echo "#### Benchmark Results: ERC20 - Mint";

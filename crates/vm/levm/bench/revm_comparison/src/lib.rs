@@ -17,15 +17,15 @@ pub fn run_with_levm(program: &str, runs: usize, calldata: &str) {
     for _ in 0..runs - 1 {
         let mut vm = new_vm_with_bytecode(bytecode.clone()).unwrap();
         vm.call_frames.last_mut().unwrap().calldata = calldata.clone();
-        vm.env.gas_limit = 100_000_000;
-        vm.env.block_gas_limit = 100_000_001;
+        vm.env.gas_limit = u64::MAX - 1;
+        vm.env.block_gas_limit = u64::MAX;
         let tx_report = black_box(vm.transact().unwrap());
         assert!(tx_report.result == TxResult::Success);
     }
     let mut vm = new_vm_with_bytecode(bytecode.clone()).unwrap();
     vm.call_frames.last_mut().unwrap().calldata = calldata.clone();
-    vm.env.gas_limit = 100_000_000;
-    vm.env.block_gas_limit = 100_000_001;
+    vm.env.gas_limit = u64::MAX - 1;
+    vm.env.block_gas_limit = u64::MAX;
     let tx_report = black_box(vm.transact().unwrap());
     assert!(tx_report.result == TxResult::Success);
 
