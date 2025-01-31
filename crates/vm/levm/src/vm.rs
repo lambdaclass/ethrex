@@ -8,7 +8,8 @@ use crate::{
     },
     environment::Environment,
     errors::{
-        InternalError, OpcodeResult, TransactionReport, TxResult, TxValidationError, VMError,
+        EVMConfigError, InternalError, OpcodeResult, TransactionReport, TxResult,
+        TxValidationError, VMError,
     },
     gas_cost::{self, STANDARD_TOKEN_COST, TOTAL_COST_FLOOR_PER_TOKEN},
     precompiles::{
@@ -85,14 +86,16 @@ impl EVMConfig {
     /// have acces to a EVMConfig (mainly in the form of a
     /// genesis.json file) you can use this function to get the
     /// "Default" ForkBlobSchedule for that specific Fork.
+    /// NOTE: This function could potentially be expanded to include
+    /// other types of "default" data given a specific fork
     pub fn canonical_values(fork: Fork) -> Result<ForkBlobSchedule, VMError> {
-        let max_blobs_per_block: u64 = max_blobs_per_block(fork)
+        let max_blobs_per_block: u64 = Self::max_blobs_per_block(fork)
             .try_into()
             .map_err(|_| VMError::Internal(InternalError::ConversionError))?;
-        let target: u64 = get_target_blob_gas_per_block_(fork)
+        let target: u64 = Self::get_target_blob_gas_per_block_(fork)
             .try_into()
             .map_err(|_| VMError::Internal(InternalError::ConversionError))?;
-        let base_fee_update_fraction: u64 = get_blob_base_fee_update_fraction_value(fork)
+        let base_fee_update_fraction: u64 = Self::get_blob_base_fee_update_fraction_value(fork)
             .try_into()
             .map_err(|_| VMError::Internal(InternalError::ConversionError))?;
         Ok(ForkBlobSchedule {
@@ -100,6 +103,42 @@ impl EVMConfig {
             max: max_blobs_per_block,
             base_fee_update_fraction,
         })
+    }
+
+    /// After EIP-7691 the maximum number of blob hashes changes. For more
+    /// information see
+    /// [EIP-7691](https://eips.ethereum.org/EIPS/eip-7691#specification).
+    pub const fn max_blobs_per_block(fork: Fork) -> usize {
+        match fork {
+            Fork::Prague => MAX_BLOB_COUNT_ELECTRA,
+            Fork::PragueEof => MAX_BLOB_COUNT_ELECTRA,
+            _ => MAX_BLOB_COUNT,
+        }
+    }
+
+    /// According to EIP-7691
+    /// (https://eips.ethereum.org/EIPS/eip-7691#specification):
+    ///
+    /// "These changes imply that get_base_fee_per_blob_gas and
+    /// calc_excess_blob_gas functions defined in EIP-4844 use the new
+    /// values for the first block of the fork (and for all subsequent
+    /// blocks)."
+    const fn get_blob_base_fee_update_fraction_value(fork: Fork) -> U256 {
+        match fork {
+            Fork::Prague => BLOB_BASE_FEE_UPDATE_FRACTION_PRAGUE,
+            Fork::PragueEof => BLOB_BASE_FEE_UPDATE_FRACTION_PRAGUE,
+            _ => BLOB_BASE_FEE_UPDATE_FRACTION,
+        }
+    }
+
+    /// According to EIP-7691
+    /// (https://eips.ethereum.org/EIPS/eip-7691#specification):
+    const fn get_target_blob_gas_per_block_(fork: Fork) -> U256 {
+        match fork {
+            Fork::Prague => TARGET_BLOB_GAS_PER_BLOCK_PECTRA,
+            Fork::PragueEof => TARGET_BLOB_GAS_PER_BLOCK_PECTRA,
+            _ => TARGET_BLOB_GAS_PER_BLOCK,
+        }
     }
 }
 
@@ -459,13 +498,13 @@ impl VM {
         let blob_gas_cost = get_blob_gas_price(
             self.env.tx_blob_hashes.clone(),
             self.env.block_excess_blob_gas,
-            self.env.config.fork,
+            &self.env.config,
         )?;
 
         // (2) INSUFFICIENT_MAX_FEE_PER_BLOB_GAS
         if let Some(tx_max_fee_per_blob_gas) = self.env.tx_max_fee_per_blob_gas {
             if tx_max_fee_per_blob_gas
-                < get_base_fee_per_blob_gas(self.env.block_excess_blob_gas, self.env.config.fork)?
+                < get_base_fee_per_blob_gas(self.env.block_excess_blob_gas, &self.env.config)?
             {
                 return Err(VMError::TxValidation(
                     TxValidationError::InsufficientMaxFeePerBlobGas,
@@ -569,7 +608,7 @@ impl VM {
             }
 
             // (14) TYPE_3_TX_BLOB_COUNT_EXCEEDED
-            if blob_hashes.len() > max_blobs_per_block(self.env.config.fork) {
+            if blob_hashes.len() > EVMConfig::max_blobs_per_block(self.env.config.fork) {
                 return Err(VMError::TxValidation(
                     TxValidationError::Type3TxBlobCountExceeded,
                 ));

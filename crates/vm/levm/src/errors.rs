@@ -212,6 +212,12 @@ pub enum PrecompileError {
     BLS12381G2PointNotInCurve,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error, Serialize, Deserialize)]
+pub enum EVMConfigError {
+    #[error("Stack Underflow")]
+    StackUnderflow,
+}
+
 #[derive(Debug, Clone)]
 /// Note: "Halt" does not mean "Error during execution" it simply
 /// means that the execution stopped. It's not called "Stop" because
