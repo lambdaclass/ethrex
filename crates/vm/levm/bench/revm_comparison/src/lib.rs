@@ -19,14 +19,14 @@ pub fn run_with_levm(program: &str, runs: usize, calldata: &str) {
         vm.call_frames.last_mut().unwrap().calldata = calldata.clone();
         vm.env.gas_limit = u64::MAX - 1;
         vm.env.block_gas_limit = u64::MAX;
-        let tx_report = black_box(vm.transact().unwrap());
+        let tx_report = black_box(vm.execute().unwrap());
         assert!(tx_report.result == TxResult::Success);
     }
     let mut vm = new_vm_with_bytecode(bytecode.clone()).unwrap();
     vm.call_frames.last_mut().unwrap().calldata = calldata.clone();
     vm.env.gas_limit = u64::MAX - 1;
     vm.env.block_gas_limit = u64::MAX;
-    let tx_report = black_box(vm.transact().unwrap());
+    let tx_report = black_box(vm.execute().unwrap());
     assert!(tx_report.result == TxResult::Success);
 
     match tx_report.result {
