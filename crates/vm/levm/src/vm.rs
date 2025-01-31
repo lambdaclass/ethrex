@@ -70,11 +70,11 @@ impl StateBackup {
 #[derive(Debug, Default, Clone, Copy)]
 pub struct EVMConfig {
     pub fork: Fork,
-    pub blob_schedule: Option<ForkBlobSchedule>,
+    pub blob_schedule: ForkBlobSchedule,
 }
 
 impl EVMConfig {
-    pub fn new(fork: Fork, blob_schedule: Option<ForkBlobSchedule>) -> EVMConfig {
+    pub fn new(fork: Fork, blob_schedule: ForkBlobSchedule) -> EVMConfig {
         EVMConfig {
             fork,
             blob_schedule,

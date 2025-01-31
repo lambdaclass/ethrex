@@ -222,10 +222,10 @@ cfg_if::cfg_if! {
             let mut block_cache: CacheDB = HashMap::new();
             let block_header = &block.header;
             let fork = state.chain_config()?.fork(block_header.timestamp);
-            let blob_schedule = state.chain_config()?.get_fork_blob_schedule(block_header.timestamp);
-            let config = EVMConfig {fork, blob_schedule};
-
-            //eip 4788: execute beacon_root_contract_call before block transactions
+            // If there's no blob schedule in chain_config use the
+            // default/canonical values
+            let blob_schedule = state.chain_config()?.get_fork_blob_schedule(block_header.timestamp).unwrap_or(EVMConfig::canonical_values(fork)?);
+            let config = EVMConfig {fork , blob_schedule};
             cfg_if::cfg_if! {
                 if #[cfg(not(feature = "l2"))] {
                     if block_header.parent_beacon_block_root.is_some() && fork == Fork::Cancun {

@@ -108,7 +108,7 @@ pub fn prepare_vm_for_tx(vector: &TestVector, test: &EFTest) -> Result<VM, EFTes
     })?;
     let config = EVMConfig {
         fork,
-        blob_schedule: Some(blob_schedule),
+        blob_schedule,
     };
 
     VM::new(
