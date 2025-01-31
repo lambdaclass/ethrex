@@ -596,6 +596,8 @@ fn finalize_payload(context: &mut PayloadBuildContext) -> Result<(), StoreError>
                             bytecode: acc_code,
                             nonce: acc_info.nonce,
                         },
+                        // This is the added_storage for the withdrawal.
+                        // If not involved in the TX, there won't be any updates in the storage
                         storage: HashMap::new(),
                     }
                 });
