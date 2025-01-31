@@ -45,21 +45,21 @@ pub mod create_opcode {
 pub const VERSIONED_HASH_VERSION_KZG: u8 = 0x01;
 
 // Blob constants
-pub const TARGET_BLOB_GAS_PER_BLOCK: U256 = U256([393216, 0, 0, 0]); // TARGET_BLOB_NUMBER_PER_BLOCK * GAS_PER_BLOB
-pub const TARGET_BLOB_GAS_PER_BLOCK_PECTRA: U256 = U256([786432, 0, 0, 0]); // TARGET_BLOB_NUMBER_PER_BLOCK * GAS_PER_BLOB
+pub const TARGET_BLOB_GAS_PER_BLOCK: u64 = 393216;
+pub const TARGET_BLOB_GAS_PER_BLOCK_PECTRA: u64 = 786432;
 
 pub const MIN_BASE_FEE_PER_BLOB_GAS: U256 = U256::one();
 
 // WARNING: Do _not_ use the BLOB_BASE_FEE_UPDATE_FRACTION_* family of
 // constants as is. Use the `get_blob_base_fee_update_fraction_value`
 // function instead
-pub const BLOB_BASE_FEE_UPDATE_FRACTION: U256 = U256([3338477, 0, 0, 0]);
-pub const BLOB_BASE_FEE_UPDATE_FRACTION_PRAGUE: U256 = U256([5007716, 0, 0, 0]); // Defined in [EIP-7691](https://eips.ethereum.org/EIPS/eip-7691)
+pub const BLOB_BASE_FEE_UPDATE_FRACTION: u64 = 3338477;
+pub const BLOB_BASE_FEE_UPDATE_FRACTION_PRAGUE: u64 = 5007716;
 
 // WARNING: Do _not_ use the MAX_BLOB_COUNT_* family of constants as
 // is. Use the `max_blobs_per_block` function instead
-pub const MAX_BLOB_COUNT: usize = 6;
-pub const MAX_BLOB_COUNT_ELECTRA: usize = 9;
+pub const MAX_BLOB_COUNT: u64 = 6;
+pub const MAX_BLOB_COUNT_ELECTRA: u64 = 9;
 
 pub const VALID_BLOB_PREFIXES: [u8; 2] = [0x01, 0x02];
 
