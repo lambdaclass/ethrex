@@ -164,7 +164,7 @@ impl VM {
         current_call_frame: &mut CallFrame,
     ) -> Result<OpcodeResult, VMError> {
         // [EIP-4844] - BLOBHASH is only available from CANCUN
-        if self.env.fork < Fork::Cancun {
+        if self.env.config.fork < Fork::Cancun {
             return Err(VMError::InvalidOpcode);
         }
 
@@ -211,7 +211,7 @@ impl VM {
         current_call_frame: &mut CallFrame,
     ) -> Result<OpcodeResult, VMError> {
         // [EIP-7516] - BLOBBASEFEE is only available from CANCUN
-        if self.env.fork < Fork::Cancun {
+        if self.env.config.fork < Fork::Cancun {
             return Err(VMError::InvalidOpcode);
         }
         current_call_frame.increase_consumed_gas(gas_cost::BLOBBASEFEE)?;

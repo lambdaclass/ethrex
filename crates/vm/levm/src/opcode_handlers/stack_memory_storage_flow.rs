@@ -25,7 +25,7 @@ impl VM {
         current_call_frame: &mut CallFrame,
     ) -> Result<OpcodeResult, VMError> {
         // [EIP-1153] - TLOAD is only available from CANCUN
-        if self.env.fork < Fork::Cancun {
+        if self.env.config.fork < Fork::Cancun {
             return Err(VMError::InvalidOpcode);
         }
 
@@ -49,7 +49,7 @@ impl VM {
         current_call_frame: &mut CallFrame,
     ) -> Result<OpcodeResult, VMError> {
         // [EIP-1153] - TLOAD is only available from CANCUN
-        if self.env.fork < Fork::Cancun {
+        if self.env.config.fork < Fork::Cancun {
             return Err(VMError::InvalidOpcode);
         }
 
@@ -264,7 +264,7 @@ impl VM {
         current_call_frame: &mut CallFrame,
     ) -> Result<OpcodeResult, VMError> {
         // [EIP-5656] - MCOPY is only available from CANCUN
-        if self.env.fork < Fork::Cancun {
+        if self.env.config.fork < Fork::Cancun {
             return Err(VMError::InvalidOpcode);
         }
 
