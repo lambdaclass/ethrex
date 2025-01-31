@@ -1,18 +1,47 @@
 use crate::{
     discovery::packet::{Packet, PacketData},
-    types::{Endpoint, Node, NodeId, NodeRecord},
+    types::{Endpoint, Node, NodeId, NodeRecord, NodeState, PeerData},
 };
 use ethrex_core::{H256, H512, U256};
 use keccak_hash::keccak;
-use std::{cmp::Reverse, collections::BTreeMap, net::SocketAddr, sync::Arc};
+use std::{
+    cmp::Reverse,
+    collections::BTreeMap,
+    net::SocketAddr,
+    sync::Arc,
+    time::{Duration, SystemTime},
+};
 use tokio::sync::Mutex;
 
+pub const PROOF_EXPIRATION_IN_SECONDS: u64 = 12 * 60 * 60;
+
 pub fn new_expiration() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
+    SystemTime::now()
+        .duration_since(SystemTime::UNIX_EPOCH)
         .unwrap()
         .as_secs()
         + 20
+}
+
+pub fn elapsed_time_since(unix_timestamp: u64) -> u64 {
+    let time = SystemTime::UNIX_EPOCH + Duration::from_secs(unix_timestamp);
+    SystemTime::now().duration_since(time).unwrap().as_secs()
+}
+
+pub fn current_unix_time() -> u64 {
+    SystemTime::now()
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .unwrap()
+        .as_secs()
+}
+
+pub fn is_last_ping_expired(last_ping: u64) -> bool {
+    let expiration = last_ping + PROOF_EXPIRATION_IN_SECONDS;
+    SystemTime::now()
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .unwrap()
+        .as_secs()
+        > expiration
 }
 
 pub fn is_expired(packet: &Packet) -> bool {
@@ -84,23 +113,28 @@ pub fn serialize_node_id(node_id: &NodeId) -> H512 {
     H512::from_slice(&node_id.serialize()[1..])
 }
 
-pub async fn neighbors(of: NodeId, from: Arc<Mutex<BTreeMap<SocketAddr, Node>>>) -> Vec<Node> {
+pub async fn neighbors(of: NodeId, from: Arc<Mutex<BTreeMap<SocketAddr, PeerData>>>) -> Vec<Node> {
     let table_lock = from.lock().await;
     let mut distances_to_target = Vec::new();
     for known_peer in table_lock.values() {
-        let n1 = keccak(serialize_node_id(&of));
-        let n2 = keccak(serialize_node_id(&known_peer.id));
-        let distance = U256::from_big_endian((n1 ^ n2).as_bytes());
-        distances_to_target.push((distance, known_peer));
+        if let Some(known_peer_id) = &known_peer.id {
+            let n1 = keccak(serialize_node_id(&of));
+            let n2 = keccak(serialize_node_id(known_peer_id));
+            let distance = U256::from_big_endian((n1 ^ n2).as_bytes());
+            distances_to_target.push((distance, known_peer, known_peer_id));
+        }
     }
 
-    distances_to_target.sort_by_key(|(distance, _)| Reverse(*distance));
+    distances_to_target.sort_by_key(|(distance, _, _)| Reverse(*distance));
 
     distances_to_target
         .iter()
+        .filter(|(_, peer, _)| matches!(peer.state, NodeState::Proven { .. }))
         .take(16)
         .cloned()
-        .map(|(_, peer)| peer)
-        .cloned()
+        .map(|(_, peer, peer_id)| Node {
+            endpoint: peer.endpoint.clone(),
+            id: *peer_id,
+        })
         .collect()
 }

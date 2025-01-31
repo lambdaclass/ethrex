@@ -2,13 +2,20 @@ use crate::{
     discovery::{
         ingress::{self, Mailbox, Message},
         packet::{Packet, PacketData, DEFAULT_UDP_PAYLOAD_BUF},
-        utils::{neighbors, new_find_node, new_neighbors, new_ping, new_pong},
+        utils::{
+            current_unix_time, is_last_ping_expired, neighbors, new_find_node, new_neighbors,
+            new_ping, new_pong,
+        },
     },
-    types::{Endpoint, Node, NodeId},
+    types::{Endpoint, NodeId, NodeState, PeerData},
 };
 use commonware_runtime::Spawner;
 use libsecp256k1::SecretKey;
-use std::{collections::BTreeMap, net::SocketAddr, sync::Arc};
+use std::{
+    collections::{btree_map::Entry, BTreeMap},
+    net::SocketAddr,
+    sync::Arc,
+};
 use tokio::{
     net::UdpSocket,
     sync::{mpsc, Mutex},
@@ -189,7 +196,7 @@ impl Actor {
                                                 peer_data.state = NodeState::Proven {
                                                     last_pong: current_unix_time(),
                                                 }
-                            }
+                                            }
                                             NodeState::Proven { .. } => {
                                                 tracing::debug!("updating peer last pong");
                                                 peer_data.state = NodeState::Proven {
@@ -215,6 +222,7 @@ impl Actor {
                                     .send_to(&content, from)
                                     .await
                                     .map_err(Error::FailedToReplayMessage)?;
+                                tracing::info!(packet = ?packet, "replied to find node");
                             }
                             PacketData::Neighbors { nodes, .. } => {
                                 let mut table = self.peers.lock().await;
@@ -242,6 +250,7 @@ impl Actor {
                         let content = packet.encode(&self.signer);
 
                         for neighbor in target_neighbors.iter() {
+                            tracing::debug!(from = ?neighbor, "looking up for neighbors");
                             main_loop_conn
                                 .send_to(&content, neighbor.endpoint.clone().udp_socket_addr())
                                 .await
@@ -339,7 +348,7 @@ impl Actor {
 
         let result = tokio::select! {
             lookup_handle_result = &mut lookup_handle => {
-                tracing::debug!("Lookup task finished, stopping discovery");
+                tracing::debug!("Lookup task finished, shutting down");
                 // We abort these because we do not have channels to send message them to terminate.
                 revalidation_handle.abort();
                 listener_handle.abort();
@@ -359,7 +368,7 @@ impl Actor {
             },
 
             revalidation_handle_result = &mut revalidation_handle => {
-                tracing::debug!("Revalidation task finished, stopping discovery");
+                tracing::debug!("Revalidation task finished, shutting down");
                 // We abort these because we do not have channels to send message them to terminate.
                 lookup_handle.abort();
                 listener_handle.abort();
@@ -379,7 +388,7 @@ impl Actor {
             },
 
             listener_handle_result = &mut listener_handle => {
-                tracing::debug!("Listener task finished, stopping discovery");
+                tracing::debug!("Listener task finished, shutting down");
                 // We abort these because we do not have channels to send message them to terminate.
                 lookup_handle.abort();
                 revalidation_handle.abort();
@@ -399,7 +408,7 @@ impl Actor {
             },
 
             main_loop_handle_result = &mut main_loop_handle => {
-                tracing::debug!("Main loop task finished, stopping discovery");
+                tracing::debug!("Main loop task finished, shutting down");
                 // We abort these because we do not have channels to send message them to terminate.
                 lookup_handle.abort();
                 revalidation_handle.abort();
