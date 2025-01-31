@@ -513,7 +513,7 @@ impl StoreEngine for Store {
         self.inner().chain_data.is_synced = status;
         Ok(())
     }
-    
+
     fn set_state_heal_paths(&self, paths: Vec<ethrex_trie::Nibbles>) -> Result<(), StoreError> {
         todo!()
     }

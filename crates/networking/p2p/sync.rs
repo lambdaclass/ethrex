@@ -166,8 +166,8 @@ impl SyncManager {
                     warn!("Sync failed to find target block header, aborting");
                     return Ok(());
                 }
+            }
         }
-    }
         // We finished fetching all headers, now we can process them
         match self.sync_mode {
             SyncMode::Snap => {
@@ -893,21 +893,42 @@ async fn storage_healer(
         // If the pivot became stale don't process anything and just save incoming requests
         //info!("Storage Healer, stale: {stale}");
         while !stale && !pending_storages.is_empty() {
-            let mut next_batch: BTreeMap<H256, Vec<Nibbles>> = BTreeMap::new();
-            // Fill batch
-            let mut batch_size = 0;
-            while batch_size < BATCH_SIZE {
-                let (key, val) = pending_storages.pop_first().unwrap();
-                batch_size += val.len();
-                next_batch.insert(key, val);
+            // We will be spawning multiple tasks and then collecting their results
+            // This uses a loop inside the main loop as the result from these tasks may lead to more values in queue
+            let mut storage_tasks = tokio::task::JoinSet::new();
+            let mut task_num = 1;
+            while !stale && !pending_storages.is_empty() {
+                let mut next_batch: BTreeMap<H256, Vec<Nibbles>> = BTreeMap::new();
+                // Fill batch
+                let mut batch_size = 0;
+                while batch_size < BATCH_SIZE {
+                    let (key, val) = pending_storages.pop_first().unwrap();
+                    batch_size += val.len();
+                    next_batch.insert(key, val);
+                }
+                info!("Spawning storage fetcher number {task_num}");
+                storage_tasks.spawn(heal_storage_batch(
+                    state_root,
+                    next_batch.clone(),
+                    peers.clone(),
+                    store.clone(),
+                ));
+                task_num += 1;
             }
-            //info!("Sending storage heal batch of size {batch_size}");
-            let (return_batch, is_stale) =
-                heal_storage_batch(state_root, next_batch.clone(), peers.clone(), store.clone())
-                    .await?;
-            //info!("Returned storage heal batch of size {}", return_batch.iter().map(|b| b.1.1.len()).sum::<usize>());
-            pending_storages.extend(return_batch.into_iter());
-            stale |= is_stale;
+            // Add unfetched paths to queue and handle stale signal
+            let mut ret_num = 1;
+            for res in storage_tasks.join_all().await {
+                let (remaining, is_stale) = res?;
+                info!(
+                    "Task {}/{} returned {} elements to the queue",
+                    ret_num,
+                    task_num,
+                    remaining.len()
+                );
+                pending_storages.extend(remaining);
+                stale |= is_stale;
+                ret_num += 1;
+            }
         }
     }
     Ok(pending_storages)
@@ -922,7 +943,10 @@ async fn heal_storage_batch(
     peers: PeerHandler,
     store: Store,
 ) -> Result<(BTreeMap<H256, Vec<Nibbles>>, bool), SyncError> {
-    if let Some(mut nodes) = peers.request_storage_trienodes(state_root, batch.clone()).await {
+    if let Some(mut nodes) = peers
+        .request_storage_trienodes(state_root, batch.clone())
+        .await
+    {
         info!("Received {} storage nodes", nodes.len());
         // Process the nodes for each account path
         for (acc_path, paths) in batch.iter_mut() {
