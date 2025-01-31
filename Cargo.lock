@@ -6884,12 +6884,15 @@ dependencies = [
 name = "revm_comparison"
 version = "0.1.0"
 dependencies = [
+ "bincode",
  "bytes",
- "ethrex-core",
  "ethrex-levm",
+ "ethrex-rpc-client",
+ "ethrex-vm",
  "hex",
  "revm 9.0.0",
  "sha3",
+ "tokio",
 ]
 
 [[package]]
