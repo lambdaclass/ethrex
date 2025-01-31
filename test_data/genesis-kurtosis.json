@@ -16,7 +16,19 @@
     "terminalTotalDifficultyPassed": true,
     "shanghaiTime": 0,
     "cancunTime": 0,
-    "pragueTime": 1718232101
+    "pragueTime": 1718232101,
+    "blobSchedule": {
+      "cancun": {
+        "target": 2,
+        "max": 3,
+        "baseFeeUpdateFraction": 6676954
+      },
+      "prague": {
+        "target": 3,
+        "max": 4,
+        "baseFeeUpdateFraction": 13353908
+      }
+    }
   },
   "alloc": {
     "0x0000000000000000000000000000000000000000": {

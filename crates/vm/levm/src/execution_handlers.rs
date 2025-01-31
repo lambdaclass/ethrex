@@ -3,8 +3,7 @@ use crate::{
     constants::*,
     db::CacheDB,
     errors::{
-        ExecutionReport, ExecutionResult, HaltReason, InternalError, OpcodeResult, OutOfGasError,
-        VMError,
+        ExecutionReport, ExecutionResult, InternalError, OpcodeResult, OutOfGasError, VMError,
     },
     gas_cost::CODE_DEPOSIT_COST,
     opcodes::Opcode,
@@ -32,7 +31,6 @@ impl VM {
                     gas_refunded: 0,
                     output,
                     logs: std::mem::take(&mut current_call_frame.logs),
-                    created_address: None,
                 })
             }
             Err(error) => {
@@ -51,7 +49,6 @@ impl VM {
                     gas_refunded: 0,
                     output: Bytes::new(),
                     logs: std::mem::take(&mut current_call_frame.logs),
-                    created_address: None,
                 })
             }
         }
@@ -61,8 +58,8 @@ impl VM {
         opcode: Opcode,
         current_call_frame: &mut CallFrame,
     ) -> Result<OpcodeResult, VMError> {
-        let op_result = match opcode {
-            Opcode::STOP => Ok(OpcodeResult::Halt(HaltReason::Stop)),
+        match opcode {
+            Opcode::STOP => Ok(OpcodeResult::Halt),
             Opcode::ADD => self.op_add(current_call_frame),
             Opcode::MUL => self.op_mul(current_call_frame),
             Opcode::SUB => self.op_sub(current_call_frame),
@@ -163,18 +160,11 @@ impl VM {
             Opcode::SELFDESTRUCT => self.op_selfdestruct(current_call_frame),
 
             _ => Err(VMError::OpcodeNotFound),
-        };
-
-        if opcode != Opcode::JUMP && opcode != Opcode::JUMPI {
-            current_call_frame.increment_pc()?;
         }
-
-        op_result
     }
 
     pub fn handle_opcode_result(
         &mut self,
-        _reason: HaltReason,
         current_call_frame: &mut CallFrame,
         backup: StateBackup,
     ) -> Result<ExecutionReport, VMError> {
@@ -205,8 +195,8 @@ impl VM {
                 Err(VMError::ContractOutputTooBig)
             } else if contract_code.first().unwrap_or(&0) == &INVALID_CONTRACT_PREFIX {
                 Err(VMError::InvalidContractPrefix)
-            } else if self
-                .increase_consumed_gas(current_call_frame, code_deposit_cost)
+            } else if current_call_frame
+                .increase_consumed_gas(code_deposit_cost)
                 .is_err()
             {
                 Err(VMError::OutOfGas(OutOfGasError::MaxGasLimitExceeded))
@@ -231,7 +221,6 @@ impl VM {
                         gas_refunded: self.env.refunded_gas,
                         output: std::mem::take(&mut current_call_frame.output),
                         logs: std::mem::take(&mut current_call_frame.logs),
-                        created_address: None,
                     });
                 }
             }
@@ -244,7 +233,6 @@ impl VM {
             gas_refunded: self.env.refunded_gas,
             output: std::mem::take(&mut current_call_frame.output),
             logs: std::mem::take(&mut current_call_frame.logs),
-            created_address: None,
         })
     }
 
@@ -277,7 +265,6 @@ impl VM {
             gas_refunded: self.env.refunded_gas,
             output: std::mem::take(&mut current_call_frame.output), // Bytes::new() if error is not RevertOpcode
             logs: std::mem::take(&mut current_call_frame.logs),
-            created_address: None,
         })
     }
 }

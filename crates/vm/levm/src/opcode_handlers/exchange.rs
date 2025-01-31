@@ -15,7 +15,7 @@ impl VM {
         current_call_frame: &mut CallFrame,
         depth: usize,
     ) -> Result<OpcodeResult, VMError> {
-        self.increase_consumed_gas(current_call_frame, gas_cost::SWAPN)?;
+        current_call_frame.increase_consumed_gas(gas_cost::SWAPN)?;
 
         let stack_top_index = current_call_frame
             .stack
@@ -33,6 +33,6 @@ impl VM {
             .stack
             .swap(stack_top_index, to_swap_index)?;
 
-        Ok(OpcodeResult::Continue)
+        Ok(OpcodeResult::Continue { pc_increment: 1 })
     }
 }

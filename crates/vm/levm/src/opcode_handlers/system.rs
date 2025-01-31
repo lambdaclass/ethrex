@@ -2,7 +2,7 @@ use crate::{
     call_frame::CallFrame,
     constants::{CREATE_DEPLOYMENT_FAIL, INIT_CODE_MAX_SIZE, REVERT_FOR_CALL, SUCCESS_FOR_CALL},
     db::cache,
-    errors::{ExecutionResult, HaltReason, InternalError, OpcodeResult, OutOfGasError, VMError},
+    errors::{ExecutionResult, InternalError, OpcodeResult, OutOfGasError, VMError},
     gas_cost::{self, max_message_call_gas},
     memory::{self, calculate_memory_size},
     utils::*,
@@ -74,8 +74,8 @@ impl VM {
             self.env.fork,
         )?;
 
-        self.increase_consumed_gas(current_call_frame, cost)?;
-        self.increase_consumed_gas(current_call_frame, eip7702_gas_consumed)?;
+        current_call_frame.increase_consumed_gas(cost)?;
+        current_call_frame.increase_consumed_gas(eip7702_gas_consumed)?;
 
         // OPERATION
         let msg_sender = current_call_frame.to; // The new sender will be the current contract.
@@ -155,8 +155,8 @@ impl VM {
             gas_left,
         )?;
 
-        self.increase_consumed_gas(current_call_frame, cost)?;
-        self.increase_consumed_gas(current_call_frame, eip7702_gas_consumed)?;
+        current_call_frame.increase_consumed_gas(cost)?;
+        current_call_frame.increase_consumed_gas(eip7702_gas_consumed)?;
 
         // Sender and recipient are the same in this case. But the code executed is from another account.
         let msg_sender = current_call_frame.to;
@@ -194,23 +194,21 @@ impl VM {
             .map_err(|_err| VMError::VeryLargeNumber)?;
 
         if size == 0 {
-            return Ok(OpcodeResult::Halt(HaltReason::Return));
+            return Ok(OpcodeResult::Halt);
         }
 
         let new_memory_size = calculate_memory_size(offset, size)?;
         let current_memory_size = current_call_frame.memory.len();
 
-        self.increase_consumed_gas(
-            current_call_frame,
-            gas_cost::exit_opcode(new_memory_size, current_memory_size)?,
-        )?;
+        current_call_frame
+            .increase_consumed_gas(gas_cost::exit_opcode(new_memory_size, current_memory_size)?)?;
 
         current_call_frame.output =
             memory::load_range(&mut current_call_frame.memory, offset, size)?
                 .to_vec()
                 .into();
 
-        Ok(OpcodeResult::Halt(HaltReason::Return))
+        Ok(OpcodeResult::Halt)
     }
 
     // DELEGATECALL operation
@@ -265,8 +263,8 @@ impl VM {
             gas_left,
         )?;
 
-        self.increase_consumed_gas(current_call_frame, cost)?;
-        self.increase_consumed_gas(current_call_frame, eip7702_gas_consumed)?;
+        current_call_frame.increase_consumed_gas(cost)?;
+        current_call_frame.increase_consumed_gas(eip7702_gas_consumed)?;
 
         // OPERATION
         let msg_sender = current_call_frame.msg_sender;
@@ -344,8 +342,8 @@ impl VM {
             gas_left,
         )?;
 
-        self.increase_consumed_gas(current_call_frame, cost)?;
-        self.increase_consumed_gas(current_call_frame, eip7702_gas_consumed)?;
+        current_call_frame.increase_consumed_gas(cost)?;
+        current_call_frame.increase_consumed_gas(eip7702_gas_consumed)?;
 
         // OPERATION
         let value = U256::zero();
@@ -385,15 +383,12 @@ impl VM {
 
         let new_size = calculate_memory_size(code_offset_in_memory, code_size_in_memory)?;
 
-        self.increase_consumed_gas(
-            current_call_frame,
-            gas_cost::create(
-                new_size,
-                current_call_frame.memory.len(),
-                code_size_in_memory,
-                self.env.fork,
-            )?,
-        )?;
+        current_call_frame.increase_consumed_gas(gas_cost::create(
+            new_size,
+            current_call_frame.memory.len(),
+            code_size_in_memory,
+            self.env.fork,
+        )?)?;
 
         self.generic_create(
             value_in_wei_to_send,
@@ -420,15 +415,12 @@ impl VM {
 
         let new_size = calculate_memory_size(code_offset_in_memory, code_size_in_memory)?;
 
-        self.increase_consumed_gas(
-            current_call_frame,
-            gas_cost::create_2(
-                new_size,
-                current_call_frame.memory.len(),
-                code_size_in_memory,
-                self.env.fork,
-            )?,
-        )?;
+        current_call_frame.increase_consumed_gas(gas_cost::create_2(
+            new_size,
+            current_call_frame.memory.len(),
+            code_size_in_memory,
+            self.env.fork,
+        )?)?;
 
         self.generic_create(
             value_in_wei_to_send,
@@ -460,10 +452,8 @@ impl VM {
         let new_memory_size = calculate_memory_size(offset, size)?;
         let current_memory_size = current_call_frame.memory.len();
 
-        self.increase_consumed_gas(
-            current_call_frame,
-            gas_cost::exit_opcode(new_memory_size, current_memory_size)?,
-        )?;
+        current_call_frame
+            .increase_consumed_gas(gas_cost::exit_opcode(new_memory_size, current_memory_size)?)?;
 
         current_call_frame.output =
             memory::load_range(&mut current_call_frame.memory, offset, size)?
@@ -506,14 +496,11 @@ impl VM {
             self.access_account(current_call_frame.to);
         let balance_to_transfer = current_account_info.balance;
 
-        self.increase_consumed_gas(
-            current_call_frame,
-            gas_cost::selfdestruct(
-                target_account_is_cold,
-                target_account_info.is_empty(),
-                balance_to_transfer,
-            )?,
-        )?;
+        current_call_frame.increase_consumed_gas(gas_cost::selfdestruct(
+            target_account_is_cold,
+            target_account_info.is_empty(),
+            balance_to_transfer,
+        )?)?;
 
         // [EIP-6780] - SELFDESTRUCT only in same transaction from CANCUN
         if self.env.fork >= Fork::Cancun {
@@ -561,7 +548,7 @@ impl VM {
                 .insert(current_call_frame.to);
         }
 
-        Ok(OpcodeResult::Halt(HaltReason::SelfDestruct))
+        Ok(OpcodeResult::Halt)
     }
 
     /// Common behavior for CREATE and CREATE2 opcodes
@@ -585,7 +572,7 @@ impl VM {
 
         // Reserve gas for subcall
         let max_message_call_gas = max_message_call_gas(current_call_frame)?;
-        self.increase_consumed_gas(current_call_frame, max_message_call_gas)?;
+        current_call_frame.increase_consumed_gas(max_message_call_gas)?;
 
         // Clear callframe subreturn data
         current_call_frame.sub_return_data = Bytes::new();
@@ -630,7 +617,7 @@ impl VM {
                 .ok_or(VMError::Internal(InternalError::GasOverflow))?;
             // Push 0
             current_call_frame.stack.push(CREATE_DEPLOYMENT_FAIL)?;
-            return Ok(OpcodeResult::Continue);
+            return Ok(OpcodeResult::Continue { pc_increment: 1 });
         }
 
         // THIRD: Validations that push 0 to the stack without returning reserved gas but incrementing deployer's nonce
@@ -638,7 +625,7 @@ impl VM {
         if new_account.has_code_or_nonce() {
             increment_account_nonce(&mut self.cache, &self.db, deployer_address)?;
             current_call_frame.stack.push(CREATE_DEPLOYMENT_FAIL)?;
-            return Ok(OpcodeResult::Continue);
+            return Ok(OpcodeResult::Continue { pc_increment: 1 });
         }
 
         // FOURTH: Changes to the state
@@ -719,7 +706,7 @@ impl VM {
             }
         }
 
-        Ok(OpcodeResult::Continue)
+        Ok(OpcodeResult::Continue { pc_increment: 1 })
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -757,7 +744,7 @@ impl VM {
                 .checked_sub(gas_limit)
                 .ok_or(InternalError::GasOverflow)?;
             current_call_frame.stack.push(REVERT_FOR_CALL)?;
-            return Ok(OpcodeResult::Continue);
+            return Ok(OpcodeResult::Continue { pc_increment: 1 });
         }
 
         // 2. Validate max depth has not been reached yet.
@@ -772,7 +759,7 @@ impl VM {
                 .checked_sub(gas_limit)
                 .ok_or(InternalError::GasOverflow)?;
             current_call_frame.stack.push(REVERT_FOR_CALL)?;
-            return Ok(OpcodeResult::Continue);
+            return Ok(OpcodeResult::Continue { pc_increment: 1 });
         }
 
         if bytecode.is_empty() && is_delegation {
@@ -781,7 +768,7 @@ impl VM {
                 .checked_sub(gas_limit)
                 .ok_or(InternalError::GasOverflow)?;
             current_call_frame.stack.push(SUCCESS_FOR_CALL)?;
-            return Ok(OpcodeResult::Continue);
+            return Ok(OpcodeResult::Continue { pc_increment: 1 });
         }
 
         let mut new_call_frame = CallFrame::new(
@@ -842,6 +829,6 @@ impl VM {
             }
         }
 
-        Ok(OpcodeResult::Continue)
+        Ok(OpcodeResult::Continue { pc_increment: 1 })
     }
 }

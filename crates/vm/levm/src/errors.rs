@@ -217,16 +217,8 @@ pub enum PrecompileError {
 /// means that the execution stopped. It's not called "Stop" because
 /// "Stop" is an Opcode
 pub enum OpcodeResult {
-    Continue,
-    Halt(HaltReason),
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum HaltReason {
-    Stop,
-    Revert,
-    Return,
-    SelfDestruct,
+    Continue { pc_increment: usize },
+    Halt,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -243,9 +235,6 @@ pub struct ExecutionReport {
     pub gas_refunded: u64,
     pub output: Bytes,
     pub logs: Vec<Log>,
-    // This only applies to create transactions. It's fundamentally ambiguous since
-    // a transaction could create multiple new contracts, but whatever.
-    pub created_address: Option<Address>,
 }
 
 impl ExecutionReport {

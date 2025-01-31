@@ -109,7 +109,7 @@ fn push_with_overflow() {
     let mut current_call_frame = vm.call_frames.pop().unwrap();
     vm.run_execute(&mut current_call_frame).unwrap();
 
-    assert_eq!(vm.current_call_frame_mut().unwrap().pc(), 33);
+    assert_eq!(vm.current_call_frame_mut().unwrap().pc, 33);
 }
 
 #[test]
