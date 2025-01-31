@@ -11,7 +11,7 @@ use crate::{
         frame::RLPxCodec,
         message::Message,
         p2p::{self, Capability, DisconnectMessage, PingMessage, PongMessage},
-        utils::{log_debug, log_error},
+        utils::{log_peer_debug, log_peer_error},
     },
     snap::{
         process_account_range_request, process_byte_codes_request, process_storage_ranges_request,
@@ -103,7 +103,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
     /// Handshake already performed, now it starts a peer connection.
     /// It runs in it's own task and blocks until the connection is dropped
     pub async fn start(&mut self, table: Arc<Mutex<crate::kademlia::KademliaTable>>) {
-        log_debug(&self.node, "Starting RLPx connection");
+        log_peer_debug(&self.node, "Starting RLPx connection");
         if let Err(e) = self.exchange_hello_messages().await {
             self.connection_failed("Hello messages exchange failed", e, table)
                 .await;
@@ -144,7 +144,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
         }))
         .await
         .unwrap_or_else(|e| {
-            log_error(
+            log_peer_error(
                 &self.node,
                 &format!("Could not send Disconnect message: ({e})."),
             )
@@ -152,7 +152,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
 
         // Discard peer from kademlia table
         let remote_node_id = self.node.node_id;
-        log_error(
+        log_peer_error(
             &self.node,
             &format!("{error_text}: ({error}), discarding peer {remote_node_id}"),
         );
@@ -205,7 +205,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
         mut receiver: mpsc::Receiver<Message>,
     ) -> Result<(), RLPxError> {
         self.init_peer_conn().await?;
-        log_debug(&self.node, "Started peer main loop");
+        log_peer_debug(&self.node, "Started peer main loop");
 
         // Subscribe this connection to the broadcasting channel.
         let mut broadcaster_receive = {
@@ -257,7 +257,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
     async fn check_periodic_tasks(&mut self) -> Result<(), RLPxError> {
         if Instant::now() >= self.next_periodic_task_check {
             self.send(Message::Ping(PingMessage {})).await?;
-            log_debug(&self.node, "Ping sent");
+            log_peer_debug(&self.node, "Ping sent");
             self.next_periodic_task_check = Instant::now() + PERIODIC_TASKS_CHECK_INTERVAL;
         };
         Ok(())
@@ -272,7 +272,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
         let is_synced = self.storage.is_synced()?;
         match message {
             Message::Disconnect(msg_data) => {
-                log_debug(
+                log_peer_debug(
                     &self.node,
                     &format!("Received Disconnect: {}", msg_data.reason()),
                 );
@@ -283,7 +283,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
             }
             Message::Ping(_) => {
                 self.send(Message::Pong(PongMessage {})).await?;
-                log_debug(&self.node, "Pong sent");
+                log_peer_debug(&self.node, "Pong sent");
             }
             Message::Pong(_) => {
                 // We ignore received Pong messages
@@ -391,7 +391,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
                 }
                 msg => {
                     let error_message = format!("Non-supported message broadcasted: {msg}");
-                    log_error(&self.node, &error_message);
+                    log_peer_error(&self.node, &error_message);
                     return Err(RLPxError::BroadcastError(error_message));
                 }
             }
@@ -403,7 +403,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
         // Sending eth Status if peer supports it
         if self.capabilities.contains(&CAP_ETH) {
             let status = backend::get_status(&self.storage)?;
-            log_debug(&self.node, "Sending status");
+            log_peer_debug(&self.node, "Sending status");
             self.send(Message::Status(status)).await?;
             // The next immediate message in the ETH protocol is the
             // status, reference here:
@@ -411,7 +411,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
             match self.receive().await? {
                 Message::Status(msg_data) => {
                     // TODO: Check message status is correct.
-                    log_debug(&self.node, "Received Status");
+                    log_peer_debug(&self.node, "Received Status");
                     backend::validate_status(msg_data, &self.storage)?
                 }
                 Message::Disconnect(disconnect) => {
@@ -449,14 +449,14 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
                 let task_id = tokio::task::id();
                 let Ok(_) = self.connection_broadcast_send.send((task_id, txs)) else {
                     let error_message = "Could not broadcast received transactions";
-                    log_error(&self.node, error_message);
+                    log_peer_error(&self.node, error_message);
                     return Err(RLPxError::BroadcastError(error_message.to_owned()));
                 };
                 Ok(())
             }
             msg => {
                 let error_message = format!("Broadcasting for msg: {msg} is not supported");
-                log_error(&self.node, &error_message);
+                log_peer_error(&self.node, &error_message);
                 Err(RLPxError::BroadcastError(error_message))
             }
         }

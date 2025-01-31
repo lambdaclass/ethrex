@@ -66,11 +66,11 @@ pub fn snappy_decompress(msg_data: &[u8]) -> Result<Vec<u8>, RLPDecodeError> {
     Ok(snappy_decoder.decompress_vec(msg_data)?)
 }
 
-pub(crate) fn log_debug(node: &Node, text: &str) {
+pub(crate) fn log_peer_debug(node: &Node, text: &str) {
     debug!("[{0}]: {1}", node, text)
 }
 
-pub(crate) fn log_error(node: &Node, text: &str) {
+pub(crate) fn log_peer_error(node: &Node, text: &str) {
     error!("[{0}]: {1}", node, text)
 }
 

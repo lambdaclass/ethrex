@@ -5,7 +5,7 @@ use crate::{
         connection::{LocalState, RLPxConnection, RemoteState},
         error::RLPxError,
         frame::RLPxCodec,
-        utils::{ecdh_xchng, id2pubkey, kdf, log_debug, pubkey2id, sha256, sha256_hmac},
+        utils::{ecdh_xchng, id2pubkey, kdf, log_peer_debug, pubkey2id, sha256, sha256_hmac},
     },
     types::Node,
     P2PContext,
@@ -51,7 +51,7 @@ where
         node_id: remote_state.node_id,
     };
     let codec = RLPxCodec::new(&local_state, &remote_state, hashed_nonces);
-    log_debug(&node, "Completed handshake!");
+    log_peer_debug(&node, "Completed handshake!");
     Ok(RLPxConnection::new(
         context.signer,
         node,
@@ -77,7 +77,7 @@ where
     let hashed_nonces: [u8; 32] =
         Keccak256::digest([remote_state.nonce.0, local_state.nonce.0].concat()).into();
     let codec = RLPxCodec::new(&local_state, &remote_state, hashed_nonces);
-    log_debug(&node, "Completed handshake!");
+    log_peer_debug(&node, "Completed handshake!");
     Ok(RLPxConnection::new(
         context.signer,
         node,
@@ -91,7 +91,7 @@ where
 async fn send_auth<S: AsyncWrite + std::marker::Unpin>(
     signer: &SigningKey,
     remote_node_id: H512,
-    stream: S,
+    mut stream: S,
 ) -> Result<LocalState, RLPxError> {
     let secret_key: SecretKey = signer.clone().into();
     let peer_pk = id2pubkey(remote_node_id).ok_or(RLPxError::InvalidPeerId())?;
@@ -100,7 +100,7 @@ async fn send_auth<S: AsyncWrite + std::marker::Unpin>(
     let local_ephemeral_key = SecretKey::random(&mut rand::thread_rng());
 
     let msg = encode_auth_message(&secret_key, local_nonce, &peer_pk, &local_ephemeral_key)?;
-    send_handshake_msg(stream, &msg).await?;
+    stream.write_all(&msg).await?;
 
     Ok(LocalState {
         nonce: local_nonce,
@@ -111,7 +111,7 @@ async fn send_auth<S: AsyncWrite + std::marker::Unpin>(
 
 async fn send_ack<S: AsyncWrite + std::marker::Unpin>(
     remote_node_id: H512,
-    stream: S,
+    mut stream: S,
 ) -> Result<LocalState, RLPxError> {
     let peer_pk = id2pubkey(remote_node_id).ok_or(RLPxError::InvalidPeerId())?;
 
@@ -119,7 +119,7 @@ async fn send_ack<S: AsyncWrite + std::marker::Unpin>(
     let local_ephemeral_key = SecretKey::random(&mut rand::thread_rng());
 
     let msg = encode_ack_message(&local_ephemeral_key, local_nonce, &peer_pk)?;
-    send_handshake_msg(stream, &msg).await?;
+    stream.write_all(&msg).await?;
 
     Ok(LocalState {
         nonce: local_nonce,
@@ -175,14 +175,6 @@ async fn receive_ack<S: AsyncRead + std::marker::Unpin>(
         ephemeral_key: remote_ephemeral_key,
         init_message: msg_bytes.to_owned(),
     })
-}
-
-async fn send_handshake_msg<S: AsyncWrite + std::marker::Unpin>(
-    mut stream: S,
-    msg: &[u8],
-) -> Result<(), RLPxError> {
-    stream.write_all(msg).await?;
-    Ok(())
 }
 
 async fn receive_handshake_msg<S: AsyncRead + std::marker::Unpin>(
