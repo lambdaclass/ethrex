@@ -1,5 +1,5 @@
 use crate::{
-    peer_channels::PeerChannels,
+    kademlia::PeerChannels,
     rlpx::{
         error::RLPxError,
         eth::{
