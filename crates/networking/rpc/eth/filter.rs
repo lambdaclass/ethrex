@@ -260,7 +260,7 @@ mod tests {
             logs::{AddressFilter, LogsFilter, TopicFilter},
         },
         map_http_requests,
-        utils::test_utils::{self, start_test_api},
+        utils::test_utils::{self, example_local_node_record, start_test_api},
         RpcApiContext, FILTER_DURATION,
     };
     use crate::{
@@ -437,6 +437,7 @@ mod tests {
                 .expect("Fatal: could not create in memory test db"),
             jwt_secret: Default::default(),
             local_p2p_node: example_p2p_node(),
+            local_node_record: example_local_node_record(),
             active_filters: filters_pointer.clone(),
             syncer: Arc::new(TokioMutex::new(SyncManager::dummy())),
         };
@@ -489,6 +490,7 @@ mod tests {
         let context = RpcApiContext {
             storage: Store::new("in-mem", EngineType::InMemory).unwrap(),
             local_p2p_node: example_p2p_node(),
+            local_node_record: example_local_node_record(),
             jwt_secret: Default::default(),
             active_filters: active_filters.clone(),
             syncer: Arc::new(TokioMutex::new(SyncManager::dummy())),
@@ -509,6 +511,7 @@ mod tests {
         let context = RpcApiContext {
             storage: Store::new("in-mem", EngineType::InMemory).unwrap(),
             local_p2p_node: example_p2p_node(),
+            local_node_record: example_local_node_record(),
             active_filters: active_filters.clone(),
             jwt_secret: Default::default(),
             syncer: Arc::new(TokioMutex::new(SyncManager::dummy())),
