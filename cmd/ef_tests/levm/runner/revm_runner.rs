@@ -10,7 +10,7 @@ use crate::{
 use bytes::Bytes;
 use ethrex_core::{types::TxKind, Address, H256};
 use ethrex_levm::{
-    errors::{ExecutionReport, ExecutionResult},
+    errors::{ExecutionReport, TxResult},
     Account, StorageSlot,
 };
 use ethrex_storage::{error::StoreError, AccountUpdate};
@@ -217,7 +217,7 @@ pub fn compare_levm_revm_execution_results(
         (levm_tx_report, Ok(revm_execution_result)) => {
             match (&levm_tx_report.result, revm_execution_result.clone()) {
                 (
-                    ExecutionResult::Success,
+                    TxResult::Success,
                     RevmExecutionResult::Success {
                         reason: _,
                         gas_used: revm_gas_used,
@@ -242,7 +242,7 @@ pub fn compare_levm_revm_execution_results(
                     }
                 }
                 (
-                    ExecutionResult::Revert(_error),
+                    TxResult::Revert(_error),
                     RevmExecutionResult::Revert {
                         gas_used: revm_gas_used,
                         output: _,
@@ -257,7 +257,7 @@ pub fn compare_levm_revm_execution_results(
                     }
                 }
                 (
-                    ExecutionResult::Revert(_error),
+                    TxResult::Revert(_error),
                     RevmExecutionResult::Halt {
                         reason: _,
                         gas_used: revm_gas_used,
@@ -457,7 +457,7 @@ pub fn _ensure_post_state_revm(
                     let error_reason = format!("Expected exception: {expected_exception:?}");
                     return Err(EFTestRunnerError::FailedToEnsurePostState(
                         ExecutionReport {
-                            result: ExecutionResult::Success,
+                            result: TxResult::Success,
                             gas_used: 42,
                             gas_refunded: 42,
                             logs: vec![],
@@ -482,7 +482,7 @@ pub fn _ensure_post_state_revm(
                         );
                         return Err(EFTestRunnerError::FailedToEnsurePostState(
                             ExecutionReport {
-                                result: ExecutionResult::Success,
+                                result: TxResult::Success,
                                 gas_used: 42,
                                 gas_refunded: 42,
                                 logs: vec![],

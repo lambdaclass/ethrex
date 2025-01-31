@@ -2,9 +2,7 @@ use crate::{
     call_frame::CallFrame,
     constants::*,
     db::CacheDB,
-    errors::{
-        ExecutionReport, ExecutionResult, InternalError, OpcodeResult, OutOfGasError, VMError,
-    },
+    errors::{ExecutionReport, InternalError, OpcodeResult, OutOfGasError, TxResult, VMError},
     gas_cost::CODE_DEPOSIT_COST,
     opcodes::Opcode,
     utils::*,
@@ -25,7 +23,7 @@ impl VM {
                 self.call_frames.push(current_call_frame.clone());
 
                 Ok(ExecutionReport {
-                    result: ExecutionResult::Success,
+                    result: TxResult::Success,
                     new_state: self.cache.clone(),
                     gas_used: current_call_frame.gas_used,
                     gas_refunded: 0,
@@ -43,7 +41,7 @@ impl VM {
                 self.restore_state(backup);
 
                 Ok(ExecutionReport {
-                    result: ExecutionResult::Revert(error),
+                    result: TxResult::Revert(error),
                     new_state: CacheDB::default(),
                     gas_used: current_call_frame.gas_limit,
                     gas_refunded: 0,
@@ -215,7 +213,7 @@ impl VM {
                     self.restore_state(backup);
 
                     return Ok(ExecutionReport {
-                        result: ExecutionResult::Revert(error),
+                        result: TxResult::Revert(error),
                         new_state: CacheDB::default(),
                         gas_used: current_call_frame.gas_used,
                         gas_refunded: self.env.refunded_gas,
@@ -227,7 +225,7 @@ impl VM {
         }
 
         Ok(ExecutionReport {
-            result: ExecutionResult::Success,
+            result: TxResult::Success,
             new_state: CacheDB::default(),
             gas_used: current_call_frame.gas_used,
             gas_refunded: self.env.refunded_gas,
@@ -259,7 +257,7 @@ impl VM {
         self.restore_state(backup);
 
         Ok(ExecutionReport {
-            result: ExecutionResult::Revert(error),
+            result: TxResult::Revert(error),
             new_state: CacheDB::default(),
             gas_used: current_call_frame.gas_used,
             gas_refunded: self.env.refunded_gas,

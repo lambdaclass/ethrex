@@ -222,14 +222,14 @@ pub enum OpcodeResult {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub enum ExecutionResult {
+pub enum TxResult {
     Success,
     Revert(VMError),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ExecutionReport {
-    pub result: ExecutionResult,
+    pub result: TxResult,
     pub new_state: HashMap<Address, Account>,
     pub gas_used: u64,
     pub gas_refunded: u64,
@@ -254,6 +254,6 @@ impl ExecutionReport {
     }
 
     pub fn is_success(&self) -> bool {
-        matches!(self.result, ExecutionResult::Success)
+        matches!(self.result, TxResult::Success)
     }
 }

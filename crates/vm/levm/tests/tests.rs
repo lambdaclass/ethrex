@@ -10,7 +10,7 @@ use ethrex_levm::{
     account::Account,
     constants::*,
     db::{cache, CacheDB, Db},
-    errors::{ExecutionResult, OutOfGasError, VMError},
+    errors::{OutOfGasError, TxResult, VMError},
     gas_cost::{
         self, BLAKE2F_ROUND_COST, ECADD_COST, ECMUL_COST, ECPAIRING_BASE_COST,
         ECPAIRING_GROUP_COST, ECRECOVER_COST, IDENTITY_DYNAMIC_BASE, IDENTITY_STATIC_COST,
@@ -1987,7 +1987,7 @@ fn pop_on_empty_stack() {
 
     assert!(matches!(
         tx_report.result,
-        ExecutionResult::Revert(VMError::StackUnderflow)
+        TxResult::Revert(VMError::StackUnderflow)
     ));
     // TODO: assert consumed gas
 }
@@ -2297,7 +2297,7 @@ fn jump_position_bigger_than_program_bytecode_size() {
     let tx_report = vm.run_execute(&mut current_call_frame).unwrap();
     assert!(matches!(
         tx_report.result,
-        ExecutionResult::Revert(VMError::InvalidJump)
+        TxResult::Revert(VMError::InvalidJump)
     ));
     // TODO: assert consumed gas
 }
@@ -2858,7 +2858,7 @@ fn no_more_gas() {
 
     assert_eq!(
         tx_report.result,
-        ExecutionResult::Revert(VMError::OutOfGas(OutOfGasError::MaxGasLimitExceeded))
+        TxResult::Revert(VMError::OutOfGas(OutOfGasError::MaxGasLimitExceeded))
     );
 }
 
@@ -2999,7 +2999,7 @@ fn jump_not_jumpdest_position() {
     let tx_report = vm.run_execute(&mut current_call_frame).unwrap();
     assert!(matches!(
         tx_report.result,
-        ExecutionResult::Revert(VMError::InvalidJump)
+        TxResult::Revert(VMError::InvalidJump)
     ));
     // TODO: assert consumed gas
 }
@@ -3052,7 +3052,7 @@ fn sstore_reverts_when_called_in_static() {
 
     assert!(matches!(
         tx_report.result,
-        ExecutionResult::Revert(VMError::OpcodeNotAllowedInStaticContext)
+        TxResult::Revert(VMError::OpcodeNotAllowedInStaticContext)
     ));
 }
 
@@ -3352,7 +3352,7 @@ fn cant_create_log_in_static_context() {
 
     assert!(matches!(
         tx_report.result,
-        ExecutionResult::Revert(VMError::OpcodeNotAllowedInStaticContext)
+        TxResult::Revert(VMError::OpcodeNotAllowedInStaticContext)
     ));
 }
 
@@ -3648,7 +3648,7 @@ fn dup_halts_if_stack_underflow() {
 
     assert!(matches!(
         tx_report.result,
-        ExecutionResult::Revert(VMError::StackUnderflow)
+        TxResult::Revert(VMError::StackUnderflow)
     ));
 }
 
@@ -3709,7 +3709,7 @@ fn swap_halts_if_stack_underflow() {
 
     assert!(matches!(
         tx_report.result,
-        ExecutionResult::Revert(VMError::StackUnderflow)
+        TxResult::Revert(VMError::StackUnderflow)
     ));
 }
 
@@ -3755,7 +3755,7 @@ fn transient_store_stack_underflow() {
 
     assert!(matches!(
         tx_report.result,
-        ExecutionResult::Revert(VMError::StackUnderflow)
+        TxResult::Revert(VMError::StackUnderflow)
     ));
 }
 
@@ -4435,7 +4435,7 @@ fn invalid_opcode() {
 
     assert!(matches!(
         tx_report.result,
-        ExecutionResult::Revert(VMError::InvalidOpcode)
+        TxResult::Revert(VMError::InvalidOpcode)
     ));
 }
 
@@ -4459,7 +4459,7 @@ fn revert_opcode() {
     assert_eq!(U256::from_big_endian(&tx_report.output), U256::from(0xA));
     assert!(matches!(
         tx_report.result,
-        ExecutionResult::Revert(VMError::RevertOpcode)
+        TxResult::Revert(VMError::RevertOpcode)
     ));
 }
 

@@ -2,7 +2,7 @@ use crate::{
     call_frame::CallFrame,
     constants::{CREATE_DEPLOYMENT_FAIL, INIT_CODE_MAX_SIZE, REVERT_FOR_CALL, SUCCESS_FOR_CALL},
     db::cache,
-    errors::{ExecutionResult, InternalError, OpcodeResult, OutOfGasError, VMError},
+    errors::{InternalError, OpcodeResult, OutOfGasError, TxResult, VMError},
     gas_cost::{self, max_message_call_gas},
     memory::{self, calculate_memory_size},
     utils::*,
@@ -680,12 +680,12 @@ impl VM {
         current_call_frame.logs.extend(tx_report.logs);
 
         match tx_report.result {
-            ExecutionResult::Success => {
+            TxResult::Success => {
                 current_call_frame
                     .stack
                     .push(address_to_word(new_address))?;
             }
-            ExecutionResult::Revert(err) => {
+            TxResult::Revert(err) => {
                 // Return value to sender
                 increase_account_balance(
                     &mut self.cache,
@@ -815,10 +815,10 @@ impl VM {
 
         // What to do, depending on TxResult
         match tx_report.result {
-            ExecutionResult::Success => {
+            TxResult::Success => {
                 current_call_frame.stack.push(SUCCESS_FOR_CALL)?;
             }
-            ExecutionResult::Revert(_) => {
+            TxResult::Revert(_) => {
                 // Revert value transfer
                 if should_transfer_value {
                     decrease_account_balance(&mut self.cache, &mut self.db, to, value)?;

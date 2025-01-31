@@ -7,9 +7,7 @@ use crate::{
         CacheDB, Database,
     },
     environment::Environment,
-    errors::{
-        ExecutionReport, ExecutionResult, InternalError, OpcodeResult, TxValidationError, VMError,
-    },
+    errors::{ExecutionReport, InternalError, OpcodeResult, TxResult, TxValidationError, VMError},
     gas_cost::{self, STANDARD_TOKEN_COST, TOTAL_COST_FLOOR_PER_TOKEN},
     precompiles::{
         execute_precompile, is_precompile, SIZE_PRECOMPILES_CANCUN, SIZE_PRECOMPILES_PRAGUE,
@@ -607,7 +605,7 @@ impl VM {
         let receiver_address = initial_call_frame.to;
 
         // 1. Undo value transfer if the transaction has reverted
-        if let ExecutionResult::Revert(_) = report.result {
+        if let TxResult::Revert(_) = report.result {
             let existing_account = get_account(&mut self.cache, &self.db, receiver_address); //TO Account
 
             if has_delegation(&existing_account.info)? {
@@ -835,7 +833,7 @@ impl VM {
         initial_call_frame: &CallFrame,
     ) -> Result<ExecutionReport, VMError> {
         let mut report = ExecutionReport {
-            result: ExecutionResult::Revert(VMError::AddressAlreadyOccupied),
+            result: TxResult::Revert(VMError::AddressAlreadyOccupied),
             gas_used: self.env.gas_limit,
             gas_refunded: 0,
             logs: vec![],

@@ -81,7 +81,7 @@ cfg_if::cfg_if! {
     if #[cfg(feature = "levm")] {
         use ethrex_levm::{
             db::{CacheDB, Database as LevmDatabase},
-            errors::{ExecutionReport, ExecutionResult, VMError},
+            errors::{ExecutionReport, TxResult, VMError},
             vm::VM,
             Environment,
             Account
@@ -258,7 +258,7 @@ cfg_if::cfg_if! {
                 cumulative_gas_used += gas_used;
                 let receipt = Receipt::new(
                     tx.tx_type(),
-                    matches!(report.result.clone(), ExecutionResult::Success),
+                    matches!(report.result.clone(), TxResult::Success),
                     cumulative_gas_used,
                     report.logs.clone(),
                 );
