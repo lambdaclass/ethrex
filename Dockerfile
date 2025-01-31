@@ -33,6 +33,7 @@ RUN cargo build --release $BUILD_FLAGS
 FROM ubuntu:24.04
 WORKDIR /usr/local/bin
 
+COPY cmd/ethrex/networks ./cmd/ethrex/networks
 COPY --from=builder ethrex/target/release/ethrex .
 EXPOSE 8545
 ENTRYPOINT [ "./ethrex" ]
