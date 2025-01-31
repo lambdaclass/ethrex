@@ -94,8 +94,7 @@ cfg_if::cfg_if! {
         pub fn beacon_root_contract_call_levm(
             store_wrapper: Arc<StoreWrapper>,
             block_header: &BlockHeader,
-            fork: Fork,
-            state: &EvmState,
+            config: EVMConfig,
         ) -> Result<TransactionReport, EvmError> {
             lazy_static! {
                 static ref SYSTEM_ADDRESS: Address =
@@ -112,8 +111,6 @@ cfg_if::cfg_if! {
                 }
                 Some(beacon_root) => beacon_root,
             };
-
-            let config = EVMConfig {fork};
 
             let env = Environment {
                 origin: *SYSTEM_ADDRESS,
@@ -221,14 +218,17 @@ cfg_if::cfg_if! {
                 store: state.database().unwrap().clone(),
                 block_hash: block.header.parent_hash,
             });
+
             let mut block_cache: CacheDB = HashMap::new();
             let block_header = &block.header;
             let fork = state.chain_config()?.fork(block_header.timestamp);
+            let config = EVMConfig {fork};
+
             //eip 4788: execute beacon_root_contract_call before block transactions
             cfg_if::cfg_if! {
                 if #[cfg(not(feature = "l2"))] {
                     if block_header.parent_beacon_block_root.is_some() && fork == Fork::Cancun {
-                        let report = beacon_root_contract_call_levm(store_wrapper.clone(), block_header, fork, state)?;
+                        let report = beacon_root_contract_call_levm(store_wrapper.clone(), block_header, config)?;
                         block_cache.extend(report.new_state);
                     }
                 }
@@ -241,7 +241,6 @@ cfg_if::cfg_if! {
             let mut receipts = Vec::new();
             let mut cumulative_gas_used = 0;
 
-            let config = EVMConfig {fork};
 
             for tx in block.body.transactions.iter() {
                 let report = execute_tx_levm(tx, block_header, store_wrapper.clone(), block_cache.clone(), config).map_err(EvmError::from)?;
