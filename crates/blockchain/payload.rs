@@ -518,7 +518,7 @@ fn apply_plain_transaction(
                 .map_err(ChainError::from)?
                 .fork(context.payload.header.timestamp),
         )
-        .map_err(|e| EvmError::Transaction(format!("Invalid Transaction: {:?}", e)))?;
+        .map_err(|e| EvmError::Transaction(format!("Invalid Transaction: {e:?}")))?;
         context.remaining_gas = context.remaining_gas.saturating_sub(report.gas_used);
         context.block_value += U256::from(report.gas_used) * head.tip;
 
