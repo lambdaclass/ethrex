@@ -18,7 +18,7 @@ lazy_static! {
         std::fs::File::open(SEPOLIA_BOOTNODES_PATH).expect("Failed to open sepolia bootnodes file")
     )
     .expect("Failed to parse sepolia bootnodes file");
-    pub static ref MEKONG_BOOTNODES: Vec<BootNode> = serde_json::from_reader(
+    pub static ref MEKONG_BOOTNODES: Vec<Node> = serde_json::from_reader(
         std::fs::File::open(MEKONG_BOOTNODES_PATH).expect("Failed to open mekong bootnodes file")
     )
     .expect("Failed to parse mekong bootnodes file");
