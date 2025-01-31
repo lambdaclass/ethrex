@@ -36,6 +36,7 @@ ethrex-blockchain = { path = "./crates/blockchain" }
 ethrex-core = { path = "./crates/common" }
 ethrex-net = { path = "./crates/networking/p2p" }
 ethrex-rpc = { path = "./crates/networking/rpc" }
+ethrex-rpc-client = { path = "./crates/networking/rpc_client" }
 ethrex-storage = { path = "./crates/storage/store" }
 ethrex-vm = { path = "./crates/vm" }
 ethrex-trie = { path = "./crates/storage/trie" }

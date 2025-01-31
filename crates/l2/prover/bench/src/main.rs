@@ -1,12 +1,9 @@
 use std::{fs::File, io::Write};
 
-use bench::{
-    constants::{CANCUN_CONFIG, MAINNET_CHAIN_ID},
-    rpc::{db::RpcDB, get_block, get_latest_block_number},
-};
 use clap::Parser;
 use ethrex_l2::utils::prover::proving_systems::ProverType;
 use ethrex_prover_lib::prover::create_prover;
+use ethrex_rpc_client::{db::RpcDB, get_block, get_latest_block_number};
 use ethrex_vm::execution_db::ToExecDB;
 use zkvm_interface::io::ProgramInput;
 
