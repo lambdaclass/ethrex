@@ -104,10 +104,7 @@ pub fn prepare_vm_for_tx(vector: &TestVector, test: &EFTest) -> Result<VM, EFTes
 
     let fork = test.fork();
     let blob_schedule = EVMConfig::canonical_values(fork);
-    let config = EVMConfig {
-        fork,
-        blob_schedule,
-    };
+    let config = EVMConfig::new(fork, blob_schedule);
 
     VM::new(
         tx.to.clone(),
