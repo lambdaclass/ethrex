@@ -45,6 +45,7 @@ pub enum Error {
 pub struct Packet {
     pub data: PacketData,
     pub node_id: NodeId,
+    pub hash: H256,
 }
 
 impl std::fmt::Display for Packet {
@@ -59,8 +60,12 @@ impl std::fmt::Display for Packet {
 }
 
 impl Packet {
-    pub fn new(data: PacketData, node_id: NodeId) -> Self {
-        Self { data, node_id }
+    pub fn new(data: PacketData, node_id: NodeId, hash: H256) -> Self {
+        Self {
+            data,
+            node_id,
+            hash,
+        }
     }
 
     // packet = packet-header || packet-data
@@ -133,6 +138,7 @@ impl Packet {
         let packet = Self {
             data: packet_data,
             node_id: peer_pk,
+            hash,
         };
 
         if is_expired(&packet) {

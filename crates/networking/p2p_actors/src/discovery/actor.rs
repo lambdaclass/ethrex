@@ -7,9 +7,10 @@ use crate::{
             new_ping, new_pong,
         },
     },
-    types::{Endpoint, NodeId, NodeState, PeerData},
+    types::{Endpoint, Node, NodeId, NodeState, PeerData},
 };
 use commonware_runtime::Spawner;
+use ethrex_core::H256;
 use libsecp256k1::SecretKey;
 use std::{
     collections::{btree_map::Entry, BTreeMap},
@@ -122,6 +123,208 @@ impl Actor {
         })
     }
 
+    async fn handle_serve(
+        packet: Packet,
+        from: SocketAddr,
+        conn: &UdpSocket,
+        mailbox: Mailbox,
+        our_secret_key: &SecretKey,
+        our_node_id: NodeId,
+        peers: Arc<Mutex<BTreeMap<SocketAddr, PeerData>>>,
+    ) -> Result<(), Error> {
+        match packet.data {
+            PacketData::Ping {
+                from: from_endpoint,
+                ..
+            } => {
+                Self::handle_ping(
+                    from_endpoint,
+                    our_node_id,
+                    packet.hash,
+                    our_secret_key,
+                    conn,
+                )
+                .await?
+            }
+            PacketData::Pong { ping_hash, .. } => {
+                Self::handle_pong(from, ping_hash, peers).await?;
+            }
+            PacketData::FindNode { target, .. } => {
+                Self::handle_find_node(target, from, our_node_id, our_secret_key, peers, conn)
+                    .await?;
+            }
+            PacketData::Neighbors { nodes, .. } => {
+                Self::handle_neighbors(nodes, peers, mailbox).await?;
+            }
+            PacketData::ENRRequest { .. } => todo!(),
+            PacketData::ENRResponse { .. } => todo!(),
+        }
+        Ok(())
+    }
+
+    async fn handle_ping(
+        from_endpoint: Endpoint,
+        our_node_id: NodeId,
+        ping_hash: H256,
+        signer: &SecretKey,
+        conn: &UdpSocket,
+    ) -> Result<(), Error> {
+        let pong_packet_data = new_pong(from_endpoint.clone(), ping_hash);
+        let pong_packet = Packet::new(pong_packet_data, our_node_id, H256::default());
+        let content = pong_packet.encode(signer);
+        conn.send_to(&content, from_endpoint.udp_socket_addr())
+            .await
+            .map_err(Error::FailedToReplayMessage)?;
+        tracing::info!(with = ?pong_packet.data, "replied to ping");
+        Ok(())
+    }
+
+    async fn handle_pong(
+        from: SocketAddr,
+        ping_hash: H256,
+        peers: Arc<Mutex<BTreeMap<SocketAddr, PeerData>>>,
+    ) -> Result<(), Error> {
+        let mut table = peers.lock().await;
+        match table.entry(from) {
+            Entry::Vacant(_entry) => {
+                tracing::debug!("received pong from unknown peer");
+            }
+            Entry::Occupied(mut entry) => {
+                let peer_data = entry.get_mut();
+                if peer_data.last_ping_hash != Some(ping_hash) {
+                    tracing::warn!("received invalid pong");
+                    return Ok(()); // Ignore invalid pong
+                }
+                tracing::debug!("pong sender is {}", peer_data.state);
+                match peer_data.state {
+                    NodeState::Known { .. } => {
+                        tracing::warn!("received pong from non-pinged known peer");
+                    }
+                    NodeState::Pinged => {
+                        tracing::debug!("updating peer to proven");
+                        peer_data.state = NodeState::Proven {
+                            last_pong: current_unix_time(),
+                        }
+                    }
+                    NodeState::Proven { .. } => {
+                        tracing::debug!("updating peer last pong");
+                        peer_data.state = NodeState::Proven {
+                            last_pong: current_unix_time(),
+                        }
+                    }
+                    NodeState::Connected { .. } => {
+                        tracing::debug!("updating peer last pong");
+                        peer_data.state = NodeState::Connected {
+                            last_pong: current_unix_time(),
+                        }
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
+    async fn handle_find_node(
+        target: NodeId,
+        from: SocketAddr,
+        our_node_id: NodeId,
+        our_secret_key: &SecretKey,
+        peers: Arc<Mutex<BTreeMap<SocketAddr, PeerData>>>,
+        conn: &UdpSocket,
+    ) -> Result<(), Error> {
+        let neighbors = neighbors(target, peers.clone()).await;
+        let packet_data = new_neighbors(neighbors);
+        let packet = Packet::new(packet_data, our_node_id, H256::default());
+        let content = packet.encode(our_secret_key);
+        conn.send_to(&content, from)
+            .await
+            .map_err(Error::FailedToReplayMessage)?;
+        tracing::info!(with = ?packet.data, "replied to find node");
+        Ok(())
+    }
+
+    async fn handle_neighbors(
+        nodes: Vec<Node>,
+        peers: Arc<Mutex<BTreeMap<SocketAddr, PeerData>>>,
+        mailbox: Mailbox,
+    ) -> Result<(), Error> {
+        let mut table = peers.lock().await;
+        for node in nodes {
+            match table.entry(node.endpoint.clone().udp_socket_addr()) {
+                Entry::Vacant(entry) => {
+                    entry.insert(PeerData::new_known(node.id, node.endpoint));
+                }
+                Entry::Occupied(mut _entry) => {
+                    // TODO: What should we do here?
+                    continue;
+                }
+            }
+            mailbox
+                .lookup(node.id)
+                .await
+                .map_err(|err| Error::FailedToLookup(err.to_string()))?;
+        }
+        Ok(())
+    }
+
+    async fn handle_lookup(
+        target: NodeId,
+        us: NodeId,
+        conn: &UdpSocket,
+        signer: &SecretKey,
+        peers: Arc<Mutex<BTreeMap<SocketAddr, PeerData>>>,
+    ) -> Result<(), Error> {
+        let target_neighbors = neighbors(target, peers.clone()).await;
+        let packet_data = new_find_node(us);
+        let packet = Packet::new(packet_data, us, H256::default());
+        let content = packet.encode(signer);
+
+        for neighbor in target_neighbors.iter() {
+            conn.send_to(&content, neighbor.endpoint.clone().udp_socket_addr())
+                .await
+                .map_err(|err| Error::FailedToLookup(err.to_string()))?;
+            tracing::debug!(sent = ?packet.data, "looking up for neighbors");
+        }
+
+        Ok(())
+    }
+
+    async fn handle_revalidate(
+        our_endpoint: Endpoint,
+        conn: &UdpSocket,
+        signer: &SecretKey,
+        node_id: NodeId,
+        peers: Arc<Mutex<BTreeMap<SocketAddr, PeerData>>>,
+    ) -> Result<(), Error> {
+        let mut peers = peers.lock().await;
+
+        for (peer_address, peer_data) in peers.iter_mut() {
+            if matches!(peer_data.state, NodeState::Known)
+                || peer_data.last_ping.is_none()
+                || peer_data.last_ping.is_some_and(is_last_ping_expired)
+            {
+                let packet_data = new_ping(
+                    our_endpoint.clone(),
+                    &peer_data.endpoint.clone().udp_socket_addr(),
+                );
+                let packet = Packet::new(packet_data, node_id, H256::default());
+                let content = packet.encode(signer);
+                if matches!(peer_data.state, NodeState::Known) {
+                    peer_data.state = NodeState::Pinged;
+                    peer_data.last_ping = Some(current_unix_time());
+                    peer_data.last_ping_hash = Some(packet.hash(signer));
+                }
+                let ping_hash = packet.hash(signer);
+                tracing::debug!(sent = ?packet.data, ping_hash = ?ping_hash, "revalidating peer");
+                conn.send_to(&content, *peer_address)
+                    .await
+                    .map_err(|err| Error::FailedToRevalidate(err.to_string()))?;
+            }
+        }
+
+        Ok(())
+    }
+
     pub async fn run(mut self) -> Result<(), Error> {
         let udp_socket_address = self.endpoint.clone().udp_socket_addr();
 
@@ -144,149 +347,36 @@ impl Actor {
                 let message = self.receiver.recv().await.unwrap();
                 match message {
                     Message::Serve(packet, from) => {
-                        let packet_hash = packet.hash(&self.signer);
-                        match packet.data {
-                            PacketData::Ping {
-                                from: from_endpoint,
-                                ..
-                            } => {
-                                let mut table = self.peers.lock().await;
-                                match table.entry(from) {
-                                    Entry::Vacant(entry) => {
-                                        entry.insert(PeerData::new_known(
-                                            packet.node_id,
-                                            from_endpoint.clone(),
-                                        ));
-                                    }
-                                    Entry::Occupied(mut entry) => {
-                                        let peer_data = entry.get_mut();
-                                        peer_data.last_ping_hash = Some(packet_hash);
-                                        peer_data.last_ping = Some(current_unix_time());
-                                    }
-                                }
-                                let ping_hash = packet_hash;
-                                let pong_packet_data = new_pong(from_endpoint.clone(), ping_hash);
-                                let pong_packet = Packet::new(pong_packet_data, self.node_id);
-                                let content = pong_packet.encode(&self.signer);
-                                main_loop_conn
-                                    .send_to(&content, from_endpoint.udp_socket_addr())
-                                    .await
-                                    .map_err(Error::FailedToReplayMessage)?;
-                                tracing::info!(packet = ?pong_packet, "replied to ping");
-                            }
-                            PacketData::Pong { ping_hash, .. } => {
-                                let mut table = self.peers.lock().await;
-                                match table.entry(from) {
-                                    Entry::Vacant(_entry) => {
-                                        tracing::debug!("received pong from unknown peer");
-                                        continue;
-                                    }
-                                    Entry::Occupied(mut entry) => {
-                                        let peer_data = entry.get_mut();
-                                        if peer_data.last_ping_hash != Some(ping_hash) {
-                                            tracing::warn!("received invalid pong");
-                                            continue;
-                                        }
-                                        tracing::debug!("pong sender is {}", peer_data.state);
-                                        match peer_data.state {
-                                            NodeState::Known { .. } => {
-                                                tracing::warn!(
-                                                    "received pong from non-pinged known peer"
-                                                );
-                                            }
-                                            NodeState::Pinged => {
-                                                tracing::debug!("updating peer to proven");
-                                                peer_data.state = NodeState::Proven {
-                                                    last_pong: current_unix_time(),
-                                                }
-                                            }
-                                            NodeState::Proven { .. } => {
-                                                tracing::debug!("updating peer last pong");
-                                                peer_data.state = NodeState::Proven {
-                                                    last_pong: current_unix_time(),
-                                                }
-                                            }
-                                            NodeState::Connected { .. } => {
-                                                tracing::debug!("updating peer last pong");
-                                                peer_data.state = NodeState::Connected {
-                                                    last_pong: current_unix_time(),
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                            PacketData::FindNode { target, .. } => {
-                                let neighbors = neighbors(target, self.peers.clone()).await;
-                                let packet_data = new_neighbors(neighbors);
-                                let packet = Packet::new(packet_data, self.node_id);
-                                let content = packet.encode(&self.signer);
-                                main_loop_conn
-                                    .send_to(&content, from)
-                                    .await
-                                    .map_err(Error::FailedToReplayMessage)?;
-                                tracing::info!(packet = ?packet, "replied to find node");
-                            }
-                            PacketData::Neighbors { nodes, .. } => {
-                                let mut table = self.peers.lock().await;
-                                for node in nodes {
-                                    match table.entry(node.endpoint.clone().udp_socket_addr()) {
-                                        Entry::Vacant(entry) => {
-                                            entry.insert(PeerData::new_known(
-                                                node.id,
-                                                node.endpoint,
-                                            ));
-                                        }
-                                        Entry::Occupied(mut _entry) => {
-                                            // TODO: What should we do here?
-                                            continue;
-                                        }
-                                    }
-                                    main_loop_mailbox.lookup(node.id).await.unwrap();
-                                }
-                            }
-                            PacketData::ENRRequest { .. } => todo!(),
-                            PacketData::ENRResponse { .. } => todo!(),
-                        }
+                        Self::handle_serve(
+                            packet,
+                            from,
+                            &main_loop_conn,
+                            main_loop_mailbox.clone(),
+                            &self.signer,
+                            self.node_id,
+                            self.peers.clone(),
+                        )
+                        .await?;
                     }
                     Message::Lookup(target) => {
-                        let target_neighbors = neighbors(target, self.peers.clone()).await;
-                        let packet_data = new_find_node(self.node_id);
-                        let packet = Packet::new(packet_data, self.node_id);
-                        let content = packet.encode(&self.signer);
-
-                        for neighbor in target_neighbors.iter() {
-                            main_loop_conn
-                                .send_to(&content, neighbor.endpoint.clone().udp_socket_addr())
-                                .await
-                                .map_err(|err| Error::FailedToLookup(err.to_string()))?;
-                            tracing::debug!(packet = ?packet, "looking up for neighbors");
-                        }
+                        Self::handle_lookup(
+                            target,
+                            self.node_id,
+                            &main_loop_conn,
+                            &self.signer,
+                            self.peers.clone(),
+                        )
+                        .await?;
                     }
                     Message::Revalidate => {
-                        let mut peers = self.peers.lock().await;
-                        for (peer_address, peer_data) in peers.iter_mut() {
-                            if matches!(peer_data.state, NodeState::Known)
-                                || peer_data.last_ping.is_none()
-                                || peer_data.last_ping.is_some_and(is_last_ping_expired)
-                            {
-                                let packet_data = new_ping(
-                                    self.endpoint.clone(),
-                                    &peer_data.endpoint.clone().udp_socket_addr(),
-                                );
-                                let packet = Packet::new(packet_data, self.node_id);
-                                let content = packet.encode(&self.signer);
-                                if matches!(peer_data.state, NodeState::Known) {
-                                    peer_data.state = NodeState::Pinged;
-                                    peer_data.last_ping = Some(current_unix_time());
-                                    peer_data.last_ping_hash = Some(packet.hash(&self.signer));
-                                }
-                                main_loop_conn
-                                    .send_to(&content, *peer_address)
-                                    .await
-                                    .map_err(|err| Error::FailedToRevalidate(err.to_string()))?;
-                            }
-                        }
+                        Self::handle_revalidate(
+                            self.endpoint.clone(),
+                            &main_loop_conn,
+                            &self.signer,
+                            self.node_id,
+                            self.peers.clone(),
+                        )
+                        .await?;
                     }
                     Message::Terminate => {
                         tracing::info!("shutting down");
@@ -323,7 +413,7 @@ impl Actor {
                     }
                 };
 
-                tracing::info!(packet = ?packet, from = ?from, "received packet");
+                tracing::info!(packet = ?packet.data, from = ?from, "received packet");
 
                 listener_mailbox
                     .serve(packet, from)
