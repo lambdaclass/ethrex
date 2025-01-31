@@ -144,9 +144,9 @@ pub async fn start_api(
         let filters = active_filters.clone();
         loop {
             interval.tick().await;
-            tracing::info!("Running filter clean task");
+            tracing::debug!("Running filter clean task");
             filter::clean_outdated_filters(filters.clone(), FILTER_DURATION);
-            tracing::info!("Filter clean task complete");
+            tracing::debug!("Filter clean task complete");
         }
     });
 

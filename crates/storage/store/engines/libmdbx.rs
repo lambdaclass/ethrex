@@ -14,7 +14,7 @@ use ethrex_core::types::{
 };
 use ethrex_rlp::decode::RLPDecode;
 use ethrex_rlp::encode::RLPEncode;
-use ethrex_trie::{LibmdbxDupsortTrieDB, LibmdbxTrieDB, Trie};
+use ethrex_trie::{LibmdbxDupsortTrieDB, LibmdbxTrieDB, Nibbles, Trie};
 use libmdbx::orm::{Decodable, Encodable, Table};
 use libmdbx::{
     dupsort,
@@ -580,16 +580,21 @@ impl StoreEngine for Store {
         self.delete::<SnapState>(SnapStateIndex::StateTrieRootCheckpoint)
     }
 
-    fn set_pending_storage_heal_accounts(&self, accounts: Vec<H256>) -> Result<(), StoreError> {
+    fn set_pending_storage_heal_accounts(
+        &self,
+        accounts: Vec<(H256, Vec<Nibbles>)>,
+    ) -> Result<(), StoreError> {
         self.write::<SnapState>(
             SnapStateIndex::PendingStorageHealAccounts,
             accounts.encode_to_vec(),
         )
     }
 
-    fn get_pending_storage_heal_accounts(&self) -> Result<Option<Vec<H256>>, StoreError> {
+    fn get_pending_storage_heal_accounts(
+        &self,
+    ) -> Result<Option<Vec<(H256, Vec<Nibbles>)>>, StoreError> {
         self.read::<SnapState>(SnapStateIndex::PendingStorageHealAccounts)?
-            .map(|ref h| <Vec<H256>>::decode(h))
+            .map(|ref h| <Vec<(H256, Vec<Nibbles>)>>::decode(h))
             .transpose()
             .map_err(StoreError::RLPDecode)
     }
@@ -604,8 +609,24 @@ impl StoreEngine for Store {
             Some(ref rlp) => RLPDecode::decode(rlp).map_err(|_| StoreError::DecodeError),
         }
     }
+
     fn update_sync_status(&self, status: bool) -> Result<(), StoreError> {
         self.write::<ChainData>(ChainDataIndex::IsSynced, status.encode_to_vec())
+    }
+    
+    fn set_state_heal_paths(&self, paths: Vec<Nibbles>) -> Result<(), StoreError> {
+        self.write::<SnapState>(SnapStateIndex::StateHealPaths, paths.encode_to_vec())
+    }
+
+    fn get_state_heal_paths(&self) -> Result<Option<Vec<Nibbles>>, StoreError> {
+        self.read::<SnapState>(SnapStateIndex::StateHealPaths)?
+            .map(|ref h| <Vec<Nibbles>>::decode(h))
+            .transpose()
+            .map_err(StoreError::RLPDecode)
+    }
+
+    fn clear_state_heal_paths(&self) -> Result<(), StoreError> {
+        self.delete::<SnapState>(SnapStateIndex::StateHealPaths)
     }
 }
 

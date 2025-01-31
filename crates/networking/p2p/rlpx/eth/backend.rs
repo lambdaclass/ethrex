@@ -1,5 +1,6 @@
 use ethrex_core::{types::ForkId, U256};
 use ethrex_storage::Store;
+use tracing::warn;
 
 use crate::rlpx::error::RLPxError;
 

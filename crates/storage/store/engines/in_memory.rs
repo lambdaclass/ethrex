@@ -4,7 +4,7 @@ use ethereum_types::{H256, U256};
 use ethrex_core::types::{
     BlobsBundle, Block, BlockBody, BlockHash, BlockHeader, BlockNumber, ChainConfig, Index, Receipt,
 };
-use ethrex_trie::{InMemoryTrieDB, Trie};
+use ethrex_trie::{InMemoryTrieDB, Nibbles, Trie};
 use std::{
     collections::HashMap,
     fmt::Debug,
@@ -65,7 +65,7 @@ pub struct SnapState {
     /// Last downloaded key of the latest State Trie
     state_trie_key_checkpoint: Option<H256>,
     /// Accounts which storage needs healing
-    pending_storage_heal_accounts: Option<Vec<H256>>,
+    pending_storage_heal_accounts: Option<Vec<(H256, Vec<Nibbles>)>>,
 }
 
 impl Store {
@@ -482,12 +482,17 @@ impl StoreEngine for Store {
         Ok(())
     }
 
-    fn set_pending_storage_heal_accounts(&self, accounts: Vec<H256>) -> Result<(), StoreError> {
+    fn set_pending_storage_heal_accounts(
+        &self,
+        accounts: Vec<(H256, Vec<Nibbles>)>,
+    ) -> Result<(), StoreError> {
         self.inner().snap_state.pending_storage_heal_accounts = Some(accounts);
         Ok(())
     }
 
-    fn get_pending_storage_heal_accounts(&self) -> Result<Option<Vec<H256>>, StoreError> {
+    fn get_pending_storage_heal_accounts(
+        &self,
+    ) -> Result<Option<Vec<(H256, Vec<Nibbles>)>>, StoreError> {
         Ok(self
             .inner()
             .snap_state
@@ -507,6 +512,18 @@ impl StoreEngine for Store {
     fn update_sync_status(&self, status: bool) -> Result<(), StoreError> {
         self.inner().chain_data.is_synced = status;
         Ok(())
+    }
+    
+    fn set_state_heal_paths(&self, paths: Vec<ethrex_trie::Nibbles>) -> Result<(), StoreError> {
+        todo!()
+    }
+
+    fn get_state_heal_paths(&self) -> Result<Option<Vec<ethrex_trie::Nibbles>>, StoreError> {
+        todo!()
+    }
+
+    fn clear_state_heal_paths(&self) -> Result<(), StoreError> {
+        todo!()
     }
 }
 

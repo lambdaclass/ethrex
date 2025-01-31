@@ -6,7 +6,7 @@ use ethrex_core::{
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode, error::RLPDecodeError};
 use ethrex_storage::{error::StoreError, Store};
 use ethrex_trie::{Nibbles, Node, TrieError, TrieState, EMPTY_TRIE_HASH};
-use std::{collections::BTreeMap, sync::Arc};
+use std::{cmp::min, collections::BTreeMap, sync::Arc};
 use tokio::{
     sync::{
         mpsc::{self, error::SendError, Receiver, Sender},
@@ -14,7 +14,7 @@ use tokio::{
     },
     time::Instant,
 };
-use tracing::{debug, info, warn};
+use tracing::{info, warn};
 
 use crate::{
     kademlia::KademliaTable,
@@ -110,7 +110,7 @@ impl SyncManager {
             }
         }
         loop {
-            debug!("Requesting Block Headers from {current_head}");
+            info!("Requesting Block Headers from {current_head}");
             // Request Block Headers from Peer
             match self
                 .peers
@@ -118,7 +118,7 @@ impl SyncManager {
                 .await
             {
                 Some(mut block_headers) => {
-                    debug!(
+                    info!(
                         "Received {} block headers| Last Number: {}",
                         block_headers.len(),
                         block_headers.last().as_ref().unwrap().number
@@ -166,8 +166,8 @@ impl SyncManager {
                     warn!("Sync failed to find target block header, aborting");
                     return Ok(());
                 }
-            }
         }
+    }
         // We finished fetching all headers, now we can process them
         match self.sync_mode {
             SyncMode::Snap => {
@@ -179,7 +179,7 @@ impl SyncManager {
                 let pivot_header = store
                     .get_block_header_by_hash(all_block_hashes[pivot_idx])?
                     .ok_or(SyncError::CorruptDB)?;
-                debug!(
+                info!(
                     "Selected block {} as pivot for snap sync",
                     pivot_header.number
                 );
@@ -230,10 +230,10 @@ async fn download_and_run_blocks(
     store: Store,
 ) -> Result<(), SyncError> {
     loop {
-        debug!("Requesting Block Bodies ");
+        info!("Requesting Block Bodies ");
         if let Some(block_bodies) = peers.request_block_bodies(block_hashes.clone()).await {
             let block_bodies_len = block_bodies.len();
-            debug!("Received {} Block Bodies", block_bodies_len);
+            info!("Received {} Block Bodies", block_bodies_len);
             // Execute and store blocks
             for (hash, body) in block_hashes
                 .drain(..block_bodies_len)
@@ -251,7 +251,7 @@ async fn download_and_run_blocks(
                 store.set_canonical_block(number, hash)?;
                 store.update_latest_block_number(number)?;
             }
-            debug!("Executed & stored {} blocks", block_bodies_len);
+            info!("Executed & stored {} blocks", block_bodies_len);
             // Check if we need to ask for another batch
             if block_hashes.is_empty() {
                 break;
@@ -268,9 +268,9 @@ async fn store_block_bodies(
     store: Store,
 ) -> Result<(), SyncError> {
     loop {
-        debug!("Requesting Block Headers ");
+        info!("Requesting Block Bodies ");
         if let Some(block_bodies) = peers.request_block_bodies(block_hashes.clone()).await {
-            debug!(" Received {} Block Bodies", block_bodies.len());
+            info!(" Received {} Block Bodies", block_bodies.len());
             // Track which bodies we have already fetched
             let current_block_hashes = block_hashes.drain(..block_bodies.len());
             // Add bodies to storage
@@ -296,9 +296,9 @@ async fn store_receipts(
     store: Store,
 ) -> Result<(), SyncError> {
     loop {
-        debug!("Requesting Block Headers ");
+        info!("Requesting Block Headers ");
         if let Some(receipts) = peers.request_receipts(block_hashes.clone()).await {
-            debug!(" Received {} Receipts", receipts.len());
+            info!(" Received {} Receipts", receipts.len());
             // Track which blocks we have already fetched receipts for
             for (block_hash, receipts) in block_hashes.drain(0..receipts.len()).zip(receipts) {
                 store.add_receipts(block_hash, receipts)?;
@@ -343,7 +343,7 @@ async fn rebuild_state_trie(
             store.clone(),
             state_root,
         ));
-        debug!("Starting/Resuming state trie download from key {start_account_hash}");
+        info!("Starting/Resuming state trie download from key {start_account_hash}");
         // Fetch Account Ranges
         // If we reached the maximum amount of retries then it means the state we are requesting is probably old and no longer available
         let mut progress_timer = Instant::now();
@@ -361,12 +361,12 @@ async fn rebuild_state_trie(
                     initial_timestamp,
                 ));
             }
-            debug!("Requesting Account Range for state root {state_root}, starting hash: {start_account_hash}");
+            info!("Requesting Account Range for state root {state_root}, starting hash: {start_account_hash}");
             if let Some((account_hashes, accounts, should_continue)) = peers
                 .request_account_range(state_root, start_account_hash)
                 .await
             {
-                debug!("Received {} account ranges", accounts.len());
+                info!("Received {} account ranges", accounts.len());
                 // Update starting hash for next batch
                 if should_continue {
                     start_account_hash = *account_hashes.last().unwrap();
@@ -425,7 +425,7 @@ async fn rebuild_state_trie(
             // Set highest key value so we know state sync is already complete on the next cycle
             store.set_state_trie_key_checkpoint(HASH_MAX)?;
         }
-        debug!("Account Trie Fetching ended, signaling storage fetcher process");
+        info!("Account Trie Fetching ended, signaling storage fetcher process");
         // Send empty batch to signal that no more batches are incoming
         storage_sender.send(vec![]).await?;
         let pending_storage_accounts = storage_fetcher_handle.await??;
@@ -435,7 +435,11 @@ async fn rebuild_state_trie(
             let mut stored_pending_storages = store
                 .get_pending_storage_heal_accounts()?
                 .unwrap_or_default();
-            stored_pending_storages.extend(pending_storage_accounts);
+            stored_pending_storages.extend(
+                pending_storage_accounts
+                    .iter()
+                    .map(|k| (*k, vec![Nibbles::default()])),
+            );
             info!(
                 "Current pending storage accounts: {}",
                 stored_pending_storages.len()
@@ -454,13 +458,12 @@ async fn rebuild_state_trie(
     let res = heal_state_trie(
         bytecode_sender.clone(),
         state_root,
-        current_state_root,
         store.clone(),
         peers.clone(),
     )
     .await?;
     // Send empty batch to signal that no more batches are incoming
-    debug!("Account Trie fully rebuilt, signaling bytecode fetcher process");
+    info!("Account Trie fully rebuilt, signaling bytecode fetcher process");
     bytecode_sender.send(vec![]).await?;
     bytecode_fetcher_handle.await??;
     Ok(res)
@@ -479,9 +482,16 @@ async fn bytecode_fetcher(
         match receiver.recv().await {
             Some(code_hashes) if !code_hashes.is_empty() => {
                 pending_bytecodes.extend(code_hashes);
+                info!(
+                    "Received incoming bytecode request, current batch: {}/{BATCH_SIZE}",
+                    pending_bytecodes.len()
+                )
             }
             // Disconnect / Empty message signaling no more bytecodes to sync
-            _ => incoming = false,
+            _ => {
+                info!("Final bytecode batch");
+                incoming = false
+            }
         }
         // If we have enough pending bytecodes to fill a batch
         // or if we have no more incoming batches, spawn a fetch process
@@ -504,7 +514,7 @@ async fn fetch_bytecode_batch(
     store: Store,
 ) -> Result<Vec<H256>, StoreError> {
     if let Some(bytecodes) = peers.request_bytecodes(batch.clone()).await {
-        debug!("Received {} bytecodes", bytecodes.len());
+        info!("Received {} bytecodes", bytecodes.len());
         // Store the bytecodes
         for code in bytecodes.into_iter() {
             store.add_account_code(batch.remove(0), code)?;
@@ -531,53 +541,75 @@ async fn storage_fetcher(
     let mut incoming = true;
     while incoming {
         // Fetch incoming requests
+        let awaiting_batch = Instant::now();
         let mut msg_buffer = vec![];
         if receiver.recv_many(&mut msg_buffer, 25).await != 0 {
             for account_hashes_and_roots in msg_buffer {
                 if !account_hashes_and_roots.is_empty() {
+                    info!(
+                        "Spent {} secs waiting for incoming batch",
+                        awaiting_batch.elapsed().as_secs()
+                    );
                     pending_storage.extend(account_hashes_and_roots);
-                } else {
-                    // Empty message signaling no more bytecodes to sync
+                    info!(
+                        "Received incoming storage range request, current batch: {}/{BATCH_SIZE}",
+                        pending_storage.len()
+                    );
+                    info!("Number of messages in receiver: {}", receiver.len());
+                }
+                // Disconnect / Empty message signaling no more bytecodes to sync
+                else {
+                    info!("Final storage batch");
                     incoming = false
                 }
             }
-        } else {
-            // Disconnect
-            incoming = false
         }
+        info!("Processing current batches");
         // If we have enough pending bytecodes to fill a batch
         // or if we have no more incoming batches, spawn a fetch process
         // If the pivot became stale don't process anything and just save incoming requests
+        if stale {
+            info!("Storage fetcher detected stale pivot");
+        }
         while !stale
-            && (pending_storage.len() >= NODE_BATCH_SIZE
-                || !incoming && !pending_storage.is_empty())
+            && (pending_storage.len() >= BATCH_SIZE || !incoming && !pending_storage.is_empty())
         {
             // We will be spawning multiple tasks and then collecting their results
             // This uses a loop inside the main loop as the result from these tasks may lead to more values in queue
             let mut storage_tasks = tokio::task::JoinSet::new();
+            let mut task_num = 1;
             while !stale
-                && (pending_storage.len() >= NODE_BATCH_SIZE
-                    || !incoming && !pending_storage.is_empty())
+                && (pending_storage.len() >= BATCH_SIZE || !incoming && !pending_storage.is_empty())
             {
                 let next_batch = pending_storage
-                    .drain(..NODE_BATCH_SIZE.min(pending_storage.len()))
+                    .drain(..BATCH_SIZE.min(pending_storage.len()))
                     .collect::<Vec<_>>();
+                info!("Spawning storage fetcher number {task_num}");
                 storage_tasks.spawn(fetch_storage_batch(
                     next_batch.clone(),
                     state_root,
                     peers.clone(),
                     store.clone(),
                 ));
+                task_num += 1;
             }
             // Add unfetched accounts to queue and handle stale signal
+            let mut ret_num = 1;
             for res in storage_tasks.join_all().await {
                 let (remaining, is_stale) = res?;
+                info!(
+                    "Task {}/{} returned {} elements to the queue",
+                    ret_num,
+                    task_num,
+                    remaining.len()
+                );
                 pending_storage.extend(remaining);
                 stale |= is_stale;
+                ret_num += 1;
             }
         }
     }
-    debug!(
+    info!(
         "Concluding storage fetcher, {} storages left in queue to be healed later",
         pending_storage.len()
     );
@@ -592,7 +624,7 @@ async fn fetch_storage_batch(
     peers: PeerHandler,
     store: Store,
 ) -> Result<(Vec<(H256, H256)>, bool), SyncError> {
-    debug!(
+    info!(
         "Requesting storage ranges for addresses {}..{}",
         batch.first().unwrap().0,
         batch.last().unwrap().0
@@ -602,7 +634,7 @@ async fn fetch_storage_batch(
         .request_storage_ranges(state_root, batch_roots, batch_hahses, H256::zero())
         .await
     {
-        debug!("Received {} storage ranges", keys.len(),);
+        info!("Received {} storage ranges", keys.len(),);
         // Handle incomplete ranges
         if incomplete {
             // An incomplete range cannot be empty
@@ -610,7 +642,7 @@ async fn fetch_storage_batch(
             // If only one incomplete range is returned then it must belong to a trie that is too big to fit into one request
             // We will handle this large trie separately
             if keys.is_empty() {
-                debug!("Large storage trie encountered, handling separately");
+                info!("Large storage trie encountered, handling separately");
                 let (account_hash, storage_root) = batch.remove(0);
                 if handle_large_storage_range(
                     state_root,
@@ -677,7 +709,7 @@ async fn handle_large_storage_range(
     let mut should_continue = true;
     // Fetch the remaining range
     while should_continue {
-        debug!("Fetching large storage trie, current key: {}", next_key);
+        info!("Fetching large storage trie, current key: {}", next_key);
 
         if let Some((keys, values, incomplete)) = peers
             .request_storage_range(state_root, storage_root, account_hash, next_key)
@@ -706,50 +738,48 @@ async fn handle_large_storage_range(
 async fn heal_state_trie(
     bytecode_sender: Sender<Vec<H256>>,
     state_root: H256,
-    mut current_root: H256,
     store: Store,
     peers: PeerHandler,
 ) -> Result<bool, SyncError> {
+    // Check if we have pending storages to heal from a previous cycle
+    let pending = if let Some(pending) = store.get_pending_storage_heal_accounts()? {
+        info!(
+            "Retrieved {} pending storage healing requests",
+            pending.len()
+        );
+        pending.into_iter().collect()
+    } else {
+        Default::default()
+    };
     // Spawn a storage healer for this blocks's storage
     let (storage_sender, storage_receiver) = mpsc::channel::<Vec<H256>>(500);
     let storage_healer_handler = tokio::spawn(storage_healer(
         state_root,
+        pending,
         storage_receiver,
         peers.clone(),
         store.clone(),
     ));
-    // Check if we have pending storages to heal from a previous cycle
-    if let Some(pending) = store.get_pending_storage_heal_accounts()? {
-        debug!(
-            "Retrieved {} pending storage healing requests",
-            pending.len()
-        );
-        storage_sender.send(pending).await?;
-    }
+    // Check if we have pending paths from a previous cycle
+    let mut paths = store.get_state_heal_paths()?.unwrap_or_default();
     // Begin by requesting the root node
-    let mut paths = vec![Nibbles::default()];
+    paths.push(Nibbles::default());
     while !paths.is_empty() {
-        // Fetch the latests paths first to prioritize reaching leaves as soon as possible
-        let batch: Vec<Nibbles> = paths
-            .drain(paths.len().saturating_sub(NODE_BATCH_SIZE)..)
-            .collect();
-
-        if let Some(nodes) = peers
-            .request_state_trienodes(state_root, batch.clone())
-            .await
-        {
-            debug!("Received {} state nodes", nodes.len());
+        info!("Paths queued: {}", paths.len());
+        // Take at most one batch so we don't overload the peer
+        let batch = paths[0..min(paths.len(), NODE_BATCH_SIZE)].to_vec();
+        if let Some(nodes) = peers.request_state_trienodes(state_root, batch).await {
+            info!("Received {} state nodes", nodes.len());
             let mut hahsed_addresses = vec![];
             let mut code_hashes = vec![];
             // For each fetched node:
             // - Add its children to the queue (if we don't have them already)
             // - If it is a leaf, request its bytecode & storage
             // - If it is a leaf, add its path & value to the trie
-            // Add unfetched nodes back to the queue (we do this first to ensure deph-focused fetching)
-            paths.extend_from_slice(&batch[nodes.len()..]);
-            for (node, path) in nodes.into_iter().zip(batch.into_iter()) {
+            for node in nodes {
                 // We cannot keep the trie state open
-                let mut trie = store.open_state_trie(current_root);
+                let mut trie = store.open_state_trie(*EMPTY_TRIE_HASH);
+                let path = paths.remove(0);
                 paths.extend(node_missing_children(&node, &path, trie.state())?);
                 if let Node::Leaf(node) = &node {
                     // Fetch bytecode & storage
@@ -771,11 +801,10 @@ async fn heal_state_trie(
                     {
                         code_hashes.push(account.code_hash);
                     }
-                    // Write values to trie
-                    trie.insert(account_hash.0.to_vec(), account.encode_to_vec())?;
-                    // Update current root
-                    current_root = trie.hash()?;
                 }
+                // Add node to trie
+                let hash = node.compute_hash();
+                trie.state_mut().write_node(node, hash)?;
             }
             // Send storage & bytecode requests
             if !hahsed_addresses.is_empty() {
@@ -788,7 +817,12 @@ async fn heal_state_trie(
             break;
         }
     }
-    debug!("State Healing stopped, signaling storage healer");
+    info!("State Healing stopped, signaling storage healer");
+    // Save paths for the next cycle
+    if !paths.is_empty() {
+        info!("Caching {} paths for the next cycle", paths.len());
+        store.set_state_heal_paths(paths.clone())?;
+    }
     // Send empty batch to signal that no more batches are incoming
     storage_sender.send(vec![]).await?;
     let pending_storage_heal_accounts = storage_healer_handler.await??;
@@ -796,7 +830,13 @@ async fn heal_state_trie(
     // If a storage trie was left mid-healing we will heal it again
     let storage_healing_succesful = pending_storage_heal_accounts.is_empty();
     if !storage_healing_succesful {
-        store.set_pending_storage_heal_accounts(pending_storage_heal_accounts)?;
+        info!(
+            "{} storages with pending healing",
+            pending_storage_heal_accounts.len()
+        );
+        store.set_pending_storage_heal_accounts(
+            pending_storage_heal_accounts.into_iter().collect(),
+        )?;
     }
     Ok(paths.is_empty() && storage_healing_succesful)
 }
@@ -804,54 +844,70 @@ async fn heal_state_trie(
 /// Waits for incoming hashed addresses from the receiver channel endpoint and queues the associated root nodes for state retrieval
 /// Also retrieves their children nodes until we have the full storage trie stored
 /// If the state becomes stale while fetching, returns its current queued account hashes
+/// Receives the prending storages from a previous iteration
 async fn storage_healer(
     state_root: H256,
+    mut pending_storages: BTreeMap<H256, Vec<Nibbles>>,
     mut receiver: Receiver<Vec<H256>>,
     peers: PeerHandler,
     store: Store,
-) -> Result<Vec<H256>, SyncError> {
+) -> Result<BTreeMap<H256, Vec<Nibbles>>, SyncError> {
     // Pending list of storages to fetch
     // Each entry is made up of AccountHash -> (CurrentRoot, Paths)
-    let mut pending_storages: BTreeMap<H256, (H256, Vec<Nibbles>)> = BTreeMap::new();
     //let mut pending_storages: Vec<(H256, Nibbles)> = vec![];
     // The pivot may become stale while the fetcher is active, we will still keep the process
     // alive until the end signal so we don't lose queued messages
     let mut stale = false;
     let mut incoming = true;
+    // This boolean exists only so that we skip waiting for messages on the first loop iteration
+    // TODO: find prettier solution
+    let mut startup = true;
     while incoming {
-        // Fetch incoming requests
-        match receiver.recv().await {
-            Some(account_paths) if !account_paths.is_empty() => {
-                // Add the root paths of each account trie to the queue
-                pending_storages.extend(
-                    account_paths
-                        .into_iter()
-                        .map(|acc_path| (acc_path, (*EMPTY_TRIE_HASH, vec![Nibbles::default()]))),
+        if startup {
+            startup = false;
+        } else {
+            // Fetch incoming requests
+            match receiver.recv().await {
+                Some(account_paths) if !account_paths.is_empty() => {
+                    // Add the root paths of each account trie to the queue
+                    pending_storages.extend(
+                        account_paths
+                            .into_iter()
+                            .map(|acc_path| (acc_path, vec![Nibbles::default()])),
+                    );
+                    info!(
+                    "Received incoming storage heal request, current batch: {}/{NODE_BATCH_SIZE}",
+                    pending_storages.len()
                 );
+                    info!("Number of messages in receiver: {}", receiver.len());
+                }
+                // Disconnect / Empty message signaling no more bytecodes to sync
+                _ => incoming = false,
             }
-            // Disconnect / Empty message signaling no more bytecodes to sync
-            _ => incoming = false,
         }
         // If we have enough pending storages to fill a batch
         // or if we have no more incoming batches, spawn a fetch process
         // If the pivot became stale don't process anything and just save incoming requests
+        //info!("Storage Healer, stale: {stale}");
         while !stale && !pending_storages.is_empty() {
-            let mut next_batch: BTreeMap<H256, (H256, Vec<Nibbles>)> = BTreeMap::new();
+            let mut next_batch: BTreeMap<H256, Vec<Nibbles>> = BTreeMap::new();
             // Fill batch
             let mut batch_size = 0;
             while batch_size < BATCH_SIZE {
                 let (key, val) = pending_storages.pop_first().unwrap();
-                batch_size += val.1.len();
+                batch_size += val.len();
                 next_batch.insert(key, val);
             }
+            //info!("Sending storage heal batch of size {batch_size}");
             let (return_batch, is_stale) =
                 heal_storage_batch(state_root, next_batch.clone(), peers.clone(), store.clone())
                     .await?;
+            //info!("Returned storage heal batch of size {}", return_batch.iter().map(|b| b.1.1.len()).sum::<usize>());
             pending_storages.extend(return_batch.into_iter());
             stale |= is_stale;
         }
     }
-    Ok(pending_storages.into_keys().collect())
+    Ok(pending_storages)
 }
 
 /// Receives a set of storage trie paths (grouped by their corresponding account's state trie path),
@@ -859,34 +915,24 @@ async fn storage_healer(
 /// Also returns a boolean indicating if the pivot became stale during the request
 async fn heal_storage_batch(
     state_root: H256,
-    mut batch: BTreeMap<H256, (H256, Vec<Nibbles>)>,
+    mut batch: BTreeMap<H256, Vec<Nibbles>>,
     peers: PeerHandler,
     store: Store,
-) -> Result<(BTreeMap<H256, (H256, Vec<Nibbles>)>, bool), SyncError> {
-    let req_batch = batch.iter().map(|(k, v)| (*k, v.1.clone())).collect();
-    if let Some(mut nodes) = peers.request_storage_trienodes(state_root, req_batch).await {
-        debug!("Received {} nodes", nodes.len());
+) -> Result<(BTreeMap<H256, Vec<Nibbles>>, bool), SyncError> {
+    if let Some(mut nodes) = peers.request_storage_trienodes(state_root, batch.clone()).await {
+        info!("Received {} storage nodes", nodes.len());
         // Process the nodes for each account path
-        for (acc_path, (root, paths)) in batch.iter_mut() {
-            let mut trie = store.open_storage_trie(*acc_path, *root);
+        for (acc_path, paths) in batch.iter_mut() {
+            let mut trie = store.open_storage_trie(*acc_path, *EMPTY_TRIE_HASH);
             // Get the corresponding nodes
             for node in nodes.drain(..paths.len().min(nodes.len())) {
                 let path = paths.remove(0);
                 // Add children to batch
                 let children = node_missing_children(&node, &path, trie.state())?;
                 paths.extend(children);
-                // If it is a leaf node, insert values into the trie
-                if let Node::Leaf(leaf) = node {
-                    let path = &path.concat(leaf.partial.clone()).to_bytes();
-                    if path.len() != 32 {
-                        // Something went wrong
-                        return Err(SyncError::CorruptPath);
-                    }
-                    trie.insert(path.to_vec(), leaf.value.encode_to_vec())?;
-                }
+                let hash = node.compute_hash();
+                trie.state_mut().write_node(node, hash)?;
             }
-            // Update current root
-            *root = trie.hash()?;
             // Cut the loop if we ran out of nodes
             if nodes.is_empty() {
                 break;
@@ -894,10 +940,11 @@ async fn heal_storage_batch(
         }
         // Return remaining and added paths to be added to the queue
         // Filter out the storages we completely fetched
-        batch.retain(|_, v| !v.1.is_empty());
+        batch.retain(|_, v| !v.is_empty());
         return Ok((batch, false));
     }
     // Pivot became stale, lets inform the fetcher
+    info!("Heal storage batch: stale pivot");
     Ok((batch, true))
 }
 

@@ -223,7 +223,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
             tokio::select! {
                 // Expect a message from the remote peer
                 message = self.receive() => {
-                    self.handle_message(message?, sender.clone()).await?;
+                    let _ = self.handle_message(message?, sender.clone()).await;
                 }
                 // Expect a message from the backend
                 Some(message) = receiver.recv() => {
