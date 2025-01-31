@@ -1375,6 +1375,24 @@ mod canonic_encoding {
                 P2PTransaction::PrivilegedL2Transaction(_) => TxType::Privileged,
             }
         }
+        pub fn tx_data(&self) -> &Bytes {
+            match self {
+                P2PTransaction::LegacyTransaction(tx) => &tx.data,
+                P2PTransaction::EIP2930Transaction(tx) => &tx.data,
+                P2PTransaction::EIP1559Transaction(tx) => &tx.data,
+                P2PTransaction::EIP4844TransactionWithBlobs(tx) => &tx.tx.data,
+                P2PTransaction::PrivilegedL2Transaction(tx) => &tx.data,
+            }
+        }
+
+        pub fn compute_hash(&self) -> H256 {
+            let tx: Transaction = if let P2PTransaction::EIP4844TransactionWithBlobs(itx) = self {
+                Transaction::EIP4844Transaction(itx.tx.clone())
+            } else {
+                self.clone().try_into().unwrap()
+            };
+            tx.compute_hash()
+        }
 
         pub fn encode_canonical(&self, buf: &mut dyn bytes::BufMut) {
             match self {

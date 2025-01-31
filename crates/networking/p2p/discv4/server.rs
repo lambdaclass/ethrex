@@ -690,6 +690,7 @@ pub(super) mod tests {
             signer,
             table,
             storage,
+            global_requested_transactions: Arc::new(Mutex::new(HashSet::new())),
             broadcast,
         };
 

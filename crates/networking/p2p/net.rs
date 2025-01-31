@@ -2,7 +2,7 @@ use discv4::{
     helpers::current_unix_time,
     server::{DiscoveryError, Discv4Server},
 };
-use ethrex_core::H512;
+use ethrex_core::{H256, H512};
 use ethrex_storage::Store;
 use k256::{
     ecdsa::SigningKey,
@@ -10,7 +10,7 @@ use k256::{
 };
 pub use kademlia::KademliaTable;
 use rlpx::{connection::RLPxConnBroadcastSender, handshake, message::Message as RLPxMessage};
-use std::{io, net::SocketAddr, sync::Arc};
+use std::{collections::HashSet, io, net::SocketAddr, sync::Arc};
 use tokio::{
     net::{TcpListener, TcpSocket, TcpStream},
     sync::Mutex,
@@ -49,6 +49,7 @@ struct P2PContext {
     signer: SigningKey,
     table: Arc<Mutex<KademliaTable>>,
     storage: Store,
+    global_requested_transactions: Arc<Mutex<HashSet<H256>>>,
     broadcast: RLPxConnBroadcastSender,
     local_node: Node,
     enr_seq: u64,
@@ -77,6 +78,7 @@ pub async fn start_network(
         signer,
         table: peer_table,
         storage,
+        global_requested_transactions: Arc::new(Mutex::new(HashSet::new())),
         broadcast: channel_broadcast_send_end,
     };
     let discovery = Discv4Server::try_new(context.clone())

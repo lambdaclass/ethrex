@@ -1,7 +1,5 @@
 use bytes::BufMut;
 use bytes::Bytes;
-use ethrex_blockchain::error::MempoolError;
-use ethrex_blockchain::mempool;
 use ethrex_core::types::P2PTransaction;
 use ethrex_core::types::WrappedEIP4844Transaction;
 use ethrex_core::{types::Transaction, H256};
@@ -63,9 +61,9 @@ impl RLPxMessage for Transactions {
 // Broadcast message
 #[derive(Debug)]
 pub(crate) struct NewPooledTransactionHashes {
-    transaction_types: Bytes,
-    transaction_sizes: Vec<usize>,
-    transaction_hashes: Vec<H256>,
+    pub transaction_types: Bytes,
+    pub transaction_sizes: Vec<usize>,
+    pub transaction_hashes: Vec<H256>,
 }
 
 impl NewPooledTransactionHashes {
@@ -91,10 +89,6 @@ impl NewPooledTransactionHashes {
             transaction_sizes,
             transaction_hashes,
         }
-    }
-
-    pub fn get_transactions_to_request(&self, storage: &Store) -> Result<Vec<H256>, StoreError> {
-        storage.filter_unknown_transactions(&self.transaction_hashes)
     }
 }
 
@@ -236,8 +230,8 @@ impl RLPxMessage for GetPooledTransactions {
 pub(crate) struct PooledTransactions {
     // id is a u64 chosen by the requesting peer, the responding peer must mirror the value for the response
     // https://github.com/ethereum/devp2p/blob/master/caps/eth.md#protocol-messages
-    id: u64,
-    pooled_transactions: Vec<P2PTransaction>,
+    pub id: u64,
+    pub pooled_transactions: Vec<P2PTransaction>,
 }
 
 impl PooledTransactions {
@@ -246,22 +240,6 @@ impl PooledTransactions {
             pooled_transactions,
             id,
         }
-    }
-
-    /// Saves every incoming pooled transaction to the mempool.
-
-    pub fn handle(self, store: &Store) -> Result<(), MempoolError> {
-        for tx in self.pooled_transactions {
-            if let P2PTransaction::EIP4844TransactionWithBlobs(itx) = tx {
-                mempool::add_blob_transaction(itx.tx, itx.blobs_bundle, store)?;
-            } else {
-                let regular_tx = tx
-                    .try_into()
-                    .map_err(|error| MempoolError::StoreError(StoreError::Custom(error)))?;
-                mempool::add_transaction(regular_tx, store)?;
-            }
-        }
-        Ok(())
     }
 }
 
@@ -290,6 +268,7 @@ impl RLPxMessage for PooledTransactions {
 
 #[cfg(test)]
 mod tests {
+
     use ethrex_core::{types::P2PTransaction, H256};
 
     use crate::rlpx::{

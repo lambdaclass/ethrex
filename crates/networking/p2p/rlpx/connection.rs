@@ -1,3 +1,9 @@
+use std::{
+    collections::{HashMap, HashSet},
+    sync::Arc,
+};
+mod pending_requests;
+
 use crate::{
     peer_channels::PeerChannels,
     rlpx::{
@@ -24,8 +30,8 @@ use ethrex_core::{H256, H512};
 use ethrex_storage::Store;
 use futures::SinkExt;
 use k256::{ecdsa::SigningKey, PublicKey, SecretKey};
+use pending_requests::TransactionRequest;
 use rand::random;
-use std::sync::Arc;
 use tokio::{
     io::{AsyncRead, AsyncWrite},
     sync::{
@@ -38,11 +44,13 @@ use tokio::{
 use tokio_stream::StreamExt;
 use tokio_util::codec::Framed;
 
+use super::utils::log_peer_warn;
 const CAP_P2P: (Capability, u8) = (Capability::P2p, 5);
 const CAP_ETH: (Capability, u8) = (Capability::Eth, 68);
 const CAP_SNAP: (Capability, u8) = (Capability::Snap, 1);
 const SUPPORTED_CAPABILITIES: [(Capability, u8); 3] = [CAP_P2P, CAP_ETH, CAP_SNAP];
-const PERIODIC_TASKS_CHECK_INTERVAL: std::time::Duration = std::time::Duration::from_secs(15);
+const PERIODIC_TASKS_CHECK_INTERVAL: std::time::Duration = std::time::Duration::from_secs(5);
+const PERIODIC_PING_INTERVAL: std::time::Duration = std::time::Duration::from_secs(15);
 
 pub(crate) type Aes256Ctr64BE = ctr::Ctr64BE<aes::Aes256>;
 
@@ -69,6 +77,8 @@ pub(crate) struct RLPxConnection<S> {
     storage: Store,
     capabilities: Vec<(Capability, u8)>,
     next_periodic_task_check: Instant,
+    next_periodic_ping: Instant,
+    global_requested_transactions: Arc<Mutex<HashSet<H256>>>,
     /// Send end of the channel used to broadcast messages
     /// to other connected peers, is ok to have it here,
     /// since internally it's an Arc.
@@ -87,6 +97,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
         stream: S,
         codec: RLPxCodec,
         storage: Store,
+        global_requested_transactions: Arc<Mutex<HashSet<H256>>>,
         connection_broadcast: RLPxConnBroadcastSender,
     ) -> Self {
         Self {
@@ -96,6 +107,8 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
             storage,
             capabilities: vec![],
             next_periodic_task_check: Instant::now() + PERIODIC_TASKS_CHECK_INTERVAL,
+            next_periodic_ping: Instant::now() + PERIODIC_PING_INTERVAL,
+            global_requested_transactions,
             connection_broadcast_send: connection_broadcast,
         }
     }
@@ -103,10 +116,16 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
     /// Handshake already performed, now it starts a peer connection.
     /// It runs in it's own task and blocks until the connection is dropped
     pub async fn start(&mut self, table: Arc<Mutex<crate::kademlia::KademliaTable>>) {
+        let mut pending_requests = HashMap::new();
         log_peer_debug(&self.node, "Starting RLPx connection");
         if let Err(e) = self.exchange_hello_messages().await {
-            self.connection_failed("Hello messages exchange failed", e, table)
-                .await;
+            self.connection_failed(
+                "Hello messages exchange failed",
+                e,
+                table,
+                &mut pending_requests,
+            )
+            .await;
         } else {
             // Handshake OK: handle connection
             // Create channels to communicate directly to the peer
@@ -126,9 +145,17 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
                 peer_channels,
                 capabilities,
             );
-            if let Err(e) = self.connection_loop(sender, receiver).await {
-                self.connection_failed("Error during RLPx connection", e, table)
-                    .await;
+            if let Err(e) = self
+                .connection_loop(sender, receiver, &mut pending_requests)
+                .await
+            {
+                self.connection_failed(
+                    "Error during RLPx connection",
+                    e,
+                    table,
+                    &mut pending_requests,
+                )
+                .await;
             }
         }
     }
@@ -138,6 +165,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
         error_text: &str,
         error: RLPxError,
         table: Arc<Mutex<crate::kademlia::KademliaTable>>,
+        pending_requests: &mut HashMap<u64, TransactionRequest>,
     ) {
         self.send(Message::Disconnect(DisconnectMessage {
             reason: self.match_disconnect_reason(&error),
@@ -157,6 +185,13 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
             &format!("{error_text}: ({error}), discarding peer {remote_node_id}"),
         );
         table.lock().await.replace_peer(remote_node_id);
+
+        // Clear pending requested transactions from peer.
+        pending_requests::remove_peer_pending_requests(
+            &self.global_requested_transactions,
+            pending_requests,
+        )
+        .await;
     }
 
     fn match_disconnect_reason(&self, error: &RLPxError) -> Option<u8> {
@@ -203,9 +238,11 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
         &mut self,
         sender: mpsc::Sender<Message>,
         mut receiver: mpsc::Receiver<Message>,
+        pending_requests: &mut HashMap<u64, TransactionRequest>,
     ) -> Result<(), RLPxError> {
         self.init_peer_conn().await?;
         log_peer_debug(&self.node, "Started peer main loop");
+        let mut next_request_id = random();
 
         // Subscribe this connection to the broadcasting channel.
         let mut broadcaster_receive = {
@@ -221,7 +258,8 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
             tokio::select! {
                 // Expect a message from the remote peer
                 message = self.receive() => {
-                    self.handle_message(message?, sender.clone()).await?;
+                    self.handle_message(message?, sender.clone(),
+                    &mut next_request_id, pending_requests).await?;
                 }
                 // Expect a message from the backend
                 Some(message) = receiver.recv() => {
@@ -241,7 +279,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
                 // Allow an interruption to check periodic tasks
                 _ = sleep(PERIODIC_TASKS_CHECK_INTERVAL) => () // noop
             }
-            self.check_periodic_tasks().await?;
+            self.check_periodic_tasks(pending_requests).await?;
         }
     }
 
@@ -254,10 +292,22 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
         }
     }
 
-    async fn check_periodic_tasks(&mut self) -> Result<(), RLPxError> {
+    async fn check_periodic_tasks(
+        &mut self,
+        pending_requests: &mut HashMap<u64, TransactionRequest>,
+    ) -> Result<(), RLPxError> {
         if Instant::now() >= self.next_periodic_task_check {
-            self.send(Message::Ping(PingMessage {})).await?;
-            log_peer_debug(&self.node, "Ping sent");
+            pending_requests::remove_stale_requests(
+                &self.global_requested_transactions,
+                pending_requests,
+            )
+            .await;
+
+            if Instant::now() >= self.next_periodic_ping {
+                self.send(Message::Ping(PingMessage {})).await?;
+                log_peer_debug(&self.node, "Ping sent");
+                self.next_periodic_ping = Instant::now() + PERIODIC_PING_INTERVAL;
+            }
             self.next_periodic_task_check = Instant::now() + PERIODIC_TASKS_CHECK_INTERVAL;
         };
         Ok(())
@@ -267,6 +317,8 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
         &mut self,
         message: Message,
         sender: mpsc::Sender<Message>,
+        next_request_id: &mut u64,
+        pending_requests: &mut HashMap<u64, TransactionRequest>,
     ) -> Result<(), RLPxError> {
         let peer_supports_eth = self.capabilities.contains(&CAP_ETH);
         let is_synced = self.storage.is_synced()?;
@@ -298,10 +350,15 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
             // TODO(#1129) Add the transaction to the mempool once received.
             Message::Transactions(txs) if peer_supports_eth => {
                 if is_synced {
+                    let mut valid_txs = vec![];
                     for tx in &txs.transactions {
-                        mempool::add_transaction(tx.clone(), &self.storage)?;
+                        if let Err(e) = mempool::add_transaction(tx.clone(), &self.storage) {
+                            log_peer_warn(&self.node, &format!("Error adding transaction: {}", e));
+                            continue;
+                        }
+                        valid_txs.push(tx.clone());
                     }
-                    self.broadcast_message(Message::Transactions(txs))?;
+                    self.broadcast_message(Message::Transactions(Transactions::new(valid_txs)))?;
                 }
             }
             Message::GetBlockHeaders(msg_data) if peer_supports_eth => {
@@ -329,16 +386,23 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
                 };
                 self.send(Message::Receipts(response)).await?;
             }
-            Message::NewPooledTransactionHashes(new_pooled_transaction_hashes)
-                if peer_supports_eth =>
-            {
-                //TODO(#1415): evaluate keeping track of requests to avoid sending the same twice.
-                let hashes =
-                    new_pooled_transaction_hashes.get_transactions_to_request(&self.storage)?;
-
-                //TODO(#1416): Evaluate keeping track of the request-id.
-                let request = GetPooledTransactions::new(random(), hashes);
-                self.send(Message::GetPooledTransactions(request)).await?;
+            Message::NewPooledTransactionHashes(msg) if peer_supports_eth => {
+                if let Some(new_request) = pending_requests::get_new_request_from_msg(
+                    msg,
+                    &self.global_requested_transactions,
+                    &self.storage,
+                )
+                .await?
+                {
+                    pending_requests.insert(*next_request_id, new_request.clone());
+                    let request_msg = GetPooledTransactions::new(
+                        *next_request_id,
+                        new_request.transaction_hashes,
+                    );
+                    self.send(Message::GetPooledTransactions(request_msg))
+                        .await?;
+                    *next_request_id += 1;
+                }
             }
             Message::GetPooledTransactions(msg) => {
                 let response = msg.handle(&self.storage)?;
@@ -346,7 +410,14 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
             }
             Message::PooledTransactions(msg) if peer_supports_eth => {
                 if is_synced {
-                    msg.handle(&self.storage)?;
+                    pending_requests::handle_response(
+                        msg,
+                        &self.storage,
+                        self.node,
+                        &self.global_requested_transactions,
+                        pending_requests,
+                    )
+                    .await?;
                 }
             }
             Message::GetStorageRanges(req) => {
