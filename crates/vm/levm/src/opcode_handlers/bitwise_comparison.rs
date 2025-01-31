@@ -13,7 +13,7 @@ use ethrex_core::U256;
 impl VM {
     // LT operation
     pub fn op_lt(&mut self, current_call_frame: &mut CallFrame) -> Result<OpcodeResult, VMError> {
-        self.increase_consumed_gas(current_call_frame, gas_cost::LT)?;
+        current_call_frame.increase_consumed_gas(gas_cost::LT)?;
         let lho = current_call_frame.stack.pop()?;
         let rho = current_call_frame.stack.pop()?;
         let result = u256_from_bool(lho < rho);
@@ -24,7 +24,7 @@ impl VM {
 
     // GT operation
     pub fn op_gt(&mut self, current_call_frame: &mut CallFrame) -> Result<OpcodeResult, VMError> {
-        self.increase_consumed_gas(current_call_frame, gas_cost::GT)?;
+        current_call_frame.increase_consumed_gas(gas_cost::GT)?;
         let lho = current_call_frame.stack.pop()?;
         let rho = current_call_frame.stack.pop()?;
         let result = u256_from_bool(lho > rho);
@@ -35,7 +35,7 @@ impl VM {
 
     // SLT operation (signed less than)
     pub fn op_slt(&mut self, current_call_frame: &mut CallFrame) -> Result<OpcodeResult, VMError> {
-        self.increase_consumed_gas(current_call_frame, gas_cost::SLT)?;
+        current_call_frame.increase_consumed_gas(gas_cost::SLT)?;
         let lho = current_call_frame.stack.pop()?;
         let rho = current_call_frame.stack.pop()?;
         let lho_is_negative = lho.bit(255);
@@ -54,7 +54,7 @@ impl VM {
 
     // SGT operation (signed greater than)
     pub fn op_sgt(&mut self, current_call_frame: &mut CallFrame) -> Result<OpcodeResult, VMError> {
-        self.increase_consumed_gas(current_call_frame, gas_cost::SGT)?;
+        current_call_frame.increase_consumed_gas(gas_cost::SGT)?;
         let lho = current_call_frame.stack.pop()?;
         let rho = current_call_frame.stack.pop()?;
         let lho_is_negative = lho.bit(255);
@@ -73,7 +73,7 @@ impl VM {
 
     // EQ operation (equality check)
     pub fn op_eq(&mut self, current_call_frame: &mut CallFrame) -> Result<OpcodeResult, VMError> {
-        self.increase_consumed_gas(current_call_frame, gas_cost::EQ)?;
+        current_call_frame.increase_consumed_gas(gas_cost::EQ)?;
         let lho = current_call_frame.stack.pop()?;
         let rho = current_call_frame.stack.pop()?;
         let result = u256_from_bool(lho == rho);
@@ -88,7 +88,7 @@ impl VM {
         &mut self,
         current_call_frame: &mut CallFrame,
     ) -> Result<OpcodeResult, VMError> {
-        self.increase_consumed_gas(current_call_frame, gas_cost::ISZERO)?;
+        current_call_frame.increase_consumed_gas(gas_cost::ISZERO)?;
 
         let operand = current_call_frame.stack.pop()?;
         let result = u256_from_bool(operand.is_zero());
@@ -100,7 +100,7 @@ impl VM {
 
     // AND operation
     pub fn op_and(&mut self, current_call_frame: &mut CallFrame) -> Result<OpcodeResult, VMError> {
-        self.increase_consumed_gas(current_call_frame, gas_cost::AND)?;
+        current_call_frame.increase_consumed_gas(gas_cost::AND)?;
         let a = current_call_frame.stack.pop()?;
         let b = current_call_frame.stack.pop()?;
         current_call_frame.stack.push(a & b)?;
@@ -110,7 +110,7 @@ impl VM {
 
     // OR operation
     pub fn op_or(&mut self, current_call_frame: &mut CallFrame) -> Result<OpcodeResult, VMError> {
-        self.increase_consumed_gas(current_call_frame, gas_cost::OR)?;
+        current_call_frame.increase_consumed_gas(gas_cost::OR)?;
         let a = current_call_frame.stack.pop()?;
         let b = current_call_frame.stack.pop()?;
         current_call_frame.stack.push(a | b)?;
@@ -120,7 +120,7 @@ impl VM {
 
     // XOR operation
     pub fn op_xor(&mut self, current_call_frame: &mut CallFrame) -> Result<OpcodeResult, VMError> {
-        self.increase_consumed_gas(current_call_frame, gas_cost::XOR)?;
+        current_call_frame.increase_consumed_gas(gas_cost::XOR)?;
         let a = current_call_frame.stack.pop()?;
         let b = current_call_frame.stack.pop()?;
         current_call_frame.stack.push(a ^ b)?;
@@ -130,7 +130,7 @@ impl VM {
 
     // NOT operation
     pub fn op_not(&mut self, current_call_frame: &mut CallFrame) -> Result<OpcodeResult, VMError> {
-        self.increase_consumed_gas(current_call_frame, gas_cost::NOT)?;
+        current_call_frame.increase_consumed_gas(gas_cost::NOT)?;
         let a = current_call_frame.stack.pop()?;
         current_call_frame.stack.push(!a)?;
 
@@ -139,7 +139,7 @@ impl VM {
 
     // BYTE operation
     pub fn op_byte(&mut self, current_call_frame: &mut CallFrame) -> Result<OpcodeResult, VMError> {
-        self.increase_consumed_gas(current_call_frame, gas_cost::BYTE)?;
+        current_call_frame.increase_consumed_gas(gas_cost::BYTE)?;
         let op1 = current_call_frame.stack.pop()?;
         let op2 = current_call_frame.stack.pop()?;
         let byte_index = match op1.try_into() {
@@ -173,7 +173,7 @@ impl VM {
 
     // SHL operation (shift left)
     pub fn op_shl(&mut self, current_call_frame: &mut CallFrame) -> Result<OpcodeResult, VMError> {
-        self.increase_consumed_gas(current_call_frame, gas_cost::SHL)?;
+        current_call_frame.increase_consumed_gas(gas_cost::SHL)?;
         let shift = current_call_frame.stack.pop()?;
         let value = current_call_frame.stack.pop()?;
 
@@ -190,7 +190,7 @@ impl VM {
 
     // SHR operation (shift right)
     pub fn op_shr(&mut self, current_call_frame: &mut CallFrame) -> Result<OpcodeResult, VMError> {
-        self.increase_consumed_gas(current_call_frame, gas_cost::SHR)?;
+        current_call_frame.increase_consumed_gas(gas_cost::SHR)?;
         let shift = current_call_frame.stack.pop()?;
         let value = current_call_frame.stack.pop()?;
 
@@ -207,7 +207,7 @@ impl VM {
 
     // SAR operation (arithmetic shift right)
     pub fn op_sar(&mut self, current_call_frame: &mut CallFrame) -> Result<OpcodeResult, VMError> {
-        self.increase_consumed_gas(current_call_frame, gas_cost::SAR)?;
+        current_call_frame.increase_consumed_gas(gas_cost::SAR)?;
         let shift = current_call_frame.stack.pop()?;
         let value = current_call_frame.stack.pop()?;
         let res = if shift < U256::from(256) {
