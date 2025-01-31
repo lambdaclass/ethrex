@@ -8,8 +8,7 @@ use crate::{
     },
     environment::Environment,
     errors::{
-        EVMConfigError, InternalError, OpcodeResult, TransactionReport, TxResult,
-        TxValidationError, VMError,
+        InternalError, OpcodeResult, TransactionReport, TxResult, TxValidationError, VMError,
     },
     gas_cost::{self, STANDARD_TOKEN_COST, TOTAL_COST_FLOOR_PER_TOKEN},
     precompiles::{
