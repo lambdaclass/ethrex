@@ -1,6 +1,6 @@
 use crate::{
     call_frame::CallFrame,
-    errors::{OpcodeSuccess, VMError},
+    errors::{OpcodeResult, VMError},
     gas_cost,
     memory::{self, calculate_memory_size},
     vm::VM,
@@ -15,7 +15,7 @@ impl VM {
     pub fn op_keccak256(
         &mut self,
         current_call_frame: &mut CallFrame,
-    ) -> Result<OpcodeSuccess, VMError> {
+    ) -> Result<OpcodeResult, VMError> {
         let offset = current_call_frame.stack.pop()?;
         let size: usize = current_call_frame
             .stack
@@ -25,10 +25,11 @@ impl VM {
 
         let new_memory_size = calculate_memory_size(offset, size)?;
 
-        self.increase_consumed_gas(
-            current_call_frame,
-            gas_cost::keccak256(new_memory_size, current_call_frame.memory.len(), size)?,
-        )?;
+        current_call_frame.increase_consumed_gas(gas_cost::keccak256(
+            new_memory_size,
+            current_call_frame.memory.len(),
+            size,
+        )?)?;
 
         let mut hasher = Keccak256::new();
         hasher.update(memory::load_range(
@@ -40,6 +41,6 @@ impl VM {
             .stack
             .push(U256::from_big_endian(&hasher.finalize()))?;
 
-        Ok(OpcodeSuccess::Continue)
+        Ok(OpcodeResult::Continue { pc_increment: 1 })
     }
 }

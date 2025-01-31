@@ -29,15 +29,30 @@ jobs:
         with:
           tool: hyperfine@1.16
 
+      - name: Install solc
+        uses: pontem-network/get-solc@master
+
       - name: Run PR benchmarks
         run: |
           cd crates/vm/levm
           make revm-comparison-ci
           {
             echo "#### Benchmark Results: Factorial";
-            cat factorial.md;
+            cat Factorial.md || echo "No results";
+            echo "#### Benchmark Results: Factorial - Recursive";
+            cat FactorialRecursive.md || echo "No results";
             echo "#### Benchmark Results: Fibonacci";
-            cat fibonacci.md;
+            cat Fibonacci.md || echo "No results";
+            echo "#### Benchmark Results: ManyHashes";
+            cat ManyHashes.md || echo "No results";
+            echo "#### Benchmark Results: BubbleSort";
+            cat BubbleSort.md || echo "No results";
+            echo "#### Benchmark Results: ERC20 - Transfer";
+            cat ERC20Transfer.md || echo "No results";
+            echo "#### Benchmark Results: ERC20 - Mint";
+            cat ERC20Mint.md || echo "No results";
+            echo "#### Benchmark Results: ERC20 - Approval";
+            cat ERC20Approval.md || echo "No results";
           } > pr_result.md
 
       - name: Upload PR results
@@ -68,15 +83,30 @@ jobs:
         with:
           tool: hyperfine@1.16
 
+      - name: Install solc
+        uses: pontem-network/get-solc@master
+
       - name: Run main benchmarks
         run: |
           cd crates/vm/levm
           make revm-comparison-ci
           {
             echo "#### Benchmark Results: Factorial";
-            cat factorial.md;
+            cat Factorial.md || echo "No results";
+            echo "#### Benchmark Results: Factorial - Recursive";
+            cat FactorialRecursive.md || echo "No results";
             echo "#### Benchmark Results: Fibonacci";
-            cat fibonacci.md;
+            cat Fibonacci.md || echo "No results";
+            echo "#### Benchmark Results: ManyHashes";
+            cat ManyHashes.md || echo "No results";
+            echo "#### Benchmark Results: BubbleSort";
+            cat BubbleSort.md || echo "No results";
+            echo "#### Benchmark Results: ERC20 - Transfer";
+            cat ERC20Transfer.md || echo "No results";
+            echo "#### Benchmark Results: ERC20 - Mint";
+            cat ERC20Mint.md || echo "No results";
+            echo "#### Benchmark Results: ERC20 - Approval";
+            cat ERC20Approval.md || echo "No results";
           } > main_result.md
 
       - name: Upload main results
@@ -158,6 +188,8 @@ jobs:
           cd crates/vm/levm && awk '/Summary: /,/Frontier/' test_result.txt;
 
       - name: Check EF-TESTS status is 100%
+        id: check_tests
+        continue-on-error: true
         run: |
           cd crates/vm/levm
           if [ "$(awk '/Summary:/ {print $(NF)}' test_result.txt)" != "(100.00%)" ]; then
@@ -184,12 +216,28 @@ jobs:
           comment-author: "github-actions[bot]"
           body-includes: "Summary:"
 
+      # If we have a failure, means that some ef-tests don't pass.
+      # If the condition is met, create or update the comment with the summary.
       - name: Create Comment
-        if: ${{ github.event_name == 'pull_request' }}
+        if: ${{ steps.check_tests.outcome == 'failure' && github.event_name == 'pull_request' }}
         uses: peter-evans/create-or-update-comment@v4
         with:
           comment-id: ${{ steps.fc.outputs.comment-id }}
           token: ${{ secrets.GITHUB_TOKEN }}
           issue-number: ${{ github.event.pull_request.number }}
           body-path: test_summary.txt
+          edit-mode: replace
+
+      # If we don't have a failure, means that all ef-tests pass.
+      # If comment-id != '', means that we've already created the comment.
+      # If both conditions are met, update the comment saying that all tests pass.
+      - name: Update Comment -- ALL
+        if: ${{ steps.check_tests.outcome != 'failure' && github.event_name == 'pull_request' && steps.fc.outputs.comment-id != '' }}
+        uses: peter-evans/create-or-update-comment@v4
+        with:
+          comment-id: ${{ steps.fc.outputs.comment-id }}
+          token: ${{ secrets.GITHUB_TOKEN }}
+          issue-number: ${{ github.event.pull_request.number }}
+          body: |
+            Summary: All EF-TESTS pass.
           edit-mode: replace
