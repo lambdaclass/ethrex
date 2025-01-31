@@ -135,18 +135,31 @@ impl Actor {
             tracing::info!("main loop started");
             loop {
                 let message = self.receiver.recv().await.unwrap();
-                tracing::info!(message = ?message, "received message");
                 match message {
                     Message::Serve(packet, from) => {
                         let packet_hash = packet.hash(&self.signer);
                         match packet.data {
-                            PacketData::Ping { from, .. } => {
+                            PacketData::Ping {
+                                from: from_endpoint,
+                                ..
+                            } => {
+                                let mut table = self.peers.lock().await;
+                                match table.entry(from) {
+                                    Entry::Vacant(entry) => {
+                                        entry.insert(PeerData::new_known(from_endpoint.clone()));
+                                    }
+                                    Entry::Occupied(mut entry) => {
+                                        let peer_data = entry.get_mut();
+                                        peer_data.last_ping_hash = Some(packet_hash);
+                                        peer_data.last_ping = Some(current_unix_time());
+                                    }
+                                }
                                 let ping_hash = packet_hash;
-                                let pong_packet_data = new_pong(from.clone(), ping_hash);
+                                let pong_packet_data = new_pong(from_endpoint.clone(), ping_hash);
                                 let pong_packet = Packet::new(pong_packet_data, self.node_id);
                                 let content = pong_packet.encode(&self.signer);
                                 main_loop_conn
-                                    .send_to(&content, from.udp_socket_addr())
+                                    .send_to(&content, from_endpoint.udp_socket_addr())
                                     .await
                                     .map_err(Error::FailedToReplayMessage)?;
                             }
