@@ -445,8 +445,5 @@ fn read_known_peers(file_path: PathBuf) -> Result<Vec<Node>, serde_json::Error> 
         return Ok(vec![]);
     };
 
-    match serde_json::from_reader(file) {
-        Ok(nodes) => Ok(nodes),
-        Err(e) => Err(e),
-    }
+    serde_json::from_reader(file)
 }
