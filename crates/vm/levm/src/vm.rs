@@ -20,7 +20,10 @@ use crate::{
 };
 use bytes::Bytes;
 use ethrex_core::{
-    types::{Fork, TxKind},
+    types::{
+        tx_fields::{AccessList, AuthorizationList},
+        Fork, TxKind,
+    },
     Address, H256, U256,
 };
 use std::{
@@ -80,20 +83,6 @@ pub struct VM {
     pub tx_kind: TxKind,
     pub access_list: AccessList,
     pub authorization_list: Option<AuthorizationList>,
-}
-
-pub type AccessList = Vec<(Address, Vec<H256>)>;
-
-pub type AuthorizationList = Vec<AuthorizationTuple>;
-// TODO: We have to implement this in ethrex_core
-#[derive(Debug, Clone, Default, Copy)]
-pub struct AuthorizationTuple {
-    pub chain_id: U256,
-    pub address: Address,
-    pub nonce: u64,
-    pub v: U256,
-    pub r_signature: U256,
-    pub s_signature: U256,
 }
 
 impl VM {

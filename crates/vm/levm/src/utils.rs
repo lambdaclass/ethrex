@@ -12,11 +12,14 @@ use crate::{
         BLOB_GAS_PER_BLOB, COLD_ADDRESS_ACCESS_COST, CREATE_BASE_COST, WARM_ADDRESS_ACCESS_COST,
     },
     opcodes::Opcode,
-    vm::{AccessList, AuthorizationList, AuthorizationTuple, Substate},
+    vm::Substate,
     AccountInfo,
 };
 use bytes::Bytes;
-use ethrex_core::{types::Fork, Address, H256, U256};
+use ethrex_core::{
+    types::{tx_fields::*, Fork},
+    Address, H256, U256,
+};
 use ethrex_rlp;
 use ethrex_rlp::encode::RLPEncode;
 use keccak_hash::keccak;
@@ -302,8 +305,7 @@ pub fn get_intrinsic_gas(
 /// [EIP-7691](https://eips.ethereum.org/EIPS/eip-7691#specification).
 pub const fn max_blobs_per_block(fork: Fork) -> usize {
     match fork {
-        Fork::Prague => MAX_BLOB_COUNT_ELECTRA,
-        Fork::PragueEof => MAX_BLOB_COUNT_ELECTRA,
+        Fork::Prague | Fork::Osaka => MAX_BLOB_COUNT_ELECTRA,
         _ => MAX_BLOB_COUNT,
     }
 }
@@ -315,11 +317,9 @@ pub const fn max_blobs_per_block(fork: Fork) -> usize {
 /// calc_excess_blob_gas functions defined in EIP-4844 use the new
 /// values for the first block of the fork (and for all subsequent
 /// blocks)."
-
 pub const fn get_blob_base_fee_update_fraction_value(fork: Fork) -> U256 {
     match fork {
-        Fork::Prague => BLOB_BASE_FEE_UPDATE_FRACTION_PRAGUE,
-        Fork::PragueEof => BLOB_BASE_FEE_UPDATE_FRACTION_PRAGUE,
+        Fork::Prague | Fork::Osaka => BLOB_BASE_FEE_UPDATE_FRACTION_PRAGUE,
         _ => BLOB_BASE_FEE_UPDATE_FRACTION,
     }
 }
@@ -482,7 +482,7 @@ pub fn eip7702_recover_address(
     if auth_tuple.r_signature > *SECP256K1_ORDER || U256::zero() >= auth_tuple.r_signature {
         return Ok(None);
     }
-    if auth_tuple.v != U256::one() && auth_tuple.v != U256::zero() {
+    if auth_tuple.y_parity != U256::one() && auth_tuple.y_parity != U256::zero() {
         return Ok(None);
     }
 
@@ -509,7 +509,7 @@ pub fn eip7702_recover_address(
 
     let Ok(recovery_id) = RecoveryId::parse(
         auth_tuple
-            .v
+            .y_parity
             .as_u32()
             .try_into()
             .map_err(|_| VMError::Internal(InternalError::ConversionError))?,
