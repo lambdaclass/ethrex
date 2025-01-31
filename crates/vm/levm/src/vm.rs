@@ -20,7 +20,7 @@ use crate::{
 };
 use bytes::Bytes;
 use ethrex_core::{
-    types::{Fork, TxKind},
+    types::{Fork, ForkBlobSchedule, TxKind},
     Address, H256, U256,
 };
 use std::{
@@ -67,12 +67,16 @@ impl StateBackup {
     }
 }
 
-#[derive(Debug, Default, Clone)]
+#[derive(Debug, Default, Clone, Copy)]
 pub struct EVMConfig {
     pub fork: Fork,
+    // pub blobSchedule: ForkBlobSchedule,
 }
 
 impl EVMConfig {
+    // pub fn new(fork: Fork, blobSchedule: ForkBlobSchedule) -> EVMConfig {
+    // EVMConfig { fork, blobSchedule }
+    // }
     pub fn new(fork: Fork) -> EVMConfig {
         EVMConfig { fork }
     }

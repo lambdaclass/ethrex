@@ -240,8 +240,10 @@ cfg_if::cfg_if! {
             let mut receipts = Vec::new();
             let mut cumulative_gas_used = 0;
 
+            let config = EVMConfig {fork};
+
             for tx in block.body.transactions.iter() {
-                let report = execute_tx_levm(tx, block_header, store_wrapper.clone(), block_cache.clone(), fork).map_err(EvmError::from)?;
+                let report = execute_tx_levm(tx, block_header, store_wrapper.clone(), block_cache.clone(), config).map_err(EvmError::from)?;
 
                 let mut new_state = report.new_state.clone();
 
@@ -294,11 +296,10 @@ cfg_if::cfg_if! {
             block_header: &BlockHeader,
             db: Arc<dyn LevmDatabase>,
             block_cache: CacheDB,
-            fork: Fork
+            config: EVMConfig,
         ) -> Result<TransactionReport, VMError> {
             let gas_price : U256 = tx.effective_gas_price(block_header.base_fee_per_gas).ok_or(VMError::InvalidTransaction)?.into();
 
-            let config = EVMConfig {fork};
             let env = Environment {
                 origin: tx.sender(),
                 refunded_gas: 0,

@@ -41,7 +41,7 @@ pub struct Genesis {
 }
 
 #[allow(unused)]
-#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq)]
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct ForkBlobSchedule {
     pub target: u64,
