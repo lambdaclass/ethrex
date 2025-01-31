@@ -134,11 +134,7 @@ async fn main() {
         .get_one::<String>("datadir")
         .map_or(set_datadir(DEFAULT_DATADIR), |datadir| set_datadir(datadir));
 
-    let peers_file = if let Some(file) = matches.get_one::<String>("peers_file") {
-        PathBuf::from(file)
-    } else {
-        PathBuf::from(data_dir.clone() + "/peers.json")
-    };
+    let peers_file = PathBuf::from(data_dir.clone() + "/peers.json");
     info!("Reading known peers from {:?}", peers_file);
     match read_known_peers(peers_file.clone()) {
         Ok(ref mut known_peers) => bootnodes.append(known_peers),
@@ -444,13 +440,13 @@ async fn store_known_peers(table: Arc<Mutex<KademliaTable>>, file_path: PathBuf)
     };
 }
 
-fn read_known_peers(file_path: PathBuf) -> Result<Vec<Node>, String> {
+fn read_known_peers(file_path: PathBuf) -> Result<Vec<Node>, serde_json::Error> {
     let Ok(file) = std::fs::File::open(file_path) else {
         return Ok(vec![]);
     };
 
     match serde_json::from_reader(file) {
         Ok(nodes) => Ok(nodes),
-        Err(_) => Err("Could not read peers from file".into()),
+        Err(e) => Err(e),
     }
 }
