@@ -9,6 +9,7 @@ use ethrex_rlp::{
 use k256::ecdsa::SigningKey;
 use sha3::{Digest, Keccak256};
 use std::{
+    fmt::Display,
     net::{IpAddr, SocketAddr},
     str::FromStr,
 };
@@ -154,6 +155,15 @@ impl Node {
 
     pub fn tcp_addr(self) -> SocketAddr {
         SocketAddr::new(self.ip, self.tcp_port)
+    }
+}
+
+impl Display for Node {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&format!(
+            "{0}({1}:{2})",
+            self.node_id, self.ip, self.tcp_port
+        ))
     }
 }
 
