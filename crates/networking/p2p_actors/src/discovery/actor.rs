@@ -3,11 +3,11 @@ use crate::{
         ingress::{self, Mailbox, Message},
         packet::{Packet, PacketData, DEFAULT_UDP_PAYLOAD_BUF},
         utils::{
-            current_unix_time, is_last_ping_expired, neighbors, new_find_node, new_neighbors,
-            new_ping, new_pong,
+            current_unix_time, is_last_ping_expired, neighbors, new_enr_response, new_find_node,
+            new_neighbors, new_ping, new_pong, serialize_node_id,
         },
     },
-    types::{Endpoint, Node, NodeId, NodeState, PeerData},
+    types::{Endpoint, Node, NodeId, NodeRecord, NodeState, PeerData},
 };
 use commonware_runtime::Spawner;
 use ethrex_core::H256;
@@ -61,9 +61,8 @@ pub struct Actor {
     // TODO: This should be the mailbox of a separate process
     peers: Arc<Mutex<BTreeMap<SocketAddr, PeerData>>>,
 
-    endpoint: Endpoint,
+    node: Node,
     signer: SecretKey,
-    node_id: NodeId,
 
     lookup_interval: std::time::Duration,
     revalidation_interval: std::time::Duration,
@@ -83,9 +82,11 @@ impl Actor {
             mailbox: mailbox.clone(),
             receiver,
             peers,
-            endpoint: cfg.endpoint,
+            node: Node {
+                endpoint: cfg.endpoint,
+                id: cfg.node_id,
+            },
             signer: cfg.signer,
-            node_id: cfg.node_id,
             lookup_interval: cfg.seek_interval,
             revalidation_interval: cfg.revalidation_interval,
             timeout_duration: cfg.timeout_duration,
@@ -128,8 +129,8 @@ impl Actor {
         from: SocketAddr,
         conn: &UdpSocket,
         mailbox: Mailbox,
+        our_node: &Node,
         our_secret_key: &SecretKey,
-        our_node_id: NodeId,
         peers: Arc<Mutex<BTreeMap<SocketAddr, PeerData>>>,
     ) -> Result<(), Error> {
         match packet.data {
@@ -139,7 +140,7 @@ impl Actor {
             } => {
                 Self::handle_ping(
                     from_endpoint,
-                    our_node_id,
+                    our_node.id,
                     packet.hash,
                     our_secret_key,
                     conn,
@@ -150,13 +151,22 @@ impl Actor {
                 Self::handle_pong(from, ping_hash, peers).await?;
             }
             PacketData::FindNode { target, .. } => {
-                Self::handle_find_node(target, from, our_node_id, our_secret_key, peers, conn)
+                Self::handle_find_node(target, from, our_node.id, our_secret_key, peers, conn)
                     .await?;
             }
             PacketData::Neighbors { nodes, .. } => {
                 Self::handle_neighbors(nodes, peers, mailbox).await?;
             }
-            PacketData::ENRRequest { .. } => todo!(),
+            PacketData::ENRRequest { .. } => {
+                Self::handle_enr_request(
+                    packet.hash(our_secret_key),
+                    from,
+                    our_node,
+                    our_secret_key,
+                    conn,
+                )
+                .await?;
+            }
             PacketData::ENRResponse { .. } => todo!(),
         }
         Ok(())
@@ -239,7 +249,7 @@ impl Actor {
         conn.send_to(&content, from)
             .await
             .map_err(Error::FailedToReplayMessage)?;
-        tracing::info!(with = ?packet.data, "replied to find node");
+        tracing::info!(with = ?packet.data, to = ?serialize_node_id(&target), "replied to find node");
         Ok(())
     }
 
@@ -267,6 +277,24 @@ impl Actor {
         Ok(())
     }
 
+    async fn handle_enr_request(
+        request_hash: H256,
+        from: SocketAddr,
+        our_node: &Node,
+        our_secret_key: &SecretKey,
+        conn: &UdpSocket,
+    ) -> Result<(), Error> {
+        let node_record = NodeRecord::from_node(our_node, current_unix_time(), our_secret_key);
+        let response_packet_data = new_enr_response(request_hash, node_record);
+        let response_packet = Packet::new(response_packet_data, our_node.id, H256::default());
+        let content = response_packet.encode(our_secret_key);
+        conn.send_to(&content, from)
+            .await
+            .map_err(Error::FailedToReplayMessage)?;
+        tracing::info!(with = ?response_packet.data, "replied to enr request");
+        Ok(())
+    }
+
     async fn handle_lookup(
         target: NodeId,
         us: NodeId,
@@ -283,7 +311,10 @@ impl Actor {
             conn.send_to(&content, neighbor.endpoint.clone().udp_socket_addr())
                 .await
                 .map_err(|err| Error::FailedToLookup(err.to_string()))?;
-            tracing::debug!(sent = ?packet.data, "looking up for neighbors");
+            tracing::debug!(
+                from = ?serialize_node_id(&neighbor.id),
+                "looking up for neighbors"
+            );
         }
 
         Ok(())
@@ -315,7 +346,7 @@ impl Actor {
                     peer_data.last_ping_hash = Some(packet.hash(signer));
                 }
                 let ping_hash = packet.hash(signer);
-                tracing::debug!(sent = ?packet.data, ping_hash = ?ping_hash, "revalidating peer");
+                tracing::debug!(sent = ?packet.data, ping_hash = ?ping_hash, peer = ?serialize_node_id(&peer_data.id), "revalidating peer");
                 conn.send_to(&content, *peer_address)
                     .await
                     .map_err(|err| Error::FailedToRevalidate(err.to_string()))?;
@@ -326,13 +357,13 @@ impl Actor {
     }
 
     pub async fn run(mut self) -> Result<(), Error> {
-        let udp_socket_address = self.endpoint.clone().udp_socket_addr();
+        let udp_socket_address = self.node.endpoint.clone().udp_socket_addr();
 
         let conn = match UdpSocket::bind(udp_socket_address).await {
             Ok(conn) => Arc::new(conn),
             Err(err) => {
                 return Err(Error::FailedToBindSocket(
-                    self.endpoint.clone().udp_socket_addr(),
+                    self.node.endpoint.clone().udp_socket_addr(),
                     err.to_string(),
                 ))
             }
@@ -340,6 +371,7 @@ impl Actor {
 
         let main_loop_conn = conn.clone();
         let main_loop_runtime = self.runtime.clone();
+        let main_loop_node = self.node.clone();
         let main_loop_mailbox = self.mailbox.clone();
         let mut main_loop_handle = main_loop_runtime.spawn("discovery", async move {
             tracing::info!("main loop started");
@@ -352,8 +384,8 @@ impl Actor {
                             from,
                             &main_loop_conn,
                             main_loop_mailbox.clone(),
+                            &main_loop_node,
                             &self.signer,
-                            self.node_id,
                             self.peers.clone(),
                         )
                         .await?;
@@ -361,7 +393,7 @@ impl Actor {
                     Message::Lookup(target) => {
                         Self::handle_lookup(
                             target,
-                            self.node_id,
+                            main_loop_node.id,
                             &main_loop_conn,
                             &self.signer,
                             self.peers.clone(),
@@ -370,10 +402,10 @@ impl Actor {
                     }
                     Message::Revalidate => {
                         Self::handle_revalidate(
-                            self.endpoint.clone(),
+                            main_loop_node.endpoint.clone(),
                             &main_loop_conn,
                             &self.signer,
-                            self.node_id,
+                            main_loop_node.id,
                             self.peers.clone(),
                         )
                         .await?;
@@ -413,7 +445,7 @@ impl Actor {
                     }
                 };
 
-                tracing::info!(packet = ?packet.data, from = ?from, "received packet");
+                tracing::info!(packet = ?packet.data, from = ?serialize_node_id(&packet.node_id), "received packet");
 
                 listener_mailbox
                     .serve(packet, from)
@@ -435,7 +467,7 @@ impl Actor {
             "lookup".to_string(),
             self.runtime.clone(),
             self.mailbox.clone(),
-            Message::Lookup(self.node_id),
+            Message::Lookup(self.node.id),
             self.lookup_interval,
         )
         .await;

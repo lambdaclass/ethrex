@@ -6,7 +6,8 @@ use ethrex_rlp::{
     error::RLPDecodeError,
     structs::{Decoder, Encoder},
 };
-use libsecp256k1::PublicKeyFormat;
+use keccak_hash::keccak;
+use libsecp256k1::{Message, PublicKeyFormat, SecretKey, Signature};
 use std::{
     fmt::Display,
     net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr},
@@ -206,21 +207,72 @@ pub const MAX_NODE_RECORD_ENCODED_SIZE: usize = 300;
 
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub struct NodeRecord {
-    // Compressed secp256k1 public key
-    signature: [u8; 33],
+    signature: [u8; 64],
     seq: u64,
     id: String,
     pairs: Vec<(Bytes, Bytes)>,
 }
 
-impl NodeRecord {
-    pub fn new(signature: [u8; 33], seq: u64, id: String, pairs: Vec<(Bytes, Bytes)>) -> Self {
+impl Default for NodeRecord {
+    fn default() -> Self {
         Self {
-            signature,
+            signature: [0; 64],
+            seq: u64::default(),
+            id: String::default(),
+            pairs: Vec::default(),
+        }
+    }
+}
+
+impl NodeRecord {
+    pub fn new(signature: Signature, seq: u64, id: String, pairs: Vec<(Bytes, Bytes)>) -> Self {
+        Self {
+            signature: signature.serialize(),
             seq,
             id,
             pairs,
         }
+    }
+
+    pub fn from_node(node: &Node, seq: u64, signer: &SecretKey) -> Self {
+        let mut record = NodeRecord {
+            seq,
+            ..Default::default()
+        };
+        record
+            .pairs
+            .push(("id".into(), "v4".encode_to_vec().into()));
+        record
+            .pairs
+            .push(("ip".into(), node.endpoint.ip().encode_to_vec().into()));
+        record.pairs.push((
+            "secp256k1".into(),
+            node.id.serialize_compressed().encode_to_vec().into(),
+        ));
+        record.pairs.push((
+            "tcp".into(),
+            node.endpoint.tcp_port().encode_to_vec().into(),
+        ));
+        record.pairs.push((
+            "udp".into(),
+            node.endpoint.udp_port().encode_to_vec().into(),
+        ));
+
+        let mut rlp_encoded_record = Vec::new();
+        Encoder::new(&mut rlp_encoded_record)
+            .encode_field(&record.seq)
+            .encode_key_value_list::<Bytes>(&record.pairs)
+            .finish();
+
+        let message = Message::parse(keccak(&rlp_encoded_record).as_fixed_bytes());
+        let (signature, _recovery_id) = libsecp256k1::sign(&message, signer);
+        record.signature = signature.serialize();
+
+        record
+    }
+
+    pub fn signature(&self) -> Signature {
+        Signature::parse_standard(&self.signature).unwrap()
     }
 }
 
@@ -285,7 +337,7 @@ fn decode_node_record_optional_fields(
 pub struct PeerData {
     pub id: NodeId,
     pub endpoint: Endpoint,
-    // pub record: NodeRecord,
+    pub record: Option<NodeRecord>,
     pub last_ping_hash: Option<H256>,
     pub last_ping: Option<u64>,
     pub state: NodeState,
@@ -301,6 +353,7 @@ impl PeerData {
         Self {
             id,
             endpoint,
+            record: None,
             last_ping_hash: None,
             last_ping: None,
             state: NodeState::Known,
