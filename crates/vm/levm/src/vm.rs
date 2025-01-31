@@ -108,7 +108,7 @@ impl EVMConfig {
     /// After EIP-7691 the maximum number of blob hashes changes. For more
     /// information see
     /// [EIP-7691](https://eips.ethereum.org/EIPS/eip-7691#specification).
-    pub const fn max_blobs_per_block(fork: Fork) -> usize {
+    const fn max_blobs_per_block(fork: Fork) -> usize {
         match fork {
             Fork::Prague => MAX_BLOB_COUNT_ELECTRA,
             Fork::PragueEof => MAX_BLOB_COUNT_ELECTRA,
@@ -608,7 +608,15 @@ impl VM {
             }
 
             // (14) TYPE_3_TX_BLOB_COUNT_EXCEEDED
-            if blob_hashes.len() > EVMConfig::max_blobs_per_block(self.env.config.fork) {
+            if blob_hashes.len()
+                > self
+                    .env
+                    .config
+                    .blob_schedule
+                    .max
+                    .try_into()
+                    .map_err(|_| VMError::Internal(InternalError::ConversionError))?
+            {
                 return Err(VMError::TxValidation(
                     TxValidationError::Type3TxBlobCountExceeded,
                 ));
