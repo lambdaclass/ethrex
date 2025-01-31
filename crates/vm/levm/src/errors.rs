@@ -236,7 +236,7 @@ pub enum TxResult {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct TransactionReport {
+pub struct ExecutionReport {
     pub result: TxResult,
     pub new_state: HashMap<Address, Account>,
     pub gas_used: u64,
@@ -248,7 +248,7 @@ pub struct TransactionReport {
     pub created_address: Option<Address>,
 }
 
-impl TransactionReport {
+impl ExecutionReport {
     /// Function to add gas to report without exceeding the maximum gas limit
     pub fn add_gas_with_max(&mut self, gas: u64, max: u64) -> Result<(), VMError> {
         let new_gas_used = self

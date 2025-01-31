@@ -8,7 +8,7 @@ use crate::{
     },
     environment::Environment,
     errors::{
-        InternalError, OpcodeResult, OutOfGasError, TransactionReport, TxResult, TxValidationError,
+        ExecutionReport, InternalError, OpcodeResult, OutOfGasError, TxResult, TxValidationError,
         VMError,
     },
     gas_cost::{self, STANDARD_TOKEN_COST, TOTAL_COST_FLOOR_PER_TOKEN},
@@ -232,7 +232,7 @@ impl VM {
     pub fn run_execute(
         &mut self,
         current_call_frame: &mut CallFrame,
-    ) -> Result<TransactionReport, VMError> {
+    ) -> Result<ExecutionReport, VMError> {
         // Backup of Database, Substate, Gas Refunds and Transient Storage if sub-context is reverted
         let backup = StateBackup::new(
             self.cache.clone(),
@@ -292,7 +292,7 @@ impl VM {
     fn gas_used(
         &self,
         initial_call_frame: &CallFrame,
-        report: &TransactionReport,
+        report: &ExecutionReport,
     ) -> Result<u64, VMError> {
         if self.env.fork >= Fork::Prague {
             // If the transaction is a CREATE transaction, the calldata is emptied and the bytecode is assigned.
@@ -598,7 +598,7 @@ impl VM {
     fn finalize_execution(
         &mut self,
         initial_call_frame: &CallFrame,
-        report: &mut TransactionReport,
+        report: &mut ExecutionReport,
     ) -> Result<(), VMError> {
         // POST-EXECUTION Changes
         let sender_address = initial_call_frame.msg_sender;
@@ -702,7 +702,7 @@ impl VM {
         Ok(())
     }
 
-    pub fn execute(&mut self) -> Result<TransactionReport, VMError> {
+    pub fn execute(&mut self) -> Result<ExecutionReport, VMError> {
         let mut initial_call_frame = self
             .call_frames
             .pop()
@@ -850,8 +850,8 @@ impl VM {
     fn handle_create_non_empty_account(
         &mut self,
         initial_call_frame: &CallFrame,
-    ) -> Result<TransactionReport, VMError> {
-        let mut report = TransactionReport {
+    ) -> Result<ExecutionReport, VMError> {
+        let mut report = ExecutionReport {
             result: TxResult::Revert(VMError::AddressAlreadyOccupied),
             gas_used: self.env.gas_limit,
             gas_refunded: 0,

@@ -2,7 +2,7 @@ use crate::runner::{EFTestRunnerError, InternalError};
 use colored::Colorize;
 use ethrex_core::{types::Fork, Address, H256};
 use ethrex_levm::{
-    errors::{TransactionReport, TxResult, VMError},
+    errors::{ExecutionReport, TxResult, VMError},
     Account, StorageSlot,
 };
 use ethrex_storage::{error::StoreError, AccountUpdate};
@@ -455,7 +455,7 @@ impl EFTestReport {
 
     pub fn register_post_state_validation_failure(
         &mut self,
-        transaction_report: TransactionReport,
+        transaction_report: ExecutionReport,
         reason: String,
         failed_vector: TestVector,
     ) {

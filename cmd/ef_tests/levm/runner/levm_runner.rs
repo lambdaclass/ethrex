@@ -10,7 +10,7 @@ use ethrex_core::{
 };
 use ethrex_levm::{
     db::CacheDB,
-    errors::{TransactionReport, TxValidationError, VMError},
+    errors::{ExecutionReport, TxValidationError, VMError},
     vm::{AuthorizationTuple, VM},
     Environment,
 };
@@ -249,7 +249,7 @@ fn exception_is_expected(
 }
 
 pub fn ensure_post_state(
-    levm_execution_result: &Result<TransactionReport, VMError>,
+    levm_execution_result: &Result<ExecutionReport, VMError>,
     vector: &TestVector,
     test: &EFTest,
 ) -> Result<(), EFTestRunnerError> {
@@ -341,7 +341,7 @@ pub fn ensure_post_state(
 pub fn get_state_transitions(
     initial_state: &EvmState,
     block_hash: H256,
-    execution_report: &TransactionReport,
+    execution_report: &ExecutionReport,
 ) -> Vec<AccountUpdate> {
     let current_db = match initial_state {
         EvmState::Store(state) => state.database.store.clone(),
