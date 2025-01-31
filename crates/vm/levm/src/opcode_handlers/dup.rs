@@ -16,7 +16,7 @@ impl VM {
         depth: usize,
     ) -> Result<OpcodeResult, VMError> {
         // Increase the consumed gas
-        self.increase_consumed_gas(current_call_frame, gas_cost::DUPN)?;
+        current_call_frame.increase_consumed_gas(gas_cost::DUPN)?;
 
         // Ensure the stack has enough elements to duplicate
         if current_call_frame.stack.len() < depth {
@@ -35,6 +35,6 @@ impl VM {
         // Push the duplicated value onto the stack
         current_call_frame.stack.push(*value_at_depth)?;
 
-        Ok(OpcodeResult::Continue)
+        Ok(OpcodeResult::Continue { pc_increment: 1 })
     }
 }

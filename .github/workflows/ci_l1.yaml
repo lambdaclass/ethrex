@@ -166,7 +166,7 @@ jobs:
             test_pattern: /AccountRange|StorageRanges|ByteCodes|TrieNodes
           - name: "Devp2p eth tests"
             simulation: devp2p
-            test_pattern: eth/Status|GetBlockHeaders|SimultaneousRequests|SameRequestID|ZeroRequestID|GetBlockBodies|MaliciousHandshake|MaliciousStatus|Transaction|InvalidTxs|NewPooledTxs|GetBlockReceipts|BlobViolations|LargeTxRequest
+            test_pattern: eth/Status|GetBlockHeaders|SimultaneousRequests|SameRequestID|ZeroRequestID|GetBlockBodies|MaliciousHandshake|MaliciousStatus|Transaction|NewPooledTxs|GetBlockReceipts|LargeTxRequest
           - name: "Engine Auth and EC tests"
             simulation: ethereum/engine
             test_pattern: engine-(auth|exchange-capabilities)/

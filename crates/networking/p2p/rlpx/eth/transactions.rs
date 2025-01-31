@@ -11,10 +11,12 @@ use ethrex_rlp::{
 };
 use ethrex_storage::{error::StoreError, Store};
 
+use crate::rlpx::utils::log_peer_warn;
 use crate::rlpx::{
     message::RLPxMessage,
     utils::{snappy_compress, snappy_decompress},
 };
+use crate::types::Node;
 
 // https://github.com/ethereum/devp2p/blob/master/caps/eth.md#transactions-0x02
 // Broadcast message
@@ -250,15 +252,21 @@ impl PooledTransactions {
 
     /// Saves every incoming pooled transaction to the mempool.
 
-    pub fn handle(self, store: &Store) -> Result<(), MempoolError> {
+    pub fn handle(self, node: &Node, store: &Store) -> Result<(), MempoolError> {
         for tx in self.pooled_transactions {
             if let P2PTransaction::EIP4844TransactionWithBlobs(itx) = tx {
-                mempool::add_blob_transaction(itx.tx, itx.blobs_bundle, store)?;
+                if let Err(e) = mempool::add_blob_transaction(itx.tx, itx.blobs_bundle, store) {
+                    log_peer_warn(node, &format!("Error adding transaction: {}", e));
+                    continue;
+                }
             } else {
                 let regular_tx = tx
                     .try_into()
                     .map_err(|error| MempoolError::StoreError(StoreError::Custom(error)))?;
-                mempool::add_transaction(regular_tx, store)?;
+                if let Err(e) = mempool::add_transaction(regular_tx, store) {
+                    log_peer_warn(node, &format!("Error adding transaction: {}", e));
+                    continue;
+                }
             }
         }
         Ok(())
