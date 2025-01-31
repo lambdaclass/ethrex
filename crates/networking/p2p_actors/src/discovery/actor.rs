@@ -218,14 +218,16 @@ impl Actor {
                             }
                             PacketData::Neighbors { nodes, .. } => {
                                 let mut table = self.peers.lock().await;
-
                                 for node in nodes {
-                                    table.insert(
-                                        node.endpoint.clone().udp_socket_addr(),
-                                        node.clone(),
-                                    );
-                                    // TODO: Spawn a RLPx connection to the new peer.
-
+                                    match table.entry(node.endpoint.clone().udp_socket_addr()) {
+                                        Entry::Vacant(entry) => {
+                                            entry.insert(PeerData::new_known(node.endpoint));
+                                        }
+                                        Entry::Occupied(mut _entry) => {
+                                            // TODO: What should we do here?
+                                            continue;
+                                        }
+                                    }
                                     main_loop_mailbox.lookup(node.id).await.unwrap();
                                 }
                             }
