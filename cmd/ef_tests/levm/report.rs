@@ -2,7 +2,7 @@ use crate::runner::{EFTestRunnerError, InternalError};
 use colored::Colorize;
 use ethrex_core::{types::Fork, Address, H256};
 use ethrex_levm::{
-    errors::{ExecutionReport, TxResult, VMError},
+    errors::{ExecutionReport, ExecutionResult, VMError},
     Account, StorageSlot,
 };
 use ethrex_storage::{error::StoreError, AccountUpdate};
@@ -798,10 +798,10 @@ impl fmt::Display for ComparisonReport {
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
 pub struct TestReRunExecutionReport {
-    pub execution_result_mismatch: Option<(TxResult, RevmExecutionResult)>,
+    pub execution_result_mismatch: Option<(ExecutionResult, RevmExecutionResult)>,
     pub gas_used_mismatch: Option<(u64, u64)>,
     pub gas_refunded_mismatch: Option<(u64, u64)>,
-    pub re_runner_error: Option<(TxResult, String)>,
+    pub re_runner_error: Option<(ExecutionResult, String)>,
 }
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
@@ -818,7 +818,7 @@ impl TestReRunReport {
     pub fn register_execution_result_mismatch(
         &mut self,
         vector: TestVector,
-        levm_result: TxResult,
+        levm_result: ExecutionResult,
         revm_result: RevmExecutionResult,
     ) {
         let value = Some((levm_result, revm_result));
@@ -880,7 +880,7 @@ impl TestReRunReport {
     pub fn register_re_run_failure(
         &mut self,
         vector: TestVector,
-        levm_result: TxResult,
+        levm_result: ExecutionResult,
         revm_error: EVMError<StoreError>,
     ) {
         let value = Some((levm_result, revm_error.to_string()));

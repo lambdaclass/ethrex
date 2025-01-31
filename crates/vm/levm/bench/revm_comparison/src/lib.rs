@@ -1,5 +1,5 @@
 use bytes::Bytes;
-use ethrex_levm::{errors::TxResult, testing::new_vm_with_bytecode};
+use ethrex_levm::{errors::ExecutionResult, testing::new_vm_with_bytecode};
 use revm::{
     db::BenchmarkDB,
     primitives::{address, Address, Bytecode, TransactTo},
@@ -20,20 +20,20 @@ pub fn run_with_levm(program: &str, runs: usize, calldata: &str) {
         vm.env.gas_limit = 100_000_000;
         vm.env.block_gas_limit = 100_000_001;
         let tx_report = black_box(vm.execute().unwrap());
-        assert!(tx_report.result == TxResult::Success);
+        assert!(tx_report.result == ExecutionResult::Success);
     }
     let mut vm = new_vm_with_bytecode(bytecode.clone()).unwrap();
     vm.call_frames.last_mut().unwrap().calldata = calldata.clone();
     vm.env.gas_limit = 100_000_000;
     vm.env.block_gas_limit = 100_000_001;
     let tx_report = black_box(vm.execute().unwrap());
-    assert!(tx_report.result == TxResult::Success);
+    assert!(tx_report.result == ExecutionResult::Success);
 
     match tx_report.result {
-        TxResult::Success => {
+        ExecutionResult::Success => {
             println!("output: \t\t0x{}", hex::encode(tx_report.output));
         }
-        TxResult::Revert(error) => panic!("Execution failed: {:?}", error),
+        ExecutionResult::Revert(error) => panic!("Execution failed: {:?}", error),
     }
 }
 

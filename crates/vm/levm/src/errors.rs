@@ -230,14 +230,14 @@ pub enum HaltReason {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub enum TxResult {
+pub enum ExecutionResult {
     Success,
     Revert(VMError),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ExecutionReport {
-    pub result: TxResult,
+    pub result: ExecutionResult,
     pub new_state: HashMap<Address, Account>,
     pub gas_used: u64,
     pub gas_refunded: u64,
@@ -265,6 +265,6 @@ impl ExecutionReport {
     }
 
     pub fn is_success(&self) -> bool {
-        matches!(self.result, TxResult::Success)
+        matches!(self.result, ExecutionResult::Success)
     }
 }
