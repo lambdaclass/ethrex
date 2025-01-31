@@ -67,6 +67,17 @@ impl StateBackup {
     }
 }
 
+#[derive(Debug, Default, Clone)]
+pub struct EVMConfig {
+    pub fork: Fork,
+}
+
+impl EVMConfig {
+    pub fn new(fork: Fork) -> EVMConfig {
+        EVMConfig { fork }
+    }
+}
+
 pub struct VM {
     pub call_frames: Vec<CallFrame>,
     pub env: Environment,
@@ -115,7 +126,7 @@ impl VM {
         let mut default_touched_accounts = HashSet::from_iter([env.origin].iter().cloned());
 
         // [EIP-3651] - Add coinbase to cache if the spec is SHANGHAI or higher
-        if env.fork >= Fork::Shanghai {
+        if env.config.fork >= Fork::Shanghai {
             default_touched_accounts.insert(env.coinbase);
         }
 
@@ -133,7 +144,7 @@ impl VM {
 
         // Add precompiled contracts addresses to cache.
         // TODO: Use the addresses from precompiles.rs in a future
-        let max_precompile_address = match env.fork {
+        let max_precompile_address = match env.config.fork {
             spec if spec >= Fork::Prague => SIZE_PRECOMPILES_PRAGUE,
             spec if spec >= Fork::Cancun => SIZE_PRECOMPILES_CANCUN,
             spec if spec < Fork::Cancun => SIZE_PRECOMPILES_PRE_CANCUN,
@@ -240,8 +251,8 @@ impl VM {
             self.env.transient_storage.clone(),
         );
 
-        if is_precompile(&current_call_frame.code_address, self.env.fork) {
-            let precompile_result = execute_precompile(current_call_frame, self.env.fork);
+        if is_precompile(&current_call_frame.code_address, self.env.config.fork) {
+            let precompile_result = execute_precompile(current_call_frame, self.env.config.fork);
             return self.handle_precompile_result(precompile_result, current_call_frame, backup);
         }
 
@@ -278,7 +289,7 @@ impl VM {
 
         let intrinsic_gas = get_intrinsic_gas(
             self.is_create(),
-            self.env.fork,
+            self.env.config.fork,
             &self.access_list,
             &self.authorization_list,
             initial_call_frame,
@@ -296,7 +307,7 @@ impl VM {
         initial_call_frame: &CallFrame,
         report: &TransactionReport,
     ) -> Result<u64, VMError> {
-        if self.env.fork >= Fork::Prague {
+        if self.env.config.fork >= Fork::Prague {
             // If the transaction is a CREATE transaction, the calldata is emptied and the bytecode is assigned.
             let calldata = if self.is_create() {
                 &initial_call_frame.bytecode
@@ -308,7 +319,7 @@ impl VM {
             // tx_calldata = nonzero_bytes_in_calldata * 16 + zero_bytes_in_calldata * 4
             // this is actually tokens_in_calldata * STANDARD_TOKEN_COST
             // see it in https://eips.ethereum.org/EIPS/eip-7623
-            let tokens_in_calldata: u64 = gas_cost::tx_calldata(calldata, self.env.fork)
+            let tokens_in_calldata: u64 = gas_cost::tx_calldata(calldata, self.env.config.fork)
                 .map_err(VMError::OutOfGas)?
                 .checked_div(STANDARD_TOKEN_COST)
                 .ok_or(VMError::Internal(InternalError::DivisionError))?;
@@ -341,11 +352,11 @@ impl VM {
         let sender_address = self.env.origin;
         let sender_account = get_account(&mut self.cache, &self.db, sender_address);
 
-        if self.env.fork >= Fork::Prague {
+        if self.env.config.fork >= Fork::Prague {
             // check for gas limit is grater or equal than the minimum required
             let intrinsic_gas: u64 = get_intrinsic_gas(
                 self.is_create(),
-                self.env.fork,
+                self.env.config.fork,
                 &self.access_list,
                 &self.authorization_list,
                 initial_call_frame,
@@ -353,7 +364,7 @@ impl VM {
 
             // calldata_cost = tokens_in_calldata * 4
             let calldata_cost: u64 =
-                gas_cost::tx_calldata(&initial_call_frame.calldata, self.env.fork)
+                gas_cost::tx_calldata(&initial_call_frame.calldata, self.env.config.fork)
                     .map_err(VMError::OutOfGas)?;
 
             // same as calculated in gas_used()
@@ -423,13 +434,13 @@ impl VM {
         let blob_gas_cost = get_blob_gas_price(
             self.env.tx_blob_hashes.clone(),
             self.env.block_excess_blob_gas,
-            self.env.fork,
+            self.env.config.fork,
         )?;
 
         // (2) INSUFFICIENT_MAX_FEE_PER_BLOB_GAS
         if let Some(tx_max_fee_per_blob_gas) = self.env.tx_max_fee_per_blob_gas {
             if tx_max_fee_per_blob_gas
-                < get_base_fee_per_blob_gas(self.env.block_excess_blob_gas, self.env.fork)?
+                < get_base_fee_per_blob_gas(self.env.block_excess_blob_gas, self.env.config.fork)?
             {
                 return Err(VMError::TxValidation(
                     TxValidationError::InsufficientMaxFeePerBlobGas,
@@ -467,7 +478,7 @@ impl VM {
         if self.is_create() {
             // [EIP-3860] - INITCODE_SIZE_EXCEEDED
             if initial_call_frame.calldata.len() > INIT_CODE_MAX_SIZE
-                && self.env.fork >= Fork::Shanghai
+                && self.env.config.fork >= Fork::Shanghai
             {
                 return Err(VMError::TxValidation(
                     TxValidationError::InitcodeSizeExceeded,
@@ -509,7 +520,7 @@ impl VM {
         // Transaction is type 3 if tx_max_fee_per_blob_gas is Some
         if self.env.tx_max_fee_per_blob_gas.is_some() {
             // (11) TYPE_3_TX_PRE_FORK
-            if self.env.fork < Fork::Cancun {
+            if self.env.config.fork < Fork::Cancun {
                 return Err(VMError::TxValidation(TxValidationError::Type3TxPreFork));
             }
 
@@ -533,7 +544,7 @@ impl VM {
             }
 
             // (14) TYPE_3_TX_BLOB_COUNT_EXCEEDED
-            if blob_hashes.len() > max_blobs_per_block(self.env.fork) {
+            if blob_hashes.len() > max_blobs_per_block(self.env.config.fork) {
                 return Err(VMError::TxValidation(
                     TxValidationError::Type3TxBlobCountExceeded,
                 ));
@@ -551,7 +562,7 @@ impl VM {
         // Transaction is type 4 if authorization_list is Some
         if let Some(auth_list) = &self.authorization_list {
             // (16) TYPE_4_TX_PRE_FORK
-            if self.env.fork < Fork::Prague {
+            if self.env.config.fork < Fork::Prague {
                 return Err(VMError::TxValidation(TxValidationError::Type4TxPreFork));
             }
 
@@ -775,7 +786,7 @@ impl VM {
     ) -> Result<(StorageSlot, bool), VMError> {
         // [EIP-2929] - Introduced conditional tracking of accessed storage slots for Berlin and later specs.
         let mut storage_slot_was_cold = false;
-        if self.env.fork >= Fork::Berlin {
+        if self.env.config.fork >= Fork::Berlin {
             storage_slot_was_cold = self
                 .accrued_substate
                 .touched_storage_slots

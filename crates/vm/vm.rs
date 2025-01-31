@@ -82,7 +82,7 @@ cfg_if::cfg_if! {
         use ethrex_levm::{
             db::{CacheDB, Database as LevmDatabase},
             errors::{TransactionReport, TxResult, VMError},
-            vm::VM,
+            vm::{VM, EVMConfig},
             Environment,
             Account
         };
@@ -112,6 +112,8 @@ cfg_if::cfg_if! {
                 Some(beacon_root) => beacon_root,
             };
 
+            let config = EVMConfig {fork};
+
             let env = Environment {
                 origin: *SYSTEM_ADDRESS,
                 gas_limit: 30_000_000,
@@ -125,7 +127,7 @@ cfg_if::cfg_if! {
                 block_blob_gas_used: block_header.blob_gas_used.map(U256::from),
                 block_gas_limit: 30_000_000,
                 transient_storage: HashMap::new(),
-                fork,
+                config,
                 ..Default::default()
             };
 
@@ -296,11 +298,12 @@ cfg_if::cfg_if! {
         ) -> Result<TransactionReport, VMError> {
             let gas_price : U256 = tx.effective_gas_price(block_header.base_fee_per_gas).ok_or(VMError::InvalidTransaction)?.into();
 
+            let config = EVMConfig {fork};
             let env = Environment {
                 origin: tx.sender(),
                 refunded_gas: 0,
                 gas_limit: tx.gas_limit(),
-                fork,
+                config,
                 block_number: block_header.number.into(),
                 coinbase: block_header.coinbase,
                 timestamp: block_header.timestamp.into(),

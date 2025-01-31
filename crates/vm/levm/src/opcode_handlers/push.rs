@@ -40,7 +40,7 @@ impl VM {
         current_call_frame: &mut CallFrame,
     ) -> Result<OpcodeResult, VMError> {
         // [EIP-3855] - PUSH0 is only available from SHANGHAI
-        if self.env.fork < Fork::Shanghai {
+        if self.env.config.fork < Fork::Shanghai {
             return Err(VMError::InvalidOpcode);
         }
 
