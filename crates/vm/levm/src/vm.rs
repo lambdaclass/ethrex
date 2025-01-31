@@ -68,7 +68,7 @@ impl StateBackup {
     }
 }
 
-#[derive(Debug, Default, Clone, Copy)]
+#[derive(Debug, Clone, Copy)]
 pub struct EVMConfig {
     pub fork: Fork,
     pub blob_schedule: ForkBlobSchedule,
@@ -133,6 +133,17 @@ impl EVMConfig {
             Fork::Prague => TARGET_BLOB_GAS_PER_BLOCK_PECTRA,
             Fork::PragueEof => TARGET_BLOB_GAS_PER_BLOCK_PECTRA,
             _ => TARGET_BLOB_GAS_PER_BLOCK,
+        }
+    }
+}
+
+impl Default for EVMConfig {
+    /// The default EVMConfig depends on the default Fork.
+    fn default() -> Self {
+        let fork = core::default::Default::default();
+        EVMConfig {
+            fork,
+            blob_schedule: Self::canonical_values(fork),
         }
     }
 }
