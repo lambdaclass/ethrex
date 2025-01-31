@@ -95,6 +95,7 @@ cfg_if::cfg_if! {
             store_wrapper: Arc<StoreWrapper>,
             block_header: &BlockHeader,
             fork: Fork,
+            state: &EvmState,
         ) -> Result<TransactionReport, EvmError> {
             lazy_static! {
                 static ref SYSTEM_ADDRESS: Address =
@@ -227,7 +228,7 @@ cfg_if::cfg_if! {
             cfg_if::cfg_if! {
                 if #[cfg(not(feature = "l2"))] {
                     if block_header.parent_beacon_block_root.is_some() && fork == Fork::Cancun {
-                        let report = beacon_root_contract_call_levm(store_wrapper.clone(), block_header, fork)?;
+                        let report = beacon_root_contract_call_levm(store_wrapper.clone(), block_header, fork, state)?;
                         block_cache.extend(report.new_state);
                     }
                 }

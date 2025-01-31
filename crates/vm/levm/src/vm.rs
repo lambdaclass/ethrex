@@ -75,7 +75,7 @@ pub struct EVMConfig {
 
 impl EVMConfig {
     // pub fn new(fork: Fork, blobSchedule: ForkBlobSchedule) -> EVMConfig {
-    // EVMConfig { fork, blobSchedule }
+    //     EVMConfig { fork, blobSchedule }
     // }
     pub fn new(fork: Fork) -> EVMConfig {
         EVMConfig { fork }
