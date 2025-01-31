@@ -224,7 +224,7 @@ cfg_if::cfg_if! {
             //eip 4788: execute beacon_root_contract_call before block transactions
             cfg_if::cfg_if! {
                 if #[cfg(not(feature = "l2"))] {
-                    if block_header.parent_beacon_block_root.is_some() && fork == Fork::Cancun {
+                    if block_header.parent_beacon_block_root.is_some() && fork >= Fork::Cancun {
                         let report = beacon_root_contract_call_levm(store_wrapper.clone(), block_header, fork)?;
                         block_cache.extend(report.new_state);
                     }
@@ -342,7 +342,7 @@ cfg_if::cfg_if! {
             cfg_if::cfg_if! {
                 if #[cfg(not(feature = "l2"))] {
                     //eip 4788: execute beacon_root_contract_call before block transactions
-                    if block_header.parent_beacon_block_root.is_some() && spec_id == SpecId::CANCUN {
+                    if block_header.parent_beacon_block_root.is_some() && spec_id >= SpecId::CANCUN {
                         beacon_root_contract_call(state, block_header, spec_id)?;
                     }
                 }

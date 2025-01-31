@@ -237,7 +237,7 @@ pub fn build_payload(
 pub fn apply_withdrawals(context: &mut PayloadBuildContext) -> Result<(), EvmError> {
     // Apply withdrawals & call beacon root contract, and obtain the new state root
     let spec_id = spec_id(&context.chain_config()?, context.payload.header.timestamp);
-    if context.payload.header.parent_beacon_block_root.is_some() && spec_id == SpecId::CANCUN {
+    if context.payload.header.parent_beacon_block_root.is_some() && spec_id >= SpecId::CANCUN {
         beacon_root_contract_call(context.evm_state, &context.payload.header, spec_id)?;
     }
     let withdrawals = context.payload.body.withdrawals.clone().unwrap_or_default();
