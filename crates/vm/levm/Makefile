@@ -130,7 +130,7 @@ revm-comparison-ci: compile-contracts
 build-revm-comparison:
 	cd bench/revm_comparison && \
 		CARGO_TARGET_DIR=../../target \
-		cargo build --release --bin benchmark
+		RUST_BACKTRACE=1 cargo build --release --bin benchmark
 
 ###### Build Client with LEVM ######
 
