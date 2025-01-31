@@ -8,7 +8,11 @@ use ethrex_rlp::{
 };
 use k256::ecdsa::SigningKey;
 use sha3::{Digest, Keccak256};
-use std::net::{IpAddr, SocketAddr};
+use std::{
+    fmt::Display,
+    net::{IpAddr, SocketAddr},
+    str::FromStr,
+};
 
 const MAX_NODE_RECORD_ENCODED_SIZE: usize = 300;
 
@@ -78,7 +82,61 @@ impl RLPDecode for Node {
     }
 }
 
+impl<'de> serde::de::Deserialize<'de> for Node {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        Node::from_str(&<String>::deserialize(deserializer)?).map_err(serde::de::Error::custom)
+    }
+}
+
+impl FromStr for Node {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            s if s.starts_with("enode://") => Self::from_enode_url(s),
+            // TODO implement enr strings, see #1757
+            _ => Err("Invalid network address format".into()),
+        }
+    }
+}
+
 impl Node {
+    pub fn from_enode_url(enode: &str) -> Result<Self, String> {
+        let node_id = H512::from_str(&enode[8..136]).map_err(|_| "Could not parse node_id")?;
+
+        let address_start = 137;
+        let address_part = &enode[address_start..];
+
+        // Remove `?discport=` if present
+        let address_part = match address_part.find('?') {
+            Some(pos) => &address_part[..pos],
+            None => address_part,
+        };
+
+        let socket_address: SocketAddr = address_part
+            .parse()
+            .map_err(|_| "Could not parse socket address")?;
+        let ip = socket_address.ip();
+        let port = socket_address.port();
+
+        let udp_port = match enode.find("?discport=") {
+            Some(pos) => enode[pos + 10..]
+                .parse()
+                .map_err(|_| "Could not parse discport")?,
+            None => port,
+        };
+
+        Ok(Self {
+            node_id,
+            ip,
+            tcp_port: port,
+            udp_port,
+        })
+    }
+
     pub fn enode_url(&self) -> String {
         let node_id = hex::encode(self.node_id);
         let node_ip = self.ip;
@@ -97,6 +155,15 @@ impl Node {
 
     pub fn tcp_addr(self) -> SocketAddr {
         SocketAddr::new(self.ip, self.tcp_port)
+    }
+}
+
+impl Display for Node {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&format!(
+            "{0}({1}:{2})",
+            self.node_id, self.ip, self.tcp_port
+        ))
     }
 }
 
@@ -269,5 +336,46 @@ impl RLPEncode for Node {
             .encode_field(&self.tcp_port)
             .encode_field(&self.node_id)
             .finish();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::types::Node;
+    use ethrex_core::H512;
+    use std::{net::SocketAddr, str::FromStr};
+
+    #[test]
+    fn parse_node_from_string() {
+        let input = "enode://d860a01f9722d78051619d1e2351aba3f43f943f6f00718d1b9baa4101932a1f5011f16bb2b1bb35db20d6fe28fa0bf09636d26a87d31de9ec6203eeedb1f666@18.138.108.67:30303";
+        let bootnode = Node::from_enode_url(input).unwrap();
+        let node_id = H512::from_str(
+            "d860a01f9722d78051619d1e2351aba3f43f943f6f00718d1b9baa4101932a1f5011f16bb2b1bb35db20d6fe28fa0bf09636d26a87d31de9ec6203eeedb1f666")
+            .unwrap();
+        let socket_address = SocketAddr::from_str("18.138.108.67:30303").unwrap();
+        let expected_bootnode = Node {
+            ip: socket_address.ip(),
+            node_id,
+            tcp_port: socket_address.port(),
+            udp_port: socket_address.port(),
+        };
+        assert_eq!(bootnode, expected_bootnode);
+    }
+
+    #[test]
+    fn parse_node_with_discport_from_string() {
+        let input = "enode://d860a01f9722d78051619d1e2351aba3f43f943f6f00718d1b9baa4101932a1f5011f16bb2b1bb35db20d6fe28fa0bf09636d26a87d31de9ec6203eeedb1f666@18.138.108.67:30303?discport=30305";
+        let node = Node::from_enode_url(input).unwrap();
+        let node_id = H512::from_str(
+            "d860a01f9722d78051619d1e2351aba3f43f943f6f00718d1b9baa4101932a1f5011f16bb2b1bb35db20d6fe28fa0bf09636d26a87d31de9ec6203eeedb1f666")
+            .unwrap();
+        let socket_address = SocketAddr::from_str("18.138.108.67:30303").unwrap();
+        let expected_bootnode = Node {
+            ip: socket_address.ip(),
+            node_id,
+            tcp_port: socket_address.port(),
+            udp_port: 30305,
+        };
+        assert_eq!(node, expected_bootnode);
     }
 }
