@@ -103,17 +103,24 @@ async fn main() {
         .unwrap_or_default();
 
     if network == "holesky" {
-        warn!("Using holesky presets, bootnodes field will be ignored");
+        info!("Adding holesky preset bootnodes");
         // Set holesky presets
         network = String::from(networks::HOLESKY_GENESIS_PATH);
-        bootnodes = networks::HOLESKY_BOOTNODES.to_vec();
+        bootnodes.extend(networks::HOLESKY_BOOTNODES.iter());
     }
 
     if network == "sepolia" {
-        warn!("Using sepolia presets, bootnodes field will be ignored");
+        info!("Adding sepolia preset bootnodes");
         // Set sepolia presets
         network = String::from(networks::SEPOLIA_GENESIS_PATH);
-        bootnodes = networks::SEPOLIA_BOOTNODES.to_vec();
+        bootnodes.extend(networks::SEPOLIA_BOOTNODES.iter());
+    }
+
+    if network == "mekong" {
+        info!("Adding mekong preset bootnodes");
+        // Set mekong presets
+        network = String::from(networks::MEKONG_GENESIS_PATH);
+        bootnodes.extend(networks::MEKONG_BOOTNODES.iter());
     }
 
     if network == "mekong" {
