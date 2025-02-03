@@ -3,11 +3,7 @@ use ethrex_core::{
     types::{AccountState, Block, BlockHash, EMPTY_KECCACK_HASH},
     BigEndianHash, H256, U256, U512,
 };
-use ethrex_rlp::{
-    decode::RLPDecode,
-    encode::RLPEncode,
-    error::RLPDecodeError,
-};
+use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode, error::RLPDecodeError};
 use ethrex_storage::{error::StoreError, Store};
 use ethrex_trie::{Nibbles, Node, TrieError, TrieState, EMPTY_TRIE_HASH};
 use std::{cmp::min, collections::BTreeMap, sync::Arc};
@@ -541,9 +537,8 @@ async fn storage_fetcher(
             for account_hashes_and_roots in msg_buffer {
                 if !account_hashes_and_roots.is_empty() {
                     pending_storage.extend(account_hashes_and_roots);
-                }
-                // Empty message signaling no more bytecodes to sync
-                else {
+                } else {
+                    // Empty message signaling no more bytecodes to sync
                     incoming = false
                 }
             }
@@ -561,7 +556,8 @@ async fn storage_fetcher(
             // This uses a loop inside the main loop as the result from these tasks may lead to more values in queue
             let mut storage_tasks = tokio::task::JoinSet::new();
             while !stale
-                && (pending_storage.len() >= BATCH_SIZE || (!incoming && !pending_storage.is_empty()))
+                && (pending_storage.len() >= BATCH_SIZE
+                    || (!incoming && !pending_storage.is_empty()))
             {
                 let next_batch = pending_storage
                     .drain(..BATCH_SIZE.min(pending_storage.len()))
