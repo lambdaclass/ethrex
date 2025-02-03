@@ -77,6 +77,27 @@ impl From<ExecutionDB> for EvmState {
     }
 }
 
+impl From<Store> for EvmState {
+    fn from(value: Store) -> Self {
+        let latest_block_idx = value.get_latest_block_number().unwrap();
+        let latest_block = value.get_block_header(latest_block_idx).unwrap().unwrap();
+        let block_hash = latest_block.parent_hash;
+        dbg!(&block_hash);
+        let store_wrapper = StoreWrapper {
+            store: value,
+            block_hash: latest_block.parent_hash,
+        };
+
+        let state = revm::db::State::builder()
+            .with_database(store_wrapper)
+            .with_bundle_update()
+            .without_state_clear()
+            .build();
+
+        EvmState::Store(state)
+    }
+}
+
 cfg_if::cfg_if! {
     if #[cfg(feature = "levm")] {
         use ethrex_levm::{

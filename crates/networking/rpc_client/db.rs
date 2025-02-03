@@ -7,11 +7,13 @@ use crate::constants::{CANCUN_CONFIG, RPC_RATE_LIMIT};
 use crate::{get_account, get_block, get_storage, retry};
 
 use crate::Account;
-use ethrex_core::types::AccountInfo;
+use ethrex_core::types::{AccountInfo, GenesisAccount};
 use ethrex_core::{
     types::{Block, TxKind},
     Address, H256,
 };
+use ethrex_storage::error::StoreError;
+use ethrex_storage::{EngineType, Store};
 use ethrex_vm::execution_db::{ExecutionDB, ToExecDB};
 use ethrex_vm::spec_id;
 use futures_util::future::join_all;
@@ -107,6 +109,77 @@ impl RpcDB {
         }
 
         Ok(fetched)
+    }
+
+    pub fn to_in_memory_store(&self, block: Block) -> Result<Store, StoreError> {
+        let chain_config: ethrex_core::types::ChainConfig = CANCUN_CONFIG;
+        let CacheDB { db, .. } = ExecutionDB::pre_execute(
+            &block,
+            chain_config.chain_id,
+            spec_id(&chain_config, block.header.timestamp),
+            self,
+        )
+        .unwrap();
+
+        let store = Store::new("test", EngineType::InMemory)?;
+
+        let block_hash = block.hash();
+
+        // Store block data
+        let block_number: u64 = self.block_number.try_into().unwrap();
+        store.add_block(block)?;
+        store.set_canonical_block(block_number, block_hash)?;
+        store.update_latest_block_number(block_number)?;
+        store.update_earliest_block_number(block_number)?;
+
+        // Store genesis state trie
+        let genesis_accs: HashMap<Address, GenesisAccount> = db
+            .cache
+            .borrow()
+            .iter()
+            .filter_map(|(addr, opt_acc)| {
+                opt_acc.as_ref().map(|acc| {
+                    let acc_c = acc.clone();
+                    (
+                        addr.clone(),
+                        GenesisAccount {
+                            code: acc_c.code.unwrap_or_default(),
+                            storage: acc_c.storage,
+                            balance: acc_c.account_state.balance,
+                            nonce: acc_c.account_state.nonce,
+                        },
+                    )
+                })
+            })
+            .collect();
+        store.setup_genesis_state_trie(genesis_accs)?;
+        store.set_chain_config(&chain_config)?;
+
+        // Add account states and codes
+        /*for (address, account) in db.cache.borrow().iter() {
+            if let Some(account) = account {
+                // Add code if present
+                if let Some(code) = &account.code {
+                    store.add_account_code(account.account_state.code_hash, code.clone())?;
+                }
+
+                // Create account update with storage
+                let mut update = AccountUpdate::new(*address);
+                update.info = Some(AccountInfo {
+                    nonce: account.account_state.nonce,
+                    balance: account.account_state.balance,
+                    code_hash: account.account_state.code_hash,
+                });
+                update.added_storage = account.storage.clone();
+
+                // Apply account update
+                let res = store.apply_account_updates(block_hash, &[update])?;
+                dbg!(&res);
+            }
+        }*/
+
+        dbg!(&store);
+        Ok(store)
     }
 }
 
@@ -230,7 +303,7 @@ impl ToExecDB for RpcDB {
         block: &Block,
     ) -> Result<ethrex_vm::execution_db::ExecutionDB, ethrex_vm::errors::ExecutionDBError> {
         let parent_hash = block.header.parent_hash;
-        let chain_config = CANCUN_CONFIG;
+        let chain_config: ethrex_core::types::ChainConfig = CANCUN_CONFIG;
 
         // pre-execute and get all downloaded accounts
         let CacheDB { db, .. } = ExecutionDB::pre_execute(
