@@ -18,6 +18,8 @@ fmt: ## 📄 Runs rustfmt
 EFTEST_DIR := ../../../cmd/ef_tests/levm
 VECTORS_DIR := $(EFTEST_DIR)/vectors
 TMP_DIR := tmp
+TESTS_REPO := $(TMP_DIR)/ethereum-tests
+LEGACY_TESTS_DIRS := Constantinople Cancun
 
 SPECTEST_VERSION := v14.1
 SPECTEST_ARTIFACT := tests_$(SPECTEST_VERSION).tar.gz
@@ -28,18 +30,48 @@ STATETEST_NET := pectra-devnet-5
 STATETEST_ARTIFACT := fixtures_$(STATETEST_NET).tar.gz
 STATETEST_URL := https://github.com/ethereum/execution-spec-tests/releases/download/$(STATETEST_VERSION)/fixtures_$(STATETEST_NET).tar.gz
 
-download-evm-ef-tests: ## 📥 Download EF Tests
-	mkdir -p $(TMP_DIR)
+setup-test-dirs:
+	mkdir -p $(VECTORS_DIR)
+	# Create directory structure for legacy tests
+	mkdir -p $(VECTORS_DIR)/legacytests/Constantinople/GeneralStateTests
+	mkdir -p $(VECTORS_DIR)/legacytests/Cancun/GeneralStateTests
+	# Create directories for other test types
 	mkdir -p $(VECTORS_DIR)/GeneralStateTests
 	mkdir -p $(VECTORS_DIR)/state_tests
-	curl -L -o $(SPECTEST_ARTIFACT) $(SPECTEST_URL)
-	tar -xzf $(SPECTEST_ARTIFACT) -C $(TMP_DIR)
-	mv $(TMP_DIR)/tests-14.1/GeneralStateTests/* $(VECTORS_DIR)/GeneralStateTests/
+
+clone-ef-tests: ## 📥 Clone Ethereum Tests repository with submodules
+	mkdir -p $(TMP_DIR)
+	git clone --recurse-submodules https://github.com/ethereum/tests.git $(TESTS_REPO)
+
+update-ef-tests: ## 🔄 Update Ethereum Tests repository and submodules
+	cd $(TESTS_REPO) && git pull && git submodule update --init --recursive
+
+setup-legacy-tests: setup-test-dirs ## 📥 Setup Legacy Tests
+	# Copy from main repository
+	cp -r $(TESTS_REPO)/GeneralStateTests/* $(VECTORS_DIR)/GeneralStateTests/
+	# Copy legacy tests
+	@for dir in $(LEGACY_TESTS_DIRS); do \
+		if [ -d "$(TESTS_REPO)/LegacyTests/$$dir/GeneralStateTests" ]; then \
+			echo "Copying tests from LegacyTests/$$dir/GeneralStateTests"; \
+			cp -r $(TESTS_REPO)/LegacyTests/$$dir/GeneralStateTests/* $(VECTORS_DIR)/legacytests/$$dir/GeneralStateTests/; \
+		else \
+			echo "Warning: Directory $(TESTS_REPO)/LegacyTests/$$dir/GeneralStateTests not found"; \
+		fi \
+	done
+
+download-state-tests: ## 📥 Download and setup state tests fixtures
 	curl -L -o $(STATETEST_ARTIFACT) $(STATETEST_URL)
 	tar -xzf $(STATETEST_ARTIFACT) -C $(TMP_DIR)
 	mv $(TMP_DIR)/fixtures/state_tests/* $(VECTORS_DIR)/state_tests/
-	rm -rf $(TMP_DIR) tests_*.tar.gz
-	rm -rf $(TMP_DIR) fixtures_*.tar.gz
+	rm -f $(STATETEST_ARTIFACT)
+
+download-evm-ef-tests: clone-ef-tests setup-legacy-tests download-state-tests ## 📥 Download and setup all EF Tests
+	rm -rf $(TMP_DIR)
+
+clean-evm-ef-tests: ## 🗑️ Clean test vectors and temporary files
+	rm -rf $(VECTORS_DIR)
+	rm -rf $(TMP_DIR)
+	rm -f $(STATETEST_ARTIFACT)
 
 run-evm-ef-tests: ## 🏃‍♂️ Run EF Tests
 	if [ "$(QUIET)" = "true" ]; then \
@@ -60,9 +92,6 @@ run-evm-ef-tests-ci: ## 🏃‍♂️ Run EF Tests only with LEVM and without sp
 generate-evm-ef-tests-report: ## 📊 Generate EF Tests Report
 	cd ../../../ && \
 	cargo test -p ef_tests-levm --test ef_tests_levm --release -- --summary
-
-clean-evm-ef-tests: ## 🗑️  Clean test vectors
-	rm -rf $(VECTORS_DIR)
 
 ###### Benchmarks ######
 REPETITIONS := 10000
