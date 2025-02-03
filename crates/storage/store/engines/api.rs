@@ -256,19 +256,13 @@ pub trait StoreEngine: Debug + Send + Sync + RefUnwindSafe {
 
     fn get_header_download_checkpoint(&self) -> Result<Option<BlockHash>, StoreError>;
 
-    fn clear_header_download_checkpoint(&self) -> Result<(), StoreError>;
-
     fn set_state_trie_root_checkpoint(&self, current_root: H256) -> Result<(), StoreError>;
 
     fn get_state_trie_root_checkpoint(&self) -> Result<Option<H256>, StoreError>;
 
-    fn clear_state_trie_root_checkpoint(&self) -> Result<(), StoreError>;
-
     fn set_state_trie_key_checkpoint(&self, last_key: H256) -> Result<(), StoreError>;
 
     fn get_state_trie_key_checkpoint(&self) -> Result<Option<H256>, StoreError>;
-
-    fn clear_state_trie_key_checkpoint(&self) -> Result<(), StoreError>;
 
     fn set_pending_storage_heal_accounts(
         &self,
@@ -279,13 +273,12 @@ pub trait StoreEngine: Debug + Send + Sync + RefUnwindSafe {
         &self,
     ) -> Result<Option<Vec<(H256, Vec<Nibbles>)>>, StoreError>;
 
-    fn clear_pending_storage_heal_accounts(&self) -> Result<(), StoreError>;
 
     fn set_state_heal_paths(&self, paths: Vec<Nibbles>) -> Result<(), StoreError>;
 
     fn get_state_heal_paths(&self) -> Result<Option<Vec<Nibbles>>, StoreError>;
 
-    fn clear_state_heal_paths(&self) -> Result<(), StoreError>;
+    fn clear_snap_state(&self) -> Result<(), StoreError>;
 
     fn is_synced(&self) -> Result<bool, StoreError>;
 

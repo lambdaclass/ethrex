@@ -449,11 +449,6 @@ impl StoreEngine for Store {
         Ok(self.inner().snap_state.header_download_checkpoint)
     }
 
-    fn clear_header_download_checkpoint(&self) -> Result<(), StoreError> {
-        self.inner().snap_state.header_download_checkpoint = None;
-        Ok(())
-    }
-
     fn set_state_trie_root_checkpoint(&self, current_root: H256) -> Result<(), StoreError> {
         self.inner().snap_state.state_trie_root_checkpoint = Some(current_root);
         Ok(())
@@ -463,11 +458,6 @@ impl StoreEngine for Store {
         Ok(self.inner().snap_state.state_trie_root_checkpoint)
     }
 
-    fn clear_state_trie_root_checkpoint(&self) -> Result<(), StoreError> {
-        self.inner().snap_state.state_trie_root_checkpoint = None;
-        Ok(())
-    }
-
     fn set_state_trie_key_checkpoint(&self, last_key: H256) -> Result<(), StoreError> {
         self.inner().snap_state.state_trie_key_checkpoint = Some(last_key);
         Ok(())
@@ -475,11 +465,6 @@ impl StoreEngine for Store {
 
     fn get_state_trie_key_checkpoint(&self) -> Result<Option<H256>, StoreError> {
         Ok(self.inner().snap_state.state_trie_key_checkpoint)
-    }
-
-    fn clear_state_trie_key_checkpoint(&self) -> Result<(), StoreError> {
-        self.inner().snap_state.state_trie_key_checkpoint = None;
-        Ok(())
     }
 
     fn set_pending_storage_heal_accounts(
@@ -500,8 +485,8 @@ impl StoreEngine for Store {
             .clone())
     }
 
-    fn clear_pending_storage_heal_accounts(&self) -> Result<(), StoreError> {
-        self.inner().snap_state.pending_storage_heal_accounts = None;
+    fn clear_snap_state(&self) -> Result<(), StoreError> {
+        self.inner().snap_state = Default::default();
         Ok(())
     }
 
@@ -519,10 +504,6 @@ impl StoreEngine for Store {
     }
 
     fn get_state_heal_paths(&self) -> Result<Option<Vec<ethrex_trie::Nibbles>>, StoreError> {
-        todo!()
-    }
-
-    fn clear_state_heal_paths(&self) -> Result<(), StoreError> {
         todo!()
     }
 }

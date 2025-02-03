@@ -1054,15 +1054,8 @@ impl Store {
         self.engine.get_state_heal_paths()
     }
 
-    pub fn clear_state_heal_paths(&self) -> Result<(), StoreError> {
-        self.engine.clear_state_heal_paths()
-    }
-
     pub fn clear_snap_state(&self) -> Result<(), StoreError> {
-        //self.engine.clear_header_download_checkpoint()?; TODO: Uncomment
-        self.engine.clear_pending_storage_heal_accounts()?;
-        self.engine.clear_state_trie_root_checkpoint()?;
-        self.engine.clear_state_trie_key_checkpoint()
+        self.engine.clear_snap_state()
     }
 
     pub fn is_synced(&self) -> Result<bool, StoreError> {

@@ -540,10 +540,6 @@ impl StoreEngine for Store {
             .map_err(StoreError::RLPDecode)
     }
 
-    fn clear_header_download_checkpoint(&self) -> Result<(), StoreError> {
-        self.delete::<SnapState>(SnapStateIndex::HeaderDownloadCheckpoint)
-    }
-
     fn set_state_trie_root_checkpoint(&self, current_root: H256) -> Result<(), StoreError> {
         self.write::<SnapState>(
             SnapStateIndex::StateTrieRootCheckpoint,
@@ -558,10 +554,6 @@ impl StoreEngine for Store {
             .map_err(StoreError::RLPDecode)
     }
 
-    fn clear_state_trie_root_checkpoint(&self) -> Result<(), StoreError> {
-        self.delete::<SnapState>(SnapStateIndex::StateTrieRootCheckpoint)
-    }
-
     fn set_state_trie_key_checkpoint(&self, last_key: H256) -> Result<(), StoreError> {
         self.write::<SnapState>(
             SnapStateIndex::StateTrieRootCheckpoint,
@@ -574,10 +566,6 @@ impl StoreEngine for Store {
             .map(|ref h| H256::decode(h))
             .transpose()
             .map_err(StoreError::RLPDecode)
-    }
-
-    fn clear_state_trie_key_checkpoint(&self) -> Result<(), StoreError> {
-        self.delete::<SnapState>(SnapStateIndex::StateTrieRootCheckpoint)
     }
 
     fn set_pending_storage_heal_accounts(
@@ -597,10 +585,6 @@ impl StoreEngine for Store {
             .map(|ref h| <Vec<(H256, Vec<Nibbles>)>>::decode(h))
             .transpose()
             .map_err(StoreError::RLPDecode)
-    }
-
-    fn clear_pending_storage_heal_accounts(&self) -> Result<(), StoreError> {
-        self.delete::<SnapState>(SnapStateIndex::PendingStorageHealAccounts)
     }
 
     fn is_synced(&self) -> Result<bool, StoreError> {
@@ -625,8 +609,14 @@ impl StoreEngine for Store {
             .map_err(StoreError::RLPDecode)
     }
 
-    fn clear_state_heal_paths(&self) -> Result<(), StoreError> {
-        self.delete::<SnapState>(SnapStateIndex::StateHealPaths)
+    fn clear_snap_state(&self) -> Result<(), StoreError> {
+        // TODO: Clear full table
+        // let txn = self.db.begin_readwrite().map_err(StoreError::LibmdbxError)?;
+        // txn.clear_table::<SnapState>().map_err(StoreError::LibmdbxError)
+        self.delete::<SnapState>(SnapStateIndex::StateHealPaths);
+        self.delete::<SnapState>(SnapStateIndex::PendingStorageHealAccounts);
+        self.delete::<SnapState>(SnapStateIndex::StateTrieKeyCheckpoint);
+        self.delete::<SnapState>(SnapStateIndex::StateTrieRootCheckpoint)
     }
 }
 
