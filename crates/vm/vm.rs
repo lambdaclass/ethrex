@@ -42,6 +42,10 @@ type AccessList = Vec<(Address, Vec<H256>)>;
 pub const WITHDRAWAL_MAGIC_DATA: &[u8] = b"burn";
 pub const DEPOSIT_MAGIC_DATA: &[u8] = b"mint";
 
+pub const SYSTEM_ADDRESS_STR: &str = "fffffffffffffffffffffffffffffffffffffffe";
+pub const BEACON_ROOTS_ADDRESS_STR: &str = "000F3df6D732807Ef1319fB7B8bB8522d0Beac02";
+pub const HISTORY_STORAGE_ADDRESS_STR: &str = "0F792be4B0c0cb4DAE440Ef133E90C0eCD48CCCC";
+
 /// State used when running the EVM. The state can be represented with a [StoreWrapper] database, or
 /// with a [ExecutionDB] in case we only want to store the necessary data for some particular
 /// execution, for example when proving in L2 mode.
@@ -98,9 +102,9 @@ cfg_if::cfg_if! {
         ) -> Result<ExecutionReport, EvmError> {
             lazy_static! {
                 static ref SYSTEM_ADDRESS: Address =
-                    Address::from_slice(&hex::decode("fffffffffffffffffffffffffffffffffffffffe").unwrap());
+                    Address::from_slice(&hex::decode(SYSTEM_ADDRESS_STR).unwrap());
                 static ref CONTRACT_ADDRESS: Address =
-                    Address::from_slice(&hex::decode("000F3df6D732807Ef1319fB7B8bB8522d0Beac02").unwrap(),);
+                    Address::from_slice(&hex::decode(BEACON_ROOTS_ADDRESS_STR).unwrap(),);
             };
             // This is OK
             let beacon_root = match block_header.parent_beacon_block_root {
@@ -130,6 +134,62 @@ cfg_if::cfg_if! {
             };
 
             let calldata = Bytes::copy_from_slice(beacon_root.as_bytes()).into();
+
+            // Here execute with LEVM but just return transaction report. And I will handle it in the calling place.
+
+            let mut vm = VM::new(
+                TxKind::Call(*CONTRACT_ADDRESS),
+                env,
+                U256::zero(),
+                calldata,
+                store_wrapper,
+                CacheDB::new(),
+                vec![],
+                None
+            )
+            .map_err(EvmError::from)?;
+
+            let mut report = vm.execute().map_err(EvmError::from)?;
+
+            report.new_state.remove(&*SYSTEM_ADDRESS);
+
+            Ok(report)
+
+        }
+
+        /// Calls the EIP-2935 process block hashes history system call contract
+        /// NOTE: This was implemented by making use of an EVM system contract, but can be changed to a
+        /// direct state trie update after the verkle fork, as explained in https://eips.ethereum.org/EIPS/eip-2935
+        pub fn process_block_hash_history_levm(
+            store_wrapper: Arc<StoreWrapper>,
+            block_header: &BlockHeader,
+            fork: Fork,
+        ) -> Result<ExecutionReport, EvmError> {
+            lazy_static! {
+                static ref SYSTEM_ADDRESS: Address =
+                    Address::from_slice(&hex::decode(SYSTEM_ADDRESS_STR).unwrap());
+                static ref CONTRACT_ADDRESS: Address =
+                    Address::from_slice(&hex::decode(HISTORY_STORAGE_ADDRESS_STR).unwrap(),);
+            };
+
+            let env = Environment {
+                origin: *SYSTEM_ADDRESS,
+                gas_limit: 30_000_000,
+                block_number: block_header.number.into(),
+                coinbase: block_header.coinbase,
+                timestamp: block_header.timestamp.into(),
+                prev_randao: Some(block_header.prev_randao),
+                base_fee_per_gas: U256::zero(),
+                gas_price: U256::zero(),
+                block_excess_blob_gas: block_header.excess_blob_gas.map(U256::from),
+                block_blob_gas_used: block_header.blob_gas_used.map(U256::from),
+                block_gas_limit: 30_000_000,
+                transient_storage: HashMap::new(),
+                fork,
+                ..Default::default()
+            };
+
+            let calldata = Bytes::copy_from_slice(block_header.parent_hash.as_bytes()).into();
 
             // Here execute with LEVM but just return transaction report. And I will handle it in the calling place.
 
@@ -248,7 +308,14 @@ cfg_if::cfg_if! {
             cfg_if::cfg_if! {
                 if #[cfg(not(feature = "l2"))] {
                     if block_header.parent_beacon_block_root.is_some() && fork >= Fork::Cancun {
-                        let report = beacon_root_contract_call_levm(store_wrapper.clone(), block_header, config)?;
+                        //eip 4788: execute beacon_root_contract_call before block transactions
+                        let report = beacon_root_contract_call_levm(store_wrapper.clone(), block_header, fork)?;
+                        block_cache.extend(report.new_state);
+                    }
+
+                    if fork >= Fork::Prague {
+                        //eip 2935: stores parent block hash in system contract
+                        let report = process_block_hash_history_levm(store_wrapper.clone(), block_header, fork)?;
                         block_cache.extend(report.new_state);
                     }
                 }
@@ -370,6 +437,11 @@ cfg_if::cfg_if! {
                     //eip 4788: execute beacon_root_contract_call before block transactions
                     if block_header.parent_beacon_block_root.is_some() && spec_id >= SpecId::CANCUN {
                         beacon_root_contract_call(state, block_header, spec_id)?;
+                    }
+
+                    //eip 2935: stores parent block hash in system contract
+                    if spec_id >= SpecId::CANCUN {
+                        process_block_hash_history(state, block_header, spec_id)?;
                     }
                 }
             }
@@ -778,12 +850,10 @@ pub fn beacon_root_contract_call(
     spec_id: SpecId,
 ) -> Result<ExecutionResult, EvmError> {
     lazy_static! {
-        static ref SYSTEM_ADDRESS: RevmAddress = RevmAddress::from_slice(
-            &hex::decode("fffffffffffffffffffffffffffffffffffffffe").unwrap()
-        );
-        static ref CONTRACT_ADDRESS: RevmAddress = RevmAddress::from_slice(
-            &hex::decode("000F3df6D732807Ef1319fB7B8bB8522d0Beac02").unwrap(),
-        );
+        static ref SYSTEM_ADDRESS: RevmAddress =
+            RevmAddress::from_slice(&hex::decode(SYSTEM_ADDRESS_STR).unwrap());
+        static ref CONTRACT_ADDRESS: RevmAddress =
+            RevmAddress::from_slice(&hex::decode(BEACON_ROOTS_ADDRESS_STR).unwrap(),);
     };
     let beacon_root = match header.parent_beacon_block_root {
         None => {
@@ -799,6 +869,64 @@ pub fn beacon_root_contract_call(
         transact_to: RevmTxKind::Call(*CONTRACT_ADDRESS),
         gas_limit: 30_000_000,
         data: revm::primitives::Bytes::copy_from_slice(beacon_root.as_bytes()),
+        ..Default::default()
+    };
+    let mut block_env = block_env(header);
+    block_env.basefee = RevmU256::ZERO;
+    block_env.gas_limit = RevmU256::from(30_000_000);
+
+    match state {
+        EvmState::Store(db) => {
+            let mut evm = Evm::builder()
+                .with_db(db)
+                .with_block_env(block_env)
+                .with_tx_env(tx_env)
+                .with_spec_id(spec_id)
+                .build();
+
+            let transaction_result = evm.transact()?;
+            let mut result_state = transaction_result.state;
+            result_state.remove(&*SYSTEM_ADDRESS);
+            result_state.remove(&evm.block().coinbase);
+
+            evm.context.evm.db.commit(result_state);
+
+            Ok(transaction_result.result.into())
+        }
+        EvmState::Execution(db) => {
+            let mut evm = Evm::builder()
+                .with_db(db)
+                .with_block_env(block_env)
+                .with_tx_env(tx_env)
+                .with_spec_id(spec_id)
+                .build();
+
+            // Not necessary to commit to DB
+            let transaction_result = evm.transact()?;
+            Ok(transaction_result.result.into())
+        }
+    }
+}
+
+/// Calls the EIP-2935 process block hashes history system call contract
+/// NOTE: This was implemented by making use of an EVM system contract, but can be changed to a
+/// direct state trie update after the verkle fork, as explained in https://eips.ethereum.org/EIPS/eip-2935
+pub fn process_block_hash_history(
+    state: &mut EvmState,
+    header: &BlockHeader,
+    spec_id: SpecId,
+) -> Result<ExecutionResult, EvmError> {
+    lazy_static! {
+        static ref SYSTEM_ADDRESS: RevmAddress =
+            RevmAddress::from_slice(&hex::decode(SYSTEM_ADDRESS_STR).unwrap());
+        static ref CONTRACT_ADDRESS: RevmAddress =
+            RevmAddress::from_slice(&hex::decode(HISTORY_STORAGE_ADDRESS_STR).unwrap(),);
+    };
+    let tx_env = TxEnv {
+        caller: *SYSTEM_ADDRESS,
+        transact_to: RevmTxKind::Call(*CONTRACT_ADDRESS),
+        gas_limit: 30_000_000,
+        data: revm::primitives::Bytes::copy_from_slice(header.parent_hash.as_bytes()),
         ..Default::default()
     };
     let mut block_env = block_env(header);
