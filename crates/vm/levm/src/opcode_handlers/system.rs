@@ -47,7 +47,12 @@ impl VM {
             calculate_memory_size(return_data_start_offset, return_data_size)?;
         let new_memory_size = new_memory_size_for_args.max(new_memory_size_for_return_data);
 
-        let (account_info, address_was_cold) = self.access_account(callee);
+        let (account_info, address_was_cold) = access_account(
+            &mut self.cache,
+            &self.db,
+            &mut self.accrued_substate,
+            callee,
+        );
 
         let (is_delegation, eip7702_gas_consumed, code_address, bytecode) = eip7702_get_code(
             &mut self.cache,
@@ -130,7 +135,12 @@ impl VM {
             calculate_memory_size(return_data_start_offset, return_data_size)?;
         let new_memory_size = new_memory_size_for_args.max(new_memory_size_for_return_data);
 
-        let (_account_info, address_was_cold) = self.access_account(code_address);
+        let (_account_info, address_was_cold) = access_account(
+            &mut self.cache,
+            &mut self.db,
+            &mut self.accrued_substate,
+            code_address,
+        );
 
         let (is_delegation, eip7702_gas_consumed, code_address, bytecode) = eip7702_get_code(
             &mut self.cache,
@@ -233,7 +243,12 @@ impl VM {
             .map_err(|_err| VMError::VeryLargeNumber)?;
 
         // GAS
-        let (_account_info, address_was_cold) = self.access_account(code_address);
+        let (_account_info, address_was_cold) = access_account(
+            &mut self.cache,
+            &mut self.db,
+            &mut self.accrued_substate,
+            code_address,
+        );
 
         let current_memory_size = current_call_frame.memory.len();
         let new_memory_size_for_args = calculate_memory_size(args_start_offset, args_size)?;
@@ -312,7 +327,12 @@ impl VM {
             .map_err(|_err| VMError::VeryLargeNumber)?;
 
         // GAS
-        let (_account_info, address_was_cold) = self.access_account(code_address);
+        let (_account_info, address_was_cold) = access_account(
+            &mut self.cache,
+            &mut self.db,
+            &mut self.accrued_substate,
+            code_address,
+        );
 
         let current_memory_size = current_call_frame.memory.len();
         let new_memory_size_for_args = calculate_memory_size(args_start_offset, args_size)?;
@@ -490,10 +510,19 @@ impl VM {
 
         let target_address = word_to_address(current_call_frame.stack.pop()?);
 
-        let (target_account_info, target_account_is_cold) = self.access_account(target_address);
+        let (target_account_info, target_account_is_cold) = access_account(
+            &mut self.cache,
+            &mut self.db,
+            &mut self.accrued_substate,
+            target_address,
+        );
 
-        let (current_account_info, _current_account_is_cold) =
-            self.access_account(current_call_frame.to);
+        let (current_account_info, _current_account_is_cold) = access_account(
+            &mut self.cache,
+            &mut self.db,
+            &mut self.accrued_substate,
+            current_call_frame.to,
+        );
         let balance_to_transfer = current_account_info.balance;
 
         current_call_frame.increase_consumed_gas(gas_cost::selfdestruct(
@@ -579,7 +608,13 @@ impl VM {
 
         let deployer_address = current_call_frame.to;
 
-        let deployer_account_info = self.access_account(deployer_address).0;
+        let deployer_account_info = access_account(
+            &mut self.cache,
+            &mut self.db,
+            &mut self.accrued_substate,
+            deployer_address,
+        )
+        .0;
 
         let code = Bytes::from(
             memory::load_range(
@@ -737,7 +772,13 @@ impl VM {
             memory::load_range(&mut current_call_frame.memory, args_offset, args_size)?.to_vec();
 
         // 1. Validate sender has enough value
-        let sender_account_info = self.access_account(msg_sender).0;
+        let sender_account_info = access_account(
+            &mut self.cache,
+            &mut self.db,
+            &mut self.accrued_substate,
+            msg_sender,
+        )
+        .0;
         if should_transfer_value && sender_account_info.balance < value {
             current_call_frame.gas_used = current_call_frame
                 .gas_used

@@ -204,6 +204,25 @@ pub fn decrease_account_balance(
     Ok(())
 }
 
+/// Accesses to an account's information.
+///
+/// Accessed accounts are stored in the `touched_accounts` set.
+/// Accessed accounts take place in some gas cost computation.
+#[must_use]
+pub fn access_account(
+    cache: &mut CacheDB,
+    db: &Arc<dyn Database>,
+    accrued_substate: &mut Substate,
+    address: Address,
+) -> (AccountInfo, bool) {
+    let address_was_cold = accrued_substate.touched_accounts.insert(address);
+    let account = match cache::get_account(&cache, &address) {
+        Some(account) => account.info.clone(),
+        None => db.get_account_info(address),
+    };
+    (account, address_was_cold)
+}
+
 // ================== Bytecode related functions =====================
 pub fn update_account_bytecode(
     cache: &mut CacheDB,

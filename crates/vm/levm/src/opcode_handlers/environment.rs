@@ -4,7 +4,7 @@ use crate::{
     errors::{InternalError, OpcodeResult, VMError},
     gas_cost::{self},
     memory::{self, calculate_memory_size},
-    utils::{has_delegation, word_to_address},
+    utils::{access_account, has_delegation, word_to_address},
     vm::VM,
 };
 use ethrex_core::U256;
@@ -37,7 +37,12 @@ impl VM {
     ) -> Result<OpcodeResult, VMError> {
         let address = word_to_address(current_call_frame.stack.pop()?);
 
-        let (account_info, address_was_cold) = self.access_account(address);
+        let (account_info, address_was_cold) = access_account(
+            &mut self.cache,
+            &self.db,
+            &mut self.accrued_substate,
+            address,
+        );
 
         current_call_frame.increase_consumed_gas(gas_cost::balance(address_was_cold)?)?;
 
@@ -281,7 +286,12 @@ impl VM {
     ) -> Result<OpcodeResult, VMError> {
         let address = word_to_address(current_call_frame.stack.pop()?);
 
-        let (account_info, address_was_cold) = self.access_account(address);
+        let (account_info, address_was_cold) = access_account(
+            &mut self.cache,
+            &self.db,
+            &mut self.accrued_substate,
+            address,
+        );
 
         // https://eips.ethereum.org/EIPS/eip-7702#delegation-designation
         let is_delegation = has_delegation(&account_info)?;
@@ -311,7 +321,12 @@ impl VM {
             .try_into()
             .map_err(|_| VMError::VeryLargeNumber)?;
 
-        let (account_info, address_was_cold) = self.access_account(address);
+        let (account_info, address_was_cold) = access_account(
+            &mut self.cache,
+            &mut self.db,
+            &mut self.accrued_substate,
+            address,
+        );
 
         let new_memory_size = calculate_memory_size(dest_offset, size)?;
 
@@ -432,7 +447,12 @@ impl VM {
     ) -> Result<OpcodeResult, VMError> {
         let address = word_to_address(current_call_frame.stack.pop()?);
 
-        let (account_info, address_was_cold) = self.access_account(address);
+        let (account_info, address_was_cold) = access_account(
+            &mut self.cache,
+            &self.db,
+            &mut self.accrued_substate,
+            address,
+        );
 
         // https://eips.ethereum.org/EIPS/eip-7702#delegation-designation
         let is_delegation = has_delegation(&account_info)?;

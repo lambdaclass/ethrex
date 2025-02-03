@@ -843,20 +843,6 @@ impl VM {
         ))
     }
 
-    /// Accesses to an account's information.
-    ///
-    /// Accessed accounts are stored in the `touched_accounts` set.
-    /// Accessed accounts take place in some gas cost computation.
-    #[must_use]
-    pub fn access_account(&mut self, address: Address) -> (AccountInfo, bool) {
-        let address_was_cold = self.accrued_substate.touched_accounts.insert(address);
-        let account = match cache::get_account(&self.cache, &address) {
-            Some(account) => account.info.clone(),
-            None => self.db.get_account_info(address),
-        };
-        (account, address_was_cold)
-    }
-
     /// Accesses to an account's storage slot.
     ///
     /// Accessed storage slots are stored in the `touched_storage_slots` set.
@@ -1036,11 +1022,21 @@ impl VM {
                 .map_err(|_| VMError::TxValidation(TxValidationError::NonceIsMax))?;
         }
 
-        let (code_address_info, _) = self.access_account(initial_call_frame.code_address);
+        let (code_address_info, _) = access_account(
+            &mut self.cache,
+            &mut self.db,
+            &mut self.accrued_substate,
+            initial_call_frame.code_address,
+        );
 
         if has_delegation(&code_address_info)? {
             initial_call_frame.code_address = get_authorized_address(&code_address_info)?;
-            let (auth_address_info, _) = self.access_account(initial_call_frame.code_address);
+            let (auth_address_info, _) = access_account(
+                &mut self.cache,
+                &mut self.db,
+                &mut self.accrued_substate,
+                initial_call_frame.code_address,
+            );
 
             initial_call_frame.bytecode = auth_address_info.bytecode.clone();
         } else {
