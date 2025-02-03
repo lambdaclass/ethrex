@@ -251,8 +251,9 @@ pub fn build_payload(
     debug!("Building payload");
     let mut evm_state = evm_state(store.clone(), payload.header.parent_hash);
     let mut context = PayloadBuildContext::new(payload, &mut evm_state)?;
-    apply_withdrawals(&mut context)?;
+    make_beacon_root_call(&mut context)?;
     fill_transactions(&mut context)?;
+    apply_withdrawals(&mut context)?;
     finalize_payload(&mut context)?;
     Ok((context.blobs_bundle, context.block_value))
 }
@@ -260,7 +261,54 @@ pub fn build_payload(
 pub fn apply_withdrawals(context: &mut PayloadBuildContext) -> Result<(), EvmError> {
     #[cfg(feature = "levm")]
     {
-        // Apply withdrawals & call beacon root contract, and obtain the new state root
+        if let Some(withdrawals) = &context.payload.body.withdrawals {
+            // For every withdrawal we increment the target account's balance
+            for (address, increment) in withdrawals
+                .iter()
+                .filter(|withdrawal| withdrawal.amount > 0)
+                .map(|w| (w.address, u128::from(w.amount) * u128::from(GWEI_TO_WEI)))
+            {
+                // We check if it was in block_cache, if not, we get it from DB.
+                let mut account = context.block_cache.get(&address).cloned().unwrap_or({
+                    let acc_info = context
+                        .store()
+                        .unwrap()
+                        .get_account_info_by_hash(context.parent_hash(), address)?
+                        .unwrap_or_default();
+                    let acc_code = context
+                        .store()
+                        .unwrap()
+                        .get_account_code(acc_info.code_hash)?
+                        .unwrap_or_default();
+
+                    Account {
+                        info: AccountInfo {
+                            balance: acc_info.balance,
+                            bytecode: acc_code,
+                            nonce: acc_info.nonce,
+                        },
+                        // This is the added_storage for the withdrawal.
+                        // If not involved in the TX, there won't be any updates in the storage
+                        storage: HashMap::new(),
+                    }
+                });
+
+                account.info.balance += increment.into();
+                context.block_cache.insert(address, account);
+            }
+        }
+    }
+    #[cfg(not(feature = "levm"))]
+    {
+        let withdrawals = context.payload.body.withdrawals.clone().unwrap_or_default();
+        process_withdrawals(context.evm_state, &withdrawals)?;
+    }
+    Ok(())
+}
+
+pub fn make_beacon_root_call(context: &mut PayloadBuildContext) -> Result<(), EvmError> {
+    #[cfg(feature = "levm")]
+    {
         let fork = context
             .chain_config()?
             .fork(context.payload.header.timestamp);
@@ -302,8 +350,6 @@ pub fn apply_withdrawals(context: &mut PayloadBuildContext) -> Result<(), EvmErr
         if context.payload.header.parent_beacon_block_root.is_some() && spec_id >= SpecId::CANCUN {
             beacon_root_contract_call(context.evm_state, &context.payload.header, spec_id)?;
         }
-        let withdrawals = context.payload.body.withdrawals.clone().unwrap_or_default();
-        process_withdrawals(context.evm_state, &withdrawals)?;
         Ok(())
     }
 }
@@ -583,43 +629,6 @@ fn apply_plain_transaction(
 fn finalize_payload(context: &mut PayloadBuildContext) -> Result<(), StoreError> {
     #[cfg(feature = "levm")]
     {
-        if let Some(withdrawals) = &context.payload.body.withdrawals {
-            // For every withdrawal we increment the target account's balance
-            for (address, increment) in withdrawals
-                .iter()
-                .filter(|withdrawal| withdrawal.amount > 0)
-                .map(|w| (w.address, u128::from(w.amount) * u128::from(GWEI_TO_WEI)))
-            {
-                // We check if it was in block_cache, if not, we get it from DB.
-                let mut account = context.block_cache.get(&address).cloned().unwrap_or({
-                    let acc_info = context
-                        .store()
-                        .unwrap()
-                        .get_account_info_by_hash(context.parent_hash(), address)?
-                        .unwrap_or_default();
-                    let acc_code = context
-                        .store()
-                        .unwrap()
-                        .get_account_code(acc_info.code_hash)?
-                        .unwrap_or_default();
-
-                    Account {
-                        info: AccountInfo {
-                            balance: acc_info.balance,
-                            bytecode: acc_code,
-                            nonce: acc_info.nonce,
-                        },
-                        // This is the added_storage for the withdrawal.
-                        // If not involved in the TX, there won't be any updates in the storage
-                        storage: HashMap::new(),
-                    }
-                });
-
-                account.info.balance += increment.into();
-                context.block_cache.insert(address, account);
-            }
-        }
-
         let account_updates = get_state_transitions_levm(
             context.evm_state,
             context.parent_hash(),
