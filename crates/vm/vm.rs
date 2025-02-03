@@ -81,7 +81,7 @@ cfg_if::cfg_if! {
     if #[cfg(feature = "levm")] {
         use ethrex_levm::{
             db::{CacheDB, Database as LevmDatabase},
-            errors::{TransactionReport, TxResult, VMError},
+            errors::{ExecutionReport, TxResult, VMError},
             vm::{VM, EVMConfig},
             Environment,
             Account
@@ -95,7 +95,7 @@ cfg_if::cfg_if! {
             store_wrapper: Arc<StoreWrapper>,
             block_header: &BlockHeader,
             config: EVMConfig,
-        ) -> Result<TransactionReport, EvmError> {
+        ) -> Result<ExecutionReport, EvmError> {
             lazy_static! {
                 static ref SYSTEM_ADDRESS: Address =
                     Address::from_slice(&hex::decode("fffffffffffffffffffffffffffffffffffffffe").unwrap());
@@ -145,7 +145,7 @@ cfg_if::cfg_if! {
             )
             .map_err(EvmError::from)?;
 
-            let mut report = vm.transact().map_err(EvmError::from)?;
+            let mut report = vm.execute().map_err(EvmError::from)?;
 
             report.new_state.remove(&*SYSTEM_ADDRESS);
 
@@ -299,7 +299,7 @@ cfg_if::cfg_if! {
             db: Arc<dyn LevmDatabase>,
             block_cache: CacheDB,
             config: EVMConfig,
-        ) -> Result<TransactionReport, VMError> {
+        ) -> Result<ExecutionReport, VMError> {
             let gas_price : U256 = tx.effective_gas_price(block_header.base_fee_per_gas).ok_or(VMError::InvalidTransaction)?.into();
 
             let env = Environment {
@@ -337,7 +337,7 @@ cfg_if::cfg_if! {
                 None
             )?;
 
-            vm.transact()
+            vm.execute()
         }
     } else if #[cfg(not(feature = "levm"))] {
         /// Executes all transactions in a block and returns their receipts.
