@@ -36,7 +36,7 @@ pub fn execute_block(block: &Block, state: &mut EvmState) -> Result<Vec<Receipt>
     cfg_if::cfg_if! {
         if #[cfg(not(feature = "l2"))] {
             //eip 4788: execute beacon_root_contract_call before block transactions
-            if block_header.parent_beacon_block_root.is_some() && spec_id == SpecId::CANCUN {
+            if block_header.parent_beacon_block_root.is_some() && spec_id >= SpecId::CANCUN {
                 beacon_root_contract_call(state, block_header, spec_id)?;
             }
         }
@@ -62,7 +62,6 @@ pub fn execute_block(block: &Block, state: &mut EvmState) -> Result<Vec<Receipt>
 
     Ok(receipts)
 }
-
 // Executes a single tx, doesn't perform state transitions
 pub fn execute_tx(
     tx: &Transaction,
