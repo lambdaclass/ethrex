@@ -340,14 +340,6 @@ impl VM {
     fn prepare_execution(&mut self, initial_call_frame: &mut CallFrame) -> Result<(), VMError> {
         let sender_address = self.env.origin;
         let sender_account = get_account(&mut self.cache, &self.db, sender_address);
-        dbg!("nonce: ", sender_account.info.nonce);
-        dbg!("nonce tx: ", self.env.tx_nonce);
-        dbg!(&sender_account);
-        dbg!(sender_address);
-
-        // if U256::from(sender_account.info.nonce) != self.env.tx_nonce {
-        //     return Err(VMError::TxValidation(TxValidationError::NonceMismatch));
-        // }
 
         if self.env.fork >= Fork::Prague {
             // check for gas limit is grater or equal than the minimum required
@@ -489,6 +481,11 @@ impl VM {
         // (7) NONCE_IS_MAX
         increment_account_nonce(&mut self.cache, &self.db, sender_address)
             .map_err(|_| VMError::TxValidation(TxValidationError::NonceIsMax))?;
+
+        // check for nonce mismatch
+        if U256::from(sender_account.info.nonce) != self.env.tx_nonce {
+            return Err(VMError::TxValidation(TxValidationError::NonceMismatch));
+        }
 
         // (8) PRIORITY_GREATER_THAN_MAX_FEE_PER_GAS
         if let (Some(tx_max_priority_fee), Some(tx_max_fee_per_gas)) = (
