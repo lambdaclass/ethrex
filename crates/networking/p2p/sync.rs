@@ -3,7 +3,7 @@ use ethrex_core::{
     types::{AccountState, Block, BlockHash, EMPTY_KECCACK_HASH},
     BigEndianHash, H256, U256, U512,
 };
-use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode, error::RLPDecodeError};
+use ethrex_rlp::{decode::{self, RLPDecode}, encode::RLPEncode, error::RLPDecodeError};
 use ethrex_storage::{error::StoreError, Store};
 use ethrex_trie::{Nibbles, Node, TrieError, TrieState, EMPTY_TRIE_HASH};
 use std::{cmp::min, collections::BTreeMap, sync::Arc, time::Duration};
@@ -199,6 +199,21 @@ impl SyncManager {
                 store_bodies_handle.await??;
                 // For all blocks before the pivot: Store the bodies and fetch the receipts (TODO)
                 // For all blocks after the pivot: Process them fully
+                // Iterate the tries to ensure no gaps
+                info!("Looking for gaps in trie");
+                let state_trie = store.state_trie(sync_head)?.unwrap();
+                for (hash, acc) in state_trie.into_iter().content() {
+                    let hashed_address = H256::decode(&hash)?;
+                    let acc = AccountState::decode(&acc).unwrap();
+                    // Iter storage trie
+                    if acc.storage_root != EMPTY_TRIE_HASH {
+                        let storage_trie = store.storage_trie(block_hash, address)?.unwrap();
+                        let storage = storage_trie.into_iter().collect::<Vec<_>>();
+                        info!("Healthy storage trie of len: {}", storage.len())
+                    }
+                }
+                info!("No gaps found, trie is healthy");
+
                 for hash in &all_block_hashes[pivot_idx + 1..] {
                     let block = store
                         .get_block_by_hash(*hash)?
