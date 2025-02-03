@@ -26,6 +26,7 @@ impl Iterator for TrieIterator {
         };
         // Fetch the last node in the stack
         let (mut path, next_node_hash) = self.stack.pop()?;
+        dbg!(&next_node_hash);
         let next_node = self.trie.state.get_node(next_node_hash).unwrap().unwrap();
         match &next_node {
             Node::Branch(branch_node) => {
@@ -49,6 +50,7 @@ impl Iterator for TrieIterator {
                 path.extend(&leaf.partial);
             }
         }
+        dbg!(&next_node);
         Some((path, next_node))
     }
 }
