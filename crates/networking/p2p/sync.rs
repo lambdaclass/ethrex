@@ -732,7 +732,7 @@ async fn heal_state_trie(
         // Take at most one batch so we don't overload the peer
         let batch = paths[0..min(paths.len(), NODE_BATCH_SIZE)].to_vec();
         if let Some(nodes) = peers.request_state_trienodes(state_root, batch).await {
-            debug!("Received {} state nodes", nodes.len());
+            info!("Received {} state nodes", nodes.len());
             let mut hahsed_addresses = vec![];
             let mut code_hashes = vec![];
             // For each fetched node:
@@ -780,10 +780,10 @@ async fn heal_state_trie(
             break;
         }
     }
-    debug!("State Healing stopped, signaling storage healer");
+    info!("State Healing stopped, signaling storage healer");
     // Save paths for the next cycle
     if !paths.is_empty() {
-        debug!("Caching {} paths for the next cycle", paths.len());
+        info!("Caching {} paths for the next cycle", paths.len());
         store.set_state_heal_paths(paths.clone())?;
     }
     // Send empty batch to signal that no more batches are incoming
@@ -793,7 +793,7 @@ async fn heal_state_trie(
     // If a storage trie was left mid-healing we will heal it again
     let storage_healing_succesful = storage_heal_paths.is_empty();
     if !storage_healing_succesful {
-        debug!("{} storages with pending healing", storage_heal_paths.len());
+        info!("{} storages with pending healing", storage_heal_paths.len());
         store.set_storage_heal_paths(storage_heal_paths.into_iter().collect())?;
     }
     Ok(paths.is_empty() && storage_healing_succesful)
@@ -848,7 +848,7 @@ async fn storage_healer(
                 let mut next_batch: BTreeMap<H256, Vec<Nibbles>> = BTreeMap::new();
                 // Fill batch
                 let mut batch_size = 0;
-                while batch_size < NODE_BATCH_SIZE {
+                while batch_size < NODE_BATCH_SIZE && !pending_paths.is_empty() {
                     let (key, val) = pending_paths.pop_first().unwrap();
                     batch_size += val.len();
                     next_batch.insert(key, val);
