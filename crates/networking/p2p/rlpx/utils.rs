@@ -71,10 +71,10 @@ pub(crate) fn log_peer_debug(node: &Node, text: &str) {
 }
 
 pub(crate) fn log_peer_error(node: &Node, text: &str) {
-    error!("[{0}]: {1}", node, text)
+    //error!("[{0}]: {1}", node, text)
 }
 pub(crate) fn log_peer_warn(node: &Node, text: &str) {
-    warn!("[{0}]: {1}", node, text)
+    //warn!("[{0}]: {1}", node, text)
 }
 
 #[cfg(test)]
