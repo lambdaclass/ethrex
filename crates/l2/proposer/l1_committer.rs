@@ -20,7 +20,7 @@ use ethrex_l2_sdk::{
     eth_client::{eth_sender::Overrides, BlockByNumber, EthClient, WrappedTransaction},
 };
 use ethrex_storage::{error::StoreError, Store};
-use ethrex_vm::{evm_state, execute_block, get_state_transitions};
+use ethrex_vm::{db::evm_state, evm_backends::revm::execute_block, get_state_transitions};
 use keccak_hash::keccak;
 use secp256k1::SecretKey;
 use std::{collections::HashMap, time::Duration};

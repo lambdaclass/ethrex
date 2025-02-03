@@ -3,8 +3,7 @@ use crate::EvmError;
 use crate::EvmState;
 use ethrex_core::{
     types::{
-        code_hash, AccountInfo, Block, BlockHeader, Fork, Receipt, Transaction, TxKind,
-        GWEI_TO_WEI,
+        code_hash, AccountInfo, Block, BlockHeader, Fork, Receipt, Transaction, TxKind, GWEI_TO_WEI,
     },
     Address, H256, U256,
 };
@@ -112,7 +111,7 @@ pub fn execute_block(
     Ok((receipts, account_updates))
 }
 
-fn execute_tx_levm(
+pub fn execute_tx_levm(
     tx: &Transaction,
     block_header: &BlockHeader,
     db: Arc<dyn LevmDatabase>,
@@ -162,7 +161,7 @@ fn execute_tx_levm(
     vm.transact()
 }
 
-fn get_state_transitions_levm(
+pub fn get_state_transitions_levm(
     initial_state: &EvmState,
     block_hash: H256,
     new_state: &CacheDB,
@@ -223,7 +222,7 @@ fn get_state_transitions_levm(
 
 /// Calls the eip4788 beacon block root system call contract
 /// More info on https://eips.ethereum.org/EIPS/eip-4788
-fn beacon_root_contract_call_levm(
+pub fn beacon_root_contract_call_levm(
     store_wrapper: Arc<StoreWrapper>,
     block_header: &BlockHeader,
     fork: Fork,

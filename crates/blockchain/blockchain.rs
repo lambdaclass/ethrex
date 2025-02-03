@@ -16,12 +16,9 @@ use ethrex_core::H256;
 
 use ethrex_storage::error::StoreError;
 use ethrex_storage::{AccountUpdate, Store};
+use ethrex_vm::db::{evm_state, EvmState};
 #[cfg(feature = "levm")]
 use ethrex_vm::evm_backends::levm;
-use ethrex_vm::{
-    db::{evm_state, EvmState},
-    evm_backends::revm,
-};
 
 //TODO: Implement a struct Chain or BlockChain to encapsulate
 //functionality and canonical chain state and config
@@ -52,7 +49,7 @@ pub fn add_block(block: &Block, storage: &Store) -> Result<(), ChainError> {
         }
         #[cfg(not(feature = "levm"))]
         {
-            let receipts = revm::execute_block(block, &mut state)?;
+            let receipts = evm_backends::revm::execute_block(block, &mut state)?;
             let account_updates = ethrex_vm::get_state_transitions(&mut state);
             (receipts, account_updates)
         }

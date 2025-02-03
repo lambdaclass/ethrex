@@ -3,6 +3,8 @@ pub mod errors;
 pub mod evm_backends;
 pub mod execution_db;
 mod execution_result;
+#[cfg(feature = "l2")]
+pub mod mods;
 
 use db::EvmState;
 

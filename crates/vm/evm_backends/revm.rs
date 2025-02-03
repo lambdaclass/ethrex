@@ -25,8 +25,7 @@ use revm_primitives::{
 };
 use std::cmp::min;
 
-#[cfg(feature = "l2")]
-mod mods;
+use crate::mods;
 
 /// Executes all transactions in a block and returns their receipts.
 pub fn execute_block(block: &Block, state: &mut EvmState) -> Result<Vec<Receipt>, EvmError> {

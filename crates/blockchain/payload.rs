@@ -23,10 +23,7 @@ use ethrex_vm::{evm_backends::revm::*, get_state_transitions, spec_id, SpecId};
 use {
     ethrex_core::types::{Fork, GWEI_TO_WEI},
     ethrex_levm::{db::CacheDB, Account, AccountInfo},
-    ethrex_vm::{
-        beacon_root_contract_call_levm, db::StoreWrapper, execute_tx_levm,
-        get_state_transitions_levm,
-    },
+    ethrex_vm::{db::StoreWrapper, evm_backends::levm::*},
     std::sync::Arc,
 };
 

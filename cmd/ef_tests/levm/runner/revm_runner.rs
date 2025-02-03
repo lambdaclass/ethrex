@@ -14,7 +14,10 @@ use ethrex_levm::{
     Account, StorageSlot,
 };
 use ethrex_storage::{error::StoreError, AccountUpdate};
-use ethrex_vm::{db::StoreWrapper, fork_to_spec_id, EvmState, RevmAddress, RevmU256};
+use ethrex_vm::{
+    db::{EvmState, StoreWrapper},
+    fork_to_spec_id, RevmAddress, RevmU256,
+};
 use revm::{
     db::State,
     inspectors::TracerEip3155 as RevmTracerEip3155,
