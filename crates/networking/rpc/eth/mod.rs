@@ -15,7 +15,8 @@ pub mod test_utils {
     use bytes::Bytes;
     use ethrex_core::{
         types::{
-            Block, BlockBody, BlockHeader, EIP1559Transaction, Genesis, LegacyTransaction, Transaction, TxKind, DEFAULT_REQUESTS_HASH, EMPTY_KECCACK_HASH
+            Block, BlockBody, BlockHeader, EIP1559Transaction, Genesis, LegacyTransaction,
+            Transaction, TxKind, DEFAULT_REQUESTS_HASH,
         },
         Address, Bloom, H256, U256,
     };

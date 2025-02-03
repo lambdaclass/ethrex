@@ -8,7 +8,7 @@ use std::collections::HashMap;
 
 use super::{
     compute_receipts_root, compute_transactions_root, compute_withdrawals_root, AccountState,
-    Block, BlockBody, BlockHeader, BlockNumber, DEFAULT_OMMERS_HASH, EMPTY_KECCACK_HASH,
+    Block, BlockBody, BlockHeader, BlockNumber, DEFAULT_OMMERS_HASH, DEFAULT_REQUESTS_HASH,
     INITIAL_BASE_FEE,
 };
 
@@ -334,7 +334,7 @@ impl Genesis {
             requests_hash: self
                 .config
                 .is_prague_activated(self.timestamp)
-                .then_some(*EMPTY_KECCACK_HASH),
+                .then_some(*DEFAULT_REQUESTS_HASH),
         }
     }
 

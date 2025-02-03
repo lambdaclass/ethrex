@@ -1,12 +1,15 @@
 use crate::db::StoreWrapper;
 use crate::EvmError;
 use crate::EvmState;
+#[cfg(not(feature = "l2"))]
+use ethrex_core::types::Fork;
 use ethrex_core::{
     types::{
-        code_hash, AccountInfo, Block, BlockHeader, Fork, Receipt, Transaction, TxKind, GWEI_TO_WEI,
+        code_hash, AccountInfo, Block, BlockHeader, Receipt, Transaction, TxKind, GWEI_TO_WEI,
     },
     Address, H256, U256,
 };
+
 use ethrex_levm::{
     db::{CacheDB, Database as LevmDatabase},
     errors::{ExecutionReport, TxResult, VMError},
