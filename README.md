@@ -267,7 +267,7 @@ For more information about the different cli arguments check out the next sectio
 ### CLI Commands
 
 ethrex supports the following command line arguments:
-- `--network <FILE>`: Receives a `Genesis` struct in json format. This is the only argument which is required. You can look at some example genesis files at `test_data/genesis*`.
+- `--network <FILE>`: Receives a `Genesis` struct in json format. This is the only argument which is required. You can look at some example genesis files at `test_data/genesis*`. Alternatively, the name of a known network can be provided instead to use its preset genesis file and include its preset bootnodes. The networks currenlty supported include Holesky, Sepolia and Mekong.
 - `--datadir <DIRECTORY>`: Receives the name of the directory where the Database is located.
 - `--import <FILE>`: Receives an rlp encoded `Chain` object (aka a list of `Block`s). You can look at the example chain file at `test_data/chain.rlp`.
 - `--http.addr <ADDRESS>`: Listening address for the http rpc server. Default value: localhost.
