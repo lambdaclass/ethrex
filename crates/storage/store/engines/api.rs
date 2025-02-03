@@ -252,40 +252,40 @@ pub trait StoreEngine: Debug + Send + Sync + RefUnwindSafe {
 
     // Snap State methods
 
+    /// Sets the hash of the last header downloaded during a snap sync
     fn set_header_download_checkpoint(&self, block_hash: BlockHash) -> Result<(), StoreError>;
 
+    /// Gets the hash of the last header downloaded during a snap sync
     fn get_header_download_checkpoint(&self) -> Result<Option<BlockHash>, StoreError>;
 
-    fn clear_header_download_checkpoint(&self) -> Result<(), StoreError>;
-
+    /// Sets the current state root of the state trie being rebuilt during snap sync
     fn set_state_trie_root_checkpoint(&self, current_root: H256) -> Result<(), StoreError>;
 
+    /// Gets the current state root of the state trie being rebuilt during snap sync
     fn get_state_trie_root_checkpoint(&self) -> Result<Option<H256>, StoreError>;
 
-    fn clear_state_trie_root_checkpoint(&self) -> Result<(), StoreError>;
-
+    /// Sets the last key fetched from the state trie being fetched during snap sync
     fn set_state_trie_key_checkpoint(&self, last_key: H256) -> Result<(), StoreError>;
 
+    /// Gets the last key fetched from the state trie being fetched during snap sync
     fn get_state_trie_key_checkpoint(&self) -> Result<Option<H256>, StoreError>;
 
-    fn clear_state_trie_key_checkpoint(&self) -> Result<(), StoreError>;
+    /// Sets the storage trie paths in need of healing, grouped by hashed address
+    fn set_storage_heal_paths(&self, accounts: Vec<(H256, Vec<Nibbles>)>)
+        -> Result<(), StoreError>;
 
-    fn set_pending_storage_heal_accounts(
-        &self,
-        accounts: Vec<(H256, Vec<Nibbles>)>,
-    ) -> Result<(), StoreError>;
+    /// Gets the storage trie paths in need of healing, grouped by hashed address
+    #[allow(clippy::type_complexity)]
+    fn get_storage_heal_paths(&self) -> Result<Option<Vec<(H256, Vec<Nibbles>)>>, StoreError>;
 
-    fn get_pending_storage_heal_accounts(
-        &self,
-    ) -> Result<Option<Vec<(H256, Vec<Nibbles>)>>, StoreError>;
-
-    fn clear_pending_storage_heal_accounts(&self) -> Result<(), StoreError>;
-
+    /// Sets the state trie paths in need of healing
     fn set_state_heal_paths(&self, paths: Vec<Nibbles>) -> Result<(), StoreError>;
 
+    /// Gets the state trie paths in need of healing
     fn get_state_heal_paths(&self) -> Result<Option<Vec<Nibbles>>, StoreError>;
 
-    fn clear_state_heal_paths(&self) -> Result<(), StoreError>;
+    /// Clears all checkpoint data created during the last snap sync
+    fn clear_snap_state(&self) -> Result<(), StoreError>;
 
     fn is_synced(&self) -> Result<bool, StoreError>;
 
