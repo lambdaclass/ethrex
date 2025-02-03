@@ -105,7 +105,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
     /// Handshake already performed, now it starts a peer connection.
     /// It runs in it's own task and blocks until the connection is dropped
     pub async fn start(&mut self, table: Arc<Mutex<crate::kademlia::KademliaTable>>) {
-        log_peer_debug(&self.node, "Starting RLPx connection");
+        //log_peer_debug(&self.node, "Starting RLPx connection");
         if let Err(e) = self.exchange_hello_messages().await {
             self.connection_failed("Hello messages exchange failed", e, table)
                 .await;
@@ -289,7 +289,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
             }
             Message::Ping(_) => {
                 self.send(Message::Pong(PongMessage {})).await?;
-                log_peer_debug(&self.node, "Pong sent");
+                //log_peer_debug(&self.node, "Pong sent");
             }
             Message::Pong(_) => {
                 // We ignore received Pong messages
@@ -307,7 +307,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
                     let mut valid_txs = vec![];
                     for tx in &txs.transactions {
                         if let Err(e) = mempool::add_transaction(tx.clone(), &self.storage) {
-                            log_peer_warn(&self.node, &format!("Error adding transaction: {}", e));
+                            //log_peer_warn(&self.node, &format!("Error adding transaction: {}", e));
                             continue;
                         }
                         valid_txs.push(tx.clone());

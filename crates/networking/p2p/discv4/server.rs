@@ -98,7 +98,7 @@ impl Discv4Server {
                 .try_add_peer_and_ping(node, self.ctx.table.lock().await)
                 .await
             {
-                debug!("Error while adding bootnode to table: {:?}", e);
+                //debug!("Error while adding bootnode to table: {:?}", e);
             };
         }
     }
@@ -114,16 +114,16 @@ impl Discv4Server {
                     return;
                 }
             };
-            debug!("Received {read} bytes from {from}");
+            //debug!("Received {read} bytes from {from}");
 
             match Packet::decode(&buf[..read]) {
                 Err(e) => error!("Could not decode packet: {:?}", e),
                 Ok(packet) => {
                     let msg = packet.get_message();
                     let msg_name = msg.to_string();
-                    debug!("Message: {:?} from {}", msg, packet.get_node_id());
+                    //debug!("Message: {:?} from {}", msg, packet.get_node_id());
                     if let Err(e) = self.handle_message(packet, from).await {
-                        debug!("Error while processing {} message: {:?}", msg_name, e);
+                        //debug!("Error while processing {} message: {:?}", msg_name, e);
                     };
                 }
             }
@@ -163,7 +163,7 @@ impl Discv4Server {
                 }
                 if let Some(enr_seq) = msg.enr_seq {
                     if enr_seq > peer.record.seq && peer.is_proven {
-                        debug!("Found outdated enr-seq, sending an enr_request");
+                        //debug!("Found outdated enr-seq, sending an enr_request");
                         self.send_enr_request(peer.node, self.ctx.table.lock().await)
                             .await?;
                     }
@@ -203,7 +203,7 @@ impl Discv4Server {
                     .pong_answered(peer.node.node_id, current_unix_time());
                 if let Some(enr_seq) = msg.enr_seq {
                     if enr_seq > peer.record.seq {
-                        debug!("Found outdated enr-seq, send an enr_request");
+                        //debug!("Found outdated enr-seq, send an enr_request");
                         self.send_enr_request(peer.node, self.ctx.table.lock().await)
                             .await?;
                     }
@@ -244,7 +244,7 @@ impl Discv4Server {
                 let nodes_chunks = nodes.chunks(4);
                 let expiration = get_msg_expiration_from_seconds(20);
 
-                debug!("Sending neighbors!");
+                //debug!("Sending neighbors!");
                 // we are sending the neighbors in 4 different messages as not to exceed the
                 // maximum packet size
                 for nodes in nodes_chunks {
@@ -307,7 +307,7 @@ impl Discv4Server {
                 }
 
                 if total_nodes_sent == MAX_NODES_PER_BUCKET {
-                    debug!("Neighbors request has been fulfilled");
+                    //debug!("Neighbors request has been fulfilled");
                     node.find_node_request = None;
                 }
 
@@ -315,7 +315,7 @@ impl Discv4Server {
                 // as we might be a long time pinging all the new nodes
                 drop(table_lock);
 
-                debug!("Storing neighbors in our table!");
+                //debug!("Storing neighbors in our table!");
                 for node in nodes {
                     let _ = self
                         .try_add_peer_and_ping(*node, self.ctx.table.lock().await)
@@ -426,10 +426,10 @@ impl Discv4Server {
                     peer.node.udp_port = udp_port;
                 }
                 peer.record = msg.node_record.clone();
-                debug!(
-                    "Node with id {:?} record has been successfully updated",
-                    peer.node.node_id
-                );
+                //debug!(
+                //     "Node with id {:?} record has been successfully updated",
+                //     peer.node.node_id
+                // );
                 Ok(())
             }
         }
@@ -458,7 +458,7 @@ impl Discv4Server {
         let mut previously_pinged_peers = HashSet::new();
         loop {
             interval.tick().await;
-            debug!("Running peer revalidation");
+            //debug!("Running peer revalidation");
 
             // first check that the peers we ping have responded
             for node_id in previously_pinged_peers {
@@ -496,7 +496,7 @@ impl Discv4Server {
                 .get_least_recently_pinged_peers(3);
             previously_pinged_peers = HashSet::default();
             for peer in peers {
-                debug!("Pinging peer {:?} to re-validate!", peer.node.node_id);
+                //debug!("Pinging peer {:?} to re-validate!", peer.node.node_id);
                 let _ = self.ping(peer.node, self.ctx.table.lock().await).await;
                 previously_pinged_peers.insert(peer.node.node_id);
                 let mut table = self.ctx.table.lock().await;
@@ -506,7 +506,7 @@ impl Discv4Server {
                 }
             }
 
-            debug!("Peer revalidation finished");
+            //debug!("Peer revalidation finished");
         }
     }
 
