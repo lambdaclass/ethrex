@@ -72,7 +72,7 @@ fn add_op() {
     .unwrap();
 
     let mut current_call_frame = vm.call_frames.pop().unwrap();
-    vm.run_execute(&mut current_call_frame).unwrap();
+    vm.run_execution(&mut current_call_frame).unwrap();
 
     assert!(vm.current_call_frame_mut().unwrap().stack.pop().unwrap() == U256::one());
     assert_eq!(vm.current_call_frame_mut().unwrap().pc, 67);
@@ -89,7 +89,7 @@ fn mul_op() {
     .unwrap();
 
     let mut current_call_frame = vm.call_frames.pop().unwrap();
-    vm.run_execute(&mut current_call_frame).unwrap();
+    vm.run_execution(&mut current_call_frame).unwrap();
 
     assert!(vm.current_call_frame_mut().unwrap().stack.pop().unwrap() == U256::from(8));
 }
@@ -105,7 +105,7 @@ fn sub_op() {
     .unwrap();
 
     let mut current_call_frame = vm.call_frames.pop().unwrap();
-    vm.run_execute(&mut current_call_frame).unwrap();
+    vm.run_execution(&mut current_call_frame).unwrap();
 
     assert!(vm.current_call_frame_mut().unwrap().stack.pop().unwrap() == U256::from(2));
 }
@@ -122,7 +122,7 @@ fn div_op() {
     .unwrap();
 
     let mut current_call_frame = vm.call_frames.pop().unwrap();
-    vm.run_execute(&mut current_call_frame).unwrap();
+    vm.run_execution(&mut current_call_frame).unwrap();
 
     assert!(vm.current_call_frame_mut().unwrap().stack.pop().unwrap() == U256::from(5));
 
@@ -136,7 +136,7 @@ fn div_op() {
     .unwrap();
 
     let mut current_call_frame = vm.call_frames.pop().unwrap();
-    vm.run_execute(&mut current_call_frame).unwrap();
+    vm.run_execution(&mut current_call_frame).unwrap();
 
     assert!(vm.current_call_frame_mut().unwrap().stack.pop().unwrap() == U256::zero());
 }
@@ -153,7 +153,7 @@ fn sdiv_op() {
     .unwrap();
 
     let mut current_call_frame = vm.call_frames.pop().unwrap();
-    vm.run_execute(&mut current_call_frame).unwrap();
+    vm.run_execution(&mut current_call_frame).unwrap();
 
     assert!(vm.current_call_frame_mut().unwrap().stack.pop().unwrap() == U256::from(2));
 }
@@ -170,7 +170,7 @@ fn mod_op() {
     .unwrap();
 
     let mut current_call_frame = vm.call_frames.pop().unwrap();
-    vm.run_execute(&mut current_call_frame).unwrap();
+    vm.run_execution(&mut current_call_frame).unwrap();
 
     assert!(vm.current_call_frame_mut().unwrap().stack.pop().unwrap() == U256::from(1));
 }
@@ -188,7 +188,7 @@ fn smod_op() {
     .unwrap();
 
     let mut current_call_frame = vm.call_frames.pop().unwrap();
-    vm.run_execute(&mut current_call_frame).unwrap();
+    vm.run_execution(&mut current_call_frame).unwrap();
 
     assert_eq!(
         vm.current_call_frame_mut().unwrap().stack.pop().unwrap(),
@@ -218,7 +218,7 @@ fn smod_op() {
     .unwrap();
 
     let mut current_call_frame = vm.call_frames.pop().unwrap();
-    vm.run_execute(&mut current_call_frame).unwrap();
+    vm.run_execution(&mut current_call_frame).unwrap();
 
     let c = U256::from_str_radix(
         "0xfffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffe",
@@ -242,7 +242,7 @@ fn addmod_op() {
     .unwrap();
 
     let mut current_call_frame = vm.call_frames.pop().unwrap();
-    vm.run_execute(&mut current_call_frame).unwrap();
+    vm.run_execution(&mut current_call_frame).unwrap();
 
     assert!(vm.current_call_frame_mut().unwrap().stack.pop().unwrap() == U256::from(4));
 }
@@ -260,7 +260,7 @@ fn mulmod_op() {
     .unwrap();
 
     let mut current_call_frame = vm.call_frames.pop().unwrap();
-    vm.run_execute(&mut current_call_frame).unwrap();
+    vm.run_execution(&mut current_call_frame).unwrap();
 
     assert!(vm.current_call_frame_mut().unwrap().stack.pop().unwrap() == U256::from(4));
 }
@@ -277,7 +277,7 @@ fn exp_op() {
     .unwrap();
 
     let mut current_call_frame = vm.call_frames.pop().unwrap();
-    vm.run_execute(&mut current_call_frame).unwrap();
+    vm.run_execution(&mut current_call_frame).unwrap();
 
     assert!(vm.current_call_frame_mut().unwrap().stack.pop().unwrap() == U256::from(100));
 }
@@ -294,7 +294,7 @@ fn sign_extend_op() {
     .unwrap();
 
     let mut current_call_frame = vm.call_frames.pop().unwrap();
-    vm.run_execute(&mut current_call_frame).unwrap();
+    vm.run_execution(&mut current_call_frame).unwrap();
     assert!(vm.current_call_frame_mut().unwrap().stack.pop().unwrap() == U256::from(0x7F));
 
     // Case 2: Input: 0, 0xFF. Output: 0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF
@@ -307,7 +307,7 @@ fn sign_extend_op() {
     .unwrap();
 
     let mut current_call_frame = vm.call_frames.pop().unwrap();
-    vm.run_execute(&mut current_call_frame).unwrap();
+    vm.run_execution(&mut current_call_frame).unwrap();
     assert!(vm.current_call_frame_mut().unwrap().stack.pop().unwrap() == U256::MAX);
 }
 
@@ -323,7 +323,7 @@ fn lt_op() {
     .unwrap();
 
     let mut current_call_frame = vm.call_frames.pop().unwrap();
-    vm.run_execute(&mut current_call_frame).unwrap();
+    vm.run_execution(&mut current_call_frame).unwrap();
 
     assert!(vm.current_call_frame_mut().unwrap().stack.pop().unwrap() == U256::one());
 }
@@ -340,7 +340,7 @@ fn gt_op() {
     .unwrap();
 
     let mut current_call_frame = vm.call_frames.pop().unwrap();
-    vm.run_execute(&mut current_call_frame).unwrap();
+    vm.run_execution(&mut current_call_frame).unwrap();
 
     assert!(vm.current_call_frame_mut().unwrap().stack.pop().unwrap() == U256::one());
 }
@@ -357,7 +357,7 @@ fn slt_op() {
     .unwrap();
 
     let mut current_call_frame = vm.call_frames.pop().unwrap();
-    vm.run_execute(&mut current_call_frame).unwrap();
+    vm.run_execution(&mut current_call_frame).unwrap();
 
     assert!(vm.current_call_frame_mut().unwrap().stack.pop().unwrap() == U256::one());
 }
@@ -374,7 +374,7 @@ fn sgt_op() {
     .unwrap();
 
     let mut current_call_frame = vm.call_frames.pop().unwrap();
-    vm.run_execute(&mut current_call_frame).unwrap();
+    vm.run_execution(&mut current_call_frame).unwrap();
 
     assert!(vm.current_call_frame_mut().unwrap().stack.pop().unwrap() == U256::one());
 }
@@ -391,7 +391,7 @@ fn eq_op() {
     .unwrap();
 
     let mut current_call_frame = vm.call_frames.pop().unwrap();
-    vm.run_execute(&mut current_call_frame).unwrap();
+    vm.run_execution(&mut current_call_frame).unwrap();
     assert!(vm.current_call_frame_mut().unwrap().stack.pop().unwrap() == U256::one());
 
     // Case 2: Input: 10, 20. Output: 0 (false)
@@ -404,7 +404,7 @@ fn eq_op() {
     .unwrap();
 
     let mut current_call_frame = vm.call_frames.pop().unwrap();
-    vm.run_execute(&mut current_call_frame).unwrap();
+    vm.run_execution(&mut current_call_frame).unwrap();
     assert!(vm.current_call_frame_mut().unwrap().stack.pop().unwrap() == U256::zero());
 }
 
@@ -419,7 +419,7 @@ fn is_zero_op() {
     .unwrap();
 
     let mut current_call_frame = vm.call_frames.pop().unwrap();
-    vm.run_execute(&mut current_call_frame).unwrap();
+    vm.run_execution(&mut current_call_frame).unwrap();
     assert!(vm.current_call_frame_mut().unwrap().stack.pop().unwrap() == U256::one());
 
     // Case 2: Input is non-zero (e.g., 10), Output should be 0 (since 10 != 0 is false)
@@ -431,7 +431,7 @@ fn is_zero_op() {
     .unwrap();
 
     let mut current_call_frame = vm.call_frames.pop().unwrap();
-    vm.run_execute(&mut current_call_frame).unwrap();
+    vm.run_execution(&mut current_call_frame).unwrap();
     assert!(vm.current_call_frame_mut().unwrap().stack.pop().unwrap() == U256::zero());
 }
 
@@ -446,7 +446,7 @@ fn and_basic() {
     .unwrap();
 
     let mut current_call_frame = vm.call_frames.pop().unwrap();
-    vm.run_execute(&mut current_call_frame).unwrap();
+    vm.run_execution(&mut current_call_frame).unwrap();
 
     let result = vm.current_call_frame_mut().unwrap().stack.pop().unwrap();
     assert_eq!(result, U256::from(0b1000));
@@ -465,7 +465,7 @@ fn and_binary_with_zero() {
     let expected_consumed_gas = gas_cost::AND + gas_cost::PUSHN.checked_mul(2).unwrap();
 
     let mut current_call_frame = vm.call_frames.pop().unwrap();
-    vm.run_execute(&mut current_call_frame).unwrap();
+    vm.run_execution(&mut current_call_frame).unwrap();
 
     let result = vm.current_call_frame_mut().unwrap().stack.pop().unwrap();
     assert_eq!(result, U256::zero());
@@ -483,7 +483,7 @@ fn and_with_hex_numbers() {
     .unwrap();
 
     let mut current_call_frame = vm.call_frames.pop().unwrap();
-    vm.run_execute(&mut current_call_frame).unwrap();
+    vm.run_execution(&mut current_call_frame).unwrap();
 
     let result = vm.current_call_frame_mut().unwrap().stack.pop().unwrap();
     assert_eq!(result, U256::from(0xF0F0));
@@ -498,7 +498,7 @@ fn and_with_hex_numbers() {
     .unwrap();
 
     let mut current_call_frame = vm.call_frames.pop().unwrap();
-    vm.run_execute(&mut current_call_frame).unwrap();
+    vm.run_execution(&mut current_call_frame).unwrap();
 
     let result = vm.current_call_frame_mut().unwrap().stack.pop().unwrap();
     assert_eq!(result, U256::from(0xF000));
@@ -513,7 +513,7 @@ fn and_with_hex_numbers() {
     .unwrap();
 
     let mut current_call_frame = vm.call_frames.pop().unwrap();
-    vm.run_execute(&mut current_call_frame).unwrap();
+    vm.run_execution(&mut current_call_frame).unwrap();
 
     let result = vm.current_call_frame_mut().unwrap().stack.pop().unwrap();
     assert_eq!(result, U256::from(0b1000000000000));
@@ -531,7 +531,7 @@ fn or_basic() {
     .unwrap();
 
     let mut current_call_frame = vm.call_frames.pop().unwrap();
-    vm.run_execute(&mut current_call_frame).unwrap();
+    vm.run_execution(&mut current_call_frame).unwrap();
 
     let result = vm.current_call_frame_mut().unwrap().stack.pop().unwrap();
     assert_eq!(result, U256::from(0b1110));
@@ -546,7 +546,7 @@ fn or_basic() {
     .unwrap();
 
     let mut current_call_frame = vm.call_frames.pop().unwrap();
-    vm.run_execute(&mut current_call_frame).unwrap();
+    vm.run_execution(&mut current_call_frame).unwrap();
 
     let result = vm.current_call_frame_mut().unwrap().stack.pop().unwrap();
     assert_eq!(result, U256::from(0b1010));
@@ -561,7 +561,7 @@ fn or_basic() {
     .unwrap();
 
     let mut current_call_frame = vm.call_frames.pop().unwrap();
-    vm.run_execute(&mut current_call_frame).unwrap();
+    vm.run_execution(&mut current_call_frame).unwrap();
 
     let result = vm.current_call_frame_mut().unwrap().stack.pop().unwrap();
     assert_eq!(result, U256::from(0xFFFFFFFFFFFFFFFF_u64));
@@ -579,7 +579,7 @@ fn or_with_hex_numbers() {
     .unwrap();
 
     let mut current_call_frame = vm.call_frames.pop().unwrap();
-    vm.run_execute(&mut current_call_frame).unwrap();
+    vm.run_execution(&mut current_call_frame).unwrap();
 
     let result = vm.current_call_frame_mut().unwrap().stack.pop().unwrap();
     assert_eq!(result, U256::from(0xFFFF));
@@ -594,7 +594,7 @@ fn or_with_hex_numbers() {
     .unwrap();
 
     let mut current_call_frame = vm.call_frames.pop().unwrap();
-    vm.run_execute(&mut current_call_frame).unwrap();
+    vm.run_execution(&mut current_call_frame).unwrap();
 
     let result = vm.current_call_frame_mut().unwrap().stack.pop().unwrap();
     assert_eq!(result, U256::from(0xF0F0));
@@ -609,7 +609,7 @@ fn or_with_hex_numbers() {
     .unwrap();
 
     let mut current_call_frame = vm.call_frames.pop().unwrap();
-    vm.run_execute(&mut current_call_frame).unwrap();
+    vm.run_execution(&mut current_call_frame).unwrap();
 
     let result = vm.current_call_frame_mut().unwrap().stack.pop().unwrap();
     assert_eq!(result, U256::from(0b1011111100101111));
@@ -627,7 +627,7 @@ fn xor_basic() {
     .unwrap();
 
     let mut current_call_frame = vm.call_frames.pop().unwrap();
-    vm.run_execute(&mut current_call_frame).unwrap();
+    vm.run_execution(&mut current_call_frame).unwrap();
 
     let result = vm.current_call_frame_mut().unwrap().stack.pop().unwrap();
     assert_eq!(result, U256::from(0b110));
@@ -642,7 +642,7 @@ fn xor_basic() {
     .unwrap();
 
     let mut current_call_frame = vm.call_frames.pop().unwrap();
-    vm.run_execute(&mut current_call_frame).unwrap();
+    vm.run_execution(&mut current_call_frame).unwrap();
 
     let result = vm.current_call_frame_mut().unwrap().stack.pop().unwrap();
     assert_eq!(result, U256::from(0b1010));
@@ -657,7 +657,7 @@ fn xor_basic() {
     .unwrap();
 
     let mut current_call_frame = vm.call_frames.pop().unwrap();
-    vm.run_execute(&mut current_call_frame).unwrap();
+    vm.run_execution(&mut current_call_frame).unwrap();
 
     let result = vm.current_call_frame_mut().unwrap().stack.pop().unwrap();
     assert_eq!(result, U256::from(u64::MAX));
@@ -672,7 +672,7 @@ fn xor_basic() {
     .unwrap();
 
     let mut current_call_frame = vm.call_frames.pop().unwrap();
-    vm.run_execute(&mut current_call_frame).unwrap();
+    vm.run_execution(&mut current_call_frame).unwrap();
 
     let result = vm.current_call_frame_mut().unwrap().stack.pop().unwrap();
     assert_eq!(result, U256::zero());
@@ -690,7 +690,7 @@ fn xor_with_hex_numbers() {
     .unwrap();
 
     let mut current_call_frame = vm.call_frames.pop().unwrap();
-    vm.run_execute(&mut current_call_frame).unwrap();
+    vm.run_execution(&mut current_call_frame).unwrap();
 
     let result = vm.current_call_frame_mut().unwrap().stack.pop().unwrap();
     assert_eq!(result, U256::from(0xFF));
@@ -705,7 +705,7 @@ fn xor_with_hex_numbers() {
     .unwrap();
 
     let mut current_call_frame = vm.call_frames.pop().unwrap();
-    vm.run_execute(&mut current_call_frame).unwrap();
+    vm.run_execution(&mut current_call_frame).unwrap();
 
     let result = vm.current_call_frame_mut().unwrap().stack.pop().unwrap();
     assert_eq!(result, U256::zero());
@@ -720,7 +720,7 @@ fn xor_with_hex_numbers() {
     .unwrap();
 
     let mut current_call_frame = vm.call_frames.pop().unwrap();
-    vm.run_execute(&mut current_call_frame).unwrap();
+    vm.run_execution(&mut current_call_frame).unwrap();
 
     let result = vm.current_call_frame_mut().unwrap().stack.pop().unwrap();
     assert_eq!(result, U256::from(0xF0F));
@@ -735,7 +735,7 @@ fn xor_with_hex_numbers() {
     .unwrap();
 
     let mut current_call_frame = vm.call_frames.pop().unwrap();
-    vm.run_execute(&mut current_call_frame).unwrap();
+    vm.run_execution(&mut current_call_frame).unwrap();
 
     let result = vm.current_call_frame_mut().unwrap().stack.pop().unwrap();
     assert_eq!(result, U256::from(0xF0));
@@ -750,7 +750,7 @@ fn xor_with_hex_numbers() {
     .unwrap();
 
     let mut current_call_frame = vm.call_frames.pop().unwrap();
-    vm.run_execute(&mut current_call_frame).unwrap();
+    vm.run_execution(&mut current_call_frame).unwrap();
 
     let result = vm.current_call_frame_mut().unwrap().stack.pop().unwrap();
     assert_eq!(result, U256::from(0b111011001000100));
@@ -767,7 +767,7 @@ fn not() {
     .unwrap();
 
     let mut current_call_frame = vm.call_frames.pop().unwrap();
-    vm.run_execute(&mut current_call_frame).unwrap();
+    vm.run_execution(&mut current_call_frame).unwrap();
 
     let result = vm.current_call_frame_mut().unwrap().stack.pop().unwrap();
     let expected = !U256::from(0b1010);
@@ -782,7 +782,7 @@ fn not() {
     .unwrap();
 
     let mut current_call_frame = vm.call_frames.pop().unwrap();
-    vm.run_execute(&mut current_call_frame).unwrap();
+    vm.run_execution(&mut current_call_frame).unwrap();
 
     let result = vm.current_call_frame_mut().unwrap().stack.pop().unwrap();
     assert_eq!(result, U256::zero());
@@ -796,7 +796,7 @@ fn not() {
     .unwrap();
 
     let mut current_call_frame = vm.call_frames.pop().unwrap();
-    vm.run_execute(&mut current_call_frame).unwrap();
+    vm.run_execution(&mut current_call_frame).unwrap();
 
     let result = vm.current_call_frame_mut().unwrap().stack.pop().unwrap();
     assert_eq!(result, U256::MAX);
@@ -810,7 +810,7 @@ fn not() {
     .unwrap();
 
     let mut current_call_frame = vm.call_frames.pop().unwrap();
-    vm.run_execute(&mut current_call_frame).unwrap();
+    vm.run_execution(&mut current_call_frame).unwrap();
 
     let result = vm.current_call_frame_mut().unwrap().stack.pop().unwrap();
     assert_eq!(result, U256::MAX - 1);
@@ -828,7 +828,7 @@ fn byte_basic() {
     .unwrap();
 
     let mut current_call_frame = vm.call_frames.pop().unwrap();
-    vm.run_execute(&mut current_call_frame).unwrap();
+    vm.run_execution(&mut current_call_frame).unwrap();
 
     let result = vm.current_call_frame_mut().unwrap().stack.pop().unwrap();
     assert_eq!(result, U256::from(0xF1));
@@ -843,7 +843,7 @@ fn byte_basic() {
     .unwrap();
 
     let mut current_call_frame = vm.call_frames.pop().unwrap();
-    vm.run_execute(&mut current_call_frame).unwrap();
+    vm.run_execution(&mut current_call_frame).unwrap();
 
     let result = vm.current_call_frame_mut().unwrap().stack.pop().unwrap();
     assert_eq!(result, U256::from(0x33));
@@ -861,7 +861,7 @@ fn byte_edge_cases() {
     .unwrap();
 
     let mut current_call_frame = vm.call_frames.pop().unwrap();
-    vm.run_execute(&mut current_call_frame).unwrap();
+    vm.run_execution(&mut current_call_frame).unwrap();
 
     let result = vm.current_call_frame_mut().unwrap().stack.pop().unwrap();
     assert_eq!(result, U256::from(0xFF));
@@ -876,7 +876,7 @@ fn byte_edge_cases() {
     .unwrap();
 
     let mut current_call_frame = vm.call_frames.pop().unwrap();
-    vm.run_execute(&mut current_call_frame).unwrap();
+    vm.run_execution(&mut current_call_frame).unwrap();
 
     let result = vm.current_call_frame_mut().unwrap().stack.pop().unwrap();
     assert_eq!(result, U256::from(0xFF));
@@ -891,7 +891,7 @@ fn byte_edge_cases() {
     .unwrap();
 
     let mut current_call_frame = vm.call_frames.pop().unwrap();
-    vm.run_execute(&mut current_call_frame).unwrap();
+    vm.run_execution(&mut current_call_frame).unwrap();
 
     let result = vm.current_call_frame_mut().unwrap().stack.pop().unwrap();
     assert_eq!(result, U256::from(0x0D));
@@ -906,7 +906,7 @@ fn byte_edge_cases() {
     .unwrap();
 
     let mut current_call_frame = vm.call_frames.pop().unwrap();
-    vm.run_execute(&mut current_call_frame).unwrap();
+    vm.run_execution(&mut current_call_frame).unwrap();
 
     let result = vm.current_call_frame_mut().unwrap().stack.pop().unwrap();
     assert_eq!(result, U256::zero());
@@ -921,7 +921,7 @@ fn byte_edge_cases() {
     .unwrap();
 
     let mut current_call_frame = vm.call_frames.pop().unwrap();
-    vm.run_execute(&mut current_call_frame).unwrap();
+    vm.run_execution(&mut current_call_frame).unwrap();
 
     let result = vm.current_call_frame_mut().unwrap().stack.pop().unwrap();
     assert_eq!(result, U256::zero());
@@ -936,7 +936,7 @@ fn byte_edge_cases() {
     .unwrap();
 
     let mut current_call_frame = vm.call_frames.pop().unwrap();
-    vm.run_execute(&mut current_call_frame).unwrap();
+    vm.run_execution(&mut current_call_frame).unwrap();
 
     let result = vm.current_call_frame_mut().unwrap().stack.pop().unwrap();
     assert_eq!(result, U256::zero());
@@ -957,7 +957,7 @@ fn byte_edge_cases() {
     .unwrap();
 
     let mut current_call_frame = vm.call_frames.pop().unwrap();
-    vm.run_execute(&mut current_call_frame).unwrap();
+    vm.run_execution(&mut current_call_frame).unwrap();
 
     let result = vm.current_call_frame_mut().unwrap().stack.pop().unwrap();
     assert_eq!(result, U256::from(0x90));
@@ -972,7 +972,7 @@ fn byte_edge_cases() {
     .unwrap();
 
     let mut current_call_frame = vm.call_frames.pop().unwrap();
-    vm.run_execute(&mut current_call_frame).unwrap();
+    vm.run_execution(&mut current_call_frame).unwrap();
 
     let result = vm.current_call_frame_mut().unwrap().stack.pop().unwrap();
     assert_eq!(result, U256::from(0x57));
@@ -987,7 +987,7 @@ fn byte_edge_cases() {
     .unwrap();
 
     let mut current_call_frame = vm.call_frames.pop().unwrap();
-    vm.run_execute(&mut current_call_frame).unwrap();
+    vm.run_execution(&mut current_call_frame).unwrap();
 
     let result = vm.current_call_frame_mut().unwrap().stack.pop().unwrap();
     assert_eq!(result, U256::from(0xDD));
@@ -1002,7 +1002,7 @@ fn byte_edge_cases() {
     .unwrap();
 
     let mut current_call_frame = vm.call_frames.pop().unwrap();
-    vm.run_execute(&mut current_call_frame).unwrap();
+    vm.run_execution(&mut current_call_frame).unwrap();
 
     let result = vm.current_call_frame_mut().unwrap().stack.pop().unwrap();
     assert_eq!(result, U256::from(0x40));
@@ -1020,7 +1020,7 @@ fn shl_basic() {
     .unwrap();
 
     let mut current_call_frame = vm.call_frames.pop().unwrap();
-    vm.run_execute(&mut current_call_frame).unwrap();
+    vm.run_execution(&mut current_call_frame).unwrap();
 
     let result = vm.current_call_frame_mut().unwrap().stack.pop().unwrap();
     assert_eq!(result, U256::from(0xDDDD));
@@ -1035,7 +1035,7 @@ fn shl_basic() {
     .unwrap();
 
     let mut current_call_frame = vm.call_frames.pop().unwrap();
-    vm.run_execute(&mut current_call_frame).unwrap();
+    vm.run_execution(&mut current_call_frame).unwrap();
 
     let result = vm.current_call_frame_mut().unwrap().stack.pop().unwrap();
     assert_eq!(result, U256::from(0x2468acf0));
@@ -1050,7 +1050,7 @@ fn shl_basic() {
     .unwrap();
 
     let mut current_call_frame = vm.call_frames.pop().unwrap();
-    vm.run_execute(&mut current_call_frame).unwrap();
+    vm.run_execution(&mut current_call_frame).unwrap();
 
     let result = vm.current_call_frame_mut().unwrap().stack.pop().unwrap();
     assert_eq!(result, U256::from(4886718336_u64));
@@ -1065,7 +1065,7 @@ fn shl_basic() {
     .unwrap();
 
     let mut current_call_frame = vm.call_frames.pop().unwrap();
-    vm.run_execute(&mut current_call_frame).unwrap();
+    vm.run_execution(&mut current_call_frame).unwrap();
 
     let result = vm.current_call_frame_mut().unwrap().stack.pop().unwrap();
     assert_eq!(result, U256::from(0xFF << 4));
@@ -1083,7 +1083,7 @@ fn shl_edge_cases() {
     .unwrap();
 
     let mut current_call_frame = vm.call_frames.pop().unwrap();
-    vm.run_execute(&mut current_call_frame).unwrap();
+    vm.run_execution(&mut current_call_frame).unwrap();
 
     let result = vm.current_call_frame_mut().unwrap().stack.pop().unwrap();
     assert_eq!(result, U256::zero());
@@ -1098,7 +1098,7 @@ fn shl_edge_cases() {
     .unwrap();
 
     let mut current_call_frame = vm.call_frames.pop().unwrap();
-    vm.run_execute(&mut current_call_frame).unwrap();
+    vm.run_execution(&mut current_call_frame).unwrap();
 
     let result = vm.current_call_frame_mut().unwrap().stack.pop().unwrap();
     assert_eq!(result, U256::zero());
@@ -1113,7 +1113,7 @@ fn shl_edge_cases() {
     .unwrap();
 
     let mut current_call_frame = vm.call_frames.pop().unwrap();
-    vm.run_execute(&mut current_call_frame).unwrap();
+    vm.run_execution(&mut current_call_frame).unwrap();
 
     let result = vm.current_call_frame_mut().unwrap().stack.pop().unwrap();
     assert_eq!(result, U256::MAX - 1);
@@ -1131,7 +1131,7 @@ fn shr_basic() {
     .unwrap();
 
     let mut current_call_frame = vm.call_frames.pop().unwrap();
-    vm.run_execute(&mut current_call_frame).unwrap();
+    vm.run_execution(&mut current_call_frame).unwrap();
 
     let result = vm.current_call_frame_mut().unwrap().stack.pop().unwrap();
     assert_eq!(result, U256::from(0xDDDD));
@@ -1146,7 +1146,7 @@ fn shr_basic() {
     .unwrap();
 
     let mut current_call_frame = vm.call_frames.pop().unwrap();
-    vm.run_execute(&mut current_call_frame).unwrap();
+    vm.run_execution(&mut current_call_frame).unwrap();
 
     let result = vm.current_call_frame_mut().unwrap().stack.pop().unwrap();
     assert_eq!(result, U256::from(0x91a2b3c));
@@ -1161,7 +1161,7 @@ fn shr_basic() {
     .unwrap();
 
     let mut current_call_frame = vm.call_frames.pop().unwrap();
-    vm.run_execute(&mut current_call_frame).unwrap();
+    vm.run_execution(&mut current_call_frame).unwrap();
 
     let result = vm.current_call_frame_mut().unwrap().stack.pop().unwrap();
     assert_eq!(result, U256::from(0x1234567));
@@ -1176,7 +1176,7 @@ fn shr_basic() {
     .unwrap();
 
     let mut current_call_frame = vm.call_frames.pop().unwrap();
-    vm.run_execute(&mut current_call_frame).unwrap();
+    vm.run_execution(&mut current_call_frame).unwrap();
 
     let result = vm.current_call_frame_mut().unwrap().stack.pop().unwrap();
     assert_eq!(result, U256::from(0xF));
@@ -1194,7 +1194,7 @@ fn shr_edge_cases() {
     .unwrap();
 
     let mut current_call_frame = vm.call_frames.pop().unwrap();
-    vm.run_execute(&mut current_call_frame).unwrap();
+    vm.run_execution(&mut current_call_frame).unwrap();
 
     let result = vm.current_call_frame_mut().unwrap().stack.pop().unwrap();
     assert_eq!(result, U256::zero());
@@ -1209,7 +1209,7 @@ fn shr_edge_cases() {
     .unwrap();
 
     let mut current_call_frame = vm.call_frames.pop().unwrap();
-    vm.run_execute(&mut current_call_frame).unwrap();
+    vm.run_execution(&mut current_call_frame).unwrap();
 
     let result = vm.current_call_frame_mut().unwrap().stack.pop().unwrap();
     assert_eq!(result, U256::zero());
@@ -1224,7 +1224,7 @@ fn shr_edge_cases() {
     .unwrap();
 
     let mut current_call_frame = vm.call_frames.pop().unwrap();
-    vm.run_execute(&mut current_call_frame).unwrap();
+    vm.run_execution(&mut current_call_frame).unwrap();
 
     let result = vm.current_call_frame_mut().unwrap().stack.pop().unwrap();
     assert_eq!(result, U256::MAX >> 1);
@@ -1242,7 +1242,7 @@ fn sar_shift_by_0() {
     .unwrap();
 
     let mut current_call_frame = vm.call_frames.pop().unwrap();
-    vm.run_execute(&mut current_call_frame).unwrap();
+    vm.run_execution(&mut current_call_frame).unwrap();
 
     let result = vm.current_call_frame_mut().unwrap().stack.pop().unwrap();
     assert_eq!(result, U256::from(0x12345678));
@@ -1266,7 +1266,7 @@ fn sar_shifting_large_value_with_all_bits_set() {
     .unwrap();
 
     let mut current_call_frame = vm.call_frames.pop().unwrap();
-    vm.run_execute(&mut current_call_frame).unwrap();
+    vm.run_execution(&mut current_call_frame).unwrap();
 
     let result = vm.current_call_frame_mut().unwrap().stack.pop().unwrap();
     let expected = U256::from_big_endian(&[
@@ -1295,7 +1295,7 @@ fn sar_shifting_negative_value_and_small_shift() {
     .unwrap();
 
     let mut current_call_frame = vm.call_frames.pop().unwrap();
-    vm.run_execute(&mut current_call_frame).unwrap();
+    vm.run_execution(&mut current_call_frame).unwrap();
 
     let result = vm.current_call_frame_mut().unwrap().stack.pop().unwrap();
     let expected = U256::from_big_endian(&[
@@ -1318,7 +1318,7 @@ fn sar_shift_positive_value() {
     .unwrap();
 
     let mut current_call_frame = vm.call_frames.pop().unwrap();
-    vm.run_execute(&mut current_call_frame).unwrap();
+    vm.run_execution(&mut current_call_frame).unwrap();
 
     let result = vm.current_call_frame_mut().unwrap().stack.pop().unwrap();
     assert_eq!(result, U256::from(0x07FFFF));
@@ -1342,7 +1342,7 @@ fn sar_shift_negative_value() {
     .unwrap();
 
     let mut current_call_frame = vm.call_frames.pop().unwrap();
-    vm.run_execute(&mut current_call_frame).unwrap();
+    vm.run_execution(&mut current_call_frame).unwrap();
 
     let result = vm.current_call_frame_mut().unwrap().stack.pop().unwrap();
     let expected = U256::from_big_endian(&[
@@ -1375,7 +1375,7 @@ fn keccak256_zero_offset_size_four() {
     let mut vm = new_vm_with_ops(&operations).unwrap();
 
     let mut current_call_frame = vm.call_frames.pop().unwrap();
-    vm.run_execute(&mut current_call_frame).unwrap();
+    vm.run_execution(&mut current_call_frame).unwrap();
 
     assert_eq!(
         vm.current_call_frame_mut().unwrap().stack.pop().unwrap(),
@@ -1405,7 +1405,7 @@ fn keccak256_zero_offset_size_bigger_than_actual_memory() {
     let mut vm = new_vm_with_ops(&operations).unwrap();
 
     let mut current_call_frame = vm.call_frames.pop().unwrap();
-    vm.run_execute(&mut current_call_frame).unwrap();
+    vm.run_execution(&mut current_call_frame).unwrap();
 
     assert!(
         vm.current_call_frame_mut().unwrap().stack.pop().unwrap()
@@ -1427,7 +1427,7 @@ fn keccak256_zero_offset_zero_size() {
     let mut vm = new_vm_with_ops(&operations).unwrap();
 
     let mut current_call_frame = vm.call_frames.pop().unwrap();
-    vm.run_execute(&mut current_call_frame).unwrap();
+    vm.run_execution(&mut current_call_frame).unwrap();
 
     assert_eq!(
         vm.current_call_frame_mut().unwrap().stack.pop().unwrap(),
@@ -1457,7 +1457,7 @@ fn keccak256_offset_four_size_four() {
     let mut vm = new_vm_with_ops(&operations).unwrap();
 
     let mut current_call_frame = vm.call_frames.pop().unwrap();
-    vm.run_execute(&mut current_call_frame).unwrap();
+    vm.run_execution(&mut current_call_frame).unwrap();
 
     assert_eq!(
         vm.current_call_frame_mut().unwrap().stack.pop().unwrap(),
@@ -1479,7 +1479,7 @@ fn mstore() {
     .unwrap();
 
     let mut current_call_frame = vm.call_frames.pop().unwrap();
-    vm.run_execute(&mut current_call_frame).unwrap();
+    vm.run_execution(&mut current_call_frame).unwrap();
 
     assert_eq!(
         vm.current_call_frame_mut().unwrap().stack.pop().unwrap(),
@@ -1501,7 +1501,7 @@ fn mstore_saves_correct_value() {
     .unwrap();
 
     let mut current_call_frame = vm.call_frames.pop().unwrap();
-    vm.run_execute(&mut current_call_frame).unwrap();
+    vm.run_execution(&mut current_call_frame).unwrap();
 
     let stored_value = memory::load_word(
         &mut vm.current_call_frame_mut().unwrap().memory,
@@ -1528,7 +1528,7 @@ fn mstore8() {
     let mut vm = new_vm_with_ops(&operations).unwrap();
 
     let mut current_call_frame = vm.call_frames.pop().unwrap();
-    vm.run_execute(&mut current_call_frame).unwrap();
+    vm.run_execution(&mut current_call_frame).unwrap();
 
     let stored_value = memory::load_word(
         &mut vm.current_call_frame_mut().unwrap().memory,
@@ -1557,7 +1557,7 @@ fn mcopy() {
     let mut vm = new_vm_with_ops(&operations).unwrap();
 
     let mut current_call_frame = vm.call_frames.pop().unwrap();
-    vm.run_execute(&mut current_call_frame).unwrap();
+    vm.run_execution(&mut current_call_frame).unwrap();
 
     let copied_value = memory::load_word(
         &mut vm.current_call_frame_mut().unwrap().memory,
@@ -1585,7 +1585,7 @@ fn mload() {
     let mut vm = new_vm_with_ops(&operations).unwrap();
 
     let mut current_call_frame = vm.call_frames.pop().unwrap();
-    vm.run_execute(&mut current_call_frame).unwrap();
+    vm.run_execution(&mut current_call_frame).unwrap();
 
     let loaded_value = vm.current_call_frame_mut().unwrap().stack.pop().unwrap();
     assert_eq!(loaded_value, U256::from(0x33333));
@@ -1599,7 +1599,7 @@ fn msize() {
     let mut vm = new_vm_with_ops(&operations).unwrap();
 
     let mut current_call_frame = vm.call_frames.pop().unwrap();
-    vm.run_execute(&mut current_call_frame).unwrap();
+    vm.run_execution(&mut current_call_frame).unwrap();
 
     let initial_size = vm.current_call_frame_mut().unwrap().stack.pop().unwrap();
     assert_eq!(initial_size, U256::zero());
@@ -1616,7 +1616,7 @@ fn msize() {
     let mut vm = new_vm_with_ops(&operations).unwrap();
 
     let mut current_call_frame = vm.call_frames.pop().unwrap();
-    vm.run_execute(&mut current_call_frame).unwrap();
+    vm.run_execution(&mut current_call_frame).unwrap();
 
     let after_store_size = vm.current_call_frame_mut().unwrap().stack.pop().unwrap();
     assert_eq!(after_store_size, U256::from(32));
@@ -1633,7 +1633,7 @@ fn msize() {
     let mut vm = new_vm_with_ops(&operations).unwrap();
 
     let mut current_call_frame = vm.call_frames.pop().unwrap();
-    vm.run_execute(&mut current_call_frame).unwrap();
+    vm.run_execution(&mut current_call_frame).unwrap();
 
     let final_size = vm.current_call_frame_mut().unwrap().stack.pop().unwrap();
     assert_eq!(final_size, U256::from(96));
@@ -1655,7 +1655,7 @@ fn mstore_mload_offset_not_multiple_of_32() {
     let mut vm = new_vm_with_ops(&operations).unwrap();
 
     let mut current_call_frame = vm.call_frames.pop().unwrap();
-    vm.run_execute(&mut current_call_frame).unwrap();
+    vm.run_execution(&mut current_call_frame).unwrap();
 
     let memory_size = vm.current_call_frame_mut().unwrap().stack.pop().unwrap();
     let loaded_value = vm.current_call_frame_mut().unwrap().stack.pop().unwrap();
@@ -1679,7 +1679,7 @@ fn mstore_mload_offset_not_multiple_of_32() {
     let mut vm = new_vm_with_ops(&operations).unwrap();
 
     let mut current_call_frame = vm.call_frames.pop().unwrap();
-    vm.run_execute(&mut current_call_frame).unwrap();
+    vm.run_execution(&mut current_call_frame).unwrap();
 
     let memory_size = vm.current_call_frame_mut().unwrap().stack.pop().unwrap();
     let loaded_value = vm.current_call_frame_mut().unwrap().stack.pop().unwrap();
@@ -1701,7 +1701,7 @@ fn mload_uninitialized_memory() {
     let mut vm = new_vm_with_ops(&operations).unwrap();
 
     let mut current_call_frame = vm.call_frames.pop().unwrap();
-    vm.run_execute(&mut current_call_frame).unwrap();
+    vm.run_execution(&mut current_call_frame).unwrap();
 
     let memory_size = vm.current_call_frame_mut().unwrap().stack.pop().unwrap();
     let loaded_value = vm.current_call_frame_mut().unwrap().stack.pop().unwrap();
@@ -1750,7 +1750,7 @@ fn call_returns_if_bytecode_empty() {
     .unwrap();
 
     let mut current_call_frame = vm.call_frames.pop().unwrap();
-    vm.run_execute(&mut current_call_frame).unwrap();
+    vm.run_execution(&mut current_call_frame).unwrap();
 
     let success = vm.current_call_frame_mut().unwrap().stack.pop().unwrap();
     assert_eq!(success, U256::one());
@@ -1797,7 +1797,7 @@ fn call_changes_callframe_and_stores() {
     .unwrap();
 
     let mut current_call_frame = vm.call_frames.pop().unwrap();
-    vm.run_execute(&mut current_call_frame).unwrap();
+    vm.run_execution(&mut current_call_frame).unwrap();
 
     let current_call_frame = vm.current_call_frame_mut().unwrap();
 
@@ -1893,7 +1893,7 @@ fn nested_calls() {
     .unwrap();
 
     let mut current_call_frame = vm.call_frames.pop().unwrap();
-    vm.run_execute(&mut current_call_frame).unwrap();
+    vm.run_execution(&mut current_call_frame).unwrap();
 
     let current_call_frame = vm.current_call_frame_mut().unwrap();
 
@@ -1961,7 +1961,7 @@ fn staticcall_changes_callframe_is_static() {
     .unwrap();
 
     let mut current_call_frame = vm.call_frames.pop().unwrap();
-    vm.run_execute(&mut current_call_frame).unwrap();
+    vm.run_execution(&mut current_call_frame).unwrap();
 
     let mut current_call_frame = vm.call_frames[0].clone();
 
@@ -1981,7 +1981,7 @@ fn pop_on_empty_stack() {
     let mut vm = new_vm_with_ops(&operations).unwrap();
 
     let mut current_call_frame = vm.call_frames.pop().unwrap();
-    let tx_report = vm.run_execute(&mut current_call_frame).unwrap();
+    let tx_report = vm.run_execution(&mut current_call_frame).unwrap();
 
     // result should be a Halt with error VMError::StackUnderflow
 
@@ -1998,7 +1998,7 @@ fn pc_op() {
     let mut vm = new_vm_with_ops(&operations).unwrap();
 
     let mut current_call_frame = vm.call_frames.pop().unwrap();
-    vm.run_execute(&mut current_call_frame).unwrap();
+    vm.run_execution(&mut current_call_frame).unwrap();
 
     assert_eq!(
         vm.current_call_frame_mut().unwrap().stack.pop().unwrap(),
@@ -2018,7 +2018,7 @@ fn pc_op_with_push_offset() {
     let mut vm = new_vm_with_ops(&operations).unwrap();
 
     let mut current_call_frame = vm.call_frames.pop().unwrap();
-    vm.run_execute(&mut current_call_frame).unwrap();
+    vm.run_execution(&mut current_call_frame).unwrap();
 
     assert_eq!(
         vm.current_call_frame_mut().unwrap().stack.pop().unwrap(),
@@ -2294,7 +2294,7 @@ fn jump_position_bigger_than_program_bytecode_size() {
     let mut vm = new_vm_with_ops(&operations).unwrap();
 
     let mut current_call_frame = vm.call_frames.pop().unwrap();
-    let tx_report = vm.run_execute(&mut current_call_frame).unwrap();
+    let tx_report = vm.run_execution(&mut current_call_frame).unwrap();
     assert!(matches!(
         tx_report.result,
         TxResult::Revert(VMError::InvalidJump)
@@ -2316,7 +2316,7 @@ fn jumpi_not_zero() {
     let mut vm = new_vm_with_ops(&operations).unwrap();
 
     let mut current_call_frame = vm.call_frames.pop().unwrap();
-    vm.run_execute(&mut current_call_frame).unwrap();
+    vm.run_execution(&mut current_call_frame).unwrap();
 
     assert_eq!(
         vm.current_call_frame_mut().unwrap().stack.pop().unwrap(),
@@ -2341,7 +2341,7 @@ fn jumpi_for_zero() {
     let mut vm = new_vm_with_ops(&operations).unwrap();
 
     let mut current_call_frame = vm.call_frames.pop().unwrap();
-    vm.run_execute(&mut current_call_frame).unwrap();
+    vm.run_execution(&mut current_call_frame).unwrap();
 
     assert_eq!(
         vm.current_call_frame_mut().unwrap().stack.pop().unwrap(),
@@ -2411,7 +2411,7 @@ fn calldataload() {
 
     vm.current_call_frame_mut().unwrap().calldata = calldata;
     let mut current_call_frame = vm.call_frames.pop().unwrap();
-    vm.run_execute(&mut current_call_frame).unwrap();
+    vm.run_execution(&mut current_call_frame).unwrap();
 
     let current_call_frame = vm.current_call_frame_mut().unwrap();
 
@@ -2484,7 +2484,7 @@ fn calldataload_being_set_by_parent() {
     .unwrap();
 
     let mut current_call_frame = vm.call_frames.pop().unwrap();
-    vm.run_execute(&mut current_call_frame).unwrap();
+    vm.run_execution(&mut current_call_frame).unwrap();
 
     let current_call_frame = vm.current_call_frame_mut().unwrap();
 
@@ -2515,7 +2515,7 @@ fn calldatasize() {
     vm.current_call_frame_mut().unwrap().calldata = calldata;
 
     let mut current_call_frame = vm.call_frames.pop().unwrap();
-    vm.run_execute(&mut current_call_frame).unwrap();
+    vm.run_execution(&mut current_call_frame).unwrap();
 
     let current_call_frame = vm.current_call_frame_mut().unwrap();
     let top_of_stack = current_call_frame.stack.pop().unwrap();
@@ -2538,7 +2538,7 @@ fn calldatacopy() {
     vm.current_call_frame_mut().unwrap().calldata = calldata;
 
     let mut current_call_frame = vm.call_frames.pop().unwrap();
-    vm.run_execute(&mut current_call_frame).unwrap();
+    vm.run_execution(&mut current_call_frame).unwrap();
 
     let current_call_frame = vm.current_call_frame_mut().unwrap();
     let memory = memory::load_range(&mut current_call_frame.memory, U256::zero(), 2).unwrap();
@@ -2555,7 +2555,7 @@ fn returndatasize() {
     vm.current_call_frame_mut().unwrap().sub_return_data = returndata;
 
     let mut current_call_frame = vm.call_frames.pop().unwrap();
-    vm.run_execute(&mut current_call_frame).unwrap();
+    vm.run_execution(&mut current_call_frame).unwrap();
 
     let current_call_frame = vm.current_call_frame_mut().unwrap();
     let top_of_stack = current_call_frame.stack.pop().unwrap();
@@ -2578,7 +2578,7 @@ fn returndatacopy() {
     vm.current_call_frame_mut().unwrap().sub_return_data = returndata;
 
     let mut current_call_frame = vm.call_frames.pop().unwrap();
-    vm.run_execute(&mut current_call_frame).unwrap();
+    vm.run_execution(&mut current_call_frame).unwrap();
 
     let current_call_frame = vm.current_call_frame_mut().unwrap();
     let memory = memory::load_range(&mut current_call_frame.memory, U256::zero(), 2).unwrap();
@@ -2627,7 +2627,7 @@ fn returndatacopy_being_set_by_parent() {
     .unwrap();
 
     let mut current_call_frame = vm.call_frames.pop().unwrap();
-    vm.run_execute(&mut current_call_frame).unwrap();
+    vm.run_execution(&mut current_call_frame).unwrap();
 
     let current_call_frame = vm.current_call_frame_mut().unwrap();
 
@@ -2664,7 +2664,7 @@ fn blockhash_op() {
     vm.env.block_number = current_block_number;
 
     let mut current_call_frame = vm.call_frames.pop().unwrap();
-    vm.run_execute(&mut current_call_frame).unwrap();
+    vm.run_execution(&mut current_call_frame).unwrap();
 
     assert_eq!(
         vm.current_call_frame_mut().unwrap().stack.pop().unwrap(),
@@ -2696,7 +2696,7 @@ fn blockhash_same_block_number() {
     vm.env.block_number = current_block_number;
 
     let mut current_call_frame = vm.call_frames.pop().unwrap();
-    vm.run_execute(&mut current_call_frame).unwrap();
+    vm.run_execution(&mut current_call_frame).unwrap();
 
     assert_eq!(
         vm.current_call_frame_mut().unwrap().stack.pop().unwrap(),
@@ -2732,7 +2732,7 @@ fn blockhash_block_number_not_from_recent_256() {
     vm.env.block_number = current_block_number;
 
     let mut current_call_frame = vm.call_frames.pop().unwrap();
-    vm.run_execute(&mut current_call_frame).unwrap();
+    vm.run_execution(&mut current_call_frame).unwrap();
 
     assert_eq!(
         vm.current_call_frame_mut().unwrap().stack.pop().unwrap(),
@@ -2751,7 +2751,7 @@ fn coinbase_op() {
     vm.env.coinbase = Address::from_low_u64_be(coinbase_address);
 
     let mut current_call_frame = vm.call_frames.pop().unwrap();
-    vm.run_execute(&mut current_call_frame).unwrap();
+    vm.run_execution(&mut current_call_frame).unwrap();
 
     assert_eq!(
         vm.current_call_frame_mut().unwrap().stack.pop().unwrap(),
@@ -2770,7 +2770,7 @@ fn timestamp_op() {
     vm.env.timestamp = timestamp;
 
     let mut current_call_frame = vm.call_frames.pop().unwrap();
-    vm.run_execute(&mut current_call_frame).unwrap();
+    vm.run_execution(&mut current_call_frame).unwrap();
 
     assert_eq!(
         vm.current_call_frame_mut().unwrap().stack.pop().unwrap(),
@@ -2789,7 +2789,7 @@ fn number_op() {
     vm.env.block_number = block_number;
 
     let mut current_call_frame = vm.call_frames.pop().unwrap();
-    vm.run_execute(&mut current_call_frame).unwrap();
+    vm.run_execution(&mut current_call_frame).unwrap();
 
     assert_eq!(
         vm.current_call_frame_mut().unwrap().stack.pop().unwrap(),
@@ -2808,7 +2808,7 @@ fn prevrandao_op() {
     vm.env.prev_randao = Some(prevrandao);
 
     let mut current_call_frame = vm.call_frames.pop().unwrap();
-    vm.run_execute(&mut current_call_frame).unwrap();
+    vm.run_execution(&mut current_call_frame).unwrap();
 
     assert_eq!(
         vm.current_call_frame_mut().unwrap().stack.pop().unwrap(),
@@ -2827,7 +2827,7 @@ fn gaslimit_op() {
     vm.env.block_gas_limit = gas_limit;
 
     let mut current_call_frame = vm.call_frames.pop().unwrap();
-    vm.run_execute(&mut current_call_frame).unwrap();
+    vm.run_execution(&mut current_call_frame).unwrap();
 
     assert_eq!(
         vm.current_call_frame_mut().unwrap().stack.pop().unwrap(),
@@ -2854,7 +2854,7 @@ fn no_more_gas() {
 
     let mut current_call_frame = vm.call_frames.pop().unwrap();
     current_call_frame.gas_limit = not_enough_funds;
-    let tx_report = vm.run_execute(&mut current_call_frame).unwrap();
+    let tx_report = vm.run_execution(&mut current_call_frame).unwrap();
 
     assert_eq!(
         tx_report.result,
@@ -2872,7 +2872,7 @@ fn chain_id_op() {
     vm.env.chain_id = chain_id;
 
     let mut current_call_frame = vm.call_frames.pop().unwrap();
-    vm.run_execute(&mut current_call_frame).unwrap();
+    vm.run_execution(&mut current_call_frame).unwrap();
 
     assert_eq!(
         vm.current_call_frame_mut().unwrap().stack.pop().unwrap(),
@@ -2891,7 +2891,7 @@ fn basefee_op() {
     vm.env.base_fee_per_gas = base_fee_per_gas;
 
     let mut current_call_frame = vm.call_frames.pop().unwrap();
-    vm.run_execute(&mut current_call_frame).unwrap();
+    vm.run_execution(&mut current_call_frame).unwrap();
 
     assert_eq!(
         vm.current_call_frame_mut().unwrap().stack.pop().unwrap(),
@@ -2910,7 +2910,7 @@ fn blobbasefee_op() {
     vm.env.block_blob_gas_used = Some(U256::zero());
 
     let mut current_call_frame = vm.call_frames.pop().unwrap();
-    vm.run_execute(&mut current_call_frame).unwrap();
+    vm.run_execution(&mut current_call_frame).unwrap();
 
     assert_eq!(
         vm.current_call_frame_mut().unwrap().stack.pop().unwrap(),
@@ -2929,7 +2929,7 @@ fn blobbasefee_minimum_cost() {
     vm.env.block_blob_gas_used = Some(U256::zero());
 
     let mut current_call_frame = vm.call_frames.pop().unwrap();
-    vm.run_execute(&mut current_call_frame).unwrap();
+    vm.run_execution(&mut current_call_frame).unwrap();
 
     assert_eq!(
         vm.current_call_frame_mut().unwrap().stack.pop().unwrap(),
@@ -2950,7 +2950,7 @@ fn pop_op() {
     let mut vm = new_vm_with_ops(&operations).unwrap();
 
     let mut current_call_frame = vm.call_frames.pop().unwrap();
-    vm.run_execute(&mut current_call_frame).unwrap();
+    vm.run_execution(&mut current_call_frame).unwrap();
 
     assert_eq!(
         vm.current_call_frame_mut().unwrap().stack.pop().unwrap(),
@@ -2973,7 +2973,7 @@ fn jump_op() {
     let mut vm = new_vm_with_ops(&operations).unwrap();
 
     let mut current_call_frame = vm.call_frames.pop().unwrap();
-    vm.run_execute(&mut current_call_frame).unwrap();
+    vm.run_execution(&mut current_call_frame).unwrap();
 
     assert_eq!(
         vm.current_call_frame_mut().unwrap().stack.pop().unwrap(),
@@ -2996,7 +2996,7 @@ fn jump_not_jumpdest_position() {
     let mut vm = new_vm_with_ops(&operations).unwrap();
 
     let mut current_call_frame = vm.call_frames.pop().unwrap();
-    let tx_report = vm.run_execute(&mut current_call_frame).unwrap();
+    let tx_report = vm.run_execution(&mut current_call_frame).unwrap();
     assert!(matches!(
         tx_report.result,
         TxResult::Revert(VMError::InvalidJump)
@@ -3023,7 +3023,7 @@ fn sstore_op() {
     vm.current_call_frame_mut().unwrap().code_address = sender_address;
 
     let mut current_call_frame = vm.call_frames.pop().unwrap();
-    vm.run_execute(&mut current_call_frame).unwrap();
+    vm.run_execution(&mut current_call_frame).unwrap();
 
     // Convert key in U256 to H256
     let key = H256::from(key.to_big_endian());
@@ -3048,7 +3048,7 @@ fn sstore_reverts_when_called_in_static() {
     let mut vm = new_vm_with_ops(&operations).unwrap();
     vm.current_call_frame_mut().unwrap().is_static = true;
     let mut current_call_frame = vm.call_frames.pop().unwrap();
-    let tx_report = vm.run_execute(&mut current_call_frame).unwrap();
+    let tx_report = vm.run_execution(&mut current_call_frame).unwrap();
 
     assert!(matches!(
         tx_report.result,
@@ -3077,7 +3077,7 @@ fn sload_op() {
     vm.current_call_frame_mut().unwrap().msg_sender = sender_address;
 
     let mut current_call_frame = vm.call_frames.pop().unwrap();
-    vm.run_execute(&mut current_call_frame).unwrap();
+    vm.run_execution(&mut current_call_frame).unwrap();
 
     assert_eq!(
         value,
@@ -3098,7 +3098,7 @@ fn sload_untouched_key_of_storage() {
     vm.current_call_frame_mut().unwrap().msg_sender = sender_address;
 
     let mut current_call_frame = vm.call_frames.pop().unwrap();
-    vm.run_execute(&mut current_call_frame).unwrap();
+    vm.run_execution(&mut current_call_frame).unwrap();
 
     assert_eq!(
         U256::zero(),
@@ -3116,7 +3116,7 @@ fn sload_on_not_existing_account() {
     vm.current_call_frame_mut().unwrap().msg_sender = sender_address;
 
     let mut current_call_frame = vm.call_frames.pop().unwrap();
-    vm.run_execute(&mut current_call_frame).unwrap();
+    vm.run_execution(&mut current_call_frame).unwrap();
 
     assert_eq!(
         U256::zero(),
@@ -3140,7 +3140,7 @@ fn log0() {
 
     let mut vm = new_vm_with_ops(&operations).unwrap();
     let mut current_call_frame = vm.call_frames.pop().unwrap();
-    vm.run_execute(&mut current_call_frame).unwrap();
+    vm.run_execution(&mut current_call_frame).unwrap();
 
     let logs = &vm.current_call_frame_mut().unwrap().logs;
     let data = [0xff_u8; 32].as_slice();
@@ -3170,7 +3170,7 @@ fn log1() {
 
     let mut vm = new_vm_with_ops(&operations).unwrap();
     let mut current_call_frame = vm.call_frames.pop().unwrap();
-    vm.run_execute(&mut current_call_frame).unwrap();
+    vm.run_execution(&mut current_call_frame).unwrap();
 
     let logs = &vm.current_call_frame_mut().unwrap().logs;
     let data = [0xff_u8; 32].as_slice();
@@ -3203,7 +3203,7 @@ fn log2() {
 
     let mut vm = new_vm_with_ops(&operations).unwrap();
     let mut current_call_frame = vm.call_frames.pop().unwrap();
-    vm.run_execute(&mut current_call_frame).unwrap();
+    vm.run_execution(&mut current_call_frame).unwrap();
 
     let logs = &vm.current_call_frame_mut().unwrap().logs;
     let data = [0xff_u8; 32].as_slice();
@@ -3242,7 +3242,7 @@ fn log3() {
 
     let mut vm = new_vm_with_ops(&operations).unwrap();
     let mut current_call_frame = vm.call_frames.pop().unwrap();
-    vm.run_execute(&mut current_call_frame).unwrap();
+    vm.run_execution(&mut current_call_frame).unwrap();
 
     let logs = &vm.current_call_frame_mut().unwrap().logs;
     let data = [0xff_u8; 32].as_slice();
@@ -3288,7 +3288,7 @@ fn log4() {
 
     let mut vm = new_vm_with_ops(&operations).unwrap();
     let mut current_call_frame = vm.call_frames.pop().unwrap();
-    vm.run_execute(&mut current_call_frame).unwrap();
+    vm.run_execution(&mut current_call_frame).unwrap();
 
     let logs = &vm.current_call_frame_mut().unwrap().logs;
     let data = [0xff_u8; 32].as_slice();
@@ -3322,7 +3322,7 @@ fn log_with_0_data_size() {
 
     let mut vm = new_vm_with_ops(&operations).unwrap();
     let mut current_call_frame = vm.call_frames.pop().unwrap();
-    vm.run_execute(&mut current_call_frame).unwrap();
+    vm.run_execution(&mut current_call_frame).unwrap();
 
     let logs = &vm.current_call_frame_mut().unwrap().logs;
     assert_eq!(logs.len(), 1);
@@ -3348,7 +3348,7 @@ fn cant_create_log_in_static_context() {
     let mut vm: VM = new_vm_with_ops(&operations).unwrap();
     vm.current_call_frame_mut().unwrap().is_static = true;
     let mut current_call_frame = vm.call_frames.pop().unwrap();
-    let tx_report = vm.run_execute(&mut current_call_frame).unwrap();
+    let tx_report = vm.run_execution(&mut current_call_frame).unwrap();
 
     assert!(matches!(
         tx_report.result,
@@ -3372,7 +3372,7 @@ fn log_with_data_in_memory_smaller_than_size() {
 
     let mut vm = new_vm_with_ops(&operations).unwrap();
     let mut current_call_frame = vm.call_frames.pop().unwrap();
-    vm.run_execute(&mut current_call_frame).unwrap();
+    vm.run_execution(&mut current_call_frame).unwrap();
 
     let logs = &vm.current_call_frame_mut().unwrap().logs;
     let mut data = vec![0_u8; 16];
@@ -3407,7 +3407,7 @@ fn multiple_logs_of_different_types() {
 
     let mut vm = new_vm_with_ops(&operations).unwrap();
     let mut current_call_frame = vm.call_frames.pop().unwrap();
-    vm.run_execute(&mut current_call_frame).unwrap();
+    vm.run_execution(&mut current_call_frame).unwrap();
 
     let logs = &vm.current_call_frame_mut().unwrap().logs;
     let data = [0xff_u8; 32].as_slice();
@@ -3466,7 +3466,7 @@ fn logs_from_multiple_callers() {
     .unwrap();
 
     let mut current_call_frame = vm.call_frames.pop().unwrap();
-    let report = vm.run_execute(&mut current_call_frame).unwrap();
+    let report = vm.run_execution(&mut current_call_frame).unwrap();
 
     assert_eq!(report.logs.len(), 2)
 }
@@ -3524,7 +3524,7 @@ fn push0_ok() {
     let mut vm = new_vm_with_ops(&[Operation::Push0, Operation::Stop]).unwrap();
 
     let mut current_call_frame = vm.call_frames.pop().unwrap();
-    vm.run_execute(&mut current_call_frame).unwrap();
+    vm.run_execution(&mut current_call_frame).unwrap();
 
     assert_eq!(
         vm.current_call_frame_mut().unwrap().stack.stack[0],
@@ -3540,7 +3540,7 @@ fn push1_ok() {
     let mut vm = new_vm_with_ops(&operations).unwrap();
 
     let mut current_call_frame = vm.call_frames.pop().unwrap();
-    vm.run_execute(&mut current_call_frame).unwrap();
+    vm.run_execution(&mut current_call_frame).unwrap();
 
     assert_eq!(vm.current_call_frame_mut().unwrap().stack.stack[0], to_push);
     assert_eq!(vm.current_call_frame_mut().unwrap().pc, 2);
@@ -3553,7 +3553,7 @@ fn push5_ok() {
     let mut vm = new_vm_with_ops(&operations).unwrap();
 
     let mut current_call_frame = vm.call_frames.pop().unwrap();
-    vm.run_execute(&mut current_call_frame).unwrap();
+    vm.run_execution(&mut current_call_frame).unwrap();
 
     assert_eq!(vm.current_call_frame_mut().unwrap().stack.stack[0], to_push);
     assert_eq!(vm.current_call_frame_mut().unwrap().pc, 6);
@@ -3566,7 +3566,7 @@ fn push31_ok() {
     let mut vm = new_vm_with_ops(&operations).unwrap();
 
     let mut current_call_frame = vm.call_frames.pop().unwrap();
-    vm.run_execute(&mut current_call_frame).unwrap();
+    vm.run_execution(&mut current_call_frame).unwrap();
 
     assert_eq!(vm.current_call_frame_mut().unwrap().stack.stack[0], to_push);
     assert_eq!(vm.current_call_frame_mut().unwrap().pc, 32);
@@ -3579,7 +3579,7 @@ fn push32_ok() {
     let mut vm = new_vm_with_ops(&operations).unwrap();
 
     let mut current_call_frame = vm.call_frames.pop().unwrap();
-    vm.run_execute(&mut current_call_frame).unwrap();
+    vm.run_execution(&mut current_call_frame).unwrap();
 
     assert_eq!(vm.current_call_frame_mut().unwrap().stack.stack[0], to_push);
     assert_eq!(vm.current_call_frame_mut().unwrap().pc, 33);
@@ -3596,7 +3596,7 @@ fn dup1_ok() {
     let mut vm = new_vm_with_ops(&operations).unwrap();
 
     let mut current_call_frame = vm.call_frames.pop().unwrap();
-    vm.run_execute(&mut current_call_frame).unwrap();
+    vm.run_execution(&mut current_call_frame).unwrap();
 
     let stack_len = vm.current_call_frame_mut().unwrap().stack.len();
 
@@ -3622,7 +3622,7 @@ fn dup16_ok() {
     let mut vm = new_vm_with_ops(&operations).unwrap();
 
     let mut current_call_frame = vm.call_frames.pop().unwrap();
-    vm.run_execute(&mut current_call_frame).unwrap();
+    vm.run_execution(&mut current_call_frame).unwrap();
 
     let stack_len = vm.current_call_frame_mut().unwrap().stack.len();
 
@@ -3644,7 +3644,7 @@ fn dup_halts_if_stack_underflow() {
     let mut vm = new_vm_with_ops(&operations).unwrap();
 
     let mut current_call_frame = vm.call_frames.pop().unwrap();
-    let tx_report = vm.run_execute(&mut current_call_frame).unwrap();
+    let tx_report = vm.run_execution(&mut current_call_frame).unwrap();
 
     assert!(matches!(
         tx_report.result,
@@ -3664,7 +3664,7 @@ fn swap1_ok() {
     ];
     let mut vm = new_vm_with_ops(&operations).unwrap();
     let mut current_call_frame = vm.call_frames.pop().unwrap();
-    vm.run_execute(&mut current_call_frame).unwrap();
+    vm.run_execution(&mut current_call_frame).unwrap();
 
     assert_eq!(vm.current_call_frame_mut().unwrap().stack.len(), 2);
     assert_eq!(vm.current_call_frame_mut().unwrap().pc, 5);
@@ -3684,7 +3684,7 @@ fn swap16_ok() {
     let mut vm = new_vm_with_ops(&operations).unwrap();
 
     let mut current_call_frame = vm.call_frames.pop().unwrap();
-    vm.run_execute(&mut current_call_frame).unwrap();
+    vm.run_execution(&mut current_call_frame).unwrap();
     let stack_len = vm.current_call_frame_mut().unwrap().stack.len();
 
     assert_eq!(stack_len, 17);
@@ -3705,7 +3705,7 @@ fn swap_halts_if_stack_underflow() {
     let mut vm = new_vm_with_ops(&operations).unwrap();
 
     let mut current_call_frame = vm.call_frames.pop().unwrap();
-    let tx_report = vm.run_execute(&mut current_call_frame).unwrap();
+    let tx_report = vm.run_execution(&mut current_call_frame).unwrap();
 
     assert!(matches!(
         tx_report.result,
@@ -3733,7 +3733,7 @@ fn transient_store() {
     }
 
     let mut current_call_frame = vm.call_frames.pop().unwrap();
-    vm.run_execute(&mut current_call_frame).unwrap();
+    vm.run_execution(&mut current_call_frame).unwrap();
 
     let callee = current_call_frame.to;
 
@@ -3751,7 +3751,7 @@ fn transient_store_stack_underflow() {
     assert!(vm.env.transient_storage.is_empty());
 
     let mut current_call_frame = vm.call_frames.pop().unwrap();
-    let tx_report = vm.run_execute(&mut current_call_frame).unwrap();
+    let tx_report = vm.run_execution(&mut current_call_frame).unwrap();
 
     assert!(matches!(
         tx_report.result,
@@ -3777,7 +3777,7 @@ fn transient_load() {
     vm.env.transient_storage.insert((callee, key), value);
 
     let mut current_call_frame = vm.call_frames.pop().unwrap();
-    vm.run_execute(&mut current_call_frame).unwrap();
+    vm.run_execution(&mut current_call_frame).unwrap();
 
     assert_eq!(
         *vm.current_call_frame_mut()
@@ -3827,7 +3827,7 @@ fn create_happy_path() {
         .clone();
 
     let mut current_call_frame = vm.call_frames.pop().unwrap();
-    vm.run_execute(&mut current_call_frame).unwrap();
+    vm.run_execution(&mut current_call_frame).unwrap();
 
     let executing_contract_after = cache::get_account(&vm.cache, &executing_contract_address)
         .unwrap()
@@ -3900,7 +3900,7 @@ fn caller_op() {
     .unwrap();
 
     let mut current_call_frame = vm.call_frames.pop().unwrap();
-    vm.run_execute(&mut current_call_frame).unwrap();
+    vm.run_execution(&mut current_call_frame).unwrap();
 
     assert_eq!(
         vm.current_call_frame_mut().unwrap().stack.pop().unwrap(),
@@ -3944,7 +3944,7 @@ fn origin_op() {
     .unwrap();
 
     let mut current_call_frame = vm.call_frames.pop().unwrap();
-    vm.run_execute(&mut current_call_frame).unwrap();
+    vm.run_execution(&mut current_call_frame).unwrap();
 
     assert_eq!(
         vm.current_call_frame_mut().unwrap().stack.pop().unwrap(),
@@ -3973,7 +3973,7 @@ fn balance_op() {
     .unwrap();
 
     let mut current_call_frame = vm.call_frames.pop().unwrap();
-    vm.run_execute(&mut current_call_frame).unwrap();
+    vm.run_execution(&mut current_call_frame).unwrap();
 
     assert_eq!(
         vm.current_call_frame_mut().unwrap().stack.pop().unwrap(),
@@ -4015,7 +4015,7 @@ fn address_op() {
     .unwrap();
 
     let mut current_call_frame = vm.call_frames.pop().unwrap();
-    vm.run_execute(&mut current_call_frame).unwrap();
+    vm.run_execution(&mut current_call_frame).unwrap();
 
     assert_eq!(
         vm.current_call_frame_mut().unwrap().stack.pop().unwrap(),
@@ -4063,7 +4063,7 @@ fn selfbalance_op() {
     .unwrap();
 
     let mut current_call_frame = vm.call_frames.pop().unwrap();
-    vm.run_execute(&mut current_call_frame).unwrap();
+    vm.run_execution(&mut current_call_frame).unwrap();
 
     assert_eq!(
         vm.current_call_frame_mut().unwrap().stack.pop().unwrap(),
@@ -4108,7 +4108,7 @@ fn callvalue_op() {
     .unwrap();
 
     let mut current_call_frame = vm.call_frames.pop().unwrap();
-    vm.run_execute(&mut current_call_frame).unwrap();
+    vm.run_execution(&mut current_call_frame).unwrap();
 
     assert_eq!(
         vm.current_call_frame_mut().unwrap().stack.pop().unwrap(),
@@ -4152,7 +4152,7 @@ fn codesize_op() {
     .unwrap();
 
     let mut current_call_frame = vm.call_frames.pop().unwrap();
-    vm.run_execute(&mut current_call_frame).unwrap();
+    vm.run_execution(&mut current_call_frame).unwrap();
     assert_eq!(
         vm.current_call_frame_mut().unwrap().stack.pop().unwrap(),
         U256::from(2)
@@ -4195,7 +4195,7 @@ fn gasprice_op() {
     .unwrap();
 
     let mut current_call_frame = vm.call_frames.pop().unwrap();
-    vm.run_execute(&mut current_call_frame).unwrap();
+    vm.run_execution(&mut current_call_frame).unwrap();
     assert_eq!(
         vm.current_call_frame_mut().unwrap().stack.pop().unwrap(),
         U256::from(0x9876)
@@ -4254,7 +4254,7 @@ fn codecopy_op() {
     .unwrap();
 
     let mut current_call_frame = vm.call_frames.pop().unwrap();
-    vm.run_execute(&mut current_call_frame).unwrap();
+    vm.run_execution(&mut current_call_frame).unwrap();
 
     assert_eq!(
         memory::load_word(
@@ -4285,7 +4285,7 @@ fn extcodesize_existing_account() {
     let mut vm = new_vm_with_ops_db(&operations, db).unwrap();
 
     let mut current_call_frame = vm.call_frames.pop().unwrap();
-    vm.run_execute(&mut current_call_frame).unwrap();
+    vm.run_execution(&mut current_call_frame).unwrap();
     assert_eq!(
         vm.current_call_frame_mut().unwrap().stack.pop().unwrap(),
         23.into()
@@ -4305,7 +4305,7 @@ fn extcodesize_non_existing_account() {
     let mut vm = new_vm_with_ops(&operations).unwrap();
 
     let mut current_call_frame = vm.call_frames.pop().unwrap();
-    vm.run_execute(&mut current_call_frame).unwrap();
+    vm.run_execution(&mut current_call_frame).unwrap();
     assert_eq!(
         vm.current_call_frame_mut().unwrap().stack.pop().unwrap(),
         0.into()
@@ -4336,7 +4336,7 @@ fn extcodecopy_existing_account() {
     let mut vm = new_vm_with_ops_db(&operations, db).unwrap();
 
     let mut current_call_frame = vm.call_frames.pop().unwrap();
-    vm.run_execute(&mut current_call_frame).unwrap();
+    vm.run_execution(&mut current_call_frame).unwrap();
     assert_eq!(
         memory::load_range(
             &mut vm.current_call_frame_mut().unwrap().memory,
@@ -4366,7 +4366,7 @@ fn extcodecopy_non_existing_account() {
     let mut vm = new_vm_with_ops(&operations).unwrap();
 
     let mut current_call_frame = vm.call_frames.pop().unwrap();
-    vm.run_execute(&mut current_call_frame).unwrap();
+    vm.run_execution(&mut current_call_frame).unwrap();
     assert_eq!(
         memory::load_range(
             &mut vm.current_call_frame_mut().unwrap().memory,
@@ -4395,7 +4395,7 @@ fn extcodehash_account_with_zero_bytecode_but_not_empty() {
     let mut vm = new_vm_with_ops_db(&operations, db).unwrap();
 
     let mut current_call_frame = vm.call_frames.pop().unwrap();
-    vm.run_execute(&mut current_call_frame).unwrap();
+    vm.run_execution(&mut current_call_frame).unwrap();
     assert_eq!(
         vm.current_call_frame_mut().unwrap().stack.pop().unwrap(),
         "c5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a470".into()
@@ -4416,7 +4416,7 @@ fn extcodehash_non_existing_account() {
     let mut vm = new_vm_with_ops(&operations).unwrap();
 
     let mut current_call_frame = vm.call_frames.pop().unwrap();
-    vm.run_execute(&mut current_call_frame).unwrap();
+    vm.run_execution(&mut current_call_frame).unwrap();
     assert_eq!(
         vm.current_call_frame_mut().unwrap().stack.pop().unwrap(),
         U256::zero()
@@ -4431,7 +4431,7 @@ fn invalid_opcode() {
     let mut vm = new_vm_with_ops(&operations).unwrap();
 
     let mut current_call_frame = vm.call_frames.pop().unwrap();
-    let tx_report = vm.run_execute(&mut current_call_frame).unwrap();
+    let tx_report = vm.run_execution(&mut current_call_frame).unwrap();
 
     assert!(matches!(
         tx_report.result,
@@ -4454,7 +4454,7 @@ fn revert_opcode() {
     let mut vm = new_vm_with_ops(&ops).unwrap();
 
     let mut current_call_frame = vm.call_frames.pop().unwrap();
-    let tx_report = vm.run_execute(&mut current_call_frame).unwrap();
+    let tx_report = vm.run_execution(&mut current_call_frame).unwrap();
 
     assert_eq!(U256::from_big_endian(&tx_report.output), U256::from(0xA));
     assert!(matches!(
@@ -4485,7 +4485,7 @@ fn revert_sstore() {
     // Cache state before the SSTORE
     let cache_backup = vm.cache.clone();
 
-    vm.run_execute(&mut current_call_frame).unwrap();
+    vm.run_execution(&mut current_call_frame).unwrap();
 
     assert_eq!(vm.cache, cache_backup);
 }

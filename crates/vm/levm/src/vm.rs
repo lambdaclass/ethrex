@@ -731,7 +731,7 @@ impl VM {
             cache::insert_account(&mut self.cache, new_contract_address, created_contract);
         }
 
-        let mut report = self.run_execute(&mut initial_call_frame)?;
+        let mut report = self.run_execution(&mut initial_call_frame)?;
 
         report.gas_used = self.gas_used(&initial_call_frame, &report)?;
 
