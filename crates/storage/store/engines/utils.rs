@@ -44,7 +44,7 @@ impl From<u8> for ChainDataIndex {
 pub enum SnapStateIndex {
     // Hash of the last downloaded header in a previous sync cycle that was aborted
     HeaderDownloadCheckpoint = 0,
-    // Current root hash of the latest State Trie (Used for both fetch & heal)
+    // Current root hash of the latest State Trie (Used during state sync)
     StateTrieRootCheckpoint = 1,
     // Paths from the storage trie in need of healing, grouped by hashed account address
     StorageHealPaths = 2,

@@ -4,13 +4,13 @@ use ethrex_core::{
     BigEndianHash, H256, U256, U512,
 };
 use ethrex_rlp::{
-    decode::{self, RLPDecode},
+    decode::RLPDecode,
     encode::RLPEncode,
     error::RLPDecodeError,
 };
 use ethrex_storage::{error::StoreError, Store};
 use ethrex_trie::{Nibbles, Node, TrieError, TrieState, EMPTY_TRIE_HASH};
-use std::{cmp::min, collections::BTreeMap, sync::Arc, time::Duration};
+use std::{cmp::min, collections::BTreeMap, sync::Arc};
 use tokio::{
     sync::{
         mpsc::{self, error::SendError, Receiver, Sender},
@@ -114,7 +114,7 @@ impl SyncManager {
             }
         }
         loop {
-            info!("Requesting Block Headers from {current_head}");
+            debug!("Requesting Block Headers from {current_head}");
             // Request Block Headers from Peer
             match self
                 .peers
@@ -122,7 +122,7 @@ impl SyncManager {
                 .await
             {
                 Some(mut block_headers) => {
-                    info!(
+                    debug!(
                         "Received {} block headers| Last Number: {}",
                         block_headers.len(),
                         block_headers.last().as_ref().unwrap().number
@@ -183,7 +183,7 @@ impl SyncManager {
                 let pivot_header = store
                     .get_block_header_by_hash(all_block_hashes[pivot_idx])?
                     .ok_or(SyncError::CorruptDB)?;
-                info!(
+                debug!(
                     "Selected block {} as pivot for snap sync",
                     pivot_header.number
                 );
@@ -542,23 +542,26 @@ async fn storage_fetcher(
                 if !account_hashes_and_roots.is_empty() {
                     pending_storage.extend(account_hashes_and_roots);
                 }
-                // Disconnect / Empty message signaling no more bytecodes to sync
+                // Empty message signaling no more bytecodes to sync
                 else {
                     incoming = false
                 }
             }
+        } else {
+            // Disconnect
+            incoming = false
         }
         // If we have enough pending bytecodes to fill a batch
         // or if we have no more incoming batches, spawn a fetch process
         // If the pivot became stale don't process anything and just save incoming requests
         while !stale
-            && (pending_storage.len() >= BATCH_SIZE || !incoming && !pending_storage.is_empty())
+            && (pending_storage.len() >= BATCH_SIZE || (!incoming && !pending_storage.is_empty()))
         {
             // We will be spawning multiple tasks and then collecting their results
             // This uses a loop inside the main loop as the result from these tasks may lead to more values in queue
             let mut storage_tasks = tokio::task::JoinSet::new();
             while !stale
-                && (pending_storage.len() >= BATCH_SIZE || !incoming && !pending_storage.is_empty())
+                && (pending_storage.len() >= BATCH_SIZE || (!incoming && !pending_storage.is_empty()))
             {
                 let next_batch = pending_storage
                     .drain(..BATCH_SIZE.min(pending_storage.len()))
