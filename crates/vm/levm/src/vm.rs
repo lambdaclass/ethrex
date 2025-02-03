@@ -664,7 +664,15 @@ impl VM {
                 ));
             }
 
-            self.env.refunded_gas = self.eip7702_set_access_code(initial_call_frame)?;
+            self.env.refunded_gas = eip7702_set_access_code(
+                &mut self.cache,
+                &mut self.db,
+                self.env.chain_id,
+                &mut self.accrued_substate,
+                // TODO: avoid clone()
+                self.authorization_list.clone(),
+                initial_call_frame,
+            )?;
         }
 
         if self.is_create() {
@@ -926,125 +934,5 @@ impl VM {
         report.new_state.clone_from(&self.cache);
 
         Ok(report)
-    }
-
-    /// Sets the account code as the EIP7702 determines.
-    pub fn eip7702_set_access_code(
-        &mut self,
-        initial_call_frame: &mut CallFrame,
-    ) -> Result<u64, VMError> {
-        let mut refunded_gas: u64 = 0;
-        // IMPORTANT:
-        // If any of the below steps fail, immediately stop processing that tuple and continue to the next tuple in the list. It will in the case of multiple tuples for the same authority, set the code using the address in the last valid occurrence.
-        // If transaction execution results in failure (any exceptional condition or code reverting), setting delegation designations is not rolled back.
-        // TODO: avoid clone()
-        for auth_tuple in self.authorization_list.clone().unwrap_or_default() {
-            let chain_id_not_equals_this_chain_id = auth_tuple.chain_id != self.env.chain_id;
-            let chain_id_not_zero = !auth_tuple.chain_id.is_zero();
-
-            // 1. Verify the chain id is either 0 or the chain’s current ID.
-            if chain_id_not_zero && chain_id_not_equals_this_chain_id {
-                continue;
-            }
-
-            // 2. Verify the nonce is less than 2**64 - 1.
-            // NOTE: nonce is a u64, it's always less than or equal to u64::MAX
-            if auth_tuple.nonce == u64::MAX {
-                continue;
-            }
-
-            // 3. authority = ecrecover(keccak(MAGIC || rlp([chain_id, address, nonce])), y_parity, r, s)
-            //      s value must be less than or equal to secp256k1n/2, as specified in EIP-2.
-            let Some(authority_address) = eip7702_recover_address(&auth_tuple)? else {
-                continue;
-            };
-
-            // 4. Add authority to accessed_addresses (as defined in EIP-2929).
-            self.accrued_substate
-                .touched_accounts
-                .insert(authority_address);
-            let authority_account_info =
-                get_account_no_push_cache(&self.cache, &self.db, authority_address).info;
-
-            // 5. Verify the code of authority is either empty or already delegated.
-            let empty_or_delegated = authority_account_info.bytecode.is_empty()
-                || has_delegation(&authority_account_info)?;
-            if !empty_or_delegated {
-                continue;
-            }
-
-            // 6. Verify the nonce of authority is equal to nonce. In case authority does not exist in the trie, verify that nonce is equal to 0.
-            // If it doesn't exist, it means the nonce is zero. The access_account() function will return AccountInfo::default()
-            // If it has nonce, the account.info.nonce should equal auth_tuple.nonce
-            if authority_account_info.nonce != auth_tuple.nonce {
-                continue;
-            }
-
-            // 7. Add PER_EMPTY_ACCOUNT_COST - PER_AUTH_BASE_COST gas to the global refund counter if authority exists in the trie.
-            // CHECK: we don't know if checking the cache is correct. More gas tests pass but the set_code_txs tests went to half.
-            if cache::is_account_cached(&self.cache, &authority_address)
-                || self.db.account_exists(authority_address)
-            {
-                let refunded_gas_if_exists = PER_EMPTY_ACCOUNT_COST - PER_AUTH_BASE_COST;
-                refunded_gas = refunded_gas
-                    .checked_add(refunded_gas_if_exists)
-                    .ok_or(VMError::Internal(InternalError::GasOverflow))?;
-            }
-
-            // 8. Set the code of authority to be 0xef0100 || address. This is a delegation designation.
-            let delegation_bytes = [
-                &SET_CODE_DELEGATION_BYTES[..],
-                auth_tuple.address.as_bytes(),
-            ]
-            .concat();
-
-            // As a special case, if address is 0x0000000000000000000000000000000000000000 do not write the designation.
-            // Clear the account’s code and reset the account’s code hash to the empty hash.
-            let auth_account = match get_account_mut(&mut self.cache, &authority_address) {
-                Some(account_mut) => account_mut,
-                None => {
-                    // This is to add the account to the cache
-                    // NOTE: Refactor in the future
-                    get_account(&mut self.cache, &self.db, authority_address);
-                    get_account_mut_vm(&mut self.cache, &self.db, authority_address)?
-                }
-            };
-
-            // TESTING LEVM CI
-            auth_account.info.bytecode = if auth_tuple.address != Address::zero() {
-                delegation_bytes.into()
-            } else {
-                Bytes::new()
-            };
-
-            // 9. Increase the nonce of authority by one.
-            increment_account_nonce(&mut self.cache, &self.db, authority_address)
-                .map_err(|_| VMError::TxValidation(TxValidationError::NonceIsMax))?;
-        }
-
-        let (code_address_info, _) = access_account(
-            &mut self.cache,
-            &mut self.db,
-            &mut self.accrued_substate,
-            initial_call_frame.code_address,
-        );
-
-        if has_delegation(&code_address_info)? {
-            initial_call_frame.code_address = get_authorized_address(&code_address_info)?;
-            let (auth_address_info, _) = access_account(
-                &mut self.cache,
-                &mut self.db,
-                &mut self.accrued_substate,
-                initial_call_frame.code_address,
-            );
-
-            initial_call_frame.bytecode = auth_address_info.bytecode.clone();
-        } else {
-            initial_call_frame.bytecode = code_address_info.bytecode.clone();
-        }
-
-        initial_call_frame.valid_jump_destinations =
-            get_valid_jump_destinations(&initial_call_frame.bytecode).unwrap_or_default();
-        Ok(refunded_gas)
     }
 }
