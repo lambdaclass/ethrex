@@ -28,6 +28,7 @@ pub struct Environment {
     pub tx_max_priority_fee_per_gas: Option<U256>,
     pub tx_max_fee_per_gas: Option<U256>,
     pub tx_max_fee_per_blob_gas: Option<U256>,
+    pub tx_nonce: u64,
     pub block_gas_limit: u64,
     pub transient_storage: TransientStorage,
 }
