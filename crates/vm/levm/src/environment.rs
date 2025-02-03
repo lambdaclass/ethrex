@@ -1,5 +1,7 @@
-use ethrex_core::{types::Fork, Address, H256, U256};
+use ethrex_core::{Address, H256, U256};
 pub use revm_primitives::SpecId;
+
+use crate::vm::EVMConfig;
 
 use std::collections::HashMap;
 /// [EIP-1153]: https://eips.ethereum.org/EIPS/eip-1153#reference-implementation
@@ -12,7 +14,7 @@ pub struct Environment {
     pub origin: Address,
     pub refunded_gas: u64,
     pub gas_limit: u64,
-    pub fork: Fork,
+    pub config: EVMConfig,
     pub block_number: U256,
     pub coinbase: Address,
     pub timestamp: U256,

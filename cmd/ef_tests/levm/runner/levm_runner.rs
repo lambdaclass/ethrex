@@ -11,7 +11,7 @@ use ethrex_core::{
 use ethrex_levm::{
     db::CacheDB,
     errors::{ExecutionReport, TxValidationError, VMError},
-    vm::{AuthorizationTuple, VM},
+    vm::{AuthorizationTuple, EVMConfig, VM},
     Environment,
 };
 use ethrex_storage::AccountUpdate;
@@ -102,13 +102,17 @@ pub fn prepare_vm_for_tx(vector: &TestVector, test: &EFTest) -> Result<VM, EFTes
             .collect::<Vec<AuthorizationTuple>>()
     });
 
+    let fork = test.fork();
+    let blob_schedule = EVMConfig::canonical_values(fork);
+    let config = EVMConfig::new(fork, blob_schedule);
+
     VM::new(
         tx.to.clone(),
         Environment {
             origin: tx.sender,
             refunded_gas: 0,
             gas_limit: tx.gas_limit,
-            fork: test.fork(),
+            config,
             block_number: test.env.current_number,
             coinbase: test.env.current_coinbase,
             timestamp: test.env.current_timestamp,

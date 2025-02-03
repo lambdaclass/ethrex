@@ -22,7 +22,7 @@ use ethrex_vm::{evm_backends::revm::*, get_state_transitions, spec_id, SpecId};
 #[cfg(feature = "levm")]
 use {
     ethrex_core::types::{Fork, GWEI_TO_WEI},
-    ethrex_levm::{db::CacheDB, Account, AccountInfo},
+    ethrex_levm::{db::CacheDB, vm::EVMConfig, Account, AccountInfo},
     ethrex_vm::{db::StoreWrapper, evm_backends::levm::*},
     std::sync::Arc,
 };
@@ -258,6 +258,12 @@ pub fn apply_withdrawals(context: &mut PayloadBuildContext) -> Result<(), EvmErr
         let fork = context
             .chain_config()?
             .fork(context.payload.header.timestamp);
+        let blob_schedule = context
+            .chain_config()?
+            .get_fork_blob_schedule(context.payload.header.timestamp)
+            .unwrap_or(EVMConfig::canonical_values(fork));
+        let config = EVMConfig::new(fork, blob_schedule);
+
         if context.payload.header.parent_beacon_block_root.is_some() && fork >= Fork::Cancun {
             let store_wrapper = Arc::new(StoreWrapper {
                 store: context.evm_state.database().unwrap().clone(),
@@ -266,7 +272,7 @@ pub fn apply_withdrawals(context: &mut PayloadBuildContext) -> Result<(), EvmErr
             let report = beacon_root_contract_call_levm(
                 store_wrapper.clone(),
                 &context.payload.header,
-                fork,
+                config,
             )?;
 
             let mut new_state = report.new_state.clone();
@@ -503,15 +509,21 @@ fn apply_plain_transaction(
             block_hash: context.payload.header.parent_hash,
         });
 
+        let fork = context
+            .chain_config()?
+            .fork(context.payload.header.timestamp);
+        let blob_schedule = context
+            .chain_config()?
+            .get_fork_blob_schedule(context.payload.header.timestamp)
+            .unwrap_or(EVMConfig::canonical_values(fork));
+        let config = EVMConfig::new(fork, blob_schedule);
+
         let report = execute_tx_levm(
             &head.tx,
             &context.payload.header,
             store_wrapper.clone(),
             context.block_cache.clone(),
-            context
-                .chain_config()
-                .map_err(ChainError::from)?
-                .fork(context.payload.header.timestamp),
+            config,
         )
         .map_err(|e| EvmError::Transaction(format!("Invalid Transaction: {e:?}")))?;
         context.remaining_gas = context.remaining_gas.saturating_sub(report.gas_used);

@@ -10,7 +10,7 @@ use ethrex_core::{
 use ethrex_levm::{
     db::{CacheDB, Database as LevmDatabase},
     errors::{ExecutionReport, TxResult, VMError},
-    vm::VM,
+    vm::{EVMConfig, VM},
     Account, Environment,
 };
 use ethrex_storage::AccountUpdate;
@@ -27,22 +27,28 @@ pub fn execute_block(
         store: state.database().unwrap().clone(),
         block_hash: block.header.parent_hash,
     });
+
     let mut block_cache: CacheDB = HashMap::new();
     let block_header = &block.header;
     let fork = state.chain_config()?.fork(block_header.timestamp);
-    //eip 4788: execute beacon_root_contract_call before block transactions
+    // If there's no blob schedule in chain_config use the
+    // default/canonical values
+    let blob_schedule = state
+        .chain_config()?
+        .get_fork_blob_schedule(block_header.timestamp)
+        .unwrap_or(EVMConfig::canonical_values(fork));
+    let config = EVMConfig::new(fork, blob_schedule);
     cfg_if::cfg_if! {
         if #[cfg(not(feature = "l2"))] {
-            if block_header.parent_beacon_block_root.is_some() && fork == Fork::Cancun {
-                let report = beacon_root_contract_call_levm(store_wrapper.clone(), block_header, fork)?;
+            if block_header.parent_beacon_block_root.is_some() && fork >= Fork::Cancun {
+                let report = beacon_root_contract_call_levm(store_wrapper.clone(), block_header, config)?;
                 block_cache.extend(report.new_state);
             }
         }
     }
 
     // Account updates are initialized like this because of the beacon_root_contract_call, it is going to be empty if it wasn't called.
-    let mut account_updates =
-        get_state_transitions_levm(state, block.header.parent_hash, &block_cache);
+    let mut account_updates = crate::get_state_transitions(state);
 
     let mut receipts = Vec::new();
     let mut cumulative_gas_used = 0;
@@ -53,7 +59,7 @@ pub fn execute_block(
             block_header,
             store_wrapper.clone(),
             block_cache.clone(),
-            fork,
+            config,
         )
         .map_err(EvmError::from)?;
 
@@ -116,7 +122,7 @@ pub fn execute_tx_levm(
     block_header: &BlockHeader,
     db: Arc<dyn LevmDatabase>,
     block_cache: CacheDB,
-    fork: Fork,
+    config: EVMConfig,
 ) -> Result<ExecutionReport, VMError> {
     let gas_price: U256 = tx
         .effective_gas_price(block_header.base_fee_per_gas)
@@ -127,7 +133,7 @@ pub fn execute_tx_levm(
         origin: tx.sender(),
         refunded_gas: 0,
         gas_limit: tx.gas_limit(),
-        fork,
+        config,
         block_number: block_header.number.into(),
         coinbase: block_header.coinbase,
         timestamp: block_header.timestamp.into(),
@@ -225,7 +231,7 @@ pub fn get_state_transitions_levm(
 pub fn beacon_root_contract_call_levm(
     store_wrapper: Arc<StoreWrapper>,
     block_header: &BlockHeader,
-    fork: Fork,
+    config: EVMConfig,
 ) -> Result<ExecutionReport, EvmError> {
     lazy_static! {
         static ref SYSTEM_ADDRESS: Address =
@@ -256,7 +262,7 @@ pub fn beacon_root_contract_call_levm(
         block_blob_gas_used: block_header.blob_gas_used.map(U256::from),
         block_gas_limit: 30_000_000,
         transient_storage: HashMap::new(),
-        fork,
+        config,
         ..Default::default()
     };
 
