@@ -324,7 +324,7 @@ impl KademliaTable {
         let total_peers = self.iter_peers().count();
         let active_peers = self.filter_peers(&active_filter).count();
         let snap_active_peers = self.filter_peers(&snap_active_filter).count();
-        info!("Snap Peers: {snap_active_peers} / Active Peers {active_peers} / Total Peers: {total_peers}");
+        info!("Snap Peers: {snap_active_peers} / Active Peers {active_peers} / Total Peers: {total_peers}")
     }
 }
 
