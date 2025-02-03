@@ -7,10 +7,7 @@ use crate::{
         CacheDB, Database,
     },
     environment::Environment,
-    errors::{
-        InternalError, OpcodeResult, OutOfGasError, TransactionReport, TxResult, TxValidationError,
-        VMError,
-    },
+    errors::{ExecutionReport, InternalError, OpcodeResult, TxResult, TxValidationError, VMError},
     gas_cost::{self, STANDARD_TOKEN_COST, TOTAL_COST_FLOOR_PER_TOKEN},
     precompiles::{
         execute_precompile, is_precompile, SIZE_PRECOMPILES_CANCUN, SIZE_PRECOMPILES_PRAGUE,
@@ -229,10 +226,10 @@ impl VM {
         }
     }
 
-    pub fn execute(
+    pub fn run_execution(
         &mut self,
         current_call_frame: &mut CallFrame,
-    ) -> Result<TransactionReport, VMError> {
+    ) -> Result<ExecutionReport, VMError> {
         // Backup of Database, Substate, Gas Refunds and Transient Storage if sub-context is reverted
         let backup = StateBackup::new(
             self.cache.clone(),
@@ -285,7 +282,8 @@ impl VM {
             initial_call_frame,
         )?;
 
-        self.increase_consumed_gas(initial_call_frame, intrinsic_gas)
+        initial_call_frame
+            .increase_consumed_gas(intrinsic_gas)
             .map_err(|_| TxValidationError::IntrinsicGasTooLow)?;
 
         Ok(())
@@ -294,7 +292,7 @@ impl VM {
     fn gas_used(
         &self,
         initial_call_frame: &CallFrame,
-        report: &TransactionReport,
+        report: &ExecutionReport,
     ) -> Result<u64, VMError> {
         if self.env.fork >= Fork::Prague {
             // If the transaction is a CREATE transaction, the calldata is emptied and the bytecode is assigned.
@@ -602,10 +600,10 @@ impl VM {
     /// 2. Return unused gas + gas refunds to the sender.
     /// 3. Pay coinbase fee
     /// 4. Destruct addresses in selfdestruct set.
-    fn post_execution_changes(
+    fn finalize_execution(
         &mut self,
         initial_call_frame: &CallFrame,
-        report: &mut TransactionReport,
+        report: &mut ExecutionReport,
     ) -> Result<(), VMError> {
         // POST-EXECUTION Changes
         let sender_address = initial_call_frame.msg_sender;
@@ -709,7 +707,7 @@ impl VM {
         Ok(())
     }
 
-    pub fn transact(&mut self) -> Result<TransactionReport, VMError> {
+    pub fn execute(&mut self) -> Result<ExecutionReport, VMError> {
         let mut initial_call_frame = self
             .call_frames
             .pop()
@@ -738,11 +736,11 @@ impl VM {
             cache::insert_account(&mut self.cache, new_contract_address, created_contract);
         }
 
-        let mut report = self.execute(&mut initial_call_frame)?;
+        let mut report = self.run_execution(&mut initial_call_frame)?;
 
         report.gas_used = self.gas_used(&initial_call_frame, &report)?;
 
-        self.post_execution_changes(&initial_call_frame, &mut report)?;
+        self.finalize_execution(&initial_call_frame, &mut report)?;
 
         report.new_state.clone_from(&self.cache);
 
@@ -753,25 +751,6 @@ impl VM {
         self.call_frames.last_mut().ok_or(VMError::Internal(
             InternalError::CouldNotAccessLastCallframe,
         ))
-    }
-
-    /// Increases gas consumption of CallFrame and Environment, returning an error if the callframe gas limit is reached.
-    pub fn increase_consumed_gas(
-        &mut self,
-        current_call_frame: &mut CallFrame,
-        gas: u64,
-    ) -> Result<(), VMError> {
-        let potential_consumed_gas = current_call_frame
-            .gas_used
-            .checked_add(gas)
-            .ok_or(OutOfGasError::ConsumedGasOverflow)?;
-        if potential_consumed_gas > current_call_frame.gas_limit {
-            return Err(VMError::OutOfGas(OutOfGasError::MaxGasLimitExceeded));
-        }
-
-        current_call_frame.gas_used = potential_consumed_gas;
-
-        Ok(())
     }
 
     /// Accesses to an account's information.
@@ -857,8 +836,8 @@ impl VM {
     fn handle_create_non_empty_account(
         &mut self,
         initial_call_frame: &CallFrame,
-    ) -> Result<TransactionReport, VMError> {
-        let mut report = TransactionReport {
+    ) -> Result<ExecutionReport, VMError> {
+        let mut report = ExecutionReport {
             result: TxResult::Revert(VMError::AddressAlreadyOccupied),
             gas_used: self.env.gas_limit,
             gas_refunded: 0,
@@ -867,7 +846,7 @@ impl VM {
             output: Bytes::new(),
         };
 
-        self.post_execution_changes(initial_call_frame, &mut report)?;
+        self.finalize_execution(initial_call_frame, &mut report)?;
         report.new_state.clone_from(&self.cache);
 
         Ok(report)
@@ -955,6 +934,7 @@ impl VM {
                 }
             };
 
+            // TESTING LEVM CI
             auth_account.info.bytecode = if auth_tuple.address != Address::zero() {
                 delegation_bytes.into()
             } else {

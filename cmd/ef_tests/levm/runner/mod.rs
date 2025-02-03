@@ -5,7 +5,7 @@ use crate::{
 };
 use clap::Parser;
 use colored::Colorize;
-use ethrex_levm::errors::{TransactionReport, VMError};
+use ethrex_levm::errors::{ExecutionReport, VMError};
 use ethrex_vm::SpecId;
 use serde::{Deserialize, Serialize};
 use spinoff::{spinners::Dots, Color, Spinner};
@@ -22,7 +22,7 @@ pub enum EFTestRunnerError {
     #[error("Failed to ensure post-state: {0}")]
     FailedToEnsurePreState(String),
     #[error("Failed to ensure post-state: {1}")]
-    FailedToEnsurePostState(TransactionReport, String),
+    FailedToEnsurePostState(ExecutionReport, String),
     #[error("VM run mismatch: {0}")]
     VMExecutionMismatch(String),
     #[error("Exception does not match the expected: {0}")]

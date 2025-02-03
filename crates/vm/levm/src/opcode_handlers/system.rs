@@ -74,8 +74,8 @@ impl VM {
             self.env.fork,
         )?;
 
-        self.increase_consumed_gas(current_call_frame, cost)?;
-        self.increase_consumed_gas(current_call_frame, eip7702_gas_consumed)?;
+        current_call_frame.increase_consumed_gas(cost)?;
+        current_call_frame.increase_consumed_gas(eip7702_gas_consumed)?;
 
         // OPERATION
         let msg_sender = current_call_frame.to; // The new sender will be the current contract.
@@ -155,8 +155,8 @@ impl VM {
             gas_left,
         )?;
 
-        self.increase_consumed_gas(current_call_frame, cost)?;
-        self.increase_consumed_gas(current_call_frame, eip7702_gas_consumed)?;
+        current_call_frame.increase_consumed_gas(cost)?;
+        current_call_frame.increase_consumed_gas(eip7702_gas_consumed)?;
 
         // Sender and recipient are the same in this case. But the code executed is from another account.
         let msg_sender = current_call_frame.to;
@@ -200,10 +200,8 @@ impl VM {
         let new_memory_size = calculate_memory_size(offset, size)?;
         let current_memory_size = current_call_frame.memory.len();
 
-        self.increase_consumed_gas(
-            current_call_frame,
-            gas_cost::exit_opcode(new_memory_size, current_memory_size)?,
-        )?;
+        current_call_frame
+            .increase_consumed_gas(gas_cost::exit_opcode(new_memory_size, current_memory_size)?)?;
 
         current_call_frame.output =
             memory::load_range(&mut current_call_frame.memory, offset, size)?
@@ -265,8 +263,8 @@ impl VM {
             gas_left,
         )?;
 
-        self.increase_consumed_gas(current_call_frame, cost)?;
-        self.increase_consumed_gas(current_call_frame, eip7702_gas_consumed)?;
+        current_call_frame.increase_consumed_gas(cost)?;
+        current_call_frame.increase_consumed_gas(eip7702_gas_consumed)?;
 
         // OPERATION
         let msg_sender = current_call_frame.msg_sender;
@@ -344,8 +342,8 @@ impl VM {
             gas_left,
         )?;
 
-        self.increase_consumed_gas(current_call_frame, cost)?;
-        self.increase_consumed_gas(current_call_frame, eip7702_gas_consumed)?;
+        current_call_frame.increase_consumed_gas(cost)?;
+        current_call_frame.increase_consumed_gas(eip7702_gas_consumed)?;
 
         // OPERATION
         let value = U256::zero();
@@ -385,15 +383,12 @@ impl VM {
 
         let new_size = calculate_memory_size(code_offset_in_memory, code_size_in_memory)?;
 
-        self.increase_consumed_gas(
-            current_call_frame,
-            gas_cost::create(
-                new_size,
-                current_call_frame.memory.len(),
-                code_size_in_memory,
-                self.env.fork,
-            )?,
-        )?;
+        current_call_frame.increase_consumed_gas(gas_cost::create(
+            new_size,
+            current_call_frame.memory.len(),
+            code_size_in_memory,
+            self.env.fork,
+        )?)?;
 
         self.generic_create(
             value_in_wei_to_send,
@@ -420,15 +415,12 @@ impl VM {
 
         let new_size = calculate_memory_size(code_offset_in_memory, code_size_in_memory)?;
 
-        self.increase_consumed_gas(
-            current_call_frame,
-            gas_cost::create_2(
-                new_size,
-                current_call_frame.memory.len(),
-                code_size_in_memory,
-                self.env.fork,
-            )?,
-        )?;
+        current_call_frame.increase_consumed_gas(gas_cost::create_2(
+            new_size,
+            current_call_frame.memory.len(),
+            code_size_in_memory,
+            self.env.fork,
+        )?)?;
 
         self.generic_create(
             value_in_wei_to_send,
@@ -460,10 +452,8 @@ impl VM {
         let new_memory_size = calculate_memory_size(offset, size)?;
         let current_memory_size = current_call_frame.memory.len();
 
-        self.increase_consumed_gas(
-            current_call_frame,
-            gas_cost::exit_opcode(new_memory_size, current_memory_size)?,
-        )?;
+        current_call_frame
+            .increase_consumed_gas(gas_cost::exit_opcode(new_memory_size, current_memory_size)?)?;
 
         current_call_frame.output =
             memory::load_range(&mut current_call_frame.memory, offset, size)?
@@ -506,14 +496,11 @@ impl VM {
             self.access_account(current_call_frame.to);
         let balance_to_transfer = current_account_info.balance;
 
-        self.increase_consumed_gas(
-            current_call_frame,
-            gas_cost::selfdestruct(
-                target_account_is_cold,
-                target_account_info.is_empty(),
-                balance_to_transfer,
-            )?,
-        )?;
+        current_call_frame.increase_consumed_gas(gas_cost::selfdestruct(
+            target_account_is_cold,
+            target_account_info.is_empty(),
+            balance_to_transfer,
+        )?)?;
 
         // [EIP-6780] - SELFDESTRUCT only in same transaction from CANCUN
         if self.env.fork >= Fork::Cancun {
@@ -585,7 +572,7 @@ impl VM {
 
         // Reserve gas for subcall
         let max_message_call_gas = max_message_call_gas(current_call_frame)?;
-        self.increase_consumed_gas(current_call_frame, max_message_call_gas)?;
+        current_call_frame.increase_consumed_gas(max_message_call_gas)?;
 
         // Clear callframe subreturn data
         current_call_frame.sub_return_data = Bytes::new();
@@ -679,7 +666,7 @@ impl VM {
 
         self.accrued_substate.created_accounts.insert(new_address); // Mostly for SELFDESTRUCT during initcode.
 
-        let tx_report = self.execute(&mut new_call_frame)?;
+        let tx_report = self.run_execution(&mut new_call_frame)?;
         let unused_gas = max_message_call_gas
             .checked_sub(tx_report.gas_used)
             .ok_or(InternalError::GasOverflow)?;
@@ -804,7 +791,7 @@ impl VM {
             increase_account_balance(&mut self.cache, &mut self.db, to, value)?;
         }
 
-        let tx_report = self.execute(&mut new_call_frame)?;
+        let tx_report = self.run_execution(&mut new_call_frame)?;
 
         // Return gas left from subcontext
         let gas_left_from_new_call_frame = new_call_frame
