@@ -279,6 +279,8 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
         match message.clone() {
             Message::AccountRange(_) => {}
             Message::PooledTransactions(_) => {}
+            Message::NewPooledTransactionHashes(_) => {}
+            Message::BlockHeaders(_) => {}
             msg => println!("MESSAGE RECEIVED RLPX {:?}", msg),
         }
         match message {
