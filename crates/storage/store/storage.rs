@@ -1033,6 +1033,7 @@ impl Store {
         self.engine.get_state_trie_key_checkpoint()
     }
 
+    /// Sets the storage trie paths in need of healing, grouped by hashed address
     pub fn set_storage_heal_paths(
         &self,
         accounts: Vec<(H256, Vec<Nibbles>)>,
@@ -1040,18 +1041,22 @@ impl Store {
         self.engine.set_storage_heal_paths(accounts)
     }
 
+    /// Gets the storage trie paths in need of healing, grouped by hashed address
     pub fn get_storage_heal_paths(&self) -> Result<Option<Vec<(H256, Vec<Nibbles>)>>, StoreError> {
         self.engine.get_storage_heal_paths()
     }
 
+    /// Sets the state trie paths in need of healing
     pub fn set_state_heal_paths(&self, paths: Vec<Nibbles>) -> Result<(), StoreError> {
         self.engine.set_state_heal_paths(paths)
     }
 
+    /// Gets the state trie paths in need of healing
     pub fn get_state_heal_paths(&self) -> Result<Option<Vec<Nibbles>>, StoreError> {
         self.engine.get_state_heal_paths()
     }
 
+    /// Clears all checkpoint data created during the last snap sync
     pub fn clear_snap_state(&self) -> Result<(), StoreError> {
         self.engine.clear_snap_state()
     }
