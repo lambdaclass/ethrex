@@ -516,15 +516,21 @@ fn apply_plain_transaction(
             block_hash: context.payload.header.parent_hash,
         });
 
+        let fork = context
+            .chain_config()?
+            .fork(context.payload.header.timestamp);
+        let blob_schedule = context
+            .chain_config()?
+            .get_fork_blob_schedule(context.payload.header.timestamp)
+            .unwrap_or(EVMConfig::canonical_values(fork));
+        let config = EVMConfig::new(fork, blob_schedule);
+
         let report = execute_tx_levm(
             &head.tx,
             &context.payload.header,
             store_wrapper.clone(),
             context.block_cache.clone(),
-            context
-                .chain_config()
-                .map_err(ChainError::from)?
-                .fork(context.payload.header.timestamp),
+            config,
         )
         .map_err(|e| EvmError::Transaction(format!("Invalid Transaction: {e:?}")))?;
         context.remaining_gas = context.remaining_gas.saturating_sub(report.gas_used);
