@@ -453,10 +453,13 @@ fn apply_transaction(
     head: &HeadTransaction,
     context: &mut PayloadBuildContext,
 ) -> Result<Receipt, ChainError> {
-    match **head {
+    dbg!("applying transaction", &head);
+    let res = match **head {
         Transaction::EIP4844Transaction(_) => apply_blob_transaction(head, context),
         _ => apply_plain_transaction(head, context),
-    }
+    };
+    dbg!("applied transaction");
+    res
 }
 
 /// Runs a blob transaction, updates the gas count & blob data and returns the receipt
@@ -508,6 +511,28 @@ fn apply_plain_transaction(
             block_hash: context.payload.header.parent_hash,
         });
 
+        dbg!("BEFORE EXECUTE TX LEVM");
+        if let Some(acc) = context.block_cache.get(&head.tx.sender()) {
+            dbg!("CACHE WITH SENDER", acc.info.nonce);
+            if acc.info.nonce != head.tx.nonce() {
+                dbg!("NONCE MISMATCH");
+                return Err(EvmError::Transaction("Nonce mismatch".to_string()).into());
+            }
+        } else {
+            dbg!("CACHE WITHOUT SENDER");
+            let acc_info = context
+                .store()
+                .unwrap()
+                .get_account_info_by_hash(context.parent_hash(), head.tx.sender())?
+                .unwrap_or_default();
+            dbg!(acc_info.nonce);
+            if acc_info.nonce != head.tx.nonce() {
+                dbg!("NONCE MISMATCH");
+                return Err(EvmError::Transaction("Nonce mismatch".to_string()).into());
+            }
+        }
+
+        dbg!("a");
         let report = execute_tx_levm(
             &head.tx,
             &context.payload.header,
@@ -524,6 +549,8 @@ fn apply_plain_transaction(
 
         let mut new_state = report.new_state.clone();
 
+        dbg!("b");
+
         // Now original_value is going to be the same as the current_value, for the next transaction.
         // It should have only one value but it is convenient to keep on using our CacheDB structure
         for account in new_state.values_mut() {
@@ -531,6 +558,8 @@ fn apply_plain_transaction(
                 storage_slot.original_value = storage_slot.current_value;
             }
         }
+
+        dbg!(new_state.contains_key(&head.tx.sender()));
 
         context.block_cache.extend(new_state);
 
@@ -546,6 +575,7 @@ fn apply_plain_transaction(
     // REVM Implementation
     #[cfg(not(feature = "levm"))]
     {
+        dbg!("a");
         let report = execute_tx(
             &head.tx,
             &context.payload.header,
@@ -555,6 +585,7 @@ fn apply_plain_transaction(
                 context.payload.header.timestamp,
             ),
         )?;
+        dbg!("b");
         context.remaining_gas = context.remaining_gas.saturating_sub(report.gas_used());
         context.block_value += U256::from(report.gas_used()) * head.tip;
         let receipt = Receipt::new(
