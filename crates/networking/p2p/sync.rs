@@ -896,7 +896,7 @@ async fn storage_healer(
             let mut next_batch: BTreeMap<H256, Vec<Nibbles>> = BTreeMap::new();
             // Fill batch
             let mut batch_size = 0;
-            while batch_size < BATCH_SIZE {
+            while batch_size < BATCH_SIZE && !pending_storages.is_empty() {
                 let (key, val) = pending_storages.pop_first().unwrap();
                 batch_size += val.len();
                 next_batch.insert(key, val);
