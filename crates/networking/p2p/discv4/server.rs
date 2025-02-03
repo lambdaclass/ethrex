@@ -143,6 +143,7 @@ impl Discv4Server {
                     tcp_port: msg.from.tcp_port,
                     node_id: packet.get_node_id(),
                 };
+                println!("Received ping from {:?}", node);
                 self.pong(packet.get_hash(), node).await?;
 
                 let peer = {
@@ -537,6 +538,7 @@ impl Discv4Server {
         node: Node,
         mut table_lock: MutexGuard<'a, KademliaTable>,
     ) -> Result<(), DiscoveryError> {
+        println!("PINGING {:?}", node);
         let mut buf = Vec::new();
         let expiration: u64 = get_msg_expiration_from_seconds(20);
         let from = Endpoint {

@@ -110,7 +110,7 @@ impl SyncManager {
             }
         }
         loop {
-            debug!("Requesting Block Headers from {current_head}");
+            // debug!("Requesting Block Headers from {current_head}");
             // Request Block Headers from Peer
             match self
                 .peers
