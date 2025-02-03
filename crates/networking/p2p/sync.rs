@@ -710,20 +710,16 @@ async fn heal_state_trie(
     peers: PeerHandler,
 ) -> Result<bool, SyncError> {
     // Check if we have pending storages to heal from a previous cycle
-    let pending = if let Some(pending) = store.get_storage_heal_paths()? {
-        debug!(
-            "Retrieved {} pending storage healing requests",
-            pending.len()
-        );
-        pending.into_iter().collect()
-    } else {
-        Default::default()
-    };
+    let pending: BTreeMap<H256, Vec<Nibbles>> = store
+        .get_storage_heal_paths()?
+        .unwrap_or_default()
+        .into_iter()
+        .collect();
     // Spawn a storage healer for this blocks's storage
     let (storage_sender, storage_receiver) = mpsc::channel::<Vec<H256>>(500);
     let storage_healer_handler = tokio::spawn(storage_healer(
         state_root,
-        pending,
+        pending.into(),
         storage_receiver,
         peers.clone(),
         store.clone(),
