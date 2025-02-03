@@ -2793,6 +2793,7 @@ dependencies = [
  "bytes",
  "cfg-if",
  "ethrex-core",
+ "ethrex-levm",
  "ethrex-metrics",
  "ethrex-rlp",
  "ethrex-storage",
