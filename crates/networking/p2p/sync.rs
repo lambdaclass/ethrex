@@ -818,7 +818,7 @@ async fn storage_healer(
     let mut stale = false;
     let mut incoming = true;
     // This boolean exists only so that we skip waiting for messages on the first loop iteration
-    // TODO: find prettier solution
+    // It will be removed on later optimizations
     let mut startup = true;
     while incoming {
         if startup {
