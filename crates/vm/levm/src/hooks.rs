@@ -18,12 +18,12 @@ use crate::{
 };
 
 pub trait Hook {
-    fn prepare_execution() -> Result<(), VMError>;
+    fn prepare_execution(&self) -> Result<(), VMError>;
 
-    fn finalize_execution() -> Result<(), VMError>;
+    fn finalize_execution(&self) -> Result<(), VMError>;
 }
 
-struct DefaultHook {}
+pub struct DefaultHook {}
 
 impl DefaultHook {
     pub fn new() -> DefaultHook {
@@ -32,11 +32,11 @@ impl DefaultHook {
 }
 
 impl Hook for DefaultHook {
-    fn prepare_execution() -> Result<(), VMError> {
+    fn prepare_execution(&self) -> Result<(), VMError> {
         todo!();
     }
 
-    fn finalize_execution() -> Result<(), VMError> {
+    fn finalize_execution(&self) -> Result<(), VMError> {
         todo!();
     }
 }

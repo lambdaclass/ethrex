@@ -9,6 +9,7 @@ use crate::{
     environment::Environment,
     errors::{ExecutionReport, InternalError, OpcodeResult, TxResult, TxValidationError, VMError},
     gas_cost::{self, STANDARD_TOKEN_COST, TOTAL_COST_FLOOR_PER_TOKEN},
+    hooks::{DefaultHook, Hook},
     precompiles::{
         execute_precompile, is_precompile, SIZE_PRECOMPILES_CANCUN, SIZE_PRECOMPILES_PRAGUE,
         SIZE_PRECOMPILES_PRE_CANCUN,
@@ -163,6 +164,7 @@ pub struct VM {
     pub tx_kind: TxKind,
     pub access_list: AccessList,
     pub authorization_list: Option<AuthorizationList>,
+    // pub hooks: Vec<Box<dyn Hook>>,
 }
 
 pub type AccessList = Vec<(Address, Vec<H256>)>;
