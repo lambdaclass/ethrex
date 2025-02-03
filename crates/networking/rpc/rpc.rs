@@ -47,7 +47,7 @@ use std::{
 };
 use tokio::{net::TcpListener, sync::Mutex as TokioMutex};
 use tracing::info;
-use types::{payload::PayloadStatus, transaction::SendRawTransactionRequest};
+use types::transaction::SendRawTransactionRequest;
 use utils::{
     RpcErr, RpcErrorMetadata, RpcErrorResponse, RpcNamespace, RpcRequest, RpcRequestId,
     RpcSuccessResponse,
@@ -147,9 +147,9 @@ pub async fn start_api(
         let filters = active_filters.clone();
         loop {
             interval.tick().await;
-            tracing::debug!("Running filter clean task");
+            tracing::info!("Running filter clean task");
             filter::clean_outdated_filters(filters.clone(), FILTER_DURATION);
-            tracing::debug!("Filter clean task complete");
+            tracing::info!("Filter clean task complete");
         }
     });
 
@@ -293,8 +293,6 @@ pub fn map_engine_requests(req: &RpcRequest, context: RpcApiContext) -> Result<V
         "engine_forkchoiceUpdatedV2" => ForkChoiceUpdatedV2::call(req, context),
         "engine_forkchoiceUpdatedV3" => ForkChoiceUpdatedV3::call(req, context),
         "engine_newPayloadV3" => NewPayloadV3Request::call(req, context),
-        "engine_newPayloadV4" => serde_json::to_value(PayloadStatus::syncing())
-            .map_err(|error| RpcErr::Internal(error.to_string())),
         "engine_newPayloadV2" => NewPayloadV2Request::call(req, context),
         "engine_newPayloadV1" => NewPayloadV1Request::call(req, context),
         "engine_exchangeTransitionConfigurationV1" => {
