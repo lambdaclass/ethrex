@@ -252,23 +252,31 @@ pub trait StoreEngine: Debug + Send + Sync + RefUnwindSafe {
 
     // Snap State methods
 
+    /// Sets the hash of the last header downloaded during a snap sync
     fn set_header_download_checkpoint(&self, block_hash: BlockHash) -> Result<(), StoreError>;
 
+    /// Gets the hash of the last header downloaded during a snap sync
     fn get_header_download_checkpoint(&self) -> Result<Option<BlockHash>, StoreError>;
 
+    /// Sets the current state root of the state trie being rebuilt during snap sync
     fn set_state_trie_root_checkpoint(&self, current_root: H256) -> Result<(), StoreError>;
 
+    /// Gets the current state root of the state trie being rebuilt during snap sync
     fn get_state_trie_root_checkpoint(&self) -> Result<Option<H256>, StoreError>;
 
+    /// Sets the last key fetched from the state trie being fetched during snap sync
     fn set_state_trie_key_checkpoint(&self, last_key: H256) -> Result<(), StoreError>;
 
+    /// Gets the last key fetched from the state trie being fetched during snap sync
     fn get_state_trie_key_checkpoint(&self) -> Result<Option<H256>, StoreError>;
 
+    /// Sets the list of account hashes whose storage needs healing
     fn set_pending_storage_heal_accounts(
         &self,
         accounts: Vec<(H256, Vec<Nibbles>)>,
     ) -> Result<(), StoreError>;
 
+    /// Gets the list of account hashes whose storage needs healing
     fn get_pending_storage_heal_accounts(
         &self,
     ) -> Result<Option<Vec<(H256, Vec<Nibbles>)>>, StoreError>;
