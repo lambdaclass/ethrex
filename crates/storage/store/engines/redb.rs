@@ -7,6 +7,7 @@ use ethrex_core::{
 };
 use ethrex_rlp::decode::RLPDecode;
 use ethrex_rlp::encode::RLPEncode;
+use ethrex_trie::Nibbles;
 use ethrex_trie::{
     db::{redb::RedBTrie, redb_multitable::RedBMultiTableTrieDB},
     Trie,
@@ -716,10 +717,6 @@ impl StoreEngine for RedBStore {
             .map_err(StoreError::RLPDecode)
     }
 
-    fn clear_header_download_checkpoint(&self) -> Result<(), StoreError> {
-        self.delete(SNAP_STATE_TABLE, SnapStateIndex::HeaderDownloadCheckpoint)
-    }
-
     fn set_state_trie_root_checkpoint(&self, current_root: H256) -> Result<(), StoreError> {
         self.write(
             SNAP_STATE_TABLE,
@@ -733,10 +730,6 @@ impl StoreEngine for RedBStore {
             .map(|rlp| RLPDecode::decode(&rlp.value()))
             .transpose()
             .map_err(StoreError::RLPDecode)
-    }
-
-    fn clear_state_trie_root_checkpoint(&self) -> Result<(), StoreError> {
-        self.delete(SNAP_STATE_TABLE, SnapStateIndex::StateTrieRootCheckpoint)
     }
 
     fn set_state_trie_key_checkpoint(&self, last_key: H256) -> Result<(), StoreError> {
@@ -754,27 +747,22 @@ impl StoreEngine for RedBStore {
             .map_err(StoreError::RLPDecode)
     }
 
-    fn clear_state_trie_key_checkpoint(&self) -> Result<(), StoreError> {
-        self.delete(SNAP_STATE_TABLE, SnapStateIndex::StateTrieKeyCheckpoint)
-    }
-
-    fn set_storage_heal_paths(&self, accounts: Vec<H256>) -> Result<(), StoreError> {
+    fn set_storage_heal_paths(
+        &self,
+        accounts: Vec<(H256, Vec<Nibbles>)>,
+    ) -> Result<(), StoreError> {
         self.write(
             SNAP_STATE_TABLE,
-            SnapStateIndex::PendingStorageHealAccounts,
+            SnapStateIndex::StorageHealPaths,
             accounts.encode_to_vec(),
         )
     }
 
-    fn get_storage_heal_paths(&self) -> Result<Option<Vec<H256>>, StoreError> {
-        self.read(SNAP_STATE_TABLE, SnapStateIndex::PendingStorageHealAccounts)?
+    fn get_storage_heal_paths(&self) -> Result<Option<Vec<(H256, Vec<Nibbles>)>>, StoreError> {
+        self.read(SNAP_STATE_TABLE, SnapStateIndex::StorageHealPaths)?
             .map(|rlp| RLPDecode::decode(&rlp.value()))
             .transpose()
             .map_err(StoreError::RLPDecode)
-    }
-
-    fn clear_storage_heal_paths(&self) -> Result<(), StoreError> {
-        self.delete(SNAP_STATE_TABLE, SnapStateIndex::PendingStorageHealAccounts)
     }
 
     fn is_synced(&self) -> Result<bool, StoreError> {
@@ -790,6 +778,29 @@ impl StoreEngine for RedBStore {
             ChainDataIndex::IsSynced,
             status.encode_to_vec(),
         )
+    }
+
+    fn set_state_heal_paths(&self, paths: Vec<Nibbles>) -> Result<(), StoreError> {
+        self.write(
+            SNAP_STATE_TABLE,
+            SnapStateIndex::StateHealPaths,
+            paths.encode_to_vec(),
+        )
+    }
+
+    fn get_state_heal_paths(&self) -> Result<Option<Vec<Nibbles>>, StoreError> {
+        self.read(SNAP_STATE_TABLE, SnapStateIndex::StateHealPaths)?
+            .map(|rlp| RLPDecode::decode(&rlp.value()))
+            .transpose()
+            .map_err(StoreError::RLPDecode)
+    }
+
+    fn clear_snap_state(&self) -> Result<(), StoreError> {
+        let write_txn = self.db.begin_write()?;
+        // Delete the whole table as it will be re-crated when we next open it
+        write_txn.delete_table(SNAP_STATE_TABLE)?;
+        write_txn.commit()?;
+        Ok(())
     }
 }
 

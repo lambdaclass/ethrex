@@ -599,7 +599,8 @@ impl StoreEngine for Store {
             .begin_readwrite()
             .map_err(StoreError::LibmdbxError)?;
         txn.clear_table::<SnapState>()
-            .map_err(StoreError::LibmdbxError)
+            .map_err(StoreError::LibmdbxError)?;
+        txn.commit().map_err(StoreError::LibmdbxError)
     }
 }
 
