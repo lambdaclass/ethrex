@@ -226,7 +226,7 @@ impl VM {
         }
     }
 
-    pub fn run_execute(
+    pub fn run_execution(
         &mut self,
         current_call_frame: &mut CallFrame,
     ) -> Result<ExecutionReport, VMError> {
