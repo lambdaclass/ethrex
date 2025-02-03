@@ -206,8 +206,8 @@ impl SyncManager {
                     let hashed_address = H256::decode(&hash)?;
                     let acc = AccountState::decode(&acc).unwrap();
                     // Iter storage trie
-                    if acc.storage_root != EMPTY_TRIE_HASH {
-                        let storage_trie = store.storage_trie(block_hash, address)?.unwrap();
+                    if acc.storage_root != *EMPTY_TRIE_HASH {
+                        let storage_trie = store.open_storage_trie(hashed_address, acc.storage_root);
                         let storage = storage_trie.into_iter().collect::<Vec<_>>();
                         info!("Healthy storage trie of len: {}", storage.len())
                     }
