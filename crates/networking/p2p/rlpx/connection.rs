@@ -277,11 +277,9 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
         let peer_supports_eth = self.capabilities.contains(&CAP_ETH);
         let is_synced = self.storage.is_synced()?;
         match message.clone() {
-            Message::AccountRange(_) => {}
-            Message::PooledTransactions(_) => {}
-            Message::NewPooledTransactionHashes(_) => {}
-            Message::BlockHeaders(_) => {}
-            msg => println!("MESSAGE RECEIVED RLPX {:?}", msg),
+            Message::Status(status) => println!("MESSAGE RECEIVED RLPX {:?}", status),
+            Message::Hello(msg) => println!("MESSAGE RECEIVED RLPX {:?}", msg),
+            _ => {}
         }
         match message {
             Message::Disconnect(msg_data) => {
