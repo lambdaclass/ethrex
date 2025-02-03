@@ -1042,6 +1042,7 @@ impl Store {
     }
 
     /// Gets the storage trie paths in need of healing, grouped by hashed address
+    #[allow(clippy::type_complexity)]
     pub fn get_storage_heal_paths(&self) -> Result<Option<Vec<(H256, Vec<Nibbles>)>>, StoreError> {
         self.engine.get_storage_heal_paths()
     }

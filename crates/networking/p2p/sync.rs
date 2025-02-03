@@ -719,7 +719,7 @@ async fn heal_state_trie(
     let (storage_sender, storage_receiver) = mpsc::channel::<Vec<H256>>(500);
     let storage_healer_handler = tokio::spawn(storage_healer(
         state_root,
-        pending.into(),
+        pending,
         storage_receiver,
         peers.clone(),
         store.clone(),
