@@ -75,7 +75,7 @@ impl StateBackup {
 ///
 /// However, that function should NOT be used IF you want to use a
 /// custom ForkBlobSchedule, like it's described in
-/// EIP-7840(https://eips.ethereum.org/EIPS/eip-7840). For more
+/// [EIP-7840](https://eips.ethereum.org/EIPS/eip-7840). For more
 /// information read the EIP
 pub struct EVMConfig {
     pub fork: Fork,
