@@ -12,7 +12,7 @@ use crate::{
         BLOB_GAS_PER_BLOB, COLD_ADDRESS_ACCESS_COST, CREATE_BASE_COST, WARM_ADDRESS_ACCESS_COST,
     },
     opcodes::Opcode,
-    vm::Substate,
+    vm::{EVMConfig, Substate},
     AccountInfo,
 };
 use bytes::Bytes;
@@ -300,38 +300,15 @@ pub fn get_intrinsic_gas(
 }
 
 // ================= Blob hash related functions =====================
-/// After EIP-7691 the maximum number of blob hashes changes. For more
-/// information see
-/// [EIP-7691](https://eips.ethereum.org/EIPS/eip-7691#specification).
-pub const fn max_blobs_per_block(fork: Fork) -> usize {
-    match fork {
-        Fork::Prague | Fork::Osaka => MAX_BLOB_COUNT_ELECTRA,
-        _ => MAX_BLOB_COUNT,
-    }
-}
-
-/// According to EIP-7691
-/// (https://eips.ethereum.org/EIPS/eip-7691#specification):
-///
-/// "These changes imply that get_base_fee_per_blob_gas and
-/// calc_excess_blob_gas functions defined in EIP-4844 use the new
-/// values for the first block of the fork (and for all subsequent
-/// blocks)."
-pub const fn get_blob_base_fee_update_fraction_value(fork: Fork) -> U256 {
-    match fork {
-        Fork::Prague | Fork::Osaka => BLOB_BASE_FEE_UPDATE_FRACTION_PRAGUE,
-        _ => BLOB_BASE_FEE_UPDATE_FRACTION,
-    }
-}
-
 pub fn get_base_fee_per_blob_gas(
     block_excess_blob_gas: Option<U256>,
-    fork: Fork,
+    evm_config: &EVMConfig,
 ) -> Result<U256, VMError> {
+    let base_fee_update_fraction = evm_config.blob_schedule.base_fee_update_fraction;
     fake_exponential(
         MIN_BASE_FEE_PER_BLOB_GAS,
         block_excess_blob_gas.unwrap_or_default(),
-        get_blob_base_fee_update_fraction_value(fork),
+        base_fee_update_fraction.into(),
     )
 }
 
@@ -361,7 +338,7 @@ pub fn get_max_blob_gas_price(
 pub fn get_blob_gas_price(
     tx_blob_hashes: Vec<H256>,
     block_excess_blob_gas: Option<U256>,
-    fork: Fork,
+    evm_config: &EVMConfig,
 ) -> Result<U256, VMError> {
     let blobhash_amount: u64 = tx_blob_hashes
         .len()
@@ -372,7 +349,7 @@ pub fn get_blob_gas_price(
         .checked_mul(BLOB_GAS_PER_BLOB)
         .unwrap_or_default();
 
-    let base_fee_per_blob_gas = get_base_fee_per_blob_gas(block_excess_blob_gas, fork)?;
+    let base_fee_per_blob_gas = get_base_fee_per_blob_gas(block_excess_blob_gas, evm_config)?;
 
     let blob_gas_price: U256 = blob_gas_price.into();
     let blob_fee: U256 = blob_gas_price
