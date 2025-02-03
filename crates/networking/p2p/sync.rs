@@ -218,9 +218,9 @@ impl SyncManager {
                     let block = store
                         .get_block_by_hash(*hash)?
                         .ok_or(SyncError::CorruptDB)?;
+                    ethrex_blockchain::add_block(&block, &store)?;
                     store.set_canonical_block(block.header.number, *hash)?;
                     store.update_latest_block_number(block.header.number)?;
-                    ethrex_blockchain::add_block(&block, &store)?;
                 }
                 self.last_snap_pivot = pivot_header.number;
                 // Finished a sync cycle without aborting halfway, clear current checkpoint
