@@ -132,8 +132,7 @@ impl EVMConfig {
         }
     }
 
-    /// According to EIP-7691
-    /// (https://eips.ethereum.org/EIPS/eip-7691#specification):
+    /// According to [EIP-7691](https://eips.ethereum.org/EIPS/eip-7691#specification):
     const fn get_target_blob_gas_per_block_(fork: Fork) -> u64 {
         match fork {
             Fork::Prague | Fork::PragueEof => TARGET_BLOB_GAS_PER_BLOCK_PECTRA,
