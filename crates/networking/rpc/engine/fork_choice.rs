@@ -163,13 +163,13 @@ fn handle_forkchoice(
     context: RpcApiContext,
     version: usize,
 ) -> Result<(Option<BlockHeader>, ForkChoiceResponse), RpcErr> {
-    debug!(
-        "New fork choice request v{} with head: {:#x}, safe: {:#x}, finalized: {:#x}.",
-        version,
-        fork_choice_state.head_block_hash,
-        fork_choice_state.safe_block_hash,
-        fork_choice_state.finalized_block_hash
-    );
+    // debug!(
+    //     "New fork choice request v{} with head: {:#x}, safe: {:#x}, finalized: {:#x}.",
+    //     version,
+    //     fork_choice_state.head_block_hash,
+    //     fork_choice_state.safe_block_hash,
+    //     fork_choice_state.finalized_block_hash
+    // );
     // Check if there is an ongoing sync before applying the forkchoice
     let fork_choice_res = match context.sync_status()? {
         // Apply current fork choice

@@ -369,7 +369,7 @@ fn get_block_from_payload(
     parent_beacon_block_root: Option<H256>,
 ) -> Result<Block, RpcErr> {
     let block_hash = payload.block_hash;
-    info!("Received new payload with block hash: {block_hash:#x}");
+    //info!("Received new payload with block hash: {block_hash:#x}");
 
     payload
         .clone()
