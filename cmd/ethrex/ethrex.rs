@@ -123,13 +123,6 @@ async fn main() {
         bootnodes.extend(networks::MEKONG_BOOTNODES.iter());
     }
 
-    if network == "mekong" {
-        warn!("Using mekong presets, bootnodes field will be ignored");
-        // Set mekong presets
-        network = String::from(networks::MEKONG_GENESIS_PATH);
-        bootnodes = networks::MEKONG_BOOTNODES.to_vec();
-    }
-
     if bootnodes.is_empty() {
         warn!("No bootnodes specified. This node will not be able to connect to the network.");
     }
