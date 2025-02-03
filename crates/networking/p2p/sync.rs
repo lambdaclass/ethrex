@@ -870,7 +870,7 @@ async fn storage_healer(
 
         // Check if we need to fetch more incoming requests
         let pending_len = pending_paths.iter().fold(0, |acc, (_, x)| acc + x.len());
-        if pending_len < NODE_BATCH_SIZE {
+        if pending_len < NODE_BATCH_SIZE && incoming {
             // Fetch incoming requests
             let mut msg_buffer = vec![];
             if receiver.recv_many(&mut msg_buffer, 25).await != 0 {
