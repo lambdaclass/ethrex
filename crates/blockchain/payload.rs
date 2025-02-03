@@ -8,17 +8,35 @@ use ethrex_core::{
     types::{
         calculate_base_fee_per_blob_gas, calculate_base_fee_per_gas, compute_receipts_root,
         compute_transactions_root, compute_withdrawals_root, BlobsBundle, Block, BlockBody,
-        BlockHash, BlockHeader, BlockNumber, ChainConfig, MempoolTransaction, Receipt, Transaction,
-        Withdrawal, DEFAULT_OMMERS_HASH, DEFAULT_REQUESTS_HASH,
+        BlockHash, BlockHeader, BlockNumber, ChainConfig, Fork, MempoolTransaction, Receipt,
+        Transaction, Withdrawal, DEFAULT_OMMERS_HASH, EMPTY_KECCACK_HASH,
     },
     Address, Bloom, Bytes, H256, U256,
 };
+#[cfg(not(feature = "levm"))]
+use {
+    ethrex_core::types::Account,
+    ethrex_vm::{
+        beacon_root_contract_call, execute_tx, get_state_transitions, process_withdrawals, spec_id,
+        SpecId,
+    },
+};
+#[cfg(feature = "levm")]
+use {
+    ethrex_core::types::GWEI_TO_WEI,
+    ethrex_levm::{db::CacheDB, Account, AccountInfo},
+    ethrex_vm::{
+        beacon_root_contract_call_levm, db::StoreWrapper, execute_tx_levm,
+        get_state_transitions_levm,
+    },
+    std::sync::Arc,
+};
+
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_storage::{error::StoreError, Store};
-use ethrex_vm::{
-    beacon_root_contract_call, evm_state, execute_tx, get_state_transitions, process_withdrawals,
-    spec_id, EvmError, EvmState, SpecId,
-};
+
+use ethrex_vm::{evm_state, EvmError, EvmState};
+
 use sha3::{Digest, Keccak256};
 
 use ethrex_metrics::metrics;
@@ -119,7 +137,7 @@ pub fn create_payload(args: &BuildPayloadArgs, storage: &Store) -> Result<Block,
         parent_beacon_block_root: args.beacon_root,
         requests_hash: chain_config
             .is_prague_activated(args.timestamp)
-            .then_some(*DEFAULT_REQUESTS_HASH),
+            .then_some(*EMPTY_KECCACK_HASH),
     };
 
     let body = BlockBody {
@@ -169,6 +187,8 @@ fn calc_excess_blob_gas(
 pub struct PayloadBuildContext<'a> {
     pub payload: &'a mut Block,
     pub evm_state: &'a mut EvmState,
+    #[cfg(feature = "levm")]
+    pub block_cache: CacheDB,
     pub remaining_gas: u64,
     pub receipts: Vec<Receipt>,
     pub block_value: U256,
@@ -195,6 +215,8 @@ impl<'a> PayloadBuildContext<'a> {
             payload,
             evm_state,
             blobs_bundle: BlobsBundle::default(),
+            #[cfg(feature = "levm")]
+            block_cache: CacheDB::new(),
         })
     }
 }
@@ -236,14 +258,48 @@ pub fn build_payload(
 }
 
 pub fn apply_withdrawals(context: &mut PayloadBuildContext) -> Result<(), EvmError> {
-    // Apply withdrawals & call beacon root contract, and obtain the new state root
-    let spec_id = spec_id(&context.chain_config()?, context.payload.header.timestamp);
-    if context.payload.header.parent_beacon_block_root.is_some() && spec_id == SpecId::CANCUN {
-        beacon_root_contract_call(context.evm_state, &context.payload.header, spec_id)?;
+    #[cfg(feature = "levm")]
+    {
+        // Apply withdrawals & call beacon root contract, and obtain the new state root
+        let fork = context
+            .chain_config()?
+            .fork(context.payload.header.timestamp);
+        if context.payload.header.parent_beacon_block_root.is_some() && fork >= Fork::Cancun {
+            let store_wrapper = Arc::new(StoreWrapper {
+                store: context.evm_state.database().unwrap().clone(),
+                block_hash: context.payload.header.parent_hash,
+            });
+            let report = beacon_root_contract_call_levm(
+                store_wrapper.clone(),
+                &context.payload.header,
+                fork,
+            )?;
+
+            let mut new_state = report.new_state.clone();
+
+            // Now original_value is going to be the same as the current_value, for the next transaction.
+            // It should have only one value but it is convenient to keep on using our CacheDB structure
+            for account in new_state.values_mut() {
+                for storage_slot in account.storage.values_mut() {
+                    storage_slot.original_value = storage_slot.current_value;
+                }
+            }
+
+            context.block_cache.extend(new_state);
+        }
+        Ok(())
     }
-    let withdrawals = context.payload.body.withdrawals.clone().unwrap_or_default();
-    process_withdrawals(context.evm_state, &withdrawals)?;
-    Ok(())
+    #[cfg(not(feature = "levm"))]
+    {
+        // Apply withdrawals & call beacon root contract, and obtain the new state root
+        let spec_id = spec_id(&context.chain_config()?, context.payload.header.timestamp);
+        if context.payload.header.parent_beacon_block_root.is_some() && spec_id >= SpecId::CANCUN {
+            beacon_root_contract_call(context.evm_state, &context.payload.header, spec_id)?;
+        }
+        let withdrawals = context.payload.body.withdrawals.clone().unwrap_or_default();
+        process_withdrawals(context.evm_state, &withdrawals)?;
+        Ok(())
+    }
 }
 
 /// Fetches suitable transactions from the mempool
@@ -446,40 +502,143 @@ fn apply_plain_transaction(
     head: &HeadTransaction,
     context: &mut PayloadBuildContext,
 ) -> Result<Receipt, ChainError> {
-    let result = execute_tx(
-        &head.tx,
-        &context.payload.header,
-        context.evm_state,
-        spec_id(
-            &context.chain_config().map_err(ChainError::from)?,
-            context.payload.header.timestamp,
-        ),
-    )?;
-    context.remaining_gas = context.remaining_gas.saturating_sub(result.gas_used());
-    context.block_value += U256::from(result.gas_used()) * head.tip;
-    let receipt = Receipt::new(
-        head.tx.tx_type(),
-        result.is_success(),
-        context.payload.header.gas_limit - context.remaining_gas,
-        result.logs(),
-    );
-    Ok(receipt)
+    #[cfg(feature = "levm")]
+    {
+        let store_wrapper = Arc::new(StoreWrapper {
+            store: context.evm_state.database().unwrap().clone(),
+            block_hash: context.payload.header.parent_hash,
+        });
+
+        let report = execute_tx_levm(
+            &head.tx,
+            &context.payload.header,
+            store_wrapper.clone(),
+            context.block_cache.clone(),
+            context
+                .chain_config()
+                .map_err(ChainError::from)?
+                .fork(context.payload.header.timestamp),
+        )
+        .map_err(|e| EvmError::Transaction(format!("Invalid Transaction: {e:?}")))?;
+        context.remaining_gas = context.remaining_gas.saturating_sub(report.gas_used);
+        context.block_value += U256::from(report.gas_used) * head.tip;
+
+        let mut new_state = report.new_state.clone();
+
+        // Now original_value is going to be the same as the current_value, for the next transaction.
+        // It should have only one value but it is convenient to keep on using our CacheDB structure
+        for account in new_state.values_mut() {
+            for storage_slot in account.storage.values_mut() {
+                storage_slot.original_value = storage_slot.current_value;
+            }
+        }
+
+        context.block_cache.extend(new_state);
+
+        let receipt = Receipt::new(
+            head.tx.tx_type(),
+            report.is_success(),
+            context.payload.header.gas_limit - context.remaining_gas,
+            report.logs.clone(),
+        );
+        Ok(receipt)
+    }
+
+    // REVM Implementation
+    #[cfg(not(feature = "levm"))]
+    {
+        let report = execute_tx(
+            &head.tx,
+            &context.payload.header,
+            context.evm_state,
+            spec_id(
+                &context.chain_config().map_err(ChainError::from)?,
+                context.payload.header.timestamp,
+            ),
+        )?;
+        context.remaining_gas = context.remaining_gas.saturating_sub(report.gas_used());
+        context.block_value += U256::from(report.gas_used()) * head.tip;
+        let receipt = Receipt::new(
+            head.tx.tx_type(),
+            report.is_success(),
+            context.payload.header.gas_limit - context.remaining_gas,
+            report.logs(),
+        );
+        Ok(receipt)
+    }
 }
 
 fn finalize_payload(context: &mut PayloadBuildContext) -> Result<(), StoreError> {
-    let account_updates = get_state_transitions(context.evm_state);
-    // Note: This is commented because it is still being used in development.
-    // dbg!(&account_updates);
-    context.payload.header.state_root = context
-        .store()
-        .ok_or(StoreError::MissingStore)?
-        .apply_account_updates(context.parent_hash(), &account_updates)?
-        .unwrap_or_default();
-    context.payload.header.transactions_root =
-        compute_transactions_root(&context.payload.body.transactions);
-    context.payload.header.receipts_root = compute_receipts_root(&context.receipts);
-    context.payload.header.gas_used = context.payload.header.gas_limit - context.remaining_gas;
-    Ok(())
+    #[cfg(feature = "levm")]
+    {
+        if let Some(withdrawals) = &context.payload.body.withdrawals {
+            // For every withdrawal we increment the target account's balance
+            for (address, increment) in withdrawals
+                .iter()
+                .filter(|withdrawal| withdrawal.amount > 0)
+                .map(|w| (w.address, u128::from(w.amount) * u128::from(GWEI_TO_WEI)))
+            {
+                // We check if it was in block_cache, if not, we get it from DB.
+                let mut account = context.block_cache.get(&address).cloned().unwrap_or({
+                    let acc_info = context
+                        .store()
+                        .unwrap()
+                        .get_account_info_by_hash(context.parent_hash(), address)?
+                        .unwrap_or_default();
+                    let acc_code = context
+                        .store()
+                        .unwrap()
+                        .get_account_code(acc_info.code_hash)?
+                        .unwrap_or_default();
+
+                    Account {
+                        info: AccountInfo {
+                            balance: acc_info.balance,
+                            bytecode: acc_code,
+                            nonce: acc_info.nonce,
+                        },
+                        // This is the added_storage for the withdrawal.
+                        // If not involved in the TX, there won't be any updates in the storage
+                        storage: HashMap::new(),
+                    }
+                });
+
+                account.info.balance += increment.into();
+                context.block_cache.insert(address, account);
+            }
+        }
+
+        let account_updates = get_state_transitions_levm(
+            context.evm_state,
+            context.parent_hash(),
+            &context.block_cache.clone(),
+        );
+
+        context.payload.header.state_root = context
+            .store()
+            .ok_or(StoreError::MissingStore)?
+            .apply_account_updates(context.parent_hash(), &account_updates)?
+            .unwrap_or_default();
+        context.payload.header.transactions_root =
+            compute_transactions_root(&context.payload.body.transactions);
+        context.payload.header.receipts_root = compute_receipts_root(&context.receipts);
+        context.payload.header.gas_used = context.payload.header.gas_limit - context.remaining_gas;
+        Ok(())
+    }
+    #[cfg(not(feature = "levm"))]
+    {
+        let account_updates = get_state_transitions(context.evm_state);
+        context.payload.header.state_root = context
+            .store()
+            .ok_or(StoreError::MissingStore)?
+            .apply_account_updates(context.parent_hash(), &account_updates)?
+            .unwrap_or_default();
+        context.payload.header.transactions_root =
+            compute_transactions_root(&context.payload.body.transactions);
+        context.payload.header.receipts_root = compute_receipts_root(&context.receipts);
+        context.payload.header.gas_used = context.payload.header.gas_limit - context.remaining_gas;
+        Ok(())
+    }
 }
 
 /// A struct representing suitable mempool transactions waiting to be included in a block
