@@ -481,7 +481,7 @@ impl VM {
             .map_err(|_| VMError::TxValidation(TxValidationError::NonceIsMax))?;
 
         // check for nonce mismatch
-        if U256::from(sender_account.info.nonce) != self.env.tx_nonce {
+        if sender_account.info.nonce != self.env.tx_nonce {
             return Err(VMError::TxValidation(TxValidationError::NonceMismatch));
         }
 

@@ -314,7 +314,7 @@ cfg_if::cfg_if! {
                 tx_max_priority_fee_per_gas: tx.max_priority_fee().map(U256::from),
                 tx_max_fee_per_gas: tx.max_fee_per_gas().map(U256::from),
                 tx_max_fee_per_blob_gas: tx.max_fee_per_blob_gas().map(U256::from),
-                tx_nonce: tx.nonce().into(),
+                tx_nonce: tx.nonce(),
                 block_gas_limit: block_header.gas_limit,
                 transient_storage: HashMap::new(),
             };
