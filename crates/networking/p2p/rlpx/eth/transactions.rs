@@ -63,7 +63,7 @@ impl RLPxMessage for Transactions {
 
 // https://github.com/ethereum/devp2p/blob/master/caps/eth.md#newpooledtransactionhashes-0x08
 // Broadcast message
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub(crate) struct NewPooledTransactionHashes {
     transaction_types: Bytes,
     transaction_sizes: Vec<usize>,
@@ -140,7 +140,7 @@ impl RLPxMessage for NewPooledTransactionHashes {
 }
 
 // https://github.com/ethereum/devp2p/blob/master/caps/eth.md#getpooledtransactions-0x09
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub(crate) struct GetPooledTransactions {
     // id is a u64 chosen by the requesting peer, the responding peer must mirror the value for the response
     // https://github.com/ethereum/devp2p/blob/master/caps/eth.md#protocol-messages
@@ -234,7 +234,7 @@ impl RLPxMessage for GetPooledTransactions {
 }
 
 // https://github.com/ethereum/devp2p/blob/master/caps/eth.md#pooledtransactions-0x0a
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub(crate) struct PooledTransactions {
     // id is a u64 chosen by the requesting peer, the responding peer must mirror the value for the response
     // https://github.com/ethereum/devp2p/blob/master/caps/eth.md#protocol-messages

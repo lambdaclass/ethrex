@@ -12,7 +12,7 @@ use ethrex_rlp::{
     structs::{Decoder, Encoder},
 };
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub(crate) struct StatusMessage {
     pub(crate) eth_version: u32,
     pub(crate) network_id: u64,

@@ -46,7 +46,7 @@ impl RLPDecode for Capability {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub(crate) struct HelloMessage {
     pub(crate) capabilities: Vec<(Capability, u8)>,
     pub(crate) node_id: PublicKey,
@@ -102,7 +102,7 @@ impl RLPxMessage for HelloMessage {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub(crate) struct DisconnectMessage {
     pub(crate) reason: Option<u8>,
 }
@@ -178,7 +178,7 @@ impl RLPxMessage for DisconnectMessage {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub(crate) struct PingMessage {}
 
 impl PingMessage {
@@ -208,7 +208,7 @@ impl RLPxMessage for PingMessage {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub(crate) struct PongMessage {}
 
 impl PongMessage {
