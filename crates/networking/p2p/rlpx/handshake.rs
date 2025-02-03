@@ -51,7 +51,7 @@ where
         node_id: remote_state.node_id,
     };
     let codec = RLPxCodec::new(&local_state, &remote_state, hashed_nonces);
-    log_peer_debug(&node, "Completed handshake!");
+    log_peer_debug(&node, "Completed handshake as receiver!");
     Ok(RLPxConnection::new(
         context.signer,
         node,

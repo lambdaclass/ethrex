@@ -180,6 +180,10 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
         // Receive Hello message
         match self.receive().await? {
             Message::Hello(hello_message) => {
+                log_peer_debug(
+                    &self.node,
+                    &format!("Capabilities {:?}", hello_message.capabilities),
+                );
                 self.capabilities = hello_message.capabilities;
 
                 // Check if we have any capability in common
