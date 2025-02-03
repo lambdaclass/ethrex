@@ -1,32 +1,23 @@
-use std::sync::Arc;
-
 use crate::{
-    peer_channels::PeerChannels,
+    kademlia::PeerChannels,
     rlpx::{
+        error::RLPxError,
         eth::{
             backend,
             blocks::{BlockBodies, BlockHeaders},
-            receipts::Receipts,
-            transactions::Transactions,
+            receipts::{GetReceipts, Receipts},
+            transactions::{GetPooledTransactions, Transactions},
         },
-        handshake::encode_ack_message,
+        frame::RLPxCodec,
         message::Message,
-        p2p::{self, DisconnectMessage, PingMessage, PongMessage},
-        utils::id2pubkey,
+        p2p::{self, Capability, DisconnectMessage, PingMessage, PongMessage},
+        utils::{log_peer_debug, log_peer_error},
     },
     snap::{
         process_account_range_request, process_byte_codes_request, process_storage_ranges_request,
         process_trie_nodes_request,
     },
-};
-
-use super::{
-    error::RLPxError,
-    eth::{receipts::GetReceipts, transactions::GetPooledTransactions},
-    frame::RLPxCodec,
-    handshake::{decode_ack_message, decode_auth_message, encode_auth_message},
-    message as rlpx,
-    p2p::Capability,
+    types::Node,
 };
 use ethrex_blockchain::mempool::{self};
 use ethrex_core::{H256, H512};
@@ -34,9 +25,9 @@ use ethrex_storage::Store;
 use futures::SinkExt;
 use k256::{ecdsa::SigningKey, PublicKey, SecretKey};
 use rand::random;
-use sha3::{Digest, Keccak256};
+use std::sync::Arc;
 use tokio::{
-    io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt},
+    io::{AsyncRead, AsyncWrite},
     sync::{
         broadcast::{self, error::RecvError},
         mpsc, Mutex,
@@ -46,7 +37,9 @@ use tokio::{
 };
 use tokio_stream::StreamExt;
 use tokio_util::codec::Framed;
-use tracing::{debug, error};
+
+use super::utils::log_peer_warn;
+
 const CAP_P2P: (Capability, u8) = (Capability::P2p, 5);
 const CAP_ETH: (Capability, u8) = (Capability::Eth, 68);
 const CAP_SNAP: (Capability, u8) = (Capability::Snap, 1);
@@ -57,15 +50,8 @@ pub(crate) type Aes256Ctr64BE = ctr::Ctr64BE<aes::Aes256>;
 
 pub(crate) type RLPxConnBroadcastSender = broadcast::Sender<(tokio::task::Id, Arc<Message>)>;
 
-// https://github.com/ethereum/go-ethereum/blob/master/p2p/peer.go#L44
-pub const P2P_MAX_MESSAGE_SIZE: usize = 2048;
-
-enum RLPxConnectionMode {
-    Initiator,
-    Receiver,
-}
-
 pub(crate) struct RemoteState {
+    pub(crate) node_id: H512,
     pub(crate) nonce: H256,
     pub(crate) ephemeral_key: PublicKey,
     pub(crate) init_message: Vec<u8>,
@@ -80,8 +66,7 @@ pub(crate) struct LocalState {
 /// Fully working RLPx connection.
 pub(crate) struct RLPxConnection<S> {
     signer: SigningKey,
-    remote_node_id: H512,
-    mode: RLPxConnectionMode,
+    node: Node,
     framed: Framed<S, RLPxCodec>,
     storage: Store,
     capabilities: Vec<(Capability, u8)>,
@@ -98,20 +83,18 @@ pub(crate) struct RLPxConnection<S> {
 }
 
 impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
-    fn new(
+    pub fn new(
         signer: SigningKey,
-        remote_node_id: H512,
+        node: Node,
         stream: S,
-        mode: RLPxConnectionMode,
+        codec: RLPxCodec,
         storage: Store,
         connection_broadcast: RLPxConnBroadcastSender,
     ) -> Self {
         Self {
             signer,
-            remote_node_id,
-            mode,
-            // Creating RLPxCodec with default values. They will be updated during the handshake
-            framed: Framed::new(stream, RLPxCodec::default()),
+            node,
+            framed: Framed::new(stream, codec),
             storage,
             capabilities: vec![],
             next_periodic_task_check: Instant::now() + PERIODIC_TASKS_CHECK_INTERVAL,
@@ -119,51 +102,13 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
         }
     }
 
-    pub fn receiver(
-        signer: SigningKey,
-        stream: S,
-        storage: Store,
-        connection_broadcast: broadcast::Sender<(task::Id, Arc<Message>)>,
-    ) -> Self {
-        Self::new(
-            signer,
-            // remote_node_id not yet provided. It will be replaced later with correct one.
-            H512::default(),
-            stream,
-            RLPxConnectionMode::Receiver,
-            storage,
-            connection_broadcast,
-        )
-    }
-
-    pub fn initiator(
-        signer: SigningKey,
-        remote_node_id: H512,
-        stream: S,
-        storage: Store,
-        connection_broadcast_send: broadcast::Sender<(task::Id, Arc<Message>)>,
-    ) -> Result<Self, RLPxError> {
-        Ok(RLPxConnection::new(
-            signer,
-            remote_node_id,
-            stream,
-            RLPxConnectionMode::Initiator,
-            storage,
-            connection_broadcast_send,
-        ))
-    }
-
-    /// Starts a handshake and runs the peer connection.
+    /// Handshake already performed, now it starts a peer connection.
     /// It runs in it's own task and blocks until the connection is dropped
-    pub async fn start_peer(
-        &mut self,
-        peer_udp_addr: std::net::SocketAddr,
-        table: Arc<Mutex<crate::kademlia::KademliaTable>>,
-    ) {
-        // Perform handshake
-        debug!("StartingRLPx connection with {}", self.remote_node_id);
-        if let Err(e) = self.handshake().await {
-            self.peer_conn_failed("Handshake failed", e, table).await;
+    pub async fn start(&mut self, table: Arc<Mutex<crate::kademlia::KademliaTable>>) {
+        log_peer_debug(&self.node, "Starting RLPx connection");
+        if let Err(e) = self.exchange_hello_messages().await {
+            self.connection_failed("Hello messages exchange failed", e, table)
+                .await;
         } else {
             // Handshake OK: handle connection
             // Create channels to communicate directly to the peer
@@ -176,27 +121,21 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
 
             // NOTE: if the peer came from the discovery server it will already be inserted in the table
             // but that might not always be the case, so we try to add it to the table
-            let node = crate::Node {
-                node_id: self.remote_node_id,
-                ip: peer_udp_addr.ip(),
-                udp_port: peer_udp_addr.port(),
-                tcp_port: peer_udp_addr.port(),
-            };
             // Note: we don't ping the node we let the validation service do its job
-            table.lock().await.insert_node(node);
+            table.lock().await.insert_node(self.node);
             table.lock().await.init_backend_communication(
-                self.remote_node_id,
+                self.node.node_id,
                 peer_channels,
                 capabilities,
             );
-            if let Err(e) = self.handle_peer_conn(sender, receiver).await {
-                self.peer_conn_failed("Error during RLPx connection", e, table)
+            if let Err(e) = self.connection_loop(sender, receiver).await {
+                self.connection_failed("Error during RLPx connection", e, table)
                     .await;
             }
         }
     }
 
-    async fn peer_conn_failed(
+    async fn connection_failed(
         &mut self,
         error_text: &str,
         error: RLPxError,
@@ -206,11 +145,19 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
             reason: self.match_disconnect_reason(&error),
         }))
         .await
-        .unwrap_or_else(|e| error!("Could not send Disconnect message: ({e})."));
+        .unwrap_or_else(|e| {
+            log_peer_error(
+                &self.node,
+                &format!("Could not send Disconnect message: ({e})."),
+            )
+        });
 
         // Discard peer from kademlia table
-        let remote_node_id = self.remote_node_id;
-        error!("{error_text}: ({error}), discarding peer {remote_node_id}");
+        let remote_node_id = self.node.node_id;
+        log_peer_error(
+            &self.node,
+            &format!("{error_text}: ({error}), discarding peer {remote_node_id}"),
+        );
         table.lock().await.replace_peer(remote_node_id);
     }
 
@@ -220,36 +167,6 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
             // TODO build a proper matching between error types and disconnection reasons
             _ => None,
         }
-    }
-
-    async fn handshake(&mut self) -> Result<(), RLPxError> {
-        let (local_state, remote_state, hashed_nonces) = match &self.mode {
-            RLPxConnectionMode::Initiator => {
-                let local_state = self.send_auth().await?;
-                let remote_state = self.receive_ack().await?;
-                // Local node is initator
-                // keccak256(nonce || initiator-nonce)
-                let hashed_nonces: [u8; 32] =
-                    Keccak256::digest([remote_state.nonce.0, local_state.nonce.0].concat()).into();
-                (local_state, remote_state, hashed_nonces)
-            }
-            RLPxConnectionMode::Receiver => {
-                let remote_state = self.receive_auth().await?;
-                let local_state = self.send_ack().await?;
-                // Remote node is initator
-                // keccak256(nonce || initiator-nonce)
-                let hashed_nonces: [u8; 32] =
-                    Keccak256::digest([local_state.nonce.0, remote_state.nonce.0].concat()).into();
-                (local_state, remote_state, hashed_nonces)
-            }
-        };
-        self.framed
-            .codec_mut()
-            .update_secrets(local_state, remote_state, hashed_nonces);
-        debug!("Completed handshake!");
-
-        self.exchange_hello_messages().await?;
-        Ok(())
     }
 
     async fn exchange_hello_messages(&mut self) -> Result<(), RLPxError> {
@@ -272,30 +189,25 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
                     }
                 }
                 // Return error if not
-                Err(RLPxError::HandshakeError(
-                    "No matching capabilities".to_string(),
-                ))
+                Err(RLPxError::NoMatchingCapabilities())
             }
-            Message::Disconnect(disconnect) => Err(RLPxError::HandshakeError(format!(
-                "Peer disconnected due to: {}",
-                disconnect.reason()
-            ))),
+            Message::Disconnect(disconnect) => Err(RLPxError::DisconnectRequested(
+                disconnect.reason().to_string(),
+            )),
             _ => {
                 // Fail if it is not a hello message
-                Err(RLPxError::HandshakeError(
-                    "Expected Hello message".to_string(),
-                ))
+                Err(RLPxError::BadRequest("Expected Hello message".to_string()))
             }
         }
     }
 
-    async fn handle_peer_conn(
+    async fn connection_loop(
         &mut self,
-        sender: mpsc::Sender<rlpx::Message>,
-        mut receiver: mpsc::Receiver<rlpx::Message>,
+        sender: mpsc::Sender<Message>,
+        mut receiver: mpsc::Receiver<Message>,
     ) -> Result<(), RLPxError> {
         self.init_peer_conn().await?;
-        debug!("Started peer main loop");
+        log_peer_debug(&self.node, "Started peer main loop");
 
         // Subscribe this connection to the broadcasting channel.
         let mut broadcaster_receive = {
@@ -347,7 +259,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
     async fn check_periodic_tasks(&mut self) -> Result<(), RLPxError> {
         if Instant::now() >= self.next_periodic_task_check {
             self.send(Message::Ping(PingMessage {})).await?;
-            debug!("Ping sent");
+            log_peer_debug(&self.node, "Ping sent");
             self.next_periodic_task_check = Instant::now() + PERIODIC_TASKS_CHECK_INTERVAL;
         };
         Ok(())
@@ -362,13 +274,18 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
         let is_synced = self.storage.is_synced()?;
         match message {
             Message::Disconnect(msg_data) => {
-                debug!("Received Disconnect: {}", msg_data.reason());
-                // Returning a Disconnect error to be handled later at the call stack
-                return Err(RLPxError::Disconnect());
+                log_peer_debug(
+                    &self.node,
+                    &format!("Received Disconnect: {}", msg_data.reason()),
+                );
+                // TODO handle the disconnection request
+                return Err(RLPxError::DisconnectRequested(
+                    msg_data.reason().to_string(),
+                ));
             }
             Message::Ping(_) => {
                 self.send(Message::Pong(PongMessage {})).await?;
-                debug!("Pong sent");
+                log_peer_debug(&self.node, "Pong sent");
             }
             Message::Pong(_) => {
                 // We ignore received Pong messages
@@ -383,10 +300,15 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
             // TODO(#1129) Add the transaction to the mempool once received.
             Message::Transactions(txs) if peer_supports_eth => {
                 if is_synced {
+                    let mut valid_txs = vec![];
                     for tx in &txs.transactions {
-                        mempool::add_transaction(tx.clone(), &self.storage)?;
+                        if let Err(e) = mempool::add_transaction(tx.clone(), &self.storage) {
+                            log_peer_warn(&self.node, &format!("Error adding transaction: {}", e));
+                            continue;
+                        }
+                        valid_txs.push(tx.clone());
                     }
-                    self.broadcast_message(Message::Transactions(txs)).await?;
+                    self.broadcast_message(Message::Transactions(Transactions::new(valid_txs)))?;
                 }
             }
             Message::GetBlockHeaders(msg_data) if peer_supports_eth => {
@@ -431,7 +353,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
             }
             Message::PooledTransactions(msg) if peer_supports_eth => {
                 if is_synced {
-                    msg.handle(&self.storage)?;
+                    msg.handle(&self.node, &self.storage)?;
                 }
             }
             Message::GetStorageRanges(req) => {
@@ -475,11 +397,9 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
                     self.send(new_msg).await?;
                 }
                 msg => {
-                    error!("Unsupported message was broadcasted: {msg}");
-                    return Err(RLPxError::BroadcastError(format!(
-                        "Non-supported message broadcasted {}",
-                        msg
-                    )));
+                    let error_message = format!("Non-supported message broadcasted: {msg}");
+                    log_peer_error(&self.node, &error_message);
+                    return Err(RLPxError::BroadcastError(error_message));
                 }
             }
         }
@@ -490,7 +410,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
         // Sending eth Status if peer supports it
         if self.capabilities.contains(&CAP_ETH) {
             let status = backend::get_status(&self.storage)?;
-            debug!("Sending status");
+            log_peer_debug(&self.node, "Sending status");
             self.send(Message::Status(status)).await?;
             // The next immediate message in the ETH protocol is the
             // status, reference here:
@@ -498,7 +418,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
             match self.receive().await? {
                 Message::Status(msg_data) => {
                     // TODO: Check message status is correct.
-                    debug!("Received Status");
+                    log_peer_debug(&self.node, "Received Status");
                     backend::validate_status(msg_data, &self.storage)?
                 }
                 Message::Disconnect(disconnect) => {
@@ -517,140 +437,34 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
         Ok(())
     }
 
-    async fn send_auth(&mut self) -> Result<LocalState, RLPxError> {
-        let secret_key: SecretKey = self.signer.clone().into();
-        let peer_pk = id2pubkey(self.remote_node_id).ok_or(RLPxError::InvalidPeerId())?;
-
-        let local_nonce = H256::random_using(&mut rand::thread_rng());
-        let local_ephemeral_key = SecretKey::random(&mut rand::thread_rng());
-
-        let msg = encode_auth_message(&secret_key, local_nonce, &peer_pk, &local_ephemeral_key)?;
-        self.send_handshake_msg(&msg).await?;
-
-        Ok(LocalState {
-            nonce: local_nonce,
-            ephemeral_key: local_ephemeral_key,
-            init_message: msg,
-        })
-    }
-
-    async fn send_ack(&mut self) -> Result<LocalState, RLPxError> {
-        let peer_pk = id2pubkey(self.remote_node_id).ok_or(RLPxError::InvalidPeerId())?;
-
-        let local_nonce = H256::random_using(&mut rand::thread_rng());
-        let local_ephemeral_key = SecretKey::random(&mut rand::thread_rng());
-
-        let msg = encode_ack_message(&local_ephemeral_key, local_nonce, &peer_pk)?;
-        self.send_handshake_msg(&msg).await?;
-
-        Ok(LocalState {
-            nonce: local_nonce,
-            ephemeral_key: local_ephemeral_key,
-            init_message: msg,
-        })
-    }
-
-    async fn receive_auth(&mut self) -> Result<RemoteState, RLPxError> {
-        let secret_key: SecretKey = self.signer.clone().into();
-
-        let msg_bytes = self.receive_handshake_msg().await?;
-        let size_data = &msg_bytes
-            .get(..2)
-            .ok_or(RLPxError::InvalidMessageLength())?;
-        let msg = &msg_bytes
-            .get(2..)
-            .ok_or(RLPxError::InvalidMessageLength())?;
-        let (auth, remote_ephemeral_key) = decode_auth_message(&secret_key, msg, size_data)?;
-        self.remote_node_id = auth.node_id;
-
-        Ok(RemoteState {
-            nonce: auth.nonce,
-            ephemeral_key: remote_ephemeral_key,
-            init_message: msg_bytes.to_owned(),
-        })
-    }
-
-    async fn receive_ack(&mut self) -> Result<RemoteState, RLPxError> {
-        let secret_key: SecretKey = self.signer.clone().into();
-        let msg_bytes = self.receive_handshake_msg().await?;
-        let size_data = &msg_bytes
-            .get(..2)
-            .ok_or(RLPxError::InvalidMessageLength())?;
-        let msg = &msg_bytes
-            .get(2..)
-            .ok_or(RLPxError::InvalidMessageLength())?;
-        let ack = decode_ack_message(&secret_key, msg, size_data)?;
-        let remote_ephemeral_key = ack
-            .get_ephemeral_pubkey()
-            .ok_or(RLPxError::NotFound("Remote ephemeral key".to_string()))?;
-
-        Ok(RemoteState {
-            nonce: ack.nonce,
-            ephemeral_key: remote_ephemeral_key,
-            init_message: msg_bytes.to_owned(),
-        })
-    }
-
-    async fn send_handshake_msg(&mut self, msg: &[u8]) -> Result<(), RLPxError> {
-        self.framed.get_mut().write_all(msg).await?;
-        Ok(())
-    }
-
-    async fn receive_handshake_msg(&mut self) -> Result<Vec<u8>, RLPxError> {
-        let mut buf = vec![0; 2];
-
-        // Read the message's size
-        self.framed.get_mut().read_exact(&mut buf).await?;
-        let ack_data = [buf[0], buf[1]];
-        let msg_size = u16::from_be_bytes(ack_data) as usize;
-        if msg_size > P2P_MAX_MESSAGE_SIZE {
-            return Err(RLPxError::InvalidMessageLength());
-        }
-        buf.resize(msg_size + 2, 0);
-
-        // Read the rest of the message
-        // Guard unwrap
-        if buf.len() < msg_size + 2 {
-            return Err(RLPxError::CryptographyError(String::from("bad buf size")));
-        }
-        self.framed
-            .get_mut()
-            .read_exact(&mut buf[2..msg_size + 2])
-            .await?;
-        let ack_bytes = &buf[..msg_size + 2];
-        Ok(ack_bytes.to_vec())
-    }
-
-    async fn send(&mut self, message: rlpx::Message) -> Result<(), RLPxError> {
+    async fn send(&mut self, message: Message) -> Result<(), RLPxError> {
         self.framed.send(message).await
     }
 
-    async fn receive(&mut self) -> Result<rlpx::Message, RLPxError> {
+    async fn receive(&mut self) -> Result<Message, RLPxError> {
         if let Some(message) = self.framed.next().await {
             message
         } else {
-            Err(RLPxError::Disconnect())
+            Err(RLPxError::Disconnected())
         }
     }
 
-    pub async fn broadcast_message(&self, msg: Message) -> Result<(), RLPxError> {
+    fn broadcast_message(&self, msg: Message) -> Result<(), RLPxError> {
         match msg {
             txs_msg @ Message::Transactions(_) => {
                 let txs = Arc::new(txs_msg);
                 let task_id = tokio::task::id();
                 let Ok(_) = self.connection_broadcast_send.send((task_id, txs)) else {
-                    error!("Could not broadcast message in task!");
-                    return Err(RLPxError::BroadcastError(
-                        "Could not broadcast received transactions".to_owned(),
-                    ));
+                    let error_message = "Could not broadcast received transactions";
+                    log_peer_error(&self.node, error_message);
+                    return Err(RLPxError::BroadcastError(error_message.to_owned()));
                 };
                 Ok(())
             }
             msg => {
-                error!("Non supported message: {msg} was tried to be broadcasted");
-                Err(RLPxError::BroadcastError(format!(
-                    "Broadcasting for msg: {msg} is not supported"
-                )))
+                let error_message = format!("Broadcasting for msg: {msg} is not supported");
+                log_peer_error(&self.node, &error_message);
+                Err(RLPxError::BroadcastError(error_message))
             }
         }
     }
