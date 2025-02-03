@@ -16,7 +16,7 @@ use tokio::{
     sync::Mutex,
 };
 use tokio_util::task::TaskTracker;
-use tracing::{error, info};
+use tracing::{debug, error, info};
 use types::Node;
 
 pub(crate) mod discv4;
@@ -139,7 +139,7 @@ async fn handle_peer_as_receiver(context: P2PContext, peer_addr: SocketAddr, str
             // TODO We should remove the peer from the table if connection failed
             // but currently it will make the tests fail
             // table.lock().await.replace_peer(node.node_id);
-            error!("Error creating tcp connection with peer at {peer_addr}: {e}")
+            debug!("Error creating tcp connection with peer at {peer_addr}: {e}")
         }
     }
 }
@@ -152,7 +152,7 @@ async fn handle_peer_as_initiator(context: P2PContext, node: Node) {
             // TODO We should remove the peer from the table if connection failed
             // but currently it will make the tests fail
             // table.lock().await.replace_peer(node.node_id);
-            error!("Error establishing tcp connection with peer at {addr}: {e}");
+            debug!("Error establishing tcp connection with peer at {addr}: {e}");
             return;
         }
     };
@@ -163,7 +163,7 @@ async fn handle_peer_as_initiator(context: P2PContext, node: Node) {
             // TODO We should remove the peer from the table if connection failed
             // but currently it will make the tests fail
             // table.lock().await.replace_peer(node.node_id);
-            error!("Error creating tcp connection with peer at {addr}: {e}")
+            debug!("Error creating tcp connection with peer at {addr}: {e}")
         }
     };
 }
