@@ -25,6 +25,7 @@ use revm_primitives::{
 };
 use std::cmp::min;
 
+#[cfg(feature = "levm")]
 use crate::mods;
 
 /// Executes all transactions in a block and returns their receipts.

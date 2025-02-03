@@ -9,7 +9,7 @@ use ethrex_core::{
 };
 use ethrex_levm::{
     db::{CacheDB, Database as LevmDatabase},
-    errors::{TransactionReport, TxResult, VMError},
+    errors::{ExecutionReport, TxResult, VMError},
     vm::VM,
     Account, Environment,
 };
@@ -117,7 +117,7 @@ pub fn execute_tx_levm(
     db: Arc<dyn LevmDatabase>,
     block_cache: CacheDB,
     fork: Fork,
-) -> Result<TransactionReport, VMError> {
+) -> Result<ExecutionReport, VMError> {
     let gas_price: U256 = tx
         .effective_gas_price(block_header.base_fee_per_gas)
         .ok_or(VMError::InvalidTransaction)?
@@ -158,7 +158,7 @@ pub fn execute_tx_levm(
         None,
     )?;
 
-    vm.transact()
+    vm.execute()
 }
 
 pub fn get_state_transitions_levm(
@@ -226,7 +226,7 @@ pub fn beacon_root_contract_call_levm(
     store_wrapper: Arc<StoreWrapper>,
     block_header: &BlockHeader,
     fork: Fork,
-) -> Result<TransactionReport, EvmError> {
+) -> Result<ExecutionReport, EvmError> {
     lazy_static! {
         static ref SYSTEM_ADDRESS: Address =
             Address::from_slice(&hex::decode("fffffffffffffffffffffffffffffffffffffffe").unwrap());
@@ -276,7 +276,7 @@ pub fn beacon_root_contract_call_levm(
     )
     .map_err(EvmError::from)?;
 
-    let mut report = vm.transact().map_err(EvmError::from)?;
+    let mut report = vm.execute().map_err(EvmError::from)?;
 
     report.new_state.remove(&*SYSTEM_ADDRESS);
 
