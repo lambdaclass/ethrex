@@ -829,67 +829,66 @@ async fn storage_healer(
     // alive until the end signal so we don't lose queued messages
     let mut stale = false;
     let mut incoming = true;
-    // This boolean exists only so that we skip waiting for messages on the first loop iteration
-    // It will be removed on later optimizations
-    let mut startup = true;
-    while incoming {
-        if startup {
-            startup = false;
-        } else {
-            // Fetch incoming requests
-            match receiver.recv().await {
-                Some(account_paths) if !account_paths.is_empty() => {
-                    // Add the root paths of each account trie to the queue
-                    pending_paths.extend(
-                        account_paths
-                            .into_iter()
-                            .map(|acc_path| (acc_path, vec![Nibbles::default()])),
-                    );
-                }
-                // Disconnect / Empty message signaling no more bytecodes to sync
-                _ => incoming = false,
-            }
-        }
+    while incoming || !pending_paths.is_empty() {
         // If we have enough pending storages to fill a batch
         // or if we have no more incoming batches, spawn a fetch process
         // If the pivot became stale don't process anything and just save incoming requests
-        //info!("Storage Healer, stale: {stale}");
+        let mut storage_tasks = tokio::task::JoinSet::new();
+        let mut task_num = 1;
         while !stale && !pending_paths.is_empty() {
-            // We will be spawning multiple tasks and then collecting their results
-            // This uses a loop inside the main loop as the result from these tasks may lead to more values in queue
-            let mut storage_tasks = tokio::task::JoinSet::new();
-            let mut task_num = 1;
-            while !stale && !pending_paths.is_empty() {
-                let mut next_batch: BTreeMap<H256, Vec<Nibbles>> = BTreeMap::new();
-                // Fill batch
-                let mut batch_size = 0;
-                while batch_size < NODE_BATCH_SIZE && !pending_paths.is_empty() {
-                    let (key, val) = pending_paths.pop_first().unwrap();
-                    batch_size += val.len();
-                    next_batch.insert(key, val);
-                }
-                info!("Spawning storage fetcher number {task_num}");
-                storage_tasks.spawn(heal_storage_batch(
-                    state_root,
-                    next_batch.clone(),
-                    peers.clone(),
-                    store.clone(),
-                ));
-                task_num += 1;
+            let mut next_batch: BTreeMap<H256, Vec<Nibbles>> = BTreeMap::new();
+            // Fill batch
+            let mut batch_size = 0;
+            while batch_size < NODE_BATCH_SIZE && !pending_paths.is_empty() {
+                let (key, val) = pending_paths.pop_first().unwrap();
+                batch_size += val.len();
+                next_batch.insert(key, val);
             }
-            // Add unfetched paths to queue and handle stale signal
-            let mut ret_num = 1;
-            for res in storage_tasks.join_all().await {
-                let (remaining, is_stale) = res?;
-                info!(
-                    "Task {}/{} returned {} elements to the queue",
-                    ret_num,
-                    task_num,
-                    remaining.len()
-                );
-                pending_paths.extend(remaining);
-                stale |= is_stale;
-                ret_num += 1;
+            info!("Spawning storage fetcher number {task_num}");
+            storage_tasks.spawn(heal_storage_batch(
+                state_root,
+                next_batch.clone(),
+                peers.clone(),
+                store.clone(),
+            ));
+            task_num += 1;
+        }
+        // Add unfetched paths to queue and handle stale signal
+        let mut ret_num = 1;
+        for res in storage_tasks.join_all().await {
+            let (remaining, is_stale) = res?;
+            info!(
+                "Task {}/{} returned {} elements to the queue",
+                ret_num,
+                task_num,
+                remaining.len()
+            );
+            pending_paths.extend(remaining);
+            stale |= is_stale;
+            ret_num += 1;
+        }
+
+        // Check if we need to fetch more incoming requests
+        let pending_len = pending_paths.iter().fold(0, |acc, (_, x)| acc + x.len());
+        if pending_len < NODE_BATCH_SIZE {
+            // Fetch incoming requests
+            let mut msg_buffer = vec![];
+            if receiver.recv_many(&mut msg_buffer, 25).await != 0 {
+                for account_hashes in msg_buffer {
+                    if !account_hashes.is_empty() {
+                        pending_paths.extend(
+                            account_hashes
+                                .into_iter()
+                                .map(|acc_path| (acc_path, vec![Nibbles::default()])),
+                        );
+                    } else {
+                        // Empty message signaling no more bytecodes to sync
+                        incoming = false
+                    }
+                }
+            } else {
+                // Disconnect
+                incoming = false
             }
         }
     }
