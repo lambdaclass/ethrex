@@ -128,8 +128,7 @@ impl EVMConfig {
     /// blocks)."
     const fn get_blob_base_fee_update_fraction_value(fork: Fork) -> u64 {
         match fork {
-            Fork::Prague => BLOB_BASE_FEE_UPDATE_FRACTION_PRAGUE,
-            Fork::PragueEof => BLOB_BASE_FEE_UPDATE_FRACTION_PRAGUE,
+            Fork::Prague | Fork::PragueEof => BLOB_BASE_FEE_UPDATE_FRACTION_PRAGUE,
             _ => BLOB_BASE_FEE_UPDATE_FRACTION,
         }
     }
