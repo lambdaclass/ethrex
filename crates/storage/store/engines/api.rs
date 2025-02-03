@@ -273,7 +273,6 @@ pub trait StoreEngine: Debug + Send + Sync + RefUnwindSafe {
         &self,
     ) -> Result<Option<Vec<(H256, Vec<Nibbles>)>>, StoreError>;
 
-
     fn set_state_heal_paths(&self, paths: Vec<Nibbles>) -> Result<(), StoreError>;
 
     fn get_state_heal_paths(&self) -> Result<Option<Vec<Nibbles>>, StoreError>;

@@ -200,8 +200,6 @@ async fn main() {
 
         import_blocks(&store, &blocks);
     }
-    // Soft reset
-    store.clear_snap_state();
 
     let jwt_secret = read_jwtsecret_file(authrpc_jwtsecret);
 
