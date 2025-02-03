@@ -5,7 +5,7 @@ use ethrex_core::types::{Block, Genesis};
 use ethrex_net::{
     node_id_from_signing_key, peer_table,
     sync::{SyncManager, SyncMode},
-    types::Node,
+    types::{Node, NodeRecord},
     KademliaTable,
 };
 use ethrex_rlp::decode::RLPDecode;
@@ -103,17 +103,24 @@ async fn main() {
         .unwrap_or_default();
 
     if network == "holesky" {
-        warn!("Using holesky presets, bootnodes field will be ignored");
+        info!("Adding holesky preset bootnodes");
         // Set holesky presets
         network = String::from(networks::HOLESKY_GENESIS_PATH);
-        bootnodes = networks::HOLESKY_BOOTNODES.to_vec();
+        bootnodes.extend(networks::HOLESKY_BOOTNODES.iter());
     }
 
     if network == "sepolia" {
-        warn!("Using sepolia presets, bootnodes field will be ignored");
+        info!("Adding sepolia preset bootnodes");
         // Set sepolia presets
         network = String::from(networks::SEPOLIA_GENESIS_PATH);
-        bootnodes = networks::SEPOLIA_BOOTNODES.to_vec();
+        bootnodes.extend(networks::SEPOLIA_BOOTNODES.iter());
+    }
+
+    if network == "mekong" {
+        info!("Adding mekong preset bootnodes");
+        // Set mekong presets
+        network = String::from(networks::MEKONG_GENESIS_PATH);
+        bootnodes.extend(networks::MEKONG_BOOTNODES.iter());
     }
 
     if network == "mekong" {
@@ -233,6 +240,12 @@ async fn main() {
         tcp_port: tcp_socket_addr.port(),
         node_id: local_node_id,
     };
+    let enr_seq = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    let local_node_record = NodeRecord::from_node(local_p2p_node, enr_seq, &signer)
+        .expect("Node record could not be created from local node");
     // Create Kademlia Table here so we can access it from rpc server (for syncing)
     let peer_table = peer_table(signer.clone());
     // Create SyncManager
@@ -246,6 +259,7 @@ async fn main() {
         store.clone(),
         jwt_secret,
         local_p2p_node,
+        local_node_record,
         syncer,
     )
     .into_future();
