@@ -119,8 +119,7 @@ impl EVMConfig {
         }
     }
 
-    /// According to EIP-7691
-    /// (https://eips.ethereum.org/EIPS/eip-7691#specification):
+    /// According to [EIP-7691](https://eips.ethereum.org/EIPS/eip-7691#specification):
     ///
     /// "These changes imply that get_base_fee_per_blob_gas and
     /// calc_excess_blob_gas functions defined in EIP-4844 use the new
