@@ -805,14 +805,11 @@ async fn heal_state_trie(
 /// Receives the prending storages from a previous iteration
 async fn storage_healer(
     state_root: H256,
-    mut pending_storages: BTreeMap<H256, Vec<Nibbles>>,
+    mut pending_paths: BTreeMap<H256, Vec<Nibbles>>,
     mut receiver: Receiver<Vec<H256>>,
     peers: PeerHandler,
     store: Store,
 ) -> Result<BTreeMap<H256, Vec<Nibbles>>, SyncError> {
-    // Pending list of storages to fetch
-    // Each entry is made up of AccountHash -> (CurrentRoot, Paths)
-    //let mut pending_storages: Vec<(H256, Nibbles)> = vec![];
     // The pivot may become stale while the fetcher is active, we will still keep the process
     // alive until the end signal so we don't lose queued messages
     let mut stale = false;
@@ -828,7 +825,7 @@ async fn storage_healer(
             match receiver.recv().await {
                 Some(account_paths) if !account_paths.is_empty() => {
                     // Add the root paths of each account trie to the queue
-                    pending_storages.extend(
+                    pending_paths.extend(
                         account_paths
                             .into_iter()
                             .map(|acc_path| (acc_path, vec![Nibbles::default()])),
@@ -841,23 +838,23 @@ async fn storage_healer(
         // If we have enough pending storages to fill a batch
         // or if we have no more incoming batches, spawn a fetch process
         // If the pivot became stale don't process anything and just save incoming requests
-        while !stale && !pending_storages.is_empty() {
+        while !stale && !pending_paths.is_empty() {
             let mut next_batch: BTreeMap<H256, Vec<Nibbles>> = BTreeMap::new();
             // Fill batch
             let mut batch_size = 0;
-            while batch_size < BATCH_SIZE && !pending_storages.is_empty() {
-                let (key, val) = pending_storages.pop_first().unwrap();
+            while batch_size < BATCH_SIZE && !pending_paths.is_empty() {
+                let (key, val) = pending_paths.pop_first().unwrap();
                 batch_size += val.len();
                 next_batch.insert(key, val);
             }
             let (return_batch, is_stale) =
                 heal_storage_batch(state_root, next_batch.clone(), peers.clone(), store.clone())
                     .await?;
-            pending_storages.extend(return_batch.into_iter());
+            pending_paths.extend(return_batch.into_iter());
             stale |= is_stale;
         }
     }
-    Ok(pending_storages)
+    Ok(pending_paths)
 }
 
 /// Receives a set of storage trie paths (grouped by their corresponding account's state trie path),
