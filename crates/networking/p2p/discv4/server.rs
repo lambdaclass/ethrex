@@ -215,10 +215,10 @@ impl Discv4Server {
                     return Ok(());
                 }
 
-                let ctx = self.ctx.clone();
-                self.ctx
-                    .tracker
-                    .spawn(async move { handle_peer_as_initiator(ctx, peer.node).await });
+                // let ctx = self.ctx.clone();
+                // self.ctx
+                //     .tracker
+                //     .spawn(async move { handle_peer_as_initiator(ctx, peer.node).await });
                 Ok(())
             }
             Message::FindNode(msg) => {

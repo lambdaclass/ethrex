@@ -274,6 +274,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
         let is_synced = self.storage.is_synced()?;
         match message.clone() {
             Message::AccountRange(_) => {}
+            Message::PooledTransactions(_) => {}
             msg => println!("MESSAGE RECEIVED RLPX {:?}", msg),
         }
         match message {
