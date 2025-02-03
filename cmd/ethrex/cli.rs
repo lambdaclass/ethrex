@@ -1,5 +1,5 @@
 use clap::{Arg, ArgAction, Command};
-use ethrex_net::bootnode::BootNode;
+use ethrex_net::types::Node;
 use ethrex_vm::evm_backends::EVM;
 use tracing::Level;
 
@@ -88,7 +88,7 @@ pub fn cli() -> Command {
             Arg::new("bootnodes")
                 .long("bootnodes")
                 .value_name("BOOTNODE_LIST")
-                .value_parser(clap::value_parser!(BootNode))
+                .value_parser(clap::value_parser!(Node))
                 .value_delimiter(',')
                 .num_args(1..)
                 .action(ArgAction::Set),
