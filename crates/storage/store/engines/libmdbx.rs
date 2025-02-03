@@ -557,20 +557,15 @@ impl StoreEngine for Store {
             .map_err(StoreError::RLPDecode)
     }
 
-    fn set_pending_storage_heal_accounts(
+    fn set_storage_heal_paths(
         &self,
         accounts: Vec<(H256, Vec<Nibbles>)>,
     ) -> Result<(), StoreError> {
-        self.write::<SnapState>(
-            SnapStateIndex::PendingStorageHealAccounts,
-            accounts.encode_to_vec(),
-        )
+        self.write::<SnapState>(SnapStateIndex::StorageHealPaths, accounts.encode_to_vec())
     }
 
-    fn get_pending_storage_heal_accounts(
-        &self,
-    ) -> Result<Option<Vec<(H256, Vec<Nibbles>)>>, StoreError> {
-        self.read::<SnapState>(SnapStateIndex::PendingStorageHealAccounts)?
+    fn get_storage_heal_paths(&self) -> Result<Option<Vec<(H256, Vec<Nibbles>)>>, StoreError> {
+        self.read::<SnapState>(SnapStateIndex::StorageHealPaths)?
             .map(|ref h| <Vec<(H256, Vec<Nibbles>)>>::decode(h))
             .transpose()
             .map_err(StoreError::RLPDecode)

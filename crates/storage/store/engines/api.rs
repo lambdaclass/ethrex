@@ -270,21 +270,20 @@ pub trait StoreEngine: Debug + Send + Sync + RefUnwindSafe {
     /// Gets the last key fetched from the state trie being fetched during snap sync
     fn get_state_trie_key_checkpoint(&self) -> Result<Option<H256>, StoreError>;
 
-    /// Sets the list of account hashes whose storage needs healing
-    fn set_pending_storage_heal_accounts(
-        &self,
-        accounts: Vec<(H256, Vec<Nibbles>)>,
-    ) -> Result<(), StoreError>;
+    /// Sets the storage trie paths in need of healing, grouped by hashed address
+    fn set_storage_heal_paths(&self, accounts: Vec<(H256, Vec<Nibbles>)>)
+        -> Result<(), StoreError>;
 
-    /// Gets the list of account hashes whose storage needs healing
-    fn get_pending_storage_heal_accounts(
-        &self,
-    ) -> Result<Option<Vec<(H256, Vec<Nibbles>)>>, StoreError>;
+    /// Gets the storage trie paths in need of healing, grouped by hashed address
+    fn get_storage_heal_paths(&self) -> Result<Option<Vec<(H256, Vec<Nibbles>)>>, StoreError>;
 
+    /// Sets the state trie paths in need of healing
     fn set_state_heal_paths(&self, paths: Vec<Nibbles>) -> Result<(), StoreError>;
 
+    /// Gets the state trie paths in need of healing
     fn get_state_heal_paths(&self) -> Result<Option<Vec<Nibbles>>, StoreError>;
 
+    /// Clears all checkpoint data created during the last snap sync
     fn clear_snap_state(&self) -> Result<(), StoreError>;
 
     fn is_synced(&self) -> Result<bool, StoreError>;

@@ -758,7 +758,7 @@ impl StoreEngine for RedBStore {
         self.delete(SNAP_STATE_TABLE, SnapStateIndex::StateTrieKeyCheckpoint)
     }
 
-    fn set_pending_storage_heal_accounts(&self, accounts: Vec<H256>) -> Result<(), StoreError> {
+    fn set_storage_heal_paths(&self, accounts: Vec<H256>) -> Result<(), StoreError> {
         self.write(
             SNAP_STATE_TABLE,
             SnapStateIndex::PendingStorageHealAccounts,
@@ -766,14 +766,14 @@ impl StoreEngine for RedBStore {
         )
     }
 
-    fn get_pending_storage_heal_accounts(&self) -> Result<Option<Vec<H256>>, StoreError> {
+    fn get_storage_heal_paths(&self) -> Result<Option<Vec<H256>>, StoreError> {
         self.read(SNAP_STATE_TABLE, SnapStateIndex::PendingStorageHealAccounts)?
             .map(|rlp| RLPDecode::decode(&rlp.value()))
             .transpose()
             .map_err(StoreError::RLPDecode)
     }
 
-    fn clear_pending_storage_heal_accounts(&self) -> Result<(), StoreError> {
+    fn clear_storage_heal_paths(&self) -> Result<(), StoreError> {
         self.delete(SNAP_STATE_TABLE, SnapStateIndex::PendingStorageHealAccounts)
     }
 

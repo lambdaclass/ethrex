@@ -436,9 +436,7 @@ async fn rebuild_state_trie(
         let pending_storages = !pending_storage_accounts.is_empty();
         // Next cycle may have different storage roots for these accounts so we will leave them to healing
         if pending_storages {
-            let mut stored_pending_storages = store
-                .get_pending_storage_heal_accounts()?
-                .unwrap_or_default();
+            let mut stored_pending_storages = store.get_storage_heal_paths()?.unwrap_or_default();
             stored_pending_storages.extend(
                 pending_storage_accounts
                     .iter()
@@ -448,7 +446,7 @@ async fn rebuild_state_trie(
                 "Current pending storage accounts: {}",
                 stored_pending_storages.len()
             );
-            store.set_pending_storage_heal_accounts(stored_pending_storages)?;
+            store.set_storage_heal_paths(stored_pending_storages)?;
         }
         if stale || pending_storages {
             // Skip healing and return stale status
@@ -713,7 +711,7 @@ async fn heal_state_trie(
     peers: PeerHandler,
 ) -> Result<bool, SyncError> {
     // Check if we have pending storages to heal from a previous cycle
-    let pending = if let Some(pending) = store.get_pending_storage_heal_accounts()? {
+    let pending = if let Some(pending) = store.get_storage_heal_paths()? {
         debug!(
             "Retrieved {} pending storage healing requests",
             pending.len()
@@ -795,18 +793,13 @@ async fn heal_state_trie(
     }
     // Send empty batch to signal that no more batches are incoming
     storage_sender.send(vec![]).await?;
-    let pending_storage_heal_accounts = storage_healer_handler.await??;
+    let storage_heal_paths = storage_healer_handler.await??;
     // Update pending list
     // If a storage trie was left mid-healing we will heal it again
-    let storage_healing_succesful = pending_storage_heal_accounts.is_empty();
+    let storage_healing_succesful = storage_heal_paths.is_empty();
     if !storage_healing_succesful {
-        debug!(
-            "{} storages with pending healing",
-            pending_storage_heal_accounts.len()
-        );
-        store.set_pending_storage_heal_accounts(
-            pending_storage_heal_accounts.into_iter().collect(),
-        )?;
+        debug!("{} storages with pending healing", storage_heal_paths.len());
+        store.set_storage_heal_paths(storage_heal_paths.into_iter().collect())?;
     }
     Ok(paths.is_empty() && storage_healing_succesful)
 }
