@@ -10,7 +10,7 @@ use crate::{
 use bytes::Bytes;
 use ethrex_core::{types::TxKind, Address, H256};
 use ethrex_levm::{
-    errors::{TransactionReport, TxResult},
+    errors::{ExecutionReport, TxResult},
     Account, StorageSlot,
 };
 use ethrex_storage::{error::StoreError, AccountUpdate};
@@ -73,7 +73,7 @@ pub fn re_run_failed_ef_test(
 pub fn re_run_failed_ef_test_tx(
     vector: &TestVector,
     test: &EFTest,
-    levm_execution_report: &TransactionReport,
+    levm_execution_report: &ExecutionReport,
     re_run_report: &mut TestReRunReport,
 ) -> Result<(), EFTestRunnerError> {
     let (mut state, _block_hash) = load_initial_state(test);
@@ -212,7 +212,7 @@ pub fn prepare_revm_for_tx<'state>(
 
 pub fn compare_levm_revm_execution_results(
     vector: &TestVector,
-    levm_execution_report: &TransactionReport,
+    levm_execution_report: &ExecutionReport,
     revm_execution_result: Result<RevmExecutionResult, REVMError<StoreError>>,
     re_run_report: &mut TestReRunReport,
 ) -> Result<(), EFTestRunnerError> {
@@ -296,7 +296,7 @@ pub fn compare_levm_revm_execution_results(
 }
 
 pub fn ensure_post_state(
-    levm_execution_report: &TransactionReport,
+    levm_execution_report: &ExecutionReport,
     vector: &TestVector,
     revm_state: &mut EvmState,
     test: &EFTest,
@@ -459,7 +459,7 @@ pub fn _ensure_post_state_revm(
                 Some(expected_exception) => {
                     let error_reason = format!("Expected exception: {expected_exception:?}");
                     return Err(EFTestRunnerError::FailedToEnsurePostState(
-                        TransactionReport {
+                        ExecutionReport {
                             result: TxResult::Success,
                             gas_used: 42,
                             gas_refunded: 42,
@@ -484,7 +484,7 @@ pub fn _ensure_post_state_revm(
                             "Post-state root mismatch: expected {expected_post_state_root_hash:#x}, got {pos_state_root:#x}",
                         );
                         return Err(EFTestRunnerError::FailedToEnsurePostState(
-                            TransactionReport {
+                            ExecutionReport {
                                 result: TxResult::Success,
                                 gas_used: 42,
                                 gas_refunded: 42,
