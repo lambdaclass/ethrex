@@ -6,7 +6,7 @@ Implementation of a simple Ethereum Virtual Machine in Rust.
 
 | Fork           | Status |
 | -------------- | ------ |
-| Prague         | 🏗️    |
+| Prague         | ✅     |
 | Cancun         | ✅     |
 | Shanghai       | ✅     |
 | Paris (Merge)  | ✅     |
@@ -80,14 +80,15 @@ There are a lot of EIPs schedule to include in this upgrade but for `levm` we'll
 - EIP-7623: Increase calldata cost
 - EIP-7691: Blob throughput increase
 - EIP-7702: Set EOA account code
+- EIP-7840: Add blob schedule to EL config files
 
 | Task Description          | Status |
 | ------------------------- | ------ |
 | Implement EIP-2537        | ✅     |
 | Implement EIP-7623        | ✅     |
-| Implement EIP-7691        | ✅️    |
-| Implement EIP-7702        | ✅️    |
-| Implement EIP-7840        | 🏗️    | 
+| Implement EIP-7691        | ✅️     |
+| Implement EIP-7702        | ✅️     |
+| Implement EIP-7840        | ✅️     |
 | Make Prague EF tests pass | ✅     |
 
 ### Milestone 5: Integrate `ethrex L2` <> `levm`

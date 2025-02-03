@@ -71,7 +71,7 @@ impl VM {
             value_to_transfer,
             gas,
             gas_left,
-            self.env.fork,
+            self.env.config.fork,
         )?;
 
         current_call_frame.increase_consumed_gas(cost)?;
@@ -387,7 +387,7 @@ impl VM {
             new_size,
             current_call_frame.memory.len(),
             code_size_in_memory,
-            self.env.fork,
+            self.env.config.fork,
         )?)?;
 
         self.generic_create(
@@ -419,7 +419,7 @@ impl VM {
             new_size,
             current_call_frame.memory.len(),
             code_size_in_memory,
-            self.env.fork,
+            self.env.config.fork,
         )?)?;
 
         self.generic_create(
@@ -503,7 +503,7 @@ impl VM {
         )?)?;
 
         // [EIP-6780] - SELFDESTRUCT only in same transaction from CANCUN
-        if self.env.fork >= Fork::Cancun {
+        if self.env.config.fork >= Fork::Cancun {
             increase_account_balance(
                 &mut self.cache,
                 &mut self.db,
@@ -566,7 +566,7 @@ impl VM {
             return Err(VMError::OpcodeNotAllowedInStaticContext);
         }
         // 2. [EIP-3860] - Cant exceed init code max size
-        if code_size_in_memory > INIT_CODE_MAX_SIZE && self.env.fork >= Fork::Shanghai {
+        if code_size_in_memory > INIT_CODE_MAX_SIZE && self.env.config.fork >= Fork::Shanghai {
             return Err(VMError::OutOfGas(OutOfGasError::ConsumedGasOverflow));
         }
 

@@ -2906,7 +2906,7 @@ fn blobbasefee_op() {
     let operations = [Operation::BlobBaseFee, Operation::Stop];
 
     let mut vm = new_vm_with_ops(&operations).unwrap();
-    vm.env.block_excess_blob_gas = Some(TARGET_BLOB_GAS_PER_BLOCK * 8);
+    vm.env.block_excess_blob_gas = Some((TARGET_BLOB_GAS_PER_BLOCK * 8).into());
     vm.env.block_blob_gas_used = Some(U256::zero());
 
     let mut current_call_frame = vm.call_frames.pop().unwrap();
