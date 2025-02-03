@@ -340,6 +340,14 @@ impl VM {
     fn prepare_execution(&mut self, initial_call_frame: &mut CallFrame) -> Result<(), VMError> {
         let sender_address = self.env.origin;
         let sender_account = get_account(&mut self.cache, &self.db, sender_address);
+        dbg!("nonce: ", sender_account.info.nonce);
+        dbg!("nonce tx: ", self.env.tx_nonce);
+        dbg!(&sender_account);
+        dbg!(sender_address);
+
+        // if U256::from(sender_account.info.nonce) != self.env.tx_nonce {
+        //     return Err(VMError::TxValidation(TxValidationError::NonceMismatch));
+        // }
 
         if self.env.fork >= Fork::Prague {
             // check for gas limit is grater or equal than the minimum required

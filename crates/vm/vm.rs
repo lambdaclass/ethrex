@@ -314,6 +314,7 @@ cfg_if::cfg_if! {
                 tx_max_priority_fee_per_gas: tx.max_priority_fee().map(U256::from),
                 tx_max_fee_per_gas: tx.max_fee_per_gas().map(U256::from),
                 tx_max_fee_per_blob_gas: tx.max_fee_per_blob_gas().map(U256::from),
+                tx_nonce: tx.nonce().into(),
                 block_gas_limit: block_header.gas_limit,
                 transient_storage: HashMap::new(),
             };
@@ -446,7 +447,7 @@ fn run_evm(
             }
         }
 
-        match state {
+        let exec_result = match state {
             EvmState::Store(db) => {
                 let mut evm = evm_builder.with_db(db).build();
                 evm.transact_commit().map_err(EvmError::from)?
@@ -455,7 +456,8 @@ fn run_evm(
                 let mut evm = evm_builder.with_db(db).build();
                 evm.transact_commit().map_err(EvmError::from)?
             }
-        }
+        };
+        exec_result
     };
     Ok(tx_result.into())
 }

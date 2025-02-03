@@ -508,20 +508,21 @@ fn apply_plain_transaction(
             block_hash: context.payload.header.parent_hash,
         });
 
-        if let Some(acc) = context.block_cache.get(&head.tx.sender()) {
-            if acc.info.nonce != head.tx.nonce() {
-                return Err(EvmError::Transaction("Nonce mismatch".to_string()).into());
-            }
-        } else {
-            let acc_info = context
-                .store()
-                .unwrap()
-                .get_account_info_by_hash(context.parent_hash(), head.tx.sender())?
-                .unwrap_or_default();
-            if acc_info.nonce != head.tx.nonce() {
-                return Err(EvmError::Transaction("Nonce mismatch".to_string()).into());
-            }
-        }
+        // // Check if the nonce is correct
+        // if let Some(acc) = context.block_cache.get(&head.tx.sender()) {
+        //     if acc.info.nonce != head.tx.nonce() {
+        //         return Err(EvmError::Transaction("Nonce mismatch".to_string()).into());
+        //     }
+        // } else {
+        //     let acc_info = context
+        //         .store()
+        //         .unwrap()
+        //         .get_account_info_by_hash(context.parent_hash(), head.tx.sender())?
+        //         .unwrap_or_default();
+        //     if acc_info.nonce != head.tx.nonce() {
+        //         return Err(EvmError::Transaction("Nonce mismatch".to_string()).into());
+        //     }
+        // }
 
         let report = execute_tx_levm(
             &head.tx,
