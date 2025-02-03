@@ -202,11 +202,11 @@ impl VM {
 
         if shift.is_zero() {
             current_call_frame.stack.push(value)?;
-            return Ok(OpcodeResult::Continue);
+            return Ok(OpcodeResult::Continue { pc_increment: 1 });
         }
         if value.is_zero() {
             current_call_frame.stack.push(U256::zero())?;
-            return Ok(OpcodeResult::Continue);
+            return Ok(OpcodeResult::Continue { pc_increment: 1 });
         }
 
         // For 1 << n, we can check if we have a precomputed value, and if not use 2^n directly
@@ -223,7 +223,7 @@ impl VM {
                 U256::from(2).pow(shift)
             };
             current_call_frame.stack.push(res)?;
-            return Ok(OpcodeResult::Continue);
+            return Ok(OpcodeResult::Continue { pc_increment: 1 });
         }
 
         // Normal behaviour for values other than 1
