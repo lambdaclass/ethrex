@@ -201,7 +201,7 @@ impl SyncManager {
                 // For all blocks after the pivot: Process them fully
                 // Iterate the tries to ensure no gaps
                 info!("Looking for gaps in trie");
-                let state_trie = store.state_trie(sync_head)?.unwrap();
+                let state_trie = store.state_trie(pivot_header.compute_block_hash())?.unwrap();
                 for (hash, acc) in state_trie.into_iter().content() {
                     let hashed_address = H256::decode(&hash)?;
                     let acc = AccountState::decode(&acc).unwrap();
