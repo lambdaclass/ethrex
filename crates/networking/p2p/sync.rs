@@ -568,7 +568,7 @@ async fn storage_fetcher(
                     store.clone(),
                 ));
                 // End loop if we don't have enough elements to fill up a batch
-                if pending_storage.len() < BATCH_SIZE || (!incoming && pending_storage.is_empty()) {
+                if pending_storage.is_empty() || (incoming && pending_storage.len() < BATCH_SIZE) {
                     break;
                 }
             }
