@@ -20,7 +20,11 @@ use keccak_hash::keccak;
 use std::{collections::HashMap, sync::Arc};
 
 pub fn run_ef_test(test: &EFTest) -> Result<EFTestReport, EFTestRunnerError> {
-    let hash = test._info.generated_test_hash.or(test._info.hash).unwrap();
+    let hash = test
+        ._info
+        .generated_test_hash
+        .or(test._info.hash)
+        .unwrap_or_default();
 
     let mut ef_test_report = EFTestReport::new(test.name.clone(), test.dir.clone(), hash);
     for fork in test.post.forks.keys() {
