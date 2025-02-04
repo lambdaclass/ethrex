@@ -102,8 +102,8 @@ cfg_if::cfg_if! {
     if #[cfg(feature = "levm")] {
         use ethrex_levm::{
             db::{CacheDB, Database as LevmDatabase},
-            errors::{TransactionReport, TxResult, VMError},
-            vm::VM,
+            errors::{ExecutionReport, TxResult, VMError},
+            vm::{VM, EVMConfig},
             Environment,
             Account
         };
@@ -115,8 +115,8 @@ cfg_if::cfg_if! {
         pub fn beacon_root_contract_call_levm(
             store_wrapper: Arc<StoreWrapper>,
             block_header: &BlockHeader,
-            fork: Fork,
-        ) -> Result<TransactionReport, EvmError> {
+            config: EVMConfig,
+        ) -> Result<ExecutionReport, EvmError> {
             lazy_static! {
                 static ref SYSTEM_ADDRESS: Address =
                     Address::from_slice(&hex::decode("fffffffffffffffffffffffffffffffffffffffe").unwrap());
@@ -146,7 +146,7 @@ cfg_if::cfg_if! {
                 block_blob_gas_used: block_header.blob_gas_used.map(U256::from),
                 block_gas_limit: 30_000_000,
                 transient_storage: HashMap::new(),
-                fork,
+                config,
                 ..Default::default()
             };
 
@@ -166,7 +166,7 @@ cfg_if::cfg_if! {
             )
             .map_err(EvmError::from)?;
 
-            let mut report = vm.transact().map_err(EvmError::from)?;
+            let mut report = vm.execute().map_err(EvmError::from)?;
 
             report.new_state.remove(&*SYSTEM_ADDRESS);
 
@@ -239,14 +239,19 @@ cfg_if::cfg_if! {
                 store: state.database().unwrap().clone(),
                 block_hash: block.header.parent_hash,
             });
+
             let mut block_cache: CacheDB = HashMap::new();
             let block_header = &block.header;
             let fork = state.chain_config()?.fork(block_header.timestamp);
-            //eip 4788: execute beacon_root_contract_call before block transactions
+            // If there's no blob schedule in chain_config use the
+            // default/canonical values
+            let blob_schedule = state.chain_config()?.get_fork_blob_schedule(block_header.timestamp)
+                .unwrap_or(EVMConfig::canonical_values(fork));
+            let config = EVMConfig::new(fork , blob_schedule);
             cfg_if::cfg_if! {
                 if #[cfg(not(feature = "l2"))] {
-                    if block_header.parent_beacon_block_root.is_some() && fork == Fork::Cancun {
-                        let report = beacon_root_contract_call_levm(store_wrapper.clone(), block_header, fork)?;
+                    if block_header.parent_beacon_block_root.is_some() && fork >= Fork::Cancun {
+                        let report = beacon_root_contract_call_levm(store_wrapper.clone(), block_header, config)?;
                         block_cache.extend(report.new_state);
                     }
                 }
@@ -259,8 +264,9 @@ cfg_if::cfg_if! {
             let mut receipts = Vec::new();
             let mut cumulative_gas_used = 0;
 
+
             for tx in block.body.transactions.iter() {
-                let report = execute_tx_levm(tx, block_header, store_wrapper.clone(), block_cache.clone(), fork).map_err(EvmError::from)?;
+                let report = execute_tx_levm(tx, block_header, store_wrapper.clone(), block_cache.clone(), config).map_err(EvmError::from)?;
 
                 let mut new_state = report.new_state.clone();
 
@@ -313,15 +319,15 @@ cfg_if::cfg_if! {
             block_header: &BlockHeader,
             db: Arc<dyn LevmDatabase>,
             block_cache: CacheDB,
-            fork: Fork
-        ) -> Result<TransactionReport, VMError> {
+            config: EVMConfig,
+        ) -> Result<ExecutionReport, VMError> {
             let gas_price : U256 = tx.effective_gas_price(block_header.base_fee_per_gas).ok_or(VMError::InvalidTransaction)?.into();
 
             let env = Environment {
                 origin: tx.sender(),
                 refunded_gas: 0,
                 gas_limit: tx.gas_limit(),
-                fork,
+                config,
                 block_number: block_header.number.into(),
                 coinbase: block_header.coinbase,
                 timestamp: block_header.timestamp.into(),
@@ -335,6 +341,7 @@ cfg_if::cfg_if! {
                 tx_max_priority_fee_per_gas: tx.max_priority_fee().map(U256::from),
                 tx_max_fee_per_gas: tx.max_fee_per_gas().map(U256::from),
                 tx_max_fee_per_blob_gas: tx.max_fee_per_blob_gas().map(U256::from),
+                tx_nonce: tx.nonce(),
                 block_gas_limit: block_header.gas_limit,
                 transient_storage: HashMap::new(),
             };
@@ -352,7 +359,7 @@ cfg_if::cfg_if! {
                 None
             )?;
 
-            vm.transact()
+            vm.execute()
         }
     } else if #[cfg(not(feature = "levm"))] {
         /// Executes all transactions in a block and returns their receipts.
@@ -363,7 +370,7 @@ cfg_if::cfg_if! {
             cfg_if::cfg_if! {
                 if #[cfg(not(feature = "l2"))] {
                     //eip 4788: execute beacon_root_contract_call before block transactions
-                    if block_header.parent_beacon_block_root.is_some() && spec_id == SpecId::CANCUN {
+                    if block_header.parent_beacon_block_root.is_some() && spec_id >= SpecId::CANCUN {
                         beacon_root_contract_call(state, block_header, spec_id)?;
                     }
                 }

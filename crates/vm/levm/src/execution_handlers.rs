@@ -2,10 +2,7 @@ use crate::{
     call_frame::CallFrame,
     constants::*,
     db::CacheDB,
-    errors::{
-        HaltReason, InternalError, OpcodeResult, OutOfGasError, TransactionReport, TxResult,
-        VMError,
-    },
+    errors::{ExecutionReport, InternalError, OpcodeResult, OutOfGasError, TxResult, VMError},
     gas_cost::CODE_DEPOSIT_COST,
     opcodes::Opcode,
     utils::*,
@@ -20,19 +17,18 @@ impl VM {
         precompile_result: Result<Bytes, VMError>,
         current_call_frame: &mut CallFrame,
         backup: StateBackup,
-    ) -> Result<TransactionReport, VMError> {
+    ) -> Result<ExecutionReport, VMError> {
         match precompile_result {
             Ok(output) => {
                 self.call_frames.push(current_call_frame.clone());
 
-                Ok(TransactionReport {
+                Ok(ExecutionReport {
                     result: TxResult::Success,
                     new_state: self.cache.clone(),
                     gas_used: current_call_frame.gas_used,
                     gas_refunded: 0,
                     output,
                     logs: std::mem::take(&mut current_call_frame.logs),
-                    created_address: None,
                 })
             }
             Err(error) => {
@@ -44,14 +40,13 @@ impl VM {
 
                 self.restore_state(backup);
 
-                Ok(TransactionReport {
+                Ok(ExecutionReport {
                     result: TxResult::Revert(error),
                     new_state: CacheDB::default(),
                     gas_used: current_call_frame.gas_limit,
                     gas_refunded: 0,
                     output: Bytes::new(),
                     logs: std::mem::take(&mut current_call_frame.logs),
-                    created_address: None,
                 })
             }
         }
@@ -61,8 +56,8 @@ impl VM {
         opcode: Opcode,
         current_call_frame: &mut CallFrame,
     ) -> Result<OpcodeResult, VMError> {
-        let op_result = match opcode {
-            Opcode::STOP => Ok(OpcodeResult::Halt(HaltReason::Stop)),
+        match opcode {
+            Opcode::STOP => Ok(OpcodeResult::Halt),
             Opcode::ADD => self.op_add(current_call_frame),
             Opcode::MUL => self.op_mul(current_call_frame),
             Opcode::SUB => self.op_sub(current_call_frame),
@@ -163,21 +158,14 @@ impl VM {
             Opcode::SELFDESTRUCT => self.op_selfdestruct(current_call_frame),
 
             _ => Err(VMError::OpcodeNotFound),
-        };
-
-        if opcode != Opcode::JUMP && opcode != Opcode::JUMPI {
-            current_call_frame.increment_pc()?;
         }
-
-        op_result
     }
 
     pub fn handle_opcode_result(
         &mut self,
-        _reason: HaltReason,
         current_call_frame: &mut CallFrame,
         backup: StateBackup,
-    ) -> Result<TransactionReport, VMError> {
+    ) -> Result<ExecutionReport, VMError> {
         self.call_frames.push(current_call_frame.clone());
         // On successful create check output validity
         if (self.is_create() && current_call_frame.depth == 0)
@@ -205,8 +193,8 @@ impl VM {
                 Err(VMError::ContractOutputTooBig)
             } else if contract_code.first().unwrap_or(&0) == &INVALID_CONTRACT_PREFIX {
                 Err(VMError::InvalidContractPrefix)
-            } else if self
-                .increase_consumed_gas(current_call_frame, code_deposit_cost)
+            } else if current_call_frame
+                .increase_consumed_gas(code_deposit_cost)
                 .is_err()
             {
                 Err(VMError::OutOfGas(OutOfGasError::MaxGasLimitExceeded))
@@ -224,27 +212,25 @@ impl VM {
                     current_call_frame.gas_used = current_call_frame.gas_limit;
                     self.restore_state(backup);
 
-                    return Ok(TransactionReport {
+                    return Ok(ExecutionReport {
                         result: TxResult::Revert(error),
                         new_state: CacheDB::default(),
                         gas_used: current_call_frame.gas_used,
                         gas_refunded: self.env.refunded_gas,
                         output: std::mem::take(&mut current_call_frame.output),
                         logs: std::mem::take(&mut current_call_frame.logs),
-                        created_address: None,
                     });
                 }
             }
         }
 
-        Ok(TransactionReport {
+        Ok(ExecutionReport {
             result: TxResult::Success,
             new_state: CacheDB::default(),
             gas_used: current_call_frame.gas_used,
             gas_refunded: self.env.refunded_gas,
             output: std::mem::take(&mut current_call_frame.output),
             logs: std::mem::take(&mut current_call_frame.logs),
-            created_address: None,
         })
     }
 
@@ -253,7 +239,7 @@ impl VM {
         error: VMError,
         current_call_frame: &mut CallFrame,
         backup: StateBackup,
-    ) -> Result<TransactionReport, VMError> {
+    ) -> Result<ExecutionReport, VMError> {
         self.call_frames.push(current_call_frame.clone());
 
         if error.is_internal() {
@@ -270,14 +256,13 @@ impl VM {
 
         self.restore_state(backup);
 
-        Ok(TransactionReport {
+        Ok(ExecutionReport {
             result: TxResult::Revert(error),
             new_state: CacheDB::default(),
             gas_used: current_call_frame.gas_used,
             gas_refunded: self.env.refunded_gas,
             output: std::mem::take(&mut current_call_frame.output), // Bytes::new() if error is not RevertOpcode
             logs: std::mem::take(&mut current_call_frame.logs),
-            created_address: None,
         })
     }
 }

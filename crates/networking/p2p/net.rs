@@ -1,4 +1,3 @@
-use bootnode::BootNode;
 use discv4::{
     helpers::current_unix_time,
     server::{DiscoveryError, Discv4Server},
@@ -10,23 +9,19 @@ use k256::{
     elliptic_curve::{sec1::ToEncodedPoint, PublicKey},
 };
 pub use kademlia::KademliaTable;
-use rlpx::{
-    connection::{RLPxConnBroadcastSender, RLPxConnection},
-    message::Message as RLPxMessage,
-};
+use rlpx::{connection::RLPxConnBroadcastSender, handshake, message::Message as RLPxMessage};
 use std::{io, net::SocketAddr, sync::Arc};
 use tokio::{
     net::{TcpListener, TcpSocket, TcpStream},
     sync::Mutex,
 };
 use tokio_util::task::TaskTracker;
-use tracing::{error, info};
+use tracing::{debug, error, info};
 use types::Node;
 
-pub mod bootnode;
 pub(crate) mod discv4;
 pub(crate) mod kademlia;
-pub mod peer_channels;
+pub mod peer_handler;
 pub mod rlpx;
 pub(crate) mod snap;
 pub mod sync;
@@ -62,7 +57,7 @@ struct P2PContext {
 pub async fn start_network(
     local_node: Node,
     tracker: TaskTracker,
-    bootnodes: Vec<BootNode>,
+    bootnodes: Vec<Node>,
     signer: SigningKey,
     peer_table: Arc<Mutex<KademliaTable>>,
     storage: Store,
@@ -137,9 +132,16 @@ fn listener(tcp_addr: SocketAddr) -> Result<TcpListener, io::Error> {
 }
 
 async fn handle_peer_as_receiver(context: P2PContext, peer_addr: SocketAddr, stream: TcpStream) {
-    let mut conn =
-        RLPxConnection::receiver(context.signer, stream, context.storage, context.broadcast);
-    conn.start_peer(peer_addr, context.table).await;
+    let table = context.table.clone();
+    match handshake::as_receiver(context, peer_addr, stream).await {
+        Ok(mut conn) => conn.start(table).await,
+        Err(e) => {
+            // TODO We should remove the peer from the table if connection failed
+            // but currently it will make the tests fail
+            // table.lock().await.replace_peer(node.node_id);
+            debug!("Error creating tcp connection with peer at {peer_addr}: {e}")
+        }
+    }
 }
 
 async fn handle_peer_as_initiator(context: P2PContext, node: Node) {
@@ -150,23 +152,18 @@ async fn handle_peer_as_initiator(context: P2PContext, node: Node) {
             // TODO We should remove the peer from the table if connection failed
             // but currently it will make the tests fail
             // table.lock().await.replace_peer(node.node_id);
-            error!("Error establishing tcp connection with peer at {addr}: {e}");
+            debug!("Error establishing tcp connection with peer at {addr}: {e}");
             return;
         }
     };
-    match RLPxConnection::initiator(
-        context.signer,
-        node.node_id,
-        stream,
-        context.storage,
-        context.broadcast,
-    ) {
-        Ok(mut conn) => conn.start_peer(node.udp_addr(), context.table).await,
+    let table = context.table.clone();
+    match handshake::as_initiator(context, node, stream).await {
+        Ok(mut conn) => conn.start(table).await,
         Err(e) => {
             // TODO We should remove the peer from the table if connection failed
             // but currently it will make the tests fail
             // table.lock().await.replace_peer(node.node_id);
-            error!("Error creating tcp connection with peer at {addr}: {e}")
+            debug!("Error creating tcp connection with peer at {addr}: {e}")
         }
     };
 }
