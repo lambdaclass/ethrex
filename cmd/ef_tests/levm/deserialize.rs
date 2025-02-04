@@ -281,7 +281,7 @@ where
         .collect()
 }
 
-pub fn deserialize_post_map<'de, D>(
+pub fn deserialize_post<'de, D>(
     // change name
     deserializer: D,
 ) -> Result<HashMap<Fork, Vec<EFTestPostValue>>, D::Error>
@@ -294,13 +294,12 @@ where
         let fork = match fork_str.as_str() {
             "Frontier" => Fork::Frontier,
             "Homestead" => Fork::Homestead,
-            "Constantinople" => Fork::Constantinople,
-            "ConstantinopleFix" | "Petersburg" => Fork::Constantinople,
+            "Constantinople" | "ConstantinopleFix" | "Petersburg" => Fork::Constantinople,
             "Istanbul" => Fork::Istanbul,
             "Berlin" => Fork::Berlin,
             "London" => Fork::London,
             "Paris" => Fork::Paris,
-            "Merge" => Fork::Paris, // CHANGE THIS
+            "Merge" => Fork::Paris,
             "Shanghai" => Fork::Shanghai,
             "Cancun" => Fork::Cancun,
             "Prague" => Fork::Prague,

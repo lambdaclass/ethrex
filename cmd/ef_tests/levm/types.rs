@@ -2,7 +2,7 @@ use crate::{
     deserialize::{
         deserialize_access_lists, deserialize_authorization_lists,
         deserialize_ef_post_value_indexes, deserialize_h256_vec_optional_safe,
-        deserialize_hex_bytes, deserialize_hex_bytes_vec, deserialize_post_map,
+        deserialize_hex_bytes, deserialize_hex_bytes_vec, deserialize_post,
         deserialize_transaction_expected_exception, deserialize_u256_optional_safe,
         deserialize_u256_safe, deserialize_u256_valued_hashmap_safe, deserialize_u256_vec_safe,
         deserialize_u64_safe, deserialize_u64_vec_safe,
@@ -26,30 +26,10 @@ pub struct EFTest {
     pub dir: String,
     pub _info: EFTestInfo,
     pub env: EFTestEnv,
-    pub post: EFTestPostMap,
+    pub post: EFTestPost,
     pub pre: EFTestPre,
     pub transactions: HashMap<TestVector, EFTestTransaction>,
 }
-
-// impl EFTest {
-//     pub fn fork(&self) -> Fork {
-//         match &self.post {
-//             EFTestPost::Prague(_) => Fork::Prague,
-//             EFTestPost::Cancun(_) => Fork::Cancun,
-//             EFTestPost::Shanghai(_) => Fork::Shanghai,
-//             EFTestPost::Homestead(_) => Fork::Homestead,
-//             EFTestPost::Istanbul(_) => Fork::Istanbul,
-//             EFTestPost::London(_) => Fork::London,
-//             EFTestPost::Byzantium(_) => Fork::Byzantium,
-//             EFTestPost::Berlin(_) => Fork::Berlin,
-//             EFTestPost::Constantinople(_) | EFTestPost::ConstantinopleFix(_) => {
-//                 Fork::Constantinople
-//             }
-//             EFTestPost::Paris(_) => Fork::Paris,
-//             EFTestPost::Frontier(_) => Fork::Frontier,
-//         }
-//     }
-// }
 
 impl From<&EFTest> for Genesis {
     fn from(test: &EFTest) -> Self {
@@ -131,13 +111,13 @@ pub struct EFTestEnv {
 }
 
 #[derive(Debug, Deserialize)]
-pub struct EFTestPostMap {
+pub struct EFTestPost {
     #[serde(flatten)]
-    #[serde(deserialize_with = "deserialize_post_map")]
+    #[serde(deserialize_with = "deserialize_post")]
     pub forks: HashMap<Fork, Vec<EFTestPostValue>>,
 }
 
-impl EFTestPostMap {
+impl EFTestPost {
     pub fn vector_post_value(&self, vector: &TestVector, fork: Fork) -> EFTestPostValue {
         let post_values = self.forks.get(&fork).unwrap();
         Self::find_vector_post_value(post_values, vector).unwrap()
@@ -165,88 +145,6 @@ impl EFTestPostMap {
             .is_some()
     }
 }
-
-#[derive(Debug, Deserialize, Clone)]
-pub enum EFTestPost {
-    Prague(Vec<EFTestPostValue>),
-    Cancun(Vec<EFTestPostValue>),
-    Shanghai(Vec<EFTestPostValue>),
-    Homestead(Vec<EFTestPostValue>),
-    Istanbul(Vec<EFTestPostValue>),
-    London(Vec<EFTestPostValue>),
-    Byzantium(Vec<EFTestPostValue>),
-    Berlin(Vec<EFTestPostValue>),
-    Constantinople(Vec<EFTestPostValue>),
-    Paris(Vec<EFTestPostValue>),
-    ConstantinopleFix(Vec<EFTestPostValue>),
-    Frontier(Vec<EFTestPostValue>),
-}
-
-// impl EFTestPost {
-//     pub fn values(self) -> Vec<EFTestPostValue> {
-//         match self {
-//             EFTestPost::Prague(v) => v,
-//             EFTestPost::Cancun(v) => v,
-//             EFTestPost::Shanghai(v) => v,
-//             EFTestPost::Homestead(v) => v,
-//             EFTestPost::Istanbul(v) => v,
-//             EFTestPost::London(v) => v,
-//             EFTestPost::Byzantium(v) => v,
-//             EFTestPost::Berlin(v) => v,
-//             EFTestPost::Constantinople(v) => v,
-//             EFTestPost::Paris(v) => v,
-//             EFTestPost::ConstantinopleFix(v) => v,
-//             EFTestPost::Frontier(v) => v,
-//         }
-//     }
-
-//     pub fn vector_post_value(&self, vector: &TestVector) -> EFTestPostValue {
-//         match self {
-//             EFTestPost::Prague(v) => Self::find_vector_post_value(v, vector),
-//             EFTestPost::Cancun(v) => Self::find_vector_post_value(v, vector),
-//             EFTestPost::Shanghai(v) => Self::find_vector_post_value(v, vector),
-//             EFTestPost::Homestead(v) => Self::find_vector_post_value(v, vector),
-//             EFTestPost::Istanbul(v) => Self::find_vector_post_value(v, vector),
-//             EFTestPost::London(v) => Self::find_vector_post_value(v, vector),
-//             EFTestPost::Byzantium(v) => Self::find_vector_post_value(v, vector),
-//             EFTestPost::Berlin(v) => Self::find_vector_post_value(v, vector),
-//             EFTestPost::Constantinople(v) => Self::find_vector_post_value(v, vector),
-//             EFTestPost::Paris(v) => Self::find_vector_post_value(v, vector),
-//             EFTestPost::ConstantinopleFix(v) => Self::find_vector_post_value(v, vector),
-//             EFTestPost::Frontier(v) => Self::find_vector_post_value(v, vector),
-//         }
-//     }
-
-//     fn find_vector_post_value(values: &[EFTestPostValue], vector: &TestVector) -> EFTestPostValue {
-//         values
-//             .iter()
-//             .find(|v| {
-//                 let data_index = v.indexes.get("data").unwrap().as_usize();
-//                 let gas_limit_index = v.indexes.get("gas").unwrap().as_usize();
-//                 let value_index = v.indexes.get("value").unwrap().as_usize();
-//                 vector == &(data_index, gas_limit_index, value_index)
-//             })
-//             .unwrap()
-//             .clone()
-//     }
-
-//     pub fn iter(&self) -> impl Iterator<Item = &EFTestPostValue> {
-//         match self {
-//             EFTestPost::Prague(v) => v.iter(),
-//             EFTestPost::Cancun(v) => v.iter(),
-//             EFTestPost::Shanghai(v) => v.iter(),
-//             EFTestPost::Homestead(v) => v.iter(),
-//             EFTestPost::Istanbul(v) => v.iter(),
-//             EFTestPost::London(v) => v.iter(),
-//             EFTestPost::Byzantium(v) => v.iter(),
-//             EFTestPost::Berlin(v) => v.iter(),
-//             EFTestPost::Constantinople(v) => v.iter(),
-//             EFTestPost::Paris(v) => v.iter(),
-//             EFTestPost::ConstantinopleFix(v) => v.iter(),
-//             EFTestPost::Frontier(v) => v.iter(),
-//         }
-//     }
-// }
 
 #[derive(Debug, Deserialize, Clone)]
 pub enum TransactionExpectedException {
