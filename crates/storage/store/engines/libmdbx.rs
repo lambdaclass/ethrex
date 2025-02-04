@@ -11,7 +11,7 @@ use bytes::Bytes;
 use ethereum_types::{H256, U256};
 use ethrex_core::types::{
     AccountState, BlobsBundle, Block, BlockBody, BlockHash, BlockHeader, BlockNumber, ChainConfig,
-    Index, Receipt, Transaction, EMPTY_KECCACK_HASH,
+    Index, Receipt, Transaction, EMPTY_TRIE_HASH,
 };
 use ethrex_rlp::decode::RLPDecode;
 use ethrex_rlp::encode::RLPEncode;
@@ -653,7 +653,7 @@ impl StoreEngine for Store {
     fn rebuild_state_from_snapshot(&self) -> Result<(H256, Vec<H256>), StoreError> {
         let mut mismatched_storage_accounts = vec![];
         // Open a new state trie
-        let mut state_trie = self.open_state_trie(*EMPTY_KECCACK_HASH);
+        let mut state_trie = self.open_state_trie(*EMPTY_TRIE_HASH);
         // Add all accounts
         let txn = self
             .db
@@ -690,7 +690,7 @@ impl Store {
 
     fn rebuild_storage_trie_from_snapshot(&self, account_hash: H256) -> Result<H256, StoreError> {
         // Open a new storage trie
-        let mut storage_trie = self.open_storage_trie(account_hash, *EMPTY_KECCACK_HASH);
+        let mut storage_trie = self.open_storage_trie(account_hash, *EMPTY_TRIE_HASH);
         // Add all accounts
         let txn = self
             .db
