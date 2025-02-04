@@ -136,6 +136,8 @@ pub struct EFTestPostMap {
     pub forks: HashMap<Fork, Vec<EFTestPostValue>>,
 }
 
+impl EFTestPostMap {}
+
 #[derive(Debug, Deserialize, Clone)]
 pub enum EFTestPost {
     Prague(Vec<EFTestPostValue>),

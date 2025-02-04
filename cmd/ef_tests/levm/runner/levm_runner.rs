@@ -1,5 +1,5 @@
 use crate::{
-    report::{EFTestReport, TestVector},
+    report::{EFTestReport, EFTestReportForkResult, TestVector},
     runner::{EFTestRunnerError, InternalError},
     types::{EFTest, TransactionExpectedException},
     utils::{self, effective_gas_price},
@@ -22,40 +22,45 @@ use std::{collections::HashMap, sync::Arc};
 pub fn run_ef_test(test: &EFTest) -> Result<EFTestReport, EFTestRunnerError> {
     let hash = test._info.generated_test_hash.or(test._info.hash).unwrap();
 
-    let mut ef_test_report =
-        EFTestReport::new(test.name.clone(), test.dir.clone(), hash, test.fork());
-    for (vector, _tx) in test.transactions.iter() {
-        match run_ef_test_tx(vector, test) {
-            Ok(_) => continue,
-            Err(EFTestRunnerError::VMInitializationFailed(reason)) => {
-                ef_test_report.register_vm_initialization_failure(reason, *vector);
-            }
-            Err(EFTestRunnerError::FailedToEnsurePreState(reason)) => {
-                ef_test_report.register_pre_state_validation_failure(reason, *vector);
-            }
-            Err(EFTestRunnerError::ExecutionFailedUnexpectedly(error)) => {
-                ef_test_report.register_unexpected_execution_failure(error, *vector);
-            }
-            Err(EFTestRunnerError::FailedToEnsurePostState(transaction_report, reason)) => {
-                ef_test_report.register_post_state_validation_failure(
-                    transaction_report,
-                    reason,
-                    *vector,
-                );
-            }
-            Err(EFTestRunnerError::VMExecutionMismatch(_)) => {
-                return Err(EFTestRunnerError::Internal(InternalError::FirstRunInternal(
-                    "VM execution mismatch errors should only happen when running with revm. This failed during levm's execution."
-                        .to_owned(),
-                )));
-            }
-            Err(EFTestRunnerError::ExpectedExceptionDoesNotMatchReceived(reason)) => {
-                ef_test_report.register_post_state_validation_error_mismatch(reason, *vector);
-            }
-            Err(EFTestRunnerError::Internal(reason)) => {
-                return Err(EFTestRunnerError::Internal(reason));
+    let mut ef_test_report = EFTestReport::new(test.name.clone(), test.dir.clone(), hash);
+    for fork in test.post.forks.keys() {
+        let mut ef_test_report_fork = EFTestReportForkResult::new();
+
+        for (vector, _tx) in test.transactions.iter() {
+            match run_ef_test_tx(vector, test) {
+                Ok(_) => continue,
+                Err(EFTestRunnerError::VMInitializationFailed(reason)) => {
+                    ef_test_report_fork.register_vm_initialization_failure(reason, *vector);
+                }
+                Err(EFTestRunnerError::FailedToEnsurePreState(reason)) => {
+                    ef_test_report_fork.register_pre_state_validation_failure(reason, *vector);
+                }
+                Err(EFTestRunnerError::ExecutionFailedUnexpectedly(error)) => {
+                    ef_test_report_fork.register_unexpected_execution_failure(error, *vector);
+                }
+                Err(EFTestRunnerError::FailedToEnsurePostState(transaction_report, reason)) => {
+                    ef_test_report_fork.register_post_state_validation_failure(
+                        transaction_report,
+                        reason,
+                        *vector,
+                    );
+                }
+                Err(EFTestRunnerError::VMExecutionMismatch(_)) => {
+                    return Err(EFTestRunnerError::Internal(InternalError::FirstRunInternal(
+                        "VM execution mismatch errors should only happen when running with revm. This failed during levm's execution."
+                            .to_owned(),
+                    )));
+                }
+                Err(EFTestRunnerError::ExpectedExceptionDoesNotMatchReceived(reason)) => {
+                    ef_test_report_fork
+                        .register_post_state_validation_error_mismatch(reason, *vector);
+                }
+                Err(EFTestRunnerError::Internal(reason)) => {
+                    return Err(EFTestRunnerError::Internal(reason));
+                }
             }
         }
+        ef_test_report.register_fork_result(*fork, ef_test_report_fork);
     }
     Ok(ef_test_report)
 }

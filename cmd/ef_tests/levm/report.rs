@@ -252,10 +252,16 @@ fn fork_summary_shell(reports: &[EFTestReport], fork: Fork) -> String {
 }
 
 fn fork_statistics(reports: &[EFTestReport], fork: Fork) -> (usize, usize, f64) {
-    let fork_tests = reports.iter().filter(|report| report.fork == fork).count();
+    let fork_tests = reports
+        .iter()
+        .filter(|report| report.fork_results.contains_key(&fork))
+        .count();
     let fork_passed_tests = reports
         .iter()
-        .filter(|report| report.fork == fork && report.passed())
+        .filter(|report| match report.fork_results.get(&fork) {
+            Some(result) => result.failed_vectors.is_empty(),
+            None => false,
+        })
         .count();
     let fork_success_percentage = (fork_passed_tests as f64 / fork_tests as f64) * 100.0;
     (fork_tests, fork_passed_tests, fork_success_percentage)
@@ -327,64 +333,78 @@ impl Display for EFTestsReport {
         writeln!(f)?;
         writeln!(f, "{}", test_dir_summary_for_shell(&self.0))?;
         for report in self.0.iter() {
-            if report.failed_vectors.is_empty() {
+            if report.passed() {
                 continue;
             }
             writeln!(f, "Test: {}", report.name)?;
             writeln!(f)?;
-            for (failed_vector, error) in &report.failed_vectors {
-                writeln!(
-                    f,
-                    "Vector: (data_index: {}, gas_limit_index: {}, value_index: {})",
-                    failed_vector.0, failed_vector.1, failed_vector.2
-                )?;
-                writeln!(f, "Error: {error}")?;
-                if let Some(re_run_report) = &report.re_run_report {
-                    if let Some(execution_report) =
-                        re_run_report.execution_report.get(failed_vector)
-                    {
-                        if let Some((levm_result, revm_result)) =
-                            &execution_report.execution_result_mismatch
-                        {
-                            writeln!(
-                                f,
-                                "Execution result mismatch: LEVM: {levm_result:?}, REVM: {revm_result:?}",
-                            )?;
-                        }
-                        if let Some((levm_gas_used, revm_gas_used)) =
-                            &execution_report.gas_used_mismatch
-                        {
-                            writeln!(
-                                f,
-                                "Gas used mismatch: LEVM: {levm_gas_used}, REVM: {revm_gas_used} (diff: {})",
-                                levm_gas_used.abs_diff(*revm_gas_used)
-                            )?;
-                        }
-                        if let Some((levm_gas_refunded, revm_gas_refunded)) =
-                            &execution_report.gas_refunded_mismatch
-                        {
-                            writeln!(
-                                f,
-                                "Gas refunded mismatch: LEVM: {levm_gas_refunded}, REVM: {revm_gas_refunded} (diff: {})",
-                                levm_gas_refunded.abs_diff(*revm_gas_refunded)
-                            )?;
-                        }
-                        if let Some((levm_result, revm_error)) = &execution_report.re_runner_error {
-                            writeln!(f, "Re-run error: LEVM: {levm_result:?}, REVM: {revm_error}",)?;
-                        }
-                    }
-
-                    if let Some(account_update) =
-                        re_run_report.account_updates_report.get(failed_vector)
-                    {
-                        writeln!(f, "{}", &account_update.to_string())?;
-                    } else {
-                        writeln!(f, "No account updates report found. Account update reports are only generated for tests that failed at the post-state validation stage.")?;
-                    }
-                } else {
-                    writeln!(f, "No re-run report found. Re-run reports are only generated for tests that failed at the post-state validation stage.")?;
+            for (fork, result) in &report.fork_results {
+                writeln!(f, "\n  Fork: {:?}", fork)?;
+                if result.failed_vectors.is_empty() {
+                    continue;
                 }
-                writeln!(f)?;
+                writeln!(f, "    Failed Vectors:")?;
+                for (failed_vector, error) in &result.failed_vectors {
+                    writeln!(
+                        f,
+                        "Vector: (data_index: {}, gas_limit_index: {}, value_index: {})",
+                        failed_vector.0, failed_vector.1, failed_vector.2
+                    )?;
+                    writeln!(f, "Error: {error}")?;
+                    if let Some(re_run_report) = &report.re_run_report {
+                        if let Some(execution_report) =
+                            re_run_report.execution_report.get(failed_vector)
+                        //.get(&(*fork, *failed_vector))
+                        {
+                            if let Some((levm_result, revm_result)) =
+                                &execution_report.execution_result_mismatch
+                            {
+                                writeln!(
+                                    f,
+                                    "Execution result mismatch: LEVM: {levm_result:?}, REVM: {revm_result:?}",
+                                )?;
+                            }
+                            if let Some((levm_gas_used, revm_gas_used)) =
+                                &execution_report.gas_used_mismatch
+                            {
+                                writeln!(
+                                    f,
+                                    "Gas used mismatch: LEVM: {levm_gas_used}, REVM: {revm_gas_used} (diff: {})",
+                                    levm_gas_used.abs_diff(*revm_gas_used)
+                                )?;
+                            }
+                            if let Some((levm_gas_refunded, revm_gas_refunded)) =
+                                &execution_report.gas_refunded_mismatch
+                            {
+                                writeln!(
+                                    f,
+                                    "Gas refunded mismatch: LEVM: {levm_gas_refunded}, REVM: {revm_gas_refunded} (diff: {})",
+                                    levm_gas_refunded.abs_diff(*revm_gas_refunded)
+                                )?;
+                            }
+                            if let Some((levm_result, revm_error)) =
+                                &execution_report.re_runner_error
+                            {
+                                writeln!(
+                                    f,
+                                    "Re-run error: LEVM: {levm_result:?}, REVM: {revm_error}",
+                                )?;
+                            }
+                        }
+
+                        if let Some(account_update) =
+                            re_run_report.account_updates_report.get(failed_vector)
+                        //.get(&(*fork, *failed_vector))
+                        {
+                            writeln!(f, "{}", &account_update.to_string())?;
+                        } else {
+                            writeln!(f, "No account updates report found. Account update reports are only generated for tests that failed at the post-state validation stage.")?;
+                        }
+                    } else {
+                        writeln!(f, "No re-run report found. Re-run reports are only generated for tests that failed at the post-state validation stage.")?;
+                    }
+                    writeln!(f)?;
+                }
             }
         }
         Ok(())
@@ -396,27 +416,51 @@ pub struct EFTestReport {
     pub name: String,
     pub dir: String,
     pub test_hash: H256,
-    pub fork: Fork,
+    pub re_run_report: Option<TestReRunReport>,
+    pub fork_results: HashMap<Fork, EFTestReportForkResult>,
+}
+
+#[derive(Debug, Default, Clone, Serialize, Deserialize)]
+pub struct EFTestReportForkResult {
     pub skipped: bool,
     pub failed_vectors: HashMap<TestVector, EFTestRunnerError>,
-    pub re_run_report: Option<TestReRunReport>,
 }
 
 impl EFTestReport {
-    pub fn new(name: String, dir: String, test_hash: H256, fork: Fork) -> Self {
+    pub fn new(name: String, dir: String, test_hash: H256) -> Self {
         EFTestReport {
             name,
             dir,
             test_hash,
-            fork,
-            ..Default::default()
+            re_run_report: None,
+            fork_results: HashMap::new(),
         }
     }
 
-    pub fn new_skipped() -> Self {
-        EFTestReport {
-            skipped: true,
-            ..Default::default()
+    pub fn register_re_run_report(&mut self, re_run_report: TestReRunReport) {
+        self.re_run_report = Some(re_run_report);
+    }
+
+    pub fn register_fork_result(
+        &mut self,
+        fork: Fork,
+        ef_test_report_fork: EFTestReportForkResult,
+    ) {
+        self.fork_results.insert(fork, ef_test_report_fork);
+    }
+
+    pub fn passed(&self) -> bool {
+        self.fork_results
+            .values()
+            .all(|fork_result| fork_result.failed_vectors.is_empty())
+    }
+}
+
+impl EFTestReportForkResult {
+    pub fn new() -> Self {
+        Self {
+            skipped: false,
+            failed_vectors: HashMap::new(),
         }
     }
 
@@ -476,16 +520,8 @@ impl EFTestReport {
         );
     }
 
-    pub fn register_re_run_report(&mut self, re_run_report: TestReRunReport) {
-        self.re_run_report = Some(re_run_report);
-    }
-
-    pub fn iter_failed(&self) -> impl Iterator<Item = (&TestVector, &EFTestRunnerError)> {
-        self.failed_vectors.iter()
-    }
-
-    pub fn passed(&self) -> bool {
-        self.failed_vectors.is_empty()
+    pub fn register_failed_vector(&mut self, vector: TestVector, error: EFTestRunnerError) {
+        self.failed_vectors.insert(vector, error);
     }
 }
 
