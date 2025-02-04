@@ -201,24 +201,6 @@ impl SyncManager {
                 store_bodies_handle.await??;
                 // For all blocks before the pivot: Store the bodies and fetch the receipts (TODO)
                 // For all blocks after the pivot: Process them fully
-                // Iterate the tries to ensure no gaps
-                info!("Looking for gaps in trie");
-                let state_trie = store
-                    .state_trie(pivot_header.compute_block_hash())?
-                    .unwrap();
-                for (hash, acc) in state_trie.into_iter().content() {
-                    let hashed_address = H256::from_slice(&hash);
-                    let acc = AccountState::decode(&acc).unwrap();
-                    // Iter storage trie
-                    if acc.storage_root != *EMPTY_TRIE_HASH {
-                        let storage_trie =
-                            store.open_storage_trie(hashed_address, acc.storage_root);
-                        let storage = storage_trie.into_iter().collect::<Vec<_>>();
-                        info!("Healthy storage trie of len: {}", storage.len())
-                    }
-                }
-                info!("No gaps found, trie is healthy");
-
                 for hash in &all_block_hashes[pivot_idx + 1..] {
                     let block = store
                         .get_block_by_hash(*hash)?
