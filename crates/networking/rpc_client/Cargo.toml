@@ -34,6 +34,7 @@ revm = { version = "14.0.3", features = [
 revm-primitives = { version = "10.0.0", features = [
     "std",
 ], default-features = false }
+bincode = "1.3.3"
 
 [dev-dependencies]
 

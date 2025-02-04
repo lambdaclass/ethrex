@@ -14,7 +14,7 @@ use std::time::Duration;
 use std::{collections::HashMap, future::Future};
 
 use serde::de::DeserializeOwned;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::json;
 
 use lazy_static::lazy_static;
@@ -25,7 +25,7 @@ lazy_static! {
     static ref CLIENT: reqwest::Client = reqwest::Client::new();
 }
 
-#[derive(Clone)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct Account {
     pub account_state: AccountState,
     pub storage: HashMap<H256, U256>,

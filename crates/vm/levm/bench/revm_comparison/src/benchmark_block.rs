@@ -1,6 +1,9 @@
-use ethrex_rpc_client::{db::RpcDB, get_block, get_latest_block_number};
-use ethrex_vm::execution_db::ToExecDB;
-use ethrex_vm::{execute_block, EvmState};
+use ethrex_rpc_client::constants::CANCUN_CONFIG;
+use ethrex_rpc_client::db::RpcDB;
+use ethrex_rpc_client::{get_block, get_latest_block_number};
+use ethrex_vm::execution_db::ExecutionDB;
+use ethrex_vm::{execute_block, spec_id, EvmState};
+use revm::db::CacheDB;
 use std::{fs::File, io::Write};
 
 #[tokio::main]
@@ -15,14 +18,39 @@ async fn main() {
         .expect("failed to fetch block");
     //dbg!(&block);
 
-    let rpc_db = RpcDB::with_cache(rpc_url, block_number - 1, &block)
-        .await
-        .expect("failed to create rpc db");
+    let chain_config = CANCUN_CONFIG;
+    let rpc_db = if let Some(db) = RpcDB::deserialize_from_file("db.bin") {
+        println!("db file found");
+        db
+    } else {
+        println!("db file not found");
 
-    println!("pre-executing to build execution db");
+        println!("populating rpc db cache");
+        let rpc_db = RpcDB::with_cache(rpc_url, block_number - 1, &block)
+            .await
+            .expect("failed to create rpc db");
+
+        println!("pre-executing to build execution db");
+        let cache_db = ExecutionDB::pre_execute(
+            &block,
+            chain_config.chain_id,
+            spec_id(&chain_config, block.header.timestamp),
+            rpc_db,
+        )
+        .unwrap();
+        let rpc_db = cache_db.db;
+
+        println!("writing db to file db.bin");
+        rpc_db
+            .serialize_to_file("db.bin")
+            .expect("failed to serialize db");
+
+        rpc_db
+    };
     let store = rpc_db
-        .to_in_memory_store(block.clone())
+        .to_in_memory_store(block.clone(), &chain_config)
         .expect("failed to build execution db");
+
     dbg!(&store);
 
     let mut evm_state = EvmState::from(store);

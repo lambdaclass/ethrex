@@ -1,13 +1,13 @@
+use crate::constants::{CANCUN_CONFIG, RPC_RATE_LIMIT};
 use crate::NodeRLP;
+use crate::{get_account, get_block, get_storage, retry};
 use std::cell::RefCell;
 use std::collections::hash_map::Entry;
 use std::collections::HashMap;
-
-use crate::constants::{CANCUN_CONFIG, RPC_RATE_LIMIT};
-use crate::{get_account, get_block, get_storage, retry};
+use std::fs::File;
 
 use crate::Account;
-use ethrex_core::types::{AccountInfo, GenesisAccount};
+use ethrex_core::types::{AccountInfo, ChainConfig, GenesisAccount};
 use ethrex_core::{
     types::{Block, TxKind},
     Address, H256,
@@ -23,14 +23,40 @@ use revm_primitives::{
     AccountInfo as RevmAccountInfo, Address as RevmAddress, Bytecode as RevmBytecode,
     Bytes as RevmBytes, B256 as RevmB256, U256 as RevmU256,
 };
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use tokio_utils::RateLimiter;
 
+#[derive(Serialize, Deserialize)]
 pub struct RpcDB {
     pub rpc_url: String,
     pub block_number: usize,
     // we concurrently download tx callers before pre-execution to minimize sequential RPC calls
+    #[serde(
+        serialize_with = "serialize_refcell",
+        deserialize_with = "deserialize_refcell"
+    )]
     pub cache: RefCell<HashMap<Address, Option<Account>>>,
+    #[serde(
+        serialize_with = "serialize_refcell",
+        deserialize_with = "deserialize_refcell"
+    )]
     pub block_hashes: RefCell<HashMap<u64, H256>>,
+}
+
+fn serialize_refcell<T, S>(value: &RefCell<T>, serializer: S) -> Result<S::Ok, S::Error>
+where
+    T: Serialize,
+    S: Serializer,
+{
+    value.borrow().serialize(serializer)
+}
+
+fn deserialize_refcell<'de, T, D>(deserializer: D) -> Result<RefCell<T>, D::Error>
+where
+    T: Deserialize<'de>,
+    D: Deserializer<'de>,
+{
+    T::deserialize(deserializer).map(RefCell::new)
 }
 
 impl RpcDB {
@@ -111,16 +137,11 @@ impl RpcDB {
         Ok(fetched)
     }
 
-    pub fn to_in_memory_store(&self, block: Block) -> Result<Store, StoreError> {
-        let chain_config: ethrex_core::types::ChainConfig = CANCUN_CONFIG;
-        let CacheDB { db, .. } = ExecutionDB::pre_execute(
-            &block,
-            chain_config.chain_id,
-            spec_id(&chain_config, block.header.timestamp),
-            self,
-        )
-        .unwrap();
-
+    pub fn to_in_memory_store(
+        &self,
+        block: Block,
+        chain_config: &ChainConfig,
+    ) -> Result<Store, StoreError> {
         let store = Store::new("test", EngineType::InMemory)?;
 
         let block_hash = block.hash();
@@ -133,7 +154,7 @@ impl RpcDB {
         store.update_earliest_block_number(block_number)?;
 
         // Store genesis state trie
-        let genesis_accs: HashMap<Address, GenesisAccount> = db
+        let genesis_accs: HashMap<Address, GenesisAccount> = self
             .cache
             .borrow()
             .iter()
@@ -153,7 +174,7 @@ impl RpcDB {
             })
             .collect();
         store.setup_genesis_state_trie(genesis_accs)?;
-        store.set_chain_config(&chain_config)?;
+        store.set_chain_config(chain_config)?;
 
         // Add account states and codes
         /*for (address, account) in db.cache.borrow().iter() {
@@ -180,6 +201,21 @@ impl RpcDB {
 
         dbg!(&store);
         Ok(store)
+    }
+
+    pub fn serialize_to_file(&self, path: &str) -> Result<(), Box<dyn std::error::Error>> {
+        let file = File::create(path)?;
+        let writer = std::io::BufWriter::new(file);
+        bincode::serialize_into(writer, self)?;
+        Ok(())
+    }
+
+    pub fn deserialize_from_file(path: &str) -> Option<Self> {
+        if let Ok(file) = File::open("db.bin") {
+            bincode::deserialize_from(file).ok()
+        } else {
+            None
+        }
     }
 }
 

@@ -2,7 +2,7 @@
 
 use std::time::Duration;
 
-use ethrex_core::types::ChainConfig;
+use ethrex_core::types::{BlobSchedule, ChainConfig, ForkBlobSchedule};
 use ethrex_vm::SpecId;
 
 // Chain config for different forks as defined on https://ethereum.github.io/execution-spec-tests/v3.0.0/consuming_tests/common_types/#fork
@@ -30,6 +30,18 @@ pub static CANCUN_CONFIG: ChainConfig = ChainConfig {
     prague_time: None,
     terminal_total_difficulty_passed: false,
     verkle_time: None,
+    blob_schedule: BlobSchedule {
+        cancun: ForkBlobSchedule {
+            target: 3,
+            max: 6,
+            base_fee_update_fraction: 3338477,
+        },
+        prague: ForkBlobSchedule {
+            target: 6,
+            max: 9,
+            base_fee_update_fraction: 5007716,
+        },
+    },
 };
 pub const MAINNET_CHAIN_ID: u64 = 0x1;
 pub const MAINNET_SPEC_ID: SpecId = SpecId::CANCUN;
