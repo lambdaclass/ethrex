@@ -754,7 +754,7 @@ async fn heal_state_trie(
         let mut state_tasks = tokio::task::JoinSet::new();
         for _ in 0..MAX_PARALLEL_FETCHES {
             // Spawn fetcher for the batch
-            let batch = paths[0..min(paths.len(), NODE_BATCH_SIZE)].to_vec();
+            let batch = paths.drain(0..min(paths.len(), NODE_BATCH_SIZE)).collect();
             state_tasks.spawn(heal_state_batch(
                 state_root,
                 batch,
