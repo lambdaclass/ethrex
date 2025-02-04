@@ -26,7 +26,7 @@ impl Iterator for TrieIterator {
         };
         // Fetch the last node in the stack
         let (mut path, next_node_hash) = self.stack.pop()?;
-        let next_node = self.trie.state.get_node(next_node_hash).ok()??;
+        let next_node = self.trie.state.get_node(next_node_hash).unwrap().unwrap();
         match &next_node {
             Node::Branch(branch_node) => {
                 // Add all children to the stack (in reverse order so we process first child frist)
