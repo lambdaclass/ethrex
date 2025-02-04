@@ -69,7 +69,6 @@ pub fn parse_ef_test_dir(
     opts: &EFTestRunnerOptions,
     directory_parsing_spinner: &mut Spinner,
 ) -> Result<Vec<EFTest>, EFTestParseError> {
-    dbg!(&test_dir);
     spinner_update_text_or_print(
         directory_parsing_spinner,
         format!("Parsing directory {:?}", test_dir.file_name()),
@@ -164,19 +163,15 @@ pub fn parse_ef_test_dir(
             continue;
         }
 
-        dbg!("1");
         let test_file = std::fs::File::open(test.path()).map_err(|err| {
             EFTestParseError::FailedToReadFile(format!("{:?}: {err}", test.path()))
         })?;
-        dbg!("2");
         let mut tests: EFTests = serde_json::from_reader(test_file).map_err(|err| {
             EFTestParseError::FailedToParseTestFile(format!("{:?} parse error: {err}", test.path()))
         })?;
-        dbg!("3");
         for test in tests.0.iter_mut() {
             test.dir = test_dir.file_name().into_string().unwrap();
         }
-        dbg!("4");
         directory_tests.extend(tests.0);
     }
     Ok(directory_tests)

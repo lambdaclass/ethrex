@@ -282,6 +282,7 @@ where
 }
 
 pub fn deserialize_post_map<'de, D>(
+    // change name
     deserializer: D,
 ) -> Result<HashMap<Fork, Vec<EFTestPostValue>>, D::Error>
 where
@@ -332,7 +333,6 @@ impl<'de> Deserialize<'de> for EFTests {
             let test_data = aux
                 .get(test_name)
                 .ok_or(serde::de::Error::missing_field("test data value"))?;
-            dbg!("pasa test_data");
 
             let raw_tx: EFTestRawTransaction = serde_json::from_value(
                 test_data
@@ -345,7 +345,6 @@ impl<'de> Deserialize<'de> for EFTests {
                     "error deserializing test \"{test_name}\", \"transaction\" field: {err}"
                 ))
             })?;
-            dbg!("pasa raw_tx");
 
             let mut transactions = HashMap::new();
 
@@ -379,7 +378,6 @@ impl<'de> Deserialize<'de> for EFTests {
                                 .unwrap_or_default(),
                             authorization_list: raw_tx.authorization_list.clone(),
                         };
-                        dbg!("pasa tx");
                         transactions.insert((data_id, gas_limit_id, value_id), tx);
                     }
                 }
@@ -434,7 +432,6 @@ impl<'de> Deserialize<'de> for EFTests {
                 })?,
                 transactions,
             };
-            dbg!("pasa ef_test");
             ef_tests.push(ef_test);
         }
         Ok(Self(ef_tests))

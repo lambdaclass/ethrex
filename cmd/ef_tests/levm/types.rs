@@ -132,6 +132,7 @@ pub struct EFTestEnv {
 
 #[derive(Debug, Deserialize)]
 pub struct EFTestPostMap {
+    #[serde(flatten)]
     #[serde(deserialize_with = "deserialize_post_map")]
     pub forks: HashMap<Fork, Vec<EFTestPostValue>>,
 }
@@ -268,7 +269,7 @@ pub struct EFTestPostValue {
     #[serde(deserialize_with = "deserialize_ef_post_value_indexes")]
     pub indexes: HashMap<String, U256>,
     pub logs: H256,
-    #[serde(deserialize_with = "deserialize_hex_bytes")]
+    #[serde(default, deserialize_with = "deserialize_hex_bytes")]
     pub txbytes: Bytes,
 }
 
