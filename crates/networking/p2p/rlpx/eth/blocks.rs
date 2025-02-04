@@ -11,7 +11,7 @@ use ethrex_rlp::{
     structs::{Decoder, Encoder},
 };
 use ethrex_storage::Store;
-use tracing::{debug, error};
+use tracing::error;
 
 pub const HASH_FIRST_BYTE_DECODER: u8 = 160;
 
@@ -93,7 +93,7 @@ impl GetBlockHeaders {
                 if let Ok(Some(block_number)) = storage.get_block_number(block_hash) {
                     block_number
                 } else {
-                    debug!("Could not fetch block number for hash {block_hash}");
+                    error!("Could not fetch block number for hash {block_hash}");
                     return vec![];
                 }
             }
