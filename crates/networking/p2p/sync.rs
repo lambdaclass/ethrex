@@ -942,6 +942,10 @@ async fn heal_storage_batch(
                 let hash = node.compute_hash();
                 trie.state_mut().write_node(node, hash)?;
             }
+            // Cut the loop if we ran out of nodes
+            if nodes.is_empty() {
+                break;
+            }
         }
         // Return remaining and added paths to be added to the queue
         // Filter out the storages we completely fetched
