@@ -521,13 +521,12 @@ async fn fetch_bytecode_batch(
 
 /// Waits for incoming account hashes & storage roots from the receiver channel endpoint, queues them, and fetches and stores their bytecodes in batches
 /// This function will remain active until either an empty vec is sent to the receiver or the pivot becomes stale
-/// In the last case, the fetcher will return the account hashes of the accounts in the queue
 async fn storage_fetcher(
     mut receiver: Receiver<Vec<(H256, H256)>>,
     peers: PeerHandler,
     store: Store,
     state_root: H256,
-) -> Result<Vec<H256>, SyncError> {
+) -> Result<(), SyncError> {
     // Pending list of storages to fetch
     let mut pending_storage: Vec<(H256, H256)> = vec![];
     // The pivot may become stale while the fetcher is active, we will still keep the process
@@ -587,7 +586,7 @@ async fn storage_fetcher(
         "Concluding storage fetcher, {} storages left in queue to be healed later",
         pending_storage.len()
     );
-    Ok(pending_storage.into_iter().map(|(acc, _)| acc).collect())
+    Ok(())
 }
 
 /// Receives a batch of account hashes with their storage roots, fetches their respective storage ranges via p2p and returns a list of the code hashes that couldn't be fetched in the request (if applicable)
