@@ -81,6 +81,9 @@ pub fn re_run_failed_ef_test_tx(
 ) -> Result<(), EFTestRunnerError> {
     let (mut state, _block_hash) = load_initial_state(test);
     let mut revm = prepare_revm_for_tx(&mut state, vector, test, fork)?;
+    if !test.post.has_vector_for_fork(vector, *fork) {
+        return Ok(());
+    }
     let revm_execution_result = revm.transact_commit();
     drop(revm); // Need to drop the state mutable reference.
     compare_levm_revm_execution_results(
@@ -397,13 +400,20 @@ pub fn compare_levm_revm_account_updates(
 }
 
 pub fn _run_ef_test_revm(test: &EFTest) -> Result<EFTestReport, EFTestRunnerError> {
-    let hash = test._info.generated_test_hash.or(test._info.hash).unwrap();
+    let hash = test
+        ._info
+        .generated_test_hash
+        .or(test._info.hash)
+        .unwrap_or_default();
 
     let mut ef_test_report = EFTestReport::new(test.name.clone(), test.dir.clone(), hash);
     for fork in test.post.forks.keys() {
         let mut ef_test_report_fork = EFTestReportForkResult::new();
 
         for (vector, _tx) in test.transactions.iter() {
+            if !test.post.has_vector_for_fork(vector, *fork) {
+                continue;
+            }
             match _run_ef_test_tx_revm(vector, test, fork) {
                 Ok(_) => continue,
                 Err(EFTestRunnerError::VMInitializationFailed(reason)) => {
