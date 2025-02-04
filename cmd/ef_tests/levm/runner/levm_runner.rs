@@ -126,9 +126,6 @@ pub fn prepare_vm_for_tx(vector: &TestVector, test: &EFTest) -> Result<VM, EFTes
             tx_max_priority_fee_per_gas: tx.max_priority_fee_per_gas,
             tx_max_fee_per_gas: tx.max_fee_per_gas,
             tx_max_fee_per_blob_gas: tx.max_fee_per_blob_gas,
-            tx_nonce: tx.nonce.try_into().map_err(|_| {
-                EFTestRunnerError::VMInitializationFailed("Nonce to large".to_string())
-            })?,
             block_gas_limit: test.env.current_gas_limit,
             transient_storage: HashMap::new(),
         },
