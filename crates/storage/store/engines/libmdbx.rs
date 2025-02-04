@@ -655,10 +655,7 @@ impl StoreEngine for Store {
         // Open a new state trie
         let mut state_trie = self.open_state_trie(*EMPTY_TRIE_HASH);
         // Add all accounts
-        let txn = self
-            .db
-            .begin_read()
-            .map_err(StoreError::LibmdbxError)?;
+        let txn = self.db.begin_read().map_err(StoreError::LibmdbxError)?;
         let cursor = txn
             .cursor::<StateSnapShot>()
             .map_err(StoreError::LibmdbxError)?;
@@ -692,10 +689,7 @@ impl Store {
         // Open a new storage trie
         let mut storage_trie = self.open_storage_trie(account_hash, *EMPTY_TRIE_HASH);
         // Add all accounts
-        let txn = self
-            .db
-            .begin_read()
-            .map_err(StoreError::LibmdbxError)?;
+        let txn = self.db.begin_read().map_err(StoreError::LibmdbxError)?;
         let cursor = txn
             .cursor::<StorageSnapShot>()
             .map_err(StoreError::LibmdbxError)?;

@@ -6,7 +6,7 @@ use ethrex_core::{
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode, error::RLPDecodeError};
 use ethrex_storage::{error::StoreError, Store};
 use ethrex_trie::{Nibbles, Node, TrieError, TrieState, EMPTY_TRIE_HASH};
-use std::{cmp::min, collections::BTreeMap, sync::Arc};
+use std::{array, cmp::min, collections::BTreeMap, sync::Arc};
 use tokio::{
     sync::{
         mpsc::{self, error::SendError, Receiver, Sender},
@@ -29,6 +29,21 @@ const BATCH_SIZE: usize = 300;
 const NODE_BATCH_SIZE: usize = 900;
 /// Maximum amount of concurrent paralell fetches for a queue
 const MAX_PARALLEL_FETCHES: usize = 5;
+// Number of state trie segments to fetch concurrently
+const STATE_TRIE_SEGMENTS: usize = 2;
+
+lazy_static::lazy_static! {
+    // Size of each state trie segment
+    static ref STATE_TRIE_SEGMENT_SIZE: U256 = HASH_MAX.into_uint()/STATE_TRIE_SEGMENTS;
+    // Starting hash of each state trie segment
+    static ref STATE_TRIE_SEGMENTS_START: [H256; STATE_TRIE_SEGMENTS] = {
+        array::from_fn(|i| H256::from_uint(&(*STATE_TRIE_SEGMENT_SIZE * i)))
+    };
+    // Ending hash of each state trie segment
+    static ref STATE_TRIE_SEGMENTS_END: [H256; STATE_TRIE_SEGMENTS] = {
+        array::from_fn(|i| H256::from_uint(&(*STATE_TRIE_SEGMENT_SIZE * (i+1))))
+    };
+}
 
 #[derive(Debug)]
 pub enum SyncMode {
@@ -639,9 +654,8 @@ async fn fetch_storage_batch(
         // Store the storage ranges & rebuild the storage trie for each account
         for (keys, values) in keys.into_iter().zip(values.into_iter()) {
             let (account_hash, _) = batch.remove(0);
-            let mut trie = store.open_storage_trie(account_hash, *EMPTY_TRIE_HASH);
             // Write storage to snapshot
-            store.write_snapshot_storage_batch(account_hash, keys, values);
+            store.write_snapshot_storage_batch(account_hash, keys, values)?;
         }
         // Return remaining code hashes in the batch if we couldn't fetch all of them
         return Ok((batch, false));
