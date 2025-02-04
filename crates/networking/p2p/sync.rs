@@ -27,6 +27,8 @@ const MIN_FULL_BLOCKS: usize = 64;
 const BATCH_SIZE: usize = 300;
 /// Max size of a bach to stat a fetch request in queues for nodes
 const NODE_BATCH_SIZE: usize = 900;
+/// Maximum amount of concurrent paralell fetches for a queue
+const MAX_PARALLEL_FETCHES: usize = 5;
 
 #[derive(Debug)]
 pub enum SyncMode {
@@ -558,10 +560,7 @@ async fn storage_fetcher(
             // We will be spawning multiple tasks and then collecting their results
             // This uses a loop inside the main loop as the result from these tasks may lead to more values in queue
             let mut storage_tasks = tokio::task::JoinSet::new();
-            while !stale
-                && (pending_storage.len() >= BATCH_SIZE
-                    || (!incoming && !pending_storage.is_empty()))
-            {
+            for _ in 0..MAX_PARALLEL_FETCHES {
                 let next_batch = pending_storage
                     .drain(..BATCH_SIZE.min(pending_storage.len()))
                     .collect::<Vec<_>>();
@@ -571,6 +570,10 @@ async fn storage_fetcher(
                     peers.clone(),
                     store.clone(),
                 ));
+                // End loop if we don't have enough elements to fill up a batch
+                if pending_storage.is_empty() || (incoming && pending_storage.len() < BATCH_SIZE) {
+                    break;
+                }
             }
             // Add unfetched accounts to queue and handle stale signal
             for res in storage_tasks.join_all().await {
@@ -732,54 +735,32 @@ async fn heal_state_trie(
     // Begin by requesting the root node
     paths.push(Nibbles::default());
     while !paths.is_empty() {
-        // Take at most one batch so we don't overload the peer
-        let batch = paths[0..min(paths.len(), NODE_BATCH_SIZE)].to_vec();
-        if let Some(nodes) = peers.request_state_trienodes(state_root, batch).await {
-            debug!("Received {} state nodes", nodes.len());
-            let mut hahsed_addresses = vec![];
-            let mut code_hashes = vec![];
-            // For each fetched node:
-            // - Add its children to the queue (if we don't have them already)
-            // - If it is a leaf, request its bytecode & storage
-            // - If it is a leaf, add its path & value to the trie
-            for node in nodes {
-                // We cannot keep the trie state open
-                let mut trie = store.open_state_trie(*EMPTY_TRIE_HASH);
-                let path = paths.remove(0);
-                paths.extend(node_missing_children(&node, &path, trie.state())?);
-                if let Node::Leaf(node) = &node {
-                    // Fetch bytecode & storage
-                    let account = AccountState::decode(&node.value)?;
-                    // By now we should have the full path = account hash
-                    let path = &path.concat(node.partial.clone()).to_bytes();
-                    if path.len() != 32 {
-                        // Something went wrong
-                        return Err(SyncError::CorruptPath);
-                    }
-                    let account_hash = H256::from_slice(path);
-                    if account.storage_root != *EMPTY_TRIE_HASH
-                        && !store.contains_storage_node(account_hash, account.storage_root)?
-                    {
-                        hahsed_addresses.push(account_hash);
-                    }
-                    if account.code_hash != *EMPTY_KECCACK_HASH
-                        && store.get_account_code(account.code_hash)?.is_none()
-                    {
-                        code_hashes.push(account.code_hash);
-                    }
-                }
-                // Add node to trie
-                let hash = node.compute_hash();
-                trie.state_mut().write_node(node, hash)?;
+        // Spawn multiple parallel requests
+        let mut state_tasks = tokio::task::JoinSet::new();
+        for _ in 0..MAX_PARALLEL_FETCHES {
+            // Spawn fetcher for the batch
+            let batch = paths.drain(0..min(paths.len(), NODE_BATCH_SIZE)).collect();
+            state_tasks.spawn(heal_state_batch(
+                state_root,
+                batch,
+                peers.clone(),
+                store.clone(),
+                storage_sender.clone(),
+                bytecode_sender.clone(),
+            ));
+            // End loop if we have no more paths to fetch
+            if paths.is_empty() {
+                break;
             }
-            // Send storage & bytecode requests
-            if !hahsed_addresses.is_empty() {
-                storage_sender.send(hahsed_addresses).await?;
-            }
-            if !code_hashes.is_empty() {
-                bytecode_sender.send(code_hashes).await?;
-            }
-        } else {
+        }
+        // Process the results of each batch
+        let mut stale = false;
+        for res in state_tasks.join_all().await {
+            let (return_paths, is_stale) = res?;
+            stale |= is_stale;
+            paths.extend(return_paths);
+        }
+        if stale {
             break;
         }
     }
@@ -802,6 +783,71 @@ async fn heal_state_trie(
     Ok(paths.is_empty() && storage_healing_succesful)
 }
 
+/// Receives a set of state trie paths, fetches their respective nodes, stores them,
+/// and returns their children paths and the paths that couldn't be fetched so they can be returned to the queue
+/// Also returns a boolean indicating if the pivot became stale during the request
+async fn heal_state_batch(
+    state_root: H256,
+    mut batch: Vec<Nibbles>,
+    peers: PeerHandler,
+    store: Store,
+    storage_sender: Sender<Vec<H256>>,
+    bytecode_sender: Sender<Vec<H256>>,
+) -> Result<(Vec<Nibbles>, bool), SyncError> {
+    if let Some(nodes) = peers
+        .request_state_trienodes(state_root, batch.clone())
+        .await
+    {
+        info!("Received {} state nodes", nodes.len());
+        let mut hashed_addresses = vec![];
+        let mut code_hashes = vec![];
+        // For each fetched node:
+        // - Add its children to the queue (if we don't have them already)
+        // - If it is a leaf, request its bytecode & storage
+        // - If it is a leaf, add its path & value to the trie
+        for node in nodes {
+            // We cannot keep the trie state open
+            let mut trie = store.open_state_trie(*EMPTY_TRIE_HASH);
+            let path = batch.remove(0);
+            batch.extend(node_missing_children(&node, &path, trie.state())?);
+            if let Node::Leaf(node) = &node {
+                // Fetch bytecode & storage
+                let account = AccountState::decode(&node.value)?;
+                // By now we should have the full path = account hash
+                let path = &path.concat(node.partial.clone()).to_bytes();
+                if path.len() != 32 {
+                    // Something went wrong
+                    return Err(SyncError::CorruptPath);
+                }
+                let account_hash = H256::from_slice(path);
+                if account.storage_root != *EMPTY_TRIE_HASH
+                    && !store.contains_storage_node(account_hash, account.storage_root)?
+                {
+                    hashed_addresses.push(account_hash);
+                }
+                if account.code_hash != *EMPTY_KECCACK_HASH
+                    && store.get_account_code(account.code_hash)?.is_none()
+                {
+                    code_hashes.push(account.code_hash);
+                }
+            }
+            // Add node to trie
+            let hash = node.compute_hash();
+            trie.state_mut().write_node(node, hash)?;
+        }
+        // Send storage & bytecode requests
+        if !hashed_addresses.is_empty() {
+            storage_sender.send(hashed_addresses).await?;
+        }
+        if !code_hashes.is_empty() {
+            bytecode_sender.send(code_hashes).await?;
+        }
+        Ok((batch, false))
+    } else {
+        Ok((batch, true))
+    }
+}
+
 /// Waits for incoming hashed addresses from the receiver channel endpoint and queues the associated root nodes for state retrieval
 /// Also retrieves their children nodes until we have the full storage trie stored
 /// If the state becomes stale while fetching, returns its current queued account hashes
@@ -817,31 +863,13 @@ async fn storage_healer(
     // alive until the end signal so we don't lose queued messages
     let mut stale = false;
     let mut incoming = true;
-    // This boolean exists only so that we skip waiting for messages on the first loop iteration
-    // It will be removed on later optimizations
-    let mut startup = true;
-    while incoming {
-        if startup {
-            startup = false;
-        } else {
-            // Fetch incoming requests
-            match receiver.recv().await {
-                Some(account_paths) if !account_paths.is_empty() => {
-                    // Add the root paths of each account trie to the queue
-                    pending_paths.extend(
-                        account_paths
-                            .into_iter()
-                            .map(|acc_path| (acc_path, vec![Nibbles::default()])),
-                    );
-                }
-                // Disconnect / Empty message signaling no more bytecodes to sync
-                _ => incoming = false,
-            }
-        }
+    while incoming || !pending_paths.is_empty() {
         // If we have enough pending storages to fill a batch
         // or if we have no more incoming batches, spawn a fetch process
         // If the pivot became stale don't process anything and just save incoming requests
-        while !stale && !pending_paths.is_empty() {
+        let mut storage_tasks = tokio::task::JoinSet::new();
+        let mut task_num = 0;
+        while !stale && !pending_paths.is_empty() && task_num < MAX_PARALLEL_FETCHES {
             let mut next_batch: BTreeMap<H256, Vec<Nibbles>> = BTreeMap::new();
             // Fill batch
             let mut batch_size = 0;
@@ -850,18 +878,50 @@ async fn storage_healer(
                 batch_size += val.len();
                 next_batch.insert(key, val);
             }
-            let (return_batch, is_stale) =
-                heal_storage_batch(state_root, next_batch.clone(), peers.clone(), store.clone())
-                    .await?;
-            pending_paths.extend(return_batch.into_iter());
+            storage_tasks.spawn(heal_storage_batch(
+                state_root,
+                next_batch.clone(),
+                peers.clone(),
+                store.clone(),
+            ));
+            task_num += 1;
+        }
+        // Add unfetched paths to queue and handle stale signal
+        for res in storage_tasks.join_all().await {
+            let (remaining, is_stale) = res?;
+            pending_paths.extend(remaining);
             stale |= is_stale;
+        }
+
+        // Read incoming requests that are already awaiting on the receiver
+        // Don't wait for requests unless we have no pending paths left
+        if incoming && (!receiver.is_empty() || pending_paths.is_empty()) {
+            // Fetch incoming requests
+            let mut msg_buffer = vec![];
+            if receiver.recv_many(&mut msg_buffer, 25).await != 0 {
+                for account_hashes in msg_buffer {
+                    if !account_hashes.is_empty() {
+                        pending_paths.extend(
+                            account_hashes
+                                .into_iter()
+                                .map(|acc_path| (acc_path, vec![Nibbles::default()])),
+                        );
+                    } else {
+                        // Empty message signaling no more bytecodes to sync
+                        incoming = false
+                    }
+                }
+            } else {
+                // Disconnect
+                incoming = false
+            }
         }
     }
     Ok(pending_paths)
 }
 
 /// Receives a set of storage trie paths (grouped by their corresponding account's state trie path),
-/// fetches their respective nodes, stores their values, and returns their children paths and the paths that couldn't be fetched so they can be returned to the queue
+/// fetches their respective nodes, stores them, and returns their children paths and the paths that couldn't be fetched so they can be returned to the queue
 /// Also returns a boolean indicating if the pivot became stale during the request
 async fn heal_storage_batch(
     state_root: H256,

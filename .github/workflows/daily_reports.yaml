@@ -32,7 +32,7 @@ jobs:
       - name: Download results (levm)
         uses: actions/download-artifact@v4
         with:
-          name: results_levm_daily_main.md
+          name: results_levm_daily.md
 
       - name: Rename result (1)
         run: cp results.md results_levm.md
@@ -40,7 +40,7 @@ jobs:
       - name: Download results (revm)
         uses: actions/download-artifact@v4
         with:
-          name: results_revm_daily_main.md
+          name: results_revm_daily.md
 
       - name: Rename result (2)
         run: cp results.md results_revm.md
