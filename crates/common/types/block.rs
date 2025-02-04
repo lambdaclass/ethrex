@@ -1,8 +1,9 @@
 use super::{
-    BASE_FEE_MAX_CHANGE_DENOMINATOR, BLOB_BASE_FEE_UPDATE_FRACTION, ELASTICITY_MULTIPLIER,
-    GAS_LIMIT_ADJUSTMENT_FACTOR, GAS_LIMIT_MINIMUM, INITIAL_BASE_FEE, MIN_BASE_FEE_PER_BLOB_GAS,
+    BASE_FEE_MAX_CHANGE_DENOMINATOR, ELASTICITY_MULTIPLIER, GAS_LIMIT_ADJUSTMENT_FACTOR,
+    GAS_LIMIT_MINIMUM, INITIAL_BASE_FEE,
 };
 use crate::{
+    constants::MIN_BASE_FEE_PER_BLOB_GAS,
     types::{Receipt, Transaction},
     Address, H256, U256,
 };
@@ -125,6 +126,8 @@ pub struct BlockHeader {
     )]
     pub excess_blob_gas: Option<u64>,
     pub parent_beacon_block_root: Option<H256>,
+    #[serde(skip_serializing_if = "Option::is_none", default = "Option::default")]
+    pub requests_hash: Option<H256>,
 }
 
 impl RLPEncode for BlockHeader {
@@ -150,6 +153,7 @@ impl RLPEncode for BlockHeader {
             .encode_optional_field(&self.blob_gas_used)
             .encode_optional_field(&self.excess_blob_gas)
             .encode_optional_field(&self.parent_beacon_block_root)
+            .encode_optional_field(&self.requests_hash)
             .finish();
     }
 }
@@ -178,6 +182,7 @@ impl RLPDecode for BlockHeader {
         let (blob_gas_used, decoder) = decoder.decode_optional_field();
         let (excess_blob_gas, decoder) = decoder.decode_optional_field();
         let (parent_beacon_block_root, decoder) = decoder.decode_optional_field();
+        let (requests_hash, decoder) = decoder.decode_optional_field();
 
         Ok((
             BlockHeader {
@@ -201,6 +206,7 @@ impl RLPDecode for BlockHeader {
                 blob_gas_used,
                 excess_blob_gas,
                 parent_beacon_block_root,
+                requests_hash,
             },
             decoder.finish()?,
         ))
@@ -340,12 +346,16 @@ fn check_gas_limit(gas_limit: u64, parent_gas_limit: u64) -> bool {
         && gas_limit >= GAS_LIMIT_MINIMUM
 }
 
-// Calculates the base fee per blob gas for the current block based on it's parent excess blob gas
-pub fn calculate_base_fee_per_blob_gas(parent_excess_blob_gas: u64) -> u64 {
+/// Calculates the base fee per blob gas for the current block based on
+/// it's parent excess blob gas and the update fraction, which depends on the fork.
+pub fn calculate_base_fee_per_blob_gas(parent_excess_blob_gas: u64, update_fraction: u64) -> u64 {
+    if update_fraction == 0 {
+        return 0;
+    }
     fake_exponential(
         MIN_BASE_FEE_PER_BLOB_GAS,
         parent_excess_blob_gas,
-        BLOB_BASE_FEE_UPDATE_FRACTION,
+        update_fraction,
     )
 }
 
@@ -539,7 +549,7 @@ pub fn validate_block_header(
 /// Validates that excess_blob_gas and blob_gas_used are present in the header and
 /// validates that excess_blob_gas value is correct on the block header
 /// according to the values in the parent header.
-pub fn validate_cancun_header_fields(
+pub fn validate_post_cancun_header_fields(
     header: &BlockHeader,
     parent_header: &BlockHeader,
 ) -> Result<(), InvalidBlockHeaderError> {
@@ -560,7 +570,7 @@ pub fn validate_cancun_header_fields(
 
 /// Validates that the excess blob gas value is correct on the block header
 /// according to the values in the parent header.
-pub fn validate_no_cancun_header_fields(
+pub fn validate_pre_cancun_header_fields(
     header: &BlockHeader,
 ) -> Result<(), InvalidBlockHeaderError> {
     if header.excess_blob_gas.is_some() {
@@ -586,11 +596,11 @@ fn calc_excess_blob_gas(parent_header: &BlockHeader) -> u64 {
 
 #[cfg(test)]
 mod test {
-    use std::str::FromStr;
-
     use super::*;
+    use crate::types::EMPTY_KECCACK_HASH;
     use ethereum_types::H160;
     use hex_literal::hex;
+    use std::str::FromStr;
 
     #[test]
     fn test_compute_withdrawals_root() {
@@ -660,10 +670,11 @@ mod test {
             blob_gas_used: Some(0x00),
             excess_blob_gas: Some(0x00),
             parent_beacon_block_root: Some(H256::zero()),
+            requests_hash: Some(*EMPTY_KECCACK_HASH),
         };
         let block = BlockHeader {
             parent_hash: H256::from_str(
-                "0x1ac1bf1eef97dc6b03daba5af3b89881b7ae4bc1600dc434f450a9ec34d44999",
+                "0x48e29e7357408113a4166e04e9f1aeff0680daa2b97ba93df6512a73ddf7a154",
             )
             .unwrap(),
             ommers_hash: H256::from_str(
@@ -702,6 +713,7 @@ mod test {
             blob_gas_used: Some(0x00),
             excess_blob_gas: Some(0x00),
             parent_beacon_block_root: Some(H256::zero()),
+            requests_hash: Some(*EMPTY_KECCACK_HASH),
         };
         assert!(validate_block_header(&block, &parent_block).is_ok())
     }

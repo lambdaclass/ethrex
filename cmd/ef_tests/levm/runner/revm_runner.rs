@@ -10,11 +10,11 @@ use crate::{
 use bytes::Bytes;
 use ethrex_core::{types::TxKind, Address, H256};
 use ethrex_levm::{
-    errors::{TransactionReport, TxResult},
+    errors::{ExecutionReport, TxResult},
     Account, StorageSlot,
 };
 use ethrex_storage::{error::StoreError, AccountUpdate};
-use ethrex_vm::{db::StoreWrapper, EvmState, RevmAddress, RevmU256};
+use ethrex_vm::{db::StoreWrapper, fork_to_spec_id, EvmState, RevmAddress, RevmU256};
 use revm::{
     db::State,
     inspectors::TracerEip3155 as RevmTracerEip3155,
@@ -70,7 +70,7 @@ pub fn re_run_failed_ef_test(
 pub fn re_run_failed_ef_test_tx(
     vector: &TestVector,
     test: &EFTest,
-    levm_execution_report: &TransactionReport,
+    levm_execution_report: &ExecutionReport,
     re_run_report: &mut TestReRunReport,
 ) -> Result<(), EFTestRunnerError> {
     let (mut state, _block_hash) = load_initial_state(test);
@@ -137,32 +137,33 @@ pub fn prepare_revm_for_tx<'state>(
         .collect();
 
     let authorization_list = None;
+
+    // WARNING: Do not delete the following.
     // The latest version of revm(19.3.0) is needed.
     // Update it in every Cargo.toml.
     // revm-inspectors and revm-primitives have to be bumped too.
+    // NOTE:
+    // - rust 1.82.X is needed
+    // - rust-toolchain 1.82.X is needed (this can be found in ethrex/crates/vm/levm/rust-toolchain.toml)
     /*
-    let revm_authorization_list: Vec<SignedAuthorization> = tx
-        .authorization_list
-        .clone()
-        .unwrap_or_default()
-        .iter()
-        .map(|auth_t| {
-            SignedAuthorization::new_unchecked(
-                Authorization {
-                    chain_id: RevmU256::from_le_bytes(auth_t.chain_id.to_little_endian()),
-                    address: RevmAddress(auth_t.address.0.into()),
-                    nonce: auth_t.nonce,
-                },
-                auth_t.v.as_u32() as u8,
-                RevmU256::from_le_bytes(auth_t.r.to_little_endian()),
-                RevmU256::from_le_bytes(auth_t.s.to_little_endian()),
-            )
-        })
-        .collect();
-
-    let authorization_list = Some(revm_authorization_list.into());
+    let authorization_list = tx.authorization_list.clone().map(|list| {
+        list.iter()
+            .map(|auth_t| {
+                SignedAuthorization::new_unchecked(
+                    Authorization {
+                        chain_id: RevmU256::from_le_bytes(auth_t.chain_id.to_little_endian()),
+                        address: RevmAddress(auth_t.address.0.into()),
+                        nonce: auth_t.nonce,
+                    },
+                    auth_t.v.as_u32() as u8,
+                    RevmU256::from_le_bytes(auth_t.r.to_little_endian()),
+                    RevmU256::from_le_bytes(auth_t.s.to_little_endian()),
+                )
+            })
+            .collect::<Vec<SignedAuthorization>>()
+            .into()
+    });
     */
-
     let tx_env = RevmTxEnv {
         caller: tx.sender.0.into(),
         gas_limit: tx.gas_limit,
@@ -194,7 +195,7 @@ pub fn prepare_revm_for_tx<'state>(
         .with_block_env(block_env)
         .with_tx_env(tx_env)
         .modify_cfg_env(|cfg| cfg.chain_id = chain_spec.chain_id)
-        .with_spec_id(test.fork())
+        .with_spec_id(fork_to_spec_id(test.fork()))
         .with_external_context(
             RevmTracerEip3155::new(Box::new(std::io::stderr())).without_summary(),
         );
@@ -208,7 +209,7 @@ pub fn prepare_revm_for_tx<'state>(
 
 pub fn compare_levm_revm_execution_results(
     vector: &TestVector,
-    levm_execution_report: &TransactionReport,
+    levm_execution_report: &ExecutionReport,
     revm_execution_result: Result<RevmExecutionResult, REVMError<StoreError>>,
     re_run_report: &mut TestReRunReport,
 ) -> Result<(), EFTestRunnerError> {
@@ -292,7 +293,7 @@ pub fn compare_levm_revm_execution_results(
 }
 
 pub fn ensure_post_state(
-    levm_execution_report: &TransactionReport,
+    levm_execution_report: &ExecutionReport,
     vector: &TestVector,
     revm_state: &mut EvmState,
     test: &EFTest,
@@ -455,14 +456,13 @@ pub fn _ensure_post_state_revm(
                 Some(expected_exception) => {
                     let error_reason = format!("Expected exception: {expected_exception:?}");
                     return Err(EFTestRunnerError::FailedToEnsurePostState(
-                        TransactionReport {
+                        ExecutionReport {
                             result: TxResult::Success,
                             gas_used: 42,
                             gas_refunded: 42,
                             logs: vec![],
                             output: Bytes::new(),
                             new_state: HashMap::new(),
-                            created_address: None,
                         },
                         //TODO: This is not a TransactionReport because it is REVM
                         error_reason,
@@ -481,14 +481,13 @@ pub fn _ensure_post_state_revm(
                             "Post-state root mismatch: expected {expected_post_state_root_hash:#x}, got {pos_state_root:#x}",
                         );
                         return Err(EFTestRunnerError::FailedToEnsurePostState(
-                            TransactionReport {
+                            ExecutionReport {
                                 result: TxResult::Success,
                                 gas_used: 42,
                                 gas_refunded: 42,
                                 logs: vec![],
                                 output: Bytes::new(),
                                 new_state: HashMap::new(),
-                                created_address: None,
                             },
                             //TODO: This is not a TransactionReport because it is REVM
                             error_reason,

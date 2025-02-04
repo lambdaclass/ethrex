@@ -267,7 +267,7 @@ For more information about the different cli arguments check out the next sectio
 ### CLI Commands
 
 ethrex supports the following command line arguments:
-- `--network <FILE>`: Receives a `Genesis` struct in json format. This is the only argument which is required. You can look at some example genesis files at `test_data/genesis*`.
+- `--network <FILE>`: Receives a `Genesis` struct in json format. This is the only argument which is required. You can look at some example genesis files at `test_data/genesis*`. Alternatively, the name of a known network can be provided instead to use its preset genesis file and include its preset bootnodes. The networks currenlty supported include Holesky, Sepolia and Mekong.
 - `--datadir <DIRECTORY>`: Receives the name of the directory where the Database is located.
 - `--import <FILE>`: Receives an rlp encoded `Chain` object (aka a list of `Block`s). You can look at the example chain file at `test_data/chain.rlp`.
 - `--http.addr <ADDRESS>`: Listening address for the http rpc server. Default value: localhost.
@@ -530,3 +530,12 @@ The following links, repos, companies and projects have been important in the de
 - [Commonware](https://commonware.xyz/)
 
 If we forgot to include anyone, please file an issue so we can add you. We always strive to reference the inspirations and code we use, but as an organization with multiple people, mistakes can happen, and someone might forget to include a reference.
+
+# Security
+
+We take security seriously. If you discover a vulnerability in this project, please report it responsibly. 
+
+- You can report vulnerabilities directly via the **[GitHub "Report a Vulnerability" feature](../../security/advisories/new)**.
+- Alternatively, send an email to **[security@lambdaclass.com](mailto:security@lambdaclass.com)**.
+
+For more details, please refer to our [Security Policy](./.github/SECURITY.md).

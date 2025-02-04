@@ -405,7 +405,8 @@ impl ProverServer {
 
         let block = Block::new(header, body);
 
-        let db = ExecutionDB::from_exec(&block, &self.store).map_err(EvmError::ExecutionDB)?;
+        let db =
+            ExecutionDB::from_store(&block, self.store.clone()).map_err(EvmError::ExecutionDB)?;
 
         let parent_block_header = self
             .store
@@ -504,7 +505,7 @@ impl ProverServer {
             .await?;
 
             if last_committed_block == last_verified_block {
-                warn!("No new blocks to prove");
+                debug!("No new blocks to prove");
                 continue;
             }
 

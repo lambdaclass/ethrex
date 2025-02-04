@@ -14,6 +14,7 @@ ethrex-trie.workspace = true
 
 tracing.workspace = true
 tokio.workspace = true
+tokio-util.workspace = true
 bytes.workspace = true
 hex.workspace = true
 thiserror.workspace = true
@@ -21,7 +22,6 @@ lazy_static.workspace = true
 snap.workspace = true
 serde.workspace = true
 
-tokio-util = "0.7.13"
 tokio-stream = "0.1.17"
 futures = "0.3.31"
 k256 = { version = "0.13.3", features = ["ecdh"] }

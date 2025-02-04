@@ -541,8 +541,18 @@ impl StoreEngine for Store {
             .map_err(StoreError::RLPDecode)
     }
 
-    fn clear_header_download_checkpoint(&self) -> Result<(), StoreError> {
-        self.delete::<SnapState>(SnapStateIndex::HeaderDownloadCheckpoint)
+    fn set_state_trie_root_checkpoint(&self, current_root: H256) -> Result<(), StoreError> {
+        self.write::<SnapState>(
+            SnapStateIndex::StateTrieRootCheckpoint,
+            current_root.encode_to_vec(),
+        )
+    }
+
+    fn get_state_trie_root_checkpoint(&self) -> Result<Option<H256>, StoreError> {
+        self.read::<SnapState>(SnapStateIndex::StateTrieRootCheckpoint)?
+            .map(|ref h| H256::decode(h))
+            .transpose()
+            .map_err(StoreError::RLPDecode)
     }
 
     fn set_state_trie_key_checkpoint(&self, last_key: H256) -> Result<(), StoreError> {
@@ -559,31 +569,29 @@ impl StoreEngine for Store {
             .map_err(StoreError::RLPDecode)
     }
 
-    fn clear_state_trie_key_checkpoint(&self) -> Result<(), StoreError> {
-        self.delete::<SnapState>(SnapStateIndex::StateTrieRootCheckpoint)
-    }
-
-    fn set_pending_storage_heal_accounts(
+    fn set_storage_heal_paths(
         &self,
         accounts: Vec<(H256, Vec<Nibbles>)>,
     ) -> Result<(), StoreError> {
-        self.write::<SnapState>(
-            SnapStateIndex::PendingStorageHealAccounts,
-            accounts.encode_to_vec(),
-        )
+        self.write::<SnapState>(SnapStateIndex::StorageHealPaths, accounts.encode_to_vec())
     }
 
-    fn get_pending_storage_heal_accounts(
-        &self,
-    ) -> Result<Option<Vec<(H256, Vec<Nibbles>)>>, StoreError> {
-        self.read::<SnapState>(SnapStateIndex::PendingStorageHealAccounts)?
+    fn get_storage_heal_paths(&self) -> Result<Option<Vec<(H256, Vec<Nibbles>)>>, StoreError> {
+        self.read::<SnapState>(SnapStateIndex::StorageHealPaths)?
             .map(|ref h| <Vec<(H256, Vec<Nibbles>)>>::decode(h))
             .transpose()
             .map_err(StoreError::RLPDecode)
     }
 
-    fn clear_pending_storage_heal_accounts(&self) -> Result<(), StoreError> {
-        self.delete::<SnapState>(SnapStateIndex::PendingStorageHealAccounts)
+    fn is_synced(&self) -> Result<bool, StoreError> {
+        match self.read::<ChainData>(ChainDataIndex::IsSynced)? {
+            None => Err(StoreError::Custom("Sync status not found".to_string())),
+            Some(ref rlp) => RLPDecode::decode(rlp).map_err(|_| StoreError::DecodeError),
+        }
+    }
+
+    fn update_sync_status(&self, status: bool) -> Result<(), StoreError> {
+        self.write::<ChainData>(ChainDataIndex::IsSynced, status.encode_to_vec())
     }
 
     fn set_state_heal_paths(&self, paths: Vec<Nibbles>) -> Result<(), StoreError> {
@@ -597,8 +605,14 @@ impl StoreEngine for Store {
             .map_err(StoreError::RLPDecode)
     }
 
-    fn clear_state_heal_paths(&self) -> Result<(), StoreError> {
-        self.delete::<SnapState>(SnapStateIndex::StateHealPaths)
+    fn clear_snap_state(&self) -> Result<(), StoreError> {
+        let txn = self
+            .db
+            .begin_readwrite()
+            .map_err(StoreError::LibmdbxError)?;
+        txn.clear_table::<SnapState>()
+            .map_err(StoreError::LibmdbxError)?;
+        txn.commit().map_err(StoreError::LibmdbxError)
     }
 
     fn write_snapshot_account_batch(
@@ -635,6 +649,7 @@ impl StoreEngine for Store {
 
     /// Rebuilds state trie from a snapshot, returns the resulting trie's root
     /// and the addresses of the storages whose root doesn't match the one in the account state
+    /// TODO: Consider receiving the sender to the storage heal queue so we start healing them while rebuilding
     fn rebuild_state_from_snapshot(&self) -> Result<(H256, Vec<H256>), StoreError> {
         let mut mismatched_storage_accounts = vec![];
         // Open a new state trie

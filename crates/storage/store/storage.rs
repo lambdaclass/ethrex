@@ -545,6 +545,9 @@ impl Store {
     }
 
     pub fn add_initial_state(&self, genesis: Genesis) -> Result<(), StoreError> {
+        info!("Setting initial sync status to false");
+        self.update_sync_status(false)?;
+
         info!("Storing initial state from genesis");
 
         // Obtain genesis block
@@ -1000,51 +1003,65 @@ impl Store {
             .is_some())
     }
 
+    /// Sets the hash of the last header downloaded during a snap sync
     pub fn set_header_download_checkpoint(&self, block_hash: BlockHash) -> Result<(), StoreError> {
         self.engine.set_header_download_checkpoint(block_hash)
     }
 
+    /// Gets the hash of the last header downloaded during a snap sync
     pub fn get_header_download_checkpoint(&self) -> Result<Option<BlockHash>, StoreError> {
         self.engine.get_header_download_checkpoint()
     }
 
+    /// Sets the current state root of the state trie being rebuilt during snap sync
+    pub fn set_state_trie_root_checkpoint(&self, current_root: H256) -> Result<(), StoreError> {
+        self.engine.set_state_trie_root_checkpoint(current_root)
+    }
+
+    /// Gets the current state root of the state trie being rebuilt during snap sync
+    pub fn get_state_trie_root_checkpoint(&self) -> Result<Option<H256>, StoreError> {
+        self.engine.get_state_trie_root_checkpoint()
+    }
+
+    /// Sets the last key fetched from the state trie being fetched during snap sync
     pub fn set_state_trie_key_checkpoint(&self, last_key: H256) -> Result<(), StoreError> {
         self.engine.set_state_trie_key_checkpoint(last_key)
     }
 
+    /// Gets the last key fetched from the state trie being fetched during snap sync
     pub fn get_state_trie_key_checkpoint(&self) -> Result<Option<H256>, StoreError> {
         self.engine.get_state_trie_key_checkpoint()
     }
 
-    pub fn set_pending_storage_heal_accounts(
+    /// Sets the storage trie paths in need of healing, grouped by hashed address
+    pub fn set_storage_heal_paths(
         &self,
         accounts: Vec<(H256, Vec<Nibbles>)>,
     ) -> Result<(), StoreError> {
-        self.engine.set_pending_storage_heal_accounts(accounts)
+        self.engine.set_storage_heal_paths(accounts)
     }
 
-    pub fn get_pending_storage_heal_accounts(
-        &self,
-    ) -> Result<Option<Vec<(H256, Vec<Nibbles>)>>, StoreError> {
-        self.engine.get_pending_storage_heal_accounts()
+    /// Gets the storage trie paths in need of healing, grouped by hashed address
+    #[allow(clippy::type_complexity)]
+    pub fn get_storage_heal_paths(&self) -> Result<Option<Vec<(H256, Vec<Nibbles>)>>, StoreError> {
+        self.engine.get_storage_heal_paths()
     }
 
+    /// Sets the state trie paths in need of healing
     pub fn set_state_heal_paths(&self, paths: Vec<Nibbles>) -> Result<(), StoreError> {
         self.engine.set_state_heal_paths(paths)
     }
 
+    /// Gets the state trie paths in need of healing
     pub fn get_state_heal_paths(&self) -> Result<Option<Vec<Nibbles>>, StoreError> {
         self.engine.get_state_heal_paths()
     }
 
-    pub fn clear_state_heal_paths(&self) -> Result<(), StoreError> {
-        self.engine.clear_state_heal_paths()
+    pub fn is_synced(&self) -> Result<bool, StoreError> {
+        self.engine.is_synced()
     }
-
-    pub fn clear_snap_state(&self) -> Result<(), StoreError> {
-        //self.engine.clear_header_download_checkpoint()?; TODO: Uncomment
-        self.engine.clear_pending_storage_heal_accounts()?;
-        self.engine.clear_state_trie_key_checkpoint()
+    pub fn update_sync_status(&self, status: bool) -> Result<(), StoreError> {
+        self.engine.update_sync_status(status)
     }
 
     pub fn write_snapshot_account_batch(
@@ -1058,6 +1075,11 @@ impl Store {
 
     pub fn rebuild_state_from_snapshot(&self) -> Result<(H256, Vec<H256>), StoreError> {
         self.engine.rebuild_state_from_snapshot()
+    }
+
+    /// Clears all checkpoint data created during the last snap sync
+    pub fn clear_snap_state(&self) -> Result<(), StoreError> {
+        self.engine.clear_snap_state()
     }
 }
 
@@ -1082,15 +1104,14 @@ pub fn hash_key(key: &H256) -> Vec<u8> {
 
 #[cfg(test)]
 mod tests {
-    use std::{fs, panic, str::FromStr};
-
     use bytes::Bytes;
     use ethereum_types::{H256, U256};
     use ethrex_core::{
-        types::{Transaction, TxType, BYTES_PER_BLOB},
+        types::{Transaction, TxType, BYTES_PER_BLOB, EMPTY_KECCACK_HASH},
         Bloom,
     };
     use ethrex_rlp::decode::RLPDecode;
+    use std::{fs, panic, str::FromStr};
 
     use super::*;
 
@@ -1226,6 +1247,7 @@ mod tests {
             blob_gas_used: Some(0x00),
             excess_blob_gas: Some(0x00),
             parent_beacon_block_root: Some(H256::zero()),
+            requests_hash: Some(*EMPTY_KECCACK_HASH),
         };
         let block_body = BlockBody {
             transactions: vec![Transaction::decode(&hex::decode("b86f02f86c8330182480114e82f618946177843db3138ae69679a54b95cf345ed759450d870aa87bee53800080c080a0151ccc02146b9b11adf516e6787b59acae3e76544fdcd75e77e67c6b598ce65da064c5dd5aae2fbb535830ebbdad0234975cd7ece3562013b63ea18cc0df6c97d4").unwrap()).unwrap(),

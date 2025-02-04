@@ -6,7 +6,7 @@ Implementation of a simple Ethereum Virtual Machine in Rust.
 
 | Fork           | Status |
 | -------------- | ------ |
-| Prague         | 🏗️     |
+| Prague         | ✅     |
 | Cancun         | ✅     |
 | Shanghai       | ✅     |
 | Paris (Merge)  | ✅     |
@@ -47,10 +47,11 @@ Nowadays `ethrex L1` uses `revm` as the backend VM. We will replace `revm` with 
 
 | Task Description                                                                                                                                                     | Status |
 | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------ |
-| All the Hive tests that pass with `revm` also pass with `levm`                                                                                                       | ✅     |
+| All the Hive tests that pass with `revm` also pass with `levm`                                                                                                       | 🏗️     |
 | We have an insurance that if `levm` some time diverges from `revm`'s behavior, we will know it. And in such case, switching to `revm` while we fix the issue is easy | ✅     |
 | The feature flag `levm` is used as the default backend VM for `ethrex L1`                                                                                            | 🏗️     |
-| We have a `EVM` trait or similar to standardize the VM interface. This trait should be implemented by `levm` and `revm`                                              | 🏗️     |
+| We switch which EVM `ethrex` uses using a `--vm` CLI flag                                                                                                            | 🏗️     |
+| We have a `EVM` trait or similar to standardize the VM interface. This trait should be implemented by `levm` and `revm`                                              | ❌     |
 
 ### Milestone 3: Support pre Merge forks
 
@@ -77,14 +78,18 @@ There are a lot of EIPs schedule to include in this upgrade but for `levm` we'll
 
 - EIP-2537: Precompile for BLS12-381 curve operations
 - EIP-7623: Increase calldata cost
+- EIP-7691: Blob throughput increase
 - EIP-7702: Set EOA account code
+- EIP-7840: Add blob schedule to EL config files
 
 | Task Description          | Status |
 | ------------------------- | ------ |
-| Implement EIP-2537        | 🏗️     |
+| Implement EIP-2537        | ✅     |
 | Implement EIP-7623        | ✅     |
-| Implement EIP-7702        | 🏗️     |
-| Make Prague EF tests pass | ❌     |
+| Implement EIP-7691        | ✅️     |
+| Implement EIP-7702        | ✅️     |
+| Implement EIP-7840        | ✅️     |
+| Make Prague EF tests pass | ✅     |
 
 ### Milestone 5: Integrate `ethrex L2` <> `levm`
 
@@ -116,8 +121,10 @@ We'll run flamegraph or Samply over the VM to identify bottlenecks and improve t
 | Task Description                                                                                                                                      | Status |
 | ----------------------------------------------------------------------------------------------------------------------------------------------------- | ------ |
 | We have a GitHub workflow that posts the benchmarks results comparison between the PR and the main branch in every PR that includes changes in `levm` | ✅     |
-| We have a GitHub workflow that generates a flamegraph over `levm` and `revm` and post the results in GitHub Pages                                     | ❌     |
-| We add a table in the README comparing the benchmark results between multiple EVM implementations similar to the one in GitHub Pages                  | ❌     |
+| We have a GitHub workflow that generates a flamegraph over `levm` and `revm` and post the results in GitHub Pages                                     | ✅     |
+| Add more benchmarks to the current suite                                                                                                              | ✅     |
+| Benchmark a mainnet's block execution                                                                                                                 | 🏗️     |
+| We add a table in the README comparing the benchmark results between multiple EVM implementations similar to the one in GitHub Pages                  | 🏗️     |
 | All the identified bottlenecks are fixed                                                                                                              | ❌     |
 
 ## Ethereum Foundation Tests (EF Tests)
@@ -127,9 +134,9 @@ We'll run flamegraph or Samply over the VM to identify bottlenecks and improve t
 > [!NOTE]
 > This is updated as of this README's last update. For the most up-to-date status, please run the tests locally.
 
-**Total**: 5057/7878 (64.19%)
+**Total**: 6265/6475 (96.76%)
 
-**Prague:** 955/3776 (25.29%)
+**Prague:** 2163/2373 (91.15%)
 **Cancun:** 3579/3579 (100.00%)
 **Shanghai:** 221/221 (100.00%)
 **Homestead:** 17/17 (100.00%)

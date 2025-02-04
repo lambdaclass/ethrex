@@ -10,8 +10,8 @@ use ethrex_core::{
 };
 use ethrex_levm::{
     db::CacheDB,
-    errors::{TransactionReport, TxValidationError, VMError},
-    vm::{AuthorizationTuple, VM},
+    errors::{ExecutionReport, TxValidationError, VMError},
+    vm::{AuthorizationTuple, EVMConfig, VM},
     Environment,
 };
 use ethrex_storage::AccountUpdate;
@@ -63,7 +63,7 @@ pub fn run_ef_test(test: &EFTest) -> Result<EFTestReport, EFTestRunnerError> {
 pub fn run_ef_test_tx(vector: &TestVector, test: &EFTest) -> Result<(), EFTestRunnerError> {
     let mut levm = prepare_vm_for_tx(vector, test)?;
     ensure_pre_state(&levm, test)?;
-    let levm_execution_result = levm.transact();
+    let levm_execution_result = levm.execute();
     ensure_post_state(&levm_execution_result, vector, test)?;
     Ok(())
 }
@@ -98,11 +98,13 @@ pub fn prepare_vm_for_tx(vector: &TestVector, test: &EFTest) -> Result<VM, EFTes
                 v: auth_tuple.v,
                 r_signature: auth_tuple.r,
                 s_signature: auth_tuple.s,
-                // If the signer is not present, set it to Address::zero()
-                signer: auth_tuple.signer.unwrap_or_default(),
             })
             .collect::<Vec<AuthorizationTuple>>()
     });
+
+    let fork = test.fork();
+    let blob_schedule = EVMConfig::canonical_values(fork);
+    let config = EVMConfig::new(fork, blob_schedule);
 
     VM::new(
         tx.to.clone(),
@@ -110,7 +112,7 @@ pub fn prepare_vm_for_tx(vector: &TestVector, test: &EFTest) -> Result<VM, EFTes
             origin: tx.sender,
             refunded_gas: 0,
             gas_limit: tx.gas_limit,
-            spec_id: test.fork(),
+            config,
             block_number: test.env.current_number,
             coinbase: test.env.current_coinbase,
             timestamp: test.env.current_timestamp,
@@ -124,6 +126,9 @@ pub fn prepare_vm_for_tx(vector: &TestVector, test: &EFTest) -> Result<VM, EFTes
             tx_max_priority_fee_per_gas: tx.max_priority_fee_per_gas,
             tx_max_fee_per_gas: tx.max_fee_per_gas,
             tx_max_fee_per_blob_gas: tx.max_fee_per_blob_gas,
+            tx_nonce: tx.nonce.try_into().map_err(|_| {
+                EFTestRunnerError::VMInitializationFailed("Nonce to large".to_string())
+            })?,
             block_gas_limit: test.env.current_gas_limit,
             transient_storage: HashMap::new(),
         },
@@ -242,13 +247,16 @@ fn exception_is_expected(
             ) | (
                 TransactionExpectedException::InitcodeSizeExceeded,
                 VMError::TxValidation(TxValidationError::InitcodeSizeExceeded)
+            ) | (
+                TransactionExpectedException::Type4TxContractCreation,
+                VMError::TxValidation(TxValidationError::Type4TxContractCreation)
             )
         )
     })
 }
 
 pub fn ensure_post_state(
-    levm_execution_result: &Result<TransactionReport, VMError>,
+    levm_execution_result: &Result<ExecutionReport, VMError>,
     vector: &TestVector,
     test: &EFTest,
 ) -> Result<(), EFTestRunnerError> {
@@ -340,7 +348,7 @@ pub fn ensure_post_state(
 pub fn get_state_transitions(
     initial_state: &EvmState,
     block_hash: H256,
-    execution_report: &TransactionReport,
+    execution_report: &ExecutionReport,
 ) -> Vec<AccountUpdate> {
     let current_db = match initial_state {
         EvmState::Store(state) => state.database.store.clone(),
