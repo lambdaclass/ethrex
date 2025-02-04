@@ -1073,6 +1073,16 @@ impl Store {
             .write_snapshot_account_batch(account_hashes, account_states)
     }
 
+    pub fn write_snapshot_storage_batch(
+        &self,
+        account_hash: H256,
+        storage_keys: Vec<H256>,
+        storage_values: Vec<U256>,
+    ) -> Result<(), StoreError> {
+        self.engine
+            .write_snapshot_storage_batch(account_hash, storage_keys, storage_values)
+    }
+
     pub fn rebuild_state_from_snapshot(&self) -> Result<(H256, Vec<H256>), StoreError> {
         self.engine.rebuild_state_from_snapshot()
     }

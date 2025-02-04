@@ -639,14 +639,10 @@ async fn fetch_storage_batch(
         }
         // Store the storage ranges & rebuild the storage trie for each account
         for (keys, values) in keys.into_iter().zip(values.into_iter()) {
-            let (account_hash, storage_root) = batch.remove(0);
+            let (account_hash, _) = batch.remove(0);
             let mut trie = store.open_storage_trie(account_hash, *EMPTY_TRIE_HASH);
-            for (key, value) in keys.into_iter().zip(values.into_iter()) {
-                trie.insert(key.0.to_vec(), value.encode_to_vec())?;
-            }
-            if trie.hash()? != storage_root {
-                warn!("State sync failed for storage root {storage_root}");
-            }
+            // Write storage to snapshot
+            store.write_snapshot_storage_batch(account_hash, keys, values);
         }
         // Return remaining code hashes in the batch if we couldn't fetch all of them
         return Ok((batch, false));
