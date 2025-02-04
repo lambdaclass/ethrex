@@ -33,8 +33,8 @@ STATETEST_URL := https://github.com/ethereum/execution-spec-tests/releases/downl
 setup-test-dirs:
 	mkdir -p $(VECTORS_DIR)
 	# Create directory structure for legacy tests
-	mkdir -p $(VECTORS_DIR)/legacytests/Constantinople/GeneralStateTests
-	# mkdir -p $(VECTORS_DIR)/legacytests/Cancun/GeneralStateTests
+	mkdir -p $(VECTORS_DIR)/LegacyTests/Constantinople/GeneralStateTests
+	# mkdir -p $(VECTORS_DIR)/LegacyTests/Cancun/GeneralStateTests
 	# Create directories for other test types
 	mkdir -p $(VECTORS_DIR)/GeneralStateTests
 	mkdir -p $(VECTORS_DIR)/state_tests
@@ -53,7 +53,7 @@ setup-legacy-tests: setup-test-dirs ## 📥 Setup Legacy Tests
 	@for dir in $(LEGACY_TESTS_DIRS); do \
 		if [ -d "$(TESTS_REPO)/LegacyTests/$$dir/GeneralStateTests" ]; then \
 			echo "Copying tests from LegacyTests/$$dir/GeneralStateTests"; \
-			cp -r $(TESTS_REPO)/LegacyTests/$$dir/GeneralStateTests/* $(VECTORS_DIR)/legacytests/$$dir/GeneralStateTests/; \
+			cp -r $(TESTS_REPO)/LegacyTests/$$dir/GeneralStateTests/* $(VECTORS_DIR)/LegacyTests/$$dir/GeneralStateTests/; \
 		else \
 			echo "Warning: Directory $(TESTS_REPO)/LegacyTests/$$dir/GeneralStateTests not found"; \
 		fi \
