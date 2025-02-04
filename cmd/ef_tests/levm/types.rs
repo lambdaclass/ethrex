@@ -136,7 +136,22 @@ pub struct EFTestPostMap {
     pub forks: HashMap<Fork, Vec<EFTestPostValue>>,
 }
 
-impl EFTestPostMap {}
+impl EFTestPostMap {
+    pub fn vector_post_value(&self, vector: &TestVector, fork: Fork) -> EFTestPostValue {
+        self.forks
+            .get(&fork)
+            .unwrap()
+            .iter()
+            .find(|v| {
+                let data_index = v.indexes.get("data").unwrap().as_usize();
+                let gas_limit_index = v.indexes.get("gas").unwrap().as_usize();
+                let value_index = v.indexes.get("value").unwrap().as_usize();
+                vector == &(data_index, gas_limit_index, value_index)
+            })
+            .unwrap()
+            .clone()
+    }
+}
 
 #[derive(Debug, Deserialize, Clone)]
 pub enum EFTestPost {

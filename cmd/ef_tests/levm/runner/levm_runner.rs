@@ -5,7 +5,7 @@ use crate::{
     utils::{self, effective_gas_price},
 };
 use ethrex_core::{
-    types::{code_hash, AccountInfo},
+    types::{code_hash, AccountInfo, Fork},
     H256, U256,
 };
 use ethrex_levm::{
@@ -27,7 +27,7 @@ pub fn run_ef_test(test: &EFTest) -> Result<EFTestReport, EFTestRunnerError> {
         let mut ef_test_report_fork = EFTestReportForkResult::new();
 
         for (vector, _tx) in test.transactions.iter() {
-            match run_ef_test_tx(vector, test) {
+            match run_ef_test_tx(vector, test, fork) {
                 Ok(_) => continue,
                 Err(EFTestRunnerError::VMInitializationFailed(reason)) => {
                     ef_test_report_fork.register_vm_initialization_failure(reason, *vector);
@@ -65,15 +65,23 @@ pub fn run_ef_test(test: &EFTest) -> Result<EFTestReport, EFTestRunnerError> {
     Ok(ef_test_report)
 }
 
-pub fn run_ef_test_tx(vector: &TestVector, test: &EFTest) -> Result<(), EFTestRunnerError> {
-    let mut levm = prepare_vm_for_tx(vector, test)?;
+pub fn run_ef_test_tx(
+    vector: &TestVector,
+    test: &EFTest,
+    fork: &Fork,
+) -> Result<(), EFTestRunnerError> {
+    let mut levm = prepare_vm_for_tx(vector, test, fork)?;
     ensure_pre_state(&levm, test)?;
     let levm_execution_result = levm.execute();
-    ensure_post_state(&levm_execution_result, vector, test)?;
+    ensure_post_state(&levm_execution_result, vector, test, fork)?;
     Ok(())
 }
 
-pub fn prepare_vm_for_tx(vector: &TestVector, test: &EFTest) -> Result<VM, EFTestRunnerError> {
+pub fn prepare_vm_for_tx(
+    vector: &TestVector,
+    test: &EFTest,
+    fork: &Fork,
+) -> Result<VM, EFTestRunnerError> {
     let (initial_state, block_hash) = utils::load_initial_state(test);
     let db = Arc::new(StoreWrapper {
         store: initial_state.database().unwrap().clone(),
@@ -107,9 +115,8 @@ pub fn prepare_vm_for_tx(vector: &TestVector, test: &EFTest) -> Result<VM, EFTes
             .collect::<Vec<AuthorizationTuple>>()
     });
 
-    let fork = test.fork();
-    let blob_schedule = EVMConfig::canonical_values(fork);
-    let config = EVMConfig::new(fork, blob_schedule);
+    let blob_schedule = EVMConfig::canonical_values(*fork);
+    let config = EVMConfig::new(*fork, blob_schedule);
 
     VM::new(
         tx.to.clone(),
@@ -261,10 +268,11 @@ pub fn ensure_post_state(
     levm_execution_result: &Result<ExecutionReport, VMError>,
     vector: &TestVector,
     test: &EFTest,
+    fork: &Fork,
 ) -> Result<(), EFTestRunnerError> {
     match levm_execution_result {
         Ok(execution_report) => {
-            match test.post.vector_post_value(vector).expect_exception {
+            match test.post.vector_post_value(vector, *fork).expect_exception {
                 // Execution result was successful but an exception was expected.
                 Some(expected_exceptions) => {
                     // Note: expected_exceptions is a vector because can only have 1 or 2 expected errors.
@@ -295,7 +303,8 @@ pub fn ensure_post_state(
                     let levm_account_updates =
                         get_state_transitions(&initial_state, block_hash, execution_report);
                     let pos_state_root = post_state_root(&levm_account_updates, test);
-                    let expected_post_state_root_hash = test.post.vector_post_value(vector).hash;
+                    let expected_post_state_root_hash =
+                        test.post.vector_post_value(vector, *fork).hash;
                     if expected_post_state_root_hash != pos_state_root {
                         let error_reason = format!(
                             "Post-state root mismatch: expected {expected_post_state_root_hash:#x}, got {pos_state_root:#x}",
@@ -309,7 +318,7 @@ pub fn ensure_post_state(
             }
         }
         Err(err) => {
-            match test.post.vector_post_value(vector).expect_exception {
+            match test.post.vector_post_value(vector, *fork).expect_exception {
                 // Execution result was unsuccessful and an exception was expected.
                 Some(expected_exceptions) => {
                     // Note: expected_exceptions is a vector because can only have 1 or 2 expected errors.
