@@ -33,12 +33,29 @@ pub enum Account {
         account_state: AccountState,
         storage: HashMap<H256, U256>,
         account_proof: Vec<NodeRLP>,
-        storage_proofs: Vec<Vec<NodeRLP>>,
+        storage_proofs: HashMap<H256, Vec<NodeRLP>>,
         code: Option<Bytes>,
     },
     NonExisting {
-        proof: Vec<NodeRLP>,
+        account_proof: Vec<NodeRLP>,
+        storage_proofs: HashMap<H256, Vec<NodeRLP>>,
     },
+}
+
+impl Account {
+    pub fn get_account_proof<'a>(&'a self) -> &'a Vec<NodeRLP> {
+        match self {
+            Account::Existing { account_proof, .. } => account_proof,
+            Account::NonExisting { account_proof, .. } => account_proof,
+        }
+    }
+
+    pub fn get_storage_proofs<'a>(&'a self) -> &'a HashMap<H256, Vec<NodeRLP>> {
+        match self {
+            Account::Existing { storage_proofs, .. } => storage_proofs,
+            Account::NonExisting { storage_proofs, .. } => storage_proofs,
+        }
+    }
 }
 
 pub async fn get_latest_block_number(rpc_url: &str) -> Result<usize, String> {
@@ -165,23 +182,6 @@ pub async fn get_account(
         .map(decode_hex)
         .collect::<Result<Vec<_>, String>>()?;
 
-    // check that account exists
-    let root = account_proof
-        .first()
-        .ok_or("account proof is empty".to_string())?;
-    let other: Vec<_> = account_proof.iter().skip(1).cloned().collect();
-    let trie = Trie::from_nodes(Some(root), &other)
-        .map_err(|err| format!("failed to build account proof trie: {err}"))?;
-    if trie
-        .get(&hash_address(address))
-        .map_err(|err| format!("failed get account from proof trie: {err}"))?
-        .is_none()
-    {
-        return Ok(Account::NonExisting {
-            proof: account_proof,
-        });
-    }
-
     let (storage, storage_proofs) = storage_proof
         .into_iter()
         .map(|proof| -> Result<_, String> {
@@ -198,9 +198,26 @@ pub async fn get_account(
                 .into_iter()
                 .map(decode_hex)
                 .collect::<Result<Vec<_>, _>>()?;
-            Ok(((key, value), proofs))
+            Ok(((key, value), (key, proofs)))
         })
-        .collect::<Result<(HashMap<_, _>, Vec<_>), _>>()?;
+        .collect::<Result<(HashMap<_, _>, HashMap<_, _>), _>>()?;
+
+    let root = account_proof
+        .first()
+        .ok_or("account proof is empty".to_string())?;
+    let other: Vec<_> = account_proof.iter().skip(1).cloned().collect();
+    let trie = Trie::from_nodes(Some(root), &other)
+        .map_err(|err| format!("failed to build account proof trie: {err}"))?;
+    if trie
+        .get(&hash_address(address))
+        .map_err(|err| format!("failed get account from proof trie: {err}"))?
+        .is_none()
+    {
+        return Ok(Account::NonExisting {
+            account_proof,
+            storage_proofs,
+        });
+    }
 
     let account_state = AccountState {
         nonce: u64::from_str_radix(nonce.trim_start_matches("0x"), 16)
@@ -267,7 +284,7 @@ pub async fn retry<F, I>(mut fut: F) -> Result<I, String>
 where
     F: Task<Item = I, Error = String>,
 {
-    let policy = RetryPolicy::exponential(Duration::from_secs(1));
+    let policy = RetryPolicy::exponential(Duration::from_secs(1)).with_jitter(true);
     policy.retry(|| fut.call()).await
 }
 
