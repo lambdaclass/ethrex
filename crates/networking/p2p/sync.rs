@@ -796,7 +796,7 @@ async fn heal_state_batch(
         .await
     {
         info!("Received {} state nodes", nodes.len());
-        let mut hahsed_addresses = vec![];
+        let mut hashed_addresses = vec![];
         let mut code_hashes = vec![];
         // For each fetched node:
         // - Add its children to the queue (if we don't have them already)
@@ -820,7 +820,7 @@ async fn heal_state_batch(
                 if account.storage_root != *EMPTY_TRIE_HASH
                     && !store.contains_storage_node(account_hash, account.storage_root)?
                 {
-                    hahsed_addresses.push(account_hash);
+                    hashed_addresses.push(account_hash);
                 }
                 if account.code_hash != *EMPTY_KECCACK_HASH
                     && store.get_account_code(account.code_hash)?.is_none()
@@ -833,8 +833,8 @@ async fn heal_state_batch(
             trie.state_mut().write_node(node, hash)?;
         }
         // Send storage & bytecode requests
-        if !hahsed_addresses.is_empty() {
-            storage_sender.send(hahsed_addresses).await?;
+        if !hashed_addresses.is_empty() {
+            storage_sender.send(hashed_addresses).await?;
         }
         if !code_hashes.is_empty() {
             bytecode_sender.send(code_hashes).await?;

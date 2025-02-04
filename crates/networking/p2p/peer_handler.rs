@@ -359,13 +359,13 @@ impl PeerHandler {
                 let mut should_continue = false;
                 // Validate each storage range
                 while !slots.is_empty() {
-                    let (hahsed_keys, values): (Vec<_>, Vec<_>) = slots
+                    let (hashed_keys, values): (Vec<_>, Vec<_>) = slots
                         .remove(0)
                         .into_iter()
                         .map(|slot| (slot.hash, slot.data))
                         .unzip();
                     // We won't accept empty storage ranges
-                    if hahsed_keys.is_empty() {
+                    if hashed_keys.is_empty() {
                         continue;
                     }
                     let encoded_values = values
@@ -379,20 +379,20 @@ impl PeerHandler {
                         let Ok(sc) = verify_range(
                             storage_root,
                             &start,
-                            &hahsed_keys,
+                            &hashed_keys,
                             &encoded_values,
                             &proof,
                         ) else {
                             continue;
                         };
                         should_continue = sc;
-                    } else if verify_range(storage_root, &start, &hahsed_keys, &encoded_values, &[])
+                    } else if verify_range(storage_root, &start, &hashed_keys, &encoded_values, &[])
                         .is_err()
                     {
                         continue;
                     }
 
-                    storage_keys.push(hahsed_keys);
+                    storage_keys.push(hashed_keys);
                     storage_values.push(values);
                 }
                 return Some((storage_keys, storage_values, should_continue));
