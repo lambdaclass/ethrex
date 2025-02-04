@@ -881,7 +881,7 @@ async fn storage_healer(
                 peers.clone(),
                 store.clone(),
             ));
-            task_num +=1;
+            task_num += 1;
         }
         // Add unfetched paths to queue and handle stale signal
         for res in storage_tasks.join_all().await {
@@ -892,7 +892,7 @@ async fn storage_healer(
 
         // Read incoming requests that are already awaiting on the receiver
         // Don't wait for requests unless we have no pending paths left
-        if incoming && (!receiver.is_empty() || pending_paths.is_empty()){
+        if incoming && (!receiver.is_empty() || pending_paths.is_empty()) {
             // Fetch incoming requests
             let mut msg_buffer = vec![];
             if receiver.recv_many(&mut msg_buffer, 25).await != 0 {
