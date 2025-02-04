@@ -36,14 +36,14 @@ impl RLPEncode for AuthorizationTuple {
 
 impl RLPDecode for AuthorizationTuple {
     fn decode_unfinished(rlp: &[u8]) -> Result<(Self, &[u8]), RLPDecodeError> {
-        let decoder = Decoder::new(rlp).unwrap();
-        let (chain_id, decoder) = decoder.decode_field("chain_id").unwrap();
-        let (address, decoder) = decoder.decode_field("address").unwrap();
-        let (nonce, decoder) = decoder.decode_field("nonce").unwrap();
-        let (y_parity, decoder) = decoder.decode_field("y_parity").unwrap();
-        let (r_signature, decoder) = decoder.decode_field("r_signature").unwrap();
-        let (s_signature, decoder) = decoder.decode_field("s_signature").unwrap();
-        let rest = decoder.finish().unwrap();
+        let decoder = Decoder::new(rlp)?;
+        let (chain_id, decoder) = decoder.decode_field("chain_id")?;
+        let (address, decoder) = decoder.decode_field("address")?;
+        let (nonce, decoder) = decoder.decode_field("nonce")?;
+        let (y_parity, decoder) = decoder.decode_field("y_parity")?;
+        let (r_signature, decoder) = decoder.decode_field("r_signature")?;
+        let (s_signature, decoder) = decoder.decode_field("s_signature")?;
+        let rest = decoder.finish()?;
         Ok((
             AuthorizationTuple {
                 chain_id,
