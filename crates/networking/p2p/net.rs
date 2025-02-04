@@ -14,7 +14,7 @@ use rlpx::{
     connection::RLPxConnBroadcastSender, handshake, message::Message as RLPxMessage,
     p2p::Capability, utils::log_peer_error,
 };
-use std::{fmt, io, net::SocketAddr, sync::Arc};
+use std::{fmt, io, net::SocketAddr, str::FromStr, sync::Arc};
 use tokio::{
     net::{TcpListener, TcpSocket, TcpStream},
     sync::Mutex,
@@ -45,6 +45,11 @@ pub fn peer_table(signer: SigningKey) -> Arc<Mutex<KademliaTable>> {
 #[derive(Debug)]
 pub enum NetworkError {
     DiscoveryStart(DiscoveryError),
+}
+
+const NODE_ID_LOG_TO_SHOW: &str = "";
+pub fn node_id_log_to_show() -> H512 {
+    H512::from_str(NODE_ID_LOG_TO_SHOW).unwrap()
 }
 
 #[derive(Clone, Debug)]

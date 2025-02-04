@@ -1,6 +1,6 @@
 use std::str::FromStr;
 
-use crate::types::Node;
+use crate::{node_id_log_to_show, types::Node, NODE_ID_LOG_TO_SHOW};
 use ethrex_core::H512;
 use ethrex_rlp::error::{RLPDecodeError, RLPEncodeError};
 use k256::{
@@ -68,21 +68,19 @@ pub fn snappy_decompress(msg_data: &[u8]) -> Result<Vec<u8>, RLPDecodeError> {
     Ok(snappy_decoder.decompress_vec(msg_data)?)
 }
 
-const NODE_ID_LOG_TO_SHOW: &str = "";
-
 pub(crate) fn log_peer_debug(node: &Node, text: &str) {
-    if node.node_id == H512::from_str(NODE_ID_LOG_TO_SHOW).unwrap() {
+    if node.node_id == node_id_log_to_show() {
         debug!("[{0}]: {1}", node, text)
     }
 }
 
 pub(crate) fn log_peer_error(node: &Node, text: &str) {
-    if node.node_id == H512::from_str(NODE_ID_LOG_TO_SHOW).unwrap() {
+    if node.node_id == node_id_log_to_show() {
         error!("[{0}]: {1}", node, text)
     }
 }
 pub(crate) fn log_peer_warn(node: &Node, text: &str) {
-    if node.node_id == H512::from_str(NODE_ID_LOG_TO_SHOW).unwrap() {
+    if node.node_id == node_id_log_to_show() {
         warn!("[{0}]: {1}", node, text)
     }
 }

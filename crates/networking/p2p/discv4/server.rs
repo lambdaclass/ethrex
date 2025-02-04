@@ -11,6 +11,7 @@ use super::{
 use crate::{
     handle_peer_as_initiator,
     kademlia::MAX_NODES_PER_BUCKET,
+    node_id_log_to_show,
     types::{Endpoint, Node, NodeRecord},
     KademliaTable, P2PContext,
 };
@@ -23,7 +24,7 @@ use std::{
     time::Duration,
 };
 use tokio::{net::UdpSocket, sync::MutexGuard};
-use tracing::{error, info};
+use tracing::{debug, error, info};
 
 const MAX_DISC_PACKET_SIZE: usize = 1280;
 const PROOF_EXPIRATION_IN_HS: u64 = 12;
@@ -156,9 +157,14 @@ impl Discv4Server {
                 Ok(packet) => {
                     let msg = packet.get_message();
                     let msg_name = msg.to_string();
-                    //debug!("Message: {:?} from {}", msg, packet.get_node_id());
+                    let node_id = packet.get_node_id();
+                    if node_id == node_id_log_to_show() {
+                        debug!("Message: {:?} from {}", msg, node_id);
+                    }
                     if let Err(e) = self.handle_message(packet, from).await {
-                        //debug!("Error while processing {} message: {:?}", msg_name, e);
+                        if node_id == node_id_log_to_show() {
+                            debug!("Error while processing {} message: {:?}", msg_name, e);
+                        }
                     };
                 }
             }
