@@ -10,6 +10,12 @@ pub enum EVM {
     REVM,
 }
 
+impl Default for EVM {
+    fn default() -> Self {
+        EVM::REVM
+    }
+}
+
 impl FromStr for EVM {
     type Err = EvmError;
     fn from_str(s: &str) -> Result<Self, Self::Err> {

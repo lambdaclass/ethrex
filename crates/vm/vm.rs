@@ -7,6 +7,7 @@ mod execution_result;
 mod mods;
 
 use db::EvmState;
+use evm_backends::EVM;
 
 use crate::evm_backends::revm::*;
 use ethrex_core::{
@@ -27,18 +28,16 @@ pub use errors::EvmError;
 pub use execution_result::*;
 pub use revm::primitives::{Address as RevmAddress, SpecId, U256 as RevmU256};
 
+use std::sync::OnceLock;
+
+// This global variable can be initialized by the ethrex cli.
+// EVM_BACKEND.get_or_init(|| evm);
+// Then, we can retrieve the evm with:
+// EVM_BACKEND.get(); -> returns Option<EVM>
+pub static EVM_BACKEND: OnceLock<EVM> = OnceLock::new();
+
 // TODO use the type inside ethrex_core
 type AccessList = Vec<(Address, Vec<H256>)>;
-
-// ================== Execute Block functions ======================
-
-cfg_if::cfg_if! {
-    if #[cfg(feature = "levm")] {
-        use evm_backends::levm::execute_block;
-    } else if #[cfg(not(feature = "levm"))] {
-        use evm_backends::revm::execute_block;
-    }
-}
 
 // ================== Commonly used functions ======================
 
