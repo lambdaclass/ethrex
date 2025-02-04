@@ -39,7 +39,6 @@ path = "./vm.rs"
 
 [features]
 default = ["c-kzg", "blst"]
-levm = ["default"]
 l2 = []
 c-kzg = ["revm/c-kzg"]
 blst = ["revm/blst"]

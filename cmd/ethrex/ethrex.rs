@@ -430,13 +430,17 @@ fn import_blocks(store: &Store, blocks: &Vec<Block>) {
     }
     if let Some(last_block) = blocks.last() {
         let hash = last_block.hash();
-        cfg_if::cfg_if! {
-            if #[cfg(feature = "levm")] {
+        match EVM_BACKEND.get() {
+            Some(EVM::LEVM) => {
                 // We are allowing this not to unwrap so that tests can run even if block execution results in the wrong root hash with LEVM.
                 let _ = apply_fork_choice(store, hash, hash, hash);
             }
-            else {
+            Some(EVM::REVM) => {
                 apply_fork_choice(store, hash, hash, hash).unwrap();
+            }
+            None => {
+                tracing::error!("Fatal Error, EVM_BACKEND uninitialized.");
+                unreachable!();
             }
         }
     }
