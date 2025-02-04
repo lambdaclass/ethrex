@@ -1231,8 +1231,12 @@ impl Transaction {
 
     pub fn authorization_list(&self) -> Option<AuthorizationList> {
         match self {
+            Transaction::LegacyTransaction(_) => None,
+            Transaction::EIP2930Transaction(_) => None,
+            Transaction::EIP1559Transaction(_) => None,
+            Transaction::EIP4844Transaction(_) => None,
             Transaction::EIP7702Transaction(tx) => Some(tx.authorization_list.clone()),
-            _ => None,
+            Transaction::PrivilegedL2Transaction(_) => None,
         }
     }
 
@@ -1260,15 +1264,23 @@ impl Transaction {
 
     pub fn blob_versioned_hashes(&self) -> Vec<H256> {
         match self {
+            Transaction::LegacyTransaction(_) => Vec::new(),
+            Transaction::EIP2930Transaction(_) => Vec::new(),
+            Transaction::EIP1559Transaction(_) => Vec::new(),
             Transaction::EIP4844Transaction(tx) => tx.blob_versioned_hashes.clone(),
-            _ => Vec::new(),
+            Transaction::EIP7702Transaction(_) => Vec::new(),
+            Transaction::PrivilegedL2Transaction(_) => Vec::new(),
         }
     }
 
     pub fn max_fee_per_blob_gas(&self) -> Option<U256> {
         match self {
+            Transaction::LegacyTransaction(_) => None,
+            Transaction::EIP2930Transaction(_) => None,
+            Transaction::EIP1559Transaction(_) => None,
             Transaction::EIP4844Transaction(tx) => Some(tx.max_fee_per_blob_gas),
-            _ => None,
+            Transaction::EIP7702Transaction(_) => None,
+            Transaction::PrivilegedL2Transaction(_) => None,
         }
     }
 
