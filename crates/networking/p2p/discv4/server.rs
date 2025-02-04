@@ -23,7 +23,7 @@ use std::{
     time::Duration,
 };
 use tokio::{net::UdpSocket, sync::MutexGuard};
-use tracing::error;
+use tracing::{error, info};
 
 const MAX_DISC_PACKET_SIZE: usize = 1280;
 const PROOF_EXPIRATION_IN_HS: u64 = 12;
@@ -51,6 +51,7 @@ pub struct Discv4Server {
     pub(super) lookup_interval_minutes: u64,
 }
 
+#[derive(Debug)]
 pub enum Discv4BackendMsg {
     AddPeer(Node),
 }
@@ -107,15 +108,23 @@ impl Discv4Server {
         &self,
         mut receiver: tokio::sync::mpsc::UnboundedReceiver<Discv4BackendMsg>,
     ) {
-        match receiver.recv().await {
-            Some(msg) => match msg {
+        loop {
+            let Some(msg) = receiver.recv().await else {
+                continue;
+            };
+            info!("RECEIVED DISCV4 MSG {:?}", msg);
+
+            match msg {
                 Discv4BackendMsg::AddPeer(node) => {
                     self.try_add_peer_and_ping(node, self.ctx.table.lock().await)
                         .await;
+                    let ctx = self.ctx.clone();
+                    self.ctx
+                        .tracker
+                        .spawn(async move { handle_peer_as_initiator(ctx, node).await });
                 }
-            },
-            _ => {}
-        };
+            }
+        }
     }
 
     async fn load_bootnodes(&self, bootnodes: Vec<Node>) {
