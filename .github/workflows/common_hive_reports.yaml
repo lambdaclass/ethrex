@@ -7,7 +7,7 @@ on:
       evm:
         required: true
         type: string
-      # Must be 'main' or 'trigger'
+      # Must be 'main'/'trigger' or 'daily'
       job_type:
         required: true
         type: string
