@@ -19,7 +19,7 @@ EFTEST_DIR := ../../../cmd/ef_tests/levm
 VECTORS_DIR := $(EFTEST_DIR)/vectors
 TMP_DIR := tmp
 TESTS_REPO := $(TMP_DIR)/ethereum-tests
-LEGACY_TESTS_DIRS := Constantinople Cancun
+LEGACY_TESTS_DIRS := Constantinople ## Cancun
 
 SPECTEST_VERSION := v14.1
 SPECTEST_ARTIFACT := tests_$(SPECTEST_VERSION).tar.gz
@@ -34,7 +34,7 @@ setup-test-dirs:
 	mkdir -p $(VECTORS_DIR)
 	# Create directory structure for legacy tests
 	mkdir -p $(VECTORS_DIR)/legacytests/Constantinople/GeneralStateTests
-	mkdir -p $(VECTORS_DIR)/legacytests/Cancun/GeneralStateTests
+	# mkdir -p $(VECTORS_DIR)/legacytests/Cancun/GeneralStateTests
 	# Create directories for other test types
 	mkdir -p $(VECTORS_DIR)/GeneralStateTests
 	mkdir -p $(VECTORS_DIR)/state_tests
