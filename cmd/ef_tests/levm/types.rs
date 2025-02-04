@@ -2,7 +2,7 @@ use crate::{
     deserialize::{
         deserialize_access_lists, deserialize_authorization_lists,
         deserialize_ef_post_value_indexes, deserialize_h256_vec_optional_safe,
-        deserialize_hex_bytes, deserialize_hex_bytes_vec,
+        deserialize_hex_bytes, deserialize_hex_bytes_vec, deserialize_post_map,
         deserialize_transaction_expected_exception, deserialize_u256_optional_safe,
         deserialize_u256_safe, deserialize_u256_valued_hashmap_safe, deserialize_u256_vec_safe,
         deserialize_u64_safe, deserialize_u64_vec_safe,
@@ -26,30 +26,30 @@ pub struct EFTest {
     pub dir: String,
     pub _info: EFTestInfo,
     pub env: EFTestEnv,
-    pub post: EFTestPost,
+    pub post: EFTestPostMap,
     pub pre: EFTestPre,
     pub transactions: HashMap<TestVector, EFTestTransaction>,
 }
 
-impl EFTest {
-    pub fn fork(&self) -> Fork {
-        match &self.post {
-            EFTestPost::Prague(_) => Fork::Prague,
-            EFTestPost::Cancun(_) => Fork::Cancun,
-            EFTestPost::Shanghai(_) => Fork::Shanghai,
-            EFTestPost::Homestead(_) => Fork::Homestead,
-            EFTestPost::Istanbul(_) => Fork::Istanbul,
-            EFTestPost::London(_) => Fork::London,
-            EFTestPost::Byzantium(_) => Fork::Byzantium,
-            EFTestPost::Berlin(_) => Fork::Berlin,
-            EFTestPost::Constantinople(_) | EFTestPost::ConstantinopleFix(_) => {
-                Fork::Constantinople
-            }
-            EFTestPost::Paris(_) => Fork::Paris,
-            EFTestPost::Frontier(_) => Fork::Frontier,
-        }
-    }
-}
+// impl EFTest {
+//     pub fn fork(&self) -> Fork {
+//         match &self.post {
+//             EFTestPost::Prague(_) => Fork::Prague,
+//             EFTestPost::Cancun(_) => Fork::Cancun,
+//             EFTestPost::Shanghai(_) => Fork::Shanghai,
+//             EFTestPost::Homestead(_) => Fork::Homestead,
+//             EFTestPost::Istanbul(_) => Fork::Istanbul,
+//             EFTestPost::London(_) => Fork::London,
+//             EFTestPost::Byzantium(_) => Fork::Byzantium,
+//             EFTestPost::Berlin(_) => Fork::Berlin,
+//             EFTestPost::Constantinople(_) | EFTestPost::ConstantinopleFix(_) => {
+//                 Fork::Constantinople
+//             }
+//             EFTestPost::Paris(_) => Fork::Paris,
+//             EFTestPost::Frontier(_) => Fork::Frontier,
+//         }
+//     }
+// }
 
 impl From<&EFTest> for Genesis {
     fn from(test: &EFTest) -> Self {
@@ -128,6 +128,12 @@ pub struct EFTestEnv {
     pub current_random: Option<H256>,
     #[serde(deserialize_with = "deserialize_u256_safe")]
     pub current_timestamp: U256,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct EFTestPostMap {
+    #[serde(deserialize_with = "deserialize_post_map")]
+    pub forks: HashMap<Fork, Vec<EFTestPostValue>>,
 }
 
 #[derive(Debug, Deserialize, Clone)]

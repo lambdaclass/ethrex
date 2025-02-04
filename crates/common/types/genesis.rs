@@ -134,7 +134,7 @@ pub struct ChainConfig {
 }
 
 #[repr(u8)]
-#[derive(Debug, PartialEq, PartialOrd, Default, Clone, Copy, Serialize, Deserialize)]
+#[derive(Debug, PartialEq, Eq, PartialOrd, Default, Hash, Clone, Copy, Serialize, Deserialize)]
 pub enum Fork {
     Frontier = 0,
     FrontierThawing = 1,

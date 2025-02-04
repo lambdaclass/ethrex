@@ -1,9 +1,9 @@
 use crate::types::{
-    EFTest, EFTestAccessListItem, EFTestAuthorizationListTuple, EFTests,
+    EFTest, EFTestAccessListItem, EFTestAuthorizationListTuple, EFTestPostValue, EFTests,
     TransactionExpectedException,
 };
 use bytes::Bytes;
-use ethrex_core::{H256, U256};
+use ethrex_core::{types::Fork, H256, U256};
 use serde::{Deserialize, Deserializer};
 use std::{collections::HashMap, str::FromStr};
 
@@ -281,6 +281,44 @@ where
         .collect()
 }
 
+pub fn deserialize_post_map<'de, D>(
+    deserializer: D,
+) -> Result<HashMap<Fork, Vec<EFTestPostValue>>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let post_map_raw = HashMap::<String, Vec<EFTestPostValue>>::deserialize(deserializer)?;
+    let mut post_map = HashMap::new();
+    for (fork_str, values) in post_map_raw {
+        let fork = match fork_str.as_str() {
+            "Frontier" => Fork::Frontier,
+            "Homestead" => Fork::Homestead,
+            "Constantinople" => Fork::Constantinople,
+            "ConstantinopleFix" | "Petersburg" => Fork::Constantinople,
+            "Istanbul" => Fork::Istanbul,
+            "Berlin" => Fork::Berlin,
+            "London" => Fork::London,
+            "Paris" => Fork::Paris,
+            "Merge" => Fork::Paris, // CHANGE THIS
+            "Shanghai" => Fork::Shanghai,
+            "Cancun" => Fork::Cancun,
+            "Prague" => Fork::Prague,
+            "Byzantium" => Fork::Byzantium,
+            "EIP158" => Fork::SpuriousDragon,
+            "EIP150" => Fork::Tangerine,
+            other => {
+                return Err(serde::de::Error::custom(format!(
+                    "Unknown fork name: {}",
+                    other
+                )))
+            }
+        };
+        post_map.insert(fork, values);
+    }
+
+    Ok(post_map)
+}
+
 impl<'de> Deserialize<'de> for EFTests {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
@@ -294,6 +332,7 @@ impl<'de> Deserialize<'de> for EFTests {
             let test_data = aux
                 .get(test_name)
                 .ok_or(serde::de::Error::missing_field("test data value"))?;
+            dbg!("pasa test_data");
 
             let raw_tx: EFTestRawTransaction = serde_json::from_value(
                 test_data
@@ -306,6 +345,7 @@ impl<'de> Deserialize<'de> for EFTests {
                     "error deserializing test \"{test_name}\", \"transaction\" field: {err}"
                 ))
             })?;
+            dbg!("pasa raw_tx");
 
             let mut transactions = HashMap::new();
 
@@ -339,6 +379,7 @@ impl<'de> Deserialize<'de> for EFTests {
                                 .unwrap_or_default(),
                             authorization_list: raw_tx.authorization_list.clone(),
                         };
+                        dbg!("pasa tx");
                         transactions.insert((data_id, gas_limit_id, value_id), tx);
                     }
                 }
@@ -393,6 +434,7 @@ impl<'de> Deserialize<'de> for EFTests {
                 })?,
                 transactions,
             };
+            dbg!("pasa ef_test");
             ef_tests.push(ef_test);
         }
         Ok(Self(ef_tests))
