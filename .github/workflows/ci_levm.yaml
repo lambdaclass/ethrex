@@ -75,7 +75,7 @@ jobs:
   hive-test:
     if: ${{ github.event_name != 'merge_group' }}
     name: Hive Tests Check
-    needs: hive-report-creation
+    needs: [hive-report-creation, hive-report-creation-main]
     runs-on: ubuntu-latest
     steps:
       - name: Checkout sources
