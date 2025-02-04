@@ -657,7 +657,7 @@ impl StoreEngine for Store {
         // Add all accounts
         let txn = self
             .db
-            .begin_readwrite()
+            .begin_read()
             .map_err(StoreError::LibmdbxError)?;
         let cursor = txn
             .cursor::<StateSnapShot>()
@@ -694,7 +694,7 @@ impl Store {
         // Add all accounts
         let txn = self
             .db
-            .begin_readwrite()
+            .begin_read()
             .map_err(StoreError::LibmdbxError)?;
         let cursor = txn
             .cursor::<StorageSnapShot>()
@@ -894,6 +894,7 @@ pub fn init_db(path: Option<impl AsRef<Path>>) -> Database {
         table_info!(PendingBlocks),
         table_info!(SnapState),
         table_info!(StateSnapShot),
+        table_info!(StorageSnapShot),
     ]
     .into_iter()
     .collect();
