@@ -190,9 +190,6 @@ async fn main() {
         import_blocks(&store, &blocks);
     }
 
-    // Soft reset
-    store.clear_snap_state().unwrap();
-
     let jwt_secret = read_jwtsecret_file(authrpc_jwtsecret);
 
     // Get the signer from the default directory, create one if the key file is not present.

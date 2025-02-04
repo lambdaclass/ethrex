@@ -72,17 +72,6 @@ impl Store {
         txn.get::<T>(key).map_err(StoreError::LibmdbxError)
     }
 
-     // Helper method to remove a value from a libmdbx table
-     fn delete<T: Table>(&self, key: T::Key) -> Result<(), StoreError> {
-        let txn = self
-            .db
-            .begin_readwrite()
-            .map_err(StoreError::LibmdbxError)?;
-        txn.delete::<T>(key, None)
-            .map_err(StoreError::LibmdbxError)?;
-        txn.commit().map_err(StoreError::LibmdbxError)
-    }
-
     fn get_block_hash_by_block_number(
         &self,
         number: BlockNumber,
@@ -605,14 +594,13 @@ impl StoreEngine for Store {
     }
 
     fn clear_snap_state(&self) -> Result<(), StoreError> {
-        // TODO: Clear full table
-        // let txn = self.db.begin_readwrite().map_err(StoreError::LibmdbxError)?;
-        // txn.clear_table::<SnapState>().map_err(StoreError::LibmdbxError)
-        self.delete::<SnapState>(SnapStateIndex::StateHealPaths)?;
-        self.delete::<SnapState>(SnapStateIndex::StorageHealPaths)?;
-        self.delete::<SnapState>(SnapStateIndex::StateTrieKeyCheckpoint)?;
-        self.delete::<SnapState>(SnapStateIndex::StateTrieRootCheckpoint)
-        // txn.commit().map_err(StoreError::LibmdbxError)
+        let txn = self
+            .db
+            .begin_readwrite()
+            .map_err(StoreError::LibmdbxError)?;
+        txn.clear_table::<SnapState>()
+            .map_err(StoreError::LibmdbxError)?;
+        txn.commit().map_err(StoreError::LibmdbxError)
     }
 }
 
