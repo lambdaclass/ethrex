@@ -36,7 +36,9 @@ use eth::{
         GetTransactionByHashRequest, GetTransactionReceiptRequest,
     },
 };
-use ethrex_net::{sync::SyncManager, types::NodeRecord};
+use ethrex_net::{
+    discv4::server::Discv4BackendMsg, sync::SyncManager, types::NodeRecord, KademliaTable,
+};
 use serde_json::Value;
 use std::{
     collections::HashMap,
@@ -73,6 +75,7 @@ pub struct RpcApiContext {
     local_node_record: NodeRecord,
     active_filters: ActiveFilters,
     syncer: Arc<TokioMutex<SyncManager>>,
+    discv4_sender: tokio::sync::mpsc::UnboundedSender<Discv4BackendMsg>,
 }
 
 /// Describes the client's current sync status:
@@ -128,6 +131,7 @@ pub async fn start_api(
     local_p2p_node: Node,
     local_node_record: NodeRecord,
     syncer: SyncManager,
+    discv4_sender: tokio::sync::mpsc::UnboundedSender<Discv4BackendMsg>,
 ) {
     // TODO: Refactor how filters are handled,
     // filters are used by the filters endpoints (eth_newFilter, eth_getFilterChanges, ...etc)
@@ -139,6 +143,7 @@ pub async fn start_api(
         local_node_record,
         active_filters: active_filters.clone(),
         syncer: Arc::new(TokioMutex::new(syncer)),
+        discv4_sender,
     };
 
     // Periodically clean up the active filters for the filters endpoints.
@@ -225,6 +230,7 @@ pub fn map_authrpc_requests(req: &RpcRequest, context: RpcApiContext) -> Result<
     match req.namespace() {
         Ok(RpcNamespace::Engine) => map_engine_requests(req, context),
         Ok(RpcNamespace::Eth) => map_eth_requests(req, context),
+        Ok(RpcNamespace::Admin) => map_admin_requests(req, context),
         _ => Err(RpcErr::MethodNotFound(req.method.clone())),
     }
 }
@@ -314,6 +320,7 @@ pub fn map_admin_requests(req: &RpcRequest, context: RpcApiContext) -> Result<Va
             context.local_p2p_node,
             context.local_node_record,
         ),
+        "admin_addPeer" => admin::AddPeer::call(req, context),
         unknown_admin_method => Err(RpcErr::MethodNotFound(unknown_admin_method.to_owned())),
     }
 }
@@ -359,8 +366,9 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::utils::test_utils::{example_local_node_record, example_p2p_node};
+    use crate::utils::test_utils::{default_context, example_local_node_record, example_p2p_node};
     use ethrex_core::types::{ChainConfig, Genesis};
+    use ethrex_net::discv4::server::Discv4Server;
     use ethrex_storage::EngineType;
     use sha3::{Digest, Keccak256};
     use std::fs::File;
@@ -380,14 +388,7 @@ mod tests {
         let storage =
             Store::new("temp.db", EngineType::InMemory).expect("Failed to create test DB");
         storage.set_chain_config(&example_chain_config()).unwrap();
-        let context = RpcApiContext {
-            local_p2p_node,
-            local_node_record: example_local_node_record(),
-            storage,
-            jwt_secret: Default::default(),
-            active_filters: Default::default(),
-            syncer: Arc::new(TokioMutex::new(SyncManager::dummy())),
-        };
+        let context = default_context();
         let enr_url = context.local_node_record.enr_url().unwrap();
         let result = map_http_requests(&request, context);
         let rpc_response = rpc_response(request.id, result);
@@ -465,14 +466,7 @@ mod tests {
             .expect("Failed to add genesis block to DB");
         let local_p2p_node = example_p2p_node();
         // Process request
-        let context = RpcApiContext {
-            local_p2p_node,
-            local_node_record: example_local_node_record(),
-            storage,
-            jwt_secret: Default::default(),
-            active_filters: Default::default(),
-            syncer: Arc::new(TokioMutex::new(SyncManager::dummy())),
-        };
+        let context = default_context();
         let result = map_http_requests(&request, context);
         let response = rpc_response(request.id, result);
         let expected_response = to_rpc_response_success_value(
@@ -496,14 +490,7 @@ mod tests {
             .expect("Failed to add genesis block to DB");
         let local_p2p_node = example_p2p_node();
         // Process request
-        let context = RpcApiContext {
-            local_p2p_node,
-            local_node_record: example_local_node_record(),
-            storage,
-            jwt_secret: Default::default(),
-            active_filters: Default::default(),
-            syncer: Arc::new(TokioMutex::new(SyncManager::dummy())),
-        };
+        let context = default_context();
         let result = map_http_requests(&request, context);
         let response =
             serde_json::from_value::<RpcSuccessResponse>(rpc_response(request.id, result).0)
@@ -557,14 +544,7 @@ mod tests {
             .chain_id
             .to_string();
         let local_p2p_node = example_p2p_node();
-        let context = RpcApiContext {
-            storage,
-            local_p2p_node,
-            local_node_record: example_local_node_record(),
-            jwt_secret: Default::default(),
-            active_filters: Default::default(),
-            syncer: Arc::new(TokioMutex::new(SyncManager::dummy())),
-        };
+        let context = default_context();
         // Process request
         let result = map_http_requests(&request, context);
         let response = rpc_response(request.id, result);

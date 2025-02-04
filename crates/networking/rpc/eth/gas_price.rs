@@ -67,14 +67,9 @@ mod tests {
     use tokio::sync::Mutex;
 
     fn default_context() -> RpcApiContext {
-        RpcApiContext {
-            storage: setup_store(),
-            jwt_secret: Default::default(),
-            local_p2p_node: example_p2p_node(),
-            local_node_record: example_local_node_record(),
-            active_filters: Default::default(),
-            syncer: Arc::new(Mutex::new(SyncManager::dummy())),
-        }
+        let mut context = crate::utils::test_utils::default_context();
+        context.storage = setup_store();
+        context
     }
 
     #[test]

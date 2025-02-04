@@ -3,6 +3,7 @@ use directories::ProjectDirs;
 use ethrex_blockchain::{add_block, fork_choice::apply_fork_choice};
 use ethrex_core::types::{Block, Genesis};
 use ethrex_net::{
+    discv4::server::Discv4BackendMsg,
     node_id_from_signing_key, peer_table,
     sync::{SyncManager, SyncMode},
     types::{Node, NodeRecord},
@@ -240,23 +241,11 @@ async fn main() {
 
     // TODO: Check every module starts properly.
     let tracker = TaskTracker::new();
-    let rpc_api = ethrex_rpc::start_api(
-        http_socket_addr,
-        authrpc_socket_addr,
-        store.clone(),
-        jwt_secret,
-        local_p2p_node,
-        local_node_record,
-        syncer,
-    )
-    .into_future();
 
     // TODO Find a proper place to show node information
     // https://github.com/lambdaclass/ethrex/issues/836
     let enode = local_p2p_node.enode_url();
     info!("Node: {enode}");
-
-    tracker.spawn(rpc_api);
 
     // Check if the metrics.port is present, else set it to 0
     let metrics_port = matches
@@ -287,15 +276,28 @@ async fn main() {
             let block_producer_engine = ethrex_dev::block_producer::start_block_producer(url, authrpc_jwtsecret.into(), head_block_hash, max_tries, 1000, ethrex_core::Address::default());
             tracker.spawn(block_producer_engine);
         } else {
-            ethrex_net::start_network(
+            let (tx, mut receiver) = tokio::sync::mpsc::unbounded_channel::<Discv4BackendMsg>();
+           ethrex_net::start_network(
                 local_p2p_node,
                 tracker.clone(),
                 bootnodes,
                 signer,
                 peer_table.clone(),
-                store,
-            )
-            .await.expect("Network starts");
+                store.clone(),
+                receiver,
+            ).await.expect("Network starts");
+            let rpc_api = ethrex_rpc::start_api(
+                            http_socket_addr,
+                            authrpc_socket_addr,
+                            store.clone(),
+                            jwt_secret,
+                            local_p2p_node,
+                            local_node_record,
+                            syncer,
+                            tx,
+                        )
+                        .into_future();
+            tracker.spawn(rpc_api);
             tracker.spawn(ethrex_net::periodically_show_peer_stats(peer_table.clone()));
         }
     }

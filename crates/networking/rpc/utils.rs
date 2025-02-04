@@ -262,7 +262,7 @@ pub mod test_utils {
     use ethrex_storage::{EngineType, Store};
     use k256::ecdsa::SigningKey;
 
-    use crate::start_api;
+    use crate::{start_api, RpcApiContext};
 
     pub const TEST_GENESIS: &str = include_str!("../../../test_data/genesis-l1.json");
     pub fn example_p2p_node() -> Node {
@@ -310,6 +310,7 @@ pub mod test_utils {
 
         let jwt_secret = Default::default();
         let local_p2p_node = example_p2p_node();
+        let (discv4_sender, mut receiver) = tokio::sync::mpsc::unbounded_channel();
         start_api(
             http_addr,
             authrpc_addr,
@@ -318,7 +319,22 @@ pub mod test_utils {
             local_p2p_node,
             example_local_node_record(),
             SyncManager::dummy(),
+            discv4_sender,
         )
         .await;
+    }
+
+    pub fn default_context() -> RpcApiContext {
+        let (discv4_sender, mut receiver) = tokio::sync::mpsc::unbounded_channel();
+        let local_p2p_node = example_p2p_node();
+        RpcApiContext {
+            storage: Store::new("in-mem", EngineType::InMemory).unwrap(),
+            local_p2p_node,
+            local_node_record: example_local_node_record(),
+            jwt_secret: Default::default(),
+            active_filters: Default::default(),
+            syncer: std::sync::Arc::new(tokio::sync::Mutex::new(SyncManager::dummy())),
+            discv4_sender,
+        }
     }
 }

@@ -23,7 +23,7 @@ use std::{
     time::Duration,
 };
 use tokio::{net::UdpSocket, sync::MutexGuard};
-use tracing::{debug, error};
+use tracing::error;
 
 const MAX_DISC_PACKET_SIZE: usize = 1280;
 const PROOF_EXPIRATION_IN_HS: u64 = 12;
@@ -51,6 +51,10 @@ pub struct Discv4Server {
     pub(super) lookup_interval_minutes: u64,
 }
 
+pub enum Discv4BackendMsg {
+    AddPeer(Node),
+}
+
 impl Discv4Server {
     /// Initializes a Discv4 UDP socket and creates a new `Discv4Server` instance.  
     /// Returns an error if the socket binding fails.  
@@ -71,13 +75,20 @@ impl Discv4Server {
     /// - Spawns tasks to handle incoming messages and revalidate known nodes.
     /// - Loads bootnodes to establish initial peer connections.
     /// - Starts the lookup handler via [`Discv4LookupHandler`] to periodically search for new peers.
-    pub async fn start(&self, bootnodes: Vec<Node>) -> Result<(), DiscoveryError> {
+    pub async fn start(
+        &self,
+        bootnodes: Vec<Node>,
+        backend_receiver: tokio::sync::mpsc::UnboundedReceiver<Discv4BackendMsg>,
+    ) -> Result<(), DiscoveryError> {
         let lookup_handler = Discv4LookupHandler::new(
             self.ctx.clone(),
             self.udp_socket.clone(),
             self.lookup_interval_minutes,
         );
-
+        self.ctx.tracker.spawn({
+            let self_clone = self.clone();
+            async move { self_clone.handle_backend_msgs(backend_receiver).await }
+        });
         self.ctx.tracker.spawn({
             let self_clone = self.clone();
             async move { self_clone.receive().await }
@@ -90,6 +101,21 @@ impl Discv4Server {
         lookup_handler.start(10);
 
         Ok(())
+    }
+
+    async fn handle_backend_msgs(
+        &self,
+        mut receiver: tokio::sync::mpsc::UnboundedReceiver<Discv4BackendMsg>,
+    ) {
+        match receiver.recv().await {
+            Some(msg) => match msg {
+                Discv4BackendMsg::AddPeer(node) => {
+                    self.try_add_peer_and_ping(node, self.ctx.table.lock().await)
+                        .await;
+                }
+            },
+            _ => {}
+        };
     }
 
     async fn load_bootnodes(&self, bootnodes: Vec<Node>) {
@@ -215,10 +241,10 @@ impl Discv4Server {
                     return Ok(());
                 }
 
-                // let ctx = self.ctx.clone();
-                // self.ctx
-                //     .tracker
-                //     .spawn(async move { handle_peer_as_initiator(ctx, peer.node).await });
+                let ctx = self.ctx.clone();
+                self.ctx
+                    .tracker
+                    .spawn(async move { handle_peer_as_initiator(ctx, peer.node).await });
                 Ok(())
             }
             Message::FindNode(msg) => {

@@ -260,7 +260,7 @@ mod tests {
             logs::{AddressFilter, LogsFilter, TopicFilter},
         },
         map_http_requests,
-        utils::test_utils::{self, example_local_node_record, start_test_api},
+        utils::test_utils::{self, default_context, example_local_node_record, start_test_api},
         RpcApiContext, FILTER_DURATION,
     };
     use crate::{
@@ -432,15 +432,8 @@ mod tests {
         json_req: serde_json::Value,
         filters_pointer: ActiveFilters,
     ) -> u64 {
-        let context = RpcApiContext {
-            storage: Store::new("in-mem", EngineType::InMemory)
-                .expect("Fatal: could not create in memory test db"),
-            jwt_secret: Default::default(),
-            local_p2p_node: example_p2p_node(),
-            local_node_record: example_local_node_record(),
-            active_filters: filters_pointer.clone(),
-            syncer: Arc::new(TokioMutex::new(SyncManager::dummy())),
-        };
+        let mut context = default_context();
+        context.active_filters = filters_pointer;
         let request: RpcRequest = serde_json::from_value(json_req).expect("Test json is incorrect");
         let genesis_config: Genesis =
             serde_json::from_str(TEST_GENESIS).expect("Fatal: non-valid genesis test config");
@@ -487,14 +480,7 @@ mod tests {
             ),
         );
         let active_filters = Arc::new(Mutex::new(HashMap::from([filter])));
-        let context = RpcApiContext {
-            storage: Store::new("in-mem", EngineType::InMemory).unwrap(),
-            local_p2p_node: example_p2p_node(),
-            local_node_record: example_local_node_record(),
-            jwt_secret: Default::default(),
-            active_filters: active_filters.clone(),
-            syncer: Arc::new(TokioMutex::new(SyncManager::dummy())),
-        };
+        let context = default_context();
 
         map_http_requests(&uninstall_filter_req, context).unwrap();
 
@@ -508,14 +494,8 @@ mod tests {
     fn removing_non_existing_filter_returns_false() {
         let active_filters = Arc::new(Mutex::new(HashMap::new()));
 
-        let context = RpcApiContext {
-            storage: Store::new("in-mem", EngineType::InMemory).unwrap(),
-            local_p2p_node: example_p2p_node(),
-            local_node_record: example_local_node_record(),
-            active_filters: active_filters.clone(),
-            jwt_secret: Default::default(),
-            syncer: Arc::new(TokioMutex::new(SyncManager::dummy())),
-        };
+        let mut context = default_context();
+        context.active_filters = active_filters;
         let uninstall_filter_req: RpcRequest = serde_json::from_value(json!(
         {
             "jsonrpc":"2.0",

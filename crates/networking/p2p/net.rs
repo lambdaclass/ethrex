@@ -1,6 +1,6 @@
 use discv4::{
     helpers::current_unix_time,
-    server::{DiscoveryError, Discv4Server},
+    server::{DiscoveryError, Discv4BackendMsg, Discv4Server},
 };
 use ethrex_core::H512;
 use ethrex_storage::Store;
@@ -19,8 +19,8 @@ use tokio_util::task::TaskTracker;
 use tracing::{error, info};
 use types::Node;
 
-pub(crate) mod discv4;
-pub(crate) mod kademlia;
+pub mod discv4;
+pub mod kademlia;
 pub mod peer_handler;
 pub mod rlpx;
 pub(crate) mod snap;
@@ -61,6 +61,7 @@ pub async fn start_network(
     signer: SigningKey,
     peer_table: Arc<Mutex<KademliaTable>>,
     storage: Store,
+    discv4_backend_receiver: tokio::sync::mpsc::UnboundedReceiver<Discv4BackendMsg>,
 ) -> Result<(), NetworkError> {
     let (channel_broadcast_send_end, _) = tokio::sync::broadcast::channel::<(
         tokio::task::Id,
@@ -77,18 +78,20 @@ pub async fn start_network(
         signer,
         table: peer_table,
         storage,
-        broadcast: channel_broadcast_send_end,
+        broadcast: channel_broadcast_send_end.clone(),
     };
-    let discovery = Discv4Server::try_new(context.clone())
-        .await
-        .map_err(NetworkError::DiscoveryStart)?;
+    let discovery = Arc::new(
+        Discv4Server::try_new(context.clone())
+            .await
+            .map_err(NetworkError::DiscoveryStart)?,
+    );
 
     info!(
         "Starting discovery service at {}",
         context.local_node.udp_addr()
     );
     discovery
-        .start(bootnodes)
+        .start(bootnodes, discv4_backend_receiver)
         .await
         .map_err(NetworkError::DiscoveryStart)?;
 
@@ -136,9 +139,6 @@ async fn handle_peer_as_receiver(context: P2PContext, peer_addr: SocketAddr, str
     match handshake::as_receiver(context, peer_addr, stream).await {
         Ok(mut conn) => conn.start(table).await,
         Err(e) => {
-            // TODO We should remove the peer from the table if connection failed
-            // but currently it will make the tests fail
-            // table.lock().await.replace_peer(node.node_id);
             error!("Error creating tcp connection with peer at {peer_addr}: {e}")
         }
     }
@@ -149,9 +149,7 @@ async fn handle_peer_as_initiator(context: P2PContext, node: Node) {
     let stream = match tcp_stream(addr).await {
         Ok(result) => result,
         Err(e) => {
-            // TODO We should remove the peer from the table if connection failed
-            // but currently it will make the tests fail
-            // table.lock().await.replace_peer(node.node_id);
+            context.table.lock().await.replace_peer(node.node_id);
             error!("Error establishing tcp connection with peer at {addr}: {e}");
             return;
         }
@@ -162,7 +160,7 @@ async fn handle_peer_as_initiator(context: P2PContext, node: Node) {
         Err(e) => {
             // TODO We should remove the peer from the table if connection failed
             // but currently it will make the tests fail
-            // table.lock().await.replace_peer(node.node_id);
+            table.lock().await.replace_peer(node.node_id);
             error!("Error creating tcp connection with peer at {addr}: {e}")
         }
     };

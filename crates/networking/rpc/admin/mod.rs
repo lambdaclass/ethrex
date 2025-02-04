@@ -1,14 +1,17 @@
 use ethrex_core::types::ChainConfig;
-use ethrex_net::types::{Node, NodeRecord};
+use ethrex_net::{
+    kademlia::PeerData,
+    types::{Node, NodeRecord},
+};
 use ethrex_storage::Store;
 use serde::Serialize;
 use serde_json::Value;
 use sha3::{Digest, Keccak256};
 use std::collections::HashMap;
 
-use crate::utils::RpcErr;
+use crate::{utils::RpcErr, RpcApiContext, RpcHandler};
 
-#[derive(Serialize, Debug)]
+#[derive(Serialize)]
 struct NodeInfo {
     enode: String,
     enr: String,
@@ -61,4 +64,30 @@ pub fn node_info(
         protocols,
     };
     serde_json::to_value(node_info).map_err(|error| RpcErr::Internal(error.to_string()))
+}
+
+pub struct AddPeer {
+    pub node: Node,
+}
+
+impl RpcHandler for AddPeer {
+    fn parse(params: &Option<Vec<Value>>) -> Result<Self, RpcErr> {
+        let params = params
+            .as_ref()
+            .ok_or(RpcErr::BadParams("No params provided".to_owned()))?;
+
+        let node: Node = serde_json::from_value(params[0].clone())?;
+
+        Ok(Self { node })
+    }
+
+    fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
+        let _ = context
+            .discv4_sender
+            .send(ethrex_net::discv4::server::Discv4BackendMsg::AddPeer(
+                self.node,
+            ));
+
+        serde_json::to_value("Ok!").map_err(|error| RpcErr::Internal(error.to_string()))
+    }
 }
