@@ -207,6 +207,7 @@ impl PeerHandler {
         &self,
         state_root: H256,
         start: H256,
+        limit: H256,
     ) -> Option<(Vec<H256>, Vec<AccountState>, bool)> {
         for _ in 0..REQUEST_RETRY_ATTEMPTS {
             let request_id = rand::random();
@@ -214,7 +215,7 @@ impl PeerHandler {
                 id: request_id,
                 root_hash: state_root,
                 starting_hash: start,
-                limit_hash: HASH_MAX,
+                limit_hash,
                 response_bytes: MAX_RESPONSE_BYTES,
             });
             let peer = self.get_peer_channel_with_retry(Capability::Snap).await?;

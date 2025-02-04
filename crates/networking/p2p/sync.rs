@@ -4,7 +4,7 @@ use ethrex_core::{
     BigEndianHash, H256, U256, U512,
 };
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode, error::RLPDecodeError};
-use ethrex_storage::{error::StoreError, Store};
+use ethrex_storage::{error::StoreError, Store, STATE_TRIE_SEGMENTS};
 use ethrex_trie::{Nibbles, Node, TrieError, TrieState, EMPTY_TRIE_HASH};
 use std::{array, cmp::min, collections::BTreeMap, sync::Arc};
 use tokio::{
@@ -29,8 +29,6 @@ const BATCH_SIZE: usize = 300;
 const NODE_BATCH_SIZE: usize = 900;
 /// Maximum amount of concurrent paralell fetches for a queue
 const MAX_PARALLEL_FETCHES: usize = 5;
-// Number of state trie segments to fetch concurrently
-const STATE_TRIE_SEGMENTS: usize = 2;
 
 lazy_static::lazy_static! {
     // Size of each state trie segment
@@ -92,6 +90,11 @@ impl SyncManager {
     /// [WARNING] Sync is done optimistically, so headers and bodies may be stored even if their data has not been fully synced if the sync is aborted halfway
     /// [WARNING] Sync is currenlty simplified and will not download bodies + receipts previous to the pivot during snap sync
     pub async fn start_sync(&mut self, current_head: H256, sync_head: H256, store: Store) {
+        dbg!(
+            STATE_TRIE_SEGMENTS,
+            *STATE_TRIE_SEGMENTS_START,
+            *STATE_TRIE_SEGMENTS_END
+        );
         info!("Syncing from current head {current_head} to sync_head {sync_head}");
         let start_time = Instant::now();
         match self.sync_cycle(current_head, sync_head, store).await {
@@ -205,9 +208,23 @@ impl SyncManager {
                     self.peers.clone(),
                     store.clone(),
                 ));
-                let stale_pivot =
-                    !rebuild_state_trie(pivot_header.state_root, self.peers.clone(), store.clone())
-                        .await?;
+                // Spawn tasks to fetch each state trie segment
+                let mut state_trie_tasks = tokio::task::JoinSet::new();
+                let key_checkpoints = store.get_state_trie_key_checkpoint()?;
+                for i in 0..STATE_TRIE_SEGMENTS {
+                    state_trie_tasks.spawn(rebuild_state_trie(
+                        pivot_header.state_root,
+                        self.peers.clone(),
+                        store.clone(),
+                        i,
+                        key_checkpoints.map(|chs| chs[i]),
+                    ))
+                }
+                // Check for pivot staleness
+                let mut stale_pivot = false;
+                for res in state_trie_tasks.join_all().await {
+                    stale_pivot |= res?;
+                }
                 if stale_pivot {
                     warn!("Stale pivot, aborting sync");
                     return Ok(());
@@ -337,6 +354,8 @@ async fn rebuild_state_trie(
     state_root: H256,
     peers: PeerHandler,
     store: Store,
+    segment_number: usize,
+    checkpoint: Option<H256>,
 ) -> Result<bool, SyncError> {
     // Spawn storage & bytecode fetchers
     let (bytecode_sender, bytecode_receiver) = mpsc::channel::<Vec<H256>>(500);
@@ -346,9 +365,9 @@ async fn rebuild_state_trie(
         store.clone(),
     ));
     // Resume download from checkpoint if available or start from an empty trie
-    let mut start_account_hash = store.get_state_trie_key_checkpoint()?.unwrap_or_default();
+    let mut start_account_hash = checkpoint.unwrap_or(STATE_TRIE_SEGMENTS_START[segment_number]);
     // Skip state sync if we are already on healing
-    if start_account_hash != HASH_MAX {
+    if start_account_hash != *STATE_TRIE_SEGMENTS_END[segment_number] {
         let (storage_sender, storage_receiver) = mpsc::channel::<Vec<(H256, H256)>>(500);
         let storage_fetcher_handle = tokio::spawn(storage_fetcher(
             storage_receiver,
@@ -356,7 +375,7 @@ async fn rebuild_state_trie(
             store.clone(),
             state_root,
         ));
-        debug!("Starting/Resuming state trie download from key {start_account_hash}");
+        debug!("Starting/Resuming state trie download of segment number {segment_number} from key {start_account_hash}");
         // Fetch Account Ranges
         // If we reached the maximum amount of retries then it means the state we are requesting is probably old and no longer available
         let mut progress_timer = Instant::now();
@@ -376,7 +395,11 @@ async fn rebuild_state_trie(
             }
             debug!("Requesting Account Range for state root {state_root}, starting hash: {start_account_hash}");
             if let Some((account_hashes, accounts, should_continue)) = peers
-                .request_account_range(state_root, start_account_hash)
+                .request_account_range(
+                    state_root,
+                    start_account_hash,
+                    STATE_TRIE_SEGMENTS_END[segment_number],
+                )
                 .await
             {
                 debug!("Received {} account ranges", accounts.len());
@@ -431,7 +454,7 @@ async fn rebuild_state_trie(
             store.set_state_trie_key_checkpoint(start_account_hash)?;
         } else {
             // Set highest key value so we know state sync is already completed on the next cycle
-            store.set_state_trie_key_checkpoint(HASH_MAX)?;
+            store.set_state_trie_key_checkpoint(STATE_TRIE_SEGMENTS_END[segment_number])?;
         }
         info!("Account Trie Fetching ended, signaling storage fetcher process");
         // Send empty batch to signal that no more batches are incoming

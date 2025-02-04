@@ -6,7 +6,7 @@ use ethrex_core::types::{
 };
 use std::{fmt::Debug, panic::RefUnwindSafe};
 
-use crate::error::StoreError;
+use crate::{error::StoreError, STATE_TRIE_SEGMENTS};
 use ethrex_trie::{Nibbles, Trie};
 
 pub trait StoreEngine: Debug + Send + Sync + RefUnwindSafe {
@@ -258,17 +258,16 @@ pub trait StoreEngine: Debug + Send + Sync + RefUnwindSafe {
     /// Gets the hash of the last header downloaded during a snap sync
     fn get_header_download_checkpoint(&self) -> Result<Option<BlockHash>, StoreError>;
 
-    /// Sets the current state root of the state trie being rebuilt during snap sync
-    fn set_state_trie_root_checkpoint(&self, current_root: H256) -> Result<(), StoreError>;
-
-    /// Gets the current state root of the state trie being rebuilt during snap sync
-    fn get_state_trie_root_checkpoint(&self) -> Result<Option<H256>, StoreError>;
-
     /// Sets the last key fetched from the state trie being fetched during snap sync
-    fn set_state_trie_key_checkpoint(&self, last_key: H256) -> Result<(), StoreError>;
+    fn set_state_trie_key_checkpoint(
+        &self,
+        last_keys: [H256; STATE_TRIE_SEGMENTS],
+    ) -> Result<(), StoreError>;
 
     /// Gets the last key fetched from the state trie being fetched during snap sync
-    fn get_state_trie_key_checkpoint(&self) -> Result<Option<H256>, StoreError>;
+    fn get_state_trie_key_checkpoint(
+        &self,
+    ) -> Result<Option<[H256; STATE_TRIE_SEGMENTS]>, StoreError>;
 
     /// Sets the storage trie paths in need of healing, grouped by hashed address
     fn set_storage_heal_paths(&self, accounts: Vec<(H256, Vec<Nibbles>)>)

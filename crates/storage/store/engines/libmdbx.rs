@@ -6,6 +6,7 @@ use crate::rlp::{
     BlockHashRLP, BlockHeaderRLP, BlockRLP, BlockTotalDifficultyRLP, ReceiptRLP, Rlp,
     TransactionHashRLP, TupleRLP,
 };
+use crate::STATE_TRIE_SEGMENTS;
 use anyhow::Result;
 use bytes::Bytes;
 use ethereum_types::{H256, U256};
@@ -15,6 +16,7 @@ use ethrex_core::types::{
 };
 use ethrex_rlp::decode::RLPDecode;
 use ethrex_rlp::encode::RLPEncode;
+use ethrex_rlp::error::RLPDecodeError;
 use ethrex_trie::{LibmdbxDupsortTrieDB, LibmdbxTrieDB, Nibbles, Trie};
 use libmdbx::orm::{Decodable, Encodable, Table};
 use libmdbx::{
@@ -541,30 +543,25 @@ impl StoreEngine for Store {
             .map_err(StoreError::RLPDecode)
     }
 
-    fn set_state_trie_root_checkpoint(&self, current_root: H256) -> Result<(), StoreError> {
+    fn set_state_trie_key_checkpoint(
+        &self,
+        last_keys: [H256; STATE_TRIE_SEGMENTS],
+    ) -> Result<(), StoreError> {
         self.write::<SnapState>(
             SnapStateIndex::StateTrieRootCheckpoint,
-            current_root.encode_to_vec(),
+            last_keys.to_vec().encode_to_vec(),
         )
     }
 
-    fn get_state_trie_root_checkpoint(&self) -> Result<Option<H256>, StoreError> {
+    fn get_state_trie_key_checkpoint(
+        &self,
+    ) -> Result<Option<[H256; STATE_TRIE_SEGMENTS]>, StoreError> {
         self.read::<SnapState>(SnapStateIndex::StateTrieRootCheckpoint)?
-            .map(|ref h| H256::decode(h))
-            .transpose()
-            .map_err(StoreError::RLPDecode)
-    }
-
-    fn set_state_trie_key_checkpoint(&self, last_key: H256) -> Result<(), StoreError> {
-        self.write::<SnapState>(
-            SnapStateIndex::StateTrieRootCheckpoint,
-            last_key.encode_to_vec(),
-        )
-    }
-
-    fn get_state_trie_key_checkpoint(&self) -> Result<Option<H256>, StoreError> {
-        self.read::<SnapState>(SnapStateIndex::StateTrieRootCheckpoint)?
-            .map(|ref h| H256::decode(h))
+            .map(|ref c| {
+                <Vec<H256>>::decode(c)?
+                    .try_into()
+                    .map_err(|_| RLPDecodeError::InvalidLength)
+            })
             .transpose()
             .map_err(StoreError::RLPDecode)
     }

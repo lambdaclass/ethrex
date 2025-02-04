@@ -26,6 +26,9 @@ mod engines;
 pub mod error;
 mod rlp;
 
+/// Number of state trie segments to fetch concurrently during state sync
+pub const STATE_TRIE_SEGMENTS: usize = 1;
+
 #[derive(Debug, Clone)]
 pub struct Store {
     // TODO: Check if we can remove this mutex and move it to the in_memory::Store struct
@@ -1013,23 +1016,18 @@ impl Store {
         self.engine.get_header_download_checkpoint()
     }
 
-    /// Sets the current state root of the state trie being rebuilt during snap sync
-    pub fn set_state_trie_root_checkpoint(&self, current_root: H256) -> Result<(), StoreError> {
-        self.engine.set_state_trie_root_checkpoint(current_root)
-    }
-
-    /// Gets the current state root of the state trie being rebuilt during snap sync
-    pub fn get_state_trie_root_checkpoint(&self) -> Result<Option<H256>, StoreError> {
-        self.engine.get_state_trie_root_checkpoint()
-    }
-
     /// Sets the last key fetched from the state trie being fetched during snap sync
-    pub fn set_state_trie_key_checkpoint(&self, last_key: H256) -> Result<(), StoreError> {
-        self.engine.set_state_trie_key_checkpoint(last_key)
+    pub fn set_state_trie_key_checkpoint(
+        &self,
+        last_keys: [H256; STATE_TRIE_SEGMENTS],
+    ) -> Result<(), StoreError> {
+        self.engine.set_state_trie_key_checkpoint(last_keys)
     }
 
     /// Gets the last key fetched from the state trie being fetched during snap sync
-    pub fn get_state_trie_key_checkpoint(&self) -> Result<Option<H256>, StoreError> {
+    pub fn get_state_trie_key_checkpoint(
+        &self,
+    ) -> Result<Option<[H256; STATE_TRIE_SEGMENTS]>, StoreError> {
         self.engine.get_state_trie_key_checkpoint()
     }
 
