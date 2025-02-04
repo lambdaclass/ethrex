@@ -56,7 +56,6 @@ impl PeerHandler {
     async fn get_peer_channel_with_retry(&self, capability: Capability) -> Option<PeerChannels> {
         for _ in 0..PEER_SELECT_RETRY_ATTEMPTS {
             let table = self.peer_table.lock().await;
-            table.show_peer_stats();
             if let Some(channels) = table.get_peer_channels(capability.clone()) {
                 return Some(channels);
             };

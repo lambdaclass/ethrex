@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::{fmt::Debug, sync::Arc};
 
 use crate::{
     discv4::messages::FindNodeRequest,
@@ -215,7 +215,7 @@ impl KademliaTable {
     }
 
     /// Returns an iterator for all peers in the table that match the filter
-    fn filter_peers<'a>(
+    pub fn filter_peers<'a>(
         &'a self,
         filter: &'a dyn Fn(&'a PeerData) -> bool,
     ) -> impl Iterator<Item = &'a PeerData> {
@@ -312,19 +312,6 @@ impl KademliaTable {
         };
         self.get_random_peer_with_filter(&filter)
             .and_then(|peer| peer.channels.clone())
-    }
-
-    /// Outputs total amount of peers, active peers, and active peers supporting the Snap Capability to the command line
-    pub fn show_peer_stats(&self) {
-        let active_filter = |peer: &PeerData| -> bool { peer.channels.as_ref().is_some() };
-        let snap_active_filter = |peer: &PeerData| -> bool {
-            peer.channels.as_ref().is_some()
-                && peer.supported_capabilities.contains(&Capability::Snap)
-        };
-        let total_peers = self.iter_peers().count();
-        let active_peers = self.filter_peers(&active_filter).count();
-        let snap_active_peers = self.filter_peers(&snap_active_filter).count();
-        info!("Snap Peers: {snap_active_peers} / Active Peers {active_peers} / Total Peers: {total_peers}")
     }
 }
 

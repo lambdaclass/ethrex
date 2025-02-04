@@ -276,7 +276,7 @@ async fn main() {
             let block_producer_engine = ethrex_dev::block_producer::start_block_producer(url, authrpc_jwtsecret.into(), head_block_hash, max_tries, 1000, ethrex_core::Address::default());
             tracker.spawn(block_producer_engine);
         } else {
-            let (tx, mut receiver) = tokio::sync::mpsc::unbounded_channel::<Discv4BackendMsg>();
+            let (tx, receiver) = tokio::sync::mpsc::unbounded_channel::<Discv4BackendMsg>();
            ethrex_net::start_network(
                 local_p2p_node,
                 tracker.clone(),

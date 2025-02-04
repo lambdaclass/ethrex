@@ -9,8 +9,12 @@ use k256::{
     elliptic_curve::{sec1::ToEncodedPoint, PublicKey},
 };
 pub use kademlia::KademliaTable;
-use rlpx::{connection::RLPxConnBroadcastSender, handshake, message::Message as RLPxMessage};
-use std::{io, net::SocketAddr, sync::Arc};
+use kademlia::PeerData;
+use rlpx::{
+    connection::RLPxConnBroadcastSender, handshake, message::Message as RLPxMessage,
+    p2p::Capability,
+};
+use std::{fmt, io, net::SocketAddr, sync::Arc};
 use tokio::{
     net::{TcpListener, TcpSocket, TcpStream},
     sync::Mutex,
@@ -176,12 +180,47 @@ pub fn node_id_from_signing_key(signer: &SigningKey) -> H512 {
     H512::from_slice(&encoded.as_bytes()[1..])
 }
 
+struct DebugPeer {
+    enode_url: String,
+    node: Node,
+    capabilities: Vec<Capability>,
+}
+
+impl std::fmt::Debug for DebugPeer {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "\n")?;
+        writeln!(f, "node_id: {}", self.node.node_id)?;
+        writeln!(f, "enode_url: {}", self.enode_url)?;
+        writeln!(f, "capabilites: {:?}", self.capabilities)?;
+
+        Ok(())
+    }
+}
+
 /// Shows the amount of connected peers, active peers, and peers suitable for snap sync on a set interval
 pub async fn periodically_show_peer_stats(peer_table: Arc<Mutex<KademliaTable>>) {
-    const INTERVAL_DURATION: tokio::time::Duration = tokio::time::Duration::from_secs(120);
+    const INTERVAL_DURATION: tokio::time::Duration = tokio::time::Duration::from_secs(10);
     let mut interval = tokio::time::interval(INTERVAL_DURATION);
     loop {
-        peer_table.lock().await.show_peer_stats();
+        let active_filter = |peer: &PeerData| -> bool { peer.channels.as_ref().is_some() };
+        let peers: Vec<PeerData> = peer_table
+            .lock()
+            .await
+            .filter_peers(&active_filter)
+            .cloned()
+            .collect();
+
+        let peers: Vec<DebugPeer> = peers
+            .iter()
+            .map(|p| DebugPeer {
+                node: p.node,
+                enode_url: p.node.enode_url(),
+                capabilities: p.supported_capabilities.clone(),
+            })
+            .collect();
+
+        info!("Peer stats {:?}", peers);
+
         interval.tick().await;
     }
 }
