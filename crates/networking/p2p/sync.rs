@@ -33,6 +33,8 @@ pub enum SyncMode {
     Full,
     Snap,
 }
+
+/// Manager in charge the sync process
 /// Only performs full-sync but will also be in charge of snap-sync in the future
 #[derive(Debug)]
 pub struct SyncManager {
