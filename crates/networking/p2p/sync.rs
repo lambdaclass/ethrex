@@ -268,7 +268,7 @@ async fn store_block_bodies(
     store: Store,
 ) -> Result<(), SyncError> {
     loop {
-        debug!("Requesting Block Headers ");
+        //debug!("Requesting Block Headers ");
         if let Some(block_bodies) = peers.request_block_bodies(block_hashes.clone()).await {
             debug!(" Received {} Block Bodies", block_bodies.len());
             // Track which bodies we have already fetched
@@ -296,7 +296,7 @@ async fn store_receipts(
     store: Store,
 ) -> Result<(), SyncError> {
     loop {
-        debug!("Requesting Block Headers ");
+        //debug!("Requesting Block Headers ");
         if let Some(receipts) = peers.request_receipts(block_hashes.clone()).await {
             debug!(" Received {} Receipts", receipts.len());
             // Track which blocks we have already fetched receipts for
