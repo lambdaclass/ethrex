@@ -12,7 +12,7 @@ pub use kademlia::KademliaTable;
 use kademlia::PeerData;
 use rlpx::{
     connection::RLPxConnBroadcastSender, handshake, message::Message as RLPxMessage,
-    p2p::Capability,
+    p2p::Capability, utils::log_peer_error,
 };
 use std::{fmt, io, net::SocketAddr, sync::Arc};
 use tokio::{
@@ -143,7 +143,7 @@ async fn handle_peer_as_receiver(context: P2PContext, peer_addr: SocketAddr, str
     match handshake::as_receiver(context, peer_addr, stream).await {
         Ok(mut conn) => conn.start(table).await,
         Err(e) => {
-            error!("Error creating tcp connection with peer at {peer_addr}: {e}")
+            // log_peer_error(&node, &format!("Error creating tcp connection {e}"));
         }
     }
 }
@@ -154,7 +154,7 @@ async fn handle_peer_as_initiator(context: P2PContext, node: Node) {
         Ok(result) => result,
         Err(e) => {
             context.table.lock().await.replace_peer(node.node_id);
-            error!("Error establishing tcp connection with peer at {addr}: {e}");
+            log_peer_error(&node, &format!("Error creating tcp connection {e}"));
             return;
         }
     };
@@ -165,7 +165,7 @@ async fn handle_peer_as_initiator(context: P2PContext, node: Node) {
             // TODO We should remove the peer from the table if connection failed
             // but currently it will make the tests fail
             table.lock().await.replace_peer(node.node_id);
-            error!("Error creating tcp connection with peer at {addr}: {e}")
+            log_peer_error(&node, &format!("Error creating tcp connection {e}"));
         }
     };
 }
