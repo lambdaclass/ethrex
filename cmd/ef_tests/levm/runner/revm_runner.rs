@@ -449,7 +449,6 @@ pub fn _run_ef_test_tx_revm(
     test: &EFTest,
     fork: &Fork,
 ) -> Result<(), EFTestRunnerError> {
-    // dbg!(vector);
     let (mut state, _block_hash) = load_initial_state(test);
     let mut revm = prepare_revm_for_tx(&mut state, vector, test, fork)?;
     let revm_execution_result = revm.transact_commit();

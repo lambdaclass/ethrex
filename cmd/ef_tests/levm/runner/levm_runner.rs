@@ -31,6 +31,9 @@ pub fn run_ef_test(test: &EFTest) -> Result<EFTestReport, EFTestRunnerError> {
         let mut ef_test_report_fork = EFTestReportForkResult::new();
 
         for (vector, _tx) in test.transactions.iter() {
+            if !test.post.has_vector_for_fork(vector, *fork) {
+                continue;
+            }
             match run_ef_test_tx(vector, test, fork) {
                 Ok(_) => continue,
                 Err(EFTestRunnerError::VMInitializationFailed(reason)) => {
