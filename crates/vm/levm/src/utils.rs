@@ -6,6 +6,7 @@ use crate::{
         cache::{self},
         CacheDB, Database,
     },
+    environment::Environment,
     errors::{InternalError, OutOfGasError, TxValidationError, VMError},
     gas_cost::{
         self, fake_exponential, ACCESS_LIST_ADDRESS_COST, ACCESS_LIST_STORAGE_KEY_COST,
@@ -313,6 +314,30 @@ pub fn get_intrinsic_gas(
         .ok_or(OutOfGasError::ConsumedGasOverflow)?;
 
     Ok(intrinsic_gas)
+}
+
+pub fn add_intrinsic_gas(
+    is_create: bool,
+    fork: Fork,
+    initial_call_frame: &mut CallFrame,
+    access_list: &AccessList,
+    authorization_list: &Option<AuthorizationList>,
+) -> Result<(), VMError> {
+    // Intrinsic gas is the gas consumed by the transaction before the execution of the opcodes. Section 6.2 in the Yellow Paper.
+
+    let intrinsic_gas = get_intrinsic_gas(
+        is_create,
+        fork,
+        &access_list,
+        &authorization_list,
+        initial_call_frame,
+    )?;
+
+    initial_call_frame
+        .increase_consumed_gas(intrinsic_gas)
+        .map_err(|_| TxValidationError::IntrinsicGasTooLow)?;
+
+    Ok(())
 }
 
 // ================= Blob hash related functions =====================

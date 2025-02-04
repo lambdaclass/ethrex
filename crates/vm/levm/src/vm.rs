@@ -358,24 +358,6 @@ impl VM {
         matches!(self.tx_kind, TxKind::Create)
     }
 
-    fn add_intrinsic_gas(&mut self, initial_call_frame: &mut CallFrame) -> Result<(), VMError> {
-        // Intrinsic gas is the gas consumed by the transaction before the execution of the opcodes. Section 6.2 in the Yellow Paper.
-
-        let intrinsic_gas = get_intrinsic_gas(
-            self.is_create(),
-            self.env.config.fork,
-            &self.access_list,
-            &self.authorization_list,
-            initial_call_frame,
-        )?;
-
-        initial_call_frame
-            .increase_consumed_gas(intrinsic_gas)
-            .map_err(|_| TxValidationError::IntrinsicGasTooLow)?;
-
-        Ok(())
-    }
-
     fn gas_used(
         &self,
         initial_call_frame: &CallFrame,
@@ -561,7 +543,13 @@ impl VM {
         }
 
         // (6) INTRINSIC_GAS_TOO_LOW
-        self.add_intrinsic_gas(initial_call_frame)?;
+        add_intrinsic_gas(
+            self.is_create(),
+            self.env.config.fork,
+            initial_call_frame,
+            &self.access_list,
+            &self.authorization_list,
+        )?;
 
         // (7) NONCE_IS_MAX
         increment_account_nonce(&mut self.cache, &self.db, sender_address)
