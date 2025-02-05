@@ -83,19 +83,21 @@ stop-localnet-silent:
 	@kurtosis enclave stop $(ENCLAVE) >/dev/null 2>&1 || true
 	@kurtosis enclave rm $(ENCLAVE) --force >/dev/null 2>&1 || true
 
-HIVE_REVISION := e95ca293cc3fb95a6d964938cd24958e8afa55fa
+HIVE_REVISION := b0b0f98bd24676239722e3aa7885e29ef856d804
 # Shallow clones can't specify a single revision, but at least we avoid working
 # the whole history by making it shallow since a given date (one day before our
 # target revision).
 HIVE_SHALLOW_SINCE := 2024-09-02
 QUIET ?= false
+# TODO change it back when we merge the PR.
+# 		git clone --quiet --single-branch --branch master --shallow-since=$(HIVE_SHALLOW_SINCE) https://github.com/lambdaclass/hive ; \
+# 		git clone --single-branch --branch master --shallow-since=$(HIVE_SHALLOW_SINCE) https://github.com/lambdaclass/hive ; \
+
 hive:
 	if [ "$(QUIET)" = "true" ]; then \
-		git clone --quiet --single-branch --branch master --shallow-since=$(HIVE_SHALLOW_SINCE) https://github.com/lambdaclass/hive && \
-		cd hive && git checkout --quiet --detach $(HIVE_REVISION) && go build .; \
+		git clone --quiet https://github.com/lambdaclass/hive; \
 	else \
-		git clone --single-branch --branch master --shallow-since=$(HIVE_SHALLOW_SINCE) https://github.com/lambdaclass/hive && \
-		cd hive && git checkout --detach $(HIVE_REVISION) && go build .; \
+		git clone  https://github.com/lambdaclass/hive; \
 	fi
 
 setup-hive: hive ## 🐝 Set up Hive testing framework
@@ -169,17 +171,18 @@ install-cli: ## 🛠️ Installs the ethrex-l2 cli
 
 start-node-with-flamegraph: rm-test-db ## 🚀🔥 Starts an ethrex client used for testing
 	@if [ -z "$$L" ]; then \
-		LEVM=""; \
+		LEVM="revm"; \
 		echo "Running the test-node without the LEVM feature"; \
 		echo "If you want to use levm, run the target with an L at the end: make <target> L=1"; \
 	else \
-		LEVM=",levm"; \
+		LEVM="levm"; \
 		echo "Running the test-node with the LEVM feature"; \
 	fi; \
-	sudo CARGO_PROFILE_RELEASE_DEBUG=true cargo flamegraph \
+	sudo -E CARGO_PROFILE_RELEASE_DEBUG=true cargo flamegraph \
 	--bin ethrex \
-	--features "dev$$LEVM" \
+	--features "dev" \
 	--  \
+	--evm $$LEVM \
 	--network test_data/genesis-l2.json \
 	--http.port 1729 \
 	--datadir test_ethrex
@@ -193,14 +196,10 @@ load-node: install-cli ## 🚧 Runs a load-test. Run make start-node-with-flameg
 		CONTRACT_INTERACTION="-c"; \
 		echo "Running the load-test with contract interaction"; \
 	fi; \
-	ethrex_l2 test load --path test_data/private_keys.txt -i 100 -v  --value 1 $$CONTRACT_INTERACTION
+	ethrex_l2 test load --path test_data/private_keys.txt -i 1000 -v  --value 100000 $$CONTRACT_INTERACTION
 
 rm-test-db:  ## 🛑 Removes the DB used by the ethrex client used for testing
 	sudo cargo run --release --bin ethrex -- removedb --datadir test_ethrex
 
-flamegraph:
-	sudo -E CARGO_PROFILE_RELEASE_DEBUG=true cargo flamegraph --bin ethrex --features dev  --  --network test_data/genesis-l2.json --http.port 1729 >/dev/null &
+flamegraph: ## 🚧 Runs a load-test. Run make start-node-with-flamegraph and in a new terminal make flamegraph
 	bash scripts/flamegraph.sh
-
-test-load:
-	ethrex_l2 test load --path ./test_data/private_keys.txt -i 1000 -v  --value 10000000 --to 0xFCbaC0713ACf16708aB6BC977227041FA1BC618D
