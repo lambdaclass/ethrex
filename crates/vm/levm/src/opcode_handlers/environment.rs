@@ -39,7 +39,7 @@ impl VM {
 
         let (account_info, address_was_cold) = access_account(
             &mut self.cache,
-            &self.db,
+            self.db.clone(),
             &mut self.accrued_substate,
             address,
         );
@@ -288,7 +288,7 @@ impl VM {
 
         let (account_info, address_was_cold) = access_account(
             &mut self.cache,
-            &self.db,
+            self.db.clone(),
             &mut self.accrued_substate,
             address,
         );
@@ -323,7 +323,7 @@ impl VM {
 
         let (account_info, address_was_cold) = access_account(
             &mut self.cache,
-            &mut self.db,
+            self.db.clone(),
             &mut self.accrued_substate,
             address,
         );
@@ -449,7 +449,7 @@ impl VM {
 
         let (account_info, address_was_cold) = access_account(
             &mut self.cache,
-            &self.db,
+            self.db.clone(),
             &mut self.accrued_substate,
             address,
         );

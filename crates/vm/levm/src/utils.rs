@@ -127,7 +127,7 @@ pub fn get_valid_jump_destinations(code: &Bytes) -> Result<HashSet<usize>, VMErr
 // ================== Account related functions =====================
 /// Gets account, first checking the cache and then the database
 /// (caching in the second case)
-pub fn get_account(cache: &mut CacheDB, db: &Arc<dyn Database>, address: Address) -> Account {
+pub fn get_account(cache: &mut CacheDB, db: Arc<dyn Database>, address: Address) -> Account {
     match cache::get_account(cache, &address) {
         Some(acc) => acc.clone(),
         None => {
@@ -144,7 +144,7 @@ pub fn get_account(cache: &mut CacheDB, db: &Arc<dyn Database>, address: Address
 
 pub fn get_account_no_push_cache(
     cache: &CacheDB,
-    db: &Arc<dyn Database>,
+    db: Arc<dyn Database>,
     address: Address,
 ) -> Account {
     match cache::get_account(cache, &address) {
@@ -161,7 +161,7 @@ pub fn get_account_no_push_cache(
 
 pub fn get_account_mut_vm<'vm>(
     cache: &'vm mut CacheDB,
-    db: &'vm Arc<dyn Database>,
+    db: Arc<dyn Database>,
     address: Address,
 ) -> Result<&'vm mut Account, VMError> {
     if !cache::is_account_cached(cache, &address) {
@@ -177,7 +177,7 @@ pub fn get_account_mut_vm<'vm>(
 
 pub fn increase_account_balance(
     cache: &mut CacheDB,
-    db: &mut Arc<dyn Database>,
+    db: Arc<dyn Database>,
     address: Address,
     increase: U256,
 ) -> Result<(), VMError> {
@@ -192,7 +192,7 @@ pub fn increase_account_balance(
 
 pub fn decrease_account_balance(
     cache: &mut CacheDB,
-    db: &mut Arc<dyn Database>,
+    db: Arc<dyn Database>,
     address: Address,
     decrease: U256,
 ) -> Result<(), VMError> {
@@ -212,7 +212,7 @@ pub fn decrease_account_balance(
 #[must_use]
 pub fn access_account(
     cache: &mut CacheDB,
-    db: &Arc<dyn Database>,
+    db: Arc<dyn Database>,
     accrued_substate: &mut Substate,
     address: Address,
 ) -> (AccountInfo, bool) {
@@ -227,7 +227,7 @@ pub fn access_account(
 // ================== Bytecode related functions =====================
 pub fn update_account_bytecode(
     cache: &mut CacheDB,
-    db: &Arc<dyn Database>,
+    db: Arc<dyn Database>,
     address: Address,
     new_bytecode: Bytes,
 ) -> Result<(), VMError> {
@@ -423,7 +423,7 @@ pub fn get_number_of_topics(op: Opcode) -> Result<u8, VMError> {
 // =================== Nonce related functions ======================
 pub fn increment_account_nonce(
     cache: &mut CacheDB,
-    db: &Arc<dyn Database>,
+    db: Arc<dyn Database>,
     address: Address,
 ) -> Result<u64, VMError> {
     let account = get_account_mut_vm(cache, db, address)?;
@@ -437,7 +437,7 @@ pub fn increment_account_nonce(
 
 pub fn decrement_account_nonce(
     cache: &mut CacheDB,
-    db: &Arc<dyn Database>,
+    db: Arc<dyn Database>,
     address: Address,
 ) -> Result<(), VMError> {
     let account = get_account_mut_vm(cache, db, address)?;
@@ -494,7 +494,7 @@ pub fn get_authorized_address(account_info: &AccountInfo) -> Result<Address, VME
 /// Sets the account code as the EIP7702 determines.
 pub fn eip7702_set_access_code(
     cache: &mut CacheDB,
-    db: &mut Arc<dyn Database>,
+    db: Arc<dyn Database>,
     chain_id: U256,
     accrued_substate: &mut Substate,
     authorization_list: Option<AuthorizationList>,
@@ -504,6 +504,7 @@ pub fn eip7702_set_access_code(
     // IMPORTANT:
     // If any of the below steps fail, immediately stop processing that tuple and continue to the next tuple in the list. It will in the case of multiple tuples for the same authority, set the code using the address in the last valid occurrence.
     // If transaction execution results in failure (any exceptional condition or code reverting), setting delegation designations is not rolled back.
+    let db_ref = db.clone();
     for auth_tuple in authorization_list.unwrap_or_default() {
         let chain_id_not_equals_this_chain_id = auth_tuple.chain_id != chain_id;
         let chain_id_not_zero = !auth_tuple.chain_id.is_zero();
@@ -527,7 +528,8 @@ pub fn eip7702_set_access_code(
 
         // 4. Add authority to accessed_addresses (as defined in EIP-2929).
         accrued_substate.touched_accounts.insert(authority_address);
-        let authority_account_info = get_account_no_push_cache(&cache, &db, authority_address).info;
+        let authority_account_info =
+            get_account_no_push_cache(&cache, db_ref.clone(), authority_address).info;
 
         // 5. Verify the code of authority is either empty or already delegated.
         let empty_or_delegated =
@@ -546,7 +548,7 @@ pub fn eip7702_set_access_code(
         // 7. Add PER_EMPTY_ACCOUNT_COST - PER_AUTH_BASE_COST gas to the global refund counter if authority exists in the trie.
         // CHECK: we don't know if checking the cache is correct. More gas tests pass but the set_code_txs tests went to half.
         if cache::is_account_cached(&cache, &authority_address)
-            || db.account_exists(authority_address)
+            || db_ref.account_exists(authority_address)
         {
             let refunded_gas_if_exists = PER_EMPTY_ACCOUNT_COST - PER_AUTH_BASE_COST;
             refunded_gas = refunded_gas
@@ -568,8 +570,8 @@ pub fn eip7702_set_access_code(
             None => {
                 // This is to add the account to the cache
                 // NOTE: Refactor in the future
-                get_account(cache, &db, authority_address);
-                get_account_mut_vm(cache, &db, authority_address)?
+                get_account(cache, db.clone(), authority_address);
+                get_account_mut_vm(cache, db.clone(), authority_address)?
             }
         };
 
@@ -581,17 +583,25 @@ pub fn eip7702_set_access_code(
         };
 
         // 9. Increase the nonce of authority by one.
-        increment_account_nonce(cache, &db, authority_address)
+        increment_account_nonce(cache, db.clone(), authority_address)
             .map_err(|_| VMError::TxValidation(TxValidationError::NonceIsMax))?;
     }
 
-    let (code_address_info, _) =
-        access_account(cache, db, accrued_substate, initial_call_frame.code_address);
+    let (code_address_info, _) = access_account(
+        cache,
+        db.clone(),
+        accrued_substate,
+        initial_call_frame.code_address,
+    );
 
     if has_delegation(&code_address_info)? {
         initial_call_frame.code_address = get_authorized_address(&code_address_info)?;
-        let (auth_address_info, _) =
-            access_account(cache, db, accrued_substate, initial_call_frame.code_address);
+        let (auth_address_info, _) = access_account(
+            cache,
+            db.clone(),
+            accrued_substate,
+            initial_call_frame.code_address,
+        );
 
         initial_call_frame.bytecode = auth_address_info.bytecode.clone();
     } else {
@@ -691,12 +701,12 @@ pub fn eip7702_recover_address(
 /// https://github.com/ethereum/execution-specs/blob/951fc43a709b493f27418a8e57d2d6f3608cef84/src/ethereum/prague/vm/eoa_delegation.py#L115
 pub fn eip7702_get_code(
     cache: &mut CacheDB,
-    db: &Arc<dyn Database>,
+    db: Arc<dyn Database>,
     accrued_substate: &mut Substate,
     address: Address,
 ) -> Result<(bool, u64, Address, Bytes), VMError> {
     // Address is the delgated address
-    let account = get_account(cache, db, address);
+    let account = get_account(cache, db.clone(), address);
     let bytecode = account.info.bytecode.clone();
 
     // If the Address doesn't have a delegation code
@@ -718,7 +728,7 @@ pub fn eip7702_get_code(
         COLD_ADDRESS_ACCESS_COST
     };
 
-    let authorized_bytecode = get_account(cache, db, auth_address).info.bytecode;
+    let authorized_bytecode = get_account(cache, db.clone(), auth_address).info.bytecode;
 
     Ok((true, access_cost, auth_address, authorized_bytecode))
 }

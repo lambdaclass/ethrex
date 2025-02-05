@@ -234,7 +234,7 @@ impl VM {
             TxKind::Call(address_to) => {
                 default_touched_accounts.insert(address_to);
 
-                let bytecode = get_account_no_push_cache(&cache, &db, address_to)
+                let bytecode = get_account_no_push_cache(&cache, db.clone(), address_to)
                     .info
                     .bytecode;
 
@@ -275,7 +275,7 @@ impl VM {
             TxKind::Create => {
                 // CREATE tx
 
-                let sender_nonce = get_account(&mut cache, &db, env.origin).info.nonce;
+                let sender_nonce = get_account(&mut cache, db.clone(), env.origin).info.nonce;
                 let new_contract_address = calculate_create_address(env.origin, sender_nonce)
                     .map_err(|_| VMError::Internal(InternalError::CouldNotComputeCreateAddress))?;
 
@@ -410,7 +410,7 @@ impl VM {
     ///   See 'docs' for more information about validations.
     fn prepare_execution(&mut self, initial_call_frame: &mut CallFrame) -> Result<(), VMError> {
         let sender_address = self.env.origin;
-        let sender_account = get_account(&mut self.cache, &self.db, sender_address);
+        let sender_account = get_account(&mut self.cache, self.db.clone(), sender_address);
 
         if self.env.config.fork >= Fork::Prague {
             // check for gas limit is grater or equal than the minimum required
@@ -524,8 +524,13 @@ impl VM {
         // technically, the sender will not be able to pay it.
 
         // (3) INSUFFICIENT_ACCOUNT_FUNDS
-        decrease_account_balance(&mut self.cache, &mut self.db, sender_address, up_front_cost)
-            .map_err(|_| TxValidationError::InsufficientAccountFunds)?;
+        decrease_account_balance(
+            &mut self.cache,
+            self.db.clone(),
+            sender_address,
+            up_front_cost,
+        )
+        .map_err(|_| TxValidationError::InsufficientAccountFunds)?;
 
         // (4) INSUFFICIENT_MAX_FEE_PER_GAS
         if self.env.tx_max_fee_per_gas.unwrap_or(self.env.gas_price) < self.env.base_fee_per_gas {
@@ -556,7 +561,7 @@ impl VM {
         )?;
 
         // (7) NONCE_IS_MAX
-        increment_account_nonce(&mut self.cache, &self.db, sender_address)
+        increment_account_nonce(&mut self.cache, self.db.clone(), sender_address)
             .map_err(|_| VMError::TxValidation(TxValidationError::NonceIsMax))?;
 
         // (8) PRIORITY_GREATER_THAN_MAX_FEE_PER_GAS
@@ -658,7 +663,7 @@ impl VM {
 
             self.env.refunded_gas = eip7702_set_access_code(
                 &mut self.cache,
-                &mut self.db,
+                self.db.clone(),
                 self.env.chain_id,
                 &mut self.accrued_substate,
                 // TODO: avoid clone()
@@ -677,7 +682,7 @@ impl VM {
             // It's here to avoid storing the "to" address in the cache before eip7702_set_access_code() step 7).
             increase_account_balance(
                 &mut self.cache,
-                &mut self.db,
+                self.db.clone(),
                 initial_call_frame.to,
                 initial_call_frame.msg_value,
             )?;
@@ -701,7 +706,7 @@ impl VM {
 
         // 1. Undo value transfer if the transaction has reverted
         if let TxResult::Revert(_) = report.result {
-            let existing_account = get_account(&mut self.cache, &self.db, receiver_address); //TO Account
+            let existing_account = get_account(&mut self.cache, self.db.clone(), receiver_address); //TO Account
 
             if has_delegation(&existing_account.info)? {
                 // This is the case where the "to" address and the
@@ -715,7 +720,7 @@ impl VM {
                 // delegation designations is not rolled back.
                 decrease_account_balance(
                     &mut self.cache,
-                    &mut self.db,
+                    self.db.clone(),
                     receiver_address,
                     initial_call_frame.msg_value,
                 )?;
@@ -726,7 +731,7 @@ impl VM {
 
             increase_account_balance(
                 &mut self.cache,
-                &mut self.db,
+                self.db.clone(),
                 sender_address,
                 initial_call_frame.msg_value,
             )?;
@@ -756,7 +761,7 @@ impl VM {
 
         increase_account_balance(
             &mut self.cache,
-            &mut self.db,
+            self.db.clone(),
             sender_address,
             wei_return_amount,
         )?;
@@ -780,7 +785,7 @@ impl VM {
         if coinbase_fee != U256::zero() {
             increase_account_balance(
                 &mut self.cache,
-                &mut self.db,
+                self.db.clone(),
                 coinbase_address,
                 coinbase_fee,
             )?;
@@ -790,7 +795,7 @@ impl VM {
         // In Cancun the only addresses destroyed are contracts created in this transaction
         let selfdestruct_set = self.accrued_substate.selfdestruct_set.clone();
         for address in selfdestruct_set {
-            let account_to_remove = get_account_mut_vm(&mut self.cache, &self.db, address)?;
+            let account_to_remove = get_account_mut_vm(&mut self.cache, self.db.clone(), address)?;
             *account_to_remove = Account::default();
         }
 
@@ -809,7 +814,7 @@ impl VM {
         //  Add created contract to cache, reverting transaction if the address is already occupied
         if self.is_create() {
             let new_contract_address = initial_call_frame.to;
-            let new_account = get_account(&mut self.cache, &self.db, new_contract_address);
+            let new_account = get_account(&mut self.cache, self.db.clone(), new_contract_address);
 
             let value = initial_call_frame.msg_value;
             let balance = new_account
@@ -884,7 +889,7 @@ impl VM {
 
         // When updating account storage of an account that's not yet cached we need to store the StorageSlot in the account
         // Note: We end up caching the account because it is the most straightforward way of doing it.
-        let account = get_account_mut_vm(&mut self.cache, &self.db, address)?;
+        let account = get_account_mut_vm(&mut self.cache, self.db.clone(), address)?;
         account.storage.insert(key, storage_slot.clone());
 
         Ok((storage_slot, storage_slot_was_cold))
@@ -896,7 +901,7 @@ impl VM {
         key: H256,
         new_value: U256,
     ) -> Result<(), VMError> {
-        let account = get_account_mut_vm(&mut self.cache, &self.db, address)?;
+        let account = get_account_mut_vm(&mut self.cache, self.db.clone(), address)?;
         let account_original_storage_slot_value = account
             .storage
             .get(&key)

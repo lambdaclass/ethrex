@@ -49,14 +49,14 @@ impl VM {
 
         let (account_info, address_was_cold) = access_account(
             &mut self.cache,
-            &self.db,
+            self.db.clone(),
             &mut self.accrued_substate,
             callee,
         );
 
         let (is_delegation, eip7702_gas_consumed, code_address, bytecode) = eip7702_get_code(
             &mut self.cache,
-            &self.db,
+            self.db.clone(),
             &mut self.accrued_substate,
             callee,
         )?;
@@ -137,14 +137,14 @@ impl VM {
 
         let (_account_info, address_was_cold) = access_account(
             &mut self.cache,
-            &mut self.db,
+            self.db.clone(),
             &mut self.accrued_substate,
             code_address,
         );
 
         let (is_delegation, eip7702_gas_consumed, code_address, bytecode) = eip7702_get_code(
             &mut self.cache,
-            &self.db,
+            self.db.clone(),
             &mut self.accrued_substate,
             code_address,
         )?;
@@ -245,7 +245,7 @@ impl VM {
         // GAS
         let (_account_info, address_was_cold) = access_account(
             &mut self.cache,
-            &mut self.db,
+            self.db.clone(),
             &mut self.accrued_substate,
             code_address,
         );
@@ -258,7 +258,7 @@ impl VM {
 
         let (is_delegation, eip7702_gas_consumed, code_address, bytecode) = eip7702_get_code(
             &mut self.cache,
-            &self.db,
+            self.db.clone(),
             &mut self.accrued_substate,
             code_address,
         )?;
@@ -329,7 +329,7 @@ impl VM {
         // GAS
         let (_account_info, address_was_cold) = access_account(
             &mut self.cache,
-            &mut self.db,
+            self.db.clone(),
             &mut self.accrued_substate,
             code_address,
         );
@@ -342,7 +342,7 @@ impl VM {
 
         let (is_delegation, eip7702_gas_consumed, _, bytecode) = eip7702_get_code(
             &mut self.cache,
-            &self.db,
+            self.db.clone(),
             &mut self.accrued_substate,
             code_address,
         )?;
@@ -512,14 +512,14 @@ impl VM {
 
         let (target_account_info, target_account_is_cold) = access_account(
             &mut self.cache,
-            &mut self.db,
+            self.db.clone(),
             &mut self.accrued_substate,
             target_address,
         );
 
         let (current_account_info, _current_account_is_cold) = access_account(
             &mut self.cache,
-            &mut self.db,
+            self.db.clone(),
             &mut self.accrued_substate,
             current_call_frame.to,
         );
@@ -535,13 +535,13 @@ impl VM {
         if self.env.config.fork >= Fork::Cancun {
             increase_account_balance(
                 &mut self.cache,
-                &mut self.db,
+                self.db.clone(),
                 target_address,
                 balance_to_transfer,
             )?;
             decrease_account_balance(
                 &mut self.cache,
-                &mut self.db,
+                self.db.clone(),
                 current_call_frame.to,
                 balance_to_transfer,
             )?;
@@ -553,7 +553,7 @@ impl VM {
                 .contains(&current_call_frame.to)
             {
                 // If target is the same as the contract calling, Ether will be burnt.
-                get_account_mut_vm(&mut self.cache, &self.db, current_call_frame.to)?
+                get_account_mut_vm(&mut self.cache, self.db.clone(), current_call_frame.to)?
                     .info
                     .balance = U256::zero();
 
@@ -564,11 +564,11 @@ impl VM {
         } else {
             increase_account_balance(
                 &mut self.cache,
-                &mut self.db,
+                self.db.clone(),
                 target_address,
                 balance_to_transfer,
             )?;
-            get_account_mut_vm(&mut self.cache, &self.db, current_call_frame.to)?
+            get_account_mut_vm(&mut self.cache, self.db.clone(), current_call_frame.to)?
                 .info
                 .balance = U256::zero();
 
@@ -610,7 +610,7 @@ impl VM {
 
         let deployer_account_info = access_account(
             &mut self.cache,
-            &mut self.db,
+            self.db.clone(),
             &mut self.accrued_substate,
             deployer_address,
         )
@@ -656,9 +656,9 @@ impl VM {
         }
 
         // THIRD: Validations that push 0 to the stack without returning reserved gas but incrementing deployer's nonce
-        let new_account = get_account(&mut self.cache, &self.db, new_address);
+        let new_account = get_account(&mut self.cache, self.db.clone(), new_address);
         if new_account.has_code_or_nonce() {
-            increment_account_nonce(&mut self.cache, &self.db, deployer_address)?;
+            increment_account_nonce(&mut self.cache, self.db.clone(), deployer_address)?;
             current_call_frame.stack.push(CREATE_DEPLOYMENT_FAIL)?;
             return Ok(OpcodeResult::Continue { pc_increment: 1 });
         }
@@ -675,12 +675,12 @@ impl VM {
         cache::insert_account(&mut self.cache, new_address, new_account);
 
         // 2. Increment sender's nonce.
-        increment_account_nonce(&mut self.cache, &self.db, deployer_address)?;
+        increment_account_nonce(&mut self.cache, self.db.clone(), deployer_address)?;
 
         // 3. Decrease sender's balance.
         decrease_account_balance(
             &mut self.cache,
-            &mut self.db,
+            self.db.clone(),
             deployer_address,
             value_in_wei_to_send,
         )?;
@@ -724,7 +724,7 @@ impl VM {
                 // Return value to sender
                 increase_account_balance(
                     &mut self.cache,
-                    &mut self.db,
+                    self.db.clone(),
                     deployer_address,
                     value_in_wei_to_send,
                 )?;
@@ -774,7 +774,7 @@ impl VM {
         // 1. Validate sender has enough value
         let sender_account_info = access_account(
             &mut self.cache,
-            &mut self.db,
+            self.db.clone(),
             &mut self.accrued_substate,
             msg_sender,
         )
@@ -827,9 +827,9 @@ impl VM {
         );
 
         // Transfer value from caller to callee.
-        if should_transfer_value {
-            decrease_account_balance(&mut self.cache, &mut self.db, msg_sender, value)?;
-            increase_account_balance(&mut self.cache, &mut self.db, to, value)?;
+        if should_transfer_value.clone() {
+            decrease_account_balance(&mut self.cache, self.db.clone(), msg_sender, value)?;
+            increase_account_balance(&mut self.cache, self.db.clone(), to, value)?;
         }
 
         let tx_report = self.run_execution(&mut new_call_frame)?;
@@ -862,8 +862,8 @@ impl VM {
             TxResult::Revert(_) => {
                 // Revert value transfer
                 if should_transfer_value {
-                    decrease_account_balance(&mut self.cache, &mut self.db, to, value)?;
-                    increase_account_balance(&mut self.cache, &mut self.db, msg_sender, value)?;
+                    decrease_account_balance(&mut self.cache, self.db.clone(), to, value)?;
+                    increase_account_balance(&mut self.cache, self.db.clone(), msg_sender, value)?;
                 }
                 // Push 0 to stack
                 current_call_frame.stack.push(REVERT_FOR_CALL)?;

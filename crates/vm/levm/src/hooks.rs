@@ -55,7 +55,7 @@ impl Hook for DefaultHook {
         initial_call_frame: &mut CallFrame,
     ) -> Result<(), VMError> {
         let sender_address = vm.env.origin;
-        let sender_account = get_account(&mut vm.cache, &vm.db, sender_address);
+        let sender_account = get_account(&mut vm.cache, vm.db.clone(), sender_address);
 
         if vm.env.config.fork >= Fork::Prague {
             // check for gas limit is grater or equal than the minimum required
@@ -169,7 +169,7 @@ impl Hook for DefaultHook {
         // technically, the sender will not be able to pay it.
 
         // (3) INSUFFICIENT_ACCOUNT_FUNDS
-        decrease_account_balance(&mut vm.cache, &mut vm.db, sender_address, up_front_cost)
+        decrease_account_balance(&mut vm.cache, vm.db.clone(), sender_address, up_front_cost)
             .map_err(|_| TxValidationError::InsufficientAccountFunds)?;
 
         // (4) INSUFFICIENT_MAX_FEE_PER_GAS
@@ -201,7 +201,7 @@ impl Hook for DefaultHook {
         )?;
 
         // (7) NONCE_IS_MAX
-        increment_account_nonce(&mut vm.cache, &vm.db, sender_address)
+        increment_account_nonce(&mut vm.cache, vm.db.clone(), sender_address)
             .map_err(|_| VMError::TxValidation(TxValidationError::NonceIsMax))?;
 
         // (8) PRIORITY_GREATER_THAN_MAX_FEE_PER_GAS
@@ -302,7 +302,7 @@ impl Hook for DefaultHook {
 
             vm.env.refunded_gas = eip7702_set_access_code(
                 &mut vm.cache,
-                &mut vm.db,
+                vm.db.clone(),
                 vm.env.chain_id,
                 &mut vm.accrued_substate,
                 // TODO: avoid clone()
@@ -321,7 +321,7 @@ impl Hook for DefaultHook {
             // It's here to avoid storing the "to" address in the cache before eip7702_set_access_code() step 7).
             increase_account_balance(
                 &mut vm.cache,
-                &mut vm.db,
+                vm.db.clone(),
                 initial_call_frame.to,
                 initial_call_frame.msg_value,
             )?;
