@@ -254,7 +254,3 @@ samply-benchmarks: ## ⚡️ Run benchmarks and create samply profiling file
 	$(call run_samply,ERC20Approval,REPETITIONS_SLOW,BENCH_APPROVAL_ITERATIONS)
 	$(call run_samply,ERC20Transfer,REPETITIONS_SLOW,BENCH_TRANSFER_ITERATIONS)
 	$(call run_samply,ERC20Mint,REPETITIONS_SLOW,BENCH_MINT_ITERATIONS)
-
-testada:
-	cd tmp/ethereum-tests && git checkout tags/v14.1
-	pwd 
