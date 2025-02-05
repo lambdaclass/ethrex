@@ -19,11 +19,10 @@ EFTEST_DIR := ../../../cmd/ef_tests/levm
 VECTORS_DIR := $(EFTEST_DIR)/vectors
 TMP_DIR := tmp
 TESTS_REPO := $(TMP_DIR)/ethereum-tests
-LEGACY_TESTS_DIR := Constantinople
 
-SPECTEST_VERSION := v14.1
-SPECTEST_ARTIFACT := tests_$(SPECTEST_VERSION).tar.gz
-SPECTEST_URL := https://github.com/ethereum/tests/archive/refs/tags/$(SPECTEST_VERSION).tar.gz
+ETH_TEST_URL := https://github.com/ethereum/tests.git
+ETH_TEST_TAG := v14.1
+COMMIT_LEGACY_TESTS_FOR_TAG := b2e6c9e
 
 STATETEST_VERSION := pectra-devnet-5%40v1.1.0
 STATETEST_NET := pectra-devnet-5
@@ -36,21 +35,13 @@ setup-test-dirs:
 	mkdir -p $(VECTORS_DIR)/GeneralStateTests
 	mkdir -p $(VECTORS_DIR)/state_tests
 
-clone-ef-tests: ## 📥 Clone Ethereum Tests repository with submodules
+clone-ef-tests: ## 📥 Download Ethereum Tests repository with submodules
 	mkdir -p $(TMP_DIR)
-	git clone --recurse-submodules https://github.com/ethereum/tests.git $(TESTS_REPO)
-
-update-ef-tests: ## 🔄 Update Ethereum Tests repository and submodules
-	cd $(TESTS_REPO) && git pull && git submodule update --init --recursive
-
-setup-legacy-tests: setup-test-dirs ## 📥 Setup Legacy Tests
+	git clone --recurse-submodules $(ETH_TEST_URL) $(TESTS_REPO) 
+	cd $(TESTS_REPO) && git checkout tags/$(ETH_TEST_TAG)
+	cd $(TESTS_REPO)/LegacyTests && git checkout $(COMMIT_LEGACY_TESTS_FOR_TAG)
 	cp -r $(TESTS_REPO)/GeneralStateTests/* $(VECTORS_DIR)/GeneralStateTests/
-	if [ -d "$(TESTS_REPO)/LegacyTests/$(LEGACY_TESTS_DIR)/GeneralStateTests" ]; then \
-		echo "Copying tests from LegacyTests/$(LEGACY_TESTS_DIR)/GeneralStateTests"; \
-		cp -r $(TESTS_REPO)/LegacyTests/$(LEGACY_TESTS_DIR)/GeneralStateTests/* $(VECTORS_DIR)/LegacyTests/$(LEGACY_TESTS_DIR)/GeneralStateTests/; \
-	else \
-		echo "Warning: Directory $(TESTS_REPO)/LegacyTests/$(LEGACY_TESTS_DIR)/GeneralStateTests not found"; \
-	fi \
+	cp -r $(TESTS_REPO)/LegacyTests/Constantinople/GeneralStateTests/* $(VECTORS_DIR)/LegacyTests/Constantinople/GeneralStateTests/;
 
 download-state-tests: ## 📥 Download and setup state tests fixtures
 	curl -L -o $(STATETEST_ARTIFACT) $(STATETEST_URL)
@@ -58,7 +49,7 @@ download-state-tests: ## 📥 Download and setup state tests fixtures
 	mv $(TMP_DIR)/fixtures/state_tests/* $(VECTORS_DIR)/state_tests/
 	rm -f $(STATETEST_ARTIFACT)
 
-download-evm-ef-tests: clone-ef-tests setup-legacy-tests download-state-tests ## 📥 Download and setup all EF Tests
+download-evm-ef-tests: setup-test-dirs clone-ef-tests download-state-tests ## 📥 Download and setup all EF Tests
 	rm -rf $(TMP_DIR)
 
 clean-evm-ef-tests: ## 🗑️ Clean test vectors and temporary files
@@ -263,3 +254,7 @@ samply-benchmarks: ## ⚡️ Run benchmarks and create samply profiling file
 	$(call run_samply,ERC20Approval,REPETITIONS_SLOW,BENCH_APPROVAL_ITERATIONS)
 	$(call run_samply,ERC20Transfer,REPETITIONS_SLOW,BENCH_TRANSFER_ITERATIONS)
 	$(call run_samply,ERC20Mint,REPETITIONS_SLOW,BENCH_MINT_ITERATIONS)
+
+testada:
+	cd tmp/ethereum-tests && git checkout tags/v14.1
+	pwd 
