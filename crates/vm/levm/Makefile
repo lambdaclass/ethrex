@@ -19,7 +19,7 @@ EFTEST_DIR := ../../../cmd/ef_tests/levm
 VECTORS_DIR := $(EFTEST_DIR)/vectors
 TMP_DIR := tmp
 TESTS_REPO := $(TMP_DIR)/ethereum-tests
-LEGACY_TESTS_DIRS := Constantinople
+LEGACY_TESTS_DIR := Constantinople
 
 SPECTEST_VERSION := v14.1
 SPECTEST_ARTIFACT := tests_$(SPECTEST_VERSION).tar.gz
@@ -45,14 +45,12 @@ update-ef-tests: ## 🔄 Update Ethereum Tests repository and submodules
 
 setup-legacy-tests: setup-test-dirs ## 📥 Setup Legacy Tests
 	cp -r $(TESTS_REPO)/GeneralStateTests/* $(VECTORS_DIR)/GeneralStateTests/
-	@for dir in $(LEGACY_TESTS_DIRS); do \
-		if [ -d "$(TESTS_REPO)/LegacyTests/$$dir/GeneralStateTests" ]; then \
-			echo "Copying tests from LegacyTests/$$dir/GeneralStateTests"; \
-			cp -r $(TESTS_REPO)/LegacyTests/$$dir/GeneralStateTests/* $(VECTORS_DIR)/LegacyTests/$$dir/GeneralStateTests/; \
-		else \
-			echo "Warning: Directory $(TESTS_REPO)/LegacyTests/$$dir/GeneralStateTests not found"; \
-		fi \
-	done
+	if [ -d "$(TESTS_REPO)/LegacyTests/$(LEGACY_TESTS_DIR)/GeneralStateTests" ]; then \
+		echo "Copying tests from LegacyTests/$(LEGACY_TESTS_DIR)/GeneralStateTests"; \
+		cp -r $(TESTS_REPO)/LegacyTests/$(LEGACY_TESTS_DIR)/GeneralStateTests/* $(VECTORS_DIR)/LegacyTests/$(LEGACY_TESTS_DIR)/GeneralStateTests/; \
+	else \
+		echo "Warning: Directory $(TESTS_REPO)/LegacyTests/$(LEGACY_TESTS_DIR)/GeneralStateTests not found"; \
+	fi \
 
 download-state-tests: ## 📥 Download and setup state tests fixtures
 	curl -L -o $(STATETEST_ARTIFACT) $(STATETEST_URL)
