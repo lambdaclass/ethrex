@@ -53,7 +53,7 @@ jobs:
         run: make setup-hive
 
       - name: Run Hive Simulation
-        run: cd hive && ./hive --client ethrex --sim ${{ matrix.test.simulation }} --ethrex.flags "--evm ${{ intputs.evm }}" --sim.parallelism 16
+        run: cd hive && ./hive --client ethrex --sim ${{ matrix.test.simulation }} --ethrex.flags "--evm ${{ inputs.evm }}" --sim.parallelism 16
         continue-on-error: true
 
       - name: Upload results
