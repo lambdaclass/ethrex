@@ -240,9 +240,6 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
                     &format!("Capabilities {:?}", hello_message.capabilities),
                 );
                 self.capabilities = hello_message.capabilities;
-                self.node.node_id = H512::from_slice(
-                    &hello_message.node_id.to_encoded_point(false).as_bytes()[1..],
-                );
 
                 // Check if we have any capability in common
                 // TODO check here because snap protocol requires eth protocol
