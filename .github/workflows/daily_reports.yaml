@@ -126,7 +126,7 @@ jobs:
       #     fi
 
       - name: Post results to Slack
-        if: ${{steps.check_tests.outcome == 'failure'}}
+        # if: ${{steps.check_tests.outcome == 'failure'}}
         env:
           SLACK_WEBHOOK: >
             ${{ github.event_name == 'workflow_dispatch'
