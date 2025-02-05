@@ -393,7 +393,6 @@ impl Display for EFTestsReport {
 
                         if let Some(account_update) =
                             re_run_report.account_updates_report.get(failed_vector)
-                        //.get(&(*fork, *failed_vector))
                         {
                             writeln!(f, "{}", &account_update.to_string())?;
                         } else {

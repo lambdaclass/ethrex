@@ -20,6 +20,7 @@ use keccak_hash::keccak;
 use std::{collections::HashMap, sync::Arc};
 
 pub fn run_ef_test(test: &EFTest) -> Result<EFTestReport, EFTestRunnerError> {
+    // There are some tests that don't have a hash, unwrap will panic
     let hash = test
         ._info
         .generated_test_hash
@@ -31,6 +32,7 @@ pub fn run_ef_test(test: &EFTest) -> Result<EFTestReport, EFTestRunnerError> {
         let mut ef_test_report_fork = EFTestReportForkResult::new();
 
         for (vector, _tx) in test.transactions.iter() {
+            // This is because there are some test vectors that are not valid for the current fork.
             if !test.post.has_vector_for_fork(vector, *fork) {
                 continue;
             }
