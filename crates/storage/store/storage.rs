@@ -27,7 +27,7 @@ pub mod error;
 mod rlp;
 
 /// Number of state trie segments to fetch concurrently during state sync
-pub const STATE_TRIE_SEGMENTS: usize = 1;
+pub const STATE_TRIE_SEGMENTS: usize = 2;
 
 #[derive(Debug, Clone)]
 pub struct Store {

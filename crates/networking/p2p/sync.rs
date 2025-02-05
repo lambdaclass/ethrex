@@ -408,7 +408,7 @@ async fn state_sync(
                 initial_timestamp,
             ));
         }
-        debug!("Requesting Account Range for state root {state_root}, starting hash: {start_account_hash}");
+        debug!("[Segment {segment_number}]: Requesting Account Range for state root {state_root}, starting hash: {start_account_hash}");
         if let Some((account_hashes, accounts, should_continue)) = peers
             .request_account_range(
                 state_root,
@@ -417,11 +417,12 @@ async fn state_sync(
             )
             .await
         {
-            debug!("Received {} account ranges", accounts.len());
+            debug!(
+                "[Segment {segment_number}]: Received {} account ranges",
+                accounts.len()
+            );
             // Update starting hash for next batch
-            if should_continue {
-                start_account_hash = *account_hashes.last().unwrap();
-            }
+            start_account_hash = *account_hashes.last().unwrap();
             // Fetch Account Storage & Bytecode
             let mut code_hashes = vec![];
             let mut account_hashes_and_storage_roots = vec![];
@@ -453,8 +454,9 @@ async fn state_sync(
             }
             // Update Snapshot
             store.write_snapshot_account_batch(account_hashes, accounts)?;
-
-            if !should_continue {
+            // As we are downloading the state trie in segments the `should_continue` flag will mean that there
+            // are more accounts to be fetched but these accounts may belong to the next segment
+            if !should_continue || start_account_hash >= STATE_TRIE_SEGMENTS_END[segment_number] {
                 // All accounts fetched!
                 break;
             }
