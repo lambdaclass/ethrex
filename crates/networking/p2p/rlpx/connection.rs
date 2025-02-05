@@ -175,7 +175,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
             // NOTE: if the peer came from the discovery server it will already be inserted in the table
             // but that might not always be the case, so we try to add it to the table
             // Note: we don't ping the node we let the validation service do its job
-            let res = table.lock().await.insert_node(self.node);
+            let res = table.lock().await.insert_node_forced(self.node);
             log_peer_debug(&self.node, &format!("INSERT TO TABLE RESULT {:?}", res));
             table.lock().await.init_backend_communication(
                 self.node.node_id,
@@ -245,6 +245,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
                 );
 
                 // Check if we have any capability in common
+                // TODO check here because snap protocol requires eth protocol
                 for cap in self.capabilities.clone() {
                     if SUPPORTED_CAPABILITIES.contains(&cap) {
                         return Ok(());

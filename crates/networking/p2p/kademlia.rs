@@ -67,7 +67,19 @@ impl KademliaTable {
         let node_id = node.node_id;
         let bucket_idx = bucket_number(node_id, self.local_node_id);
 
-        self.insert_node_inner(node, bucket_idx)
+        self.insert_node_inner(node, bucket_idx, false)
+    }
+
+    /// Will try to insert a node into the table. If the table is full then it pushes it to the replacement list.
+    /// # Returns
+    /// A tuple containing:
+    ///     1. PeerData: none if the peer was already in the table or as a potential replacement
+    ///     2. A bool indicating if the node was inserted to the table
+    pub fn insert_node_forced(&mut self, node: Node) -> (Option<PeerData>, bool) {
+        let node_id = node.node_id;
+        let bucket_idx = bucket_number(node_id, self.local_node_id);
+
+        self.insert_node_inner(node, bucket_idx, true)
     }
 
     #[cfg(test)]
@@ -76,10 +88,15 @@ impl KademliaTable {
         node: Node,
         bucket_idx: usize,
     ) -> (Option<PeerData>, bool) {
-        self.insert_node_inner(node, bucket_idx)
+        self.insert_node_inner(node, bucket_idx, false)
     }
 
-    fn insert_node_inner(&mut self, node: Node, bucket_idx: usize) -> (Option<PeerData>, bool) {
+    fn insert_node_inner(
+        &mut self,
+        node: Node,
+        bucket_idx: usize,
+        force_push: bool,
+    ) -> (Option<PeerData>, bool) {
         let node_id = node.node_id;
 
         let peer_already_in_table = self.buckets[bucket_idx]
@@ -99,9 +116,15 @@ impl KademliaTable {
 
         let peer = PeerData::new(node, NodeRecord::default(), false);
 
-        if self.buckets[bucket_idx].peers.len() == MAX_NODES_PER_BUCKET {
-            self.insert_as_replacement(&peer, bucket_idx);
-            (Some(peer), false)
+        if self.buckets[bucket_idx].peers.len() >= MAX_NODES_PER_BUCKET {
+            if force_push {
+                self.remove_from_replacements(node_id, bucket_idx);
+                self.buckets[bucket_idx].peers.push(peer.clone());
+                (Some(peer), true)
+            } else {
+                self.insert_as_replacement(&peer, bucket_idx);
+                (Some(peer), false)
+            }
         } else {
             self.remove_from_replacements(node_id, bucket_idx);
             self.buckets[bucket_idx].peers.push(peer.clone());
