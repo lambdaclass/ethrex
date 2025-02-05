@@ -4,16 +4,11 @@ pub mod revm;
 use crate::errors::EvmError;
 use std::str::FromStr;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub enum EVM {
-    LEVM,
+    #[default]
     REVM,
-}
-
-impl Default for EVM {
-    fn default() -> Self {
-        EVM::REVM
-    }
+    LEVM,
 }
 
 impl FromStr for EVM {

@@ -45,14 +45,11 @@ pub fn add_block(block: &Block, storage: &Store) -> Result<(), ChainError> {
     let (receipts, account_updates): (Vec<Receipt>, Vec<AccountUpdate>) = {
         match EVM_BACKEND.get() {
             Some(EVM::LEVM) => evm_backends::levm::execute_block(block, &mut state)?,
-            Some(EVM::REVM) => {
+            // This means we are using REVM as default for tests
+            Some(EVM::REVM) | None => {
                 let receipts = evm_backends::revm::execute_block(block, &mut state)?;
                 let account_updates = ethrex_vm::get_state_transitions(&mut state);
                 (receipts, account_updates)
-            }
-            None => {
-                tracing::error!("Fatal Error, EVM_BACKEND uninitialized.");
-                unreachable!();
             }
         }
     };

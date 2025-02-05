@@ -284,7 +284,8 @@ pub fn apply_withdrawals(context: &mut PayloadBuildContext) -> Result<(), EvmErr
             }
             Ok(())
         }
-        Some(EVM::REVM) => {
+        // This means we are using REVM as default for tests
+        Some(EVM::REVM) | None => {
             // Apply withdrawals & call beacon root contract, and obtain the new state root
             let spec_id = spec_id(&context.chain_config()?, context.payload.header.timestamp);
             if context.payload.header.parent_beacon_block_root.is_some()
@@ -299,10 +300,6 @@ pub fn apply_withdrawals(context: &mut PayloadBuildContext) -> Result<(), EvmErr
             let withdrawals = context.payload.body.withdrawals.clone().unwrap_or_default();
             evm_backends::revm::process_withdrawals(context.evm_state, &withdrawals)?;
             Ok(())
-        }
-        None => {
-            tracing::error!("Fatal Error, EVM_BACKEND uninitialized.");
-            unreachable!();
         }
     }
 }
@@ -554,7 +551,8 @@ fn apply_plain_transaction(
             );
             Ok(receipt)
         }
-        Some(EVM::REVM) => {
+        // This means we are using REVM as default for tests
+        Some(EVM::REVM) | None => {
             let report = evm_backends::revm::execute_tx(
                 &head.tx,
                 &context.payload.header,
@@ -573,10 +571,6 @@ fn apply_plain_transaction(
                 report.logs(),
             );
             Ok(receipt)
-        }
-        None => {
-            tracing::error!("Fatal Error, EVM_BACKEND uninitialized.");
-            unreachable!();
         }
     }
 }
@@ -639,7 +633,8 @@ fn finalize_payload(context: &mut PayloadBuildContext) -> Result<(), StoreError>
                 context.payload.header.gas_limit - context.remaining_gas;
             Ok(())
         }
-        Some(EVM::REVM) => {
+        // This means we are using REVM as default for tests
+        Some(EVM::REVM) | None => {
             let account_updates = get_state_transitions(context.evm_state);
             context.payload.header.state_root = context
                 .store()
@@ -652,10 +647,6 @@ fn finalize_payload(context: &mut PayloadBuildContext) -> Result<(), StoreError>
             context.payload.header.gas_used =
                 context.payload.header.gas_limit - context.remaining_gas;
             Ok(())
-        }
-        None => {
-            tracing::error!("Fatal Error, EVM_BACKEND uninitialized.");
-            unreachable!();
         }
     }
 }
