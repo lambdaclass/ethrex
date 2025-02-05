@@ -164,7 +164,7 @@ pub struct VM {
     pub tx_kind: TxKind,
     pub access_list: AccessList,
     pub authorization_list: Option<AuthorizationList>,
-    // pub hooks: Vec<Box<dyn Hook>>,
+    pub hooks: Vec<Box<dyn Hook>>,
 }
 
 pub type AccessList = Vec<(Address, Vec<H256>)>;
@@ -228,6 +228,8 @@ impl VM {
             default_touched_accounts.insert(Address::from_low_u64_be(i));
         }
 
+        let default_hook: Box<dyn Hook> = Box::new(DefaultHook::new());
+        let hooks = vec![default_hook];
         match to {
             TxKind::Call(address_to) => {
                 default_touched_accounts.insert(address_to);
@@ -267,6 +269,7 @@ impl VM {
                     tx_kind: to,
                     access_list,
                     authorization_list,
+                    hooks,
                 })
             }
             TxKind::Create => {
@@ -308,6 +311,7 @@ impl VM {
                     tx_kind: TxKind::Create,
                     access_list,
                     authorization_list,
+                    hooks,
                 })
             }
         }
