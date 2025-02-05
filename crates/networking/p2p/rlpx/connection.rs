@@ -71,7 +71,10 @@ static FILE_PATH: &str = "peers_conn_status.json";
 async fn update_peer_conn_status(node: Node, connected: bool) {
     #[derive(Serialize, Deserialize)]
     struct PeerConn {
-        node: Node,
+        ip: std::net::IpAddr,
+        udp_port: u16,
+        tcp_port: u16,
+        node_id: H512,
         connected: bool,
     }
 
@@ -92,14 +95,20 @@ async fn update_peer_conn_status(node: Node, connected: bool) {
 
     let mut found = false;
     for peer in peers.iter_mut() {
-        if peer.node.node_id == node.node_id {
+        if peer.node_id == node.node_id {
             peer.connected = connected;
             found = true;
             break;
         }
     }
     if !found {
-        let new_entry = PeerConn { node, connected };
+        let new_entry = PeerConn {
+            ip: node.ip,
+            udp_port: node.udp_port,
+            tcp_port: node.tcp_port,
+            node_id: node.node_id,
+            connected,
+        };
         peers.push(new_entry);
     }
 
