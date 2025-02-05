@@ -167,12 +167,13 @@ impl DatabaseRef for RpcDB {
     fn basic_ref(&self, address: RevmAddress) -> Result<Option<RevmAccountInfo>, Self::Error> {
         let address = Address::from(address.0.as_ref());
 
-        let account = match self.cache.borrow_mut().entry(address) {
-            Entry::Occupied(entry) => entry.get().clone(),
-            Entry::Vacant(entry) => {
-                let account = self.fetch_account_blocking(address, &[], false)?;
-                entry.insert(account.clone());
-                account
+        let account = {
+            let cache_ref = self.cache.borrow();
+            if let Some(account) = cache_ref.get(&address) {
+                account.clone()
+            } else {
+                drop(cache_ref); // fetch_account_blocking mutably borrows the cache
+                self.fetch_account_blocking(address, &[], false)?
             }
         };
 
@@ -201,8 +202,10 @@ impl DatabaseRef for RpcDB {
         let address = Address::from(address.0.as_ref());
         let index = H256::from_slice(&index.to_be_bytes_vec());
 
-        let value = match self.cache.borrow().get(&address) {
-            Some(account) => {
+        // TODO: this can be simplified
+        let value = {
+            let cache_ref = self.cache.borrow();
+            if let Some(account) = cache_ref.get(&address) {
                 let Account::Existing { storage, .. } = account else {
                     return Err("account doesn't exists".to_string());
                 };
@@ -211,28 +214,21 @@ impl DatabaseRef for RpcDB {
                     None => {
                         let storage_keys =
                             storage.keys().chain(&[index]).cloned().collect::<Vec<_>>();
+                        drop(cache_ref); // fetch_account_blocking mutably borrows the cache
                         let account = self.fetch_account_blocking(address, &storage_keys, false)?;
-                        match &account {
-                            Account::Existing { storage, .. } => *storage.get(&index).expect(
-                                "rpc account response didn't include requested storage value",
-                            ),
-
-                            Account::NonExisting { .. } => {
-                                return Err("account doesn't exists".to_string());
-                            }
-                        }
+                        let Account::Existing { storage, .. } = account else {
+                            return Err("account doesn't exists".to_string());
+                        };
+                        storage[&index]
                     }
                 }
-            }
-            None => {
+            } else {
+                drop(cache_ref); // fetch_account_blocking mutably borrows the cache
                 let account = self.fetch_account_blocking(address, &[index], false)?;
-                if let Account::Existing { storage, .. } = account {
-                    *storage
-                        .get(&index)
-                        .expect("rpc account response didn't include requested storage value")
-                } else {
+                let Account::Existing { storage, .. } = account else {
                     return Err("account doesn't exists".to_string());
-                }
+                };
+                storage[&index]
             }
         };
 
