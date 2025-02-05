@@ -14,7 +14,7 @@ use ethrex_core::types::{
 };
 use ethrex_rlp::decode::RLPDecode;
 use ethrex_rlp::encode::RLPEncode;
-use ethrex_trie::{LibmdbxDupsortTrieDB, LibmdbxTrieDB, Trie};
+use ethrex_trie::{LibmdbxDupsortTrieDB, LibmdbxTrieDB, Nibbles, Trie};
 use libmdbx::orm::{Decodable, Encodable, Table};
 use libmdbx::{
     dupsort,
@@ -70,17 +70,6 @@ impl Store {
     fn read<T: Table>(&self, key: T::Key) -> Result<Option<T::Value>, StoreError> {
         let txn = self.db.begin_read().map_err(StoreError::LibmdbxError)?;
         txn.get::<T>(key).map_err(StoreError::LibmdbxError)
-    }
-
-    // Helper method to remove a value from a libmdbx table
-    fn delete<T: Table>(&self, key: T::Key) -> Result<(), StoreError> {
-        let txn = self
-            .db
-            .begin_readwrite()
-            .map_err(StoreError::LibmdbxError)?;
-        txn.delete::<T>(key, None)
-            .map_err(StoreError::LibmdbxError)?;
-        txn.commit().map_err(StoreError::LibmdbxError)
     }
 
     fn get_block_hash_by_block_number(
@@ -540,10 +529,6 @@ impl StoreEngine for Store {
             .map_err(StoreError::RLPDecode)
     }
 
-    fn clear_header_download_checkpoint(&self) -> Result<(), StoreError> {
-        self.delete::<SnapState>(SnapStateIndex::HeaderDownloadCheckpoint)
-    }
-
     fn set_state_trie_root_checkpoint(&self, current_root: H256) -> Result<(), StoreError> {
         self.write::<SnapState>(
             SnapStateIndex::StateTrieRootCheckpoint,
@@ -556,10 +541,6 @@ impl StoreEngine for Store {
             .map(|ref h| H256::decode(h))
             .transpose()
             .map_err(StoreError::RLPDecode)
-    }
-
-    fn clear_state_trie_root_checkpoint(&self) -> Result<(), StoreError> {
-        self.delete::<SnapState>(SnapStateIndex::StateTrieRootCheckpoint)
     }
 
     fn set_state_trie_key_checkpoint(&self, last_key: H256) -> Result<(), StoreError> {
@@ -576,26 +557,18 @@ impl StoreEngine for Store {
             .map_err(StoreError::RLPDecode)
     }
 
-    fn clear_state_trie_key_checkpoint(&self) -> Result<(), StoreError> {
-        self.delete::<SnapState>(SnapStateIndex::StateTrieRootCheckpoint)
+    fn set_storage_heal_paths(
+        &self,
+        accounts: Vec<(H256, Vec<Nibbles>)>,
+    ) -> Result<(), StoreError> {
+        self.write::<SnapState>(SnapStateIndex::StorageHealPaths, accounts.encode_to_vec())
     }
 
-    fn set_pending_storage_heal_accounts(&self, accounts: Vec<H256>) -> Result<(), StoreError> {
-        self.write::<SnapState>(
-            SnapStateIndex::PendingStorageHealAccounts,
-            accounts.encode_to_vec(),
-        )
-    }
-
-    fn get_pending_storage_heal_accounts(&self) -> Result<Option<Vec<H256>>, StoreError> {
-        self.read::<SnapState>(SnapStateIndex::PendingStorageHealAccounts)?
-            .map(|ref h| <Vec<H256>>::decode(h))
+    fn get_storage_heal_paths(&self) -> Result<Option<Vec<(H256, Vec<Nibbles>)>>, StoreError> {
+        self.read::<SnapState>(SnapStateIndex::StorageHealPaths)?
+            .map(|ref h| <Vec<(H256, Vec<Nibbles>)>>::decode(h))
             .transpose()
             .map_err(StoreError::RLPDecode)
-    }
-
-    fn clear_pending_storage_heal_accounts(&self) -> Result<(), StoreError> {
-        self.delete::<SnapState>(SnapStateIndex::PendingStorageHealAccounts)
     }
 
     fn is_synced(&self) -> Result<bool, StoreError> {
@@ -604,8 +577,30 @@ impl StoreEngine for Store {
             Some(ref rlp) => RLPDecode::decode(rlp).map_err(|_| StoreError::DecodeError),
         }
     }
+
     fn update_sync_status(&self, status: bool) -> Result<(), StoreError> {
         self.write::<ChainData>(ChainDataIndex::IsSynced, status.encode_to_vec())
+    }
+
+    fn set_state_heal_paths(&self, paths: Vec<Nibbles>) -> Result<(), StoreError> {
+        self.write::<SnapState>(SnapStateIndex::StateHealPaths, paths.encode_to_vec())
+    }
+
+    fn get_state_heal_paths(&self) -> Result<Option<Vec<Nibbles>>, StoreError> {
+        self.read::<SnapState>(SnapStateIndex::StateHealPaths)?
+            .map(|ref h| <Vec<Nibbles>>::decode(h))
+            .transpose()
+            .map_err(StoreError::RLPDecode)
+    }
+
+    fn clear_snap_state(&self) -> Result<(), StoreError> {
+        let txn = self
+            .db
+            .begin_readwrite()
+            .map_err(StoreError::LibmdbxError)?;
+        txn.clear_table::<SnapState>()
+            .map_err(StoreError::LibmdbxError)?;
+        txn.commit().map_err(StoreError::LibmdbxError)
     }
 }
 
