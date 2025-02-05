@@ -152,7 +152,8 @@ async fn main() {
     let sync_mode = sync_mode(&matches);
 
     let evm = matches.get_one::<EVM>("evm").unwrap_or(&EVM::REVM);
-    EVM_BACKEND.get_or_init(|| evm.clone());
+    let evm = EVM_BACKEND.get_or_init(|| evm.clone());
+    info!("EVM_BACKEND set to: {:?}", evm);
 
     cfg_if::cfg_if! {
         if #[cfg(feature = "redb")] {
