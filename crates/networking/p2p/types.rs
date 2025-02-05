@@ -7,6 +7,7 @@ use ethrex_rlp::{
     structs::{self, Decoder, Encoder},
 };
 use k256::ecdsa::{SigningKey, VerifyingKey};
+use serde::Serialize;
 use sha3::{Digest, Keccak256};
 use std::{
     fmt::Display,
@@ -55,7 +56,7 @@ impl RLPDecode for Endpoint {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
 pub struct Node {
     pub ip: IpAddr,
     pub udp_port: u16,
