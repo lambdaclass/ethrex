@@ -258,7 +258,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
         self.init_peer_conn().await?;
 
         log_peer_debug(&self.node, "Started peer main loop");
-        update_peer_conn_status(self.node, true);
+        update_peer_conn_status(self.node, true).await;
 
         // Subscribe this connection to the broadcasting channel.
         let mut broadcaster_receive = {

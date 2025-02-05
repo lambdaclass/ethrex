@@ -194,9 +194,9 @@ struct DebugPeer {
 impl std::fmt::Debug for DebugPeer {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "\n ")?;
-        writeln!(f, "'\t- node_id: {}", self.node.node_id)?;
-        writeln!(f, "'\t- enode_url: {}", self.enode_url)?;
-        writeln!(f, "'\t- capabilites: {:?}", self.capabilities)?;
+        writeln!(f, "\t- node_id: {}", self.node.node_id)?;
+        writeln!(f, "\t- enode_url: {}", self.enode_url)?;
+        writeln!(f, "\t- capabilites: {:?}", self.capabilities)?;
 
         Ok(())
     }
@@ -225,7 +225,7 @@ pub async fn periodically_show_peer_stats(peer_table: Arc<Mutex<KademliaTable>>)
             .collect();
 
         info!(
-            "Peer stats:\n\t- discovered peers: {}\n\t- {:?}",
+            "Peer stats:\n- discovered peers: {}\n {:?}",
             peer_table.lock().await.iter_peers().count(),
             peers
         );
