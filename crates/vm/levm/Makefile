@@ -136,16 +136,16 @@ build-revm-comparison:
 
 FLAGS := "--features ethrex-blockchain/levm,ethrex-vm/levm,ethrex/levm"
 
-build-image-levm: ## 🐳 Build the Docker image with LEVM features
+build-image-levm: ## 🐳 Build the Docker image
 	cd ../../../ && \
-	docker build -t ethrex --build-arg BUILD_FLAGS=$(FLAGS) .
+	docker build -t ethrex .
 
-run-hive-debug-levm: build-image-levm ## 🐝 Run Hive with LEVM in debug mode
+run-hive-levm: build-image-levm ## 🐝 Run Hive with LEVM and Build report
 	$(MAKE) -C ../../../ setup-hive
-	cd ../../../hive && ./hive --sim ethereum/rpc-compat --client ethrex --sim.limit "$(TEST_PATTERN)" --docker.output || exit 0
-	cd ../../../hive && ./hive --sim devp2p --client ethrex --sim.limit "$(TEST_PATTERN)" --docker.output || exit 0
-	cd ../../../hive && ./hive --sim ethereum/engine --client ethrex --sim.limit "$(TEST_PATTERN)" --docker.output || exit 0
-	cd ../../../hive && ./hive --sim ethereum/sync --client ethrex --sim.limit "$(TEST_PATTERN)" --docker.output || exit 0
+	cd ../../../hive && ./hive --ethrex.flags "--evm levm" --sim ethereum/rpc-compat --client ethrex --sim.limit "$(TEST_PATTERN)" || exit 0
+	cd ../../../hive && ./hive --ethrex.flags "--evm levm" --sim devp2p --client ethrex --sim.limit "$(TEST_PATTERN)" || exit 0
+	cd ../../../hive && ./hive --ethrex.flags "--evm levm" --sim ethereum/engine --client ethrex --sim.limit "$(TEST_PATTERN)" || exit 0
+	cd ../../../hive && ./hive --ethrex.flags "--evm levm" --sim ethereum/sync --client ethrex --sim.limit "$(TEST_PATTERN)" || exit 0
 	cargo run --release -p hive_report
 
 SUBDIRS := $(shell find $(VECTORS_DIR)/GeneralStateTests -maxdepth 1 -type d ! -path "$(VECTORS_DIR)/GeneralStateTests" -exec basename {} \;)
