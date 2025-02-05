@@ -215,7 +215,7 @@ impl PeerHandler {
                 id: request_id,
                 root_hash: state_root,
                 starting_hash: start,
-                limit_hash,
+                limit_hash: limit,
                 response_bytes: MAX_RESPONSE_BYTES,
             });
             let peer = self.get_peer_channel_with_retry(Capability::Snap).await?;

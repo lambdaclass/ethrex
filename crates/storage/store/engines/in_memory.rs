@@ -1,4 +1,4 @@
-use crate::error::StoreError;
+use crate::{error::StoreError, STATE_TRIE_SEGMENTS};
 use bytes::Bytes;
 use ethereum_types::{H256, U256};
 use ethrex_core::types::{
@@ -60,10 +60,8 @@ struct ChainData {
 pub struct SnapState {
     /// Latest downloaded block header's hash from a previously aborted sync
     header_download_checkpoint: Option<BlockHash>,
-    /// Current root hash of the latest State Trie (Used for both fetching and healing)
-    state_trie_root_checkpoint: Option<H256>,
     /// Last downloaded key of the latest State Trie
-    state_trie_key_checkpoint: Option<H256>,
+    state_trie_key_checkpoint: Option<[H256; STATE_TRIE_SEGMENTS]>,
     /// Accounts which storage needs healing
     storage_heal_paths: Option<Vec<(H256, Vec<Nibbles>)>>,
     /// State trie Paths in need of healing
@@ -451,21 +449,17 @@ impl StoreEngine for Store {
         Ok(self.inner().snap_state.header_download_checkpoint)
     }
 
-    fn set_state_trie_root_checkpoint(&self, current_root: H256) -> Result<(), StoreError> {
-        self.inner().snap_state.state_trie_root_checkpoint = Some(current_root);
+    fn set_state_trie_key_checkpoint(
+        &self,
+        last_keys: [H256; STATE_TRIE_SEGMENTS],
+    ) -> Result<(), StoreError> {
+        self.inner().snap_state.state_trie_key_checkpoint = Some(last_keys);
         Ok(())
     }
 
-    fn get_state_trie_root_checkpoint(&self) -> Result<Option<H256>, StoreError> {
-        Ok(self.inner().snap_state.state_trie_root_checkpoint)
-    }
-
-    fn set_state_trie_key_checkpoint(&self, last_key: H256) -> Result<(), StoreError> {
-        self.inner().snap_state.state_trie_key_checkpoint = Some(last_key);
-        Ok(())
-    }
-
-    fn get_state_trie_key_checkpoint(&self) -> Result<Option<H256>, StoreError> {
+    fn get_state_trie_key_checkpoint(
+        &self,
+    ) -> Result<Option<[H256; STATE_TRIE_SEGMENTS]>, StoreError> {
         Ok(self.inner().snap_state.state_trie_key_checkpoint)
     }
 

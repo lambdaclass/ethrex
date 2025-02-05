@@ -212,21 +212,34 @@ impl SyncManager {
                 let mut state_trie_tasks = tokio::task::JoinSet::new();
                 let key_checkpoints = store.get_state_trie_key_checkpoint()?;
                 for i in 0..STATE_TRIE_SEGMENTS {
-                    state_trie_tasks.spawn(rebuild_state_trie(
+                    state_trie_tasks.spawn(state_sync(
                         pivot_header.state_root,
                         self.peers.clone(),
                         store.clone(),
                         i,
                         key_checkpoints.map(|chs| chs[i]),
-                    ))
+                    ));
                 }
                 // Check for pivot staleness
                 let mut stale_pivot = false;
-                for res in state_trie_tasks.join_all().await {
-                    stale_pivot |= res?;
+                let mut state_trie_checkpoint = [H256::zero(); STATE_TRIE_SEGMENTS];
+                for (i, res) in state_trie_tasks.join_all().await.into_iter().enumerate() {
+                    let (is_stale, last_key) = res?;
+                    stale_pivot |= is_stale;
+                    state_trie_checkpoint[i] = last_key;
                 }
+                // Update state trie checkpoint
+                store.set_state_trie_key_checkpoint(state_trie_checkpoint)?;
                 if stale_pivot {
-                    warn!("Stale pivot, aborting sync");
+                    warn!("Stale pivot, aborting state sync");
+                    return Ok(());
+                }
+                // Rebuild & Heal state trie
+                let stale_pivot =
+                    heal_state_trie(pivot_header.state_root, store.clone(), self.peers.clone())
+                        .await?;
+                if stale_pivot {
+                    warn!("Stale pivot, aborting healing");
                     return Ok(());
                 }
                 // Wait for all bodies to be downloaded
@@ -349,157 +362,119 @@ async fn store_receipts(
 /// Rebuilds a Block's state trie by requesting snap state from peers, also performs state healing
 /// Receives an optional checkpoint in case there was a previous snap sync process that became stale, in which
 /// case it will continue from the checkpoint and then apply healing to fix inconsistencies with the older state
-/// Returns true if all state was fetched or false if the block is too old and the state is no longer available
-async fn rebuild_state_trie(
+/// Returns the pivot staleness status (true if stale, false if not), and the last downloaded key
+/// If the pivot is not stale by the end of the state sync then the state sync was completed succesfuly
+async fn state_sync(
     state_root: H256,
     peers: PeerHandler,
     store: Store,
     segment_number: usize,
     checkpoint: Option<H256>,
-) -> Result<bool, SyncError> {
+) -> Result<(bool, H256), SyncError> {
+    // Resume download from checkpoint if available or start from an empty trie
+    let mut start_account_hash = checkpoint.unwrap_or(STATE_TRIE_SEGMENTS_START[segment_number]);
+    // Skip state sync if we are already on healing
+    if start_account_hash != STATE_TRIE_SEGMENTS_END[segment_number] {
+        return Ok((false, start_account_hash));
+    }
     // Spawn storage & bytecode fetchers
     let (bytecode_sender, bytecode_receiver) = mpsc::channel::<Vec<H256>>(500);
+    let (storage_sender, storage_receiver) = mpsc::channel::<Vec<(H256, H256)>>(500);
     let bytecode_fetcher_handle = tokio::spawn(bytecode_fetcher(
         bytecode_receiver,
         peers.clone(),
         store.clone(),
     ));
-    // Resume download from checkpoint if available or start from an empty trie
-    let mut start_account_hash = checkpoint.unwrap_or(STATE_TRIE_SEGMENTS_START[segment_number]);
-    // Skip state sync if we are already on healing
-    if start_account_hash != *STATE_TRIE_SEGMENTS_END[segment_number] {
-        let (storage_sender, storage_receiver) = mpsc::channel::<Vec<(H256, H256)>>(500);
-        let storage_fetcher_handle = tokio::spawn(storage_fetcher(
-            storage_receiver,
-            peers.clone(),
-            store.clone(),
-            state_root,
-        ));
-        debug!("Starting/Resuming state trie download of segment number {segment_number} from key {start_account_hash}");
-        // Fetch Account Ranges
-        // If we reached the maximum amount of retries then it means the state we are requesting is probably old and no longer available
-        let mut progress_timer = Instant::now();
-        let initial_timestamp = Instant::now();
-        let initial_account_hash = start_account_hash.into_uint();
-        let mut stale = false;
-        const PROGRESS_OUTPUT_TIMER: std::time::Duration = std::time::Duration::from_secs(30);
-        loop {
-            // Show Progress stats (this task is not vital so we can detach it)
-            if Instant::now().duration_since(progress_timer) >= PROGRESS_OUTPUT_TIMER {
-                progress_timer = Instant::now();
-                tokio::spawn(show_progress(
-                    start_account_hash,
-                    initial_account_hash,
-                    initial_timestamp,
-                ));
+    let storage_fetcher_handle = tokio::spawn(storage_fetcher(
+        storage_receiver,
+        peers.clone(),
+        store.clone(),
+        state_root,
+    ));
+    debug!("Starting/Resuming state trie download of segment number {segment_number} from key {start_account_hash}");
+    // Fetch Account Ranges
+    // If we reached the maximum amount of retries then it means the state we are requesting is probably old and no longer available
+    let mut progress_timer = Instant::now();
+    let initial_timestamp = Instant::now();
+    let initial_account_hash = start_account_hash.into_uint();
+    let mut stale = false;
+    const PROGRESS_OUTPUT_TIMER: std::time::Duration = std::time::Duration::from_secs(30);
+    loop {
+        // Show Progress stats (this task is not vital so we can detach it)
+        if Instant::now().duration_since(progress_timer) >= PROGRESS_OUTPUT_TIMER {
+            progress_timer = Instant::now();
+            tokio::spawn(show_progress(
+                start_account_hash,
+                initial_account_hash,
+                initial_timestamp,
+            ));
+        }
+        debug!("Requesting Account Range for state root {state_root}, starting hash: {start_account_hash}");
+        if let Some((account_hashes, accounts, should_continue)) = peers
+            .request_account_range(
+                state_root,
+                start_account_hash,
+                STATE_TRIE_SEGMENTS_END[segment_number],
+            )
+            .await
+        {
+            debug!("Received {} account ranges", accounts.len());
+            // Update starting hash for next batch
+            if should_continue {
+                start_account_hash = *account_hashes.last().unwrap();
             }
-            debug!("Requesting Account Range for state root {state_root}, starting hash: {start_account_hash}");
-            if let Some((account_hashes, accounts, should_continue)) = peers
-                .request_account_range(
-                    state_root,
-                    start_account_hash,
-                    STATE_TRIE_SEGMENTS_END[segment_number],
-                )
-                .await
-            {
-                debug!("Received {} account ranges", accounts.len());
-                // Update starting hash for next batch
-                if should_continue {
-                    start_account_hash = *account_hashes.last().unwrap();
+            // Fetch Account Storage & Bytecode
+            let mut code_hashes = vec![];
+            let mut account_hashes_and_storage_roots = vec![];
+            for (account_hash, account) in account_hashes.iter().zip(accounts.iter()) {
+                // Build the batch of code hashes to send to the bytecode fetcher
+                // Ignore accounts without code / code we already have stored
+                if account.code_hash != *EMPTY_KECCACK_HASH
+                    && store.get_account_code(account.code_hash)?.is_none()
+                {
+                    code_hashes.push(account.code_hash)
                 }
-                // Fetch Account Storage & Bytecode
-                let mut code_hashes = vec![];
-                let mut account_hashes_and_storage_roots = vec![];
-                for (account_hash, account) in account_hashes.iter().zip(accounts.iter()) {
-                    // Build the batch of code hashes to send to the bytecode fetcher
-                    // Ignore accounts without code / code we already have stored
-                    if account.code_hash != *EMPTY_KECCACK_HASH
-                        && store.get_account_code(account.code_hash)?.is_none()
-                    {
-                        code_hashes.push(account.code_hash)
-                    }
-                    // Build the batch of hashes and roots to send to the storage fetcher
-                    // Ignore accounts without storage and account's which storage hasn't changed from our current stored state
-                    if account.storage_root != *EMPTY_TRIE_HASH
-                        && !store.contains_storage_node(*account_hash, account.storage_root)?
-                    {
-                        account_hashes_and_storage_roots
-                            .push((*account_hash, account.storage_root));
-                    }
+                // Build the batch of hashes and roots to send to the storage fetcher
+                // Ignore accounts without storage and account's which storage hasn't changed from our current stored state
+                if account.storage_root != *EMPTY_TRIE_HASH
+                    && !store.contains_storage_node(*account_hash, account.storage_root)?
+                {
+                    account_hashes_and_storage_roots.push((*account_hash, account.storage_root));
                 }
-                // Send code hash batch to the bytecode fetcher
-                if !code_hashes.is_empty() {
-                    bytecode_sender.send(code_hashes).await?;
-                }
-                // Send hash and root batch to the storage fetcher
-                if !account_hashes_and_storage_roots.is_empty() {
-                    storage_sender
-                        .send(account_hashes_and_storage_roots)
-                        .await?;
-                }
-                // Update Snapshot
-                store.write_snapshot_account_batch(account_hashes, accounts)?;
+            }
+            // Send code hash batch to the bytecode fetcher
+            if !code_hashes.is_empty() {
+                bytecode_sender.send(code_hashes).await?;
+            }
+            // Send hash and root batch to the storage fetcher
+            if !account_hashes_and_storage_roots.is_empty() {
+                storage_sender
+                    .send(account_hashes_and_storage_roots)
+                    .await?;
+            }
+            // Update Snapshot
+            store.write_snapshot_account_batch(account_hashes, accounts)?;
 
-                if !should_continue {
-                    // All accounts fetched!
-                    break;
-                }
-            } else {
-                stale = true;
+            if !should_continue {
+                // All accounts fetched!
                 break;
             }
-        }
-        // Store current checkpoint
-        if stale {
-            store.set_state_trie_key_checkpoint(start_account_hash)?;
         } else {
-            // Set highest key value so we know state sync is already completed on the next cycle
-            store.set_state_trie_key_checkpoint(STATE_TRIE_SEGMENTS_END[segment_number])?;
+            stale = true;
+            break;
         }
-        info!("Account Trie Fetching ended, signaling storage fetcher process");
-        // Send empty batch to signal that no more batches are incoming
-        storage_sender.send(vec![]).await?;
-        storage_fetcher_handle.await??;
-        if stale {
-            // Skip healing and return stale status
-            return Ok(false);
-        }
-        info!("Rebuilding State Trie");
-        let (rebuilt_root, pending_storages) = store.rebuild_state_from_snapshot()?;
-        if rebuilt_root == state_root && pending_storages.is_empty() {
-            // Unlikely case where we don't need healing (probably a test case)
-            return Ok(true);
-        }
-        info!(
-            "State trie rebuilt from snapshot, identified {} incomplete storage tries",
-            pending_storages.len()
-        );
-        if !pending_storages.is_empty() {
-            // Heal mismatched storages
-            store.set_storage_heal_paths(
-                pending_storages
-                    .into_iter()
-                    .map(|acc| (acc, vec![Nibbles::default()]))
-                    .collect(),
-            )?;
-        }
-        info!("Healing Start")
-    } else {
-        info!("Resuming healing")
     }
-    // Perform state healing to fix inconsistencies with older state
-    let res = heal_state_trie(
-        bytecode_sender.clone(),
-        state_root,
-        store.clone(),
-        peers.clone(),
-    )
-    .await?;
+    info!("Account Trie Fetching ended, signaling storage & bytecode fetcher process");
     // Send empty batch to signal that no more batches are incoming
-    debug!("Account Trie healing ended signaling bytecode fetcher process");
+    storage_sender.send(vec![]).await?;
     bytecode_sender.send(vec![]).await?;
+    storage_fetcher_handle.await??;
     bytecode_fetcher_handle.await??;
-    Ok(res)
+    if !stale {
+        // State sync finished before becoming stale, update checkpoint so we skip state sync on the next cycle
+        start_account_hash = STATE_TRIE_SEGMENTS_END[segment_number]
+    }
+    Ok((stale, start_account_hash))
 }
 
 /// Waits for incoming code hashes from the receiver channel endpoint, queues them, and fetches and stores their bytecodes in batches
@@ -740,31 +715,51 @@ async fn handle_large_storage_range(
 }
 
 /// Heals the trie given its state_root by fetching any missing nodes in it via p2p
-/// Doesn't store nodes, only leaf values to avoid inconsistent tries on restarts
+/// Also rebuilds it if this is the first healing cycle
+/// Returns true if healing was fully completed or false if we need to resume healing on the next sync cycle
 async fn heal_state_trie(
-    bytecode_sender: Sender<Vec<H256>>,
     state_root: H256,
     store: Store,
     peers: PeerHandler,
 ) -> Result<bool, SyncError> {
-    // Check if we have pending storages to heal from a previous cycle
-    let pending: BTreeMap<H256, Vec<Nibbles>> = store
-        .get_storage_heal_paths()?
+    // If this is not the first healing cycle (aka we have pending paths stored) continue to healing
+    // If not, perform state trie rebuild
+    let mut pending_storage_paths = store.get_storage_heal_paths()?;
+    let pending_state_paths = store.get_state_heal_paths()?;
+    if pending_storage_paths.is_none() && pending_state_paths.is_none() {
+        let (_, paths) = store.rebuild_state_from_snapshot()?;
+        info!(
+            "State trie rebuilt from snapshot, identified {} incomplete storage tries",
+            paths.len()
+        );
+        pending_storage_paths = Some(
+            paths
+                .into_iter()
+                .map(|h| (h, vec![Nibbles::default()]))
+                .collect(),
+        )
+    }
+    let pending_storage_paths = pending_storage_paths
         .unwrap_or_default()
         .into_iter()
         .collect();
-    // Spawn a storage healer for this blocks's storage
+    let mut paths = pending_state_paths.unwrap_or_default();
+    // Spawn a storage healer and a bytecode fetcher for this blocks
     let (storage_sender, storage_receiver) = mpsc::channel::<Vec<H256>>(500);
+    let (bytecode_sender, bytecode_receiver) = mpsc::channel::<Vec<H256>>(500);
+    let bytecode_fetcher_handle = tokio::spawn(bytecode_fetcher(
+        bytecode_receiver,
+        peers.clone(),
+        store.clone(),
+    ));
     let storage_healer_handler = tokio::spawn(storage_healer(
         state_root,
-        pending,
+        pending_storage_paths,
         storage_receiver,
         peers.clone(),
         store.clone(),
     ));
-    // Check if we have pending paths from a previous cycle
-    let mut paths = store.get_state_heal_paths()?.unwrap_or_default();
-    // Begin by requesting the root node
+    // Add the current state trie root to the pending paths
     paths.push(Nibbles::default());
     while !paths.is_empty() {
         // Spawn multiple parallel requests
@@ -803,7 +798,9 @@ async fn heal_state_trie(
         store.set_state_heal_paths(paths.clone())?;
     }
     // Send empty batch to signal that no more batches are incoming
+    bytecode_sender.send(vec![]).await?;
     storage_sender.send(vec![]).await?;
+    bytecode_fetcher_handle.await??;
     let storage_heal_paths = storage_healer_handler.await??;
     // Update pending list
     // If a storage trie was left mid-healing we will heal it again
