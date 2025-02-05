@@ -11,8 +11,8 @@ build: ## 🔨 Build the client
 lint: ## 🧹 Linter check
 	cargo clippy --all-targets --all-features --workspace --exclude ethrex-prover -- -D warnings
 
-SPECTEST_VERSION := v3.0.0
-SPECTEST_ARTIFACT := tests_$(SPECTEST_VERSION).tar.gz
+SPECTEST_LINK := https://github.com/ethereum/execution-spec-tests/releases/download/pectra-devnet-6%40v1.0.0/fixtures_pectra-devnet-6.tar.gz
+SPECTEST_ARTIFACT := tests.tar.gz
 SPECTEST_VECTORS_DIR := cmd/ef_tests/ethrex/vectors
 
 CRATE ?= *
@@ -33,13 +33,23 @@ build-image: $(STAMP_FILE) ## 🐳 Build the Docker image
 run-image: build-image ## 🏃 Run the Docker image
 	docker run --rm -p 127.0.0.1:8545:8545 ethrex --http.addr 0.0.0.0
 
-$(SPECTEST_ARTIFACT):
-	rm -f tests_*.tar.gz # Delete older versions
-	curl -L -o $(SPECTEST_ARTIFACT) "https://github.com/ethereum/execution-spec-tests/releases/download/$(SPECTEST_VERSION)/fixtures_stable.tar.gz"
+# This target is used to store the current version of EF tests downloaded.
+# If the SPECTEST_LINK variable is modified, this target will be run and the file modified, which will trigger a new $(SPECTEST_ARTIFACT) build
+# Thanks to:
+# - https://www.technovelty.org/tips/the-stamp-idiom-with-make.html
+# - https://stackoverflow.com/questions/27791578/makefile-how-to-detect-changes-within-the-makefile-itself
+EF_TEST_STAMP_FILE := .ef_tests_stamp_file
+$(EF_TEST_STAMP_FILE): Makefile
+	echo $(SPECTEST_LINK) | cmp -s - $@ || echo $(SPECTEST_LINK) > $@
+
+$(SPECTEST_ARTIFACT): $(EF_TEST_STAMP_FILE)
+	rm -f tests.tar.gz # Delete older versions
+	curl -L -o $(SPECTEST_ARTIFACT) $(SPECTEST_LINK)
 
 $(SPECTEST_VECTORS_DIR): $(SPECTEST_ARTIFACT)
 	mkdir -p $(SPECTEST_VECTORS_DIR) tmp
 	tar -xzf $(SPECTEST_ARTIFACT) -C tmp
+	rm -rf $(SPECTEST_VECTORS_DIR)/*
 	mv tmp/fixtures/blockchain_tests/* $(SPECTEST_VECTORS_DIR)
 
 download-test-vectors: $(SPECTEST_VECTORS_DIR) ## 📥 Download test vectors
