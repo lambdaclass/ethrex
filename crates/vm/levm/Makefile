@@ -19,7 +19,7 @@ EFTEST_DIR := ../../../cmd/ef_tests/levm
 VECTORS_DIR := $(EFTEST_DIR)/vectors
 TMP_DIR := tmp
 TESTS_REPO := $(TMP_DIR)/ethereum-tests
-LEGACY_TESTS_DIRS := Constantinople ## Cancun
+LEGACY_TESTS_DIRS := Constantinople
 
 SPECTEST_VERSION := v14.1
 SPECTEST_ARTIFACT := tests_$(SPECTEST_VERSION).tar.gz
