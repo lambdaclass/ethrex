@@ -354,7 +354,6 @@ impl Display for EFTestsReport {
                     if let Some(re_run_report) = &report.re_run_report {
                         if let Some(execution_report) =
                             re_run_report.execution_report.get(failed_vector)
-                        //.get(&(*fork, *failed_vector))
                         {
                             if let Some((levm_result, revm_result)) =
                                 &execution_report.execution_result_mismatch
