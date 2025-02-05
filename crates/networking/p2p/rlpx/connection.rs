@@ -157,6 +157,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
             &format!("{error_text}: ({error}), discarding peer {remote_node_id}"),
         );
         table.lock().await.replace_peer(remote_node_id);
+        self.framed.close().await;
     }
 
     fn match_disconnect_reason(&self, error: &RLPxError) -> Option<u8> {
