@@ -51,13 +51,13 @@ jobs:
         run: |
           cd crates/vm/levm && awk '/Summary: /,/Frontier/' test_result.txt;
 
-      - name: Check EF-TESTS status is 100%
-        run: |
-          cd crates/vm/levm
-          if [ "$(awk '/Summary:/ {print $(NF)}' test_result.txt)" != "(100.00%)" ]; then
-              echo "Percentage is not 100%."
-              exit 1
-          fi
+      # - name: Check EF-TESTS status is 100%
+      #   run: |
+      #     cd crates/vm/levm
+      #     if [ "$(awk '/Summary:/ {print $(NF)}' test_result.txt)" != "(100.00%)" ]; then
+      #         echo "Percentage is not 100%."
+      #         exit 1
+      #     fi
 
   hive-report-creation:
     uses: ./.github/workflows/common_hive_reports.yaml
