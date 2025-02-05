@@ -74,8 +74,8 @@ async fn main() {
 
     println!("proving");
     let mut prover = create_prover(ProverType::SP1);
-    let receipt = prover
-        .prove(ProgramInput {
+    let output = prover
+        .execute(ProgramInput {
             block,
             parent_block_header,
             db,
