@@ -8,26 +8,23 @@ use ethrex_core::{
     types::{
         calculate_base_fee_per_blob_gas, calculate_base_fee_per_gas, compute_receipts_root,
         compute_transactions_root, compute_withdrawals_root, BlobsBundle, Block, BlockBody,
-        BlockHash, BlockHeader, BlockNumber, ChainConfig, Fork, MempoolTransaction, Receipt,
-        Transaction, Withdrawal, DEFAULT_OMMERS_HASH, EMPTY_KECCACK_HASH,
+        BlockHash, BlockHeader, BlockNumber, ChainConfig, MempoolTransaction, Receipt, Transaction,
+        Withdrawal, DEFAULT_OMMERS_HASH, EMPTY_KECCACK_HASH,
     },
     Address, Bloom, Bytes, H256, U256,
 };
 #[cfg(not(feature = "levm"))]
-use {
-    ethrex_core::types::Account,
-    ethrex_vm::{
-        beacon_root_contract_call, execute_tx, get_state_transitions, process_withdrawals, spec_id,
-        SpecId,
-    },
+use ethrex_vm::{
+    beacon_root_contract_call, execute_tx, get_state_transitions, process_block_hash_history,
+    process_withdrawals, spec_id, SpecId,
 };
 #[cfg(feature = "levm")]
 use {
-    ethrex_core::types::GWEI_TO_WEI,
+    ethrex_core::types::{Fork, GWEI_TO_WEI},
     ethrex_levm::{db::CacheDB, vm::EVMConfig, Account, AccountInfo},
     ethrex_vm::{
         beacon_root_contract_call_levm, db::StoreWrapper, execute_tx_levm,
-        get_state_transitions_levm,
+        get_state_transitions_levm, process_block_hash_history_levm,
     },
     std::sync::Arc,
 };
@@ -251,16 +248,18 @@ pub fn build_payload(
     debug!("Building payload");
     let mut evm_state = evm_state(store.clone(), payload.header.parent_hash);
     let mut context = PayloadBuildContext::new(payload, &mut evm_state)?;
-    apply_withdrawals(&mut context)?;
+    apply_system_operations(&mut context)?;
     fill_transactions(&mut context)?;
     finalize_payload(&mut context)?;
     Ok((context.blobs_bundle, context.block_value))
 }
 
-pub fn apply_withdrawals(context: &mut PayloadBuildContext) -> Result<(), EvmError> {
+// This function applies system level operations:
+// - Call beacon root contract, and obtain the new state root
+// - Call block hash process contract, and store parent block hash
+pub fn apply_system_operations(context: &mut PayloadBuildContext) -> Result<(), EvmError> {
     #[cfg(feature = "levm")]
     {
-        // Apply withdrawals & call beacon root contract, and obtain the new state root
         let fork = context
             .chain_config()?
             .fork(context.payload.header.timestamp);
@@ -270,6 +269,7 @@ pub fn apply_withdrawals(context: &mut PayloadBuildContext) -> Result<(), EvmErr
             .unwrap_or(EVMConfig::canonical_values(fork));
         let config = EVMConfig::new(fork, blob_schedule);
 
+        let mut new_state: HashMap<_, _> = HashMap::new();
         if context.payload.header.parent_beacon_block_root.is_some() && fork >= Fork::Cancun {
             let store_wrapper = Arc::new(StoreWrapper {
                 store: context.evm_state.database().unwrap().clone(),
@@ -281,26 +281,44 @@ pub fn apply_withdrawals(context: &mut PayloadBuildContext) -> Result<(), EvmErr
                 config,
             )?;
 
-            let mut new_state = report.new_state.clone();
-
-            // Now original_value is going to be the same as the current_value, for the next transaction.
-            // It should have only one value but it is convenient to keep on using our CacheDB structure
-            for account in new_state.values_mut() {
-                for storage_slot in account.storage.values_mut() {
-                    storage_slot.original_value = storage_slot.current_value;
-                }
-            }
-
-            context.block_cache.extend(new_state);
+            new_state.extend(report.new_state.clone());
         }
+
+        if fork >= Fork::Prague {
+            let store_wrapper = Arc::new(StoreWrapper {
+                store: context.evm_state.database().unwrap().clone(),
+                block_hash: context.payload.header.parent_hash,
+            });
+            let report = process_block_hash_history_levm(
+                store_wrapper.clone(),
+                &context.payload.header,
+                config,
+            )?;
+
+            new_state.extend(report.new_state.clone());
+        }
+
+        // Now original_value is going to be the same as the current_value, for the next transaction.
+        // It should have only one value but it is convenient to keep on using our CacheDB structure
+        for account in new_state.values_mut() {
+            for storage_slot in account.storage.values_mut() {
+                storage_slot.original_value = storage_slot.current_value;
+            }
+        }
+
+        context.block_cache.extend(new_state);
+
         Ok(())
     }
     #[cfg(not(feature = "levm"))]
     {
-        // Apply withdrawals & call beacon root contract, and obtain the new state root
         let spec_id = spec_id(&context.chain_config()?, context.payload.header.timestamp);
         if context.payload.header.parent_beacon_block_root.is_some() && spec_id >= SpecId::CANCUN {
             beacon_root_contract_call(context.evm_state, &context.payload.header, spec_id)?;
+        }
+
+        if spec_id >= SpecId::PRAGUE {
+            process_block_hash_history(context.evm_state, &context.payload.header, spec_id)?;
         }
         let withdrawals = context.payload.body.withdrawals.clone().unwrap_or_default();
         process_withdrawals(context.evm_state, &withdrawals)?;

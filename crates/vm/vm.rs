@@ -44,7 +44,7 @@ pub const DEPOSIT_MAGIC_DATA: &[u8] = b"mint";
 
 pub const SYSTEM_ADDRESS_STR: &str = "fffffffffffffffffffffffffffffffffffffffe";
 pub const BEACON_ROOTS_ADDRESS_STR: &str = "000F3df6D732807Ef1319fB7B8bB8522d0Beac02";
-pub const HISTORY_STORAGE_ADDRESS_STR: &str = "0F792be4B0c0cb4DAE440Ef133E90C0eCD48CCCC";
+pub const HISTORY_STORAGE_ADDRESS_STR: &str = "0000F90827F1C53a10cb7A02335B175320002935";
 
 /// State used when running the EVM. The state can be represented with a [StoreWrapper] database, or
 /// with a [ExecutionDB] in case we only want to store the necessary data for some particular
@@ -163,7 +163,7 @@ cfg_if::cfg_if! {
         pub fn process_block_hash_history_levm(
             store_wrapper: Arc<StoreWrapper>,
             block_header: &BlockHeader,
-            fork: Fork,
+            config: EVMConfig,
         ) -> Result<ExecutionReport, EvmError> {
             lazy_static! {
                 static ref SYSTEM_ADDRESS: Address =
@@ -185,7 +185,7 @@ cfg_if::cfg_if! {
                 block_blob_gas_used: block_header.blob_gas_used.map(U256::from),
                 block_gas_limit: 30_000_000,
                 transient_storage: HashMap::new(),
-                fork,
+                config,
                 ..Default::default()
             };
 
@@ -309,18 +309,17 @@ cfg_if::cfg_if! {
                 if #[cfg(not(feature = "l2"))] {
                     if block_header.parent_beacon_block_root.is_some() && fork >= Fork::Cancun {
                         //eip 4788: execute beacon_root_contract_call before block transactions
-                        let report = beacon_root_contract_call_levm(store_wrapper.clone(), block_header, fork)?;
-                        block_cache.extend(report.new_state);
-                    }
-
-                    if fork >= Fork::Prague {
-                        //eip 2935: stores parent block hash in system contract
-                        let report = process_block_hash_history_levm(store_wrapper.clone(), block_header, fork)?;
+                        let report = beacon_root_contract_call_levm(store_wrapper.clone(), block_header, config)?;
                         block_cache.extend(report.new_state);
                     }
                 }
             }
 
+            if fork >= Fork::Prague {
+                //eip 2935: stores parent block hash in system contract
+                let report = process_block_hash_history_levm(store_wrapper.clone(), block_header, config)?;
+                block_cache.extend(report.new_state);
+            }
 
             // Account updates are initialized like this because of the beacon_root_contract_call, it is going to be empty if it wasn't called.
             let mut account_updates = get_state_transitions(state);
@@ -438,13 +437,14 @@ cfg_if::cfg_if! {
                     if block_header.parent_beacon_block_root.is_some() && spec_id >= SpecId::CANCUN {
                         beacon_root_contract_call(state, block_header, spec_id)?;
                     }
-
-                    //eip 2935: stores parent block hash in system contract
-                    if spec_id >= SpecId::CANCUN {
-                        process_block_hash_history(state, block_header, spec_id)?;
-                    }
                 }
             }
+
+            //eip 2935: stores parent block hash in system contract
+            if spec_id >= SpecId::PRAGUE {
+                process_block_hash_history(state, block_header, spec_id)?;
+            }
+
             let mut receipts = Vec::new();
             let mut cumulative_gas_used = 0;
 
