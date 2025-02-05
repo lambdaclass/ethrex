@@ -107,8 +107,8 @@ pub fn load() -> Result<Vec<EFTestReport>, EFTestRunnerError> {
 }
 
 pub fn summary_for_slack(reports: &[EFTestReport]) -> String {
-    let total_passed = reports.iter().filter(|report| report.passed()).count();
-    let total_run = reports.len();
+    let total_passed = total_fork_test_passed(reports); //reports.iter().filter(|report| report.passed()).count();
+    let total_run = total_fork_test_run(reports); //reports.len();
     let success_percentage = (total_passed as f64 / total_run as f64) * 100.0;
     format!(
         r#"{{
@@ -167,8 +167,8 @@ pub fn write_summary_for_slack(reports: &[EFTestReport]) -> Result<PathBuf, EFTe
 }
 
 pub fn summary_for_github(reports: &[EFTestReport]) -> String {
-    let total_passed = reports.iter().filter(|report| report.passed()).count();
-    let total_run = reports.len();
+    let total_passed = total_fork_test_passed(reports);
+    let total_run = total_fork_test_run(reports);
     let success_percentage = (total_passed as f64 / total_run as f64) * 100.0;
     format!(
         r#"Summary: {total_passed}/{total_run} ({success_percentage:.2}%)\n\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n"#,
@@ -207,8 +207,8 @@ pub fn write_summary_for_github(reports: &[EFTestReport]) -> Result<PathBuf, EFT
 }
 
 pub fn summary_for_shell(reports: &[EFTestReport]) -> String {
-    let total_passed = reports.iter().filter(|report| report.passed()).count();
-    let total_run = reports.len();
+    let total_passed = total_fork_test_passed(reports);
+    let total_run = total_fork_test_run(reports);
     let success_percentage = (total_passed as f64 / total_run as f64) * 100.0;
     format!(
         "{} {}/{total_run} ({success_percentage:.2}%)\n\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n\n\n{}\n",
@@ -274,8 +274,10 @@ pub fn test_dir_summary_for_shell(reports: &[EFTestReport]) -> String {
         .into_group_map_by(|report| report.dir.clone())
         .iter()
         .map(|(dir, reports)| {
-            let total_passed = reports.iter().filter(|report| report.passed()).count();
-            let total_run = reports.len();
+            let total_passed =
+                total_fork_test_passed(&reports.iter().map(|&r| r.clone()).collect::<Vec<_>>());
+            let total_run =
+                total_fork_test_run(&reports.iter().map(|&r| r.clone()).collect::<Vec<_>>());
             if total_passed == 0 {
                 (dir, reports, 0)
             } else if total_passed > 0 && total_passed < total_run {
@@ -287,8 +289,10 @@ pub fn test_dir_summary_for_shell(reports: &[EFTestReport]) -> String {
         .sorted_by_key(|(_dir, _reports, weight)| *weight)
         .rev()
         .for_each(|(dir, reports, _weight)| {
-            let total_passed = reports.iter().filter(|report| report.passed()).count();
-            let total_run = reports.len();
+            let total_passed =
+                total_fork_test_passed(&reports.iter().map(|&r| r.clone()).collect::<Vec<_>>());
+            let total_run =
+                total_fork_test_run(&reports.iter().map(|&r| r.clone()).collect::<Vec<_>>());
             let success_percentage = (total_passed as f64 / total_run as f64) * 100.0;
             let test_dir_summary = format!(
                 "{}: {}/{} ({:.2}%)\n",
@@ -311,10 +315,30 @@ pub fn test_dir_summary_for_shell(reports: &[EFTestReport]) -> String {
 #[derive(Debug, Default, Clone)]
 pub struct EFTestsReport(pub Vec<EFTestReport>);
 
+pub fn total_fork_test_passed(reports: &[EFTestReport]) -> usize {
+    let mut count = 0;
+    for report in reports {
+        for fork_result in report.fork_results.values() {
+            if fork_result.failed_vectors.is_empty() {
+                count += 1;
+            }
+        }
+    }
+    dbg!(count)
+}
+
+pub fn total_fork_test_run(reports: &[EFTestReport]) -> usize {
+    let mut count = 0;
+    for report in reports {
+        count += report.fork_results.len();
+    }
+    dbg!(count)
+}
+
 impl Display for EFTestsReport {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let total_passed = self.0.iter().filter(|report| report.passed()).count();
-        let total_run = self.0.len();
+        let total_passed = total_fork_test_passed(&self.0); //self.0.iter().filter(|report| report.passed()).count();
+        let total_run = total_fork_test_run(&self.0); //self.0.len();
         writeln!(f, "Summary: {total_passed}/{total_run}",)?;
         writeln!(f)?;
         writeln!(f, "{}", fork_summary_shell(&self.0, Fork::Prague))?;
