@@ -476,6 +476,10 @@ impl Store {
     ) -> Result<H256, StoreError> {
         let mut genesis_state_trie = self.engine.open_state_trie(*EMPTY_TRIE_HASH);
         for (address, account) in genesis_accounts {
+            println!(
+                "Inserting account: {:#x} with balance: {}",
+                address, account.balance
+            );
             let hashed_address = hash_address(&address);
             // Store account code (as this won't be stored in the trie)
             let code_hash = code_hash(&account.code);
@@ -498,6 +502,7 @@ impl Store {
                 storage_root,
                 code_hash,
             };
+            println!("Account state balance: {:?}", account_state.balance);
             genesis_state_trie.insert(hashed_address, account_state.encode_to_vec())?;
         }
         Ok(genesis_state_trie.hash()?)
@@ -552,6 +557,7 @@ impl Store {
 
         // Obtain genesis block
         let genesis_block = genesis.get_block();
+        dbg!(&genesis_block);
         let genesis_block_number = genesis_block.header.number;
 
         let genesis_hash = genesis_block.hash();
@@ -578,6 +584,10 @@ impl Store {
         self.add_block(genesis_block)?;
         self.update_earliest_block_number(genesis_block_number)?;
         self.update_latest_block_number(genesis_block_number)?;
+        println!(
+            "Setting canonical block for {} to {}",
+            genesis_block_number, genesis_hash
+        );
         self.set_canonical_block(genesis_block_number, genesis_hash)?;
 
         // Set chain config

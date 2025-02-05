@@ -6,9 +6,7 @@ mod execution_result;
 mod mods;
 
 use db::StoreWrapper;
-use execution_db::ExecutionDB;
-use std::cmp::min;
-
+use ethereum_types::H160;
 use ethrex_core::{
     types::{
         AccountInfo, Block, BlockHash, BlockHeader, ChainConfig, Fork, GenericTransaction,
@@ -17,6 +15,7 @@ use ethrex_core::{
     Address, BigEndianHash, H256, U256,
 };
 use ethrex_storage::{error::StoreError, AccountUpdate, Store};
+use execution_db::ExecutionDB;
 use lazy_static::lazy_static;
 use revm::{
     db::{states::bundle_state::BundleRetention, AccountState, AccountStatus},
@@ -27,9 +26,10 @@ use revm::{
     Database, DatabaseCommit, Evm,
 };
 use revm_inspectors::access_list::AccessListInspector;
+use std::cmp::min;
 // Rename imported types for clarity
 use revm_primitives::{
-    ruint::Uint, AccessList as RevmAccessList, AccessListItem, Bytes, FixedBytes,
+    hex, ruint::Uint, AccessList as RevmAccessList, AccessListItem, Bytes, FixedBytes,
     TxKind as RevmTxKind,
 };
 // Export needed types
@@ -68,6 +68,22 @@ impl EvmState {
             EvmState::Store(db) => db.database.store.get_chain_config().map_err(EvmError::from),
             EvmState::Execution(db) => Ok(db.db.get_chain_config()),
         }
+    }
+
+    pub fn from_store(store: &Store, block: &Block) -> Self {
+        let store_wrapper = StoreWrapper {
+            store: store.clone(),
+            block_hash: block.hash(),
+        };
+        dbg!(&block.hash());
+
+        let state = revm::db::State::builder()
+            .with_database(store_wrapper)
+            .with_bundle_update()
+            .without_state_clear()
+            .build();
+
+        EvmState::Store(state)
     }
 }
 
@@ -240,6 +256,15 @@ cfg_if::cfg_if! {
                 block_hash: block.header.parent_hash,
             });
 
+            // This returns correctly the account
+            println!("addr inside execute_block");
+            let fetch_addr = Address::from([
+                143, 202, 74, 222, 58, 81, 113, 51, 255, 35, 202, 85, 205, 174, 162, 156, 120, 201, 144,
+                184,
+            ]);
+            let info = store_wrapper.store.get_account_info(0, fetch_addr).unwrap();
+            dbg!(&info);
+
             let mut block_cache: CacheDB = HashMap::new();
             let block_header = &block.header;
             let fork = state.chain_config()?.fork(block_header.timestamp);
@@ -266,6 +291,9 @@ cfg_if::cfg_if! {
 
 
             for tx in block.body.transactions.iter() {
+                println!("check here");
+                let info = store_wrapper.store.get_account_info(0, fetch_addr)?;
+                dbg!(&info);
                 let report = execute_tx_levm(tx, block_header, store_wrapper.clone(), block_cache.clone(), config).map_err(EvmError::from)?;
 
                 let mut new_state = report.new_state.clone();
@@ -345,6 +373,14 @@ cfg_if::cfg_if! {
                 block_gas_limit: block_header.gas_limit,
                 transient_storage: HashMap::new(),
             };
+
+            // This should return the account but it returns empty
+            let fetch_addr = Address::from([
+                143, 202, 74, 222, 58, 81, 113, 51, 255, 35, 202, 85, 205, 174, 162, 156, 120, 201, 144,
+                184,
+            ]);
+            let fetch_res = db.get_account_info(fetch_addr);
+            dbg!(&fetch_res);
 
             let mut vm = VM::new(
                 tx.to(),

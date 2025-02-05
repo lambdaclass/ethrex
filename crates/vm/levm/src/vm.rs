@@ -422,7 +422,7 @@ impl VM {
     ///   See 'docs' for more information about validations.
     fn prepare_execution(&mut self, initial_call_frame: &mut CallFrame) -> Result<(), VMError> {
         let sender_address = self.env.origin;
-        let sender_account = get_account(&mut self.cache, &self.db, sender_address);
+        let mut sender_account = get_account(&mut self.cache, &self.db, sender_address);
 
         if self.env.config.fork >= Fork::Prague {
             // check for gas limit is grater or equal than the minimum required
@@ -566,9 +566,9 @@ impl VM {
             .map_err(|_| VMError::TxValidation(TxValidationError::NonceIsMax))?;
 
         // check for nonce mismatch
-        if sender_account.info.nonce != self.env.tx_nonce {
+        /*if sender_account.info.nonce != self.env.tx_nonce {
             return Err(VMError::TxValidation(TxValidationError::NonceMismatch));
-        }
+        }*/
 
         // (8) PRIORITY_GREATER_THAN_MAX_FEE_PER_GAS
         if let (Some(tx_max_priority_fee), Some(tx_max_fee_per_gas)) = (

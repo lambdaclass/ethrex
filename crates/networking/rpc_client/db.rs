@@ -10,7 +10,7 @@ use crate::Account;
 use ethrex_core::types::{AccountInfo, ChainConfig, GenesisAccount};
 use ethrex_core::{
     types::{Block, TxKind},
-    Address, H256,
+    Address, H256, U256,
 };
 use ethrex_storage::error::StoreError;
 use ethrex_storage::{EngineType, Store};
@@ -160,6 +160,7 @@ impl RpcDB {
             .iter()
             .filter_map(|(addr, opt_acc)| {
                 opt_acc.as_ref().map(|acc| {
+                    println!("account: {}, balance: {}", addr, acc.account_state.balance);
                     let acc_c = acc.clone();
                     (
                         addr.clone(),
