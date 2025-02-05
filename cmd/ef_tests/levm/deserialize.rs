@@ -282,15 +282,14 @@ where
 }
 
 pub fn deserialize_post<'de, D>(
-    // change name
     deserializer: D,
 ) -> Result<HashMap<Fork, Vec<EFTestPostValue>>, D::Error>
 where
     D: serde::Deserializer<'de>,
 {
-    let post_map_raw = HashMap::<String, Vec<EFTestPostValue>>::deserialize(deserializer)?;
-    let mut post_map = HashMap::new();
-    for (fork_str, values) in post_map_raw {
+    let post_deserialized = HashMap::<String, Vec<EFTestPostValue>>::deserialize(deserializer)?;
+    let mut post_parsed = HashMap::new();
+    for (fork_str, values) in post_deserialized {
         let fork = match fork_str.as_str() {
             "Frontier" => Fork::Frontier,
             "Homestead" => Fork::Homestead,
@@ -313,10 +312,10 @@ where
                 )))
             }
         };
-        post_map.insert(fork, values);
+        post_parsed.insert(fork, values);
     }
 
-    Ok(post_map)
+    Ok(post_parsed)
 }
 
 impl<'de> Deserialize<'de> for EFTests {
