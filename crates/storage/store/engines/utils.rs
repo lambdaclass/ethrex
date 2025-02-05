@@ -44,12 +44,14 @@ impl From<u8> for ChainDataIndex {
 pub enum SnapStateIndex {
     // Hash of the last downloaded header in a previous sync cycle that was aborted
     HeaderDownloadCheckpoint = 0,
-    // Current root hash of the latest State Trie (Used for both fetch & heal)
+    // Current root hash of the latest State Trie (Used during state sync)
     StateTrieRootCheckpoint = 1,
-    // Accounts which storage needs healing
-    PendingStorageHealAccounts = 2,
+    // Paths from the storage trie in need of healing, grouped by hashed account address
+    StorageHealPaths = 2,
     // Last key fetched from the state trie
     StateTrieKeyCheckpoint = 3,
+    // Paths from the state trie in need of healing
+    StateHealPaths = 4,
 }
 
 impl From<u8> for SnapStateIndex {
@@ -61,12 +63,11 @@ impl From<u8> for SnapStateIndex {
             x if x == SnapStateIndex::StateTrieRootCheckpoint as u8 => {
                 SnapStateIndex::StateTrieRootCheckpoint
             }
-            x if x == SnapStateIndex::PendingStorageHealAccounts as u8 => {
-                SnapStateIndex::PendingStorageHealAccounts
-            }
+            x if x == SnapStateIndex::StorageHealPaths as u8 => SnapStateIndex::StorageHealPaths,
             x if x == SnapStateIndex::StateTrieKeyCheckpoint as u8 => {
                 SnapStateIndex::StateTrieKeyCheckpoint
             }
+            x if x == SnapStateIndex::StateHealPaths as u8 => SnapStateIndex::StateHealPaths,
             _ => panic!("Invalid value when casting to SnapDataIndex: {}", value),
         }
     }
