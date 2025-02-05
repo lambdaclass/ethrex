@@ -125,7 +125,6 @@ pub fn create_payload(args: &BuildPayloadArgs, storage: &Store) -> Result<Block,
             .then_some(0),
         excess_blob_gas,
         parent_beacon_block_root: args.beacon_root,
-        // TODO: set the value properly
         requests_hash: chain_config
             .is_prague_activated(args.timestamp)
             .then_some(*EMPTY_KECCACK_HASH),

@@ -39,6 +39,7 @@ pub struct Genesis {
     pub blob_gas_used: Option<u64>,
     #[serde(default, with = "crate::serde_utils::u64::hex_str_opt")]
     pub excess_blob_gas: Option<u64>,
+    pub requests_hash: Option<H256>,
 }
 
 #[allow(unused)]
@@ -330,11 +331,10 @@ impl Genesis {
                 .config
                 .is_cancun_activated(self.timestamp)
                 .then_some(H256::zero()),
-            // TODO: set the value properly
             requests_hash: self
                 .config
                 .is_prague_activated(self.timestamp)
-                .then_some(*DEFAULT_REQUESTS_HASH),
+                .then_some(self.requests_hash.unwrap_or(*DEFAULT_REQUESTS_HASH)),
         }
     }
 

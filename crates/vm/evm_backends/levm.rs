@@ -182,14 +182,36 @@ pub fn get_state_transitions_levm(
     };
     let mut account_updates: Vec<AccountUpdate> = vec![];
     for (new_state_account_address, new_state_account) in new_state {
-        // This stores things that have changed in the account.
-        let mut account_update = AccountUpdate::new(*new_state_account_address);
-
-        // Account state before block execution.
         let initial_account_state = current_db
             .get_account_info_by_hash(block_hash, *new_state_account_address)
-            .expect("Error getting account info by address")
-            .unwrap_or_default();
+            .expect("Error getting account info by address");
+
+        if initial_account_state.is_none() {
+            // New account, update everything
+            let new_account = AccountUpdate {
+                address: *new_state_account_address,
+                removed: new_state_account.is_empty(),
+                info: Some(AccountInfo {
+                    code_hash: code_hash(&new_state_account.info.bytecode),
+                    balance: new_state_account.info.balance,
+                    nonce: new_state_account.info.nonce,
+                }),
+                code: Some(new_state_account.info.bytecode.clone()),
+                added_storage: new_state_account
+                    .storage
+                    .iter()
+                    .map(|(key, storage_slot)| (*key, storage_slot.current_value))
+                    .collect(),
+            };
+
+            account_updates.push(new_account);
+            continue;
+        }
+
+        // This unwrap is safe, just checked upside
+        let initial_account_state = initial_account_state.unwrap();
+        let mut account_update = AccountUpdate::new(*new_state_account_address);
+
         // Account state after block execution.
         let new_state_acc_info = AccountInfo {
             code_hash: code_hash(&new_state_account.info.bytecode),
