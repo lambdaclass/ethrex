@@ -179,6 +179,7 @@ pub struct EFTestPostValue {
     #[serde(deserialize_with = "deserialize_ef_post_value_indexes")]
     pub indexes: HashMap<String, U256>,
     pub logs: H256,
+    // we add the default because some tests don't have this field
     #[serde(default, deserialize_with = "deserialize_hex_bytes")]
     pub txbytes: Bytes,
 }

@@ -32,10 +32,7 @@ STATETEST_URL := https://github.com/ethereum/execution-spec-tests/releases/downl
 
 setup-test-dirs:
 	mkdir -p $(VECTORS_DIR)
-	# Create directory structure for legacy tests
 	mkdir -p $(VECTORS_DIR)/LegacyTests/Constantinople/GeneralStateTests
-	# mkdir -p $(VECTORS_DIR)/LegacyTests/Cancun/GeneralStateTests
-	# Create directories for other test types
 	mkdir -p $(VECTORS_DIR)/GeneralStateTests
 	mkdir -p $(VECTORS_DIR)/state_tests
 
@@ -47,9 +44,7 @@ update-ef-tests: ## 🔄 Update Ethereum Tests repository and submodules
 	cd $(TESTS_REPO) && git pull && git submodule update --init --recursive
 
 setup-legacy-tests: setup-test-dirs ## 📥 Setup Legacy Tests
-	# Copy from main repository
 	cp -r $(TESTS_REPO)/GeneralStateTests/* $(VECTORS_DIR)/GeneralStateTests/
-	# Copy legacy tests
 	@for dir in $(LEGACY_TESTS_DIRS); do \
 		if [ -d "$(TESTS_REPO)/LegacyTests/$$dir/GeneralStateTests" ]; then \
 			echo "Copying tests from LegacyTests/$$dir/GeneralStateTests"; \
