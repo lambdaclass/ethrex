@@ -11,8 +11,11 @@ use k256::{
 pub use kademlia::KademliaTable;
 use kademlia::PeerData;
 use rlpx::{
-    connection::RLPxConnBroadcastSender, handshake, message::Message as RLPxMessage,
-    p2p::Capability, utils::log_peer_error,
+    connection::RLPxConnBroadcastSender,
+    handshake,
+    message::Message as RLPxMessage,
+    p2p::Capability,
+    utils::{log_peer_debug, log_peer_error},
 };
 use std::{fmt, io, net::SocketAddr, str::FromStr, sync::Arc};
 use tokio::{
@@ -163,6 +166,7 @@ async fn handle_peer_as_initiator(context: P2PContext, node: Node) {
             return;
         }
     };
+    log_peer_debug(&node, "Trying to start connection as initiators");
     let table = context.table.clone();
     match handshake::as_initiator(context, node, stream).await {
         Ok(mut conn) => conn.start(table).await,
