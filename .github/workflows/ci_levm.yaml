@@ -57,7 +57,7 @@ jobs:
           if [ "$(awk '/Summary:/ {print $(NF)}' test_result.txt)" != "(100.00%)" ]; then
               echo "Percentage is not 100%."
               # exit 1 # uncomment when we expect 100% pass-rate
-          fi          
+          fi
 
   hive-report-creation:
     uses: ./.github/workflows/common_hive_reports.yaml
