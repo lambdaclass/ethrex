@@ -211,7 +211,7 @@ pub fn summary_for_shell(reports: &[EFTestReport]) -> String {
     let total_run = total_fork_test_run(reports);
     let success_percentage = (total_passed as f64 / total_run as f64) * 100.0;
     format!(
-        "{} {}/{total_run} ({success_percentage:.2}%)\n\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n\n\n{}\n",
+        "{} {}/{total_run} ({success_percentage:.2}%)\n\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n\n\n{}\n",
         "Summary:".bold(),
         if total_passed == total_run {
             format!("{}", total_passed).green()
@@ -231,6 +231,8 @@ pub fn summary_for_shell(reports: &[EFTestReport]) -> String {
         fork_summary_shell(reports, Fork::Byzantium),
         fork_summary_shell(reports, Fork::Homestead),
         fork_summary_shell(reports, Fork::Frontier),
+        fork_summary_shell(reports, Fork::SpuriousDragon),
+        fork_summary_shell(reports, Fork::Tangerine),
         test_dir_summary_for_shell(reports),
     )
 }
@@ -316,29 +318,29 @@ pub fn test_dir_summary_for_shell(reports: &[EFTestReport]) -> String {
 pub struct EFTestsReport(pub Vec<EFTestReport>);
 
 pub fn total_fork_test_passed(reports: &[EFTestReport]) -> usize {
-    let mut count = 0;
+    let mut tests_passed = 0;
     for report in reports {
         for fork_result in report.fork_results.values() {
             if fork_result.failed_vectors.is_empty() {
-                count += 1;
+                tests_passed += 1;
             }
         }
     }
-    dbg!(count)
+    tests_passed
 }
 
 pub fn total_fork_test_run(reports: &[EFTestReport]) -> usize {
-    let mut count = 0;
+    let mut tests_run = 0;
     for report in reports {
-        count += report.fork_results.len();
+        tests_run += report.fork_results.len();
     }
-    dbg!(count)
+    tests_run
 }
 
 impl Display for EFTestsReport {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let total_passed = total_fork_test_passed(&self.0); //self.0.iter().filter(|report| report.passed()).count();
-        let total_run = total_fork_test_run(&self.0); //self.0.len();
+        let total_passed = total_fork_test_passed(&self.0);
+        let total_run = total_fork_test_run(&self.0);
         writeln!(f, "Summary: {total_passed}/{total_run}",)?;
         writeln!(f)?;
         writeln!(f, "{}", fork_summary_shell(&self.0, Fork::Prague))?;
@@ -352,6 +354,8 @@ impl Display for EFTestsReport {
         writeln!(f, "{}", fork_summary_shell(&self.0, Fork::Istanbul))?;
         writeln!(f, "{}", fork_summary_shell(&self.0, Fork::London))?;
         writeln!(f, "{}", fork_summary_shell(&self.0, Fork::Frontier))?;
+        writeln!(f, "{}", fork_summary_shell(&self.0, Fork::SpuriousDragon))?;
+        writeln!(f, "{}", fork_summary_shell(&self.0, Fork::Tangerine))?;
         writeln!(f)?;
         writeln!(f, "Failed tests:")?;
         writeln!(f)?;
