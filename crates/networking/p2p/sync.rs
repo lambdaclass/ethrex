@@ -235,10 +235,9 @@ impl SyncManager {
                     return Ok(());
                 }
                 // Rebuild & Heal state trie
-                let stale_pivot =
-                    heal_state_trie(pivot_header.state_root, store.clone(), self.peers.clone())
-                        .await?;
-                if stale_pivot {
+                if !heal_state_trie(pivot_header.state_root, store.clone(), self.peers.clone())
+                    .await?
+                {
                     warn!("Stale pivot, aborting healing");
                     return Ok(());
                 }
@@ -374,7 +373,7 @@ async fn state_sync(
     // Resume download from checkpoint if available or start from an empty trie
     let mut start_account_hash = checkpoint.unwrap_or(STATE_TRIE_SEGMENTS_START[segment_number]);
     // Skip state sync if we are already on healing
-    if start_account_hash != STATE_TRIE_SEGMENTS_END[segment_number] {
+    if start_account_hash == STATE_TRIE_SEGMENTS_END[segment_number] {
         return Ok((false, start_account_hash));
     }
     // Spawn storage & bytecode fetchers
