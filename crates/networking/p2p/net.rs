@@ -47,7 +47,7 @@ pub enum NetworkError {
     DiscoveryStart(DiscoveryError),
 }
 
-const NODE_ID_LOG_TO_SHOW: &str = "";
+const NODE_ID_LOG_TO_SHOW: &str = "709764f16bc0867bc3f51c95e6c0ce9cb53fe679c7630acbc4aee3d7d7243d8937e84aba5253d8da835b1e603c6faa9db7676c6739749d558e9611b3ff791848";
 pub fn node_id_log_to_show() -> H512 {
     H512::from_str(NODE_ID_LOG_TO_SHOW).unwrap()
 }
@@ -193,10 +193,10 @@ struct DebugPeer {
 
 impl std::fmt::Debug for DebugPeer {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "\n")?;
-        writeln!(f, "node_id: {}", self.node.node_id)?;
-        writeln!(f, "enode_url: {}", self.enode_url)?;
-        writeln!(f, "capabilites: {:?}", self.capabilities)?;
+        write!(f, "\n ")?;
+        writeln!(f, "'\t- node_id: {}", self.node.node_id)?;
+        writeln!(f, "'\t- enode_url: {}", self.enode_url)?;
+        writeln!(f, "'\t- capabilites: {:?}", self.capabilities)?;
 
         Ok(())
     }
@@ -224,7 +224,11 @@ pub async fn periodically_show_peer_stats(peer_table: Arc<Mutex<KademliaTable>>)
             })
             .collect();
 
-        info!("Peer stats {:?}", peers);
+        info!(
+            "Peer stats:\n\t- discovered peers: {}\n\t- {:?}",
+            peer_table.lock().await.iter_peers().count(),
+            peers
+        );
 
         interval.tick().await;
     }
