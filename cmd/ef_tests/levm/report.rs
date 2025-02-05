@@ -353,7 +353,7 @@ impl Display for EFTestsReport {
                     writeln!(f, "Error: {error}")?;
                     if let Some(re_run_report) = &report.re_run_report {
                         if let Some(execution_report) =
-                            re_run_report.execution_report.get(failed_vector)
+                            re_run_report.execution_report.get(&(*failed_vector, *fork))
                         {
                             if let Some((levm_result, revm_result)) =
                                 &execution_report.execution_result_mismatch
@@ -391,8 +391,9 @@ impl Display for EFTestsReport {
                             }
                         }
 
-                        if let Some(account_update) =
-                            re_run_report.account_updates_report.get(failed_vector)
+                        if let Some(account_update) = re_run_report
+                            .account_updates_report
+                            .get(&(*failed_vector, *fork))
                         {
                             writeln!(f, "{}", &account_update.to_string())?;
                         } else {
@@ -840,8 +841,8 @@ pub struct TestReRunExecutionReport {
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
 pub struct TestReRunReport {
-    pub execution_report: HashMap<TestVector, TestReRunExecutionReport>,
-    pub account_updates_report: HashMap<TestVector, ComparisonReport>,
+    pub execution_report: HashMap<(TestVector, Fork), TestReRunExecutionReport>,
+    pub account_updates_report: HashMap<(TestVector, Fork), ComparisonReport>,
 }
 
 impl TestReRunReport {
@@ -854,10 +855,11 @@ impl TestReRunReport {
         vector: TestVector,
         levm_result: TxResult,
         revm_result: RevmExecutionResult,
+        fork: Fork,
     ) {
         let value = Some((levm_result, revm_result));
         self.execution_report
-            .entry(vector)
+            .entry((vector, fork))
             .and_modify(|report| {
                 report.execution_result_mismatch = value.clone();
             })
@@ -872,10 +874,11 @@ impl TestReRunReport {
         vector: TestVector,
         levm_gas_used: u64,
         revm_gas_used: u64,
+        fork: Fork,
     ) {
         let value = Some((levm_gas_used, revm_gas_used));
         self.execution_report
-            .entry(vector)
+            .entry((vector, fork))
             .and_modify(|report| {
                 report.gas_used_mismatch = value;
             })
@@ -890,10 +893,11 @@ impl TestReRunReport {
         vector: TestVector,
         levm_gas_refunded: u64,
         revm_gas_refunded: u64,
+        fork: Fork,
     ) {
         let value = Some((levm_gas_refunded, revm_gas_refunded));
         self.execution_report
-            .entry(vector)
+            .entry((vector, fork))
             .and_modify(|report| {
                 report.gas_refunded_mismatch = value;
             })
@@ -907,8 +911,9 @@ impl TestReRunReport {
         &mut self,
         vector: TestVector,
         report: ComparisonReport,
+        fork: Fork,
     ) {
-        self.account_updates_report.insert(vector, report);
+        self.account_updates_report.insert((vector, fork), report);
     }
 
     pub fn register_re_run_failure(
@@ -916,10 +921,11 @@ impl TestReRunReport {
         vector: TestVector,
         levm_result: TxResult,
         revm_error: EVMError<StoreError>,
+        fork: Fork,
     ) {
         let value = Some((levm_result, revm_error.to_string()));
         self.execution_report
-            .entry(vector)
+            .entry((vector, fork))
             .and_modify(|report| {
                 report.re_runner_error = value.clone();
             })

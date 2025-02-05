@@ -91,6 +91,7 @@ pub fn re_run_failed_ef_test_tx(
         levm_execution_report,
         revm_execution_result,
         re_run_report,
+        fork,
     )?;
     ensure_post_state(
         levm_execution_report,
@@ -223,6 +224,7 @@ pub fn compare_levm_revm_execution_results(
     levm_execution_report: &ExecutionReport,
     revm_execution_result: Result<RevmExecutionResult, REVMError<StoreError>>,
     re_run_report: &mut TestReRunReport,
+    fork: &Fork,
 ) -> Result<(), EFTestRunnerError> {
     match (levm_execution_report, revm_execution_result) {
         (levm_tx_report, Ok(revm_execution_result)) => {
@@ -242,6 +244,7 @@ pub fn compare_levm_revm_execution_results(
                             *vector,
                             levm_tx_report.gas_used,
                             revm_gas_used,
+                            *fork,
                         );
                     }
                     if levm_tx_report.gas_refunded != revm_gas_refunded {
@@ -249,6 +252,7 @@ pub fn compare_levm_revm_execution_results(
                             *vector,
                             levm_tx_report.gas_refunded,
                             revm_gas_refunded,
+                            *fork,
                         );
                     }
                 }
@@ -264,6 +268,7 @@ pub fn compare_levm_revm_execution_results(
                             *vector,
                             levm_tx_report.gas_used,
                             revm_gas_used,
+                            *fork,
                         );
                     }
                 }
@@ -280,6 +285,7 @@ pub fn compare_levm_revm_execution_results(
                             *vector,
                             levm_tx_report.gas_used,
                             revm_gas_used,
+                            *fork,
                         );
                     }
                 }
@@ -288,6 +294,7 @@ pub fn compare_levm_revm_execution_results(
                         *vector,
                         levm_tx_report.result.clone(),
                         revm_execution_result.clone(),
+                        *fork,
                     );
                 }
             }
@@ -297,6 +304,7 @@ pub fn compare_levm_revm_execution_results(
                 *vector,
                 levm_transaction_report.result.clone(),
                 revm_error,
+                *fork,
             );
         }
     }
@@ -327,7 +335,7 @@ pub fn ensure_post_state(
                 &levm_account_updates,
                 &revm_account_updates,
             );
-            re_run_report.register_account_updates_report(*vector, account_updates_report);
+            re_run_report.register_account_updates_report(*vector, account_updates_report, *fork);
         }
     }
 
