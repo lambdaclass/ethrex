@@ -18,7 +18,10 @@ use crate::{
 };
 use bytes::Bytes;
 use ethrex_core::{
-    types::{Fork, ForkBlobSchedule, TxKind},
+    types::{
+        tx_fields::{AccessList, AuthorizationList},
+        Fork, ForkBlobSchedule, TxKind,
+    },
     Address, H256, U256,
 };
 use std::{
@@ -112,7 +115,7 @@ impl EVMConfig {
     const fn max_blobs_per_block(fork: Fork) -> u64 {
         match fork {
             Fork::Prague => MAX_BLOB_COUNT_ELECTRA,
-            Fork::PragueEof => MAX_BLOB_COUNT_ELECTRA,
+            Fork::Osaka => MAX_BLOB_COUNT_ELECTRA,
             _ => MAX_BLOB_COUNT,
         }
     }
@@ -125,7 +128,7 @@ impl EVMConfig {
     /// blocks)."
     const fn get_blob_base_fee_update_fraction_value(fork: Fork) -> u64 {
         match fork {
-            Fork::Prague | Fork::PragueEof => BLOB_BASE_FEE_UPDATE_FRACTION_PRAGUE,
+            Fork::Prague | Fork::Osaka => BLOB_BASE_FEE_UPDATE_FRACTION_PRAGUE,
             _ => BLOB_BASE_FEE_UPDATE_FRACTION,
         }
     }
@@ -133,7 +136,7 @@ impl EVMConfig {
     /// According to [EIP-7691](https://eips.ethereum.org/EIPS/eip-7691#specification):
     const fn get_target_blob_gas_per_block_(fork: Fork) -> u64 {
         match fork {
-            Fork::Prague | Fork::PragueEof => TARGET_BLOB_GAS_PER_BLOCK_PECTRA,
+            Fork::Prague | Fork::Osaka => TARGET_BLOB_GAS_PER_BLOCK_PECTRA,
             _ => TARGET_BLOB_GAS_PER_BLOCK,
         }
     }
@@ -163,20 +166,6 @@ pub struct VM {
     pub tx_kind: TxKind,
     pub access_list: AccessList,
     pub authorization_list: Option<AuthorizationList>,
-}
-
-pub type AccessList = Vec<(Address, Vec<H256>)>;
-
-pub type AuthorizationList = Vec<AuthorizationTuple>;
-// TODO: We have to implement this in ethrex_core
-#[derive(Debug, Clone, Default, Copy)]
-pub struct AuthorizationTuple {
-    pub chain_id: U256,
-    pub address: Address,
-    pub nonce: u64,
-    pub v: U256,
-    pub r_signature: U256,
-    pub s_signature: U256,
 }
 
 impl VM {

@@ -201,6 +201,7 @@ impl GetPooledTransactions {
                     blobs_bundle: bundle,
                 })
             }
+            Transaction::EIP7702Transaction(itx) => P2PTransaction::EIP7702Transaction(itx),
             Transaction::PrivilegedL2Transaction(itx) => {
                 P2PTransaction::PrivilegedL2Transaction(itx)
             }

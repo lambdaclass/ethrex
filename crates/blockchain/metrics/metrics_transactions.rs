@@ -128,6 +128,7 @@ impl MetricsTxType {
             ethrex_core::types::TxType::EIP2930 => "EIP2930",
             ethrex_core::types::TxType::EIP1559 => "EIP1559",
             ethrex_core::types::TxType::EIP4844 => "EIP4844",
+            ethrex_core::types::TxType::EIP7702 => "EIP7702",
             ethrex_core::types::TxType::Privileged => "Privileged",
         }
     }

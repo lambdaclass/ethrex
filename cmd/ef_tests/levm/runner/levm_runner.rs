@@ -5,13 +5,13 @@ use crate::{
     utils::{self, effective_gas_price},
 };
 use ethrex_core::{
-    types::{code_hash, AccountInfo},
+    types::{code_hash, tx_fields::*, AccountInfo},
     H256, U256,
 };
 use ethrex_levm::{
     db::CacheDB,
     errors::{ExecutionReport, TxValidationError, VMError},
-    vm::{AuthorizationTuple, EVMConfig, VM},
+    vm::{EVMConfig, VM},
     Environment,
 };
 use ethrex_storage::AccountUpdate;
@@ -95,7 +95,7 @@ pub fn prepare_vm_for_tx(vector: &TestVector, test: &EFTest) -> Result<VM, EFTes
                 chain_id: auth_tuple.chain_id,
                 address: auth_tuple.address,
                 nonce: auth_tuple.nonce,
-                v: auth_tuple.v,
+                y_parity: auth_tuple.v,
                 r_signature: auth_tuple.r,
                 s_signature: auth_tuple.s,
             })
