@@ -283,10 +283,20 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
             tokio::select! {
                 // Expect a message from the remote peer
                 message = self.receive() => {
-                    self.handle_message(message?, sender.clone()).await?;
+                    match message {
+                        Ok(message) => {
+                            log_peer_debug(&self.node, &format!("Received message {}", message));
+                            self.handle_message(message, sender.clone()).await?;
+                        },
+                        Err(e) => {
+                            log_peer_debug(&self.node, &format!("Received RLPX Error in msg {}", e));
+                            return Err(e);
+                        }
+                    }
                 }
                 // Expect a message from the backend
                 Some(message) = receiver.recv() => {
+                    log_peer_debug(&self.node, &format!("Sending message {}", message));
                     self.send(message).await?;
                 }
                 // This is not ideal, but using the receiver without
