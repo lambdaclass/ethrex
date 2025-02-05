@@ -7,6 +7,7 @@ use ethrex_core::{
 };
 use ethrex_rlp::decode::RLPDecode;
 use ethrex_rlp::encode::RLPEncode;
+use ethrex_trie::Nibbles;
 use ethrex_trie::{
     db::{redb::RedBTrie, redb_multitable::RedBMultiTableTrieDB},
     Trie,
@@ -22,6 +23,7 @@ use crate::{
     },
 };
 
+use super::utils::SnapStateIndex;
 use super::{api::StoreEngine, utils::ChainDataIndex};
 
 const STATE_TRIE_NODES_TABLE: TableDefinition<&[u8], &[u8]> =
@@ -52,6 +54,8 @@ const TRANSACTION_LOCATIONS_TABLE: MultimapTableDefinition<
     TransactionHashRLP,
     Rlp<(BlockNumber, BlockHash, Index)>,
 > = MultimapTableDefinition::new("TransactionLocations");
+const SNAP_STATE_TABLE: TableDefinition<SnapStateIndex, Vec<u8>> =
+    TableDefinition::new("SnapState");
 
 #[derive(Debug)]
 pub struct RedBStore {
@@ -698,6 +702,69 @@ impl StoreEngine for RedBStore {
             .collect())
     }
 
+    fn set_header_download_checkpoint(&self, block_hash: BlockHash) -> Result<(), StoreError> {
+        self.write(
+            SNAP_STATE_TABLE,
+            SnapStateIndex::HeaderDownloadCheckpoint,
+            block_hash.encode_to_vec(),
+        )
+    }
+
+    fn get_header_download_checkpoint(&self) -> Result<Option<BlockHash>, StoreError> {
+        self.read(SNAP_STATE_TABLE, SnapStateIndex::HeaderDownloadCheckpoint)?
+            .map(|rlp| RLPDecode::decode(&rlp.value()))
+            .transpose()
+            .map_err(StoreError::RLPDecode)
+    }
+
+    fn set_state_trie_root_checkpoint(&self, current_root: H256) -> Result<(), StoreError> {
+        self.write(
+            SNAP_STATE_TABLE,
+            SnapStateIndex::StateTrieRootCheckpoint,
+            current_root.encode_to_vec(),
+        )
+    }
+
+    fn get_state_trie_root_checkpoint(&self) -> Result<Option<H256>, StoreError> {
+        self.read(SNAP_STATE_TABLE, SnapStateIndex::StateTrieRootCheckpoint)?
+            .map(|rlp| RLPDecode::decode(&rlp.value()))
+            .transpose()
+            .map_err(StoreError::RLPDecode)
+    }
+
+    fn set_state_trie_key_checkpoint(&self, last_key: H256) -> Result<(), StoreError> {
+        self.write(
+            SNAP_STATE_TABLE,
+            SnapStateIndex::StateTrieKeyCheckpoint,
+            last_key.encode_to_vec(),
+        )
+    }
+
+    fn get_state_trie_key_checkpoint(&self) -> Result<Option<H256>, StoreError> {
+        self.read(SNAP_STATE_TABLE, SnapStateIndex::StateTrieKeyCheckpoint)?
+            .map(|rlp| RLPDecode::decode(&rlp.value()))
+            .transpose()
+            .map_err(StoreError::RLPDecode)
+    }
+
+    fn set_storage_heal_paths(
+        &self,
+        accounts: Vec<(H256, Vec<Nibbles>)>,
+    ) -> Result<(), StoreError> {
+        self.write(
+            SNAP_STATE_TABLE,
+            SnapStateIndex::StorageHealPaths,
+            accounts.encode_to_vec(),
+        )
+    }
+
+    fn get_storage_heal_paths(&self) -> Result<Option<Vec<(H256, Vec<Nibbles>)>>, StoreError> {
+        self.read(SNAP_STATE_TABLE, SnapStateIndex::StorageHealPaths)?
+            .map(|rlp| RLPDecode::decode(&rlp.value()))
+            .transpose()
+            .map_err(StoreError::RLPDecode)
+    }
+
     fn is_synced(&self) -> Result<bool, StoreError> {
         match self.read(CHAIN_DATA_TABLE, ChainDataIndex::IsSynced)? {
             None => Err(StoreError::Custom("Sync status not found".to_string())),
@@ -711,6 +778,29 @@ impl StoreEngine for RedBStore {
             ChainDataIndex::IsSynced,
             status.encode_to_vec(),
         )
+    }
+
+    fn set_state_heal_paths(&self, paths: Vec<Nibbles>) -> Result<(), StoreError> {
+        self.write(
+            SNAP_STATE_TABLE,
+            SnapStateIndex::StateHealPaths,
+            paths.encode_to_vec(),
+        )
+    }
+
+    fn get_state_heal_paths(&self) -> Result<Option<Vec<Nibbles>>, StoreError> {
+        self.read(SNAP_STATE_TABLE, SnapStateIndex::StateHealPaths)?
+            .map(|rlp| RLPDecode::decode(&rlp.value()))
+            .transpose()
+            .map_err(StoreError::RLPDecode)
+    }
+
+    fn clear_snap_state(&self) -> Result<(), StoreError> {
+        let write_txn = self.db.begin_write()?;
+        // Delete the whole table as it will be re-crated when we next open it
+        write_txn.delete_table(SNAP_STATE_TABLE)?;
+        write_txn.commit()?;
+        Ok(())
     }
 }
 
@@ -755,6 +845,47 @@ impl redb::Key for ChainDataIndex {
     }
 }
 
+impl redb::Value for SnapStateIndex {
+    type SelfType<'a>
+        = SnapStateIndex
+    where
+        Self: 'a;
+
+    type AsBytes<'a>
+        = [u8; 1]
+    where
+        Self: 'a;
+
+    fn fixed_width() -> Option<usize> {
+        None
+    }
+
+    fn from_bytes<'a>(data: &'a [u8]) -> Self::SelfType<'a>
+    where
+        Self: 'a,
+    {
+        data[0].into()
+    }
+
+    fn as_bytes<'a, 'b: 'a>(value: &'a Self::SelfType<'b>) -> Self::AsBytes<'a>
+    where
+        Self: 'a,
+        Self: 'b,
+    {
+        [*value as u8]
+    }
+
+    fn type_name() -> redb::TypeName {
+        TypeName::new("SnapStateIndex")
+    }
+}
+
+impl redb::Key for SnapStateIndex {
+    fn compare(data1: &[u8], data2: &[u8]) -> std::cmp::Ordering {
+        data1.cmp(data2)
+    }
+}
+
 pub fn init_db() -> Result<Database, StoreError> {
     let db = Database::create("ethrex.redb")?;
 
@@ -770,6 +901,7 @@ pub fn init_db() -> Result<Database, StoreError> {
     table_creation_txn.open_table(PAYLOADS_TABLE)?;
     table_creation_txn.open_table(PENDING_BLOCKS_TABLE)?;
     table_creation_txn.open_multimap_table(TRANSACTION_LOCATIONS_TABLE)?;
+    table_creation_txn.open_table(SNAP_STATE_TABLE)?;
     table_creation_txn.commit()?;
 
     Ok(db)

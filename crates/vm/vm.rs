@@ -81,8 +81,8 @@ cfg_if::cfg_if! {
     if #[cfg(feature = "levm")] {
         use ethrex_levm::{
             db::{CacheDB, Database as LevmDatabase},
-            errors::{TransactionReport, TxResult, VMError},
-            vm::VM,
+            errors::{ExecutionReport, TxResult, VMError},
+            vm::{VM, EVMConfig},
             Environment,
             Account
         };
@@ -94,8 +94,8 @@ cfg_if::cfg_if! {
         pub fn beacon_root_contract_call_levm(
             store_wrapper: Arc<StoreWrapper>,
             block_header: &BlockHeader,
-            spec_id: SpecId,
-        ) -> Result<TransactionReport, EvmError> {
+            config: EVMConfig,
+        ) -> Result<ExecutionReport, EvmError> {
             lazy_static! {
                 static ref SYSTEM_ADDRESS: Address =
                     Address::from_slice(&hex::decode("fffffffffffffffffffffffffffffffffffffffe").unwrap());
@@ -125,7 +125,7 @@ cfg_if::cfg_if! {
                 block_blob_gas_used: block_header.blob_gas_used.map(U256::from),
                 block_gas_limit: 30_000_000,
                 transient_storage: HashMap::new(),
-                spec_id,
+                config,
                 ..Default::default()
             };
 
@@ -145,7 +145,7 @@ cfg_if::cfg_if! {
             )
             .map_err(EvmError::from)?;
 
-            let mut report = vm.transact().map_err(EvmError::from)?;
+            let mut report = vm.execute().map_err(EvmError::from)?;
 
             report.new_state.remove(&*SYSTEM_ADDRESS);
 
@@ -164,14 +164,32 @@ cfg_if::cfg_if! {
             };
             let mut account_updates: Vec<AccountUpdate> = vec![];
             for (new_state_account_address, new_state_account) in new_state {
-                // This stores things that have changed in the account.
-                let mut account_update = AccountUpdate::new(*new_state_account_address);
-
-                // Account state before block execution.
                 let initial_account_state = current_db
                     .get_account_info_by_hash(block_hash, *new_state_account_address)
-                    .expect("Error getting account info by address")
-                    .unwrap_or_default();
+                    .expect("Error getting account info by address");
+
+                if initial_account_state.is_none() {
+                    // New account, update everything
+                    let new_account = AccountUpdate{
+                        address: *new_state_account_address ,
+                        removed: new_state_account.is_empty(),
+                        info: Some(AccountInfo {
+                            code_hash: code_hash(&new_state_account.info.bytecode),
+                            balance: new_state_account.info.balance,
+                            nonce: new_state_account.info.nonce,
+                        }),
+                        code: Some(new_state_account.info.bytecode.clone()),
+                        added_storage: new_state_account.storage.iter().map(|(key, storage_slot)| (*key, storage_slot.current_value)).collect(),
+                    };
+
+                    account_updates.push(new_account);
+                    continue;
+                }
+
+                // This unwrap is safe, just checked upside
+                let initial_account_state = initial_account_state.unwrap();
+                let mut account_update = AccountUpdate::new(*new_state_account_address);
+
                 // Account state after block execution.
                 let new_state_acc_info = AccountInfo {
                     code_hash: code_hash(&new_state_account.info.bytecode),
@@ -218,14 +236,19 @@ cfg_if::cfg_if! {
                 store: state.database().unwrap().clone(),
                 block_hash: block.header.parent_hash,
             });
+
             let mut block_cache: CacheDB = HashMap::new();
             let block_header = &block.header;
-            let spec_id = spec_id(&state.chain_config()?, block_header.timestamp);
-            //eip 4788: execute beacon_root_contract_call before block transactions
+            let fork = state.chain_config()?.fork(block_header.timestamp);
+            // If there's no blob schedule in chain_config use the
+            // default/canonical values
+            let blob_schedule = state.chain_config()?.get_fork_blob_schedule(block_header.timestamp)
+                .unwrap_or(EVMConfig::canonical_values(fork));
+            let config = EVMConfig::new(fork , blob_schedule);
             cfg_if::cfg_if! {
                 if #[cfg(not(feature = "l2"))] {
-                    if block_header.parent_beacon_block_root.is_some() && spec_id == SpecId::CANCUN {
-                        let report = beacon_root_contract_call_levm(store_wrapper.clone(), block_header, spec_id)?;
+                    if block_header.parent_beacon_block_root.is_some() && fork >= Fork::Cancun {
+                        let report = beacon_root_contract_call_levm(store_wrapper.clone(), block_header, config)?;
                         block_cache.extend(report.new_state);
                     }
                 }
@@ -238,8 +261,9 @@ cfg_if::cfg_if! {
             let mut receipts = Vec::new();
             let mut cumulative_gas_used = 0;
 
+
             for tx in block.body.transactions.iter() {
-                let report = execute_tx_levm(tx, block_header, store_wrapper.clone(), block_cache.clone(), spec_id).map_err(EvmError::from)?;
+                let report = execute_tx_levm(tx, block_header, store_wrapper.clone(), block_cache.clone(), config).map_err(EvmError::from)?;
 
                 let mut new_state = report.new_state.clone();
 
@@ -282,6 +306,7 @@ cfg_if::cfg_if! {
                 }
             }
 
+
             account_updates.extend(get_state_transitions_levm(state, block.header.parent_hash, &block_cache));
 
             Ok((receipts, account_updates))
@@ -292,15 +317,15 @@ cfg_if::cfg_if! {
             block_header: &BlockHeader,
             db: Arc<dyn LevmDatabase>,
             block_cache: CacheDB,
-            spec_id: SpecId
-        ) -> Result<TransactionReport, VMError> {
+            config: EVMConfig,
+        ) -> Result<ExecutionReport, VMError> {
             let gas_price : U256 = tx.effective_gas_price(block_header.base_fee_per_gas).ok_or(VMError::InvalidTransaction)?.into();
 
             let env = Environment {
                 origin: tx.sender(),
                 refunded_gas: 0,
                 gas_limit: tx.gas_limit(),
-                spec_id,
+                config,
                 block_number: block_header.number.into(),
                 coinbase: block_header.coinbase,
                 timestamp: block_header.timestamp.into(),
@@ -314,6 +339,7 @@ cfg_if::cfg_if! {
                 tx_max_priority_fee_per_gas: tx.max_priority_fee().map(U256::from),
                 tx_max_fee_per_gas: tx.max_fee_per_gas().map(U256::from),
                 tx_max_fee_per_blob_gas: tx.max_fee_per_blob_gas().map(U256::from),
+                tx_nonce: tx.nonce(),
                 block_gas_limit: block_header.gas_limit,
                 transient_storage: HashMap::new(),
             };
@@ -331,7 +357,7 @@ cfg_if::cfg_if! {
                 None
             )?;
 
-            vm.transact()
+            vm.execute()
         }
     } else if #[cfg(not(feature = "levm"))] {
         /// Executes all transactions in a block and returns their receipts.
@@ -342,7 +368,7 @@ cfg_if::cfg_if! {
             cfg_if::cfg_if! {
                 if #[cfg(not(feature = "l2"))] {
                     //eip 4788: execute beacon_root_contract_call before block transactions
-                    if block_header.parent_beacon_block_root.is_some() && spec_id == SpecId::CANCUN {
+                    if block_header.parent_beacon_block_root.is_some() && spec_id >= SpecId::CANCUN {
                         beacon_root_contract_call(state, block_header, spec_id)?;
                     }
                 }
@@ -979,10 +1005,31 @@ fn access_list_inspector(
 /// Returns the spec id according to the block timestamp and the stored chain config
 /// WARNING: Assumes at least Merge fork is active
 pub fn spec_id(chain_config: &ChainConfig, block_timestamp: u64) -> SpecId {
-    match chain_config.get_fork(block_timestamp) {
-        Fork::Cancun => SpecId::CANCUN,
-        Fork::Shanghai => SpecId::SHANGHAI,
+    fork_to_spec_id(chain_config.get_fork(block_timestamp))
+}
+
+pub fn fork_to_spec_id(fork: Fork) -> SpecId {
+    match fork {
+        Fork::Frontier => SpecId::FRONTIER,
+        Fork::FrontierThawing => SpecId::FRONTIER_THAWING,
+        Fork::Homestead => SpecId::HOMESTEAD,
+        Fork::DaoFork => SpecId::DAO_FORK,
+        Fork::Tangerine => SpecId::TANGERINE,
+        Fork::SpuriousDragon => SpecId::SPURIOUS_DRAGON,
+        Fork::Byzantium => SpecId::BYZANTIUM,
+        Fork::Constantinople => SpecId::CONSTANTINOPLE,
+        Fork::Petersburg => SpecId::PETERSBURG,
+        Fork::Istanbul => SpecId::ISTANBUL,
+        Fork::MuirGlacier => SpecId::MUIR_GLACIER,
+        Fork::Berlin => SpecId::BERLIN,
+        Fork::London => SpecId::LONDON,
+        Fork::ArrowGlacier => SpecId::ARROW_GLACIER,
+        Fork::GrayGlacier => SpecId::GRAY_GLACIER,
         Fork::Paris => SpecId::MERGE,
+        Fork::Shanghai => SpecId::SHANGHAI,
+        Fork::Cancun => SpecId::CANCUN,
+        Fork::Prague => SpecId::PRAGUE,
+        Fork::PragueEof => SpecId::PRAGUE_EOF,
     }
 }
 

@@ -11,8 +11,12 @@ use super::message::Message;
 pub(crate) enum RLPxError {
     #[error("{0}")]
     HandshakeError(String),
-    #[error("Disconnect received")]
-    Disconnect(),
+    #[error("No matching capabilities")]
+    NoMatchingCapabilities(),
+    #[error("Peer disconnected")]
+    Disconnected(),
+    #[error("Disconnect requested: {0}")]
+    DisconnectRequested(String),
     #[error("Not Found: {0}")]
     NotFound(String),
     #[error("Invalid peer id")]

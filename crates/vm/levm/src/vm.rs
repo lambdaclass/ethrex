@@ -7,12 +7,8 @@ use crate::{
         CacheDB, Database,
     },
     environment::Environment,
-    errors::{
-        InternalError, OpcodeSuccess, OutOfGasError, ResultReason, TransactionReport, TxResult,
-        TxValidationError, VMError,
-    },
-    gas_cost::{self, CODE_DEPOSIT_COST, STANDARD_TOKEN_COST, TOTAL_COST_FLOOR_PER_TOKEN},
-    opcodes::Opcode,
+    errors::{ExecutionReport, InternalError, OpcodeResult, TxResult, TxValidationError, VMError},
+    gas_cost::{self, STANDARD_TOKEN_COST, TOTAL_COST_FLOOR_PER_TOKEN},
     precompiles::{
         execute_precompile, is_precompile, SIZE_PRECOMPILES_CANCUN, SIZE_PRECOMPILES_PRAGUE,
         SIZE_PRECOMPILES_PRE_CANCUN,
@@ -21,8 +17,10 @@ use crate::{
     AccountInfo, TransientStorage,
 };
 use bytes::Bytes;
-use ethrex_core::{types::TxKind, Address, H256, U256};
-use revm_primitives::SpecId;
+use ethrex_core::{
+    types::{Fork, ForkBlobSchedule, TxKind},
+    Address, H256, U256,
+};
 use std::{
     cmp::max,
     collections::{HashMap, HashSet},
@@ -32,15 +30,124 @@ use std::{
 pub type Storage = HashMap<U256, H256>;
 
 #[derive(Debug, Clone, Default)]
-// TODO: https://github.com/lambdaclass/ethrex/issues/604
 pub struct Substate {
-    // accessed addresses and storage keys are considered WARM
-    // pub accessed_addresses: HashSet<Address>,
-    // pub accessed_storage_keys: HashSet<(Address, U256)>,
     pub selfdestruct_set: HashSet<Address>,
     pub touched_accounts: HashSet<Address>,
     pub touched_storage_slots: HashMap<Address, HashSet<H256>>,
     pub created_accounts: HashSet<Address>,
+}
+
+/// Backup if sub-context is reverted. It consists of a copy of:
+///   - Database
+///   - Substate
+///   - Gas Refunds
+///   - Transient Storage
+pub struct StateBackup {
+    cache: CacheDB,
+    substate: Substate,
+    refunded_gas: u64,
+    transient_storage: TransientStorage,
+}
+
+impl StateBackup {
+    pub fn new(
+        cache: CacheDB,
+        substate: Substate,
+        refunded_gas: u64,
+        transient_storage: TransientStorage,
+    ) -> StateBackup {
+        StateBackup {
+            cache,
+            substate,
+            refunded_gas,
+            transient_storage,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+/// This structs holds special configuration variables specific to the
+/// EVM. In most cases, at least at the time of writing (February
+/// 2025), you want to use the default blob_schedule values for the
+/// specified Fork. The "intended" way to do this is by using the `EVMConfig::canonical_values(fork: Fork)` function.
+///
+/// However, that function should NOT be used IF you want to use a
+/// custom ForkBlobSchedule, like it's described in
+/// [EIP-7840](https://eips.ethereum.org/EIPS/eip-7840). For more
+/// information read the EIP
+pub struct EVMConfig {
+    pub fork: Fork,
+    pub blob_schedule: ForkBlobSchedule,
+}
+
+impl EVMConfig {
+    pub fn new(fork: Fork, blob_schedule: ForkBlobSchedule) -> EVMConfig {
+        EVMConfig {
+            fork,
+            blob_schedule,
+        }
+    }
+
+    /// This function is used for running the EF tests. If you don't
+    /// have acces to a EVMConfig (mainly in the form of a
+    /// genesis.json file) you can use this function to get the
+    /// "Default" ForkBlobSchedule for that specific Fork.
+    /// NOTE: This function could potentially be expanded to include
+    /// other types of "default"s.
+    pub fn canonical_values(fork: Fork) -> ForkBlobSchedule {
+        let max_blobs_per_block: u64 = Self::max_blobs_per_block(fork);
+        let target: u64 = Self::get_target_blob_gas_per_block_(fork);
+        let base_fee_update_fraction: u64 = Self::get_blob_base_fee_update_fraction_value(fork);
+
+        ForkBlobSchedule {
+            target,
+            max: max_blobs_per_block,
+            base_fee_update_fraction,
+        }
+    }
+
+    /// After EIP-7691 the maximum number of blob hashes changed. For more
+    /// information see
+    /// [EIP-7691](https://eips.ethereum.org/EIPS/eip-7691#specification).
+    const fn max_blobs_per_block(fork: Fork) -> u64 {
+        match fork {
+            Fork::Prague => MAX_BLOB_COUNT_ELECTRA,
+            Fork::PragueEof => MAX_BLOB_COUNT_ELECTRA,
+            _ => MAX_BLOB_COUNT,
+        }
+    }
+
+    /// According to [EIP-7691](https://eips.ethereum.org/EIPS/eip-7691#specification):
+    ///
+    /// "These changes imply that get_base_fee_per_blob_gas and
+    /// calc_excess_blob_gas functions defined in EIP-4844 use the new
+    /// values for the first block of the fork (and for all subsequent
+    /// blocks)."
+    const fn get_blob_base_fee_update_fraction_value(fork: Fork) -> u64 {
+        match fork {
+            Fork::Prague | Fork::PragueEof => BLOB_BASE_FEE_UPDATE_FRACTION_PRAGUE,
+            _ => BLOB_BASE_FEE_UPDATE_FRACTION,
+        }
+    }
+
+    /// According to [EIP-7691](https://eips.ethereum.org/EIPS/eip-7691#specification):
+    const fn get_target_blob_gas_per_block_(fork: Fork) -> u64 {
+        match fork {
+            Fork::Prague | Fork::PragueEof => TARGET_BLOB_GAS_PER_BLOCK_PECTRA,
+            _ => TARGET_BLOB_GAS_PER_BLOCK,
+        }
+    }
+}
+
+impl Default for EVMConfig {
+    /// The default EVMConfig depends on the default Fork.
+    fn default() -> Self {
+        let fork = core::default::Default::default();
+        EVMConfig {
+            fork,
+            blob_schedule: Self::canonical_values(fork),
+        }
+    }
 }
 
 pub struct VM {
@@ -91,7 +198,7 @@ impl VM {
         let mut default_touched_accounts = HashSet::from_iter([env.origin].iter().cloned());
 
         // [EIP-3651] - Add coinbase to cache if the spec is SHANGHAI or higher
-        if env.spec_id >= SpecId::SHANGHAI {
+        if env.config.fork >= Fork::Shanghai {
             default_touched_accounts.insert(env.coinbase);
         }
 
@@ -109,10 +216,10 @@ impl VM {
 
         // Add precompiled contracts addresses to cache.
         // TODO: Use the addresses from precompiles.rs in a future
-        let max_precompile_address = match env.spec_id {
-            spec if spec >= SpecId::PRAGUE => SIZE_PRECOMPILES_PRAGUE,
-            spec if spec >= SpecId::CANCUN => SIZE_PRECOMPILES_CANCUN,
-            spec if spec < SpecId::CANCUN => SIZE_PRECOMPILES_PRE_CANCUN,
+        let max_precompile_address = match env.config.fork {
+            spec if spec >= Fork::Prague => SIZE_PRECOMPILES_PRAGUE,
+            spec if spec >= Fork::Cancun => SIZE_PRECOMPILES_CANCUN,
+            spec if spec < Fork::Cancun => SIZE_PRECOMPILES_PRE_CANCUN,
             _ => return Err(VMError::Internal(InternalError::InvalidSpecId)),
         };
         for i in 1..=max_precompile_address {
@@ -204,306 +311,48 @@ impl VM {
         }
     }
 
-    pub fn execute(
+    pub fn run_execution(
         &mut self,
         current_call_frame: &mut CallFrame,
-    ) -> Result<TransactionReport, VMError> {
+    ) -> Result<ExecutionReport, VMError> {
         // Backup of Database, Substate, Gas Refunds and Transient Storage if sub-context is reverted
-        let (backup_db, backup_substate, backup_refunded_gas, backup_transient_storage) = (
+        let backup = StateBackup::new(
             self.cache.clone(),
             self.accrued_substate.clone(),
             self.env.refunded_gas,
             self.env.transient_storage.clone(),
         );
 
-        if is_precompile(&current_call_frame.code_address, self.env.spec_id) {
-            let precompile_result = execute_precompile(current_call_frame, self.env.spec_id);
-
-            match precompile_result {
-                Ok(output) => {
-                    self.call_frames.push(current_call_frame.clone());
-
-                    return Ok(TransactionReport {
-                        result: TxResult::Success,
-                        new_state: self.cache.clone(),
-                        gas_used: current_call_frame.gas_used,
-                        gas_refunded: 0,
-                        output,
-                        logs: std::mem::take(&mut current_call_frame.logs),
-                        created_address: None,
-                    });
-                }
-                Err(error) => {
-                    if error.is_internal() {
-                        return Err(error);
-                    }
-
-                    self.call_frames.push(current_call_frame.clone());
-
-                    self.restore_state(
-                        backup_db,
-                        backup_substate,
-                        backup_refunded_gas,
-                        backup_transient_storage,
-                    );
-
-                    return Ok(TransactionReport {
-                        result: TxResult::Revert(error),
-                        new_state: HashMap::default(),
-                        gas_used: current_call_frame.gas_limit,
-                        gas_refunded: 0,
-                        output: Bytes::new(),
-                        logs: std::mem::take(&mut current_call_frame.logs),
-                        created_address: None,
-                    });
-                }
-            }
+        if is_precompile(&current_call_frame.code_address, self.env.config.fork) {
+            let precompile_result = execute_precompile(current_call_frame, self.env.config.fork);
+            return self.handle_precompile_result(precompile_result, current_call_frame, backup);
         }
 
         loop {
             let opcode = current_call_frame.next_opcode();
 
-            let op_result: Result<OpcodeSuccess, VMError> = match opcode {
-                Opcode::STOP => Ok(OpcodeSuccess::Result(ResultReason::Stop)),
-                Opcode::ADD => self.op_add(current_call_frame),
-                Opcode::MUL => self.op_mul(current_call_frame),
-                Opcode::SUB => self.op_sub(current_call_frame),
-                Opcode::DIV => self.op_div(current_call_frame),
-                Opcode::SDIV => self.op_sdiv(current_call_frame),
-                Opcode::MOD => self.op_mod(current_call_frame),
-                Opcode::SMOD => self.op_smod(current_call_frame),
-                Opcode::ADDMOD => self.op_addmod(current_call_frame),
-                Opcode::MULMOD => self.op_mulmod(current_call_frame),
-                Opcode::EXP => self.op_exp(current_call_frame),
-                Opcode::SIGNEXTEND => self.op_signextend(current_call_frame),
-                Opcode::LT => self.op_lt(current_call_frame),
-                Opcode::GT => self.op_gt(current_call_frame),
-                Opcode::SLT => self.op_slt(current_call_frame),
-                Opcode::SGT => self.op_sgt(current_call_frame),
-                Opcode::EQ => self.op_eq(current_call_frame),
-                Opcode::ISZERO => self.op_iszero(current_call_frame),
-                Opcode::KECCAK256 => self.op_keccak256(current_call_frame),
-                Opcode::CALLDATALOAD => self.op_calldataload(current_call_frame),
-                Opcode::CALLDATASIZE => self.op_calldatasize(current_call_frame),
-                Opcode::CALLDATACOPY => self.op_calldatacopy(current_call_frame),
-                Opcode::RETURNDATASIZE => self.op_returndatasize(current_call_frame),
-                Opcode::RETURNDATACOPY => self.op_returndatacopy(current_call_frame),
-                Opcode::JUMP => self.op_jump(current_call_frame),
-                Opcode::JUMPI => self.op_jumpi(current_call_frame),
-                Opcode::JUMPDEST => self.op_jumpdest(current_call_frame),
-                Opcode::PC => self.op_pc(current_call_frame),
-                Opcode::BLOCKHASH => self.op_blockhash(current_call_frame),
-                Opcode::COINBASE => self.op_coinbase(current_call_frame),
-                Opcode::TIMESTAMP => self.op_timestamp(current_call_frame),
-                Opcode::NUMBER => self.op_number(current_call_frame),
-                Opcode::PREVRANDAO => self.op_prevrandao(current_call_frame),
-                Opcode::GASLIMIT => self.op_gaslimit(current_call_frame),
-                Opcode::CHAINID => self.op_chainid(current_call_frame),
-                Opcode::BASEFEE => self.op_basefee(current_call_frame),
-                Opcode::BLOBHASH => self.op_blobhash(current_call_frame),
-                Opcode::BLOBBASEFEE => self.op_blobbasefee(current_call_frame),
-                Opcode::PUSH0 => self.op_push0(current_call_frame),
-                // PUSHn
-                op if (Opcode::PUSH1..=Opcode::PUSH32).contains(&op) => {
-                    let n_bytes = get_n_value(op, Opcode::PUSH1)?;
-                    self.op_push(current_call_frame, n_bytes)
-                }
-                Opcode::AND => self.op_and(current_call_frame),
-                Opcode::OR => self.op_or(current_call_frame),
-                Opcode::XOR => self.op_xor(current_call_frame),
-                Opcode::NOT => self.op_not(current_call_frame),
-                Opcode::BYTE => self.op_byte(current_call_frame),
-                Opcode::SHL => self.op_shl(current_call_frame),
-                Opcode::SHR => self.op_shr(current_call_frame),
-                Opcode::SAR => self.op_sar(current_call_frame),
-                // DUPn
-                op if (Opcode::DUP1..=Opcode::DUP16).contains(&op) => {
-                    let depth = get_n_value(op, Opcode::DUP1)?;
-                    self.op_dup(current_call_frame, depth)
-                }
-                // SWAPn
-                op if (Opcode::SWAP1..=Opcode::SWAP16).contains(&op) => {
-                    let depth = get_n_value(op, Opcode::SWAP1)?;
-                    self.op_swap(current_call_frame, depth)
-                }
-                Opcode::POP => self.op_pop(current_call_frame),
-                op if (Opcode::LOG0..=Opcode::LOG4).contains(&op) => {
-                    let number_of_topics = get_number_of_topics(op)?;
-                    self.op_log(current_call_frame, number_of_topics)
-                }
-                Opcode::MLOAD => self.op_mload(current_call_frame),
-                Opcode::MSTORE => self.op_mstore(current_call_frame),
-                Opcode::MSTORE8 => self.op_mstore8(current_call_frame),
-                Opcode::SLOAD => self.op_sload(current_call_frame),
-                Opcode::SSTORE => self.op_sstore(current_call_frame),
-                Opcode::MSIZE => self.op_msize(current_call_frame),
-                Opcode::GAS => self.op_gas(current_call_frame),
-                Opcode::MCOPY => self.op_mcopy(current_call_frame),
-                Opcode::CALL => self.op_call(current_call_frame),
-                Opcode::CALLCODE => self.op_callcode(current_call_frame),
-                Opcode::RETURN => self.op_return(current_call_frame),
-                Opcode::DELEGATECALL => self.op_delegatecall(current_call_frame),
-                Opcode::STATICCALL => self.op_staticcall(current_call_frame),
-                Opcode::CREATE => self.op_create(current_call_frame),
-                Opcode::CREATE2 => self.op_create2(current_call_frame),
-                Opcode::TLOAD => self.op_tload(current_call_frame),
-                Opcode::TSTORE => self.op_tstore(current_call_frame),
-                Opcode::SELFBALANCE => self.op_selfbalance(current_call_frame),
-                Opcode::ADDRESS => self.op_address(current_call_frame),
-                Opcode::ORIGIN => self.op_origin(current_call_frame),
-                Opcode::BALANCE => self.op_balance(current_call_frame),
-                Opcode::CALLER => self.op_caller(current_call_frame),
-                Opcode::CALLVALUE => self.op_callvalue(current_call_frame),
-                Opcode::CODECOPY => self.op_codecopy(current_call_frame),
-                Opcode::CODESIZE => self.op_codesize(current_call_frame),
-                Opcode::GASPRICE => self.op_gasprice(current_call_frame),
-                Opcode::EXTCODESIZE => self.op_extcodesize(current_call_frame),
-                Opcode::EXTCODECOPY => self.op_extcodecopy(current_call_frame),
-                Opcode::EXTCODEHASH => self.op_extcodehash(current_call_frame),
-                Opcode::REVERT => self.op_revert(current_call_frame),
-                Opcode::INVALID => self.op_invalid(),
-                Opcode::SELFDESTRUCT => self.op_selfdestruct(current_call_frame),
-
-                _ => Err(VMError::OpcodeNotFound),
-            };
-
-            if opcode != Opcode::JUMP && opcode != Opcode::JUMPI {
-                current_call_frame.increment_pc()?;
-            }
-
-            // Gas refunds are applied at the end of a transaction. Should it be implemented here?
+            let op_result = self.handle_current_opcode(opcode, current_call_frame);
 
             match op_result {
-                Ok(OpcodeSuccess::Continue) => {}
-                Ok(OpcodeSuccess::Result(_)) => {
-                    self.call_frames.push(current_call_frame.clone());
-                    // On successful create check output validity
-                    if (self.is_create() && current_call_frame.depth == 0)
-                        || current_call_frame.create_op_called
-                    {
-                        let contract_code = std::mem::take(&mut current_call_frame.output);
-                        let code_length = contract_code.len();
-
-                        let code_length_u64: u64 = code_length
-                            .try_into()
-                            .map_err(|_| VMError::Internal(InternalError::ConversionError))?;
-
-                        let code_deposit_cost: u64 =
-                            code_length_u64.checked_mul(CODE_DEPOSIT_COST).ok_or(
-                                VMError::Internal(InternalError::ArithmeticOperationOverflow),
-                            )?;
-
-                        // Revert
-                        // If the first byte of code is 0xef
-                        // If the code_length > MAX_CODE_SIZE
-                        // If current_consumed_gas + code_deposit_cost > gas_limit
-                        let validate_create = if code_length > MAX_CODE_SIZE {
-                            Err(VMError::ContractOutputTooBig)
-                        } else if contract_code.first().unwrap_or(&0) == &INVALID_CONTRACT_PREFIX {
-                            Err(VMError::InvalidContractPrefix)
-                        } else if self
-                            .increase_consumed_gas(current_call_frame, code_deposit_cost)
-                            .is_err()
-                        {
-                            Err(VMError::OutOfGas(OutOfGasError::MaxGasLimitExceeded))
-                        } else {
-                            Ok(current_call_frame.to)
-                        };
-
-                        match validate_create {
-                            Ok(new_address) => {
-                                // Set bytecode to new account if success
-                                update_account_bytecode(
-                                    &mut self.cache,
-                                    &self.db,
-                                    new_address,
-                                    contract_code,
-                                )?;
-                            }
-                            Err(error) => {
-                                // Revert if error
-                                current_call_frame.gas_used = current_call_frame.gas_limit;
-                                self.restore_state(
-                                    backup_db,
-                                    backup_substate,
-                                    backup_refunded_gas,
-                                    backup_transient_storage,
-                                );
-
-                                return Ok(TransactionReport {
-                                    result: TxResult::Revert(error),
-                                    new_state: HashMap::default(),
-                                    gas_used: current_call_frame.gas_used,
-                                    gas_refunded: self.env.refunded_gas,
-                                    output: std::mem::take(&mut current_call_frame.output),
-                                    logs: std::mem::take(&mut current_call_frame.logs),
-                                    created_address: None,
-                                });
-                            }
-                        }
-                    }
-
-                    return Ok(TransactionReport {
-                        result: TxResult::Success,
-                        new_state: HashMap::default(),
-                        gas_used: current_call_frame.gas_used,
-                        gas_refunded: self.env.refunded_gas,
-                        output: std::mem::take(&mut current_call_frame.output),
-                        logs: std::mem::take(&mut current_call_frame.logs),
-                        created_address: None,
-                    });
+                Ok(OpcodeResult::Continue { pc_increment }) => {
+                    current_call_frame.increment_pc_by(pc_increment)?
                 }
-                Err(error) => {
-                    self.call_frames.push(current_call_frame.clone());
-
-                    if error.is_internal() {
-                        return Err(error);
-                    }
-
-                    // Unless error is from Revert opcode, all gas is consumed
-                    if error != VMError::RevertOpcode {
-                        let left_gas = current_call_frame
-                            .gas_limit
-                            .saturating_sub(current_call_frame.gas_used);
-                        current_call_frame.gas_used =
-                            current_call_frame.gas_used.saturating_add(left_gas);
-                    }
-
-                    self.restore_state(
-                        backup_db,
-                        backup_substate,
-                        backup_refunded_gas,
-                        backup_transient_storage,
-                    );
-
-                    return Ok(TransactionReport {
-                        result: TxResult::Revert(error),
-                        new_state: HashMap::default(),
-                        gas_used: current_call_frame.gas_used,
-                        gas_refunded: self.env.refunded_gas,
-                        output: std::mem::take(&mut current_call_frame.output), // Bytes::new() if error is not RevertOpcode
-                        logs: std::mem::take(&mut current_call_frame.logs),
-                        created_address: None,
-                    });
+                Ok(OpcodeResult::Halt) => {
+                    return self.handle_opcode_result(current_call_frame, backup)
                 }
+                Err(error) => return self.handle_opcode_error(error, current_call_frame, backup),
             }
         }
     }
 
-    fn restore_state(
-        &mut self,
-        backup_cache: CacheDB,
-        backup_substate: Substate,
-        backup_refunded_gas: u64,
-        backup_transient_storage: TransientStorage,
-    ) {
-        self.cache = backup_cache;
-        self.accrued_substate = backup_substate;
-        self.env.refunded_gas = backup_refunded_gas;
-        self.env.transient_storage = backup_transient_storage;
+    pub fn restore_state(&mut self, backup: StateBackup) {
+        self.cache = backup.cache;
+        self.accrued_substate = backup.substate;
+        self.env.refunded_gas = backup.refunded_gas;
+        self.env.transient_storage = backup.transient_storage;
     }
 
-    fn is_create(&self) -> bool {
+    pub fn is_create(&self) -> bool {
         matches!(self.tx_kind, TxKind::Create)
     }
 
@@ -512,13 +361,14 @@ impl VM {
 
         let intrinsic_gas = get_intrinsic_gas(
             self.is_create(),
-            self.env.spec_id,
+            self.env.config.fork,
             &self.access_list,
             &self.authorization_list,
             initial_call_frame,
         )?;
 
-        self.increase_consumed_gas(initial_call_frame, intrinsic_gas)
+        initial_call_frame
+            .increase_consumed_gas(intrinsic_gas)
             .map_err(|_| TxValidationError::IntrinsicGasTooLow)?;
 
         Ok(())
@@ -527,9 +377,9 @@ impl VM {
     fn gas_used(
         &self,
         initial_call_frame: &CallFrame,
-        report: &TransactionReport,
+        report: &ExecutionReport,
     ) -> Result<u64, VMError> {
-        if self.env.spec_id >= SpecId::PRAGUE {
+        if self.env.config.fork >= Fork::Prague {
             // If the transaction is a CREATE transaction, the calldata is emptied and the bytecode is assigned.
             let calldata = if self.is_create() {
                 &initial_call_frame.bytecode
@@ -541,7 +391,7 @@ impl VM {
             // tx_calldata = nonzero_bytes_in_calldata * 16 + zero_bytes_in_calldata * 4
             // this is actually tokens_in_calldata * STANDARD_TOKEN_COST
             // see it in https://eips.ethereum.org/EIPS/eip-7623
-            let tokens_in_calldata: u64 = gas_cost::tx_calldata(calldata, self.env.spec_id)
+            let tokens_in_calldata: u64 = gas_cost::tx_calldata(calldata, self.env.config.fork)
                 .map_err(VMError::OutOfGas)?
                 .checked_div(STANDARD_TOKEN_COST)
                 .ok_or(VMError::Internal(InternalError::DivisionError))?;
@@ -574,11 +424,11 @@ impl VM {
         let sender_address = self.env.origin;
         let sender_account = get_account(&mut self.cache, &self.db, sender_address);
 
-        if self.env.spec_id >= SpecId::PRAGUE {
+        if self.env.config.fork >= Fork::Prague {
             // check for gas limit is grater or equal than the minimum required
             let intrinsic_gas: u64 = get_intrinsic_gas(
                 self.is_create(),
-                self.env.spec_id,
+                self.env.config.fork,
                 &self.access_list,
                 &self.authorization_list,
                 initial_call_frame,
@@ -586,7 +436,7 @@ impl VM {
 
             // calldata_cost = tokens_in_calldata * 4
             let calldata_cost: u64 =
-                gas_cost::tx_calldata(&initial_call_frame.calldata, self.env.spec_id)
+                gas_cost::tx_calldata(&initial_call_frame.calldata, self.env.config.fork)
                     .map_err(VMError::OutOfGas)?;
 
             // same as calculated in gas_used()
@@ -656,13 +506,13 @@ impl VM {
         let blob_gas_cost = get_blob_gas_price(
             self.env.tx_blob_hashes.clone(),
             self.env.block_excess_blob_gas,
-            self.env.spec_id,
+            &self.env.config,
         )?;
 
         // (2) INSUFFICIENT_MAX_FEE_PER_BLOB_GAS
         if let Some(tx_max_fee_per_blob_gas) = self.env.tx_max_fee_per_blob_gas {
             if tx_max_fee_per_blob_gas
-                < get_base_fee_per_blob_gas(self.env.block_excess_blob_gas, self.env.spec_id)?
+                < get_base_fee_per_blob_gas(self.env.block_excess_blob_gas, &self.env.config)?
             {
                 return Err(VMError::TxValidation(
                     TxValidationError::InsufficientMaxFeePerBlobGas,
@@ -700,7 +550,7 @@ impl VM {
         if self.is_create() {
             // [EIP-3860] - INITCODE_SIZE_EXCEEDED
             if initial_call_frame.calldata.len() > INIT_CODE_MAX_SIZE
-                && self.env.spec_id >= SpecId::SHANGHAI
+                && self.env.config.fork >= Fork::Shanghai
             {
                 return Err(VMError::TxValidation(
                     TxValidationError::InitcodeSizeExceeded,
@@ -714,6 +564,11 @@ impl VM {
         // (7) NONCE_IS_MAX
         increment_account_nonce(&mut self.cache, &self.db, sender_address)
             .map_err(|_| VMError::TxValidation(TxValidationError::NonceIsMax))?;
+
+        // check for nonce mismatch
+        if sender_account.info.nonce != self.env.tx_nonce {
+            return Err(VMError::TxValidation(TxValidationError::NonceMismatch));
+        }
 
         // (8) PRIORITY_GREATER_THAN_MAX_FEE_PER_GAS
         if let (Some(tx_max_priority_fee), Some(tx_max_fee_per_gas)) = (
@@ -742,7 +597,7 @@ impl VM {
         // Transaction is type 3 if tx_max_fee_per_blob_gas is Some
         if self.env.tx_max_fee_per_blob_gas.is_some() {
             // (11) TYPE_3_TX_PRE_FORK
-            if self.env.spec_id < SpecId::CANCUN {
+            if self.env.config.fork < Fork::Cancun {
                 return Err(VMError::TxValidation(TxValidationError::Type3TxPreFork));
             }
 
@@ -766,7 +621,15 @@ impl VM {
             }
 
             // (14) TYPE_3_TX_BLOB_COUNT_EXCEEDED
-            if blob_hashes.len() > max_blobs_per_block(self.env.spec_id) {
+            if blob_hashes.len()
+                > self
+                    .env
+                    .config
+                    .blob_schedule
+                    .max
+                    .try_into()
+                    .map_err(|_| VMError::Internal(InternalError::ConversionError))?
+            {
                 return Err(VMError::TxValidation(
                     TxValidationError::Type3TxBlobCountExceeded,
                 ));
@@ -784,7 +647,7 @@ impl VM {
         // Transaction is type 4 if authorization_list is Some
         if let Some(auth_list) = &self.authorization_list {
             // (16) TYPE_4_TX_PRE_FORK
-            if self.env.spec_id < SpecId::PRAGUE {
+            if self.env.config.fork < Fork::Prague {
                 return Err(VMError::TxValidation(TxValidationError::Type4TxPreFork));
             }
 
@@ -830,10 +693,10 @@ impl VM {
     /// 2. Return unused gas + gas refunds to the sender.
     /// 3. Pay coinbase fee
     /// 4. Destruct addresses in selfdestruct set.
-    fn post_execution_changes(
+    fn finalize_execution(
         &mut self,
         initial_call_frame: &CallFrame,
-        report: &mut TransactionReport,
+        report: &mut ExecutionReport,
     ) -> Result<(), VMError> {
         // POST-EXECUTION Changes
         let sender_address = initial_call_frame.msg_sender;
@@ -937,7 +800,7 @@ impl VM {
         Ok(())
     }
 
-    pub fn transact(&mut self) -> Result<TransactionReport, VMError> {
+    pub fn execute(&mut self) -> Result<ExecutionReport, VMError> {
         let mut initial_call_frame = self
             .call_frames
             .pop()
@@ -966,12 +829,11 @@ impl VM {
             cache::insert_account(&mut self.cache, new_contract_address, created_contract);
         }
 
-        let mut report = self.execute(&mut initial_call_frame)?;
+        let mut report = self.run_execution(&mut initial_call_frame)?;
 
         report.gas_used = self.gas_used(&initial_call_frame, &report)?;
 
-        self.post_execution_changes(&initial_call_frame, &mut report)?;
-        // There shouldn't be any errors here but I don't know what the desired behavior is if something goes wrong.
+        self.finalize_execution(&initial_call_frame, &mut report)?;
 
         report.new_state.clone_from(&self.cache);
 
@@ -982,25 +844,6 @@ impl VM {
         self.call_frames.last_mut().ok_or(VMError::Internal(
             InternalError::CouldNotAccessLastCallframe,
         ))
-    }
-
-    /// Increases gas consumption of CallFrame and Environment, returning an error if the callframe gas limit is reached.
-    pub fn increase_consumed_gas(
-        &mut self,
-        current_call_frame: &mut CallFrame,
-        gas: u64,
-    ) -> Result<(), VMError> {
-        let potential_consumed_gas = current_call_frame
-            .gas_used
-            .checked_add(gas)
-            .ok_or(OutOfGasError::ConsumedGasOverflow)?;
-        if potential_consumed_gas > current_call_frame.gas_limit {
-            return Err(VMError::OutOfGas(OutOfGasError::MaxGasLimitExceeded));
-        }
-
-        current_call_frame.gas_used = potential_consumed_gas;
-
-        Ok(())
     }
 
     /// Accesses to an account's information.
@@ -1028,7 +871,7 @@ impl VM {
     ) -> Result<(StorageSlot, bool), VMError> {
         // [EIP-2929] - Introduced conditional tracking of accessed storage slots for Berlin and later specs.
         let mut storage_slot_was_cold = false;
-        if self.env.spec_id >= SpecId::BERLIN {
+        if self.env.config.fork >= Fork::Berlin {
             storage_slot_was_cold = self
                 .accrued_substate
                 .touched_storage_slots
@@ -1086,18 +929,17 @@ impl VM {
     fn handle_create_non_empty_account(
         &mut self,
         initial_call_frame: &CallFrame,
-    ) -> Result<TransactionReport, VMError> {
-        let mut report = TransactionReport {
+    ) -> Result<ExecutionReport, VMError> {
+        let mut report = ExecutionReport {
             result: TxResult::Revert(VMError::AddressAlreadyOccupied),
             gas_used: self.env.gas_limit,
             gas_refunded: 0,
             logs: vec![],
             new_state: HashMap::default(),
             output: Bytes::new(),
-            created_address: None,
         };
 
-        self.post_execution_changes(initial_call_frame, &mut report)?;
+        self.finalize_execution(initial_call_frame, &mut report)?;
         report.new_state.clone_from(&self.cache);
 
         Ok(report)
@@ -1185,6 +1027,7 @@ impl VM {
                 }
             };
 
+            // TESTING LEVM CI
             auth_account.info.bytecode = if auth_tuple.address != Address::zero() {
                 delegation_bytes.into()
             } else {

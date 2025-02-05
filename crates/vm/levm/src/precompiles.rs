@@ -4,7 +4,7 @@ use bls12_381::{
 };
 
 use bytes::Bytes;
-use ethrex_core::{serde_utils::bool, Address, H160, H256, U256};
+use ethrex_core::{serde_utils::bool, types::Fork, Address, H160, H256, U256};
 use keccak_hash::keccak256;
 use kzg_rs::{Bytes32, Bytes48, KzgSettings};
 use lambdaworks_math::{
@@ -32,7 +32,6 @@ use lambdaworks_math::{
 };
 use libsecp256k1::{self, Message, RecoveryId, Signature};
 use num_bigint::BigUint;
-use revm_primitives::SpecId;
 use sha3::Digest;
 use std::ops::Mul;
 
@@ -176,14 +175,14 @@ const FP2_ZERO_MAPPED_TO_G2: [u8; 256] = [
 pub const G1_POINT_AT_INFINITY: [u8; 128] = [0_u8; 128];
 pub const G2_POINT_AT_INFINITY: [u8; 256] = [0_u8; 256];
 
-pub fn is_precompile(callee_address: &Address, spec_id: SpecId) -> bool {
+pub fn is_precompile(callee_address: &Address, fork: Fork) -> bool {
     // Cancun specs is the only one that allows point evaluation precompile
-    if *callee_address == POINT_EVALUATION_ADDRESS && spec_id < SpecId::CANCUN {
+    if *callee_address == POINT_EVALUATION_ADDRESS && fork < Fork::Cancun {
         return false;
     }
     // Prague or newers forks should only use this precompiles
     // https://eips.ethereum.org/EIPS/eip-2537
-    if PRECOMPILES_POST_CANCUN.contains(callee_address) && spec_id < SpecId::PRAGUE {
+    if PRECOMPILES_POST_CANCUN.contains(callee_address) && fork < Fork::Prague {
         return false;
     }
 
@@ -192,7 +191,7 @@ pub fn is_precompile(callee_address: &Address, spec_id: SpecId) -> bool {
 
 pub fn execute_precompile(
     current_call_frame: &mut CallFrame,
-    spec_id: SpecId,
+    fork: Fork,
 ) -> Result<Bytes, VMError> {
     let callee_address = current_call_frame.code_address;
     let gas_for_call = current_call_frame
@@ -218,7 +217,7 @@ pub fn execute_precompile(
             &current_call_frame.calldata,
             gas_for_call,
             consumed_gas,
-            spec_id,
+            fork,
         )?,
         address if address == ECADD_ADDRESS => {
             ecadd(&current_call_frame.calldata, gas_for_call, consumed_gas)?
@@ -400,7 +399,7 @@ pub fn modexp(
     calldata: &Bytes,
     gas_for_call: u64,
     consumed_gas: &mut u64,
-    spec_id: SpecId,
+    fork: Fork,
 ) -> Result<Bytes, VMError> {
     // If calldata does not reach the required length, we should fill the rest with zeros
     let calldata = fill_with_zeros(calldata, 96)?;
@@ -426,7 +425,7 @@ pub fn modexp(
     if base_size == U256::zero() && modulus_size == U256::zero() {
         // On Berlin or newer there is a floor cost for the modexp precompile
         // On older versions in this return there is no cost added, see more https://eips.ethereum.org/EIPS/eip-2565
-        if spec_id >= SpecId::BERLIN {
+        if fork >= Fork::Berlin {
             increase_precompile_consumed_gas(gas_for_call, MODEXP_STATIC_COST, consumed_gas)?;
         }
         return Ok(Bytes::new());
@@ -465,13 +464,7 @@ pub fn modexp(
     // Use of unwrap_or_default because if e == 0 get_slice_or_default returns an empty vec
     let exp_first_32 = BigUint::from_bytes_be(e.get(0..bytes_to_take).unwrap_or_default());
 
-    let gas_cost = gas_cost::modexp(
-        &exp_first_32,
-        base_size,
-        exponent_size,
-        modulus_size,
-        spec_id,
-    )?;
+    let gas_cost = gas_cost::modexp(&exp_first_32, base_size, exponent_size, modulus_size, fork)?;
 
     increase_precompile_consumed_gas(gas_for_call, gas_cost, consumed_gas)?;
 

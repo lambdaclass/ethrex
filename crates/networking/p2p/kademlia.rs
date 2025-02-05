@@ -1,12 +1,15 @@
+use std::sync::Arc;
+
 use crate::{
-    discv4::{time_now_unix, FindNodeRequest},
-    peer_channels::PeerChannels,
+    discv4::messages::FindNodeRequest,
     rlpx::p2p::Capability,
     types::{Node, NodeRecord},
+    RLPxMessage,
 };
 use ethrex_core::{H256, H512, U256};
 use sha3::{Digest, Keccak256};
 use tokio::sync::mpsc::UnboundedSender;
+use tokio::sync::{mpsc, Mutex};
 use tracing::{debug, info};
 
 pub const MAX_NODES_PER_BUCKET: usize = 16;
@@ -94,7 +97,7 @@ impl KademliaTable {
             return (None, false);
         }
 
-        let peer = PeerData::new(node, NodeRecord::default(), time_now_unix(), 0, false);
+        let peer = PeerData::new(node, NodeRecord::default(), false);
 
         if self.buckets[bucket_idx].peers.len() == MAX_NODES_PER_BUCKET {
             self.insert_as_replacement(&peer, bucket_idx);
@@ -148,7 +151,7 @@ impl KademliaTable {
         nodes.iter().map(|a| a.0).collect()
     }
 
-    pub fn pong_answered(&mut self, node_id: H512) {
+    pub fn pong_answered(&mut self, node_id: H512, pong_at: u64) {
         let peer = self.get_by_node_id_mut(node_id);
         if peer.is_none() {
             return;
@@ -156,12 +159,12 @@ impl KademliaTable {
 
         let peer = peer.unwrap();
         peer.is_proven = true;
-        peer.last_pong = time_now_unix();
+        peer.last_pong = pong_at;
         peer.last_ping_hash = None;
         peer.revalidation = peer.revalidation.and(Some(true));
     }
 
-    pub fn update_peer_ping(&mut self, node_id: H512, ping_hash: Option<H256>) {
+    pub fn update_peer_ping(&mut self, node_id: H512, ping_hash: Option<H256>, ping_at: u64) {
         let peer = self.get_by_node_id_mut(node_id);
         if peer.is_none() {
             return;
@@ -169,26 +172,7 @@ impl KademliaTable {
 
         let peer = peer.unwrap();
         peer.last_ping_hash = ping_hash;
-        peer.last_ping = time_now_unix();
-    }
-
-    pub fn update_peer_enr_seq(&mut self, node_id: H512, enr_seq: u64, enr_req_hash: Option<H256>) {
-        let peer = self.get_by_node_id_mut(node_id);
-        let Some(peer) = peer else {
-            return;
-        };
-        peer.record.seq = enr_seq;
-        peer.enr_request_hash = enr_req_hash;
-    }
-
-    pub fn update_peer_ping_with_revalidation(&mut self, node_id: H512, ping_hash: Option<H256>) {
-        let Some(peer) = self.get_by_node_id_mut(node_id) else {
-            return;
-        };
-
-        peer.last_ping_hash = ping_hash;
-        peer.last_ping = time_now_unix();
-        peer.revalidation = Some(false);
+        peer.last_ping = ping_at;
     }
 
     /// ## Returns
@@ -226,7 +210,7 @@ impl KademliaTable {
     }
 
     /// Returns an iterator for all peers in the table
-    fn iter_peers(&self) -> impl Iterator<Item = &PeerData> {
+    pub fn iter_peers(&self) -> impl Iterator<Item = &PeerData> {
         self.buckets.iter().flat_map(|bucket| bucket.peers.iter())
     }
 
@@ -378,18 +362,12 @@ pub struct PeerData {
 }
 
 impl PeerData {
-    pub fn new(
-        node: Node,
-        record: NodeRecord,
-        last_ping: u64,
-        last_pong: u64,
-        is_proven: bool,
-    ) -> Self {
+    pub fn new(node: Node, record: NodeRecord, is_proven: bool) -> Self {
         Self {
             node,
             record,
-            last_ping,
-            last_pong,
+            last_ping: 0,
+            last_pong: 0,
             is_proven,
             liveness: 1,
             last_ping_hash: None,
@@ -417,6 +395,34 @@ impl PeerData {
 
     pub fn decrement_liveness(&mut self) {
         self.liveness /= 3;
+    }
+}
+
+pub const MAX_MESSAGES_IN_PEER_CHANNEL: usize = 25;
+
+#[derive(Debug, Clone)]
+/// Holds the respective sender and receiver ends of the communication channels bewteen the peer data and its active connection
+pub struct PeerChannels {
+    pub(crate) sender: mpsc::Sender<RLPxMessage>,
+    pub(crate) receiver: Arc<Mutex<mpsc::Receiver<RLPxMessage>>>,
+}
+
+impl PeerChannels {
+    /// Sets up the communication channels for the peer
+    /// Returns the channel endpoints to send to the active connection's listen loop
+    pub(crate) fn create() -> (Self, mpsc::Sender<RLPxMessage>, mpsc::Receiver<RLPxMessage>) {
+        let (sender, connection_receiver) =
+            mpsc::channel::<RLPxMessage>(MAX_MESSAGES_IN_PEER_CHANNEL);
+        let (connection_sender, receiver) =
+            mpsc::channel::<RLPxMessage>(MAX_MESSAGES_IN_PEER_CHANNEL);
+        (
+            Self {
+                sender,
+                receiver: Arc::new(Mutex::new(receiver)),
+            },
+            connection_sender,
+            connection_receiver,
+        )
     }
 }
 

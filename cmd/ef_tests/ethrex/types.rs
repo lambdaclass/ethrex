@@ -25,6 +25,31 @@ pub struct TestUnit {
     pub post_state: HashMap<Address, Account>,
     pub pre: HashMap<Address, Account>,
     pub seal_engine: serde_json::Value,
+    pub config: FixtureConfig,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FixtureConfig {
+    pub blob_schedule: Option<BlobSchedule>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ForkBlobSchedule {
+    #[serde(default, with = "ethrex_core::serde_utils::u64::hex_str")]
+    pub target: u64,
+    #[serde(default, with = "ethrex_core::serde_utils::u64::hex_str")]
+    pub max: u64,
+    #[serde(default, with = "ethrex_core::serde_utils::u64::hex_str")]
+    pub base_fee_update_fraction: u64,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "PascalCase")]
+pub struct BlobSchedule {
+    pub cancun: Option<ForkBlobSchedule>,
+    pub prague: Option<ForkBlobSchedule>,
 }
 
 impl TestUnit {
@@ -63,6 +88,7 @@ impl TestUnit {
                 .genesis_block_header
                 .excess_blob_gas
                 .map(|v| v.as_u64()),
+            requests_hash: self.genesis_block_header.requests_hash,
         }
     }
 }
@@ -128,7 +154,7 @@ pub struct Header {
     pub blob_gas_used: Option<U256>,
     pub excess_blob_gas: Option<U256>,
     pub parent_beacon_block_root: Option<H256>,
-    pub requests_root: Option<H256>,
+    pub requests_hash: Option<H256>,
 }
 
 #[derive(Debug, PartialEq, Eq, Deserialize, Clone)]
@@ -235,6 +261,7 @@ impl From<Header> for BlockHeader {
             blob_gas_used: val.blob_gas_used.map(|x| x.as_u64()),
             excess_blob_gas: val.excess_blob_gas.map(|x| x.as_u64()),
             parent_beacon_block_root: val.parent_beacon_block_root,
+            requests_hash: val.requests_hash,
         }
     }
 }

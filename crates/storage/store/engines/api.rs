@@ -7,7 +7,7 @@ use ethrex_core::types::{
 use std::{fmt::Debug, panic::RefUnwindSafe};
 
 use crate::error::StoreError;
-use ethrex_trie::Trie;
+use ethrex_trie::{Nibbles, Trie};
 
 pub trait StoreEngine: Debug + Send + Sync + RefUnwindSafe {
     /// Add block header
@@ -175,61 +175,61 @@ pub trait StoreEngine: Debug + Send + Sync + RefUnwindSafe {
     /// Returns the stored chain configuration
     fn get_chain_config(&self) -> Result<ChainConfig, StoreError>;
 
-    // Update earliest block number
+    /// Update earliest block number
     fn update_earliest_block_number(&self, block_number: BlockNumber) -> Result<(), StoreError>;
 
-    // Obtain earliest block number
+    /// Obtain earliest block number
     fn get_earliest_block_number(&self) -> Result<Option<BlockNumber>, StoreError>;
 
-    // Update finalized block number
+    /// Update finalized block number
     fn update_finalized_block_number(&self, block_number: BlockNumber) -> Result<(), StoreError>;
 
-    // Obtain finalized block number
+    /// Obtain finalized block number
     fn get_finalized_block_number(&self) -> Result<Option<BlockNumber>, StoreError>;
 
-    // Update safe block number
+    /// Update safe block number
     fn update_safe_block_number(&self, block_number: BlockNumber) -> Result<(), StoreError>;
 
-    // Obtain safe block number
+    /// Obtain safe block number
     fn get_safe_block_number(&self) -> Result<Option<BlockNumber>, StoreError>;
 
-    // Update latest block number
+    /// Update latest block number
     fn update_latest_block_number(&self, block_number: BlockNumber) -> Result<(), StoreError>;
 
-    // Obtain latest block number
+    /// Obtain latest block number
     fn get_latest_block_number(&self) -> Result<Option<BlockNumber>, StoreError>;
 
     // TODO (#307): Remove TotalDifficulty.
-    // Update latest total difficulty
+    /// Update latest total difficulty
     fn update_latest_total_difficulty(
         &self,
         latest_total_difficulty: U256,
     ) -> Result<(), StoreError>;
 
     // TODO (#307): Remove TotalDifficulty.
-    // Obtain latest total difficulty
+    /// Obtain latest total difficulty
     fn get_latest_total_difficulty(&self) -> Result<Option<U256>, StoreError>;
 
-    // Update pending block number
+    /// Update pending block number
     fn update_pending_block_number(&self, block_number: BlockNumber) -> Result<(), StoreError>;
 
-    // Obtain pending block number
+    /// Obtain pending block number
     fn get_pending_block_number(&self) -> Result<Option<BlockNumber>, StoreError>;
 
-    // Obtain a storage trie from the given address and storage_root
-    // Doesn't check if the account is stored
-    // Used for internal store operations
+    /// Obtain a storage trie from the given address and storage_root
+    /// Doesn't check if the account is stored
+    /// Used for internal store operations
     fn open_storage_trie(&self, hashed_address: H256, storage_root: H256) -> Trie;
 
-    // Obtain a state trie from the given state root
-    // Doesn't check if the state root is valid
-    // Used for internal store operations
+    /// Obtain a state trie from the given state root
+    /// Doesn't check if the state root is valid
+    /// Used for internal store operations
     fn open_state_trie(&self, state_root: H256) -> Trie;
 
-    // Set the canonical block hash for a given block number.
+    /// Set the canonical block hash for a given block number.
     fn set_canonical_block(&self, number: BlockNumber, hash: BlockHash) -> Result<(), StoreError>;
 
-    // Unsets canonical block for a block number.
+    /// Unsets canonical block for a block number.
     fn unset_canonical_block(&self, number: BlockNumber) -> Result<(), StoreError>;
 
     fn add_payload(&self, payload_id: u64, block: Block) -> Result<(), StoreError>;
@@ -249,6 +249,43 @@ pub trait StoreEngine: Debug + Send + Sync + RefUnwindSafe {
     ) -> Result<(), StoreError>;
 
     fn get_receipts_for_block(&self, block_hash: &BlockHash) -> Result<Vec<Receipt>, StoreError>;
+
+    // Snap State methods
+
+    /// Sets the hash of the last header downloaded during a snap sync
+    fn set_header_download_checkpoint(&self, block_hash: BlockHash) -> Result<(), StoreError>;
+
+    /// Gets the hash of the last header downloaded during a snap sync
+    fn get_header_download_checkpoint(&self) -> Result<Option<BlockHash>, StoreError>;
+
+    /// Sets the current state root of the state trie being rebuilt during snap sync
+    fn set_state_trie_root_checkpoint(&self, current_root: H256) -> Result<(), StoreError>;
+
+    /// Gets the current state root of the state trie being rebuilt during snap sync
+    fn get_state_trie_root_checkpoint(&self) -> Result<Option<H256>, StoreError>;
+
+    /// Sets the last key fetched from the state trie being fetched during snap sync
+    fn set_state_trie_key_checkpoint(&self, last_key: H256) -> Result<(), StoreError>;
+
+    /// Gets the last key fetched from the state trie being fetched during snap sync
+    fn get_state_trie_key_checkpoint(&self) -> Result<Option<H256>, StoreError>;
+
+    /// Sets the storage trie paths in need of healing, grouped by hashed address
+    fn set_storage_heal_paths(&self, accounts: Vec<(H256, Vec<Nibbles>)>)
+        -> Result<(), StoreError>;
+
+    /// Gets the storage trie paths in need of healing, grouped by hashed address
+    #[allow(clippy::type_complexity)]
+    fn get_storage_heal_paths(&self) -> Result<Option<Vec<(H256, Vec<Nibbles>)>>, StoreError>;
+
+    /// Sets the state trie paths in need of healing
+    fn set_state_heal_paths(&self, paths: Vec<Nibbles>) -> Result<(), StoreError>;
+
+    /// Gets the state trie paths in need of healing
+    fn get_state_heal_paths(&self) -> Result<Option<Vec<Nibbles>>, StoreError>;
+
+    /// Clears all checkpoint data created during the last snap sync
+    fn clear_snap_state(&self) -> Result<(), StoreError>;
 
     fn is_synced(&self) -> Result<bool, StoreError>;
 

@@ -1,12 +1,11 @@
 use crate::runner::{EFTestRunnerError, InternalError};
 use colored::Colorize;
-use ethrex_core::{Address, H256};
+use ethrex_core::{types::Fork, Address, H256};
 use ethrex_levm::{
-    errors::{TransactionReport, TxResult, VMError},
+    errors::{ExecutionReport, TxResult, VMError},
     Account, StorageSlot,
 };
 use ethrex_storage::{error::StoreError, AccountUpdate};
-use ethrex_vm::SpecId;
 use itertools::Itertools;
 use revm::primitives::{EVMError, ExecutionResult as RevmExecutionResult};
 use serde::{Deserialize, Serialize};
@@ -133,21 +132,21 @@ pub fn summary_for_slack(reports: &[EFTestReport]) -> String {
         }}
     ]
 }}"#,
-        fork_summary_for_slack(reports, SpecId::PRAGUE),
-        fork_summary_for_slack(reports, SpecId::CANCUN),
-        fork_summary_for_slack(reports, SpecId::SHANGHAI),
-        fork_summary_for_slack(reports, SpecId::HOMESTEAD),
-        fork_summary_for_slack(reports, SpecId::ISTANBUL),
-        fork_summary_for_slack(reports, SpecId::LONDON),
-        fork_summary_for_slack(reports, SpecId::BYZANTIUM),
-        fork_summary_for_slack(reports, SpecId::BERLIN),
-        fork_summary_for_slack(reports, SpecId::CONSTANTINOPLE),
-        fork_summary_for_slack(reports, SpecId::MERGE),
-        fork_summary_for_slack(reports, SpecId::FRONTIER),
+        fork_summary_for_slack(reports, Fork::Prague),
+        fork_summary_for_slack(reports, Fork::Cancun),
+        fork_summary_for_slack(reports, Fork::Shanghai),
+        fork_summary_for_slack(reports, Fork::Byzantium),
+        fork_summary_for_slack(reports, Fork::Berlin),
+        fork_summary_for_slack(reports, Fork::Constantinople),
+        fork_summary_for_slack(reports, Fork::Paris),
+        fork_summary_for_slack(reports, Fork::Homestead),
+        fork_summary_for_slack(reports, Fork::Istanbul),
+        fork_summary_for_slack(reports, Fork::London),
+        fork_summary_for_slack(reports, Fork::Frontier),
     )
 }
 
-fn fork_summary_for_slack(reports: &[EFTestReport], fork: SpecId) -> String {
+fn fork_summary_for_slack(reports: &[EFTestReport], fork: Fork) -> String {
     let fork_str: &str = fork.into();
     let (fork_tests, fork_passed_tests, fork_success_percentage) = fork_statistics(reports, fork);
     format!(r#"*{fork_str}:* {fork_passed_tests}/{fork_tests} ({fork_success_percentage:.2}%)"#)
@@ -173,21 +172,21 @@ pub fn summary_for_github(reports: &[EFTestReport]) -> String {
     let success_percentage = (total_passed as f64 / total_run as f64) * 100.0;
     format!(
         r#"Summary: {total_passed}/{total_run} ({success_percentage:.2}%)\n\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n"#,
-        fork_summary_for_github(reports, SpecId::PRAGUE),
-        fork_summary_for_github(reports, SpecId::CANCUN),
-        fork_summary_for_github(reports, SpecId::SHANGHAI),
-        fork_summary_for_github(reports, SpecId::HOMESTEAD),
-        fork_summary_for_github(reports, SpecId::ISTANBUL),
-        fork_summary_for_github(reports, SpecId::LONDON),
-        fork_summary_for_github(reports, SpecId::BYZANTIUM),
-        fork_summary_for_github(reports, SpecId::BERLIN),
-        fork_summary_for_github(reports, SpecId::CONSTANTINOPLE),
-        fork_summary_for_github(reports, SpecId::MERGE),
-        fork_summary_for_github(reports, SpecId::FRONTIER),
+        fork_summary_for_github(reports, Fork::Prague),
+        fork_summary_for_github(reports, Fork::Cancun),
+        fork_summary_for_github(reports, Fork::Shanghai),
+        fork_summary_for_github(reports, Fork::Byzantium),
+        fork_summary_for_github(reports, Fork::Berlin),
+        fork_summary_for_github(reports, Fork::Constantinople),
+        fork_summary_for_github(reports, Fork::Paris),
+        fork_summary_for_github(reports, Fork::Homestead),
+        fork_summary_for_github(reports, Fork::Istanbul),
+        fork_summary_for_github(reports, Fork::London),
+        fork_summary_for_github(reports, Fork::Frontier),
     )
 }
 
-fn fork_summary_for_github(reports: &[EFTestReport], fork: SpecId) -> String {
+fn fork_summary_for_github(reports: &[EFTestReport], fork: Fork) -> String {
     let fork_str: &str = fork.into();
     let (fork_tests, fork_passed_tests, fork_success_percentage) = fork_statistics(reports, fork);
     format!("{fork_str}: {fork_passed_tests}/{fork_tests} ({fork_success_percentage:.2}%)")
@@ -221,22 +220,22 @@ pub fn summary_for_shell(reports: &[EFTestReport]) -> String {
         } else {
             format!("{}", total_passed).red()
         },
-        fork_summary_shell(reports, SpecId::PRAGUE),
-        fork_summary_shell(reports, SpecId::CANCUN),
-        fork_summary_shell(reports, SpecId::SHANGHAI),
-        fork_summary_shell(reports, SpecId::MERGE),
-        fork_summary_shell(reports, SpecId::LONDON),
-        fork_summary_shell(reports, SpecId::BERLIN),
-        fork_summary_shell(reports, SpecId::ISTANBUL),
-        fork_summary_shell(reports, SpecId::CONSTANTINOPLE),
-        fork_summary_shell(reports, SpecId::BYZANTIUM),
-        fork_summary_shell(reports, SpecId::HOMESTEAD),
-        fork_summary_shell(reports, SpecId::FRONTIER),
+        fork_summary_shell(reports, Fork::Prague),
+        fork_summary_shell(reports, Fork::Cancun),
+        fork_summary_shell(reports, Fork::Shanghai),
+        fork_summary_shell(reports, Fork::Paris),
+        fork_summary_shell(reports, Fork::London),
+        fork_summary_shell(reports, Fork::Berlin),
+        fork_summary_shell(reports, Fork::Istanbul),
+        fork_summary_shell(reports, Fork::Constantinople),
+        fork_summary_shell(reports, Fork::Byzantium),
+        fork_summary_shell(reports, Fork::Homestead),
+        fork_summary_shell(reports, Fork::Frontier),
         test_dir_summary_for_shell(reports),
     )
 }
 
-fn fork_summary_shell(reports: &[EFTestReport], fork: SpecId) -> String {
+fn fork_summary_shell(reports: &[EFTestReport], fork: Fork) -> String {
     let fork_str: &str = fork.into();
     let (fork_tests, fork_passed_tests, fork_success_percentage) = fork_statistics(reports, fork);
     format!(
@@ -252,7 +251,7 @@ fn fork_summary_shell(reports: &[EFTestReport], fork: SpecId) -> String {
     )
 }
 
-fn fork_statistics(reports: &[EFTestReport], fork: SpecId) -> (usize, usize, f64) {
+fn fork_statistics(reports: &[EFTestReport], fork: Fork) -> (usize, usize, f64) {
     let fork_tests = reports.iter().filter(|report| report.fork == fork).count();
     let fork_passed_tests = reports
         .iter()
@@ -312,17 +311,17 @@ impl Display for EFTestsReport {
         let total_run = self.0.len();
         writeln!(f, "Summary: {total_passed}/{total_run}",)?;
         writeln!(f)?;
-        writeln!(f, "{}", fork_summary_shell(&self.0, SpecId::PRAGUE))?;
-        writeln!(f, "{}", fork_summary_shell(&self.0, SpecId::CANCUN))?;
-        writeln!(f, "{}", fork_summary_shell(&self.0, SpecId::SHANGHAI))?;
-        writeln!(f, "{}", fork_summary_shell(&self.0, SpecId::HOMESTEAD))?;
-        writeln!(f, "{}", fork_summary_shell(&self.0, SpecId::ISTANBUL))?;
-        writeln!(f, "{}", fork_summary_shell(&self.0, SpecId::LONDON))?;
-        writeln!(f, "{}", fork_summary_shell(&self.0, SpecId::BYZANTIUM))?;
-        writeln!(f, "{}", fork_summary_shell(&self.0, SpecId::BERLIN))?;
-        writeln!(f, "{}", fork_summary_shell(&self.0, SpecId::CONSTANTINOPLE))?;
-        writeln!(f, "{}", fork_summary_shell(&self.0, SpecId::MERGE))?;
-        writeln!(f, "{}", fork_summary_shell(&self.0, SpecId::FRONTIER))?;
+        writeln!(f, "{}", fork_summary_shell(&self.0, Fork::Prague))?;
+        writeln!(f, "{}", fork_summary_shell(&self.0, Fork::Cancun))?;
+        writeln!(f, "{}", fork_summary_shell(&self.0, Fork::Shanghai))?;
+        writeln!(f, "{}", fork_summary_shell(&self.0, Fork::Byzantium))?;
+        writeln!(f, "{}", fork_summary_shell(&self.0, Fork::Berlin))?;
+        writeln!(f, "{}", fork_summary_shell(&self.0, Fork::Constantinople))?;
+        writeln!(f, "{}", fork_summary_shell(&self.0, Fork::Paris))?;
+        writeln!(f, "{}", fork_summary_shell(&self.0, Fork::Homestead))?;
+        writeln!(f, "{}", fork_summary_shell(&self.0, Fork::Istanbul))?;
+        writeln!(f, "{}", fork_summary_shell(&self.0, Fork::London))?;
+        writeln!(f, "{}", fork_summary_shell(&self.0, Fork::Frontier))?;
         writeln!(f)?;
         writeln!(f, "Failed tests:")?;
         writeln!(f)?;
@@ -397,14 +396,14 @@ pub struct EFTestReport {
     pub name: String,
     pub dir: String,
     pub test_hash: H256,
-    pub fork: SpecId,
+    pub fork: Fork,
     pub skipped: bool,
     pub failed_vectors: HashMap<TestVector, EFTestRunnerError>,
     pub re_run_report: Option<TestReRunReport>,
 }
 
 impl EFTestReport {
-    pub fn new(name: String, dir: String, test_hash: H256, fork: SpecId) -> Self {
+    pub fn new(name: String, dir: String, test_hash: H256, fork: Fork) -> Self {
         EFTestReport {
             name,
             dir,
@@ -456,7 +455,7 @@ impl EFTestReport {
 
     pub fn register_post_state_validation_failure(
         &mut self,
-        transaction_report: TransactionReport,
+        transaction_report: ExecutionReport,
         reason: String,
         failed_vector: TestVector,
     ) {

@@ -90,6 +90,8 @@ pub enum TxValidationError {
     InsufficientAccountFunds,
     #[error("Nonce is max (overflow)")]
     NonceIsMax,
+    #[error("Nonce mismatch")]
+    NonceMismatch,
     #[error("Initcode size exceeded")]
     InitcodeSizeExceeded,
     #[error("Priority fee greater than max fee per gas")]
@@ -213,17 +215,12 @@ pub enum PrecompileError {
 }
 
 #[derive(Debug, Clone)]
-pub enum OpcodeSuccess {
-    Continue,
-    Result(ResultReason),
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum ResultReason {
-    Stop,
-    Revert,
-    Return,
-    SelfDestruct,
+/// Note: "Halt" does not mean "Error during execution" it simply
+/// means that the execution stopped. It's not called "Stop" because
+/// "Stop" is an Opcode
+pub enum OpcodeResult {
+    Continue { pc_increment: usize },
+    Halt,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -233,19 +230,16 @@ pub enum TxResult {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct TransactionReport {
+pub struct ExecutionReport {
     pub result: TxResult,
     pub new_state: HashMap<Address, Account>,
     pub gas_used: u64,
     pub gas_refunded: u64,
     pub output: Bytes,
     pub logs: Vec<Log>,
-    // This only applies to create transactions. It's fundamentally ambiguous since
-    // a transaction could create multiple new contracts, but whatever.
-    pub created_address: Option<Address>,
 }
 
-impl TransactionReport {
+impl ExecutionReport {
     /// Function to add gas to report without exceeding the maximum gas limit
     pub fn add_gas_with_max(&mut self, gas: u64, max: u64) -> Result<(), VMError> {
         let new_gas_used = self

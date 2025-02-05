@@ -1,5 +1,5 @@
 use super::api::StoreEngine;
-use super::utils::ChainDataIndex;
+use super::utils::{ChainDataIndex, SnapStateIndex};
 use crate::error::StoreError;
 use crate::rlp::{
     AccountCodeHashRLP, AccountCodeRLP, BlockBodyRLP, BlockHashRLP, BlockHeaderRLP, BlockRLP,
@@ -14,7 +14,7 @@ use ethrex_core::types::{
 };
 use ethrex_rlp::decode::RLPDecode;
 use ethrex_rlp::encode::RLPEncode;
-use ethrex_trie::{LibmdbxDupsortTrieDB, LibmdbxTrieDB, Trie};
+use ethrex_trie::{LibmdbxDupsortTrieDB, LibmdbxTrieDB, Nibbles, Trie};
 use libmdbx::orm::{Decodable, Encodable, Table};
 use libmdbx::{
     dupsort,
@@ -514,14 +514,93 @@ impl StoreEngine for Store {
 
         Ok(receipts.into_iter().map(|receipt| receipt.to()).collect())
     }
+
+    fn set_header_download_checkpoint(&self, block_hash: BlockHash) -> Result<(), StoreError> {
+        self.write::<SnapState>(
+            SnapStateIndex::HeaderDownloadCheckpoint,
+            block_hash.encode_to_vec(),
+        )
+    }
+
+    fn get_header_download_checkpoint(&self) -> Result<Option<BlockHash>, StoreError> {
+        self.read::<SnapState>(SnapStateIndex::HeaderDownloadCheckpoint)?
+            .map(|ref h| BlockHash::decode(h))
+            .transpose()
+            .map_err(StoreError::RLPDecode)
+    }
+
+    fn set_state_trie_root_checkpoint(&self, current_root: H256) -> Result<(), StoreError> {
+        self.write::<SnapState>(
+            SnapStateIndex::StateTrieRootCheckpoint,
+            current_root.encode_to_vec(),
+        )
+    }
+
+    fn get_state_trie_root_checkpoint(&self) -> Result<Option<H256>, StoreError> {
+        self.read::<SnapState>(SnapStateIndex::StateTrieRootCheckpoint)?
+            .map(|ref h| H256::decode(h))
+            .transpose()
+            .map_err(StoreError::RLPDecode)
+    }
+
+    fn set_state_trie_key_checkpoint(&self, last_key: H256) -> Result<(), StoreError> {
+        self.write::<SnapState>(
+            SnapStateIndex::StateTrieRootCheckpoint,
+            last_key.encode_to_vec(),
+        )
+    }
+
+    fn get_state_trie_key_checkpoint(&self) -> Result<Option<H256>, StoreError> {
+        self.read::<SnapState>(SnapStateIndex::StateTrieRootCheckpoint)?
+            .map(|ref h| H256::decode(h))
+            .transpose()
+            .map_err(StoreError::RLPDecode)
+    }
+
+    fn set_storage_heal_paths(
+        &self,
+        accounts: Vec<(H256, Vec<Nibbles>)>,
+    ) -> Result<(), StoreError> {
+        self.write::<SnapState>(SnapStateIndex::StorageHealPaths, accounts.encode_to_vec())
+    }
+
+    fn get_storage_heal_paths(&self) -> Result<Option<Vec<(H256, Vec<Nibbles>)>>, StoreError> {
+        self.read::<SnapState>(SnapStateIndex::StorageHealPaths)?
+            .map(|ref h| <Vec<(H256, Vec<Nibbles>)>>::decode(h))
+            .transpose()
+            .map_err(StoreError::RLPDecode)
+    }
+
     fn is_synced(&self) -> Result<bool, StoreError> {
         match self.read::<ChainData>(ChainDataIndex::IsSynced)? {
             None => Err(StoreError::Custom("Sync status not found".to_string())),
             Some(ref rlp) => RLPDecode::decode(rlp).map_err(|_| StoreError::DecodeError),
         }
     }
+
     fn update_sync_status(&self, status: bool) -> Result<(), StoreError> {
         self.write::<ChainData>(ChainDataIndex::IsSynced, status.encode_to_vec())
+    }
+
+    fn set_state_heal_paths(&self, paths: Vec<Nibbles>) -> Result<(), StoreError> {
+        self.write::<SnapState>(SnapStateIndex::StateHealPaths, paths.encode_to_vec())
+    }
+
+    fn get_state_heal_paths(&self) -> Result<Option<Vec<Nibbles>>, StoreError> {
+        self.read::<SnapState>(SnapStateIndex::StateHealPaths)?
+            .map(|ref h| <Vec<Nibbles>>::decode(h))
+            .transpose()
+            .map_err(StoreError::RLPDecode)
+    }
+
+    fn clear_snap_state(&self) -> Result<(), StoreError> {
+        let txn = self
+            .db
+            .begin_readwrite()
+            .map_err(StoreError::LibmdbxError)?;
+        txn.clear_table::<SnapState>()
+            .map_err(StoreError::LibmdbxError)?;
+        txn.commit().map_err(StoreError::LibmdbxError)
     }
 }
 
@@ -582,6 +661,12 @@ table!(
     /// Stores chain data, each value is unique and stored as its rlp encoding
     /// See [ChainDataIndex] for available chain values
     ( ChainData ) ChainDataIndex => Vec<u8>
+);
+
+table!(
+    /// Stores snap state, each value is unique and stored as its rlp encoding
+    /// See [SnapStateIndex] for available values
+    ( SnapState ) SnapStateIndex => Vec<u8>
 );
 
 // Trie storages
@@ -668,6 +753,13 @@ impl Encodable for ChainDataIndex {
     }
 }
 
+impl Encodable for SnapStateIndex {
+    type Encoded = [u8; 4];
+
+    fn encode(self) -> Self::Encoded {
+        (self as u32).encode()
+    }
+}
 /// Initializes a new database with the provided path. If the path is `None`, the database
 /// will be temporary.
 pub fn init_db(path: Option<impl AsRef<Path>>) -> Database {
@@ -686,6 +778,7 @@ pub fn init_db(path: Option<impl AsRef<Path>>) -> Database {
         table_info!(CanonicalBlockHashes),
         table_info!(Payloads),
         table_info!(PendingBlocks),
+        table_info!(SnapState),
     ]
     .into_iter()
     .collect();

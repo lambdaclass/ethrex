@@ -1,0 +1,243 @@
+name: Benchmark LEVM vs REVM in PR
+
+on:
+  pull_request:
+    branches: ["**"]
+    paths:
+      - "crates/vm/levm/**"
+
+jobs:
+  benchmark-pr:
+    name: Benchmark for PR
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout PR
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.head_ref }}
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@1.81.0
+        with:
+          components: rustfmt, clippy
+
+      - name: Set up cargo cache
+        uses: Swatinem/rust-cache@v2
+
+      - name: Install hyperfine
+        uses: taiki-e/install-action@v2
+        with:
+          tool: hyperfine@1.16
+
+      - name: Install solc
+        uses: pontem-network/get-solc@master
+
+      - name: Run PR benchmarks
+        run: |
+          cd crates/vm/levm
+          make revm-comparison-ci
+          {
+            echo "#### Benchmark Results: Factorial";
+            cat Factorial.md || echo "No results";
+            echo "#### Benchmark Results: Factorial - Recursive";
+            cat FactorialRecursive.md || echo "No results";
+            echo "#### Benchmark Results: Fibonacci";
+            cat Fibonacci.md || echo "No results";
+            echo "#### Benchmark Results: ManyHashes";
+            cat ManyHashes.md || echo "No results";
+            echo "#### Benchmark Results: BubbleSort";
+            cat BubbleSort.md || echo "No results";
+            echo "#### Benchmark Results: ERC20 - Transfer";
+            cat ERC20Transfer.md || echo "No results";
+            echo "#### Benchmark Results: ERC20 - Mint";
+            cat ERC20Mint.md || echo "No results";
+            echo "#### Benchmark Results: ERC20 - Approval";
+            cat ERC20Approval.md || echo "No results";
+          } > pr_result.md
+
+      - name: Upload PR results
+        uses: actions/upload-artifact@v4
+        with:
+          name: pr-result
+          path: crates/vm/levm/pr_result.md
+
+  benchmark-main:
+    name: Benchmark for Main
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@1.81.0
+        with:
+          components: rustfmt, clippy
+
+      - name: Set up cargo cache
+        uses: Swatinem/rust-cache@v2
+
+      - name: Install hyperfine
+        uses: taiki-e/install-action@v2
+        with:
+          tool: hyperfine@1.16
+
+      - name: Install solc
+        uses: pontem-network/get-solc@master
+
+      - name: Run main benchmarks
+        run: |
+          cd crates/vm/levm
+          make revm-comparison-ci
+          {
+            echo "#### Benchmark Results: Factorial";
+            cat Factorial.md || echo "No results";
+            echo "#### Benchmark Results: Factorial - Recursive";
+            cat FactorialRecursive.md || echo "No results";
+            echo "#### Benchmark Results: Fibonacci";
+            cat Fibonacci.md || echo "No results";
+            echo "#### Benchmark Results: ManyHashes";
+            cat ManyHashes.md || echo "No results";
+            echo "#### Benchmark Results: BubbleSort";
+            cat BubbleSort.md || echo "No results";
+            echo "#### Benchmark Results: ERC20 - Transfer";
+            cat ERC20Transfer.md || echo "No results";
+            echo "#### Benchmark Results: ERC20 - Mint";
+            cat ERC20Mint.md || echo "No results";
+            echo "#### Benchmark Results: ERC20 - Approval";
+            cat ERC20Approval.md || echo "No results";
+          } > main_result.md
+
+      - name: Upload main results
+        uses: actions/upload-artifact@v4
+        with:
+          name: main-result
+          path: crates/vm/levm/main_result.md
+
+  combine-results:
+    name: Combine Benchmark Results
+    runs-on: ubuntu-latest
+    needs: [benchmark-pr, benchmark-main]
+    steps:
+      - name: Download PR results
+        uses: actions/download-artifact@v4
+        with:
+          name: pr-result
+          path: .
+
+      - name: Download main results
+        uses: actions/download-artifact@v4
+        with:
+          name: main-result
+          path: .
+
+      - name: Create combined results
+        run: |
+          {
+            echo "# Benchmark Results Comparison";
+            echo "## PR Results";
+            cat pr_result.md;
+            echo "## Main Results";
+            cat main_result.md;
+          } > combined_result.md
+
+      - name: Find comment
+        continue-on-error: true
+        uses: peter-evans/find-comment@v3
+        id: fc
+        with:
+          issue-number: ${{ github.event.pull_request.number }}
+          comment-author: "github-actions[bot]"
+          body-includes: "Benchmark Results Comparison"
+
+      - name: Create or update comment
+        uses: peter-evans/create-or-update-comment@v4
+        with:
+          comment-id: ${{ steps.fc.outputs.comment-id }}
+          token: ${{ secrets.GITHUB_TOKEN }}
+          issue-number: ${{ github.event.pull_request.number }}
+          body-path: combined_result.md
+          edit-mode: replace
+
+  ef-test:
+    name: EF-Test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v4
+
+      - name: Rustup toolchain install
+        uses: dtolnay/rust-toolchain@1.81.0
+
+      - name: Caching
+        uses: Swatinem/rust-cache@v2
+
+      - name: Download EF Tests
+        run: |
+          cd crates/vm/levm
+          make download-evm-ef-tests
+
+      - name: Run tests
+        run: |
+          cd crates/vm/levm
+          make run-evm-ef-tests-ci | tee test_result.txt
+
+      - name: Show test summary -- short
+        run: |
+          cd crates/vm/levm && awk '/Summary: /,/Frontier/' test_result.txt;
+
+      - name: Check EF-TESTS status is 100%
+        id: check_tests
+        continue-on-error: true
+        run: |
+          cd crates/vm/levm
+          if [ "$(awk '/Summary:/ {print $(NF)}' test_result.txt)" != "(100.00%)" ]; then
+              echo "Percentage is not 100%."
+              exit 1
+          fi
+
+      - name: Create test summary
+        if: ${{ github.event_name == 'pull_request' }}
+        run: |
+          {
+            printf '```\n';
+            cd crates/vm/levm && awk '/Summary: /,/Frontier/' test_result.txt;
+            printf '```\n';
+          } > test_summary.txt
+
+      - name: Find comment
+        if: ${{ github.event_name == 'pull_request' }}
+        continue-on-error: true
+        uses: peter-evans/find-comment@v3
+        id: fc
+        with:
+          issue-number: ${{ github.event.pull_request.number }}
+          comment-author: "github-actions[bot]"
+          body-includes: "Summary:"
+
+      # If we have a failure, means that some ef-tests don't pass.
+      # If the condition is met, create or update the comment with the summary.
+      - name: Create Comment
+        if: ${{ steps.check_tests.outcome == 'failure' && github.event_name == 'pull_request' }}
+        uses: peter-evans/create-or-update-comment@v4
+        with:
+          comment-id: ${{ steps.fc.outputs.comment-id }}
+          token: ${{ secrets.GITHUB_TOKEN }}
+          issue-number: ${{ github.event.pull_request.number }}
+          body-path: test_summary.txt
+          edit-mode: replace
+
+      # If we don't have a failure, means that all ef-tests pass.
+      # If comment-id != '', means that we've already created the comment.
+      # If both conditions are met, update the comment saying that all tests pass.
+      - name: Update Comment -- ALL
+        if: ${{ steps.check_tests.outcome != 'failure' && github.event_name == 'pull_request' && steps.fc.outputs.comment-id != '' }}
+        uses: peter-evans/create-or-update-comment@v4
+        with:
+          comment-id: ${{ steps.fc.outputs.comment-id }}
+          token: ${{ secrets.GITHUB_TOKEN }}
+          issue-number: ${{ github.event.pull_request.number }}
+          body: |
+            Summary: All EF-TESTS pass.
+          edit-mode: replace
