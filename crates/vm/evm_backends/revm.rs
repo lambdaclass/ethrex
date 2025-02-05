@@ -20,8 +20,9 @@ use ethrex_core::{
     Address,
 };
 use revm_primitives::{
-    ruint::Uint, AccessList as RevmAccessList, AccessListItem, Address as RevmAddress, Bytes,
-    FixedBytes, SpecId, TxKind as RevmTxKind, U256 as RevmU256,
+    ruint::Uint, AccessList as RevmAccessList, AccessListItem, Address as RevmAddress,
+    Authorization as RevmAuthorization, Bytes, FixedBytes, SignedAuthorization, SpecId,
+    TxKind as RevmTxKind, U256 as RevmU256,
 };
 use std::cmp::min;
 
@@ -272,9 +273,29 @@ pub fn tx_env(tx: &Transaction) -> TxEnv {
             .map(|hash| B256::from(hash.0))
             .collect(),
         max_fee_per_blob_gas,
-        // TODO revise
+        // EIP7702
         // https://eips.ethereum.org/EIPS/eip-7702
-        authorization_list: None,
+        // The latest version of revm(19.3.0) is needed to run with the latest changes.
+        // NOTE:
+        // - rust 1.82.X is needed
+        // - rust-toolchain 1.82.X is needed (this can be found in ethrex/crates/vm/levm/rust-toolchain.toml)
+        authorization_list: tx.authorization_list().map(|list| {
+            list.into_iter()
+                .map(|auth_t| {
+                    SignedAuthorization::new_unchecked(
+                        RevmAuthorization {
+                            chain_id: auth_t.chain_id.as_u64(),
+                            address: RevmAddress(auth_t.address.0.into()),
+                            nonce: auth_t.nonce,
+                        },
+                        auth_t.y_parity.as_u32() as u8,
+                        RevmU256::from_le_bytes(auth_t.r_signature.to_little_endian()),
+                        RevmU256::from_le_bytes(auth_t.s_signature.to_little_endian()),
+                    )
+                })
+                .collect::<Vec<SignedAuthorization>>()
+                .into()
+        }),
     }
 }
 
@@ -317,9 +338,30 @@ pub(crate) fn tx_env_from_generic(tx: &GenericTransaction, basefee: u64) -> TxEn
             .map(|hash| B256::from(hash.0))
             .collect(),
         max_fee_per_blob_gas: tx.max_fee_per_blob_gas.map(|x| RevmU256::from_limbs(x.0)),
-        // TODO revise
+        // EIP7702
         // https://eips.ethereum.org/EIPS/eip-7702
-        authorization_list: None,
+        // The latest version of revm(19.3.0) is needed to run with the latest changes.
+        // NOTE:
+        // - rust 1.82.X is needed
+        // - rust-toolchain 1.82.X is needed (this can be found in ethrex/crates/vm/levm/rust-toolchain.toml)
+        authorization_list: tx.authorization_list.clone().map(|list| {
+            list.into_iter()
+                .map(|auth_t| {
+                    SignedAuthorization::new_unchecked(
+                        RevmAuthorization {
+                            //chain_id: RevmU256::from_le_bytes(auth_t.chain_id.to_little_endian()),
+                            chain_id: auth_t.chain_id.as_u64(),
+                            address: RevmAddress(auth_t.address.0.into()),
+                            nonce: auth_t.nonce,
+                        },
+                        auth_t.y_parity.as_u32() as u8,
+                        RevmU256::from_le_bytes(auth_t.r.to_little_endian()),
+                        RevmU256::from_le_bytes(auth_t.s.to_little_endian()),
+                    )
+                })
+                .collect::<Vec<SignedAuthorization>>()
+                .into()
+        }),
     }
 }
 

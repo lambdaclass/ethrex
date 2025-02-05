@@ -11,7 +11,10 @@ use evm_backends::EVM;
 
 use crate::evm_backends::revm::*;
 use ethrex_core::{
-    types::{AccountInfo, BlockHeader, ChainConfig, Fork, GenericTransaction, INITIAL_BASE_FEE},
+    types::{
+        tx_fields::AccessList, AccountInfo, BlockHeader, ChainConfig, Fork, GenericTransaction,
+        INITIAL_BASE_FEE,
+    },
     Address, BigEndianHash, H256, U256,
 };
 use ethrex_storage::AccountUpdate;
@@ -35,9 +38,6 @@ use std::sync::OnceLock;
 // Then, we can retrieve the evm with:
 // EVM_BACKEND.get(); -> returns Option<EVM>
 pub static EVM_BACKEND: OnceLock<EVM> = OnceLock::new();
-
-// TODO use the type inside ethrex_core
-type AccessList = Vec<(Address, Vec<H256>)>;
 
 // ================== Commonly used functions ======================
 
@@ -290,6 +290,6 @@ pub fn fork_to_spec_id(fork: Fork) -> SpecId {
         Fork::Shanghai => SpecId::SHANGHAI,
         Fork::Cancun => SpecId::CANCUN,
         Fork::Prague => SpecId::PRAGUE,
-        Fork::PragueEof => SpecId::PRAGUE_EOF,
+        Fork::Osaka => SpecId::OSAKA,
     }
 }

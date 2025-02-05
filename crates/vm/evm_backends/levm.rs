@@ -163,9 +163,7 @@ pub fn execute_tx_levm(
         db,
         block_cache,
         tx.access_list(),
-        // TODO: Here we should pass the tx.authorization_list
-        // We have to implement the EIP7702 tx in ethrex_core
-        None,
+        tx.authorization_list(),
     )?;
 
     vm.execute()
