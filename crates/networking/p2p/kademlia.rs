@@ -10,7 +10,7 @@ use ethrex_core::{H256, H512, U256};
 use sha3::{Digest, Keccak256};
 use tokio::sync::mpsc::UnboundedSender;
 use tokio::sync::{mpsc, Mutex};
-use tracing::{debug, info};
+use tracing::debug;
 
 pub const MAX_NODES_PER_BUCKET: usize = 16;
 const NUMBER_OF_BUCKETS: usize = 256;
@@ -285,13 +285,8 @@ impl KademliaTable {
         channels: PeerChannels,
         capabilities: Vec<Capability>,
     ) {
-        let bucket_idx = bucket_number(self.local_node_id, node_id);
-        if let Some(peer) = self.buckets.get_mut(bucket_idx).and_then(|bucket| {
-            bucket
-                .peers
-                .iter_mut()
-                .find(|peer| peer.node.node_id == node_id)
-        }) {
+        let peer = self.get_by_node_id_mut(node_id);
+        if let Some(peer) = peer {
             peer.channels = Some(channels);
             peer.supported_capabilities = capabilities;
             peer.is_connected = true;

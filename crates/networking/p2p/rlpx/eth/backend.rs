@@ -36,7 +36,6 @@ pub fn get_status(storage: &Store) -> Result<StatusMessage, RLPxError> {
 
 pub fn validate_status(msg_data: StatusMessage, storage: &Store) -> Result<(), RLPxError> {
     let chain_config = storage.get_chain_config()?;
-
     // These blocks must always be available
     let genesis_header = storage
         .get_block_header(0)?
