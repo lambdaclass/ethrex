@@ -7,6 +7,7 @@ use tracing::info;
 use ethrex_blockchain::add_block;
 use ethrex_prover_lib::prover::{Prover, Risc0Prover, Sp1Prover};
 use ethrex_storage::{EngineType, Store};
+use ethrex_vm::db::StoreWrapper;
 use ethrex_vm::execution_db::{ExecutionDB, ToExecDB};
 use zkvm_interface::io::ProgramInput;
 
@@ -91,6 +92,7 @@ async fn setup() -> (ProgramInput, Block) {
     let db = store.to_exec_db(&block_to_prove).unwrap();
 
     let parent_block_header = store
+        .store
         .get_block_header_by_hash(block_to_prove.header.parent_hash)
         .unwrap()
         .unwrap();

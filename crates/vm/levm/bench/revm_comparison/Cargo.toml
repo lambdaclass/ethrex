@@ -11,8 +11,6 @@ path = "src/lib.rs"
 ethrex-levm = { path = "../../" }
 ethrex-vm = { path = "../../../" }
 ethrex-rpc-client.workspace = true
-ethrex-core.workspace = true
-ethrex-storage.workspace = true
 hex.workspace = true
 bytes.workspace = true
 

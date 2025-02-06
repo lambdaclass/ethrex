@@ -6,7 +6,7 @@ use std::collections::hash_map::Entry;
 use std::collections::HashMap;
 
 use crate::Account;
-use ethrex_core::types::{AccountInfo, ChainConfig, GenesisAccount};
+use ethrex_core::types::AccountInfo;
 use ethrex_core::{
     types::{Block, TxKind},
     Address, H256,

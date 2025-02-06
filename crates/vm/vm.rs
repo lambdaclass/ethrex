@@ -125,7 +125,7 @@ cfg_if::cfg_if! {
         /// Calls the eip4788 beacon block root system call contract
         /// More info on https://eips.ethereum.org/EIPS/eip-4788
         pub fn beacon_root_contract_call_levm(
-            store_wrapper: Arc<StoreWrapper>,
+            store_wrapper: Arc<dyn LevmDatabase>,
             block_header: &BlockHeader,
             config: EVMConfig,
         ) -> Result<ExecutionReport, EvmError> {
@@ -188,7 +188,6 @@ cfg_if::cfg_if! {
 
         pub fn get_state_transitions_levm(
             initial_state: &EvmState,
-            block_hash: H256,
             new_state: &CacheDB,
         ) -> Vec<AccountUpdate> {
             let current_db: &dyn LevmDatabase = match initial_state {
@@ -275,14 +274,14 @@ cfg_if::cfg_if! {
             let blob_schedule = state.chain_config()?.get_fork_blob_schedule(block_header.timestamp)
                 .unwrap_or(EVMConfig::canonical_values(fork));
             let config = EVMConfig::new(fork , blob_schedule);
-            /*cfg_if::cfg_if! {
+            cfg_if::cfg_if! {
                 if #[cfg(not(feature = "l2"))] {
                     if block_header.parent_beacon_block_root.is_some() && fork >= Fork::Cancun {
-                        let report = beacon_root_contract_call_levm(store_wrapper.clone(), block_header, config)?;
+                        let report = beacon_root_contract_call_levm(exec_db.clone(), block_header, config)?;
                         block_cache.extend(report.new_state);
                     }
                 }
-            }*/
+            }
 
 
             // Account updates are initialized like this because of the beacon_root_contract_call, it is going to be empty if it wasn't called.
@@ -337,7 +336,7 @@ cfg_if::cfg_if! {
             }
 
 
-            account_updates.extend(get_state_transitions_levm(state, block.header.parent_hash, &block_cache));
+            account_updates.extend(get_state_transitions_levm(state, &block_cache));
 
             Ok((receipts, account_updates))
         }
