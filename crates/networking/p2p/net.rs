@@ -9,7 +9,10 @@ use k256::{
     elliptic_curve::{sec1::ToEncodedPoint, PublicKey},
 };
 pub use kademlia::KademliaTable;
-use rlpx::{connection::RLPxConnBroadcastSender, handshake, message::Message as RLPxMessage};
+use rlpx::{
+    connection::RLPxConnBroadcastSender, handshake, message::Message as RLPxMessage,
+    p2p::Capability,
+};
 use std::{io, net::SocketAddr, sync::Arc};
 use tokio::{
     net::{TcpListener, TcpSocket, TcpStream},
@@ -180,10 +183,24 @@ pub fn node_id_from_signing_key(signer: &SigningKey) -> H512 {
 
 /// Shows the amount of connected peers, active peers, and peers suitable for snap sync on a set interval
 pub async fn periodically_show_peer_stats(peer_table: Arc<Mutex<KademliaTable>>) {
-    const INTERVAL_DURATION: tokio::time::Duration = tokio::time::Duration::from_secs(120);
+    const INTERVAL_DURATION: tokio::time::Duration = tokio::time::Duration::from_secs(30);
     let mut interval = tokio::time::interval(INTERVAL_DURATION);
     loop {
-        peer_table.lock().await.show_peer_stats();
+        let peers: Vec<kademlia::PeerData> =
+            peer_table.lock().await.iter_peers().cloned().collect();
+        let total_peers = peers.len();
+        let active_peers = peers
+            .iter()
+            .filter(|peer| -> bool { peer.channels.as_ref().is_some() })
+            .count();
+        let snap_active_peers = peers
+            .iter()
+            .filter(|peer| -> bool {
+                peer.channels.as_ref().is_some()
+                    && peer.supported_capabilities.contains(&Capability::Snap)
+            })
+            .count();
+        info!("Snap Peers: {snap_active_peers} / Active Peers {active_peers} / Total Peers: {total_peers}");
         interval.tick().await;
     }
 }
