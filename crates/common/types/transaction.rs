@@ -310,10 +310,6 @@ impl Transaction {
     }
 
     fn calc_effective_gas_price(&self, base_fee_per_gas: Option<u64>) -> Option<u64> {
-        // dbg!(base_fee_per_gas);
-        // dbg!(self.max_priority_fee()?);
-        // dbg!(self.max_fee_per_gas()?);
-
         let priority_fee_per_gas = min(
             self.max_priority_fee()?,
             self.max_fee_per_gas()?.saturating_sub(base_fee_per_gas?),
