@@ -9,7 +9,8 @@ debug/
 # MSVC Windows builds of rustc generate these, which store debugging information
 *.pdb
 
-cmd/ef_tests/ethrex/vectors
+cmd/ef_tests/blockchain/vectors
+
 cmd/ef_tests/levm/vectors
 
 # Repos checked out by make target
@@ -17,6 +18,7 @@ hive/
 ethereum-package/
 
 .docker_build_stamp
+.ef_tests_stamp_file
 
 **/.DS_Store
 **/.vscode
@@ -40,7 +42,7 @@ jwt.hex
 # Used by the make test target
 /tmp
 
-tests_v3.0.0.tar.gz
+tests*.tar.gz
 
 .env
 

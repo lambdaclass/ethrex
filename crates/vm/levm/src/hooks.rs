@@ -194,6 +194,11 @@ impl Hook for DefaultHook {
         increment_account_nonce(&mut vm.cache, vm.db.clone(), sender_address)
             .map_err(|_| VMError::TxValidation(TxValidationError::NonceIsMax))?;
 
+        // check for nonce mismatch
+        if sender_account.info.nonce != self.env.tx_nonce {
+            return Err(VMError::TxValidation(TxValidationError::NonceMismatch));
+        }
+
         // (8) PRIORITY_GREATER_THAN_MAX_FEE_PER_GAS
         if let (Some(tx_max_priority_fee), Some(tx_max_fee_per_gas)) = (
             vm.env.tx_max_priority_fee_per_gas,

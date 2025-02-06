@@ -7,8 +7,7 @@ on:
       evm:
         required: true
         type: string
-      # Must be 'daily' or 'trigger'
-      # If it's daily, it is assumed that the CI is checking out the main branch
+      # Must be 'main'/'trigger' or 'daily'
       job_type:
         required: true
         type: string
@@ -45,7 +44,14 @@ jobs:
           docker tag ghcr.io/lambdaclass/ethrex:latest ethrex:latest
 
       - name: Checkout sources
+        if: ${{ inputs.job_type != 'main' }}
         uses: actions/checkout@v4
+
+      - name: Checkout sources
+        if: ${{ inputs.job_type == 'main' }}
+        uses: actions/checkout@v4
+        with:
+          ref: main
 
       - name: Build Image with LEVM
         if: ${{ inputs.evm == 'levm' }}

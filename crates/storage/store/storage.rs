@@ -14,7 +14,7 @@ use ethrex_core::types::{
 };
 use ethrex_rlp::decode::RLPDecode;
 use ethrex_rlp::encode::RLPEncode;
-use ethrex_trie::Trie;
+use ethrex_trie::{Nibbles, Trie};
 use serde::{Deserialize, Serialize};
 use sha3::{Digest as _, Keccak256};
 use std::collections::{HashMap, HashSet};
@@ -1033,22 +1033,33 @@ impl Store {
         self.engine.get_state_trie_key_checkpoint()
     }
 
-    /// Sets the list of account hashes whose storage needs healing
-    pub fn set_pending_storage_heal_accounts(&self, accounts: Vec<H256>) -> Result<(), StoreError> {
-        self.engine.set_pending_storage_heal_accounts(accounts)
+    /// Sets the storage trie paths in need of healing, grouped by hashed address
+    pub fn set_storage_heal_paths(
+        &self,
+        accounts: Vec<(H256, Vec<Nibbles>)>,
+    ) -> Result<(), StoreError> {
+        self.engine.set_storage_heal_paths(accounts)
     }
 
-    /// Gets the list of account hashes whose storage needs healing
-    pub fn get_pending_storage_heal_accounts(&self) -> Result<Option<Vec<H256>>, StoreError> {
-        self.engine.get_pending_storage_heal_accounts()
+    /// Gets the storage trie paths in need of healing, grouped by hashed address
+    #[allow(clippy::type_complexity)]
+    pub fn get_storage_heal_paths(&self) -> Result<Option<Vec<(H256, Vec<Nibbles>)>>, StoreError> {
+        self.engine.get_storage_heal_paths()
     }
 
-    /// Clears all checkpoints written during a snap sync
+    /// Sets the state trie paths in need of healing
+    pub fn set_state_heal_paths(&self, paths: Vec<Nibbles>) -> Result<(), StoreError> {
+        self.engine.set_state_heal_paths(paths)
+    }
+
+    /// Gets the state trie paths in need of healing
+    pub fn get_state_heal_paths(&self) -> Result<Option<Vec<Nibbles>>, StoreError> {
+        self.engine.get_state_heal_paths()
+    }
+
+    /// Clears all checkpoint data created during the last snap sync
     pub fn clear_snap_state(&self) -> Result<(), StoreError> {
-        self.engine.clear_header_download_checkpoint()?;
-        self.engine.clear_pending_storage_heal_accounts()?;
-        self.engine.clear_state_trie_root_checkpoint()?;
-        self.engine.clear_state_trie_key_checkpoint()
+        self.engine.clear_snap_state()
     }
 
     pub fn is_synced(&self) -> Result<bool, StoreError> {
