@@ -40,4 +40,4 @@ rand = "0.8.5"
 hex-literal = "0.4.1"
 
 [lib]
-path = "./lib.rs"
+path = "./p2p.rs"
