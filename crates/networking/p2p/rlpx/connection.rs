@@ -40,10 +40,10 @@ use tokio_util::codec::Framed;
 
 use super::utils::log_peer_warn;
 
-const CAP_P2P: (Capability, u8) = (Capability::P2p, 5);
-const CAP_ETH: (Capability, u8) = (Capability::Eth, 68);
-const CAP_SNAP: (Capability, u8) = (Capability::Snap, 1);
-const SUPPORTED_CAPABILITIES: [(Capability, u8); 3] = [CAP_P2P, CAP_ETH, CAP_SNAP];
+const CAP_P2P_5: (Capability, u8) = (Capability::P2p, 5);
+const CAP_ETH_68: (Capability, u8) = (Capability::Eth, 68);
+const CAP_SNAP_1: (Capability, u8) = (Capability::Snap, 1);
+const SUPPORTED_CAPABILITIES: [(Capability, u8); 3] = [CAP_P2P_5, CAP_ETH_68, CAP_SNAP_1];
 const PERIODIC_TASKS_CHECK_INTERVAL: std::time::Duration = std::time::Duration::from_secs(15);
 
 pub(crate) type Aes256Ctr64BE = ctr::Ctr64BE<aes::Aes256>;
@@ -180,16 +180,32 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
         // Receive Hello message
         match self.receive().await? {
             Message::Hello(hello_message) => {
-                self.capabilities = hello_message.capabilities;
+                let mut negotiated_eth_cap = (Capability::Eth, 0);
+                let mut negotiated_snap_cap = (Capability::Snap, 0);
 
-                // Check if we have any capability in common
-                for cap in self.capabilities.clone() {
-                    if SUPPORTED_CAPABILITIES.contains(&cap) {
-                        return Ok(());
+                // Check if we have any capability in common and store the highest version
+                for cap in hello_message.capabilities.clone() {
+                    match cap {
+                        CAP_ETH_68 if CAP_ETH_68.1 > negotiated_eth_cap.1 => {
+                            negotiated_eth_cap = CAP_ETH_68
+                        }
+                        CAP_SNAP_1 if CAP_SNAP_1.1 > negotiated_snap_cap.1 => {
+                            negotiated_snap_cap = CAP_SNAP_1
+                        }
+                        _ => {}
                     }
                 }
-                // Return error if not
-                Err(RLPxError::NoMatchingCapabilities())
+
+                if negotiated_eth_cap.1 == 0 {
+                    return Err(RLPxError::NoMatchingCapabilities());
+                }
+                self.capabilities.push(negotiated_eth_cap);
+
+                if negotiated_snap_cap.1 != 0 {
+                    self.capabilities.push(negotiated_snap_cap);
+                }
+
+                Ok(())
             }
             Message::Disconnect(disconnect) => Err(RLPxError::DisconnectRequested(
                 disconnect.reason().to_string(),
@@ -211,7 +227,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
 
         // Subscribe this connection to the broadcasting channel.
         let mut broadcaster_receive = {
-            if self.capabilities.contains(&CAP_ETH) {
+            if self.capabilities.contains(&CAP_ETH_68) {
                 Some(self.connection_broadcast_send.subscribe())
             } else {
                 None
@@ -270,7 +286,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
         message: Message,
         sender: mpsc::Sender<Message>,
     ) -> Result<(), RLPxError> {
-        let peer_supports_eth = self.capabilities.contains(&CAP_ETH);
+        let peer_supports_eth = self.capabilities.contains(&CAP_ETH_68);
         let is_synced = self.storage.is_synced()?;
         match message {
             Message::Disconnect(msg_data) => {
@@ -408,7 +424,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
 
     async fn init_peer_conn(&mut self) -> Result<(), RLPxError> {
         // Sending eth Status if peer supports it
-        if self.capabilities.contains(&CAP_ETH) {
+        if self.capabilities.contains(&CAP_ETH_68) {
             let status = backend::get_status(&self.storage)?;
             log_peer_debug(&self.node, "Sending status");
             self.send(Message::Status(status)).await?;
