@@ -660,6 +660,7 @@ impl StoreEngine for Store {
             .walk(None)
             .map_while(|res| res.ok().map(|(hash, acc)| (hash.to(), acc.to())))
         {
+            tracing::info!("Rebuilding state trie, storages in need of healing: {}", mismatched_storage_accounts.len());
             // Rebuild storage trie and check for mismatches
             let rebuilt_root = self.rebuild_storage_trie_from_snapshot(hash)?;
             if rebuilt_root != account.storage_root {
