@@ -212,13 +212,13 @@ impl SyncManager {
                     self.peers.clone(),
                     store.clone(),
                 ));
-                // Spawn tasks to fetch each state trie segment
-                let mut state_trie_tasks = tokio::task::JoinSet::new();
-                let key_checkpoints = store.get_state_trie_key_checkpoint()?;
                 // Spawn a task to show the state sync progress
                 let state_sync_progress = StateSyncProgress::new(Instant::now());
                 let show_progress_handle =
                     tokio::task::spawn(show_state_sync_progress(state_sync_progress.clone()));
+                // Spawn tasks to fetch each state trie segment
+                let mut state_trie_tasks = tokio::task::JoinSet::new();
+                let key_checkpoints = store.get_state_trie_key_checkpoint()?;
                 for i in 0..STATE_TRIE_SEGMENTS {
                     state_trie_tasks.spawn(state_sync(
                         pivot_header.state_root,
@@ -289,7 +289,7 @@ async fn download_and_run_blocks(
         debug!("Requesting Block Bodies ");
         if let Some(block_bodies) = peers.request_block_bodies(block_hashes.clone()).await {
             let block_bodies_len = block_bodies.len();
-            info!("Received {} Block Bodies", block_bodies_len);
+            debug!("Received {} Block Bodies", block_bodies_len);
             // Execute and store blocks
             for (hash, body) in block_hashes
                 .drain(..block_bodies_len)
@@ -383,7 +383,7 @@ async fn state_sync(
 ) -> Result<(usize, bool, H256), SyncError> {
     // Resume download from checkpoint if available or start from an empty trie
     let mut start_account_hash = checkpoint.unwrap_or(STATE_TRIE_SEGMENTS_START[segment_number]);
-    // Update sync progress (this task is not vital so we can detach it)
+    // Write initial sync progress (this task is not vital so we can detach it)
     tokio::task::spawn(StateSyncProgress::init_segment(
         state_sync_progress.clone(),
         segment_number,
@@ -413,7 +413,7 @@ async fn state_sync(
         store.clone(),
         state_root,
     ));
-    debug!("Starting/Resuming state trie download of segment number {segment_number} from key {start_account_hash}");
+    info!("Starting/Resuming state trie download of segment number {segment_number} from key {start_account_hash}");
     // Fetch Account Ranges
     // If we reached the maximum amount of retries then it means the state we are requesting is probably old and no longer available
     let mut stale = false;
@@ -477,11 +477,17 @@ async fn state_sync(
                 break;
             }
         } else {
+            info!("[Segment {segment_number}: Stale Pivot");
             stale = true;
             break;
         }
     }
-    info!("Account Trie Fetching ended, signaling storage & bytecode fetcher process");
+    info!("[Segment {segment_number}: Account Trie Fetching ended, signaling storage & bytecode fetcher process");
+    // Update sync progress (this task is not vital so we can detach it)
+    tokio::task::spawn(StateSyncProgress::end_segment(
+        state_sync_progress.clone(),
+        segment_number,
+    ));
     // Send empty batch to signal that no more batches are incoming
     storage_sender.send(vec![]).await?;
     bytecode_sender.send(vec![]).await?;
@@ -507,16 +513,9 @@ async fn bytecode_fetcher(
         match receiver.recv().await {
             Some(code_hashes) if !code_hashes.is_empty() => {
                 pending_bytecodes.extend(code_hashes);
-                info!(
-                    "Received incoming bytecode request, current batch: {}/{BATCH_SIZE}",
-                    pending_bytecodes.len()
-                )
             }
             // Disconnect / Empty message signaling no more bytecodes to sync
-            _ => {
-                info!("Final bytecode batch");
-                incoming = false
-            }
+            _ => incoming = false,
         }
         // If we have enough pending bytecodes to fill a batch
         // or if we have no more incoming batches, spawn a fetch process
@@ -579,7 +578,6 @@ async fn storage_fetcher(
             // Disconnect
             incoming = false
         }
-        info!("Processing current batches");
         // If we have enough pending bytecodes to fill a batch
         // or if we have no more incoming batches, spawn a fetch process
         // If the pivot became stale don't process anything and just save incoming requests
@@ -1129,8 +1127,8 @@ impl StateSyncProgress {
         for i in 0..STATE_TRIE_SEGMENTS {
             let segment_synced_accounts =
                 data.current_keys[i].into_uint() - STATE_TRIE_SEGMENTS_START[i].into_uint();
-            let segment_completion_rate =
-                (U512::from(segment_synced_accounts + 1) * 100) / U512::from(U256::MAX);
+            let segment_completion_rate = (U512::from(segment_synced_accounts + 1) * 100)
+                / U512::from(U256::MAX / STATE_TRIE_SEGMENTS);
             info!("Segment {i} completion rate: {segment_completion_rate}%");
             synced_accounts += segment_synced_accounts;
         }
