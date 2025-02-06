@@ -47,6 +47,25 @@ lazy_static::lazy_static! {
     };
 }
 
+pub(crate) type RebuildStatus = [SegmentStatus; STATE_TRIE_SEGMENTS];
+pub(crate) struct SegmentStatus {
+    pub current: H256,
+    pub end: H256,
+}
+
+impl SegmentStatus {
+    pub(crate) fn complete(&self) -> bool {
+        self.current >= self.end
+    }
+}
+
+pub(crate) fn init_rebuild_status() -> RebuildStatus {
+    array::from_fn(|i| SegmentStatus {
+        current: STATE_TRIE_SEGMENTS_START[i],
+        end: STATE_TRIE_SEGMENTS_END[i],
+    })
+}
+
 #[derive(Debug)]
 pub enum SyncMode {
     Full,
@@ -63,6 +82,7 @@ pub struct SyncManager {
     /// Syncing beyond this pivot should re-enable snap-sync (as we will not have that state stored)
     /// TODO: Reorgs
     last_snap_pivot: u64,
+    state_trie_rebuilder: Option<tokio::task::JoinHandle<()>>,
 }
 
 impl SyncManager {
@@ -71,6 +91,7 @@ impl SyncManager {
             sync_mode,
             peers: PeerHandler::new(peer_table),
             last_snap_pivot: 0,
+            state_trie_rebuilder: None,
         }
     }
 
@@ -82,6 +103,7 @@ impl SyncManager {
             sync_mode: SyncMode::Full,
             peers: PeerHandler::new(dummy_peer_table),
             last_snap_pivot: 0,
+            state_trie_rebuilder: None,
         }
     }
 

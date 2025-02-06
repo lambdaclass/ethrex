@@ -308,4 +308,6 @@ pub trait StoreEngine: Debug + Send + Sync + RefUnwindSafe {
     /// Rebuilds state trie from a snapshot, returns the resulting trie's root
     /// and the addresses of the storages whose root doesn't match the one in the account state
     fn rebuild_state_from_snapshot(&self) -> Result<(H256, Vec<H256>), StoreError>;
+
+    // NO PUEDO TENER ASYNC ACA!!!!
 }
