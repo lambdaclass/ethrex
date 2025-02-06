@@ -334,6 +334,11 @@ impl Hook for DefaultHook {
         Ok(())
     }
 
+    /// ## Changes post execution
+    /// 1. Undo value transfer if the transaction was reverted
+    /// 2. Return unused gas + gas refunds to the sender.
+    /// 3. Pay coinbase fee
+    /// 4. Destruct addresses in selfdestruct set.
     fn finalize_execution(
         &self,
         vm: &mut VM,
