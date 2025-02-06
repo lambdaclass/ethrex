@@ -656,6 +656,7 @@ impl StoreEngine for Store {
         let cursor = txn
             .cursor::<StateSnapShot>()
             .map_err(StoreError::LibmdbxError)?;
+        tracing::info!("Snapshot open");
         for (hash, account) in cursor
             .walk(None)
             .map_while(|res| res.ok().map(|(hash, acc)| (hash.to(), acc.to())))
