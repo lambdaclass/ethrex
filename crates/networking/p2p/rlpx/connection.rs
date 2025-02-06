@@ -122,7 +122,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
             // NOTE: if the peer came from the discovery server it will already be inserted in the table
             // but that might not always be the case, so we try to add it to the table
             // Note: we don't ping the node we let the validation service do its job
-            table.lock().await.insert_node(self.node);
+            table.lock().await.insert_node_forced(self.node);
             table.lock().await.init_backend_communication(
                 self.node.node_id,
                 peer_channels,
@@ -181,8 +181,13 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
         // Receive Hello message
         match self.receive().await? {
             Message::Hello(hello_message) => {
-                self.capabilities = hello_message.capabilities;
-
+                log_peer_debug(
+                    &self.node,
+                    &format!(
+                        "Hello message capabilities {:?}",
+                        hello_message.capabilities
+                    ),
+                );
                 // Check if we have any capability in common
                 for cap in self.capabilities.clone() {
                     if SUPPORTED_CAPABILITIES.contains(&cap) {

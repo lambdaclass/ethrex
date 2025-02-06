@@ -11,7 +11,7 @@ use k256::{
 pub use kademlia::KademliaTable;
 use rlpx::{
     connection::RLPxConnBroadcastSender, handshake, message::Message as RLPxMessage,
-    p2p::Capability,
+    p2p::Capability, utils::log_peer_error,
 };
 use std::{io, net::SocketAddr, sync::Arc};
 use tokio::{
@@ -139,9 +139,6 @@ async fn handle_peer_as_receiver(context: P2PContext, peer_addr: SocketAddr, str
     match handshake::as_receiver(context, peer_addr, stream).await {
         Ok(mut conn) => conn.start(table).await,
         Err(e) => {
-            // TODO We should remove the peer from the table if connection failed
-            // but currently it will make the tests fail
-            // table.lock().await.replace_peer(node.node_id);
             debug!("Error creating tcp connection with peer at {peer_addr}: {e}")
         }
     }
@@ -152,10 +149,8 @@ async fn handle_peer_as_initiator(context: P2PContext, node: Node) {
     let stream = match tcp_stream(addr).await {
         Ok(result) => result,
         Err(e) => {
-            // TODO We should remove the peer from the table if connection failed
-            // but currently it will make the tests fail
-            // table.lock().await.replace_peer(node.node_id);
-            debug!("Error establishing tcp connection with peer at {addr}: {e}");
+            log_peer_error(&node, &format!("Error creating tcp connection {e}"));
+            context.table.lock().await.replace_peer(node.node_id);
             return;
         }
     };
@@ -163,10 +158,8 @@ async fn handle_peer_as_initiator(context: P2PContext, node: Node) {
     match handshake::as_initiator(context, node, stream).await {
         Ok(mut conn) => conn.start(table).await,
         Err(e) => {
-            // TODO We should remove the peer from the table if connection failed
-            // but currently it will make the tests fail
-            // table.lock().await.replace_peer(node.node_id);
-            debug!("Error creating tcp connection with peer at {addr}: {e}")
+            log_peer_error(&node, &format!("Error creating tcp connection {e}"));
+            table.lock().await.replace_peer(node.node_id);
         }
     };
 }
