@@ -35,7 +35,7 @@ use {
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_storage::{error::StoreError, Store};
 
-use ethrex_vm::{evm_state, process_withdrawals, EvmError, EvmState};
+use ethrex_vm::{evm_state, EvmError, EvmState};
 
 use sha3::{Digest, Keccak256};
 
