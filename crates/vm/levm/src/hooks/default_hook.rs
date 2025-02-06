@@ -14,17 +14,7 @@ use ethrex_core::{types::Fork, U256};
 
 use std::cmp::max;
 
-pub struct DefaultHook {}
-
-impl DefaultHook {
-    // NOTE: I'm leaving this in case there needs to be a custom new()
-    // function when the post_execution_changes methods is
-    // implemented.
-    #[allow(clippy::new_without_default)]
-    pub fn new() -> DefaultHook {
-        DefaultHook {}
-    }
-}
+pub struct DefaultHook;
 
 impl Hook for DefaultHook {
     /// ## Description

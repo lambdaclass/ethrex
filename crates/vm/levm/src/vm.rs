@@ -218,7 +218,7 @@ impl VM {
             default_touched_accounts.insert(Address::from_low_u64_be(i));
         }
 
-        let default_hook: Rc<dyn Hook> = Rc::new(DefaultHook::new());
+        let default_hook: Rc<dyn Hook> = Rc::new(DefaultHook);
         let hooks = vec![default_hook];
         match to {
             TxKind::Call(address_to) => {
