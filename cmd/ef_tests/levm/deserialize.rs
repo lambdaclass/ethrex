@@ -1,9 +1,9 @@
 use crate::types::{
-    EFTest, EFTestAccessListItem, EFTestAuthorizationListTuple, EFTests,
+    EFTest, EFTestAccessListItem, EFTestAuthorizationListTuple, EFTestPostValue, EFTests,
     TransactionExpectedException,
 };
 use bytes::Bytes;
-use ethrex_core::{H256, U256};
+use ethrex_core::{types::Fork, H256, U256};
 use serde::{Deserialize, Deserializer};
 use std::{collections::HashMap, str::FromStr};
 
@@ -279,6 +279,42 @@ where
             Ok((key, value))
         })
         .collect()
+}
+
+pub fn deserialize_post<'de, D>(
+    deserializer: D,
+) -> Result<HashMap<Fork, Vec<EFTestPostValue>>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let post_deserialized = HashMap::<String, Vec<EFTestPostValue>>::deserialize(deserializer)?;
+    let mut post_parsed = HashMap::new();
+    for (fork_str, values) in post_deserialized {
+        let fork = match fork_str.as_str() {
+            "Frontier" => Fork::Frontier,
+            "Homestead" => Fork::Homestead,
+            "Constantinople" | "ConstantinopleFix" | "Petersburg" => Fork::Constantinople,
+            "Istanbul" => Fork::Istanbul,
+            "Berlin" => Fork::Berlin,
+            "London" => Fork::London,
+            "Paris" | "Merge" => Fork::Paris,
+            "Shanghai" => Fork::Shanghai,
+            "Cancun" => Fork::Cancun,
+            "Prague" => Fork::Prague,
+            "Byzantium" => Fork::Byzantium,
+            "EIP158" => Fork::SpuriousDragon,
+            "EIP150" => Fork::Tangerine,
+            other => {
+                return Err(serde::de::Error::custom(format!(
+                    "Unknown fork name: {}",
+                    other
+                )))
+            }
+        };
+        post_parsed.insert(fork, values);
+    }
+
+    Ok(post_parsed)
 }
 
 impl<'de> Deserialize<'de> for EFTests {

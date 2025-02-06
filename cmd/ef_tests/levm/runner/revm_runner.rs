@@ -1,5 +1,5 @@
 use crate::{
-    report::{ComparisonReport, EFTestReport, TestReRunReport, TestVector},
+    report::{ComparisonReport, EFTestReport, EFTestReportForkResult, TestReRunReport, TestVector},
     runner::{
         levm_runner::{self, post_state_root},
         EFTestRunnerError, InternalError,
@@ -8,7 +8,10 @@ use crate::{
     utils::{effective_gas_price, load_initial_state},
 };
 use bytes::Bytes;
-use ethrex_core::{types::TxKind, Address, H256};
+use ethrex_core::{
+    types::{Fork, TxKind},
+    Address, H256,
+};
 use ethrex_levm::{
     errors::{ExecutionReport, TxResult},
     Account, StorageSlot,
@@ -33,36 +36,38 @@ pub fn re_run_failed_ef_test(
 ) -> Result<TestReRunReport, EFTestRunnerError> {
     assert_eq!(test.name, failed_test_report.name);
     let mut re_run_report = TestReRunReport::new();
-    for (vector, vector_failure) in failed_test_report.failed_vectors.iter() {
-        match vector_failure {
-            // We only want to re-run tests that failed in the post-state validation.
-            EFTestRunnerError::FailedToEnsurePostState(transaction_report, _) => {
-                match re_run_failed_ef_test_tx(vector, test, transaction_report, &mut re_run_report) {
-                    Ok(_) => continue,
-                    Err(EFTestRunnerError::VMInitializationFailed(reason)) => {
-                        return Err(EFTestRunnerError::Internal(InternalError::ReRunInternal(
-                            format!("REVM initialization failed when re-running failed test: {reason}"), re_run_report.clone()
-                        )));
+    for (fork, fork_result) in failed_test_report.fork_results.iter() {
+        for (vector, vector_failure) in fork_result.failed_vectors.iter() {
+            match vector_failure {
+                // We only want to re-run tests that failed in the post-state validation.
+                EFTestRunnerError::FailedToEnsurePostState(transaction_report, _) => {
+                    match re_run_failed_ef_test_tx(vector, test, transaction_report, &mut re_run_report, fork) {
+                        Ok(_) => continue,
+                        Err(EFTestRunnerError::VMInitializationFailed(reason)) => {
+                            return Err(EFTestRunnerError::Internal(InternalError::ReRunInternal(
+                                format!("REVM initialization failed when re-running failed test: {reason}"), re_run_report.clone()
+                            )));
+                        }
+                        Err(EFTestRunnerError::Internal(reason)) => {
+                            return Err(EFTestRunnerError::Internal(reason));
+                        }
+                        unexpected_error => {
+                            return Err(EFTestRunnerError::Internal(InternalError::ReRunInternal(format!(
+                                "Unexpected error when re-running failed test: {unexpected_error:?}"
+                            ), re_run_report.clone())));
+                        }
                     }
-                    Err(EFTestRunnerError::Internal(reason)) => {
-                        return Err(EFTestRunnerError::Internal(reason));
-                    }
-                    unexpected_error => {
-                        return Err(EFTestRunnerError::Internal(InternalError::ReRunInternal(format!(
-                            "Unexpected error when re-running failed test: {unexpected_error:?}"
-                        ), re_run_report.clone())));
-                    }
-                }
-            },
-            // Currently, we decided not to re-execute the test when the Expected exception does not match 
-            // with the received. This can change in the future.
-            EFTestRunnerError::ExpectedExceptionDoesNotMatchReceived(_) => continue,
-            EFTestRunnerError::VMInitializationFailed(_)
-            | EFTestRunnerError::ExecutionFailedUnexpectedly(_)
-            | EFTestRunnerError::FailedToEnsurePreState(_) => continue,
-            EFTestRunnerError::VMExecutionMismatch(reason) => return Err(EFTestRunnerError::Internal(InternalError::ReRunInternal(
-                format!("VM execution mismatch errors should only happen when running with revm. This failed during levm's execution: {reason}"), re_run_report.clone()))),
-            EFTestRunnerError::Internal(reason) => return Err(EFTestRunnerError::Internal(reason.to_owned())),
+                },
+                // Currently, we decided not to re-execute the test when the Expected exception does not match 
+                // with the received. This can change in the future.
+                EFTestRunnerError::ExpectedExceptionDoesNotMatchReceived(_) => continue,
+                EFTestRunnerError::VMInitializationFailed(_)
+                | EFTestRunnerError::ExecutionFailedUnexpectedly(_)
+                | EFTestRunnerError::FailedToEnsurePreState(_) => continue,
+                EFTestRunnerError::VMExecutionMismatch(reason) => return Err(EFTestRunnerError::Internal(InternalError::ReRunInternal(
+                    format!("VM execution mismatch errors should only happen when running with revm. This failed during levm's execution: {reason}"), re_run_report.clone()))),
+                EFTestRunnerError::Internal(reason) => return Err(EFTestRunnerError::Internal(reason.to_owned())),
+            }
         }
     }
     Ok(re_run_report)
@@ -73,9 +78,13 @@ pub fn re_run_failed_ef_test_tx(
     test: &EFTest,
     levm_execution_report: &ExecutionReport,
     re_run_report: &mut TestReRunReport,
+    fork: &Fork,
 ) -> Result<(), EFTestRunnerError> {
     let (mut state, _block_hash) = load_initial_state(test);
-    let mut revm = prepare_revm_for_tx(&mut state, vector, test)?;
+    let mut revm = prepare_revm_for_tx(&mut state, vector, test, fork)?;
+    if !test.post.has_vector_for_fork(vector, *fork) {
+        return Ok(());
+    }
     let revm_execution_result = revm.transact_commit();
     drop(revm); // Need to drop the state mutable reference.
     compare_levm_revm_execution_results(
@@ -83,6 +92,7 @@ pub fn re_run_failed_ef_test_tx(
         levm_execution_report,
         revm_execution_result,
         re_run_report,
+        fork,
     )?;
     ensure_post_state(
         levm_execution_report,
@@ -90,6 +100,7 @@ pub fn re_run_failed_ef_test_tx(
         &mut state,
         test,
         re_run_report,
+        fork,
     )?;
     Ok(())
 }
@@ -98,6 +109,7 @@ pub fn prepare_revm_for_tx<'state>(
     initial_state: &'state mut EvmState,
     vector: &TestVector,
     test: &EFTest,
+    fork: &Fork,
 ) -> Result<Revm<'state, RevmTracerEip3155, &'state mut State<StoreWrapper>>, EFTestRunnerError> {
     let chain_spec = initial_state
         .chain_config()
@@ -194,7 +206,7 @@ pub fn prepare_revm_for_tx<'state>(
         .with_block_env(block_env)
         .with_tx_env(tx_env)
         .modify_cfg_env(|cfg| cfg.chain_id = chain_spec.chain_id)
-        .with_spec_id(fork_to_spec_id(test.fork()))
+        .with_spec_id(fork_to_spec_id(*fork))
         .with_external_context(
             RevmTracerEip3155::new(Box::new(std::io::stderr())).without_summary(),
         );
@@ -211,6 +223,7 @@ pub fn compare_levm_revm_execution_results(
     levm_execution_report: &ExecutionReport,
     revm_execution_result: Result<RevmExecutionResult, REVMError<StoreError>>,
     re_run_report: &mut TestReRunReport,
+    fork: &Fork,
 ) -> Result<(), EFTestRunnerError> {
     match (levm_execution_report, revm_execution_result) {
         (levm_tx_report, Ok(revm_execution_result)) => {
@@ -230,6 +243,7 @@ pub fn compare_levm_revm_execution_results(
                             *vector,
                             levm_tx_report.gas_used,
                             revm_gas_used,
+                            *fork,
                         );
                     }
                     if levm_tx_report.gas_refunded != revm_gas_refunded {
@@ -237,6 +251,7 @@ pub fn compare_levm_revm_execution_results(
                             *vector,
                             levm_tx_report.gas_refunded,
                             revm_gas_refunded,
+                            *fork,
                         );
                     }
                 }
@@ -252,6 +267,7 @@ pub fn compare_levm_revm_execution_results(
                             *vector,
                             levm_tx_report.gas_used,
                             revm_gas_used,
+                            *fork,
                         );
                     }
                 }
@@ -268,6 +284,7 @@ pub fn compare_levm_revm_execution_results(
                             *vector,
                             levm_tx_report.gas_used,
                             revm_gas_used,
+                            *fork,
                         );
                     }
                 }
@@ -276,6 +293,7 @@ pub fn compare_levm_revm_execution_results(
                         *vector,
                         levm_tx_report.result.clone(),
                         revm_execution_result.clone(),
+                        *fork,
                     );
                 }
             }
@@ -285,6 +303,7 @@ pub fn compare_levm_revm_execution_results(
                 *vector,
                 levm_transaction_report.result.clone(),
                 revm_error,
+                *fork,
             );
         }
     }
@@ -297,8 +316,9 @@ pub fn ensure_post_state(
     revm_state: &mut EvmState,
     test: &EFTest,
     re_run_report: &mut TestReRunReport,
+    fork: &Fork,
 ) -> Result<(), EFTestRunnerError> {
-    match test.post.vector_post_value(vector).expect_exception {
+    match test.post.vector_post_value(vector, *fork).expect_exception {
         Some(_expected_exception) => {}
         // We only want to compare account updates when no exception is expected.
         None => {
@@ -314,7 +334,7 @@ pub fn ensure_post_state(
                 &levm_account_updates,
                 &revm_account_updates,
             );
-            re_run_report.register_account_updates_report(*vector, account_updates_report);
+            re_run_report.register_account_updates_report(*vector, account_updates_report, *fork);
         }
     }
 
@@ -387,57 +407,71 @@ pub fn compare_levm_revm_account_updates(
 }
 
 pub fn _run_ef_test_revm(test: &EFTest) -> Result<EFTestReport, EFTestRunnerError> {
-    let hash = test._info.generated_test_hash.or(test._info.hash).unwrap();
+    let hash = test
+        ._info
+        .generated_test_hash
+        .or(test._info.hash)
+        .unwrap_or_default();
 
-    let mut ef_test_report =
-        EFTestReport::new(test.name.clone(), test.dir.clone(), hash, test.fork());
-    for (vector, _tx) in test.transactions.iter() {
-        match _run_ef_test_tx_revm(vector, test) {
-            Ok(_) => continue,
-            Err(EFTestRunnerError::VMInitializationFailed(reason)) => {
-                ef_test_report.register_vm_initialization_failure(reason, *vector);
+    let mut ef_test_report = EFTestReport::new(test.name.clone(), test.dir.clone(), hash);
+    for fork in test.post.forks.keys() {
+        let mut ef_test_report_fork = EFTestReportForkResult::new();
+
+        for (vector, _tx) in test.transactions.iter() {
+            if !test.post.has_vector_for_fork(vector, *fork) {
+                continue;
             }
-            Err(EFTestRunnerError::FailedToEnsurePreState(reason)) => {
-                ef_test_report.register_pre_state_validation_failure(reason, *vector);
-            }
-            Err(EFTestRunnerError::ExecutionFailedUnexpectedly(error)) => {
-                ef_test_report.register_unexpected_execution_failure(error, *vector);
-            }
-            Err(EFTestRunnerError::FailedToEnsurePostState(transaction_report, reason)) => {
-                ef_test_report.register_post_state_validation_failure(
-                    transaction_report,
-                    reason,
-                    *vector,
-                );
-            }
-            Err(EFTestRunnerError::VMExecutionMismatch(_)) => {
-                return Err(EFTestRunnerError::Internal(InternalError::FirstRunInternal(
-                    "VM execution mismatch errors should only happen when COMPARING LEVM AND REVM. This failed during revm's execution."
-                        .to_owned(),
-                )));
-            }
-            Err(EFTestRunnerError::Internal(reason)) => {
-                return Err(EFTestRunnerError::Internal(reason));
-            }
-            Err(EFTestRunnerError::ExpectedExceptionDoesNotMatchReceived(_)) => {
-                return Err(EFTestRunnerError::Internal(InternalError::MainRunnerInternal(
-                    "The ExpectedExceptionDoesNotMatchReceived error should only happen when executing Levm, the errors matching is not implemented in Revm"
-                        .to_owned(),
-                )));
+            match _run_ef_test_tx_revm(vector, test, fork) {
+                Ok(_) => continue,
+                Err(EFTestRunnerError::VMInitializationFailed(reason)) => {
+                    ef_test_report_fork.register_vm_initialization_failure(reason, *vector);
+                }
+                Err(EFTestRunnerError::FailedToEnsurePreState(reason)) => {
+                    ef_test_report_fork.register_pre_state_validation_failure(reason, *vector);
+                }
+                Err(EFTestRunnerError::ExecutionFailedUnexpectedly(error)) => {
+                    ef_test_report_fork.register_unexpected_execution_failure(error, *vector);
+                }
+                Err(EFTestRunnerError::FailedToEnsurePostState(transaction_report, reason)) => {
+                    ef_test_report_fork.register_post_state_validation_failure(
+                        transaction_report,
+                        reason,
+                        *vector,
+                    );
+                }
+                Err(EFTestRunnerError::VMExecutionMismatch(_)) => {
+                    return Err(EFTestRunnerError::Internal(InternalError::FirstRunInternal(
+                        "VM execution mismatch errors should only happen when COMPARING LEVM AND REVM. This failed during revm's execution."
+                            .to_owned(),
+                    )));
+                }
+                Err(EFTestRunnerError::Internal(reason)) => {
+                    return Err(EFTestRunnerError::Internal(reason));
+                }
+                Err(EFTestRunnerError::ExpectedExceptionDoesNotMatchReceived(_)) => {
+                    return Err(EFTestRunnerError::Internal(InternalError::MainRunnerInternal(
+                        "The ExpectedExceptionDoesNotMatchReceived error should only happen when executing Levm, the errors matching is not implemented in Revm"
+                            .to_owned(),
+                    )));
+                }
             }
         }
+        ef_test_report.register_fork_result(*fork, ef_test_report_fork);
     }
     Ok(ef_test_report)
 }
 
-pub fn _run_ef_test_tx_revm(vector: &TestVector, test: &EFTest) -> Result<(), EFTestRunnerError> {
-    // dbg!(vector);
+pub fn _run_ef_test_tx_revm(
+    vector: &TestVector,
+    test: &EFTest,
+    fork: &Fork,
+) -> Result<(), EFTestRunnerError> {
     let (mut state, _block_hash) = load_initial_state(test);
-    let mut revm = prepare_revm_for_tx(&mut state, vector, test)?;
+    let mut revm = prepare_revm_for_tx(&mut state, vector, test, fork)?;
     let revm_execution_result = revm.transact_commit();
     drop(revm); // Need to drop the state mutable reference.
 
-    _ensure_post_state_revm(revm_execution_result, vector, test, &mut state)?;
+    _ensure_post_state_revm(revm_execution_result, vector, test, &mut state, fork)?;
 
     Ok(())
 }
@@ -447,10 +481,11 @@ pub fn _ensure_post_state_revm(
     vector: &TestVector,
     test: &EFTest,
     revm_state: &mut EvmState,
+    fork: &Fork,
 ) -> Result<(), EFTestRunnerError> {
     match revm_execution_result {
         Ok(_execution_result) => {
-            match test.post.vector_post_value(vector).expect_exception {
+            match test.post.vector_post_value(vector, *fork).expect_exception {
                 // Execution result was successful but an exception was expected.
                 Some(expected_exception) => {
                     let error_reason = format!("Expected exception: {expected_exception:?}");
@@ -471,7 +506,8 @@ pub fn _ensure_post_state_revm(
                 None => {
                     let revm_account_updates = ethrex_vm::get_state_transitions(revm_state);
                     let pos_state_root = post_state_root(&revm_account_updates, test);
-                    let expected_post_state_root_hash = test.post.vector_post_value(vector).hash;
+                    let expected_post_state_root_hash =
+                        test.post.vector_post_value(vector, *fork).hash;
                     if expected_post_state_root_hash != pos_state_root {
                         println!(
                             "Post-state root mismatch: expected {expected_post_state_root_hash:#x}, got {pos_state_root:#x}",
@@ -496,7 +532,7 @@ pub fn _ensure_post_state_revm(
             }
         }
         Err(err) => {
-            match test.post.vector_post_value(vector).expect_exception {
+            match test.post.vector_post_value(vector, *fork).expect_exception {
                 // Execution result was unsuccessful and an exception was expected.
                 // TODO: See if we want to map revm exceptions to expected exceptions, probably not.
                 Some(_expected_exception) => {}

@@ -245,7 +245,7 @@ fn re_run_with_revm(
                         ._info
                         .generated_test_hash
                         .or(test._info.hash)
-                        .unwrap();
+                        .unwrap_or_default();
 
                     let failed_hash = failed_test_report.test_hash;
 
