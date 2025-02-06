@@ -1,15 +1,15 @@
 pub mod db;
 pub mod errors;
-pub mod evm_backends;
+pub mod backends;
 pub mod execution_db;
 mod execution_result;
 #[cfg(feature = "l2")]
 mod mods;
 
 use db::EvmState;
-use evm_backends::EVM;
+use backends::EVM;
 
-use crate::evm_backends::revm::*;
+use crate::backends::revm::*;
 use ethrex_core::{
     types::{
         tx_fields::AccessList, AccountInfo, BlockHeader, ChainConfig, Fork, GenericTransaction,

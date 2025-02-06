@@ -18,8 +18,8 @@ use ethrex_core::types::{Fork, GWEI_TO_WEI};
 use ethrex_levm::{db::CacheDB, vm::EVMConfig, Account, AccountInfo};
 use ethrex_vm::{
     db::{evm_state, EvmState, StoreWrapper},
-    evm_backends,
-    evm_backends::EVM,
+    backends,
+    backends::EVM,
     get_state_transitions, spec_id, EvmError, SpecId, EVM_BACKEND,
 };
 use std::sync::Arc;
@@ -263,7 +263,7 @@ pub fn apply_withdrawals(context: &mut PayloadBuildContext) -> Result<(), EvmErr
                     store: context.evm_state.database().unwrap().clone(),
                     block_hash: context.payload.header.parent_hash,
                 });
-                let report = evm_backends::levm::beacon_root_contract_call_levm(
+                let report = backends::levm::beacon_root_contract_call_levm(
                     store_wrapper.clone(),
                     &context.payload.header,
                     config,
@@ -290,14 +290,14 @@ pub fn apply_withdrawals(context: &mut PayloadBuildContext) -> Result<(), EvmErr
             if context.payload.header.parent_beacon_block_root.is_some()
                 && spec_id >= SpecId::CANCUN
             {
-                evm_backends::revm::beacon_root_contract_call(
+                backends::revm::beacon_root_contract_call(
                     context.evm_state,
                     &context.payload.header,
                     spec_id,
                 )?;
             }
             let withdrawals = context.payload.body.withdrawals.clone().unwrap_or_default();
-            evm_backends::revm::process_withdrawals(context.evm_state, &withdrawals)?;
+            backends::revm::process_withdrawals(context.evm_state, &withdrawals)?;
             Ok(())
         }
     }
@@ -519,7 +519,7 @@ fn apply_plain_transaction(
                 .unwrap_or(EVMConfig::canonical_values(fork));
             let config = EVMConfig::new(fork, blob_schedule);
 
-            let report = evm_backends::levm::execute_tx_levm(
+            let report = backends::levm::execute_tx_levm(
                 &head.tx,
                 &context.payload.header,
                 store_wrapper.clone(),
@@ -552,7 +552,7 @@ fn apply_plain_transaction(
         }
         // This means we are using REVM as default for tests
         Some(EVM::REVM) | None => {
-            let report = evm_backends::revm::execute_tx(
+            let report = backends::revm::execute_tx(
                 &head.tx,
                 &context.payload.header,
                 context.evm_state,
@@ -614,7 +614,7 @@ fn finalize_payload(context: &mut PayloadBuildContext) -> Result<(), StoreError>
                 }
             }
 
-            let account_updates = evm_backends::levm::get_state_transitions_levm(
+            let account_updates = backends::levm::get_state_transitions_levm(
                 context.evm_state,
                 context.parent_hash(),
                 &context.block_cache.clone(),

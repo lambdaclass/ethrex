@@ -1,6 +1,6 @@
 use clap::{Arg, ArgAction, Command};
 use ethrex_net::types::Node;
-use ethrex_vm::evm_backends::EVM;
+use ethrex_vm::backends::EVM;
 use tracing::Level;
 
 pub fn cli() -> Command {

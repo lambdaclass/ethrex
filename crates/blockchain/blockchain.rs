@@ -19,7 +19,7 @@ use ethrex_storage::{AccountUpdate, Store};
 use ethrex_vm::db::{evm_state, EvmState};
 
 use ethrex_vm::EVM_BACKEND;
-use ethrex_vm::{evm_backends, evm_backends::EVM};
+use ethrex_vm::{backends, backends::EVM};
 
 //TODO: Implement a struct Chain or BlockChain to encapsulate
 //functionality and canonical chain state and config
@@ -44,10 +44,10 @@ pub fn add_block(block: &Block, storage: &Store) -> Result<(), ChainError> {
     validate_block(block, &parent_header, &state)?;
     let (receipts, account_updates): (Vec<Receipt>, Vec<AccountUpdate>) = {
         match EVM_BACKEND.get() {
-            Some(EVM::LEVM) => evm_backends::levm::execute_block(block, &mut state)?,
+            Some(EVM::LEVM) => backends::levm::execute_block(block, &mut state)?,
             // This means we are using REVM as default for tests
             Some(EVM::REVM) | None => {
-                let receipts = evm_backends::revm::execute_block(block, &mut state)?;
+                let receipts = backends::revm::execute_block(block, &mut state)?;
                 let account_updates = ethrex_vm::get_state_transitions(&mut state);
                 (receipts, account_updates)
             }
