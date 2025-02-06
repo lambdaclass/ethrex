@@ -5,6 +5,7 @@ use crate::{
     db::cache::remove_account,
     errors::{ExecutionReport, InternalError, TxResult, TxValidationError, VMError},
     gas_cost::{self, STANDARD_TOKEN_COST, TOTAL_COST_FLOOR_PER_TOKEN},
+    hooks::hook::Hook,
     utils::*,
     vm::VM,
 };
@@ -12,21 +13,6 @@ use crate::{
 use ethrex_core::{types::Fork, U256};
 
 use std::cmp::max;
-
-pub trait Hook {
-    fn prepare_execution(
-        &self,
-        vm: &mut VM,
-        initial_call_frame: &mut CallFrame,
-    ) -> Result<(), VMError>;
-
-    fn finalize_execution(
-        &self,
-        vm: &mut VM,
-        initial_call_frame: &CallFrame,
-        report: &mut ExecutionReport,
-    ) -> Result<(), VMError>;
-}
 
 pub struct DefaultHook {}
 
