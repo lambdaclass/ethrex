@@ -3,7 +3,6 @@
 FIXTURES_FILE := .fixtures_url
 SPECTEST_ARTIFACT := tests.tar.gz
 SPECTEST_VECTORS_DIR := vectors
-TMP_DIR := tmp
 
 SPECTEST_URL := $(shell cat $(FIXTURES_FILE))
 
@@ -12,18 +11,14 @@ $(SPECTEST_ARTIFACT): $(FIXTURES_FILE)
 	curl -L -o $(SPECTEST_ARTIFACT) $(SPECTEST_URL)
 
 $(SPECTEST_VECTORS_DIR): $(SPECTEST_ARTIFACT)
-	mkdir -p $(SPECTEST_VECTORS_DIR) $(TMP_DIR)
-	tar -xzf $(SPECTEST_ARTIFACT) -C $(TMP_DIR)
-	rm -rf $(SPECTEST_VECTORS_DIR)/*
-	mv $(TMP_DIR)/fixtures/blockchain_tests/* $(SPECTEST_VECTORS_DIR)
-	rm -rf $(TMP_DIR)
+	mkdir -p $(SPECTEST_VECTORS_DIR)
+	tar -xzf $(SPECTEST_ARTIFACT) --strip-components=2 -C $(SPECTEST_VECTORS_DIR) fixtures/blockchain_tests
 
 download-test-vectors: $(SPECTEST_VECTORS_DIR) ## 📥 Download test vectors
 
 clean-vectors: ## 🗑️  Clean test vectors
 	rm -rf $(SPECTEST_VECTORS_DIR)
 	rm -f $(SPECTEST_ARTIFACT)
-	rm -rf $(TMP_DIR)
 
 test: $(SPECTEST_VECTORS_DIR) ## 🧪 Run blockchain tests
 	cargo test

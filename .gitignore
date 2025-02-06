@@ -10,7 +10,6 @@ debug/
 *.pdb
 
 cmd/ef_tests/blockchain/vectors
-cmd/ef_tests/blockchain/tmp
 
 cmd/ef_tests/levm/vectors
 
