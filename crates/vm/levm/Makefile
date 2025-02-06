@@ -37,8 +37,7 @@ setup-test-dirs:
 
 clone-ef-tests: ## 📥 Download Ethereum Tests repository with submodules
 	mkdir -p $(TMP_DIR)
-	git clone --recurse-submodules $(ETH_TEST_URL) $(TESTS_REPO) 
-	cd $(TESTS_REPO) && git checkout tags/$(ETH_TEST_TAG)
+	git clone --recurse-submodules --depth 1 --branch $(ETH_TEST_TAG) $(ETH_TEST_URL) $(TESTS_REPO)
 	cd $(TESTS_REPO)/LegacyTests && git checkout $(COMMIT_LEGACY_TESTS_FOR_TAG)
 	cp -r $(TESTS_REPO)/GeneralStateTests/* $(VECTORS_DIR)/GeneralStateTests/
 	cp -r $(TESTS_REPO)/LegacyTests/Constantinople/GeneralStateTests/* $(VECTORS_DIR)/LegacyTests/Constantinople/GeneralStateTests/;
