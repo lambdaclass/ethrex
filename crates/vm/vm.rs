@@ -195,9 +195,9 @@ cfg_if::cfg_if! {
             block_hash: H256,
             new_state: &CacheDB,
         ) -> Vec<AccountUpdate> {
-            let current_db = match initial_state {
-                EvmState::Store(state) => state.database.store.clone(),
-                EvmState::Execution(_cache_db) => unreachable!("Execution state should not be passed here"),
+            let current_db: &dyn LevmDatabase = match initial_state {
+                EvmState::Store(state) => &state.database,
+                EvmState::Execution(cache_db) => &cache_db.db,
             };
             let mut account_updates: Vec<AccountUpdate> = vec![];
             for (new_state_account_address, new_state_account) in new_state {
@@ -205,10 +205,8 @@ cfg_if::cfg_if! {
                 let mut account_update = AccountUpdate::new(*new_state_account_address);
 
                 // Account state before block execution.
-                let initial_account_state = current_db
-                    .get_account_info_by_hash(block_hash, *new_state_account_address)
-                    .expect("Error getting account info by address")
-                    .unwrap_or_default();
+                let initial_account_state = current_db.get_account_info(*new_state_account_address);
+
                 // Account state after block execution.
                 let new_state_acc_info = AccountInfo {
                     code_hash: code_hash(&new_state_account.info.bytecode),
@@ -217,19 +215,19 @@ cfg_if::cfg_if! {
                 };
 
                 // Compare Account Info
-                if initial_account_state != new_state_acc_info {
+                if initial_account_state != new_state_account.info {
                     account_update.info = Some(new_state_acc_info.clone());
                 }
 
                 // If code hash is different it means the code is different too.
-                if initial_account_state.code_hash != new_state_acc_info.code_hash {
+                if code_hash(&initial_account_state.bytecode) != new_state_acc_info.code_hash {
                     account_update.code = Some(new_state_account.info.bytecode.clone());
                 }
 
                 let mut updated_storage = HashMap::new();
                 for (key, storage_slot) in &new_state_account.storage {
                     // original_value in storage_slot is not the original_value on the DB, be careful.
-                    let original_value = current_db.get_storage_at_hash(block_hash, *new_state_account_address, *key).unwrap().unwrap_or_default(); // Option inside result, I guess I have to assume it is zero.
+                    let original_value = current_db.get_storage_slot(*new_state_account_address, *key);
 
                     if original_value != storage_slot.current_value {
                         updated_storage.insert(*key, storage_slot.current_value);
@@ -251,19 +249,10 @@ cfg_if::cfg_if! {
             block: &Block,
             state: &mut EvmState,
         ) -> Result<(Vec<Receipt>, Vec<AccountUpdate>), EvmError> {
-            let store_wrapper = Arc::new(StoreWrapper {
-                store: state.database().unwrap().clone(),
-                block_hash: block.header.parent_hash,
+            let exec_db = Arc::new(match state {
+                EvmState::Execution(cache_db) => cache_db.db.clone(),
+                EvmState::Store(_) => unreachable!("Store state should not be passed here"),
             });
-
-            // This returns correctly the account
-            println!("addr inside execute_block");
-            let fetch_addr = Address::from([
-                143, 202, 74, 222, 58, 81, 113, 51, 255, 35, 202, 85, 205, 174, 162, 156, 120, 201, 144,
-                184,
-            ]);
-            let info = store_wrapper.store.get_account_info(0, fetch_addr).unwrap();
-            dbg!(&info);
 
             let mut block_cache: CacheDB = HashMap::new();
             let block_header = &block.header;
@@ -291,10 +280,7 @@ cfg_if::cfg_if! {
 
 
             for tx in block.body.transactions.iter() {
-                println!("check here");
-                let info = store_wrapper.store.get_account_info(0, fetch_addr)?;
-                dbg!(&info);
-                let report = execute_tx_levm(tx, block_header, store_wrapper.clone(), block_cache.clone(), config).map_err(EvmError::from)?;
+                let report = execute_tx_levm(tx, block_header, exec_db.clone(), block_cache.clone(), config).map_err(EvmError::from)?;
 
                 let mut new_state = report.new_state.clone();
 
@@ -327,7 +313,7 @@ cfg_if::cfg_if! {
                 for (address, increment) in withdrawals.iter().filter(|withdrawal| withdrawal.amount > 0).map(|w| (w.address, u128::from(w.amount) * u128::from(GWEI_TO_WEI))) {
                     // We check if it was in block_cache, if not, we get it from DB.
                     let mut account = block_cache.get(&address).cloned().unwrap_or({
-                        let acc_info = store_wrapper.get_account_info(address);
+                        let acc_info = exec_db.get_account_info(address);
                         Account::from(acc_info)
                     });
 
@@ -373,14 +359,6 @@ cfg_if::cfg_if! {
                 block_gas_limit: block_header.gas_limit,
                 transient_storage: HashMap::new(),
             };
-
-            // This should return the account but it returns empty
-            let fetch_addr = Address::from([
-                143, 202, 74, 222, 58, 81, 113, 51, 255, 35, 202, 85, 205, 174, 162, 156, 120, 201, 144,
-                184,
-            ]);
-            let fetch_res = db.get_account_info(fetch_addr);
-            dbg!(&fetch_res);
 
             let mut vm = VM::new(
                 tx.to(),
