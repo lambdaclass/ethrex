@@ -827,7 +827,7 @@ impl VM {
         );
 
         // Transfer value from caller to callee.
-        if should_transfer_value.clone() {
+        if should_transfer_value {
             decrease_account_balance(&mut self.cache, self.db.clone(), msg_sender, value)?;
             increase_account_balance(&mut self.cache, self.db.clone(), to, value)?;
         }

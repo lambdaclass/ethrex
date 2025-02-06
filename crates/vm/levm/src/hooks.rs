@@ -1,34 +1,15 @@
 use crate::{
-    account::{Account, StorageSlot},
     call_frame::CallFrame,
     constants::*,
-    db::{
-        cache::{self, get_account_mut, remove_account},
-        CacheDB, Database,
-    },
-    environment::Environment,
-    errors::{ExecutionReport, InternalError, OpcodeResult, TxResult, TxValidationError, VMError},
+    errors::{InternalError, TxValidationError, VMError},
     gas_cost::{self, STANDARD_TOKEN_COST, TOTAL_COST_FLOOR_PER_TOKEN},
-    precompiles::{
-        execute_precompile, is_precompile, SIZE_PRECOMPILES_CANCUN, SIZE_PRECOMPILES_PRAGUE,
-        SIZE_PRECOMPILES_PRE_CANCUN,
-    },
     utils::*,
     vm::VM,
-    AccountInfo, TransientStorage,
 };
 
-use ethrex_core::{
-    types::{Fork, ForkBlobSchedule, TxKind},
-    Address, H256, U256,
-};
+use ethrex_core::types::Fork;
 
-use std::{
-    cmp::max,
-    collections::{HashMap, HashSet},
-    fmt::Debug,
-    sync::Arc,
-};
+use std::cmp::max;
 
 pub trait Hook {
     fn prepare_execution(
@@ -43,12 +24,21 @@ pub trait Hook {
 pub struct DefaultHook {}
 
 impl DefaultHook {
+    #[allow(clippy::new_without_default)]
     pub fn new() -> DefaultHook {
         DefaultHook {}
     }
 }
 
 impl Hook for DefaultHook {
+    /// ## Description
+    /// This method performs validations and returns an error if any of the validations fail.
+    /// It also makes pre-execution changes:
+    /// - It increases sender nonce
+    /// - It substracts up-front-cost from sender balance.
+    /// - It adds value to receiver balance.
+    /// - It calculates and adds intrinsic gas to the 'gas used' of callframe and environment.
+    ///   See 'docs' for more information about validations.
     fn prepare_execution(
         &self,
         vm: &mut VM,

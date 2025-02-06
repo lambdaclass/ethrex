@@ -6,7 +6,6 @@ use crate::{
         cache::{self},
         CacheDB, Database,
     },
-    environment::Environment,
     errors::{InternalError, OutOfGasError, TxValidationError, VMError},
     gas_cost::{
         self, fake_exponential, ACCESS_LIST_ADDRESS_COST, ACCESS_LIST_STORAGE_KEY_COST,
@@ -159,11 +158,11 @@ pub fn get_account_no_push_cache(
     }
 }
 
-pub fn get_account_mut_vm<'vm>(
-    cache: &'vm mut CacheDB,
+pub fn get_account_mut_vm(
+    cache: &mut CacheDB,
     db: Arc<dyn Database>,
     address: Address,
-) -> Result<&'vm mut Account, VMError> {
+) -> Result<&mut Account, VMError> {
     if !cache::is_account_cached(cache, &address) {
         let account_info = db.get_account_info(address);
         let account = Account {
@@ -217,7 +216,7 @@ pub fn access_account(
     address: Address,
 ) -> (AccountInfo, bool) {
     let address_was_cold = accrued_substate.touched_accounts.insert(address);
-    let account = match cache::get_account(&cache, &address) {
+    let account = match cache::get_account(cache, &address) {
         Some(account) => account.info.clone(),
         None => db.get_account_info(address),
     };
@@ -328,8 +327,8 @@ pub fn add_intrinsic_gas(
     let intrinsic_gas = get_intrinsic_gas(
         is_create,
         fork,
-        &access_list,
-        &authorization_list,
+        access_list,
+        authorization_list,
         initial_call_frame,
     )?;
 
@@ -529,7 +528,7 @@ pub fn eip7702_set_access_code(
         // 4. Add authority to accessed_addresses (as defined in EIP-2929).
         accrued_substate.touched_accounts.insert(authority_address);
         let authority_account_info =
-            get_account_no_push_cache(&cache, db_ref.clone(), authority_address).info;
+            get_account_no_push_cache(cache, db_ref.clone(), authority_address).info;
 
         // 5. Verify the code of authority is either empty or already delegated.
         let empty_or_delegated =
@@ -547,7 +546,7 @@ pub fn eip7702_set_access_code(
 
         // 7. Add PER_EMPTY_ACCOUNT_COST - PER_AUTH_BASE_COST gas to the global refund counter if authority exists in the trie.
         // CHECK: we don't know if checking the cache is correct. More gas tests pass but the set_code_txs tests went to half.
-        if cache::is_account_cached(&cache, &authority_address)
+        if cache::is_account_cached(cache, &authority_address)
             || db_ref.account_exists(authority_address)
         {
             let refunded_gas_if_exists = PER_EMPTY_ACCOUNT_COST - PER_AUTH_BASE_COST;
