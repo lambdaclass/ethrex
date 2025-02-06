@@ -256,7 +256,7 @@ cfg_if::cfg_if! {
 
 
             // Account updates are initialized like this because of the beacon_root_contract_call, it is going to be empty if it wasn't called.
-            let mut account_updates = get_state_transitions(state);
+            let mut account_updates = get_state_transitions_levm(state, block.header.parent_hash, &block_cache);
 
             let mut receipts = Vec::new();
             let mut cumulative_gas_used = 0;
