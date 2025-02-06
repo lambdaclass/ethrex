@@ -720,9 +720,8 @@ pub(super) mod tests {
             .try_add_peer_and_ping(server_b.ctx.local_node, server_a.ctx.table.lock().await)
             .await?;
 
-        // mark them as connected so that they are not replaced when trying to init tcp connection
+        // allow some time for the server to respond
         sleep(Duration::from_secs(1)).await;
-
         Ok(())
     }
 
