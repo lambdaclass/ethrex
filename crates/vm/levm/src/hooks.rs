@@ -1,13 +1,15 @@
 use crate::{
+    account::Account,
     call_frame::CallFrame,
     constants::*,
-    errors::{InternalError, TxValidationError, VMError},
+    db::cache::remove_account,
+    errors::{ExecutionReport, InternalError, TxResult, TxValidationError, VMError},
     gas_cost::{self, STANDARD_TOKEN_COST, TOTAL_COST_FLOOR_PER_TOKEN},
     utils::*,
     vm::VM,
 };
 
-use ethrex_core::types::Fork;
+use ethrex_core::{types::Fork, U256};
 
 use std::cmp::max;
 
@@ -18,7 +20,12 @@ pub trait Hook {
         initial_call_frame: &mut CallFrame,
     ) -> Result<(), VMError>;
 
-    fn finalize_execution(&self) -> Result<(), VMError>;
+    fn finalize_execution(
+        &self,
+        vm: &mut VM,
+        initial_call_frame: &CallFrame,
+        report: &mut ExecutionReport,
+    ) -> Result<(), VMError>;
 }
 
 pub struct DefaultHook {}
@@ -327,7 +334,106 @@ impl Hook for DefaultHook {
         Ok(())
     }
 
-    fn finalize_execution(&self) -> Result<(), VMError> {
-        todo!();
+    fn finalize_execution(
+        &self,
+        vm: &mut VM,
+        initial_call_frame: &CallFrame,
+        report: &mut ExecutionReport,
+    ) -> Result<(), VMError> {
+        // POST-EXECUTION Changes
+        let sender_address = initial_call_frame.msg_sender;
+        let receiver_address = initial_call_frame.to;
+
+        // 1. Undo value transfer if the transaction has reverted
+        if let TxResult::Revert(_) = report.result {
+            let existing_account = get_account(&mut vm.cache, vm.db.clone(), receiver_address); //TO Account
+
+            if has_delegation(&existing_account.info)? {
+                // This is the case where the "to" address and the
+                // "signer" address are the same. We are setting the code
+                // and sending some balance to the "to"/"signer"
+                // address.
+                // See https://eips.ethereum.org/EIPS/eip-7702#behavior (last sentence).
+
+                // If transaction execution results in failure (any
+                // exceptional condition or code reverting), setting
+                // delegation designations is not rolled back.
+                decrease_account_balance(
+                    &mut vm.cache,
+                    vm.db.clone(),
+                    receiver_address,
+                    initial_call_frame.msg_value,
+                )?;
+            } else {
+                // We remove the receiver account from the cache, like nothing changed in it's state.
+                remove_account(&mut vm.cache, &receiver_address);
+            }
+
+            increase_account_balance(
+                &mut vm.cache,
+                vm.db.clone(),
+                sender_address,
+                initial_call_frame.msg_value,
+            )?;
+        }
+
+        // 2. Return unused gas + gas refunds to the sender.
+        let max_gas = vm.env.gas_limit;
+        let consumed_gas = report.gas_used;
+        let refunded_gas = report.gas_refunded.min(
+            consumed_gas
+                .checked_div(5)
+                .ok_or(VMError::Internal(InternalError::UndefinedState(-1)))?,
+        );
+        // "The max refundable proportion of gas was reduced from one half to one fifth by EIP-3529 by Buterin and Swende [2021] in the London release"
+        report.gas_refunded = refunded_gas;
+
+        let gas_to_return = max_gas
+            .checked_sub(consumed_gas)
+            .and_then(|gas| gas.checked_add(refunded_gas))
+            .ok_or(VMError::Internal(InternalError::UndefinedState(0)))?;
+
+        let wei_return_amount = vm
+            .env
+            .gas_price
+            .checked_mul(U256::from(gas_to_return))
+            .ok_or(VMError::Internal(InternalError::UndefinedState(1)))?;
+
+        increase_account_balance(
+            &mut vm.cache,
+            vm.db.clone(),
+            sender_address,
+            wei_return_amount,
+        )?;
+
+        // 3. Pay coinbase fee
+        let coinbase_address = vm.env.coinbase;
+
+        let gas_to_pay_coinbase = consumed_gas
+            .checked_sub(refunded_gas)
+            .ok_or(VMError::Internal(InternalError::UndefinedState(2)))?;
+
+        let priority_fee_per_gas = vm
+            .env
+            .gas_price
+            .checked_sub(vm.env.base_fee_per_gas)
+            .ok_or(VMError::GasPriceIsLowerThanBaseFee)?;
+        let coinbase_fee = U256::from(gas_to_pay_coinbase)
+            .checked_mul(priority_fee_per_gas)
+            .ok_or(VMError::BalanceOverflow)?;
+
+        if coinbase_fee != U256::zero() {
+            increase_account_balance(&mut vm.cache, vm.db.clone(), coinbase_address, coinbase_fee)?;
+        };
+
+        // 4. Destruct addresses in vm.estruct set.
+        // In Cancun the only addresses destroyed are contracts created in this transaction
+        let selfdestruct_set = vm.accrued_substate.selfdestruct_set.clone();
+        for address in selfdestruct_set {
+            let account_to_remove = get_account_mut_vm(&mut vm.cache, vm.db.clone(), address)?;
+            *account_to_remove = Account::default();
+        }
+
+        Ok(())
     }
 }

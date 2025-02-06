@@ -540,7 +540,9 @@ impl VM {
 
         report.gas_used = self.gas_used(&initial_call_frame, &report)?;
 
-        self.finalize_execution(&initial_call_frame, &mut report)?;
+        for hook in self.hooks.clone() {
+            hook.finalize_execution(self, &initial_call_frame, &mut report)?;
+        }
 
         report.new_state.clone_from(&self.cache);
 
