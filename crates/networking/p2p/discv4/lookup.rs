@@ -17,9 +17,9 @@ use tracing::debug;
 
 #[derive(Clone, Debug)]
 pub struct Discv4LookupHandler {
-    pub ctx: P2PContext,
-    pub udp_socket: Arc<UdpSocket>,
-    pub interval_minutes: u64,
+    ctx: P2PContext,
+    udp_socket: Arc<UdpSocket>,
+    interval_minutes: u64,
 }
 
 impl Discv4LookupHandler {
