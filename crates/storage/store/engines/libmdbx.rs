@@ -669,6 +669,7 @@ impl StoreEngine for Store {
             }
             // Add account to trie
             state_trie.insert(hash.to_fixed_bytes().to_vec(), account.encode_to_vec())?;
+            // TODO: Commit every few iterations so we don't build the full trie in memory
         }
         Ok((state_trie.hash()?, mismatched_storage_accounts))
     }
