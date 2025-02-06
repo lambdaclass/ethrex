@@ -1,7 +1,5 @@
 // Blockchain related constants
 
-use std::time::Duration;
-
 use ethrex_core::types::{BlobSchedule, ChainConfig, ForkBlobSchedule};
 use ethrex_vm::SpecId;
 

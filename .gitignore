@@ -10,8 +10,8 @@ debug/
 *.pdb
 
 cmd/ef_tests/blockchain/vectors
-
 cmd/ef_tests/levm/vectors
+cmd/ef_tests/ethrex/vectors
 
 # Repos checked out by make target
 hive/

@@ -4,7 +4,6 @@ use crate::{get_account, get_block, retry};
 use std::cell::RefCell;
 use std::collections::hash_map::Entry;
 use std::collections::HashMap;
-use std::fs::File;
 
 use crate::Account;
 use ethrex_core::types::{AccountInfo, ChainConfig, GenesisAccount};
@@ -12,18 +11,16 @@ use ethrex_core::{
     types::{Block, TxKind},
     Address, H256,
 };
-use ethrex_storage::error::StoreError;
-use ethrex_storage::{EngineType, Store};
 use ethrex_vm::execution_db::{ExecutionDB, ToExecDB};
 use ethrex_vm::spec_id;
 use futures_util::future::join_all;
 use revm::db::CacheDB;
 use revm::DatabaseRef;
-use revm_primitives::{
+
+use revm::primitives::{
     AccountInfo as RevmAccountInfo, Address as RevmAddress, Bytecode as RevmBytecode,
     Bytes as RevmBytes, B256 as RevmB256, U256 as RevmU256,
 };
-use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use tokio_utils::RateLimiter;
 
 pub struct RpcDB {
@@ -116,7 +113,7 @@ impl RpcDB {
 impl DatabaseRef for RpcDB {
     type Error = String;
 
-    fn basic_ref(&self, address: RevmAddress) -> Result<Option<RevmAccountInfo>, Self::Error> {
+    fn basic_ref(&self, address: RevmAddress) -> Result<Option<RevmAccountInfo>, String> {
         let address = Address::from(address.0.as_ref());
 
         let account = match self.cache.borrow_mut().entry(address) {
@@ -144,7 +141,10 @@ impl DatabaseRef for RpcDB {
         Ok(account)
     }
     #[allow(unused_variables)]
-    fn code_by_hash_ref(&self, code_hash: RevmB256) -> Result<RevmBytecode, Self::Error> {
+    fn code_by_hash_ref(
+        &self,
+        code_hash: RevmB256,
+    ) -> Result<revm::primitives::Bytecode, Self::Error> {
         Ok(RevmBytecode::default()) // code is stored in account info
     }
     fn storage_ref(&self, address: RevmAddress, index: RevmU256) -> Result<RevmU256, Self::Error> {
@@ -231,8 +231,7 @@ impl ToExecDB for RpcDB {
     fn to_exec_db(
         &self,
         block: &Block,
-    ) -> Result<ethrex_vm::execution_db::ExecutionDB, ethrex_vm::errors::ExecutionDBError> {
-        let parent_hash = block.header.parent_hash;
+    ) -> Result<ExecutionDB, ethrex_vm::errors::ExecutionDBError> {
         let chain_config: ethrex_core::types::ChainConfig = CANCUN_CONFIG;
 
         // pre-execute and get all downloaded accounts

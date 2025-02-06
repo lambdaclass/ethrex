@@ -198,10 +198,9 @@ cfg_if::cfg_if! {
             let mut account_updates: Vec<AccountUpdate> = vec![];
             for (new_state_account_address, new_state_account) in new_state {
                 let initial_account_state = current_db
-                    .get_account_info_by_hash(block_hash, *new_state_account_address)
-                    .expect("Error getting account info by address");
+                    .get_account_info(*new_state_account_address);
 
-                if initial_account_state.is_none() {
+                if initial_account_state.is_empty() {
                     // New account, update everything
                     let new_account = AccountUpdate{
                         address: *new_state_account_address ,
@@ -219,8 +218,6 @@ cfg_if::cfg_if! {
                     continue;
                 }
 
-                // This unwrap is safe, just checked upside
-                let initial_account_state = initial_account_state.unwrap();
                 let mut account_update = AccountUpdate::new(*new_state_account_address);
 
                 // Account state after block execution.

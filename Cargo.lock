@@ -3137,7 +3137,6 @@ name = "ethrex-rpc-client"
 version = "0.1.0"
 dependencies = [
  "again",
- "bincode",
  "bytes",
  "ethrex-core",
  "ethrex-rlp",
@@ -3148,8 +3147,7 @@ dependencies = [
  "hex",
  "lazy_static",
  "reqwest 0.12.9",
- "revm 14.0.3",
- "revm-primitives 10.0.0",
+ "revm 18.0.0",
  "serde",
  "serde_json",
  "tokio",
@@ -6936,6 +6934,7 @@ version = "0.1.0"
 dependencies = [
  "bincode",
  "bytes",
+ "cfg-if",
  "clap 4.5.21",
  "ethrex-core",
  "ethrex-levm",

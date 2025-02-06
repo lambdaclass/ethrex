@@ -411,7 +411,7 @@ impl VM {
     ///   See 'docs' for more information about validations.
     fn prepare_execution(&mut self, initial_call_frame: &mut CallFrame) -> Result<(), VMError> {
         let sender_address = self.env.origin;
-        let mut sender_account = get_account(&mut self.cache, &self.db, sender_address);
+        let sender_account = get_account(&mut self.cache, &self.db, sender_address);
 
         if self.env.config.fork >= Fork::Prague {
             // check for gas limit is grater or equal than the minimum required
