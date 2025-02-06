@@ -27,3 +27,7 @@ harness = false
 [[test]]
 name = "shanghai"
 harness = false
+
+[[test]]
+name = "prague"
+harness = false

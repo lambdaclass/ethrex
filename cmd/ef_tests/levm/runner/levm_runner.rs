@@ -5,13 +5,13 @@ use crate::{
     utils::{self, effective_gas_price},
 };
 use ethrex_core::{
-    types::{code_hash, AccountInfo, Fork},
+    types::{code_hash, tx_fields::*, AccountInfo, Fork},
     H256, U256,
 };
 use ethrex_levm::{
     db::CacheDB,
     errors::{ExecutionReport, TxValidationError, VMError},
-    vm::{AuthorizationTuple, EVMConfig, VM},
+    vm::{EVMConfig, VM},
     Environment,
 };
 use ethrex_storage::AccountUpdate;
@@ -117,7 +117,7 @@ pub fn prepare_vm_for_tx(
                 chain_id: auth_tuple.chain_id,
                 address: auth_tuple.address,
                 nonce: auth_tuple.nonce,
-                v: auth_tuple.v,
+                y_parity: auth_tuple.v,
                 r_signature: auth_tuple.r,
                 s_signature: auth_tuple.s,
             })
@@ -147,6 +147,9 @@ pub fn prepare_vm_for_tx(
             tx_max_priority_fee_per_gas: tx.max_priority_fee_per_gas,
             tx_max_fee_per_gas: tx.max_fee_per_gas,
             tx_max_fee_per_blob_gas: tx.max_fee_per_blob_gas,
+            tx_nonce: tx.nonce.try_into().map_err(|_| {
+                EFTestRunnerError::VMInitializationFailed("Nonce to large".to_string())
+            })?,
             block_gas_limit: test.env.current_gas_limit,
             transient_storage: HashMap::new(),
         },

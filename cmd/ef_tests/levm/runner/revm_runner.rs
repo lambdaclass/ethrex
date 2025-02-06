@@ -22,8 +22,9 @@ use revm::{
     db::State,
     inspectors::TracerEip3155 as RevmTracerEip3155,
     primitives::{
-        AccessListItem, BlobExcessGasAndPrice, BlockEnv as RevmBlockEnv, EVMError as REVMError,
-        ExecutionResult as RevmExecutionResult, TxEnv as RevmTxEnv, TxKind as RevmTxKind, B256,
+        AccessListItem, Authorization, BlobExcessGasAndPrice, BlockEnv as RevmBlockEnv,
+        EVMError as REVMError, ExecutionResult as RevmExecutionResult, SignedAuthorization,
+        TxEnv as RevmTxEnv, TxKind as RevmTxKind, B256,
     },
     Evm as Revm,
 };
@@ -148,22 +149,20 @@ pub fn prepare_revm_for_tx<'state>(
         })
         .collect();
 
-    let authorization_list = None;
-
-    // WARNING: Do not delete the following.
-    // The latest version of revm(19.3.0) is needed.
+    // The latest version of revm(19.3.0) is needed to run the ef-tests with the latest changes.
     // Update it in every Cargo.toml.
     // revm-inspectors and revm-primitives have to be bumped too.
     // NOTE:
     // - rust 1.82.X is needed
     // - rust-toolchain 1.82.X is needed (this can be found in ethrex/crates/vm/levm/rust-toolchain.toml)
-    /*
     let authorization_list = tx.authorization_list.clone().map(|list| {
         list.iter()
             .map(|auth_t| {
                 SignedAuthorization::new_unchecked(
                     Authorization {
-                        chain_id: RevmU256::from_le_bytes(auth_t.chain_id.to_little_endian()),
+                        // The latest spec defined chain_id as a U256
+                        //chain_id: RevmU256::from_le_bytes(auth_t.chain_id.to_little_endian()),
+                        chain_id: auth_t.chain_id.as_u64(),
                         address: RevmAddress(auth_t.address.0.into()),
                         nonce: auth_t.nonce,
                     },
@@ -175,7 +174,7 @@ pub fn prepare_revm_for_tx<'state>(
             .collect::<Vec<SignedAuthorization>>()
             .into()
     });
-    */
+
     let tx_env = RevmTxEnv {
         caller: tx.sender.0.into(),
         gas_limit: tx.gas_limit,

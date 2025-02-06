@@ -117,7 +117,7 @@ impl Discv4Server {
             debug!("Received {read} bytes from {from}");
 
             match Packet::decode(&buf[..read]) {
-                Err(e) => error!("Could not decode packet: {:?}", e),
+                Err(e) => debug!("Could not decode packet: {:?}", e),
                 Ok(packet) => {
                     let msg = packet.get_message();
                     let msg_name = msg.to_string();
