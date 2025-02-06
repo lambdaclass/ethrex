@@ -10,6 +10,7 @@ debug/
 *.pdb
 
 cmd/ef_tests/blockchain/vectors
+cmd/ef_tests/blockchain/.stamp_file
 cmd/ef_tests/levm/vectors
 
 # Repos checked out by make target
