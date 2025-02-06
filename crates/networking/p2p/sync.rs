@@ -361,20 +361,21 @@ async fn snap_sync(state_root: H256, store: Store, peers: PeerHandler) -> Result
         }
     }
     // If we have no pending storage or state paths then we should perform trie rebuild
-    if pending_state_paths.is_none() && pending_state_paths.is_none() {
-        if pending_storage_paths.is_none() && pending_state_paths.is_none() {
-            let (_, paths) = store.rebuild_state_from_snapshot()?;
-            info!(
-                "State trie rebuilt from snapshot, identified {} incomplete storage tries",
-                paths.len()
+    if pending_storage_paths.is_none() && pending_state_paths.is_none() {
+        info!("Rebuilding state trie");
+        let rebuild_start = Instant::now();
+        let (_, paths) = store.rebuild_state_from_snapshot()?;
+        info!(
+                "State trie rebuilt from snapshot, identified {} incomplete storage tries, time elapsed: {}",
+                paths.len(),
+                rebuild_start.elapsed().as_secs()
             );
-            pending_storage_paths = Some(
-                paths
-                    .into_iter()
-                    .map(|h| (h, vec![Nibbles::default()]))
-                    .collect(),
-            )
-        }
+        pending_storage_paths = Some(
+            paths
+                .into_iter()
+                .map(|h| (h, vec![Nibbles::default()]))
+                .collect(),
+        )
     }
     // Perfrom Healing
     let heal_status = heal_state_trie(
