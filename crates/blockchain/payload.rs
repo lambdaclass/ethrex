@@ -17,9 +17,9 @@ use ethrex_core::{
 use ethrex_core::types::{Fork, GWEI_TO_WEI};
 use ethrex_levm::{db::CacheDB, vm::EVMConfig, Account, AccountInfo};
 use ethrex_vm::{
-    db::{evm_state, EvmState, StoreWrapper},
     backends,
     backends::EVM,
+    db::{evm_state, EvmState, StoreWrapper},
     get_state_transitions, spec_id, EvmError, SpecId, EVM_BACKEND,
 };
 use std::sync::Arc;

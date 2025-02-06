@@ -1,13 +1,13 @@
+pub mod backends;
 pub mod db;
 pub mod errors;
-pub mod backends;
 pub mod execution_db;
 mod execution_result;
 #[cfg(feature = "l2")]
 mod mods;
 
-use db::EvmState;
 use backends::EVM;
+use db::EvmState;
 
 use crate::backends::revm::*;
 use ethrex_core::{
