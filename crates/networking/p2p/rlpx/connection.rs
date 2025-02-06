@@ -159,6 +159,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
             &format!("{error_text}: ({error}), discarding peer {remote_node_id}"),
         );
         table.lock().await.replace_peer(remote_node_id);
+        let _ = self.framed.close().await;
     }
 
     fn match_disconnect_reason(&self, error: &RLPxError) -> Option<u8> {
@@ -223,10 +224,20 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
             tokio::select! {
                 // Expect a message from the remote peer
                 message = self.receive() => {
-                    self.handle_message(message?, sender.clone()).await?;
+                    match message {
+                        Ok(message) => {
+                            log_peer_debug(&self.node, &format!("Received message {}", message));
+                            self.handle_message(message, sender.clone()).await?;
+                        },
+                        Err(e) => {
+                            log_peer_debug(&self.node, &format!("Received RLPX Error in msg {}", e));
+                            return Err(e);
+                        }
+                    }
                 }
                 // Expect a message from the backend
                 Some(message) = receiver.recv() => {
+                    log_peer_debug(&self.node, &format!("Sending message {}", message));
                     self.send(message).await?;
                 }
                 // This is not ideal, but using the receiver without
@@ -285,7 +296,6 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
             }
             Message::Ping(_) => {
                 self.send(Message::Pong(PongMessage {})).await?;
-                log_peer_debug(&self.node, "Pong sent");
             }
             Message::Pong(_) => {
                 // We ignore received Pong messages
@@ -417,8 +427,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
             // https://github.com/ethereum/devp2p/blob/master/caps/eth.md#status-0x00
             match self.receive().await? {
                 Message::Status(msg_data) => {
-                    // TODO: Check message status is correct.
-                    log_peer_debug(&self.node, "Received Status");
+                    log_peer_debug(&self.node, &format!("Received Status {:?}", msg_data));
                     backend::validate_status(msg_data, &self.storage)?
                 }
                 Message::Disconnect(disconnect) => {
