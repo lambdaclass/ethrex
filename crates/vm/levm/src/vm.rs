@@ -508,6 +508,9 @@ impl VM {
             .pop()
             .ok_or(VMError::Internal(InternalError::CouldNotPopCallframe))?;
 
+        // NOTE: ATTOW the default hook is created in VM::new(), so
+        // (in theory) _at least_ the default prepare execution should
+        // run
         for hook in self.hooks.clone() {
             hook.prepare_execution(self, &mut initial_call_frame)?;
         }
