@@ -19,7 +19,7 @@ use ethrex_core::{
 use ethrex_storage::{error::StoreError, AccountUpdate, Store};
 use lazy_static::lazy_static;
 use revm::{
-    db::{states::bundle_state::BundleRetention, AccountState, AccountStatus},
+    db::{states::bundle_state::BundleRetention, AccountState as RevmAccountState, AccountStatus},
     inspector_handle_register,
     inspectors::TracerEip3155,
     precompile::{PrecompileSpecId, Precompiles},
@@ -649,14 +649,14 @@ pub fn get_state_transitions(state: &mut EvmState) -> Vec<AccountUpdate> {
             // Update accounts
             let mut account_updates = Vec::new();
             for (revm_address, account) in &db.accounts {
-                if account.account_state == AccountState::None {
+                if account.account_state == RevmAccountState::None {
                     // EVM didn't interact with this account
                     continue;
                 }
 
                 let address = Address::from_slice(revm_address.0.as_slice());
                 // Remove account from DB if destroyed
-                if account.account_state == AccountState::NotExisting {
+                if account.account_state == RevmAccountState::NotExisting {
                     account_updates.push(AccountUpdate::removed(address));
                     continue;
                 }
@@ -708,26 +708,36 @@ pub fn process_withdrawals(
     state: &mut EvmState,
     withdrawals: &[Withdrawal],
 ) -> Result<(), StoreError> {
+    //balance_increments is a vector of tuples (Address, increment as u128)
+    let balance_increments = withdrawals
+        .iter()
+        .filter(|withdrawal| withdrawal.amount > 0)
+        .map(|withdrawal| {
+            (
+                RevmAddress::from_slice(withdrawal.address.as_bytes()),
+                (withdrawal.amount as u128 * GWEI_TO_WEI as u128),
+            )
+        })
+        .collect::<Vec<_>>();
     match state {
         EvmState::Store(db) => {
-            //balance_increments is a vector of tuples (Address, increment as u128)
-            let balance_increments = withdrawals
-                .iter()
-                .filter(|withdrawal| withdrawal.amount > 0)
-                .map(|withdrawal| {
-                    (
-                        RevmAddress::from_slice(withdrawal.address.as_bytes()),
-                        (withdrawal.amount as u128 * GWEI_TO_WEI as u128),
-                    )
-                })
-                .collect::<Vec<_>>();
-
             db.increment_balances(balance_increments)?;
         }
-        EvmState::Execution(_) => {
-            // TODO: We should check withdrawals are valid
-            // (by checking that accounts exist if this is the only error) but there's no state to
-            // change.
+        EvmState::Execution(db) => {
+            for (address, balance) in balance_increments {
+                if balance == 0 {
+                    continue;
+                }
+
+                let account = db
+                    .load_account(address)
+                    .map_err(|err| StoreError::Custom(format!("revm CacheDB error: {err}")))?;
+
+                account.info.balance += RevmU256::from(balance);
+                if account.account_state == RevmAccountState::None {
+                    account.account_state = RevmAccountState::Touched;
+                }
+            }
         }
     }
     Ok(())
