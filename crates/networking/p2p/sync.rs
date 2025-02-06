@@ -413,7 +413,7 @@ async fn state_sync(
         store.clone(),
         state_root,
     ));
-    debug!("Starting/Resuming state trie download of segment number {segment_number} from key {start_account_hash}");
+    info!("Starting/Resuming state trie download of segment number {segment_number} from key {start_account_hash}");
     // Fetch Account Ranges
     // If we reached the maximum amount of retries then it means the state we are requesting is probably old and no longer available
     let mut stale = false;
