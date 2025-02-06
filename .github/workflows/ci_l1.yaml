@@ -64,10 +64,6 @@ jobs:
       - name: Caching
         uses: Swatinem/rust-cache@v2
 
-      - name: Download test vectors
-        run: |
-          make download-test-vectors
-
       - name: Run tests
         run: |
           make test

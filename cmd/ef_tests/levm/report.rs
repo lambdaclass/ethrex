@@ -107,8 +107,8 @@ pub fn load() -> Result<Vec<EFTestReport>, EFTestRunnerError> {
 }
 
 pub fn summary_for_slack(reports: &[EFTestReport]) -> String {
-    let total_passed = reports.iter().filter(|report| report.passed()).count();
-    let total_run = reports.len();
+    let total_passed = total_fork_test_passed(reports);
+    let total_run = total_fork_test_run(reports);
     let success_percentage = (total_passed as f64 / total_run as f64) * 100.0;
     format!(
         r#"{{
@@ -167,8 +167,8 @@ pub fn write_summary_for_slack(reports: &[EFTestReport]) -> Result<PathBuf, EFTe
 }
 
 pub fn summary_for_github(reports: &[EFTestReport]) -> String {
-    let total_passed = reports.iter().filter(|report| report.passed()).count();
-    let total_run = reports.len();
+    let total_passed = total_fork_test_passed(reports);
+    let total_run = total_fork_test_run(reports);
     let success_percentage = (total_passed as f64 / total_run as f64) * 100.0;
     format!(
         r#"Summary: {total_passed}/{total_run} ({success_percentage:.2}%)\n\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n"#,
@@ -207,11 +207,11 @@ pub fn write_summary_for_github(reports: &[EFTestReport]) -> Result<PathBuf, EFT
 }
 
 pub fn summary_for_shell(reports: &[EFTestReport]) -> String {
-    let total_passed = reports.iter().filter(|report| report.passed()).count();
-    let total_run = reports.len();
+    let total_passed = total_fork_test_passed(reports);
+    let total_run = total_fork_test_run(reports);
     let success_percentage = (total_passed as f64 / total_run as f64) * 100.0;
     format!(
-        "{} {}/{total_run} ({success_percentage:.2}%)\n\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n\n\n{}\n",
+        "{} {}/{total_run} ({success_percentage:.2}%)\n\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n\n\n{}\n",
         "Summary:".bold(),
         if total_passed == total_run {
             format!("{}", total_passed).green()
@@ -231,6 +231,8 @@ pub fn summary_for_shell(reports: &[EFTestReport]) -> String {
         fork_summary_shell(reports, Fork::Byzantium),
         fork_summary_shell(reports, Fork::Homestead),
         fork_summary_shell(reports, Fork::Frontier),
+        fork_summary_shell(reports, Fork::SpuriousDragon),
+        fork_summary_shell(reports, Fork::Tangerine),
         test_dir_summary_for_shell(reports),
     )
 }
@@ -252,10 +254,16 @@ fn fork_summary_shell(reports: &[EFTestReport], fork: Fork) -> String {
 }
 
 fn fork_statistics(reports: &[EFTestReport], fork: Fork) -> (usize, usize, f64) {
-    let fork_tests = reports.iter().filter(|report| report.fork == fork).count();
+    let fork_tests = reports
+        .iter()
+        .filter(|report| report.fork_results.contains_key(&fork))
+        .count();
     let fork_passed_tests = reports
         .iter()
-        .filter(|report| report.fork == fork && report.passed())
+        .filter(|report| match report.fork_results.get(&fork) {
+            Some(result) => result.failed_vectors.is_empty(),
+            None => false,
+        })
         .count();
     let fork_success_percentage = (fork_passed_tests as f64 / fork_tests as f64) * 100.0;
     (fork_tests, fork_passed_tests, fork_success_percentage)
@@ -268,8 +276,10 @@ pub fn test_dir_summary_for_shell(reports: &[EFTestReport]) -> String {
         .into_group_map_by(|report| report.dir.clone())
         .iter()
         .map(|(dir, reports)| {
-            let total_passed = reports.iter().filter(|report| report.passed()).count();
-            let total_run = reports.len();
+            let total_passed =
+                total_fork_test_passed(&reports.iter().map(|&r| r.clone()).collect::<Vec<_>>());
+            let total_run =
+                total_fork_test_run(&reports.iter().map(|&r| r.clone()).collect::<Vec<_>>());
             if total_passed == 0 {
                 (dir, reports, 0)
             } else if total_passed > 0 && total_passed < total_run {
@@ -281,8 +291,10 @@ pub fn test_dir_summary_for_shell(reports: &[EFTestReport]) -> String {
         .sorted_by_key(|(_dir, _reports, weight)| *weight)
         .rev()
         .for_each(|(dir, reports, _weight)| {
-            let total_passed = reports.iter().filter(|report| report.passed()).count();
-            let total_run = reports.len();
+            let total_passed =
+                total_fork_test_passed(&reports.iter().map(|&r| r.clone()).collect::<Vec<_>>());
+            let total_run =
+                total_fork_test_run(&reports.iter().map(|&r| r.clone()).collect::<Vec<_>>());
             let success_percentage = (total_passed as f64 / total_run as f64) * 100.0;
             let test_dir_summary = format!(
                 "{}: {}/{} ({:.2}%)\n",
@@ -305,10 +317,30 @@ pub fn test_dir_summary_for_shell(reports: &[EFTestReport]) -> String {
 #[derive(Debug, Default, Clone)]
 pub struct EFTestsReport(pub Vec<EFTestReport>);
 
+pub fn total_fork_test_passed(reports: &[EFTestReport]) -> usize {
+    let mut tests_passed = 0;
+    for report in reports {
+        for fork_result in report.fork_results.values() {
+            if fork_result.failed_vectors.is_empty() {
+                tests_passed += 1;
+            }
+        }
+    }
+    tests_passed
+}
+
+pub fn total_fork_test_run(reports: &[EFTestReport]) -> usize {
+    let mut tests_run = 0;
+    for report in reports {
+        tests_run += report.fork_results.len();
+    }
+    tests_run
+}
+
 impl Display for EFTestsReport {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let total_passed = self.0.iter().filter(|report| report.passed()).count();
-        let total_run = self.0.len();
+        let total_passed = total_fork_test_passed(&self.0);
+        let total_run = total_fork_test_run(&self.0);
         writeln!(f, "Summary: {total_passed}/{total_run}",)?;
         writeln!(f)?;
         writeln!(f, "{}", fork_summary_shell(&self.0, Fork::Prague))?;
@@ -322,69 +354,84 @@ impl Display for EFTestsReport {
         writeln!(f, "{}", fork_summary_shell(&self.0, Fork::Istanbul))?;
         writeln!(f, "{}", fork_summary_shell(&self.0, Fork::London))?;
         writeln!(f, "{}", fork_summary_shell(&self.0, Fork::Frontier))?;
+        writeln!(f, "{}", fork_summary_shell(&self.0, Fork::SpuriousDragon))?;
+        writeln!(f, "{}", fork_summary_shell(&self.0, Fork::Tangerine))?;
         writeln!(f)?;
         writeln!(f, "Failed tests:")?;
         writeln!(f)?;
         writeln!(f, "{}", test_dir_summary_for_shell(&self.0))?;
         for report in self.0.iter() {
-            if report.failed_vectors.is_empty() {
+            if report.passed() {
                 continue;
             }
             writeln!(f, "Test: {}", report.name)?;
             writeln!(f)?;
-            for (failed_vector, error) in &report.failed_vectors {
-                writeln!(
-                    f,
-                    "Vector: (data_index: {}, gas_limit_index: {}, value_index: {})",
-                    failed_vector.0, failed_vector.1, failed_vector.2
-                )?;
-                writeln!(f, "Error: {error}")?;
-                if let Some(re_run_report) = &report.re_run_report {
-                    if let Some(execution_report) =
-                        re_run_report.execution_report.get(failed_vector)
-                    {
-                        if let Some((levm_result, revm_result)) =
-                            &execution_report.execution_result_mismatch
-                        {
-                            writeln!(
-                                f,
-                                "Execution result mismatch: LEVM: {levm_result:?}, REVM: {revm_result:?}",
-                            )?;
-                        }
-                        if let Some((levm_gas_used, revm_gas_used)) =
-                            &execution_report.gas_used_mismatch
-                        {
-                            writeln!(
-                                f,
-                                "Gas used mismatch: LEVM: {levm_gas_used}, REVM: {revm_gas_used} (diff: {})",
-                                levm_gas_used.abs_diff(*revm_gas_used)
-                            )?;
-                        }
-                        if let Some((levm_gas_refunded, revm_gas_refunded)) =
-                            &execution_report.gas_refunded_mismatch
-                        {
-                            writeln!(
-                                f,
-                                "Gas refunded mismatch: LEVM: {levm_gas_refunded}, REVM: {revm_gas_refunded} (diff: {})",
-                                levm_gas_refunded.abs_diff(*revm_gas_refunded)
-                            )?;
-                        }
-                        if let Some((levm_result, revm_error)) = &execution_report.re_runner_error {
-                            writeln!(f, "Re-run error: LEVM: {levm_result:?}, REVM: {revm_error}",)?;
-                        }
-                    }
-
-                    if let Some(account_update) =
-                        re_run_report.account_updates_report.get(failed_vector)
-                    {
-                        writeln!(f, "{}", &account_update.to_string())?;
-                    } else {
-                        writeln!(f, "No account updates report found. Account update reports are only generated for tests that failed at the post-state validation stage.")?;
-                    }
-                } else {
-                    writeln!(f, "No re-run report found. Re-run reports are only generated for tests that failed at the post-state validation stage.")?;
+            for (fork, result) in &report.fork_results {
+                writeln!(f, "\n  Fork: {:?}", fork)?;
+                if result.failed_vectors.is_empty() {
+                    continue;
                 }
-                writeln!(f)?;
+                writeln!(f, "    Failed Vectors:")?;
+                for (failed_vector, error) in &result.failed_vectors {
+                    writeln!(
+                        f,
+                        "Vector: (data_index: {}, gas_limit_index: {}, value_index: {})",
+                        failed_vector.0, failed_vector.1, failed_vector.2
+                    )?;
+                    writeln!(f, "Error: {error}")?;
+                    if let Some(re_run_report) = &report.re_run_report {
+                        if let Some(execution_report) =
+                            re_run_report.execution_report.get(&(*failed_vector, *fork))
+                        {
+                            if let Some((levm_result, revm_result)) =
+                                &execution_report.execution_result_mismatch
+                            {
+                                writeln!(
+                                    f,
+                                    "Execution result mismatch: LEVM: {levm_result:?}, REVM: {revm_result:?}",
+                                )?;
+                            }
+                            if let Some((levm_gas_used, revm_gas_used)) =
+                                &execution_report.gas_used_mismatch
+                            {
+                                writeln!(
+                                    f,
+                                    "Gas used mismatch: LEVM: {levm_gas_used}, REVM: {revm_gas_used} (diff: {})",
+                                    levm_gas_used.abs_diff(*revm_gas_used)
+                                )?;
+                            }
+                            if let Some((levm_gas_refunded, revm_gas_refunded)) =
+                                &execution_report.gas_refunded_mismatch
+                            {
+                                writeln!(
+                                    f,
+                                    "Gas refunded mismatch: LEVM: {levm_gas_refunded}, REVM: {revm_gas_refunded} (diff: {})",
+                                    levm_gas_refunded.abs_diff(*revm_gas_refunded)
+                                )?;
+                            }
+                            if let Some((levm_result, revm_error)) =
+                                &execution_report.re_runner_error
+                            {
+                                writeln!(
+                                    f,
+                                    "Re-run error: LEVM: {levm_result:?}, REVM: {revm_error}",
+                                )?;
+                            }
+                        }
+
+                        if let Some(account_update) = re_run_report
+                            .account_updates_report
+                            .get(&(*failed_vector, *fork))
+                        {
+                            writeln!(f, "{}", &account_update.to_string())?;
+                        } else {
+                            writeln!(f, "No account updates report found. Account update reports are only generated for tests that failed at the post-state validation stage.")?;
+                        }
+                    } else {
+                        writeln!(f, "No re-run report found. Re-run reports are only generated for tests that failed at the post-state validation stage.")?;
+                    }
+                    writeln!(f)?;
+                }
             }
         }
         Ok(())
@@ -396,27 +443,51 @@ pub struct EFTestReport {
     pub name: String,
     pub dir: String,
     pub test_hash: H256,
-    pub fork: Fork,
+    pub re_run_report: Option<TestReRunReport>,
+    pub fork_results: HashMap<Fork, EFTestReportForkResult>,
+}
+
+#[derive(Debug, Default, Clone, Serialize, Deserialize)]
+pub struct EFTestReportForkResult {
     pub skipped: bool,
     pub failed_vectors: HashMap<TestVector, EFTestRunnerError>,
-    pub re_run_report: Option<TestReRunReport>,
 }
 
 impl EFTestReport {
-    pub fn new(name: String, dir: String, test_hash: H256, fork: Fork) -> Self {
+    pub fn new(name: String, dir: String, test_hash: H256) -> Self {
         EFTestReport {
             name,
             dir,
             test_hash,
-            fork,
-            ..Default::default()
+            re_run_report: None,
+            fork_results: HashMap::new(),
         }
     }
 
-    pub fn new_skipped() -> Self {
-        EFTestReport {
-            skipped: true,
-            ..Default::default()
+    pub fn register_re_run_report(&mut self, re_run_report: TestReRunReport) {
+        self.re_run_report = Some(re_run_report);
+    }
+
+    pub fn register_fork_result(
+        &mut self,
+        fork: Fork,
+        ef_test_report_fork: EFTestReportForkResult,
+    ) {
+        self.fork_results.insert(fork, ef_test_report_fork);
+    }
+
+    pub fn passed(&self) -> bool {
+        self.fork_results
+            .values()
+            .all(|fork_result| fork_result.failed_vectors.is_empty())
+    }
+}
+
+impl EFTestReportForkResult {
+    pub fn new() -> Self {
+        Self {
+            skipped: false,
+            failed_vectors: HashMap::new(),
         }
     }
 
@@ -476,16 +547,8 @@ impl EFTestReport {
         );
     }
 
-    pub fn register_re_run_report(&mut self, re_run_report: TestReRunReport) {
-        self.re_run_report = Some(re_run_report);
-    }
-
-    pub fn iter_failed(&self) -> impl Iterator<Item = (&TestVector, &EFTestRunnerError)> {
-        self.failed_vectors.iter()
-    }
-
-    pub fn passed(&self) -> bool {
-        self.failed_vectors.is_empty()
+    pub fn register_failed_vector(&mut self, vector: TestVector, error: EFTestRunnerError) {
+        self.failed_vectors.insert(vector, error);
     }
 }
 
@@ -806,8 +869,8 @@ pub struct TestReRunExecutionReport {
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
 pub struct TestReRunReport {
-    pub execution_report: HashMap<TestVector, TestReRunExecutionReport>,
-    pub account_updates_report: HashMap<TestVector, ComparisonReport>,
+    pub execution_report: HashMap<(TestVector, Fork), TestReRunExecutionReport>,
+    pub account_updates_report: HashMap<(TestVector, Fork), ComparisonReport>,
 }
 
 impl TestReRunReport {
@@ -820,10 +883,11 @@ impl TestReRunReport {
         vector: TestVector,
         levm_result: TxResult,
         revm_result: RevmExecutionResult,
+        fork: Fork,
     ) {
         let value = Some((levm_result, revm_result));
         self.execution_report
-            .entry(vector)
+            .entry((vector, fork))
             .and_modify(|report| {
                 report.execution_result_mismatch = value.clone();
             })
@@ -838,10 +902,11 @@ impl TestReRunReport {
         vector: TestVector,
         levm_gas_used: u64,
         revm_gas_used: u64,
+        fork: Fork,
     ) {
         let value = Some((levm_gas_used, revm_gas_used));
         self.execution_report
-            .entry(vector)
+            .entry((vector, fork))
             .and_modify(|report| {
                 report.gas_used_mismatch = value;
             })
@@ -856,10 +921,11 @@ impl TestReRunReport {
         vector: TestVector,
         levm_gas_refunded: u64,
         revm_gas_refunded: u64,
+        fork: Fork,
     ) {
         let value = Some((levm_gas_refunded, revm_gas_refunded));
         self.execution_report
-            .entry(vector)
+            .entry((vector, fork))
             .and_modify(|report| {
                 report.gas_refunded_mismatch = value;
             })
@@ -873,8 +939,9 @@ impl TestReRunReport {
         &mut self,
         vector: TestVector,
         report: ComparisonReport,
+        fork: Fork,
     ) {
-        self.account_updates_report.insert(vector, report);
+        self.account_updates_report.insert((vector, fork), report);
     }
 
     pub fn register_re_run_failure(
@@ -882,10 +949,11 @@ impl TestReRunReport {
         vector: TestVector,
         levm_result: TxResult,
         revm_error: EVMError<StoreError>,
+        fork: Fork,
     ) {
         let value = Some((levm_result, revm_error.to_string()));
         self.execution_report
-            .entry(vector)
+            .entry((vector, fork))
             .and_modify(|report| {
                 report.re_runner_error = value.clone();
             })

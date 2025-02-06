@@ -1,11 +1,11 @@
 use crate::{
-    report::{EFTestReport, TestVector},
+    report::{EFTestReport, EFTestReportForkResult, TestVector},
     runner::{EFTestRunnerError, InternalError},
     types::{EFTest, TransactionExpectedException},
     utils::{self, effective_gas_price},
 };
 use ethrex_core::{
-    types::{code_hash, tx_fields::*, AccountInfo},
+    types::{code_hash, tx_fields::*, AccountInfo, Fork},
     H256, U256,
 };
 use ethrex_levm::{
@@ -20,55 +20,77 @@ use keccak_hash::keccak;
 use std::{collections::HashMap, sync::Arc};
 
 pub fn run_ef_test(test: &EFTest) -> Result<EFTestReport, EFTestRunnerError> {
-    let hash = test._info.generated_test_hash.or(test._info.hash).unwrap();
+    // There are some tests that don't have a hash, unwrap will panic
+    let hash = test
+        ._info
+        .generated_test_hash
+        .or(test._info.hash)
+        .unwrap_or_default();
 
-    let mut ef_test_report =
-        EFTestReport::new(test.name.clone(), test.dir.clone(), hash, test.fork());
-    for (vector, _tx) in test.transactions.iter() {
-        match run_ef_test_tx(vector, test) {
-            Ok(_) => continue,
-            Err(EFTestRunnerError::VMInitializationFailed(reason)) => {
-                ef_test_report.register_vm_initialization_failure(reason, *vector);
+    let mut ef_test_report = EFTestReport::new(test.name.clone(), test.dir.clone(), hash);
+    for fork in test.post.forks.keys() {
+        let mut ef_test_report_fork = EFTestReportForkResult::new();
+
+        for (vector, _tx) in test.transactions.iter() {
+            // This is because there are some test vectors that are not valid for the current fork.
+            if !test.post.has_vector_for_fork(vector, *fork) {
+                continue;
             }
-            Err(EFTestRunnerError::FailedToEnsurePreState(reason)) => {
-                ef_test_report.register_pre_state_validation_failure(reason, *vector);
-            }
-            Err(EFTestRunnerError::ExecutionFailedUnexpectedly(error)) => {
-                ef_test_report.register_unexpected_execution_failure(error, *vector);
-            }
-            Err(EFTestRunnerError::FailedToEnsurePostState(transaction_report, reason)) => {
-                ef_test_report.register_post_state_validation_failure(
-                    transaction_report,
-                    reason,
-                    *vector,
-                );
-            }
-            Err(EFTestRunnerError::VMExecutionMismatch(_)) => {
-                return Err(EFTestRunnerError::Internal(InternalError::FirstRunInternal(
-                    "VM execution mismatch errors should only happen when running with revm. This failed during levm's execution."
-                        .to_owned(),
-                )));
-            }
-            Err(EFTestRunnerError::ExpectedExceptionDoesNotMatchReceived(reason)) => {
-                ef_test_report.register_post_state_validation_error_mismatch(reason, *vector);
-            }
-            Err(EFTestRunnerError::Internal(reason)) => {
-                return Err(EFTestRunnerError::Internal(reason));
+            match run_ef_test_tx(vector, test, fork) {
+                Ok(_) => continue,
+                Err(EFTestRunnerError::VMInitializationFailed(reason)) => {
+                    ef_test_report_fork.register_vm_initialization_failure(reason, *vector);
+                }
+                Err(EFTestRunnerError::FailedToEnsurePreState(reason)) => {
+                    ef_test_report_fork.register_pre_state_validation_failure(reason, *vector);
+                }
+                Err(EFTestRunnerError::ExecutionFailedUnexpectedly(error)) => {
+                    ef_test_report_fork.register_unexpected_execution_failure(error, *vector);
+                }
+                Err(EFTestRunnerError::FailedToEnsurePostState(transaction_report, reason)) => {
+                    ef_test_report_fork.register_post_state_validation_failure(
+                        transaction_report,
+                        reason,
+                        *vector,
+                    );
+                }
+                Err(EFTestRunnerError::VMExecutionMismatch(_)) => {
+                    return Err(EFTestRunnerError::Internal(InternalError::FirstRunInternal(
+                        "VM execution mismatch errors should only happen when running with revm. This failed during levm's execution."
+                            .to_owned(),
+                    )));
+                }
+                Err(EFTestRunnerError::ExpectedExceptionDoesNotMatchReceived(reason)) => {
+                    ef_test_report_fork
+                        .register_post_state_validation_error_mismatch(reason, *vector);
+                }
+                Err(EFTestRunnerError::Internal(reason)) => {
+                    return Err(EFTestRunnerError::Internal(reason));
+                }
             }
         }
+        ef_test_report.register_fork_result(*fork, ef_test_report_fork);
     }
     Ok(ef_test_report)
 }
 
-pub fn run_ef_test_tx(vector: &TestVector, test: &EFTest) -> Result<(), EFTestRunnerError> {
-    let mut levm = prepare_vm_for_tx(vector, test)?;
+pub fn run_ef_test_tx(
+    vector: &TestVector,
+    test: &EFTest,
+    fork: &Fork,
+) -> Result<(), EFTestRunnerError> {
+    let mut levm = prepare_vm_for_tx(vector, test, fork)?;
     ensure_pre_state(&levm, test)?;
     let levm_execution_result = levm.execute();
-    ensure_post_state(&levm_execution_result, vector, test)?;
+    ensure_post_state(&levm_execution_result, vector, test, fork)?;
     Ok(())
 }
 
-pub fn prepare_vm_for_tx(vector: &TestVector, test: &EFTest) -> Result<VM, EFTestRunnerError> {
+pub fn prepare_vm_for_tx(
+    vector: &TestVector,
+    test: &EFTest,
+    fork: &Fork,
+) -> Result<VM, EFTestRunnerError> {
     let (initial_state, block_hash) = utils::load_initial_state(test);
     let db = Arc::new(StoreWrapper {
         store: initial_state.database().unwrap().clone(),
@@ -102,9 +124,8 @@ pub fn prepare_vm_for_tx(vector: &TestVector, test: &EFTest) -> Result<VM, EFTes
             .collect::<Vec<AuthorizationTuple>>()
     });
 
-    let fork = test.fork();
-    let blob_schedule = EVMConfig::canonical_values(fork);
-    let config = EVMConfig::new(fork, blob_schedule);
+    let blob_schedule = EVMConfig::canonical_values(*fork);
+    let config = EVMConfig::new(*fork, blob_schedule);
 
     VM::new(
         tx.to.clone(),
@@ -259,10 +280,11 @@ pub fn ensure_post_state(
     levm_execution_result: &Result<ExecutionReport, VMError>,
     vector: &TestVector,
     test: &EFTest,
+    fork: &Fork,
 ) -> Result<(), EFTestRunnerError> {
     match levm_execution_result {
         Ok(execution_report) => {
-            match test.post.vector_post_value(vector).expect_exception {
+            match test.post.vector_post_value(vector, *fork).expect_exception {
                 // Execution result was successful but an exception was expected.
                 Some(expected_exceptions) => {
                     // Note: expected_exceptions is a vector because can only have 1 or 2 expected errors.
@@ -293,7 +315,8 @@ pub fn ensure_post_state(
                     let levm_account_updates =
                         get_state_transitions(&initial_state, block_hash, execution_report);
                     let pos_state_root = post_state_root(&levm_account_updates, test);
-                    let expected_post_state_root_hash = test.post.vector_post_value(vector).hash;
+                    let expected_post_state_root_hash =
+                        test.post.vector_post_value(vector, *fork).hash;
                     if expected_post_state_root_hash != pos_state_root {
                         let error_reason = format!(
                             "Post-state root mismatch: expected {expected_post_state_root_hash:#x}, got {pos_state_root:#x}",
@@ -307,7 +330,7 @@ pub fn ensure_post_state(
             }
         }
         Err(err) => {
-            match test.post.vector_post_value(vector).expect_exception {
+            match test.post.vector_post_value(vector, *fork).expect_exception {
                 // Execution result was unsuccessful and an exception was expected.
                 Some(expected_exceptions) => {
                     // Note: expected_exceptions is a vector because can only have 1 or 2 expected errors.
