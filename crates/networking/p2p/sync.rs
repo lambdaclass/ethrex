@@ -212,43 +212,9 @@ impl SyncManager {
                     self.peers.clone(),
                     store.clone(),
                 ));
-                // Spawn a task to show the state sync progress
-                let state_sync_progress = StateSyncProgress::new(Instant::now());
-                let show_progress_handle =
-                    tokio::task::spawn(show_state_sync_progress(state_sync_progress.clone()));
-                // Spawn tasks to fetch each state trie segment
-                let mut state_trie_tasks = tokio::task::JoinSet::new();
-                let key_checkpoints = store.get_state_trie_key_checkpoint()?;
-                for i in 0..STATE_TRIE_SEGMENTS {
-                    state_trie_tasks.spawn(state_sync(
-                        pivot_header.state_root,
-                        self.peers.clone(),
-                        store.clone(),
-                        i,
-                        key_checkpoints.map(|chs| chs[i]),
-                        state_sync_progress.clone(),
-                    ));
-                }
-                show_progress_handle.await?;
-                // Check for pivot staleness
-                let mut stale_pivot = false;
-                let mut state_trie_checkpoint = [H256::zero(); STATE_TRIE_SEGMENTS];
-                for res in state_trie_tasks.join_all().await {
-                    let (index, is_stale, last_key) = res?;
-                    stale_pivot |= is_stale;
-                    state_trie_checkpoint[index] = last_key;
-                }
-                // Update state trie checkpoint
-                store.set_state_trie_key_checkpoint(state_trie_checkpoint)?;
-                if stale_pivot {
-                    warn!("Stale pivot, aborting state sync");
-                    return Ok(());
-                }
-                // Rebuild & Heal state trie
-                if !heal_state_trie(pivot_header.state_root, store.clone(), self.peers.clone())
-                    .await?
-                {
-                    warn!("Stale pivot, aborting healing");
+                // Perform snap sync
+                if !snap_sync(pivot_header.state_root, store.clone(), self.peers.clone()).await? {
+                    // Snap sync was not completed, abort and resume it on the next cycle
                     return Ok(());
                 }
                 // Wait for all bodies to be downloaded
@@ -368,12 +334,111 @@ async fn store_receipts(
     Ok(())
 }
 
-/// Rebuilds a Block's state trie by requesting snap state from peers, also performs state healing
-/// Receives an optional checkpoint in case there was a previous snap sync process that became stale, in which
-/// case it will continue from the checkpoint and then apply healing to fix inconsistencies with the older state
-/// Returns the segment number, the pivot staleness status (true if stale, false if not), and the last downloaded key
+// Downloads the latest state trie and all associated storage tries & bytecodes from peers
+// Rebuilds the state trie and all storage tries based on the downloaded data
+// Performs state healing in order to fix all inconsistencies with the downloaded state
+// Returns the success status, if it is true, then the state is fully consistent and
+// new blocks can be executed on top of it, if false then the state is still inconsistent and
+// snap sync must be resumed on the next sync cycle
+async fn snap_sync(state_root: H256, store: Store, peers: PeerHandler) -> Result<bool, SyncError> {
+    // Retrieve storage data to check which snap sync phase we are in
+    let key_checkpoints = store.get_state_trie_key_checkpoint()?;
+    let mut pending_storage_paths = store.get_storage_heal_paths()?;
+    let pending_state_paths = store.get_state_heal_paths()?;
+    // If we have no key checkpoints or if the key checkpoints are lower than the segment boundaries we are in state sync phase
+    if key_checkpoints.is_none()
+        || key_checkpoints.is_some_and(|ch| {
+            ch.into_iter()
+                .zip(STATE_TRIE_SEGMENTS_END.into_iter())
+                .any(|(ch, end)| ch < end)
+        })
+    {
+        let stale_pivot =
+            state_sync(state_root, store.clone(), peers.clone(), key_checkpoints).await?;
+        if stale_pivot {
+            warn!("Stale Pivot, aborting state sync");
+            return Ok(false);
+        }
+    }
+    // If we have no pending storage or state paths then we should perform trie rebuild
+    if pending_state_paths.is_none() && pending_state_paths.is_none() {
+        if pending_storage_paths.is_none() && pending_state_paths.is_none() {
+            let (_, paths) = store.rebuild_state_from_snapshot()?;
+            info!(
+                "State trie rebuilt from snapshot, identified {} incomplete storage tries",
+                paths.len()
+            );
+            pending_storage_paths = Some(
+                paths
+                    .into_iter()
+                    .map(|h| (h, vec![Nibbles::default()]))
+                    .collect(),
+            )
+        }
+    }
+    // Perfrom Healing
+    let heal_status = heal_state_trie(
+        state_root,
+        store.clone(),
+        peers.clone(),
+        pending_state_paths,
+        pending_storage_paths,
+    )
+    .await?;
+    if !heal_status {
+        warn!("Stale pivot, aborting healing");
+    }
+    return Ok(heal_status);
+}
+
+/// Downloads the leaf values of a Block's state trie by requesting snap state from peers
+/// Also downloads the storage tries & bytecodes for each downloaded account
+/// Receives optional checkpoints in case there was a previous snap sync process that became stale, in which
+/// case it will resume it
+/// Returns the pivot staleness status (true if stale, false if not)
 /// If the pivot is not stale by the end of the state sync then the state sync was completed succesfuly
 async fn state_sync(
+    state_root: H256,
+    store: Store,
+    peers: PeerHandler,
+    key_checkpoints: Option<[H256; STATE_TRIE_SEGMENTS]>,
+) -> Result<bool, SyncError> {
+    // Spawn tasks to fetch each state trie segment
+    let mut state_trie_tasks = tokio::task::JoinSet::new();
+    // Spawn a task to show the state sync progress
+    let state_sync_progress = StateSyncProgress::new(Instant::now());
+    let show_progress_handle =
+        tokio::task::spawn(show_state_sync_progress(state_sync_progress.clone()));
+    for i in 0..STATE_TRIE_SEGMENTS {
+        state_trie_tasks.spawn(state_sync_segment(
+            state_root,
+            peers.clone(),
+            store.clone(),
+            i,
+            key_checkpoints.map(|chs| chs[i]),
+            state_sync_progress.clone(),
+        ));
+    }
+    show_progress_handle.await?;
+    // Check for pivot staleness
+    let mut stale_pivot = false;
+    let mut state_trie_checkpoint = [H256::zero(); STATE_TRIE_SEGMENTS];
+    for res in state_trie_tasks.join_all().await {
+        let (index, is_stale, last_key) = res?;
+        stale_pivot |= is_stale;
+        state_trie_checkpoint[index] = last_key;
+    }
+    // Update state trie checkpoint
+    store.set_state_trie_key_checkpoint(state_trie_checkpoint)?;
+    Ok(stale_pivot)
+}
+
+/// Downloads the leaf values of the given state trie segment by requesting snap state from peers
+/// Also downloads the storage tries & bytecodes for each downloaded account
+/// Receives an optional checkpoint from a previous state sync to resume it
+/// Returns the segment number, the pivot staleness status (true if stale, false if not), and the last downloaded key
+/// If the pivot is not stale by the end of the state sync then the state sync was completed succesfuly
+async fn state_sync_segment(
     state_root: H256,
     peers: PeerHandler,
     store: Store,
@@ -729,74 +794,6 @@ async fn handle_large_storage_range(
     Ok(false)
 }
 
-async fn snap_sync(state_root: H256, store: Store, peers: PeerHandler) -> Result<(), SyncError> {
-    // Retrieve storage data to check which snap sync phase we are in
-    let key_checkpoints = store.get_state_trie_key_checkpoint()?;
-    let mut pending_storage_paths = store.get_storage_heal_paths()?;
-    let pending_state_paths = store.get_state_heal_paths()?;
-    // If we have no key checkpoints or if the key checkpoints are lower than the segment boundaries we are in state sync phase
-    if key_checkpoints.is_none() || key_checkpoints.is_some_and(|ch| ch.into_iter().zip(STATE_TRIE_SEGMENTS_END.into_iter()).any(|(ch, end)| ch < end)) {
-        state_sync_full().await;
-    }
-    // If we have no pending storage or state paths then we should perform trie rebuild
-    if pending_state_paths.is_none() && pending_state_paths.is_none() {
-        if pending_storage_paths.is_none() && pending_state_paths.is_none() {
-            let (_, paths) = store.rebuild_state_from_snapshot()?;
-            info!(
-                "State trie rebuilt from snapshot, identified {} incomplete storage tries",
-                paths.len()
-            );
-            pending_storage_paths = Some(
-                paths
-                    .into_iter()
-                    .map(|h| (h, vec![Nibbles::default()]))
-                    .collect(),
-            )
-        }
-    }
-    // Perfrom Healing 
-    if !heal_state_trie(state_root, store.clone(), peers.clone())
-        .await?
-    {
-        warn!("Stale pivot, aborting healing");
-    }
-    return Ok(());
-}
-
-async fn state_sync_full() {
-// Spawn tasks to fetch each state trie segment
-let mut state_trie_tasks = tokio::task::JoinSet::new();
-// Spawn a task to show the state sync progress
-let state_sync_progress = StateSyncProgress::new(Instant::now());
-let show_progress_handle =
-    tokio::task::spawn(show_state_sync_progress(state_sync_progress.clone()));
-for i in 0..STATE_TRIE_SEGMENTS {
-    state_trie_tasks.spawn(state_sync(
-        state_root,
-        peers.clone(),
-        store.clone(),
-        i,
-        key_checkpoints.map(|chs| chs[i]),
-        state_sync_progress.clone(),
-    ));
-}
-show_progress_handle.await?;
-// Check for pivot staleness
-let mut stale_pivot = false;
-let mut state_trie_checkpoint = [H256::zero(); STATE_TRIE_SEGMENTS];
-for res in state_trie_tasks.join_all().await {
-    let (index, is_stale, last_key) = res?;
-    stale_pivot |= is_stale;
-    state_trie_checkpoint[index] = last_key;
-}
-// Update state trie checkpoint
-store.set_state_trie_key_checkpoint(state_trie_checkpoint)?;
-if stale_pivot {
-    warn!("Stale pivot, aborting state sync");
-    return Ok(());
-}
-}
-
 /// Heals the trie given its state_root by fetching any missing nodes in it via p2p
 /// Also rebuilds it if this is the first healing cycle
 /// Returns true if healing was fully completed or false if we need to resume healing on the next sync cycle
@@ -804,8 +801,8 @@ async fn heal_state_trie(
     state_root: H256,
     store: Store,
     peers: PeerHandler,
-    pending_state_paths: Option<H256>,
-    pending_storage_paths: Option<Vec<(H256, Nibbles)>,
+    pending_state_paths: Option<Vec<Nibbles>>,
+    pending_storage_paths: Option<Vec<(H256, Vec<Nibbles>)>>,
 ) -> Result<bool, SyncError> {
     let pending_storage_paths = pending_storage_paths
         .unwrap_or_default()
