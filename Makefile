@@ -66,7 +66,7 @@ stop-localnet-silent:
 	@kurtosis enclave stop $(ENCLAVE) >/dev/null 2>&1 || true
 	@kurtosis enclave rm $(ENCLAVE) --force >/dev/null 2>&1 || true
 
-HIVE_REVISION := b0b0f98bd24676239722e3aa7885e29ef856d804
+HIVE_REVISION := feb4333db7fe9f6dc161326ebb11957d4306d2f9
 # Shallow clones can't specify a single revision, but at least we avoid working
 # the whole history by making it shallow since a given date (one day before our
 # target revision).
@@ -76,8 +76,10 @@ QUIET ?= false
 hive:
 	if [ "$(QUIET)" = "true" ]; then \
 		git clone --quiet --single-branch --branch master --shallow-since=$(HIVE_SHALLOW_SINCE) https://github.com/lambdaclass/hive ; \
+		cd hive && git checkout --quiet --detach $(HIVE_REVISION) && go build .; \
 	else \
 		git clone --single-branch --branch master --shallow-since=$(HIVE_SHALLOW_SINCE) https://github.com/lambdaclass/hive ; \
+		cd hive && git checkout --detach $(HIVE_REVISION) && go build .; \
 	fi
 
 setup-hive: hive ## 🐝 Set up Hive testing framework
@@ -116,6 +118,16 @@ run-hive-debug: build-image setup-hive ## 🐞 Run Hive testing suite in debug m
 
 clean-hive-logs: ## 🧹 Clean Hive logs
 	rm -rf ./hive/workspace/logs
+
+SIM_PARALLELISM := 48
+EVM_BACKEND := revm
+# `make run-hive-report SIM_PARALLELISM=24 EVM_BACKEND="levm"`
+run-hive-report: build-image setup-hive clean-hive-logs ## 🐝 Run Hive and Build report
+	cd hive && ./hive --ethrex.flags "--evm $(EVM_BACKEND)" --sim ethereum/rpc-compat --client ethrex --sim.limit "$(TEST_PATTERN)" --sim.parallelism $(SIM_PARALLELISM) || exit 0
+	cd hive && ./hive --ethrex.flags "--evm $(EVM_BACKEND)" --sim devp2p --client ethrex --sim.limit "$(TEST_PATTERN)" --sim.parallelism $(SIM_PARALLELISM) || exit 0
+	cd hive && ./hive --ethrex.flags "--evm $(EVM_BACKEND)" --sim ethereum/engine --client ethrex --sim.limit "$(TEST_PATTERN)" --sim.parallelism $(SIM_PARALLELISM) || exit 0
+	cd hive && ./hive --ethrex.flags "--evm $(EVM_BACKEND)" --sim ethereum/sync --client ethrex --sim.limit "$(TEST_PATTERN)" --sim.parallelism $(SIM_PARALLELISM) || exit 0
+	cargo run --release -p hive_report
 
 loc:
 	cargo run -p loc
