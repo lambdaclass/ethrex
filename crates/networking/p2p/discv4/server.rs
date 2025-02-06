@@ -628,7 +628,8 @@ impl Discv4Server {
 pub(super) mod tests {
     use super::*;
     use crate::{
-        node_id_from_signing_key, rlpx::message::Message as RLPxMessage, MAX_MESSAGES_TO_BROADCAST,
+        node_id_from_signing_key, rlpx::message::Message as RLPxMessage, serve_p2p_requests,
+        MAX_MESSAGES_TO_BROADCAST,
     };
     use ethrex_storage::{EngineType, Store};
     use k256::ecdsa::SigningKey;
@@ -693,7 +694,7 @@ pub(super) mod tests {
             broadcast,
         };
 
-        let discv4 = Discv4Server::try_new(ctx).await?;
+        let discv4 = Discv4Server::try_new(ctx.clone()).await?;
 
         if should_start_server {
             tracker.spawn({
@@ -702,6 +703,9 @@ pub(super) mod tests {
                     discv4.receive().await;
                 }
             });
+            // we need to spawn the p2p service, as the nodes will try to connect each other via tcp once bonded
+            // if that connection fails, then they are remove themselves from the table, we want them to be bonded for these tests
+            ctx.tracker.spawn(serve_p2p_requests(ctx.clone()));
         }
 
         Ok(discv4)
@@ -715,8 +719,10 @@ pub(super) mod tests {
         server_a
             .try_add_peer_and_ping(server_b.ctx.local_node, server_a.ctx.table.lock().await)
             .await?;
-        // allow some time for the server to respond
+
+        // mark them as connected so that they are not replaced when trying to init tcp connection
         sleep(Duration::from_secs(1)).await;
+
         Ok(())
     }
 

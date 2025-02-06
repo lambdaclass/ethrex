@@ -188,6 +188,8 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
                         hello_message.capabilities
                     ),
                 );
+                self.capabilities = hello_message.capabilities;
+
                 // Check if we have any capability in common
                 for cap in self.capabilities.clone() {
                     if SUPPORTED_CAPABILITIES.contains(&cap) {
