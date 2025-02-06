@@ -23,5 +23,4 @@ clean-vectors: ## 🗑️  Clean test vectors
 	rm -f $(SPECTEST_ARTIFACT)
 
 test: $(SPECTEST_VECTORS_DIR) ## 🧪 Run blockchain tests
-	# cargo test --workspace parse_and_execute_until_cancun::eip4844_blobs/blob_txs/invalid_normal_gas.json
-	cargo test --workspace -- --test-threads=1
+	cargo test
