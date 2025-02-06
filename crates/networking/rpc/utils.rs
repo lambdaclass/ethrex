@@ -255,7 +255,7 @@ pub mod test_utils {
     use std::{net::SocketAddr, str::FromStr};
 
     use ethrex_core::H512;
-    use ethrex_net::{
+    use ethrex_p2p::{
         sync::SyncManager,
         types::{Node, NodeRecord},
     };

@@ -5,9 +5,8 @@ use super::{
 };
 use crate::{
     kademlia::{bucket_number, MAX_NODES_PER_BUCKET},
-    node_id_from_signing_key,
+    network::{node_id_from_signing_key, P2PContext},
     types::Node,
-    P2PContext,
 };
 use ethrex_core::H512;
 use k256::ecdsa::SigningKey;
@@ -18,9 +17,9 @@ use tracing::debug;
 
 #[derive(Clone, Debug)]
 pub struct Discv4LookupHandler {
-    ctx: P2PContext,
-    udp_socket: Arc<UdpSocket>,
-    interval_minutes: u64,
+    pub ctx: P2PContext,
+    pub udp_socket: Arc<UdpSocket>,
+    pub interval_minutes: u64,
 }
 
 impl Discv4LookupHandler {
