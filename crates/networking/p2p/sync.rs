@@ -227,10 +227,10 @@ impl SyncManager {
                 // Check for pivot staleness
                 let mut stale_pivot = false;
                 let mut state_trie_checkpoint = [H256::zero(); STATE_TRIE_SEGMENTS];
-                for (i, res) in state_trie_tasks.join_all().await.into_iter().enumerate() {
-                    let (is_stale, last_key) = res?;
+                for res in state_trie_tasks.join_all().await {
+                    let (index, is_stale, last_key) = res?;
                     stale_pivot |= is_stale;
-                    state_trie_checkpoint[i] = last_key;
+                    state_trie_checkpoint[index] = last_key;
                 }
                 // Update state trie checkpoint
                 store.set_state_trie_key_checkpoint(state_trie_checkpoint)?;
@@ -365,7 +365,7 @@ async fn store_receipts(
 /// Rebuilds a Block's state trie by requesting snap state from peers, also performs state healing
 /// Receives an optional checkpoint in case there was a previous snap sync process that became stale, in which
 /// case it will continue from the checkpoint and then apply healing to fix inconsistencies with the older state
-/// Returns the pivot staleness status (true if stale, false if not), and the last downloaded key
+/// Returns the segment number, the pivot staleness status (true if stale, false if not), and the last downloaded key
 /// If the pivot is not stale by the end of the state sync then the state sync was completed succesfuly
 async fn state_sync(
     state_root: H256,
@@ -373,12 +373,12 @@ async fn state_sync(
     store: Store,
     segment_number: usize,
     checkpoint: Option<H256>,
-) -> Result<(bool, H256), SyncError> {
+) -> Result<(usize, bool, H256), SyncError> {
     // Resume download from checkpoint if available or start from an empty trie
     let mut start_account_hash = checkpoint.unwrap_or(STATE_TRIE_SEGMENTS_START[segment_number]);
     // Skip state sync if we are already on healing
     if start_account_hash == STATE_TRIE_SEGMENTS_END[segment_number] {
-        return Ok((false, start_account_hash));
+        return Ok((segment_number, false, start_account_hash));
     }
     // Spawn storage & bytecode fetchers
     let (bytecode_sender, bytecode_receiver) = mpsc::channel::<Vec<H256>>(MAX_CHANNEL_MESSAGES);
@@ -479,7 +479,7 @@ async fn state_sync(
         // State sync finished before becoming stale, update checkpoint so we skip state sync on the next cycle
         start_account_hash = STATE_TRIE_SEGMENTS_END[segment_number]
     }
-    Ok((stale, start_account_hash))
+    Ok((segment_number, stale, start_account_hash))
 }
 
 /// Waits for incoming code hashes from the receiver channel endpoint, queues them, and fetches and stores their bytecodes in batches
