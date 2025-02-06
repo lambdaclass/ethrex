@@ -252,8 +252,8 @@ pub fn build_payload(
     let mut evm_state = evm_state(store.clone(), payload.header.parent_hash);
     let mut context = PayloadBuildContext::new(payload, &mut evm_state)?;
     make_beacon_root_call(&mut context)?;
-    fill_transactions(&mut context)?;
     apply_withdrawals(&mut context)?;
+    fill_transactions(&mut context)?;
     finalize_payload(&mut context)?;
     Ok((context.blobs_bundle, context.block_value))
 }
