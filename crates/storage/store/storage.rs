@@ -557,7 +557,6 @@ impl Store {
 
         // Obtain genesis block
         let genesis_block = genesis.get_block();
-        dbg!(&genesis_block);
         let genesis_block_number = genesis_block.header.number;
 
         let genesis_hash = genesis_block.hash();

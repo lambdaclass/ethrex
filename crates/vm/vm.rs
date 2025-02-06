@@ -6,7 +6,6 @@ mod execution_result;
 mod mods;
 
 use db::StoreWrapper;
-use ethereum_types::H160;
 use ethrex_core::{
     types::{
         AccountInfo, Block, BlockHash, BlockHeader, ChainConfig, Fork, GenericTransaction,
@@ -75,7 +74,6 @@ impl EvmState {
             store: store.clone(),
             block_hash: block.hash(),
         };
-        dbg!(&block.hash());
 
         let state = revm::db::State::builder()
             .with_database(store_wrapper)
@@ -97,8 +95,6 @@ impl From<Store> for EvmState {
     fn from(value: Store) -> Self {
         let latest_block_idx = value.get_latest_block_number().unwrap();
         let latest_block = value.get_block_header(latest_block_idx).unwrap().unwrap();
-        let block_hash = latest_block.parent_hash;
-        dbg!(&block_hash);
         let store_wrapper = StoreWrapper {
             store: value,
             block_hash: latest_block.parent_hash,
@@ -262,14 +258,14 @@ cfg_if::cfg_if! {
             let blob_schedule = state.chain_config()?.get_fork_blob_schedule(block_header.timestamp)
                 .unwrap_or(EVMConfig::canonical_values(fork));
             let config = EVMConfig::new(fork , blob_schedule);
-            cfg_if::cfg_if! {
+            /*cfg_if::cfg_if! {
                 if #[cfg(not(feature = "l2"))] {
                     if block_header.parent_beacon_block_root.is_some() && fork >= Fork::Cancun {
                         let report = beacon_root_contract_call_levm(store_wrapper.clone(), block_header, config)?;
                         block_cache.extend(report.new_state);
                     }
                 }
-            }
+            }*/
 
 
             // Account updates are initialized like this because of the beacon_root_contract_call, it is going to be empty if it wasn't called.

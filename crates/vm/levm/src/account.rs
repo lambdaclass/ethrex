@@ -1,6 +1,5 @@
 use crate::constants::EMPTY_CODE_HASH;
 use bytes::Bytes;
-use ethrex_core::types::AccountInfo as CoreAccountInfo;
 use ethrex_core::{H256, U256};
 use keccak_hash::keccak;
 use serde::{Deserialize, Serialize};
@@ -28,16 +27,6 @@ impl AccountInfo {
 
     pub fn has_nonce(&self) -> bool {
         self.nonce != 0
-    }
-}
-
-impl From<CoreAccountInfo> for AccountInfo {
-    fn from(info: CoreAccountInfo) -> Self {
-        Self {
-            balance: info.balance,
-            bytecode: Bytes::copy_from_slice(info.code_hash.as_bytes()),
-            nonce: info.nonce,
-        }
     }
 }
 

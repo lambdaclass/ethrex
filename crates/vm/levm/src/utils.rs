@@ -128,14 +128,9 @@ pub fn get_valid_jump_destinations(code: &Bytes) -> Result<HashSet<usize>, VMErr
 /// (caching in the second case)
 pub fn get_account(cache: &mut CacheDB, db: &Arc<dyn Database>, address: Address) -> Account {
     match cache::get_account(cache, &address) {
-        Some(acc) => {
-            println!("cache hit");
-            acc.clone()
-        }
+        Some(acc) => acc.clone(),
         None => {
-            println!("cache not hit");
             let account_info = db.get_account_info(address);
-            dbg!(&account_info);
             let account = Account {
                 info: account_info,
                 storage: HashMap::new(),

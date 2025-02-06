@@ -1,6 +1,6 @@
 use crate::constants::{CANCUN_CONFIG, RPC_RATE_LIMIT};
 use crate::NodeRLP;
-use crate::{get_account, get_block, get_storage, retry};
+use crate::{get_account, get_block, retry};
 use std::cell::RefCell;
 use std::collections::hash_map::Entry;
 use std::collections::HashMap;
@@ -10,7 +10,7 @@ use crate::Account;
 use ethrex_core::types::{AccountInfo, ChainConfig, GenesisAccount};
 use ethrex_core::{
     types::{Block, TxKind},
-    Address, H256, U256,
+    Address, H256,
 };
 use ethrex_storage::error::StoreError;
 use ethrex_storage::{EngineType, Store};
@@ -26,37 +26,12 @@ use revm_primitives::{
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use tokio_utils::RateLimiter;
 
-#[derive(Serialize, Deserialize)]
 pub struct RpcDB {
     pub rpc_url: String,
     pub block_number: usize,
     // we concurrently download tx callers before pre-execution to minimize sequential RPC calls
-    #[serde(
-        serialize_with = "serialize_refcell",
-        deserialize_with = "deserialize_refcell"
-    )]
     pub cache: RefCell<HashMap<Address, Option<Account>>>,
-    #[serde(
-        serialize_with = "serialize_refcell",
-        deserialize_with = "deserialize_refcell"
-    )]
     pub block_hashes: RefCell<HashMap<u64, H256>>,
-}
-
-fn serialize_refcell<T, S>(value: &RefCell<T>, serializer: S) -> Result<S::Ok, S::Error>
-where
-    T: Serialize,
-    S: Serializer,
-{
-    value.borrow().serialize(serializer)
-}
-
-fn deserialize_refcell<'de, T, D>(deserializer: D) -> Result<RefCell<T>, D::Error>
-where
-    T: Deserialize<'de>,
-    D: Deserializer<'de>,
-{
-    T::deserialize(deserializer).map(RefCell::new)
 }
 
 impl RpcDB {
@@ -135,88 +110,6 @@ impl RpcDB {
         }
 
         Ok(fetched)
-    }
-
-    pub fn to_in_memory_store(
-        &self,
-        block: Block,
-        chain_config: &ChainConfig,
-    ) -> Result<Store, StoreError> {
-        let store = Store::new("test", EngineType::InMemory)?;
-
-        let block_hash = block.hash();
-
-        // Store block data
-        let block_number: u64 = self.block_number.try_into().unwrap();
-        store.add_block(block)?;
-        store.set_canonical_block(block_number, block_hash)?;
-        store.update_latest_block_number(block_number)?;
-        store.update_earliest_block_number(block_number)?;
-
-        // Store genesis state trie
-        let genesis_accs: HashMap<Address, GenesisAccount> = self
-            .cache
-            .borrow()
-            .iter()
-            .filter_map(|(addr, opt_acc)| {
-                opt_acc.as_ref().map(|acc| {
-                    println!("account: {}, balance: {}", addr, acc.account_state.balance);
-                    let acc_c = acc.clone();
-                    (
-                        addr.clone(),
-                        GenesisAccount {
-                            code: acc_c.code.unwrap_or_default(),
-                            storage: acc_c.storage,
-                            balance: acc_c.account_state.balance,
-                            nonce: acc_c.account_state.nonce,
-                        },
-                    )
-                })
-            })
-            .collect();
-        store.setup_genesis_state_trie(genesis_accs)?;
-        store.set_chain_config(chain_config)?;
-
-        // Add account states and codes
-        /*for (address, account) in db.cache.borrow().iter() {
-            if let Some(account) = account {
-                // Add code if present
-                if let Some(code) = &account.code {
-                    store.add_account_code(account.account_state.code_hash, code.clone())?;
-                }
-
-                // Create account update with storage
-                let mut update = AccountUpdate::new(*address);
-                update.info = Some(AccountInfo {
-                    nonce: account.account_state.nonce,
-                    balance: account.account_state.balance,
-                    code_hash: account.account_state.code_hash,
-                });
-                update.added_storage = account.storage.clone();
-
-                // Apply account update
-                let res = store.apply_account_updates(block_hash, &[update])?;
-                dbg!(&res);
-            }
-        }*/
-
-        dbg!(&store);
-        Ok(store)
-    }
-
-    pub fn serialize_to_file(&self, path: &str) -> Result<(), Box<dyn std::error::Error>> {
-        let file = File::create(path)?;
-        let writer = std::io::BufWriter::new(file);
-        bincode::serialize_into(writer, self)?;
-        Ok(())
-    }
-
-    pub fn deserialize_from_file(path: &str) -> Option<Self> {
-        if let Ok(file) = File::open("db.bin") {
-            bincode::deserialize_from(file).ok()
-        } else {
-            None
-        }
     }
 }
 

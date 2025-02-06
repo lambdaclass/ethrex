@@ -1,7 +1,11 @@
 use std::collections::HashMap;
 
+use crate::{
+    block_env, errors::ExecutionDBError, evm_state, execute_block, get_state_transitions, tx_env,
+};
 use bytes::Bytes;
 use ethereum_types::H160;
+use ethrex_core::types::code_hash;
 use ethrex_core::{
     types::{AccountInfo, Block, ChainConfig},
     Address, H256, U256,
@@ -19,10 +23,6 @@ use revm::{
 };
 use revm_primitives::SpecId;
 use serde::{Deserialize, Serialize};
-
-use crate::{
-    block_env, errors::ExecutionDBError, evm_state, execute_block, get_state_transitions, tx_env,
-};
 
 /// In-memory EVM database for single execution data.
 ///
@@ -181,57 +181,47 @@ pub trait ToExecDB {
 }
 
 cfg_if::cfg_if! {
-if #[cfg(feature = "levm")] {
-    use ethrex_levm::db::Database as LevmDatabase;
-    impl LevmDatabase for ExecutionDB {
-        fn get_account_info(&self, address: Address) -> ethrex_levm::AccountInfo {
-            println!("asked for account: {:?}", address);
-            let Some(account_info) = self.accounts.get(&address) else {
-                println!("NOT FOUND");
-                return ethrex_levm::AccountInfo {
-                    balance: U256::zero(),
-                    bytecode: Bytes::new(),
-                    nonce: 0,
+    if #[cfg(feature = "levm")] {
+        use ethrex_levm::db::Database as LevmDatabase;
+        impl LevmDatabase for ExecutionDB {
+            fn get_account_info(&self, address: Address) -> ethrex_levm::AccountInfo {
+                let Some(account_info) = self.accounts.get(&address) else {
+                    return ethrex_levm::AccountInfo {
+                        balance: U256::zero(),
+                        bytecode: Bytes::new(),
+                        nonce: 0,
+                    };
                 };
-            };
-            println!("FOUND");
-            dbg!(&account_info);
-            let bytecode = if account_info.code_hash
-                == "0xc5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a470"
-                    .parse()
-                    .unwrap()
-            {
-                Bytes::new()
-            } else {
-                self.code
-                    .get(&account_info.code_hash)
-                    .map(|b| Bytes::copy_from_slice(b.as_ref()))
+                let bytecode = if account_info.code_hash == code_hash(&Bytes::new()) {
+                    Bytes::new()
+                } else {
+                    self.code
+                        .get(&account_info.code_hash)
+                        .map(|b| Bytes::copy_from_slice(b.as_ref()))
+                        .unwrap_or_default()
+                };
+                ethrex_levm::AccountInfo {
+                    balance: account_info.balance,
+                    bytecode,
+                    nonce: account_info.nonce,
+                }
+            }
+
+            fn get_storage_slot(&self, address: Address, key: H256) -> U256 {
+                self.storage
+                    .get(&address)
+                    .and_then(|storage| storage.get(&key))
+                    .copied()
                     .unwrap_or_default()
-            };
-            let res = ethrex_levm::AccountInfo {
-                balance: account_info.balance,
-                bytecode,
-                nonce: account_info.nonce,
-            };
-            dbg!(&res);
-            res
-        }
+            }
 
-        fn get_storage_slot(&self, address: Address, key: H256) -> U256 {
-            self.storage
-                .get(&address)
-                .and_then(|storage| storage.get(&key))
-                .copied()
-                .unwrap_or_default()
-        }
+            fn get_block_hash(&self, block_number: u64) -> Option<H256> {
+                self.block_hashes.get(&block_number).copied()
+            }
 
-        fn get_block_hash(&self, block_number: u64) -> Option<H256> {
-            self.block_hashes.get(&block_number).copied()
-        }
-
-        fn account_exists(&self, address: Address) -> bool {
-            self.accounts.contains_key(&address)
-        }
+            fn account_exists(&self, address: Address) -> bool {
+                self.accounts.contains_key(&address)
+            }
         }
     }
 }

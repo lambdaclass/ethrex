@@ -33,3 +33,7 @@ path = "src/benchmark.rs"
 [[bin]]
 name = "benchmark-block"
 path = "src/benchmark_block.rs"
+
+[features]
+default = []
+levm = ["default", "ethrex-vm/levm"]
