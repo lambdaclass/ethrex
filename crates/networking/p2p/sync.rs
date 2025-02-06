@@ -12,7 +12,7 @@ use tokio::{
         mpsc::{self, error::SendError, Receiver, Sender},
         Mutex,
     },
-    time::Instant,
+    time::{sleep, Instant},
 };
 use tracing::{debug, info, warn};
 
@@ -215,6 +215,10 @@ impl SyncManager {
                 // Spawn tasks to fetch each state trie segment
                 let mut state_trie_tasks = tokio::task::JoinSet::new();
                 let key_checkpoints = store.get_state_trie_key_checkpoint()?;
+                // Spawn a task to show the state sync progress
+                let state_sync_progress = StateSyncProgress::new(Instant::now());
+                let show_progress_handle =
+                    tokio::task::spawn(show_state_sync_progress(state_sync_progress.clone()));
                 for i in 0..STATE_TRIE_SEGMENTS {
                     state_trie_tasks.spawn(state_sync(
                         pivot_header.state_root,
@@ -222,8 +226,10 @@ impl SyncManager {
                         store.clone(),
                         i,
                         key_checkpoints.map(|chs| chs[i]),
+                        state_sync_progress.clone(),
                     ));
                 }
+                show_progress_handle.await?;
                 // Check for pivot staleness
                 let mut stale_pivot = false;
                 let mut state_trie_checkpoint = [H256::zero(); STATE_TRIE_SEGMENTS];
@@ -373,16 +379,29 @@ async fn state_sync(
     store: Store,
     segment_number: usize,
     checkpoint: Option<H256>,
+    state_sync_progress: StateSyncProgress,
 ) -> Result<(usize, bool, H256), SyncError> {
     // Resume download from checkpoint if available or start from an empty trie
     let mut start_account_hash = checkpoint.unwrap_or(STATE_TRIE_SEGMENTS_START[segment_number]);
+    // Update sync progress (this task is not vital so we can detach it)
+    tokio::task::spawn(StateSyncProgress::init_segment(
+        state_sync_progress.clone(),
+        segment_number,
+        start_account_hash,
+    ));
     // Skip state sync if we are already on healing
     if start_account_hash == STATE_TRIE_SEGMENTS_END[segment_number] {
+        // Update sync progress (this task is not vital so we can detach it)
+        tokio::task::spawn(StateSyncProgress::end_segment(
+            state_sync_progress.clone(),
+            segment_number,
+        ));
         return Ok((segment_number, false, start_account_hash));
     }
     // Spawn storage & bytecode fetchers
     let (bytecode_sender, bytecode_receiver) = mpsc::channel::<Vec<H256>>(MAX_CHANNEL_MESSAGES);
-    let (storage_sender, storage_receiver) = mpsc::channel::<Vec<(H256, H256)>>(MAX_CHANNEL_MESSAGES);
+    let (storage_sender, storage_receiver) =
+        mpsc::channel::<Vec<(H256, H256)>>(MAX_CHANNEL_MESSAGES);
     let bytecode_fetcher_handle = tokio::spawn(bytecode_fetcher(
         bytecode_receiver,
         peers.clone(),
@@ -397,21 +416,14 @@ async fn state_sync(
     debug!("Starting/Resuming state trie download of segment number {segment_number} from key {start_account_hash}");
     // Fetch Account Ranges
     // If we reached the maximum amount of retries then it means the state we are requesting is probably old and no longer available
-    let mut progress_timer = Instant::now();
-    let initial_timestamp = Instant::now();
-    let initial_account_hash = start_account_hash.into_uint();
     let mut stale = false;
-    const PROGRESS_OUTPUT_TIMER: std::time::Duration = std::time::Duration::from_secs(30);
     loop {
-        // Show Progress stats (this task is not vital so we can detach it)
-        if Instant::now().duration_since(progress_timer) >= PROGRESS_OUTPUT_TIMER {
-            progress_timer = Instant::now();
-            tokio::spawn(show_progress(
-                start_account_hash,
-                initial_account_hash,
-                initial_timestamp,
-            ));
-        }
+        // Update sync progress (this task is not vital so we can detach it)
+        tokio::task::spawn(StateSyncProgress::update_key(
+            state_sync_progress.clone(),
+            segment_number,
+            start_account_hash,
+        ));
         debug!("[Segment {segment_number}]: Requesting Account Range for state root {state_root}, starting hash: {start_account_hash}");
         if let Some((account_hashes, accounts, should_continue)) = peers
             .request_account_range(
@@ -1019,30 +1031,93 @@ fn node_missing_children(
     Ok(paths)
 }
 
-/// Shows the completion rate & estimated remaining time of the state sync phase of snap sync
-/// Does not take into account healing
-async fn show_progress(
-    current_account_hash: H256,
-    initial_account_hash: U256,
-    start_time: Instant,
-) {
-    // Calculate current progress percentage
-    // Add 1 here to avoid dividing by zero, the change should be inperceptible
-    let completion_rate: U512 =
-        U512::from(current_account_hash.into_uint() + 1) * 100 / U512::from(U256::MAX);
-    // Make a simple time to finish estimation based on current progress
-    // The estimation relies on account hashes being (close to) evenly distributed
-    let synced_account_hashes = current_account_hash.into_uint() - initial_account_hash;
-    let remaining_account_hashes = U256::MAX - current_account_hash.into_uint();
-    // Time to finish = Time since start / synced_account_hashes * remaining_account_hashes
-    let time_to_finish_secs = U512::from(Instant::now().duration_since(start_time).as_secs())
-        * U512::from(remaining_account_hashes)
-        / U512::from(synced_account_hashes);
-    info!(
-        "Downloading state trie, completion rate: {}%, estimated time to finish: {}",
-        completion_rate,
-        seconds_to_readable(time_to_finish_secs)
-    )
+#[derive(Clone)]
+struct StateSyncProgress {
+    data: Arc<Mutex<StateSyncProgressData>>,
+}
+
+#[derive(Clone)]
+struct StateSyncProgressData {
+    cycle_start: Instant,
+    initial_keys: [H256; STATE_TRIE_SEGMENTS],
+    current_keys: [H256; STATE_TRIE_SEGMENTS],
+    ended: [bool; STATE_TRIE_SEGMENTS],
+}
+
+impl StateSyncProgress {
+    fn new(cycle_start: Instant) -> Self {
+        Self {
+            data: Arc::new(Mutex::new(StateSyncProgressData {
+                cycle_start,
+                initial_keys: Default::default(),
+                current_keys: Default::default(),
+                ended: Default::default(),
+            })),
+        }
+    }
+
+    async fn init_segment(progress: StateSyncProgress, segment_number: usize, initial_key: H256) {
+        progress.data.lock().await.initial_keys[segment_number] = initial_key;
+    }
+    async fn update_key(progress: StateSyncProgress, segment_number: usize, current_key: H256) {
+        progress.data.lock().await.current_keys[segment_number] = current_key
+    }
+    async fn end_segment(progress: StateSyncProgress, segment_number: usize) {
+        progress.data.lock().await.ended[segment_number] = true
+    }
+
+    // Returns true if the state sync ended
+    async fn show_progress(&self) -> bool {
+        // Copy the current data so we don't read while it is being written
+        let data = self.data.lock().await.clone();
+        // Calculate current progress percentage
+        let mut synced_accounts = U256::zero();
+        // Calculate the total amount of accounts synced
+        for i in 0..STATE_TRIE_SEGMENTS {
+            let segment_synced_accounts =
+                data.current_keys[i].into_uint() - STATE_TRIE_SEGMENTS_START[i].into_uint();
+            let segment_completion_rate =
+                (U512::from(segment_synced_accounts + 1) * 100) / U512::from(U256::MAX);
+            info!("Segment {i} completion rate: {segment_completion_rate}%");
+            synced_accounts += segment_synced_accounts;
+        }
+        // Add 1 here to avoid dividing by zero, the change should be inperceptible
+        let completion_rate: U512 = (U512::from(synced_accounts + 1) * 100) / U512::from(U256::MAX);
+        // Make a simple time to finish estimation based on current progress
+        // The estimation relies on account hashes being (close to) evenly distributed
+        let mut synced_accounts_this_cycle = U256::one();
+        // Calculate the total amount of accounts synced this cycle
+        for i in 0..STATE_TRIE_SEGMENTS {
+            synced_accounts_this_cycle +=
+                data.current_keys[i].into_uint() - data.initial_keys[i].into_uint();
+        }
+        let remaining_accounts =
+            (U512::from(U256::MAX) / 100) * (U512::from(100) - completion_rate);
+        // Time to finish = Time since start / Accounts synced this cycle * Remaining accounts
+        let time_to_finish_secs =
+            U512::from(Instant::now().duration_since(data.cycle_start).as_secs())
+                * U512::from(remaining_accounts)
+                / U512::from(synced_accounts_this_cycle);
+        info!(
+            "Downloading state trie, completion rate: {}%, estimated time to finish: {}",
+            completion_rate,
+            seconds_to_readable(time_to_finish_secs)
+        );
+        data.ended.iter().all(|e| *e)
+    }
+}
+
+async fn show_state_sync_progress(progress: StateSyncProgress) {
+    const INTERVAL_DURATION: tokio::time::Duration = tokio::time::Duration::from_secs(30);
+    // Rest for one interval so we don't start computing on empty progress
+    sleep(INTERVAL_DURATION).await;
+    info!("State sync progress shower activated!");
+    let mut interval = tokio::time::interval(INTERVAL_DURATION);
+    let mut complete = false;
+    while !complete {
+        interval.tick().await;
+        complete = progress.show_progress().await
+    }
 }
 
 fn seconds_to_readable(seconds: U512) -> String {
