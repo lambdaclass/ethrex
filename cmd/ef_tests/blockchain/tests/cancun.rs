@@ -1,4 +1,4 @@
-use ef_tests_ethrex::{
+use ef_tests_blockchain::{
     network::Network,
     test_runner::{parse_test_file, run_ef_test},
 };

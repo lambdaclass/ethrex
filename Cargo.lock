@@ -2291,7 +2291,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "ef_tests-ethrex"
+name = "ef_tests-blockchain"
 version = "0.1.0"
 dependencies = [
  "bytes",
@@ -2300,6 +2300,7 @@ dependencies = [
  "ethrex-core",
  "ethrex-rlp",
  "ethrex-storage",
+ "ethrex-vm",
  "hex",
  "lazy_static",
  "serde",

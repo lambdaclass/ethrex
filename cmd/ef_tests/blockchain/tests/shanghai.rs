@@ -1,16 +1,15 @@
 use std::path::Path;
 
-use ef_tests_ethrex::{
+use ef_tests_blockchain::{
     network::Network,
     test_runner::{parse_test_file, run_ef_test},
 };
 
-#[allow(dead_code)]
 fn parse_and_execute(path: &Path) -> datatest_stable::Result<()> {
     let tests = parse_test_file(path);
 
     for (test_key, test) in tests {
-        if test.network < Network::Merge {
+        if test.network < Network::Merge || test.network >= Network::Prague {
             // Discard this test
             continue;
         }
@@ -20,10 +19,4 @@ fn parse_and_execute(path: &Path) -> datatest_stable::Result<()> {
     Ok(())
 }
 
-// TODO: Delete main function and uncomment the following line to allow prague tests to be parsed
-
-// datatest_stable::harness!(parse_and_execute, "vectors/prague/", r".*/.*/.*\.json");
-
-fn main() {
-    //Do nothing
-}
+datatest_stable::harness!(parse_and_execute, "vectors/shanghai/", r".*/.*/.*\.json");
