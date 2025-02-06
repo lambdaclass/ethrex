@@ -99,15 +99,12 @@ HIVE_REVISION := b0b0f98bd24676239722e3aa7885e29ef856d804
 # target revision).
 HIVE_SHALLOW_SINCE := 2024-09-02
 QUIET ?= false
-# TODO change it back when we merge the PR.
-# 		git clone --quiet --single-branch --branch master --shallow-since=$(HIVE_SHALLOW_SINCE) https://github.com/lambdaclass/hive ; \
-# 		git clone --single-branch --branch master --shallow-since=$(HIVE_SHALLOW_SINCE) https://github.com/lambdaclass/hive ; \
 
 hive:
 	if [ "$(QUIET)" = "true" ]; then \
-		git clone --quiet https://github.com/lambdaclass/hive; \
+		git clone --quiet --single-branch --branch master --shallow-since=$(HIVE_SHALLOW_SINCE) https://github.com/lambdaclass/hive ; \
 	else \
-		git clone  https://github.com/lambdaclass/hive; \
+		git clone --single-branch --branch master --shallow-since=$(HIVE_SHALLOW_SINCE) https://github.com/lambdaclass/hive ; \
 	fi
 
 setup-hive: hive ## 🐝 Set up Hive testing framework
