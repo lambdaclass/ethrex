@@ -731,6 +731,74 @@ async fn handle_large_storage_range(
     Ok(false)
 }
 
+async fn snap_sync(state_root: H256, store: Store, peers: PeerHandler) -> Result<(), SyncError> {
+    // Retrieve storage data to check which snap sync phase we are in
+    let key_checkpoints = store.get_state_trie_key_checkpoint()?;
+    let mut pending_storage_paths = store.get_storage_heal_paths()?;
+    let pending_state_paths = store.get_state_heal_paths()?;
+    // If we have no key checkpoints or if the key checkpoints are lower than the segment boundaries we are in state sync phase
+    if key_checkpoints.is_none() || key_checkpoints.is_some_and(|ch| ch.into_iter().zip(STATE_TRIE_SEGMENTS_END.into_iter()).any(|(ch, end)| ch < end)) {
+        state_sync_full().await;
+    }
+    // If we have no pending storage or state paths then we should perform trie rebuild
+    if pending_state_paths.is_none() && pending_state_paths.is_none() {
+        if pending_storage_paths.is_none() && pending_state_paths.is_none() {
+            let (_, paths) = store.rebuild_state_from_snapshot()?;
+            info!(
+                "State trie rebuilt from snapshot, identified {} incomplete storage tries",
+                paths.len()
+            );
+            pending_storage_paths = Some(
+                paths
+                    .into_iter()
+                    .map(|h| (h, vec![Nibbles::default()]))
+                    .collect(),
+            )
+        }
+    }
+    // Perfrom Healing 
+    if !heal_state_trie(state_root, store.clone(), peers.clone())
+        .await?
+    {
+        warn!("Stale pivot, aborting healing");
+    }
+    return Ok(());
+}
+
+async fn state_sync_full() {
+// Spawn tasks to fetch each state trie segment
+let mut state_trie_tasks = tokio::task::JoinSet::new();
+// Spawn a task to show the state sync progress
+let state_sync_progress = StateSyncProgress::new(Instant::now());
+let show_progress_handle =
+    tokio::task::spawn(show_state_sync_progress(state_sync_progress.clone()));
+for i in 0..STATE_TRIE_SEGMENTS {
+    state_trie_tasks.spawn(state_sync(
+        state_root,
+        peers.clone(),
+        store.clone(),
+        i,
+        key_checkpoints.map(|chs| chs[i]),
+        state_sync_progress.clone(),
+    ));
+}
+show_progress_handle.await?;
+// Check for pivot staleness
+let mut stale_pivot = false;
+let mut state_trie_checkpoint = [H256::zero(); STATE_TRIE_SEGMENTS];
+for res in state_trie_tasks.join_all().await {
+    let (index, is_stale, last_key) = res?;
+    stale_pivot |= is_stale;
+    state_trie_checkpoint[index] = last_key;
+}
+// Update state trie checkpoint
+store.set_state_trie_key_checkpoint(state_trie_checkpoint)?;
+if stale_pivot {
+    warn!("Stale pivot, aborting state sync");
+    return Ok(());
+}
+}
+
 /// Heals the trie given its state_root by fetching any missing nodes in it via p2p
 /// Also rebuilds it if this is the first healing cycle
 /// Returns true if healing was fully completed or false if we need to resume healing on the next sync cycle
@@ -738,24 +806,9 @@ async fn heal_state_trie(
     state_root: H256,
     store: Store,
     peers: PeerHandler,
+    pending_state_paths: Option<H256>,
+    pending_storage_paths: Option<Vec<(H256, Nibbles)>,
 ) -> Result<bool, SyncError> {
-    // If this is not the first healing cycle (aka we have pending paths stored) continue to healing
-    // If not, perform state trie rebuild
-    let mut pending_storage_paths = store.get_storage_heal_paths()?;
-    let pending_state_paths = store.get_state_heal_paths()?;
-    if pending_storage_paths.is_none() && pending_state_paths.is_none() {
-        let (_, paths) = store.rebuild_state_from_snapshot()?;
-        info!(
-            "State trie rebuilt from snapshot, identified {} incomplete storage tries",
-            paths.len()
-        );
-        pending_storage_paths = Some(
-            paths
-                .into_iter()
-                .map(|h| (h, vec![Nibbles::default()]))
-                .collect(),
-        )
-    }
     let pending_storage_paths = pending_storage_paths
         .unwrap_or_default()
         .into_iter()
@@ -1111,7 +1164,6 @@ async fn show_state_sync_progress(progress: StateSyncProgress) {
     const INTERVAL_DURATION: tokio::time::Duration = tokio::time::Duration::from_secs(30);
     // Rest for one interval so we don't start computing on empty progress
     sleep(INTERVAL_DURATION).await;
-    info!("State sync progress shower activated!");
     let mut interval = tokio::time::interval(INTERVAL_DURATION);
     let mut complete = false;
     while !complete {
