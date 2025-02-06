@@ -14,6 +14,9 @@ $(SPECTEST_VECTORS_DIR): $(SPECTEST_ARTIFACT)
 	mkdir -p $(SPECTEST_VECTORS_DIR)
 	tar -xzf $(SPECTEST_ARTIFACT) --strip-components=2 -C $(SPECTEST_VECTORS_DIR) fixtures/blockchain_tests
 
+help: ## 📚 Show help for each of the Makefile recipes
+	@grep -E '^[a-zA-Z0-9_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-30s\033[0m %s\n", $$1, $$2}'
+
 download-test-vectors: $(SPECTEST_VECTORS_DIR) ## 📥 Download test vectors
 
 clean-vectors: ## 🗑️  Clean test vectors
