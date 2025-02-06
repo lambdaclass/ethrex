@@ -122,6 +122,14 @@ pub fn cli() -> Command {
                 .required(false)
                 .value_name("PROMETHEUS_METRICS_PORT"),
         )
+        .arg(
+            Arg::new("evm")
+                .long("evm")
+                .required(false)
+                .default_value("revm")
+                .value_name("EVM_BACKEND")
+                .help("Has to be `levm` or `revm`"),
+        )
         .subcommand(
             Command::new("removedb").about("Remove the database").arg(
                 Arg::new("datadir")
