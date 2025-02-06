@@ -8,7 +8,7 @@ use std::collections::HashMap;
 
 use super::{
     compute_receipts_root, compute_transactions_root, compute_withdrawals_root, AccountState,
-    Block, BlockBody, BlockHeader, BlockNumber, DEFAULT_OMMERS_HASH, EMPTY_KECCACK_HASH,
+    Block, BlockBody, BlockHeader, BlockNumber, DEFAULT_OMMERS_HASH, DEFAULT_REQUESTS_HASH,
     INITIAL_BASE_FEE,
 };
 
@@ -135,7 +135,7 @@ pub struct ChainConfig {
 }
 
 #[repr(u8)]
-#[derive(Debug, PartialEq, PartialOrd, Default, Clone, Copy, Serialize, Deserialize)]
+#[derive(Debug, PartialEq, Eq, PartialOrd, Default, Hash, Clone, Copy, Serialize, Deserialize)]
 pub enum Fork {
     Frontier = 0,
     FrontierThawing = 1,
@@ -157,7 +157,7 @@ pub enum Fork {
     #[default]
     Cancun = 17,
     Prague = 18,
-    PragueEof = 19,
+    Osaka = 19,
 }
 
 impl From<Fork> for &str {
@@ -182,7 +182,7 @@ impl From<Fork> for &str {
             Fork::Shanghai => "Shanghai",
             Fork::Cancun => "Cancun",
             Fork::Prague => "Prague",
-            Fork::PragueEof => "Prague EOF",
+            Fork::Osaka => "Osaka",
         }
     }
 }
@@ -334,7 +334,7 @@ impl Genesis {
             requests_hash: self
                 .config
                 .is_prague_activated(self.timestamp)
-                .then_some(self.requests_hash.unwrap_or(*EMPTY_KECCACK_HASH)),
+                .then_some(self.requests_hash.unwrap_or(*DEFAULT_REQUESTS_HASH)),
         }
     }
 

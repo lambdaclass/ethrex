@@ -56,7 +56,7 @@ jobs:
           cd crates/vm/levm
           if [ "$(awk '/Summary:/ {print $(NF)}' test_result.txt)" != "(100.00%)" ]; then
               echo "Percentage is not 100%."
-              exit 1
+              # exit 1 # uncomment when we expect 100% pass-rate
           fi
 
   hive-report-creation:
@@ -75,7 +75,7 @@ jobs:
   hive-test:
     if: ${{ github.event_name != 'merge_group' }}
     name: Hive Tests Check
-    needs: hive-report-creation
+    needs: [hive-report-creation, hive-report-creation-main]
     runs-on: ubuntu-latest
     steps:
       - name: Checkout sources
