@@ -107,8 +107,8 @@ pub fn load() -> Result<Vec<EFTestReport>, EFTestRunnerError> {
 }
 
 pub fn summary_for_slack(reports: &[EFTestReport]) -> String {
-    let total_passed = total_fork_test_passed(reports); //reports.iter().filter(|report| report.passed()).count();
-    let total_run = total_fork_test_run(reports); //reports.len();
+    let total_passed = total_fork_test_passed(reports);
+    let total_run = total_fork_test_run(reports);
     let success_percentage = (total_passed as f64 / total_run as f64) * 100.0;
     format!(
         r#"{{
