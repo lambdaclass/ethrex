@@ -272,12 +272,12 @@ pub fn apply_withdrawals(context: &mut PayloadBuildContext) -> Result<(), EvmErr
                 let mut account = context.block_cache.get(&address).cloned().unwrap_or({
                     let acc_info = context
                         .store()
-                        .unwrap()
+                        .ok_or(StoreError::MissingStore)?
                         .get_account_info_by_hash(context.parent_hash(), address)?
                         .unwrap_or_default();
                     let acc_code = context
                         .store()
-                        .unwrap()
+                        .ok_or(StoreError::MissingStore)?
                         .get_account_code(acc_info.code_hash)?
                         .unwrap_or_default();
 
