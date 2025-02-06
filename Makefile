@@ -13,7 +13,7 @@ lint: ## 🧹 Linter check
 
 SPECTEST_LINK := https://github.com/ethereum/execution-spec-tests/releases/download/pectra-devnet-6%40v1.0.0/fixtures_pectra-devnet-6.tar.gz
 SPECTEST_ARTIFACT := tests.tar.gz
-SPECTEST_VECTORS_DIR := cmd/ef_tests/ethrex/vectors
+SPECTEST_VECTORS_DIR := cmd/ef_tests/blockchain/vectors
 
 CRATE ?= *
 test: $(SPECTEST_VECTORS_DIR) ## 🧪 Run each crate's tests

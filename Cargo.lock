@@ -2291,7 +2291,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "ef_tests-ethrex"
+name = "ef_tests-blockchain"
 version = "0.1.0"
 dependencies = [
  "bytes",
