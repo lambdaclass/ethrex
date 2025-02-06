@@ -12,11 +12,14 @@ use crate::{
         BLOB_GAS_PER_BLOB, COLD_ADDRESS_ACCESS_COST, CREATE_BASE_COST, WARM_ADDRESS_ACCESS_COST,
     },
     opcodes::Opcode,
-    vm::{AccessList, AuthorizationList, AuthorizationTuple, EVMConfig, Substate},
+    vm::{EVMConfig, Substate},
     AccountInfo,
 };
 use bytes::Bytes;
-use ethrex_core::{types::Fork, Address, H256, U256};
+use ethrex_core::{
+    types::{tx_fields::*, Fork},
+    Address, H256, U256,
+};
 use ethrex_rlp;
 use ethrex_rlp::encode::RLPEncode;
 use keccak_hash::keccak;
@@ -456,7 +459,7 @@ pub fn eip7702_recover_address(
     if auth_tuple.r_signature > *SECP256K1_ORDER || U256::zero() >= auth_tuple.r_signature {
         return Ok(None);
     }
-    if auth_tuple.v != U256::one() && auth_tuple.v != U256::zero() {
+    if auth_tuple.y_parity != U256::one() && auth_tuple.y_parity != U256::zero() {
         return Ok(None);
     }
 
@@ -483,7 +486,7 @@ pub fn eip7702_recover_address(
 
     let Ok(recovery_id) = RecoveryId::parse(
         auth_tuple
-            .v
+            .y_parity
             .as_u32()
             .try_into()
             .map_err(|_| VMError::Internal(InternalError::ConversionError))?,
