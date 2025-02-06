@@ -383,7 +383,7 @@ async fn state_sync(
 ) -> Result<(usize, bool, H256), SyncError> {
     // Resume download from checkpoint if available or start from an empty trie
     let mut start_account_hash = checkpoint.unwrap_or(STATE_TRIE_SEGMENTS_START[segment_number]);
-    // Update sync progress (this task is not vital so we can detach it)
+    // Write initial sync progress (this task is not vital so we can detach it)
     tokio::task::spawn(StateSyncProgress::init_segment(
         state_sync_progress.clone(),
         segment_number,
@@ -482,6 +482,11 @@ async fn state_sync(
         }
     }
     info!("Account Trie Fetching ended, signaling storage & bytecode fetcher process");
+     // Update sync progress (this task is not vital so we can detach it)
+     tokio::task::spawn(StateSyncProgress::end_segment(
+        state_sync_progress.clone(),
+        segment_number,
+    ));
     // Send empty batch to signal that no more batches are incoming
     storage_sender.send(vec![]).await?;
     bytecode_sender.send(vec![]).await?;
