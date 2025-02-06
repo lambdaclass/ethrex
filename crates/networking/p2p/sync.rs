@@ -477,11 +477,12 @@ async fn state_sync(
                 break;
             }
         } else {
+            info!("[Segment {segment_number}: Stale Pivot");
             stale = true;
             break;
         }
     }
-    info!("Account Trie Fetching ended, signaling storage & bytecode fetcher process");
+    info!("[Segment {segment_number}: Account Trie Fetching ended, signaling storage & bytecode fetcher process");
      // Update sync progress (this task is not vital so we can detach it)
      tokio::task::spawn(StateSyncProgress::end_segment(
         state_sync_progress.clone(),
