@@ -289,7 +289,7 @@ async fn download_and_run_blocks(
         debug!("Requesting Block Bodies ");
         if let Some(block_bodies) = peers.request_block_bodies(block_hashes.clone()).await {
             let block_bodies_len = block_bodies.len();
-            info!("Received {} Block Bodies", block_bodies_len);
+            debug!("Received {} Block Bodies", block_bodies_len);
             // Execute and store blocks
             for (hash, body) in block_hashes
                 .drain(..block_bodies_len)
@@ -507,14 +507,9 @@ async fn bytecode_fetcher(
         match receiver.recv().await {
             Some(code_hashes) if !code_hashes.is_empty() => {
                 pending_bytecodes.extend(code_hashes);
-                info!(
-                    "Received incoming bytecode request, current batch: {}/{BATCH_SIZE}",
-                    pending_bytecodes.len()
-                )
             }
             // Disconnect / Empty message signaling no more bytecodes to sync
             _ => {
-                info!("Final bytecode batch");
                 incoming = false
             }
         }
@@ -579,7 +574,6 @@ async fn storage_fetcher(
             // Disconnect
             incoming = false
         }
-        info!("Processing current batches");
         // If we have enough pending bytecodes to fill a batch
         // or if we have no more incoming batches, spawn a fetch process
         // If the pivot became stale don't process anything and just save incoming requests
