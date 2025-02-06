@@ -548,7 +548,6 @@ pub fn eip7702_set_access_code(
         }
 
         // 7. Add PER_EMPTY_ACCOUNT_COST - PER_AUTH_BASE_COST gas to the global refund counter if authority exists in the trie.
-        // CHECK: we don't know if checking the cache is correct. More gas tests pass but the set_code_txs tests went to half.
         if cache::is_account_cached(cache, &authority_address)
             || db_ref.account_exists(authority_address)
         {
@@ -577,7 +576,6 @@ pub fn eip7702_set_access_code(
             }
         };
 
-        // TESTING LEVM CI
         auth_account.info.bytecode = if auth_tuple.address != Address::zero() {
             delegation_bytes.into()
         } else {
