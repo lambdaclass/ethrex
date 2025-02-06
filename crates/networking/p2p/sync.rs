@@ -212,13 +212,13 @@ impl SyncManager {
                     self.peers.clone(),
                     store.clone(),
                 ));
-                // Spawn tasks to fetch each state trie segment
-                let mut state_trie_tasks = tokio::task::JoinSet::new();
-                let key_checkpoints = store.get_state_trie_key_checkpoint()?;
                 // Spawn a task to show the state sync progress
                 let state_sync_progress = StateSyncProgress::new(Instant::now());
                 let show_progress_handle =
                     tokio::task::spawn(show_state_sync_progress(state_sync_progress.clone()));
+                // Spawn tasks to fetch each state trie segment
+                let mut state_trie_tasks = tokio::task::JoinSet::new();
+                let key_checkpoints = store.get_state_trie_key_checkpoint()?;
                 for i in 0..STATE_TRIE_SEGMENTS {
                     state_trie_tasks.spawn(state_sync(
                         pivot_header.state_root,
@@ -483,8 +483,8 @@ async fn state_sync(
         }
     }
     info!("[Segment {segment_number}: Account Trie Fetching ended, signaling storage & bytecode fetcher process");
-     // Update sync progress (this task is not vital so we can detach it)
-     tokio::task::spawn(StateSyncProgress::end_segment(
+    // Update sync progress (this task is not vital so we can detach it)
+    tokio::task::spawn(StateSyncProgress::end_segment(
         state_sync_progress.clone(),
         segment_number,
     ));
@@ -515,9 +515,7 @@ async fn bytecode_fetcher(
                 pending_bytecodes.extend(code_hashes);
             }
             // Disconnect / Empty message signaling no more bytecodes to sync
-            _ => {
-                incoming = false
-            }
+            _ => incoming = false,
         }
         // If we have enough pending bytecodes to fill a batch
         // or if we have no more incoming batches, spawn a fetch process
@@ -1076,8 +1074,8 @@ impl StateSyncProgress {
         for i in 0..STATE_TRIE_SEGMENTS {
             let segment_synced_accounts =
                 data.current_keys[i].into_uint() - STATE_TRIE_SEGMENTS_START[i].into_uint();
-            let segment_completion_rate =
-                (U512::from(segment_synced_accounts + 1) * 100) / U512::from(U256::MAX / STATE_TRIE_SEGMENTS);
+            let segment_completion_rate = (U512::from(segment_synced_accounts + 1) * 100)
+                / U512::from(U256::MAX / STATE_TRIE_SEGMENTS);
             info!("Segment {i} completion rate: {segment_completion_rate}%");
             synced_accounts += segment_synced_accounts;
         }
