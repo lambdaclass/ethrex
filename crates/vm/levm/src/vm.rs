@@ -26,6 +26,7 @@ use std::{
     cmp::max,
     collections::{HashMap, HashSet},
     fmt::Debug,
+    rc::Rc,
     sync::Arc,
 };
 pub type Storage = HashMap<U256, H256>;
@@ -164,7 +165,7 @@ pub struct VM {
     pub tx_kind: TxKind,
     pub access_list: AccessList,
     pub authorization_list: Option<AuthorizationList>,
-    pub hooks: Vec<Box<dyn Hook>>,
+    pub hooks: Vec<Rc<dyn Hook>>,
 }
 
 pub type AccessList = Vec<(Address, Vec<H256>)>;
@@ -228,7 +229,7 @@ impl VM {
             default_touched_accounts.insert(Address::from_low_u64_be(i));
         }
 
-        let default_hook: Box<dyn Hook> = Box::new(DefaultHook::new());
+        let default_hook: Rc<dyn Hook> = Rc::new(DefaultHook::new());
         let hooks = vec![default_hook];
         match to {
             TxKind::Call(address_to) => {
@@ -808,7 +809,9 @@ impl VM {
             .pop()
             .ok_or(VMError::Internal(InternalError::CouldNotPopCallframe))?;
 
-        self.prepare_execution(&mut initial_call_frame)?;
+        for hook in self.hooks.clone() {
+            hook.prepare_execution(self, &mut initial_call_frame)?;
+        }
 
         // In CREATE type transactions:
         //  Add created contract to cache, reverting transaction if the address is already occupied
