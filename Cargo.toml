@@ -10,7 +10,7 @@ members = [
     "crates/storage/trie",
     "crates/common/rlp",
     "cmd/ethrex",
-    "cmd/ef_tests/ethrex",
+    "cmd/ef_tests/blockchain",
     "cmd/ef_tests/levm",
     "cmd/ethrex_l2",
     "cmd/hive_report",

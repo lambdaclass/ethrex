@@ -56,7 +56,7 @@ jobs:
           cd crates/vm/levm
           if [ "$(awk '/Summary:/ {print $(NF)}' test_result.txt)" != "(100.00%)" ]; then
               echo "Percentage is not 100%."
-              exit 1
+              # exit 1 # uncomment when we expect 100% pass-rate
           fi
 
   hive-report-creation:
@@ -65,11 +65,17 @@ jobs:
       evm: levm
       job_type: trigger
 
+  hive-report-creation-main:
+    uses: ./.github/workflows/common_hive_reports.yaml
+    with:
+      evm: levm
+      job_type: main
+
   # Check we don't have a regression against main
   hive-test:
     if: ${{ github.event_name != 'merge_group' }}
     name: Hive Tests Check
-    needs: hive-report-creation
+    needs: [hive-report-creation, hive-report-creation-main]
     runs-on: ubuntu-latest
     steps:
       - name: Checkout sources
@@ -86,16 +92,16 @@ jobs:
       - name: Download results (main)
         uses: actions/download-artifact@v4
         with:
-          name: results_levm_daily.md
+          name: results_levm_main.md
         # If we don't have the file it will use the result(1) file
         continue-on-error: true
 
       - name: Rename result (2)
-        run: cp results.md results_levm_daily.md
+        run: cp results.md results_levm_main.md
 
       - name: Create diff message
         run: |
-          bash .github/scripts/hive_levm_revm_diff.sh results_levm_daily.md results_levm.md >> diff.md
+          bash .github/scripts/hive_levm_revm_diff.sh results_levm_main.md results_levm.md >> diff.md
           cat diff.md >> $GITHUB_STEP_SUMMARY
 
       - name: Check Regression

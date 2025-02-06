@@ -1,5 +1,5 @@
 [package]
-name = "ef_tests-ethrex"
+name = "ef_tests-blockchain"
 version.workspace = true
 edition.workspace = true
 
@@ -8,6 +8,7 @@ ethrex-blockchain.workspace = true
 ethrex-core.workspace = true
 ethrex-storage.workspace = true
 ethrex-rlp.workspace = true
+ethrex-vm.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 bytes.workspace = true
@@ -18,7 +19,7 @@ lazy_static.workspace = true
 datatest-stable = "0.2.9"
 
 [lib]
-path = "./ef_tests.rs"
+path = "./lib.rs"
 
 [[test]]
 name = "cancun"
@@ -26,4 +27,8 @@ harness = false
 
 [[test]]
 name = "shanghai"
+harness = false
+
+[[test]]
+name = "prague"
 harness = false

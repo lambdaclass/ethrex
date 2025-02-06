@@ -1,4 +1,4 @@
-.PHONY: build lint test clean run-image build-image download-test-vectors clean-vectors \
+.PHONY: build lint test clean run-image build-image clean-vectors \
 	setup-hive test-pattern-default run-hive run-hive-debug clean-hive-logs loc-detailed \
 	loc-compare-detailed
 
@@ -11,13 +11,10 @@ build: ## 🔨 Build the client
 lint: ## 🧹 Linter check
 	cargo clippy --all-targets --all-features --workspace --exclude ethrex-prover -- -D warnings
 
-SPECTEST_VERSION := v3.0.0
-SPECTEST_ARTIFACT := tests_$(SPECTEST_VERSION).tar.gz
-SPECTEST_VECTORS_DIR := cmd/ef_tests/ethrex/vectors
-
 CRATE ?= *
-test: $(SPECTEST_VECTORS_DIR) ## 🧪 Run each crate's tests
-	cargo test -p '$(CRATE)' --workspace --exclude ethrex-prover --exclude ethrex-levm --exclude ef_tests-levm --exclude ethrex-l2 -- --skip test_contract_compilation
+test: ## 🧪 Run each crate's tests
+	cargo test -p '$(CRATE)' --workspace --exclude ethrex-prover --exclude ethrex-levm --exclude ef_tests-blockchain --exclude ef_tests-levm --exclude ethrex-l2 -- --skip test_contract_compilation
+	$(MAKE) -C cmd/ef_tests/blockchain test
 
 clean: clean-vectors ## 🧹 Remove build artifacts
 	cargo clean
@@ -32,20 +29,6 @@ build-image: $(STAMP_FILE) ## 🐳 Build the Docker image
 
 run-image: build-image ## 🏃 Run the Docker image
 	docker run --rm -p 127.0.0.1:8545:8545 ethrex --http.addr 0.0.0.0
-
-$(SPECTEST_ARTIFACT):
-	rm -f tests_*.tar.gz # Delete older versions
-	curl -L -o $(SPECTEST_ARTIFACT) "https://github.com/ethereum/execution-spec-tests/releases/download/$(SPECTEST_VERSION)/fixtures_stable.tar.gz"
-
-$(SPECTEST_VECTORS_DIR): $(SPECTEST_ARTIFACT)
-	mkdir -p $(SPECTEST_VECTORS_DIR) tmp
-	tar -xzf $(SPECTEST_ARTIFACT) -C tmp
-	mv tmp/fixtures/blockchain_tests/* $(SPECTEST_VECTORS_DIR)
-
-download-test-vectors: $(SPECTEST_VECTORS_DIR) ## 📥 Download test vectors
-
-clean-vectors: ## 🗑️  Clean test vectors
-	rm -rf $(SPECTEST_VECTORS_DIR)
 
 ETHEREUM_PACKAGE_REVISION := 5b49d02ee556232a73ea1e28000ec5b3fca1073f
 # Shallow clones can't specify a single revision, but at least we avoid working
