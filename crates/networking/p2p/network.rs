@@ -2,7 +2,7 @@ use crate::discv4::{
     helpers::current_unix_time,
     server::{DiscoveryError, Discv4Server},
 };
-pub use crate::kademlia::KademliaTable;
+use crate::kademlia::KademliaTable;
 use crate::rlpx::{
     connection::RLPxConnBroadcastSender, handshake, message::Message as RLPxMessage,
 };

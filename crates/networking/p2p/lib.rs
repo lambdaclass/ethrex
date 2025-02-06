@@ -1,5 +1,5 @@
 pub(crate) mod discv4;
-pub(crate) mod kademlia;
+pub mod kademlia;
 pub mod network;
 pub mod peer_handler;
 pub mod rlpx;

@@ -3,8 +3,8 @@ use directories::ProjectDirs;
 use ethrex_blockchain::{add_block, fork_choice::apply_fork_choice};
 use ethrex_core::types::{Block, Genesis};
 use ethrex_p2p::{
-    network::node_id_from_signing_key,
-    network::{peer_table, KademliaTable},
+    kademlia::KademliaTable,
+    network::{node_id_from_signing_key, peer_table},
     sync::{SyncManager, SyncMode},
     types::{Node, NodeRecord},
 };

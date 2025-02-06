@@ -9,8 +9,8 @@ use super::{
     },
 };
 use crate::{
-    kademlia::MAX_NODES_PER_BUCKET,
-    network::{handle_peer_as_initiator, KademliaTable, P2PContext},
+    kademlia::{KademliaTable, MAX_NODES_PER_BUCKET},
+    network::{handle_peer_as_initiator, P2PContext},
     types::{Endpoint, Node, NodeRecord},
 };
 use ethrex_core::H256;

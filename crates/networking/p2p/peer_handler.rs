@@ -11,8 +11,7 @@ use ethrex_trie::{verify_range, Node};
 use tokio::sync::Mutex;
 
 use crate::{
-    kademlia::PeerChannels,
-    network::KademliaTable,
+    kademlia::{KademliaTable, PeerChannels},
     rlpx::{
         eth::{
             blocks::{
