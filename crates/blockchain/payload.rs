@@ -35,7 +35,7 @@ use {
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_storage::{error::StoreError, Store};
 
-use ethrex_vm::{evm_state, EvmError, EvmState};
+use ethrex_vm::{evm_state, process_withdrawals, EvmError, EvmState};
 
 use sha3::{Digest, Keccak256};
 
@@ -300,8 +300,15 @@ pub fn apply_withdrawals(context: &mut PayloadBuildContext) -> Result<(), EvmErr
     }
     #[cfg(not(feature = "levm"))]
     {
-        let withdrawals = context.payload.body.withdrawals.clone().unwrap_or_default();
-        process_withdrawals(context.evm_state, &withdrawals)?;
+        process_withdrawals(
+            context.evm_state,
+            context
+                .payload
+                .body
+                .withdrawals
+                .as_ref()
+                .unwrap_or(&Vec::new()),
+        )?;
     }
     Ok(())
 }
