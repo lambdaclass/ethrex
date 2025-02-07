@@ -319,6 +319,7 @@ impl VM {
 
         dbg!(&current_call_frame.msg_sender);
         dbg!(&current_call_frame.to);
+        dbg!(&current_call_frame.gas_limit);
         dbg!(&current_call_frame.gas_used);
 
         loop {

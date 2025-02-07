@@ -229,6 +229,7 @@ impl VM {
             &storage_slot,
             new_storage_slot_value,
             storage_slot_was_cold,
+            self.env.config.fork,
         )?)?;
 
         self.update_account_storage(current_call_frame.to, key, new_storage_slot_value)?;

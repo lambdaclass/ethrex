@@ -415,30 +415,39 @@ pub fn sstore(
     storage_slot: &StorageSlot,
     new_value: U256,
     storage_slot_was_cold: bool,
+    fork: Fork,
 ) -> Result<u64, VMError> {
-    let static_gas = SSTORE_STATIC;
-
-    let mut base_dynamic_gas = if new_value == storage_slot.current_value {
-        SSTORE_DEFAULT_DYNAMIC
-    } else if storage_slot.current_value == storage_slot.original_value {
-        if storage_slot.original_value.is_zero() {
-            SSTORE_STORAGE_CREATION
+    if fork <= Fork::Berlin {
+        if storage_slot.current_value.is_zero() && !new_value.is_zero() {
+            Ok(20_000)
         } else {
-            SSTORE_STORAGE_MODIFICATION
+            Ok(5000)
         }
     } else {
-        SSTORE_DEFAULT_DYNAMIC
-    };
+        let static_gas = SSTORE_STATIC;
 
-    if storage_slot_was_cold {
-        base_dynamic_gas = base_dynamic_gas
-            .checked_add(SSTORE_COLD_DYNAMIC)
-            .ok_or(OutOfGasError::GasCostOverflow)?;
+        let mut base_dynamic_gas = if new_value == storage_slot.current_value {
+            SSTORE_DEFAULT_DYNAMIC
+        } else if storage_slot.current_value == storage_slot.original_value {
+            if storage_slot.original_value.is_zero() {
+                SSTORE_STORAGE_CREATION
+            } else {
+                SSTORE_STORAGE_MODIFICATION
+            }
+        } else {
+            SSTORE_DEFAULT_DYNAMIC
+        };
+
+        if storage_slot_was_cold {
+            base_dynamic_gas = base_dynamic_gas
+                .checked_add(SSTORE_COLD_DYNAMIC)
+                .ok_or(OutOfGasError::GasCostOverflow)?;
+        }
+
+        Ok(static_gas
+            .checked_add(base_dynamic_gas)
+            .ok_or(OutOfGasError::GasCostOverflow)?)
     }
-
-    Ok(static_gas
-        .checked_add(base_dynamic_gas)
-        .ok_or(OutOfGasError::GasCostOverflow)?)
 }
 
 pub fn mcopy(
@@ -774,14 +783,19 @@ pub fn delegatecall(
     address_was_cold: bool,
     gas_from_stack: U256,
     gas_left: u64,
+    fork: Fork,
 ) -> Result<(u64, u64), VMError> {
     let memory_expansion_cost = memory::expansion_cost(new_memory_size, current_memory_size)?;
 
     let address_access_cost = address_access_cost(
         address_was_cold,
-        DELEGATECALL_STATIC,
+        if fork <= Fork::Berlin { 700 } else { 0 },
         DELEGATECALL_COLD_DYNAMIC,
-        DELEGATECALL_WARM_DYNAMIC,
+        if fork <= Fork::Berlin {
+            0
+        } else {
+            DELEGATECALL_WARM_DYNAMIC
+        },
     )?;
     let call_gas_costs = memory_expansion_cost
         .checked_add(address_access_cost)

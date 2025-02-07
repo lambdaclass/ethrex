@@ -261,6 +261,7 @@ impl VM {
             address_was_cold,
             gas,
             gas_left,
+            self.env.config.fork,
         )?;
 
         current_call_frame.increase_consumed_gas(cost)?;
