@@ -253,7 +253,7 @@ pub fn get_state_transitions_levm(
 /// Calls the eip4788 beacon block root system call contract
 /// More info on https://eips.ethereum.org/EIPS/eip-4788
 pub fn beacon_root_contract_call_levm(
-    db: Arc<dyn LevmDatabase>,
+    store_wrapper: Arc<StoreWrapper>,
     block_header: &BlockHeader,
     config: EVMConfig,
 ) -> Result<ExecutionReport, EvmError> {
@@ -299,7 +299,7 @@ pub fn beacon_root_contract_call_levm(
         env,
         U256::zero(),
         calldata,
-        db,
+        store_wrapper,
         CacheDB::new(),
         vec![],
         None,
