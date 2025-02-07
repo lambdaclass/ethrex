@@ -103,6 +103,29 @@ jobs:
               # exit 1 # uncomment when we expect 100% pass-rate
           fi
 
+  compare-ef-tests:
+    if: ${{ github.event_name != 'merge_group' }}
+    name: EF Tests Check main
+    needs: [ef-test-main, ef-test]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v4
+
+      - name: Rustup toolchain install
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: ${{ env.RUST_VERSION }}
+
+      - name: Caching
+        uses: Swatinem/rust-cache@v2
+
+      - name: Compare results
+        run: |
+          cd crates/vm/levm
+          cat test_result_pr.txt
+          cat test_result_main.txt
+
   hive-report-creation:
     uses: ./.github/workflows/common_hive_reports.yaml
     with:
