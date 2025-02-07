@@ -387,13 +387,23 @@ fn mem_expansion_behavior(
         .ok_or(OutOfGasError::GasCostOverflow)?)
 }
 
-pub fn sload(storage_slot_was_cold: bool) -> Result<u64, VMError> {
-    let static_gas = SLOAD_STATIC;
-
-    let dynamic_cost = if storage_slot_was_cold {
-        SLOAD_COLD_DYNAMIC
+pub fn sload(storage_slot_was_cold: bool, fork: Fork) -> Result<u64, VMError> {
+    // Berlin https://github.com/ethereum/execution-specs/blob/8dbde99b132ff8d8fcc9cfb015a9947ccc8b12d6/network-upgrades/mainnet-upgrades/berlin.md
+    // EIP https://eips.ethereum.org/EIPS/eip-2929
+    let static_gas = if fork >= Fork::Berlin {
+        SLOAD_STATIC
     } else {
-        SLOAD_WARM_DYNAMIC
+        200
+    };
+
+    let dynamic_cost = if fork >= Fork::Berlin {
+        if storage_slot_was_cold {
+            SLOAD_COLD_DYNAMIC
+        } else {
+            SLOAD_WARM_DYNAMIC
+        }
+    } else {
+        0
     };
 
     Ok(static_gas

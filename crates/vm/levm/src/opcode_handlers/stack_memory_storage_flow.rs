@@ -153,7 +153,10 @@ impl VM {
         let (storage_slot, storage_slot_was_cold) =
             self.access_storage_slot(address, storage_slot_key)?;
 
-        current_call_frame.increase_consumed_gas(gas_cost::sload(storage_slot_was_cold)?)?;
+        current_call_frame.increase_consumed_gas(gas_cost::sload(
+            storage_slot_was_cold,
+            self.env.config.fork,
+        )?)?;
 
         current_call_frame.stack.push(storage_slot.current_value)?;
         Ok(OpcodeResult::Continue { pc_increment: 1 })
