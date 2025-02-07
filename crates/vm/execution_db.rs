@@ -97,6 +97,10 @@ impl ExecutionDB {
         spec_id: SpecId,
         db: ExtDB,
     ) -> Result<CacheDB<ExtDB>, RevmError<ExtDB::Error>> {
+        // this code was copied from the L1
+        // TODO: if we change EvmState so that it accepts a CacheDB<RpcDB> then we can
+        // simply call execute_block().
+
         let mut db = CacheDB::new(db);
 
         // beacon root call
@@ -145,6 +149,7 @@ impl ExecutionDB {
             evm.context.evm.db.commit(result_state);
         }
 
+        // execute block
         let block_env = block_env(&block.header);
 
         for transaction in &block.body.transactions {
