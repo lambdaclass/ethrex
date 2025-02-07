@@ -701,10 +701,10 @@ impl Store {
         Ok(storage_trie.hash()?)
     }
 
-    /// Rebuilds state trie from a snapshot, returns the resulting trie's root
+    /// Rebuilds state trie segment from the snapshot
     /// and the addresses of the storages whose root doesn't match the one in the account state
-    /// Returns the last rebuild account hash + the account hashes of storages in need of healing
-    fn rebuild_state_trie_segment(&self, start: H256, end: H256) -> Result<(H256, Vec<H256>), StoreError> {
+    /// Returns the last rebuild account hash + the account hashes of storages in need of healing + the current state root
+    fn rebuild_state_trie_segment(&self, start: H256, end: H256) -> Result<(H256, Vec<H256>, H256), StoreError> {
         let mut mismatched_storage_accounts = vec![];
         // Open a new state trie
         let mut state_trie = self.open_state_trie(*EMPTY_TRIE_HASH);
@@ -735,9 +735,7 @@ impl Store {
             // Add account to trie
             state_trie.insert(hash.to_fixed_bytes().to_vec(), account.encode_to_vec())?;
         }
-        // Commit trie
-        state_trie.hash()?;
-        Ok((current_hash, mismatched_storage_accounts))
+        Ok((current_hash, mismatched_storage_accounts, state_trie.hash()?))
     }
 }
 
