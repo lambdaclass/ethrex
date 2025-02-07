@@ -665,10 +665,6 @@ impl StoreEngine for Store {
             .walk(None)
             .map_while(|res| res.ok().map(|(hash, acc)| (hash.to(), acc.to())))
         {
-            tracing::info!(
-                "Rebuilding state trie, storages in need of healing: {}",
-                mismatched_storage_accounts.len()
-            );
             // Rebuild storage trie and check for mismatches
             let rebuilt_root = self.rebuild_storage_trie_from_snapshot(hash)?;
             if rebuilt_root != account.storage_root {
@@ -679,6 +675,10 @@ impl StoreEngine for Store {
             // Commit every few iterations so we don't build the full trie in memory
             inserts_since_last_commit += 1;
             if inserts_since_last_commit > MAX_TRIE_INSERTS_WITHOUT_COMMIT {
+                tracing::info!(
+                    "Rebuilding state trie, storages in need of healing: {}",
+                    mismatched_storage_accounts.len()
+                );
                 state_trie.hash()?;
                 inserts_since_last_commit = 0;
             }
