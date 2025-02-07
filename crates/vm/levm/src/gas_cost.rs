@@ -417,6 +417,7 @@ pub fn sstore(
     storage_slot_was_cold: bool,
     fork: Fork,
 ) -> Result<u64, VMError> {
+    // https://github.com/ethereum/EIPs/blob/master/EIPS/eip-1087.md
     if fork <= Fork::Berlin {
         if storage_slot.current_value.is_zero() && !new_value.is_zero() {
             Ok(20_000)
@@ -787,6 +788,7 @@ pub fn delegatecall(
 ) -> Result<(u64, u64), VMError> {
     let memory_expansion_cost = memory::expansion_cost(new_memory_size, current_memory_size)?;
 
+    // https://eips.ethereum.org/EIPS/eip-2929#storage-read-changes
     let address_access_cost = address_access_cost(
         address_was_cold,
         if fork <= Fork::Berlin { 700 } else { 0 },
