@@ -168,7 +168,7 @@ pub struct VM {
     pub tx_kind: TxKind,
     pub access_list: AccessList,
     pub authorization_list: Option<AuthorizationList>,
-    pub hooks: Vec<Arc<dyn Hook>>,
+    pub hooks: Vec<Rc<dyn Hook>>,
 }
 
 impl VM {
@@ -218,7 +218,7 @@ impl VM {
             default_touched_accounts.insert(Address::from_low_u64_be(i));
         }
 
-        let default_hook: Arc<dyn Hook> = Arc::new(DefaultHook);
+        let default_hook: Rc<dyn Hook> = Rc::new(DefaultHook);
         let hooks = vec![default_hook];
         match to {
             TxKind::Call(address_to) => {
