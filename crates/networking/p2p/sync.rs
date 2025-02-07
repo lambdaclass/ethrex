@@ -1121,13 +1121,19 @@ pub(crate) fn init_rebuild_status() -> RebuildStatus {
 }
 
 async fn rebuild_state_trie_in_backgound(store: Store) -> Result<Vec<H256>, SyncError> {
-    // Sleep for some time so we don't start rebuilding too early
-    tokio::time::sleep(tokio::time::Duration::from_secs(10)).await;
     let mut rebuild_status = init_rebuild_status();
     let mut current_segment = 0;
     let mut root = *EMPTY_TRIE_HASH;
     let mut mismatched_storage_accounts = vec![];
     while !rebuild_status.iter().all(|status| status.complete()) {
+        let state_sync_complte = {
+            let key_checkpoints = store.get_state_trie_key_checkpoint()?;
+            key_checkpoints.is_some_and(|ch| {
+                ch.into_iter()
+                    .zip(STATE_TRIE_SEGMENTS_END.into_iter())
+                    .all(|(ch, end)| ch >= end)
+            })
+        };
         info!("Rebuilding segment {current_segment}, status: {rebuild_status:?}");
         if !rebuild_status[current_segment].complete() {
             // Start rebuilding the current trie segment
@@ -1139,9 +1145,14 @@ async fn rebuild_state_trie_in_backgound(store: Store) -> Result<Vec<H256>, Sync
             mismatched_storage_accounts.extend(mismatched);
             // Update status
             root = current_root;
-            rebuild_status[current_segment].current = current_hash;
+            // If state_sync is complete, then mark the segment as fully rebuilt
+            if state_sync_complte {
+                rebuild_status[current_segment].current = rebuild_status[current_segment].end
+            } else {
+                rebuild_status[current_segment].current = current_hash;
+            }
         }
-        // Move on to the next segemt
+        // Move on to the next segment
         current_segment = (current_segment + 1) % STATE_TRIE_SEGMENTS
     }
     Ok(mismatched_storage_accounts)
