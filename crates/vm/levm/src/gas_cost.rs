@@ -418,8 +418,9 @@ pub fn sstore(
     fork: Fork,
 ) -> Result<u64, VMError> {
     // https://github.com/ethereum/EIPs/blob/master/EIPS/eip-1087.md
+    dbg!("sstore", storage_slot.current_value, new_value);
     if fork <= Fork::Berlin {
-        if storage_slot.current_value.is_zero() && !new_value.is_zero() {
+        if dbg!(storage_slot.current_value.is_zero()) && dbg!(!new_value.is_zero()) {
             Ok(20_000)
         } else {
             Ok(5000)
@@ -640,6 +641,7 @@ fn address_access_cost(
 }
 
 pub fn balance(address_was_cold: bool) -> Result<u64, VMError> {
+    dbg!("balance");
     address_access_cost(
         address_was_cold,
         BALANCE_STATIC,
@@ -649,6 +651,7 @@ pub fn balance(address_was_cold: bool) -> Result<u64, VMError> {
 }
 
 pub fn extcodesize(address_was_cold: bool) -> Result<u64, VMError> {
+    dbg!("exitcode");
     address_access_cost(
         address_was_cold,
         EXTCODESIZE_STATIC,
@@ -683,6 +686,7 @@ pub fn extcodecopy(
 }
 
 pub fn extcodehash(address_was_cold: bool) -> Result<u64, VMError> {
+    dbg!("exitcodehash");
     address_access_cost(
         address_was_cold,
         EXTCODEHASH_STATIC,
@@ -704,6 +708,7 @@ pub fn call(
 ) -> Result<(u64, u64), VMError> {
     let memory_expansion_cost = memory::expansion_cost(new_memory_size, current_memory_size)?;
 
+    dbg!("ENTRA ACA CALL");
     let address_access_cost = address_access_cost(
         address_was_cold,
         CALL_STATIC,
@@ -758,6 +763,7 @@ pub fn callcode(
         CALLCODE_COLD_DYNAMIC,
         CALLCODE_WARM_DYNAMIC,
     )?;
+    dbg!("CALL CODE", address_access_cost);
     let positive_value_cost = if !value_to_transfer.is_zero() {
         CALLCODE_POSITIVE_VALUE
     } else {
@@ -789,16 +795,22 @@ pub fn delegatecall(
     let memory_expansion_cost = memory::expansion_cost(new_memory_size, current_memory_size)?;
 
     // https://eips.ethereum.org/EIPS/eip-2929#storage-read-changes
-    let address_access_cost = address_access_cost(
-        address_was_cold,
-        if fork <= Fork::Berlin { 700 } else { 0 },
-        DELEGATECALL_COLD_DYNAMIC,
-        if fork <= Fork::Berlin {
-            0
-        } else {
-            DELEGATECALL_WARM_DYNAMIC
-        },
-    )?;
+
+    let address_access_cost = if fork <= Fork::Berlin {
+        700
+    } else {
+        address_access_cost(
+            dbg!(address_was_cold),
+            if fork <= Fork::Berlin { 700 } else { 0 },
+            DELEGATECALL_COLD_DYNAMIC,
+            if fork <= Fork::Berlin {
+                0
+            } else {
+                DELEGATECALL_WARM_DYNAMIC
+            },
+        )?
+    };
+    dbg!("DELEGATECALL", address_access_cost);
     let call_gas_costs = memory_expansion_cost
         .checked_add(address_access_cost)
         .ok_or(OutOfGasError::GasCostOverflow)?;
@@ -821,6 +833,8 @@ pub fn staticcall(
         STATICCALL_COLD_DYNAMIC,
         STATICCALL_WARM_DYNAMIC,
     )?;
+    dbg!("STATIC CALL", address_access_cost);
+
     let call_gas_costs = memory_expansion_cost
         .checked_add(address_access_cost)
         .ok_or(OutOfGasError::GasCostOverflow)?;

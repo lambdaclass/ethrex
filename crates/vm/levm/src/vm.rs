@@ -328,6 +328,7 @@ impl VM {
 
             let op_result = self.handle_current_opcode(opcode, current_call_frame);
             dbg!(&current_call_frame.gas_used);
+            dbg!(&current_call_frame.stack);
 
             match op_result {
                 Ok(OpcodeResult::Continue { pc_increment }) => {

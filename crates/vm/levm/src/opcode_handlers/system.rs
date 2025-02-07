@@ -255,6 +255,7 @@ impl VM {
             .checked_sub(eip7702_gas_consumed)
             .ok_or(InternalError::GasOverflow)?;
 
+        dbg!("NEW EIP", eip7702_gas_consumed);
         let (cost, gas_limit) = gas_cost::delegatecall(
             new_memory_size,
             current_memory_size,
@@ -263,6 +264,7 @@ impl VM {
             gas_left,
             self.env.config.fork,
         )?;
+        dbg!("PASA");
 
         current_call_frame.increase_consumed_gas(cost)?;
         current_call_frame.increase_consumed_gas(eip7702_gas_consumed)?;
