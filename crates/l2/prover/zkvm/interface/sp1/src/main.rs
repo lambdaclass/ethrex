@@ -35,7 +35,7 @@ pub fn main() {
         panic!("invalid database")
     };
 
-    // Execute 
+    // Execute
     let receipts = execute_block(&block, &mut state).expect("failed to execute block");
     validate_gas_used(&receipts, &block.header).expect("invalid gas used");
 
