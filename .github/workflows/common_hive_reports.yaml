@@ -38,7 +38,6 @@ jobs:
 
     steps:
       - name: Pull image
-        if: ${{ inputs.evm == 'revm' }}
         run: |
           docker pull ghcr.io/lambdaclass/ethrex:latest
           docker tag ghcr.io/lambdaclass/ethrex:latest ethrex:latest
@@ -53,10 +52,6 @@ jobs:
         with:
           ref: main
 
-      - name: Build Image with LEVM
-        if: ${{ inputs.evm == 'levm' }}
-        run: cd crates/vm/levm && make build-image-levm
-
       - name: Setup Go
         uses: actions/setup-go@v5
 
@@ -64,7 +59,7 @@ jobs:
         run: make setup-hive
 
       - name: Run Hive Simulation
-        run: cd hive && ./hive --client ethrex --sim ${{ matrix.test.simulation }} --sim.parallelism 16
+        run: cd hive && ./hive --client ethrex --sim ${{ matrix.test.simulation }} --ethrex.flags "--evm ${{ inputs.evm }}" --sim.parallelism 16
         continue-on-error: true
 
       - name: Upload results
