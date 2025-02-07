@@ -66,6 +66,8 @@ jobs:
     steps:
       - name: Checkout sources
         uses: actions/checkout@v4
+        with:
+          ref: main
 
       - name: Rustup toolchain install
         uses: dtolnay/rust-toolchain@stable
