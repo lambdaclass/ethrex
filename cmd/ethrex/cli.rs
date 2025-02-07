@@ -1,5 +1,5 @@
 use clap::{Arg, ArgAction, Command};
-use ethrex_net::types::Node;
+use ethrex_p2p::types::Node;
 use tracing::Level;
 
 pub fn cli() -> Command {

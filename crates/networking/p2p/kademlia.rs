@@ -2,9 +2,8 @@ use std::sync::Arc;
 
 use crate::{
     discv4::messages::FindNodeRequest,
-    rlpx::p2p::Capability,
+    rlpx::{message::Message as RLPxMessage, p2p::Capability},
     types::{Node, NodeRecord},
-    RLPxMessage,
 };
 use ethrex_core::{H256, H512, U256};
 use sha3::{Digest, Keccak256};
@@ -428,8 +427,9 @@ impl PeerChannels {
 
 #[cfg(test)]
 mod tests {
+    use crate::network::node_id_from_signing_key;
+
     use super::*;
-    use crate::node_id_from_signing_key;
     use hex_literal::hex;
     use k256::{ecdsa::SigningKey, elliptic_curve::rand_core::OsRng};
     use std::{

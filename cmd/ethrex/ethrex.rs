@@ -2,11 +2,11 @@ use bytes::Bytes;
 use directories::ProjectDirs;
 use ethrex_blockchain::{add_block, fork_choice::apply_fork_choice};
 use ethrex_core::types::{Block, Genesis};
-use ethrex_net::{
-    node_id_from_signing_key, peer_table,
+use ethrex_p2p::{
+    kademlia::KademliaTable,
+    network::{node_id_from_signing_key, peer_table},
     sync::{SyncManager, SyncMode},
     types::{Node, NodeRecord},
-    KademliaTable,
 };
 use ethrex_rlp::decode::RLPDecode;
 use ethrex_storage::{EngineType, Store};
@@ -287,7 +287,7 @@ async fn main() {
             let block_producer_engine = ethrex_dev::block_producer::start_block_producer(url, authrpc_jwtsecret.into(), head_block_hash, max_tries, 1000, ethrex_core::Address::default());
             tracker.spawn(block_producer_engine);
         } else {
-            ethrex_net::start_network(
+            ethrex_p2p::start_network(
                 local_p2p_node,
                 tracker.clone(),
                 bootnodes,
@@ -296,7 +296,7 @@ async fn main() {
                 store,
             )
             .await.expect("Network starts");
-            tracker.spawn(ethrex_net::periodically_show_peer_stats(peer_table.clone()));
+            tracker.spawn(ethrex_p2p::periodically_show_peer_stats(peer_table.clone()));
         }
     }
 

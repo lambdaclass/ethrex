@@ -1,5 +1,5 @@
 use ethrex_core::types::ChainConfig;
-use ethrex_net::types::{Node, NodeRecord};
+use ethrex_p2p::types::{Node, NodeRecord};
 use ethrex_storage::Store;
 use serde::Serialize;
 use serde_json::Value;

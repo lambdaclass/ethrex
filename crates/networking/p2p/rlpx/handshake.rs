@@ -1,6 +1,7 @@
 use std::net::SocketAddr;
 
 use crate::{
+    network::P2PContext,
     rlpx::{
         connection::{LocalState, RLPxConnection, RemoteState},
         error::RLPxError,
@@ -8,7 +9,6 @@ use crate::{
         utils::{ecdh_xchng, id2pubkey, kdf, log_peer_debug, pubkey2id, sha256, sha256_hmac},
     },
     types::Node,
-    P2PContext,
 };
 use aes::cipher::{KeyIvInit, StreamCipher};
 use ethrex_core::{Signature, H128, H256, H512};
