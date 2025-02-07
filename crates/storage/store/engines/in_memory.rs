@@ -540,6 +540,10 @@ impl StoreEngine for Store {
     ) -> Result<Option<(H256, [H256; STATE_TRIE_SEGMENTS])>, StoreError> {
         todo!()
     }
+
+    fn clear_snapshot(&self) -> Result<(), StoreError> {
+        todo!()
+    }
 }
 
 impl Debug for Store {
