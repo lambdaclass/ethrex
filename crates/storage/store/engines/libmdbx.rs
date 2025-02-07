@@ -30,6 +30,9 @@ use std::fmt::{Debug, Formatter};
 use std::path::Path;
 use std::sync::Arc;
 
+/// Maximum amount of trie inserts without committing nodes to DB
+const MAX_TRIE_INSERTS_WITHOUT_COMMIT: usize = 200;
+
 pub struct Store {
     db: Arc<Database>,
 }
@@ -657,11 +660,15 @@ impl StoreEngine for Store {
             .cursor::<StateSnapShot>()
             .map_err(StoreError::LibmdbxError)?;
         tracing::info!("Snapshot open");
+        let mut inserts_since_last_commit = 0;
         for (hash, account) in cursor
             .walk(None)
             .map_while(|res| res.ok().map(|(hash, acc)| (hash.to(), acc.to())))
         {
-            tracing::info!("Rebuilding state trie, storages in need of healing: {}", mismatched_storage_accounts.len());
+            tracing::info!(
+                "Rebuilding state trie, storages in need of healing: {}",
+                mismatched_storage_accounts.len()
+            );
             // Rebuild storage trie and check for mismatches
             let rebuilt_root = self.rebuild_storage_trie_from_snapshot(hash)?;
             if rebuilt_root != account.storage_root {
@@ -669,7 +676,12 @@ impl StoreEngine for Store {
             }
             // Add account to trie
             state_trie.insert(hash.to_fixed_bytes().to_vec(), account.encode_to_vec())?;
-            // TODO: Commit every few iterations so we don't build the full trie in memory
+            // Commit every few iterations so we don't build the full trie in memory
+            inserts_since_last_commit += 1;
+            if inserts_since_last_commit > MAX_TRIE_INSERTS_WITHOUT_COMMIT {
+                state_trie.hash()?;
+                inserts_since_last_commit = 0;
+            }
         }
         Ok((state_trie.hash()?, mismatched_storage_accounts))
     }
@@ -693,11 +705,18 @@ impl Store {
         let cursor = txn
             .cursor::<StorageSnapShot>()
             .map_err(StoreError::LibmdbxError)?;
+        let mut inserts_since_last_commit = 0;
         for (key, value) in cursor.walk_key(account_hash.into(), None).map_while(|res| {
             res.ok()
                 .map(|(k, v)| (k.0.to_vec(), U256::from_big_endian(&v.0).encode_to_vec()))
         }) {
             storage_trie.insert(key, value)?;
+            // Commit every few iterations so we don't build the full trie in memory
+            inserts_since_last_commit += 1;
+            if inserts_since_last_commit > MAX_TRIE_INSERTS_WITHOUT_COMMIT {
+                storage_trie.hash()?;
+                inserts_since_last_commit = 0;
+            }
         }
         Ok(storage_trie.hash()?)
     }
