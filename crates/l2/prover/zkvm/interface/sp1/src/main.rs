@@ -2,7 +2,6 @@
 
 use ethrex_blockchain::{validate_block, validate_gas_used};
 use ethrex_core::types::EMPTY_TRIE_HASH;
-use ethrex_storage::{hash_address, hash_key};
 use ethrex_vm::{execute_block, get_state_transitions, EvmState};
 use zkvm_interface::{
     io::{ProgramInput, ProgramOutput},
