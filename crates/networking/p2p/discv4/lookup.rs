@@ -5,9 +5,8 @@ use super::{
 };
 use crate::{
     kademlia::{bucket_number, MAX_NODES_PER_BUCKET},
-    node_id_from_signing_key,
+    network::{node_id_from_signing_key, P2PContext},
     types::Node,
-    P2PContext,
 };
 use ethrex_core::H512;
 use k256::ecdsa::SigningKey;
