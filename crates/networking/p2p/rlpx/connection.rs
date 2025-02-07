@@ -189,11 +189,11 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
 
                 // Check if we have any capability in common and store the highest version
                 for cap in &hello_message.capabilities {
-                    match cap {
-                        &CAP_ETH_68 if CAP_ETH_68.1 > negotiated_eth_cap.1 => {
+                    match *cap {
+                        CAP_ETH_68 if CAP_ETH_68.1 > negotiated_eth_cap.1 => {
                             negotiated_eth_cap = CAP_ETH_68
                         }
-                        &CAP_SNAP_1 if CAP_SNAP_1.1 > negotiated_snap_cap.1 => {
+                        CAP_SNAP_1 if CAP_SNAP_1.1 > negotiated_snap_cap.1 => {
                             negotiated_snap_cap = CAP_SNAP_1
                         }
                         _ => {}
