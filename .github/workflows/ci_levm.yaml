@@ -2,9 +2,9 @@ name: LEVM
 
 on:
   push:
-    branches: ["main"]
+    branches: [ "main" ]
   pull_request:
-    branches: ["**"]
+    branches: [ "**" ]
     paths:
       - "crates/vm/levm/**"
 
@@ -75,7 +75,7 @@ jobs:
   hive-test:
     if: ${{ github.event_name != 'merge_group' }}
     name: Hive Tests Check
-    needs: [hive-report-creation, hive-report-creation-main]
+    needs: [ hive-report-creation, hive-report-creation-main ]
     runs-on: ubuntu-latest
     steps:
       - name: Checkout sources
@@ -112,6 +112,7 @@ jobs:
             echo "No regression found."
           else
             echo "Differences found."
+            cat diff.md
             exit 1
           fi
 
@@ -120,7 +121,7 @@ jobs:
     # "Integration Test" is a required check, don't change the name
     name: Integration Test
     runs-on: ubuntu-latest
-    needs: [hive-test, ef-test]
+    needs: [ hive-test, ef-test ]
     # Make sure this job runs even if the previous jobs failed or were skipped
     if: ${{ always() && needs.hive-test.result != 'skipped' && needs.ef-test.result != 'skipped' }}
     steps:
