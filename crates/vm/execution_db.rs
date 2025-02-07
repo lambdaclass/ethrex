@@ -1,3 +1,4 @@
+use ethrex_core::types::code_hash;
 use std::collections::HashMap;
 
 use bytes::Bytes;
@@ -213,7 +214,7 @@ impl ExecutionDB {
     }
 
     /// Execute a block and cache all state changes, returns the cache
-    fn pre_execute<ExtDB: DatabaseRef>(
+    pub fn pre_execute<ExtDB: DatabaseRef>(
         block: &Block,
         chain_id: u64,
         spec_id: SpecId,
@@ -294,5 +295,54 @@ impl DatabaseRef for ExecutionDB {
             .get(&number)
             .map(|h| RevmB256::from_slice(&h.0))
             .ok_or(ExecutionDBError::BlockHashNotFound(number))
+    }
+}
+
+/// Creates an [ExecutionDB] from an initial database and a block to execute, usually via
+/// pre-execution.
+pub trait ToExecDB {
+    fn to_exec_db(&self, block: &Block) -> Result<ExecutionDB, ExecutionDBError>;
+}
+
+// TODO: We need to check this with more detail
+use ethrex_levm::db::Database as LevmDatabase;
+impl LevmDatabase for ExecutionDB {
+    fn get_account_info(&self, address: Address) -> ethrex_levm::AccountInfo {
+        let Some(account_info) = self.accounts.get(&address) else {
+            return ethrex_levm::AccountInfo {
+                balance: U256::zero(),
+                bytecode: Bytes::new(),
+                nonce: 0,
+            };
+        };
+        let bytecode = if account_info.code_hash == code_hash(&Bytes::new()) {
+            Bytes::new()
+        } else {
+            self.code
+                .get(&account_info.code_hash)
+                .map(|b| Bytes::copy_from_slice(b.as_ref()))
+                .unwrap_or_default()
+        };
+        ethrex_levm::AccountInfo {
+            balance: account_info.balance,
+            bytecode,
+            nonce: account_info.nonce,
+        }
+    }
+
+    fn get_storage_slot(&self, address: Address, key: H256) -> U256 {
+        self.storage
+            .get(&address)
+            .and_then(|storage| storage.get(&key))
+            .copied()
+            .unwrap_or_default()
+    }
+
+    fn get_block_hash(&self, block_number: u64) -> Option<H256> {
+        self.block_hashes.get(&block_number).copied()
+    }
+
+    fn account_exists(&self, address: Address) -> bool {
+        self.accounts.contains_key(&address)
     }
 }
