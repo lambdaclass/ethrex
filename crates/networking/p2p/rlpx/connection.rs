@@ -205,6 +205,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
                 if negotiated_eth_cap.1 == 0 {
                     return Err(RLPxError::NoMatchingCapabilities());
                 }
+                self.negotiated_eth_version = negotiated_eth_cap.1;
 
                 if negotiated_snap_cap.1 != 0 {
                     self.negotiated_snap_version = negotiated_snap_cap.1;
