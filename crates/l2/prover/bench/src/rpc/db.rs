@@ -115,8 +115,13 @@ impl RpcDB {
 
             fetched.extend(fetched_chunk);
 
-            counter += chunk.len();
-            println!("fetched {} accounts of {}", counter, index.len());
+            if index.len() == 1 {
+                let address = chunk.first().unwrap().0;
+                println!("fetched account {address}");
+            } else {
+                counter += chunk.len();
+                println!("fetched {} accounts of {}", counter, index.len());
+            }
         }
 
         if from_child {
