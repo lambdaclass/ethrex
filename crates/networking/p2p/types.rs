@@ -387,7 +387,7 @@ impl RLPEncode for Node {
 #[cfg(test)]
 mod tests {
     use crate::{
-        node_id_from_signing_key,
+        network::node_id_from_signing_key,
         types::{Node, NodeRecord},
     };
     use ethrex_core::H512;

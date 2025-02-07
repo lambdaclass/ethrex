@@ -1,5 +1,5 @@
 use clap::{Arg, ArgAction, Command};
-use ethrex_net::types::Node;
+use ethrex_p2p::types::Node;
 use ethrex_vm::backends::EVM;
 use tracing::Level;
 

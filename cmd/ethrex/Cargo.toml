@@ -9,7 +9,7 @@ edition = "2021"
 ethrex-blockchain.workspace = true
 ethrex-rpc.workspace = true
 ethrex-core.workspace = true
-ethrex-net.workspace = true
+ethrex-p2p.workspace = true
 ethrex-storage = { workspace = true, optional = true }
 ethrex-vm.workspace = true
 ethrex-rlp.workspace = true
