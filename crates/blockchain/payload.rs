@@ -239,6 +239,7 @@ pub fn build_payload(
     debug!("Building payload");
     let mut evm_state = evm_state(store.clone(), payload.header.parent_hash);
     let mut context = PayloadBuildContext::new(payload, &mut evm_state)?;
+    make_beacon_root_call(&mut context)?;
     apply_withdrawals(&mut context)?;
     fill_transactions(&mut context)?;
     finalize_payload(&mut context)?;
@@ -248,7 +249,61 @@ pub fn build_payload(
 pub fn apply_withdrawals(context: &mut PayloadBuildContext) -> Result<(), EvmError> {
     match EVM_BACKEND.get() {
         Some(EVM::LEVM) => {
-            // Apply withdrawals & call beacon root contract, and obtain the new state root
+            if let Some(withdrawals) = &context.payload.body.withdrawals {
+                // For every withdrawal we increment the target account's balance
+                for (address, increment) in withdrawals
+                    .iter()
+                    .filter(|withdrawal| withdrawal.amount > 0)
+                    .map(|w| (w.address, u128::from(w.amount) * u128::from(GWEI_TO_WEI)))
+                {
+                    // We check if it was in block_cache, if not, we get it from DB.
+                    let mut account = context.block_cache.get(&address).cloned().unwrap_or({
+                        let acc_info = context
+                            .store()
+                            .ok_or(StoreError::MissingStore)?
+                            .get_account_info_by_hash(context.parent_hash(), address)?
+                            .unwrap_or_default();
+                        let acc_code = context
+                            .store()
+                            .ok_or(StoreError::MissingStore)?
+                            .get_account_code(acc_info.code_hash)?
+                            .unwrap_or_default();
+
+                        Account {
+                            info: AccountInfo {
+                                balance: acc_info.balance,
+                                bytecode: acc_code,
+                                nonce: acc_info.nonce,
+                            },
+                            // This is the added_storage for the withdrawal.
+                            // If not involved in the TX, there won't be any updates in the storage
+                            storage: HashMap::new(),
+                        }
+                    });
+
+                    account.info.balance += increment.into();
+                    context.block_cache.insert(address, account);
+                }
+            }
+        }
+        Some(EVM::REVM) | None => {
+            backends::revm::process_withdrawals(
+                context.evm_state,
+                context
+                    .payload
+                    .body
+                    .withdrawals
+                    .as_ref()
+                    .unwrap_or(&Vec::new()),
+            )?;
+        }
+    }
+    Ok(())
+}
+
+pub fn make_beacon_root_call(context: &mut PayloadBuildContext) -> Result<(), EvmError> {
+    match EVM_BACKEND.get() {
+        Some(EVM::LEVM) => {
             let fork = context
                 .chain_config()?
                 .fork(context.payload.header.timestamp);
@@ -281,7 +336,6 @@ pub fn apply_withdrawals(context: &mut PayloadBuildContext) -> Result<(), EvmErr
 
                 context.block_cache.extend(new_state);
             }
-            Ok(())
         }
         // This means we are using REVM as default for tests
         Some(EVM::REVM) | None => {
@@ -296,11 +350,9 @@ pub fn apply_withdrawals(context: &mut PayloadBuildContext) -> Result<(), EvmErr
                     spec_id,
                 )?;
             }
-            let withdrawals = context.payload.body.withdrawals.clone().unwrap_or_default();
-            backends::revm::process_withdrawals(context.evm_state, &withdrawals)?;
-            Ok(())
         }
     }
+    Ok(())
 }
 
 /// Fetches suitable transactions from the mempool
@@ -575,79 +627,26 @@ fn apply_plain_transaction(
 }
 
 fn finalize_payload(context: &mut PayloadBuildContext) -> Result<(), StoreError> {
-    match EVM_BACKEND.get() {
-        Some(EVM::LEVM) => {
-            if let Some(withdrawals) = &context.payload.body.withdrawals {
-                // For every withdrawal we increment the target account's balance
-                for (address, increment) in withdrawals
-                    .iter()
-                    .filter(|withdrawal| withdrawal.amount > 0)
-                    .map(|w| (w.address, u128::from(w.amount) * u128::from(GWEI_TO_WEI)))
-                {
-                    // We check if it was in block_cache, if not, we get it from DB.
-                    let mut account = context.block_cache.get(&address).cloned().unwrap_or({
-                        let acc_info = context
-                            .store()
-                            .unwrap()
-                            .get_account_info_by_hash(context.parent_hash(), address)?
-                            .unwrap_or_default();
-                        let acc_code = context
-                            .store()
-                            .unwrap()
-                            .get_account_code(acc_info.code_hash)?
-                            .unwrap_or_default();
-
-                        Account {
-                            info: AccountInfo {
-                                balance: acc_info.balance,
-                                bytecode: acc_code,
-                                nonce: acc_info.nonce,
-                            },
-                            // This is the added_storage for the withdrawal.
-                            // If not involved in the TX, there won't be any updates in the storage
-                            storage: HashMap::new(),
-                        }
-                    });
-
-                    account.info.balance += increment.into();
-                    context.block_cache.insert(address, account);
-                }
-            }
-
-            let account_updates = backends::levm::get_state_transitions_levm(
-                context.evm_state,
-                context.parent_hash(),
-                &context.block_cache.clone(),
-            );
-
-            context.payload.header.state_root = context
-                .store()
-                .ok_or(StoreError::MissingStore)?
-                .apply_account_updates(context.parent_hash(), &account_updates)?
-                .unwrap_or_default();
-            context.payload.header.transactions_root =
-                compute_transactions_root(&context.payload.body.transactions);
-            context.payload.header.receipts_root = compute_receipts_root(&context.receipts);
-            context.payload.header.gas_used =
-                context.payload.header.gas_limit - context.remaining_gas;
-            Ok(())
-        }
+    let account_updates = match EVM_BACKEND.get() {
+        Some(EVM::LEVM) => backends::levm::get_state_transitions_levm(
+            context.evm_state,
+            context.parent_hash(),
+            &context.block_cache.clone(),
+        ),
         // This means we are using REVM as default for tests
-        Some(EVM::REVM) | None => {
-            let account_updates = get_state_transitions(context.evm_state);
-            context.payload.header.state_root = context
-                .store()
-                .ok_or(StoreError::MissingStore)?
-                .apply_account_updates(context.parent_hash(), &account_updates)?
-                .unwrap_or_default();
-            context.payload.header.transactions_root =
-                compute_transactions_root(&context.payload.body.transactions);
-            context.payload.header.receipts_root = compute_receipts_root(&context.receipts);
-            context.payload.header.gas_used =
-                context.payload.header.gas_limit - context.remaining_gas;
-            Ok(())
-        }
-    }
+        Some(EVM::REVM) | None => get_state_transitions(context.evm_state),
+    };
+
+    context.payload.header.state_root = context
+        .store()
+        .ok_or(StoreError::MissingStore)?
+        .apply_account_updates(context.parent_hash(), &account_updates)?
+        .unwrap_or_default();
+    context.payload.header.transactions_root =
+        compute_transactions_root(&context.payload.body.transactions);
+    context.payload.header.receipts_root = compute_receipts_root(&context.receipts);
+    context.payload.header.gas_used = context.payload.header.gas_limit - context.remaining_gas;
+    Ok(())
 }
 
 /// A struct representing suitable mempool transactions waiting to be included in a block
