@@ -627,7 +627,7 @@ impl Discv4Server {
 pub(super) mod tests {
     use super::*;
     use crate::{
-        network::{node_id_from_signing_key, MAX_MESSAGES_TO_BROADCAST},
+        network::{node_id_from_signing_key, serve_p2p_requests, MAX_MESSAGES_TO_BROADCAST},
         rlpx::message::Message as RLPxMessage,
     };
     use ethrex_storage::{EngineType, Store};

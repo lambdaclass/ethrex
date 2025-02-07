@@ -99,7 +99,7 @@ pub async fn start_network(
     Ok(())
 }
 
-async fn serve_p2p_requests(context: P2PContext) {
+pub(crate) async fn serve_p2p_requests(context: P2PContext) {
     let tcp_addr = context.local_node.tcp_addr();
     let listener = match listener(tcp_addr) {
         Ok(result) => result,
