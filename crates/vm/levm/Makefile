@@ -24,8 +24,8 @@ ETH_TEST_URL := https://github.com/ethereum/tests.git
 ETH_TEST_TAG := v14.1
 COMMIT_LEGACY_TESTS_FOR_TAG := b2e6c9e
 
-STATETEST_VERSION := pectra-devnet-5%40v1.1.0
-STATETEST_NET := pectra-devnet-5
+STATETEST_VERSION := pectra-devnet-6%40v1.0.0
+STATETEST_NET := pectra-devnet-6
 STATETEST_ARTIFACT := fixtures_$(STATETEST_NET).tar.gz
 STATETEST_URL := https://github.com/ethereum/execution-spec-tests/releases/download/$(STATETEST_VERSION)/fixtures_$(STATETEST_NET).tar.gz
 
