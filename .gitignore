@@ -63,3 +63,5 @@ cmd/ef_tests/levm/levm_perfgraphs
 *.svg
 prof_*.json
 prof.json
+
+db.bin

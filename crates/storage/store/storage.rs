@@ -476,10 +476,6 @@ impl Store {
     ) -> Result<H256, StoreError> {
         let mut genesis_state_trie = self.engine.open_state_trie(*EMPTY_TRIE_HASH);
         for (address, account) in genesis_accounts {
-            println!(
-                "Inserting account: {:#x} with balance: {}",
-                address, account.balance
-            );
             let hashed_address = hash_address(&address);
             // Store account code (as this won't be stored in the trie)
             let code_hash = code_hash(&account.code);
