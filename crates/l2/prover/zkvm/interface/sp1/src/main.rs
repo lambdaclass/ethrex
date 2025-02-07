@@ -1,6 +1,8 @@
 #![no_main]
 
 use ethrex_blockchain::{validate_block, validate_gas_used};
+use ethrex_core::types::EMPTY_TRIE_HASH;
+use ethrex_storage::{hash_address, hash_key};
 use ethrex_vm::{execute_block, get_state_transitions, EvmState};
 use zkvm_interface::{
     io::{ProgramInput, ProgramOutput},
@@ -34,6 +36,7 @@ pub fn main() {
         panic!("invalid database")
     };
 
+    // Execute 
     let receipts = execute_block(&block, &mut state).expect("failed to execute block");
     validate_gas_used(&receipts, &block.header).expect("invalid gas used");
 
@@ -44,12 +47,12 @@ pub fn main() {
         .unwrap_or_default();
     sp1_zkvm::io::commit(&cumulative_gas_used);
 
+    // Update state trie
     let account_updates = get_state_transitions(&mut state);
-
-    // Update tries and calculate final state root hash
     update_tries(&mut state_trie, &mut storage_tries, &account_updates)
         .expect("failed to update state and storage tries");
 
+    // Calculate final state root hash and check
     let final_state_hash = state_trie.hash_no_commit();
     if final_state_hash != block.header.state_root {
         panic!("invalid final state trie");
@@ -58,5 +61,6 @@ pub fn main() {
     sp1_zkvm::io::commit(&ProgramOutput {
         initial_state_hash,
         final_state_hash,
+        debug_final_proofs,
     });
 }

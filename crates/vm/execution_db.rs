@@ -96,8 +96,55 @@ impl ExecutionDB {
         spec_id: SpecId,
         db: ExtDB,
     ) -> Result<CacheDB<ExtDB>, RevmError<ExtDB::Error>> {
-        let block_env = block_env(&block.header);
         let mut db = CacheDB::new(db);
+
+        // beacon root call
+        {
+            lazy_static! {
+                static ref SYSTEM_ADDRESS: RevmAddress = RevmAddress::from_slice(
+                    &hex::decode("fffffffffffffffffffffffffffffffffffffffe").unwrap()
+                );
+                static ref CONTRACT_ADDRESS: RevmAddress = RevmAddress::from_slice(
+                    &hex::decode("000F3df6D732807Ef1319fB7B8bB8522d0Beac02").unwrap(),
+                );
+            };
+            let beacon_root = match block.header.parent_beacon_block_root {
+                None => {
+                    return Err(RevmError::Custom(
+                        "parent_beacon_block_root field is missing".to_string(),
+                    ))
+                }
+                Some(beacon_root) => beacon_root,
+            };
+
+            let tx_env = TxEnv {
+                caller: *SYSTEM_ADDRESS,
+                transact_to: RevmTxKind::Call(*CONTRACT_ADDRESS),
+                gas_limit: 30_000_000,
+                data: revm::primitives::Bytes::copy_from_slice(beacon_root.as_bytes()),
+                ..Default::default()
+            };
+            let mut block_env = block_env(&block.header);
+            block_env.basefee = RevmU256::ZERO;
+            block_env.gas_limit = RevmU256::from(30_000_000);
+
+            let mut evm = Evm::builder()
+                .with_db(&mut db)
+                .with_block_env(block_env)
+                .with_tx_env(tx_env)
+                .with_spec_id(spec_id)
+                .build();
+
+            let transaction_result = evm.transact()?;
+
+            let mut result_state = transaction_result.state;
+            result_state.remove(&*SYSTEM_ADDRESS);
+            result_state.remove(&evm.block().coinbase);
+
+            evm.context.evm.db.commit(result_state);
+        }
+
+        let block_env = block_env(&block.header);
 
         for transaction in &block.body.transactions {
             let tx_env = tx_env(transaction);

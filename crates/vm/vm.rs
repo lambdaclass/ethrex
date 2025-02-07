@@ -815,8 +815,14 @@ pub fn beacon_root_contract_call(
                 .with_spec_id(spec_id)
                 .build();
 
-            // Not necessary to commit to DB
             let transaction_result = evm.transact()?;
+
+            let mut result_state = transaction_result.state;
+            result_state.remove(&*SYSTEM_ADDRESS);
+            result_state.remove(&evm.block().coinbase);
+
+            evm.context.evm.db.commit(result_state);
+
             Ok(transaction_result.result.into())
         }
     }
