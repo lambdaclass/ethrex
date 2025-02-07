@@ -395,12 +395,7 @@ impl VM {
             .pop()
             .ok_or(VMError::Internal(InternalError::CouldNotPopCallframe))?;
 
-        // NOTE: ATTOW the default hook is created in VM::new(), so
-        // (in theory) _at least_ the default prepare execution should
-        // run
-        for hook in self.hooks.clone() {
-            hook.prepare_execution(self, &mut initial_call_frame)?;
-        }
+        self.prepare_execution(&mut initial_call_frame)?;
 
         // In CREATE type transactions:
         //  Add created contract to cache, reverting transaction if the address is already occupied
@@ -427,9 +422,7 @@ impl VM {
 
         report.gas_used = self.gas_used(&initial_call_frame, &report)?;
 
-        for hook in self.hooks.clone() {
-            hook.finalize_execution(self, &initial_call_frame, &mut report)?;
-        }
+        self.finalize_execution(&initial_call_frame, &mut report)?;
 
         report.new_state.clone_from(&self.cache);
 
@@ -521,11 +514,36 @@ impl VM {
             output: Bytes::new(),
         };
 
-        for hook in self.hooks.clone() {
-            hook.finalize_execution(self, initial_call_frame, &mut report)?;
-        }
+        self.finalize_execution(initial_call_frame, &mut report)?;
+
         report.new_state.clone_from(&self.cache);
 
         Ok(report)
+    }
+
+    fn prepare_execution(&mut self, initial_call_frame: &mut CallFrame) -> Result<(), VMError> {
+        // NOTE: ATTOW the default hook is created in VM::new(), so
+        // (in theory) _at least_ the default prepare execution should
+        // run
+        for hook in self.hooks.clone() {
+            hook.prepare_execution(self, initial_call_frame)?;
+        }
+
+        Ok(())
+    }
+
+    fn finalize_execution(
+        &mut self,
+        initial_call_frame: &CallFrame,
+        report: &mut ExecutionReport,
+    ) -> Result<(), VMError> {
+        // NOTE: ATTOW the default hook is created in VM::new(), so
+        // (in theory) _at least_ the default finalize execution should
+        // run
+        for hook in self.hooks.clone() {
+            hook.finalize_execution(self, initial_call_frame, report)?;
+        }
+
+        Ok(())
     }
 }
