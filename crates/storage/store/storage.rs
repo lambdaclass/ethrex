@@ -1112,6 +1112,10 @@ impl Store {
     ) -> Result<Option<(H256, [H256; STATE_TRIE_SEGMENTS])>, StoreError> {
         self.engine.get_trie_rebuild_checkpoint()
     }
+
+    pub fn clear_snapshot(&self) -> Result<(), StoreError> {
+        self.engine.clear_snapshot()
+    }
 }
 
 pub fn hash_address(address: &Address) -> Vec<u8> {

@@ -12,7 +12,7 @@ use tokio::{
         mpsc::{self, error::SendError, Receiver, Sender},
         Mutex,
     },
-    time::{sleep, Instant, Duration},
+    time::{sleep, Duration, Instant},
 };
 use tracing::{debug, info, warn};
 
@@ -1130,9 +1130,7 @@ async fn rebuild_state_trie_in_backgound(store: Store) -> Result<Vec<H256>, Sync
         // Show Progress stats (this task is not vital so we can detach it)
         if Instant::now().duration_since(last_show_progress) >= SHOW_PROGRESS_INTERVAL_DURATION {
             last_show_progress = Instant::now();
-            tokio::spawn(show_trie_rebuild_progress(
-                rebuild_status.clone()
-            ));
+            tokio::spawn(show_trie_rebuild_progress(rebuild_status.clone()));
         }
         let state_sync_complte = {
             let key_checkpoints = store.get_state_trie_key_checkpoint()?;
@@ -1166,18 +1164,22 @@ async fn rebuild_state_trie_in_backgound(store: Store) -> Result<Vec<H256>, Sync
         // Move on to the next segment
         current_segment = (current_segment + 1) % STATE_TRIE_SEGMENTS
     }
+    // Clear snapshot
+    store.clear_snapshot()?;
 
     Ok(mismatched_storage_accounts)
 }
 
-async fn show_trie_rebuild_progress(rebuild_status: [SegmentStatus;STATE_TRIE_SEGMENTS]) {
+async fn show_trie_rebuild_progress(rebuild_status: [SegmentStatus; STATE_TRIE_SEGMENTS]) {
     // Count how many hashes we already inserted in the trie
     let mut accounts_processed = U256::zero();
-    for i  in 0..STATE_TRIE_SEGMENTS {
-        accounts_processed += rebuild_status[i].current.into_uint() - STATE_TRIE_SEGMENTS_START[i].into_uint();
+    for i in 0..STATE_TRIE_SEGMENTS {
+        accounts_processed +=
+            rebuild_status[i].current.into_uint() - STATE_TRIE_SEGMENTS_START[i].into_uint();
     }
     // Calculate completion rate
-    let completion_rate = (U512::from(accounts_processed + U256::one()) * U512::from(100)) / U512::from(U256::max_value());
+    let completion_rate = (U512::from(accounts_processed + U256::one()) * U512::from(100))
+        / U512::from(U256::max_value());
     info!("State Trie Rebuild Progress: {}%", completion_rate)
 }
 

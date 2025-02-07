@@ -78,17 +78,6 @@ impl Store {
         txn.get::<T>(key).map_err(StoreError::LibmdbxError)
     }
 
-    // Helper method to remove a value from a libmdbx table
-    fn delete<T: Table>(&self, key: T::Key) -> Result<(), StoreError> {
-        let txn = self
-            .db
-            .begin_readwrite()
-            .map_err(StoreError::LibmdbxError)?;
-        txn.delete::<T>(key, None)
-            .map_err(StoreError::LibmdbxError)?;
-        txn.commit().map_err(StoreError::LibmdbxError)
-    }
-
     fn get_block_hash_by_block_number(
         &self,
         number: BlockNumber,
@@ -757,18 +746,20 @@ impl StoreEngine for Store {
                 .map_err(|_| RLPDecodeError::InvalidLength)?,
         )))
     }
-}
 
-impl Store {
     fn clear_snapshot(&self) -> Result<(), StoreError> {
         let txn = self
             .db
             .begin_readwrite()
             .map_err(StoreError::LibmdbxError)?;
-        txn.clear_table::<StateSnapShot>();
-        Ok(())
+        txn.clear_table::<StateSnapShot>()
+            .map_err(StoreError::LibmdbxError)?;
+        txn.clear_table::<StorageSnapShot>()
+            .map_err(StoreError::LibmdbxError)
     }
+}
 
+impl Store {
     fn rebuild_storage_trie_from_snapshot(&self, account_hash: H256) -> Result<H256, StoreError> {
         // Open a new storage trie
         let mut storage_trie = self.open_storage_trie(account_hash, *EMPTY_TRIE_HASH);

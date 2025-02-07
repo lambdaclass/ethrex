@@ -325,5 +325,6 @@ pub trait StoreEngine: Debug + Send + Sync + RefUnwindSafe {
         &self,
     ) -> Result<Option<(H256, [H256; STATE_TRIE_SEGMENTS])>, StoreError>;
 
+    fn clear_snapshot(&self) -> Result<(), StoreError>;
     // NO PUEDO TENER ASYNC ACA!!!!
 }
