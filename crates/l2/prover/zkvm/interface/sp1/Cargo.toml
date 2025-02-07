@@ -11,9 +11,7 @@ zkvm_interface = { path = "../" }
 
 ethrex-core = { path = "../../../../../common", default-features = false }
 ethrex-rlp = { path = "../../../../../common/rlp" }
-ethrex-vm = { path = "../../../../../vm", default-features = false, features = [
-    "l2",
-] }
+ethrex-vm = { path = "../../../../../vm", default-features = false }
 ethrex-blockchain = { path = "../../../../../blockchain", default-features = false }
 
 [patch.crates-io]
