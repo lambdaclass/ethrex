@@ -1100,6 +1100,8 @@ fn node_missing_children(
 }
 
 pub(crate) type RebuildStatus = [SegmentStatus; STATE_TRIE_SEGMENTS];
+
+#[derive(Debug)]
 pub(crate) struct SegmentStatus {
     pub current: H256,
     pub end: H256,
