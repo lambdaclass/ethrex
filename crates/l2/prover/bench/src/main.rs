@@ -1,6 +1,9 @@
 use std::{fs::File, io::Write};
 
-use bench::rpc::{db::RpcDB, get_block, get_latest_block_number};
+use bench::{
+    cache::{load_cache, write_cache, Cache},
+    rpc::{db::RpcDB, get_block, get_latest_block_number},
+};
 use clap::Parser;
 use ethrex_l2::utils::prover::proving_systems::ProverType;
 use ethrex_prover_lib::prover::create_prover;
@@ -35,41 +38,43 @@ async fn main() {
         }
     };
 
-    println!("fetching block {block_number} and its parent header");
-    let block = get_block(&rpc_url, block_number)
-        .await
-        .expect("failed to fetch block");
-    let parent_block_header = get_block(&rpc_url, block_number - 1)
-        .await
-        .expect("failed to fetch block")
-        .header;
+    let Cache {
+        block,
+        parent_block_header,
+        db,
+    } = match load_cache(block_number) {
+        Ok(cache) => cache,
+        Err(err) => {
+            println!("failed to load cache for block {block_number}: {err}");
 
-    let db = if let Ok(file) = File::open("db.bin") {
-        println!("db file found");
-        bincode::deserialize_from(file).expect("failed to deserialize db from file")
-    } else {
-        println!("db file not found");
+            println!("fetching block {block_number} and its parent header");
+            let block = get_block(&rpc_url, block_number)
+                .await
+                .expect("failed to fetch block");
 
-        println!("populating rpc db cache");
-        let rpc_db = RpcDB::with_cache(&rpc_url, block_number - 1, &block)
-            .await
-            .expect("failed to create rpc db");
+            let parent_block_header = get_block(&rpc_url, block_number - 1)
+                .await
+                .expect("failed to fetch block")
+                .header;
 
-        println!("pre-executing to build execution db");
-        let db = rpc_db
-            .to_exec_db(&block)
-            .expect("failed to build execution db");
+            println!("populating rpc db cache");
+            let rpc_db = RpcDB::with_cache(&rpc_url, block_number - 1, &block)
+                .await
+                .expect("failed to create rpc db");
 
-        println!("writing db to file db.bin");
-        let mut file = File::create("db.bin").expect("failed to create db file");
-        file.write_all(
-            bincode::serialize(&db)
-                .expect("failed to serialize db")
-                .as_slice(),
-        )
-        .expect("failed to write db to file");
+            println!("pre-executing to build execution db");
+            let db = rpc_db
+                .to_exec_db(&block)
+                .expect("failed to build execution db");
 
-        db
+            let cache = Cache {
+                block,
+                parent_block_header,
+                db,
+            };
+            write_cache(&cache).expect("failed to write cache");
+            cache
+        }
     };
 
     let mut prover = create_prover(ProverType::SP1);
