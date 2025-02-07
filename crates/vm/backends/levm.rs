@@ -299,7 +299,7 @@ pub fn beacon_root_contract_call_levm(
         env,
         U256::zero(),
         calldata,
-        store_wrapper,
+        db,
         CacheDB::new(),
         vec![],
         None,
