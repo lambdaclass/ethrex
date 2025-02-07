@@ -687,7 +687,6 @@ impl StoreEngine for Store {
         let cursor = txn
             .cursor::<StateSnapShot>()
             .map_err(StoreError::LibmdbxError)?;
-        tracing::info!("Snapshot open");
         let mut current_hash = start;
         let mut inserts_since_last_commit = 0;
         for (hash, account) in cursor

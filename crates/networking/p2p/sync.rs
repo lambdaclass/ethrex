@@ -1125,12 +1125,18 @@ async fn rebuild_state_trie_in_backgound(store: Store) -> Result<Vec<H256>, Sync
     let mut root = checkpoint.map(|(root, _)| root).unwrap_or(*EMPTY_TRIE_HASH);
     let mut current_segment = 0;
     let mut mismatched_storage_accounts = vec![];
+    let start_time = Instant::now();
+    let initial_rebuild_status = rebuild_status.clone();
     let mut last_show_progress = Instant::now();
     while !rebuild_status.iter().all(|status| status.complete()) {
         // Show Progress stats (this task is not vital so we can detach it)
         if Instant::now().duration_since(last_show_progress) >= SHOW_PROGRESS_INTERVAL_DURATION {
             last_show_progress = Instant::now();
-            tokio::spawn(show_trie_rebuild_progress(rebuild_status.clone()));
+            tokio::spawn(show_trie_rebuild_progress(
+                start_time,
+                initial_rebuild_status.clone(),
+                rebuild_status.clone(),
+            ));
         }
         let state_sync_complte = {
             let key_checkpoints = store.get_state_trie_key_checkpoint()?;
@@ -1140,7 +1146,6 @@ async fn rebuild_state_trie_in_backgound(store: Store) -> Result<Vec<H256>, Sync
                     .all(|(ch, end)| ch >= end)
             })
         };
-        info!("Rebuilding segment {current_segment}, status: {rebuild_status:?}");
         if !rebuild_status[current_segment].complete() {
             // Start rebuilding the current trie segment
             let (current_root, mismatched, current_hash) = store.rebuild_state_trie_segment(
@@ -1170,17 +1175,33 @@ async fn rebuild_state_trie_in_backgound(store: Store) -> Result<Vec<H256>, Sync
     Ok(mismatched_storage_accounts)
 }
 
-async fn show_trie_rebuild_progress(rebuild_status: [SegmentStatus; STATE_TRIE_SEGMENTS]) {
-    // Count how many hashes we already inserted in the trie
+async fn show_trie_rebuild_progress(
+    start_time: Instant,
+    initial_rebuild_status: [SegmentStatus; STATE_TRIE_SEGMENTS],
+    rebuild_status: [SegmentStatus; STATE_TRIE_SEGMENTS],
+) {
+    // Count how many hashes we already inserted in the trie and how many we inserted this cycle
     let mut accounts_processed = U256::zero();
+    let mut accounts_processed_this_cycle = U256::zero();
     for i in 0..STATE_TRIE_SEGMENTS {
         accounts_processed +=
             rebuild_status[i].current.into_uint() - STATE_TRIE_SEGMENTS_START[i].into_uint();
+        accounts_processed_this_cycle +=
+            rebuild_status[i].current.into_uint() - initial_rebuild_status[i].current.into_uint()
     }
     // Calculate completion rate
     let completion_rate = (U512::from(accounts_processed + U256::one()) * U512::from(100))
         / U512::from(U256::max_value());
-    info!("State Trie Rebuild Progress: {}%", completion_rate)
+    // Time to finish = Time since start / Accounts processed this cycle * Remaining accounts
+    let remaining_accounts = U256::MAX - accounts_processed;
+    let time_to_finish =
+        (U512::from(start_time.elapsed().as_secs()) * U512::from(remaining_accounts) + U512::one())
+            / U512::from(accounts_processed_this_cycle);
+    info!(
+        "State Trie Rebuild Progress: {}%, estimated time to finish: {}",
+        completion_rate,
+        seconds_to_readable(time_to_finish)
+    );
 }
 
 #[derive(Clone)]
