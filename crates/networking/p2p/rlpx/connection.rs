@@ -122,12 +122,15 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
             // NOTE: if the peer came from the discovery server it will already be inserted in the table
             // but that might not always be the case, so we try to add it to the table
             // Note: we don't ping the node we let the validation service do its job
-            table.lock().await.insert_node_forced(self.node);
-            table.lock().await.init_backend_communication(
-                self.node.node_id,
-                peer_channels,
-                capabilities,
-            );
+            {
+                let mut table_lock = table.lock().await;
+                table_lock.insert_node_forced(self.node);
+                table_lock.init_backend_communication(
+                    self.node.node_id,
+                    peer_channels,
+                    capabilities,
+                );
+            }
             if let Err(e) = self.connection_loop(sender, receiver).await {
                 self.connection_failed("Error during RLPx connection", e, table)
                     .await;

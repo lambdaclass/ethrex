@@ -179,6 +179,7 @@ pub async fn periodically_show_peer_stats(peer_table: Arc<Mutex<KademliaTable>>)
     const INTERVAL_DURATION: tokio::time::Duration = tokio::time::Duration::from_secs(30);
     let mut interval = tokio::time::interval(INTERVAL_DURATION);
     loop {
+        // clone peers to keep the lock short
         let peers: Vec<kademlia::PeerData> =
             peer_table.lock().await.iter_peers().cloned().collect();
         let total_peers = peers.len();

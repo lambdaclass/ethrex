@@ -70,7 +70,7 @@ impl KademliaTable {
         self.insert_node_inner(node, bucket_idx, false)
     }
 
-    /// Inserts a node into the table, even if the bucket is filled.
+    /// Inserts a node into the table, even if the bucket is full.
     /// # Returns
     /// A tuple containing:
     ///     1. PeerData: none if the peer was already in the table or as a potential replacement
