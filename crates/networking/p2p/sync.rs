@@ -12,7 +12,7 @@ use tokio::{
         mpsc::{self, error::SendError, Receiver, Sender},
         Mutex,
     },
-    time::{sleep, Instant},
+    time::{sleep, Instant, Duration},
 };
 use tracing::{debug, info, warn};
 
@@ -33,6 +33,8 @@ const MAX_PARALLEL_FETCHES: usize = 10;
 const MAX_CHANNEL_MESSAGES: usize = 500;
 /// Maximum amount of messages to read from a channel at once
 const MAX_CHANNEL_READS: usize = 200;
+/// Pace at which progress is shown via info tracing
+const SHOW_PROGRESS_INTERVAL_DURATION: Duration = Duration::from_secs(30);
 
 lazy_static::lazy_static! {
     // Size of each state trie segment
@@ -1099,8 +1101,6 @@ fn node_missing_children(
     Ok(paths)
 }
 
-pub(crate) type RebuildStatus = [SegmentStatus; STATE_TRIE_SEGMENTS];
-
 #[derive(Debug, Clone)]
 pub(crate) struct SegmentStatus {
     pub current: H256,
@@ -1111,13 +1111,6 @@ impl SegmentStatus {
     pub(crate) fn complete(&self) -> bool {
         self.current >= self.end
     }
-}
-
-pub(crate) fn init_rebuild_status() -> RebuildStatus {
-    array::from_fn(|i| SegmentStatus {
-        current: STATE_TRIE_SEGMENTS_START[i],
-        end: STATE_TRIE_SEGMENTS_END[i],
-    })
 }
 
 async fn rebuild_state_trie_in_backgound(store: Store) -> Result<Vec<H256>, SyncError> {
@@ -1132,7 +1125,15 @@ async fn rebuild_state_trie_in_backgound(store: Store) -> Result<Vec<H256>, Sync
     let mut root = checkpoint.map(|(root, _)| root).unwrap_or(*EMPTY_TRIE_HASH);
     let mut current_segment = 0;
     let mut mismatched_storage_accounts = vec![];
+    let mut last_show_progress = Instant::now();
     while !rebuild_status.iter().all(|status| status.complete()) {
+        // Show Progress stats (this task is not vital so we can detach it)
+        if Instant::now().duration_since(last_show_progress) >= SHOW_PROGRESS_INTERVAL_DURATION {
+            last_show_progress = Instant::now();
+            tokio::spawn(show_trie_rebuild_progress(
+                rebuild_status.clone()
+            ));
+        }
         let state_sync_complte = {
             let key_checkpoints = store.get_state_trie_key_checkpoint()?;
             key_checkpoints.is_some_and(|ch| {
@@ -1165,7 +1166,19 @@ async fn rebuild_state_trie_in_backgound(store: Store) -> Result<Vec<H256>, Sync
         // Move on to the next segment
         current_segment = (current_segment + 1) % STATE_TRIE_SEGMENTS
     }
+
     Ok(mismatched_storage_accounts)
+}
+
+async fn show_trie_rebuild_progress(rebuild_status: [SegmentStatus;STATE_TRIE_SEGMENTS]) {
+    // Count how many hashes we already inserted in the trie
+    let mut accounts_processed = U256::zero();
+    for i  in 0..STATE_TRIE_SEGMENTS {
+        accounts_processed += rebuild_status[i].current.into_uint() - STATE_TRIE_SEGMENTS_START[i].into_uint();
+    }
+    // Calculate completion rate
+    let completion_rate = (U512::from(accounts_processed + U256::one()) * U512::from(100)) / U512::from(U256::max_value());
+    info!("State Trie Rebuild Progress: {}%", completion_rate)
 }
 
 #[derive(Clone)]
@@ -1245,10 +1258,9 @@ impl StateSyncProgress {
 }
 
 async fn show_state_sync_progress(progress: StateSyncProgress) {
-    const INTERVAL_DURATION: tokio::time::Duration = tokio::time::Duration::from_secs(30);
     // Rest for one interval so we don't start computing on empty progress
-    sleep(INTERVAL_DURATION).await;
-    let mut interval = tokio::time::interval(INTERVAL_DURATION);
+    sleep(SHOW_PROGRESS_INTERVAL_DURATION).await;
+    let mut interval = tokio::time::interval(SHOW_PROGRESS_INTERVAL_DURATION);
     let mut complete = false;
     while !complete {
         interval.tick().await;
