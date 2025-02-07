@@ -75,10 +75,10 @@ QUIET ?= false
 
 hive:
 	if [ "$(QUIET)" = "true" ]; then \
-		git clone --quiet --single-branch --branch master --shallow-since=$(HIVE_SHALLOW_SINCE) https://github.com/lambdaclass/hive ; \
+		git clone --quiet --single-branch --branch master --shallow-since=$(HIVE_SHALLOW_SINCE) https://github.com/lambdaclass/hive && \
 		cd hive && git checkout --quiet --detach $(HIVE_REVISION) && go build .; \
 	else \
-		git clone --single-branch --branch master --shallow-since=$(HIVE_SHALLOW_SINCE) https://github.com/lambdaclass/hive ; \
+		git clone --single-branch --branch master --shallow-since=$(HIVE_SHALLOW_SINCE) https://github.com/lambdaclass/hive && \
 		cd hive && git checkout --detach $(HIVE_REVISION) && go build .; \
 	fi
 
