@@ -244,13 +244,9 @@ impl ToExecDB for RpcDB {
         .unwrap(); // TODO: remove unwrap
         let cache = db.cache.borrow();
 
-        let cache_iter = cache.iter().filter_map(|(address, account)| {
-            if let Some(account) = account {
-                Some((address, account))
-            } else {
-                None
-            }
-        });
+        let cache_iter = cache
+            .iter()
+            .filter_map(|(address, account)| account.as_ref().map(|account| (address, account)));
 
         let accounts: HashMap<_, _> = cache_iter
             .clone()
@@ -305,7 +301,6 @@ impl ToExecDB for RpcDB {
         let state_root = cache_iter
             .clone()
             .next()
-            .clone()
             .and_then(|(_, account)| account.account_proof.first().cloned());
         let other_state_nodes = cache_iter
             .flat_map(|(_, account)| account.account_proof.iter().skip(1).cloned())

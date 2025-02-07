@@ -4,8 +4,6 @@ use ethrex_rpc_client::{get_block, get_latest_block_number};
 use ethrex_vm::execution_db::ToExecDB;
 use ethrex_vm::{execute_block, EvmState};
 use revm::primitives::hex;
-use revm::Database;
-use std::hash::Hash;
 use std::{fs::File, io::Write};
 
 #[derive(Parser, Debug)]

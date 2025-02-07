@@ -10,8 +10,8 @@ use ethrex_core::{
 use ethrex_rlp::decode::RLPDecode;
 use ethrex_storage::hash_address;
 use ethrex_trie::Trie;
+use std::collections::HashMap;
 use std::time::Duration;
-use std::{collections::HashMap, future::Future};
 
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
