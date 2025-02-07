@@ -195,13 +195,12 @@ pub mod trie {
 
                 // if there isn't a path into the account (inconsistent tree error), then
                 // it's potentially a new account. This is because we're using pruned tries
-                // so the path into a new account might not be included in the pruned state trie.
-                let mut account_state = match account_state {
-                    Ok(Some(encoded_state)) => AccountState::decode(&encoded_state)?,
-                    Ok(None) | Err(TrieError::InconsistentTree) => AccountState::default(),
+                // so a proof of exclusion might not be included in the pruned state trie.
+                let (mut account_state, is_account_new) = match account_state {
+                    Ok(Some(encoded_state)) => (AccountState::decode(&encoded_state)?, false),
+                    Ok(None) | Err(TrieError::InconsistentTree) => (AccountState::default(), true),
                     Err(err) => return Err(err.into()),
                 };
-                let is_account_new = account_state == AccountState::default();
 
                 if let Some(info) = &update.info {
                     account_state.nonce = info.nonce;
@@ -221,9 +220,9 @@ pub mod trie {
                     };
                     for (storage_key, storage_value) in &update.added_storage {
                         let hashed_key = hash_key(storage_key);
-                        if storage_value.is_zero() && !is_account_new {
+                        if storage_value.is_zero() {
                             storage_trie.remove(hashed_key)?;
-                        } else if !storage_value.is_zero() {
+                        } else {
                             storage_trie.insert(hashed_key, storage_value.encode_to_vec())?;
                         }
                     }
