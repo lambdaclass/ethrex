@@ -710,10 +710,6 @@ impl StoreEngine for Store {
             .walk(Some(start.into()))
             .map_while(|res| res.ok().map(|(hash, acc)| (hash.to(), acc.to())))
         {
-            tracing::info!(
-                "Rebuilding state trie, storages in need of healing: {}",
-                mismatched_storage_accounts.len()
-            );
             current_hash = hash;
             if current_hash >= end {
                 break;
