@@ -29,7 +29,6 @@ use std::{
     cmp::max,
     collections::{HashMap, HashSet},
     fmt::Debug,
-    rc::Rc,
     sync::Arc,
 };
 pub type Storage = HashMap<U256, H256>;
@@ -168,7 +167,7 @@ pub struct VM {
     pub tx_kind: TxKind,
     pub access_list: AccessList,
     pub authorization_list: Option<AuthorizationList>,
-    pub hooks: Vec<Rc<dyn Hook>>,
+    pub hooks: Vec<Arc<dyn Hook>>,
 }
 
 impl VM {
@@ -218,7 +217,7 @@ impl VM {
             default_touched_accounts.insert(Address::from_low_u64_be(i));
         }
 
-        let default_hook: Rc<dyn Hook> = Rc::new(DefaultHook);
+        let default_hook: Arc<dyn Hook> = Arc::new(DefaultHook);
         let hooks = vec![default_hook];
         match to {
             TxKind::Call(address_to) => {
