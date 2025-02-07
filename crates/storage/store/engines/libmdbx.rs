@@ -724,7 +724,11 @@ impl Store {
     /// Rebuilds state trie segment from the snapshot
     /// and the addresses of the storages whose root doesn't match the one in the account state
     /// Returns the last rebuild account hash + the account hashes of storages in need of healing + the current state root
-    fn rebuild_state_trie_segment(&self, start: H256, end: H256) -> Result<(H256, Vec<H256>, H256), StoreError> {
+    fn rebuild_state_trie_segment(
+        &self,
+        start: H256,
+        end: H256,
+    ) -> Result<(H256, Vec<H256>, H256), StoreError> {
         let mut mismatched_storage_accounts = vec![];
         // Open a new state trie
         let mut state_trie = self.open_state_trie(*EMPTY_TRIE_HASH);
@@ -735,6 +739,7 @@ impl Store {
             .map_err(StoreError::LibmdbxError)?;
         tracing::info!("Snapshot open");
         let mut current_hash = start;
+        let mut inserts_since_last_commit = 0;
         for (hash, account) in cursor
             .walk(Some(start.into()))
             .map_while(|res| res.ok().map(|(hash, acc)| (hash.to(), acc.to())))
@@ -754,8 +759,18 @@ impl Store {
             }
             // Add account to trie
             state_trie.insert(hash.to_fixed_bytes().to_vec(), account.encode_to_vec())?;
+            // Commit every few iterations so we don't build the full trie in memory
+            inserts_since_last_commit += 1;
+            if inserts_since_last_commit > MAX_TRIE_INSERTS_WITHOUT_COMMIT {
+                state_trie.hash()?;
+                inserts_since_last_commit = 0;
+            }
         }
-        Ok((current_hash, mismatched_storage_accounts, state_trie.hash()?))
+        Ok((
+            current_hash,
+            mismatched_storage_accounts,
+            state_trie.hash()?,
+        ))
     }
 }
 
