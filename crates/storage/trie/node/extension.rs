@@ -74,13 +74,13 @@ impl ExtensionNode {
             let branch_node = if self.prefix.at(0) == 16 {
                 match state.get_node(new_node)? {
                     Some(Node::Leaf(leaf)) => {
-                        BranchNode::new_with_value(choices, leaf.value)
+                        BranchNode::new_with_value(Box::new(choices), leaf.value)
                     }
                     _ => return Err(TrieError::InconsistentTree),
                 }
             } else {
                 choices[self.prefix.at(0)] = new_node;
-                BranchNode::new(choices)
+                BranchNode::new(Box::new(choices))
             };
             return branch_node.insert(state, path, value);
         } else {
@@ -426,7 +426,7 @@ mod test {
         let mut choices = BranchNode::EMPTY_CHOICES;
         choices[0] = leaf_node_a.compute_hash();
         choices[1] = leaf_node_b.compute_hash();
-        let branch_node = BranchNode::new(choices);
+        let branch_node = BranchNode::new(Box::new(choices));
         let node = ExtensionNode::new(Nibbles::from_hex(vec![0, 0]), branch_node.compute_hash());
 
         assert_eq!(
@@ -461,7 +461,7 @@ mod test {
         let mut choices = BranchNode::EMPTY_CHOICES;
         choices[0] = leaf_node_a.compute_hash();
         choices[1] = leaf_node_b.compute_hash();
-        let branch_node = BranchNode::new(choices);
+        let branch_node = BranchNode::new(Box::new(choices));
         let node = ExtensionNode::new(Nibbles::from_hex(vec![0, 0]), branch_node.compute_hash());
 
         assert_eq!(

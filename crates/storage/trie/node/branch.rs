@@ -9,7 +9,7 @@ use super::{ExtensionNode, LeafNode, Node};
 #[derive(Debug, Clone, PartialEq)]
 pub struct BranchNode {
     // TODO: check if switching to hashmap is a better solution
-    pub choices: [NodeHash; 16],
+    pub choices: Box<[NodeHash; 16]>,
     pub value: ValueRLP,
 }
 
@@ -35,7 +35,7 @@ impl BranchNode {
     ];
 
     /// Creates a new branch node given its children, without any stored value
-    pub fn new(choices: [NodeHash; 16]) -> Self {
+    pub fn new(choices: Box<[NodeHash; 16]>) -> Self {
         Self {
             choices,
             value: Default::default(),
@@ -43,7 +43,7 @@ impl BranchNode {
     }
 
     /// Creates a new branch node given its children and value
-    pub fn new_with_value(choices: [NodeHash; 16], value: ValueRLP) -> Self {
+    pub fn new_with_value(choices: Box<[NodeHash; 16]>, value: ValueRLP) -> Self {
         Self { choices, value }
     }
 
@@ -278,11 +278,11 @@ mod test {
             choices[2] = NodeHash::Hashed(H256([2; 32]));
             choices[5] = NodeHash::Hashed(H256([5; 32]));
 
-            choices
+            Box::new(choices)
         });
 
         assert_eq!(
-            node.choices,
+            *node.choices,
             [
                 Default::default(),
                 Default::default(),

@@ -59,13 +59,13 @@ impl LeafNode {
                 let new_leaf = LeafNode::new(path.offset(match_index + 1), value);
                 let mut choices = BranchNode::EMPTY_CHOICES;
                 choices[new_leaf_choice_idx] = new_leaf.insert_self(state)?;
-                BranchNode::new_with_value(choices, self.value)
+                BranchNode::new_with_value(Box::new(choices), self.value)
             } else if new_leaf_choice_idx == 16 {
                 // Create a branch node with self as a child and store the value in the branch node
                 // Branch { [Self,...], Value }
                 let mut choices = BranchNode::EMPTY_CHOICES;
                 choices[self_choice_idx] = self.clone().insert_self(state)?;
-                BranchNode::new_with_value(choices, value)
+                BranchNode::new_with_value(Box::new(choices), value)
             } else {
                 // Create a new leaf node and store the path and value in it
                 // Create a new branch node with the leaf and self as children
@@ -74,7 +74,7 @@ impl LeafNode {
                 let mut choices = BranchNode::EMPTY_CHOICES;
                 choices[new_leaf_choice_idx] = new_leaf.insert_self(state)?;
                 choices[self_choice_idx] = self.clone().insert_self(state)?;
-                BranchNode::new(choices)
+                BranchNode::new(Box::new(choices))
             };
 
             let final_node = if match_index == 0 {
