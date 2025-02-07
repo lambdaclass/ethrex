@@ -799,6 +799,7 @@ impl VM {
 
         // In CREATE type transactions:
         //  Add created contract to cache, reverting transaction if the address is already occupied
+        //
         if self.is_create() {
             let new_contract_address = initial_call_frame.to;
             let new_account = get_account(&mut self.cache, &self.db, new_contract_address);
