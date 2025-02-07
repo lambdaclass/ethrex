@@ -311,6 +311,7 @@ pub trait StoreEngine: Debug + Send + Sync + RefUnwindSafe {
 
     fn rebuild_state_trie_segment(
         &self,
+        current_root: H256,
         start: H256,
         end: H256,
     ) -> Result<(H256, Vec<H256>, H256), StoreError>;

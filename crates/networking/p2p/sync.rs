@@ -63,7 +63,7 @@ pub struct SyncManager {
     /// Syncing beyond this pivot should re-enable snap-sync (as we will not have that state stored)
     /// TODO: Reorgs
     last_snap_pivot: u64,
-    state_trie_rebuilder: Option<tokio::task::JoinHandle<()>>,
+    state_trie_rebuilder: Option<tokio::task::JoinHandle<Result<Vec<H256>, SyncError>>>,
 }
 
 impl SyncManager {
@@ -216,7 +216,10 @@ impl SyncManager {
                     store.clone(),
                 ));
                 // Perform snap sync
-                if !snap_sync(pivot_header.state_root, store.clone(), self.peers.clone()).await? {
+                if !self
+                    .snap_sync(pivot_header.state_root, store.clone())
+                    .await?
+                {
                     // Snap sync was not completed, abort and resume it on the next cycle
                     return Ok(());
                 }
@@ -337,62 +340,75 @@ async fn store_receipts(
     Ok(())
 }
 
-// Downloads the latest state trie and all associated storage tries & bytecodes from peers
-// Rebuilds the state trie and all storage tries based on the downloaded data
-// Performs state healing in order to fix all inconsistencies with the downloaded state
-// Returns the success status, if it is true, then the state is fully consistent and
-// new blocks can be executed on top of it, if false then the state is still inconsistent and
-// snap sync must be resumed on the next sync cycle
-async fn snap_sync(state_root: H256, store: Store, peers: PeerHandler) -> Result<bool, SyncError> {
-    // Retrieve storage data to check which snap sync phase we are in
-    let key_checkpoints = store.get_state_trie_key_checkpoint()?;
-    let mut pending_storage_paths = store.get_storage_heal_paths()?;
-    let pending_state_paths = store.get_state_heal_paths()?;
-    // If we have no key checkpoints or if the key checkpoints are lower than the segment boundaries we are in state sync phase
-    if key_checkpoints.is_none()
-        || key_checkpoints.is_some_and(|ch| {
-            ch.into_iter()
-                .zip(STATE_TRIE_SEGMENTS_END.into_iter())
-                .any(|(ch, end)| ch < end)
-        })
-    {
-        let stale_pivot =
-            state_sync(state_root, store.clone(), peers.clone(), key_checkpoints).await?;
-        if stale_pivot {
-            warn!("Stale Pivot, aborting state sync");
-            return Ok(false);
+impl SyncManager {
+    // Downloads the latest state trie and all associated storage tries & bytecodes from peers
+    // Rebuilds the state trie and all storage tries based on the downloaded data
+    // Performs state healing in order to fix all inconsistencies with the downloaded state
+    // Returns the success status, if it is true, then the state is fully consistent and
+    // new blocks can be executed on top of it, if false then the state is still inconsistent and
+    // snap sync must be resumed on the next sync cycle
+    async fn snap_sync(&mut self, state_root: H256, store: Store) -> Result<bool, SyncError> {
+        // Retrieve storage data to check which snap sync phase we are in
+        let key_checkpoints = store.get_state_trie_key_checkpoint()?;
+        let mut pending_storage_paths = store.get_storage_heal_paths()?;
+        let pending_state_paths = store.get_state_heal_paths()?;
+        // If we have no key checkpoints or if the key checkpoints are lower than the segment boundaries we are in state sync phase
+        if key_checkpoints.is_none()
+            || key_checkpoints.is_some_and(|ch| {
+                ch.into_iter()
+                    .zip(STATE_TRIE_SEGMENTS_END.into_iter())
+                    .any(|(ch, end)| ch < end)
+            })
+        {
+            // Begin the background state rebuild process if it is not active yet
+            if self.state_trie_rebuilder.is_none() {
+                self.state_trie_rebuilder = Some(tokio::task::spawn(
+                    rebuild_state_trie_in_backgound(store.clone()),
+                ))
+            };
+            let stale_pivot = state_sync(
+                state_root,
+                store.clone(),
+                self.peers.clone(),
+                key_checkpoints,
+            )
+            .await?;
+            if stale_pivot {
+                warn!("Stale Pivot, aborting state sync");
+                return Ok(false);
+            }
         }
-    }
-    // If we have no pending storage or state paths then we should perform trie rebuild
-    if pending_storage_paths.is_none() && pending_state_paths.is_none() {
-        info!("Rebuilding state trie");
-        let rebuild_start = Instant::now();
-        let (_, paths) = store.rebuild_state_from_snapshot()?;
-        info!(
-                "State trie rebuilt from snapshot, identified {} incomplete storage tries, time elapsed: {}",
+        // If we have no pending storage or state paths then wait for the trie rebuild to finish
+        if pending_storage_paths.is_none() && pending_state_paths.is_none() {
+            info!("Waiting for the trie rebuild to finish");
+            let rebuild_start = Instant::now();
+            let paths = self.state_trie_rebuilder.take().unwrap().await??;
+            info!(
+                "State trie rebuilt from snapshot, identified {} incomplete storage tries, overtime: {}",
                 paths.len(),
                 rebuild_start.elapsed().as_secs()
             );
-        pending_storage_paths = Some(
-            paths
-                .into_iter()
-                .map(|h| (h, vec![Nibbles::default()]))
-                .collect(),
+            pending_storage_paths = Some(
+                paths
+                    .into_iter()
+                    .map(|h| (h, vec![Nibbles::default()]))
+                    .collect(),
+            )
+        }
+        // Perfrom Healing
+        let heal_status = heal_state_trie(
+            state_root,
+            store.clone(),
+            self.peers.clone(),
+            pending_state_paths,
+            pending_storage_paths,
         )
+        .await?;
+        if !heal_status {
+            warn!("Stale pivot, aborting healing");
+        }
+        return Ok(heal_status);
     }
-    // Perfrom Healing
-    let heal_status = heal_state_trie(
-        state_root,
-        store.clone(),
-        peers.clone(),
-        pending_state_paths,
-        pending_storage_paths,
-    )
-    .await?;
-    if !heal_status {
-        warn!("Stale pivot, aborting healing");
-    }
-    return Ok(heal_status);
 }
 
 /// Downloads the leaf values of a Block's state trie by requesting snap state from peers
@@ -1102,15 +1118,30 @@ pub(crate) fn init_rebuild_status() -> RebuildStatus {
     })
 }
 
-async fn rebuild_state_trie_in_backgound(store: Store) {
+async fn rebuild_state_trie_in_backgound(store: Store) -> Result<Vec<H256>, SyncError> {
     // Sleep for some time so we don't start rebuilding too early
-    tokio::time::sleep(Durarion::from_secs(120));
+    tokio::time::sleep(tokio::time::Duration::from_secs(120)).await;
     let mut rebuild_status = init_rebuild_status();
     let mut current_segment = 0;
+    let mut root = *EMPTY_TRIE_HASH;
+    let mut mismatched_storage_accounts = vec![];
     while !rebuild_status.iter().all(|status| status.complete()) {
-        // Start rebuilding the current trie segment
-        store.rebuild_state_trie_segment(rebuild_status[current_segment].current, rebuild_status[current_segment].end)?;
+        if !rebuild_status[current_segment].complete() {
+            // Start rebuilding the current trie segment
+            let (current_root, mismatched, current_hash) = store.rebuild_state_trie_segment(
+                root,
+                rebuild_status[current_segment].current,
+                rebuild_status[current_segment].end,
+            )?;
+            mismatched_storage_accounts.extend(mismatched);
+            // Update status
+            root = current_root;
+            rebuild_status[current_segment].current = current_hash;
+        }
+        // Move on to the next segemt
+        current_segment = (current_segment + 1) % STATE_TRIE_SEGMENTS
     }
+    Ok(mismatched_storage_accounts)
 }
 
 #[derive(Clone)]

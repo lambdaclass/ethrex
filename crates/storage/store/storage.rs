@@ -1092,10 +1092,12 @@ impl Store {
 
     pub fn rebuild_state_trie_segment(
         &self,
+        current_root: H256,
         start: H256,
         end: H256,
     ) -> Result<(H256, Vec<H256>, H256), StoreError> {
-        self.engine.rebuild_state_trie_segment(start, end)
+        self.engine
+            .rebuild_state_trie_segment(current_root, start, end)
     }
 }
 
