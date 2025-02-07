@@ -1,5 +1,5 @@
 use clap::{Arg, ArgAction, Command};
-use ethrex_net::types::Node;
+use ethrex_p2p::types::Node;
 use tracing::Level;
 
 pub fn cli() -> Command {
@@ -121,6 +121,14 @@ pub fn cli() -> Command {
                 .long("metrics.port")
                 .required(false)
                 .value_name("PROMETHEUS_METRICS_PORT"),
+        )
+        .arg(
+            Arg::new("evm")
+                .long("evm")
+                .required(false)
+                .default_value("revm")
+                .value_name("EVM_BACKEND")
+                .help("Has to be `levm` or `revm`"),
         )
         .subcommand(
             Command::new("removedb").about("Remove the database").arg(
