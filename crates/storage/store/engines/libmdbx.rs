@@ -591,6 +591,8 @@ impl StoreEngine for Store {
     }
 
     fn update_sync_status(&self, status: bool) -> Result<(), StoreError> {
+        let size = self.db.stat().unwrap().total_size();
+        tracing::info!("DB TOTAL SIZE: {size} bytes");
         self.write::<ChainData>(ChainDataIndex::IsSynced, status.encode_to_vec())
     }
 
