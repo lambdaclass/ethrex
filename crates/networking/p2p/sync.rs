@@ -1101,7 +1101,7 @@ fn node_missing_children(
 
 pub(crate) type RebuildStatus = [SegmentStatus; STATE_TRIE_SEGMENTS];
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub(crate) struct SegmentStatus {
     pub current: H256,
     pub end: H256,
@@ -1121,9 +1121,16 @@ pub(crate) fn init_rebuild_status() -> RebuildStatus {
 }
 
 async fn rebuild_state_trie_in_backgound(store: Store) -> Result<Vec<H256>, SyncError> {
-    let mut rebuild_status = init_rebuild_status();
+    // Get initial status from checkpoint if available (aka node restart)
+    let checkpoint = store.get_trie_rebuild_checkpoint()?;
+    let mut rebuild_status = array::from_fn(|i| SegmentStatus {
+        current: checkpoint
+            .map(|(_, ch)| ch[i])
+            .unwrap_or(STATE_TRIE_SEGMENTS_START[i]),
+        end: STATE_TRIE_SEGMENTS_END[i],
+    });
+    let mut root = checkpoint.map(|(root, _)| root).unwrap_or(*EMPTY_TRIE_HASH);
     let mut current_segment = 0;
-    let mut root = *EMPTY_TRIE_HASH;
     let mut mismatched_storage_accounts = vec![];
     while !rebuild_status.iter().all(|status| status.complete()) {
         let state_sync_complte = {
@@ -1152,6 +1159,9 @@ async fn rebuild_state_trie_in_backgound(store: Store) -> Result<Vec<H256>, Sync
                 rebuild_status[current_segment].current = current_hash;
             }
         }
+        // Update DB checkpoint
+        let checkpoint = (root, rebuild_status.clone().map(|st| st.current));
+        store.set_trie_rebuild_checkpoint(checkpoint)?;
         // Move on to the next segment
         current_segment = (current_segment + 1) % STATE_TRIE_SEGMENTS
     }

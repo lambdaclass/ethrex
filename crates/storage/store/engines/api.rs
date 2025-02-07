@@ -316,5 +316,14 @@ pub trait StoreEngine: Debug + Send + Sync + RefUnwindSafe {
         end: H256,
     ) -> Result<(H256, Vec<H256>, H256), StoreError>;
 
+    fn set_trie_rebuild_checkpoint(
+        &self,
+        checkpoint: (H256, [H256; STATE_TRIE_SEGMENTS]),
+    ) -> Result<(), StoreError>;
+
+    fn get_trie_rebuild_checkpoint(
+        &self,
+    ) -> Result<Option<(H256, [H256; STATE_TRIE_SEGMENTS])>, StoreError>;
+
     // NO PUEDO TENER ASYNC ACA!!!!
 }

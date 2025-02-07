@@ -734,6 +734,34 @@ impl StoreEngine for Store {
             state_trie.hash()?,
         ))
     }
+
+    fn set_trie_rebuild_checkpoint(
+        &self,
+        checkpoint: (H256, [H256; STATE_TRIE_SEGMENTS]),
+    ) -> Result<(), StoreError> {
+        self.write::<SnapState>(
+            SnapStateIndex::TrieRebuildCheckpoint,
+            (checkpoint.0, checkpoint.1.to_vec()).encode_to_vec(),
+        )
+    }
+
+    fn get_trie_rebuild_checkpoint(
+        &self,
+    ) -> Result<Option<(H256, [H256; STATE_TRIE_SEGMENTS])>, StoreError> {
+        let Some((root, checkpoints)) = self
+            .read::<SnapState>(SnapStateIndex::StateTrieRootCheckpoint)?
+            .map(|ref c| <(H256, Vec<H256>)>::decode(c))
+            .transpose()?
+        else {
+            return Ok(None);
+        };
+        Ok(Some((
+            root,
+            checkpoints
+                .try_into()
+                .map_err(|_| RLPDecodeError::InvalidLength)?,
+        )))
+    }
 }
 
 impl Store {

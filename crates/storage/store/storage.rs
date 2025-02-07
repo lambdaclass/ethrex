@@ -1099,6 +1099,19 @@ impl Store {
         self.engine
             .rebuild_state_trie_segment(current_root, start, end)
     }
+
+    pub fn set_trie_rebuild_checkpoint(
+        &self,
+        checkpoint: (H256, [H256; STATE_TRIE_SEGMENTS]),
+    ) -> Result<(), StoreError> {
+        self.engine.set_trie_rebuild_checkpoint(checkpoint)
+    }
+
+    pub fn get_trie_rebuild_checkpoint(
+        &self,
+    ) -> Result<Option<(H256, [H256; STATE_TRIE_SEGMENTS])>, StoreError> {
+        self.engine.get_trie_rebuild_checkpoint()
+    }
 }
 
 pub fn hash_address(address: &Address) -> Vec<u8> {
