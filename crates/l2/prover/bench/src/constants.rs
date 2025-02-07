@@ -2,11 +2,15 @@
 
 use std::time::Duration;
 
-use ethrex_core::types::ChainConfig;
+use ethrex_core::types::{ChainConfig, BlobSchedule};
 use revm_primitives::SpecId;
 
+use lazy_static::lazy_static;
+
+lazy_static! {
+
 // Chain config for different forks as defined on https://ethereum.github.io/execution-spec-tests/v3.0.0/consuming_tests/common_types/#fork
-pub static CANCUN_CONFIG: ChainConfig = ChainConfig {
+pub static ref CANCUN_CONFIG: ChainConfig = ChainConfig {
     chain_id: 1_u64,
     homestead_block: Some(0),
     dao_fork_block: Some(0),
@@ -30,7 +34,9 @@ pub static CANCUN_CONFIG: ChainConfig = ChainConfig {
     prague_time: None,
     terminal_total_difficulty_passed: false,
     verkle_time: None,
+    blob_schedule: BlobSchedule::default()
 };
+}
 pub const MAINNET_CHAIN_ID: u64 = 0x1;
 pub const MAINNET_SPEC_ID: SpecId = SpecId::CANCUN;
 

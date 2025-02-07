@@ -16,7 +16,7 @@ pub mod test_utils {
     use ethrex_core::{
         types::{
             Block, BlockBody, BlockHeader, EIP1559Transaction, Genesis, LegacyTransaction,
-            Transaction, TxKind,
+            Transaction, TxKind, DEFAULT_REQUESTS_HASH,
         },
         Address, Bloom, H256, U256,
     };
@@ -69,7 +69,7 @@ pub mod test_utils {
             blob_gas_used: Some(0x00),
             excess_blob_gas: Some(0x00),
             parent_beacon_block_root: Some(H256::zero()),
-            requests_hash: None,
+            requests_hash: Some(*DEFAULT_REQUESTS_HASH),
         }
     }
 

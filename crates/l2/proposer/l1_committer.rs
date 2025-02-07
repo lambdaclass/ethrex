@@ -20,7 +20,7 @@ use ethrex_l2_sdk::{
     eth_client::{eth_sender::Overrides, BlockByNumber, EthClient, WrappedTransaction},
 };
 use ethrex_storage::{error::StoreError, Store};
-use ethrex_vm::{evm_state, execute_block, get_state_transitions};
+use ethrex_vm::{backends::revm::execute_block, db::evm_state, get_state_transitions};
 use keccak_hash::keccak;
 use secp256k1::SecretKey;
 use std::{collections::HashMap, time::Duration};
@@ -41,7 +41,7 @@ pub struct Committer {
     arbitrary_base_blob_gas_price: u64,
 }
 
-pub async fn start_l1_commiter(store: Store) -> Result<(), ConfigError> {
+pub async fn start_l1_committer(store: Store) -> Result<(), ConfigError> {
     let eth_config = EthConfig::from_env()?;
     let committer_config = CommitterConfig::from_env()?;
     let committer = Committer::new_from_config(&committer_config, eth_config, store);

@@ -255,8 +255,12 @@ pub mod test_utils {
     use std::{net::SocketAddr, str::FromStr};
 
     use ethrex_core::H512;
-    use ethrex_net::{sync::SyncManager, types::Node};
+    use ethrex_p2p::{
+        sync::SyncManager,
+        types::{Node, NodeRecord},
+    };
     use ethrex_storage::{EngineType, Store};
+    use k256::ecdsa::SigningKey;
 
     use crate::start_api;
 
@@ -269,6 +273,19 @@ pub mod test_utils {
             tcp_port: 30303,
             node_id: node_id_1,
         }
+    }
+
+    pub fn example_local_node_record() -> NodeRecord {
+        let node_id_1 = H512::from_str("d860a01f9722d78051619d1e2351aba3f43f943f6f00718d1b9baa4101932a1f5011f16bb2b1bb35db20d6fe28fa0bf09636d26a87d31de9ec6203eeedb1f666").unwrap();
+        let node = Node {
+            ip: "127.0.0.1".parse().unwrap(),
+            udp_port: 30303,
+            tcp_port: 30303,
+            node_id: node_id_1,
+        };
+        let signer = SigningKey::random(&mut rand::rngs::OsRng);
+
+        NodeRecord::from_node(node, 0, &signer).unwrap()
     }
 
     // Util to start an api for testing on ports 8500 and 8501,
@@ -299,6 +316,7 @@ pub mod test_utils {
             storage,
             jwt_secret,
             local_p2p_node,
+            example_local_node_record(),
             SyncManager::dummy(),
         )
         .await;

@@ -20,7 +20,7 @@ impl VM {
         &mut self,
         current_call_frame: &mut CallFrame,
     ) -> Result<OpcodeResult, VMError> {
-        self.increase_consumed_gas(current_call_frame, gas_cost::BLOCKHASH)?;
+        current_call_frame.increase_consumed_gas(gas_cost::BLOCKHASH)?;
 
         let block_number = current_call_frame.stack.pop()?;
 
@@ -33,7 +33,7 @@ impl VM {
             || block_number >= self.env.block_number
         {
             current_call_frame.stack.push(U256::zero())?;
-            return Ok(OpcodeResult::Continue);
+            return Ok(OpcodeResult::Continue { pc_increment: 1 });
         }
 
         let block_number: u64 = block_number
@@ -48,7 +48,7 @@ impl VM {
             current_call_frame.stack.push(U256::zero())?;
         }
 
-        Ok(OpcodeResult::Continue)
+        Ok(OpcodeResult::Continue { pc_increment: 1 })
     }
 
     // COINBASE operation
@@ -56,13 +56,13 @@ impl VM {
         &mut self,
         current_call_frame: &mut CallFrame,
     ) -> Result<OpcodeResult, VMError> {
-        self.increase_consumed_gas(current_call_frame, gas_cost::COINBASE)?;
+        current_call_frame.increase_consumed_gas(gas_cost::COINBASE)?;
 
         current_call_frame
             .stack
             .push(address_to_word(self.env.coinbase))?;
 
-        Ok(OpcodeResult::Continue)
+        Ok(OpcodeResult::Continue { pc_increment: 1 })
     }
 
     // TIMESTAMP operation
@@ -70,11 +70,11 @@ impl VM {
         &mut self,
         current_call_frame: &mut CallFrame,
     ) -> Result<OpcodeResult, VMError> {
-        self.increase_consumed_gas(current_call_frame, gas_cost::TIMESTAMP)?;
+        current_call_frame.increase_consumed_gas(gas_cost::TIMESTAMP)?;
 
         current_call_frame.stack.push(self.env.timestamp)?;
 
-        Ok(OpcodeResult::Continue)
+        Ok(OpcodeResult::Continue { pc_increment: 1 })
     }
 
     // NUMBER operation
@@ -82,11 +82,11 @@ impl VM {
         &mut self,
         current_call_frame: &mut CallFrame,
     ) -> Result<OpcodeResult, VMError> {
-        self.increase_consumed_gas(current_call_frame, gas_cost::NUMBER)?;
+        current_call_frame.increase_consumed_gas(gas_cost::NUMBER)?;
 
         current_call_frame.stack.push(self.env.block_number)?;
 
-        Ok(OpcodeResult::Continue)
+        Ok(OpcodeResult::Continue { pc_increment: 1 })
     }
 
     // PREVRANDAO operation
@@ -94,14 +94,14 @@ impl VM {
         &mut self,
         current_call_frame: &mut CallFrame,
     ) -> Result<OpcodeResult, VMError> {
-        self.increase_consumed_gas(current_call_frame, gas_cost::PREVRANDAO)?;
+        current_call_frame.increase_consumed_gas(gas_cost::PREVRANDAO)?;
 
         let randao = self.env.prev_randao.unwrap_or_default(); // Assuming block_env has been integrated
         current_call_frame
             .stack
             .push(U256::from_big_endian(randao.0.as_slice()))?;
 
-        Ok(OpcodeResult::Continue)
+        Ok(OpcodeResult::Continue { pc_increment: 1 })
     }
 
     // GASLIMIT operation
@@ -109,13 +109,13 @@ impl VM {
         &mut self,
         current_call_frame: &mut CallFrame,
     ) -> Result<OpcodeResult, VMError> {
-        self.increase_consumed_gas(current_call_frame, gas_cost::GASLIMIT)?;
+        current_call_frame.increase_consumed_gas(gas_cost::GASLIMIT)?;
 
         current_call_frame
             .stack
             .push(self.env.block_gas_limit.into())?;
 
-        Ok(OpcodeResult::Continue)
+        Ok(OpcodeResult::Continue { pc_increment: 1 })
     }
 
     // CHAINID operation
@@ -123,11 +123,11 @@ impl VM {
         &mut self,
         current_call_frame: &mut CallFrame,
     ) -> Result<OpcodeResult, VMError> {
-        self.increase_consumed_gas(current_call_frame, gas_cost::CHAINID)?;
+        current_call_frame.increase_consumed_gas(gas_cost::CHAINID)?;
 
         current_call_frame.stack.push(self.env.chain_id)?;
 
-        Ok(OpcodeResult::Continue)
+        Ok(OpcodeResult::Continue { pc_increment: 1 })
     }
 
     // SELFBALANCE operation
@@ -135,14 +135,14 @@ impl VM {
         &mut self,
         current_call_frame: &mut CallFrame,
     ) -> Result<OpcodeResult, VMError> {
-        self.increase_consumed_gas(current_call_frame, gas_cost::SELFBALANCE)?;
+        current_call_frame.increase_consumed_gas(gas_cost::SELFBALANCE)?;
 
-        let balance = get_account(&mut self.cache, &self.db, current_call_frame.to)
+        let balance = get_account(&mut self.cache, self.db.clone(), current_call_frame.to)
             .info
             .balance;
 
         current_call_frame.stack.push(balance)?;
-        Ok(OpcodeResult::Continue)
+        Ok(OpcodeResult::Continue { pc_increment: 1 })
     }
 
     // BASEFEE operation
@@ -150,11 +150,11 @@ impl VM {
         &mut self,
         current_call_frame: &mut CallFrame,
     ) -> Result<OpcodeResult, VMError> {
-        self.increase_consumed_gas(current_call_frame, gas_cost::BASEFEE)?;
+        current_call_frame.increase_consumed_gas(gas_cost::BASEFEE)?;
 
         current_call_frame.stack.push(self.env.base_fee_per_gas)?;
 
-        Ok(OpcodeResult::Continue)
+        Ok(OpcodeResult::Continue { pc_increment: 1 })
     }
 
     // BLOBHASH operation
@@ -164,18 +164,18 @@ impl VM {
         current_call_frame: &mut CallFrame,
     ) -> Result<OpcodeResult, VMError> {
         // [EIP-4844] - BLOBHASH is only available from CANCUN
-        if self.env.fork < Fork::Cancun {
+        if self.env.config.fork < Fork::Cancun {
             return Err(VMError::InvalidOpcode);
         }
 
-        self.increase_consumed_gas(current_call_frame, gas_cost::BLOBHASH)?;
+        current_call_frame.increase_consumed_gas(gas_cost::BLOBHASH)?;
 
         let index = current_call_frame.stack.pop()?;
 
         let blob_hashes = &self.env.tx_blob_hashes;
         if index >= blob_hashes.len().into() {
             current_call_frame.stack.push(U256::zero())?;
-            return Ok(OpcodeResult::Continue);
+            return Ok(OpcodeResult::Continue { pc_increment: 1 });
         }
 
         let index: usize = index
@@ -191,7 +191,7 @@ impl VM {
             .stack
             .push(U256::from_big_endian(blob_hash.as_bytes()))?;
 
-        Ok(OpcodeResult::Continue)
+        Ok(OpcodeResult::Continue { pc_increment: 1 })
     }
 
     fn get_blob_gasprice(&mut self) -> Result<U256, VMError> {
@@ -211,16 +211,16 @@ impl VM {
         current_call_frame: &mut CallFrame,
     ) -> Result<OpcodeResult, VMError> {
         // [EIP-7516] - BLOBBASEFEE is only available from CANCUN
-        if self.env.fork < Fork::Cancun {
+        if self.env.config.fork < Fork::Cancun {
             return Err(VMError::InvalidOpcode);
         }
-        self.increase_consumed_gas(current_call_frame, gas_cost::BLOBBASEFEE)?;
+        current_call_frame.increase_consumed_gas(gas_cost::BLOBBASEFEE)?;
 
         let blob_base_fee = self.get_blob_gasprice()?;
 
         current_call_frame.stack.push(blob_base_fee)?;
 
-        Ok(OpcodeResult::Continue)
+        Ok(OpcodeResult::Continue { pc_increment: 1 })
     }
 }
 

@@ -22,7 +22,10 @@ use revm_primitives::{SpecId, TxEnv, TxKind as RevmTxKind};
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    block_env, errors::ExecutionDBError, evm_state, execute_block, get_state_transitions, tx_env,
+    block_env,
+    db::evm_state,
+    errors::ExecutionDBError,
+    execute_block, get_state_transitions, tx_env,
 };
 
 /// In-memory EVM database for single execution data.

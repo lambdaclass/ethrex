@@ -14,7 +14,7 @@ use ethrex_core::types::{
 };
 use ethrex_rlp::decode::RLPDecode;
 use ethrex_rlp::encode::RLPEncode;
-use ethrex_trie::Trie;
+use ethrex_trie::{Nibbles, Trie};
 use serde::{Deserialize, Serialize};
 use sha3::{Digest as _, Keccak256};
 use std::collections::{HashMap, HashSet};
@@ -28,7 +28,6 @@ mod rlp;
 
 #[derive(Debug, Clone)]
 pub struct Store {
-    // TODO: Check if we can remove this mutex and move it to the in_memory::Store struct
     engine: Arc<dyn StoreEngine>,
     pub mempool: Arc<Mutex<HashMap<H256, MempoolTransaction>>>,
     pub blobs_bundle_pool: Arc<Mutex<HashMap<H256, BlobsBundle>>>,
@@ -1033,22 +1032,33 @@ impl Store {
         self.engine.get_state_trie_key_checkpoint()
     }
 
-    /// Sets the list of account hashes whose storage needs healing
-    pub fn set_pending_storage_heal_accounts(&self, accounts: Vec<H256>) -> Result<(), StoreError> {
-        self.engine.set_pending_storage_heal_accounts(accounts)
+    /// Sets the storage trie paths in need of healing, grouped by hashed address
+    pub fn set_storage_heal_paths(
+        &self,
+        accounts: Vec<(H256, Vec<Nibbles>)>,
+    ) -> Result<(), StoreError> {
+        self.engine.set_storage_heal_paths(accounts)
     }
 
-    /// Gets the list of account hashes whose storage needs healing
-    pub fn get_pending_storage_heal_accounts(&self) -> Result<Option<Vec<H256>>, StoreError> {
-        self.engine.get_pending_storage_heal_accounts()
+    /// Gets the storage trie paths in need of healing, grouped by hashed address
+    #[allow(clippy::type_complexity)]
+    pub fn get_storage_heal_paths(&self) -> Result<Option<Vec<(H256, Vec<Nibbles>)>>, StoreError> {
+        self.engine.get_storage_heal_paths()
     }
 
-    /// Clears all checkpoints written during a snap sync
+    /// Sets the state trie paths in need of healing
+    pub fn set_state_heal_paths(&self, paths: Vec<Nibbles>) -> Result<(), StoreError> {
+        self.engine.set_state_heal_paths(paths)
+    }
+
+    /// Gets the state trie paths in need of healing
+    pub fn get_state_heal_paths(&self) -> Result<Option<Vec<Nibbles>>, StoreError> {
+        self.engine.get_state_heal_paths()
+    }
+
+    /// Clears all checkpoint data created during the last snap sync
     pub fn clear_snap_state(&self) -> Result<(), StoreError> {
-        self.engine.clear_header_download_checkpoint()?;
-        self.engine.clear_pending_storage_heal_accounts()?;
-        self.engine.clear_state_trie_root_checkpoint()?;
-        self.engine.clear_state_trie_key_checkpoint()
+        self.engine.clear_snap_state()
     }
 
     pub fn is_synced(&self) -> Result<bool, StoreError> {
@@ -1080,15 +1090,14 @@ pub fn hash_key(key: &H256) -> Vec<u8> {
 
 #[cfg(test)]
 mod tests {
-    use std::{fs, panic, str::FromStr};
-
     use bytes::Bytes;
     use ethereum_types::{H256, U256};
     use ethrex_core::{
-        types::{Transaction, TxType, BYTES_PER_BLOB},
+        types::{Transaction, TxType, BYTES_PER_BLOB, EMPTY_KECCACK_HASH},
         Bloom,
     };
     use ethrex_rlp::decode::RLPDecode;
+    use std::{fs, panic, str::FromStr};
 
     use super::*;
 
@@ -1224,7 +1233,7 @@ mod tests {
             blob_gas_used: Some(0x00),
             excess_blob_gas: Some(0x00),
             parent_beacon_block_root: Some(H256::zero()),
-            requests_hash: None,
+            requests_hash: Some(*EMPTY_KECCACK_HASH),
         };
         let block_body = BlockBody {
             transactions: vec![Transaction::decode(&hex::decode("b86f02f86c8330182480114e82f618946177843db3138ae69679a54b95cf345ed759450d870aa87bee53800080c080a0151ccc02146b9b11adf516e6787b59acae3e76544fdcd75e77e67c6b598ce65da064c5dd5aae2fbb535830ebbdad0234975cd7ece3562013b63ea18cc0df6c97d4").unwrap()).unwrap(),

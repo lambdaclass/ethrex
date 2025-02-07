@@ -1,18 +1,17 @@
-use bootnode::BootNode;
-use discv4::{
+use crate::discv4::{
     helpers::current_unix_time,
     server::{DiscoveryError, Discv4Server},
 };
+use crate::kademlia::KademliaTable;
+use crate::rlpx::{
+    connection::RLPxConnBroadcastSender, handshake, message::Message as RLPxMessage,
+};
+use crate::types::Node;
 use ethrex_core::H512;
 use ethrex_storage::Store;
 use k256::{
     ecdsa::SigningKey,
     elliptic_curve::{sec1::ToEncodedPoint, PublicKey},
-};
-pub use kademlia::KademliaTable;
-use rlpx::{
-    connection::{RLPxConnBroadcastSender, RLPxConnection},
-    message::Message as RLPxMessage,
 };
 use std::{io, net::SocketAddr, sync::Arc};
 use tokio::{
@@ -20,23 +19,13 @@ use tokio::{
     sync::Mutex,
 };
 use tokio_util::task::TaskTracker;
-use tracing::{error, info};
-use types::Node;
-
-pub mod bootnode;
-pub(crate) mod discv4;
-pub(crate) mod kademlia;
-pub mod peer_channels;
-pub mod rlpx;
-pub(crate) mod snap;
-pub mod sync;
-pub mod types;
+use tracing::{debug, error, info};
 
 // Totally arbitrary limit on how
 // many messages the connections can queue,
 // if we miss messages to broadcast, maybe
 // we should bump this limit.
-const MAX_MESSAGES_TO_BROADCAST: usize = 1000;
+pub const MAX_MESSAGES_TO_BROADCAST: usize = 1000;
 
 pub fn peer_table(signer: SigningKey) -> Arc<Mutex<KademliaTable>> {
     let local_node_id = node_id_from_signing_key(&signer);
@@ -49,20 +38,20 @@ pub enum NetworkError {
 }
 
 #[derive(Clone, Debug)]
-struct P2PContext {
-    tracker: TaskTracker,
-    signer: SigningKey,
-    table: Arc<Mutex<KademliaTable>>,
-    storage: Store,
-    broadcast: RLPxConnBroadcastSender,
-    local_node: Node,
-    enr_seq: u64,
+pub struct P2PContext {
+    pub tracker: TaskTracker,
+    pub signer: SigningKey,
+    pub table: Arc<Mutex<KademliaTable>>,
+    pub storage: Store,
+    pub(crate) broadcast: RLPxConnBroadcastSender,
+    pub local_node: Node,
+    pub enr_seq: u64,
 }
 
 pub async fn start_network(
     local_node: Node,
     tracker: TaskTracker,
-    bootnodes: Vec<BootNode>,
+    bootnodes: Vec<Node>,
     signer: SigningKey,
     peer_table: Arc<Mutex<KademliaTable>>,
     storage: Store,
@@ -137,12 +126,19 @@ fn listener(tcp_addr: SocketAddr) -> Result<TcpListener, io::Error> {
 }
 
 async fn handle_peer_as_receiver(context: P2PContext, peer_addr: SocketAddr, stream: TcpStream) {
-    let mut conn =
-        RLPxConnection::receiver(context.signer, stream, context.storage, context.broadcast);
-    conn.start_peer(peer_addr, context.table).await;
+    let table = context.table.clone();
+    match handshake::as_receiver(context, peer_addr, stream).await {
+        Ok(mut conn) => conn.start(table).await,
+        Err(e) => {
+            // TODO We should remove the peer from the table if connection failed
+            // but currently it will make the tests fail
+            // table.lock().await.replace_peer(node.node_id);
+            debug!("Error creating tcp connection with peer at {peer_addr}: {e}")
+        }
+    }
 }
 
-async fn handle_peer_as_initiator(context: P2PContext, node: Node) {
+pub async fn handle_peer_as_initiator(context: P2PContext, node: Node) {
     let addr = SocketAddr::new(node.ip, node.tcp_port);
     let stream = match tcp_stream(addr).await {
         Ok(result) => result,
@@ -150,23 +146,18 @@ async fn handle_peer_as_initiator(context: P2PContext, node: Node) {
             // TODO We should remove the peer from the table if connection failed
             // but currently it will make the tests fail
             // table.lock().await.replace_peer(node.node_id);
-            error!("Error establishing tcp connection with peer at {addr}: {e}");
+            debug!("Error establishing tcp connection with peer at {addr}: {e}");
             return;
         }
     };
-    match RLPxConnection::initiator(
-        context.signer,
-        node.node_id,
-        stream,
-        context.storage,
-        context.broadcast,
-    ) {
-        Ok(mut conn) => conn.start_peer(node.udp_addr(), context.table).await,
+    let table = context.table.clone();
+    match handshake::as_initiator(context, node, stream).await {
+        Ok(mut conn) => conn.start(table).await,
         Err(e) => {
             // TODO We should remove the peer from the table if connection failed
             // but currently it will make the tests fail
             // table.lock().await.replace_peer(node.node_id);
-            error!("Error creating tcp connection with peer at {addr}: {e}")
+            debug!("Error creating tcp connection with peer at {addr}: {e}")
         }
     };
 }

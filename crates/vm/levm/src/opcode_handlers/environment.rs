@@ -4,7 +4,7 @@ use crate::{
     errors::{InternalError, OpcodeResult, VMError},
     gas_cost::{self},
     memory::{self, calculate_memory_size},
-    utils::{has_delegation, word_to_address},
+    utils::{access_account, has_delegation, word_to_address},
     vm::VM,
 };
 use ethrex_core::U256;
@@ -19,7 +19,7 @@ impl VM {
         &mut self,
         current_call_frame: &mut CallFrame,
     ) -> Result<OpcodeResult, VMError> {
-        self.increase_consumed_gas(current_call_frame, gas_cost::ADDRESS)?;
+        current_call_frame.increase_consumed_gas(gas_cost::ADDRESS)?;
 
         let addr = current_call_frame.to; // The recipient of the current call.
 
@@ -27,7 +27,7 @@ impl VM {
             .stack
             .push(U256::from_big_endian(addr.as_bytes()))?;
 
-        Ok(OpcodeResult::Continue)
+        Ok(OpcodeResult::Continue { pc_increment: 1 })
     }
 
     // BALANCE operation
@@ -37,13 +37,18 @@ impl VM {
     ) -> Result<OpcodeResult, VMError> {
         let address = word_to_address(current_call_frame.stack.pop()?);
 
-        let (account_info, address_was_cold) = self.access_account(address);
+        let (account_info, address_was_cold) = access_account(
+            &mut self.cache,
+            self.db.clone(),
+            &mut self.accrued_substate,
+            address,
+        );
 
-        self.increase_consumed_gas(current_call_frame, gas_cost::balance(address_was_cold)?)?;
+        current_call_frame.increase_consumed_gas(gas_cost::balance(address_was_cold)?)?;
 
         current_call_frame.stack.push(account_info.balance)?;
 
-        Ok(OpcodeResult::Continue)
+        Ok(OpcodeResult::Continue { pc_increment: 1 })
     }
 
     // ORIGIN operation
@@ -51,14 +56,14 @@ impl VM {
         &mut self,
         current_call_frame: &mut CallFrame,
     ) -> Result<OpcodeResult, VMError> {
-        self.increase_consumed_gas(current_call_frame, gas_cost::ORIGIN)?;
+        current_call_frame.increase_consumed_gas(gas_cost::ORIGIN)?;
 
         let origin = self.env.origin;
         current_call_frame
             .stack
             .push(U256::from_big_endian(origin.as_bytes()))?;
 
-        Ok(OpcodeResult::Continue)
+        Ok(OpcodeResult::Continue { pc_increment: 1 })
     }
 
     // CALLER operation
@@ -66,14 +71,14 @@ impl VM {
         &mut self,
         current_call_frame: &mut CallFrame,
     ) -> Result<OpcodeResult, VMError> {
-        self.increase_consumed_gas(current_call_frame, gas_cost::CALLER)?;
+        current_call_frame.increase_consumed_gas(gas_cost::CALLER)?;
 
         let caller = current_call_frame.msg_sender;
         current_call_frame
             .stack
             .push(U256::from_big_endian(caller.as_bytes()))?;
 
-        Ok(OpcodeResult::Continue)
+        Ok(OpcodeResult::Continue { pc_increment: 1 })
     }
 
     // CALLVALUE operation
@@ -81,13 +86,13 @@ impl VM {
         &mut self,
         current_call_frame: &mut CallFrame,
     ) -> Result<OpcodeResult, VMError> {
-        self.increase_consumed_gas(current_call_frame, gas_cost::CALLVALUE)?;
+        current_call_frame.increase_consumed_gas(gas_cost::CALLVALUE)?;
 
         let callvalue = current_call_frame.msg_value;
 
         current_call_frame.stack.push(callvalue)?;
 
-        Ok(OpcodeResult::Continue)
+        Ok(OpcodeResult::Continue { pc_increment: 1 })
     }
 
     // CALLDATALOAD operation
@@ -95,7 +100,7 @@ impl VM {
         &mut self,
         current_call_frame: &mut CallFrame,
     ) -> Result<OpcodeResult, VMError> {
-        self.increase_consumed_gas(current_call_frame, gas_cost::CALLDATALOAD)?;
+        current_call_frame.increase_consumed_gas(gas_cost::CALLDATALOAD)?;
 
         let calldata_size: U256 = current_call_frame.calldata.len().into();
 
@@ -105,7 +110,7 @@ impl VM {
         // have no data to return.
         if offset > calldata_size {
             current_call_frame.stack.push(U256::zero())?;
-            return Ok(OpcodeResult::Continue);
+            return Ok(OpcodeResult::Continue { pc_increment: 1 });
         };
         let offset: usize = offset
             .try_into()
@@ -128,7 +133,7 @@ impl VM {
 
         current_call_frame.stack.push(result)?;
 
-        Ok(OpcodeResult::Continue)
+        Ok(OpcodeResult::Continue { pc_increment: 1 })
     }
 
     // CALLDATASIZE operation
@@ -136,13 +141,13 @@ impl VM {
         &mut self,
         current_call_frame: &mut CallFrame,
     ) -> Result<OpcodeResult, VMError> {
-        self.increase_consumed_gas(current_call_frame, gas_cost::CALLDATASIZE)?;
+        current_call_frame.increase_consumed_gas(gas_cost::CALLDATASIZE)?;
 
         current_call_frame
             .stack
             .push(U256::from(current_call_frame.calldata.len()))?;
 
-        Ok(OpcodeResult::Continue)
+        Ok(OpcodeResult::Continue { pc_increment: 1 })
     }
 
     // CALLDATACOPY operation
@@ -160,19 +165,20 @@ impl VM {
 
         let new_memory_size = calculate_memory_size(dest_offset, size)?;
 
-        self.increase_consumed_gas(
-            current_call_frame,
-            gas_cost::calldatacopy(new_memory_size, current_call_frame.memory.len(), size)?,
-        )?;
+        current_call_frame.increase_consumed_gas(gas_cost::calldatacopy(
+            new_memory_size,
+            current_call_frame.memory.len(),
+            size,
+        )?)?;
 
         if size == 0 {
-            return Ok(OpcodeResult::Continue);
+            return Ok(OpcodeResult::Continue { pc_increment: 1 });
         }
 
         let mut data = vec![0u8; size];
         if calldata_offset > current_call_frame.calldata.len().into() {
             memory::try_store_data(&mut current_call_frame.memory, dest_offset, &data)?;
-            return Ok(OpcodeResult::Continue);
+            return Ok(OpcodeResult::Continue { pc_increment: 1 });
         }
 
         let calldata_offset: usize = calldata_offset
@@ -193,7 +199,7 @@ impl VM {
 
         memory::try_store_data(&mut current_call_frame.memory, dest_offset, &data)?;
 
-        Ok(OpcodeResult::Continue)
+        Ok(OpcodeResult::Continue { pc_increment: 1 })
     }
 
     // CODESIZE operation
@@ -201,13 +207,13 @@ impl VM {
         &mut self,
         current_call_frame: &mut CallFrame,
     ) -> Result<OpcodeResult, VMError> {
-        self.increase_consumed_gas(current_call_frame, gas_cost::CODESIZE)?;
+        current_call_frame.increase_consumed_gas(gas_cost::CODESIZE)?;
 
         current_call_frame
             .stack
             .push(U256::from(current_call_frame.bytecode.len()))?;
 
-        Ok(OpcodeResult::Continue)
+        Ok(OpcodeResult::Continue { pc_increment: 1 })
     }
 
     // CODECOPY operation
@@ -227,13 +233,14 @@ impl VM {
 
         let new_memory_size = calculate_memory_size(destination_offset, size)?;
 
-        self.increase_consumed_gas(
-            current_call_frame,
-            gas_cost::codecopy(new_memory_size, current_call_frame.memory.len(), size)?,
-        )?;
+        current_call_frame.increase_consumed_gas(gas_cost::codecopy(
+            new_memory_size,
+            current_call_frame.memory.len(),
+            size,
+        )?)?;
 
         if size == 0 {
-            return Ok(OpcodeResult::Continue);
+            return Ok(OpcodeResult::Continue { pc_increment: 1 });
         }
 
         let mut data = vec![0u8; size];
@@ -257,7 +264,7 @@ impl VM {
 
         memory::try_store_data(&mut current_call_frame.memory, destination_offset, &data)?;
 
-        Ok(OpcodeResult::Continue)
+        Ok(OpcodeResult::Continue { pc_increment: 1 })
     }
 
     // GASPRICE operation
@@ -265,11 +272,11 @@ impl VM {
         &mut self,
         current_call_frame: &mut CallFrame,
     ) -> Result<OpcodeResult, VMError> {
-        self.increase_consumed_gas(current_call_frame, gas_cost::GASPRICE)?;
+        current_call_frame.increase_consumed_gas(gas_cost::GASPRICE)?;
 
         current_call_frame.stack.push(self.env.gas_price)?;
 
-        Ok(OpcodeResult::Continue)
+        Ok(OpcodeResult::Continue { pc_increment: 1 })
     }
 
     // EXTCODESIZE operation
@@ -279,12 +286,17 @@ impl VM {
     ) -> Result<OpcodeResult, VMError> {
         let address = word_to_address(current_call_frame.stack.pop()?);
 
-        let (account_info, address_was_cold) = self.access_account(address);
+        let (account_info, address_was_cold) = access_account(
+            &mut self.cache,
+            self.db.clone(),
+            &mut self.accrued_substate,
+            address,
+        );
 
         // https://eips.ethereum.org/EIPS/eip-7702#delegation-designation
         let is_delegation = has_delegation(&account_info)?;
 
-        self.increase_consumed_gas(current_call_frame, gas_cost::extcodesize(address_was_cold)?)?;
+        current_call_frame.increase_consumed_gas(gas_cost::extcodesize(address_was_cold)?)?;
 
         current_call_frame.stack.push(if is_delegation {
             SET_CODE_DELEGATION_BYTES[..2].len().into()
@@ -292,7 +304,7 @@ impl VM {
             account_info.bytecode.len().into()
         })?;
 
-        Ok(OpcodeResult::Continue)
+        Ok(OpcodeResult::Continue { pc_increment: 1 })
     }
 
     // EXTCODECOPY operation
@@ -309,25 +321,27 @@ impl VM {
             .try_into()
             .map_err(|_| VMError::VeryLargeNumber)?;
 
-        let (account_info, address_was_cold) = self.access_account(address);
+        let (account_info, address_was_cold) = access_account(
+            &mut self.cache,
+            self.db.clone(),
+            &mut self.accrued_substate,
+            address,
+        );
 
         let new_memory_size = calculate_memory_size(dest_offset, size)?;
 
         // https://eips.ethereum.org/EIPS/eip-7702#delegation-designation
         let is_delegation = has_delegation(&account_info)?;
 
-        self.increase_consumed_gas(
-            current_call_frame,
-            gas_cost::extcodecopy(
-                size,
-                new_memory_size,
-                current_call_frame.memory.len(),
-                address_was_cold,
-            )?,
-        )?;
+        current_call_frame.increase_consumed_gas(gas_cost::extcodecopy(
+            size,
+            new_memory_size,
+            current_call_frame.memory.len(),
+            address_was_cold,
+        )?)?;
 
         if size == 0 {
-            return Ok(OpcodeResult::Continue);
+            return Ok(OpcodeResult::Continue { pc_increment: 1 });
         }
 
         let bytecode = if is_delegation {
@@ -350,7 +364,7 @@ impl VM {
 
         memory::try_store_data(&mut current_call_frame.memory, dest_offset, &data)?;
 
-        Ok(OpcodeResult::Continue)
+        Ok(OpcodeResult::Continue { pc_increment: 1 })
     }
 
     // RETURNDATASIZE operation
@@ -358,13 +372,13 @@ impl VM {
         &mut self,
         current_call_frame: &mut CallFrame,
     ) -> Result<OpcodeResult, VMError> {
-        self.increase_consumed_gas(current_call_frame, gas_cost::RETURNDATASIZE)?;
+        current_call_frame.increase_consumed_gas(gas_cost::RETURNDATASIZE)?;
 
         current_call_frame
             .stack
             .push(U256::from(current_call_frame.sub_return_data.len()))?;
 
-        Ok(OpcodeResult::Continue)
+        Ok(OpcodeResult::Continue { pc_increment: 1 })
     }
 
     // RETURNDATACOPY operation
@@ -386,13 +400,14 @@ impl VM {
 
         let new_memory_size = calculate_memory_size(dest_offset, size)?;
 
-        self.increase_consumed_gas(
-            current_call_frame,
-            gas_cost::returndatacopy(new_memory_size, current_call_frame.memory.len(), size)?,
-        )?;
+        current_call_frame.increase_consumed_gas(gas_cost::returndatacopy(
+            new_memory_size,
+            current_call_frame.memory.len(),
+            size,
+        )?)?;
 
         if size == 0 && returndata_offset == 0 {
-            return Ok(OpcodeResult::Continue);
+            return Ok(OpcodeResult::Continue { pc_increment: 1 });
         }
 
         let sub_return_data_len = current_call_frame.sub_return_data.len();
@@ -422,7 +437,7 @@ impl VM {
 
         memory::try_store_data(&mut current_call_frame.memory, dest_offset, &data)?;
 
-        Ok(OpcodeResult::Continue)
+        Ok(OpcodeResult::Continue { pc_increment: 1 })
     }
 
     // EXTCODEHASH operation
@@ -432,12 +447,17 @@ impl VM {
     ) -> Result<OpcodeResult, VMError> {
         let address = word_to_address(current_call_frame.stack.pop()?);
 
-        let (account_info, address_was_cold) = self.access_account(address);
+        let (account_info, address_was_cold) = access_account(
+            &mut self.cache,
+            self.db.clone(),
+            &mut self.accrued_substate,
+            address,
+        );
 
         // https://eips.ethereum.org/EIPS/eip-7702#delegation-designation
         let is_delegation = has_delegation(&account_info)?;
 
-        self.increase_consumed_gas(current_call_frame, gas_cost::extcodehash(address_was_cold)?)?;
+        current_call_frame.increase_consumed_gas(gas_cost::extcodehash(address_was_cold)?)?;
 
         if is_delegation {
             let hash =
@@ -447,13 +467,13 @@ impl VM {
             // An account is considered empty when it has no code and zero nonce and zero balance. [EIP-161]
             if account_info.is_empty() {
                 current_call_frame.stack.push(U256::zero())?;
-                return Ok(OpcodeResult::Continue);
+                return Ok(OpcodeResult::Continue { pc_increment: 1 });
             }
 
             let hash = U256::from_big_endian(keccak(account_info.bytecode).as_fixed_bytes());
             current_call_frame.stack.push(hash)?;
         }
 
-        Ok(OpcodeResult::Continue)
+        Ok(OpcodeResult::Continue { pc_increment: 1 })
     }
 }

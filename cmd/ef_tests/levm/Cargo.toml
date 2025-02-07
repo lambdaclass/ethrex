@@ -4,11 +4,11 @@ version.workspace = true
 edition.workspace = true
 
 [dependencies]
-ethrex-blockchain = { workspace = true, features = ["levm"] }
+ethrex-blockchain = { workspace = true }
 ethrex-core.workspace = true
 ethrex-storage.workspace = true
 ethrex-rlp.workspace = true
-ethrex-vm = { workspace = true, features = ["levm"] }
+ethrex-vm = { workspace = true }
 ethrex-levm = { path = "../../../crates/vm/levm" }
 serde.workspace = true
 serde_json.workspace = true
@@ -21,7 +21,7 @@ thiserror.workspace = true
 clap = { version = "4.3", features = ["derive"] }
 clap_complete = "4.5.17"
 itertools = "0.13.0"
-revm = { version = "14.0.3", features = [
+revm = { version = "18.0.0", features = [
     "serde",
     "std",
     "serde-json",

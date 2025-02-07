@@ -513,7 +513,7 @@ impl ProverServer {
             .await?;
 
             if last_committed_block == last_verified_block {
-                warn!("No new blocks to prove");
+                debug!("No new blocks to prove");
                 continue;
             }
 

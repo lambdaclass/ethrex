@@ -1,5 +1,6 @@
 use clap::{Arg, ArgAction, Command};
-use ethrex_net::bootnode::BootNode;
+use ethrex_p2p::types::Node;
+use ethrex_vm::backends::EVM;
 use tracing::Level;
 
 pub fn cli() -> Command {
@@ -87,7 +88,7 @@ pub fn cli() -> Command {
             Arg::new("bootnodes")
                 .long("bootnodes")
                 .value_name("BOOTNODE_LIST")
-                .value_parser(clap::value_parser!(BootNode))
+                .value_parser(clap::value_parser!(Node))
                 .value_delimiter(',')
                 .num_args(1..)
                 .action(ArgAction::Set),
@@ -121,6 +122,15 @@ pub fn cli() -> Command {
                 .long("metrics.port")
                 .required(false)
                 .value_name("PROMETHEUS_METRICS_PORT"),
+        )
+        .arg(
+            Arg::new("evm")
+                .long("evm")
+                .required(false)
+                .default_value("revm")
+                .value_name("EVM_BACKEND")
+                .value_parser(clap::value_parser!(EVM))
+                .help("Has to be `levm` or `revm`"),
         )
         .subcommand(
             Command::new("removedb").about("Remove the database").arg(

@@ -264,7 +264,7 @@ impl ToExecDB for RpcDB {
         block: &Block,
     ) -> Result<ethrex_vm::execution_db::ExecutionDB, ethrex_vm::errors::ExecutionDBError> {
         let parent_hash = block.header.parent_hash;
-        let chain_config = CANCUN_CONFIG;
+        let chain_config = *CANCUN_CONFIG;
 
         // pre-execute and get cache db
         let cache_db = ExecutionDB::pre_execute(

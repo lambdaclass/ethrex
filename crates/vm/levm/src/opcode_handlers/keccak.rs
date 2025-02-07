@@ -25,10 +25,11 @@ impl VM {
 
         let new_memory_size = calculate_memory_size(offset, size)?;
 
-        self.increase_consumed_gas(
-            current_call_frame,
-            gas_cost::keccak256(new_memory_size, current_call_frame.memory.len(), size)?,
-        )?;
+        current_call_frame.increase_consumed_gas(gas_cost::keccak256(
+            new_memory_size,
+            current_call_frame.memory.len(),
+            size,
+        )?)?;
 
         let mut hasher = Keccak256::new();
         hasher.update(memory::load_range(
@@ -40,6 +41,6 @@ impl VM {
             .stack
             .push(U256::from_big_endian(&hasher.finalize()))?;
 
-        Ok(OpcodeResult::Continue)
+        Ok(OpcodeResult::Continue { pc_increment: 1 })
     }
 }

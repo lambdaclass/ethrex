@@ -252,6 +252,7 @@ jobs:
           ethrex_l2 config create default --default
           ethrex_l2 config set default
 
+      # By default ethrex uses revm as evm backend.
       - id: generate-flamegraph-ethrex
         name: Generate Flamegraph data for Ethrex
         shell: bash

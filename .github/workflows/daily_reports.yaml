@@ -10,97 +10,45 @@ env:
   RUST_VERSION: 1.81.0
 
 jobs:
-  run-hive:
-    name: Hive (${{ matrix.vm }}) - ${{ matrix.test.name }}
+  hive-report-creation-levm:
+    uses: ./.github/workflows/common_hive_reports.yaml
+    with:
+      evm: levm
+      job_type: daily
+  hive-report-creation-revm:
+    uses: ./.github/workflows/common_hive_reports.yaml
+    with:
+      evm: revm
+      job_type: daily
+
+  hive-diff-report:
+    name: Post tests diff to levm slack
+    needs: [hive-report-creation-levm, hive-report-creation-revm]
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        vm: [levm, revm]
-        test:
-          - {
-              name: "Rpc Compat tests",
-              file_name: rpc-compat,
-              simulation: ethereum/rpc-compat,
-            }
-          - { name: "Devp2p eth tests", file_name: devp2p, simulation: devp2p }
-          - {
-              name: "Cancun Engine tests",
-              file_name: engine,
-              simulation: ethereum/engine,
-            }
-          - { name: "Sync tests", file_name: sync, simulation: ethereum/sync }
-
-    steps:
-      - name: Pull image
-        if: ${{ matrix.vm == 'revm' }}
-        run: |
-          docker pull ghcr.io/lambdaclass/ethrex:latest
-          docker tag ghcr.io/lambdaclass/ethrex:latest ethrex:latest
-
-      - name: Checkout sources
-        uses: actions/checkout@v4
-
-      - name: Build Image with LEVM
-        if: ${{ matrix.vm == 'levm' }}
-        run: cd crates/vm/levm && make build-image-levm
-
-      - name: Setup Go
-        uses: actions/setup-go@v5
-
-      - name: Setup Hive
-        run: make setup-hive
-
-      - name: Run Hive Simulation
-        run: cd hive && ./hive --client ethrex --sim ${{ matrix.test.simulation }} --sim.parallelism 16
-        continue-on-error: true
-
-      - name: Upload results
-        uses: actions/upload-artifact@v4
-        with:
-          name: ${{ matrix.test.file_name }}_${{ matrix.vm }}_logs
-          path: hive/workspace/logs/*-*.json
-          if-no-files-found: error
-
-  hive-report:
-    name: Generate report and upload to Slack (${{ matrix.vm }})
-    needs: run-hive
-    runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        vm: [levm, revm]
     steps:
       - name: Checkout sources
         uses: actions/checkout@v4
 
-      - name: Rustup toolchain install
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          toolchain: ${{ env.RUST_VERSION }}
-
-      - name: Download all results
+      - name: Download results (levm)
         uses: actions/download-artifact@v4
         with:
-          path: hive/workspace/logs
-          pattern: "*_${{ matrix.vm }}_logs"
-          merge-multiple: true
+          name: results_levm_daily.md
 
-      - name: Caching
-        uses: Swatinem/rust-cache@v2
+      - name: Rename result (1)
+        run: cp results.md results_levm.md
 
-      - name: Generate the hive report
-        run: cargo run -p hive_report > results.md
-
-      - name: Upload ${{matrix.vm}} result
-        uses: actions/upload-artifact@v4
+      - name: Download results (revm)
+        uses: actions/download-artifact@v4
         with:
-          name: results_${{matrix.vm}}.md
-          path: results.md
-          if-no-files-found: error
+          name: results_revm_daily.md
 
-      - name: Post results in summary
+      - name: Rename result (2)
+        run: cp results.md results_revm.md
+
+      - name: Create diff message
         run: |
-          echo "# Hive coverage report (${{ matrix.vm }})" >> $GITHUB_STEP_SUMMARY
-          cat results.md >> $GITHUB_STEP_SUMMARY
+          bash .github/scripts/hive_levm_revm_diff.sh results_revm.md results_levm.md >> diff.md
+          cat diff.md >> $GITHUB_STEP_SUMMARY
 
       - name: Post results to Slack
         env:
@@ -114,39 +62,12 @@ jobs:
                   secrets.LEVM_SLACK_WEBHOOK
                 )
             }}
-          SCRIPT: >
-            ${{ matrix.vm == 'levm'
-              && '.github/scripts/publish_levm_hive.sh'
-              || '.github/scripts/publish_hive.sh'
-            }}
         run: |
           for webhook in $SLACK_WEBHOOKS; do
-            sh $SCRIPT "$webhook"
+            sh .github/scripts/publish_levm_hive.sh "$webhook"
+            sh .github/scripts/publish_hive.sh "$webhook"
           done
-
-  hive-diff-report:
-    name: Post tests diff to levm slack
-    needs: hive-report
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout sources
-        uses: actions/checkout@v4
-
-      - name: Download results (levm)
-        uses: actions/download-artifact@v4
-        with:
-          name: results_levm.md
-
-      - name: Rename result (1)
-        run: cp results.md results_levm.md
-
-      - name: Download results (revm)
-        uses: actions/download-artifact@v4
-        with:
-          name: results_revm.md
-
-      - name: Rename result (2)
-        run: cp results.md results_revm.md
+          echo "Sending Results" >> $GITHUB_STEP_SUMMARY
 
       - name: Post results diff to Slack
         env:
@@ -155,10 +76,14 @@ jobs:
               && secrets.TEST_CHANNEL_SLACK
               || secrets.LEVM_SLACK_WEBHOOK
             }}
+        # Only send diff message if the diff has changed
         run: |
-          bash .github/scripts/levm_revm_diff.sh results_revm.md results_levm.md >> diff.md
-          cat diff.md >> $GITHUB_STEP_SUMMARY
-          sh .github/scripts/publish_vms_diff.sh $SLACK_WEBHOOK
+          if grep -q "No differences found" diff.md; then
+            echo "No differences to post" >> $GITHUB_STEP_SUMMARY
+          else
+            sh .github/scripts/publish_vms_diff.sh $SLACK_WEBHOOK
+            echo "Sending Results" >> $GITHUB_STEP_SUMMARY
+          fi
 
   levm-test:
     name: Generate Report for LEVM EF Tests
@@ -183,14 +108,26 @@ jobs:
       - name: Run tests
         run: |
           cd crates/vm/levm
-          make generate-evm-ef-tests-report
+          make generate-evm-ef-tests-report | tee test_result.txt
 
       - name: Post results in summary
         run: |
+          cd crates/vm/levm
           echo "# Daily LEVM EF Tests Run Report" >> $GITHUB_STEP_SUMMARY
-          cat cmd/ef_tests/levm/levm_ef_tests_summary_github.txt >> $GITHUB_STEP_SUMMARY
+          cat test_result.txt >> $GITHUB_STEP_SUMMARY
+
+      - name: Check EF-TESTS status is 100%
+        id: check_tests
+        continue-on-error: true
+        run: |
+          cd crates/vm/levm
+          if [ "$(awk '/**Summary**:/ {print $(NF)}' test_result.txt)" != "(100.00%)" ]; then
+              echo "Percentage is not 100%."
+              exit 1
+          fi
 
       - name: Post results to Slack
+        if: ${{steps.check_tests.outcome == 'failure'}}
         env:
           SLACK_WEBHOOK: >
             ${{ github.event_name == 'workflow_dispatch'

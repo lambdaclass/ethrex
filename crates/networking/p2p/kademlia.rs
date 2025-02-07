@@ -1,12 +1,14 @@
+use std::sync::Arc;
+
 use crate::{
     discv4::messages::FindNodeRequest,
-    peer_channels::PeerChannels,
-    rlpx::p2p::Capability,
+    rlpx::{message::Message as RLPxMessage, p2p::Capability},
     types::{Node, NodeRecord},
 };
 use ethrex_core::{H256, H512, U256};
 use sha3::{Digest, Keccak256};
 use tokio::sync::mpsc::UnboundedSender;
+use tokio::sync::{mpsc, Mutex};
 use tracing::{debug, info};
 
 pub const MAX_NODES_PER_BUCKET: usize = 16;
@@ -207,7 +209,7 @@ impl KademliaTable {
     }
 
     /// Returns an iterator for all peers in the table
-    fn iter_peers(&self) -> impl Iterator<Item = &PeerData> {
+    pub fn iter_peers(&self) -> impl Iterator<Item = &PeerData> {
         self.buckets.iter().flat_map(|bucket| bucket.peers.iter())
     }
 
@@ -395,10 +397,39 @@ impl PeerData {
     }
 }
 
+pub const MAX_MESSAGES_IN_PEER_CHANNEL: usize = 25;
+
+#[derive(Debug, Clone)]
+/// Holds the respective sender and receiver ends of the communication channels bewteen the peer data and its active connection
+pub struct PeerChannels {
+    pub(crate) sender: mpsc::Sender<RLPxMessage>,
+    pub(crate) receiver: Arc<Mutex<mpsc::Receiver<RLPxMessage>>>,
+}
+
+impl PeerChannels {
+    /// Sets up the communication channels for the peer
+    /// Returns the channel endpoints to send to the active connection's listen loop
+    pub(crate) fn create() -> (Self, mpsc::Sender<RLPxMessage>, mpsc::Receiver<RLPxMessage>) {
+        let (sender, connection_receiver) =
+            mpsc::channel::<RLPxMessage>(MAX_MESSAGES_IN_PEER_CHANNEL);
+        let (connection_sender, receiver) =
+            mpsc::channel::<RLPxMessage>(MAX_MESSAGES_IN_PEER_CHANNEL);
+        (
+            Self {
+                sender,
+                receiver: Arc::new(Mutex::new(receiver)),
+            },
+            connection_sender,
+            connection_receiver,
+        )
+    }
+}
+
 #[cfg(test)]
 mod tests {
+    use crate::network::node_id_from_signing_key;
+
     use super::*;
-    use crate::node_id_from_signing_key;
     use hex_literal::hex;
     use k256::{ecdsa::SigningKey, elliptic_curve::rand_core::OsRng};
     use std::{

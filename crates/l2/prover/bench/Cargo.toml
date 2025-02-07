@@ -26,7 +26,7 @@ reqwest = { version = "0.12.9", features = [
 ], default-features = false }
 clap = { version = "4.5.21", features = ["derive"] }
 
-revm = { version = "14.0.3", features = [
+revm = { version = "18.0.0", features = [
   "serde",
   "std",
   "serde-json",
@@ -35,8 +35,8 @@ revm = { version = "14.0.3", features = [
 ], default-features = false }
 
 # These dependencies must be kept up to date with the corresponding revm version, otherwise errors may pop up because of trait implementation mismatches
-revm-inspectors = { version = "0.8.1" }
-revm-primitives = { version = "10.0.0", features = [
+revm-inspectors = { version = "=0.13.0" }
+revm-primitives = { version = "14.0.0", features = [
   "std",
 ], default-features = false }
 futures-util = "0.3.31"

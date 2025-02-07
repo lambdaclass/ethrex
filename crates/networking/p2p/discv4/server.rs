@@ -9,11 +9,9 @@ use super::{
     },
 };
 use crate::{
-    bootnode::BootNode,
-    handle_peer_as_initiator,
-    kademlia::MAX_NODES_PER_BUCKET,
+    kademlia::{KademliaTable, MAX_NODES_PER_BUCKET},
+    network::{handle_peer_as_initiator, P2PContext},
     types::{Endpoint, Node, NodeRecord},
-    KademliaTable, P2PContext,
 };
 use ethrex_core::H256;
 use k256::ecdsa::{signature::hazmat::PrehashVerifier, Signature, VerifyingKey};
@@ -53,8 +51,8 @@ pub struct Discv4Server {
 }
 
 impl Discv4Server {
-    /// Initializes a Discv4 UDP socket and creates a new `Discv4Server` instance.  
-    /// Returns an error if the socket binding fails.  
+    /// Initializes a Discv4 UDP socket and creates a new `Discv4Server` instance.
+    /// Returns an error if the socket binding fails.
     pub async fn try_new(ctx: P2PContext) -> Result<Self, DiscoveryError> {
         let udp_socket = UdpSocket::bind(ctx.local_node.udp_addr())
             .await
@@ -72,7 +70,7 @@ impl Discv4Server {
     /// - Spawns tasks to handle incoming messages and revalidate known nodes.
     /// - Loads bootnodes to establish initial peer connections.
     /// - Starts the lookup handler via [`Discv4LookupHandler`] to periodically search for new peers.
-    pub async fn start(&self, bootnodes: Vec<BootNode>) -> Result<(), DiscoveryError> {
+    pub async fn start(&self, bootnodes: Vec<Node>) -> Result<(), DiscoveryError> {
         let lookup_handler = Discv4LookupHandler::new(
             self.ctx.clone(),
             self.udp_socket.clone(),
@@ -93,16 +91,8 @@ impl Discv4Server {
         Ok(())
     }
 
-    async fn load_bootnodes(&self, bootnodes: Vec<BootNode>) {
-        for bootnode in bootnodes {
-            let node = Node {
-                ip: bootnode.socket_address.ip(),
-                udp_port: bootnode.socket_address.port(),
-                // TODO: udp port can differ from tcp port.
-                // see https://github.com/lambdaclass/ethrex/issues/905
-                tcp_port: bootnode.socket_address.port(),
-                node_id: bootnode.node_id,
-            };
+    async fn load_bootnodes(&self, bootnodes: Vec<Node>) {
+        for node in bootnodes {
             if let Err(e) = self
                 .try_add_peer_and_ping(node, self.ctx.table.lock().await)
                 .await
@@ -126,7 +116,7 @@ impl Discv4Server {
             debug!("Received {read} bytes from {from}");
 
             match Packet::decode(&buf[..read]) {
-                Err(e) => error!("Could not decode packet: {:?}", e),
+                Err(e) => debug!("Could not decode packet: {:?}", e),
                 Ok(packet) => {
                     let msg = packet.get_message();
                     let msg_name = msg.to_string();
@@ -521,7 +511,7 @@ impl Discv4Server {
 
     /// Attempts to add a node to the Kademlia table and send a ping if necessary.
     ///
-    /// - If the node is **not found** in the table and there is enough space, it will be added,  
+    /// - If the node is **not found** in the table and there is enough space, it will be added,
     ///   and a ping message will be sent to verify connectivity.
     /// - If the node is **already present**, no action is taken.
     async fn try_add_peer_and_ping<'a>(
@@ -637,7 +627,8 @@ impl Discv4Server {
 pub(super) mod tests {
     use super::*;
     use crate::{
-        node_id_from_signing_key, rlpx::message::Message as RLPxMessage, MAX_MESSAGES_TO_BROADCAST,
+        network::{node_id_from_signing_key, MAX_MESSAGES_TO_BROADCAST},
+        rlpx::message::Message as RLPxMessage,
     };
     use ethrex_storage::{EngineType, Store};
     use k256::ecdsa::SigningKey;
