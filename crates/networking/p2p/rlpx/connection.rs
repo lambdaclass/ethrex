@@ -70,6 +70,8 @@ pub(crate) struct RLPxConnection<S> {
     framed: Framed<S, RLPxCodec>,
     storage: Store,
     capabilities: Vec<(Capability, u8)>,
+    negotiated_eth_version: u8,
+    negotiated_snap_version: u8,
     next_periodic_task_check: Instant,
     /// Send end of the channel used to broadcast messages
     /// to other connected peers, is ok to have it here,
@@ -97,6 +99,8 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
             framed: Framed::new(stream, codec),
             storage,
             capabilities: vec![],
+            negotiated_eth_version: 0,
+            negotiated_snap_version: 0,
             next_periodic_task_check: Instant::now() + PERIODIC_TASKS_CHECK_INTERVAL,
             connection_broadcast_send: connection_broadcast,
         }
@@ -184,25 +188,26 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
                 let mut negotiated_snap_cap = (Capability::Snap, 0);
 
                 // Check if we have any capability in common and store the highest version
-                for cap in hello_message.capabilities.clone() {
+                for cap in &hello_message.capabilities {
                     match cap {
-                        CAP_ETH_68 if CAP_ETH_68.1 > negotiated_eth_cap.1 => {
+                        &CAP_ETH_68 if CAP_ETH_68.1 > negotiated_eth_cap.1 => {
                             negotiated_eth_cap = CAP_ETH_68
                         }
-                        CAP_SNAP_1 if CAP_SNAP_1.1 > negotiated_snap_cap.1 => {
+                        &CAP_SNAP_1 if CAP_SNAP_1.1 > negotiated_snap_cap.1 => {
                             negotiated_snap_cap = CAP_SNAP_1
                         }
                         _ => {}
                     }
                 }
 
+                self.capabilities = hello_message.capabilities;
+
                 if negotiated_eth_cap.1 == 0 {
                     return Err(RLPxError::NoMatchingCapabilities());
                 }
-                self.capabilities.push(negotiated_eth_cap);
 
                 if negotiated_snap_cap.1 != 0 {
-                    self.capabilities.push(negotiated_snap_cap);
+                    self.negotiated_snap_version = negotiated_snap_cap.1;
                 }
 
                 Ok(())
@@ -306,9 +311,11 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
             Message::Pong(_) => {
                 // We ignore received Pong messages
             }
-            Message::Status(msg_data) if !peer_supports_eth => {
-                backend::validate_status(msg_data, &self.storage)?
-            }
+            Message::Status(msg_data) if !peer_supports_eth => backend::validate_status(
+                msg_data,
+                &self.storage,
+                self.negotiated_eth_version as u32,
+            )?,
             Message::GetAccountRange(req) => {
                 let response = process_account_range_request(req, self.storage.clone())?;
                 self.send(Message::AccountRange(response)).await?
@@ -425,7 +432,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
     async fn init_peer_conn(&mut self) -> Result<(), RLPxError> {
         // Sending eth Status if peer supports it
         if self.capabilities.contains(&CAP_ETH_68) {
-            let status = backend::get_status(&self.storage)?;
+            let status = backend::get_status(&self.storage, self.negotiated_eth_version as u32)?;
             log_peer_debug(&self.node, "Sending status");
             self.send(Message::Status(status)).await?;
             // The next immediate message in the ETH protocol is the
@@ -433,9 +440,12 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
             // https://github.com/ethereum/devp2p/blob/master/caps/eth.md#status-0x00
             match self.receive().await? {
                 Message::Status(msg_data) => {
-                    // TODO: Check message status is correct.
                     log_peer_debug(&self.node, "Received Status");
-                    backend::validate_status(msg_data, &self.storage)?
+                    backend::validate_status(
+                        msg_data,
+                        &self.storage,
+                        self.negotiated_eth_version as u32,
+                    )?
                 }
                 Message::Disconnect(disconnect) => {
                     return Err(RLPxError::HandshakeError(format!(
