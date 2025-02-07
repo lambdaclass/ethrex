@@ -1089,6 +1089,14 @@ impl Store {
     pub fn clear_snap_state(&self) -> Result<(), StoreError> {
         self.engine.clear_snap_state()
     }
+
+    pub fn rebuild_state_trie_segment(
+        &self,
+        start: H256,
+        end: H256,
+    ) -> Result<(H256, Vec<H256>, H256), StoreError> {
+        self.engine.rebuild_state_trie_segment(start, end)
+    }
 }
 
 pub fn hash_address(address: &Address) -> Vec<u8> {

@@ -47,25 +47,6 @@ lazy_static::lazy_static! {
     };
 }
 
-pub(crate) type RebuildStatus = [SegmentStatus; STATE_TRIE_SEGMENTS];
-pub(crate) struct SegmentStatus {
-    pub current: H256,
-    pub end: H256,
-}
-
-impl SegmentStatus {
-    pub(crate) fn complete(&self) -> bool {
-        self.current >= self.end
-    }
-}
-
-pub(crate) fn init_rebuild_status() -> RebuildStatus {
-    array::from_fn(|i| SegmentStatus {
-        current: STATE_TRIE_SEGMENTS_START[i],
-        end: STATE_TRIE_SEGMENTS_END[i],
-    })
-}
-
 #[derive(Debug)]
 pub enum SyncMode {
     Full,
@@ -1100,6 +1081,36 @@ fn node_missing_children(
         _ => {}
     }
     Ok(paths)
+}
+
+pub(crate) type RebuildStatus = [SegmentStatus; STATE_TRIE_SEGMENTS];
+pub(crate) struct SegmentStatus {
+    pub current: H256,
+    pub end: H256,
+}
+
+impl SegmentStatus {
+    pub(crate) fn complete(&self) -> bool {
+        self.current >= self.end
+    }
+}
+
+pub(crate) fn init_rebuild_status() -> RebuildStatus {
+    array::from_fn(|i| SegmentStatus {
+        current: STATE_TRIE_SEGMENTS_START[i],
+        end: STATE_TRIE_SEGMENTS_END[i],
+    })
+}
+
+async fn rebuild_state_trie_in_backgound(store: Store) {
+    // Sleep for some time so we don't start rebuilding too early
+    tokio::time::sleep(Durarion::from_secs(120));
+    let mut rebuild_status = init_rebuild_status();
+    let mut current_segment = 0;
+    while !rebuild_status.iter().all(|status| status.complete()) {
+        // Start rebuilding the current trie segment
+        store.rebuild_state_trie_segment(rebuild_status[current_segment].current, rebuild_status[current_segment].end)?;
+    }
 }
 
 #[derive(Clone)]

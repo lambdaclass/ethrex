@@ -309,5 +309,11 @@ pub trait StoreEngine: Debug + Send + Sync + RefUnwindSafe {
     /// and the addresses of the storages whose root doesn't match the one in the account state
     fn rebuild_state_from_snapshot(&self) -> Result<(H256, Vec<H256>), StoreError>;
 
+    fn rebuild_state_trie_segment(
+        &self,
+        start: H256,
+        end: H256,
+    ) -> Result<(H256, Vec<H256>, H256), StoreError>;
+
     // NO PUEDO TENER ASYNC ACA!!!!
 }
