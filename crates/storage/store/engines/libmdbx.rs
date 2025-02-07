@@ -651,7 +651,7 @@ impl StoreEngine for Store {
     /// and the addresses of the storages whose root doesn't match the one in the account state
     /// TODO: Consider receiving the sender to the storage heal queue so we start healing them while rebuilding
     fn rebuild_state_from_snapshot(&self) -> Result<(H256, Vec<H256>), StoreError> {
-        // let mut mismatched_storage_accounts = vec![];
+        let mut mismatched_storage_accounts = vec![];
         // Open a new state trie
         let mut state_trie = self.open_state_trie(*EMPTY_TRIE_HASH);
         // Add all accounts
@@ -665,10 +665,14 @@ impl StoreEngine for Store {
             .walk(None)
             .map_while(|res| res.ok().map(|(hash, acc)| (hash.to(), acc.to())))
         {
+            tracing::info!(
+                "Rebuilding state trie, storages in need of healing: {}",
+                mismatched_storage_accounts.len()
+            );
             // Rebuild storage trie and check for mismatches
             let rebuilt_root = self.rebuild_storage_trie_from_snapshot(hash)?;
             if rebuilt_root != account.storage_root {
-                //mismatched_storage_accounts.push(hash);
+                mismatched_storage_accounts.push(hash);
             }
             // Add account to trie
             state_trie.insert(hash.to_fixed_bytes().to_vec(), account.encode_to_vec())?;
@@ -677,14 +681,9 @@ impl StoreEngine for Store {
             if inserts_since_last_commit > MAX_TRIE_INSERTS_WITHOUT_COMMIT {
                 state_trie.hash()?;
                 inserts_since_last_commit = 0;
-             // tracing::info!(
-            //     "Rebuilding state trie, storages in need of healing: {}",
-            //     mismatched_storage_accounts.len()
-            // );
-                tracing::info!("Rebuiling state trie [NO STORAGE ROOT CHECK");
             }
         }
-        Ok((state_trie.hash()?, vec![]))
+        Ok((state_trie.hash()?, mismatched_storage_accounts))
     }
 }
 
