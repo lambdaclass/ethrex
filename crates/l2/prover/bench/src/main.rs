@@ -97,6 +97,8 @@ async fn main() {
             })
             .expect("proving failed");
     }
-    let gas = prover.get_gas().expect("failed to get execution gas");
-    println!("total gas consumption: {gas}");
+
+    // get_gas() is unimplemented for SP1
+    // let gas = prover.get_gas().expect("failed to get execution gas");
+    // println!("total gas consumption: {gas}");
 }
