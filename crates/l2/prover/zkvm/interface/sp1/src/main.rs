@@ -61,6 +61,5 @@ pub fn main() {
     sp1_zkvm::io::commit(&ProgramOutput {
         initial_state_hash,
         final_state_hash,
-        debug_final_proofs,
     });
 }
