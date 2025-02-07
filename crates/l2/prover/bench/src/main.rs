@@ -1,9 +1,6 @@
 use std::{fs::File, io::Write};
 
-use bench::{
-    constants::{CANCUN_CONFIG, MAINNET_CHAIN_ID},
-    rpc::{db::RpcDB, get_block, get_latest_block_number},
-};
+use bench::rpc::{db::RpcDB, get_block, get_latest_block_number};
 use clap::Parser;
 use ethrex_l2::utils::prover::proving_systems::ProverType;
 use ethrex_prover_lib::prover::create_prover;
@@ -16,6 +13,8 @@ struct Args {
     rpc_url: String,
     #[arg(short, long)]
     block_number: Option<usize>,
+    #[arg(short, long)]
+    prove: bool,
 }
 
 #[tokio::main]
@@ -23,6 +22,7 @@ async fn main() {
     let Args {
         rpc_url,
         block_number,
+        prove,
     } = Args::parse();
 
     let block_number = match block_number {
@@ -72,14 +72,26 @@ async fn main() {
         db
     };
 
-    println!("proving");
     let mut prover = create_prover(ProverType::SP1);
-    let output = prover
-        .execute(ProgramInput {
-            block,
-            parent_block_header,
-            db,
-        })
-        .expect("proving failed");
-    let execution_gas = prover.get_gas().expect("failed to get execution gas");
+    if prove {
+        println!("proving");
+        prover
+            .prove(ProgramInput {
+                block,
+                parent_block_header,
+                db,
+            })
+            .expect("proving failed");
+    } else {
+        println!("executing");
+        prover
+            .execute(ProgramInput {
+                block,
+                parent_block_header,
+                db,
+            })
+            .expect("proving failed");
+    }
+    let gas = prover.get_gas().expect("failed to get execution gas");
+    println!("total gas consumption: {gas}");
 }
