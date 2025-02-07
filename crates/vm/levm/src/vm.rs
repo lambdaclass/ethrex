@@ -29,7 +29,6 @@ use std::{
     cmp::max,
     collections::{HashMap, HashSet},
     fmt::Debug,
-    rc::Rc,
     sync::Arc,
 };
 pub type Storage = HashMap<U256, H256>;
