@@ -620,11 +620,8 @@ fn finalize_payload(context: &mut PayloadBuildContext) -> Result<(), StoreError>
             }
         }
 
-        let account_updates = get_state_transitions_levm(
-            context.evm_state,
-            context.parent_hash(),
-            &context.block_cache.clone(),
-        );
+        let account_updates =
+            get_state_transitions_levm(context.evm_state, &context.block_cache.clone());
 
         context.payload.header.state_root = context
             .store()

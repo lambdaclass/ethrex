@@ -6,9 +6,6 @@ mod execution_result;
 mod mods;
 
 use db::StoreWrapper;
-use execution_db::ExecutionDB;
-use std::cmp::min;
-
 use ethrex_core::{
     types::{
         AccountInfo, Block, BlockHash, BlockHeader, ChainConfig, Fork, GenericTransaction,
@@ -17,6 +14,7 @@ use ethrex_core::{
     Address, BigEndianHash, H256, U256,
 };
 use ethrex_storage::{error::StoreError, AccountUpdate, Store};
+use execution_db::ExecutionDB;
 use lazy_static::lazy_static;
 use revm::{
     db::{states::bundle_state::BundleRetention, AccountState, AccountStatus},
@@ -27,6 +25,7 @@ use revm::{
     Database, DatabaseCommit, Evm,
 };
 use revm_inspectors::access_list::AccessListInspector;
+use std::cmp::min;
 // Rename imported types for clarity
 use revm_primitives::{
     ruint::Uint, AccessList as RevmAccessList, AccessListItem, Authorization as RevmAuthorization,
@@ -69,11 +68,45 @@ impl EvmState {
             EvmState::Execution(db) => Ok(db.db.get_chain_config()),
         }
     }
+
+    pub fn from_store(store: &Store, block: &Block) -> Self {
+        let store_wrapper = StoreWrapper {
+            store: store.clone(),
+            block_hash: block.hash(),
+        };
+
+        let state = revm::db::State::builder()
+            .with_database(store_wrapper)
+            .with_bundle_update()
+            .without_state_clear()
+            .build();
+
+        EvmState::Store(state)
+    }
 }
 
 impl From<ExecutionDB> for EvmState {
     fn from(value: ExecutionDB) -> Self {
         EvmState::Execution(Box::new(revm::db::CacheDB::new(value)))
+    }
+}
+
+impl From<Store> for EvmState {
+    fn from(value: Store) -> Self {
+        let latest_block_idx = value.get_latest_block_number().unwrap();
+        let latest_block = value.get_block_header(latest_block_idx).unwrap().unwrap();
+        let store_wrapper = StoreWrapper {
+            store: value,
+            block_hash: latest_block.parent_hash,
+        };
+
+        let state = revm::db::State::builder()
+            .with_database(store_wrapper)
+            .with_bundle_update()
+            .without_state_clear()
+            .build();
+
+        EvmState::Store(state)
     }
 }
 
@@ -92,7 +125,7 @@ cfg_if::cfg_if! {
         /// Calls the eip4788 beacon block root system call contract
         /// More info on https://eips.ethereum.org/EIPS/eip-4788
         pub fn beacon_root_contract_call_levm(
-            store_wrapper: Arc<StoreWrapper>,
+            store_wrapper: Arc<dyn LevmDatabase>,
             block_header: &BlockHeader,
             config: EVMConfig,
         ) -> Result<ExecutionReport, EvmError> {
@@ -155,20 +188,18 @@ cfg_if::cfg_if! {
 
         pub fn get_state_transitions_levm(
             initial_state: &EvmState,
-            block_hash: H256,
             new_state: &CacheDB,
         ) -> Vec<AccountUpdate> {
-            let current_db = match initial_state {
-                EvmState::Store(state) => state.database.store.clone(),
-                EvmState::Execution(_cache_db) => unreachable!("Execution state should not be passed here"),
+            let current_db: &dyn LevmDatabase = match initial_state {
+                EvmState::Store(state) => &state.database,
+                EvmState::Execution(cache_db) => &cache_db.db,
             };
             let mut account_updates: Vec<AccountUpdate> = vec![];
             for (new_state_account_address, new_state_account) in new_state {
                 let initial_account_state = current_db
-                    .get_account_info_by_hash(block_hash, *new_state_account_address)
-                    .expect("Error getting account info by address");
+                    .get_account_info(*new_state_account_address);
 
-                if initial_account_state.is_none() {
+                if initial_account_state.is_empty() {
                     // New account, update everything
                     let new_account = AccountUpdate{
                         address: *new_state_account_address ,
@@ -186,8 +217,6 @@ cfg_if::cfg_if! {
                     continue;
                 }
 
-                // This unwrap is safe, just checked upside
-                let initial_account_state = initial_account_state.unwrap();
                 let mut account_update = AccountUpdate::new(*new_state_account_address);
 
                 // Account state after block execution.
@@ -198,19 +227,19 @@ cfg_if::cfg_if! {
                 };
 
                 // Compare Account Info
-                if initial_account_state != new_state_acc_info {
+                if initial_account_state != new_state_account.info {
                     account_update.info = Some(new_state_acc_info.clone());
                 }
 
                 // If code hash is different it means the code is different too.
-                if initial_account_state.code_hash != new_state_acc_info.code_hash {
+                if code_hash(&initial_account_state.bytecode) != new_state_acc_info.code_hash {
                     account_update.code = Some(new_state_account.info.bytecode.clone());
                 }
 
                 let mut updated_storage = HashMap::new();
                 for (key, storage_slot) in &new_state_account.storage {
                     // original_value in storage_slot is not the original_value on the DB, be careful.
-                    let original_value = current_db.get_storage_at_hash(block_hash, *new_state_account_address, *key).unwrap().unwrap_or_default(); // Option inside result, I guess I have to assume it is zero.
+                    let original_value = current_db.get_storage_slot(*new_state_account_address, *key);
 
                     if original_value != storage_slot.current_value {
                         updated_storage.insert(*key, storage_slot.current_value);
@@ -232,9 +261,9 @@ cfg_if::cfg_if! {
             block: &Block,
             state: &mut EvmState,
         ) -> Result<(Vec<Receipt>, Vec<AccountUpdate>), EvmError> {
-            let store_wrapper = Arc::new(StoreWrapper {
-                store: state.database().unwrap().clone(),
-                block_hash: block.header.parent_hash,
+            let exec_db = Arc::new(match state {
+                EvmState::Execution(cache_db) => cache_db.db.clone(),
+                EvmState::Store(_) => unreachable!("Store state should not be passed here"),
             });
 
             let mut block_cache: CacheDB = HashMap::new();
@@ -248,7 +277,7 @@ cfg_if::cfg_if! {
             cfg_if::cfg_if! {
                 if #[cfg(not(feature = "l2"))] {
                     if block_header.parent_beacon_block_root.is_some() && fork >= Fork::Cancun {
-                        let report = beacon_root_contract_call_levm(store_wrapper.clone(), block_header, config)?;
+                        let report = beacon_root_contract_call_levm(exec_db.clone(), block_header, config)?;
                         block_cache.extend(report.new_state);
                     }
                 }
@@ -263,7 +292,7 @@ cfg_if::cfg_if! {
 
 
             for tx in block.body.transactions.iter() {
-                let report = execute_tx_levm(tx, block_header, store_wrapper.clone(), block_cache.clone(), config).map_err(EvmError::from)?;
+                let report = execute_tx_levm(tx, block_header, exec_db.clone(), block_cache.clone(), config).map_err(EvmError::from)?;
 
                 let mut new_state = report.new_state.clone();
 
@@ -296,7 +325,7 @@ cfg_if::cfg_if! {
                 for (address, increment) in withdrawals.iter().filter(|withdrawal| withdrawal.amount > 0).map(|w| (w.address, u128::from(w.amount) * u128::from(GWEI_TO_WEI))) {
                     // We check if it was in block_cache, if not, we get it from DB.
                     let mut account = block_cache.get(&address).cloned().unwrap_or({
-                        let acc_info = store_wrapper.get_account_info(address);
+                        let acc_info = exec_db.get_account_info(address);
                         Account::from(acc_info)
                     });
 
@@ -307,7 +336,7 @@ cfg_if::cfg_if! {
             }
 
 
-            account_updates.extend(get_state_transitions_levm(state, block.header.parent_hash, &block_cache));
+            account_updates.extend(get_state_transitions_levm(state, &block_cache));
 
             Ok((receipts, account_updates))
         }

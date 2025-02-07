@@ -498,6 +498,7 @@ impl Store {
                 storage_root,
                 code_hash,
             };
+            println!("Account state balance: {:?}", account_state.balance);
             genesis_state_trie.insert(hashed_address, account_state.encode_to_vec())?;
         }
         Ok(genesis_state_trie.hash()?)
@@ -578,6 +579,10 @@ impl Store {
         self.add_block(genesis_block)?;
         self.update_earliest_block_number(genesis_block_number)?;
         self.update_latest_block_number(genesis_block_number)?;
+        println!(
+            "Setting canonical block for {} to {}",
+            genesis_block_number, genesis_hash
+        );
         self.set_canonical_block(genesis_block_number, genesis_hash)?;
 
         // Set chain config
