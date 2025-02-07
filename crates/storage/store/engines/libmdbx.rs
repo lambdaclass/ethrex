@@ -14,6 +14,7 @@ use ethrex_core::types::{
     AccountState, BlobsBundle, Block, BlockBody, BlockHash, BlockHeader, BlockNumber, ChainConfig,
     Index, Receipt, Transaction, EMPTY_TRIE_HASH,
 };
+use ethrex_core::BigEndianHash;
 use ethrex_rlp::decode::RLPDecode;
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_rlp::error::RLPDecodeError;
@@ -689,10 +690,12 @@ impl StoreEngine for Store {
             .map_err(StoreError::LibmdbxError)?;
         let mut current_hash = start;
         let mut inserts_since_last_commit = 0;
+        tracing::info!("Rebuilding segment!");
         for (hash, account) in cursor
             .walk(Some(start.into()))
             .map_while(|res| res.ok().map(|(hash, acc)| (hash.to(), acc.to())))
         {
+            tracing::info!("Key: {}", hash.into_uint());
             current_hash = hash;
             if current_hash >= end {
                 break;
