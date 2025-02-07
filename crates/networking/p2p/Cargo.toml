@@ -1,5 +1,5 @@
 [package]
-name = "ethrex-net"
+name = "ethrex-p2p"
 version = "0.1.0"
 edition = "2021"
 
@@ -40,4 +40,4 @@ rand = "0.8.5"
 hex-literal = "0.4.1"
 
 [lib]
-path = "./net.rs"
+path = "./p2p.rs"

@@ -2802,7 +2802,7 @@ dependencies = [
  "ethrex-dev",
  "ethrex-l2",
  "ethrex-metrics",
- "ethrex-net",
+ "ethrex-p2p",
  "ethrex-rlp",
  "ethrex-rpc",
  "ethrex-storage",
@@ -2963,7 +2963,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "ethrex-net"
+name = "ethrex-p2p"
 version = "0.1.0"
 dependencies = [
  "aes",
@@ -3041,7 +3041,7 @@ dependencies = [
  "bytes",
  "ethrex-blockchain",
  "ethrex-core",
- "ethrex-net",
+ "ethrex-p2p",
  "ethrex-rlp",
  "ethrex-storage",
  "ethrex-vm",

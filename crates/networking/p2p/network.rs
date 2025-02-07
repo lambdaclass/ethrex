@@ -1,17 +1,21 @@
-use discv4::{
-    helpers::current_unix_time,
-    server::{DiscoveryError, Discv4Server},
+use crate::kademlia::{self, KademliaTable};
+use crate::rlpx::p2p::Capability;
+use crate::rlpx::{
+    connection::RLPxConnBroadcastSender, handshake, message::Message as RLPxMessage,
+};
+use crate::types::Node;
+use crate::{
+    discv4::{
+        helpers::current_unix_time,
+        server::{DiscoveryError, Discv4Server},
+    },
+    rlpx::utils::log_peer_error,
 };
 use ethrex_core::H512;
 use ethrex_storage::Store;
 use k256::{
     ecdsa::SigningKey,
     elliptic_curve::{sec1::ToEncodedPoint, PublicKey},
-};
-pub use kademlia::KademliaTable;
-use rlpx::{
-    connection::RLPxConnBroadcastSender, handshake, message::Message as RLPxMessage,
-    p2p::Capability, utils::log_peer_error,
 };
 use std::{io, net::SocketAddr, sync::Arc};
 use tokio::{
@@ -20,21 +24,12 @@ use tokio::{
 };
 use tokio_util::task::TaskTracker;
 use tracing::{debug, error, info};
-use types::Node;
-
-pub(crate) mod discv4;
-pub(crate) mod kademlia;
-pub mod peer_handler;
-pub mod rlpx;
-pub(crate) mod snap;
-pub mod sync;
-pub mod types;
 
 // Totally arbitrary limit on how
 // many messages the connections can queue,
 // if we miss messages to broadcast, maybe
 // we should bump this limit.
-const MAX_MESSAGES_TO_BROADCAST: usize = 1000;
+pub const MAX_MESSAGES_TO_BROADCAST: usize = 1000;
 
 pub fn peer_table(signer: SigningKey) -> Arc<Mutex<KademliaTable>> {
     let local_node_id = node_id_from_signing_key(&signer);
@@ -47,14 +42,14 @@ pub enum NetworkError {
 }
 
 #[derive(Clone, Debug)]
-struct P2PContext {
-    tracker: TaskTracker,
-    signer: SigningKey,
-    table: Arc<Mutex<KademliaTable>>,
-    storage: Store,
-    broadcast: RLPxConnBroadcastSender,
-    local_node: Node,
-    enr_seq: u64,
+pub struct P2PContext {
+    pub tracker: TaskTracker,
+    pub signer: SigningKey,
+    pub table: Arc<Mutex<KademliaTable>>,
+    pub storage: Store,
+    pub(crate) broadcast: RLPxConnBroadcastSender,
+    pub local_node: Node,
+    pub enr_seq: u64,
 }
 
 pub async fn start_network(
@@ -144,7 +139,7 @@ async fn handle_peer_as_receiver(context: P2PContext, peer_addr: SocketAddr, str
     }
 }
 
-async fn handle_peer_as_initiator(context: P2PContext, node: Node) {
+pub async fn handle_peer_as_initiator(context: P2PContext, node: Node) {
     let addr = SocketAddr::new(node.ip, node.tcp_port);
     let stream = match tcp_stream(addr).await {
         Ok(result) => result,
