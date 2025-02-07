@@ -105,7 +105,7 @@ jobs:
 
   compare-ef-tests:
     if: ${{ github.event_name != 'merge_group' }}
-    name: EF Tests Check main
+    name: EF Tests Compare
     needs: [ef-test-main, ef-test]
     runs-on: ubuntu-latest
     steps:
