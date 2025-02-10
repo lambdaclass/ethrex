@@ -76,8 +76,6 @@ jobs:
     if: ${{ github.event_name != 'merge_group' }}
     name: EF Tests Check main
     runs-on: ubuntu-latest
-    # This needs is only needed in the PR. As soon as this is merged, this should be deleted
-    needs: [ef-test]
     steps:
       - name: Checkout sources
         uses: actions/checkout@v4

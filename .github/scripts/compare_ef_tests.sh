@@ -8,8 +8,6 @@ IFS=$'\n' read -rd '' -a main_results <<<"$main_results"
 pr_results=$(bash ../../../.github/scripts/parse_test_result.sh $2)
 IFS=$'\n' read -rd '' -a pr_results <<<"$pr_results"
 
-# main_results=($main_results)
-# readarray -t main_results <<<"$main_results"
 
 echo "|Test Name | MAIN     | PR | DIFF | "
 echo "|----------|----------|----|------|"
