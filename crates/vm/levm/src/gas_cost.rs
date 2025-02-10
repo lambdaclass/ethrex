@@ -96,6 +96,7 @@ pub const DEFAULT_WARM_DYNAMIC: u64 = 100;
 pub const SLOAD_STATIC: u64 = 0;
 pub const SLOAD_COLD_DYNAMIC: u64 = 2100;
 pub const SLOAD_WARM_DYNAMIC: u64 = 100;
+pub const SLOAD_COST_PRE_BERLIN: u64 = 200;
 
 pub const SSTORE_STATIC: u64 = 0;
 pub const SSTORE_COLD_DYNAMIC: u64 = 2100;
@@ -391,10 +392,9 @@ fn mem_expansion_behavior(
 }
 
 pub fn sload(storage_slot_was_cold: bool, fork: Fork) -> Result<u64, VMError> {
-    // Berlin https://github.com/ethereum/execution-specs/blob/8dbde99b132ff8d8fcc9cfb015a9947ccc8b12d6/network-upgrades/mainnet-upgrades/berlin.md
     // EIP https://eips.ethereum.org/EIPS/eip-2929
     if fork < Fork::Berlin {
-        return Ok(200);
+        return Ok(SLOAD_COST_PRE_BERLIN);
     }
     let static_gas = SLOAD_STATIC;
 
