@@ -732,7 +732,7 @@ impl StoreEngine for Store {
         &self,
     ) -> Result<Option<(H256, [H256; STATE_TRIE_SEGMENTS])>, StoreError> {
         let Some((root, checkpoints)) = self
-            .read::<SnapState>(SnapStateIndex::StateTrieRootCheckpoint)?
+            .read::<SnapState>(SnapStateIndex::TrieRebuildCheckpoint)?
             .map(|ref c| <(H256, Vec<H256>)>::decode(c))
             .transpose()?
         else {
