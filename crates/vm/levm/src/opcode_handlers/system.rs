@@ -217,6 +217,9 @@ impl VM {
         &mut self,
         current_call_frame: &mut CallFrame,
     ) -> Result<OpcodeResult, VMError> {
+        if self.env.config.fork == Fork::Homestead {
+            return Err(VMError::NotAllowedOpcode);
+        }
         // STACK
         let gas = current_call_frame.stack.pop()?;
         let code_address = word_to_address(current_call_frame.stack.pop()?);
