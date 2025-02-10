@@ -103,6 +103,8 @@ pub const SSTORE_DEFAULT_DYNAMIC: u64 = 100;
 pub const SSTORE_STORAGE_CREATION: u64 = 20000;
 pub const SSTORE_STORAGE_MODIFICATION: u64 = 2900;
 pub const SSTORE_STIPEND: u64 = 2300;
+pub const SSTORE_PRE_BERLIN_NON_ZERO: u64 = 20000;
+pub const SSTORE_PRE_BERLIN: u64 = 5000;
 
 pub const BALANCE_STATIC: u64 = DEFAULT_STATIC;
 pub const BALANCE_COLD_DYNAMIC: u64 = DEFAULT_COLD_DYNAMIC;
@@ -144,6 +146,7 @@ pub const STATICCALL_COLD_DYNAMIC: u64 = DEFAULT_COLD_DYNAMIC;
 pub const STATICCALL_WARM_DYNAMIC: u64 = DEFAULT_WARM_DYNAMIC;
 
 // Costs in gas for call opcodes
+pub const ADDRESS_COST_PRE_BERLIN: u64 = 700;
 pub const WARM_ADDRESS_ACCESS_COST: u64 = 100;
 pub const COLD_ADDRESS_ACCESS_COST: u64 = 2600;
 pub const NON_ZERO_VALUE_COST: u64 = 9000;
@@ -415,9 +418,9 @@ pub fn sstore(
     // https://github.com/ethereum/EIPs/blob/master/EIPS/eip-1087.md
     if fork <= Fork::Berlin {
         if storage_slot.current_value.is_zero() && !new_value.is_zero() {
-            Ok(20_000)
+            Ok(SSTORE_PRE_BERLIN_NON_ZERO)
         } else {
-            Ok(5000)
+            Ok(SSTORE_PRE_BERLIN)
         }
     } else {
         let static_gas = SSTORE_STATIC;
@@ -625,7 +628,7 @@ fn address_access_cost(
 ) -> Result<u64, VMError> {
     // [EIP-2929](https://eips.ethereum.org/EIPS/eip-2929)
     if fork <= Fork::Berlin {
-        Ok(700)
+        Ok(ADDRESS_COST_PRE_BERLIN)
     } else {
         let static_gas = static_cost;
         let dynamic_cost: u64 = if address_was_cold {
@@ -710,22 +713,13 @@ pub fn call(
 ) -> Result<(u64, u64), VMError> {
     let memory_expansion_cost = memory::expansion_cost(new_memory_size, current_memory_size)?;
 
-    let address_access_cost = if fork >= Fork::Berlin {
-        address_access_cost(
-            address_was_cold,
-            CALL_STATIC,
-            CALL_COLD_DYNAMIC,
-            if fork >= Fork::Berlin {
-                CALL_WARM_DYNAMIC
-            } else {
-                //https://eips.ethereum.org/EIPS/eip-2929
-                CALL_PRE_BERLIN
-            },
-            fork,
-        )?
-    } else {
-        700
-    };
+    let address_access_cost = address_access_cost(
+        address_was_cold,
+        CALL_STATIC,
+        CALL_COLD_DYNAMIC,
+        CALL_WARM_DYNAMIC,
+        fork,
+    )?;
     let positive_value_cost = if !value_to_transfer.is_zero() {
         CALL_POSITIVE_VALUE
     } else {
