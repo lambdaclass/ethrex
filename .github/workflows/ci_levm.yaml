@@ -158,7 +158,7 @@ jobs:
       - name: Compare results
         run: |
           cd crates/vm/levm
-          bash ../../../.github/scripts/compare_ef_tests.sh test_result_main.txt test_result_pr.txt > ef_tests_comparison_comparison.md
+          bash ../../../.github/scripts/compare_ef_tests.sh test_result_main.txt test_result_pr.txt > ef_tests_comparison.md
 
       - name: Find comment
         continue-on-error: true
