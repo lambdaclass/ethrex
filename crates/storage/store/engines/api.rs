@@ -4,8 +4,8 @@ use ethrex_core::types::{
     AccountState, BlobsBundle, Block, BlockBody, BlockHash, BlockHeader, BlockNumber, ChainConfig,
     Index, Receipt, Transaction,
 };
-use tokio_util::sync::CancellationToken;
 use std::{fmt::Debug, panic::RefUnwindSafe};
+use tokio_util::sync::CancellationToken;
 
 use crate::{error::StoreError, STATE_TRIE_SEGMENTS};
 use ethrex_trie::{Nibbles, Trie};
@@ -316,7 +316,10 @@ pub trait StoreEngine: Debug + Send + Sync + RefUnwindSafe {
         start: H256,
         end: H256,
         cancel_token: CancellationToken,
-    ) -> Result<(H256, Vec<H256>, H256), StoreError>;
+    ) -> Result<(H256, H256, Vec<(H256, H256)>), StoreError>;
+
+    // Rebuilds the storage trie and returns its root
+    fn rebuild_storage_trie_from_snapshot(&self, account_hash: H256) -> Result<H256, StoreError>;
 
     fn set_trie_rebuild_checkpoint(
         &self,

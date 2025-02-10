@@ -17,10 +17,10 @@ use ethrex_rlp::encode::RLPEncode;
 use ethrex_trie::{Nibbles, Trie};
 use serde::{Deserialize, Serialize};
 use sha3::{Digest as _, Keccak256};
-use tokio_util::sync::CancellationToken;
 use std::collections::{HashMap, HashSet};
 use std::fmt::Debug;
 use std::sync::{Arc, Mutex};
+use tokio_util::sync::CancellationToken;
 use tracing::info;
 
 mod engines;
@@ -1097,9 +1097,16 @@ impl Store {
         start: H256,
         end: H256,
         cancel_token: CancellationToken,
-    ) -> Result<(H256, Vec<H256>, H256), StoreError> {
+    ) -> Result<(H256, H256, Vec<(H256, H256)>), StoreError> {
         self.engine
             .rebuild_state_trie_segment(current_root, start, end, cancel_token)
+    }
+
+    pub fn rebuild_storage_trie_from_snapshot(
+        &self,
+        account_hash: H256,
+    ) -> Result<H256, StoreError> {
+        self.engine.rebuild_storage_trie_from_snapshot(account_hash)
     }
 
     pub fn set_trie_rebuild_checkpoint(

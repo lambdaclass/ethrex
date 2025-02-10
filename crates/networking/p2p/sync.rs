@@ -6,7 +6,6 @@ use ethrex_core::{
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode, error::RLPDecodeError};
 use ethrex_storage::{error::StoreError, Store, STATE_TRIE_SEGMENTS};
 use ethrex_trie::{Nibbles, Node, TrieError, TrieState, EMPTY_TRIE_HASH};
-use tokio_util::sync::CancellationToken;
 use std::{array, cmp::min, collections::BTreeMap, sync::Arc};
 use tokio::{
     sync::{
@@ -15,6 +14,7 @@ use tokio::{
     },
     time::{sleep, Duration, Instant},
 };
+use tokio_util::sync::CancellationToken;
 use tracing::{debug, info, warn};
 
 use crate::{
@@ -72,7 +72,11 @@ pub struct SyncManager {
 }
 
 impl SyncManager {
-    pub fn new(peer_table: Arc<Mutex<KademliaTable>>, sync_mode: SyncMode, cancel_token: CancellationToken) -> Self {
+    pub fn new(
+        peer_table: Arc<Mutex<KademliaTable>>,
+        sync_mode: SyncMode,
+        cancel_token: CancellationToken,
+    ) -> Self {
         Self {
             sync_mode,
             peers: PeerHandler::new(peer_table),
@@ -1124,7 +1128,10 @@ impl SegmentStatus {
     }
 }
 
-async fn rebuild_state_trie_in_backgound(store: Store, cancel_token: CancellationToken) -> Result<Vec<H256>, SyncError> {
+async fn rebuild_state_trie_in_backgound(
+    store: Store,
+    cancel_token: CancellationToken,
+) -> Result<Vec<H256>, SyncError> {
     info!("Spawning trie rebuilder");
     // Get initial status from checkpoint if available (aka node restart)
     let checkpoint = store.get_trie_rebuild_checkpoint()?;
@@ -1154,7 +1161,7 @@ async fn rebuild_state_trie_in_backgound(store: Store, cancel_token: Cancellatio
         // Check for cancellation signal from the main node execution
         // TODO: PERSIST MISMATCHED ACCOUNTS SOMEHOW
         if cancel_token.is_cancelled() {
-            return Ok(vec![])
+            return Ok(vec![]);
         }
         let state_sync_complete = {
             let key_checkpoints = store.get_state_trie_key_checkpoint()?;
@@ -1166,13 +1173,19 @@ async fn rebuild_state_trie_in_backgound(store: Store, cancel_token: Cancellatio
         };
         if !rebuild_status[current_segment].complete() {
             // Start rebuilding the current trie segment
-            let (current_hash, mismatched, current_root) = store.rebuild_state_trie_segment(
+            let (current_hash, current_root, storages) = store.rebuild_state_trie_segment(
                 root,
                 rebuild_status[current_segment].current,
                 rebuild_status[current_segment].end,
-                cancel_token.clone()
+                cancel_token.clone(),
             )?;
-            mismatched_storage_accounts.extend(mismatched);
+            // Rebuild storage tries
+            for (account_hash, expected_root) in storages {
+                let rebuilt_root = store.rebuild_storage_trie_from_snapshot(account_hash)?;
+                if rebuilt_root != expected_root {
+                    mismatched_storage_accounts.push(expected_root);
+                }
+            }
             // Update status
             root = current_root;
             // If state_sync is complete, then mark the segment as fully rebuilt

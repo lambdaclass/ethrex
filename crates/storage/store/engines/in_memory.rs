@@ -5,12 +5,12 @@ use ethrex_core::types::{
     BlobsBundle, Block, BlockBody, BlockHash, BlockHeader, BlockNumber, ChainConfig, Index, Receipt,
 };
 use ethrex_trie::{InMemoryTrieDB, Nibbles, Trie};
-use tokio_util::sync::CancellationToken;
 use std::{
     collections::HashMap,
     fmt::Debug,
     sync::{Arc, Mutex, MutexGuard},
 };
+use tokio_util::sync::CancellationToken;
 
 use super::api::StoreEngine;
 
@@ -526,7 +526,7 @@ impl StoreEngine for Store {
         start: H256,
         end: H256,
         cancel_token: CancellationToken,
-    ) -> Result<(H256, Vec<H256>, H256), StoreError> {
+    ) -> Result<(H256, H256, Vec<(H256, H256)>), StoreError> {
         todo!()
     }
 
@@ -544,6 +544,10 @@ impl StoreEngine for Store {
     }
 
     fn clear_snapshot(&self) -> Result<(), StoreError> {
+        todo!()
+    }
+
+    fn rebuild_storage_trie_from_snapshot(&self, account_hash: H256) -> Result<H256, StoreError> {
         todo!()
     }
 }

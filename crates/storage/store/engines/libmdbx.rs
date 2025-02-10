@@ -26,10 +26,10 @@ use libmdbx::{
 };
 use libmdbx::{DatabaseOptions, Mode, ReadWriteOptions};
 use serde_json;
-use tokio_util::sync::CancellationToken;
 use std::fmt::{Debug, Formatter};
 use std::path::Path;
 use std::sync::Arc;
+use tokio_util::sync::CancellationToken;
 
 /// Maximum amount of trie inserts without committing nodes to DB
 const MAX_TRIE_INSERTS_WITHOUT_COMMIT: usize = 100;
@@ -673,15 +673,16 @@ impl StoreEngine for Store {
 
     /// Rebuilds state trie segment from the snapshot
     /// and the addresses of the storages whose root doesn't match the one in the account state
-    /// Returns the last rebuild account hash + the account hashes of storages in need of healing + the current state root
+    /// Returns the last rebuild account hash + the current state root + a list of account hashes and storage roots for all
+    /// accounts processed with non-empty storages, tese should be rebuilt by the calling context
     fn rebuild_state_trie_segment(
         &self,
         current_root: H256,
         start: H256,
         end: H256,
         cancel_token: CancellationToken,
-    ) -> Result<(H256, Vec<H256>, H256), StoreError> {
-        let mut mismatched_storage_accounts = vec![];
+    ) -> Result<(H256, H256, Vec<(H256, H256)>), StoreError> {
+        let mut storages = vec![];
         // Open a new state trie
         let mut state_trie = self.open_state_trie(current_root);
         // Add all accounts
@@ -697,14 +698,13 @@ impl StoreEngine for Store {
         {
             // Break loop if we surpass segment bounds & check for cancellation signal from main process
             if hash >= end || cancel_token.is_cancelled() {
-                break
+                break;
             }
             current_hash = hash;
-            // Rebuild storage trie and check for mismatches
-            // let rebuilt_root = self.rebuild_storage_trie_from_snapshot(hash)?;
-            // if rebuilt_root != account.storage_root {
-            //     mismatched_storage_accounts.push(hash);
-            // }
+            // Add storage to pending list
+            if account.storage_root != *EMPTY_TRIE_HASH {
+                storages.push((hash, account.storage_root))
+            }
             // Add account to trie
             state_trie.insert(hash.to_fixed_bytes().to_vec(), account.encode_to_vec())?;
             // Commit every few iterations so we don't build the full trie in memory
@@ -714,11 +714,7 @@ impl StoreEngine for Store {
                 inserts_since_last_commit = 0;
             }
         }
-        Ok((
-            current_hash,
-            mismatched_storage_accounts,
-            state_trie.hash()?,
-        ))
+        Ok((current_hash, state_trie.hash()?, storages))
     }
 
     fn set_trie_rebuild_checkpoint(
@@ -759,9 +755,8 @@ impl StoreEngine for Store {
         txn.clear_table::<StorageSnapShot>()
             .map_err(StoreError::LibmdbxError)
     }
-}
 
-impl Store {
+    // Rebuilds the storage trie and returns its root
     fn rebuild_storage_trie_from_snapshot(&self, account_hash: H256) -> Result<H256, StoreError> {
         // Open a new storage trie
         let mut storage_trie = self.open_storage_trie(account_hash, *EMPTY_TRIE_HASH);
