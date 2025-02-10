@@ -392,10 +392,13 @@ fn mem_expansion_behavior(
 }
 
 pub fn sload(storage_slot_was_cold: bool, fork: Fork) -> Result<u64, VMError> {
-    // EIP https://eips.ethereum.org/EIPS/eip-2929
-    if fork < Fork::Berlin {
+    if fork < Fork::Tangerine {
+        return Ok(50);
+    } else if fork < Fork::Berlin {
+        // https://github.com/ethereum/EIPs/blob/master/EIPS/eip-150.md
         return Ok(SLOAD_COST_PRE_BERLIN);
     }
+    // EIP https://eips.ethereum.org/EIPS/eip-2929
     let static_gas = SLOAD_STATIC;
 
     let dynamic_cost = if storage_slot_was_cold {
