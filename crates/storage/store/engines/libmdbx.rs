@@ -766,15 +766,17 @@ impl StoreEngine for Store {
         let cursor = txn
             .cursor::<StorageSnapShot>()
             .map_err(StoreError::LibmdbxError)?;
-        let mut read_count = 0;
+        let mut inserts_since_last_commit = 0;
         for (key, value) in cursor.walk_key(account_hash.into(), None).map_while(|res| {
             res.ok()
                 .map(|(k, v)| (k.0.to_vec(), U256::from_big_endian(&v.0).encode_to_vec()))
         }) {
             storage_trie.insert(key, value)?;
-            read_count += 1;
-            if  read_count > MAX_SNAPSHOT_READS {
-                break
+            // Commit every few iterations so we don't build the full trie in memory
+            inserts_since_last_commit += 1;
+            if inserts_since_last_commit > MAX_TRIE_INSERTS_WITHOUT_COMMIT {
+                storage_trie.hash()?;
+                inserts_since_last_commit = 0;
             }
         }
         Ok(storage_trie.hash()?)
