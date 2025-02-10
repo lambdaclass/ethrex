@@ -1185,9 +1185,8 @@ async fn show_trie_rebuild_progress(
     let mut accounts_processed_this_cycle = U256::zero();
     for i in 0..STATE_TRIE_SEGMENTS {
         accounts_processed +=
-            rebuild_status[i].current.into_uint() - STATE_TRIE_SEGMENTS_START[i].into_uint();
-        accounts_processed_this_cycle +=
-            rebuild_status[i].current.into_uint() - initial_rebuild_status[i].current.into_uint()
+            rebuild_status[i].current.into_uint().checked_sub(STATE_TRIE_SEGMENTS_START[i].into_uint()).unwrap();
+        accounts_processed_this_cycle = accounts_processed_this_cycle.checked_add(rebuild_status[i].current.into_uint().checked_sub(initial_rebuild_status[i].current.into_uint()).unwrap()).unwrap();
     }
     // Calculate completion rate
     let completion_rate = (U512::from(accounts_processed + U256::one()) * U512::from(100))
