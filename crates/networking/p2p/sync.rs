@@ -1132,6 +1132,7 @@ async fn rebuild_state_trie_in_backgound(store: Store) -> Result<Vec<H256>, Sync
         // Show Progress stats (this task is not vital so we can detach it)
         if Instant::now().duration_since(last_show_progress) >= SHOW_PROGRESS_INTERVAL_DURATION {
             last_show_progress = Instant::now();
+            info!("Show trie rebuild progress");
             tokio::spawn(show_trie_rebuild_progress(
                 start_time,
                 initial_rebuild_status.clone(),
