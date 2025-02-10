@@ -720,6 +720,7 @@ impl StoreEngine for Store {
                 inserts_since_last_commit = 0;
             }
         }
+        tracing::info!("Rebuilding segment, new start: {current_hash}");
         Ok((
             current_hash,
             mismatched_storage_accounts,
