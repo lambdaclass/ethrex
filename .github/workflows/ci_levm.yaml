@@ -57,6 +57,13 @@ jobs:
           name: pr-ef-test-data
           path: crates/vm/levm/test_result_pr.txt
 
+        # This needs is only needed in the PR. As soon as this is merged, this should be deleted
+      - name: Upload comparison shell script
+        uses: actions/upload-artifact@v4
+        with:
+          name: ef-test-shell-script
+          path: .github/scripts/parse_test_result.sh
+
       - name: Check EF-TESTS status is 100%
         run: |
           cd crates/vm/levm
@@ -69,6 +76,8 @@ jobs:
     if: ${{ github.event_name != 'merge_group' }}
     name: EF Tests Check main
     runs-on: ubuntu-latest
+    # This needs is only needed in the PR. As soon as this is merged, this should be deleted
+    needs: [ef-test]
     steps:
       - name: Checkout sources
         uses: actions/checkout@v4
@@ -97,9 +106,16 @@ jobs:
         run: |
           cd crates/vm/levm && awk '/Summary: /,0' test_result_main.txt
 
+        # This needs is only needed in the PR. As soon as this is merged, this should be deleted
+      - name: Download shell script
+        uses: actions/download-artifact@v4
+        with:
+          name: ef-test-shell-script
+          path: .github/scripts/
+
       - name: Show test summary -- short
         run: |
-          cd crates/vm/levm && bash ../../../.github/scripts/parse_test_result.sh test_result.txt;
+          cd crates/vm/levm && bash ../../../.github/scripts/parse_test_result.sh test_result_main.txt;
 
       - name: Upload main branch EF-test results.
         uses: actions/upload-artifact@v4
