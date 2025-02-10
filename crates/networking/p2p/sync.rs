@@ -1121,7 +1121,7 @@ impl SegmentStatus {
 async fn rebuild_state_trie_in_backgound(store: Store) -> Result<Vec<H256>, SyncError> {
     info!("Spawning trie rebuilder");
     // Get initial status from checkpoint if available (aka node restart)
-    let checkpoint = store.get_trie_rebuild_checkpoint().unwrap();
+    let checkpoint = store.get_trie_rebuild_checkpoint()?;
     let mut rebuild_status = array::from_fn(|i| SegmentStatus {
         current: checkpoint
             .map(|(_, ch)| ch[i])
@@ -1154,14 +1154,14 @@ async fn rebuild_state_trie_in_backgound(store: Store) -> Result<Vec<H256>, Sync
                     .all(|(ch, end)| ch >= end)
             })
         };
-        info!("State sync complete: {state_sync_complete:?}");
         if !rebuild_status[current_segment].complete() {
             // Start rebuilding the current trie segment
-            let (current_root, mismatched, current_hash) = store.rebuild_state_trie_segment(
-                root,
-                rebuild_status[current_segment].current,
-                rebuild_status[current_segment].end,
-            ).unwrap();
+            let (current_root, mismatched, current_hash) = store
+                .rebuild_state_trie_segment(
+                    root,
+                    rebuild_status[current_segment].current,
+                    rebuild_status[current_segment].end,
+                )?;
             mismatched_storage_accounts.extend(mismatched);
             // Update status
             root = current_root;
