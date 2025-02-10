@@ -17,8 +17,12 @@ use ethrex_core::{
 use ethrex_core::types::{Fork, GWEI_TO_WEI};
 use ethrex_levm::{db::CacheDB, vm::EVMConfig, Account, AccountInfo};
 use ethrex_vm::{
-    backends,
-    backends::EVM,
+    backends::{
+        self,
+        levm::{LevmGetStateTransitionsIn, LevmSystemCallIn, LevmTransactionExecutionIn},
+        revm::{RevmSystemCallIn, RevmTransactionExecutionIn},
+        SystemContracts, EVM, IEVM,
+    },
     db::{evm_state, EvmState, StoreWrapper},
     get_state_transitions, spec_id, EvmError, SpecId, EVM_BACKEND,
 };
@@ -318,10 +322,9 @@ pub fn make_beacon_root_call(context: &mut PayloadBuildContext) -> Result<(), Ev
                     store: context.evm_state.database().unwrap().clone(),
                     block_hash: context.payload.header.parent_hash,
                 });
-                let report = backends::levm::beacon_root_contract_call_levm(
-                    store_wrapper.clone(),
+                let report = backends::levm::LEVM::beacon_root_contract_call(
                     &context.payload.header,
-                    config,
+                    LevmSystemCallIn::new(store_wrapper.clone(), config),
                 )?;
 
                 let mut new_state = report.new_state.clone();
@@ -344,10 +347,9 @@ pub fn make_beacon_root_call(context: &mut PayloadBuildContext) -> Result<(), Ev
             if context.payload.header.parent_beacon_block_root.is_some()
                 && spec_id >= SpecId::CANCUN
             {
-                backends::revm::beacon_root_contract_call(
-                    context.evm_state,
+                backends::revm::REVM::beacon_root_contract_call(
                     &context.payload.header,
-                    spec_id,
+                    RevmSystemCallIn::new(context.evm_state, spec_id),
                 )?;
             }
         }
@@ -571,13 +573,13 @@ fn apply_plain_transaction(
                 .unwrap_or(EVMConfig::canonical_values(fork));
             let config = EVMConfig::new(fork, blob_schedule);
 
-            let report = backends::levm::execute_tx_levm(
+            let report = backends::levm::LEVM::execute_tx(LevmTransactionExecutionIn::new(
                 &head.tx,
                 &context.payload.header,
                 store_wrapper.clone(),
                 context.block_cache.clone(),
                 config,
-            )
+            ))
             .map_err(|e| EvmError::Transaction(format!("Invalid Transaction: {e:?}")))?;
             context.remaining_gas = context.remaining_gas.saturating_sub(report.gas_used);
             context.block_value += U256::from(report.gas_used) * head.tip;
@@ -604,7 +606,7 @@ fn apply_plain_transaction(
         }
         // This means we are using REVM as default for tests
         Some(EVM::REVM) | None => {
-            let report = backends::revm::execute_tx(
+            let report = backends::revm::REVM::execute_tx(RevmTransactionExecutionIn::new(
                 &head.tx,
                 &context.payload.header,
                 context.evm_state,
@@ -612,7 +614,7 @@ fn apply_plain_transaction(
                     &context.chain_config().map_err(ChainError::from)?,
                     context.payload.header.timestamp,
                 ),
-            )?;
+            ))?;
             context.remaining_gas = context.remaining_gas.saturating_sub(report.gas_used());
             context.block_value += U256::from(report.gas_used()) * head.tip;
             let receipt = Receipt::new(
@@ -628,11 +630,13 @@ fn apply_plain_transaction(
 
 fn finalize_payload(context: &mut PayloadBuildContext) -> Result<(), StoreError> {
     let account_updates = match EVM_BACKEND.get() {
-        Some(EVM::LEVM) => backends::levm::get_state_transitions_levm(
-            context.evm_state,
-            context.parent_hash(),
-            &context.block_cache.clone(),
-        ),
+        Some(EVM::LEVM) => {
+            backends::levm::LEVM::get_state_transitions(LevmGetStateTransitionsIn::new(
+                context.evm_state,
+                context.parent_hash(),
+                &context.block_cache.clone(),
+            ))
+        }
         // This means we are using REVM as default for tests
         Some(EVM::REVM) | None => get_state_transitions(context.evm_state),
     };
