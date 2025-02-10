@@ -26,6 +26,5 @@ default = []
 build_risc0 = []
 build_sp1 = []
 
-
 [lib]
 path = "./src/lib.rs"
