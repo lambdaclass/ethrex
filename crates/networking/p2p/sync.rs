@@ -1296,6 +1296,9 @@ fn seconds_to_readable(seconds: U512) -> String {
     let (hours, rest) = rest.div_mod(U512::from(60 * 60));
     let (minutes, seconds) = rest.div_mod(U512::from(60));
     if days > U512::zero() {
+        if days > U512::from(15) {
+            return format!("unknown");
+        }
         return format!("Over {days} days");
     }
     format!("{hours}h{minutes}m{seconds}s")
