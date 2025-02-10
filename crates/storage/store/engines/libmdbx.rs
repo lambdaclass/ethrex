@@ -34,7 +34,7 @@ use tokio_util::sync::CancellationToken;
 /// Maximum amount of trie inserts without committing nodes to DB
 const MAX_TRIE_INSERTS_WITHOUT_COMMIT: usize = 100;
 // Maximum amount of reads from the snapshot in a single transaction to avoid performance hits due to long-living reads
-const MAX_SNAPSHOT_READS: usize = 100;
+const MAX_SNAPSHOT_READS: usize = 200;
 
 pub struct Store {
     db: Arc<Database>,
