@@ -18,12 +18,10 @@ do
    name_main=$(echo "$i" | awk -F " " '{print $1}')
    result_main=$(echo "$i" | awk -F " " '{print $2}')
    result_main=${result_main%(*}
-   # percentage_main=$(echo "$i" | awk -F " " '{print $3}')
 
    name_pr=$(echo "${pr_results[num]}" | awk -F " " '{print $1}')
    result_pr=$(echo "${pr_results[num]}" | awk -F " " '{print $2}')
    result_pr=${result_pr%(*}
-   # percentage_pr=$(echo "${pr_results[num]}" | awk -F " " '{print $3}')
 
    emoji=""
    if (( $(echo "$result_main > $result_pr" |bc -l) )); then
