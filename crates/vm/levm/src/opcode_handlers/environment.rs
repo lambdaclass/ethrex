@@ -39,7 +39,8 @@ impl VM {
 
         let (account_info, address_was_cold) = self.access_account(address);
 
-        current_call_frame.increase_consumed_gas(gas_cost::balance(address_was_cold)?)?;
+        current_call_frame
+            .increase_consumed_gas(gas_cost::balance(address_was_cold, self.env.config.fork)?)?;
 
         current_call_frame.stack.push(account_info.balance)?;
 
@@ -286,7 +287,10 @@ impl VM {
         // https://eips.ethereum.org/EIPS/eip-7702#delegation-designation
         let is_delegation = has_delegation(&account_info)?;
 
-        current_call_frame.increase_consumed_gas(gas_cost::extcodesize(address_was_cold)?)?;
+        current_call_frame.increase_consumed_gas(gas_cost::extcodesize(
+            address_was_cold,
+            self.env.config.fork,
+        )?)?;
 
         current_call_frame.stack.push(if is_delegation {
             SET_CODE_DELEGATION_BYTES[..2].len().into()
@@ -323,6 +327,7 @@ impl VM {
             new_memory_size,
             current_call_frame.memory.len(),
             address_was_cold,
+            self.env.config.fork,
         )?)?;
 
         if size == 0 {
@@ -437,7 +442,10 @@ impl VM {
         // https://eips.ethereum.org/EIPS/eip-7702#delegation-designation
         let is_delegation = has_delegation(&account_info)?;
 
-        current_call_frame.increase_consumed_gas(gas_cost::extcodehash(address_was_cold)?)?;
+        current_call_frame.increase_consumed_gas(gas_cost::extcodehash(
+            address_was_cold,
+            self.env.config.fork,
+        )?)?;
 
         if is_delegation {
             let hash =

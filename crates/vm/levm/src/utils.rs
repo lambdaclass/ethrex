@@ -562,7 +562,6 @@ pub fn eip7702_get_code(
         WARM_ADDRESS_ACCESS_COST
     } else {
         accrued_substate.touched_accounts.insert(auth_address);
-        dbg!("entro aca??");
         COLD_ADDRESS_ACCESS_COST
     };
 

@@ -223,7 +223,7 @@ impl VM {
             }
         }
 
-        self.env.refunded_gas = dbg!(gas_refunds);
+        self.env.refunded_gas = gas_refunds;
 
         current_call_frame.increase_consumed_gas(gas_cost::sstore(
             &storage_slot,
