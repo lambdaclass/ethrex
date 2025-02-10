@@ -127,6 +127,18 @@ jobs:
       - name: Caching
         uses: Swatinem/rust-cache@v2
 
+      - name: Download main branch ef tests
+        uses: actions/download-artifact@v4
+        with:
+          name: main-ef-test-data
+          path: crates/vm/levm/
+
+      - name: Download PR branch ef tests
+        uses: actions/download-artifact@v4
+        with:
+          name: pr-ef-test-data
+          path: crates/vm/levm/
+
       - name: Compare results
         run: |
           cd crates/vm/levm
