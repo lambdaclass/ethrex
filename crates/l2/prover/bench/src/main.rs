@@ -78,6 +78,7 @@ async fn main() {
     };
 
     let mut prover = create_prover(ProverType::SP1);
+    let now = std::time::Instant::now();
     if prove {
         println!("proving");
         prover
@@ -97,6 +98,8 @@ async fn main() {
             })
             .expect("proving failed");
     }
+    let elapsed = now.elapsed();
+    println!("finished in {elapsed}");
 
     // get_gas() is unimplemented for SP1
     // let gas = prover.get_gas().expect("failed to get execution gas");
