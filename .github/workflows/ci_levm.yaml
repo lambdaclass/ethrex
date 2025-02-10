@@ -175,7 +175,7 @@ jobs:
           comment-id: ${{ steps.fc.outputs.comment-id }}
           token: ${{ secrets.GITHUB_TOKEN }}
           issue-number: ${{ github.event.pull_request.number }}
-          body-path: ef_tests_comparison.md
+          body-path: crates/vm/levm/ef_tests_comparison.md
           edit-mode: replace
 
   hive-report-creation:
