@@ -5,16 +5,18 @@ use ethrex_core::{
     Address as CoreAddress, H256 as CoreH256,
 };
 use ethrex_storage::{error::StoreError, hash_address, hash_key, Store};
-use revm::{primitives::{
-    AccountInfo as RevmAccountInfo, Address as RevmAddress, Bytecode as RevmBytecode,
-    Bytes as RevmBytes, B256 as RevmB256, U256 as RevmU256,
-}, db::AccountState as RevmAccountState};
+use revm::{
+    db::AccountState as RevmAccountState,
+    primitives::{
+        AccountInfo as RevmAccountInfo, Address as RevmAddress, Bytecode as RevmBytecode,
+        Bytes as RevmBytes, B256 as RevmB256, U256 as RevmU256,
+    },
+};
 
 use crate::{
     errors::ExecutionDBError,
     execution_db::{ExecutionDB, ToExecDB},
-    spec_id, EvmError,
-    ChainConfig,
+    spec_id, ChainConfig, EvmError,
 };
 
 pub struct StoreWrapper {
