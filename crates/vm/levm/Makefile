@@ -15,7 +15,7 @@ fmt: ## 📄 Runs rustfmt
 	cargo fmt --all
 
 ###### EF Tests ######
-EFTEST_DIR := ../../../cmd/ef_tests/levm
+EFTEST_DIR := ../../../cmd/ef_tests/state
 VECTORS_DIR := $(EFTEST_DIR)/vectors
 TMP_DIR := tmp
 TESTS_REPO := $(TMP_DIR)/ethereum-tests
@@ -59,22 +59,22 @@ clean-evm-ef-tests: ## 🗑️ Clean test vectors and temporary files
 run-evm-ef-tests: ## 🏃‍♂️ Run EF Tests
 	if [ "$(QUIET)" = "true" ]; then \
 		cd ../../../ && \
-		time cargo test --quiet -p ef_tests-levm --test ef_tests_levm --release -- $(flags) --summary;\
+		time cargo test --quiet -p ef_tests-state --test all --release -- $(flags) --summary;\
 	elif [ "$(DEBUG)" = "true" ]; then \
 		cd ../../../ && \
-		time cargo test -p ef_tests-levm --test ef_tests_levm -- $(flags);\
+		time cargo test -p ef_tests-state --test all -- $(flags);\
 	else \
 		cd ../../../ && \
-		time cargo test -p ef_tests-levm --test ef_tests_levm --release -- $(flags);\
+		time cargo test -p ef_tests-state --test all --release -- $(flags);\
 	fi
 
 run-evm-ef-tests-ci: ## 🏃‍♂️ Run EF Tests only with LEVM and without spinner, for CI.
 	cd ../../../ && \
-	time cargo test -p ef_tests-levm --test ef_tests_levm --release -- --summary
+	time cargo test -p ef_tests-state --test all --release -- --summary
 
 generate-evm-ef-tests-report: ## 📊 Generate EF Tests Report
 	cd ../../../ && \
-	cargo test -p ef_tests-levm --test ef_tests_levm --release -- --summary
+	cargo test -p ef_tests-state --test all --release -- --summary
 
 ###### Benchmarks ######
 REPETITIONS := 10000
@@ -169,7 +169,7 @@ SUBDIRS := $(shell find $(VECTORS_DIR)/GeneralStateTests -maxdepth 1 -type d ! -
 
 flamegraph-run-ef-tests: ## 🔥 Run EF tests and create a flamegraph per test folder
 	cd $(EFTEST_DIR) &&\
-	mkdir -p levm_perfgraphs/flamegraph/ef_tests/levm ||: && \
+	mkdir -p levm_perfgraphs/flamegraph/ef_tests/state ||: && \
 	mkdir -p levm_perfgraphs/flamegraph/ef_tests/revm ||:
 	$(MAKE) flamegraph-run-ef-tests-revm
 	$(MAKE) flamegraph-run-ef-tests-levm
@@ -178,18 +178,18 @@ flamegraph-run-ef-tests-revm:
 	@for dir in $(SUBDIRS); do\
 		CARGO_PROFILE_RELEASE_DEBUG=true cargo flamegraph --root \
 		--output $(EFTEST_DIR)/levm_perfgraphs/flamegraph/ef_tests/revm/$$dir.svg\
-		-p ef_tests-levm --test ef_tests_levm -- --summary --revm --tests $$dir;\
+		-p ef_tests-state --test all -- --summary --revm --tests $$dir;\
 	done
 flamegraph-run-ef-tests-levm:
 	@for dir in $(SUBDIRS); do\
 		CARGO_PROFILE_RELEASE_DEBUG=true cargo flamegraph --root \
-		--output $(EFTEST_DIR)/levm_perfgraphs/flamegraph/ef_tests/levm/$$dir.svg\
-		-p ef_tests-levm --test ef_tests_levm -- --summary --tests $$dir;\
+		--output $(EFTEST_DIR)/levm_perfgraphs/flamegraph/ef_tests/state/$$dir.svg\
+		-p ef_tests-state --test all -- --summary --tests $$dir;\
 	done
 
 samply-run-ef-tests: ## ⚡️ Run EF tests and create a samply profiling file per test folder
 	cd $(EFTEST_DIR) && \
-	mkdir -p levm_perfgraphs/samply/ef_tests/levm ||: && \
+	mkdir -p levm_perfgraphs/samply/ef_tests/state ||: && \
 	mkdir -p levm_perfgraphs/samply/ef_tests/revm ||:
 	$(MAKE) samply-run-ef-tests-revm
 	$(MAKE) samply-run-ef-tests-levm
@@ -198,14 +198,14 @@ samply-run-ef-tests-revm:
 	@for dir in $(SUBDIRS); do\
 		CARGO_PROFILE_RELEASE_DEBUG=true samply record --save-only \
 		-o $(EFTEST_DIR)/levm_perfgraphs/samply/ef_tests/revm/prof_$$dir.json \
-		cargo test --release -p ef_tests-levm --test ef_tests_levm -- --summary --revm --tests $$dir;\
+		cargo test --release -p ef_tests-state --test all -- --summary --revm --tests $$dir;\
 	done
 
 samply-run-ef-tests-levm:
 	@for dir in $(SUBDIRS); do\
 		CARGO_PROFILE_RELEASE_DEBUG=true samply record --save-only \
-		-o $(EFTEST_DIR)/levm_perfgraphs/samply/ef_tests/levm/prof_$$dir.json \
-		cargo test --release -p ef_tests-levm --test ef_tests_levm -- --summary --tests $$dir;\
+		-o $(EFTEST_DIR)/levm_perfgraphs/samply/ef_tests/state/prof_$$dir.json \
+		cargo test --release -p ef_tests-state --test all -- --summary --tests $$dir;\
 	done
 
 ################
@@ -235,7 +235,7 @@ endef
 
 FLAMEGRAPH_DIR := $(EFTEST_DIR)/levm_perfgraphs/flamegraph/bench
 flamegraph-benchmarks: ## 🔥 Run benchmarks and create flamegraph
-	cd ../../../cmd/ef_tests/levm &&\
+	cd ../../../cmd/ef_tests/state &&\
 	mkdir -p levm_perfgraphs/flamegraph/bench ||:
 	$(call run_flamegraph,Fibonacci,REPETITIONS,BENCH_FIB_ITERATIONS)
 	$(call run_flamegraph,Factorial,REPETITIONS,BENCH_FACT_ITERATIONS)
@@ -246,9 +246,9 @@ flamegraph-benchmarks: ## 🔥 Run benchmarks and create flamegraph
 	$(call run_flamegraph,ERC20Transfer,REPETITIONS_SLOW,BENCH_TRANSFER_ITERATIONS)
 	$(call run_flamegraph,ERC20Mint,REPETITIONS_SLOW,BENCH_MINT_ITERATIONS)
 
-SAMPLY_DIR := ../../../cmd/ef_tests/levm/levm_perfgraphs/samply/bench
+SAMPLY_DIR := ../../../cmd/ef_tests/state/levm_perfgraphs/samply/bench
 samply-benchmarks: ## ⚡️ Run benchmarks and create samply profiling file
-	cd ../../../cmd/ef_tests/levm &&\
+	cd ../../../cmd/ef_tests/state &&\
 	mkdir -p levm_perfgraphs/samply/bench ||:
 	$(call run_samply,Fibonacci,REPETITIONS,BENCH_FIB_ITERATIONS)
 	$(call run_samply,Factorial,REPETITIONS,BENCH_FACT_ITERATIONS)
