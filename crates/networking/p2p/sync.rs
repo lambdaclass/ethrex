@@ -1143,11 +1143,9 @@ async fn rebuild_state_trie_in_backgound(store: Store, cancel_token: Cancellatio
     let initial_rebuild_status = rebuild_status.clone();
     let mut last_show_progress = Instant::now();
     while !rebuild_status.iter().all(|status| status.complete()) {
-        info!("rebuild_status: {rebuild_status:?}");
         // Show Progress stats (this task is not vital so we can detach it)
         if Instant::now().duration_since(last_show_progress) >= SHOW_PROGRESS_INTERVAL_DURATION {
             last_show_progress = Instant::now();
-            info!("Show trie rebuild progress");
             tokio::spawn(show_trie_rebuild_progress(
                 start_time,
                 initial_rebuild_status.clone(),
@@ -1167,10 +1165,6 @@ async fn rebuild_state_trie_in_backgound(store: Store, cancel_token: Cancellatio
                     .all(|(ch, end)| ch >= end)
             })
         };
-        if state_sync_complete {
-            info!("State sync complete!!");
-        }
-        info!("Rebuilding segment: {current_segment}");
         if !rebuild_status[current_segment].complete() {
             // Start rebuilding the current trie segment
             let (current_hash, mismatched, current_root) = store.rebuild_state_trie_segment(

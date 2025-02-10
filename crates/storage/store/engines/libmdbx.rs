@@ -691,7 +691,6 @@ impl StoreEngine for Store {
             .map_err(StoreError::LibmdbxError)?;
         let mut current_hash = start;
         let mut inserts_since_last_commit = 0;
-        tracing::info!("Rebuilding segment, start: {start}, end: {end}");
         for (hash, account) in cursor
             .walk(Some(start.into()))
             .map_while(|res| res.ok().map(|(hash, acc)| (hash.to(), acc.to())))
@@ -715,7 +714,6 @@ impl StoreEngine for Store {
                 inserts_since_last_commit = 0;
             }
         }
-        tracing::info!("Rebuilding segment, new start: {current_hash}");
         Ok((
             current_hash,
             mismatched_storage_accounts,
