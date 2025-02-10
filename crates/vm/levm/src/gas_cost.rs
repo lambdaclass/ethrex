@@ -390,20 +390,15 @@ fn mem_expansion_behavior(
 pub fn sload(storage_slot_was_cold: bool, fork: Fork) -> Result<u64, VMError> {
     // Berlin https://github.com/ethereum/execution-specs/blob/8dbde99b132ff8d8fcc9cfb015a9947ccc8b12d6/network-upgrades/mainnet-upgrades/berlin.md
     // EIP https://eips.ethereum.org/EIPS/eip-2929
-    let static_gas = if fork >= Fork::Berlin {
-        SLOAD_STATIC
-    } else {
-        200
-    };
+    if fork < Fork::Berlin {
+        return Ok(200);
+    }
+    let static_gas = SLOAD_STATIC;
 
-    let dynamic_cost = if fork >= Fork::Berlin {
-        if storage_slot_was_cold {
-            SLOAD_COLD_DYNAMIC
-        } else {
-            SLOAD_WARM_DYNAMIC
-        }
+    let dynamic_cost = if storage_slot_was_cold {
+        SLOAD_COLD_DYNAMIC
     } else {
-        0
+        SLOAD_WARM_DYNAMIC
     };
 
     Ok(static_gas
@@ -628,6 +623,7 @@ fn address_access_cost(
     warm_dynamic_cost: u64,
     fork: Fork,
 ) -> Result<u64, VMError> {
+    // [EIP-2929](https://eips.ethereum.org/EIPS/eip-2929)
     if fork <= Fork::Berlin {
         Ok(700)
     } else {
@@ -805,23 +801,13 @@ pub fn delegatecall(
 ) -> Result<(u64, u64), VMError> {
     let memory_expansion_cost = memory::expansion_cost(new_memory_size, current_memory_size)?;
 
-    // https://eips.ethereum.org/EIPS/eip-2929#storage-read-changes
-
-    let address_access_cost = if fork <= Fork::Berlin {
-        700
-    } else {
-        address_access_cost(
-            address_was_cold,
-            if fork <= Fork::Berlin { 700 } else { 0 },
-            DELEGATECALL_COLD_DYNAMIC,
-            if fork <= Fork::Berlin {
-                0
-            } else {
-                DELEGATECALL_WARM_DYNAMIC
-            },
-            fork,
-        )?
-    };
+    let address_access_cost = address_access_cost(
+        address_was_cold,
+        DELEGATECALL_STATIC,
+        DELEGATECALL_COLD_DYNAMIC,
+        DELEGATECALL_WARM_DYNAMIC,
+        fork,
+    )?;
     let call_gas_costs = memory_expansion_cost
         .checked_add(address_access_cost)
         .ok_or(OutOfGasError::GasCostOverflow)?;
