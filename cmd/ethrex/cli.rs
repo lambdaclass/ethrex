@@ -97,7 +97,10 @@ pub fn cli() -> Command {
             Arg::new("datadir")
                 .long("datadir")
                 .value_name("DATABASE_DIRECTORY")
-                .action(ArgAction::Set),
+                .action(ArgAction::Set)
+                .help(
+                    "If the datadir contains the word `memory`, ethrex will use the InMemory Engine",
+                ),
         )
         .arg(
             Arg::new("import")
@@ -122,6 +125,15 @@ pub fn cli() -> Command {
                 .long("metrics.port")
                 .required(false)
                 .value_name("PROMETHEUS_METRICS_PORT"),
+        )
+        .arg(
+            Arg::new("devmode")
+                .long("devmode")
+                .default_value("false")
+                .required(false)
+                .value_parser(clap::value_parser!(bool))
+                .value_name("DEV_MODE")
+                .help("Used to create blocks without requiring a Consensus Client"),
         )
         .arg(
             Arg::new("evm")

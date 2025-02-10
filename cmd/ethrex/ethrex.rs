@@ -157,13 +157,20 @@ async fn main() {
 
     cfg_if::cfg_if! {
         if #[cfg(feature = "redb")] {
-            let store = Store::new(&data_dir, EngineType::RedB).expect("Failed to create Store");
+            let engine_type = EngineType::RedB;
         } else if #[cfg(feature = "libmdbx")] {
-            let store = Store::new(&data_dir, EngineType::Libmdbx).expect("Failed to create Store");
+            let engine_type = EngineType::Libmdbx;
         } else {
-            let store = Store::new(&data_dir, EngineType::InMemory).expect("Failed to create Store");
+            // This is used as fallback in case there are no features enabled.
+            let engine_type = EngineType::InMemory;
         }
     }
+
+    let store = if data_dir.contains("memory") {
+        Store::new(&data_dir, EngineType::InMemory).expect("Failed to create Store")
+    } else {
+        Store::new(&data_dir, engine_type).expect("Failed to create Store")
+    };
 
     let genesis = read_genesis_file(&network);
     store
@@ -274,30 +281,37 @@ async fn main() {
         tracker.spawn(metrics_api);
     }
 
+    // Start the block_producer module if devmode was set
+    let dev_mode = *matches.get_one::<bool>("devmode").unwrap_or(&false);
+    if dev_mode {
+        info!("Runnning in DEV_MODE");
+        let authrpc_jwtsecret =
+            std::fs::read(authrpc_jwtsecret).expect("Failed to read JWT secret");
+        let head_block_hash = {
+            let current_block_number = store.get_latest_block_number().unwrap();
+            store
+                .get_canonical_block_hash(current_block_number)
+                .unwrap()
+                .unwrap()
+        };
+        let max_tries = 3;
+        let url = format!("http://{authrpc_socket_addr}");
+        let block_producer_engine = ethrex_dev::block_producer::start_block_producer(
+            url,
+            authrpc_jwtsecret.into(),
+            head_block_hash,
+            max_tries,
+            1000,
+            ethrex_core::Address::default(),
+        );
+        tracker.spawn(block_producer_engine);
+    }
+
     // We do not want to start the networking module if the l2 feature is enabled.
     cfg_if::cfg_if! {
         if #[cfg(feature = "l2")] {
             let l2_proposer = ethrex_l2::start_proposer(store).into_future();
             tracker.spawn(l2_proposer);
-        } else if #[cfg(feature = "dev")] {
-            use ethrex_dev;
-
-            let authrpc_jwtsecret = std::fs::read(authrpc_jwtsecret).expect("Failed to read JWT secret");
-            let head_block_hash = {
-                let current_block_number = store.get_latest_block_number().unwrap();
-                store.get_canonical_block_hash(current_block_number).unwrap().unwrap()
-            };
-            let max_tries = 3;
-            let url = format!("http://{authrpc_socket_addr}");
-            let block_producer_engine = ethrex_dev::block_producer::start_block_producer(
-                url,
-                authrpc_jwtsecret.into(),
-                head_block_hash,
-                max_tries,
-                1000,
-                ethrex_core::Address::default(),
-            );
-            tracker.spawn(block_producer_engine);
         } else {
             ethrex_p2p::start_network(
                 local_p2p_node,
