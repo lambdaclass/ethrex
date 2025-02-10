@@ -104,6 +104,8 @@ pub const SSTORE_STORAGE_CREATION: u64 = 20000;
 pub const SSTORE_STORAGE_MODIFICATION: u64 = 2900;
 pub const SSTORE_STIPEND: u64 = 2300;
 
+pub const BALANCE_PRE_TANGERINE: u64 = 20;
+pub const BALANCE_TANGERINE: u64 = 400;
 pub const BALANCE_STATIC: u64 = DEFAULT_STATIC;
 pub const BALANCE_COLD_DYNAMIC: u64 = DEFAULT_COLD_DYNAMIC;
 pub const BALANCE_WARM_DYNAMIC: u64 = DEFAULT_WARM_DYNAMIC;
@@ -621,13 +623,19 @@ fn address_access_cost(
         .ok_or(OutOfGasError::GasCostOverflow)?)
 }
 
-pub fn balance(address_was_cold: bool) -> Result<u64, VMError> {
-    address_access_cost(
-        address_was_cold,
-        BALANCE_STATIC,
-        BALANCE_COLD_DYNAMIC,
-        BALANCE_WARM_DYNAMIC,
-    )
+pub fn balance(address_was_cold: bool, fork: Fork) -> Result<u64, VMError> {
+    if fork < Fork::Tangerine {
+        Ok(BALANCE_PRE_TANGERINE)
+    } else if fork >= Fork::Tangerine && fork < Fork::Cancun {
+        Ok(BALANCE_TANGERINE)
+    } else {
+        address_access_cost(
+            address_was_cold,
+            BALANCE_STATIC,
+            BALANCE_COLD_DYNAMIC,
+            BALANCE_WARM_DYNAMIC,
+        )
+    }
 }
 
 pub fn extcodesize(address_was_cold: bool, fork: Fork) -> Result<u64, VMError> {

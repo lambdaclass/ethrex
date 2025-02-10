@@ -44,7 +44,8 @@ impl VM {
             address,
         );
 
-        current_call_frame.increase_consumed_gas(gas_cost::balance(address_was_cold)?)?;
+        current_call_frame
+            .increase_consumed_gas(gas_cost::balance(address_was_cold, self.env.config.fork)?)?;
 
         current_call_frame.stack.push(account_info.balance)?;
 
