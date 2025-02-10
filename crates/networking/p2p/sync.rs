@@ -1167,6 +1167,9 @@ async fn rebuild_state_trie_in_backgound(store: Store, cancel_token: Cancellatio
                     .all(|(ch, end)| ch >= end)
             })
         };
+        if state_sync_complete {
+            info!("State sync complete!!");
+        }
         info!("Rebuilding segment: {current_segment}");
         if !rebuild_status[current_segment].complete() {
             // Start rebuilding the current trie segment
