@@ -7122,7 +7122,7 @@ dependencies = [
  "bytes",
  "elf",
  "enum-map",
- "getrandom 0.2.15",
+ "getrandom",
  "hex",
  "keccak",
  "lazy-regex",
@@ -7159,7 +7159,7 @@ checksum = "a6b5ac61f6d36b02655a415a8a2afd021aa260402d45deff5524c80dbc521f29"
 dependencies = [
  "bytemuck",
  "cfg-if",
- "getrandom 0.2.15",
+ "getrandom",
  "libm",
  "stability",
 ]
