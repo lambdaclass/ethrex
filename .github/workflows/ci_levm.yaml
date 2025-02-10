@@ -51,6 +51,12 @@ jobs:
         run: |
           cd crates/vm/levm && awk '/Summary: /,/Frontier/' test_result_pr.txt;
 
+      - name: Upload PR branch EF-test results.
+        uses: actions/upload-artifact@v4
+        with:
+          name: pr-ef-test-data
+          path: crates/vm/levm/test_result_pr.txt
+
       - name: Check EF-TESTS status is 100%
         run: |
           cd crates/vm/levm
@@ -94,6 +100,12 @@ jobs:
       - name: Show test summary -- short
         run: |
           cd crates/vm/levm && awk '/Summary: /,/Frontier/' test_result_main.txt;
+
+      - name: Upload main branch EF-test results.
+        uses: actions/upload-artifact@v4
+        with:
+          name: main-ef-test-data
+          path: crates/vm/levm/test_result_main.txt
 
       - name: Check EF-TESTS status is 100%
         run: |
