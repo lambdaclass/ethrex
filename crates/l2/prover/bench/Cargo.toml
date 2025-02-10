@@ -4,9 +4,9 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-ethrex-core.workspace = true
+ethrex-core = { path = "../../../common/", default-features = false }
+ethrex-vm = { path = "../../../vm/", default-features = false }
 ethrex-rlp.workspace = true
-ethrex-vm.workspace = true
 ethrex-prover.workspace = true
 ethrex-l2.workspace = true
 ethrex-trie.workspace = true
