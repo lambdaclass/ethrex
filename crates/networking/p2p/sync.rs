@@ -368,17 +368,17 @@ impl SyncManager {
                     .any(|(ch, end)| ch < end)
             })
         {
-            // // Begin the background state rebuild process if it is not active yet or if it crashed
-            // if self.state_trie_rebuilder.is_none()
-            //     || self
-            //         .state_trie_rebuilder
-            //         .as_ref()
-            //         .is_some_and(|task| task.is_finished())
-            // {
-            //     self.state_trie_rebuilder = Some(tokio::task::spawn(
-            //         rebuild_state_trie_in_backgound(store.clone(), self.cancel_token.clone()),
-            //     ))
-            // };
+            // Begin the background state rebuild process if it is not active yet or if it crashed
+            if self.state_trie_rebuilder.is_none()
+                || self
+                    .state_trie_rebuilder
+                    .as_ref()
+                    .is_some_and(|task| task.is_finished())
+            {
+                self.state_trie_rebuilder = Some(tokio::task::spawn(
+                    rebuild_state_trie_in_backgound(store.clone(), self.cancel_token.clone()),
+                ))
+            };
             let stale_pivot = state_sync(
                 state_root,
                 store.clone(),
