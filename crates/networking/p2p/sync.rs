@@ -1156,12 +1156,11 @@ async fn rebuild_state_trie_in_backgound(store: Store) -> Result<Vec<H256>, Sync
         };
         if !rebuild_status[current_segment].complete() {
             // Start rebuilding the current trie segment
-            let (current_hash, mismatched, current_root) = store
-                .rebuild_state_trie_segment(
-                    root,
-                    rebuild_status[current_segment].current,
-                    rebuild_status[current_segment].end,
-                )?;
+            let (current_hash, mismatched, current_root) = store.rebuild_state_trie_segment(
+                root,
+                rebuild_status[current_segment].current,
+                rebuild_status[current_segment].end,
+            )?;
             mismatched_storage_accounts.extend(mismatched);
             // Update status
             root = current_root;
@@ -1191,20 +1190,21 @@ async fn show_trie_rebuild_progress(
 ) {
     // Count how many hashes we already inserted in the trie and how many we inserted this cycle
     let mut accounts_processed = U256::zero();
-    let mut accounts_processed_this_cycle = U256::zero();
+    let mut accounts_processed_this_cycle = U256::one();
     for i in 0..STATE_TRIE_SEGMENTS {
         accounts_processed +=
-            rebuild_status[i].current.into_uint().checked_sub(STATE_TRIE_SEGMENTS_START[i].into_uint()).unwrap();
-        accounts_processed_this_cycle = accounts_processed_this_cycle.checked_add(rebuild_status[i].current.into_uint().checked_sub(initial_rebuild_status[i].current.into_uint()).unwrap()).unwrap();
+            rebuild_status[i].current.into_uint() - (STATE_TRIE_SEGMENTS_START[i].into_uint());
+        accounts_processed_this_cycle +=
+            rebuild_status[i].current.into_uint() - initial_rebuild_status[i].current.into_uint();
     }
     // Calculate completion rate
     let completion_rate = (U512::from(accounts_processed + U256::one()) * U512::from(100))
         / U512::from(U256::max_value());
     // Time to finish = Time since start / Accounts processed this cycle * Remaining accounts
     let remaining_accounts = U256::MAX - accounts_processed;
-    let time_to_finish =
-        (U512::from(start_time.elapsed().as_secs()) * U512::from(remaining_accounts) + U512::one())
-            / U512::from(accounts_processed_this_cycle);
+    let time_to_finish = (U512::from(start_time.elapsed().as_secs())
+        * U512::from(remaining_accounts))
+        / (U512::from(accounts_processed_this_cycle));
     info!(
         "State Trie Rebuild Progress: {}%, estimated time to finish: {}",
         completion_rate,
