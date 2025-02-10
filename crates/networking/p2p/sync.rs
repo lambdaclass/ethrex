@@ -412,6 +412,8 @@ impl SyncManager {
                     .collect(),
             )
         }
+        // Clear snapshot
+        store.clear_snapshot()?;
         // Perfrom Healing
         let heal_status = heal_state_trie(
             state_root,
@@ -1201,8 +1203,6 @@ async fn rebuild_state_trie_in_backgound(
         // Move on to the next segment
         current_segment = (current_segment + 1) % STATE_TRIE_SEGMENTS
     }
-    // Clear snapshot
-    store.clear_snapshot()?;
 
     Ok(mismatched_storage_accounts)
 }
