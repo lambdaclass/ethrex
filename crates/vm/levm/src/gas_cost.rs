@@ -664,18 +664,16 @@ pub fn balance(address_was_cold: bool, fork: Fork) -> Result<u64, VMError> {
 }
 
 pub fn extcodesize(address_was_cold: bool, fork: Fork) -> Result<u64, VMError> {
-    if fork < Fork::Tangerine {
-        Ok(EXTCODESIZE_PRE_TANGERINE)
-    } else if fork >= Fork::Tangerine && fork < Fork::Cancun {
-        Ok(EXTCODESIZE_TANGERINE)
-    } else {
-        address_access_cost(
+    match fork {
+        f if f < Fork::Tangerine => Ok(EXTCODESIZE_PRE_TANGERINE),
+        f if f >= Fork::Tangerine && fork < Fork::Cancun => Ok(EXTCODESIZE_TANGERINE),
+        _ => address_access_cost(
             address_was_cold,
             EXTCODESIZE_STATIC,
             EXTCODESIZE_COLD_DYNAMIC,
             EXTCODESIZE_WARM_DYNAMIC,
             fork,
-        )
+        ),
     }
 }
 
