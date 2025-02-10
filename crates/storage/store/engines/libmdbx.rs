@@ -693,10 +693,10 @@ impl StoreEngine for Store {
             .walk(Some(start.into()))
             .map_while(|res| res.ok().map(|(hash, acc)| (hash.to(), acc.to())))
         {
-            current_hash = hash;
-            if current_hash >= end {
+            if hash >= end {
                 break;
             }
+            current_hash = hash;
             // Rebuild storage trie and check for mismatches
             let rebuilt_root = self.rebuild_storage_trie_from_snapshot(hash)?;
             if rebuilt_root != account.storage_root {
