@@ -12,7 +12,7 @@ use zkvm_interface::io::ProgramInput;
 
 #[cfg(all(feature = "sp1", feature = "risc0"))]
 compile_error!("Choose only one prover backend.");
-#[cfg(not(any((feature = "sp1", feature = "risc0"))))]
+#[cfg(not(any(feature = "sp1", feature = "risc0")))]
 compile_error!("Choose either sp1 or risc0 prover backends.");
 
 #[derive(Parser, Debug)]
