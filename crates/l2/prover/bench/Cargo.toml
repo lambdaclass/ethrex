@@ -6,11 +6,11 @@ edition = "2021"
 [dependencies]
 ethrex-core = { path = "../../../common/", default-features = false }
 ethrex-vm = { path = "../../../vm/", default-features = false }
+ethrex-storage = { path = "../../../storage/store", default-features = false }
 ethrex-rlp.workspace = true
 ethrex-prover.workspace = true
 ethrex-l2.workspace = true
 ethrex-trie.workspace = true
-ethrex-storage.workspace = true
 
 zkvm_interface = { path = "../zkvm/interface", default-features = false }
 
