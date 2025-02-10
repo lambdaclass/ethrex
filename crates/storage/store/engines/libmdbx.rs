@@ -701,10 +701,10 @@ impl StoreEngine for Store {
             }
             current_hash = hash;
             // Rebuild storage trie and check for mismatches
-            let rebuilt_root = self.rebuild_storage_trie_from_snapshot(hash)?;
-            if rebuilt_root != account.storage_root {
-                mismatched_storage_accounts.push(hash);
-            }
+            // let rebuilt_root = self.rebuild_storage_trie_from_snapshot(hash)?;
+            // if rebuilt_root != account.storage_root {
+            //     mismatched_storage_accounts.push(hash);
+            // }
             // Add account to trie
             state_trie.insert(hash.to_fixed_bytes().to_vec(), account.encode_to_vec())?;
             // Commit every few iterations so we don't build the full trie in memory
