@@ -1,14 +1,14 @@
 [package]
-name = "ef_tests-levm"
+name = "ef_tests-state"
 version.workspace = true
 edition.workspace = true
 
 [dependencies]
-ethrex-blockchain = { workspace = true, features = ["levm"] }
+ethrex-blockchain = { workspace = true }
 ethrex-core.workspace = true
 ethrex-storage.workspace = true
 ethrex-rlp.workspace = true
-ethrex-vm = { workspace = true, features = ["levm"] }
+ethrex-vm = { workspace = true }
 ethrex-levm = { path = "../../../crates/vm/levm" }
 serde.workspace = true
 serde_json.workspace = true
@@ -33,12 +33,8 @@ revm = { version = "18.0.0", features = [
 hex = "0.4.3"
 
 [lib]
-path = "./ef_tests.rs"
-
-[[bin]]
-name = "ef_tests_levm"
-path = "tests/ef_tests_levm.rs"
+path = "./lib.rs"
 
 [[test]]
-name = "ef_tests_levm"
+name = "all"
 harness = false

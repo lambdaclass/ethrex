@@ -205,7 +205,12 @@ impl VM {
             match validate_create {
                 Ok(new_address) => {
                     // Set bytecode to new account if success
-                    update_account_bytecode(&mut self.cache, &self.db, new_address, contract_code)?;
+                    update_account_bytecode(
+                        &mut self.cache,
+                        self.db.clone(),
+                        new_address,
+                        contract_code,
+                    )?;
                 }
                 Err(error) => {
                     // Revert if error
