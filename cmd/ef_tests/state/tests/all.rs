@@ -1,5 +1,5 @@
 use clap::Parser;
-use ef_tests_levm::{
+use ef_tests_state::{
     parser,
     runner::{self, EFTestRunnerOptions},
 };

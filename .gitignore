@@ -13,6 +13,10 @@ cmd/ef_tests/blockchain/vectors
 cmd/ef_tests/levm/vectors
 cmd/ef_tests/ethrex/vectors
 
+cmd/ef_tests/levm/vectors
+
+cmd/ef_tests/state/vectors
+
 # Repos checked out by make target
 hive/
 ethereum-package/
@@ -59,7 +63,7 @@ loc_report.json
 ethrex.redb
 
 # used by Flamegraph and Samply
-cmd/ef_tests/levm/levm_perfgraphs
+cmd/ef_tests/state/levm_perfgraphs
 *.svg
 prof_*.json
 prof.json

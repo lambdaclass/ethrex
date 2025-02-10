@@ -16,7 +16,7 @@ use ethrex_blockchain::mempool;
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_storage::Store;
 
-use ethrex_vm::{evm_state, ExecutionResult, SpecId};
+use ethrex_vm::{db::evm_state, ExecutionResult, SpecId};
 use serde::Serialize;
 
 use serde_json::Value;

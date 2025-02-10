@@ -35,4 +35,3 @@ path = "src/benchmark_block.rs"
 
 [features]
 default = []
-levm = ["default", "ethrex-vm/levm"]

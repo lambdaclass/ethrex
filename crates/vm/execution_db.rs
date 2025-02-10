@@ -1,8 +1,5 @@
 use std::collections::HashMap;
 
-use crate::{
-    block_env, errors::ExecutionDBError, evm_state, execute_block, get_state_transitions, tx_env,
-};
 use bytes::Bytes;
 use ethereum_types::H160;
 use ethrex_core::types::code_hash;
@@ -23,6 +20,11 @@ use revm::{
 };
 use revm_primitives::SpecId;
 use serde::{Deserialize, Serialize};
+
+use crate::{
+    block_env, db::evm_state, errors::ExecutionDBError, execute_block, get_state_transitions,
+    tx_env,
+};
 
 /// In-memory EVM database for single execution data.
 ///

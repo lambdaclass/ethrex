@@ -10,6 +10,7 @@ use ethrex_p2p::{
 };
 use ethrex_rlp::decode::RLPDecode;
 use ethrex_storage::{EngineType, Store};
+use ethrex_vm::{backends::EVM, EVM_BACKEND};
 use k256::ecdsa::SigningKey;
 use local_ip_address::local_ip;
 use rand::rngs::OsRng;
@@ -150,6 +151,10 @@ async fn main() {
 
     let sync_mode = sync_mode(&matches);
 
+    let evm = matches.get_one::<EVM>("evm").unwrap_or(&EVM::REVM);
+    let evm = EVM_BACKEND.get_or_init(|| evm.clone());
+    info!("EVM_BACKEND set to: {:?}", evm);
+
     cfg_if::cfg_if! {
         if #[cfg(feature = "redb")] {
             let store = Store::new(&data_dir, EngineType::RedB).expect("Failed to create Store");
@@ -284,7 +289,14 @@ async fn main() {
             };
             let max_tries = 3;
             let url = format!("http://{authrpc_socket_addr}");
-            let block_producer_engine = ethrex_dev::block_producer::start_block_producer(url, authrpc_jwtsecret.into(), head_block_hash, max_tries, 1000, ethrex_core::Address::default());
+            let block_producer_engine = ethrex_dev::block_producer::start_block_producer(
+                url,
+                authrpc_jwtsecret.into(),
+                head_block_hash,
+                max_tries,
+                1000,
+                ethrex_core::Address::default(),
+            );
             tracker.spawn(block_producer_engine);
         } else {
             ethrex_p2p::start_network(
@@ -419,12 +431,13 @@ fn import_blocks(store: &Store, blocks: &Vec<Block>) {
     }
     if let Some(last_block) = blocks.last() {
         let hash = last_block.hash();
-        cfg_if::cfg_if! {
-            if #[cfg(feature = "levm")] {
+        match EVM_BACKEND.get() {
+            Some(EVM::LEVM) => {
                 // We are allowing this not to unwrap so that tests can run even if block execution results in the wrong root hash with LEVM.
                 let _ = apply_fork_choice(store, hash, hash, hash);
             }
-            else {
+            // This means we are using REVM as default
+            Some(EVM::REVM) | None => {
                 apply_fork_choice(store, hash, hash, hash).unwrap();
             }
         }

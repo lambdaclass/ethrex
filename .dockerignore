@@ -8,7 +8,7 @@
 **/*.rs.bk
 
 cmd/ef_tests/blockchain/vectors
-cmd/ef_tests/levm/vectors
+cmd/ef_tests/state/vectors
 
 **/.DS_Store
 **/.vscode
@@ -24,4 +24,4 @@ crates/levm_mlir/ethtests
 crates/levm_mlir/*.tar.gz
 
 # used by Flamegraph and Samply
-cmd/ef_tests/levm/levm_perfgraphs
+cmd/ef_tests/state/levm_perfgraphs
