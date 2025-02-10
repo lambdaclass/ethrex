@@ -112,11 +112,6 @@ jobs:
       - name: Checkout sources
         uses: actions/checkout@v4
 
-      - name: Rustup toolchain install
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          toolchain: ${{ env.RUST_VERSION }}
-
       - name: Caching
         uses: Swatinem/rust-cache@v2
 
