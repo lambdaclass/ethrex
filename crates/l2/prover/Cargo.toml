@@ -29,7 +29,7 @@ zkvm_interface = { path = "./zkvm/interface", default-features = false }
 risc0-zkvm = { version = "1.2.0" }
 
 # sp1
-sp1-sdk = "4.0.1"
+sp1-sdk = "3.4.0"
 
 [dev-dependencies]
 ethrex-vm.workspace = true
