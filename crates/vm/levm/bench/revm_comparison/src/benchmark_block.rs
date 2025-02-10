@@ -2,7 +2,12 @@ use clap::Parser;
 use ethrex_rpc_client::db::RpcDB;
 use ethrex_rpc_client::{get_block, get_latest_block_number};
 use ethrex_vm::execution_db::ToExecDB;
-use ethrex_vm::{execute_block, EvmState};
+use ethrex_vm::{
+    backends::{
+        levm::execute_block as execute_block_levm, revm::execute_block as execute_block_revm,
+    },
+    db::EvmState,
+};
 use revm::primitives::hex;
 use std::{fs::File, io::Write};
 
@@ -68,7 +73,7 @@ async fn main() {
     cfg_if::cfg_if! {
         if #[cfg(feature = "levm")] {
             let before = std::time::Instant::now();
-            let (receipts, _updates) = execute_block(&block, &mut evm_state).unwrap();
+            let (receipts, _updates) = execute_block_levm(&block, &mut evm_state).unwrap();
             let after = std::time::Instant::now();
 
             let last_receipt = receipts.last().unwrap();
@@ -77,7 +82,7 @@ async fn main() {
             println!("Receipt hash: 0x{}", hashed_receipt);
         } else {
             let before = std::time::Instant::now();
-            let receipts = execute_block(&block, &mut evm_state).unwrap();
+            let receipts = execute_block_revm(&block, &mut evm_state).unwrap();
             let after = std::time::Instant::now();
 
             let last_receipt = receipts.last().unwrap();
