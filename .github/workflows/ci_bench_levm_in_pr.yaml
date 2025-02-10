@@ -185,7 +185,7 @@ jobs:
 
       - name: Show test summary -- short
         run: |
-          cd crates/vm/levm && awk '/Summary: /,/Frontier/' test_result.txt;
+          cd crates/vm/levm && bash ../../../.github/scripts/parse_test_result.sh test_result.txt;
 
       - name: Check EF-TESTS status is 100%
         id: check_tests
@@ -202,7 +202,7 @@ jobs:
         run: |
           {
             printf '```\n';
-            cd crates/vm/levm && awk '/Summary: /,/Frontier/' test_result.txt;
+            cd crates/vm/levm && bash ../../../.github/scripts/parse_test_result.sh test_result.txt;
             printf '```\n';
           } > test_summary.txt
 

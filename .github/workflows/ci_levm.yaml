@@ -49,7 +49,7 @@ jobs:
 
       - name: Show test summary -- short
         run: |
-          cd crates/vm/levm && awk '/Summary: /,/Frontier/' test_result_pr.txt;
+          cd crates/vm/levm && bash ../../../.github/scripts/parse_test_result.sh test_result.txt;
 
       - name: Upload PR branch EF-test results.
         uses: actions/upload-artifact@v4
@@ -99,7 +99,7 @@ jobs:
 
       - name: Show test summary -- short
         run: |
-          cd crates/vm/levm && awk '/Summary: /,/Frontier/' test_result_main.txt;
+          cd crates/vm/levm && bash ../../../.github/scripts/parse_test_result.sh test_result.txt;
 
       - name: Upload main branch EF-test results.
         uses: actions/upload-artifact@v4
