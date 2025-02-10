@@ -28,7 +28,6 @@ mod rlp;
 
 #[derive(Debug, Clone)]
 pub struct Store {
-    // TODO: Check if we can remove this mutex and move it to the in_memory::Store struct
     engine: Arc<dyn StoreEngine>,
     pub mempool: Arc<Mutex<HashMap<H256, MempoolTransaction>>>,
     pub blobs_bundle_pool: Arc<Mutex<HashMap<H256, BlobsBundle>>>,
