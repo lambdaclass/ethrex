@@ -670,7 +670,7 @@ pub fn extcodesize(address_was_cold: bool, fork: Fork) -> Result<u64, VMError> {
             EXTCODESIZE_STATIC,
             EXTCODESIZE_COLD_DYNAMIC,
             EXTCODESIZE_WARM_DYNAMIC,
-            fork,
+            f,
         ),
     }
 }
