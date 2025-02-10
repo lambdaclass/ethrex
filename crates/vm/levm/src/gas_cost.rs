@@ -418,8 +418,6 @@ pub fn sstore(
     storage_slot_was_cold: bool,
     fork: Fork,
 ) -> Result<u64, VMError> {
-    dbg!("ENTRO SSTORE");
-    dbg!(storage_slot.current_value, new_value);
     // https://github.com/ethereum/EIPs/blob/master/EIPS/eip-1087.md
     if fork <= Fork::Berlin {
         if storage_slot.current_value.is_zero() && !new_value.is_zero() {
@@ -563,7 +561,12 @@ pub fn selfdestruct(
     address_was_cold: bool,
     account_is_empty: bool,
     balance_to_transfer: U256,
+    fork: Fork,
 ) -> Result<u64, OutOfGasError> {
+    // https://github.com/ethereum/EIPs/blob/master/EIPS/eip-150.md
+    if fork < Fork::Tangerine {
+        return Ok(0);
+    }
     let mut gas_cost = SELFDESTRUCT_STATIC;
 
     if address_was_cold {
@@ -631,9 +634,7 @@ fn address_access_cost(
     warm_dynamic_cost: u64,
     fork: Fork,
 ) -> Result<u64, VMError> {
-    if fork < Fork::Tangerine {
-        Ok(40)
-    } else if fork <= Fork::Berlin {
+    if fork <= Fork::Berlin {
         //[EIP-150](https://github.com/ethereum/EIPs/blob/master/EIPS/eip-150.md)
         Ok(ADDRESS_COST_PRE_BERLIN)
     } else {
@@ -652,6 +653,9 @@ fn address_access_cost(
 }
 
 pub fn balance(address_was_cold: bool, fork: Fork) -> Result<u64, VMError> {
+    if fork < Fork::Tangerine {
+        return Ok(20);
+    }
     address_access_cost(
         address_was_cold,
         BALANCE_STATIC,
@@ -662,6 +666,10 @@ pub fn balance(address_was_cold: bool, fork: Fork) -> Result<u64, VMError> {
 }
 
 pub fn extcodesize(address_was_cold: bool, fork: Fork) -> Result<u64, VMError> {
+    if fork < Fork::Tangerine {
+        return Ok(20);
+    }
+    // https://github.com/ethereum/EIPs/blob/master/EIPS/eip-150.md
     address_access_cost(
         address_was_cold,
         EXTCODESIZE_STATIC,
@@ -678,6 +686,9 @@ pub fn extcodecopy(
     address_was_cold: bool,
     fork: Fork,
 ) -> Result<u64, VMError> {
+    if fork < Fork::Tangerine {
+        return Ok(20);
+    }
     let base_access_cost = copy_behavior(
         new_memory_size,
         current_memory_size,
@@ -721,13 +732,17 @@ pub fn call(
 ) -> Result<(u64, u64), VMError> {
     let memory_expansion_cost = memory::expansion_cost(new_memory_size, current_memory_size)?;
 
-    let address_access_cost = address_access_cost(
-        address_was_cold,
-        CALL_STATIC,
-        CALL_COLD_DYNAMIC,
-        CALL_WARM_DYNAMIC,
-        fork,
-    )?;
+    let address_access_cost = if fork < Fork::Tangerine {
+        40
+    } else {
+        address_access_cost(
+            address_was_cold,
+            CALL_STATIC,
+            CALL_COLD_DYNAMIC,
+            CALL_WARM_DYNAMIC,
+            fork,
+        )?
+    };
     let positive_value_cost = if !value_to_transfer.is_zero() {
         CALL_POSITIVE_VALUE
     } else {
@@ -766,13 +781,17 @@ pub fn callcode(
 ) -> Result<(u64, u64), VMError> {
     let memory_expansion_cost = memory::expansion_cost(new_memory_size, current_memory_size)?;
 
-    let address_access_cost = address_access_cost(
-        address_was_cold,
-        CALLCODE_STATIC,
-        CALLCODE_COLD_DYNAMIC,
-        CALLCODE_WARM_DYNAMIC,
-        fork,
-    )?;
+    let address_access_cost = if fork < Fork::Tangerine {
+        40
+    } else {
+        address_access_cost(
+            address_was_cold,
+            CALL_STATIC,
+            CALL_COLD_DYNAMIC,
+            CALL_WARM_DYNAMIC,
+            fork,
+        )?
+    };
     let positive_value_cost = if !value_to_transfer.is_zero() {
         CALLCODE_POSITIVE_VALUE
     } else {
@@ -803,13 +822,17 @@ pub fn delegatecall(
 ) -> Result<(u64, u64), VMError> {
     let memory_expansion_cost = memory::expansion_cost(new_memory_size, current_memory_size)?;
 
-    let address_access_cost = address_access_cost(
-        address_was_cold,
-        DELEGATECALL_STATIC,
-        DELEGATECALL_COLD_DYNAMIC,
-        DELEGATECALL_WARM_DYNAMIC,
-        fork,
-    )?;
+    let address_access_cost = if fork < Fork::Tangerine {
+        40
+    } else {
+        address_access_cost(
+            address_was_cold,
+            CALL_STATIC,
+            CALL_COLD_DYNAMIC,
+            CALL_WARM_DYNAMIC,
+            fork,
+        )?
+    };
     let call_gas_costs = memory_expansion_cost
         .checked_add(address_access_cost)
         .ok_or(OutOfGasError::GasCostOverflow)?;
