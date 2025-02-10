@@ -147,7 +147,7 @@ impl SyncManager {
                 .await
             {
                 Some(mut block_headers) => {
-                    debug!(
+                    info!(
                         "Received {} block headers| Last Number: {}",
                         block_headers.len(),
                         block_headers.last().as_ref().unwrap().number
