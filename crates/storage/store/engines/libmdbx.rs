@@ -32,7 +32,7 @@ use std::path::Path;
 use std::sync::Arc;
 
 /// Maximum amount of trie inserts without committing nodes to DB
-const MAX_TRIE_INSERTS_WITHOUT_COMMIT: usize = 200;
+const MAX_TRIE_INSERTS_WITHOUT_COMMIT: usize = 100;
 
 pub struct Store {
     db: Arc<Database>,
