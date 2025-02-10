@@ -415,6 +415,8 @@ pub fn sstore(
     storage_slot_was_cold: bool,
     fork: Fork,
 ) -> Result<u64, VMError> {
+    dbg!("ENTRO SSTORE");
+    dbg!(storage_slot.current_value, new_value);
     // https://github.com/ethereum/EIPs/blob/master/EIPS/eip-1087.md
     if fork <= Fork::Berlin {
         if storage_slot.current_value.is_zero() && !new_value.is_zero() {
@@ -626,10 +628,13 @@ fn address_access_cost(
     warm_dynamic_cost: u64,
     fork: Fork,
 ) -> Result<u64, VMError> {
-    // [EIP-2929](https://eips.ethereum.org/EIPS/eip-2929)
-    if fork <= Fork::Berlin {
+    if fork < Fork::Tangerine {
+        Ok(40)
+    } else if fork <= Fork::Berlin {
+        //[EIP-150](https://github.com/ethereum/EIPs/blob/master/EIPS/eip-150.md)
         Ok(ADDRESS_COST_PRE_BERLIN)
     } else {
+        // [EIP-2929](https://eips.ethereum.org/EIPS/eip-2929)
         let static_gas = static_cost;
         let dynamic_cost: u64 = if address_was_cold {
             cold_dynamic_cost
