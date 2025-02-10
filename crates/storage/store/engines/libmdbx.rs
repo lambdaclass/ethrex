@@ -696,7 +696,7 @@ impl StoreEngine for Store {
             .walk(Some(start.into()))
             .map_while(|res| res.ok().map(|(hash, acc)| (hash.to(), acc.to())))
         {
-            info!("{hash}");
+            tracing::info!("{hash}");
             // Check for cancellation signal from main process
             if cancel_token.is_cancelled() {
                 break
