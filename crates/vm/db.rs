@@ -5,12 +5,9 @@ use ethrex_core::{
     Address as CoreAddress, H256 as CoreH256,
 };
 use ethrex_storage::{error::StoreError, hash_address, hash_key, Store};
-use revm::{
-    db::AccountState as RevmAccountState,
-    primitives::{
-        AccountInfo as RevmAccountInfo, Address as RevmAddress, Bytecode as RevmBytecode,
-        Bytes as RevmBytes, B256 as RevmB256, U256 as RevmU256,
-    },
+use revm::primitives::{
+    AccountInfo as RevmAccountInfo, Address as RevmAddress, Bytecode as RevmBytecode,
+    Bytes as RevmBytes, B256 as RevmB256, U256 as RevmU256,
 };
 
 use crate::{
