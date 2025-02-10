@@ -1,0 +1,38 @@
+name: L2
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+    branches: ["**"]
+    paths:
+      - "crates/l2/**"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
+  cancel-in-progress: true
+
+env:
+  RUST_VERSION: 1.81.0
+
+jobs:
+  test:
+    # "Integration Test" is a required check, don't change the name
+    name: Integration Test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v4
+
+      - name: Rustup toolchain install
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: ${{ env.RUST_VERSION }}
+
+      - name: Caching
+        uses: Swatinem/rust-cache@v2
+
+      - name: Run L2 integration test
+        run: |
+          cd crates/l2
+          cp .env.example .env
+          make ci_test
