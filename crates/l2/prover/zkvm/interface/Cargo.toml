@@ -15,7 +15,7 @@ ethrex-storage = { path = "../../../../storage/store", default-features = false 
 ethrex-trie = { path = "../../../../storage/trie", default-features = false }
 
 [build-dependencies]
-risc0-build = { version = "1.2.0" }
+risc0-build = { version = "1.2.2" }
 sp1-build = "3.4.0"
 
 [package.metadata.risc0]
@@ -25,7 +25,6 @@ methods = ["risc0"]
 default = []
 build_risc0 = []
 build_sp1 = []
-
 
 [lib]
 path = "./src/lib.rs"

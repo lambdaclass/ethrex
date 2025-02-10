@@ -32,7 +32,7 @@ directories = "5.0.1"
 zkvm_interface = { path = "./prover/zkvm/interface/", default-features = false }
 
 # risc0
-risc0-zkvm = { version = "1.2.0" }
+risc0-zkvm = { version = "1.2.2" }
 # sp1
 sp1-sdk = { version = "3.4.0" }
 ethrex-sdk = { path = "./sdk" }

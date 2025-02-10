@@ -6,7 +6,7 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-ethrex-levm = { path = "../vm/levm" }
+ethrex-levm = { path = "../vm/levm", default-features = false }
 thiserror.workspace = true
 sha3.workspace = true
 tracing.workspace = true
@@ -32,5 +32,5 @@ path = "./blockchain.rs"
 [features]
 default = ["c-kzg"]
 libmdbx = ["ethrex-core/libmdbx", "ethrex-storage/default", "ethrex-vm/libmdbx"]
-c-kzg = ["ethrex-core/c-kzg"]
+c-kzg = ["ethrex-core/c-kzg", "ethrex-levm/c-kzg"]
 metrics = ["ethrex-metrics/transactions"]
