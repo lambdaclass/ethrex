@@ -233,7 +233,10 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
 
         // Subscribe this connection to the broadcasting channel.
         let mut broadcaster_receive = {
-            if self.capabilities.contains(&CAP_ETH_68) {
+            if self
+                .capabilities
+                .contains(&(Capability::Eth, self.negotiated_eth_version))
+            {
                 Some(self.connection_broadcast_send.subscribe())
             } else {
                 None
@@ -292,7 +295,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
         message: Message,
         sender: mpsc::Sender<Message>,
     ) -> Result<(), RLPxError> {
-        let peer_supports_eth = self.capabilities.contains(&CAP_ETH_68);
+        let peer_supports_eth = self.negotiated_eth_version != 0;
         let is_synced = self.storage.is_synced()?;
         match message {
             Message::Disconnect(msg_data) => {
@@ -432,7 +435,10 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
 
     async fn init_peer_conn(&mut self) -> Result<(), RLPxError> {
         // Sending eth Status if peer supports it
-        if self.capabilities.contains(&CAP_ETH_68) {
+        if self
+            .capabilities
+            .contains(&(Capability::Eth, self.negotiated_eth_version))
+        {
             let status = backend::get_status(&self.storage, self.negotiated_eth_version as u32)?;
             log_peer_debug(&self.node, "Sending status");
             self.send(Message::Status(status)).await?;
@@ -461,6 +467,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
                 }
             }
         }
+
         Ok(())
     }
 
