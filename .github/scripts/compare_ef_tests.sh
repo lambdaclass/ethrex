@@ -9,6 +9,7 @@ pr_results=$(bash ../../../.github/scripts/parse_test_result.sh $2)
 IFS=$'\n' read -rd '' -a pr_results <<<"$pr_results"
 
 
+echo "# EF Tests Comparison"
 echo "|Test Name | MAIN     | PR | DIFF | "
 echo "|----------|----------|----|------|"
 
