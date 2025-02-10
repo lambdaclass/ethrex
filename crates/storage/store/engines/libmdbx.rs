@@ -33,6 +33,8 @@ use tokio_util::sync::CancellationToken;
 
 /// Maximum amount of trie inserts without committing nodes to DB
 const MAX_TRIE_INSERTS_WITHOUT_COMMIT: usize = 100;
+// Maximum amount of reads from the snapshot in a single transaction to avoid performance hits due to long-living reads
+const MAX_SNAPSHOT_READS: usize = 100;
 
 pub struct Store {
     db: Arc<Database>,
@@ -691,7 +693,7 @@ impl StoreEngine for Store {
             .cursor::<StateSnapShot>()
             .map_err(StoreError::LibmdbxError)?;
         let mut current_hash = start;
-        let mut inserts_since_last_commit = 0;
+        let mut read_count = 0;
         for (hash, account) in cursor
             .walk(Some(start.into()))
             .map_while(|res| res.ok().map(|(hash, acc)| (hash.to(), acc.to())))
@@ -708,10 +710,9 @@ impl StoreEngine for Store {
             // Add account to trie
             state_trie.insert(hash.to_fixed_bytes().to_vec(), account.encode_to_vec())?;
             // Commit every few iterations so we don't build the full trie in memory
-            inserts_since_last_commit += 1;
-            if inserts_since_last_commit > MAX_TRIE_INSERTS_WITHOUT_COMMIT {
-                state_trie.hash()?;
-                inserts_since_last_commit = 0;
+            read_count += 1;
+            if  read_count > MAX_SNAPSHOT_READS {
+                break
             }
         }
         Ok((current_hash, state_trie.hash()?, storages))
@@ -765,17 +766,15 @@ impl StoreEngine for Store {
         let cursor = txn
             .cursor::<StorageSnapShot>()
             .map_err(StoreError::LibmdbxError)?;
-        let mut inserts_since_last_commit = 0;
+        let mut read_count = 0;
         for (key, value) in cursor.walk_key(account_hash.into(), None).map_while(|res| {
             res.ok()
                 .map(|(k, v)| (k.0.to_vec(), U256::from_big_endian(&v.0).encode_to_vec()))
         }) {
             storage_trie.insert(key, value)?;
-            // Commit every few iterations so we don't build the full trie in memory
-            inserts_since_last_commit += 1;
-            if inserts_since_last_commit > MAX_TRIE_INSERTS_WITHOUT_COMMIT {
-                storage_trie.hash()?;
-                inserts_since_last_commit = 0;
+            read_count += 1;
+            if  read_count > MAX_SNAPSHOT_READS {
+                break
             }
         }
         Ok(storage_trie.hash()?)
