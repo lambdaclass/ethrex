@@ -39,6 +39,7 @@ jobs:
           make download-evm-ef-tests
 
       - name: Run tests
+        id: check_tests_pr
         run: |
           cd crates/vm/levm
           make run-evm-ef-tests-ci | tee test_result_pr.txt
@@ -96,6 +97,7 @@ jobs:
           make download-evm-ef-tests
 
       - name: Run tests
+        id: check_tests_main
         run: |
           cd crates/vm/levm
           make run-evm-ef-tests-ci | tee test_result_main.txt
@@ -170,7 +172,7 @@ jobs:
       # If we have a failure, means that some ef-tests don't pass.
       # If the condition is met, create or update the comment with the summary.
       - name: Create comment
-        if: ${{ steps.check_tests.outcome == 'failure' && github.event_name == 'pull_request' }}
+        if: ${{ steps.check_tests_pr.outcome == 'failure' && github.event_name == 'pull_request' }}
         uses: peter-evans/create-or-update-comment@v4
         with:
           comment-id: ${{ steps.fc.outputs.comment-id }}
@@ -180,7 +182,7 @@ jobs:
           edit-mode: replace
 
       - name: Update comment
-        if: ${{ steps.check_tests.outcome != 'failure' && github.event_name == 'pull_request' && steps.fc.outputs.comment-id != '' }}
+        if: ${{ steps.check_tests_pr.outcome != 'failure' && github.event_name == 'pull_request' && steps.fc.outputs.comment-id != '' }}
         uses: peter-evans/create-or-update-comment@v4
         with:
           comment-id: ${{ steps.fc.outputs.comment-id }}
