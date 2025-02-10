@@ -666,17 +666,18 @@ pub fn balance(address_was_cold: bool, fork: Fork) -> Result<u64, VMError> {
 }
 
 pub fn extcodesize(address_was_cold: bool, fork: Fork) -> Result<u64, VMError> {
-    if fork < Fork::Tangerine {
+  // https://github.com/ethereum/EIPs/blob/master/EIPS/eip-150.md
+  if fork < Fork::Tangerine {
         return Ok(20);
     }
-    // https://github.com/ethereum/EIPs/blob/master/EIPS/eip-150.md
-    address_access_cost(
-        address_was_cold,
-        EXTCODESIZE_STATIC,
-        EXTCODESIZE_COLD_DYNAMIC,
-        EXTCODESIZE_WARM_DYNAMIC,
-        fork,
-    )
+  
+  address_access_cost(
+      address_was_cold,
+      EXTCODESIZE_STATIC,
+      EXTCODESIZE_COLD_DYNAMIC,
+      EXTCODESIZE_WARM_DYNAMIC,
+      fork,
+  )
 }
 
 pub fn extcodecopy(
