@@ -6,6 +6,7 @@ use ethrex_core::{
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode, error::RLPDecodeError};
 use ethrex_storage::{error::StoreError, Store, STATE_TRIE_SEGMENTS};
 use ethrex_trie::{Nibbles, Node, TrieError, TrieState, EMPTY_TRIE_HASH};
+use tokio_util::sync::CancellationToken;
 use std::{array, cmp::min, collections::BTreeMap, sync::Arc};
 use tokio::{
     sync::{
@@ -66,15 +67,18 @@ pub struct SyncManager {
     /// TODO: Reorgs
     last_snap_pivot: u64,
     state_trie_rebuilder: Option<tokio::task::JoinHandle<Result<Vec<H256>, SyncError>>>,
+    // Used for cancelling long-living tasks upon shutdown
+    cancel_token: CancellationToken,
 }
 
 impl SyncManager {
-    pub fn new(peer_table: Arc<Mutex<KademliaTable>>, sync_mode: SyncMode) -> Self {
+    pub fn new(peer_table: Arc<Mutex<KademliaTable>>, sync_mode: SyncMode, cancel_token: CancellationToken) -> Self {
         Self {
             sync_mode,
             peers: PeerHandler::new(peer_table),
             last_snap_pivot: 0,
             state_trie_rebuilder: None,
+            cancel_token,
         }
     }
 
@@ -87,6 +91,8 @@ impl SyncManager {
             peers: PeerHandler::new(dummy_peer_table),
             last_snap_pivot: 0,
             state_trie_rebuilder: None,
+            // This won't be used
+            cancel_token: CancellationToken::new(),
         }
     }
 
@@ -370,7 +376,7 @@ impl SyncManager {
                     .is_some_and(|task| task.is_finished())
             {
                 self.state_trie_rebuilder = Some(tokio::task::spawn(
-                    rebuild_state_trie_in_backgound(store.clone()),
+                    rebuild_state_trie_in_backgound(store.clone(), self.cancel_token.clone()),
                 ))
             };
             let stale_pivot = state_sync(
@@ -1118,7 +1124,7 @@ impl SegmentStatus {
     }
 }
 
-async fn rebuild_state_trie_in_backgound(store: Store) -> Result<Vec<H256>, SyncError> {
+async fn rebuild_state_trie_in_backgound(store: Store, cancel_token: CancellationToken) -> Result<Vec<H256>, SyncError> {
     info!("Spawning trie rebuilder");
     // Get initial status from checkpoint if available (aka node restart)
     let checkpoint = store.get_trie_rebuild_checkpoint()?;
@@ -1145,6 +1151,10 @@ async fn rebuild_state_trie_in_backgound(store: Store) -> Result<Vec<H256>, Sync
                 initial_rebuild_status.clone(),
                 rebuild_status.clone(),
             ));
+        }
+        // Check for cancellation signal from the main node execution
+        if cancel_token.is_cancelled() {
+            return Ok(vec![])
         }
         let state_sync_complete = {
             let key_checkpoints = store.get_state_trie_key_checkpoint()?;
