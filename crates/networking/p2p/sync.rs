@@ -1129,9 +1129,10 @@ async fn rebuild_state_trie_in_backgound(store: Store, cancel_token: Cancellatio
     // Get initial status from checkpoint if available (aka node restart)
     let checkpoint = store.get_trie_rebuild_checkpoint()?;
     let mut rebuild_status = array::from_fn(|i| SegmentStatus {
-        current: checkpoint
-            .map(|(_, ch)| ch[i])
-            .unwrap_or(STATE_TRIE_SEGMENTS_START[i]),
+        // current: checkpoint
+        //     .map(|(_, ch)| ch[i])
+        //     .unwrap_or(STATE_TRIE_SEGMENTS_START[i]),
+        current: STATE_TRIE_SEGMENTS_START[i],
         end: STATE_TRIE_SEGMENTS_END[i],
     });
     info!("rebuild status: {rebuild_status:?}");
@@ -1142,6 +1143,7 @@ async fn rebuild_state_trie_in_backgound(store: Store, cancel_token: Cancellatio
     let initial_rebuild_status = rebuild_status.clone();
     let mut last_show_progress = Instant::now();
     while !rebuild_status.iter().all(|status| status.complete()) {
+        info!("rebuild_status: {rebuild_status:?}");
         // Show Progress stats (this task is not vital so we can detach it)
         if Instant::now().duration_since(last_show_progress) >= SHOW_PROGRESS_INTERVAL_DURATION {
             last_show_progress = Instant::now();
@@ -1165,6 +1167,7 @@ async fn rebuild_state_trie_in_backgound(store: Store, cancel_token: Cancellatio
                     .all(|(ch, end)| ch >= end)
             })
         };
+        info!("Rebuilding segment: {current_segment}");
         if !rebuild_status[current_segment].complete() {
             // Start rebuilding the current trie segment
             let (current_hash, mismatched, current_root) = store.rebuild_state_trie_segment(
