@@ -206,7 +206,10 @@ jobs:
           name: results_levm_trigger.md
 
       - name: Rename result (1)
-        run: cp results.md results_levm.md
+        run: |
+          cp results.md results_levm.md
+          echo "RESULTS:"
+          cat results_levm.md
 
       - name: Download results (main)
         uses: actions/download-artifact@v4
@@ -216,12 +219,17 @@ jobs:
         continue-on-error: true
 
       - name: Rename result (2)
-        run: cp results.md results_levm_main.md
+        run: |
+          cp results.md results_levm_main.md
+          echo "RESULTS:"
+          cat results_levm_main.md
 
       - name: Create diff message
         run: |
           bash .github/scripts/hive_levm_revm_diff.sh results_levm_main.md results_levm.md >> diff.md
           cat diff.md >> $GITHUB_STEP_SUMMARY
+          echo "SUMMARY:"
+          cat diff.md
 
       - name: Check Regression
         run: |
