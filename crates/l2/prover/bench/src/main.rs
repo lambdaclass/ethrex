@@ -10,8 +10,8 @@ use ethrex_prover_lib::prover::create_prover;
 use ethrex_vm::execution_db::ToExecDB;
 use zkvm_interface::io::ProgramInput;
 
-#[cfg(all(feature = "sp1", feature = "risc0"))]
-compile_error!("Choose only one prover backend.");
+#[cfg(not(any(feature = "sp1", feature = "risc0")))]
+compile_error!("Choose prover backends (sp1, risc0).");
 
 #[derive(Parser, Debug)]
 struct Args {
