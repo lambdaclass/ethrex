@@ -1123,10 +1123,9 @@ async fn rebuild_state_trie_in_backgound(store: Store) -> Result<Vec<H256>, Sync
     // Get initial status from checkpoint if available (aka node restart)
     let checkpoint = store.get_trie_rebuild_checkpoint()?;
     let mut rebuild_status = array::from_fn(|i| SegmentStatus {
-        // current: checkpoint
-        //     .map(|(_, ch)| ch[i])
-        //     .unwrap_or(STATE_TRIE_SEGMENTS_START[i]),
-        current: STATE_TRIE_SEGMENTS_START[i],
+        current: checkpoint
+            .map(|(_, ch)| ch[i])
+            .unwrap_or(STATE_TRIE_SEGMENTS_START[i]),
         end: STATE_TRIE_SEGMENTS_END[i],
     });
     info!("rebuild status: {rebuild_status:?}");

@@ -694,6 +694,7 @@ impl StoreEngine for Store {
             .map_while(|res| res.ok().map(|(hash, acc)| (hash.to(), acc.to())))
         {
             if hash >= end {
+                current_hash = end;
                 break;
             }
             current_hash = hash;
