@@ -1153,6 +1153,7 @@ async fn rebuild_state_trie_in_backgound(store: Store, cancel_token: Cancellatio
             ));
         }
         // Check for cancellation signal from the main node execution
+        // TODO: PERSIST MISMATCHED ACCOUNTS SOMEHOW
         if cancel_token.is_cancelled() {
             return Ok(vec![])
         }

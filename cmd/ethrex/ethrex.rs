@@ -238,7 +238,7 @@ async fn main() {
     // Create a cancellation_token for long_living tasks
     let cancel_token = tokio_util::sync::CancellationToken::new();
     // Create SyncManager
-    let syncer = SyncManager::new(peer_table.clone(), sync_mode, cancel_token);
+    let syncer = SyncManager::new(peer_table.clone(), sync_mode, cancel_token.clone());
 
     // TODO: Check every module starts properly.
     let tracker = TaskTracker::new();
