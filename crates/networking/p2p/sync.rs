@@ -1174,6 +1174,7 @@ async fn rebuild_state_trie_in_backgound(store: Store, cancel_token: Cancellatio
                 root,
                 rebuild_status[current_segment].current,
                 rebuild_status[current_segment].end,
+                cancel_token.clone()
             )?;
             mismatched_storage_accounts.extend(mismatched);
             // Update status

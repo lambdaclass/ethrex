@@ -5,6 +5,7 @@ use ethrex_core::types::{
     BlobsBundle, Block, BlockBody, BlockHash, BlockHeader, BlockNumber, ChainConfig, Index, Receipt,
 };
 use ethrex_trie::{InMemoryTrieDB, Nibbles, Trie};
+use tokio_util::sync::CancellationToken;
 use std::{
     collections::HashMap,
     fmt::Debug,
@@ -524,6 +525,7 @@ impl StoreEngine for Store {
         current_root: H256,
         start: H256,
         end: H256,
+        cancel_token: CancellationToken,
     ) -> Result<(H256, Vec<H256>, H256), StoreError> {
         todo!()
     }

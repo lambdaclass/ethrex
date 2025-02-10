@@ -26,6 +26,7 @@ use libmdbx::{
 };
 use libmdbx::{DatabaseOptions, Mode, ReadWriteOptions};
 use serde_json;
+use tokio_util::sync::CancellationToken;
 use std::fmt::{Debug, Formatter};
 use std::path::Path;
 use std::sync::Arc;
@@ -678,6 +679,7 @@ impl StoreEngine for Store {
         current_root: H256,
         start: H256,
         end: H256,
+        cancel_token: CancellationToken,
     ) -> Result<(H256, Vec<H256>, H256), StoreError> {
         let mut mismatched_storage_accounts = vec![];
         // Open a new state trie
@@ -694,9 +696,13 @@ impl StoreEngine for Store {
             .walk(Some(start.into()))
             .map_while(|res| res.ok().map(|(hash, acc)| (hash.to(), acc.to())))
         {
+            // Check for cancellation signal from main process
+            if cancel_token.is_cancelled() {
+                break
+            }
             if hash >= end {
                 current_hash = end;
-                break;
+                break
             }
             current_hash = hash;
             // Rebuild storage trie and check for mismatches
