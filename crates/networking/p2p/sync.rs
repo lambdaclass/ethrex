@@ -1180,12 +1180,12 @@ async fn rebuild_state_trie_in_backgound(
                 cancel_token.clone(),
             )?;
             // Rebuild storage tries
-            for (account_hash, expected_root) in storages {
-                let rebuilt_root = store.rebuild_storage_trie_from_snapshot(account_hash)?;
-                if rebuilt_root != expected_root {
-                    mismatched_storage_accounts.push(expected_root);
-                }
-            }
+            // for (account_hash, expected_root) in storages {
+            //     let rebuilt_root = store.rebuild_storage_trie_from_snapshot(account_hash)?;
+            //     if rebuilt_root != expected_root {
+            //         mismatched_storage_accounts.push(expected_root);
+            //     }
+            // }
             // Update status
             root = current_root;
             // If state_sync is complete, then mark the segment as fully rebuilt
