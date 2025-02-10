@@ -1123,6 +1123,7 @@ async fn rebuild_state_trie_in_backgound(store: Store) -> Result<Vec<H256>, Sync
             .unwrap_or(STATE_TRIE_SEGMENTS_START[i]),
         end: STATE_TRIE_SEGMENTS_END[i],
     });
+    info!("rebuild status: {rebuild_status:?}");
     let mut root = checkpoint.map(|(root, _)| root).unwrap_or(*EMPTY_TRIE_HASH);
     let mut current_segment = 0;
     let mut mismatched_storage_accounts = vec![];
@@ -1140,7 +1141,7 @@ async fn rebuild_state_trie_in_backgound(store: Store) -> Result<Vec<H256>, Sync
                 rebuild_status.clone(),
             ));
         }
-        let state_sync_complte = {
+        let state_sync_complete = {
             let key_checkpoints = store.get_state_trie_key_checkpoint()?;
             key_checkpoints.is_some_and(|ch| {
                 ch.into_iter()
@@ -1148,18 +1149,19 @@ async fn rebuild_state_trie_in_backgound(store: Store) -> Result<Vec<H256>, Sync
                     .all(|(ch, end)| ch >= end)
             })
         };
+        info!("State sync complete: {state_sync_complete:?}");
         if !rebuild_status[current_segment].complete() {
             // Start rebuilding the current trie segment
             let (current_root, mismatched, current_hash) = store.rebuild_state_trie_segment(
                 root,
                 rebuild_status[current_segment].current,
                 rebuild_status[current_segment].end,
-            )?;
+            ).unwrap();
             mismatched_storage_accounts.extend(mismatched);
             // Update status
             root = current_root;
             // If state_sync is complete, then mark the segment as fully rebuilt
-            if state_sync_complte {
+            if state_sync_complete {
                 rebuild_status[current_segment].current = rebuild_status[current_segment].end
             } else {
                 rebuild_status[current_segment].current = current_hash;
