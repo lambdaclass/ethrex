@@ -1,9 +1,6 @@
 use crate::{
     report::{ComparisonReport, EFTestReport, EFTestReportForkResult, TestReRunReport, TestVector},
-    runner::{
-        levm_runner::{self, post_state_root},
-        EFTestRunnerError, InternalError,
-    },
+    runner::{levm_runner::post_state_root, EFTestRunnerError, InternalError},
     types::EFTest,
     utils::{effective_gas_price, load_initial_state},
 };
@@ -18,6 +15,7 @@ use ethrex_levm::{
 };
 use ethrex_storage::{error::StoreError, AccountUpdate};
 use ethrex_vm::{
+    backends::{self, levm::LevmGetStateTransitionsIn, IEVM},
     db::{EvmState, StoreWrapper},
     fork_to_spec_id, RevmAddress, RevmU256,
 };
@@ -326,12 +324,15 @@ pub fn ensure_post_state(
         // We only want to compare account updates when no exception is expected.
         None => {
             let (initial_state, block_hash) = load_initial_state(test);
-            let levm_account_updates = levm_runner::get_state_transitions(
-                &initial_state,
-                block_hash,
-                levm_execution_report,
+            let levm_account_updates =
+                backends::levm::LEVM::get_state_transitions(LevmGetStateTransitionsIn::new(
+                    &initial_state,
+                    block_hash,
+                    &levm_execution_report.new_state,
+                ));
+            let revm_account_updates = backends::revm::REVM::get_state_transitions(
+                backends::revm::RevmGetStateTransitionsIn::new(revm_state),
             );
-            let revm_account_updates = ethrex_vm::get_state_transitions(revm_state);
             let account_updates_report = compare_levm_revm_account_updates(
                 test,
                 &levm_account_updates,
@@ -507,7 +508,9 @@ pub fn _ensure_post_state_revm(
                 }
                 // Execution result was successful and no exception was expected.
                 None => {
-                    let revm_account_updates = ethrex_vm::get_state_transitions(revm_state);
+                    let revm_account_updates = backends::revm::REVM::get_state_transitions(
+                        backends::revm::RevmGetStateTransitionsIn::new(revm_state),
+                    );
                     let pos_state_root = post_state_root(&revm_account_updates, test);
                     let expected_post_state_root_hash =
                         test.post.vector_post_value(vector, *fork).hash;

@@ -20,11 +20,11 @@ use ethrex_vm::{
     backends::{
         self,
         levm::{LevmGetStateTransitionsIn, LevmSystemCallIn, LevmTransactionExecutionIn},
-        revm::{RevmSystemCallIn, RevmTransactionExecutionIn},
+        revm::{RevmGetStateTransitionsIn, RevmSystemCallIn, RevmTransactionExecutionIn},
         SystemContracts, EVM, IEVM,
     },
     db::{evm_state, EvmState, StoreWrapper},
-    get_state_transitions, spec_id, EvmError, SpecId, EVM_BACKEND,
+    spec_id, EvmError, SpecId, EVM_BACKEND,
 };
 use std::sync::Arc;
 
@@ -638,7 +638,9 @@ fn finalize_payload(context: &mut PayloadBuildContext) -> Result<(), StoreError>
             ))
         }
         // This means we are using REVM as default for tests
-        Some(EVM::REVM) | None => get_state_transitions(context.evm_state),
+        Some(EVM::REVM) | None => backends::revm::REVM::get_state_transitions(
+            RevmGetStateTransitionsIn::new(context.evm_state),
+        ),
     };
 
     context.payload.header.state_root = context

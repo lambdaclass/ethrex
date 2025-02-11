@@ -119,7 +119,11 @@ impl IEVM for LEVM {
         }
 
         // Account updates are initialized like this because of the beacon_root_contract_call, it is going to be empty if it wasn't called.
-        let mut account_updates = crate::get_state_transitions(state);
+        let mut account_updates = Self::get_state_transitions(LevmGetStateTransitionsIn::new(
+            state,
+            block_header.compute_block_hash(),
+            &block_cache,
+        ));
 
         let mut receipts = Vec::new();
         let mut cumulative_gas_used = 0;
@@ -270,44 +274,67 @@ impl IEVM for LEVM {
                 continue;
             }
 
-            // This unwrap is safe, just checked upside
             let initial_account_state = initial_account_state.unwrap();
-            let mut account_update = AccountUpdate::new(*new_state_account_address);
 
-            // Account state after block execution.
-            let new_state_acc_info = AccountInfo {
-                code_hash: code_hash(&new_state_account.info.bytecode),
-                balance: new_state_account.info.balance,
-                nonce: new_state_account.info.nonce,
+            let balance_changed = initial_account_state.balance != new_state_account.info.balance;
+            let nonce_changed = initial_account_state.nonce != new_state_account.info.nonce;
+            let code = if new_state_account.info.bytecode.is_empty() {
+                // The new state account has no code
+                None
+            } else {
+                // Get the code hash of the new state account bytecode
+                let potential_new_bytecode_hash = code_hash(&new_state_account.info.bytecode);
+                // Look into the current database to see if the bytecode hash is already present
+                let current_bytecode = current_db
+                    .get_account_code(potential_new_bytecode_hash)
+                    .expect("Error getting account code by hash");
+                let code = new_state_account.info.bytecode.clone();
+                // The code is present in the current database
+                if let Some(current_bytecode) = current_bytecode {
+                    if current_bytecode != code {
+                        // The code has changed
+                        Some(code)
+                    } else {
+                        // The code has not changed
+                        None
+                    }
+                } else {
+                    // The new state account code is not present in the current
+                    // database, then it must be new
+                    Some(code)
+                }
             };
+            let code_changed = code.is_some();
+            let mut storage_changed = false;
+            let mut added_storage = HashMap::new();
+            for (key, value) in &new_state_account.storage {
+                added_storage.insert(*key, value.current_value);
 
-            // Compare Account Info
-            if initial_account_state != new_state_acc_info {
-                account_update.info = Some(new_state_acc_info.clone());
-            }
-
-            // If code hash is different it means the code is different too.
-            if initial_account_state.code_hash != new_state_acc_info.code_hash {
-                account_update.code = Some(new_state_account.info.bytecode.clone());
-            }
-
-            let mut updated_storage = HashMap::new();
-            for (key, storage_slot) in &new_state_account.storage {
-                // original_value in storage_slot is not the original_value on the DB, be careful.
+                // Check if the value stored in the DB doesn't equal new_state_account.storage.value
                 let original_value = current_db
                     .get_storage_at_hash(input.block_hash, *new_state_account_address, *key)
                     .unwrap()
-                    .unwrap_or_default(); // Option inside result, I guess I have to assume it is zero.
+                    .unwrap_or_default();
 
-                if original_value != storage_slot.current_value {
-                    updated_storage.insert(*key, storage_slot.current_value);
+                if original_value != value.current_value {
+                    added_storage.insert(*key, value.current_value);
+                    storage_changed = true;
                 }
             }
-            account_update.added_storage = updated_storage;
 
-            account_update.removed = new_state_account.is_empty();
+            if storage_changed || nonce_changed || balance_changed || code_changed {
+                let account_update = AccountUpdate {
+                    address: *new_state_account_address,
+                    removed: new_state_account.is_empty(),
+                    info: Some(AccountInfo {
+                        code_hash: code_hash(&new_state_account.info.bytecode),
+                        balance: new_state_account.info.balance,
+                        nonce: new_state_account.info.nonce,
+                    }),
+                    code,
+                    added_storage,
+                };
 
-            if account_update != AccountUpdate::new(*new_state_account_address) {
                 account_updates.push(account_update);
             }
         }

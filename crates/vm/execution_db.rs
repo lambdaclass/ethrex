@@ -21,12 +21,11 @@ use revm_primitives::SpecId;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    backends,
-    backends::IEVM,
+    backends::{self, revm::RevmGetStateTransitionsIn, IEVM},
     block_env,
     db::{evm_state, StoreWrapper},
     errors::ExecutionDBError,
-    get_state_transitions, spec_id, tx_env, EvmError,
+    spec_id, tx_env, EvmError,
 };
 
 /// In-memory EVM database for single execution data.
@@ -188,7 +187,8 @@ impl ExecutionDB {
 
         backends::revm::REVM::execute_block(block, &mut state).map_err(Box::new)?;
 
-        let account_updates = get_state_transitions(&mut state);
+        let account_updates =
+            backends::revm::REVM::get_state_transitions(RevmGetStateTransitionsIn::new(&mut state));
         Ok(account_updates)
     }
 
