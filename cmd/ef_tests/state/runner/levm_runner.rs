@@ -4,7 +4,7 @@ use crate::{
     types::{EFTest, TransactionExpectedException},
     utils::{self, effective_gas_price},
 };
-use ethrex_core::{
+use ethrex_common::{
     types::{code_hash, tx_fields::*, AccountInfo, Fork},
     H256, U256,
 };

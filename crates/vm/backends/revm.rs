@@ -13,7 +13,7 @@ use revm::{
 };
 use revm_inspectors::access_list::AccessListInspector;
 // Rename imported types for clarity
-use ethrex_core::{
+use ethrex_common::{
     types::{
         Block, BlockHeader, GenericTransaction, PrivilegedTxType, Receipt, Transaction, TxKind,
         Withdrawal, GWEI_TO_WEI, INITIAL_BASE_FEE,

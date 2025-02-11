@@ -1,7 +1,7 @@
 use bytes::Bytes;
 use directories::ProjectDirs;
 use ethrex_blockchain::{add_block, fork_choice::apply_fork_choice};
-use ethrex_core::types::{Block, Genesis};
+use ethrex_common::types::{Block, Genesis};
 use ethrex_p2p::{
     kademlia::KademliaTable,
     network::{node_id_from_signing_key, peer_table},
@@ -295,7 +295,7 @@ async fn main() {
                 head_block_hash,
                 max_tries,
                 1000,
-                ethrex_core::Address::default(),
+                ethrex_common::Address::default(),
             );
             tracker.spawn(block_producer_engine);
         } else {
@@ -376,14 +376,10 @@ fn parse_socket_addr(addr: &str, port: &str) -> io::Result<SocketAddr> {
 
 fn sync_mode(matches: &clap::ArgMatches) -> SyncMode {
     let syncmode = matches.get_one::<String>("syncmode");
-    if let Some(syncmode) = syncmode {
-        match &**syncmode {
-            "full" => SyncMode::Full,
-            "snap" => SyncMode::Snap,
-            other => panic!("Invalid syncmode {other} expected either snap or full"),
-        }
-    } else {
-        SyncMode::Snap
+    match syncmode {
+        Some(mode) if mode == "full" => SyncMode::Full,
+        Some(mode) if mode == "snap" => SyncMode::Snap,
+        other => panic!("Invalid syncmode {:?} expected either snap or full", other),
     }
 }
 
