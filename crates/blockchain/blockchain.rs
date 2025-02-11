@@ -17,7 +17,7 @@ use ethrex_common::H256;
 
 use ethrex_storage::error::StoreError;
 use ethrex_storage::{AccountUpdate, Store};
-use ethrex_vm::db::{evm_state, EvmState};
+use ethrex_vm::db::evm_state;
 
 use ethrex_vm::EVM_BACKEND;
 use ethrex_vm::{backends, backends::EVM};
@@ -73,9 +73,6 @@ pub fn add_block(block: &Block, storage: &Store) -> Result<(), ChainError> {
 
     // Processes requests from receipts, computes the requests_hash and compares it against the header
     validate_requests_hash(&block.header, &receipts, &chain_config)?;
-
-    // TODO: REMOVE LOG
-    println!("Valid request_hash");
 
     store_block(storage, block.clone())?;
     store_receipts(storage, receipts, block_hash)?;

@@ -15,7 +15,7 @@ use ethrex_common::{
     Address, Bloom, Bytes, H256, U256,
 };
 
-use ethrex_common::types::{Fork, GWEI_TO_WEI};
+use ethrex_common::types::GWEI_TO_WEI;
 use ethrex_levm::{db::CacheDB, vm::EVMConfig, Account, AccountInfo};
 use ethrex_vm::{
     backends,
