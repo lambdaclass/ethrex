@@ -201,7 +201,7 @@ jobs:
           token: ${{ secrets.GITHUB_TOKEN }}
           issue-number: ${{ github.event.pull_request.number }}
           body: |
-            "# EF Tests Comparison \n All EF-TESTS pass."
+            "# EF Tests Comparison \n Same results between main branch and the current PR."
           edit-mode: replace
 
   hive-report-creation:
