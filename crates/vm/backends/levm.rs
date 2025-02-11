@@ -1,7 +1,7 @@
+use super::constants::{BEACON_ROOTS_ADDRESS_STR, HISTORY_STORAGE_ADDRESS_STR, SYSTEM_ADDRESS_STR};
 use crate::db::StoreWrapper;
 use crate::EvmError;
 use crate::EvmState;
-#[cfg(not(feature = "l2"))]
 use ethrex_core::types::Fork;
 use ethrex_core::{
     types::{
@@ -20,10 +20,6 @@ use ethrex_storage::AccountUpdate;
 use lazy_static::lazy_static;
 use revm_primitives::Bytes;
 use std::{collections::HashMap, sync::Arc};
-
-pub const SYSTEM_ADDRESS_STR: &str = "fffffffffffffffffffffffffffffffffffffffe";
-pub const BEACON_ROOTS_ADDRESS_STR: &str = "000F3df6D732807Ef1319fB7B8bB8522d0Beac02";
-pub const HISTORY_STORAGE_ADDRESS_STR: &str = "0000F90827F1C53a10cb7A02335B175320002935";
 
 /// Executes all transactions in a block and returns their receipts.
 pub fn execute_block(
@@ -269,9 +265,9 @@ pub fn beacon_root_contract_call_levm(
 ) -> Result<ExecutionReport, EvmError> {
     lazy_static! {
         static ref SYSTEM_ADDRESS: Address =
-            Address::from_slice(&hex::decode("fffffffffffffffffffffffffffffffffffffffe").unwrap());
+            Address::from_slice(&hex::decode(SYSTEM_ADDRESS_STR).unwrap());
         static ref CONTRACT_ADDRESS: Address =
-            Address::from_slice(&hex::decode("000F3df6D732807Ef1319fB7B8bB8522d0Beac02").unwrap(),);
+            Address::from_slice(&hex::decode(BEACON_ROOTS_ADDRESS_STR).unwrap());
     };
     // This is OK
     let beacon_root = match block_header.parent_beacon_block_root {

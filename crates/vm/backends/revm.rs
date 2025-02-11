@@ -1,3 +1,4 @@
+use super::constants::{BEACON_ROOTS_ADDRESS_STR, HISTORY_STORAGE_ADDRESS_STR, SYSTEM_ADDRESS_STR};
 use crate::spec_id;
 use crate::EvmError;
 use crate::EvmState;
@@ -28,10 +29,6 @@ use std::cmp::min;
 
 #[cfg(feature = "l2")]
 use crate::mods;
-
-pub const SYSTEM_ADDRESS_STR: &str = "fffffffffffffffffffffffffffffffffffffffe";
-pub const BEACON_ROOTS_ADDRESS_STR: &str = "000F3df6D732807Ef1319fB7B8bB8522d0Beac02";
-pub const HISTORY_STORAGE_ADDRESS_STR: &str = "0000F90827F1C53a10cb7A02335B175320002935";
 
 /// Executes all transactions in a block and returns their receipts.
 pub fn execute_block(block: &Block, state: &mut EvmState) -> Result<Vec<Receipt>, EvmError> {
@@ -447,12 +444,10 @@ pub fn beacon_root_contract_call(
     spec_id: SpecId,
 ) -> Result<ExecutionResult, EvmError> {
     lazy_static! {
-        static ref SYSTEM_ADDRESS: RevmAddress = RevmAddress::from_slice(
-            &hex::decode("fffffffffffffffffffffffffffffffffffffffe").unwrap()
-        );
-        static ref CONTRACT_ADDRESS: RevmAddress = RevmAddress::from_slice(
-            &hex::decode("000F3df6D732807Ef1319fB7B8bB8522d0Beac02").unwrap(),
-        );
+        static ref SYSTEM_ADDRESS: RevmAddress =
+            RevmAddress::from_slice(&hex::decode(SYSTEM_ADDRESS_STR).unwrap());
+        static ref CONTRACT_ADDRESS: RevmAddress =
+            RevmAddress::from_slice(&hex::decode(BEACON_ROOTS_ADDRESS_STR).unwrap());
     };
     let beacon_root = match header.parent_beacon_block_root {
         None => {
