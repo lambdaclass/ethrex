@@ -4,7 +4,7 @@ use crate::{
     types::{EFTest, TransactionExpectedException},
     utils::{self, effective_gas_price},
 };
-use ethrex_core::{
+use ethrex_common::{
     types::{code_hash, tx_fields::*, AccountInfo, Fork},
     H256, U256,
 };
@@ -15,7 +15,7 @@ use ethrex_levm::{
     Environment,
 };
 use ethrex_storage::AccountUpdate;
-use ethrex_vm::{db::StoreWrapper, EvmState};
+use ethrex_vm::db::{EvmState, StoreWrapper};
 use keccak_hash::keccak;
 use std::{collections::HashMap, sync::Arc};
 

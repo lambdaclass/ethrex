@@ -13,10 +13,10 @@ pub(crate) mod max_priority_fee;
 #[cfg(test)]
 pub mod test_utils {
     use bytes::Bytes;
-    use ethrex_core::{
+    use ethrex_common::{
         types::{
             Block, BlockBody, BlockHeader, EIP1559Transaction, Genesis, LegacyTransaction,
-            Transaction, TxKind, EMPTY_KECCACK_HASH,
+            Transaction, TxKind, DEFAULT_REQUESTS_HASH,
         },
         Address, Bloom, H256, U256,
     };
@@ -69,7 +69,7 @@ pub mod test_utils {
             blob_gas_used: Some(0x00),
             excess_blob_gas: Some(0x00),
             parent_beacon_block_root: Some(H256::zero()),
-            requests_hash: Some(*EMPTY_KECCACK_HASH),
+            requests_hash: Some(*DEFAULT_REQUESTS_HASH),
         }
     }
 

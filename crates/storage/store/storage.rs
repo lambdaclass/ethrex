@@ -7,7 +7,7 @@ use engines::api::StoreEngine;
 #[cfg(feature = "redb")]
 use engines::redb::RedBStore;
 use ethereum_types::{Address, H256, U256};
-use ethrex_core::types::{
+use ethrex_common::types::{
     code_hash, AccountInfo, AccountState, BlobsBundle, Block, BlockBody, BlockHash, BlockHeader,
     BlockNumber, ChainConfig, Genesis, GenesisAccount, Index, MempoolTransaction, Receipt,
     Transaction, TxType, EMPTY_TRIE_HASH,
@@ -28,7 +28,6 @@ mod rlp;
 
 #[derive(Debug, Clone)]
 pub struct Store {
-    // TODO: Check if we can remove this mutex and move it to the in_memory::Store struct
     engine: Arc<dyn StoreEngine>,
     pub mempool: Arc<Mutex<HashMap<H256, MempoolTransaction>>>,
     pub blobs_bundle_pool: Arc<Mutex<HashMap<H256, BlobsBundle>>>,
@@ -1093,7 +1092,7 @@ pub fn hash_key(key: &H256) -> Vec<u8> {
 mod tests {
     use bytes::Bytes;
     use ethereum_types::{H256, U256};
-    use ethrex_core::{
+    use ethrex_common::{
         types::{Transaction, TxType, BYTES_PER_BLOB, EMPTY_KECCACK_HASH},
         Bloom,
     };

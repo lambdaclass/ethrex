@@ -1,5 +1,5 @@
-use ethrex_core::Bytes;
-use ethrex_core::{Address, H32, U256};
+use ethrex_common::Bytes;
+use ethrex_common::{Address, H32, U256};
 use keccak_hash::keccak;
 
 use crate::eth_client::errors::CalldataEncodeError;

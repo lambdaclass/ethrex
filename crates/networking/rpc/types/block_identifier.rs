@@ -1,6 +1,6 @@
 use std::{fmt::Display, str::FromStr};
 
-use ethrex_core::types::{BlockHash, BlockHeader, BlockNumber};
+use ethrex_common::types::{BlockHash, BlockHeader, BlockNumber};
 use ethrex_storage::{error::StoreError, Store};
 use serde::Deserialize;
 use serde_json::Value;

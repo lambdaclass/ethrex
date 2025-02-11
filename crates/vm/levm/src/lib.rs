@@ -6,6 +6,7 @@ pub mod environment;
 pub mod errors;
 pub mod execution_handlers;
 pub mod gas_cost;
+pub mod hooks;
 pub mod memory;
 pub mod opcode_handlers;
 pub mod opcodes;

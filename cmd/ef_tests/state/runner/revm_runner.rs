@@ -8,7 +8,7 @@ use crate::{
     utils::{effective_gas_price, load_initial_state},
 };
 use bytes::Bytes;
-use ethrex_core::{
+use ethrex_common::{
     types::{Fork, TxKind},
     Address, H256,
 };
@@ -17,7 +17,10 @@ use ethrex_levm::{
     Account, StorageSlot,
 };
 use ethrex_storage::{error::StoreError, AccountUpdate};
-use ethrex_vm::{db::StoreWrapper, fork_to_spec_id, EvmState, RevmAddress, RevmU256};
+use ethrex_vm::{
+    db::{EvmState, StoreWrapper},
+    fork_to_spec_id, RevmAddress, RevmU256,
+};
 use revm::{
     db::State,
     inspectors::TracerEip3155 as RevmTracerEip3155,
@@ -58,7 +61,7 @@ pub fn re_run_failed_ef_test(
                         }
                     }
                 },
-                // Currently, we decided not to re-execute the test when the Expected exception does not match 
+                // Currently, we decided not to re-execute the test when the Expected exception does not match
                 // with the received. This can change in the future.
                 EFTestRunnerError::ExpectedExceptionDoesNotMatchReceived(_) => continue,
                 EFTestRunnerError::VMInitializationFailed(_)

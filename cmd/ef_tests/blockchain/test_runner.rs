@@ -2,7 +2,7 @@ use std::{collections::HashMap, path::Path};
 
 use crate::types::{BlockWithRLP, TestUnit};
 use ethrex_blockchain::{add_block, fork_choice::apply_fork_choice};
-use ethrex_core::types::{
+use ethrex_common::types::{
     Account as CoreAccount, Block as CoreBlock, BlockHeader as CoreBlockHeader,
 };
 use ethrex_rlp::decode::RLPDecode;

@@ -6,7 +6,7 @@ use crate::{
     utils::*,
     vm::VM,
 };
-use ethrex_core::{
+use ethrex_common::{
     types::{Fork, BLOB_BASE_FEE_UPDATE_FRACTION, MIN_BASE_FEE_PER_BLOB_GAS},
     U256,
 };
@@ -137,7 +137,7 @@ impl VM {
     ) -> Result<OpcodeResult, VMError> {
         current_call_frame.increase_consumed_gas(gas_cost::SELFBALANCE)?;
 
-        let balance = get_account(&mut self.cache, &self.db, current_call_frame.to)
+        let balance = get_account(&mut self.cache, self.db.clone(), current_call_frame.to)
             .info
             .balance;
 
