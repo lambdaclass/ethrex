@@ -34,7 +34,7 @@ use tokio_util::sync::CancellationToken;
 /// Maximum amount of trie inserts without committing nodes to DB
 const MAX_TRIE_INSERTS_WITHOUT_COMMIT: usize = 100;
 // Maximum amount of reads from the snapshot in a single transaction to avoid performance hits due to long-living reads
-const MAX_SNAPSHOT_READS: usize = 200;
+const MAX_SNAPSHOT_READS: usize = 100;
 
 pub struct Store {
     db: Arc<Database>,
@@ -711,8 +711,8 @@ impl StoreEngine for Store {
             state_trie.insert(hash.to_fixed_bytes().to_vec(), account.encode_to_vec())?;
             // Commit every few iterations so we don't build the full trie in memory
             read_count += 1;
-            if  read_count > MAX_SNAPSHOT_READS {
-                break
+            if read_count > MAX_SNAPSHOT_READS {
+                break;
             }
         }
         Ok((current_hash, state_trie.hash()?, storages))
@@ -780,6 +780,39 @@ impl StoreEngine for Store {
             }
         }
         Ok(storage_trie.hash()?)
+    }
+
+    // Yields at most 100 elements
+    fn iter_account_snapshot(&self, start: H256) -> Result<Vec<(H256, AccountState)>, StoreError> {
+        let txn = self.db.begin_read().map_err(StoreError::LibmdbxError)?;
+        let cursor = txn
+            .cursor::<StateSnapShot>()
+            .map_err(StoreError::LibmdbxError)?;
+        let iter = cursor
+            .walk(Some(start.into()))
+            .map_while(|res| res.ok().map(|(hash, acc)| (hash.to(), acc.to())))
+            .take(MAX_SNAPSHOT_READS);
+        Ok(iter.collect::<Vec<_>>())
+    }
+
+    // Yields at most 100 elements
+    fn iter_storage_snapshot(
+        &self,
+        account_hash: H256,
+        start: H256,
+    ) -> Result<Vec<(H256, U256)>, StoreError> {
+        let txn = self.db.begin_read().map_err(StoreError::LibmdbxError)?;
+        let cursor = txn
+            .cursor::<StorageSnapShot>()
+            .map_err(StoreError::LibmdbxError)?;
+        let iter = cursor
+            .walk_key(account_hash.into(), Some(start.into()))
+            .map_while(|res| {
+                res.ok()
+                    .map(|(k, v)| (H256(k.0), U256::from_big_endian(&v.0)))
+            })
+            .take(MAX_SNAPSHOT_READS);
+        Ok(iter.collect::<Vec<_>>())
     }
 }
 

@@ -550,6 +550,21 @@ impl StoreEngine for Store {
     fn rebuild_storage_trie_from_snapshot(&self, account_hash: H256) -> Result<H256, StoreError> {
         todo!()
     }
+
+    fn iter_account_snapshot(
+        &self,
+        start: H256,
+    ) -> Result<Vec<(H256, ethrex_core::types::AccountState)>, StoreError> {
+        todo!()
+    }
+
+    fn iter_storage_snapshot(
+        &self,
+        start: H256,
+        account_hash: H256,
+    ) -> Result<Vec<(H256, U256)>, StoreError> {
+        todo!()
+    }
 }
 
 impl Debug for Store {

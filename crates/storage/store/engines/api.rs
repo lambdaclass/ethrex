@@ -331,5 +331,12 @@ pub trait StoreEngine: Debug + Send + Sync + RefUnwindSafe {
     ) -> Result<Option<(H256, [H256; STATE_TRIE_SEGMENTS])>, StoreError>;
 
     fn clear_snapshot(&self) -> Result<(), StoreError>;
-    // NO PUEDO TENER ASYNC ACA!!!!
+
+    fn iter_account_snapshot(&self, start: H256) -> Result<Vec<(H256, AccountState)>, StoreError>;
+
+    fn iter_storage_snapshot(
+        &self,
+        start: H256,
+        account_hash: H256,
+    ) -> Result<Vec<(H256, U256)>, StoreError>;
 }

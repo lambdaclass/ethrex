@@ -12,6 +12,7 @@ use tokio::{
         mpsc::{self, error::SendError, Receiver, Sender},
         Mutex,
     },
+    task::JoinSet,
     time::{sleep, Duration, Instant},
 };
 use tokio_util::sync::CancellationToken;
@@ -66,9 +67,49 @@ pub struct SyncManager {
     /// Syncing beyond this pivot should re-enable snap-sync (as we will not have that state stored)
     /// TODO: Reorgs
     last_snap_pivot: u64,
-    state_trie_rebuilder: Option<tokio::task::JoinHandle<Result<Vec<H256>, SyncError>>>,
+    trie_rebuilder: Option<TrieRebuilder>,
     // Used for cancelling long-living tasks upon shutdown
     cancel_token: CancellationToken,
+}
+
+#[derive(Debug)]
+struct TrieRebuilder {
+    state_trie_rebuilder: tokio::task::JoinHandle<Result<(), SyncError>>,
+    storage_trie_rebuilder: tokio::task::JoinHandle<Result<Vec<H256>, SyncError>>,
+    storage_rebuilder_sender: Sender<Vec<(H256, H256)>>,
+}
+
+impl TrieRebuilder {
+    /// Returns true is the trie rebuild porcess is alive and well
+    fn alive(&self) -> bool {
+        !(self.state_trie_rebuilder.is_finished()
+            || self.storage_trie_rebuilder.is_finished()
+            || self.storage_rebuilder_sender.is_closed())
+    }
+    /// Waits for the rebuild process to complete and returns the resulting mismatched accounts
+    async fn complete(self) -> Result<Vec<H256>, SyncError> {
+        self.state_trie_rebuilder.await??;
+        self.storage_trie_rebuilder.await?
+    }
+
+    fn startup(cancel_token: CancellationToken, store: Store) -> Self {
+        let (storage_rebuilder_sender, storage_rebuilder_receiver) =
+            mpsc::channel::<Vec<(H256, H256)>>(MAX_CHANNEL_MESSAGES);
+        let state_trie_rebuilder = tokio::task::spawn(rebuild_state_trie_in_backgound(
+            store.clone(),
+            cancel_token.clone(),
+        ));
+        let storage_trie_rebuilder = tokio::task::spawn(rebuild_storage_trie_in_background(
+            store,
+            cancel_token,
+            storage_rebuilder_receiver,
+        ));
+        Self {
+            state_trie_rebuilder,
+            storage_trie_rebuilder,
+            storage_rebuilder_sender,
+        }
+    }
 }
 
 impl SyncManager {
@@ -81,7 +122,7 @@ impl SyncManager {
             sync_mode,
             peers: PeerHandler::new(peer_table),
             last_snap_pivot: 0,
-            state_trie_rebuilder: None,
+            trie_rebuilder: None,
             cancel_token,
         }
     }
@@ -94,7 +135,7 @@ impl SyncManager {
             sync_mode: SyncMode::Full,
             peers: PeerHandler::new(dummy_peer_table),
             last_snap_pivot: 0,
-            state_trie_rebuilder: None,
+            trie_rebuilder: None,
             // This won't be used
             cancel_token: CancellationToken::new(),
         }
@@ -373,15 +414,15 @@ impl SyncManager {
             })
         {
             // Begin the background state rebuild process if it is not active yet or if it crashed
-            if self.state_trie_rebuilder.is_none()
-                || self
-                    .state_trie_rebuilder
-                    .as_ref()
-                    .is_some_and(|task| task.is_finished())
+            if !self
+                .trie_rebuilder
+                .as_ref()
+                .is_some_and(|rebuilder| rebuilder.alive())
             {
-                self.state_trie_rebuilder = Some(tokio::task::spawn(
-                    rebuild_state_trie_in_backgound(store.clone(), self.cancel_token.clone()),
-                ))
+                self.trie_rebuilder = Some(TrieRebuilder::startup(
+                    self.cancel_token.clone(),
+                    store.clone(),
+                ));
             };
             let stale_pivot = state_sync(
                 state_root,
@@ -399,7 +440,7 @@ impl SyncManager {
         if pending_storage_paths.is_none() && pending_state_paths.is_none() {
             info!("Waiting for the trie rebuild to finish");
             let rebuild_start = Instant::now();
-            let paths = self.state_trie_rebuilder.take().unwrap().await??;
+            let paths = self.trie_rebuilder.take().unwrap().complete().await?;
             info!(
                 "State trie rebuilt from snapshot, identified {} incomplete storage tries, overtime: {}",
                 paths.len(),
@@ -459,6 +500,7 @@ async fn state_sync(
         ));
     }
     show_progress_handle.await?;
+    info!("Finished state sync!");
     // Check for pivot staleness
     let mut stale_pivot = false;
     let mut state_trie_checkpoint = [H256::zero(); STATE_TRIE_SEGMENTS];
@@ -1133,7 +1175,7 @@ impl SegmentStatus {
 async fn rebuild_state_trie_in_backgound(
     store: Store,
     cancel_token: CancellationToken,
-) -> Result<Vec<H256>, SyncError> {
+) -> Result<(), SyncError> {
     info!("Spawning trie rebuilder");
     // Get initial status from checkpoint if available (aka node restart)
     let checkpoint = store.get_trie_rebuild_checkpoint()?;
@@ -1146,7 +1188,6 @@ async fn rebuild_state_trie_in_backgound(
     info!("rebuild status: {rebuild_status:?}");
     let mut root = checkpoint.map(|(root, _)| root).unwrap_or(*EMPTY_TRIE_HASH);
     let mut current_segment = 0;
-    let mut mismatched_storage_accounts = vec![];
     let start_time = Instant::now();
     let initial_rebuild_status = rebuild_status.clone();
     let mut last_show_progress = Instant::now();
@@ -1161,41 +1202,27 @@ async fn rebuild_state_trie_in_backgound(
             ));
         }
         // Check for cancellation signal from the main node execution
-        // TODO: PERSIST MISMATCHED ACCOUNTS SOMEHOW
         if cancel_token.is_cancelled() {
-            return Ok(vec![]);
+            return Ok(());
         }
-        let state_sync_complete = {
-            let key_checkpoints = store.get_state_trie_key_checkpoint()?;
-            key_checkpoints.is_some_and(|ch| {
-                ch.into_iter()
-                    .zip(STATE_TRIE_SEGMENTS_END.into_iter())
-                    .all(|(ch, end)| ch >= end)
-            })
-        };
+        info!(
+            "Segment {current_segment}, complete: {}",
+            rebuild_status[current_segment].complete()
+        );
         if !rebuild_status[current_segment].complete() {
             // Start rebuilding the current trie segment
-            let (current_hash, current_root, storages) = store.rebuild_state_trie_segment(
+            let (current_root, current_hash) = rebuild_state_trie_segment(
                 root,
                 rebuild_status[current_segment].current,
-                rebuild_status[current_segment].end,
+                current_segment,
+                store.clone(),
                 cancel_token.clone(),
-            )?;
-            // Rebuild storage tries
-            for (account_hash, expected_root) in storages {
-                let rebuilt_root = store.rebuild_storage_trie_from_snapshot(account_hash)?;
-                if rebuilt_root != expected_root {
-                    mismatched_storage_accounts.push(expected_root);
-                }
-            }
+            )
+            .await?;
+            info!("Rebuild of segment {current_segment} yielded new current hash: {current_hash}");
             // Update status
             root = current_root;
-            // If state_sync is complete, then mark the segment as fully rebuilt
-            if state_sync_complete {
-                rebuild_status[current_segment].current = rebuild_status[current_segment].end
-            } else {
-                rebuild_status[current_segment].current = current_hash;
-            }
+            rebuild_status[current_segment].current = current_hash;
         }
         // Update DB checkpoint
         let checkpoint = (root, rebuild_status.clone().map(|st| st.current));
@@ -1204,7 +1231,149 @@ async fn rebuild_state_trie_in_backgound(
         current_segment = (current_segment + 1) % STATE_TRIE_SEGMENTS
     }
 
-    Ok(mismatched_storage_accounts)
+    Ok(())
+}
+
+// Returns the current root, the last processed account hash, and the list of mismatched storages
+async fn rebuild_state_trie_segment(
+    mut root: H256,
+    mut start: H256,
+    segment_number: usize,
+    store: Store,
+    cancel_token: CancellationToken,
+) -> Result<(H256, H256), SyncError> {
+    loop {
+        if cancel_token.is_cancelled() {
+            break;
+        }
+        let mut batch = store.iter_account_snapshot(start)?;
+        // Remove out of bounds elements
+        batch.retain(|(hash, _)| *hash <= STATE_TRIE_SEGMENTS_END[segment_number]);
+        let unfilled_batch = batch.len() < 100;
+        // If this is not the first rebuild loop, discard the first element as we have already processed it
+        if !batch.is_empty() && start == STATE_TRIE_SEGMENTS_START[segment_number] {
+            batch.remove(0);
+        }
+        // Update start
+        if let Some(last) = batch.last() {
+            start = last.0;
+        }
+        // Process batch
+        // Add accounts to state trie
+        root = state_trie_insert_batch(root, batch, store.clone())?;
+        // Return if we have no more snapshot accounts to process for this segemnt
+        if unfilled_batch {
+            let state_sync_complete = store
+                .get_state_trie_key_checkpoint()?
+                .is_some_and(|ch| ch[segment_number] == STATE_TRIE_SEGMENTS_END[segment_number]);
+            info!("Unfilled batch but state sync complete? {state_sync_complete}");
+            // Mark segment as finished if state sync is complete
+            if state_sync_complete {
+                start = STATE_TRIE_SEGMENTS_END[segment_number];
+            }
+            break;
+        }
+    }
+    Ok((root, start))
+}
+
+// Only receives storages
+async fn rebuild_storage_trie_in_background(
+    store: Store,
+    cancel_token: CancellationToken,
+    mut receiver: Receiver<Vec<(H256, H256)>>,
+) -> Result<Vec<H256>, SyncError> {
+    // TODO: fetch from DB checkpoint
+    // (AccountHash, ExpectedRoot)
+    // TODO: Use checkpoints
+    let mut pending_storages: Vec<(H256, H256)> = vec![];
+    let mut mismatched_storages: Vec<H256> = vec![];
+    let mut incoming = false;
+    while incoming || !pending_storages.is_empty() {
+        if cancel_token.is_cancelled() {
+            break;
+        }
+        // Read incoming batch
+        if !receiver.is_empty() || pending_storages.is_empty() {
+            let mut buffer = vec![];
+            receiver.recv_many(&mut buffer, MAX_CHANNEL_READS).await;
+            incoming = !buffer.iter().any(|batch| batch.is_empty());
+            pending_storages.extend(buffer.iter().flatten());
+        }
+
+        // Spawn tasks to rebuild current storages
+        let mut rebuild_tasks = JoinSet::new();
+        for _ in 0..MAX_PARALLEL_FETCHES {
+            if pending_storages.is_empty() {
+                break;
+            }
+            let (account_hash, expected_root) = pending_storages.pop().unwrap();
+            let store = store.clone();
+            rebuild_tasks.spawn(rebuild_storage_trie(
+                account_hash,
+                expected_root,
+                store.clone(),
+            ));
+        }
+        for res in rebuild_tasks.join_all().await {
+            if let Some(hash) = res? {
+                mismatched_storages.push(hash)
+            }
+        }
+    }
+    Ok(mismatched_storages)
+}
+
+/// Asumes that the storage has been fully downloaded
+/// Returns the account hash if the rebuilt root doesn't match the expected root
+async fn rebuild_storage_trie(
+    account_hash: H256,
+    expected_root: H256,
+    store: Store,
+) -> Result<Option<H256>, SyncError> {
+    let mut start = H256::zero();
+    let mut storage_trie = store.open_storage_trie(account_hash, *EMPTY_TRIE_HASH);
+    loop {
+        let mut batch = store.iter_storage_snapshot(account_hash, start)?;
+        let unfilled_batch = batch.len() < 100;
+        info!("Fetched snapshot batch of size {}", batch.len());
+        // If this is not the first rebuild loop, discard the first element as we have already processed it
+        if !batch.is_empty() && start.is_zero() {
+            batch.remove(0);
+        }
+        // Update start
+        if let Some(last) = batch.last() {
+            start = last.0;
+        }
+        // Process batch
+        // Launch storage rebuild tasks for all non-empty storages
+        for (key, val) in batch {
+            storage_trie.insert(key.0.to_vec(), val.encode_to_vec())?;
+        }
+        storage_trie.hash()?;
+
+        // Return if we have no more snapshot accounts to process for this segemnt
+        if unfilled_batch {
+            break;
+        }
+    }
+    let root = storage_trie.hash()?;
+    Ok((root != expected_root).then_some(root))
+}
+
+/// Helper method to insert a batch of accounts into a state trie
+/// (We have to do this separately as we cannot keep an open trie between async calls)
+fn state_trie_insert_batch(
+    root: H256,
+    batch: Vec<(H256, AccountState)>,
+    store: Store,
+) -> Result<H256, SyncError> {
+    // Add accounts to the state trie
+    let mut state_trie = store.open_state_trie(root);
+    for (hash, account) in batch.iter() {
+        state_trie.insert(hash.0.to_vec(), account.encode_to_vec())?;
+    }
+    Ok(state_trie.hash()?)
 }
 
 async fn show_trie_rebuild_progress(

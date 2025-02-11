@@ -1125,6 +1125,21 @@ impl Store {
     pub fn clear_snapshot(&self) -> Result<(), StoreError> {
         self.engine.clear_snapshot()
     }
+
+    // Only yields 100 elements
+    pub fn iter_account_snapshot(
+        &self,
+        start: H256,
+    ) -> Result<Vec<(H256, AccountState)>, StoreError> {
+        self.engine.iter_account_snapshot(start)
+    }
+    pub fn iter_storage_snapshot(
+        &self,
+        account_hash: H256,
+        start: H256,
+    ) -> Result<Vec<(H256, U256)>, StoreError> {
+        self.engine.iter_storage_snapshot(account_hash, start)
+    }
 }
 
 pub fn hash_address(address: &Address) -> Vec<u8> {
