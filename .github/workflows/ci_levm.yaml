@@ -141,9 +141,6 @@ jobs:
       - name: Checkout sources
         uses: actions/checkout@v4
 
-      - name: Caching
-        uses: Swatinem/rust-cache@v2
-
       - name: Download main branch ef tests
         uses: actions/download-artifact@v4
         with:
