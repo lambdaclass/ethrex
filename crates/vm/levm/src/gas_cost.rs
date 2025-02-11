@@ -574,14 +574,12 @@ pub fn selfdestruct(
     fork: Fork,
 ) -> Result<u64, OutOfGasError> {
     match fork {
-        f if f <= Fork::DaoFork => {
-            todo!();
-        }
+        f if f <= Fork::DaoFork => Ok(0),
         Fork::Tangerine => {
-            todo!();
-        }
-        f if f > Fork::Tangerine && f <= Fork::Berlin => {
-            todo!();
+            let unexisting = if account_is_empty { 25000 } else { 0 };
+            Ok(5000_u64
+                .checked_add(unexisting)
+                .ok_or(OutOfGasError::GasCostOverflow)?)
         }
         _ => {
             let mut gas_cost = SELFDESTRUCT_STATIC;
