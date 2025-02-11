@@ -23,6 +23,6 @@ pub fn load_cache(block_number: usize) -> Result<Cache, String> {
 
 pub fn write_cache(cache: &Cache) -> Result<(), String> {
     let file_name = format!("cache_{}.json", cache.block.header.number);
-    let mut file = BufWriter::new(File::open(file_name).map_err(|err| err.to_string())?);
+    let mut file = BufWriter::new(File::create(file_name).map_err(|err| err.to_string())?);
     serde_json::to_writer(file, cache).map_err(|err| err.to_string())
 }
