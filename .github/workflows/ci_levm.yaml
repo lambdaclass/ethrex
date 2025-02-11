@@ -194,15 +194,14 @@ jobs:
       # If both conditions are met, update the comment saying that all tests pass.
       - name: Update comment
         if: ${{ steps.branch_diffs.outcome != 'failure' && github.event_name == 'pull_request' && steps.fc.outputs.comment-id != '' }}
-        run: |
-          echo " # EF Tests Comparison" > all_good.md
-          echo "Same results between main branch and the current PR." >> all_good.md
         uses: peter-evans/create-or-update-comment@v4
         with:
           comment-id: ${{ steps.fc.outputs.comment-id }}
           token: ${{ secrets.GITHUB_TOKEN }}
           issue-number: ${{ github.event.pull_request.number }}
-          body-path: all_good.md
+          body: |
+            \# EF Tests Comparison
+            Same results between main branch and the current PR.
           edit-mode: replace
 
   hive-report-creation:
