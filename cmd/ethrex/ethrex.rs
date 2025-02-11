@@ -403,14 +403,10 @@ fn parse_socket_addr(addr: &str, port: &str) -> io::Result<SocketAddr> {
 
 fn sync_mode(matches: &clap::ArgMatches) -> SyncMode {
     let syncmode = matches.get_one::<String>("syncmode");
-    if let Some(syncmode) = syncmode {
-        match &**syncmode {
-            "full" => SyncMode::Full,
-            "snap" => SyncMode::Snap,
-            other => panic!("Invalid syncmode {other} expected either snap or full"),
-        }
-    } else {
-        SyncMode::Snap
+    match syncmode {
+        Some(mode) if mode == "full" => SyncMode::Full,
+        Some(mode) if mode == "snap" => SyncMode::Snap,
+        other => panic!("Invalid syncmode {:?} expected either snap or full", other),
     }
 }
 

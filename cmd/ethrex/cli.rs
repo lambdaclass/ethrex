@@ -110,6 +110,7 @@ pub fn cli() -> Command {
             Arg::new("syncmode")
                 .long("syncmode")
                 .required(false)
+                .default_value("full")
                 .value_name("SYNC_MODE"),
         )
         .arg(
