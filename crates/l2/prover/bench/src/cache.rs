@@ -1,3 +1,8 @@
+use std::{
+    fs::File,
+    io::{BufReader, BufWriter, Read},
+};
+
 use ethrex_core::types::{Block, BlockHeader};
 use ethrex_vm::execution_db::ExecutionDB;
 
@@ -12,12 +17,12 @@ pub struct Cache {
 
 pub fn load_cache(block_number: usize) -> Result<Cache, String> {
     let file_name = format!("cache_{}.bin", block_number);
-    let file = std::fs::File::open(file_name).map_err(|err| err.to_string())?;
-    bincode::deserialize_from(file).map_err(|err| err.to_string())
+    let file = BufReader::new(File::open(file_name).map_err(|err| err.to_string())?);
+    serde_json::from_reader(file).map_err(|err| err.to_string())
 }
 
 pub fn write_cache(cache: &Cache) -> Result<(), String> {
     let file_name = format!("cache_{}.bin", cache.block.header.number);
-    let mut file = std::fs::File::create(file_name).map_err(|err| err.to_string())?;
-    bincode::serialize_into(file, &cache).map_err(|err| err.to_string())
+    let mut file = BufWriter::new(File::open(file_name).map_err(|err| err.to_string())?);
+    serde_json::to_writer(file, cache).map_err(|err| err.to_string())
 }
