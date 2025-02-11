@@ -107,10 +107,14 @@ pub const SSTORE_STIPEND: u64 = 2300;
 pub const SSTORE_PRE_BERLIN_NON_ZERO: u64 = 20000;
 pub const SSTORE_PRE_BERLIN: u64 = 5000;
 
+pub const BALANCE_PRE_TANGERINE: u64 = 20;
+pub const BALANCE_TANGERINE: u64 = 400;
 pub const BALANCE_STATIC: u64 = DEFAULT_STATIC;
 pub const BALANCE_COLD_DYNAMIC: u64 = DEFAULT_COLD_DYNAMIC;
 pub const BALANCE_WARM_DYNAMIC: u64 = DEFAULT_WARM_DYNAMIC;
 
+pub const EXTCODESIZE_PRE_TANGERINE: u64 = 20;
+pub const EXTCODESIZE_TANGERINE: u64 = 700;
 pub const EXTCODESIZE_STATIC: u64 = DEFAULT_STATIC;
 pub const EXTCODESIZE_COLD_DYNAMIC: u64 = DEFAULT_COLD_DYNAMIC;
 pub const EXTCODESIZE_WARM_DYNAMIC: u64 = DEFAULT_WARM_DYNAMIC;
@@ -644,23 +648,31 @@ fn address_access_cost(
 }
 
 pub fn balance(address_was_cold: bool, fork: Fork) -> Result<u64, VMError> {
-    address_access_cost(
-        address_was_cold,
-        BALANCE_STATIC,
-        BALANCE_COLD_DYNAMIC,
-        BALANCE_WARM_DYNAMIC,
-        fork,
-    )
+    match fork {
+        f if f < Fork::Tangerine => Ok(BALANCE_PRE_TANGERINE),
+        f if f >= Fork::Tangerine && fork < Fork::Cancun => Ok(BALANCE_TANGERINE),
+        f => address_access_cost(
+            address_was_cold,
+            BALANCE_STATIC,
+            BALANCE_COLD_DYNAMIC,
+            BALANCE_WARM_DYNAMIC,
+            f,
+        ),
+    }
 }
 
 pub fn extcodesize(address_was_cold: bool, fork: Fork) -> Result<u64, VMError> {
-    address_access_cost(
-        address_was_cold,
-        EXTCODESIZE_STATIC,
-        EXTCODESIZE_COLD_DYNAMIC,
-        EXTCODESIZE_WARM_DYNAMIC,
-        fork,
-    )
+    match fork {
+        f if f < Fork::Tangerine => Ok(EXTCODESIZE_PRE_TANGERINE),
+        f if f >= Fork::Tangerine && fork < Fork::Cancun => Ok(EXTCODESIZE_TANGERINE),
+        f => address_access_cost(
+            address_was_cold,
+            EXTCODESIZE_STATIC,
+            EXTCODESIZE_COLD_DYNAMIC,
+            EXTCODESIZE_WARM_DYNAMIC,
+            f,
+        ),
+    }
 }
 
 pub fn extcodecopy(
