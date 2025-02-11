@@ -50,6 +50,8 @@ jobs:
       - name: Show test summary -- short
         run: |
           bash ./github/scripts/parse_test_result.sh crates/vm/levm/test_result_pr.txt | tee crates/vm/levm/test_result_pr_short.txt
+          echo "PR's test results:"
+          cat crates/vm/levm/test_result_pr_short.txt
 
       - name: Upload PR branch EF-test results.
         uses: actions/upload-artifact@v4
@@ -115,6 +117,8 @@ jobs:
       - name: Show test summary -- short
         run: |
           bash ./.github/scripts/parse_test_result.sh crates/vm/levm/test_result_main.txt | tee crates/vm/levm/test_result_main_short.txt
+          echo "Main's test results:"
+          cat crates/vm/levm/test_result_main_short.txt
 
       - name: Upload main branch EF-test results.
         uses: actions/upload-artifact@v4
