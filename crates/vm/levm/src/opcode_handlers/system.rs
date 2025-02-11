@@ -3,7 +3,7 @@ use crate::{
     constants::{CREATE_DEPLOYMENT_FAIL, INIT_CODE_MAX_SIZE, REVERT_FOR_CALL, SUCCESS_FOR_CALL},
     db::cache,
     errors::{InternalError, OpcodeResult, OutOfGasError, TxResult, VMError},
-    gas_cost::{self, max_message_call_gas},
+    gas_cost::{self, max_message_call_gas, SELFDESTRUCT_REFUND},
     memory::{self, calculate_memory_size},
     utils::*,
     utils::{address_to_word, word_to_address},
@@ -579,7 +579,14 @@ impl VM {
                 .selfdestruct_set
                 .insert(current_call_frame.to);
         }
-
+        // [EIP-3529](https://eips.ethereum.org/EIPS/eip-3529)
+        if self.env.config.fork < Fork::London {
+            self.env.refunded_gas = self
+                .env
+                .refunded_gas
+                .checked_add(SELFDESTRUCT_REFUND)
+                .ok_or(VMError::GasRefundsOverflow)?;
+        }
         Ok(OpcodeResult::Halt)
     }
 
