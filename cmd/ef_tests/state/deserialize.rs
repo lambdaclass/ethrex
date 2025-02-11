@@ -293,7 +293,8 @@ where
         let fork = match fork_str.as_str() {
             "Frontier" => Fork::Frontier,
             "Homestead" => Fork::Homestead,
-            "Constantinople" | "ConstantinopleFix" | "Petersburg" => Fork::Constantinople,
+            "Constantinople" => Fork::Constantinople,
+            "ConstantinopleFix" | "Petersburg" => Fork::Petersburg,
             "Istanbul" => Fork::Istanbul,
             "Berlin" => Fork::Berlin,
             "London" => Fork::London,
