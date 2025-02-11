@@ -57,7 +57,7 @@ jobs:
           name: pr-ef-test-data
           path: crates/vm/levm/test_result_pr.txt
 
-        # This needs is only needed in the PR. As soon as this is merged, this should be deleted
+        # This is only needed in the PR. As soon as this is merged, this should be deleted
       - name: Upload comparison shell script
         uses: actions/upload-artifact@v4
         with:
@@ -105,7 +105,7 @@ jobs:
         run: |
           cd crates/vm/levm && awk '/Summary: /,0' test_result_main.txt
 
-        # This needs is only needed in the PR. As soon as this is merged, this should be deleted
+        # This is only needed in the PR. As soon as this is merged, this should be deleted
       - name: Download shell script
         uses: actions/download-artifact@v4
         with:
