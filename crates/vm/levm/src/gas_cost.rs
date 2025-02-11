@@ -692,10 +692,15 @@ pub fn extcodecopy(
             EXTCODECOPY_DYNAMIC_BASE,
             0,
         ),
-        f if f >= Fork::Tangerine && fork < Fork::Cancun => {
+        f if f >= Fork::Tangerine && fork < Fork::Berlin => {
             // Before Cancun, memory expansion weren't accounted for,
             // hence the 0
             (EXTCODECOPY_STATIC_TANGERINE, EXTCODECOPY_DYNAMIC_BASE, 0)
+        }
+        f if f >= Fork::Berlin && fork < Fork::Cancun => {
+            // Before Cancun, memory expansion weren't accounted for,
+            // hence the 0
+            (100, EXTCODECOPY_DYNAMIC_BASE, 0)
         }
         _ => {
             let expansion_access_cost = address_access_cost(
