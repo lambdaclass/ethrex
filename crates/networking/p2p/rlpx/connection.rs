@@ -122,12 +122,15 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
             // NOTE: if the peer came from the discovery server it will already be inserted in the table
             // but that might not always be the case, so we try to add it to the table
             // Note: we don't ping the node we let the validation service do its job
-            table.lock().await.insert_node(self.node);
-            table.lock().await.init_backend_communication(
-                self.node.node_id,
-                peer_channels,
-                capabilities,
-            );
+            {
+                let mut table_lock = table.lock().await;
+                table_lock.insert_node_forced(self.node);
+                table_lock.init_backend_communication(
+                    self.node.node_id,
+                    peer_channels,
+                    capabilities,
+                );
+            }
             if let Err(e) = self.connection_loop(sender, receiver).await {
                 self.connection_failed("Error during RLPx connection", e, table)
                     .await;
@@ -159,6 +162,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
             &format!("{error_text}: ({error}), discarding peer {remote_node_id}"),
         );
         table.lock().await.replace_peer(remote_node_id);
+        let _ = self.framed.close().await;
     }
 
     fn match_disconnect_reason(&self, error: &RLPxError) -> Option<u8> {
@@ -180,6 +184,13 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
         // Receive Hello message
         match self.receive().await? {
             Message::Hello(hello_message) => {
+                log_peer_debug(
+                    &self.node,
+                    &format!(
+                        "Hello message capabilities {:?}",
+                        hello_message.capabilities
+                    ),
+                );
                 self.capabilities = hello_message.capabilities;
 
                 // Check if we have any capability in common
@@ -223,10 +234,20 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
             tokio::select! {
                 // Expect a message from the remote peer
                 message = self.receive() => {
-                    self.handle_message(message?, sender.clone()).await?;
+                    match message {
+                        Ok(message) => {
+                            log_peer_debug(&self.node, &format!("Received message {}", message));
+                            self.handle_message(message, sender.clone()).await?;
+                        },
+                        Err(e) => {
+                            log_peer_debug(&self.node, &format!("Received RLPX Error in msg {}", e));
+                            return Err(e);
+                        }
+                    }
                 }
                 // Expect a message from the backend
                 Some(message) = receiver.recv() => {
+                    log_peer_debug(&self.node, &format!("Sending message {}", message));
                     self.send(message).await?;
                 }
                 // This is not ideal, but using the receiver without
@@ -285,7 +306,6 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
             }
             Message::Ping(_) => {
                 self.send(Message::Pong(PongMessage {})).await?;
-                log_peer_debug(&self.node, "Pong sent");
             }
             Message::Pong(_) => {
                 // We ignore received Pong messages
@@ -417,8 +437,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
             // https://github.com/ethereum/devp2p/blob/master/caps/eth.md#status-0x00
             match self.receive().await? {
                 Message::Status(msg_data) => {
-                    // TODO: Check message status is correct.
-                    log_peer_debug(&self.node, "Received Status");
+                    log_peer_debug(&self.node, &format!("Received Status {:?}", msg_data));
                     backend::validate_status(msg_data, &self.storage)?
                 }
                 Message::Disconnect(disconnect) => {
