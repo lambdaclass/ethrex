@@ -5,7 +5,7 @@ use crate::{
     utils::{effective_gas_price, load_initial_state},
 };
 use bytes::Bytes;
-use ethrex_core::{
+use ethrex_common::{
     types::{Fork, TxKind},
     Address, H256,
 };
@@ -59,7 +59,7 @@ pub fn re_run_failed_ef_test(
                         }
                     }
                 },
-                // Currently, we decided not to re-execute the test when the Expected exception does not match 
+                // Currently, we decided not to re-execute the test when the Expected exception does not match
                 // with the received. This can change in the future.
                 EFTestRunnerError::ExpectedExceptionDoesNotMatchReceived(_) => continue,
                 EFTestRunnerError::VMInitializationFailed(_)

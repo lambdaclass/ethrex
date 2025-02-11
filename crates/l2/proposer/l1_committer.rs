@@ -6,7 +6,7 @@ use crate::{
     utils::config::{committer::CommitterConfig, errors::ConfigError, eth::EthConfig},
 };
 
-use ethrex_core::{
+use ethrex_common::{
     types::{
         blobs_bundle, fake_exponential_checked, BlobsBundle, BlobsBundleError, Block,
         PrivilegedL2Transaction, PrivilegedTxType, Transaction, TxKind,

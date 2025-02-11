@@ -2,7 +2,7 @@ pub mod levm;
 pub mod revm;
 
 use crate::{errors::EvmError, EvmState};
-use ethrex_core::types::{Block, BlockHeader};
+use ethrex_common::types::{Block, BlockHeader};
 use ethrex_storage::AccountUpdate;
 use std::str::FromStr;
 

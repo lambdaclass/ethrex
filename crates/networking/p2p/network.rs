@@ -1,13 +1,17 @@
-use crate::discv4::{
-    helpers::current_unix_time,
-    server::{DiscoveryError, Discv4Server},
-};
-use crate::kademlia::KademliaTable;
+use crate::kademlia::{self, KademliaTable};
+use crate::rlpx::p2p::Capability;
 use crate::rlpx::{
     connection::RLPxConnBroadcastSender, handshake, message::Message as RLPxMessage,
 };
 use crate::types::Node;
-use ethrex_core::H512;
+use crate::{
+    discv4::{
+        helpers::current_unix_time,
+        server::{DiscoveryError, Discv4Server},
+    },
+    rlpx::utils::log_peer_error,
+};
+use ethrex_common::H512;
 use ethrex_storage::Store;
 use k256::{
     ecdsa::SigningKey,
@@ -95,7 +99,7 @@ pub async fn start_network(
     Ok(())
 }
 
-async fn serve_p2p_requests(context: P2PContext) {
+pub(crate) async fn serve_p2p_requests(context: P2PContext) {
     let tcp_addr = context.local_node.tcp_addr();
     let listener = match listener(tcp_addr) {
         Ok(result) => result,
@@ -130,9 +134,6 @@ async fn handle_peer_as_receiver(context: P2PContext, peer_addr: SocketAddr, str
     match handshake::as_receiver(context, peer_addr, stream).await {
         Ok(mut conn) => conn.start(table).await,
         Err(e) => {
-            // TODO We should remove the peer from the table if connection failed
-            // but currently it will make the tests fail
-            // table.lock().await.replace_peer(node.node_id);
             debug!("Error creating tcp connection with peer at {peer_addr}: {e}")
         }
     }
@@ -143,10 +144,8 @@ pub async fn handle_peer_as_initiator(context: P2PContext, node: Node) {
     let stream = match tcp_stream(addr).await {
         Ok(result) => result,
         Err(e) => {
-            // TODO We should remove the peer from the table if connection failed
-            // but currently it will make the tests fail
-            // table.lock().await.replace_peer(node.node_id);
-            debug!("Error establishing tcp connection with peer at {addr}: {e}");
+            log_peer_error(&node, &format!("Error creating tcp connection {e}"));
+            context.table.lock().await.replace_peer(node.node_id);
             return;
         }
     };
@@ -154,10 +153,8 @@ pub async fn handle_peer_as_initiator(context: P2PContext, node: Node) {
     match handshake::as_initiator(context, node, stream).await {
         Ok(mut conn) => conn.start(table).await,
         Err(e) => {
-            // TODO We should remove the peer from the table if connection failed
-            // but currently it will make the tests fail
-            // table.lock().await.replace_peer(node.node_id);
-            debug!("Error creating tcp connection with peer at {addr}: {e}")
+            log_peer_error(&node, &format!("Error creating tcp connection {e}"));
+            table.lock().await.replace_peer(node.node_id);
         }
     };
 }
@@ -174,10 +171,25 @@ pub fn node_id_from_signing_key(signer: &SigningKey) -> H512 {
 
 /// Shows the amount of connected peers, active peers, and peers suitable for snap sync on a set interval
 pub async fn periodically_show_peer_stats(peer_table: Arc<Mutex<KademliaTable>>) {
-    const INTERVAL_DURATION: tokio::time::Duration = tokio::time::Duration::from_secs(120);
+    const INTERVAL_DURATION: tokio::time::Duration = tokio::time::Duration::from_secs(30);
     let mut interval = tokio::time::interval(INTERVAL_DURATION);
     loop {
-        peer_table.lock().await.show_peer_stats();
+        // clone peers to keep the lock short
+        let peers: Vec<kademlia::PeerData> =
+            peer_table.lock().await.iter_peers().cloned().collect();
+        let total_peers = peers.len();
+        let active_peers = peers
+            .iter()
+            .filter(|peer| -> bool { peer.channels.as_ref().is_some() })
+            .count();
+        let snap_active_peers = peers
+            .iter()
+            .filter(|peer| -> bool {
+                peer.channels.as_ref().is_some()
+                    && peer.supported_capabilities.contains(&Capability::Snap)
+            })
+            .count();
+        info!("Snap Peers: {snap_active_peers} / Active Peers {active_peers} / Total Peers: {total_peers}");
         interval.tick().await;
     }
 }

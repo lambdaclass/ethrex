@@ -6,13 +6,13 @@ pub mod payload;
 mod smoke_test;
 
 use error::{ChainError, InvalidBlockError};
-use ethrex_core::constants::GAS_PER_BLOB;
-use ethrex_core::types::{
+use ethrex_common::constants::GAS_PER_BLOB;
+use ethrex_common::types::{
     compute_receipts_root, validate_block_header, validate_post_cancun_header_fields,
     validate_pre_cancun_header_fields, Block, BlockHash, BlockHeader, BlockNumber, ChainConfig,
     EIP4844Transaction, Receipt, Transaction,
 };
-use ethrex_core::H256;
+use ethrex_common::H256;
 
 use ethrex_storage::error::StoreError;
 use ethrex_storage::{AccountUpdate, Store};

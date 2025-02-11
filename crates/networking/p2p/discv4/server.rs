@@ -13,7 +13,7 @@ use crate::{
     network::{handle_peer_as_initiator, P2PContext},
     types::{Endpoint, Node, NodeRecord},
 };
-use ethrex_core::H256;
+use ethrex_common::H256;
 use k256::ecdsa::{signature::hazmat::PrehashVerifier, Signature, VerifyingKey};
 use std::{
     collections::HashSet,
@@ -627,7 +627,7 @@ impl Discv4Server {
 pub(super) mod tests {
     use super::*;
     use crate::{
-        network::{node_id_from_signing_key, MAX_MESSAGES_TO_BROADCAST},
+        network::{node_id_from_signing_key, serve_p2p_requests, MAX_MESSAGES_TO_BROADCAST},
         rlpx::message::Message as RLPxMessage,
     };
     use ethrex_storage::{EngineType, Store};
@@ -693,7 +693,7 @@ pub(super) mod tests {
             broadcast,
         };
 
-        let discv4 = Discv4Server::try_new(ctx).await?;
+        let discv4 = Discv4Server::try_new(ctx.clone()).await?;
 
         if should_start_server {
             tracker.spawn({
@@ -702,6 +702,9 @@ pub(super) mod tests {
                     discv4.receive().await;
                 }
             });
+            // we need to spawn the p2p service, as the nodes will try to connect each other via tcp once bonded
+            // if that connection fails, then they are remove themselves from the table, we want them to be bonded for these tests
+            ctx.tracker.spawn(serve_p2p_requests(ctx.clone()));
         }
 
         Ok(discv4)
@@ -715,6 +718,7 @@ pub(super) mod tests {
         server_a
             .try_add_peer_and_ping(server_b.ctx.local_node, server_a.ctx.table.lock().await)
             .await?;
+
         // allow some time for the server to respond
         sleep(Duration::from_secs(1)).await;
         Ok(())
