@@ -122,10 +122,6 @@ impl Decoder for RLPxCodec {
         let mut temp_ingress_aes = self.ingress_aes.clone();
         temp_ingress_aes.apply_keystream(header_text);
 
-        // header-data = [capability-id, context-id]
-        // Both are unused, and always zero
-        assert_eq!(&header_text[3..6], &(0_u8, 0_u8).encode_to_vec());
-
         let frame_size: usize =
             u32::from_be_bytes([0, header_text[0], header_text[1], header_text[2]])
                 .try_into()
