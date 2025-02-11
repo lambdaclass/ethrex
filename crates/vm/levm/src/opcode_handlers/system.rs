@@ -580,6 +580,17 @@ impl VM {
                 .insert(current_call_frame.to);
         }
 
+        // [EIP-3529](https://eips.ethereum.org/EIPS/eip-3529)
+        if self.env.config.fork < Fork::London {
+            dbg!("ENTRO ACA!!!!!!!", self.env.refunded_gas);
+            self.env.refunded_gas = self
+                .env
+                .refunded_gas
+                .checked_add(24000)
+                .ok_or(VMError::GasRefundsOverflow)?;
+            dbg!(self.env.refunded_gas);
+        }
+
         Ok(OpcodeResult::Halt)
     }
 
