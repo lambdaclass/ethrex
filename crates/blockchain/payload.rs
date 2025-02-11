@@ -8,19 +8,24 @@ use ethrex_common::{
     types::{
         calculate_base_fee_per_blob_gas, calculate_base_fee_per_gas, compute_receipts_root,
         compute_transactions_root, compute_withdrawals_root, BlobsBundle, Block, BlockBody,
-        BlockHash, BlockHeader, BlockNumber, ChainConfig, MempoolTransaction, Receipt, Transaction,
-        Withdrawal, DEFAULT_OMMERS_HASH, DEFAULT_REQUESTS_HASH,
+        BlockHash, BlockHeader, BlockNumber, ChainConfig, Fork, MempoolTransaction, Receipt,
+        Transaction, Withdrawal, DEFAULT_OMMERS_HASH, DEFAULT_REQUESTS_HASH,
     },
     Address, Bloom, Bytes, H256, U256,
 };
 
-use ethrex_common::types::{Fork, GWEI_TO_WEI};
-use ethrex_levm::{db::CacheDB, vm::EVMConfig, Account, AccountInfo};
+use ethrex_levm::{db::CacheDB, vm::EVMConfig};
 use ethrex_vm::{
     backends::{
         self,
-        levm::{LevmGetStateTransitionsIn, LevmSystemCallIn, LevmTransactionExecutionIn},
-        revm::{RevmGetStateTransitionsIn, RevmSystemCallIn, RevmTransactionExecutionIn},
+        levm::{
+            LevmGetStateTransitionsIn, LevmProcessWithdrawalsIn, LevmSystemCallIn,
+            LevmTransactionExecutionIn,
+        },
+        revm::{
+            RevmGetStateTransitionsIn, RevmProcessWithdrawalsIn, RevmSystemCallIn,
+            RevmTransactionExecutionIn,
+        },
         SystemContracts, EVM, IEVM,
     },
     db::{evm_state, EvmState, StoreWrapper},
@@ -251,55 +256,30 @@ pub fn build_payload(
 }
 
 pub fn apply_withdrawals(context: &mut PayloadBuildContext) -> Result<(), EvmError> {
+    let binding = Vec::new();
+    let withdrawals = context
+        .payload
+        .body
+        .withdrawals
+        .as_ref()
+        .unwrap_or(&binding);
     match EVM_BACKEND.get() {
         Some(EVM::LEVM) => {
-            if let Some(withdrawals) = &context.payload.body.withdrawals {
-                // For every withdrawal we increment the target account's balance
-                for (address, increment) in withdrawals
-                    .iter()
-                    .filter(|withdrawal| withdrawal.amount > 0)
-                    .map(|w| (w.address, u128::from(w.amount) * u128::from(GWEI_TO_WEI)))
-                {
-                    // We check if it was in block_cache, if not, we get it from DB.
-                    let mut account = context.block_cache.get(&address).cloned().unwrap_or({
-                        let acc_info = context
-                            .store()
-                            .ok_or(StoreError::MissingStore)?
-                            .get_account_info_by_hash(context.parent_hash(), address)?
-                            .unwrap_or_default();
-                        let acc_code = context
-                            .store()
-                            .ok_or(StoreError::MissingStore)?
-                            .get_account_code(acc_info.code_hash)?
-                            .unwrap_or_default();
-
-                        Account {
-                            info: AccountInfo {
-                                balance: acc_info.balance,
-                                bytecode: acc_code,
-                                nonce: acc_info.nonce,
-                            },
-                            // This is the added_storage for the withdrawal.
-                            // If not involved in the TX, there won't be any updates in the storage
-                            storage: HashMap::new(),
-                        }
-                    });
-
-                    account.info.balance += increment.into();
-                    context.block_cache.insert(address, account);
-                }
-            }
+            let parent_hash = context.parent_hash();
+            let mut temp_block_cache = CacheDB::new();
+            backends::levm::LEVM::process_withdrawals(LevmProcessWithdrawalsIn::new(
+                &mut temp_block_cache,
+                withdrawals,
+                context.store(),
+                parent_hash,
+            ))?;
+            context.block_cache.extend(temp_block_cache);
         }
         Some(EVM::REVM) | None => {
-            backends::revm::process_withdrawals(
+            backends::revm::REVM::process_withdrawals(RevmProcessWithdrawalsIn::new(
                 context.evm_state,
-                context
-                    .payload
-                    .body
-                    .withdrawals
-                    .as_ref()
-                    .unwrap_or(&Vec::new()),
-            )?;
+                withdrawals,
+            ))?;
         }
     }
     Ok(())

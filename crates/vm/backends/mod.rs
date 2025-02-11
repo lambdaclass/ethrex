@@ -3,7 +3,7 @@ pub mod revm;
 
 use crate::{errors::EvmError, EvmState};
 use ethrex_common::types::{Block, BlockHeader};
-use ethrex_storage::AccountUpdate;
+use ethrex_storage::{error::StoreError, AccountUpdate};
 use std::str::FromStr;
 
 #[derive(Debug, Clone, Default)]
@@ -28,17 +28,20 @@ pub trait IEVM {
     /// The error type for this trait's error. `EvmError` is the default, but it could be modified if needed.
     type Error;
 
-    /// Output for `execute_block`. The default is `(Vec<Receipt>, Vec<AccountUpdate>)`, but it could be modified if needed.
+    /// Output for [IEVM::execute_block]. The default is `(Vec<Receipt>, Vec<AccountUpdate>)`, but it could be modified if needed.
     type BlockExecutionOutput;
 
-    /// Input for `execute_tx`. This must be defined by the implementor. It may vary depending on the backend EVM.
+    /// Input for [IEVM::execute_tx]. This must be defined by the implementor. It may vary depending on the backend EVM.
     type TransactionExecutionInput<'a>;
 
-    /// Output for `execute_tx`. This must be defined by the implementor. It may vary depending on the backend EVM.
+    /// Output for [IEVM::execute_tx]. This must be defined by the implementor. It may vary depending on the backend EVM.
     type TransactionExecutionResult;
 
-    /// Input for `get_state_transitions`. This must be defined by the implementor. It may vary depending on the backend EVM.
+    /// Input for [IEVM::get_state_transitions]. This must be defined by the implementor. It may vary depending on the backend EVM.
     type GetStateTransitionsInput<'a>;
+
+    /// Input for [IEVM::process_withdrawals]. This must be defined by the implementor. It may vary depending on the backend EVM.
+    type ProcessWithdrawalsInput<'a>;
 
     /// Executes every transaction of a block returning a list of their receipts executed and a list of accounts that were updated in the execution.
     fn execute_block(
@@ -53,6 +56,9 @@ pub trait IEVM {
 
     /// Gets the state transitions performed by the execution. Returning an Array of AccounUpdates
     fn get_state_transitions(input: Self::GetStateTransitionsInput<'_>) -> Vec<AccountUpdate>;
+
+    /// Processes a block's withdrawals, updating the account balances in the state
+    fn process_withdrawals(input: Self::ProcessWithdrawalsInput<'_>) -> Result<(), StoreError>;
 }
 
 pub trait SystemContracts {

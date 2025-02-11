@@ -5,7 +5,8 @@ use crate::EvmState;
 use ethrex_common::types::Fork;
 use ethrex_common::{
     types::{
-        code_hash, AccountInfo, Block, BlockHeader, Receipt, Transaction, TxKind, GWEI_TO_WEI,
+        code_hash, AccountInfo, Block, BlockHeader, Receipt, Transaction, TxKind, Withdrawal,
+        GWEI_TO_WEI,
     },
     Address, H256, U256,
 };
@@ -14,9 +15,9 @@ use ethrex_levm::{
     db::{CacheDB, Database as LevmDatabase},
     errors::{ExecutionReport, TxResult, VMError},
     vm::{EVMConfig, VM},
-    Account, Environment,
+    Account, AccountInfo as LevmAccountInfo, Environment,
 };
-use ethrex_storage::AccountUpdate;
+use ethrex_storage::{error::StoreError, AccountUpdate, Store};
 use lazy_static::lazy_static;
 use revm_primitives::Bytes;
 use std::{collections::HashMap, sync::Arc};
@@ -72,6 +73,30 @@ impl<'a> LevmGetStateTransitionsIn<'a> {
     }
 }
 
+/// Input for [LEVM::process_withdrawals]
+pub struct LevmProcessWithdrawalsIn<'a> {
+    block_cache: &'a mut CacheDB,
+    withdrawals: &'a [Withdrawal],
+    store: Option<&'a Store>,
+    parent_hash: H256,
+}
+
+impl<'a> LevmProcessWithdrawalsIn<'a> {
+    pub fn new(
+        block_cache: &'a mut CacheDB,
+        withdrawals: &'a [Withdrawal],
+        store: Option<&'a Store>,
+        parent_hash: H256,
+    ) -> Self {
+        LevmProcessWithdrawalsIn {
+            block_cache,
+            withdrawals,
+            store,
+            parent_hash,
+        }
+    }
+}
+
 #[derive(Debug)]
 pub struct LEVM;
 
@@ -85,6 +110,8 @@ impl IEVM for LEVM {
     type TransactionExecutionResult = ExecutionReport;
 
     type GetStateTransitionsInput<'a> = LevmGetStateTransitionsIn<'a>;
+
+    type ProcessWithdrawalsInput<'a> = LevmProcessWithdrawalsIn<'a>;
 
     fn execute_block(
         block: &Block,
@@ -339,6 +366,47 @@ impl IEVM for LEVM {
             }
         }
         account_updates
+    }
+
+    fn process_withdrawals(
+        input: Self::ProcessWithdrawalsInput<'_>,
+    ) -> Result<(), ethrex_storage::error::StoreError> {
+        // For every withdrawal we increment the target account's balance
+        for (address, increment) in input
+            .withdrawals
+            .iter()
+            .filter(|withdrawal| withdrawal.amount > 0)
+            .map(|w| (w.address, u128::from(w.amount) * u128::from(GWEI_TO_WEI)))
+        {
+            // We check if it was in block_cache, if not, we get it from DB.
+            let mut account = input.block_cache.get(&address).cloned().unwrap_or({
+                let acc_info = input
+                    .store
+                    .ok_or(StoreError::MissingStore)?
+                    .get_account_info_by_hash(input.parent_hash, address)?
+                    .unwrap_or_default();
+                let acc_code = input
+                    .store
+                    .ok_or(StoreError::MissingStore)?
+                    .get_account_code(acc_info.code_hash)?
+                    .unwrap_or_default();
+
+                Account {
+                    info: LevmAccountInfo {
+                        balance: acc_info.balance,
+                        bytecode: acc_code,
+                        nonce: acc_info.nonce,
+                    },
+                    // This is the added_storage for the withdrawal.
+                    // If not involved in the TX, there won't be any updates in the storage
+                    storage: HashMap::new(),
+                }
+            });
+
+            account.info.balance += increment.into();
+            input.block_cache.insert(address, account);
+        }
+        Ok(())
     }
 }
 

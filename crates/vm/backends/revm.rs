@@ -70,6 +70,21 @@ impl<'a> RevmGetStateTransitionsIn<'a> {
     }
 }
 
+/// Input for [REVM::process_withdrawals]
+pub struct RevmProcessWithdrawalsIn<'a> {
+    initial_state: &'a mut EvmState,
+    withdrawals: &'a [Withdrawal],
+}
+
+impl<'a> RevmProcessWithdrawalsIn<'a> {
+    pub fn new(initial_state: &'a mut EvmState, withdrawals: &'a [Withdrawal]) -> Self {
+        RevmProcessWithdrawalsIn {
+            initial_state,
+            withdrawals,
+        }
+    }
+}
+
 impl IEVM for REVM {
     type Error = EvmError;
 
@@ -80,6 +95,8 @@ impl IEVM for REVM {
     type TransactionExecutionResult = ExecutionResult;
 
     type GetStateTransitionsInput<'a> = RevmGetStateTransitionsIn<'a>;
+
+    type ProcessWithdrawalsInput<'a> = RevmProcessWithdrawalsIn<'a>;
 
     fn execute_block(
         block: &Block,
@@ -115,7 +132,7 @@ impl IEVM for REVM {
         }
 
         if let Some(withdrawals) = &block.body.withdrawals {
-            process_withdrawals(state, withdrawals)?;
+            Self::process_withdrawals(RevmProcessWithdrawalsIn::new(state, withdrawals))?;
         }
 
         Ok(receipts)
@@ -258,6 +275,33 @@ impl IEVM for REVM {
             }
         }
     }
+
+    fn process_withdrawals(input: Self::ProcessWithdrawalsInput<'_>) -> Result<(), StoreError> {
+        match input.initial_state {
+            EvmState::Store(db) => {
+                //balance_increments is a vector of tuples (Address, increment as u128)
+                let balance_increments = input
+                    .withdrawals
+                    .iter()
+                    .filter(|withdrawal| withdrawal.amount > 0)
+                    .map(|withdrawal| {
+                        (
+                            RevmAddress::from_slice(withdrawal.address.as_bytes()),
+                            (withdrawal.amount as u128 * GWEI_TO_WEI as u128),
+                        )
+                    })
+                    .collect::<Vec<_>>();
+
+                db.increment_balances(balance_increments)?;
+            }
+            EvmState::Execution(_) => {
+                // TODO: We should check withdrawals are valid
+                // (by checking that accounts exist if this is the only error) but there's no state to
+                // change.
+            }
+        }
+        Ok(())
+    }
 }
 
 /// Runs the transaction and returns the result, but does not commit it.
@@ -343,36 +387,6 @@ fn run_evm(
         }
     };
     Ok(tx_result.into())
-}
-
-/// Processes a block's withdrawals, updating the account balances in the state
-pub fn process_withdrawals(
-    state: &mut EvmState,
-    withdrawals: &[Withdrawal],
-) -> Result<(), StoreError> {
-    match state {
-        EvmState::Store(db) => {
-            //balance_increments is a vector of tuples (Address, increment as u128)
-            let balance_increments = withdrawals
-                .iter()
-                .filter(|withdrawal| withdrawal.amount > 0)
-                .map(|withdrawal| {
-                    (
-                        RevmAddress::from_slice(withdrawal.address.as_bytes()),
-                        (withdrawal.amount as u128 * GWEI_TO_WEI as u128),
-                    )
-                })
-                .collect::<Vec<_>>();
-
-            db.increment_balances(balance_increments)?;
-        }
-        EvmState::Execution(_) => {
-            // TODO: We should check withdrawals are valid
-            // (by checking that accounts exist if this is the only error) but there's no state to
-            // change.
-        }
-    }
-    Ok(())
 }
 
 pub fn block_env(header: &BlockHeader) -> BlockEnv {
