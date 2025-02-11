@@ -154,6 +154,7 @@ jobs:
           name: pr-ef-test-data
           path: crates/vm/levm/
 
+     # NOTE: diff will exit with a non 0 exit code when there are differences
       - name: Compare files
         id: branch_diffs
         continue-on-error: true
