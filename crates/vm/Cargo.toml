@@ -6,7 +6,7 @@ edition = "2021"
 [dependencies]
 ethrex-core = { path = "../common", default-features = false }
 ethrex-storage = { path = "../storage/store", default-features = false }
-ethrex-levm = { path = "./levm", optional = true }
+ethrex-levm = { path = "./levm", default-features = false }
 ethrex-trie = { path = "../storage/trie", default-features = false }
 ethrex-rlp = { path = "../common/rlp", default-features = false }
 revm = { version = "18.0.0", features = [
@@ -39,9 +39,8 @@ path = "./vm.rs"
 
 [features]
 default = ["c-kzg", "blst"]
-levm = ["default", "ethrex-levm"]
 l2 = []
-c-kzg = ["revm/c-kzg"]
+c-kzg = ["revm/c-kzg", "ethrex-levm/c-kzg", "ethrex-core/c-kzg"]
 blst = ["revm/blst"]
 libmdbx = ["ethrex-storage/default", "ethrex-core/libmdbx"]
 
