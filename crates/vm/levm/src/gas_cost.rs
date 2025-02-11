@@ -562,10 +562,12 @@ pub fn selfdestruct(
     address_was_cold: bool,
     account_is_empty: bool,
     balance_to_transfer: U256,
+    fork: Fork,
 ) -> Result<u64, OutOfGasError> {
     let mut gas_cost = SELFDESTRUCT_STATIC;
 
-    if address_was_cold {
+    // https://eips.ethereum.org/EIPS/eip-2929#selfdestruct-changes
+    if fork >= Fork::Berlin && address_was_cold {
         gas_cost = gas_cost
             .checked_add(COLD_ADDRESS_ACCESS_COST)
             .ok_or(OutOfGasError::GasCostOverflow)?;

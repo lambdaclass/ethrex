@@ -532,6 +532,7 @@ impl VM {
             target_account_is_cold,
             target_account_info.is_empty(),
             balance_to_transfer,
+            self.env.config.fork,
         )?)?;
 
         // [EIP-6780] - SELFDESTRUCT only in same transaction from CANCUN
