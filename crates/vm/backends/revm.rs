@@ -261,7 +261,7 @@ impl IEVM for REVM {
 }
 
 /// Runs the transaction and returns the result, but does not commit it.
-pub fn run_without_commit(
+pub(crate) fn run_without_commit(
     tx_env: TxEnv,
     mut block_env: BlockEnv,
     state: &mut EvmState,

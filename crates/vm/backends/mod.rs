@@ -51,6 +51,7 @@ pub trait IEVM {
         input: Self::TransactionExecutionInput<'_>,
     ) -> Result<Self::TransactionExecutionResult, Self::Error>;
 
+    /// Gets the state transitions performed by the execution. Returning an Array of AccounUpdates
     fn get_state_transitions(input: Self::GetStateTransitionsInput<'_>) -> Vec<AccountUpdate>;
 }
 
