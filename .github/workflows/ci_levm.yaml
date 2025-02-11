@@ -157,11 +157,6 @@ jobs:
         run: |
           cd crates/vm/levm
           diff test_result_main.txt test_result_pr.txt > diff.txt
-          # if [ -s diff.txt ]; then
-          #     exit 0
-          # fi
-          # exit 0
-          cat diff.txt
 
       - name: Compare results
         run: |
