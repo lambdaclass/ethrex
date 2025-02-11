@@ -40,14 +40,6 @@ impl Request {
             for log in &r.logs {
                 if log.address == *DEPOSIT_CONTRACT_ADDRESS {
                     let d = Deposit::from_abi_byte_array(&log.data);
-                    // REMOVE LOG
-                    // println!("Deposit: ");
-                    // println!("Pub key: {:x?}", d.pub_key);
-                    // println!("Withdrawal credentials: {:x?}", d.withdrawal_credentials);
-                    // println!("Amount: {:?}", d.amount);
-                    // println!("Signature: {:x?}", d.signature);
-                    // println!("Index: {:?}", d.index);
-                    // println!("--------------------------");
                     deposits.push(Self::Deposit(d));
                 }
             }

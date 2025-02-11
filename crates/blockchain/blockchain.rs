@@ -7,20 +7,17 @@ mod smoke_test;
 
 use error::{ChainError, InvalidBlockError};
 use ethrex_core::constants::GAS_PER_BLOB;
-use ethrex_core::types::requests::DEPOSIT_CONTRACT_ADDRESS;
 use ethrex_core::types::{
     calculate_requests_hash, compute_receipts_root, validate_block_header,
     validate_cancun_header_fields, validate_prague_header_fields,
     validate_pre_cancun_header_fields, Block, BlockHash, BlockHeader, BlockNumber, ChainConfig,
     EIP4844Transaction, Receipt, Transaction,
 };
-use ethrex_core::{H160, H256, U256};
+use ethrex_core::H256;
 
 use ethrex_storage::error::StoreError;
 use ethrex_storage::{AccountUpdate, Store};
 use ethrex_vm::{evm_state, execute_block};
-use hex;
-use std::collections::HashMap;
 
 //TODO: Implement a struct Chain or BlockChain to encapsulate
 //functionality and canonical chain state and config
@@ -44,7 +41,7 @@ pub fn add_block(block: &Block, storage: &Store) -> Result<(), ChainError> {
 
     // Validate the block pre-execution
     validate_block(block, &parent_header, &chain_config)?;
-    let (receipts, mut account_updates): (Vec<Receipt>, Vec<AccountUpdate>) = {
+    let (receipts, account_updates): (Vec<Receipt>, Vec<AccountUpdate>) = {
         // TODO: Consider refactoring both implementations so that they have the same signature
         #[cfg(feature = "levm")]
         {
@@ -58,28 +55,6 @@ pub fn add_block(block: &Block, storage: &Store) -> Result<(), ChainError> {
         }
     };
 
-    // REMOVE LOG
-    // let strg: HashMap<H256, U256> = HashMap::from([(
-    //     H256::zero(),
-    //     U256::from_str_radix(
-    //         "fb1c29cd7e2227821d299499862801daeafdbdd2b2f2ee17e2f8a2b18134712b",
-    //         16,
-    //     )
-    //     .unwrap(),
-    // )]);
-    //
-    // let account_update = AccountUpdate {
-    //     address: H160::from_slice(
-    //         &hex::decode("0000f90827f1c53a10cb7a02335b175320002935").unwrap(),
-    //     ),
-    //     removed: false,
-    //     info: None,
-    //     code: None,
-    //     added_storage: strg,
-    // };
-    //
-    // account_updates.push(account_update);
-
     validate_gas_used(&receipts, &block.header)?;
 
     // Apply the account updates over the last block's state and compute the new state root
@@ -88,25 +63,6 @@ pub fn add_block(block: &Block, storage: &Store) -> Result<(), ChainError> {
         .ok_or(ChainError::StoreError(StoreError::MissingStore))?
         .apply_account_updates(block.header.parent_hash, &account_updates)?
         .ok_or(ChainError::ParentStateNotFound)?;
-
-    // REMOVE LOG
-    // dbg!(&account_updates);
-
-    // REMOVE LOG
-    // UNCOMMENT TO PRINT STORAGE VALUES
-    // let block_num = storage.get_latest_block_number()?;
-    //
-    // println!("Block num: {}", block_num);
-    //
-    // let acc_info = storage.get_account_info(block_num, *DEPOSIT_CONTRACT_ADDRESS)?;
-    //
-    // println!("Acc info: {:?}", acc_info);
-    //
-    // for i in 0..100 {
-    //     let key = H256::from_low_u64_be(i);
-    //     let value = storage.get_storage_at(block_num, *DEPOSIT_CONTRACT_ADDRESS, key)?;
-    //     println!("STORAGE: {:02x}-{:#x}", key, value.unwrap_or_default());
-    // }
 
     // Check state root matches the one in block header after execution
     // validate_state_root(&block.header, new_state_root)?;
