@@ -106,7 +106,11 @@ async fn main() {
             .expect("proving failed");
     }
     let elapsed = now.elapsed().as_secs();
-    println!("finished in {} minutes", elapsed / 60);
+    println!(
+        "finished in {} minutes for block {}",
+        elapsed / 60,
+        block_number
+    );
 
     // get_gas() is unimplemented for SP1
     // let gas = prover.get_gas().expect("failed to get execution gas");
