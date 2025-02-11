@@ -25,7 +25,7 @@ use ethrex_storage::Store;
 use futures::SinkExt;
 use k256::{ecdsa::SigningKey, PublicKey, SecretKey};
 use rand::random;
-use std::sync::Arc;
+use std::{io::Read, sync::Arc};
 use tokio::{
     io::{AsyncRead, AsyncWrite},
     sync::{
@@ -148,10 +148,13 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
             reason: self.match_disconnect_reason(&error),
         }))
         .await
-        .unwrap_or_else(|e| {
+        .unwrap_or_else(|_| {
             log_peer_error(
                 &self.node,
-                &format!("Could not send Disconnect message: ({e})."),
+                &format!(
+                    "Could not send Disconnect message: ({:?}).",
+                    self.match_disconnect_reason(&error)
+                ),
             )
         });
 
@@ -182,7 +185,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
         self.send(hello_msg).await?;
 
         // Receive Hello message
-        match self.receive().await? {
+        match self.receive().await.unwrap()? {
             Message::Hello(hello_message) => {
                 log_peer_debug(
                     &self.node,
@@ -233,7 +236,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
         loop {
             tokio::select! {
                 // Expect a message from the remote peer
-                message = self.receive() => {
+                Some(message) = self.receive() => {
                     match message {
                         Ok(message) => {
                             log_peer_debug(&self.node, &format!("Received message {}", message));
@@ -305,6 +308,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
                 ));
             }
             Message::Ping(_) => {
+                log_peer_debug(&self.node, "Sending pong message");
                 self.send(Message::Pong(PongMessage {})).await?;
             }
             Message::Pong(_) => {
@@ -435,7 +439,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
             // The next immediate message in the ETH protocol is the
             // status, reference here:
             // https://github.com/ethereum/devp2p/blob/master/caps/eth.md#status-0x00
-            match self.receive().await? {
+            match self.receive().await.unwrap()? {
                 Message::Status(msg_data) => {
                     log_peer_debug(&self.node, &format!("Received Status {:?}", msg_data));
                     backend::validate_status(msg_data, &self.storage)?
@@ -460,12 +464,11 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
         self.framed.send(message).await
     }
 
-    async fn receive(&mut self) -> Result<Message, RLPxError> {
-        if let Some(message) = self.framed.next().await {
-            message
-        } else {
-            Err(RLPxError::Disconnected())
-        }
+    async fn receive(&mut self) -> Option<Result<Message, RLPxError>> {
+        // don't assume the stream is closed if reached an EOF
+        // send a ping first to verify its not closed
+        // otherwise we can be sure the peer has disconnected
+        self.framed.next().await
     }
 
     fn broadcast_message(&self, msg: Message) -> Result<(), RLPxError> {
