@@ -323,12 +323,12 @@ pub fn apply_system_operations(context: &mut PayloadBuildContext) -> Result<(), 
                     block_hash: context.payload.header.parent_hash,
                 });
                 let report = backends::levm::beacon_root_contract_call_levm(
-                    store_wrapper.clone(),
+                    store_wrapper,
                     &context.payload.header,
                     config,
                 )?;
 
-                new_state.extend(report.new_state.clone());
+                new_state.extend(report.new_state);
             }
 
             if fork >= Fork::Prague {
@@ -337,12 +337,12 @@ pub fn apply_system_operations(context: &mut PayloadBuildContext) -> Result<(), 
                     block_hash: context.payload.header.parent_hash,
                 });
                 let report = backends::levm::process_block_hash_history(
-                    store_wrapper.clone(),
+                    store_wrapper,
                     &context.payload.header,
                     config,
                 )?;
 
-                new_state.extend(report.new_state.clone());
+                new_state.extend(report.new_state);
             }
 
             // Now original_value is going to be the same as the current_value, for the next transaction.
