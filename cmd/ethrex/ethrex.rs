@@ -159,14 +159,13 @@ async fn main() {
     let store: Store = if path.ends_with("memory") {
         Store::new(&data_dir, EngineType::InMemory).expect("Failed to create Store")
     } else {
-        let engine_type: EngineType;
         cfg_if::cfg_if! {
             if #[cfg(feature = "redb")] {
-                engine_type = EngineType::RedB;
+                let engine_type = EngineType::RedB;
             } else if #[cfg(feature = "libmdbx")] {
-                engine_type = EngineType::Libmdbx;
+                let engine_type = EngineType::Libmdbx;
             } else {
-                engine_type = EngineType::InMemory;
+                let engine_type = EngineType::InMemory;
             }
         }
         if engine_type == EngineType::InMemory {
@@ -290,6 +289,10 @@ async fn main() {
     // We do not want to start the networking module if the l2 feature is enabled.
     cfg_if::cfg_if! {
         if #[cfg(feature = "l2")] {
+            if dev_mode {
+                error!("Cannot run with DEV_MODE if the `l2` feature is enabled.");
+                panic!("Run without the --dev argument.");
+            }
             let l2_proposer = ethrex_l2::start_proposer(store).into_future();
             tracker.spawn(l2_proposer);
         } else if #[cfg(feature = "dev")] {
