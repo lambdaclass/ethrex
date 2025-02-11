@@ -49,7 +49,7 @@ jobs:
 
       - name: Show test summary -- short
         run: |
-          bash ./github/scripts/parse_test_result.sh crates/vm/levm/test_result_pr.txt | tee crates/vm/levm/test_result_pr_short.txt
+          bash .github/scripts/parse_test_result.sh crates/vm/levm/test_result_pr.txt | tee crates/vm/levm/test_result_pr_short.txt
           echo "PR's test results:"
           cat crates/vm/levm/test_result_pr_short.txt
 
@@ -116,7 +116,7 @@ jobs:
 
       - name: Show test summary -- short
         run: |
-          bash ./.github/scripts/parse_test_result.sh crates/vm/levm/test_result_main.txt | tee crates/vm/levm/test_result_main_short.txt
+          bash .github/scripts/parse_test_result.sh crates/vm/levm/test_result_main.txt | tee crates/vm/levm/test_result_main_short.txt
           echo "Main's test results:"
           cat crates/vm/levm/test_result_main_short.txt
 
@@ -166,7 +166,7 @@ jobs:
       - name: Compare results
         if: ${{ steps.branch_diffs.outcome == 'failure' && github.event_name == 'pull_request' }}
         run: |
-          bash ./.github/scripts/compare_ef_tests.sh crates/vm/levm/test_result_main_short.txt crates/vm/levm/test_result_pr_short.txt | tee crates/vm/levm/ef_tests_comparison.md
+          bash .github/scripts/compare_ef_tests.sh crates/vm/levm/test_result_main_short.txt crates/vm/levm/test_result_pr_short.txt | tee crates/vm/levm/ef_tests_comparison.md
 
       - name: Find comment
         continue-on-error: true
