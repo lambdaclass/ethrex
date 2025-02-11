@@ -123,6 +123,8 @@ pub const EXTCODEHASH_STATIC: u64 = DEFAULT_STATIC;
 pub const EXTCODEHASH_COLD_DYNAMIC: u64 = DEFAULT_COLD_DYNAMIC;
 pub const EXTCODEHASH_WARM_DYNAMIC: u64 = DEFAULT_WARM_DYNAMIC;
 
+pub const EXTCODECOPY_STATIC_PRE_TANGERINE: u64 = 20;
+pub const EXTCODECOPY_STATIC_TANGERINE: u64 = 700;
 pub const EXTCODECOPY_STATIC: u64 = 0;
 pub const EXTCODECOPY_DYNAMIC_BASE: u64 = 3;
 pub const EXTCODECOPY_COLD_DYNAMIC: u64 = DEFAULT_COLD_DYNAMIC;
@@ -682,23 +684,46 @@ pub fn extcodecopy(
     address_was_cold: bool,
     fork: Fork,
 ) -> Result<u64, VMError> {
+    let (base_cost, dynamic_base, address_acces_cost) = match fork {
+        f if f < Fork::Tangerine => (
+            // Before Cancun, memory expansion weren't accounted for,
+            // hence the 0
+            EXTCODECOPY_STATIC_PRE_TANGERINE,
+            EXTCODECOPY_DYNAMIC_BASE,
+            0,
+        ),
+        f if f >= Fork::Tangerine && fork < Fork::Cancun => {
+            // Before Cancun, memory expansion weren't accounted for,
+            // hence the 0
+            (EXTCODECOPY_STATIC_TANGERINE, EXTCODECOPY_DYNAMIC_BASE, 0)
+        }
+        _ => {
+            let expansion_access_cost = address_access_cost(
+                address_was_cold,
+                EXTCODECOPY_STATIC,
+                EXTCODECOPY_COLD_DYNAMIC,
+                EXTCODECOPY_WARM_DYNAMIC,
+                fork,
+            )?;
+
+            (
+                EXTCODECOPY_STATIC,
+                EXTCODECOPY_DYNAMIC_BASE,
+                expansion_access_cost,
+            )
+        }
+    };
+
     let base_access_cost = copy_behavior(
         new_memory_size,
         current_memory_size,
         size,
-        EXTCODECOPY_DYNAMIC_BASE,
-        EXTCODECOPY_STATIC,
-    )?;
-    let expansion_access_cost = address_access_cost(
-        address_was_cold,
-        EXTCODECOPY_STATIC,
-        EXTCODECOPY_COLD_DYNAMIC,
-        EXTCODECOPY_WARM_DYNAMIC,
-        fork,
+        dynamic_base,
+        base_cost,
     )?;
 
     Ok(base_access_cost
-        .checked_add(expansion_access_cost)
+        .checked_add(address_acces_cost)
         .ok_or(OutOfGasError::GasCostOverflow)?)
 }
 
