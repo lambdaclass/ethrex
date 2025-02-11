@@ -686,14 +686,14 @@ pub fn extcodecopy(
 ) -> Result<u64, VMError> {
     let (base_cost, dynamic_base, address_acces_cost) = match fork {
         f if f < Fork::Tangerine => (
-            // Before Cancun, memory expansion weren't accounted for,
+            // Before Berlin, memory expansion weren't accounted for,
             // hence the 0
             EXTCODECOPY_STATIC_PRE_TANGERINE,
             EXTCODECOPY_DYNAMIC_BASE,
             0,
         ),
         f if f >= Fork::Tangerine && fork < Fork::Berlin => {
-            // Before Cancun, memory expansion weren't accounted for,
+            // Before Berlin, memory expansion weren't accounted for,
             // hence the 0
             (EXTCODECOPY_STATIC_TANGERINE, EXTCODECOPY_DYNAMIC_BASE, 0)
         }
