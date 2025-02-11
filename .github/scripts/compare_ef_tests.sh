@@ -3,8 +3,8 @@
 # $1 Main branch tests results
 # $2 PR branch tests results
 # IFS=$'\n' read -rd '' -a main_results <<<"$1"
-main_results=$"{1}"
-pr_results=$"{2}"
+main_results=$(cat "$1")
+pr_results=$(cat "$2")
 
 # IFS=$'\n' read -rd '' -a pr_results <<<"$2"
 
