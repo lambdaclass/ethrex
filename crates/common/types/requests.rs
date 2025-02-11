@@ -1,33 +1,60 @@
 use ethereum_types::Address;
 
-use super::Bytes48;
+use super::{Bytes48, Receipt};
 
 pub type Bytes32 = [u8; 32];
 pub type Bytes96 = [u8; 96];
+const DEPOSIT_TYPE: u8 = 0x00;
+const WITHDRAWAL_TYPE: u8 = 0x01;
 
 lazy_static::lazy_static! {
     pub static ref DEPOSIT_CONTRACT_ADDRESS: Address = Address::from_slice(&hex::decode("00000000219ab540356cbb839cbe05303d7705fa").unwrap());
 }
 
-// NOTE: Check if we actually need this structure before implementing GetPayloadV4, NewPayloadV4
-// #[derive(Default)]
-// pub struct Requests {
-//     pub deposits: Vec<Deposit>,
-// }
+pub enum Request {
+    Deposit(Deposit),
+    Withdrawal,
+}
 
-// impl Requests {
-//     pub fn new() -> Self {
-//         Requests::default()
-//     }
-//
-//     pub fn add_request_from_log(&mut self, log: &Log) {
-//         if log.address == *DEPOSIT_CONTRACT_ADDRESS {
-//             self.deposits.push(Deposit::from_abi_byte_array(&log.data))
-//         } else {
-//             todo!()
-//         }
-//     }
-// }
+impl Request {
+    pub fn to_bytes(&self) -> [u8; 193] {
+        let mut result = [0u8; 193];
+
+        match self {
+            Request::Deposit(d) => {
+                result[0] = DEPOSIT_TYPE;
+                let deposit_bytes = d.to_summarized_byte_array();
+                result[1..].copy_from_slice(&deposit_bytes);
+            }
+            Request::Withdrawal => {
+                result[0] = WITHDRAWAL_TYPE;
+                // TODO: implement the withdrawal type
+            }
+        }
+        result
+    }
+    pub fn from_deposits_receipts(receipts: &[Receipt]) -> Vec<Request> {
+        let mut deposits = vec![];
+
+        for r in receipts {
+            for log in &r.logs {
+                if log.address == *DEPOSIT_CONTRACT_ADDRESS {
+                    let d = Deposit::from_abi_byte_array(&log.data);
+                    // REMOVE LOG
+                    // println!("Deposit: ");
+                    // println!("Pub key: {:x?}", d.pub_key);
+                    // println!("Withdrawal credentials: {:x?}", d.withdrawal_credentials);
+                    // println!("Amount: {:?}", d.amount);
+                    // println!("Signature: {:x?}", d.signature);
+                    // println!("Index: {:?}", d.index);
+                    // println!("--------------------------");
+                    deposits.push(Self::Deposit(d));
+                }
+            }
+        }
+        deposits
+    }
+}
 
 #[derive(Debug)]
 pub struct Deposit {

@@ -118,7 +118,7 @@ fn check_poststate_against_db(test_key: &str, test: &TestUnit, db: &Store) {
         // Check info
         let db_account_info = db
             .get_account_info(latest_block_number, *addr)
-            .expect("Failed to read from DB")
+            .expect(&format!("Failed to read from DB {:?}", addr))
             .unwrap_or_else(|| {
                 panic!("Account info for address {addr} not found in DB, test:{test_key}")
             });

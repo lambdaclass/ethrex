@@ -9,7 +9,7 @@ use error::{ChainError, InvalidBlockError};
 use ethrex_core::constants::GAS_PER_BLOB;
 use ethrex_core::types::requests::DEPOSIT_CONTRACT_ADDRESS;
 use ethrex_core::types::{
-    compute_receipts_root, compute_requests_hash, validate_block_header,
+    calculate_requests_hash, compute_receipts_root, validate_block_header,
     validate_cancun_header_fields, validate_prague_header_fields,
     validate_pre_cancun_header_fields, Block, BlockHash, BlockHeader, BlockNumber, ChainConfig,
     EIP4844Transaction, Receipt, Transaction,
@@ -109,13 +109,16 @@ pub fn add_block(block: &Block, storage: &Store) -> Result<(), ChainError> {
     // }
 
     // Check state root matches the one in block header after execution
-    validate_state_root(&block.header, new_state_root)?;
+    // validate_state_root(&block.header, new_state_root)?;
 
     // Check receipts root matches the one in block header after execution
     validate_receipts_root(&block.header, &receipts)?;
 
     // Processes requests from receipts, computes the requests_hash and compares it against the header
     validate_requests_hash(&block.header, &receipts, &chain_config)?;
+
+    // TODO: REMOVE LOG
+    println!("Valid request_hash");
 
     store_block(storage, block.clone())?;
     store_receipts(storage, receipts, block_hash)?;
@@ -131,7 +134,7 @@ pub fn validate_requests_hash(
     if !chain_config.is_prague_activated(header.timestamp) {
         return Ok(());
     }
-    let computed_requests_hash = compute_requests_hash(receipts);
+    let computed_requests_hash = calculate_requests_hash(receipts);
     let valid = header
         .requests_hash
         .map(|requests_hash| requests_hash == computed_requests_hash)

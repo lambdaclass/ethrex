@@ -4,10 +4,7 @@ use super::{
 };
 use crate::{
     constants::MIN_BASE_FEE_PER_BLOB_GAS,
-    types::{
-        requests::{Deposit, DEPOSIT_CONTRACT_ADDRESS},
-        Receipt, Transaction,
-    },
+    types::{requests::Request, Receipt, Transaction},
     Address, H256, U256,
 };
 use bytes::Bytes;
@@ -265,46 +262,21 @@ pub fn compute_withdrawals_root(withdrawals: &[Withdrawal]) -> H256 {
     Trie::compute_hash_from_unsorted_iter(iter)
 }
 
-pub fn compute_requests_hash(receipts: &[Receipt]) -> H256 {
-    let mut deposits = vec![];
-    for r in receipts {
-        for log in &r.logs {
-            if log.address == *DEPOSIT_CONTRACT_ADDRESS {
-                let d = Deposit::from_abi_byte_array(&log.data);
-                // REMOVE LOG
-                // println!("Deposit: ");
-                // println!("Pub key: {:x?}", d.pub_key);
-                // println!("Withdrawal credentials: {:x?}", d.withdrawal_credentials);
-                // println!("Amount: {:?}", d.amount);
-                // println!("Signature: {:x?}", d.signature);
-                // println!("Index: {:?}", d.index);
-                // println!("--------------------------");
-                deposits.push(d);
-            }
+pub fn calculate_requests_hash(receipts: &[Receipt]) -> H256 {
+    let requests = Request::from_deposits_receipts(receipts);
+    // TODO: implement other requests
+    compute_requests_hash(&requests)
+}
+fn compute_requests_hash(requests: &[Request]) -> H256 {
+    let mut hasher = Sha256::new();
+    for request in requests {
+        let request_bytes = request.to_bytes();
+        // TODO: correct this check
+        if request_bytes.len() > 1 {
+            hasher.update(Sha256::digest(&request_bytes));
         }
     }
-
-    // TODO: We can actually reserve memory for all the deposits
-    let mut deposit_data = vec![];
-
-    const DEPOSIT_TYPE: u8 = 0x00;
-
-    for deposit in deposits {
-        let data = deposit.to_summarized_byte_array();
-        deposit_data.push(data);
-    }
-
-    let deposit_bytes: Vec<u8> = std::iter::once(DEPOSIT_TYPE)
-        .chain(deposit_data.into_iter().flatten())
-        .collect();
-
-    let mut hasher = Sha256::new();
-    if deposit_bytes.len() > 1 {
-        hasher.update(deposit_bytes);
-    }
-    let hash = hasher.finalize();
-
-    H256::from_slice(&hash)
+    H256::from_slice(&hasher.finalize())
 }
 
 impl RLPEncode for BlockBody {
