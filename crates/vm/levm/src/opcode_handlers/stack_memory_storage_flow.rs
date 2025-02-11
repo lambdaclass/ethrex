@@ -6,7 +6,7 @@ use crate::{
     memory::{self, calculate_memory_size},
     vm::VM,
 };
-use ethrex_core::{types::Fork, H256, U256};
+use ethrex_common::{types::Fork, H256, U256};
 
 // Stack, Memory, Storage and Flow Operations (15)
 // Opcodes: POP, MLOAD, MSTORE, MSTORE8, SLOAD, SSTORE, JUMP, JUMPI, PC, MSIZE, GAS, JUMPDEST, TLOAD, TSTORE, MCOPY

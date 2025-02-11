@@ -16,7 +16,7 @@ hex.workspace = true
 thiserror.workspace = true
 
 # ethrex
-ethrex-core.workspace = true
+ethrex-common.workspace = true
 ethrex-vm.workspace = true
 ethrex-rlp.workspace = true
 

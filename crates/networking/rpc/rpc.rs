@@ -360,7 +360,7 @@ where
 mod tests {
     use super::*;
     use crate::utils::test_utils::{example_local_node_record, example_p2p_node};
-    use ethrex_core::types::{ChainConfig, Genesis};
+    use ethrex_common::types::{ChainConfig, Genesis};
     use ethrex_storage::EngineType;
     use sha3::{Digest, Keccak256};
     use std::fs::File;

@@ -1,5 +1,5 @@
 use super::transaction::RpcTransaction;
-use ethrex_core::{
+use ethrex_common::{
     serde_utils,
     types::{Block, BlockBody, BlockHash, BlockHeader, BlockNumber, Withdrawal},
     H256, U256,
@@ -101,7 +101,7 @@ impl FullBlockBody {
 mod test {
 
     use bytes::Bytes;
-    use ethrex_core::{
+    use ethrex_common::{
         types::{EIP1559Transaction, Transaction, TxKind, EMPTY_KECCACK_HASH},
         Address, Bloom, H256, U256,
     };

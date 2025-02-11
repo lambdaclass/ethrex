@@ -8,7 +8,7 @@ use crate::{
     network::{node_id_from_signing_key, P2PContext},
     types::Node,
 };
-use ethrex_core::H512;
+use ethrex_common::H512;
 use k256::ecdsa::SigningKey;
 use rand::rngs::OsRng;
 use std::{collections::HashSet, net::SocketAddr, sync::Arc, time::Duration};

@@ -2,7 +2,7 @@
 #![allow(clippy::unwrap_used)]
 
 use bytes::Bytes;
-use ethrex_core::{
+use ethrex_common::{
     types::{Fork, TxKind},
     Address, H256, U256,
 };

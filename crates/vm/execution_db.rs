@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use bytes::Bytes;
 use ethereum_types::H160;
-use ethrex_core::{
+use ethrex_common::{
     types::{AccountInfo, Block, ChainConfig},
     Address, H256, U256,
 };

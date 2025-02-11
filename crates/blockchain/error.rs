@@ -1,4 +1,4 @@
-use ethrex_core::types::{BlobsBundleError, InvalidBlockHeaderError};
+use ethrex_common::types::{BlobsBundleError, InvalidBlockHeaderError};
 use ethrex_storage::error::StoreError;
 use ethrex_vm::EvmError;
 

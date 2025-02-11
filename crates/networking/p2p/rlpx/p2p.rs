@@ -1,5 +1,5 @@
 use bytes::BufMut;
-use ethrex_core::H512;
+use ethrex_common::H512;
 use ethrex_rlp::{
     decode::RLPDecode,
     encode::RLPEncode,

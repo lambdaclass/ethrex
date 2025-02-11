@@ -9,7 +9,7 @@ edition = "2021"
 sp1-zkvm = "3.4.0"
 zkvm_interface = { path = "../" }
 
-ethrex-core = { path = "../../../../../common", default-features = false }
+ethrex-common = { path = "../../../../../common", default-features = false }
 ethrex-rlp = { path = "../../../../../common/rlp" }
 ethrex-vm = { path = "../../../../../vm", default-features = false, features = [
     "l2",

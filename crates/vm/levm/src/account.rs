@@ -1,6 +1,6 @@
 use crate::constants::EMPTY_CODE_HASH;
 use bytes::Bytes;
-use ethrex_core::{H256, U256};
+use ethrex_common::{H256, U256};
 use keccak_hash::keccak;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;

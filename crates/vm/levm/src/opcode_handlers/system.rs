@@ -11,7 +11,7 @@ use crate::{
     Account,
 };
 use bytes::Bytes;
-use ethrex_core::{types::Fork, Address, U256};
+use ethrex_common::{types::Fork, Address, U256};
 
 // System Operations (10)
 // Opcodes: CREATE, CALL, CALLCODE, RETURN, DELEGATECALL, CREATE2, STATICCALL, REVERT, INVALID, SELFDESTRUCT

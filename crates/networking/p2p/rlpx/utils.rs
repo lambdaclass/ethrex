@@ -1,5 +1,5 @@
 use crate::types::Node;
-use ethrex_core::H512;
+use ethrex_common::H512;
 use ethrex_rlp::error::{RLPDecodeError, RLPEncodeError};
 use k256::{
     elliptic_curve::sec1::{FromEncodedPoint, ToEncodedPoint},

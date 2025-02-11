@@ -3,7 +3,7 @@ use std::{
     collections::HashMap,
 };
 
-use ethrex_core::{
+use ethrex_common::{
     constants::GAS_PER_BLOB,
     types::{
         calculate_base_fee_per_blob_gas, calculate_base_fee_per_gas, compute_receipts_root,
@@ -14,7 +14,7 @@ use ethrex_core::{
     Address, Bloom, Bytes, H256, U256,
 };
 
-use ethrex_core::types::{Fork, GWEI_TO_WEI};
+use ethrex_common::types::{Fork, GWEI_TO_WEI};
 use ethrex_levm::{db::CacheDB, vm::EVMConfig, Account, AccountInfo};
 use ethrex_vm::{
     backends,

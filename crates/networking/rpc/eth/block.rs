@@ -12,7 +12,7 @@ use crate::{
     utils::RpcErr,
     RpcApiContext, RpcHandler,
 };
-use ethrex_core::{
+use ethrex_common::{
     types::{
         calculate_base_fee_per_blob_gas, Block, BlockBody, BlockHash, BlockHeader, BlockNumber,
         Receipt,

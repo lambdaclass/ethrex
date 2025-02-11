@@ -3,7 +3,7 @@ use crate::rlpx::{
     utils::{snappy_compress, snappy_decompress},
 };
 use bytes::BufMut;
-use ethrex_core::{
+use ethrex_common::{
     types::{BlockHash, ForkId},
     U256,
 };

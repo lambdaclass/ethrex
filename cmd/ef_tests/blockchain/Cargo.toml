@@ -5,7 +5,7 @@ edition.workspace = true
 
 [dependencies]
 ethrex-blockchain.workspace = true
-ethrex-core.workspace = true
+ethrex-common.workspace = true
 ethrex-storage.workspace = true
 ethrex-rlp.workspace = true
 ethrex-vm.workspace = true

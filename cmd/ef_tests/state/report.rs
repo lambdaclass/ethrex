@@ -1,6 +1,6 @@
 use crate::runner::{EFTestRunnerError, InternalError};
 use colored::Colorize;
-use ethrex_core::{types::Fork, Address, H256};
+use ethrex_common::{types::Fork, Address, H256};
 use ethrex_levm::{
     errors::{ExecutionReport, TxResult, VMError},
     Account, StorageSlot,
@@ -128,7 +128,7 @@ pub fn summary_for_slack(reports: &[EFTestReport]) -> String {
             "text": {{
                 "type": "mrkdwn",
                 "text": "*Summary*: {total_passed}/{total_run} ({success_percentage:.2}%)\n\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n"
-            }}             
+            }}
         }}
     ]
 }}"#,

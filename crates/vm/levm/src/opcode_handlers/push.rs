@@ -5,7 +5,7 @@ use crate::{
     gas_cost,
     vm::VM,
 };
-use ethrex_core::{types::Fork, U256};
+use ethrex_common::{types::Fork, U256};
 
 // Push Operations
 // Opcodes: PUSH0, PUSH1 ... PUSH32

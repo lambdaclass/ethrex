@@ -1,7 +1,7 @@
 use crate::error::StoreError;
 use bytes::Bytes;
 use ethereum_types::{H256, U256};
-use ethrex_core::types::{
+use ethrex_common::types::{
     BlobsBundle, Block, BlockBody, BlockHash, BlockHeader, BlockNumber, ChainConfig, Index, Receipt,
 };
 use ethrex_trie::{InMemoryTrieDB, Nibbles, Trie};

@@ -2,7 +2,7 @@
 // - Manually testing the behaviour deploying contracts on the Sepolia test network.
 // - Go-Ethereum, specifically: https://github.com/ethereum/go-ethereum/blob/368e16f39d6c7e5cce72a92ec289adbfbaed4854/eth/filters/filter.go
 // - Ethereum's reference: https://ethereum.org/en/developers/docs/apis/json-rpc/#eth_newfilter
-use ethrex_core::types::BlockNumber;
+use ethrex_common::types::BlockNumber;
 use ethrex_storage::Store;
 use std::{
     collections::HashMap,
@@ -267,7 +267,7 @@ mod tests {
         types::block_identifier::BlockIdentifier,
         utils::{test_utils::example_p2p_node, RpcRequest},
     };
-    use ethrex_core::types::Genesis;
+    use ethrex_common::types::Genesis;
     use ethrex_p2p::sync::SyncManager;
     use ethrex_storage::{EngineType, Store};
 

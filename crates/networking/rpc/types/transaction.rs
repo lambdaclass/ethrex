@@ -1,4 +1,4 @@
-use ethrex_core::{
+use ethrex_common::{
     serde_utils,
     types::{
         BlockHash, BlockNumber, EIP1559Transaction, EIP2930Transaction, LegacyTransaction,

@@ -1,5 +1,5 @@
 use super::payload::PayloadStatus;
-use ethrex_core::{serde_utils, types::Withdrawal, Address, H256};
+use ethrex_common::{serde_utils, types::Withdrawal, Address, H256};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Deserialize, Serialize)]

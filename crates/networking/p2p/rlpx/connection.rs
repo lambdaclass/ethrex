@@ -20,7 +20,7 @@ use crate::{
     types::Node,
 };
 use ethrex_blockchain::mempool::{self};
-use ethrex_core::{H256, H512};
+use ethrex_common::{H256, H512};
 use ethrex_storage::Store;
 use futures::SinkExt;
 use k256::{ecdsa::SigningKey, PublicKey, SecretKey};

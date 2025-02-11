@@ -2,7 +2,7 @@ use crate::config::EthrexL2Config;
 use bytes::Bytes;
 use clap::Subcommand;
 use ethereum_types::{Address, H256, U256};
-use ethrex_core::types::{PrivilegedTxType, Transaction};
+use ethrex_common::types::{PrivilegedTxType, Transaction};
 use ethrex_l2_sdk::calldata::{encode_calldata, Value};
 use ethrex_l2_sdk::eth_client::{eth_sender::Overrides, EthClient};
 use ethrex_l2_sdk::merkle_tree::merkle_proof;

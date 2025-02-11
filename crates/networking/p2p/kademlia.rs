@@ -5,7 +5,7 @@ use crate::{
     rlpx::{message::Message as RLPxMessage, p2p::Capability},
     types::{Node, NodeRecord},
 };
-use ethrex_core::{H256, H512, U256};
+use ethrex_common::{H256, H512, U256};
 use sha3::{Digest, Keccak256};
 use tokio::sync::mpsc::UnboundedSender;
 use tokio::sync::{mpsc, Mutex};

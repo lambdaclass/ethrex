@@ -1,7 +1,7 @@
 use super::helpers::current_unix_time;
 use crate::types::{Endpoint, Node, NodeRecord};
 use bytes::BufMut;
-use ethrex_core::{H256, H512, H520};
+use ethrex_common::{H256, H512, H520};
 use ethrex_rlp::{
     decode::RLPDecode,
     encode::RLPEncode,
@@ -501,7 +501,7 @@ impl RLPEncode for ENRResponseMessage {
 mod tests {
     use super::*;
     use bytes::Bytes;
-    use ethrex_core::{H256, H264};
+    use ethrex_common::{H256, H264};
     use std::fmt::Write;
     use std::net::IpAddr;
     use std::num::ParseIntError;

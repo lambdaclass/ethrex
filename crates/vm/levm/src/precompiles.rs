@@ -4,7 +4,7 @@ use bls12_381::{
 };
 
 use bytes::Bytes;
-use ethrex_core::{serde_utils::bool, types::Fork, Address, H160, H256, U256};
+use ethrex_common::{serde_utils::bool, types::Fork, Address, H160, H256, U256};
 use keccak_hash::keccak256;
 use kzg_rs::{Bytes32, Bytes48, KzgSettings};
 use lambdaworks_math::{

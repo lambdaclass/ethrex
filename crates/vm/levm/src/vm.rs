@@ -18,7 +18,7 @@ use crate::{
     TransientStorage,
 };
 use bytes::Bytes;
-use ethrex_core::{
+use ethrex_common::{
     types::{
         tx_fields::{AccessList, AuthorizationList},
         Fork, ForkBlobSchedule, TxKind,

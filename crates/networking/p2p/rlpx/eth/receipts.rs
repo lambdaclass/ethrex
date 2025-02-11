@@ -3,7 +3,7 @@ use crate::rlpx::{
     utils::{snappy_compress, snappy_decompress},
 };
 use bytes::BufMut;
-use ethrex_core::types::{BlockHash, Receipt};
+use ethrex_common::types::{BlockHash, Receipt};
 use ethrex_rlp::{
     error::{RLPDecodeError, RLPEncodeError},
     structs::{Decoder, Encoder},
@@ -87,7 +87,7 @@ impl RLPxMessage for Receipts {
 
 #[cfg(test)]
 mod tests {
-    use ethrex_core::types::{BlockHash, Receipt};
+    use ethrex_common::types::{BlockHash, Receipt};
 
     use crate::rlpx::{
         eth::receipts::{GetReceipts, Receipts},

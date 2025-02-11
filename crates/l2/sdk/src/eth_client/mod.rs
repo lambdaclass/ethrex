@@ -8,7 +8,7 @@ use errors::{
 };
 use eth_sender::Overrides;
 use ethereum_types::{Address, H256, U256};
-use ethrex_core::{
+use ethrex_common::{
     types::{
         BlobsBundle, EIP1559Transaction, EIP4844Transaction, GenericTransaction,
         PrivilegedL2Transaction, PrivilegedTxType, Signable, TxKind, TxType,
@@ -1064,15 +1064,15 @@ pub fn from_hex_string_to_u256(hex_str: &str) -> Result<U256, EthClientError> {
 #[derive(Serialize, Deserialize, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct GetTransactionByHashTransaction {
-    #[serde(default, with = "ethrex_core::serde_utils::u64::hex_str")]
+    #[serde(default, with = "ethrex_common::serde_utils::u64::hex_str")]
     pub chain_id: u64,
-    #[serde(default, with = "ethrex_core::serde_utils::u64::hex_str")]
+    #[serde(default, with = "ethrex_common::serde_utils::u64::hex_str")]
     pub nonce: u64,
-    #[serde(default, with = "ethrex_core::serde_utils::u64::hex_str")]
+    #[serde(default, with = "ethrex_common::serde_utils::u64::hex_str")]
     pub max_priority_fee_per_gas: u64,
-    #[serde(default, with = "ethrex_core::serde_utils::u64::hex_str")]
+    #[serde(default, with = "ethrex_common::serde_utils::u64::hex_str")]
     pub max_fee_per_gas: u64,
-    #[serde(default, with = "ethrex_core::serde_utils::u64::hex_str")]
+    #[serde(default, with = "ethrex_common::serde_utils::u64::hex_str")]
     pub gas_limit: u64,
     #[serde(default)]
     pub to: Address,
@@ -1086,9 +1086,9 @@ pub struct GetTransactionByHashTransaction {
     pub r#type: TxType,
     #[serde(default)]
     pub signature_y_parity: bool,
-    #[serde(default, with = "ethrex_core::serde_utils::u64::hex_str")]
+    #[serde(default, with = "ethrex_common::serde_utils::u64::hex_str")]
     pub signature_r: u64,
-    #[serde(default, with = "ethrex_core::serde_utils::u64::hex_str")]
+    #[serde(default, with = "ethrex_common::serde_utils::u64::hex_str")]
     pub signature_s: u64,
     #[serde(default)]
     pub block_number: U256,
@@ -1098,7 +1098,7 @@ pub struct GetTransactionByHashTransaction {
     pub from: Address,
     #[serde(default)]
     pub hash: H256,
-    #[serde(default, with = "ethrex_core::serde_utils::u64::hex_str")]
+    #[serde(default, with = "ethrex_common::serde_utils::u64::hex_str")]
     pub transaction_index: u64,
 }
 

@@ -6,7 +6,7 @@ use crate::{
     utils::get_valid_jump_destinations,
 };
 use bytes::Bytes;
-use ethrex_core::{types::Log, Address, U256};
+use ethrex_common::{types::Log, Address, U256};
 use std::collections::HashSet;
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]

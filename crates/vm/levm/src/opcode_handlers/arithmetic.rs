@@ -5,7 +5,7 @@ use crate::{
     opcode_handlers::bitwise_comparison::checked_shift_left,
     vm::VM,
 };
-use ethrex_core::{U256, U512};
+use ethrex_common::{U256, U512};
 
 use super::bitwise_comparison::checked_shift_right;
 

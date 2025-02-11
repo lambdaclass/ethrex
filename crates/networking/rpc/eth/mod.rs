@@ -13,7 +13,7 @@ pub(crate) mod max_priority_fee;
 #[cfg(test)]
 pub mod test_utils {
     use bytes::Bytes;
-    use ethrex_core::{
+    use ethrex_common::{
         types::{
             Block, BlockBody, BlockHeader, EIP1559Transaction, Genesis, LegacyTransaction,
             Transaction, TxKind, DEFAULT_REQUESTS_HASH,

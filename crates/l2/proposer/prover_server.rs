@@ -10,7 +10,7 @@ use crate::utils::{
         save_state::{StateFileType, StateType, *},
     },
 };
-use ethrex_core::{
+use ethrex_common::{
     types::{Block, BlockHeader},
     Address, H256, U256,
 };

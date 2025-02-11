@@ -6,7 +6,7 @@ use crate::{
     types::{block_identifier::BlockIdentifier, receipt::RpcLog},
     RpcApiContext, RpcErr, RpcHandler,
 };
-use ethrex_core::{H160, H256};
+use ethrex_common::{H160, H256};
 use ethrex_storage::Store;
 use serde::Deserialize;
 use serde_json::Value;

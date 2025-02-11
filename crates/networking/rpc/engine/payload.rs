@@ -1,8 +1,8 @@
 use ethrex_blockchain::add_block;
 use ethrex_blockchain::error::ChainError;
 use ethrex_blockchain::payload::build_payload;
-use ethrex_core::types::{BlobsBundle, Block, BlockBody, BlockHash, BlockNumber, Fork};
-use ethrex_core::{H256, U256};
+use ethrex_common::types::{BlobsBundle, Block, BlockBody, BlockHash, BlockNumber, Fork};
+use ethrex_common::{H256, U256};
 use serde_json::Value;
 use tracing::{debug, error, info, warn};
 

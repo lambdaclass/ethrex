@@ -11,7 +11,7 @@ use crate::{
     types::Node,
 };
 use aes::cipher::{KeyIvInit, StreamCipher};
-use ethrex_core::{Signature, H128, H256, H512};
+use ethrex_common::{Signature, H128, H256, H512};
 use ethrex_rlp::{
     decode::RLPDecode,
     encode::RLPEncode,
@@ -505,7 +505,7 @@ impl RLPDecode for AckMessage {
 mod tests {
     use std::str::FromStr;
 
-    use ethrex_core::H256;
+    use ethrex_common::H256;
     use hex_literal::hex;
     use k256::SecretKey;
 
