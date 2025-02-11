@@ -5,7 +5,6 @@ use ethrex_vm::{
     backends::revm::{RevmGetStateTransitionsIn, REVM},
     backends::IEVM,
     db::EvmState,
-    get_state_transitions,
 };
 use zkvm_interface::{
     io::{ProgramInput, ProgramOutput},
