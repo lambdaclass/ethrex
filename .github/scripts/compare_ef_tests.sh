@@ -16,6 +16,7 @@ echo "|----------|----------|----|------|"
 num=0
 for i in "${main_results[@]}"
 do
+   echo "A"
    name_main=$(echo "$i" | awk -F " " '{print $1}')
    result_main=$(echo "$i" | awk -F " " '{print $2}')
    result_main=${result_main%(*}
