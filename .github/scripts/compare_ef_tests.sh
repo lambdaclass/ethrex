@@ -27,9 +27,9 @@ do
 
    emoji=""
    if (( $(echo "$result_main > $result_pr" |bc -l) )); then
-       emoji="⬇️️"
+       emoji="🔴️️"
    elif (( $(echo "$result_main < $result_pr" |bc -l) )); then
-       emoji="⬆️"
+       emoji="️🟢"
    else
        emoji="➖️"
    fi
