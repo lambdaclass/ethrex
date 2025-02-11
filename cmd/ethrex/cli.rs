@@ -127,10 +127,8 @@ pub fn cli() -> Command {
         .arg(
             Arg::new("dev")
                 .long("dev")
-                .default_value("false")
                 .required(false)
-                .value_parser(clap::value_parser!(bool))
-                .value_name("DEV_MODE")
+                .action(clap::ArgAction::SetTrue) // This turns the flag into a boolean
                 .help("Used to create blocks without requiring a Consensus Client"),
         )
         .arg(
