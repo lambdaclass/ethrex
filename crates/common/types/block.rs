@@ -4,7 +4,10 @@ use super::{
 };
 use crate::{
     constants::MIN_BASE_FEE_PER_BLOB_GAS,
-    types::{Receipt, Transaction},
+    types::{
+        requests::{Deposit, DEPOSIT_CONTRACT_ADDRESS},
+        Receipt, Transaction,
+    },
     Address, H256, U256,
 };
 use bytes::Bytes;
@@ -16,6 +19,7 @@ use ethrex_rlp::{
     structs::{Decoder, Encoder},
 };
 use ethrex_trie::Trie;
+use k256::sha2::{Digest, Sha256};
 use keccak_hash::keccak;
 use serde::{Deserialize, Serialize};
 
@@ -261,6 +265,48 @@ pub fn compute_withdrawals_root(withdrawals: &[Withdrawal]) -> H256 {
     Trie::compute_hash_from_unsorted_iter(iter)
 }
 
+pub fn compute_requests_hash(receipts: &[Receipt]) -> H256 {
+    let mut deposits = vec![];
+    for r in receipts {
+        for log in &r.logs {
+            if log.address == *DEPOSIT_CONTRACT_ADDRESS {
+                let d = Deposit::from_abi_byte_array(&log.data);
+                // REMOVE LOG
+                // println!("Deposit: ");
+                // println!("Pub key: {:x?}", d.pub_key);
+                // println!("Withdrawal credentials: {:x?}", d.withdrawal_credentials);
+                // println!("Amount: {:?}", d.amount);
+                // println!("Signature: {:x?}", d.signature);
+                // println!("Index: {:?}", d.index);
+                // println!("--------------------------");
+                deposits.push(d);
+            }
+        }
+    }
+
+    // TODO: We can actually reserve memory for all the deposits
+    let mut deposit_data = vec![];
+
+    const DEPOSIT_TYPE: u8 = 0x00;
+
+    for deposit in deposits {
+        let data = deposit.to_summarized_byte_array();
+        deposit_data.push(data);
+    }
+
+    let deposit_bytes: Vec<u8> = std::iter::once(DEPOSIT_TYPE)
+        .chain(deposit_data.into_iter().flatten())
+        .collect();
+
+    let mut hasher = Sha256::new();
+    if deposit_bytes.len() > 1 {
+        hasher.update(deposit_bytes);
+    }
+    let hash = hasher.finalize();
+
+    H256::from_slice(&hash)
+}
+
 impl RLPEncode for BlockBody {
     fn encode(&self, buf: &mut dyn bytes::BufMut) {
         Encoder::new(buf)
@@ -486,11 +532,17 @@ pub enum InvalidBlockHeaderError {
     ExcessBlobGasIncorrect,
     #[error("Parent beacon block root is not present")]
     ParentBeaconBlockRootNotPresent,
+    #[error("Requests hash is not present")]
+    RequestsHashNotPresent,
     // Other fork errors
     #[error("Excess blob gas is present")]
     ExcessBlobGasPresent,
     #[error("Blob gas used is present")]
     BlobGasUsedPresent,
+    #[error("Parent beacon block root is present")]
+    ParentBeaconBlockRootPresent,
+    #[error("Requests hash is present")]
+    RequestsHashPresent,
 }
 
 /// Validates that the header fields are correct in reference to the parent_header
@@ -547,10 +599,10 @@ pub fn validate_block_header(
 
     Ok(())
 }
-/// Validates that excess_blob_gas and blob_gas_used are present in the header and
-/// validates that excess_blob_gas value is correct on the block header
-/// according to the values in the parent header.
-pub fn validate_post_cancun_header_fields(
+
+/// Validates that only the required field are present for a Prague block
+/// Also validates excess_blob_gas value against parent's header
+pub fn validate_prague_header_fields(
     header: &BlockHeader,
     parent_header: &BlockHeader,
 ) -> Result<(), InvalidBlockHeaderError> {
@@ -566,11 +618,38 @@ pub fn validate_post_cancun_header_fields(
     if header.parent_beacon_block_root.is_none() {
         return Err(InvalidBlockHeaderError::ParentBeaconBlockRootNotPresent);
     }
+    if header.requests_hash.is_none() {
+        return Err(InvalidBlockHeaderError::RequestsHashNotPresent);
+    }
     Ok(())
 }
 
-/// Validates that the excess blob gas value is correct on the block header
-/// according to the values in the parent header.
+/// Validates that only the required field are present for a Cancun block
+/// Also validates excess_blob_gas value against parent's header
+pub fn validate_cancun_header_fields(
+    header: &BlockHeader,
+    parent_header: &BlockHeader,
+) -> Result<(), InvalidBlockHeaderError> {
+    if header.excess_blob_gas.is_none() {
+        return Err(InvalidBlockHeaderError::ExcessBlobGasNotPresent);
+    }
+    if header.blob_gas_used.is_none() {
+        return Err(InvalidBlockHeaderError::BlobGasUsedNotPresent);
+    }
+    if header.excess_blob_gas.unwrap() != calc_excess_blob_gas(parent_header) {
+        return Err(InvalidBlockHeaderError::ExcessBlobGasIncorrect);
+    }
+    if header.parent_beacon_block_root.is_none() {
+        return Err(InvalidBlockHeaderError::ParentBeaconBlockRootNotPresent);
+    }
+    if header.requests_hash.is_none() {
+        return Err(InvalidBlockHeaderError::RequestsHashNotPresent);
+    }
+    Ok(())
+}
+
+/// Validates that only the required field are present for a Cancun block
+/// Also validates excess_blob_gas value against parent's header
 pub fn validate_pre_cancun_header_fields(
     header: &BlockHeader,
 ) -> Result<(), InvalidBlockHeaderError> {
@@ -579,6 +658,12 @@ pub fn validate_pre_cancun_header_fields(
     }
     if header.blob_gas_used.is_some() {
         return Err(InvalidBlockHeaderError::BlobGasUsedPresent);
+    }
+    if header.parent_beacon_block_root.is_some() {
+        return Err(InvalidBlockHeaderError::ParentBeaconBlockRootPresent);
+    }
+    if header.requests_hash.is_some() {
+        return Err(InvalidBlockHeaderError::RequestsHashPresent);
     }
     Ok(())
 }

@@ -7,9 +7,10 @@ use ethrex_core::{
     constants::GAS_PER_BLOB,
     types::{
         calculate_base_fee_per_blob_gas, calculate_base_fee_per_gas, compute_receipts_root,
-        compute_transactions_root, compute_withdrawals_root, BlobsBundle, Block, BlockBody,
-        BlockHash, BlockHeader, BlockNumber, ChainConfig, Fork, MempoolTransaction, Receipt,
-        Transaction, Withdrawal, DEFAULT_OMMERS_HASH, DEFAULT_REQUESTS_HASH,
+        compute_requests_hash, compute_transactions_root, compute_withdrawals_root, BlobsBundle,
+        Block, BlockBody, BlockHash, BlockHeader, BlockNumber, ChainConfig, Fork,
+        MempoolTransaction, Receipt, Transaction, Withdrawal, DEFAULT_OMMERS_HASH,
+        DEFAULT_REQUESTS_HASH,
     },
     Address, Bloom, Bytes, H256, U256,
 };
@@ -580,7 +581,10 @@ fn apply_plain_transaction(
     }
 }
 
-fn finalize_payload(context: &mut PayloadBuildContext) -> Result<(), StoreError> {
+fn finalize_payload(context: &mut PayloadBuildContext) -> Result<(), ChainError> {
+    let is_shanghai_activated = context
+        .chain_config()?
+        .is_shanghai_activated(context.payload.header.timestamp);
     #[cfg(feature = "levm")]
     {
         if let Some(withdrawals) = &context.payload.body.withdrawals {
@@ -634,6 +638,8 @@ fn finalize_payload(context: &mut PayloadBuildContext) -> Result<(), StoreError>
         context.payload.header.transactions_root =
             compute_transactions_root(&context.payload.body.transactions);
         context.payload.header.receipts_root = compute_receipts_root(&context.receipts);
+        context.payload.header.requests_hash =
+            is_shanghai_activated.then_some(compute_requests_hash(&context.receipts));
         context.payload.header.gas_used = context.payload.header.gas_limit - context.remaining_gas;
         Ok(())
     }

@@ -12,6 +12,7 @@ sha3.workspace = true
 tracing.workspace = true
 bytes.workspace = true
 cfg-if = "1.0.0"
+hex = "0.4.3" # TODO: This is a debug dependency, remove
 
 ethrex-rlp.workspace = true
 ethrex-core = { path = "../common", default-features = false }
@@ -24,7 +25,7 @@ ethrex-metrics = { path = "./metrics", default-features = false }
 
 [dev-dependencies]
 serde_json.workspace = true
-hex = "0.4.3"
+#hex = "0.4.3" # TODO: Uncomment this when removed from dependencies
 
 [lib]
 path = "./blockchain.rs"

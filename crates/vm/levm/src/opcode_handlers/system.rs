@@ -11,7 +11,10 @@ use crate::{
     Account,
 };
 use bytes::Bytes;
-use ethrex_core::{types::Fork, Address, U256};
+use ethrex_core::{
+    types::{requests::DEPOSIT_CONTRACT_ADDRESS, Fork},
+    Address, U256,
+};
 
 // System Operations (10)
 // Opcodes: CREATE, CALL, CALLCODE, RETURN, DELEGATECALL, CREATE2, STATICCALL, REVERT, INVALID, SELFDESTRUCT
@@ -732,6 +735,8 @@ impl VM {
     ) -> Result<OpcodeResult, VMError> {
         // Clear callframe subreturn data
         current_call_frame.sub_return_data = Bytes::new();
+        // REMOVE LOG
+        dbg!(&to);
 
         let calldata =
             memory::load_range(&mut current_call_frame.memory, args_offset, args_size)?.to_vec();
@@ -813,12 +818,29 @@ impl VM {
         )?;
         current_call_frame.sub_return_data = tx_report.output;
 
+        // REMOVE LOG
+        if to == *DEPOSIT_CONTRACT_ADDRESS {
+            dbg!(&new_call_frame);
+            // match tx_report.result {
+            //     TxResult::Success => {
+            //         println!("SUCCESS");
+            //     }
+            //     TxResult::Revert(_) => {
+            //         println!("FAILURE");
+            //     }
+            // }
+        }
+
         // What to do, depending on TxResult
         match tx_report.result {
             TxResult::Success => {
                 current_call_frame.stack.push(SUCCESS_FOR_CALL)?;
+                // REMOVE LOG
+                println!("SUCCESS");
             }
             TxResult::Revert(_) => {
+                // REMOVE LOG
+                println!("FAILURE");
                 // Revert value transfer
                 if should_transfer_value {
                     decrease_account_balance(&mut self.cache, &mut self.db, to, value)?;
