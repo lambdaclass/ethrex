@@ -4,7 +4,7 @@ use ethrex_blockchain::{
     latest_canonical_block_hash,
     payload::{create_payload, BuildPayloadArgs},
 };
-use ethrex_core::types::BlockHeader;
+use ethrex_common::types::BlockHeader;
 use serde_json::Value;
 use tracing::{debug, info, warn};
 

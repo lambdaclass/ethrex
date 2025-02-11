@@ -20,7 +20,7 @@ thiserror.workspace = true
 
 ethrex-l2 = { path = "../../l2" }
 ethrex-sdk = { path = "../../l2/sdk" }
-ethrex-core = { path = "../../common" }
+ethrex-common = { path = "../../common" }
 
 [[bin]]
 name = "ethrex_l2_l1_deployer"

@@ -10,7 +10,7 @@ mod blockchain_integration_test {
         payload::{build_payload, create_payload, BuildPayloadArgs},
     };
 
-    use ethrex_core::{
+    use ethrex_common::{
         types::{Block, BlockHeader},
         H160, H256,
     };

@@ -5,7 +5,7 @@ use crate::{
     memory::{self, calculate_memory_size},
     vm::VM,
 };
-use ethrex_core::U256;
+use ethrex_common::U256;
 use sha3::{Digest, Keccak256};
 
 // KECCAK256 (1)

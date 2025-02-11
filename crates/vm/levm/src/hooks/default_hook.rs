@@ -10,7 +10,7 @@ use crate::{
     vm::VM,
 };
 
-use ethrex_core::{types::Fork, U256};
+use ethrex_common::{types::Fork, U256};
 
 use std::cmp::max;
 

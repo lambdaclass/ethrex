@@ -7,7 +7,7 @@ use crate::{
     utils::{access_account, has_delegation, word_to_address},
     vm::VM,
 };
-use ethrex_core::U256;
+use ethrex_common::U256;
 use keccak_hash::keccak;
 
 // Environmental Information (16)

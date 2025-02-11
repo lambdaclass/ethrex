@@ -1,4 +1,4 @@
-use ethrex_core::types::ChainConfig;
+use ethrex_common::types::ChainConfig;
 use ethrex_p2p::types::{Node, NodeRecord};
 use ethrex_storage::Store;
 use serde::Serialize;
