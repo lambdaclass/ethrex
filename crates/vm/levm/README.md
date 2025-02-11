@@ -25,7 +25,7 @@ Implementation of a simple Ethereum Virtual Machine in Rust.
 | 1   | Support Merge->Cancun forks     | ✅     |
 | 2   | Integrate `ethrex L1` <> `levm` | 🏗️     |
 | 3   | Support pre Merge forks         | 🏗     |
-| 4   | Support Pectra upgrade          | ✅     |
+| 4   | Support Pectra upgrade          | 🏗️     |
 | 5   | Integrate `ethrex L2` <> `levm` | ❌     |
 | 6   | Performance                     | 🏗️     |
 
