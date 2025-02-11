@@ -2,11 +2,9 @@
 
 # $1 Main branch tests results
 # $2 PR branch tests results
-main_results=$(bash ../../../.github/scripts/parse_test_result.sh $1)
-IFS=$'\n' read -rd '' -a main_results <<<"$main_results"
+IFS=$'\n' read -rd '' -a main_results <<<"$1"
 
-pr_results=$(bash ../../../.github/scripts/parse_test_result.sh $2)
-IFS=$'\n' read -rd '' -a pr_results <<<"$pr_results"
+IFS=$'\n' read -rd '' -a pr_results <<<"$2"
 
 
 echo "# EF Tests Comparison"
