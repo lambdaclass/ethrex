@@ -396,7 +396,6 @@ impl VM {
         &mut self,
         current_call_frame: &mut CallFrame,
     ) -> Result<OpcodeResult, VMError> {
-        dbg!("op_create");
         let value_in_wei_to_send = current_call_frame.stack.pop()?;
         let code_offset_in_memory = current_call_frame.stack.pop()?;
         let code_size_in_memory: usize = current_call_frame
@@ -594,7 +593,6 @@ impl VM {
         salt: Option<U256>,
         current_call_frame: &mut CallFrame,
     ) -> Result<OpcodeResult, VMError> {
-        dbg!("generic create!!");
         // First: Validations that can cause out of gas.
         // 1. Cant be called in a static context
         if current_call_frame.is_static {
@@ -635,8 +633,6 @@ impl VM {
             Some(salt) => calculate_create2_address(deployer_address, &code, salt)?,
             None => calculate_create_address(deployer_address, deployer_account_info.nonce)?,
         };
-
-        dbg!("new address", &new_address);
 
         // touch account
         self.accrued_substate.touched_accounts.insert(new_address);

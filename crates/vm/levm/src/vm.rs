@@ -326,6 +326,7 @@ impl VM {
         dbg!(&current_call_frame.msg_sender);
         dbg!(&current_call_frame.to);
         dbg!(&current_call_frame.gas_used);
+        dbg!(&current_call_frame.gas_limit);
 
         loop {
             let opcode = current_call_frame.next_opcode();
