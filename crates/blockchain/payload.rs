@@ -239,7 +239,7 @@ pub fn build_payload(
     debug!("Building payload");
     let mut evm_state = evm_state(store.clone(), payload.header.parent_hash);
     let mut context = PayloadBuildContext::new(payload, &mut evm_state)?;
-    make_beacon_root_call(&mut context)?;
+    apply_system_operations(&mut context)?;
     apply_withdrawals(&mut context)?;
     fill_transactions(&mut context)?;
     finalize_payload(&mut context)?;
@@ -301,7 +301,10 @@ pub fn apply_withdrawals(context: &mut PayloadBuildContext) -> Result<(), EvmErr
     Ok(())
 }
 
-pub fn make_beacon_root_call(context: &mut PayloadBuildContext) -> Result<(), EvmError> {
+// This function applies system level operations:
+// - Call beacon root contract, and obtain the new state root
+// - Call block hash process contract, and store parent block hash
+pub fn apply_system_operations(context: &mut PayloadBuildContext) -> Result<(), EvmError> {
     match EVM_BACKEND.get() {
         Some(EVM::LEVM) => {
             let fork = context
@@ -312,6 +315,7 @@ pub fn make_beacon_root_call(context: &mut PayloadBuildContext) -> Result<(), Ev
                 .get_fork_blob_schedule(context.payload.header.timestamp)
                 .unwrap_or(EVMConfig::canonical_values(fork));
             let config = EVMConfig::new(fork, blob_schedule);
+            let mut new_state = HashMap::new();
 
             if context.payload.header.parent_beacon_block_root.is_some() && fork >= Fork::Cancun {
                 let store_wrapper = Arc::new(StoreWrapper {
@@ -319,23 +323,37 @@ pub fn make_beacon_root_call(context: &mut PayloadBuildContext) -> Result<(), Ev
                     block_hash: context.payload.header.parent_hash,
                 });
                 let report = backends::levm::beacon_root_contract_call_levm(
-                    store_wrapper.clone(),
+                    store_wrapper,
                     &context.payload.header,
                     config,
                 )?;
 
-                let mut new_state = report.new_state.clone();
-
-                // Now original_value is going to be the same as the current_value, for the next transaction.
-                // It should have only one value but it is convenient to keep on using our CacheDB structure
-                for account in new_state.values_mut() {
-                    for storage_slot in account.storage.values_mut() {
-                        storage_slot.original_value = storage_slot.current_value;
-                    }
-                }
-
-                context.block_cache.extend(new_state);
+                new_state.extend(report.new_state);
             }
+
+            if fork >= Fork::Prague {
+                let store_wrapper = Arc::new(StoreWrapper {
+                    store: context.evm_state.database().unwrap().clone(),
+                    block_hash: context.payload.header.parent_hash,
+                });
+                let report = backends::levm::process_block_hash_history(
+                    store_wrapper,
+                    &context.payload.header,
+                    config,
+                )?;
+
+                new_state.extend(report.new_state);
+            }
+
+            // Now original_value is going to be the same as the current_value, for the next transaction.
+            // It should have only one value but it is convenient to keep on using our CacheDB structure
+            for account in new_state.values_mut() {
+                for storage_slot in account.storage.values_mut() {
+                    storage_slot.original_value = storage_slot.current_value;
+                }
+            }
+
+            context.block_cache.extend(new_state);
         }
         // This means we are using REVM as default for tests
         Some(EVM::REVM) | None => {
@@ -345,6 +363,14 @@ pub fn make_beacon_root_call(context: &mut PayloadBuildContext) -> Result<(), Ev
                 && spec_id >= SpecId::CANCUN
             {
                 backends::revm::beacon_root_contract_call(
+                    context.evm_state,
+                    &context.payload.header,
+                    spec_id,
+                )?;
+            }
+
+            if spec_id >= SpecId::PRAGUE {
+                backends::revm::process_block_hash_history(
                     context.evm_state,
                     &context.payload.header,
                     spec_id,
