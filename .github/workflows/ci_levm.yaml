@@ -49,13 +49,14 @@ jobs:
 
       - name: Show test summary -- short
         run: |
-          cd crates/vm/levm && bash ../../../.github/scripts/parse_test_result.sh test_result_pr.txt;
+          cd crates/vm/levm
+          bash ../../../.github/scripts/parse_test_result.sh test_result_pr.txt > test_result_pr_short;
 
       - name: Upload PR branch EF-test results.
         uses: actions/upload-artifact@v4
         with:
           name: pr-ef-test-data
-          path: crates/vm/levm/test_result_pr.txt
+          path: crates/vm/levm/test_result_pr_short.txt
 
         # This is only needed in the PR. As soon as this is merged, this should be deleted
       - name: Upload comparison shell script
@@ -67,7 +68,7 @@ jobs:
       - name: Check EF-TESTS status is 100%
         run: |
           cd crates/vm/levm
-          if [ "$(awk '/Summary:/ {print $(NF)}' test_result_pr.txt)" != "(100.00%)" ]; then
+          if [ "$(awk '/Summary:/ {print $(NF)}' test_result_pr_short.txt)" != "(100.00%)" ]; then
               echo "Percentage is not 100%."
               # exit 1 # uncomment when we expect 100% pass-rate
           fi
@@ -114,18 +115,19 @@ jobs:
 
       - name: Show test summary -- short
         run: |
-          cd crates/vm/levm && bash ../../../.github/scripts/parse_test_result.sh test_result_main.txt;
+          cd crates/vm/levm
+          bash ../../../.github/scripts/parse_test_result.sh test_result_main.txt > test_result_main_short.txt
 
       - name: Upload main branch EF-test results.
         uses: actions/upload-artifact@v4
         with:
           name: main-ef-test-data
-          path: crates/vm/levm/test_result_main.txt
+          path: crates/vm/levm/test_result_main_short.txt
 
       - name: Check EF-TESTS status is 100%
         run: |
           cd crates/vm/levm
-          if [ "$(awk '/Summary:/ {print $(NF)}' test_result_main.txt)" != "(100.00%)" ]; then
+          if [ "$(awk '/Summary:/ {print $(NF)}' test_result_main_short.txt)" != "(100.00%)" ]; then
               echo "Percentage is not 100%."
               # exit 1 # uncomment when we expect 100% pass-rate
           fi
@@ -160,13 +162,13 @@ jobs:
         continue-on-error: true
         run: |
           cd crates/vm/levm
-          diff test_result_main.txt test_result_pr.txt
+          diff test_result_main_short.txt test_result_pr_short.txt
 
       - name: Compare results
         if: ${{ steps.branch_diffs.outcome == 'failure' && github.event_name == 'pull_request' }}
         run: |
           cd crates/vm/levm
-          bash ../../../.github/scripts/compare_ef_tests.sh test_result_main.txt test_result_pr.txt > ef_tests_comparison.md
+          bash ../../../.github/scripts/compare_ef_tests.sh test_result_main_short.txt test_result_pr_short.txt > ef_tests_comparison.md
 
       - name: Find comment
         continue-on-error: true
