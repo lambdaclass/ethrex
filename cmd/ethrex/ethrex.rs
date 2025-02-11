@@ -159,18 +159,22 @@ async fn main() {
     let store: Store = if path.ends_with("memory") {
         Store::new(&data_dir, EngineType::InMemory).expect("Failed to create Store")
     } else {
+        let engine_type: EngineType;
         cfg_if::cfg_if! {
             if #[cfg(feature = "redb")] {
-                let engine_type = EngineType::RedB;
+                engine_type = EngineType::RedB;
             } else if #[cfg(feature = "libmdbx")] {
-                let engine_type = EngineType::Libmdbx;
+                engine_type = EngineType::Libmdbx;
             } else {
-                let engine_type = EngineType::InMemory;
-                error!("No database specified. The feature flag `redb` or `libmdbx` should've been set while building.");
-                panic!("Specify the desired database engine.");
+                engine_type = EngineType::InMemory;
             }
         }
-        Store::new(&data_dir, engine_type).expect("Failed to create Store")
+        if engine_type == EngineType::InMemory {
+            error!("No database specified. The feature flag `redb` or `libmdbx` should've been set while building.");
+            panic!("Specify the desired database engine.");
+        } else {
+            Store::new(&data_dir, engine_type).expect("Failed to create Store")
+        }
     };
 
     let genesis = read_genesis_file(&network);
@@ -282,14 +286,15 @@ async fn main() {
         tracker.spawn(metrics_api);
     }
 
+    let dev_mode = *matches.get_one::<bool>("dev").unwrap_or(&false);
     // We do not want to start the networking module if the l2 feature is enabled.
     cfg_if::cfg_if! {
         if #[cfg(feature = "l2")] {
             let l2_proposer = ethrex_l2::start_proposer(store).into_future();
             tracker.spawn(l2_proposer);
-        } else {
-             // Start the block_producer module if devmode was set
-            let dev_mode = *matches.get_one::<bool>("dev").unwrap_or(&false);
+        } else if #[cfg(feature = "dev")] {
+            use ethrex_dev;
+            // Start the block_producer module if devmode was set
             if dev_mode {
                 info!("Runnning in DEV_MODE");
                 let authrpc_jwtsecret =
@@ -313,7 +318,11 @@ async fn main() {
                 );
                 tracker.spawn(block_producer_engine);
             }
-
+        } else {
+            if dev_mode {
+                error!("Binary wasn't built with The feature flag `dev` enabled.");
+                panic!("Build the binary with the `dev` feature in order to use the `--dev` cli's argument.");
+            }
             ethrex_p2p::start_network(
                 local_p2p_node,
                 tracker.clone(),

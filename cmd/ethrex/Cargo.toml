@@ -34,7 +34,7 @@ lazy_static.workspace = true
 
 cfg-if = "1.0.0"
 
-ethrex-dev = { path = "../../crates/blockchain/dev" }
+ethrex-dev = { path = "../../crates/blockchain/dev", optional = true }
 ethrex-metrics = { path = "../../crates/blockchain/metrics" }
 
 [[bin]]
@@ -43,6 +43,7 @@ path = "./ethrex.rs"
 
 [features]
 default = ["libmdbx"]
+dev = ["dep:ethrex-dev"]
 metrics = ["ethrex-blockchain/metrics", "ethrex-l2/metrics"]
 libmdbx = ["dep:libmdbx", "ethrex-storage/libmdbx"]
 redb = ["dep:redb", "ethrex-storage/redb"]
