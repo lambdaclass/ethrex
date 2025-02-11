@@ -3,10 +3,9 @@ use crate::{
     constants::{CREATE_DEPLOYMENT_FAIL, INIT_CODE_MAX_SIZE, REVERT_FOR_CALL, SUCCESS_FOR_CALL},
     db::cache,
     errors::{InternalError, OpcodeResult, OutOfGasError, TxResult, VMError},
-    gas_cost::{self, max_message_call_gas},
+    gas_cost::{self, max_message_call_gas, SELFDESTRUCT_REFUND},
     memory::{self, calculate_memory_size},
-    utils::*,
-    utils::{address_to_word, word_to_address},
+    utils::{address_to_word, word_to_address, *},
     vm::VM,
     Account,
 };
@@ -583,13 +582,11 @@ impl VM {
 
         // [EIP-3529](https://eips.ethereum.org/EIPS/eip-3529)
         if self.env.config.fork < Fork::London {
-            dbg!("ENTRO ACA!!!!!!!", self.env.refunded_gas);
             self.env.refunded_gas = self
                 .env
                 .refunded_gas
-                .checked_add(24000)
+                .checked_add(SELFDESTRUCT_REFUND)
                 .ok_or(VMError::GasRefundsOverflow)?;
-            dbg!(self.env.refunded_gas);
         }
 
         Ok(OpcodeResult::Halt)

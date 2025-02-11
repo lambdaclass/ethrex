@@ -362,7 +362,6 @@ impl Hook for DefaultHook {
         }
 
         // 2. Return unused gas + gas refunds to the sender.
-        dbg!("FINALIZE", &report.gas_used, &report.gas_refunded);
         let max_gas = vm.env.gas_limit;
         let consumed_gas = report.gas_used;
         // [EIP-3529](https://eips.ethereum.org/EIPS/eip-3529)
