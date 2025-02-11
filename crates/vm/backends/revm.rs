@@ -41,12 +41,12 @@ pub fn execute_block(block: &Block, state: &mut EvmState) -> Result<Vec<Receipt>
             if block_header.parent_beacon_block_root.is_some() && spec_id >= SpecId::CANCUN {
                 beacon_root_contract_call(state, block_header, spec_id)?;
             }
-        }
-    }
 
-    //eip 2935: stores parent block hash in system contract
-    if spec_id >= SpecId::PRAGUE {
-        process_block_hash_history(state, block_header, spec_id)?;
+            //eip 2935: stores parent block hash in system contract
+            if spec_id >= SpecId::PRAGUE {
+                process_block_hash_history(state, block_header, spec_id)?;
+            }
+        }
     }
 
     let mut receipts = Vec::new();

@@ -2,6 +2,7 @@ use super::constants::{BEACON_ROOTS_ADDRESS_STR, HISTORY_STORAGE_ADDRESS_STR, SY
 use crate::db::StoreWrapper;
 use crate::EvmError;
 use crate::EvmState;
+#[cfg(not(feature = "l2"))]
 use ethrex_core::types::Fork;
 use ethrex_core::{
     types::{
@@ -47,13 +48,13 @@ pub fn execute_block(
                 let report = beacon_root_contract_call_levm(store_wrapper.clone(), block_header, config)?;
                 block_cache.extend(report.new_state);
             }
-        }
-    }
 
-    if fork >= Fork::Prague {
-        //eip 2935: stores parent block hash in system contract
-        let report = process_block_hash_history(store_wrapper.clone(), block_header, config)?;
-        block_cache.extend(report.new_state);
+            if fork >= Fork::Prague {
+                //eip 2935: stores parent block hash in system contract
+                let report = process_block_hash_history(store_wrapper.clone(), block_header, config)?;
+                block_cache.extend(report.new_state);
+            }
+        }
     }
 
     // Account updates are initialized like this because of the beacon_root_contract_call, it is going to be empty if it wasn't called.
