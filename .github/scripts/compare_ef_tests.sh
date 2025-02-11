@@ -2,11 +2,12 @@
 
 # $1 Main branch tests results
 # $2 PR branch tests results
-# IFS=$'\n' read -rd '' -a main_results <<<"$1"
 main_results=$(cat "$1")
-pr_results=$(cat "$2")
+IFS=$'\n' read -rd '' -a main_results <<<"${main_results}"
 
-# IFS=$'\n' read -rd '' -a pr_results <<<"$2"
+
+pr_results=$(cat "$2")
+IFS=$'\n' read -rd '' -a pr_results <<<"${pr_results}"
 
 
 echo "# EF Tests Comparison"
