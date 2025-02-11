@@ -2,8 +2,8 @@ use crate::db::StoreWrapper;
 use crate::EvmError;
 use crate::EvmState;
 #[cfg(not(feature = "l2"))]
-use ethrex_core::types::Fork;
-use ethrex_core::{
+use ethrex_common::types::Fork;
+use ethrex_common::{
     types::{
         code_hash, AccountInfo, Block, BlockHeader, Receipt, Transaction, TxKind, GWEI_TO_WEI,
     },

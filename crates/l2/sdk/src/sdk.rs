@@ -5,7 +5,7 @@ use eth_client::{
     EthClient,
 };
 use ethereum_types::{Address, H160, H256, U256};
-use ethrex_core::types::{PrivilegedTxType, Transaction};
+use ethrex_common::types::{PrivilegedTxType, Transaction};
 use ethrex_rpc::types::{block::BlockBodyWrapper, receipt::RpcReceipt};
 use itertools::Itertools;
 use keccak_hash::keccak;

@@ -9,7 +9,7 @@ path = "src/lib.rs"
 
 [dependencies]
 ethrex-levm = { path = "../../" }
-ethrex-core.workspace = true
+ethrex-common.workspace = true
 hex.workspace = true
 bytes.workspace = true
 

@@ -1,7 +1,7 @@
 use std::{collections::BTreeMap, sync::Arc, time::Duration};
 
 use bytes::Bytes;
-use ethrex_core::{
+use ethrex_common::{
     types::{AccountState, BlockBody, BlockHeader, Receipt},
     H256, U256,
 };

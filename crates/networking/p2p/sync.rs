@@ -1,5 +1,5 @@
 use ethrex_blockchain::error::ChainError;
-use ethrex_core::{
+use ethrex_common::{
     types::{AccountState, Block, BlockHash, EMPTY_KECCACK_HASH},
     BigEndianHash, H256, U256, U512,
 };

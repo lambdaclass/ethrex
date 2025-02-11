@@ -9,7 +9,7 @@ use aes::{
     Aes256Enc,
 };
 use bytes::{Buf, BytesMut};
-use ethrex_core::{H128, H256};
+use ethrex_common::{H128, H256};
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode as _};
 use sha3::{Digest as _, Keccak256};
 use tokio::io::{AsyncRead, AsyncWrite};
