@@ -33,7 +33,7 @@ impl Request {
         }
         result
     }
-    pub fn from_deposits_receipts(receipts: &[Receipt]) -> Vec<Request> {
+    pub fn from_deposit_receipts(receipts: &[Receipt]) -> Vec<Request> {
         let mut deposits = vec![];
 
         for r in receipts {

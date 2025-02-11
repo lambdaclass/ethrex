@@ -263,7 +263,7 @@ pub fn compute_withdrawals_root(withdrawals: &[Withdrawal]) -> H256 {
 }
 
 pub fn calculate_requests_hash(receipts: &[Receipt]) -> H256 {
-    let requests = Request::from_deposits_receipts(receipts);
+    let requests = Request::from_deposit_receipts(receipts);
     // TODO: implement other requests
     compute_requests_hash(&requests)
 }
