@@ -576,37 +576,40 @@ pub fn selfdestruct(
     balance_to_transfer: U256,
     fork: Fork,
 ) -> Result<u64, OutOfGasError> {
-    match fork {
-        f if f <= Fork::DaoFork => Ok(SELFDESTRUCT_STATIC_PRE_TANGERINE),
+    let (static_cost, dynamic_cost) = match fork {
+        f if f <= Fork::DaoFork => (SELFDESTRUCT_STATIC_PRE_TANGERINE, 0),
         Fork::Tangerine => {
             let dynamic_cost = if account_is_empty {
                 SELFDESTRUCT_DYNAMIC
             } else {
                 0
             };
-            Ok(SELFDESTRUCT_STATIC
-                .checked_add(dynamic_cost)
-                .ok_or(OutOfGasError::GasCostOverflow)?)
+            (SELFDESTRUCT_STATIC, dynamic_cost)
         }
         _ => {
-            let mut gas_cost = SELFDESTRUCT_STATIC;
+            let dynamic_cost = if account_is_empty && balance_to_transfer > U256::zero() {
+                SELFDESTRUCT_DYNAMIC
+            } else {
+                0
+            };
 
-            if address_was_cold {
-                gas_cost = gas_cost
-                    .checked_add(COLD_ADDRESS_ACCESS_COST)
-                    .ok_or(OutOfGasError::GasCostOverflow)?;
-            }
+            let cold_address_cost = if address_was_cold {
+                COLD_ADDRESS_ACCESS_COST
+            } else {
+                0
+            };
 
-            // If a positive balance is sent to an empty account, the dynamic gas is 25000
-            if account_is_empty && balance_to_transfer > U256::zero() {
-                gas_cost = gas_cost
-                    .checked_add(SELFDESTRUCT_DYNAMIC)
-                    .ok_or(OutOfGasError::GasCostOverflow)?;
-            }
-
-            Ok(gas_cost)
+            (
+                SELFDESTRUCT_STATIC,
+                dynamic_cost
+                    .checked_add(cold_address_cost)
+                    .ok_or(OutOfGasError::GasCostOverflow)?,
+            )
         }
-    }
+    };
+    static_cost
+        .checked_add(dynamic_cost)
+        .ok_or(OutOfGasError::GasCostOverflow)
 }
 
 pub fn tx_calldata(calldata: &Bytes, fork: Fork) -> Result<u64, OutOfGasError> {
