@@ -88,6 +88,8 @@ impl TrieRebuilder {
     }
     /// Waits for the rebuild process to complete and returns the resulting mismatched accounts
     async fn complete(self) -> Result<Vec<H256>, SyncError> {
+        // Signal storage rebuilder to finish
+        self.storage_rebuilder_sender.send(vec![]).await?;
         self.state_trie_rebuilder.await??;
         self.storage_trie_rebuilder.await?
     }
@@ -429,6 +431,11 @@ impl SyncManager {
                 store.clone(),
                 self.peers.clone(),
                 key_checkpoints,
+                self.trie_rebuilder
+                    .as_ref()
+                    .unwrap()
+                    .storage_rebuilder_sender
+                    .clone(),
             )
             .await?;
             if stale_pivot {
@@ -482,6 +489,7 @@ async fn state_sync(
     store: Store,
     peers: PeerHandler,
     key_checkpoints: Option<[H256; STATE_TRIE_SEGMENTS]>,
+    storage_trie_rebuilder_sender: Sender<Vec<(H256, H256)>>,
 ) -> Result<bool, SyncError> {
     // Spawn tasks to fetch each state trie segment
     let mut state_trie_tasks = tokio::task::JoinSet::new();
@@ -497,6 +505,7 @@ async fn state_sync(
             i,
             key_checkpoints.map(|chs| chs[i]),
             state_sync_progress.clone(),
+            storage_trie_rebuilder_sender.clone(),
         ));
     }
     show_progress_handle.await?;
@@ -526,6 +535,7 @@ async fn state_sync_segment(
     segment_number: usize,
     checkpoint: Option<H256>,
     state_sync_progress: StateSyncProgress,
+    storage_trie_rebuilder_sender: Sender<Vec<(H256, H256)>>,
 ) -> Result<(usize, bool, H256), SyncError> {
     // Resume download from checkpoint if available or start from an empty trie
     let mut start_account_hash = checkpoint.unwrap_or(STATE_TRIE_SEGMENTS_START[segment_number]);
@@ -558,6 +568,7 @@ async fn state_sync_segment(
         peers.clone(),
         store.clone(),
         state_root,
+        storage_trie_rebuilder_sender.clone(),
     ));
     info!("Starting/Resuming state trie download of segment number {segment_number} from key {start_account_hash}");
     // Fetch Account Ranges
@@ -701,6 +712,7 @@ async fn storage_fetcher(
     peers: PeerHandler,
     store: Store,
     state_root: H256,
+    storage_trie_rebuilder_sender: Sender<Vec<(H256, H256)>>,
 ) -> Result<(), SyncError> {
     // Pending list of storages to fetch
     let mut pending_storage: Vec<(H256, H256)> = vec![];
@@ -738,10 +750,11 @@ async fn storage_fetcher(
                     .drain(..BATCH_SIZE.min(pending_storage.len()))
                     .collect::<Vec<_>>();
                 storage_tasks.spawn(fetch_storage_batch(
-                    next_batch.clone(),
+                    next_batch,
                     state_root,
                     peers.clone(),
                     store.clone(),
+                    storage_trie_rebuilder_sender.clone(),
                 ));
                 // End loop if we don't have enough elements to fill up a batch
                 if pending_storage.is_empty() || (incoming && pending_storage.len() < BATCH_SIZE) {
@@ -770,7 +783,10 @@ async fn fetch_storage_batch(
     state_root: H256,
     peers: PeerHandler,
     store: Store,
+    storage_trie_rebuilder_sender: Sender<Vec<(H256, H256)>>,
 ) -> Result<(Vec<(H256, H256)>, bool), SyncError> {
+    // A list of all completely fetched storages to send to the rebuilder
+    let mut complete_storages = vec![];
     debug!(
         "Requesting storage ranges for addresses {}..{}",
         batch.first().unwrap().0,
@@ -807,15 +823,22 @@ async fn fetch_storage_batch(
                     batch.push((account_hash, storage_root));
                     return Ok((batch, true));
                 }
+                // Add large storage to completed storages
+                complete_storages.push((account_hash, storage_root));
             }
             // The incomplete range is not the first, we cannot asume it is a large trie, so lets add it back to the queue
         }
         // Store the storage ranges & rebuild the storage trie for each account
         for (keys, values) in keys.into_iter().zip(values.into_iter()) {
-            let (account_hash, _) = batch.remove(0);
+            let (account_hash, expected_root) = batch.remove(0);
             // Write storage to snapshot
             store.write_snapshot_storage_batch(account_hash, keys, values)?;
+            complete_storages.push((account_hash, expected_root));
         }
+        // Send complete storages to the rebuilder
+        storage_trie_rebuilder_sender
+            .send(complete_storages)
+            .await?;
         // Return remaining code hashes in the batch if we couldn't fetch all of them
         return Ok((batch, false));
     }
