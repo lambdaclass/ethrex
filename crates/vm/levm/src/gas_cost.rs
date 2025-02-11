@@ -398,21 +398,26 @@ fn mem_expansion_behavior(
 }
 
 pub fn sload(storage_slot_was_cold: bool, fork: Fork) -> Result<u64, VMError> {
-    // EIP https://eips.ethereum.org/EIPS/eip-2929
-    if fork < Fork::Berlin {
-        return Ok(SLOAD_COST_PRE_BERLIN);
+    match fork {
+        f if f < Fork::Tangerine => Ok(50),
+        f if f >= Fork::Tangerine && f < Fork::Berlin => {
+            // EIP https://eips.ethereum.org/EIPS/eip-2929
+            Ok(SLOAD_COST_PRE_BERLIN)
+        }
+        _ => {
+            let static_gas = SLOAD_STATIC;
+
+            let dynamic_cost = if storage_slot_was_cold {
+                SLOAD_COLD_DYNAMIC
+            } else {
+                SLOAD_WARM_DYNAMIC
+            };
+
+            Ok(static_gas
+                .checked_add(dynamic_cost)
+                .ok_or(OutOfGasError::GasCostOverflow)?)
+        }
     }
-    let static_gas = SLOAD_STATIC;
-
-    let dynamic_cost = if storage_slot_was_cold {
-        SLOAD_COLD_DYNAMIC
-    } else {
-        SLOAD_WARM_DYNAMIC
-    };
-
-    Ok(static_gas
-        .checked_add(dynamic_cost)
-        .ok_or(OutOfGasError::GasCostOverflow)?)
 }
 
 pub fn sstore(
