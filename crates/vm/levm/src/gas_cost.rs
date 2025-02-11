@@ -571,23 +571,37 @@ pub fn selfdestruct(
     address_was_cold: bool,
     account_is_empty: bool,
     balance_to_transfer: U256,
+    fork: Fork,
 ) -> Result<u64, OutOfGasError> {
-    let mut gas_cost = SELFDESTRUCT_STATIC;
+    match fork {
+        f if f <= Fork::DaoFork => {
+            todo!();
+        }
+        Fork::Tangerine => {
+            todo!();
+        }
+        f if f > Fork::Tangerine && f <= Fork::Berlin => {
+            todo!();
+        }
+        _ => {
+            let mut gas_cost = SELFDESTRUCT_STATIC;
 
-    if address_was_cold {
-        gas_cost = gas_cost
-            .checked_add(COLD_ADDRESS_ACCESS_COST)
-            .ok_or(OutOfGasError::GasCostOverflow)?;
+            if address_was_cold {
+                gas_cost = gas_cost
+                    .checked_add(COLD_ADDRESS_ACCESS_COST)
+                    .ok_or(OutOfGasError::GasCostOverflow)?;
+            }
+
+            // If a positive balance is sent to an empty account, the dynamic gas is 25000
+            if account_is_empty && balance_to_transfer > U256::zero() {
+                gas_cost = gas_cost
+                    .checked_add(SELFDESTRUCT_DYNAMIC)
+                    .ok_or(OutOfGasError::GasCostOverflow)?;
+            }
+
+            Ok(gas_cost)
+        }
     }
-
-    // If a positive balance is sent to an empty account, the dynamic gas is 25000
-    if account_is_empty && balance_to_transfer > U256::zero() {
-        gas_cost = gas_cost
-            .checked_add(SELFDESTRUCT_DYNAMIC)
-            .ok_or(OutOfGasError::GasCostOverflow)?;
-    }
-
-    Ok(gas_cost)
 }
 
 pub fn tx_calldata(calldata: &Bytes, fork: Fork) -> Result<u64, OutOfGasError> {
