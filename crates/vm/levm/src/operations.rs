@@ -239,5 +239,6 @@ impl Operation {
             Operation::SelfDestruct => Bytes::copy_from_slice(&[u8::from(Opcode::SELFDESTRUCT)]),
         };
         Ok(bytecode)
+        //
     }
 }
