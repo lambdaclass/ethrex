@@ -1,7 +1,12 @@
 #![no_main]
 
 use ethrex_blockchain::{validate_block, validate_gas_used};
-use ethrex_vm::{backends::revm::execute_block, db::EvmState, get_state_transitions};
+use ethrex_vm::{
+    backends::revm::{RevmGetStateTransitionsIn, REVM},
+    backends::IEVM,
+    db::EvmState,
+    get_state_transitions,
+};
 use zkvm_interface::{
     io::{ProgramInput, ProgramOutput},
     trie::{update_tries, verify_db},
@@ -34,7 +39,7 @@ pub fn main() {
         panic!("invalid database")
     };
 
-    let receipts = execute_block(&block, &mut state).expect("failed to execute block");
+    let receipts = REVM::execute_block(&block, &mut state).expect("failed to execute block");
     validate_gas_used(&receipts, &block.header).expect("invalid gas used");
 
     // Output gas for measurement purposes
@@ -44,7 +49,7 @@ pub fn main() {
         .unwrap_or_default();
     sp1_zkvm::io::commit(&cumulative_gas_used);
 
-    let account_updates = get_state_transitions(&mut state);
+    let account_updates = REVM::get_state_transitions(RevmGetStateTransitionsIn::new(&mut state));
 
     // Update tries and calculate final state root hash
     update_tries(&mut state_trie, &mut storage_tries, &account_updates)
