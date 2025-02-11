@@ -16,7 +16,7 @@ use crate::{
     AccountInfo,
 };
 use bytes::Bytes;
-use ethrex_core::{
+use ethrex_common::{
     types::{tx_fields::*, Fork},
     Address, H256, U256,
 };

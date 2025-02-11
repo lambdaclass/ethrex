@@ -1,6 +1,6 @@
 use crate::account::Account;
 use bytes::Bytes;
-use ethrex_core::{types::Log, Address};
+use ethrex_common::{types::Log, Address};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use thiserror;

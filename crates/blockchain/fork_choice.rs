@@ -1,4 +1,4 @@
-use ethrex_core::{
+use ethrex_common::{
     types::{Block, BlockHash, BlockHeader, BlockNumber},
     H256,
 };

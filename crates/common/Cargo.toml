@@ -1,5 +1,5 @@
 [package]
-name = "ethrex-core"
+name = "ethrex-common"
 version = "0.1.0"
 edition = "2021"
 
@@ -37,4 +37,4 @@ redb = ["ethrex-trie/redb"]
 c-kzg = ["dep:c-kzg"]
 
 [lib]
-path = "./core.rs"
+path = "./common.rs"

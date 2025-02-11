@@ -11,7 +11,7 @@ use crate::{
     },
     rlpx::utils::log_peer_error,
 };
-use ethrex_core::H512;
+use ethrex_common::H512;
 use ethrex_storage::Store;
 use k256::{
     ecdsa::SigningKey,

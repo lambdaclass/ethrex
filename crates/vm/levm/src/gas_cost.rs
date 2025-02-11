@@ -6,7 +6,7 @@ use crate::{
 };
 use bytes::Bytes;
 /// Contains the gas costs of the EVM instructions
-use ethrex_core::{types::Fork, U256};
+use ethrex_common::{types::Fork, U256};
 use num_bigint::BigUint;
 
 // Opcodes cost

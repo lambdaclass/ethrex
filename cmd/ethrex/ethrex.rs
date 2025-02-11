@@ -1,7 +1,7 @@
 use bytes::Bytes;
 use directories::ProjectDirs;
 use ethrex_blockchain::{add_block, fork_choice::apply_fork_choice};
-use ethrex_core::types::{Block, Genesis};
+use ethrex_common::types::{Block, Genesis};
 use ethrex_p2p::{
     kademlia::KademliaTable,
     network::{node_id_from_signing_key, peer_table},
@@ -295,7 +295,7 @@ async fn main() {
                 head_block_hash,
                 max_tries,
                 1000,
-                ethrex_core::Address::default(),
+                ethrex_common::Address::default(),
             );
             tracker.spawn(block_producer_engine);
         } else {

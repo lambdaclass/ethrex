@@ -3,7 +3,7 @@ use crate::rlpx::{
     utils::{snappy_compress, snappy_decompress},
 };
 use bytes::BufMut;
-use ethrex_core::types::{BlockBody, BlockHash, BlockHeader, BlockNumber};
+use ethrex_common::types::{BlockBody, BlockHash, BlockHeader, BlockNumber};
 use ethrex_rlp::{
     decode::RLPDecode,
     encode::RLPEncode,
@@ -309,7 +309,7 @@ impl RLPxMessage for BlockBodies {
 
 #[cfg(test)]
 mod tests {
-    use ethrex_core::types::BlockHash;
+    use ethrex_common::types::BlockHash;
 
     use crate::rlpx::{
         eth::blocks::{BlockBodies, GetBlockBodies, GetBlockHeaders},
