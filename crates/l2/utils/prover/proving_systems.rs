@@ -10,6 +10,8 @@ use sp1_sdk::{ExecutionReport as SP1ExecutionReport, HashableKey, SP1PublicValue
 pub enum ProverType {
     RISC0,
     SP1,
+    #[cfg(feature = "pico")]
+    Pico,
 }
 
 /// Used to iterate through all the possible proving systems
@@ -143,10 +145,42 @@ impl Sp1Proof {
     }
 }
 
+#[cfg(feature = "pico")]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct PicoProof {
+    pub proof: pico_vm::machine::proof::MetaProof,
+    pub vk: sp1_sdk::SP1VerifyingKey,
+}
+
+#[cfg(feature = "pico")]
+impl Debug for PicoProof {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Sp1Proof")
+            .field("proof", &self.proof)
+            .field("vk", &self.vk.bytes32())
+            .finish()
+    }
+}
+
+#[cfg(feature = "pico")]
+impl PicoProof {
+    pub fn new(
+        proof: sp1_sdk::SP1ProofWithPublicValues,
+        verifying_key: sp1_sdk::SP1VerifyingKey,
+    ) -> Self {
+        PicoProof {
+            proof: Box::new(proof),
+            vk: verifying_key,
+        }
+    }
+}
+
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub enum ProvingOutput {
     RISC0(Risc0Proof),
     SP1(Sp1Proof),
+    #[cfg(feature = "pico")]
+    Pico(PicoProof),
 }
 
 #[derive(Clone, Debug)]

@@ -15,6 +15,10 @@ use zkvm_interface::{
 // sp1
 use sp1_sdk::{ProverClient, SP1Stdin};
 
+// pico
+#[cfg(feature = "build_pico")]
+use pico_sdk::client::DefaultProverClient;
+
 /// Structure that wraps all the needed components for the RISC0 proving system
 pub struct Risc0Prover<'a> {
     elf: &'a [u8],
@@ -39,11 +43,26 @@ impl<'a> Default for Sp1Prover<'a> {
     }
 }
 
+#[cfg(feature = "build_pico")]
+/// Structure that wraps all the needed components for the SP1 proving system
+pub struct PicoProver<'a> {
+    elf: &'a [u8],
+}
+
+#[cfg(feature = "build_pico")]
+impl<'a> Default for PicoProver<'a> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// Creates a prover depending on the [ProverType]
 pub fn create_prover(prover_type: ProverType) -> Box<dyn Prover> {
     match prover_type {
         ProverType::RISC0 => Box::new(Risc0Prover::new()),
         ProverType::SP1 => Box::new(Sp1Prover::new()),
+        #[cfg(feature = "build_pico")]
+        ProverType::Pico => Box::new(PicoProver::new()),
     }
 }
 
@@ -73,10 +92,10 @@ impl<'a> Risc0Prover<'a> {
         &self,
         proving_output: &ProvingOutput,
     ) -> Result<ProgramOutput, Box<dyn std::error::Error>> {
-        let commitment = match proving_output {
-            ProvingOutput::RISC0(proof) => proof.receipt.journal.decode()?,
-            ProvingOutput::SP1(_) => return Err(Box::new(ProverError::IncorrectProverType)),
+        let ProvingOutput::RISC0(proof) = proving_output else {
+            return Err(Box::new(ProverError::IncorrectProverType));
         };
+        let commitment = proof.receipt.journal.decode()?;
         Ok(commitment)
     }
 }
@@ -114,11 +133,10 @@ impl<'a> Prover for Risc0Prover<'a> {
 
     fn verify(&self, proving_output: &ProvingOutput) -> Result<(), Box<dyn std::error::Error>> {
         // Verify the proof.
-        match proving_output {
-            ProvingOutput::RISC0(proof) => proof.receipt.verify(self.id)?,
-            ProvingOutput::SP1(_) => return Err(Box::new(ProverError::IncorrectProverType)),
-        }
-
+        let ProvingOutput::RISC0(proof) = proving_output else {
+            return Err(Box::new(ProverError::IncorrectProverType));
+        };
+        proof.receipt.verify(self.id)?;
         Ok(())
     }
 
@@ -174,15 +192,41 @@ impl<'a> Prover for Sp1Prover<'a> {
 
     fn verify(&self, proving_output: &ProvingOutput) -> Result<(), Box<dyn std::error::Error>> {
         // Verify the proof.
-        match proving_output {
-            ProvingOutput::SP1(complete_proof) => {
-                let client = ProverClient::from_env();
-                client.verify(&complete_proof.proof, &complete_proof.vk)?;
-            }
-            ProvingOutput::RISC0(_) => return Err(Box::new(ProverError::IncorrectProverType)),
-        }
+        let ProvingOutput::SP1(complete_proof) = proving_output else {
+            return Err(Box::new(ProverError::IncorrectProverType));
+        };
+        let client = ProverClient::from_env();
+        client.verify(&complete_proof.proof, &complete_proof.vk)?;
 
         Ok(())
+    }
+
+    fn get_gas(&self) -> Result<u64, Box<dyn std::error::Error>> {
+        todo!()
+    }
+}
+
+#[cfg(feature = "build_pico")]
+impl<'a> Prover for PicoProver<'a> {
+    fn prove(&mut self, input: ProgramInput) -> Result<ProvingOutput, Box<dyn std::error::Error>> {
+        let client = DefaultProverClient::new(self.elf);
+
+        let stdin_builder = client.get_stdin_builder();
+        let proof = client.prove_fast()?;
+
+        info!("Successfully generated PicoProof.");
+        Ok(ProvingOutput::Pico(proof))
+    }
+
+    fn execute(
+        &mut self,
+        input: ProgramInput,
+    ) -> Result<ExecuteOutput, Box<dyn std::error::Error>> {
+        todo!()
+    }
+
+    fn verify(&self, proving_output: &ProvingOutput) -> Result<(), Box<dyn std::error::Error>> {
+        todo!()
     }
 
     fn get_gas(&self) -> Result<u64, Box<dyn std::error::Error>> {

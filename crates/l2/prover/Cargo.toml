@@ -31,6 +31,9 @@ risc0-zkvm = { version = "1.2.2" }
 # sp1
 sp1-sdk = "4.1.0"
 
+# sp1
+pico-sdk = { git = "https://github.com/brevis-network/pico", optional = true }
+
 [dev-dependencies]
 ethrex-vm.workspace = true
 ethrex-storage.workspace = true
@@ -48,7 +51,8 @@ path = "src/main.rs"
 default = []
 build_risc0 = ["zkvm_interface/build_risc0"]
 build_sp1 = ["zkvm_interface/build_sp1"]
-l2 = ["ethrex-vm/l2"] # the prover can work with both l1 or l2 blocks
+build_pico = ["zkvm_interface/build_pico", "ethrex-l2/pico", "dep:pico-sdk"]
+l2 = ["ethrex-vm/l2"]                                                        # the prover can work with both l1 or l2 blocks
 gpu = ["risc0-zkvm/cuda", "sp1-sdk/cuda"]
 
 [lints.clippy]

@@ -70,6 +70,8 @@ impl From<&StateType> for StateFileType {
             StateType::Proof(p) => match p {
                 ProvingOutput::RISC0(_) => StateFileType::Proof(ProverType::RISC0),
                 ProvingOutput::SP1(_) => StateFileType::Proof(ProverType::SP1),
+                #[cfg(feature = "pico")]
+                ProvingOutput::Pico(_) => StateFileType::Proof(ProverType::Pico),
             },
             StateType::AccountUpdates(_) => StateFileType::AccountUpdates,
         }
@@ -81,6 +83,8 @@ impl From<&ProverType> for StateFileType {
         match prover_type {
             ProverType::RISC0 => StateFileType::Proof(ProverType::RISC0),
             ProverType::SP1 => StateFileType::Proof(ProverType::SP1),
+            #[cfg(feature = "pico")]
+            ProverType::Pico => StateFileType::Proof(ProverType::Pico),
         }
     }
 }
@@ -90,6 +94,8 @@ fn get_proof_file_name_from_prover_type(prover_type: &ProverType, block_number: 
     match prover_type {
         ProverType::RISC0 => format!("proof_risc0_{block_number}.json"),
         ProverType::SP1 => format!("proof_sp1_{block_number}.json").to_owned(),
+        #[cfg(feature = "pico")]
+        ProverType::Pico => format!("proof_pico_{block_number}.json").to_owned(),
     }
 }
 

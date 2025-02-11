@@ -315,6 +315,8 @@ impl ProverServer {
                 let prover_type = match proving_output {
                     ProvingOutput::RISC0(_) => ProverType::RISC0,
                     ProvingOutput::SP1(_) => ProverType::SP1,
+                    #[cfg(feature = "pico")]
+                    ProvingOutput::Pico(_) => ProverType::Pico,
                 };
 
                 // Check if we have the proof for that ProverType

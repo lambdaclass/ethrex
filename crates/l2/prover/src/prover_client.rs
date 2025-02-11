@@ -108,6 +108,10 @@ impl ProverClient {
             ProvingOutput::SP1(sp1_proof) => {
                 ProofData::submit(block_number, ProvingOutput::SP1(sp1_proof))
             }
+            #[cfg(feature = "build_pico")]
+            ProvingOutput::Pico(pico_proof) => {
+                ProofData::submit(block_number, ProvingOutput::Pico(pico_proof))
+            }
         };
 
         let submit_ack = connect_to_prover_server_wr(&self.prover_server_endpoint, &submit)
