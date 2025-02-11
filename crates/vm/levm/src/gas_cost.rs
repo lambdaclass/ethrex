@@ -93,10 +93,11 @@ pub const DEFAULT_STATIC: u64 = 0;
 pub const DEFAULT_COLD_DYNAMIC: u64 = 2600;
 pub const DEFAULT_WARM_DYNAMIC: u64 = 100;
 
+pub const SLOAD_COST_PRE_BERLIN: u64 = 200;
+pub const SLOAD_COST_PRE_TANGERINE: u64 = 50;
 pub const SLOAD_STATIC: u64 = 0;
 pub const SLOAD_COLD_DYNAMIC: u64 = 2100;
 pub const SLOAD_WARM_DYNAMIC: u64 = 100;
-pub const SLOAD_COST_PRE_BERLIN: u64 = 200;
 
 pub const SSTORE_STATIC: u64 = 0;
 pub const SSTORE_COLD_DYNAMIC: u64 = 2100;
@@ -399,7 +400,7 @@ fn mem_expansion_behavior(
 
 pub fn sload(storage_slot_was_cold: bool, fork: Fork) -> Result<u64, VMError> {
     match fork {
-        f if f < Fork::Tangerine => Ok(50),
+        f if f < Fork::Tangerine => Ok(SLOAD_COST_PRE_TANGERINE),
         f if f >= Fork::Tangerine && f < Fork::Berlin => {
             // EIP https://eips.ethereum.org/EIPS/eip-2929
             Ok(SLOAD_COST_PRE_BERLIN)
