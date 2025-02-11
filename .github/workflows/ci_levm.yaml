@@ -192,7 +192,7 @@ jobs:
       # If comment-id != '', means that we've already created the comment.
       # If both conditions are met, update the comment saying that all tests pass.
       - name: Update comment
-        if: ${{ steps.check_tests.outcome != 'failure' && github.event_name == 'pull_request' && steps.fc.outputs.comment-id != '' }}
+        if: ${{ steps.branch_diffs.outcome != 'failure' && github.event_name == 'pull_request' && steps.fc.outputs.comment-id != '' }}
         uses: peter-evans/create-or-update-comment@v4
         with:
           comment-id: ${{ steps.fc.outputs.comment-id }}
