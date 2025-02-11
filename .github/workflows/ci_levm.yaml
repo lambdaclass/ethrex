@@ -156,7 +156,7 @@ jobs:
       - name: Compare files
         run: |
           cd crates/vm/levm
-          diff test_result_main.txt test_result_pr.txt > diff.txt
+          diff test_result_main.txt test_result_pr.txt | tee diff.txt
 
       - name: Compare results
         run: |
