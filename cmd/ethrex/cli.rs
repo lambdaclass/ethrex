@@ -98,9 +98,7 @@ pub fn cli() -> Command {
                 .long("datadir")
                 .value_name("DATABASE_DIRECTORY")
                 .action(ArgAction::Set)
-                .help(
-                    "If the datadir contains the word `memory`, ethrex will use the InMemory Engine",
-                ),
+                .help("If the datadir is the word `memory`, ethrex will use the InMemory Engine"),
         )
         .arg(
             Arg::new("import")
@@ -127,8 +125,8 @@ pub fn cli() -> Command {
                 .value_name("PROMETHEUS_METRICS_PORT"),
         )
         .arg(
-            Arg::new("devmode")
-                .long("devmode")
+            Arg::new("dev")
+                .long("dev")
                 .default_value("false")
                 .required(false)
                 .value_parser(clap::value_parser!(bool))
