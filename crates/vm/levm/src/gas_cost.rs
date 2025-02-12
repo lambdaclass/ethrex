@@ -642,7 +642,7 @@ fn address_access_cost(
         // [EIP-2929](https://eips.ethereum.org/EIPS/eip-2929)
         Ok(ADDRESS_COST_PRE_BERLIN)
     } else {
-        let static_gas = dbg!(static_cost);
+        let static_gas = static_cost;
         let dynamic_cost: u64 = if address_was_cold {
             cold_dynamic_cost
         } else {
