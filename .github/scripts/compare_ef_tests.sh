@@ -27,6 +27,8 @@ do
    result_pr=${result_pr%(*}
    percentage_pr=$(echo "${pr_results[num]}" | awk -F " " '{print $3}')
 
+   difference="$(( $result_pr - $result_main ))"
+
    emoji=""
    if (( $(echo "$result_main > $result_pr" |bc -l) )); then
        emoji="⬇️️"
@@ -36,7 +38,6 @@ do
        emoji="➖️"
    fi
 
-   difference="$(( $result_pr - $result_main ))"
 
    echo "|$name_main|$result_main $percentage_main |$result_pr $percentage_pr| $emoji $difference |"
 
