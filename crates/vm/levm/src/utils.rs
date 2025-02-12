@@ -253,6 +253,7 @@ pub fn get_intrinsic_gas(
     // 4 gas for each zero byte in the transaction data 16 gas for each non-zero byte in the transaction.
     let calldata_cost =
         gas_cost::tx_calldata(&initial_call_frame.calldata, fork).map_err(VMError::OutOfGas)?;
+    dbg!(calldata_cost);
 
     intrinsic_gas = intrinsic_gas
         .checked_add(calldata_cost)
@@ -264,21 +265,24 @@ pub fn get_intrinsic_gas(
         .ok_or(OutOfGasError::ConsumedGasOverflow)?;
 
     // Create Cost
-    if is_create {
+    if dbg!(is_create) {
         intrinsic_gas = intrinsic_gas
             .checked_add(CREATE_BASE_COST)
             .ok_or(OutOfGasError::ConsumedGasOverflow)?;
 
-        let number_of_words = initial_call_frame.calldata.len().div_ceil(WORD_SIZE);
-        let double_number_of_words: u64 = number_of_words
-            .checked_mul(2)
-            .ok_or(OutOfGasError::ConsumedGasOverflow)?
-            .try_into()
-            .map_err(|_| VMError::Internal(InternalError::ConversionError))?;
+        if fork >= Fork::Cancun {
+            let number_of_words = initial_call_frame.calldata.len().div_ceil(WORD_SIZE);
+            let double_number_of_words: u64 = number_of_words
+                .checked_mul(2)
+                .ok_or(OutOfGasError::ConsumedGasOverflow)?
+                .try_into()
+                .map_err(|_| VMError::Internal(InternalError::ConversionError))?;
+            dbg!(double_number_of_words);
 
-        intrinsic_gas = intrinsic_gas
-            .checked_add(double_number_of_words)
-            .ok_or(OutOfGasError::ConsumedGasOverflow)?;
+            intrinsic_gas = intrinsic_gas
+                .checked_add(double_number_of_words)
+                .ok_or(OutOfGasError::ConsumedGasOverflow)?;
+        }
     }
 
     // Access List Cost
@@ -293,6 +297,7 @@ pub fn get_intrinsic_gas(
                 .ok_or(OutOfGasError::ConsumedGasOverflow)?;
         }
     }
+    dbg!(access_lists_cost);
 
     intrinsic_gas = intrinsic_gas
         .checked_add(access_lists_cost)
@@ -310,6 +315,7 @@ pub fn get_intrinsic_gas(
     let authorization_list_cost = PER_EMPTY_ACCOUNT_COST
         .checked_mul(amount_of_auth_tuples)
         .ok_or(VMError::Internal(InternalError::GasOverflow))?;
+    dbg!(authorization_list_cost);
 
     intrinsic_gas = intrinsic_gas
         .checked_add(authorization_list_cost)
