@@ -705,13 +705,19 @@ pub fn extcodecopy(
 }
 
 pub fn extcodehash(address_was_cold: bool, fork: Fork) -> Result<u64, VMError> {
-    address_access_cost(
-        address_was_cold,
-        EXTCODEHASH_STATIC,
-        EXTCODEHASH_COLD_DYNAMIC,
-        EXTCODEHASH_WARM_DYNAMIC,
-        fork,
-    )
+    if fork < Fork::Istanbul {
+        Ok(400)
+    } else if fork < Fork::Berlin {
+        Ok(700)
+    } else {
+        address_access_cost(
+            address_was_cold,
+            EXTCODEHASH_STATIC,
+            EXTCODEHASH_COLD_DYNAMIC,
+            EXTCODEHASH_WARM_DYNAMIC,
+            fork,
+        )
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
