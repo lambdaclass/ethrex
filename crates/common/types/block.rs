@@ -614,8 +614,8 @@ pub fn validate_cancun_header_fields(
     if header.parent_beacon_block_root.is_none() {
         return Err(InvalidBlockHeaderError::ParentBeaconBlockRootNotPresent);
     }
-    if header.requests_hash.is_none() {
-        return Err(InvalidBlockHeaderError::RequestsHashNotPresent);
+    if header.requests_hash.is_some() {
+        return Err(InvalidBlockHeaderError::RequestsHashPresent);
     }
     Ok(())
 }
