@@ -21,7 +21,7 @@ use revm_primitives::SpecId;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    backends::{self, revm::RevmGetStateTransitionsIn, IEVM},
+    backends::{self, IEVM},
     block_env,
     db::{evm_state, StoreWrapper},
     errors::ExecutionDBError,
@@ -185,10 +185,8 @@ impl ExecutionDB {
 
         let mut state = evm_state(store.clone(), block.header.parent_hash);
 
-        backends::revm::REVM::execute_block(block, &mut state).map_err(Box::new)?;
-
-        let account_updates =
-            backends::revm::REVM::get_state_transitions(RevmGetStateTransitionsIn::new(&mut state));
+        let (_, account_updates) =
+            backends::revm::REVM::execute_block(block, &mut state).map_err(Box::new)?;
         Ok(account_updates)
     }
 

@@ -3,11 +3,13 @@ pub mod levm;
 pub mod revm;
 
 use crate::{errors::EvmError, EvmState};
-use ethrex_common::types::{Block, BlockHeader};
+use ethrex_common::types::{Block, BlockHeader, Receipt};
 use ethrex_storage::{error::StoreError, AccountUpdate};
+use levm::LEVM;
+use revm::REVM;
 use std::str::FromStr;
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Default, Clone)]
 pub enum EVM {
     #[default]
     REVM,
@@ -22,6 +24,34 @@ impl FromStr for EVM {
             "revm" => Ok(EVM::REVM),
             _ => Err(EvmError::InvalidEVM(s.to_string())),
         }
+    }
+}
+
+impl EVM {
+    pub fn execute_block(
+        &self,
+        block: &Block,
+        state: &mut EvmState,
+    ) -> Result<(Vec<Receipt>, Vec<AccountUpdate>), EvmError> {
+        match self {
+            EVM::REVM => REVM::execute_block(block, state),
+            EVM::LEVM => LEVM::execute_block(block, state),
+        }
+    }
+
+    #[allow(dead_code)]
+    fn execute_tx() -> Result<(), EvmError> {
+        todo!()
+    }
+
+    #[allow(dead_code)]
+    fn get_state_transitions() -> Vec<AccountUpdate> {
+        todo!()
+    }
+
+    #[allow(dead_code)]
+    fn process_withdrawals() -> Result<(), StoreError> {
+        todo!()
     }
 }
 

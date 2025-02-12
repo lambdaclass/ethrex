@@ -89,7 +89,7 @@ impl<'a> RevmProcessWithdrawalsIn<'a> {
 impl IEVM for REVM {
     type Error = EvmError;
 
-    type BlockExecutionOutput = Vec<Receipt>;
+    type BlockExecutionOutput = (Vec<Receipt>, Vec<AccountUpdate>);
 
     type TransactionExecutionInput<'a> = RevmTransactionExecutionIn<'a>;
 
@@ -140,7 +140,9 @@ impl IEVM for REVM {
             Self::process_withdrawals(RevmProcessWithdrawalsIn::new(state, withdrawals))?;
         }
 
-        Ok(receipts)
+        let account_updates = Self::get_state_transitions(RevmGetStateTransitionsIn::new(state));
+
+        Ok((receipts, account_updates))
     }
 
     fn execute_tx(
