@@ -669,28 +669,26 @@ pub fn balance(address_was_cold: bool, fork: Fork) -> Result<u64, VMError> {
         warm_dyanmic_code,
         fork,
     )
-
-    //     BALANCE_STATIC,
-    //     BALANCE_COLD_DYNAMIC,
-    //     BALANCE_WARM_DYNAMIC,
-    //     f,
-    // ))),
-    // };)
 }
 
 pub fn extcodesize(address_was_cold: bool, fork: Fork) -> Result<u64, VMError> {
-    match fork {
-        f if f < Fork::Tangerine => Ok(EXTCODESIZE_PRE_TANGERINE),
+    let (static_cost, cold_dynamic_code, warm_dyanmic_code) = match fork {
+        f if f < Fork::Tangerine => (EXTCODESIZE_PRE_TANGERINE, 0, 0),
         // https://github.com/ethereum/EIPs/blob/master/EIPS/eip-2929.md#storage-read-changes
-        f if f >= Fork::Tangerine && fork < Fork::Berlin => Ok(EXTCODESIZE_TANGERINE),
-        f => address_access_cost(
-            address_was_cold,
+        f if f >= Fork::Tangerine && fork < Fork::Berlin => (EXTCODESIZE_TANGERINE, 0, 0),
+        _ => (
             EXTCODESIZE_STATIC,
             EXTCODESIZE_COLD_DYNAMIC,
             EXTCODESIZE_WARM_DYNAMIC,
-            f,
         ),
-    }
+    };
+    address_access_cost(
+        address_was_cold,
+        static_cost,
+        cold_dynamic_code,
+        warm_dyanmic_code,
+        fork,
+    )
 }
 
 pub fn extcodecopy(
