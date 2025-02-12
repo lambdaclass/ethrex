@@ -809,11 +809,11 @@ impl StoreEngine for RedBStore {
             STATE_SNAPSHOT_TABLE,
             account_hashes
                 .into_iter()
-                .map(|h| <H256 as Into<AccountHashRLP>>::into(h))
+                .map(<H256 as Into<AccountHashRLP>>::into)
                 .zip(
                     account_states
                         .into_iter()
-                        .map(|a| <AccountState as Into<AccountStateRLP>>::into(a)),
+                        .map(<AccountState as Into<AccountStateRLP>>::into),
                 )
                 .collect::<Vec<_>>(),
         )

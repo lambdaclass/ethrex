@@ -514,7 +514,7 @@ impl StoreEngine for Store {
     ) -> Result<(), StoreError> {
         self.inner()
             .state_snapshot
-            .extend(account_hashes.into_iter().zip(account_states.into_iter()));
+            .extend(account_hashes.into_iter().zip(account_states));
         Ok(())
     }
 
@@ -528,7 +528,7 @@ impl StoreEngine for Store {
             .storage_snapshot
             .entry(account_hash)
             .or_default()
-            .extend(storage_keys.into_iter().zip(storage_values.into_iter()));
+            .extend(storage_keys.into_iter().zip(storage_values));
         Ok(())
     }
 
@@ -543,11 +543,7 @@ impl StoreEngine for Store {
     fn get_state_trie_rebuild_checkpoint(
         &self,
     ) -> Result<Option<(H256, [H256; STATE_TRIE_SEGMENTS])>, StoreError> {
-        Ok(self
-            .inner()
-            .snap_state
-            .state_trie_rebuild_checkpoint
-            .clone())
+        Ok(self.inner().snap_state.state_trie_rebuild_checkpoint)
     }
 
     fn clear_snapshot(&self) -> Result<(), StoreError> {

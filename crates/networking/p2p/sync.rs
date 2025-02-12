@@ -456,7 +456,7 @@ impl SyncManager {
         // Wait for the trie rebuilder to finish
         info!("Waiting for the trie rebuild to finish");
         let rebuild_start = Instant::now();
-        let _ = self.trie_rebuilder.take().unwrap().complete().await?;
+        self.trie_rebuilder.take().unwrap().complete().await?;
         info!(
             "State trie rebuilt from snapshot, overtime: {}",
             rebuild_start.elapsed().as_secs()
@@ -478,7 +478,7 @@ impl SyncManager {
         if !heal_status {
             warn!("Stale pivot, aborting healing");
         }
-        return Ok(heal_status);
+        Ok(heal_status)
     }
 }
 
