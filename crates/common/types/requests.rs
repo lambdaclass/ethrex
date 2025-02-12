@@ -1,4 +1,5 @@
 use ethereum_types::Address;
+use tracing::error;
 
 use super::{Bytes48, Receipt};
 
@@ -43,8 +44,9 @@ impl Requests {
         for r in receipts {
             for log in &r.logs {
                 if log.address == *DEPOSIT_CONTRACT_ADDRESS {
-                    let d = Deposit::from_abi_byte_array(&log.data);
-                    deposits.push(d);
+                    if let Some(d) = Deposit::from_abi_byte_array(&log.data) {
+                        deposits.push(d);
+                    }
                 }
             }
         }
@@ -64,10 +66,10 @@ pub struct Deposit {
 // Followed and ported implementation from:
 // https://github.com/lightclient/go-ethereum/blob/5c4d46f3614d26654241849da7dfd46b95eed1c6/core/types/deposit.go#L61
 impl Deposit {
-    pub fn from_abi_byte_array(data: &[u8]) -> Deposit {
-        // TODO: Handle errors
+    pub fn from_abi_byte_array(data: &[u8]) -> Option<Deposit> {
         if data.len() != 576 {
-            panic!("Wrong data length");
+            error!("Wrong data length when parsing deposit.");
+            return None;
         }
 
         //Encoding scheme:
@@ -83,23 +85,23 @@ impl Deposit {
 
         let mut p = 32 * 5 + 32;
 
-        let pub_key: Bytes48 = fixed_bytes_panic::<48>(data, p);
+        let pub_key: Bytes48 = fixed_bytes::<48>(data, p);
         p += 48 + 16 + 32;
-        let withdrawal_credentials: Bytes32 = fixed_bytes_panic::<32>(data, p);
+        let withdrawal_credentials: Bytes32 = fixed_bytes::<32>(data, p);
         p += 32 + 32;
-        let amount: u64 = u64::from_le_bytes(fixed_bytes_panic::<8>(data, p));
+        let amount: u64 = u64::from_le_bytes(fixed_bytes::<8>(data, p));
         p += 8 + 24 + 32;
-        let signature: Bytes96 = fixed_bytes_panic::<96>(data, p);
+        let signature: Bytes96 = fixed_bytes::<96>(data, p);
         p += 96 + 32;
-        let index: u64 = u64::from_le_bytes(fixed_bytes_panic::<8>(data, p));
+        let index: u64 = u64::from_le_bytes(fixed_bytes::<8>(data, p));
 
-        Deposit {
+        Some(Deposit {
             pub_key,
             withdrawal_credentials,
             amount,
             signature,
             index,
-        }
+        })
     }
 
     pub fn to_summarized_byte_array(&self) -> [u8; 192] {
@@ -120,7 +122,7 @@ impl Deposit {
     }
 }
 
-fn fixed_bytes_panic<const N: usize>(data: &[u8], offset: usize) -> [u8; N] {
+fn fixed_bytes<const N: usize>(data: &[u8], offset: usize) -> [u8; N] {
     data.get(offset..offset + N)
         .expect("Couldn't convert to fixed bytes")
         .try_into()

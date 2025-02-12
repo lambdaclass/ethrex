@@ -19,7 +19,7 @@ fn parse_and_execute(path: &Path) -> datatest_stable::Result<()> {
         if test.network < Network::Merge || SKIPPED_TEST.contains(&test_key.as_str()) {
             // Discard this test
             continue;
-        };
+        }
 
         run_ef_test(&test_key, &test);
     }
