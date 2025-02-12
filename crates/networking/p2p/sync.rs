@@ -509,7 +509,6 @@ async fn state_sync(
         ));
     }
     show_progress_handle.await?;
-    info!("Finished state sync!");
     // Check for pivot staleness
     let mut stale_pivot = false;
     let mut state_trie_checkpoint = [H256::zero(); STATE_TRIE_SEGMENTS];
@@ -1208,7 +1207,6 @@ async fn rebuild_state_trie_in_backgound(
             .unwrap_or(STATE_TRIE_SEGMENTS_START[i]),
         end: STATE_TRIE_SEGMENTS_END[i],
     });
-    info!("rebuild status: {rebuild_status:?}");
     let mut root = checkpoint.map(|(root, _)| root).unwrap_or(*EMPTY_TRIE_HASH);
     let mut current_segment = 0;
     let start_time = Instant::now();
@@ -1228,10 +1226,6 @@ async fn rebuild_state_trie_in_backgound(
         if cancel_token.is_cancelled() {
             return Ok(());
         }
-        info!(
-            "Segment {current_segment}, complete: {}",
-            rebuild_status[current_segment].complete()
-        );
         if !rebuild_status[current_segment].complete() {
             // Start rebuilding the current trie segment
             let (current_root, current_hash) = rebuild_state_trie_segment(
@@ -1242,7 +1236,6 @@ async fn rebuild_state_trie_in_backgound(
                 cancel_token.clone(),
             )
             .await?;
-            info!("Rebuild of segment {current_segment} yielded new current hash: {current_hash}");
             // Update status
             root = current_root;
             rebuild_status[current_segment].current = current_hash;
@@ -1285,7 +1278,6 @@ async fn rebuild_state_trie_segment(
             let state_sync_complete = store
                 .get_state_trie_key_checkpoint()?
                 .is_some_and(|ch| ch[segment_number] == STATE_TRIE_SEGMENTS_END[segment_number]);
-            info!("Unfilled batch but state sync complete? {state_sync_complete}");
             // Mark segment as finished if state sync is complete
             if state_sync_complete {
                 start = STATE_TRIE_SEGMENTS_END[segment_number];
@@ -1309,10 +1301,6 @@ async fn rebuild_storage_trie_in_background(
     let mut mismatched_storages: Vec<H256> = vec![];
     let mut incoming = true;
     while incoming || !pending_storages.is_empty() {
-        info!(
-            "[Storage rebuild loop] Trie rebuilder channel closed? {}",
-            receiver.is_closed()
-        );
         if cancel_token.is_cancelled() {
             break;
         }
@@ -1359,7 +1347,6 @@ async fn rebuild_storage_trie(
     loop {
         let batch = store.iter_storage_snapshot(account_hash, start)?;
         let unfilled_batch = batch.len() < 100;
-        info!("Fetched snapshot batch of size {}", batch.len());
         // Update start
         if let Some(last) = batch.last() {
             start = last.0;
