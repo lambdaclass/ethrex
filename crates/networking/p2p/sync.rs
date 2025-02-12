@@ -76,7 +76,7 @@ pub struct SyncManager {
 #[derive(Debug)]
 struct TrieRebuilder {
     state_trie_rebuilder: tokio::task::JoinHandle<Result<(), SyncError>>,
-    storage_trie_rebuilder: tokio::task::JoinHandle<Result<Vec<H256>, SyncError>>,
+    storage_trie_rebuilder: tokio::task::JoinHandle<Result<(), SyncError>>,
     storage_rebuilder_sender: Sender<Vec<(H256, H256)>>,
 }
 
@@ -88,7 +88,7 @@ impl TrieRebuilder {
             || self.storage_rebuilder_sender.is_closed())
     }
     /// Waits for the rebuild process to complete and returns the resulting mismatched accounts
-    async fn complete(self) -> Result<Vec<H256>, SyncError> {
+    async fn complete(self) -> Result<(), SyncError> {
         // Signal storage rebuilder to finish
         self.storage_rebuilder_sender.send(vec![]).await?;
         self.state_trie_rebuilder.await??;
@@ -404,10 +404,28 @@ impl SyncManager {
     // new blocks can be executed on top of it, if false then the state is still inconsistent and
     // snap sync must be resumed on the next sync cycle
     async fn snap_sync(&mut self, state_root: H256, store: Store) -> Result<bool, SyncError> {
+        // Begin the background trie rebuild process if it is not active yet or if it crashed
+        if !self
+        .trie_rebuilder
+        .as_ref()
+        .is_some_and(|rebuilder| rebuilder.alive())
+    {
+        self.trie_rebuilder = Some(TrieRebuilder::startup(
+            self.cancel_token.clone(),
+            store.clone(),
+        ));
+    };
+    // Spawn storage healer earlier so we can start healing stale storages
+    let (storage_healer_sender, storage_healer_receiver) = mpsc::channel::<Vec<H256>>(MAX_CHANNEL_MESSAGES);
+    let storage_healer_handler = tokio::spawn(storage_healer(
+        state_root,
+        storage_healer_receiver,
+        self.peers.clone(),
+        store.clone(),
+    ));
+    // Perform state sync if it was not already completed on a previous cycle
         // Retrieve storage data to check which snap sync phase we are in
         let key_checkpoints = store.get_state_trie_key_checkpoint()?;
-        let mut pending_storage_paths = store.get_storage_heal_paths()?;
-        let pending_state_paths = store.get_state_heal_paths()?;
         // If we have no key checkpoints or if the key checkpoints are lower than the segment boundaries we are in state sync phase
         if key_checkpoints.is_none()
             || key_checkpoints.is_some_and(|ch| {
@@ -416,17 +434,6 @@ impl SyncManager {
                     .any(|(ch, end)| ch < end)
             })
         {
-            // Begin the background state rebuild process if it is not active yet or if it crashed
-            if !self
-                .trie_rebuilder
-                .as_ref()
-                .is_some_and(|rebuilder| rebuilder.alive())
-            {
-                self.trie_rebuilder = Some(TrieRebuilder::startup(
-                    self.cancel_token.clone(),
-                    store.clone(),
-                ));
-            };
             let stale_pivot = state_sync(
                 state_root,
                 store.clone(),
@@ -437,6 +444,7 @@ impl SyncManager {
                     .unwrap()
                     .storage_rebuilder_sender
                     .clone(),
+                    storage_healer_sender.clone(),
             )
             .await?;
             if stale_pivot {
@@ -444,34 +452,28 @@ impl SyncManager {
                 return Ok(false);
             }
         }
-        // If we have no pending storage or state paths then wait for the trie rebuild to finish
-        if pending_storage_paths.is_none() && pending_state_paths.is_none() {
-            info!("Waiting for the trie rebuild to finish");
+        // Wait for the trie rebuilder to finish
+        info!("Waiting for the trie rebuild to finish");
             let rebuild_start = Instant::now();
-            let paths = self.trie_rebuilder.take().unwrap().complete().await?;
+            let _ = self.trie_rebuilder.take().unwrap().complete().await?;
             info!(
-                "State trie rebuilt from snapshot, identified {} incomplete storage tries, overtime: {}",
-                paths.len(),
+                "State trie rebuilt from snapshot, overtime: {}",
                 rebuild_start.elapsed().as_secs()
             );
-            pending_storage_paths = Some(
-                paths
-                    .into_iter()
-                    .map(|h| (h, vec![Nibbles::default()]))
-                    .collect(),
-            )
-        }
-        // Clear snapshot
-        store.clear_snapshot()?;
+                // Clear snapshot
+                store.clear_snapshot()?;
+
         // Perfrom Healing
         let heal_status = heal_state_trie(
             state_root,
             store.clone(),
             self.peers.clone(),
-            pending_state_paths,
-            pending_storage_paths,
+            storage_healer_sender.clone(),
         )
         .await?;
+        // Send empty batch to signal that no more batches are incoming
+        storage_healer_sender.send(vec![]).await?;
+        storage_healer_handler.await??;
         if !heal_status {
             warn!("Stale pivot, aborting healing");
         }
@@ -491,6 +493,7 @@ async fn state_sync(
     peers: PeerHandler,
     key_checkpoints: Option<[H256; STATE_TRIE_SEGMENTS]>,
     storage_trie_rebuilder_sender: Sender<Vec<(H256, H256)>>,
+    storage_healer_sender: Sender<Vec<H256>>,
 ) -> Result<bool, SyncError> {
     // Spawn tasks to fetch each state trie segment
     let mut state_trie_tasks = tokio::task::JoinSet::new();
@@ -507,6 +510,7 @@ async fn state_sync(
             key_checkpoints.map(|chs| chs[i]),
             state_sync_progress.clone(),
             storage_trie_rebuilder_sender.clone(),
+            storage_healer_sender.clone(),
         ));
     }
     show_progress_handle.await?;
@@ -536,6 +540,7 @@ async fn state_sync_segment(
     checkpoint: Option<H256>,
     state_sync_progress: StateSyncProgress,
     storage_trie_rebuilder_sender: Sender<Vec<(H256, H256)>>,
+    storage_healer_sender: Sender<Vec<H256>>,
 ) -> Result<(usize, bool, H256), SyncError> {
     // Resume download from checkpoint if available or start from an empty trie
     let mut start_account_hash = checkpoint.unwrap_or(STATE_TRIE_SEGMENTS_START[segment_number]);
@@ -569,6 +574,7 @@ async fn state_sync_segment(
         store.clone(),
         state_root,
         storage_trie_rebuilder_sender.clone(),
+        storage_healer_sender.clone()
     ));
     info!("Starting/Resuming state trie download of segment number {segment_number} from key {start_account_hash}");
     // Fetch Account Ranges
@@ -713,6 +719,7 @@ async fn storage_fetcher(
     store: Store,
     state_root: H256,
     storage_trie_rebuilder_sender: Sender<Vec<(H256, H256)>>,
+    storage_healer_sender: Sender<Vec<H256>>,
 ) -> Result<(), SyncError> {
     // Pending list of storages to fetch
     let mut pending_storage: Vec<(H256, H256)> = vec![];
@@ -773,6 +780,7 @@ async fn storage_fetcher(
         "Concluding storage fetcher, {} storages left in queue to be healed later",
         pending_storage.len()
     );
+    storage_healer_sender.send(pending_storage.into_iter().map(|(hash, _)| hash).collect()).await?;
     Ok(())
 }
 
@@ -905,26 +913,13 @@ async fn heal_state_trie(
     state_root: H256,
     store: Store,
     peers: PeerHandler,
-    pending_state_paths: Option<Vec<Nibbles>>,
-    pending_storage_paths: Option<Vec<(H256, Vec<Nibbles>)>>,
+    storage_healer_sender: Sender<Vec<H256>>,
 ) -> Result<bool, SyncError> {
-    let pending_storage_paths = pending_storage_paths
-        .unwrap_or_default()
-        .into_iter()
-        .collect();
-    let mut paths = pending_state_paths.unwrap_or_default();
-    // Spawn a storage healer and a bytecode fetcher for this blocks
-    let (storage_sender, storage_receiver) = mpsc::channel::<Vec<H256>>(MAX_CHANNEL_MESSAGES);
+    let mut paths = store.get_state_heal_paths()?.unwrap_or_default();
+    // Spawn a bytecode fetcher for this block
     let (bytecode_sender, bytecode_receiver) = mpsc::channel::<Vec<H256>>(MAX_CHANNEL_MESSAGES);
     let bytecode_fetcher_handle = tokio::spawn(bytecode_fetcher(
         bytecode_receiver,
-        peers.clone(),
-        store.clone(),
-    ));
-    let storage_healer_handler = tokio::spawn(storage_healer(
-        state_root,
-        pending_storage_paths,
-        storage_receiver,
         peers.clone(),
         store.clone(),
     ));
@@ -941,7 +936,7 @@ async fn heal_state_trie(
                 batch,
                 peers.clone(),
                 store.clone(),
-                storage_sender.clone(),
+                storage_healer_sender.clone(),
                 bytecode_sender.clone(),
             ));
             // End loop if we have no more paths to fetch
@@ -968,17 +963,8 @@ async fn heal_state_trie(
     }
     // Send empty batch to signal that no more batches are incoming
     bytecode_sender.send(vec![]).await?;
-    storage_sender.send(vec![]).await?;
     bytecode_fetcher_handle.await??;
-    let storage_heal_paths = storage_healer_handler.await??;
-    // Update pending list
-    // If a storage trie was left mid-healing we will heal it again
-    let storage_healing_succesful = storage_heal_paths.is_empty();
-    if !storage_healing_succesful {
-        debug!("{} storages with pending healing", storage_heal_paths.len());
-        store.set_storage_heal_paths(storage_heal_paths.into_iter().collect())?;
-    }
-    Ok(paths.is_empty() && storage_healing_succesful)
+    Ok(paths.is_empty())
 }
 
 /// Receives a set of state trie paths, fetches their respective nodes, stores them,
@@ -1052,11 +1038,11 @@ async fn heal_state_batch(
 /// Receives the prending storages from a previous iteration
 async fn storage_healer(
     state_root: H256,
-    mut pending_paths: BTreeMap<H256, Vec<Nibbles>>,
     mut receiver: Receiver<Vec<H256>>,
     peers: PeerHandler,
     store: Store,
 ) -> Result<BTreeMap<H256, Vec<Nibbles>>, SyncError> {
+    let mut pending_paths: BTreeMap<H256, Vec<Nibbles>> = store.get_storage_heal_paths()?.unwrap_or_default().into_iter().collect();
     // The pivot may become stale while the fetcher is active, we will still keep the process
     // alive until the end signal so we don't lose queued messages
     let mut stale = false;
@@ -1294,12 +1280,11 @@ async fn rebuild_storage_trie_in_background(
     store: Store,
     cancel_token: CancellationToken,
     mut receiver: Receiver<Vec<(H256, H256)>>,
-) -> Result<Vec<H256>, SyncError> {
+) -> Result<(), SyncError> {
     // (AccountHash, ExpectedRoot)
     let mut pending_storages = store
         .get_storage_trie_rebuild_pending()?
         .unwrap_or_default();
-    let mut mismatched_storages: Vec<H256> = vec![];
     let mut incoming = true;
     while incoming || !pending_storages.is_empty() {
         if cancel_token.is_cancelled() {
@@ -1328,22 +1313,20 @@ async fn rebuild_storage_trie_in_background(
             ));
         }
         for res in rebuild_tasks.join_all().await {
-            if let Some(hash) = res? {
-                mismatched_storages.push(hash)
-            }
+            res?;
         }
     }
     store.set_storage_trie_rebuild_pending(pending_storages)?;
-    Ok(mismatched_storages)
+    Ok(())
 }
 
 /// Asumes that the storage has been fully downloaded
-/// Returns the account hash if the rebuilt root doesn't match the expected root
+/// Warns if the storage doesn't match
 async fn rebuild_storage_trie(
     account_hash: H256,
     expected_root: H256,
     store: Store,
-) -> Result<Option<H256>, SyncError> {
+) -> Result<(), SyncError> {
     let mut start = H256::zero();
     let mut storage_trie = store.open_storage_trie(account_hash, *EMPTY_TRIE_HASH);
     loop {
@@ -1365,8 +1348,10 @@ async fn rebuild_storage_trie(
             break;
         }
     }
-    let root = storage_trie.hash()?;
-    Ok((root != expected_root).then_some(root))
+    if storage_trie.hash()? != expected_root {
+        warn!("Mismatched storage root for account {account_hash}");
+    }
+    Ok(())
 }
 
 /// Helper method to insert a batch of accounts into a state trie
