@@ -2,12 +2,14 @@ mod constants;
 pub mod levm;
 pub mod revm;
 
-use crate::{errors::EvmError, EvmState};
-use ethrex_common::types::{Block, BlockHeader, Receipt};
+use crate::{db::StoreWrapper, errors::EvmError, spec_id, EvmState};
+use ethrex_common::types::{Block, BlockHeader, ChainConfig, Receipt, Transaction};
+use ethrex_levm::db::CacheDB;
 use ethrex_storage::{error::StoreError, AccountUpdate};
-use levm::LEVM;
-use revm::REVM;
+use levm::{LevmTransactionExecutionIn, LEVM};
+use revm::{RevmTransactionExecutionIn, REVM};
 use std::str::FromStr;
+use std::sync::Arc;
 
 #[derive(Debug, Default, Clone)]
 pub enum EVM {
@@ -28,6 +30,7 @@ impl FromStr for EVM {
 }
 
 impl EVM {
+    /// Wraps [IEVM::execute_block]. The output is `(Vec<Receipt>, Vec<AccountUpdate>)`
     pub fn execute_block(
         &self,
         block: &Block,
@@ -39,9 +42,73 @@ impl EVM {
         }
     }
 
-    #[allow(dead_code)]
-    fn execute_tx() -> Result<(), EvmError> {
-        todo!()
+    pub fn execute_tx(
+        &self,
+        state: &mut EvmState,
+        tx: &Transaction,
+        block_header: &BlockHeader,
+        block_cache: &mut CacheDB,
+        chain_config: &ChainConfig,
+        remaining_gas: &mut u64,
+    ) -> Result<(Receipt, u64), EvmError> {
+        match self {
+            EVM::REVM => {
+                let input = RevmTransactionExecutionIn::new(
+                    tx,
+                    block_header,
+                    state,
+                    spec_id(chain_config, block_header.timestamp),
+                );
+                let execution_result = REVM::execute_tx(input)?;
+
+                *remaining_gas = remaining_gas.saturating_sub(execution_result.gas_used());
+
+                let receipt = Receipt::new(
+                    tx.tx_type(),
+                    execution_result.is_success(),
+                    block_header.gas_limit - *remaining_gas,
+                    execution_result.logs(),
+                );
+
+                Ok((receipt, execution_result.gas_used()))
+            }
+            EVM::LEVM => {
+                let store_wrapper = Arc::new(StoreWrapper {
+                    store: state.database().unwrap().clone(),
+                    block_hash: block_header.parent_hash,
+                });
+
+                let input = LevmTransactionExecutionIn::new(
+                    tx,
+                    block_header,
+                    store_wrapper.clone(),
+                    block_cache,
+                    chain_config,
+                );
+                let execution_report = LEVM::execute_tx(input)?;
+
+                *remaining_gas = remaining_gas.saturating_sub(execution_report.gas_used);
+
+                let mut new_state = execution_report.new_state.clone();
+
+                // Now original_value is going to be the same as the current_value, for the next transaction.
+                // It should have only one value but it is convenient to keep on using our CacheDB structure
+                for account in new_state.values_mut() {
+                    for storage_slot in account.storage.values_mut() {
+                        storage_slot.original_value = storage_slot.current_value;
+                    }
+                }
+                block_cache.extend(new_state);
+
+                let receipt = Receipt::new(
+                    tx.tx_type(),
+                    execution_report.is_success(),
+                    block_header.gas_limit - *remaining_gas,
+                    execution_report.logs.clone(),
+                );
+                Ok((receipt, execution_report.gas_used))
+            }
+        }
     }
 
     #[allow(dead_code)]

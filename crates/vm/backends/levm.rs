@@ -35,7 +35,7 @@ pub struct LevmTransactionExecutionIn<'a> {
     /// The database to use for EVM state access.  This is wrapped in an `Arc` for shared ownership.
     db: Arc<dyn LevmDatabase>,
     /// A cache database for intermediate state changes during execution.
-    block_cache: CacheDB,
+    block_cache: &'a mut CacheDB,
     /// The EVM configuration to use.
     config: &'a ChainConfig,
 }
@@ -45,7 +45,7 @@ impl<'a> LevmTransactionExecutionIn<'a> {
         tx: &'a Transaction,
         block_header: &'a BlockHeader,
         db: Arc<dyn LevmDatabase>,
-        block_cache: CacheDB,
+        block_cache: &'a mut CacheDB,
         config: &'a ChainConfig,
     ) -> Self {
         LevmTransactionExecutionIn {
@@ -158,7 +158,7 @@ impl IEVM for LEVM {
                 tx,
                 block_header,
                 store_wrapper.clone(),
-                block_cache.clone(),
+                &mut block_cache,
                 &config,
             ))
             .map_err(EvmError::from)?;
@@ -257,7 +257,7 @@ impl IEVM for LEVM {
             tx.value(),
             tx.data().clone(),
             input.db,
-            input.block_cache,
+            input.block_cache.clone(),
             tx.access_list(),
             tx.authorization_list(),
         )?;

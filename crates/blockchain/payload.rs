@@ -17,14 +17,8 @@ use ethrex_common::{
 use ethrex_vm::{
     backends::{
         self,
-        levm::{
-            CacheDB, LevmGetStateTransitionsIn, LevmProcessWithdrawalsIn, LevmSystemCallIn,
-            LevmTransactionExecutionIn,
-        },
-        revm::{
-            RevmGetStateTransitionsIn, RevmProcessWithdrawalsIn, RevmSystemCallIn,
-            RevmTransactionExecutionIn,
-        },
+        levm::{CacheDB, LevmGetStateTransitionsIn, LevmProcessWithdrawalsIn, LevmSystemCallIn},
+        revm::{RevmGetStateTransitionsIn, RevmProcessWithdrawalsIn, RevmSystemCallIn},
         SystemContracts, EVM, IEVM,
     },
     db::{evm_state, EvmState, StoreWrapper},
@@ -551,66 +545,17 @@ fn apply_plain_transaction(
     head: &HeadTransaction,
     context: &mut PayloadBuildContext,
 ) -> Result<Receipt, ChainError> {
-    match EVM_BACKEND.get() {
-        Some(EVM::LEVM) => {
-            let store_wrapper = Arc::new(StoreWrapper {
-                store: context.evm_state.database().unwrap().clone(),
-                block_hash: context.payload.header.parent_hash,
-            });
-
-            let report = backends::levm::LEVM::execute_tx(LevmTransactionExecutionIn::new(
-                &head.tx,
-                &context.payload.header,
-                store_wrapper.clone(),
-                context.block_cache.clone(),
-                &context.chain_config()?,
-            ))
-            .map_err(|e| EvmError::Transaction(format!("Invalid Transaction: {e:?}")))?;
-            context.remaining_gas = context.remaining_gas.saturating_sub(report.gas_used);
-            context.block_value += U256::from(report.gas_used) * head.tip;
-
-            let mut new_state = report.new_state.clone();
-
-            // Now original_value is going to be the same as the current_value, for the next transaction.
-            // It should have only one value but it is convenient to keep on using our CacheDB structure
-            for account in new_state.values_mut() {
-                for storage_slot in account.storage.values_mut() {
-                    storage_slot.original_value = storage_slot.current_value;
-                }
-            }
-
-            context.block_cache.extend(new_state);
-
-            let receipt = Receipt::new(
-                head.tx.tx_type(),
-                report.is_success(),
-                context.payload.header.gas_limit - context.remaining_gas,
-                report.logs.clone(),
-            );
-            Ok(receipt)
-        }
-        // This means we are using REVM as default for tests
-        Some(EVM::REVM) | None => {
-            let report = backends::revm::REVM::execute_tx(RevmTransactionExecutionIn::new(
-                &head.tx,
-                &context.payload.header,
-                context.evm_state,
-                spec_id(
-                    &context.chain_config().map_err(ChainError::from)?,
-                    context.payload.header.timestamp,
-                ),
-            ))?;
-            context.remaining_gas = context.remaining_gas.saturating_sub(report.gas_used());
-            context.block_value += U256::from(report.gas_used()) * head.tip;
-            let receipt = Receipt::new(
-                head.tx.tx_type(),
-                report.is_success(),
-                context.payload.header.gas_limit - context.remaining_gas,
-                report.logs(),
-            );
-            Ok(receipt)
-        }
-    }
+    let chain_config = context.chain_config()?;
+    let (report, gas_used) = EVM_BACKEND.get().unwrap_or(&EVM::default()).execute_tx(
+        context.evm_state,
+        &head.tx,
+        &context.payload.header,
+        &mut context.block_cache,
+        &chain_config,
+        &mut context.remaining_gas,
+    )?;
+    context.block_value += U256::from(gas_used) * head.tip;
+    Ok(report)
 }
 
 fn finalize_payload(context: &mut PayloadBuildContext) -> Result<(), StoreError> {
