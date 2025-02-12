@@ -1109,17 +1109,30 @@ impl Store {
         self.engine.rebuild_storage_trie_from_snapshot(account_hash)
     }
 
-    pub fn set_trie_rebuild_checkpoint(
+    pub fn set_state_trie_rebuild_checkpoint(
         &self,
         checkpoint: (H256, [H256; STATE_TRIE_SEGMENTS]),
     ) -> Result<(), StoreError> {
-        self.engine.set_trie_rebuild_checkpoint(checkpoint)
+        self.engine.set_state_trie_rebuild_checkpoint(checkpoint)
     }
 
-    pub fn get_trie_rebuild_checkpoint(
+    pub fn get_state_trie_rebuild_checkpoint(
         &self,
     ) -> Result<Option<(H256, [H256; STATE_TRIE_SEGMENTS])>, StoreError> {
-        self.engine.get_trie_rebuild_checkpoint()
+        self.engine.get_state_trie_rebuild_checkpoint()
+    }
+
+    pub fn set_storage_trie_rebuild_pending(
+        &self,
+        pending: Vec<(H256, H256)>,
+    ) -> Result<(), StoreError> {
+        self.engine.set_storage_trie_rebuild_pending(pending)
+    }
+
+    pub fn get_storage_trie_rebuild_pending(
+        &self,
+    ) -> Result<Option<Vec<(H256, H256)>>, StoreError> {
+        self.engine.get_storage_trie_rebuild_pending()
     }
 
     pub fn clear_snapshot(&self) -> Result<(), StoreError> {

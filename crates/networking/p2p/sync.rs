@@ -72,6 +72,7 @@ pub struct SyncManager {
     cancel_token: CancellationToken,
 }
 
+/// Represents the permanently ongoing background trie rebuild process
 #[derive(Debug)]
 struct TrieRebuilder {
     state_trie_rebuilder: tokio::task::JoinHandle<Result<(), SyncError>>,
@@ -1200,7 +1201,7 @@ async fn rebuild_state_trie_in_backgound(
 ) -> Result<(), SyncError> {
     info!("Spawning trie rebuilder");
     // Get initial status from checkpoint if available (aka node restart)
-    let checkpoint = store.get_trie_rebuild_checkpoint()?;
+    let checkpoint = store.get_state_trie_rebuild_checkpoint()?;
     let mut rebuild_status = array::from_fn(|i| SegmentStatus {
         current: checkpoint
             .map(|(_, ch)| ch[i])
@@ -1242,7 +1243,7 @@ async fn rebuild_state_trie_in_backgound(
         }
         // Update DB checkpoint
         let checkpoint = (root, rebuild_status.clone().map(|st| st.current));
-        store.set_trie_rebuild_checkpoint(checkpoint)?;
+        store.set_state_trie_rebuild_checkpoint(checkpoint)?;
         // Move on to the next segment
         current_segment = (current_segment + 1) % STATE_TRIE_SEGMENTS
     }
@@ -1268,7 +1269,7 @@ async fn rebuild_state_trie_segment(
         let unfilled_batch = batch.len() < 100;
         // Update start
         if let Some(last) = batch.last() {
-            start = last.0;
+            start = next_hash(last.0);
         }
         // Process batch
         // Add accounts to state trie
@@ -1294,10 +1295,10 @@ async fn rebuild_storage_trie_in_background(
     cancel_token: CancellationToken,
     mut receiver: Receiver<Vec<(H256, H256)>>,
 ) -> Result<Vec<H256>, SyncError> {
-    // TODO: fetch from DB checkpoint
     // (AccountHash, ExpectedRoot)
-    // TODO: Use checkpoints
-    let mut pending_storages: Vec<(H256, H256)> = vec![];
+    let mut pending_storages = store
+        .get_storage_trie_rebuild_pending()?
+        .unwrap_or_default();
     let mut mismatched_storages: Vec<H256> = vec![];
     let mut incoming = true;
     while incoming || !pending_storages.is_empty() {
@@ -1332,6 +1333,7 @@ async fn rebuild_storage_trie_in_background(
             }
         }
     }
+    store.set_storage_trie_rebuild_pending(pending_storages)?;
     Ok(mismatched_storages)
 }
 
@@ -1349,7 +1351,7 @@ async fn rebuild_storage_trie(
         let unfilled_batch = batch.len() < 100;
         // Update start
         if let Some(last) = batch.last() {
-            start = last.0;
+            start = next_hash(last.0);
         }
         // Process batch
         // Launch storage rebuild tasks for all non-empty storages
@@ -1506,6 +1508,11 @@ fn seconds_to_readable(seconds: U512) -> String {
         return format!("Over {days} days");
     }
     format!("{hours}h{minutes}m{seconds}s")
+}
+
+/// Returns hash + 1
+fn next_hash(hash: H256) -> H256 {
+    H256::from_uint(&(hash.into_uint() + 1))
 }
 
 #[derive(thiserror::Error, Debug)]

@@ -530,14 +530,14 @@ impl StoreEngine for Store {
         todo!()
     }
 
-    fn set_trie_rebuild_checkpoint(
+    fn set_state_trie_rebuild_checkpoint(
         &self,
         checkpoint: (H256, [H256; STATE_TRIE_SEGMENTS]),
     ) -> Result<(), StoreError> {
         todo!()
     }
 
-    fn get_trie_rebuild_checkpoint(
+    fn get_state_trie_rebuild_checkpoint(
         &self,
     ) -> Result<Option<(H256, [H256; STATE_TRIE_SEGMENTS])>, StoreError> {
         todo!()
@@ -563,6 +563,17 @@ impl StoreEngine for Store {
         start: H256,
         account_hash: H256,
     ) -> Result<Vec<(H256, U256)>, StoreError> {
+        todo!()
+    }
+
+    fn set_storage_trie_rebuild_pending(
+        &self,
+        pending: Vec<(H256, H256)>,
+    ) -> Result<(), StoreError> {
+        todo!()
+    }
+
+    fn get_storage_trie_rebuild_pending(&self) -> Result<Option<Vec<(H256, H256)>>, StoreError> {
         todo!()
     }
 }

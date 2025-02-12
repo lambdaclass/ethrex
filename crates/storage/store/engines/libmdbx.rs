@@ -718,21 +718,21 @@ impl StoreEngine for Store {
         Ok((current_hash, state_trie.hash()?, storages))
     }
 
-    fn set_trie_rebuild_checkpoint(
+    fn set_state_trie_rebuild_checkpoint(
         &self,
         checkpoint: (H256, [H256; STATE_TRIE_SEGMENTS]),
     ) -> Result<(), StoreError> {
         self.write::<SnapState>(
-            SnapStateIndex::TrieRebuildCheckpoint,
+            SnapStateIndex::StateTrieRebuildCheckpoint,
             (checkpoint.0, checkpoint.1.to_vec()).encode_to_vec(),
         )
     }
 
-    fn get_trie_rebuild_checkpoint(
+    fn get_state_trie_rebuild_checkpoint(
         &self,
     ) -> Result<Option<(H256, [H256; STATE_TRIE_SEGMENTS])>, StoreError> {
         let Some((root, checkpoints)) = self
-            .read::<SnapState>(SnapStateIndex::TrieRebuildCheckpoint)?
+            .read::<SnapState>(SnapStateIndex::StateTrieRebuildCheckpoint)?
             .map(|ref c| <(H256, Vec<H256>)>::decode(c))
             .transpose()?
         else {
@@ -744,6 +744,23 @@ impl StoreEngine for Store {
                 .try_into()
                 .map_err(|_| RLPDecodeError::InvalidLength)?,
         )))
+    }
+
+    fn set_storage_trie_rebuild_pending(
+        &self,
+        pending: Vec<(H256, H256)>,
+    ) -> Result<(), StoreError> {
+        self.write::<SnapState>(
+            SnapStateIndex::StorageTrieRebuildPending,
+            pending.encode_to_vec(),
+        )
+    }
+
+    fn get_storage_trie_rebuild_pending(&self) -> Result<Option<Vec<(H256, H256)>>, StoreError> {
+        self.read::<SnapState>(SnapStateIndex::StorageTrieRebuildPending)?
+            .map(|ref h| <Vec<(H256, H256)>>::decode(h))
+            .transpose()
+            .map_err(StoreError::RLPDecode)
     }
 
     fn clear_snapshot(&self) -> Result<(), StoreError> {
