@@ -158,6 +158,7 @@ pub const STATICCALL_COLD_DYNAMIC: u64 = DEFAULT_COLD_DYNAMIC;
 pub const STATICCALL_WARM_DYNAMIC: u64 = DEFAULT_WARM_DYNAMIC;
 
 // Costs in gas for call opcodes
+pub const ADDRESS_COST_PRE_DAO: u64 = 40;
 pub const ADDRESS_COST_PRE_BERLIN: u64 = 700;
 pub const WARM_ADDRESS_ACCESS_COST: u64 = 100;
 pub const COLD_ADDRESS_ACCESS_COST: u64 = 2600;
@@ -662,7 +663,7 @@ fn address_access_cost(
     fork: Fork,
 ) -> Result<u64, VMError> {
     if fork <= Fork::DaoFork {
-        Ok(40)
+        Ok(ADDRESS_COST_PRE_DAO)
     } else if fork > Fork::DaoFork && fork <= Fork::Berlin {
         // [EIP-2929](https://eips.ethereum.org/EIPS/eip-2929)
         Ok(ADDRESS_COST_PRE_BERLIN)
