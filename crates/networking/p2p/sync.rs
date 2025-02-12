@@ -1273,10 +1273,6 @@ async fn rebuild_state_trie_segment(
         // Remove out of bounds elements
         batch.retain(|(hash, _)| *hash <= STATE_TRIE_SEGMENTS_END[segment_number]);
         let unfilled_batch = batch.len() < 100;
-        // If this is not the first rebuild loop, discard the first element as we have already processed it
-        if !batch.is_empty() && start == STATE_TRIE_SEGMENTS_START[segment_number] {
-            batch.remove(0);
-        }
         // Update start
         if let Some(last) = batch.last() {
             start = last.0;
@@ -1311,8 +1307,12 @@ async fn rebuild_storage_trie_in_background(
     // TODO: Use checkpoints
     let mut pending_storages: Vec<(H256, H256)> = vec![];
     let mut mismatched_storages: Vec<H256> = vec![];
-    let mut incoming = false;
+    let mut incoming = true;
     while incoming || !pending_storages.is_empty() {
+        info!(
+            "[Storage rebuild loop] Trie rebuilder channel closed? {}",
+            receiver.is_closed()
+        );
         if cancel_token.is_cancelled() {
             break;
         }
@@ -1357,13 +1357,9 @@ async fn rebuild_storage_trie(
     let mut start = H256::zero();
     let mut storage_trie = store.open_storage_trie(account_hash, *EMPTY_TRIE_HASH);
     loop {
-        let mut batch = store.iter_storage_snapshot(account_hash, start)?;
+        let batch = store.iter_storage_snapshot(account_hash, start)?;
         let unfilled_batch = batch.len() < 100;
         info!("Fetched snapshot batch of size {}", batch.len());
-        // If this is not the first rebuild loop, discard the first element as we have already processed it
-        if !batch.is_empty() && start.is_zero() {
-            batch.remove(0);
-        }
         // Update start
         if let Some(last) = batch.last() {
             start = last.0;
