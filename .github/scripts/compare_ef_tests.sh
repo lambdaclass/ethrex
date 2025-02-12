@@ -27,7 +27,9 @@ do
    result_pr=${result_pr%(*}
    percentage_pr=$(echo "${pr_results[num]}" | awk -F " " '{print $3}')
 
-   difference="$(( $result_pr - $result_main ))"
+   passing_pr=${result_pr%/*}
+   passing_main=${result_main%/*}
+   difference=$(echo "$passing_pr - $passing_main" | bc)
 
    emoji=""
    if (( $(echo "$result_main > $result_pr" |bc -l) )); then
