@@ -5,7 +5,6 @@ use ethrex_core::types::{
     Index, Receipt, Transaction,
 };
 use std::{fmt::Debug, panic::RefUnwindSafe};
-use tokio_util::sync::CancellationToken;
 
 use crate::{error::StoreError, STATE_TRIE_SEGMENTS};
 use ethrex_trie::{Nibbles, Trie};
@@ -305,21 +304,6 @@ pub trait StoreEngine: Debug + Send + Sync + RefUnwindSafe {
         storage_keys: Vec<H256>,
         storage_values: Vec<U256>,
     ) -> Result<(), StoreError>;
-
-    /// Rebuilds state trie from a snapshot, returns the resulting trie's root
-    /// and the addresses of the storages whose root doesn't match the one in the account state
-    fn rebuild_state_from_snapshot(&self) -> Result<(H256, Vec<H256>), StoreError>;
-
-    fn rebuild_state_trie_segment(
-        &self,
-        current_root: H256,
-        start: H256,
-        end: H256,
-        cancel_token: CancellationToken,
-    ) -> Result<(H256, H256, Vec<(H256, H256)>), StoreError>;
-
-    // Rebuilds the storage trie and returns its root
-    fn rebuild_storage_trie_from_snapshot(&self, account_hash: H256) -> Result<H256, StoreError>;
 
     fn set_state_trie_rebuild_checkpoint(
         &self,

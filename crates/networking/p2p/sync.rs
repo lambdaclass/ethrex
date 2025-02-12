@@ -4,7 +4,7 @@ use ethrex_core::{
     BigEndianHash, H256, U256, U512,
 };
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode, error::RLPDecodeError};
-use ethrex_storage::{error::StoreError, Store, STATE_TRIE_SEGMENTS};
+use ethrex_storage::{error::StoreError, Store, MAX_SNAPSHOT_READS, STATE_TRIE_SEGMENTS};
 use ethrex_trie::{Nibbles, Node, TrieError, TrieState, EMPTY_TRIE_HASH};
 use std::{array, cmp::min, collections::BTreeMap, sync::Arc};
 use tokio::{
@@ -1252,7 +1252,7 @@ async fn rebuild_state_trie_segment(
         let mut batch = store.iter_account_snapshot(start)?;
         // Remove out of bounds elements
         batch.retain(|(hash, _)| *hash <= STATE_TRIE_SEGMENTS_END[segment_number]);
-        let unfilled_batch = batch.len() < 100;
+        let unfilled_batch = batch.len() < MAX_SNAPSHOT_READS;
         // Update start
         if let Some(last) = batch.last() {
             start = next_hash(last.0);
@@ -1275,7 +1275,7 @@ async fn rebuild_state_trie_segment(
     Ok((root, start))
 }
 
-// Only receives storages
+// Only receives fully downloaded storages
 async fn rebuild_storage_trie_in_background(
     store: Store,
     cancel_token: CancellationToken,
@@ -1331,7 +1331,7 @@ async fn rebuild_storage_trie(
     let mut storage_trie = store.open_storage_trie(account_hash, *EMPTY_TRIE_HASH);
     loop {
         let batch = store.iter_storage_snapshot(account_hash, start)?;
-        let unfilled_batch = batch.len() < 100;
+        let unfilled_batch = batch.len() < MAX_SNAPSHOT_READS;
         // Update start
         if let Some(last) = batch.last() {
             start = next_hash(last.0);

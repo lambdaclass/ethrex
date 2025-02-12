@@ -20,7 +20,6 @@ use sha3::{Digest as _, Keccak256};
 use std::collections::{HashMap, HashSet};
 use std::fmt::Debug;
 use std::sync::{Arc, Mutex};
-use tokio_util::sync::CancellationToken;
 use tracing::info;
 
 mod engines;
@@ -29,6 +28,9 @@ mod rlp;
 
 /// Number of state trie segments to fetch concurrently during state sync
 pub const STATE_TRIE_SEGMENTS: usize = 2;
+// Maximum amount of reads from the snapshot in a single transaction to avoid performance hits due to long-living reads
+// This will always be the amount yielded by snapshot reads unless there are less elements left
+pub const MAX_SNAPSHOT_READS: usize = 100;
 
 #[derive(Debug, Clone)]
 pub struct Store {
@@ -1082,31 +1084,10 @@ impl Store {
             .write_snapshot_storage_batch(account_hash, storage_keys, storage_values)
     }
 
-    pub fn rebuild_state_from_snapshot(&self) -> Result<(H256, Vec<H256>), StoreError> {
-        self.engine.rebuild_state_from_snapshot()
-    }
 
     /// Clears all checkpoint data created during the last snap sync
     pub fn clear_snap_state(&self) -> Result<(), StoreError> {
         self.engine.clear_snap_state()
-    }
-
-    pub fn rebuild_state_trie_segment(
-        &self,
-        current_root: H256,
-        start: H256,
-        end: H256,
-        cancel_token: CancellationToken,
-    ) -> Result<(H256, H256, Vec<(H256, H256)>), StoreError> {
-        self.engine
-            .rebuild_state_trie_segment(current_root, start, end, cancel_token)
-    }
-
-    pub fn rebuild_storage_trie_from_snapshot(
-        &self,
-        account_hash: H256,
-    ) -> Result<H256, StoreError> {
-        self.engine.rebuild_storage_trie_from_snapshot(account_hash)
     }
 
     pub fn set_state_trie_rebuild_checkpoint(

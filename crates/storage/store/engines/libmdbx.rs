@@ -6,13 +6,13 @@ use crate::rlp::{
     BlockHashRLP, BlockHeaderRLP, BlockRLP, BlockTotalDifficultyRLP, ReceiptRLP, Rlp,
     TransactionHashRLP, TupleRLP,
 };
-use crate::STATE_TRIE_SEGMENTS;
+use crate::{MAX_SNAPSHOT_READS, STATE_TRIE_SEGMENTS};
 use anyhow::Result;
 use bytes::Bytes;
 use ethereum_types::{H256, U256};
 use ethrex_core::types::{
     AccountState, BlobsBundle, Block, BlockBody, BlockHash, BlockHeader, BlockNumber, ChainConfig,
-    Index, Receipt, Transaction, EMPTY_TRIE_HASH,
+    Index, Receipt, Transaction,
 };
 use ethrex_rlp::decode::RLPDecode;
 use ethrex_rlp::encode::RLPEncode;
@@ -29,12 +29,6 @@ use serde_json;
 use std::fmt::{Debug, Formatter};
 use std::path::Path;
 use std::sync::Arc;
-use tokio_util::sync::CancellationToken;
-
-/// Maximum amount of trie inserts without committing nodes to DB
-const MAX_TRIE_INSERTS_WITHOUT_COMMIT: usize = 100;
-// Maximum amount of reads from the snapshot in a single transaction to avoid performance hits due to long-living reads
-const MAX_SNAPSHOT_READS: usize = 100;
 
 pub struct Store {
     db: Arc<Database>,
@@ -639,84 +633,6 @@ impl StoreEngine for Store {
         txn.commit().map_err(StoreError::LibmdbxError)
     }
 
-    /// Rebuilds state trie from a snapshot, returns the resulting trie's root
-    /// and the addresses of the storages whose root doesn't match the one in the account state
-    /// TODO: Consider receiving the sender to the storage heal queue so we start healing them while rebuilding
-    fn rebuild_state_from_snapshot(&self) -> Result<(H256, Vec<H256>), StoreError> {
-        let mut mismatched_storage_accounts = vec![];
-        // Open a new state trie
-        let mut state_trie = self.open_state_trie(*EMPTY_TRIE_HASH);
-        // Add all accounts
-        let txn = self.db.begin_read().map_err(StoreError::LibmdbxError)?;
-        let cursor = txn
-            .cursor::<StateSnapShot>()
-            .map_err(StoreError::LibmdbxError)?;
-        let mut inserts_since_last_commit = 0;
-        for (hash, account) in cursor
-            .walk(None)
-            .map_while(|res| res.ok().map(|(hash, acc)| (hash.to(), acc.to())))
-        {
-            // Rebuild storage trie and check for mismatches
-            let rebuilt_root = self.rebuild_storage_trie_from_snapshot(hash)?;
-            if rebuilt_root != account.storage_root {
-                mismatched_storage_accounts.push(hash);
-            }
-            // Add account to trie
-            state_trie.insert(hash.to_fixed_bytes().to_vec(), account.encode_to_vec())?;
-            // Commit every few iterations so we don't build the full trie in memory
-            inserts_since_last_commit += 1;
-            if inserts_since_last_commit > MAX_TRIE_INSERTS_WITHOUT_COMMIT {
-                state_trie.hash()?;
-                inserts_since_last_commit = 0;
-            }
-        }
-        Ok((state_trie.hash()?, mismatched_storage_accounts))
-    }
-
-    /// Rebuilds state trie segment from the snapshot
-    /// and the addresses of the storages whose root doesn't match the one in the account state
-    /// Returns the last rebuild account hash + the current state root + a list of account hashes and storage roots for all
-    /// accounts processed with non-empty storages, tese should be rebuilt by the calling context
-    fn rebuild_state_trie_segment(
-        &self,
-        current_root: H256,
-        start: H256,
-        end: H256,
-        cancel_token: CancellationToken,
-    ) -> Result<(H256, H256, Vec<(H256, H256)>), StoreError> {
-        let mut storages = vec![];
-        // Open a new state trie
-        let mut state_trie = self.open_state_trie(current_root);
-        // Add all accounts
-        let txn = self.db.begin_read().map_err(StoreError::LibmdbxError)?;
-        let cursor = txn
-            .cursor::<StateSnapShot>()
-            .map_err(StoreError::LibmdbxError)?;
-        let mut current_hash = start;
-        let mut read_count = 0;
-        for (hash, account) in cursor
-            .walk(Some(start.into()))
-            .map_while(|res| res.ok().map(|(hash, acc)| (hash.to(), acc.to())))
-        {
-            // Break loop if we surpass segment bounds & check for cancellation signal from main process
-            if hash >= end || cancel_token.is_cancelled() {
-                break;
-            }
-            current_hash = hash;
-            // Add storage to pending list
-            if account.storage_root != *EMPTY_TRIE_HASH {
-                storages.push((hash, account.storage_root))
-            }
-            // Add account to trie
-            state_trie.insert(hash.to_fixed_bytes().to_vec(), account.encode_to_vec())?;
-            // Commit every few iterations so we don't build the full trie in memory
-            read_count += 1;
-            if read_count > MAX_SNAPSHOT_READS {
-                break;
-            }
-        }
-        Ok((current_hash, state_trie.hash()?, storages))
-    }
 
     fn set_state_trie_rebuild_checkpoint(
         &self,
@@ -772,31 +688,6 @@ impl StoreEngine for Store {
             .map_err(StoreError::LibmdbxError)?;
         txn.clear_table::<StorageSnapShot>()
             .map_err(StoreError::LibmdbxError)
-    }
-
-    // Rebuilds the storage trie and returns its root
-    fn rebuild_storage_trie_from_snapshot(&self, account_hash: H256) -> Result<H256, StoreError> {
-        // Open a new storage trie
-        let mut storage_trie = self.open_storage_trie(account_hash, *EMPTY_TRIE_HASH);
-        // Add all accounts
-        let txn = self.db.begin_read().map_err(StoreError::LibmdbxError)?;
-        let cursor = txn
-            .cursor::<StorageSnapShot>()
-            .map_err(StoreError::LibmdbxError)?;
-        let mut inserts_since_last_commit = 0;
-        for (key, value) in cursor.walk_key(account_hash.into(), None).map_while(|res| {
-            res.ok()
-                .map(|(k, v)| (k.0.to_vec(), U256::from_big_endian(&v.0).encode_to_vec()))
-        }) {
-            storage_trie.insert(key, value)?;
-            // Commit every few iterations so we don't build the full trie in memory
-            inserts_since_last_commit += 1;
-            if inserts_since_last_commit > MAX_TRIE_INSERTS_WITHOUT_COMMIT {
-                storage_trie.hash()?;
-                inserts_since_last_commit = 0;
-            }
-        }
-        Ok(storage_trie.hash()?)
     }
 
     // Yields at most 100 elements
