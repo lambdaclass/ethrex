@@ -32,3 +32,7 @@ harness = false
 [[test]]
 name = "prague"
 harness = false
+
+[features]
+default = []
+levm = []

@@ -2,7 +2,13 @@ use ef_tests_blockchain::{
     network::Network,
     test_runner::{parse_test_file, run_ef_test},
 };
+use ethrex_vm::{backends::EVM, EVM_BACKEND};
 use std::path::Path;
+
+#[cfg(feature = "levm")]
+pub static VM: EVM = EVM::LEVM;
+#[cfg(not(feature = "levm"))]
+pub static VM: EVM = EVM::REVM;
 
 // NOTE: There are many tests which are failing due to the usage of Prague fork.
 // These tests are distributed in almost all json test files.
@@ -12,8 +18,9 @@ use std::path::Path;
 // Prague development starts.
 // This modification should be made on the harness down below, matching the regex with the desired
 // test or set of tests
-
 fn parse_and_execute_until_cancun(path: &Path) -> datatest_stable::Result<()> {
+    EVM_BACKEND.get_or_init(|| VM.clone());
+
     let tests = parse_test_file(path);
 
     for (test_key, test) in tests {

@@ -25,3 +25,6 @@ clean-vectors: ## 🗑️  Clean test vectors
 
 test: $(SPECTEST_VECTORS_DIR) ## 🧪 Run blockchain tests
 	cargo test
+
+test-levm: $(SPECTEST_VECTORS_DIR) ## 🧪 Run blockchain tests
+	cargo test --features levm
