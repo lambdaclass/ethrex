@@ -105,6 +105,7 @@ impl ExecutionDB {
         let mut db = CacheDB::new(db);
 
         // beacon root call
+        #[cfg(not(feature = "l2"))]
         {
             lazy_static! {
                 static ref SYSTEM_ADDRESS: RevmAddress = RevmAddress::from_slice(
