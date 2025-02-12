@@ -181,6 +181,7 @@ jobs:
       - name: Run tests
         run: |
           cd crates/vm/levm
+          set -o pipefail
           make run-evm-ef-tests-ci | tee test_result.txt
 
       - name: Show test summary -- short
