@@ -1,3 +1,4 @@
+use super::constants::{BEACON_ROOTS_ADDRESS_STR, HISTORY_STORAGE_ADDRESS_STR, SYSTEM_ADDRESS_STR};
 use crate::spec_id;
 use crate::EvmError;
 use crate::EvmState;
@@ -108,6 +109,10 @@ impl IEVM for REVM {
             if #[cfg(not(feature = "l2"))] {
                 if block_header.parent_beacon_block_root.is_some() && spec_id >= SpecId::CANCUN {
                     Self::beacon_root_contract_call(block_header, RevmSystemCallIn::new(state, spec_id))?;
+                }
+                //eip 2935: stores parent block hash in system contract
+                if spec_id >= SpecId::PRAGUE {
+                    Self::process_block_hash_history(block_header, RevmSystemCallIn::new(state, spec_id))?;
                 }
             }
         }
@@ -651,12 +656,10 @@ impl SystemContracts for REVM {
         input: Self::SystemCallInput<'_>,
     ) -> Result<<Self::Evm as super::IEVM>::TransactionExecutionResult, Self::Error> {
         lazy_static! {
-            static ref SYSTEM_ADDRESS: RevmAddress = RevmAddress::from_slice(
-                &hex::decode("fffffffffffffffffffffffffffffffffffffffe").unwrap()
-            );
-            static ref CONTRACT_ADDRESS: RevmAddress = RevmAddress::from_slice(
-                &hex::decode("000F3df6D732807Ef1319fB7B8bB8522d0Beac02").unwrap(),
-            );
+            static ref SYSTEM_ADDRESS: RevmAddress =
+                RevmAddress::from_slice(&hex::decode(SYSTEM_ADDRESS_STR).unwrap());
+            static ref CONTRACT_ADDRESS: RevmAddress =
+                RevmAddress::from_slice(&hex::decode(BEACON_ROOTS_ADDRESS_STR).unwrap());
         };
         let beacon_root = match block_header.parent_beacon_block_root {
             None => {
@@ -672,6 +675,63 @@ impl SystemContracts for REVM {
             transact_to: RevmTxKind::Call(*CONTRACT_ADDRESS),
             gas_limit: 30_000_000,
             data: revm::primitives::Bytes::copy_from_slice(beacon_root.as_bytes()),
+            ..Default::default()
+        };
+        let mut block_env = block_env(block_header);
+        block_env.basefee = RevmU256::ZERO;
+        block_env.gas_limit = RevmU256::from(30_000_000);
+
+        match input.state {
+            EvmState::Store(db) => {
+                let mut evm = Evm::builder()
+                    .with_db(db)
+                    .with_block_env(block_env)
+                    .with_tx_env(tx_env)
+                    .with_spec_id(input.spec_id)
+                    .build();
+
+                let transaction_result = evm.transact()?;
+                let mut result_state = transaction_result.state;
+                result_state.remove(&*SYSTEM_ADDRESS);
+                result_state.remove(&evm.block().coinbase);
+
+                evm.context.evm.db.commit(result_state);
+
+                Ok(transaction_result.result.into())
+            }
+            EvmState::Execution(db) => {
+                let mut evm = Evm::builder()
+                    .with_db(db)
+                    .with_block_env(block_env)
+                    .with_tx_env(tx_env)
+                    .with_spec_id(input.spec_id)
+                    .build();
+
+                // Not necessary to commit to DB
+                let transaction_result = evm.transact()?;
+                Ok(transaction_result.result.into())
+            }
+        }
+    }
+
+    /// Calls the EIP-2935 process block hashes history system call contract
+    /// NOTE: This was implemented by making use of an EVM system contract, but can be changed to a
+    /// direct state trie update after the verkle fork, as explained in https://eips.ethereum.org/EIPS/eip-2935
+    fn process_block_hash_history(
+        block_header: &BlockHeader,
+        input: Self::SystemCallInput<'_>,
+    ) -> Result<<Self::Evm as super::IEVM>::TransactionExecutionResult, Self::Error> {
+        lazy_static! {
+            static ref SYSTEM_ADDRESS: RevmAddress =
+                RevmAddress::from_slice(&hex::decode(SYSTEM_ADDRESS_STR).unwrap());
+            static ref CONTRACT_ADDRESS: RevmAddress =
+                RevmAddress::from_slice(&hex::decode(HISTORY_STORAGE_ADDRESS_STR).unwrap(),);
+        };
+        let tx_env = TxEnv {
+            caller: *SYSTEM_ADDRESS,
+            transact_to: RevmTxKind::Call(*CONTRACT_ADDRESS),
+            gas_limit: 30_000_000,
+            data: revm::primitives::Bytes::copy_from_slice(block_header.parent_hash.as_bytes()),
             ..Default::default()
         };
         let mut block_env = block_env(block_header);

@@ -650,7 +650,8 @@ fn address_access_cost(
 pub fn balance(address_was_cold: bool, fork: Fork) -> Result<u64, VMError> {
     match fork {
         f if f < Fork::Tangerine => Ok(BALANCE_PRE_TANGERINE),
-        f if f >= Fork::Tangerine && fork < Fork::Cancun => Ok(BALANCE_TANGERINE),
+        // https://github.com/ethereum/EIPs/blob/master/EIPS/eip-2929.md#storage-read-changes
+        f if f >= Fork::Tangerine && fork < Fork::Berlin => Ok(BALANCE_TANGERINE),
         f => address_access_cost(
             address_was_cold,
             BALANCE_STATIC,
@@ -664,7 +665,8 @@ pub fn balance(address_was_cold: bool, fork: Fork) -> Result<u64, VMError> {
 pub fn extcodesize(address_was_cold: bool, fork: Fork) -> Result<u64, VMError> {
     match fork {
         f if f < Fork::Tangerine => Ok(EXTCODESIZE_PRE_TANGERINE),
-        f if f >= Fork::Tangerine && fork < Fork::Cancun => Ok(EXTCODESIZE_TANGERINE),
+        // https://github.com/ethereum/EIPs/blob/master/EIPS/eip-2929.md#storage-read-changes
+        f if f >= Fork::Tangerine && fork < Fork::Berlin => Ok(EXTCODESIZE_TANGERINE),
         f => address_access_cost(
             address_was_cold,
             EXTCODESIZE_STATIC,

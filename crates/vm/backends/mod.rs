@@ -1,3 +1,4 @@
+mod constants;
 pub mod levm;
 pub mod revm;
 
@@ -72,6 +73,11 @@ pub trait SystemContracts {
     /// As of the Cancun hard-fork, parent_beacon_block_root needs to be present in the block header.
     type SystemCallInput<'a>;
     fn beacon_root_contract_call(
+        block_header: &BlockHeader,
+        input: Self::SystemCallInput<'_>,
+    ) -> Result<<Self::Evm as IEVM>::TransactionExecutionResult, Self::Error>;
+
+    fn process_block_hash_history(
         block_header: &BlockHeader,
         input: Self::SystemCallInput<'_>,
     ) -> Result<<Self::Evm as IEVM>::TransactionExecutionResult, Self::Error>;
