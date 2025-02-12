@@ -7,7 +7,7 @@ edition = "2021"
 
 [dependencies]
 ethrex-rlp.workspace = true
-ethrex-trie = { path = "../storage/trie", default-features = false }
+ethrex-trie.workspace = true
 
 tracing.workspace = true
 tinyvec = "1.6.0"
