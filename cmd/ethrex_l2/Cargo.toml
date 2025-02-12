@@ -28,7 +28,7 @@ keccak-hash.workspace = true
 
 ethrex-l2.workspace = true
 ethrex-sdk.workspace = true
-ethrex-core.workspace = true
+ethrex-common.workspace = true
 ethrex-blockchain.workspace = true
 ethrex-prover.workspace = true
 ethrex-rlp.workspace = true

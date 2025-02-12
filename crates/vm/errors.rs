@@ -1,5 +1,5 @@
 use ethereum_types::{H160, H256};
-use ethrex_core::{types::BlockHash, Address};
+use ethrex_common::{types::BlockHash, Address};
 use ethrex_levm::errors::VMError;
 use ethrex_storage::error::StoreError;
 use ethrex_trie::TrieError;

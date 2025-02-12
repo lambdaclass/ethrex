@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-ethrex-core = { path = "../common", default-features = false }
+ethrex-common = { path = "../common", default-features = false }
 ethrex-storage = { path = "../storage/store", default-features = false }
 ethrex-levm = { path = "./levm", default-features = false }
 ethrex-trie = { path = "../storage/trie", default-features = false }
@@ -40,9 +40,9 @@ path = "./vm.rs"
 [features]
 default = ["c-kzg", "blst"]
 l2 = []
-c-kzg = ["revm/c-kzg", "ethrex-levm/c-kzg", "ethrex-core/c-kzg"]
+c-kzg = ["revm/c-kzg", "ethrex-levm/c-kzg", "ethrex-common/c-kzg"]
 blst = ["revm/blst"]
-libmdbx = ["ethrex-storage/default", "ethrex-core/libmdbx"]
+libmdbx = ["ethrex-storage/default", "ethrex-common/libmdbx"]
 
 [profile.test]
 opt-level = 3

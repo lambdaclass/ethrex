@@ -14,7 +14,7 @@ bytes.workspace = true
 cfg-if = "1.0.0"
 
 ethrex-rlp.workspace = true
-ethrex-core = { path = "../common", default-features = false }
+ethrex-common = { path = "../common", default-features = false }
 ethrex-storage = { path = "../storage/store", default-features = false }
 ethrex-vm = { path = "../vm", default-features = false }
 
@@ -31,6 +31,6 @@ path = "./blockchain.rs"
 
 [features]
 default = ["c-kzg"]
-libmdbx = ["ethrex-core/libmdbx", "ethrex-storage/default", "ethrex-vm/libmdbx"]
-c-kzg = ["ethrex-core/c-kzg", "ethrex-levm/c-kzg"]
+libmdbx = ["ethrex-common/libmdbx", "ethrex-storage/default", "ethrex-vm/libmdbx"]
+c-kzg = ["ethrex-common/c-kzg", "ethrex-levm/c-kzg"]
 metrics = ["ethrex-metrics/transactions"]

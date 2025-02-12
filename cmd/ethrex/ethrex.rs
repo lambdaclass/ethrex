@@ -1,7 +1,7 @@
 use bytes::Bytes;
 use directories::ProjectDirs;
 use ethrex_blockchain::{add_block, fork_choice::apply_fork_choice};
-use ethrex_core::types::{Block, Genesis};
+use ethrex_common::types::{Block, Genesis};
 use ethrex_p2p::{
     kademlia::KademliaTable,
     network::{node_id_from_signing_key, peer_table},
@@ -159,21 +159,18 @@ async fn main() {
     let store: Store = if path.ends_with("memory") {
         Store::new(&data_dir, EngineType::InMemory).expect("Failed to create Store")
     } else {
+        let engine_type;
         cfg_if::cfg_if! {
             if #[cfg(feature = "redb")] {
-                let engine_type = EngineType::RedB;
+                engine_type = EngineType::RedB;
             } else if #[cfg(feature = "libmdbx")] {
-                let engine_type = EngineType::Libmdbx;
+                engine_type = EngineType::Libmdbx;
             } else {
-                let engine_type = EngineType::InMemory;
+                error!("No database specified. The feature flag `redb` or `libmdbx` should've been set while building.");
+                panic!("Specify the desired database engine.");
             }
         }
-        if engine_type == EngineType::InMemory {
-            error!("No database specified. The feature flag `redb` or `libmdbx` should've been set while building.");
-            panic!("Specify the desired database engine.");
-        } else {
-            Store::new(&data_dir, engine_type).expect("Failed to create Store")
-        }
+        Store::new(&data_dir, engine_type).expect("Failed to create Store")
     };
 
     let genesis = read_genesis_file(&network);
@@ -317,7 +314,7 @@ async fn main() {
                     head_block_hash,
                     max_tries,
                     1000,
-                    ethrex_core::Address::default(),
+                    ethrex_common::Address::default(),
                 );
                 tracker.spawn(block_producer_engine);
             }

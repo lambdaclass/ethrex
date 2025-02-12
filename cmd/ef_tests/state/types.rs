@@ -10,7 +10,7 @@ use crate::{
     report::TestVector,
 };
 use bytes::Bytes;
-use ethrex_core::{
+use ethrex_common::{
     types::{Fork, Genesis, GenesisAccount, TxKind},
     Address, H256, U256,
 };

@@ -1,4 +1,4 @@
-use ethrex_core::H256;
+use ethrex_common::H256;
 use keccak_hash::keccak;
 use serde::{Deserialize, Serialize};
 use tracing::info;

@@ -1,4 +1,4 @@
-use ethrex_core::types::TxType;
+use ethrex_common::types::TxType;
 use prometheus::{Encoder, IntCounter, IntCounterVec, Opts, Registry, TextEncoder};
 use std::sync::{Arc, LazyLock, Mutex};
 
@@ -124,12 +124,12 @@ pub struct MetricsTxType(pub TxType);
 impl MetricsTxType {
     pub fn to_str(&self) -> &str {
         match self.0 {
-            ethrex_core::types::TxType::Legacy => "Legacy",
-            ethrex_core::types::TxType::EIP2930 => "EIP2930",
-            ethrex_core::types::TxType::EIP1559 => "EIP1559",
-            ethrex_core::types::TxType::EIP4844 => "EIP4844",
-            ethrex_core::types::TxType::EIP7702 => "EIP7702",
-            ethrex_core::types::TxType::Privileged => "Privileged",
+            ethrex_common::types::TxType::Legacy => "Legacy",
+            ethrex_common::types::TxType::EIP2930 => "EIP2930",
+            ethrex_common::types::TxType::EIP1559 => "EIP1559",
+            ethrex_common::types::TxType::EIP4844 => "EIP4844",
+            ethrex_common::types::TxType::EIP7702 => "EIP7702",
+            ethrex_common::types::TxType::Privileged => "Privileged",
         }
     }
 }

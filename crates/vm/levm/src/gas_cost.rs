@@ -6,7 +6,7 @@ use crate::{
 };
 use bytes::Bytes;
 /// Contains the gas costs of the EVM instructions
-use ethrex_core::{types::Fork, U256};
+use ethrex_common::{types::Fork, U256};
 use num_bigint::BigUint;
 
 // Opcodes cost
@@ -88,6 +88,7 @@ pub const CODECOPY_DYNAMIC_BASE: u64 = 3;
 pub const GASPRICE: u64 = 2;
 pub const SELFDESTRUCT_STATIC: u64 = 5000;
 pub const SELFDESTRUCT_DYNAMIC: u64 = 25000;
+pub const SELFDESTRUCT_REFUND: u64 = 24000;
 
 pub const DEFAULT_STATIC: u64 = 0;
 pub const DEFAULT_COLD_DYNAMIC: u64 = 2600;
@@ -122,6 +123,8 @@ pub const EXTCODESIZE_WARM_DYNAMIC: u64 = DEFAULT_WARM_DYNAMIC;
 pub const EXTCODEHASH_STATIC: u64 = DEFAULT_STATIC;
 pub const EXTCODEHASH_COLD_DYNAMIC: u64 = DEFAULT_COLD_DYNAMIC;
 pub const EXTCODEHASH_WARM_DYNAMIC: u64 = DEFAULT_WARM_DYNAMIC;
+pub const EXTCODEHASH_STATIC_PRE_ISTANBUL: u64 = 400;
+pub const EXTCODEHASH_STATIC_PRE_BERLIN: u64 = 700;
 
 pub const EXTCODECOPY_STATIC: u64 = 0;
 pub const EXTCODECOPY_DYNAMIC_BASE: u64 = 3;
@@ -562,10 +565,12 @@ pub fn selfdestruct(
     address_was_cold: bool,
     account_is_empty: bool,
     balance_to_transfer: U256,
+    fork: Fork,
 ) -> Result<u64, OutOfGasError> {
     let mut gas_cost = SELFDESTRUCT_STATIC;
 
-    if address_was_cold {
+    // https://eips.ethereum.org/EIPS/eip-2929#selfdestruct-changes
+    if fork >= Fork::Berlin && address_was_cold {
         gas_cost = gas_cost
             .checked_add(COLD_ADDRESS_ACCESS_COST)
             .ok_or(OutOfGasError::GasCostOverflow)?;
@@ -650,7 +655,8 @@ fn address_access_cost(
 pub fn balance(address_was_cold: bool, fork: Fork) -> Result<u64, VMError> {
     match fork {
         f if f < Fork::Tangerine => Ok(BALANCE_PRE_TANGERINE),
-        f if f >= Fork::Tangerine && fork < Fork::Cancun => Ok(BALANCE_TANGERINE),
+        // https://github.com/ethereum/EIPs/blob/master/EIPS/eip-2929.md#storage-read-changes
+        f if f >= Fork::Tangerine && fork < Fork::Berlin => Ok(BALANCE_TANGERINE),
         f => address_access_cost(
             address_was_cold,
             BALANCE_STATIC,
@@ -664,7 +670,8 @@ pub fn balance(address_was_cold: bool, fork: Fork) -> Result<u64, VMError> {
 pub fn extcodesize(address_was_cold: bool, fork: Fork) -> Result<u64, VMError> {
     match fork {
         f if f < Fork::Tangerine => Ok(EXTCODESIZE_PRE_TANGERINE),
-        f if f >= Fork::Tangerine && fork < Fork::Cancun => Ok(EXTCODESIZE_TANGERINE),
+        // https://github.com/ethereum/EIPs/blob/master/EIPS/eip-2929.md#storage-read-changes
+        f if f >= Fork::Tangerine && fork < Fork::Berlin => Ok(EXTCODESIZE_TANGERINE),
         f => address_access_cost(
             address_was_cold,
             EXTCODESIZE_STATIC,
@@ -703,13 +710,19 @@ pub fn extcodecopy(
 }
 
 pub fn extcodehash(address_was_cold: bool, fork: Fork) -> Result<u64, VMError> {
-    address_access_cost(
-        address_was_cold,
-        EXTCODEHASH_STATIC,
-        EXTCODEHASH_COLD_DYNAMIC,
-        EXTCODEHASH_WARM_DYNAMIC,
-        fork,
-    )
+    if fork < Fork::Istanbul {
+        Ok(EXTCODEHASH_STATIC_PRE_ISTANBUL)
+    } else if fork < Fork::Berlin {
+        Ok(EXTCODEHASH_STATIC_PRE_BERLIN)
+    } else {
+        address_access_cost(
+            address_was_cold,
+            EXTCODEHASH_STATIC,
+            EXTCODEHASH_COLD_DYNAMIC,
+            EXTCODEHASH_WARM_DYNAMIC,
+            fork,
+        )
+    }
 }
 
 #[allow(clippy::too_many_arguments)]

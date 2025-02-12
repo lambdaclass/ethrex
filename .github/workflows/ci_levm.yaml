@@ -41,23 +41,155 @@ jobs:
       - name: Run tests
         run: |
           cd crates/vm/levm
-          make run-evm-ef-tests-ci | tee test_result.txt
+          set -o pipefail
+          make run-evm-ef-tests-ci | tee test_result_pr.txt
 
       - name: Show test summary -- full
         run: |
-          cd crates/vm/levm && awk '/Summary: /,0' test_result.txt
+          cd crates/vm/levm && awk '/Summary: /,0' test_result_pr.txt
 
       - name: Show test summary -- short
         run: |
-          cd crates/vm/levm && awk '/Summary: /,/Frontier/' test_result.txt;
+          bash .github/scripts/parse_test_result.sh crates/vm/levm/test_result_pr.txt | tee crates/vm/levm/test_result_pr_short.txt
+          echo "PR's test results:"
+          cat crates/vm/levm/test_result_pr_short.txt
+
+      - name: Upload PR branch EF-test results.
+        uses: actions/upload-artifact@v4
+        with:
+          name: pr-ef-test-data
+          path: crates/vm/levm/test_result_pr_short.txt
 
       - name: Check EF-TESTS status is 100%
         run: |
           cd crates/vm/levm
-          if [ "$(awk '/Summary:/ {print $(NF)}' test_result.txt)" != "(100.00%)" ]; then
+          if [ "$(awk '/Summary:/ {print $(NF)}' test_result_pr_short.txt)" != "(100.00%)" ]; then
               echo "Percentage is not 100%."
               # exit 1 # uncomment when we expect 100% pass-rate
           fi
+
+  ef-test-main:
+    if: ${{ github.event_name != 'merge_group' }}
+    name: EF Tests Check main
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - name: Rustup toolchain install
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: ${{ env.RUST_VERSION }}
+
+      - name: Caching
+        uses: Swatinem/rust-cache@v2
+
+      - name: Download EF Tests
+        run: |
+          cd crates/vm/levm
+          make download-evm-ef-tests
+
+      - name: Run tests
+        run: |
+          cd crates/vm/levm
+          set -o pipefail
+          make run-evm-ef-tests-ci | tee test_result_main.txt
+
+      - name: Show test summary -- full
+        run: |
+          cd crates/vm/levm && awk '/Summary: /,0' test_result_main.txt
+
+      - name: Show test summary -- short
+        run: |
+          bash .github/scripts/parse_test_result.sh crates/vm/levm/test_result_main.txt | tee crates/vm/levm/test_result_main_short.txt
+          echo "Main's test results:"
+          cat crates/vm/levm/test_result_main_short.txt
+
+      - name: Upload main branch EF-test results.
+        uses: actions/upload-artifact@v4
+        with:
+          name: main-ef-test-data
+          path: crates/vm/levm/test_result_main_short.txt
+
+      - name: Check EF-TESTS status is 100%
+        run: |
+          cd crates/vm/levm
+          if [ "$(awk '/Summary:/ {print $(NF)}' test_result_main_short.txt)" != "(100.00%)" ]; then
+              echo "Percentage is not 100%."
+              # exit 1 # uncomment when we expect 100% pass-rate
+          fi
+
+  compare-ef-tests:
+    if: ${{ github.event_name != 'merge_group' }}
+    name: EF Tests Compare
+    needs: [ef-test-main, ef-test]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v4
+
+      - name: Download main branch ef tests
+        uses: actions/download-artifact@v4
+        with:
+          name: main-ef-test-data
+          path: crates/vm/levm/
+
+      - name: Download PR branch ef tests
+        uses: actions/download-artifact@v4
+        with:
+          name: pr-ef-test-data
+          path: crates/vm/levm/
+
+     # NOTE: diff will exit with a non 0 exit code when there are differences
+      - name: Compare files
+        id: branch_diffs
+        continue-on-error: true
+        run: |
+          cd crates/vm/levm
+          diff test_result_main_short.txt test_result_pr_short.txt
+
+      - name: Compare results
+        if: ${{ steps.branch_diffs.outcome == 'failure' && github.event_name == 'pull_request' }}
+        run: |
+          bash .github/scripts/compare_ef_tests.sh crates/vm/levm/test_result_main_short.txt crates/vm/levm/test_result_pr_short.txt | tee crates/vm/levm/ef_tests_comparison.md
+
+      - name: Find comment
+        continue-on-error: true
+        uses: peter-evans/find-comment@v3
+        id: fc
+        with:
+          issue-number: ${{ github.event.pull_request.number }}
+          comment-author: "github-actions[bot]"
+          body-includes: "EF Tests Comparison"
+
+      # If we have a failure, means that some ef-tests don't pass.
+      # If the condition is met, create or update the comment with the summary.
+      - name: Create comment
+        if: ${{ steps.branch_diffs.outcome == 'failure' && github.event_name == 'pull_request' }}
+        uses: peter-evans/create-or-update-comment@v4
+        with:
+          comment-id: ${{ steps.fc.outputs.comment-id }}
+          token: ${{ secrets.GITHUB_TOKEN }}
+          issue-number: ${{ github.event.pull_request.number }}
+          body-path: crates/vm/levm/ef_tests_comparison.md
+          edit-mode: replace
+
+      # If we don't have a failure, means that all ef-tests pass.
+      # If comment-id != '', means that we've already created the comment.
+      # If both conditions are met, update the comment saying that all tests pass.
+      - name: Update comment
+        if: ${{ steps.branch_diffs.outcome != 'failure' && github.event_name == 'pull_request' && steps.fc.outputs.comment-id != '' }}
+        uses: peter-evans/create-or-update-comment@v4
+        with:
+          comment-id: ${{ steps.fc.outputs.comment-id }}
+          token: ${{ secrets.GITHUB_TOKEN }}
+          issue-number: ${{ github.event.pull_request.number }}
+          body: |
+            # EF Tests Comparison
+            Same results between main branch and the current PR.
+          edit-mode: replace
 
   hive-report-creation:
     uses: ./.github/workflows/common_hive_reports.yaml
