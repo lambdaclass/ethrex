@@ -11,40 +11,44 @@ lazy_static::lazy_static! {
     pub static ref DEPOSIT_CONTRACT_ADDRESS: Address = Address::from_slice(&hex::decode("00000000219ab540356cbb839cbe05303d7705fa").unwrap());
 }
 
-pub enum Request {
-    Deposit(Deposit),
+pub enum Requests {
+    Deposit(Vec<Deposit>),
     Withdrawal,
 }
 
-impl Request {
-    pub fn to_bytes(&self) -> [u8; 193] {
-        let mut result = [0u8; 193];
-
+impl Requests {
+    pub fn to_bytes(&self) -> Vec<u8> {
         match self {
-            Request::Deposit(d) => {
-                result[0] = DEPOSIT_TYPE;
-                let deposit_bytes = d.to_summarized_byte_array();
-                result[1..].copy_from_slice(&deposit_bytes);
+            Requests::Deposit(deposits) => {
+                let mut deposit_data = vec![];
+
+                for deposit in deposits {
+                    let data = deposit.to_summarized_byte_array();
+                    deposit_data.push(data);
+                }
+
+                std::iter::once(DEPOSIT_TYPE)
+                    .chain(deposit_data.into_iter().flatten())
+                    .collect()
             }
-            Request::Withdrawal => {
-                result[0] = WITHDRAWAL_TYPE;
+            Requests::Withdrawal => {
                 // TODO: implement the withdrawal type
+                vec![WITHDRAWAL_TYPE]
             }
         }
-        result
     }
-    pub fn from_deposit_receipts(receipts: &[Receipt]) -> Vec<Request> {
+    pub fn from_deposit_receipts(receipts: &[Receipt]) -> Requests {
         let mut deposits = vec![];
 
         for r in receipts {
             for log in &r.logs {
                 if log.address == *DEPOSIT_CONTRACT_ADDRESS {
                     let d = Deposit::from_abi_byte_array(&log.data);
-                    deposits.push(Self::Deposit(d));
+                    deposits.push(d);
                 }
             }
         }
-        deposits
+        Self::Deposit(deposits)
     }
 }
 
