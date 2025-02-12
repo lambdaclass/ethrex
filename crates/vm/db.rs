@@ -1,8 +1,7 @@
 use std::collections::HashMap;
 
-use crate::{execution_db::ExecutionDB, EvmError};
 use ethrex_common::{
-    types::{Block, BlockHash, ChainConfig},
+    types::{Block, BlockHash},
     Address as CoreAddress, H256 as CoreH256,
 };
 use ethrex_storage::{error::StoreError, hash_address, hash_key, Store};

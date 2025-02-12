@@ -2,7 +2,7 @@
 
 use std::time::Duration;
 
-use ethrex_core::types::{BlobSchedule, ChainConfig};
+use ethrex_common::types::{BlobSchedule, ChainConfig};
 use revm_primitives::SpecId;
 
 use lazy_static::lazy_static;

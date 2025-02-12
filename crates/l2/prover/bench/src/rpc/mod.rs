@@ -5,7 +5,7 @@ use again::{RetryPolicy, Task};
 use tokio::time::timeout;
 
 use bytes::Bytes;
-use ethrex_core::{
+use ethrex_common::{
     types::{AccountState, Block, EMPTY_KECCACK_HASH},
     Address, H256, U256,
 };

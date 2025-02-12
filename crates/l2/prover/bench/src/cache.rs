@@ -3,7 +3,7 @@ use std::{
     io::{BufReader, BufWriter, Read},
 };
 
-use ethrex_core::types::{Block, BlockHeader};
+use ethrex_common::types::{Block, BlockHeader};
 use ethrex_vm::execution_db::ExecutionDB;
 
 use serde::{Deserialize, Serialize};

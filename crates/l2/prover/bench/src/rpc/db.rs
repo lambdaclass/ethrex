@@ -6,9 +6,9 @@ use crate::constants::{CANCUN_CONFIG, RPC_RATE_LIMIT};
 use crate::rpc::{get_account, get_block, get_storage, retry};
 
 use bytes::Bytes;
-use ethrex_core::types::{AccountInfo, AccountState};
-use ethrex_core::U256;
-use ethrex_core::{
+use ethrex_common::types::{AccountInfo, AccountState};
+use ethrex_common::U256;
+use ethrex_common::{
     types::{Account as CoreAccount, Block, TxKind},
     Address, H256,
 };
