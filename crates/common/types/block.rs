@@ -267,6 +267,8 @@ pub fn calculate_requests_hash(receipts: &[Receipt]) -> H256 {
     // TODO: implement other requests
     compute_requests_hash(&requests)
 }
+
+// See https://github.com/ethereum/EIPs/blob/2a6b6965e64787815f7fffb9a4c27660d9683846/EIPS/eip-7685.md?plain=1#L62.
 fn compute_requests_hash(requests: &[Request]) -> H256 {
     let mut hasher = Sha256::new();
     for request in requests {
@@ -620,7 +622,7 @@ pub fn validate_cancun_header_fields(
     Ok(())
 }
 
-/// Validates that only the required field are present for a Cancun block
+/// Validates that only the required field are present for a pre Cancun block
 /// Also validates excess_blob_gas value against parent's header
 pub fn validate_pre_cancun_header_fields(
     header: &BlockHeader,
