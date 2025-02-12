@@ -781,12 +781,7 @@ pub fn call(
     gas_left: u64,
     fork: Fork,
 ) -> Result<(u64, u64), VMError> {
-    let mut memory_expansion_cost = memory::expansion_cost(new_memory_size, current_memory_size)?;
-    if fork <= Fork::Tangerine {
-        memory_expansion_cost
-            .checked_add(700)
-            .ok_or(OutOfGasError::GasCostOverflow)?;
-    };
+    let memory_expansion_cost = memory::expansion_cost(new_memory_size, current_memory_size)?;
 
     let address_access_cost = address_access_cost(
         address_was_cold,
