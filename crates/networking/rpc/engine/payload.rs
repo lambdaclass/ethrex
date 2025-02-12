@@ -399,6 +399,19 @@ fn execute_payload(block: &Block, context: &RpcApiContext) -> Result<PayloadStat
 
     // Execute and store the block
     info!("Executing payload with block hash: {block_hash:#x}");
+    let latest_block_number = match context.storage.get_latest_block_number() {
+        Ok(n) => n,
+        Err(e) => return Err(RpcErr::Internal(e.to_string())),
+    };
+    let latest_valid_hash = match context
+        .storage
+        .get_canonical_block_hash(latest_block_number)
+    {
+        Ok(hash) if hash.is_none() => return Err(RpcErr::Internal("hash not found".into())),
+        Ok(hash) => hash.unwrap(),
+        Err(e) => return Err(RpcErr::Internal(e.to_string())),
+    };
+
     match add_block(block, storage) {
         Err(ChainError::ParentNotFound) => Ok(PayloadStatus::syncing()),
         // Under the current implementation this is not possible: we always calculate the state
@@ -412,16 +425,15 @@ fn execute_payload(block: &Block, context: &RpcApiContext) -> Result<PayloadStat
         }
         Err(ChainError::InvalidBlock(error)) => {
             warn!("Error adding block: {error}");
-            // TODO(#982): this is only valid for the cases where the parent was found, but fully invalid ones may also happen.
             Ok(PayloadStatus::invalid_with(
-                block.header.parent_hash,
+                latest_valid_hash,
                 error.to_string(),
             ))
         }
         Err(ChainError::EvmError(error)) => {
             warn!("Error executing block: {error}");
             Ok(PayloadStatus::invalid_with(
-                block.header.parent_hash,
+                latest_valid_hash,
                 error.to_string(),
             ))
         }
