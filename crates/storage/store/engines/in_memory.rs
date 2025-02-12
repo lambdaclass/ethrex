@@ -71,7 +71,9 @@ pub struct SnapState {
     /// State trie Paths in need of healing
     state_heal_paths: Option<Vec<Nibbles>>,
     /// Storage tries waiting rebuild
-    storage_trie_rebuild_pending: Option<Vec<(H256, H256)>>
+    storage_trie_rebuild_pending: Option<Vec<(H256, H256)>>,
+    // Latest root of the rebuilt state trie + the last inserted keys for each state trie segment
+    state_trie_rebuild_checkpoint: Option<(H256, [H256; STATE_TRIE_SEGMENTS])>
 }
 
 impl Store {
@@ -528,17 +530,20 @@ impl StoreEngine for Store {
         &self,
         checkpoint: (H256, [H256; STATE_TRIE_SEGMENTS]),
     ) -> Result<(), StoreError> {
-        todo!()
+        self.inner().snap_state.state_trie_rebuild_checkpoint = Some(checkpoint);
+        Ok(())
     }
 
     fn get_state_trie_rebuild_checkpoint(
         &self,
     ) -> Result<Option<(H256, [H256; STATE_TRIE_SEGMENTS])>, StoreError> {
-        todo!()
+        Ok(self.inner().snap_state.state_trie_rebuild_checkpoint.clone())
     }
 
     fn clear_snapshot(&self) -> Result<(), StoreError> {
-        todo!()
+        self.inner().snap_state.state_trie_rebuild_checkpoint = None;
+        self.inner().snap_state.storage_trie_rebuild_pending = None;
+        Ok(())
     }
 
     fn iter_account_snapshot(
