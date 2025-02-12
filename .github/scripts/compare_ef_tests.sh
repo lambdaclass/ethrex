@@ -30,6 +30,9 @@ do
    passing_pr=${result_pr%/*}
    passing_main=${result_main%/*}
    difference=$(echo "$passing_pr - $passing_main" | bc)
+   if [ $difference == "0" ]; then
+       difference=""
+   fi
 
    emoji=""
    if (( $(echo "$result_main > $result_pr" |bc -l) )); then
