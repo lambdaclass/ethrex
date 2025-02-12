@@ -20,10 +20,8 @@ fn parse_and_execute(path: &Path) -> datatest_stable::Result<()> {
     Ok(())
 }
 
-// TODO: Delete main function and uncomment the following line to allow prague tests to be parsed
-
-// datatest_stable::harness!(parse_and_execute, "vectors/prague/", r".*/.*/.*\.json");
-
-fn main() {
-    //Do nothing
-}
+datatest_stable::harness!(
+    parse_and_execute,
+    "vectors/prague/eip2935_historical_block_hashes_from_state",
+    r".*/.*\.json"
+);

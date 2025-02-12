@@ -1,3 +1,4 @@
+use super::constants::{BEACON_ROOTS_ADDRESS_STR, HISTORY_STORAGE_ADDRESS_STR, SYSTEM_ADDRESS_STR};
 use crate::spec_id;
 use crate::EvmError;
 use crate::EvmState;
@@ -40,8 +41,14 @@ pub fn execute_block(block: &Block, state: &mut EvmState) -> Result<Vec<Receipt>
             if block_header.parent_beacon_block_root.is_some() && spec_id >= SpecId::CANCUN {
                 beacon_root_contract_call(state, block_header, spec_id)?;
             }
+
+            //eip 2935: stores parent block hash in system contract
+            if spec_id >= SpecId::PRAGUE {
+                process_block_hash_history(state, block_header, spec_id)?;
+            }
         }
     }
+
     let mut receipts = Vec::new();
     let mut cumulative_gas_used = 0;
 
@@ -437,12 +444,10 @@ pub fn beacon_root_contract_call(
     spec_id: SpecId,
 ) -> Result<ExecutionResult, EvmError> {
     lazy_static! {
-        static ref SYSTEM_ADDRESS: RevmAddress = RevmAddress::from_slice(
-            &hex::decode("fffffffffffffffffffffffffffffffffffffffe").unwrap()
-        );
-        static ref CONTRACT_ADDRESS: RevmAddress = RevmAddress::from_slice(
-            &hex::decode("000F3df6D732807Ef1319fB7B8bB8522d0Beac02").unwrap(),
-        );
+        static ref SYSTEM_ADDRESS: RevmAddress =
+            RevmAddress::from_slice(&hex::decode(SYSTEM_ADDRESS_STR).unwrap());
+        static ref CONTRACT_ADDRESS: RevmAddress =
+            RevmAddress::from_slice(&hex::decode(BEACON_ROOTS_ADDRESS_STR).unwrap());
     };
     let beacon_root = match header.parent_beacon_block_root {
         None => {
@@ -458,6 +463,64 @@ pub fn beacon_root_contract_call(
         transact_to: RevmTxKind::Call(*CONTRACT_ADDRESS),
         gas_limit: 30_000_000,
         data: revm::primitives::Bytes::copy_from_slice(beacon_root.as_bytes()),
+        ..Default::default()
+    };
+    let mut block_env = block_env(header);
+    block_env.basefee = RevmU256::ZERO;
+    block_env.gas_limit = RevmU256::from(30_000_000);
+
+    match state {
+        EvmState::Store(db) => {
+            let mut evm = Evm::builder()
+                .with_db(db)
+                .with_block_env(block_env)
+                .with_tx_env(tx_env)
+                .with_spec_id(spec_id)
+                .build();
+
+            let transaction_result = evm.transact()?;
+            let mut result_state = transaction_result.state;
+            result_state.remove(&*SYSTEM_ADDRESS);
+            result_state.remove(&evm.block().coinbase);
+
+            evm.context.evm.db.commit(result_state);
+
+            Ok(transaction_result.result.into())
+        }
+        EvmState::Execution(db) => {
+            let mut evm = Evm::builder()
+                .with_db(db)
+                .with_block_env(block_env)
+                .with_tx_env(tx_env)
+                .with_spec_id(spec_id)
+                .build();
+
+            // Not necessary to commit to DB
+            let transaction_result = evm.transact()?;
+            Ok(transaction_result.result.into())
+        }
+    }
+}
+
+/// Calls the EIP-2935 process block hashes history system call contract
+/// NOTE: This was implemented by making use of an EVM system contract, but can be changed to a
+/// direct state trie update after the verkle fork, as explained in https://eips.ethereum.org/EIPS/eip-2935
+pub fn process_block_hash_history(
+    state: &mut EvmState,
+    header: &BlockHeader,
+    spec_id: SpecId,
+) -> Result<ExecutionResult, EvmError> {
+    lazy_static! {
+        static ref SYSTEM_ADDRESS: RevmAddress =
+            RevmAddress::from_slice(&hex::decode(SYSTEM_ADDRESS_STR).unwrap());
+        static ref CONTRACT_ADDRESS: RevmAddress =
+            RevmAddress::from_slice(&hex::decode(HISTORY_STORAGE_ADDRESS_STR).unwrap(),);
+    };
+    let tx_env = TxEnv {
+        caller: *SYSTEM_ADDRESS,
+        transact_to: RevmTxKind::Call(*CONTRACT_ADDRESS),
+        gas_limit: 30_000_000,
+        data: revm::primitives::Bytes::copy_from_slice(header.parent_hash.as_bytes()),
         ..Default::default()
     };
     let mut block_env = block_env(header);
