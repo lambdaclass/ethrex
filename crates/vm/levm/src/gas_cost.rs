@@ -1096,7 +1096,7 @@ fn calculate_cost_and_gas_limit_call(
     let gas: u64 = gas_from_stack
         .min(max_gas_for_call.into())
         .try_into()
-        .map_err(|_err| OutOfGasError::MaxGasLimitExceeded)?
+        .map_err(|_err| OutOfGasError::MaxGasLimitExceeded)?;
 
     Ok((
         gas.checked_add(call_gas_costs)
