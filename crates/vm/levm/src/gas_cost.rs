@@ -423,7 +423,7 @@ pub fn sstore(
     fork: Fork,
 ) -> Result<u64, VMError> {
     // https://github.com/ethereum/EIPs/blob/master/EIPS/eip-1087.md
-    if fork <= Fork::Berlin {
+    if fork < Fork::Berlin {
         if storage_slot.current_value.is_zero() && !new_value.is_zero() {
             Ok(SSTORE_PRE_BERLIN_NON_ZERO)
         } else {
