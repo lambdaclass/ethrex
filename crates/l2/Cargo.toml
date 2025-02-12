@@ -18,8 +18,8 @@ ethrex-rlp.workspace = true
 ethrex-rpc.workspace = true
 ethrex-blockchain.workspace = true
 ethrex-storage.workspace = true
-ethrex-vm.workspace = true
-ethrex-dev = { path = "../../crates/blockchain/dev" }
+ethrex-vm = { path = "../vm", default-features = false }
+ethrex-dev = { path = "../../crates/blockchain/dev", default-features = false }
 hex.workspace = true
 bytes.workspace = true
 jsonwebtoken.workspace = true

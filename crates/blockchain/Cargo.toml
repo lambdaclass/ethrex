@@ -32,7 +32,7 @@ hex = "0.4.3"
 path = "./blockchain.rs"
 
 [features]
-default = ["c-kzg"]
+default = []
 libmdbx = ["ethrex-common/libmdbx", "ethrex-storage/default", "ethrex-vm/libmdbx"]
-c-kzg = ["ethrex-common/c-kzg", "ethrex-levm/c-kzg"]
+c-kzg = ["ethrex-common/c-kzg", "ethrex-vm/c-kzg", "ethrex-levm/c-kzg"]
 metrics = ["ethrex-metrics/transactions"]

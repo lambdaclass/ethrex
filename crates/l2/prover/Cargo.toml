@@ -17,6 +17,7 @@ thiserror.workspace = true
 
 # ethrex
 ethrex-common.workspace = true
+# ethrex-vm = { path="../../vm", default-features = false }
 ethrex-vm.workspace = true
 ethrex-rlp.workspace = true
 
@@ -32,7 +33,7 @@ risc0-zkvm = { version = "1.2.2" }
 sp1-sdk = "3.4.0"
 
 [dev-dependencies]
-ethrex-vm.workspace = true
+# ethrex-vm = { path="../../vm", default-features = false }
 ethrex-storage.workspace = true
 ethrex-blockchain.workspace = true
 
