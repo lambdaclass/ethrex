@@ -176,7 +176,7 @@ jobs:
           body-path: crates/vm/levm/ef_tests_comparison.md
           edit-mode: replace
 
-      # If we don't have a failure, means that there are no differences in ef-tests.
+      # If we don't have a failure, means that there are no differences in EF-tests.
       # If comment-id != '', means that we've already created the comment.
       # If both conditions are met, update the comment saying that all tests pass.
       - name: Update comment
