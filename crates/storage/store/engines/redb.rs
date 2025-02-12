@@ -1,12 +1,13 @@
 use std::{borrow::Borrow, panic::RefUnwindSafe, sync::Arc};
 
-use ethrex_core::types::BlockBody;
+use ethrex_core::types::{AccountState, BlockBody};
 use ethrex_core::{
     types::{BlobsBundle, Block, BlockHash, BlockHeader, BlockNumber, ChainConfig, Index, Receipt},
     H256, U256,
 };
 use ethrex_rlp::decode::RLPDecode;
 use ethrex_rlp::encode::RLPEncode;
+use ethrex_rlp::error::RLPDecodeError;
 use ethrex_trie::Nibbles;
 use ethrex_trie::{
     db::{redb::RedBTrie, redb_multitable::RedBMultiTableTrieDB},
@@ -14,7 +15,10 @@ use ethrex_trie::{
 };
 use redb::{AccessGuard, Database, Key, MultimapTableDefinition, TableDefinition, TypeName, Value};
 
-use crate::rlp::{BlockRLP, BlockTotalDifficultyRLP, Rlp, TransactionHashRLP};
+use crate::rlp::{
+    AccountHashRLP, AccountStateRLP, BlockRLP, BlockTotalDifficultyRLP, Rlp, TransactionHashRLP,
+};
+use crate::MAX_SNAPSHOT_READS;
 use crate::{
     error::StoreError,
     rlp::{
@@ -56,6 +60,10 @@ const TRANSACTION_LOCATIONS_TABLE: MultimapTableDefinition<
 > = MultimapTableDefinition::new("TransactionLocations");
 const SNAP_STATE_TABLE: TableDefinition<SnapStateIndex, Vec<u8>> =
     TableDefinition::new("SnapState");
+const STATE_SNAPSHOT_TABLE: TableDefinition<AccountHashRLP, AccountStateRLP> =
+    TableDefinition::new("StateSnapshot");
+const STORAGE_SNAPSHOT_TABLE: MultimapTableDefinition<AccountHashRLP, ([u8; 32], [u8; 32])> =
+    MultimapTableDefinition::new("TransactionLocations");
 
 #[derive(Debug)]
 pub struct RedBStore {
@@ -717,32 +725,21 @@ impl StoreEngine for RedBStore {
             .map_err(StoreError::RLPDecode)
     }
 
-    fn set_state_trie_root_checkpoint(&self, current_root: H256) -> Result<(), StoreError> {
-        self.write(
-            SNAP_STATE_TABLE,
-            SnapStateIndex::StateTrieRootCheckpoint,
-            current_root.encode_to_vec(),
-        )
-    }
-
-    fn get_state_trie_root_checkpoint(&self) -> Result<Option<H256>, StoreError> {
-        self.read(SNAP_STATE_TABLE, SnapStateIndex::StateTrieRootCheckpoint)?
-            .map(|rlp| RLPDecode::decode(&rlp.value()))
-            .transpose()
-            .map_err(StoreError::RLPDecode)
-    }
-
-    fn set_state_trie_key_checkpoint(&self, last_key: H256) -> Result<(), StoreError> {
+    fn set_state_trie_key_checkpoint(&self, last_key: [H256; 2]) -> Result<(), StoreError> {
         self.write(
             SNAP_STATE_TABLE,
             SnapStateIndex::StateTrieKeyCheckpoint,
-            last_key.encode_to_vec(),
+            last_key.to_vec().encode_to_vec(),
         )
     }
 
-    fn get_state_trie_key_checkpoint(&self) -> Result<Option<H256>, StoreError> {
+    fn get_state_trie_key_checkpoint(&self) -> Result<Option<[H256; 2]>, StoreError> {
         self.read(SNAP_STATE_TABLE, SnapStateIndex::StateTrieKeyCheckpoint)?
-            .map(|rlp| RLPDecode::decode(&rlp.value()))
+            .map(|rlp| {
+                <Vec<H256>>::decode(&rlp.value())?
+                    .try_into()
+                    .map_err(|_| RLPDecodeError::InvalidLength)
+            })
             .transpose()
             .map_err(StoreError::RLPDecode)
     }
@@ -801,6 +798,139 @@ impl StoreEngine for RedBStore {
         write_txn.delete_table(SNAP_STATE_TABLE)?;
         write_txn.commit()?;
         Ok(())
+    }
+
+    fn write_snapshot_account_batch(
+        &self,
+        account_hashes: Vec<H256>,
+        account_states: Vec<ethrex_core::types::AccountState>,
+    ) -> Result<(), StoreError> {
+        self.write_batch(
+            STATE_SNAPSHOT_TABLE,
+            account_hashes
+                .into_iter()
+                .map(|h| <H256 as Into<AccountHashRLP>>::into(h))
+                .zip(
+                    account_states
+                        .into_iter()
+                        .map(|a| <AccountState as Into<AccountStateRLP>>::into(a)),
+                )
+                .collect::<Vec<_>>(),
+        )
+    }
+
+    fn write_snapshot_storage_batch(
+        &self,
+        account_hash: H256,
+        storage_keys: Vec<H256>,
+        storage_values: Vec<U256>,
+    ) -> Result<(), StoreError> {
+        let write_tx = self.db.begin_write()?;
+        {
+            let mut table = write_tx.open_multimap_table(STORAGE_SNAPSHOT_TABLE)?;
+            for (key, value) in storage_keys.into_iter().zip(storage_values.into_iter()) {
+                table.insert(
+                    <H256 as Into<AccountHashRLP>>::into(account_hash),
+                    (key.0, value.to_big_endian()),
+                )?;
+            }
+        }
+        write_tx.commit()?;
+        Ok(())
+    }
+
+    fn set_state_trie_rebuild_checkpoint(
+        &self,
+        checkpoint: (H256, [H256; crate::STATE_TRIE_SEGMENTS]),
+    ) -> Result<(), StoreError> {
+        self.write(
+            SNAP_STATE_TABLE,
+            SnapStateIndex::StateTrieRebuildCheckpoint,
+            (checkpoint.0, checkpoint.1.to_vec()).encode_to_vec(),
+        )
+    }
+
+    fn get_state_trie_rebuild_checkpoint(
+        &self,
+    ) -> Result<Option<(H256, [H256; crate::STATE_TRIE_SEGMENTS])>, StoreError> {
+        let Some((root, checkpoints)) = self
+            .read(SNAP_STATE_TABLE, SnapStateIndex::StateTrieRebuildCheckpoint)?
+            .map(|ref rlp| <(H256, Vec<H256>)>::decode(&rlp.value()))
+            .transpose()?
+        else {
+            return Ok(None);
+        };
+        Ok(Some((
+            root,
+            checkpoints
+                .try_into()
+                .map_err(|_| RLPDecodeError::InvalidLength)?,
+        )))
+    }
+
+    fn set_storage_trie_rebuild_pending(
+        &self,
+        pending: Vec<(H256, H256)>,
+    ) -> Result<(), StoreError> {
+        self.write(
+            SNAP_STATE_TABLE,
+            SnapStateIndex::StorageTrieRebuildPending,
+            pending.encode_to_vec(),
+        )
+    }
+
+    fn get_storage_trie_rebuild_pending(&self) -> Result<Option<Vec<(H256, H256)>>, StoreError> {
+        self.read(SNAP_STATE_TABLE, SnapStateIndex::StorageTrieRebuildPending)?
+            .map(|p| RLPDecode::decode(&p.value()))
+            .transpose()
+            .map_err(StoreError::RLPDecode)
+    }
+
+    fn clear_snapshot(&self) -> Result<(), StoreError> {
+        let write_tx = self.db.begin_write()?;
+        write_tx.delete_table(STATE_SNAPSHOT_TABLE)?;
+        write_tx.delete_multimap_table(STORAGE_SNAPSHOT_TABLE)?;
+        write_tx.commit()?;
+        Ok(())
+    }
+
+    fn iter_account_snapshot(
+        &self,
+        start: H256,
+    ) -> Result<Vec<(H256, ethrex_core::types::AccountState)>, StoreError> {
+        let read_tx = self.db.begin_read()?;
+        let table = read_tx.open_table(STATE_SNAPSHOT_TABLE)?;
+        Ok(table
+            .range(<H256 as Into<AccountHashRLP>>::into(start)..)?
+            .take(MAX_SNAPSHOT_READS)
+            .map_while(|elem| {
+                elem.ok()
+                    .map(|(key, value)| (key.value().to(), value.value().to()))
+            })
+            .collect())
+    }
+
+    fn iter_storage_snapshot(
+        &self,
+        start: H256,
+        account_hash: H256,
+    ) -> Result<Vec<(H256, U256)>, StoreError> {
+        let read_tx = self.db.begin_read()?;
+        let table = read_tx.open_multimap_table(STORAGE_SNAPSHOT_TABLE)?;
+        Ok(table
+            .get(<H256 as Into<AccountHashRLP>>::into(account_hash))?
+            .map_while(|elem| {
+                elem.ok().and_then(|entry| {
+                    let (key, val) = entry.value();
+                    if H256(key) < start {
+                        None
+                    } else {
+                        Some((H256(key), U256::from_big_endian(&val)))
+                    }
+                })
+            })
+            .take(MAX_SNAPSHOT_READS)
+            .collect())
     }
 }
 
@@ -902,6 +1032,8 @@ pub fn init_db() -> Result<Database, StoreError> {
     table_creation_txn.open_table(PENDING_BLOCKS_TABLE)?;
     table_creation_txn.open_multimap_table(TRANSACTION_LOCATIONS_TABLE)?;
     table_creation_txn.open_table(SNAP_STATE_TABLE)?;
+    table_creation_txn.open_table(STATE_SNAPSHOT_TABLE)?;
+    table_creation_txn.open_multimap_table(STORAGE_SNAPSHOT_TABLE)?;
     table_creation_txn.commit()?;
 
     Ok(db)

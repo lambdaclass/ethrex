@@ -633,7 +633,6 @@ impl StoreEngine for Store {
         txn.commit().map_err(StoreError::LibmdbxError)
     }
 
-
     fn set_state_trie_rebuild_checkpoint(
         &self,
         checkpoint: (H256, [H256; STATE_TRIE_SEGMENTS]),
@@ -687,7 +686,9 @@ impl StoreEngine for Store {
         txn.clear_table::<StateSnapShot>()
             .map_err(StoreError::LibmdbxError)?;
         txn.clear_table::<StorageSnapShot>()
-            .map_err(StoreError::LibmdbxError)
+            .map_err(StoreError::LibmdbxError)?;
+        txn.commit().map_err(StoreError::LibmdbxError)?;
+        Ok(())
     }
 
     // Yields at most 100 elements

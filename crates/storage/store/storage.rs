@@ -1084,7 +1084,6 @@ impl Store {
             .write_snapshot_storage_batch(account_hash, storage_keys, storage_values)
     }
 
-
     /// Clears all checkpoint data created during the last snap sync
     pub fn clear_snap_state(&self) -> Result<(), StoreError> {
         self.engine.clear_snap_state()

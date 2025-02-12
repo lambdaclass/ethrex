@@ -406,24 +406,25 @@ impl SyncManager {
     async fn snap_sync(&mut self, state_root: H256, store: Store) -> Result<bool, SyncError> {
         // Begin the background trie rebuild process if it is not active yet or if it crashed
         if !self
-        .trie_rebuilder
-        .as_ref()
-        .is_some_and(|rebuilder| rebuilder.alive())
-    {
-        self.trie_rebuilder = Some(TrieRebuilder::startup(
-            self.cancel_token.clone(),
+            .trie_rebuilder
+            .as_ref()
+            .is_some_and(|rebuilder| rebuilder.alive())
+        {
+            self.trie_rebuilder = Some(TrieRebuilder::startup(
+                self.cancel_token.clone(),
+                store.clone(),
+            ));
+        };
+        // Spawn storage healer earlier so we can start healing stale storages
+        let (storage_healer_sender, storage_healer_receiver) =
+            mpsc::channel::<Vec<H256>>(MAX_CHANNEL_MESSAGES);
+        let storage_healer_handler = tokio::spawn(storage_healer(
+            state_root,
+            storage_healer_receiver,
+            self.peers.clone(),
             store.clone(),
         ));
-    };
-    // Spawn storage healer earlier so we can start healing stale storages
-    let (storage_healer_sender, storage_healer_receiver) = mpsc::channel::<Vec<H256>>(MAX_CHANNEL_MESSAGES);
-    let storage_healer_handler = tokio::spawn(storage_healer(
-        state_root,
-        storage_healer_receiver,
-        self.peers.clone(),
-        store.clone(),
-    ));
-    // Perform state sync if it was not already completed on a previous cycle
+        // Perform state sync if it was not already completed on a previous cycle
         // Retrieve storage data to check which snap sync phase we are in
         let key_checkpoints = store.get_state_trie_key_checkpoint()?;
         // If we have no key checkpoints or if the key checkpoints are lower than the segment boundaries we are in state sync phase
@@ -444,7 +445,7 @@ impl SyncManager {
                     .unwrap()
                     .storage_rebuilder_sender
                     .clone(),
-                    storage_healer_sender.clone(),
+                storage_healer_sender.clone(),
             )
             .await?;
             if stale_pivot {
@@ -454,14 +455,14 @@ impl SyncManager {
         }
         // Wait for the trie rebuilder to finish
         info!("Waiting for the trie rebuild to finish");
-            let rebuild_start = Instant::now();
-            let _ = self.trie_rebuilder.take().unwrap().complete().await?;
-            info!(
-                "State trie rebuilt from snapshot, overtime: {}",
-                rebuild_start.elapsed().as_secs()
-            );
-                // Clear snapshot
-                store.clear_snapshot()?;
+        let rebuild_start = Instant::now();
+        let _ = self.trie_rebuilder.take().unwrap().complete().await?;
+        info!(
+            "State trie rebuilt from snapshot, overtime: {}",
+            rebuild_start.elapsed().as_secs()
+        );
+        // Clear snapshot
+        store.clear_snapshot()?;
 
         // Perfrom Healing
         let heal_status = heal_state_trie(
@@ -574,7 +575,7 @@ async fn state_sync_segment(
         store.clone(),
         state_root,
         storage_trie_rebuilder_sender.clone(),
-        storage_healer_sender.clone()
+        storage_healer_sender.clone(),
     ));
     info!("Starting/Resuming state trie download of segment number {segment_number} from key {start_account_hash}");
     // Fetch Account Ranges
@@ -780,7 +781,9 @@ async fn storage_fetcher(
         "Concluding storage fetcher, {} storages left in queue to be healed later",
         pending_storage.len()
     );
-    storage_healer_sender.send(pending_storage.into_iter().map(|(hash, _)| hash).collect()).await?;
+    storage_healer_sender
+        .send(pending_storage.into_iter().map(|(hash, _)| hash).collect())
+        .await?;
     Ok(())
 }
 
@@ -1042,7 +1045,11 @@ async fn storage_healer(
     peers: PeerHandler,
     store: Store,
 ) -> Result<BTreeMap<H256, Vec<Nibbles>>, SyncError> {
-    let mut pending_paths: BTreeMap<H256, Vec<Nibbles>> = store.get_storage_heal_paths()?.unwrap_or_default().into_iter().collect();
+    let mut pending_paths: BTreeMap<H256, Vec<Nibbles>> = store
+        .get_storage_heal_paths()?
+        .unwrap_or_default()
+        .into_iter()
+        .collect();
     // The pivot may become stale while the fetcher is active, we will still keep the process
     // alive until the end signal so we don't lose queued messages
     let mut stale = false;
