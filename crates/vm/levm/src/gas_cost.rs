@@ -122,6 +122,8 @@ pub const EXTCODESIZE_WARM_DYNAMIC: u64 = DEFAULT_WARM_DYNAMIC;
 pub const EXTCODEHASH_STATIC: u64 = DEFAULT_STATIC;
 pub const EXTCODEHASH_COLD_DYNAMIC: u64 = DEFAULT_COLD_DYNAMIC;
 pub const EXTCODEHASH_WARM_DYNAMIC: u64 = DEFAULT_WARM_DYNAMIC;
+pub const EXTCODEHASH_STATIC_PRE_ISTANBUL: u64 = 400;
+pub const EXTCODEHASH_STATIC_PRE_BERLIN: u64 = 700;
 
 pub const EXTCODECOPY_STATIC: u64 = 0;
 pub const EXTCODECOPY_DYNAMIC_BASE: u64 = 3;
@@ -706,9 +708,9 @@ pub fn extcodecopy(
 
 pub fn extcodehash(address_was_cold: bool, fork: Fork) -> Result<u64, VMError> {
     if fork < Fork::Istanbul {
-        Ok(400)
+        Ok(EXTCODEHASH_STATIC_PRE_ISTANBUL)
     } else if fork < Fork::Berlin {
-        Ok(700)
+        Ok(EXTCODEHASH_STATIC_PRE_BERLIN)
     } else {
         address_access_cost(
             address_was_cold,
