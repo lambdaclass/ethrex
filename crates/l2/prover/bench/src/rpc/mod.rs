@@ -331,7 +331,7 @@ fn decode_hex(hex: String) -> Result<Vec<u8>, String> {
 
 #[cfg(test)]
 mod test {
-    use ethrex_core::Address;
+    use ethrex_trie::Address;
 
     use super::*;
 
