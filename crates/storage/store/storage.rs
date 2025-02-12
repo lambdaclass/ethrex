@@ -34,7 +34,7 @@ pub struct Store {
 }
 
 #[allow(dead_code)]
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EngineType {
     InMemory,
     #[cfg(feature = "libmdbx")]
