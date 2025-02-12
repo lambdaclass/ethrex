@@ -1,7 +1,10 @@
+use std::{env::temp_dir, fs::read_to_string};
+
 use crate::errors::ProverError;
 use ethrex_l2::utils::prover::proving_systems::{
-    ExecuteOutput, ProverType, ProvingOutput, Risc0Proof, Sp1Proof,
+    ExecuteOutput, PicoProof, ProverType, ProvingOutput, Risc0Proof, Sp1Proof,
 };
+use pico_sdk::vk_client::KoalaBearProveVKClient;
 use tracing::info;
 
 // risc0
@@ -207,15 +210,42 @@ impl<'a> Prover for Sp1Prover<'a> {
 }
 
 #[cfg(feature = "build_pico")]
+impl<'a> PicoProver<'a> {
+    pub fn new() -> Self {
+        Self {
+            elf: ZKVM_RISC0_PROGRAM_ELF,
+        }
+    }
+}
+
+#[cfg(feature = "build_pico")]
 impl<'a> Prover for PicoProver<'a> {
     fn prove(&mut self, input: ProgramInput) -> Result<ProvingOutput, Box<dyn std::error::Error>> {
         let client = DefaultProverClient::new(self.elf);
-
         let stdin_builder = client.get_stdin_builder();
-        let proof = client.prove_fast()?;
+
+        let output_dir = temp_dir();
+        let constraints_path = output_dir.join("constraints.json");
+        let groth16_witness_path = output_dir.join("groth16_witness.json");
+
+        let proof = client.prove(output_dir)?;
+
+        let constraints_json: serde_json::Value =
+            serde_json::from_str(&read_to_string(constraints_path)?)?;
+        let groth16_witness_json: serde_json::Value =
+            serde_json::from_str(&read_to_string(groth16_witness_path)?)?;
+
+        let mut constraints = Vec::new();
+        let mut groth16_witness = Vec::new();
+
+        serde_json::to_writer(&mut constraints, &constraints_json)?;
+        serde_json::to_writer(&mut groth16_witness, &groth16_witness_json)?;
 
         info!("Successfully generated PicoProof.");
-        Ok(ProvingOutput::Pico(proof))
+        Ok(ProvingOutput::Pico(PicoProof {
+            constraints,
+            groth16_witness,
+        }))
     }
 
     fn execute(

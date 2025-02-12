@@ -148,16 +148,16 @@ impl Sp1Proof {
 #[cfg(feature = "pico")]
 #[derive(Serialize, Deserialize, Clone)]
 pub struct PicoProof {
-    pub proof: pico_vm::machine::proof::MetaProof,
-    pub vk: sp1_sdk::SP1VerifyingKey,
+    pub constraints: Vec<u8>,
+    pub groth16_witness: Vec<u8>,
 }
 
 #[cfg(feature = "pico")]
 impl Debug for PicoProof {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("Sp1Proof")
-            .field("proof", &self.proof)
-            .field("vk", &self.vk.bytes32())
+        f.debug_struct("PicoProof")
+            .field("constraints", &self.constraints)
+            .field("groth16_witness", &self.groth16_witness)
             .finish()
     }
 }
@@ -169,8 +169,8 @@ impl PicoProof {
         verifying_key: sp1_sdk::SP1VerifyingKey,
     ) -> Self {
         PicoProof {
-            proof: Box::new(proof),
-            vk: verifying_key,
+            constraints: Vec::new(),
+            groth16_witness: Vec::new(),
         }
     }
 }

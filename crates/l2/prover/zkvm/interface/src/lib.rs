@@ -3,16 +3,20 @@ pub mod methods {
     pub const ZKVM_RISC0_PROGRAM_ELF: &[u8] = &[0];
     #[cfg(any(clippy, not(feature = "build_risc0")))]
     pub const ZKVM_RISC0_PROGRAM_ID: [u32; 8] = [0_u32; 8];
-
     #[cfg(all(not(clippy), feature = "build_risc0"))]
     include!(concat!(env!("OUT_DIR"), "/methods.rs"));
 
     #[cfg(all(not(clippy), feature = "build_sp1"))]
     pub const ZKVM_SP1_PROGRAM_ELF: &[u8] =
         include_bytes!("../sp1/elf/riscv32im-succinct-zkvm-elf");
-
     #[cfg(any(clippy, not(feature = "build_sp1")))]
     pub const ZKVM_SP1_PROGRAM_ELF: &[u8] = &[0];
+
+    #[cfg(all(not(clippy), feature = "build_pico"))]
+    pub const ZKVM_PICO_PROGRAM_ELF: &[u8] =
+        include_bytes!("../pico/elf/riscv32im-pico-zkvm-elf");
+    #[cfg(any(clippy, not(feature = "build_pico")))]
+    pub const ZKVM_PICO_PROGRAM_ELF: &[u8] = &[0];
 }
 
 pub mod io {
