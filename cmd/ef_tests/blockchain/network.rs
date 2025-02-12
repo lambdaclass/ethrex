@@ -1,4 +1,4 @@
-use ethrex_core::types::ChainConfig;
+use ethrex_common::types::ChainConfig;
 use lazy_static::lazy_static;
 use serde::Deserialize;
 

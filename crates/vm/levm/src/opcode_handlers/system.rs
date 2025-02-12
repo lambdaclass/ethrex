@@ -3,15 +3,14 @@ use crate::{
     constants::{CREATE_DEPLOYMENT_FAIL, INIT_CODE_MAX_SIZE, REVERT_FOR_CALL, SUCCESS_FOR_CALL},
     db::cache,
     errors::{InternalError, OpcodeResult, OutOfGasError, TxResult, VMError},
-    gas_cost::{self, max_message_call_gas},
+    gas_cost::{self, max_message_call_gas, SELFDESTRUCT_REFUND},
     memory::{self, calculate_memory_size},
-    utils::*,
-    utils::{address_to_word, word_to_address},
+    utils::{address_to_word, word_to_address, *},
     vm::VM,
     Account,
 };
 use bytes::Bytes;
-use ethrex_core::{types::Fork, Address, U256};
+use ethrex_common::{types::Fork, Address, U256};
 
 // System Operations (10)
 // Opcodes: CREATE, CALL, CALLCODE, RETURN, DELEGATECALL, CREATE2, STATICCALL, REVERT, INVALID, SELFDESTRUCT
@@ -532,6 +531,7 @@ impl VM {
             target_account_is_cold,
             target_account_info.is_empty(),
             balance_to_transfer,
+            self.env.config.fork,
         )?)?;
 
         // [EIP-6780] - SELFDESTRUCT only in same transaction from CANCUN
@@ -578,6 +578,15 @@ impl VM {
             self.accrued_substate
                 .selfdestruct_set
                 .insert(current_call_frame.to);
+        }
+
+        // [EIP-3529](https://eips.ethereum.org/EIPS/eip-3529)
+        if self.env.config.fork < Fork::London {
+            self.env.refunded_gas = self
+                .env
+                .refunded_gas
+                .checked_add(SELFDESTRUCT_REFUND)
+                .ok_or(VMError::GasRefundsOverflow)?;
         }
 
         Ok(OpcodeResult::Halt)

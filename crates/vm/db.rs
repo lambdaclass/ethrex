@@ -1,7 +1,8 @@
 use std::collections::HashMap;
 
-use ethrex_core::{
-    types::{Block, BlockHash},
+use crate::{execution_db::ExecutionDB, EvmError};
+use ethrex_common::{
+    types::{Block, BlockHash, ChainConfig},
     Address as CoreAddress, H256 as CoreH256,
 };
 use ethrex_storage::{error::StoreError, hash_address, hash_key, Store};
@@ -67,7 +68,7 @@ impl From<ExecutionDB> for EvmState {
     }
 }
 
-use ethrex_core::U256 as CoreU256;
+use ethrex_common::U256 as CoreU256;
 use ethrex_levm::db::Database as LevmDatabase;
 
 impl LevmDatabase for StoreWrapper {

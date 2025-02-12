@@ -3,7 +3,7 @@ use super::{
     utils::{snappy_compress, snappy_decompress},
 };
 use bytes::{BufMut, Bytes};
-use ethrex_core::{
+use ethrex_common::{
     types::{AccountState, EMPTY_KECCACK_HASH, EMPTY_TRIE_HASH},
     H256, U256,
 };

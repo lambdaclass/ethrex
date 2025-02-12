@@ -2,7 +2,7 @@
 #![allow(clippy::expect_used)]
 
 use ethrex_blockchain::add_block;
-use ethrex_core::types::{Block, Genesis};
+use ethrex_common::types::{Block, Genesis};
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
 use ethrex_storage::{EngineType, Store};
 use ethrex_vm::{db::StoreWrapper, execution_db::ToExecDB};

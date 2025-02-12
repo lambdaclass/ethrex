@@ -1,6 +1,6 @@
 #![allow(clippy::expect_used)]
 #![allow(clippy::unwrap_used)]
-use ethrex_core::types::Block;
+use ethrex_common::types::Block;
 use std::path::Path;
 use tracing::info;
 

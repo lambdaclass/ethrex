@@ -16,7 +16,7 @@ pub mod methods {
 }
 
 pub mod io {
-    use ethrex_core::{
+    use ethrex_common::{
         types::{Block, BlockHeader},
         H256,
     };
@@ -49,7 +49,7 @@ pub mod io {
     }
 
     /// Used with [serde_with] to encode a Block into RLP before serializing its bytes. This is
-    /// necessary because the [ethrex_core::types::Transaction] type doesn't serializes into any
+    /// necessary because the [ethrex_common::types::Transaction] type doesn't serializes into any
     /// format other than JSON.
     pub struct RLPBlock;
 
@@ -78,7 +78,7 @@ pub mod io {
 pub mod trie {
     use std::collections::HashMap;
 
-    use ethrex_core::{
+    use ethrex_common::{
         types::{AccountInfo, AccountState},
         H160, U256,
     };
