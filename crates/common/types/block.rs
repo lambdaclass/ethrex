@@ -265,7 +265,7 @@ pub fn compute_withdrawals_root(withdrawals: &[Withdrawal]) -> H256 {
 pub fn calculate_requests_hash(receipts: &[Receipt]) -> H256 {
     let requests = Requests::from_deposit_receipts(receipts);
     // TODO: implement other requests
-    compute_requests_hash(&vec![requests])
+    compute_requests_hash(&[requests])
 }
 
 // See https://github.com/ethereum/EIPs/blob/2a6b6965e64787815f7fffb9a4c27660d9683846/EIPS/eip-7685.md?plain=1#L62.
