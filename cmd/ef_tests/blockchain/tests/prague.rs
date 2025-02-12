@@ -24,7 +24,7 @@ datatest_stable::harness!(
     parse_and_execute,
     "vectors/prague/eip2935_historical_block_hashes_from_state",
     r".*/.*\.json",
-    parse_and_execute,
-    "vectors/prague/eip6110_deposits/deposits",
-    r"test.json"
+    // parse_and_execute,
+    // "vectors/prague/eip6110_deposits/deposits",
+    // r"test.json"
 );

@@ -273,7 +273,7 @@ fn compute_requests_hash(requests: &[Request]) -> H256 {
         let request_bytes = request.to_bytes();
         // TODO: correct this check
         if request_bytes.len() > 1 {
-            hasher.update(Sha256::digest(&request_bytes));
+            hasher.update(Sha256::digest(request_bytes));
         }
     }
     H256::from_slice(&hasher.finalize())
