@@ -15,7 +15,7 @@ tracing.workspace = true
 tracing-subscriber.workspace = true
 ethrex-common.workspace = true
 ethrex-storage.workspace = true
-ethrex-vm = { path = "../../vm", default-features = false }
+ethrex-vm.workspace = true
 ethrex-blockchain.workspace = true
 ethrex-p2p.workspace = true
 ethrex-rlp.workspace = true

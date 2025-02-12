@@ -8,8 +8,8 @@ ethrex-blockchain.workspace = true
 ethrex-common.workspace = true
 ethrex-storage.workspace = true
 ethrex-rlp.workspace = true
-ethrex-vm = { path = "../../../crates/vm" }
-ethrex-levm = { path = "../../../crates/vm/levm" }
+ethrex-vm.workspace = true
+ethrex-levm.workspace = true
 
 serde.workspace = true
 serde_json.workspace = true
@@ -35,6 +35,10 @@ hex = "0.4.3"
 
 [lib]
 path = "./lib.rs"
+
+[features]
+default = ["c-kzg"]
+c-kzg = ["ethrex-vm/c-kzg", "ethrex-levm/c-kzg", "ethrex-common/c-kzg"]
 
 [[test]]
 name = "all"

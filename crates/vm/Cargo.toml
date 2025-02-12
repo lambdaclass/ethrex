@@ -1,12 +1,12 @@
 [package]
 name = "ethrex-vm"
-version = "0.1.0"
-edition = "2021"
+version.workspace = true
+edition.workspace = true
 
 [dependencies]
 ethrex-common.workspace = true
 ethrex-storage.workspace = true
-ethrex-levm = { path = "./levm", default-features = false }
+ethrex-levm.workspace = true
 ethrex-trie.workspace = true
 ethrex-rlp.workspace = true
 
@@ -39,7 +39,7 @@ ethereum-types.workspace = true
 path = "./vm.rs"
 
 [features]
-default = ["c-kzg", "blst"]
+default = ["blst"]
 l2 = []
 c-kzg = ["revm/c-kzg", "ethrex-levm/c-kzg", "ethrex-common/c-kzg"]
 blst = ["revm/blst"]

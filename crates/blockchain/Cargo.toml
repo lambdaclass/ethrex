@@ -9,8 +9,8 @@ edition = "2021"
 ethrex-rlp.workspace = true
 ethrex-common.workspace = true
 ethrex-storage.workspace = true
-ethrex-vm = { path = "../vm", default-features = false }
-ethrex-levm = { path = "../vm/levm", default-features = false }
+ethrex-vm.workspace = true
+ethrex-levm.workspace = true
 
 thiserror.workspace = true
 sha3.workspace = true

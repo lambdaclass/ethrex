@@ -37,6 +37,7 @@ ethrex-p2p = { path = "./crates/networking/p2p" }
 ethrex-rpc = { path = "./crates/networking/rpc" }
 ethrex-storage = { path = "./crates/storage/store" }
 ethrex-vm = { path = "./crates/vm" }
+ethrex-levm = { path = "./crates/vm/levm" }
 ethrex-trie = { path = "./crates/storage/trie" }
 ethrex-rlp = { path = "./crates/common/rlp" }
 ethrex-l2 = { path = "./crates/l2" }
