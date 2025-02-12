@@ -134,7 +134,7 @@ pub const EXTCODECOPY_WARM_DYNAMIC: u64 = DEFAULT_WARM_DYNAMIC;
 pub const CALL_STATIC: u64 = DEFAULT_STATIC;
 pub const CALL_COLD_DYNAMIC: u64 = DEFAULT_COLD_DYNAMIC;
 pub const CALL_WARM_DYNAMIC: u64 = DEFAULT_WARM_DYNAMIC;
-pub const CALL_PRE_BERLIN: u64 = 700;
+// pub const CALL_PRE_BERLIN: u64 = 700;
 pub const CALL_POSITIVE_VALUE: u64 = 9000;
 pub const CALL_POSITIVE_VALUE_STIPEND: u64 = 2300;
 pub const CALL_TO_EMPTY_ACCOUNT: u64 = 25000;
@@ -635,11 +635,13 @@ fn address_access_cost(
     warm_dynamic_cost: u64,
     fork: Fork,
 ) -> Result<u64, VMError> {
-    // [EIP-2929](https://eips.ethereum.org/EIPS/eip-2929)
-    if fork <= Fork::Berlin {
+    if fork <= Fork::DaoFork {
+        Ok(40)
+    } else if fork > Fork::DaoFork && fork <= Fork::Berlin {
+        // [EIP-2929](https://eips.ethereum.org/EIPS/eip-2929)
         Ok(ADDRESS_COST_PRE_BERLIN)
     } else {
-        let static_gas = static_cost;
+        let static_gas = dbg!(static_cost);
         let dynamic_cost: u64 = if address_was_cold {
             cold_dynamic_cost
         } else {
@@ -736,7 +738,12 @@ pub fn call(
     gas_left: u64,
     fork: Fork,
 ) -> Result<(u64, u64), VMError> {
-    let memory_expansion_cost = memory::expansion_cost(new_memory_size, current_memory_size)?;
+    let mut memory_expansion_cost = memory::expansion_cost(new_memory_size, current_memory_size)?;
+    if fork <= Fork::Tangerine {
+        memory_expansion_cost
+            .checked_add(700)
+            .ok_or(OutOfGasError::GasCostOverflow)?;
+    };
 
     let address_access_cost = address_access_cost(
         address_was_cold,
