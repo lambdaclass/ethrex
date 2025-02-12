@@ -269,6 +269,7 @@ pub fn get_intrinsic_gas(
             .checked_add(CREATE_BASE_COST)
             .ok_or(OutOfGasError::ConsumedGasOverflow)?;
 
+        // https://eips.ethereum.org/EIPS/eip-3860
         if fork >= Fork::Shanghai {
             let number_of_words = initial_call_frame.calldata.len().div_ceil(WORD_SIZE);
             let double_number_of_words: u64 = number_of_words
