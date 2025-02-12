@@ -127,6 +127,8 @@ pub const EXTCODESIZE_WARM_DYNAMIC: u64 = DEFAULT_WARM_DYNAMIC;
 pub const EXTCODEHASH_STATIC: u64 = DEFAULT_STATIC;
 pub const EXTCODEHASH_COLD_DYNAMIC: u64 = DEFAULT_COLD_DYNAMIC;
 pub const EXTCODEHASH_WARM_DYNAMIC: u64 = DEFAULT_WARM_DYNAMIC;
+pub const EXTCODEHASH_STATIC_PRE_ISTANBUL: u64 = 400;
+pub const EXTCODEHASH_STATIC_PRE_BERLIN: u64 = 700;
 
 pub const EXTCODECOPY_STATIC_PRE_TANGERINE: u64 = 20;
 pub const EXTCODECOPY_STATIC_TANGERINE: u64 = 700;
@@ -756,13 +758,19 @@ pub fn extcodecopy(
 }
 
 pub fn extcodehash(address_was_cold: bool, fork: Fork) -> Result<u64, VMError> {
-    address_access_cost(
-        address_was_cold,
-        EXTCODEHASH_STATIC,
-        EXTCODEHASH_COLD_DYNAMIC,
-        EXTCODEHASH_WARM_DYNAMIC,
-        fork,
-    )
+    if fork < Fork::Istanbul {
+        Ok(EXTCODEHASH_STATIC_PRE_ISTANBUL)
+    } else if fork < Fork::Berlin {
+        Ok(EXTCODEHASH_STATIC_PRE_BERLIN)
+    } else {
+        address_access_cost(
+            address_was_cold,
+            EXTCODEHASH_STATIC,
+            EXTCODEHASH_COLD_DYNAMIC,
+            EXTCODEHASH_WARM_DYNAMIC,
+            fork,
+        )
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
