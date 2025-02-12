@@ -323,21 +323,10 @@ impl VM {
             return self.handle_precompile_result(precompile_result, current_call_frame, backup);
         }
 
-        // dbg!(&current_call_frame.to);
-        // dbg!(&current_call_frame.msg_sender);
-        // dbg!(&current_call_frame.gas_used);
-        // dbg!(&current_call_frame.gas_limit);
-
         loop {
             let opcode = current_call_frame.next_opcode();
-            // dbg!(&opcode);
 
             let op_result = self.handle_current_opcode(opcode, current_call_frame);
-
-            // dbg!(&op_result);
-            // dbg!(&current_call_frame.gas_used);
-            // dbg!(&current_call_frame.stack);
-            // dbg!(&self.env.refunded_gas);
 
             match op_result {
                 Ok(OpcodeResult::Continue { pc_increment }) => {
