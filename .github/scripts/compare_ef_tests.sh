@@ -36,7 +36,9 @@ do
        emoji="➖️"
    fi
 
-   echo "|$name_main|$result_main $percentage_main |$result_pr $percentage_pr| $emoji |"
+   diff=$(( $result_pr - $result_main ))
+
+   echo "|$name_main|$result_main $percentage_main |$result_pr $percentage_pr| $emoji $diff |"
 
    num=$((num + 1))
 
