@@ -593,7 +593,7 @@ pub fn selfdestruct(
         _ => {
             let mut gas_cost = SELFDESTRUCT_STATIC;
 
-            if address_was_cold {
+            if fork >= Fork::Berlin && address_was_cold {
                 gas_cost = gas_cost
                     .checked_add(COLD_ADDRESS_ACCESS_COST)
                     .ok_or(OutOfGasError::GasCostOverflow)?;
