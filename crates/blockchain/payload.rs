@@ -14,12 +14,11 @@ use ethrex_common::{
     Address, Bloom, Bytes, H256, U256,
 };
 
-use ethrex_levm::{db::CacheDB, vm::EVMConfig};
 use ethrex_vm::{
     backends::{
         self,
         levm::{
-            LevmGetStateTransitionsIn, LevmProcessWithdrawalsIn, LevmSystemCallIn,
+            CacheDB, LevmGetStateTransitionsIn, LevmProcessWithdrawalsIn, LevmSystemCallIn,
             LevmTransactionExecutionIn,
         },
         revm::{
@@ -291,14 +290,8 @@ pub fn apply_withdrawals(context: &mut PayloadBuildContext) -> Result<(), EvmErr
 pub fn apply_system_operations(context: &mut PayloadBuildContext) -> Result<(), EvmError> {
     match EVM_BACKEND.get() {
         Some(EVM::LEVM) => {
-            let fork = context
-                .chain_config()?
-                .fork(context.payload.header.timestamp);
-            let blob_schedule = context
-                .chain_config()?
-                .get_fork_blob_schedule(context.payload.header.timestamp)
-                .unwrap_or(EVMConfig::canonical_values(fork));
-            let config = EVMConfig::new(fork, blob_schedule);
+            let config = context.chain_config()?;
+            let fork = config.fork(context.payload.header.timestamp);
             let mut new_state = HashMap::new();
 
             let store_wrapper = Arc::new(StoreWrapper {
@@ -565,21 +558,12 @@ fn apply_plain_transaction(
                 block_hash: context.payload.header.parent_hash,
             });
 
-            let fork = context
-                .chain_config()?
-                .fork(context.payload.header.timestamp);
-            let blob_schedule = context
-                .chain_config()?
-                .get_fork_blob_schedule(context.payload.header.timestamp)
-                .unwrap_or(EVMConfig::canonical_values(fork));
-            let config = EVMConfig::new(fork, blob_schedule);
-
             let report = backends::levm::LEVM::execute_tx(LevmTransactionExecutionIn::new(
                 &head.tx,
                 &context.payload.header,
                 store_wrapper.clone(),
                 context.block_cache.clone(),
-                config,
+                &context.chain_config()?,
             ))
             .map_err(|e| EvmError::Transaction(format!("Invalid Transaction: {e:?}")))?;
             context.remaining_gas = context.remaining_gas.saturating_sub(report.gas_used);

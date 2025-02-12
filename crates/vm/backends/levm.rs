@@ -1,4 +1,5 @@
 use super::constants::{BEACON_ROOTS_ADDRESS_STR, HISTORY_STORAGE_ADDRESS_STR, SYSTEM_ADDRESS_STR};
+use super::{SystemContracts, IEVM};
 use crate::db::StoreWrapper;
 use crate::EvmError;
 use crate::EvmState;
@@ -6,14 +7,13 @@ use crate::EvmState;
 use ethrex_common::types::Fork;
 use ethrex_common::{
     types::{
-        code_hash, AccountInfo, Block, BlockHeader, Receipt, Transaction, TxKind, Withdrawal,
-        GWEI_TO_WEI,
+        code_hash, AccountInfo, Block, BlockHeader, ChainConfig, Receipt, Transaction, TxKind,
+        Withdrawal, GWEI_TO_WEI,
     },
     Address, H256, U256,
 };
-
 use ethrex_levm::{
-    db::{CacheDB, Database as LevmDatabase},
+    db::Database as LevmDatabase,
     errors::{ExecutionReport, TxResult, VMError},
     vm::{EVMConfig, VM},
     Account, AccountInfo as LevmAccountInfo, Environment,
@@ -23,7 +23,8 @@ use lazy_static::lazy_static;
 use revm_primitives::Bytes;
 use std::{collections::HashMap, sync::Arc};
 
-use super::{SystemContracts, IEVM};
+// Export needed types
+pub use ethrex_levm::db::CacheDB;
 
 /// Input for [LEVM::execute_tx]
 pub struct LevmTransactionExecutionIn<'a> {
@@ -36,7 +37,7 @@ pub struct LevmTransactionExecutionIn<'a> {
     /// A cache database for intermediate state changes during execution.
     block_cache: CacheDB,
     /// The EVM configuration to use.
-    config: EVMConfig,
+    config: &'a ChainConfig,
 }
 
 impl<'a> LevmTransactionExecutionIn<'a> {
@@ -45,7 +46,7 @@ impl<'a> LevmTransactionExecutionIn<'a> {
         block_header: &'a BlockHeader,
         db: Arc<dyn LevmDatabase>,
         block_cache: CacheDB,
-        config: EVMConfig,
+        config: &'a ChainConfig,
     ) -> Self {
         LevmTransactionExecutionIn {
             tx,
@@ -125,24 +126,18 @@ impl IEVM for LEVM {
 
         let mut block_cache: CacheDB = HashMap::new();
         let block_header = &block.header;
-        let fork = state.chain_config()?.fork(block_header.timestamp);
-        // If there's no blob schedule in chain_config use the
-        // default/canonical values
-        let blob_schedule = state
-            .chain_config()?
-            .get_fork_blob_schedule(block_header.timestamp)
-            .unwrap_or(EVMConfig::canonical_values(fork));
-        let config = EVMConfig::new(fork, blob_schedule);
+        let config = state.chain_config()?;
         cfg_if::cfg_if! {
             if #[cfg(not(feature = "l2"))] {
+                let fork = config.fork(block_header.timestamp);
                 if block_header.parent_beacon_block_root.is_some() && fork >= Fork::Cancun {
-                    let report = Self::beacon_root_contract_call(block_header, LevmSystemCallIn::new(store_wrapper.clone(), config))
+                    let report = Self::beacon_root_contract_call(block_header, LevmSystemCallIn::new(store_wrapper.clone(), config))?;
                     block_cache.extend(report.new_state);
                 }
 
                 if fork >= Fork::Prague {
                     //eip 2935: stores parent block hash in system contract
-                    let report = Self::process_block_hash_history(block_header, LevmSystemCallIn::new(store_wrapper.clone(), config))
+                    let report = Self::process_block_hash_history(block_header, LevmSystemCallIn::new(store_wrapper.clone(), config))?;
                     block_cache.extend(report.new_state);
                 }
             }
@@ -164,7 +159,7 @@ impl IEVM for LEVM {
                 block_header,
                 store_wrapper.clone(),
                 block_cache.clone(),
-                config,
+                &config,
             ))
             .map_err(EvmError::from)?;
 
@@ -232,11 +227,12 @@ impl IEVM for LEVM {
             .ok_or(VMError::InvalidTransaction)?
             .into();
 
+        let config = EVMConfig::new_from_chain_config(input.config, input.block_header);
         let env = Environment {
             origin: tx.sender(),
             refunded_gas: 0,
             gas_limit: tx.gas_limit(),
-            config: input.config,
+            config,
             block_number: block_header.number.into(),
             coinbase: block_header.coinbase,
             timestamp: block_header.timestamp.into(),
@@ -416,11 +412,11 @@ impl IEVM for LEVM {
 pub struct LevmSystemCallIn {
     // CHECK: is it ok to use StoreWrapper.
     store_wrapper: Arc<StoreWrapper>,
-    config: EVMConfig,
+    config: ChainConfig,
 }
 
 impl LevmSystemCallIn {
-    pub fn new(store_wrapper: Arc<StoreWrapper>, config: EVMConfig) -> Self {
+    pub fn new(store_wrapper: Arc<StoreWrapper>, config: ChainConfig) -> Self {
         LevmSystemCallIn {
             store_wrapper,
             config,
@@ -455,6 +451,7 @@ impl SystemContracts for LEVM {
             Some(beacon_root) => beacon_root,
         };
 
+        let config = EVMConfig::new_from_chain_config(&input.config, block_header);
         let env = Environment {
             origin: *SYSTEM_ADDRESS,
             gas_limit: 30_000_000,
@@ -468,7 +465,7 @@ impl SystemContracts for LEVM {
             block_blob_gas_used: block_header.blob_gas_used.map(U256::from),
             block_gas_limit: 30_000_000,
             transient_storage: HashMap::new(),
-            config: input.config,
+            config,
             ..Default::default()
         };
 
@@ -509,6 +506,7 @@ impl SystemContracts for LEVM {
                 Address::from_slice(&hex::decode(HISTORY_STORAGE_ADDRESS_STR).unwrap(),);
         };
 
+        let config = EVMConfig::new_from_chain_config(&input.config, block_header);
         let env = Environment {
             origin: *SYSTEM_ADDRESS,
             gas_limit: 30_000_000,
@@ -522,7 +520,7 @@ impl SystemContracts for LEVM {
             block_blob_gas_used: block_header.blob_gas_used.map(U256::from),
             block_gas_limit: 30_000_000,
             transient_storage: HashMap::new(),
-            config: input.config,
+            config,
             ..Default::default()
         };
 

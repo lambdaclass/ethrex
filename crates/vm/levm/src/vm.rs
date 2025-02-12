@@ -21,7 +21,7 @@ use bytes::Bytes;
 use ethrex_common::{
     types::{
         tx_fields::{AccessList, AuthorizationList},
-        Fork, ForkBlobSchedule, TxKind,
+        BlockHeader, ChainConfig, Fork, ForkBlobSchedule, TxKind,
     },
     Address, H256, U256,
 };
@@ -90,6 +90,19 @@ impl EVMConfig {
             fork,
             blob_schedule,
         }
+    }
+
+    pub fn new_from_chain_config(
+        chain_config: &ChainConfig,
+        block_header: &BlockHeader,
+    ) -> Self {
+        let fork = chain_config.fork(block_header.timestamp);
+
+        let blob_schedule = chain_config
+            .get_fork_blob_schedule(block_header.timestamp)
+            .unwrap_or_else(|| EVMConfig::canonical_values(fork));
+
+        EVMConfig::new(fork, blob_schedule)
     }
 
     /// This function is used for running the EF tests. If you don't
