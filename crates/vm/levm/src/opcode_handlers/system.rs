@@ -5,8 +5,7 @@ use crate::{
     errors::{InternalError, OpcodeResult, OutOfGasError, TxResult, VMError},
     gas_cost::{self, max_message_call_gas, SELFDESTRUCT_REFUND},
     memory::{self, calculate_memory_size},
-    utils::*,
-    utils::{address_to_word, word_to_address},
+    utils::{address_to_word, word_to_address, *},
     vm::VM,
     Account,
 };
