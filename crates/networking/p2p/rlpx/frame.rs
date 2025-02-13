@@ -17,7 +17,7 @@ use tokio_util::codec::{Decoder, Encoder, Framed};
 
 // max RLPx Message size
 // Taken from https://github.com/ethereum/go-ethereum/blob/82e963e5c981e36dc4b607dd0685c64cf4aabea8/p2p/rlpx/rlpx.go#L152
-const MAX_MESSAGE_SIZE: usize = 10 * 1024 * 1024;
+const MAX_MESSAGE_SIZE: usize = 0xFFFFFF;
 
 pub(crate) struct RLPxCodec {
     pub(crate) mac_key: H256,
