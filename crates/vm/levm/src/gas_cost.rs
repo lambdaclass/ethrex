@@ -918,13 +918,27 @@ pub fn staticcall(
 ) -> Result<(u64, u64), VMError> {
     let memory_expansion_cost = memory::expansion_cost(new_memory_size, current_memory_size)?;
 
-    let address_access_cost = address_access_cost(
-        address_was_cold,
-        STATICCALL_STATIC,
-        STATICCALL_COLD_DYNAMIC,
-        STATICCALL_WARM_DYNAMIC,
-        fork,
-    )?;
+    let (static_cost, cold_dynamic_cost, warm_dynamic_cost) = match fork {
+        f if f < Fork::Tangerine => (40, 0, 0),
+        f if f < Fork::Berlin => (700, 0, 0),
+        f if f < Fork::Berlin => (0, 0, 0),
+        _ => (
+            STATICCALL_STATIC,
+            STATICCALL_COLD_DYNAMIC,
+            STATICCALL_WARM_DYNAMIC,
+        ),
+    };
+
+    let dynamic_cost: u64 = if address_was_cold {
+        cold_dynamic_cost
+    } else {
+        warm_dynamic_cost
+    };
+
+    //TODO: CHANGE BEFORE COMMIT
+    let address_access_cost = static_cost
+        .checked_add(dynamic_cost)
+        .ok_or(OutOfGasError::GasCostOverflow)?;
 
     let call_gas_costs = memory_expansion_cost
         .checked_add(address_access_cost)
