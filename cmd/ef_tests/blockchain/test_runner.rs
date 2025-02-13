@@ -50,7 +50,7 @@ pub fn run_ef_test(test_key: &str, test: &TestUnit) {
                     test_key,
                     block_fixture.expect_exception.clone().unwrap()
                 );
-                apply_fork_choice(&store, hash, hash, hash).unwrap();
+                apply_fork_choice(&store, HashMap::new(), hash, hash, hash).unwrap();
             }
         }
     }

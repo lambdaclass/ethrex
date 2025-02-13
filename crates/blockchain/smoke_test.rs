@@ -1,6 +1,6 @@
 #[cfg(test)]
 mod blockchain_integration_test {
-    use std::{fs::File, io::BufReader};
+    use std::{collections::HashMap, fs::File, io::BufReader};
 
     use crate::{
         add_block,
@@ -54,6 +54,7 @@ mod blockchain_integration_test {
         // Receive block 2 as new head.
         apply_fork_choice(
             &store,
+            HashMap::new(),
             block_2.hash(),
             genesis_header.compute_block_hash(),
             genesis_header.compute_block_hash(),
@@ -76,7 +77,7 @@ mod blockchain_integration_test {
         let block_1 = new_block(&store, &genesis_header);
         let hash_1 = block_1.header.compute_block_hash();
         add_block(&block_1, &store).unwrap();
-        apply_fork_choice(&store, hash_1, H256::zero(), H256::zero()).unwrap();
+        apply_fork_choice(&store, HashMap::new(), hash_1, H256::zero(), H256::zero()).unwrap();
 
         // Build a child, then change its parent, making it effectively a pending block.
         let mut block_2 = new_block(&store, &block_1.header);
@@ -88,7 +89,8 @@ mod blockchain_integration_test {
         // block 2 should now be pending.
         assert!(store.get_pending_block(hash_2).unwrap().is_some());
 
-        let fc_result = apply_fork_choice(&store, hash_2, H256::zero(), H256::zero());
+        let fc_result =
+            apply_fork_choice(&store, HashMap::new(), hash_2, H256::zero(), H256::zero());
         assert!(matches!(fc_result, Err(InvalidForkChoice::Syncing)));
 
         // block 2 should still be pending.
@@ -114,7 +116,7 @@ mod blockchain_integration_test {
         let block_1b = new_block(&store, &genesis_header);
         let hash_1b = block_1b.hash();
         add_block(&block_1b, &store).expect("Could not add block 1b.");
-        apply_fork_choice(&store, hash_1b, genesis_hash, genesis_hash).unwrap();
+        apply_fork_choice(&store, HashMap::new(), hash_1b, genesis_hash, genesis_hash).unwrap();
         let retrieved_1b = store.get_block_header(1).unwrap().unwrap();
 
         assert_ne!(retrieved_1a, retrieved_1b);
@@ -126,7 +128,7 @@ mod blockchain_integration_test {
         let block_2 = new_block(&store, &block_1b.header);
         let hash_2 = block_2.hash();
         add_block(&block_2, &store).expect("Could not add block 2.");
-        apply_fork_choice(&store, hash_2, genesis_hash, genesis_hash).unwrap();
+        apply_fork_choice(&store, HashMap::new(), hash_2, genesis_hash, genesis_hash).unwrap();
         let retrieved_2 = store.get_block_header_by_hash(hash_2).unwrap();
         assert_eq!(latest_canonical_block_hash(&store).unwrap(), hash_2);
 
@@ -137,6 +139,7 @@ mod blockchain_integration_test {
         // Receive block 1a as new head.
         apply_fork_choice(
             &store,
+            HashMap::new(),
             block_1a.hash(),
             genesis_header.compute_block_hash(),
             genesis_header.compute_block_hash(),
@@ -171,12 +174,12 @@ mod blockchain_integration_test {
         assert!(!is_canonical(&store, 2, hash_2).unwrap());
 
         // Make that chain the canonical one.
-        apply_fork_choice(&store, hash_2, genesis_hash, genesis_hash).unwrap();
+        apply_fork_choice(&store, HashMap::new(), hash_2, genesis_hash, genesis_hash).unwrap();
 
         assert!(is_canonical(&store, 1, hash_1).unwrap());
         assert!(is_canonical(&store, 2, hash_2).unwrap());
 
-        let result = apply_fork_choice(&store, hash_1, hash_1, hash_1);
+        let result = apply_fork_choice(&store, HashMap::new(), hash_1, hash_1, hash_1);
 
         assert!(matches!(
             result,
@@ -211,7 +214,7 @@ mod blockchain_integration_test {
         assert_eq!(latest_canonical_block_hash(&store).unwrap(), genesis_hash);
 
         // Make that chain the canonical one.
-        apply_fork_choice(&store, hash_2, genesis_hash, genesis_hash).unwrap();
+        apply_fork_choice(&store, HashMap::new(), hash_2, genesis_hash, genesis_hash).unwrap();
 
         assert_eq!(latest_canonical_block_hash(&store).unwrap(), hash_2);
 
@@ -224,7 +227,7 @@ mod blockchain_integration_test {
         assert_eq!(latest_canonical_block_hash(&store).unwrap(), hash_2);
 
         // if we apply fork choice to the new one, then we should
-        apply_fork_choice(&store, hash_b, genesis_hash, genesis_hash).unwrap();
+        apply_fork_choice(&store, HashMap::new(), hash_b, genesis_hash, genesis_hash).unwrap();
 
         // The latest block should now be the new head.
         assert_eq!(latest_canonical_block_hash(&store).unwrap(), hash_b);
