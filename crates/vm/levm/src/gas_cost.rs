@@ -715,13 +715,29 @@ pub fn extcodecopy(
         EXTCODECOPY_DYNAMIC_BASE,
         EXTCODECOPY_STATIC,
     )?;
-    let expansion_access_cost = address_access_cost(
-        address_was_cold,
-        EXTCODECOPY_STATIC,
-        EXTCODECOPY_COLD_DYNAMIC,
-        EXTCODECOPY_WARM_DYNAMIC,
-        fork,
-    )?;
+    let (static_cost, cold_dynamic_cost, warm_dynamic_cost) = match fork {
+        f if f < Fork::Tangerine => (20, 0, 0),
+        f if f >= Fork::Tangerine && fork < Fork::Berlin => (700, 0, 0),
+        f => (
+            EXTCODECOPY_STATIC,
+            EXTCODECOPY_COLD_DYNAMIC,
+            EXTCODECOPY_WARM_DYNAMIC,
+        ),
+    };
+    let dynamic_cost: u64 = if address_was_cold {
+        cold_dynamic_cost
+    } else {
+        warm_dynamic_cost
+    };
+
+    //TODO: CHANGE BEFORE COMMIT
+    let expansion_access_cost = static_cost
+        .checked_add(dynamic_cost)
+        .ok_or(OutOfGasError::GasCostOverflow)?;
+    // address_access_cost(
+    // address_was_cold,
+    // fork,
+    // )?;
 
     Ok(base_access_cost
         .checked_add(expansion_access_cost)
