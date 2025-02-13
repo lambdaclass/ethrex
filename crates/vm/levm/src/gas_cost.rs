@@ -634,22 +634,17 @@ fn address_access_cost(
     static_cost: u64,
     cold_dynamic_cost: u64,
     warm_dynamic_cost: u64,
-    fork: Fork,
 ) -> Result<u64, VMError> {
-    if fork <= Fork::Berlin {
-        Ok(ADDRESS_COST_PRE_BERLIN)
+    let static_gas = static_cost;
+    let dynamic_cost: u64 = if address_was_cold {
+        cold_dynamic_cost
     } else {
-        let static_gas = static_cost;
-        let dynamic_cost: u64 = if address_was_cold {
-            cold_dynamic_cost
-        } else {
-            warm_dynamic_cost
-        };
+        warm_dynamic_cost
+    };
 
-        Ok(static_gas
-            .checked_add(dynamic_cost)
-            .ok_or(OutOfGasError::GasCostOverflow)?)
-    }
+    Ok(static_gas
+        .checked_add(dynamic_cost)
+        .ok_or(OutOfGasError::GasCostOverflow)?)
 }
 
 pub fn balance(address_was_cold: bool, fork: Fork) -> Result<u64, VMError> {
