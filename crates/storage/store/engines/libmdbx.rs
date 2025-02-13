@@ -691,8 +691,7 @@ impl StoreEngine for Store {
         Ok(())
     }
 
-    // Yields at most 100 elements
-    fn iter_account_snapshot(&self, start: H256) -> Result<Vec<(H256, AccountState)>, StoreError> {
+    fn read_account_snapshot(&self, start: H256) -> Result<Vec<(H256, AccountState)>, StoreError> {
         let txn = self.db.begin_read().map_err(StoreError::LibmdbxError)?;
         let cursor = txn
             .cursor::<StateSnapShot>()
@@ -704,8 +703,7 @@ impl StoreEngine for Store {
         Ok(iter.collect::<Vec<_>>())
     }
 
-    // Yields at most 100 elements
-    fn iter_storage_snapshot(
+    fn read_storage_snapshot(
         &self,
         account_hash: H256,
         start: H256,

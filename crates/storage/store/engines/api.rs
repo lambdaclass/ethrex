@@ -297,7 +297,7 @@ pub trait StoreEngine: Debug + Send + Sync + RefUnwindSafe {
         account_states: Vec<AccountState>,
     ) -> Result<(), StoreError>;
 
-    // Write a storage batch into the current storage snapshot
+    /// Write a storage batch into the current storage snapshot
     fn write_snapshot_storage_batch(
         &self,
         account_hash: H256,
@@ -305,27 +305,34 @@ pub trait StoreEngine: Debug + Send + Sync + RefUnwindSafe {
         storage_values: Vec<U256>,
     ) -> Result<(), StoreError>;
 
+    /// Set the latest root of the rebuilt state trie and the last downloaded hashes from each segment
     fn set_state_trie_rebuild_checkpoint(
         &self,
         checkpoint: (H256, [H256; STATE_TRIE_SEGMENTS]),
     ) -> Result<(), StoreError>;
 
+    /// Get the latest root of the rebuilt state trie and the last downloaded hashes from each segment
     fn get_state_trie_rebuild_checkpoint(
         &self,
     ) -> Result<Option<(H256, [H256; STATE_TRIE_SEGMENTS])>, StoreError>;
 
+    /// Get the accont hashes and roots of the storage tries awaiting rebuild
     fn set_storage_trie_rebuild_pending(
         &self,
         pending: Vec<(H256, H256)>,
     ) -> Result<(), StoreError>;
 
+    /// Get the accont hashes and roots of the storage tries awaiting rebuild
     fn get_storage_trie_rebuild_pending(&self) -> Result<Option<Vec<(H256, H256)>>, StoreError>;
 
+    /// Clears the state and storage snapshots
     fn clear_snapshot(&self) -> Result<(), StoreError>;
 
-    fn iter_account_snapshot(&self, start: H256) -> Result<Vec<(H256, AccountState)>, StoreError>;
+    /// Reads the next `MAX_SNAPSHOT_READS` accounts from the state snapshot as from the `start` hash
+    fn read_account_snapshot(&self, start: H256) -> Result<Vec<(H256, AccountState)>, StoreError>;
 
-    fn iter_storage_snapshot(
+    /// Reads the next `MAX_SNAPSHOT_READS` elements from the storage snapshot as from the `start` storage key
+    fn read_storage_snapshot(
         &self,
         start: H256,
         account_hash: H256,

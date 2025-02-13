@@ -552,7 +552,7 @@ impl StoreEngine for Store {
         Ok(())
     }
 
-    fn iter_account_snapshot(
+    fn read_account_snapshot(
         &self,
         start: H256,
     ) -> Result<Vec<(H256, ethrex_common::types::AccountState)>, StoreError> {
@@ -566,7 +566,7 @@ impl StoreEngine for Store {
             .collect())
     }
 
-    fn iter_storage_snapshot(
+    fn read_storage_snapshot(
         &self,
         start: H256,
         account_hash: H256,

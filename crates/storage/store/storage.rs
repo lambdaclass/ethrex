@@ -1064,6 +1064,7 @@ impl Store {
         self.engine.update_sync_status(status)
     }
 
+    /// Write an account batch into the current state snapshot
     pub fn write_snapshot_account_batch(
         &self,
         account_hashes: Vec<H256>,
@@ -1073,6 +1074,7 @@ impl Store {
             .write_snapshot_account_batch(account_hashes, account_states)
     }
 
+    /// Write a storage batch into the current storage snapshot
     pub fn write_snapshot_storage_batch(
         &self,
         account_hash: H256,
@@ -1088,6 +1090,7 @@ impl Store {
         self.engine.clear_snap_state()
     }
 
+    /// Set the latest root of the rebuilt state trie and the last downloaded hashes from each segment
     pub fn set_state_trie_rebuild_checkpoint(
         &self,
         checkpoint: (H256, [H256; STATE_TRIE_SEGMENTS]),
@@ -1095,12 +1098,14 @@ impl Store {
         self.engine.set_state_trie_rebuild_checkpoint(checkpoint)
     }
 
+    /// Get the latest root of the rebuilt state trie and the last downloaded hashes from each segment
     pub fn get_state_trie_rebuild_checkpoint(
         &self,
     ) -> Result<Option<(H256, [H256; STATE_TRIE_SEGMENTS])>, StoreError> {
         self.engine.get_state_trie_rebuild_checkpoint()
     }
 
+    /// Set the accont hashes and roots of the storage tries awaiting rebuild
     pub fn set_storage_trie_rebuild_pending(
         &self,
         pending: Vec<(H256, H256)>,
@@ -1108,29 +1113,33 @@ impl Store {
         self.engine.set_storage_trie_rebuild_pending(pending)
     }
 
+    /// Get the accont hashes and roots of the storage tries awaiting rebuild
     pub fn get_storage_trie_rebuild_pending(
         &self,
     ) -> Result<Option<Vec<(H256, H256)>>, StoreError> {
         self.engine.get_storage_trie_rebuild_pending()
     }
 
+    /// Clears the state and storage snapshots
     pub fn clear_snapshot(&self) -> Result<(), StoreError> {
         self.engine.clear_snapshot()
     }
 
-    // Only yields 100 elements
-    pub fn iter_account_snapshot(
+    /// Reads the next `MAX_SNAPSHOT_READS` accounts from the state snapshot as from the `start` hash
+    pub fn read_account_snapshot(
         &self,
         start: H256,
     ) -> Result<Vec<(H256, AccountState)>, StoreError> {
-        self.engine.iter_account_snapshot(start)
+        self.engine.read_account_snapshot(start)
     }
-    pub fn iter_storage_snapshot(
+
+    /// Reads the next `MAX_SNAPSHOT_READS` elements from the storage snapshot as from the `start` storage key
+    pub fn read_storage_snapshot(
         &self,
         account_hash: H256,
         start: H256,
     ) -> Result<Vec<(H256, U256)>, StoreError> {
-        self.engine.iter_storage_snapshot(account_hash, start)
+        self.engine.read_storage_snapshot(account_hash, start)
     }
 }
 
