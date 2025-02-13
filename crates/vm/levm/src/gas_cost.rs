@@ -653,18 +653,23 @@ fn address_access_cost(
 }
 
 pub fn balance(address_was_cold: bool, fork: Fork) -> Result<u64, VMError> {
-    match fork {
-        f if f < Fork::Tangerine => Ok(BALANCE_PRE_TANGERINE),
+    let (static_cost, cold_dynamic_cost, warm_dynamic_cost) = match fork {
+        f if f < Fork::Tangerine => (BALANCE_PRE_TANGERINE, 0, 0),
         // https://github.com/ethereum/EIPs/blob/master/EIPS/eip-2929.md#storage-read-changes
-        f if f >= Fork::Tangerine && fork < Fork::Berlin => Ok(BALANCE_TANGERINE),
-        f => address_access_cost(
-            address_was_cold,
-            BALANCE_STATIC,
-            BALANCE_COLD_DYNAMIC,
-            BALANCE_WARM_DYNAMIC,
-            f,
-        ),
-    }
+        f if f >= Fork::Tangerine && fork < Fork::Berlin => (BALANCE_TANGERINE, 0, 0),
+        f => (BALANCE_STATIC, BALANCE_COLD_DYNAMIC, BALANCE_WARM_DYNAMIC),
+    };
+
+    let dynamic_cost: u64 = if address_was_cold {
+        cold_dynamic_cost
+    } else {
+        warm_dynamic_cost
+    };
+
+    //TODO: CHANGE BEFORE COMMIT
+    Ok(static_cost
+        .checked_add(dynamic_cost)
+        .ok_or(OutOfGasError::GasCostOverflow)?)
 }
 
 pub fn extcodesize(address_was_cold: bool, fork: Fork) -> Result<u64, VMError> {
@@ -683,6 +688,7 @@ pub fn extcodesize(address_was_cold: bool, fork: Fork) -> Result<u64, VMError> {
     } else {
         warm_dynamic_cost
     };
+    //TODO: CHANGE BEFORE COMMIT
     Ok(static_cost
         .checked_add(dynamic_cost)
         .ok_or(OutOfGasError::GasCostOverflow)?)
