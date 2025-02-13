@@ -3,7 +3,7 @@ use crate::types::{
     TransactionExpectedException,
 };
 use bytes::Bytes;
-use ethrex_core::{types::Fork, H256, U256};
+use ethrex_common::{types::Fork, H256, U256};
 use serde::{Deserialize, Deserializer};
 use std::{collections::HashMap, str::FromStr};
 
@@ -293,7 +293,8 @@ where
         let fork = match fork_str.as_str() {
             "Frontier" => Fork::Frontier,
             "Homestead" => Fork::Homestead,
-            "Constantinople" | "ConstantinopleFix" | "Petersburg" => Fork::Constantinople,
+            "Constantinople" => Fork::Constantinople,
+            "ConstantinopleFix" | "Petersburg" => Fork::Petersburg,
             "Istanbul" => Fork::Istanbul,
             "Berlin" => Fork::Berlin,
             "London" => Fork::London,

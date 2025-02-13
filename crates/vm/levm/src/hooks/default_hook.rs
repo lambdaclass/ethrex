@@ -10,9 +10,12 @@ use crate::{
     vm::VM,
 };
 
-use ethrex_core::{types::Fork, U256};
+use ethrex_common::{types::Fork, U256};
 
 use std::cmp::max;
+
+const MAX_REFUND_QUOTIENT: u64 = 5;
+const MAX_REFUND_QUOTIENT_PRE_LONDON: u64 = 2;
 
 pub struct DefaultHook;
 
@@ -361,9 +364,15 @@ impl Hook for DefaultHook {
         // 2. Return unused gas + gas refunds to the sender.
         let max_gas = vm.env.gas_limit;
         let consumed_gas = report.gas_used;
+        // [EIP-3529](https://eips.ethereum.org/EIPS/eip-3529)
+        let quotient = if vm.env.config.fork < Fork::London {
+            MAX_REFUND_QUOTIENT_PRE_LONDON
+        } else {
+            MAX_REFUND_QUOTIENT
+        };
         let refunded_gas = report.gas_refunded.min(
             consumed_gas
-                .checked_div(5)
+                .checked_div(quotient)
                 .ok_or(VMError::Internal(InternalError::UndefinedState(-1)))?,
         );
         // "The max refundable proportion of gas was reduced from one half to one fifth by EIP-3529 by Buterin and Swende [2021] in the London release"

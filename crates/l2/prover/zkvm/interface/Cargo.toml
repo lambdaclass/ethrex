@@ -8,7 +8,7 @@ serde = { version = "1.0.203", features = ["derive"] }
 serde_with = "3.11.0"
 thiserror = "2.0.9"
 
-ethrex-core = { path = "../../../../common/", default-features = false }
+ethrex-common = { path = "../../../../common/", default-features = false }
 ethrex-vm = { path = "../../../../vm", default-features = false }
 ethrex-rlp = { path = "../../../../common/rlp", default-features = false }
 ethrex-storage = { path = "../../../../storage/store", default-features = false }
