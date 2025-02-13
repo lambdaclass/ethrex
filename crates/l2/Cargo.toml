@@ -33,7 +33,7 @@ ethrex-sdk = { path = "./sdk" }
 
 zkvm_interface = { path = "./prover/zkvm/interface/", default-features = false }
 
-risc0-zkvm = { version = "1.2.2" }
+risc0-zkvm = { version = "1.2.2", optional = true }
 sp1-sdk = { version = "4.1.0" }
 pico-vm = { git = "https://github.com/brevis-network/pico", optional = true }
 
@@ -58,3 +58,4 @@ panic = "deny"
 default = []
 metrics = ["ethrex-metrics/l2"]
 pico = ["dep:pico-vm"]
+risc0 = ["dep:risc0-zkvm"]

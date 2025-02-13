@@ -68,6 +68,7 @@ impl From<&StateType> for StateFileType {
     fn from(state_type: &StateType) -> Self {
         match state_type {
             StateType::Proof(p) => match p {
+#[cfg(feature = "risc0")]
                 ProvingOutput::RISC0(_) => StateFileType::Proof(ProverType::RISC0),
                 ProvingOutput::SP1(_) => StateFileType::Proof(ProverType::SP1),
                 #[cfg(feature = "pico")]
@@ -81,6 +82,7 @@ impl From<&StateType> for StateFileType {
 impl From<&ProverType> for StateFileType {
     fn from(prover_type: &ProverType) -> Self {
         match prover_type {
+#[cfg(feature = "risc0")]
             ProverType::RISC0 => StateFileType::Proof(ProverType::RISC0),
             ProverType::SP1 => StateFileType::Proof(ProverType::SP1),
             #[cfg(feature = "pico")]
@@ -92,6 +94,7 @@ impl From<&ProverType> for StateFileType {
 #[inline(always)]
 fn get_proof_file_name_from_prover_type(prover_type: &ProverType, block_number: u64) -> String {
     match prover_type {
+#[cfg(feature = "risc0")]
         ProverType::RISC0 => format!("proof_risc0_{block_number}.json"),
         ProverType::SP1 => format!("proof_sp1_{block_number}.json").to_owned(),
         #[cfg(feature = "pico")]
@@ -395,15 +398,18 @@ mod tests {
     use ethrex_blockchain::add_block;
     use ethrex_storage::{EngineType, Store};
     use ethrex_vm::execution_db::ExecutionDB;
+#[cfg(feature = "risc0")]
     use risc0_zkvm::sha::Digest;
     use sp1_sdk::{HashableKey, PlonkBn254Proof, ProverClient, SP1Proof, SP1PublicValues};
 
     use super::*;
     use crate::utils::{
-        prover::proving_systems::{Risc0Proof, Sp1Proof},
+        prover::proving_systems::{Sp1Proof},
         test_data_io,
     };
     use std::fs::{self};
+#[cfg(feature = "risc0")]
+    use crate::utils::prover::proving_systems::Risc0Proof;
 
     #[test]
     fn test_state_file_integration() -> Result<(), Box<dyn std::error::Error>> {
@@ -432,6 +438,7 @@ mod tests {
         let mut account_updates_vec: Vec<Vec<AccountUpdate>> = Vec::new();
 
         // Generic RISC0 Receipt
+#[cfg(feature = "risc0")]
         let risc0_proof = Risc0Proof {
             receipt: Box::new(risc0_zkvm::Receipt::new(
                 risc0_zkvm::InnerReceipt::Fake(risc0_zkvm::FakeReceipt::new(
@@ -495,7 +502,9 @@ mod tests {
                 &StateType::AccountUpdates(account_updates),
             )?;
 
+#[cfg(feature = "risc0")]
             let risc0_data = ProvingOutput::RISC0(risc0_proof.clone());
+#[cfg(feature = "risc0")]
             write_state(block.header.number, &StateType::Proof(risc0_data))?;
 
             let sp1_data = ProvingOutput::SP1(sp1_proof.clone());
@@ -565,8 +574,10 @@ mod tests {
         }
 
         // Read RISC0 Proof back
+#[cfg(feature = "risc0")]
         let read_proof_updates_blk2 = read_proof(2, StateFileType::Proof(ProverType::RISC0))?;
 
+#[cfg(feature = "risc0")]
         if let ProvingOutput::RISC0(read_risc0_proof) = read_proof_updates_blk2 {
             assert_eq!(
                 risc0_proof.receipt.journal.bytes,

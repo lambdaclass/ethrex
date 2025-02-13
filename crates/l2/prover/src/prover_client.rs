@@ -102,6 +102,7 @@ impl ProverClient {
 
     fn submit_proof(&self, block_number: u64, proving_output: ProvingOutput) -> Result<(), String> {
         let submit = match proving_output {
+            #[cfg(feature = "build_risc0")]
             ProvingOutput::RISC0(risc0_proof) => {
                 ProofData::submit(block_number, ProvingOutput::RISC0(risc0_proof))
             }

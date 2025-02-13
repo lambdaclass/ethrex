@@ -2,12 +2,14 @@ use crate::proposer::errors::ProverServerError;
 use serde::{Deserialize, Serialize};
 use std::fmt::Debug;
 
+#[cfg(feature = "risc0")]
 use risc0_zkvm::sha::Digestible;
 use sp1_sdk::{ExecutionReport as SP1ExecutionReport, HashableKey, SP1PublicValues};
 
 #[derive(Debug, Clone, Copy, Hash, PartialEq, Eq, Serialize, Deserialize)]
 /// Enum used to identify the different proving systems.
 pub enum ProverType {
+#[cfg(feature = "risc0")]
     RISC0,
     SP1,
     #[cfg(feature = "pico")]
@@ -17,22 +19,25 @@ pub enum ProverType {
 /// Used to iterate through all the possible proving systems
 impl ProverType {
     pub fn all() -> &'static [ProverType] {
-        &[ProverType::RISC0, ProverType::SP1]
+        &[ ProverType::SP1]
     }
 }
 
+#[cfg(feature = "risc0")]
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct Risc0Proof {
     pub receipt: Box<risc0_zkvm::Receipt>,
     pub prover_id: Vec<u32>,
 }
 
+#[cfg(feature = "risc0")]
 pub struct Risc0ContractData {
     pub block_proof: Vec<u8>,
     pub image_id: Vec<u8>,
     pub journal_digest: Vec<u8>,
 }
 
+#[cfg(feature = "risc0")]
 impl Risc0Proof {
     // 8 times u32
     const IMAGE_ID_SIZE: usize = 8;
@@ -177,6 +182,7 @@ impl PicoProof {
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub enum ProvingOutput {
+#[cfg(feature = "risc0")]
     RISC0(Risc0Proof),
     SP1(Sp1Proof),
     #[cfg(feature = "pico")]

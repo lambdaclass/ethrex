@@ -313,6 +313,7 @@ impl ProverServer {
                 // Check if we have an entry for the proof in that block_number
                 // Get the ProverType, implicitly set by the ProvingOutput
                 let prover_type = match proving_output {
+#[cfg(feature = "risc0")]
                     ProvingOutput::RISC0(_) => ProverType::RISC0,
                     ProvingOutput::SP1(_) => ProverType::SP1,
                     #[cfg(feature = "pico")]
@@ -437,8 +438,10 @@ impl ProverServer {
         block_number: u64,
     ) -> Result<H256, ProverServerError> {
         // TODO change error
+#[cfg(feature = "risc0")]
         let risc0_proving_output =
             read_proof(block_number, StateFileType::Proof(ProverType::RISC0))?;
+#[cfg(feature = "risc0")]
         let risc0_contract_data = match risc0_proving_output {
             ProvingOutput::RISC0(risc0_proof) => risc0_proof.contract_data()?,
             _ => {
@@ -462,8 +465,11 @@ impl ProverServer {
 
         let calldata_values = vec![
             Value::Uint(U256::from(block_number)),
+#[cfg(feature = "risc0")]
             Value::Bytes(risc0_contract_data.block_proof.into()),
+#[cfg(feature = "risc0")]
             Value::FixedBytes(risc0_contract_data.image_id.into()),
+#[cfg(feature = "risc0")]
             Value::FixedBytes(risc0_contract_data.journal_digest.into()),
             Value::FixedBytes(sp1_contract_data.vk.into()),
             Value::Bytes(sp1_contract_data.public_values.into()),

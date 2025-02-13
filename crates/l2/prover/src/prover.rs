@@ -2,18 +2,25 @@ use std::{env::temp_dir, fs::read_to_string};
 
 use crate::errors::ProverError;
 use ethrex_l2::utils::prover::proving_systems::{
-    ExecuteOutput, PicoProof, ProverType, ProvingOutput, Risc0Proof, Sp1Proof,
+    ExecuteOutput, PicoProof, ProverType, ProvingOutput,  Sp1Proof,
 };
+#[cfg(feature = "build_risc0")]
+use ethrex_l2::prover::proving_systems::Risc0Proof;
 use pico_sdk::vk_client::KoalaBearProveVKClient;
+#[cfg(feature = "build_risc0")]
+use ethrex_l2::utils::prover::proving_systems::Risc0Proof;
 use tracing::info;
 
 // risc0
+#[cfg(feature = "build_risc0")]
 use risc0_zkvm::{default_prover, ExecutorEnv, ProverOpts};
 use zkvm_interface::{
     io::{ProgramInput, ProgramOutput},
     methods::ZKVM_SP1_PROGRAM_ELF,
-    methods::{ZKVM_RISC0_PROGRAM_ELF, ZKVM_RISC0_PROGRAM_ID, ZKVM_PICO_PROGRAM_ELF},
+    methods::{ZKVM_PICO_PROGRAM_ELF},
 };
+#[cfg(feature = "build_risc0")]
+use zkvm_interface::methods::{ZKVM_RISC0_PROGRAM_ELF, ZKVM_RISC0_PROGRAM_ID};
 
 // sp1
 use sp1_sdk::{ProverClient, SP1Stdin};
@@ -22,6 +29,7 @@ use sp1_sdk::{ProverClient, SP1Stdin};
 #[cfg(feature = "build_pico")]
 use pico_sdk::client::DefaultProverClient;
 
+#[cfg(feature = "build_risc0")]
 /// Structure that wraps all the needed components for the RISC0 proving system
 pub struct Risc0Prover<'a> {
     elf: &'a [u8],
@@ -29,6 +37,7 @@ pub struct Risc0Prover<'a> {
     pub stdout: Vec<u8>,
 }
 
+#[cfg(feature = "build_risc0")]
 impl<'a> Default for Risc0Prover<'a> {
     fn default() -> Self {
         Self::new()
@@ -62,6 +71,7 @@ impl<'a> Default for PicoProver<'a> {
 /// Creates a prover depending on the [ProverType]
 pub fn create_prover(prover_type: ProverType) -> Box<dyn Prover> {
     match prover_type {
+        #[cfg(feature = "build_risc0")]
         ProverType::RISC0 => Box::new(Risc0Prover::new()),
         ProverType::SP1 => Box::new(Sp1Prover::new()),
         #[cfg(feature = "build_pico")]
@@ -82,6 +92,7 @@ pub trait Prover {
     fn get_gas(&self) -> Result<u64, Box<dyn std::error::Error>>;
 }
 
+#[cfg(feature = "build_risc0")]
 impl<'a> Risc0Prover<'a> {
     pub fn new() -> Self {
         Self {
@@ -103,6 +114,7 @@ impl<'a> Risc0Prover<'a> {
     }
 }
 
+#[cfg(feature = "build_risc0")]
 impl<'a> Prover for Risc0Prover<'a> {
     fn prove(&mut self, input: ProgramInput) -> Result<ProvingOutput, Box<dyn std::error::Error>> {
         let env = ExecutorEnv::builder()
