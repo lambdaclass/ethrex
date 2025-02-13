@@ -745,19 +745,26 @@ pub fn extcodecopy(
 }
 
 pub fn extcodehash(address_was_cold: bool, fork: Fork) -> Result<u64, VMError> {
-    if fork < Fork::Istanbul {
-        Ok(EXTCODEHASH_STATIC_PRE_ISTANBUL)
-    } else if fork < Fork::Berlin {
-        Ok(EXTCODEHASH_STATIC_PRE_BERLIN)
-    } else {
-        address_access_cost(
-            address_was_cold,
+    let (static_cost, cold_dynamic_cost, warm_dynamic_cost) = match fork {
+        f if f < Fork::Constantinople => return Err(VMError::InvalidOpcode),
+        f if f < Fork::Istanbul => (EXTCODEHASH_STATIC_PRE_ISTANBUL, 0, 0),
+        f if f < Fork::Berlin => (EXTCODEHASH_STATIC_PRE_BERLIN, 0, 0),
+        _ => (
             EXTCODEHASH_STATIC,
             EXTCODEHASH_COLD_DYNAMIC,
             EXTCODEHASH_WARM_DYNAMIC,
-            fork,
-        )
-    }
+        ),
+    };
+    let dynamic_cost: u64 = if address_was_cold {
+        cold_dynamic_cost
+    } else {
+        warm_dynamic_cost
+    };
+
+    //TODO: CHANGE BEFORE COMMIT
+    Ok(static_cost
+        .checked_add(dynamic_cost)
+        .ok_or(OutOfGasError::GasCostOverflow)?)
 }
 
 #[allow(clippy::too_many_arguments)]
