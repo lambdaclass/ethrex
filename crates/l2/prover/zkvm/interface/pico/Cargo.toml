@@ -1,3 +1,5 @@
+cargo-features = ["edition2024"]
+
 [package]
 name = "zkvm-pico-program"
 version = "0.1.0"

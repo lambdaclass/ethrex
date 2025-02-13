@@ -14,7 +14,7 @@ pub mod methods {
 
     #[cfg(all(not(clippy), feature = "build_pico"))]
     pub const ZKVM_PICO_PROGRAM_ELF: &[u8] =
-        include_bytes!("../pico/elf/riscv32im-pico-zkvm-elf");
+        include_bytes!(concat!(env!("OUT_DIR"), "/riscv32im-pico-zkvm-elf"));
     #[cfg(any(clippy, not(feature = "build_pico")))]
     pub const ZKVM_PICO_PROGRAM_ELF: &[u8] = &[0];
 }
