@@ -369,7 +369,7 @@ fn get_block_from_payload(
     parent_beacon_block_root: Option<H256>,
 ) -> Result<Block, RpcErr> {
     let block_hash = payload.block_hash;
-    debug!("Received new payload with block hash: {block_hash:#x}");
+    info!("Received new payload with block hash: {block_hash:#x}");
 
     payload
         .clone()
@@ -467,7 +467,7 @@ fn get_payload(
     payload_id: u64,
     context: &RpcApiContext,
 ) -> Result<(Block, U256, BlobsBundle, bool), RpcErr> {
-    debug!("Requested payload with id: {:#018x}", payload_id);
+    info!("Requested payload with id: {:#018x}", payload_id);
     let payload = context.storage.get_payload(payload_id)?;
 
     let Some((payload_block, block_value, blobs_bundle, completed)) = payload else {
