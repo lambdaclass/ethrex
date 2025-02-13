@@ -167,7 +167,6 @@ pub const STATICCALL_COLD_DYNAMIC: u64 = DEFAULT_COLD_DYNAMIC;
 pub const STATICCALL_WARM_DYNAMIC: u64 = DEFAULT_WARM_DYNAMIC;
 
 // Costs in gas for call opcodes
-pub const ADDRESS_COST_PRE_DAO: u64 = 40;
 pub const ADDRESS_COST_PRE_BERLIN: u64 = 700;
 pub const WARM_ADDRESS_ACCESS_COST: u64 = 100;
 pub const COLD_ADDRESS_ACCESS_COST: u64 = 2600;
@@ -437,7 +436,7 @@ pub fn sstore(
     fork: Fork,
 ) -> Result<u64, VMError> {
     // https://github.com/ethereum/EIPs/blob/master/EIPS/eip-1087.md
-    if fork <= Fork::Berlin {
+    if fork < Fork::Berlin {
         if storage_slot.current_value.is_zero() && !new_value.is_zero() {
             Ok(SSTORE_PRE_BERLIN_NON_ZERO)
         } else {

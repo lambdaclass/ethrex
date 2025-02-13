@@ -4,12 +4,13 @@ version.workspace = true
 edition.workspace = true
 
 [dependencies]
-ethrex-blockchain = { workspace = true }
+ethrex-blockchain.workspace = true
 ethrex-common.workspace = true
 ethrex-storage.workspace = true
 ethrex-rlp.workspace = true
-ethrex-vm = { workspace = true }
-ethrex-levm = { path = "../../../crates/vm/levm" }
+ethrex-vm.workspace = true
+ethrex-levm.workspace = true
+
 serde.workspace = true
 serde_json.workspace = true
 bytes.workspace = true
@@ -34,6 +35,11 @@ hex = "0.4.3"
 
 [lib]
 path = "./lib.rs"
+
+[features]
+default = ["c-kzg", "blst"]
+c-kzg = ["ethrex-vm/c-kzg", "ethrex-levm/c-kzg", "ethrex-common/c-kzg"]
+blst = ["ethrex-vm/blst"]
 
 [[test]]
 name = "all"
