@@ -213,7 +213,7 @@ pub fn summary_for_shell(reports: &[EFTestReport]) -> String {
     let total_run = total_fork_test_run(reports);
     let success_percentage = (total_passed as f64 / total_run as f64) * 100.0;
     format!(
-        "{} {}/{total_run} ({success_percentage:.2}%)\n\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n\n\n{}\n",
+        "{} {}/{total_run} ({success_percentage:.2}%)\n\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n\n\n{}\n",
         "Summary:".bold(),
         if total_passed == total_run {
             format!("{}", total_passed).green()
@@ -224,25 +224,25 @@ pub fn summary_for_shell(reports: &[EFTestReport]) -> String {
         },
 
         // NOTE: Keep in order, se the Fork Enum to check
-        fork_summary_shell(reports, Fork::Osaka),
+        // fork_summary_shell(reports, Fork::Osaka),
         fork_summary_shell(reports, Fork::Prague),
         fork_summary_shell(reports, Fork::Cancun),
         fork_summary_shell(reports, Fork::Shanghai),
         fork_summary_shell(reports, Fork::Paris),
-        fork_summary_shell(reports, Fork::GrayGlacier),
-        fork_summary_shell(reports, Fork::ArrowGlacier),
+        // fork_summary_shell(reports, Fork::GrayGlacier),
+        // fork_summary_shell(reports, Fork::ArrowGlacier),
         fork_summary_shell(reports, Fork::London),
         fork_summary_shell(reports, Fork::Berlin),
-        fork_summary_shell(reports, Fork::MuirGlacier),
+        // fork_summary_shell(reports, Fork::MuirGlacier),
         fork_summary_shell(reports, Fork::Istanbul),
         fork_summary_shell(reports, Fork::Petersburg),
         fork_summary_shell(reports, Fork::Constantinople),
         fork_summary_shell(reports, Fork::Byzantium),
         fork_summary_shell(reports, Fork::SpuriousDragon),
         fork_summary_shell(reports, Fork::Tangerine),
-        fork_summary_shell(reports, Fork::DaoFork),
+        // fork_summary_shell(reports, Fork::DaoFork),
         fork_summary_shell(reports, Fork::Homestead),
-        fork_summary_shell(reports, Fork::FrontierThawing),
+        // fork_summary_shell(reports, Fork::FrontierThawing),
         fork_summary_shell(reports, Fork::Frontier),
 
         test_dir_summary_for_shell(reports),
