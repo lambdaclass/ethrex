@@ -133,6 +133,8 @@ pub const EXTCODECOPY_DYNAMIC_BASE: u64 = 3;
 pub const EXTCODECOPY_COLD_DYNAMIC: u64 = DEFAULT_COLD_DYNAMIC;
 pub const EXTCODECOPY_WARM_DYNAMIC: u64 = DEFAULT_WARM_DYNAMIC;
 
+pub const CALL_STATIC_PRE_TANGERINE: u64 = 40;
+pub const CALL_STATIC_PRE_BERLIN: u64 = 700;
 pub const CALL_STATIC: u64 = DEFAULT_STATIC;
 pub const CALL_COLD_DYNAMIC: u64 = DEFAULT_COLD_DYNAMIC;
 pub const CALL_WARM_DYNAMIC: u64 = DEFAULT_WARM_DYNAMIC;
@@ -756,8 +758,8 @@ pub fn call(
     let memory_expansion_cost = memory::expansion_cost(new_memory_size, current_memory_size)?;
 
     let (static_cost, cold_dynamic_cost, warm_dynamic_cost) = match fork {
-        f if f < Fork::Tangerine => (40, 0, 0),
-        f if f < Fork::Berlin => (700, 0, 0),
+        f if f < Fork::Tangerine => (CALL_STATIC_PRE_TANGERINE, 0, 0),
+        f if f < Fork::Berlin => (CALL_STATIC_PRE_BERLIN, 0, 0),
         f if f < Fork::Berlin => (0, 0, 0),
         _ => (CALL_STATIC, CALL_COLD_DYNAMIC, CALL_WARM_DYNAMIC),
     };
