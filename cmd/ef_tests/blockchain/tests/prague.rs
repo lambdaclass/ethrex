@@ -21,10 +21,7 @@ fn parse_and_execute(path: &Path) -> datatest_stable::Result<()> {
 }
 
 datatest_stable::harness!(
-    // parse_and_execute,
-    // "vectors/prague/eip2935_historical_block_hashes_from_state",
-    // r".*/.*\.json",
     parse_and_execute,
-    "vectors/prague/eip6110_deposits/deposits",
+    "vectors/prague/eip2935_historical_block_hashes_from_state",
     r".*/.*\.json"
 );

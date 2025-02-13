@@ -1,7 +1,7 @@
 use risc0_zkvm::guest::env;
 
 use ethrex_blockchain::{validate_block, validate_gas_used};
-use ethrex_vm::{backends::revm::execute_block, db::EvmState, get_state_transitions};
+use ethrex_vm::{backends::revm::execute_block, get_state_transitions, db::EvmState};
 use zkvm_interface::{
     io::{ProgramInput, ProgramOutput},
     trie::{update_tries, verify_db},
@@ -14,10 +14,9 @@ fn main() {
         db,
     } = env::read();
     let mut state = EvmState::from(db.clone());
-    let chain_config = state.chain_config().map_err(ChainError::from)?;
 
     // Validate the block
-    validate_block(&block, &parent_block_header, &chain_config).expect("invalid block");
+    validate_block(&block, &parent_block_header, &state).expect("invalid block");
 
     // Tries used for validating initial and final state root
     let (mut state_trie, mut storage_tries) = db

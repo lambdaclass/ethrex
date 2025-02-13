@@ -4,7 +4,7 @@ use super::{
 };
 use crate::{
     constants::MIN_BASE_FEE_PER_BLOB_GAS,
-    types::{requests::Requests, Receipt, Transaction},
+    types::{Receipt, Transaction},
     Address, H256, U256,
 };
 use bytes::Bytes;
@@ -16,7 +16,6 @@ use ethrex_rlp::{
     structs::{Decoder, Encoder},
 };
 use ethrex_trie::Trie;
-use k256::sha2::{Digest, Sha256};
 use keccak_hash::keccak;
 use serde::{Deserialize, Serialize};
 
@@ -262,24 +261,6 @@ pub fn compute_withdrawals_root(withdrawals: &[Withdrawal]) -> H256 {
     Trie::compute_hash_from_unsorted_iter(iter)
 }
 
-pub fn calculate_requests_hash(receipts: &[Receipt]) -> H256 {
-    let requests = Requests::from_deposit_receipts(receipts);
-    // TODO: implement other requests
-    compute_requests_hash(&vec![requests])
-}
-
-// See https://github.com/ethereum/EIPs/blob/2a6b6965e64787815f7fffb9a4c27660d9683846/EIPS/eip-7685.md?plain=1#L62.
-fn compute_requests_hash(requests: &[Requests]) -> H256 {
-    let mut hasher = Sha256::new();
-    for request in requests {
-        let request_bytes = request.to_bytes();
-        if request_bytes.len() > 1 {
-            hasher.update(Sha256::digest(request_bytes));
-        }
-    }
-    H256::from_slice(&hasher.finalize())
-}
-
 impl RLPEncode for BlockBody {
     fn encode(&self, buf: &mut dyn bytes::BufMut) {
         Encoder::new(buf)
@@ -505,17 +486,11 @@ pub enum InvalidBlockHeaderError {
     ExcessBlobGasIncorrect,
     #[error("Parent beacon block root is not present")]
     ParentBeaconBlockRootNotPresent,
-    #[error("Requests hash is not present")]
-    RequestsHashNotPresent,
     // Other fork errors
     #[error("Excess blob gas is present")]
     ExcessBlobGasPresent,
     #[error("Blob gas used is present")]
     BlobGasUsedPresent,
-    #[error("Parent beacon block root is present")]
-    ParentBeaconBlockRootPresent,
-    #[error("Requests hash is present")]
-    RequestsHashPresent,
 }
 
 /// Validates that the header fields are correct in reference to the parent_header
@@ -572,10 +547,10 @@ pub fn validate_block_header(
 
     Ok(())
 }
-
-/// Validates that only the required field are present for a Prague block
-/// Also validates excess_blob_gas value against parent's header
-pub fn validate_prague_header_fields(
+/// Validates that excess_blob_gas and blob_gas_used are present in the header and
+/// validates that excess_blob_gas value is correct on the block header
+/// according to the values in the parent header.
+pub fn validate_post_cancun_header_fields(
     header: &BlockHeader,
     parent_header: &BlockHeader,
 ) -> Result<(), InvalidBlockHeaderError> {
@@ -591,38 +566,11 @@ pub fn validate_prague_header_fields(
     if header.parent_beacon_block_root.is_none() {
         return Err(InvalidBlockHeaderError::ParentBeaconBlockRootNotPresent);
     }
-    if header.requests_hash.is_none() {
-        return Err(InvalidBlockHeaderError::RequestsHashNotPresent);
-    }
     Ok(())
 }
 
-/// Validates that only the required field are present for a Cancun block
-/// Also validates excess_blob_gas value against parent's header
-pub fn validate_cancun_header_fields(
-    header: &BlockHeader,
-    parent_header: &BlockHeader,
-) -> Result<(), InvalidBlockHeaderError> {
-    if header.excess_blob_gas.is_none() {
-        return Err(InvalidBlockHeaderError::ExcessBlobGasNotPresent);
-    }
-    if header.blob_gas_used.is_none() {
-        return Err(InvalidBlockHeaderError::BlobGasUsedNotPresent);
-    }
-    if header.excess_blob_gas.unwrap() != calc_excess_blob_gas(parent_header) {
-        return Err(InvalidBlockHeaderError::ExcessBlobGasIncorrect);
-    }
-    if header.parent_beacon_block_root.is_none() {
-        return Err(InvalidBlockHeaderError::ParentBeaconBlockRootNotPresent);
-    }
-    if header.requests_hash.is_some() {
-        return Err(InvalidBlockHeaderError::RequestsHashPresent);
-    }
-    Ok(())
-}
-
-/// Validates that only the required field are present for a pre Cancun block
-/// Also validates excess_blob_gas value against parent's header
+/// Validates that the excess blob gas value is correct on the block header
+/// according to the values in the parent header.
 pub fn validate_pre_cancun_header_fields(
     header: &BlockHeader,
 ) -> Result<(), InvalidBlockHeaderError> {
@@ -631,12 +579,6 @@ pub fn validate_pre_cancun_header_fields(
     }
     if header.blob_gas_used.is_some() {
         return Err(InvalidBlockHeaderError::BlobGasUsedPresent);
-    }
-    if header.parent_beacon_block_root.is_some() {
-        return Err(InvalidBlockHeaderError::ParentBeaconBlockRootPresent);
-    }
-    if header.requests_hash.is_some() {
-        return Err(InvalidBlockHeaderError::RequestsHashPresent);
     }
     Ok(())
 }

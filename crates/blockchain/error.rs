@@ -22,8 +22,6 @@ pub enum ChainError {
 
 #[derive(Debug, thiserror::Error)]
 pub enum InvalidBlockError {
-    #[error("Requests hash does not match the one in the header after executing")]
-    RequestsHashMismatch,
     #[error("World State Root does not match the one in the header after executing")]
     StateRootMismatch,
     #[error("Receipts Root does not match the one in the header after executing")]
