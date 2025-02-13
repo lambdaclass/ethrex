@@ -712,6 +712,7 @@ async fn fetch_bytecode_batch(
 
 /// Waits for incoming account hashes & storage roots from the receiver channel endpoint, queues them, and fetches and stores their bytecodes in batches
 /// This function will remain active until either an empty vec is sent to the receiver or the pivot becomes stale
+/// Upon finsih, remaining storages will be sent to the storage healer
 async fn storage_fetcher(
     mut receiver: Receiver<Vec<(H256, H256)>>,
     peers: PeerHandler,
@@ -908,7 +909,6 @@ async fn handle_large_storage_range(
 }
 
 /// Heals the trie given its state_root by fetching any missing nodes in it via p2p
-/// Also rebuilds it if this is the first healing cycle
 /// Returns true if healing was fully completed or false if we need to resume healing on the next sync cycle
 async fn heal_state_trie(
     state_root: H256,
