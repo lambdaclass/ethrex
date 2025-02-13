@@ -34,7 +34,7 @@ pub fn apply_fork_choice(
     // We get the block bodies even if we only use headers them so we check that they are
     // stored too.
     if invalid_ancestors.contains(&head_hash) {
-        return Err(InvalidForkChoice::InvalidHead);
+        return Err(InvalidForkChoice::InvalidAncestor);
     }
 
     let finalized_res = if !finalized_hash.is_zero() {

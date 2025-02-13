@@ -225,7 +225,24 @@ fn handle_forkchoice(
                 }
                 reason => {
                     warn!("Invalid fork choice state. Reason: {:#?}", reason);
-                    return Err(RpcErr::InvalidForkChoiceState(reason.to_string()));
+                    let latest_block_number = match context.storage.get_latest_block_number() {
+                        Ok(n) => n,
+                        Err(e) => return Err(RpcErr::Internal(e.to_string())),
+                    };
+                    let latest_valid_hash = match context
+                        .storage
+                        .get_canonical_block_hash(latest_block_number)
+                    {
+                        Ok(hash) if hash.is_none() => {
+                            return Err(RpcErr::Internal("hash not found".into()))
+                        }
+                        Ok(hash) => hash.unwrap(),
+                        Err(e) => return Err(RpcErr::Internal(e.to_string())),
+                    };
+                    ForkChoiceResponse::from(PayloadStatus::invalid_with(
+                        latest_valid_hash,
+                        reason.to_string(),
+                    ))
                 }
             };
             Ok((None, forkchoice_response))

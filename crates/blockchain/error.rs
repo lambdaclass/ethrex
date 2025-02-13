@@ -99,4 +99,6 @@ pub enum InvalidForkChoice {
     Disconnected(ForkChoiceElement, ForkChoiceElement),
     #[error("Requested head is an invalid block.")]
     InvalidHead,
+    #[error("Links to previously rejected block.")]
+    InvalidAncestor,
 }
