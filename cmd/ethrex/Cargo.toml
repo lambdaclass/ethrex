@@ -10,7 +10,7 @@ ethrex-blockchain.workspace = true
 ethrex-rpc.workspace = true
 ethrex-common.workspace = true
 ethrex-p2p.workspace = true
-ethrex-storage = { workspace = true, optional = true }
+ethrex-storage = { workspace = true }
 ethrex-vm.workspace = true
 ethrex-rlp.workspace = true
 ethrex-l2 = { workspace = true, optional = true }
@@ -42,7 +42,7 @@ name = "ethrex"
 path = "./ethrex.rs"
 
 [features]
-default = ["dep:ethrex-storage", "libmdbx"]
+default = ["libmdbx"]
 dev = ["dep:ethrex-dev"]
 metrics = ["ethrex-blockchain/metrics", "ethrex-l2/metrics"]
 libmdbx = ["dep:libmdbx", "ethrex-storage/libmdbx"]
