@@ -153,11 +153,6 @@ impl SyncManager {
     /// [WARNING] Sync is done optimistically, so headers and bodies may be stored even if their data has not been fully synced if the sync is aborted halfway
     /// [WARNING] Sync is currenlty simplified and will not download bodies + receipts previous to the pivot during snap sync
     pub async fn start_sync(&mut self, current_head: H256, sync_head: H256, store: Store) {
-        dbg!(
-            STATE_TRIE_SEGMENTS,
-            *STATE_TRIE_SEGMENTS_START,
-            *STATE_TRIE_SEGMENTS_END
-        );
         info!("Syncing from current head {current_head} to sync_head {sync_head}");
         let start_time = Instant::now();
         match self.sync_cycle(current_head, sync_head, store).await {
