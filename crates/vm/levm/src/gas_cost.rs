@@ -207,10 +207,14 @@ pub const MODEXP_DYNAMIC_QUOTIENT: u64 = 3;
 pub const MODEXP_DYNAMIC_QUOTIENT_PRE_BERLIN: u64 = 20;
 
 pub const ECADD_COST: u64 = 150;
+pub const ECADD_COST_PRE_ISTANBUL: u64 = 500;
 pub const ECMUL_COST: u64 = 6000;
+pub const ECMUL_COST_PRE_ISTANBUL: u64 = 40000;
 
 pub const ECPAIRING_BASE_COST: u64 = 45000;
 pub const ECPAIRING_GROUP_COST: u64 = 34000;
+pub const ECPAIRING_BASE_COST_PRE_ISTANBUL: u64 = 100000;
+pub const ECPAIRING_GROUP_COST_PRE_ISTANBUL: u64 = 80000;
 
 pub const POINT_EVALUATION_COST: u64 = 50000;
 
@@ -1063,14 +1067,23 @@ fn precompile(data_size: usize, static_cost: u64, dynamic_base: u64) -> Result<u
         .ok_or(OutOfGasError::GasCostOverflow)?)
 }
 
-pub fn ecpairing(groups_number: usize) -> Result<u64, VMError> {
+pub fn ecpairing(groups_number: usize, fork: Fork) -> Result<u64, VMError> {
     let groups_number = u64::try_from(groups_number).map_err(|_| InternalError::ConversionError)?;
 
+    let (group_cost_scalar, base_cost) = if fork < Fork::Istanbul {
+        (
+            ECPAIRING_GROUP_COST_PRE_ISTANBUL,
+            ECPAIRING_GROUP_COST_PRE_ISTANBUL,
+        )
+    } else {
+        (ECPAIRING_GROUP_COST, ECPAIRING_BASE_COST)
+    };
+
     let groups_cost = groups_number
-        .checked_mul(ECPAIRING_GROUP_COST)
+        .checked_mul(group_cost_scalar)
         .ok_or(OutOfGasError::GasCostOverflow)?;
     groups_cost
-        .checked_add(ECPAIRING_BASE_COST)
+        .checked_add(base_cost)
         .ok_or(VMError::OutOfGas(OutOfGasError::GasCostOverflow))
 }
 
