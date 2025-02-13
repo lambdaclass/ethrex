@@ -128,13 +128,19 @@ pub const EXTCODEHASH_WARM_DYNAMIC: u64 = DEFAULT_WARM_DYNAMIC;
 pub const EXTCODEHASH_STATIC_PRE_ISTANBUL: u64 = 400;
 pub const EXTCODEHASH_STATIC_PRE_BERLIN: u64 = 700;
 
+pub const EXTCODECOPY_STATIC_PRE_TANGERINE: u64 = 20;
+pub const EXTCODECOPY_STATIC_PRE_BERLIN: u64 = 700;
 pub const EXTCODECOPY_STATIC: u64 = 0;
 pub const EXTCODECOPY_COST_PRE_TANGERINE: u64 = 20;
 pub const EXTCODECOPY_DYNAMIC_BASE: u64 = 3;
 pub const EXTCODECOPY_COLD_DYNAMIC: u64 = DEFAULT_COLD_DYNAMIC;
 pub const EXTCODECOPY_WARM_DYNAMIC: u64 = DEFAULT_WARM_DYNAMIC;
 
-pub const CALL_STATIC_COST_PRE_TANGERINE: u64 = 40;
+pub const DEFAULT_CALL_STATIC_PRE_TANGERINE: u64 = 40;
+pub const DEFAULT_CALL_STATIC_PRE_BERLIN: u64 = 700;
+
+pub const CALL_STATIC_PRE_TANGERINE: u64 = DEFAULT_CALL_STATIC_PRE_TANGERINE;
+pub const CALL_STATIC_PRE_BERLIN: u64 = DEFAULT_CALL_STATIC_PRE_BERLIN;
 pub const CALL_STATIC: u64 = DEFAULT_STATIC;
 pub const CALL_COLD_DYNAMIC: u64 = DEFAULT_COLD_DYNAMIC;
 pub const CALL_WARM_DYNAMIC: u64 = DEFAULT_WARM_DYNAMIC;
@@ -143,6 +149,8 @@ pub const CALL_POSITIVE_VALUE: u64 = 9000;
 pub const CALL_POSITIVE_VALUE_STIPEND: u64 = 2300;
 pub const CALL_TO_EMPTY_ACCOUNT: u64 = 25000;
 
+pub const CALLCODE_STATIC_PRE_TANGERINE: u64 = DEFAULT_CALL_STATIC_PRE_TANGERINE;
+pub const CALLCODE_STATIC_PRE_BERLIN: u64 = DEFAULT_CALL_STATIC_PRE_BERLIN;
 pub const CALLCODE_STATIC: u64 = DEFAULT_STATIC;
 pub const CALLCODE_STATIC_COST_PRE_TANGERINE: u64 = 40;
 pub const CALLCODE_COLD_DYNAMIC: u64 = DEFAULT_COLD_DYNAMIC;
@@ -150,17 +158,20 @@ pub const CALLCODE_WARM_DYNAMIC: u64 = DEFAULT_WARM_DYNAMIC;
 pub const CALLCODE_POSITIVE_VALUE: u64 = 9000;
 pub const CALLCODE_POSITIVE_VALUE_STIPEND: u64 = 2300;
 
+pub const DELEGATECALL_STATIC_PRE_TANGERINE: u64 = DEFAULT_CALL_STATIC_PRE_TANGERINE;
+pub const DELEGATECALL_STATIC_PRE_BERLIN: u64 = DEFAULT_CALL_STATIC_PRE_BERLIN;
 pub const DELEGATECALL_STATIC: u64 = DEFAULT_STATIC;
 pub const DELEGATECALL_STATIC_COST_PRE_TANGERINE: u64 = 40;
 pub const DELEGATECALL_COLD_DYNAMIC: u64 = DEFAULT_COLD_DYNAMIC;
 pub const DELEGATECALL_WARM_DYNAMIC: u64 = DEFAULT_WARM_DYNAMIC;
 
+pub const STATICCALLCALL_STATIC_PRE_TANGERINE: u64 = DEFAULT_CALL_STATIC_PRE_TANGERINE;
+pub const STATICCALLCALL_STATIC_PRE_BERLIN: u64 = DEFAULT_CALL_STATIC_PRE_BERLIN;
 pub const STATICCALL_STATIC: u64 = DEFAULT_STATIC;
 pub const STATICCALL_COLD_DYNAMIC: u64 = DEFAULT_COLD_DYNAMIC;
 pub const STATICCALL_WARM_DYNAMIC: u64 = DEFAULT_WARM_DYNAMIC;
 
 // Costs in gas for call opcodes
-pub const ADDRESS_COST_PRE_DAO: u64 = 40;
 pub const ADDRESS_COST_PRE_BERLIN: u64 = 700;
 pub const WARM_ADDRESS_ACCESS_COST: u64 = 100;
 pub const COLD_ADDRESS_ACCESS_COST: u64 = 2600;
@@ -214,10 +225,14 @@ pub const MODEXP_DYNAMIC_QUOTIENT: u64 = 3;
 pub const MODEXP_DYNAMIC_QUOTIENT_PRE_BERLIN: u64 = 20;
 
 pub const ECADD_COST: u64 = 150;
+pub const ECADD_COST_PRE_ISTANBUL: u64 = 500;
 pub const ECMUL_COST: u64 = 6000;
+pub const ECMUL_COST_PRE_ISTANBUL: u64 = 40000;
 
 pub const ECPAIRING_BASE_COST: u64 = 45000;
 pub const ECPAIRING_GROUP_COST: u64 = 34000;
+pub const ECPAIRING_BASE_COST_PRE_ISTANBUL: u64 = 100000;
+pub const ECPAIRING_GROUP_COST_PRE_ISTANBUL: u64 = 80000;
 
 pub const POINT_EVALUATION_COST: u64 = 50000;
 
@@ -647,56 +662,54 @@ fn address_access_cost(
     static_cost: u64,
     cold_dynamic_cost: u64,
     warm_dynamic_cost: u64,
-    fork: Fork,
 ) -> Result<u64, VMError> {
-    if fork <= Fork::DaoFork {
-        Ok(ADDRESS_COST_PRE_DAO)
-    } else if fork > Fork::DaoFork && fork <= Fork::Berlin {
-        // [EIP-2929](https://eips.ethereum.org/EIPS/eip-2929)
-        Ok(ADDRESS_COST_PRE_BERLIN)
-    } else {
-        // [EIP-2929](https://eips.ethereum.org/EIPS/eip-2929)
-        let static_gas = static_cost;
-        let dynamic_cost: u64 = if address_was_cold {
-            cold_dynamic_cost
-        } else {
-            warm_dynamic_cost
-        };
+    let static_gas = static_cost;
 
-        Ok(static_gas
-            .checked_add(dynamic_cost)
-            .ok_or(OutOfGasError::GasCostOverflow)?)
-    }
+    let dynamic_cost: u64 = if address_was_cold {
+        cold_dynamic_cost
+    } else {
+        warm_dynamic_cost
+    };
+
+    Ok(static_gas
+        .checked_add(dynamic_cost)
+        .ok_or(OutOfGasError::GasCostOverflow)?)
 }
 
 pub fn balance(address_was_cold: bool, fork: Fork) -> Result<u64, VMError> {
-    match fork {
-        f if f < Fork::Tangerine => Ok(BALANCE_PRE_TANGERINE),
+    let (static_cost, cold_dynamic_cost, warm_dynamic_cost) = match fork {
+        f if f < Fork::Tangerine => (BALANCE_PRE_TANGERINE, 0, 0),
         // https://github.com/ethereum/EIPs/blob/master/EIPS/eip-2929.md#storage-read-changes
-        f if f >= Fork::Tangerine && fork < Fork::Berlin => Ok(BALANCE_TANGERINE),
-        f => address_access_cost(
-            address_was_cold,
-            BALANCE_STATIC,
-            BALANCE_COLD_DYNAMIC,
-            BALANCE_WARM_DYNAMIC,
-            f,
-        ),
-    }
+        f if f >= Fork::Tangerine && fork < Fork::Berlin => (BALANCE_TANGERINE, 0, 0),
+        _ => (BALANCE_STATIC, BALANCE_COLD_DYNAMIC, BALANCE_WARM_DYNAMIC),
+    };
+
+    address_access_cost(
+        address_was_cold,
+        static_cost,
+        cold_dynamic_cost,
+        warm_dynamic_cost,
+    )
 }
 
 pub fn extcodesize(address_was_cold: bool, fork: Fork) -> Result<u64, VMError> {
-    match fork {
-        f if f < Fork::Tangerine => Ok(EXTCODESIZE_PRE_TANGERINE),
+    let (static_cost, cold_dynamic_cost, warm_dynamic_cost) = match fork {
+        f if f < Fork::Tangerine => (EXTCODESIZE_PRE_TANGERINE, 0, 0),
         // https://github.com/ethereum/EIPs/blob/master/EIPS/eip-2929.md#storage-read-changes
-        f if f >= Fork::Tangerine && fork < Fork::Berlin => Ok(EXTCODESIZE_TANGERINE),
-        f => address_access_cost(
-            address_was_cold,
+        f if f >= Fork::Tangerine && fork < Fork::Berlin => (EXTCODESIZE_TANGERINE, 0, 0),
+        _ => (
             EXTCODESIZE_STATIC,
             EXTCODESIZE_COLD_DYNAMIC,
             EXTCODESIZE_WARM_DYNAMIC,
-            f,
         ),
-    }
+    };
+
+    address_access_cost(
+        address_was_cold,
+        static_cost,
+        cold_dynamic_cost,
+        warm_dynamic_cost,
+    )
 }
 
 pub fn extcodecopy(
@@ -716,12 +729,21 @@ pub fn extcodecopy(
         EXTCODECOPY_DYNAMIC_BASE,
         EXTCODECOPY_STATIC,
     )?;
+    let (static_cost, cold_dynamic_cost, warm_dynamic_cost) = match fork {
+        f if f < Fork::Tangerine => (EXTCODECOPY_STATIC_PRE_TANGERINE, 0, 0),
+        f if f >= Fork::Tangerine && fork < Fork::Berlin => (EXTCODECOPY_STATIC_PRE_BERLIN, 0, 0),
+        _ => (
+            EXTCODECOPY_STATIC,
+            EXTCODECOPY_COLD_DYNAMIC,
+            EXTCODECOPY_WARM_DYNAMIC,
+        ),
+    };
+
     let expansion_access_cost = address_access_cost(
         address_was_cold,
-        EXTCODECOPY_STATIC,
-        EXTCODECOPY_COLD_DYNAMIC,
-        EXTCODECOPY_WARM_DYNAMIC,
-        fork,
+        static_cost,
+        cold_dynamic_cost,
+        warm_dynamic_cost,
     )?;
 
     Ok(base_access_cost
@@ -730,19 +752,23 @@ pub fn extcodecopy(
 }
 
 pub fn extcodehash(address_was_cold: bool, fork: Fork) -> Result<u64, VMError> {
-    if fork < Fork::Istanbul {
-        Ok(EXTCODEHASH_STATIC_PRE_ISTANBUL)
-    } else if fork < Fork::Berlin {
-        Ok(EXTCODEHASH_STATIC_PRE_BERLIN)
-    } else {
-        address_access_cost(
-            address_was_cold,
+    let (static_cost, cold_dynamic_cost, warm_dynamic_cost) = match fork {
+        f if f < Fork::Constantinople => return Err(VMError::InvalidOpcode),
+        f if f < Fork::Istanbul => (EXTCODEHASH_STATIC_PRE_ISTANBUL, 0, 0),
+        f if f < Fork::Berlin => (EXTCODEHASH_STATIC_PRE_BERLIN, 0, 0),
+        _ => (
             EXTCODEHASH_STATIC,
             EXTCODEHASH_COLD_DYNAMIC,
             EXTCODEHASH_WARM_DYNAMIC,
-            fork,
-        )
-    }
+        ),
+    };
+
+    address_access_cost(
+        address_was_cold,
+        static_cost,
+        cold_dynamic_cost,
+        warm_dynamic_cost,
+    )
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -758,17 +784,19 @@ pub fn call(
 ) -> Result<(u64, u64), VMError> {
     let memory_expansion_cost = memory::expansion_cost(new_memory_size, current_memory_size)?;
 
-    let address_access_cost = if fork < Fork::Tangerine {
-        CALL_STATIC_COST_PRE_TANGERINE
-    } else {
-        address_access_cost(
-            address_was_cold,
-            CALL_STATIC,
-            CALL_COLD_DYNAMIC,
-            CALL_WARM_DYNAMIC,
-            fork,
-        )?
+    let (static_cost, cold_dynamic_cost, warm_dynamic_cost) = match fork {
+        f if f < Fork::Tangerine => (CALL_STATIC_PRE_TANGERINE, 0, 0),
+        f if f < Fork::Berlin => (CALL_STATIC_PRE_BERLIN, 0, 0),
+        f if f < Fork::Berlin => (0, 0, 0),
+        _ => (CALL_STATIC, CALL_COLD_DYNAMIC, CALL_WARM_DYNAMIC),
     };
+
+    let address_access_cost = address_access_cost(
+        address_was_cold,
+        static_cost,
+        cold_dynamic_cost,
+        warm_dynamic_cost,
+    )?;
     let positive_value_cost = if !value_to_transfer.is_zero() {
         CALL_POSITIVE_VALUE
     } else {
@@ -808,17 +836,24 @@ pub fn callcode(
 ) -> Result<(u64, u64), VMError> {
     let memory_expansion_cost = memory::expansion_cost(new_memory_size, current_memory_size)?;
 
-    let address_access_cost = if fork < Fork::Tangerine {
-        CALLCODE_STATIC_COST_PRE_TANGERINE
-    } else {
-        address_access_cost(
-            address_was_cold,
-            CALL_STATIC,
-            CALL_COLD_DYNAMIC,
-            CALL_WARM_DYNAMIC,
-            fork,
-        )?
+    let (static_cost, cold_dynamic_cost, warm_dynamic_cost) = match fork {
+        f if f < Fork::Tangerine => (CALLCODE_STATIC_PRE_TANGERINE, 0, 0),
+        f if f < Fork::Berlin => (CALLCODE_STATIC_PRE_BERLIN, 0, 0),
+        f if f < Fork::Berlin => (0, 0, 0),
+        _ => (
+            DELEGATECALL_STATIC,
+            DELEGATECALL_COLD_DYNAMIC,
+            DELEGATECALL_WARM_DYNAMIC,
+        ),
     };
+
+    let address_access_cost = address_access_cost(
+        address_was_cold,
+        static_cost,
+        cold_dynamic_cost,
+        warm_dynamic_cost,
+    )?;
+
     let positive_value_cost = if !value_to_transfer.is_zero() {
         CALLCODE_POSITIVE_VALUE
     } else {
@@ -850,17 +885,24 @@ pub fn delegatecall(
 ) -> Result<(u64, u64), VMError> {
     let memory_expansion_cost = memory::expansion_cost(new_memory_size, current_memory_size)?;
 
-    let address_access_cost = if fork < Fork::Tangerine {
-        DELEGATECALL_STATIC_COST_PRE_TANGERINE
-    } else {
-        address_access_cost(
-            address_was_cold,
-            CALL_STATIC,
-            CALL_COLD_DYNAMIC,
-            CALL_WARM_DYNAMIC,
-            fork,
-        )?
+    let (static_cost, cold_dynamic_cost, warm_dynamic_cost) = match fork {
+        f if f < Fork::Tangerine => (DELEGATECALL_STATIC_PRE_TANGERINE, 0, 0),
+        f if f < Fork::Berlin => (DELEGATECALL_STATIC_PRE_BERLIN, 0, 0),
+        f if f < Fork::Berlin => (0, 0, 0),
+        _ => (
+            DELEGATECALL_STATIC,
+            DELEGATECALL_COLD_DYNAMIC,
+            DELEGATECALL_WARM_DYNAMIC,
+        ),
     };
+
+    let address_access_cost = address_access_cost(
+        address_was_cold,
+        static_cost,
+        cold_dynamic_cost,
+        warm_dynamic_cost,
+    )?;
+
     let call_gas_costs = memory_expansion_cost
         .checked_add(address_access_cost)
         .ok_or(OutOfGasError::GasCostOverflow)?;
@@ -878,12 +920,22 @@ pub fn staticcall(
 ) -> Result<(u64, u64), VMError> {
     let memory_expansion_cost = memory::expansion_cost(new_memory_size, current_memory_size)?;
 
+    let (static_cost, cold_dynamic_cost, warm_dynamic_cost) = match fork {
+        f if f < Fork::Tangerine => (STATICCALLCALL_STATIC_PRE_TANGERINE, 0, 0),
+        f if f < Fork::Berlin => (STATICCALLCALL_STATIC_PRE_BERLIN, 0, 0),
+        f if f < Fork::Berlin => (0, 0, 0),
+        _ => (
+            STATICCALL_STATIC,
+            STATICCALL_COLD_DYNAMIC,
+            STATICCALL_WARM_DYNAMIC,
+        ),
+    };
+
     let address_access_cost = address_access_cost(
         address_was_cold,
-        STATICCALL_STATIC,
-        STATICCALL_COLD_DYNAMIC,
-        STATICCALL_WARM_DYNAMIC,
-        fork,
+        static_cost,
+        cold_dynamic_cost,
+        warm_dynamic_cost,
     )?;
 
     let call_gas_costs = memory_expansion_cost
@@ -1097,14 +1149,23 @@ fn precompile(data_size: usize, static_cost: u64, dynamic_base: u64) -> Result<u
         .ok_or(OutOfGasError::GasCostOverflow)?)
 }
 
-pub fn ecpairing(groups_number: usize) -> Result<u64, VMError> {
+pub fn ecpairing(groups_number: usize, fork: Fork) -> Result<u64, VMError> {
     let groups_number = u64::try_from(groups_number).map_err(|_| InternalError::ConversionError)?;
+    // https://eips.ethereum.org/EIPS/eip-1108
+    let (group_cost_scalar, base_cost) = if fork < Fork::Istanbul {
+        (
+            ECPAIRING_GROUP_COST_PRE_ISTANBUL,
+            ECPAIRING_GROUP_COST_PRE_ISTANBUL,
+        )
+    } else {
+        (ECPAIRING_GROUP_COST, ECPAIRING_BASE_COST)
+    };
 
     let groups_cost = groups_number
-        .checked_mul(ECPAIRING_GROUP_COST)
+        .checked_mul(group_cost_scalar)
         .ok_or(OutOfGasError::GasCostOverflow)?;
     groups_cost
-        .checked_add(ECPAIRING_BASE_COST)
+        .checked_add(base_cost)
         .ok_or(VMError::OutOfGas(OutOfGasError::GasCostOverflow))
 }
 
