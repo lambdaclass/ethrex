@@ -10,6 +10,8 @@ risc0:
 	cargo r -r --features risc0 -- --rpc-url ${RPC_URL} --block-number ${BLOCK_NUMBER}
 risc0-gpu:
 	cargo r -r --features "risc0,gpu" -- --rpc-url ${RPC_URL} --block-number ${BLOCK_NUMBER}
+pico:
+	cargo +nightly r -r --features pico -- --rpc-url ${RPC_URL} --block-number ${BLOCK_NUMBER}
 else
 sp1:
 	SP1_PROVER=cpu cargo r -r --features sp1 -- --rpc-url ${RPC_URL}
@@ -19,6 +21,8 @@ risc0:
 	cargo r -r --features risc0 -- --rpc-url ${RPC_URL}
 risc0-gpu:
 	cargo r -r --features "risc0,gpu" -- --rpc-url ${RPC_URL}
+pico:
+	cargo +nightly r -r --features pico -- --rpc-url ${RPC_URL}
 endif
 
 # Proving
@@ -31,6 +35,8 @@ prove-risc0:
 	cargo r -r --features risc0 -- --rpc-url ${RPC_URL} --prove --block-number ${BLOCK_NUMBER}
 prove-risc0-gpu:
 	cargo r -r --features "risc0,gpu" -- --rpc-url ${RPC_URL} --prove --block-number ${BLOCK_NUMBER}
+prove-pico:
+	cargo +nightly r -r --features pico -- --rpc-url ${RPC_URL} --prove --block-number ${BLOCK_NUMBER}
 else
 prove-sp1:
 	SP1_PROVER=cpu cargo r -r --features sp1 -- --rpc-url ${RPC_URL} --prove
@@ -40,4 +46,6 @@ prove-risc0:
 	cargo r -r --features risc0 -- --rpc-url ${RPC_URL} --prove
 prove-risc0-gpu:
 	cargo r -r --features "risc0,gpu" -- --rpc-url ${RPC_URL} --prove
+prove-pico:
+	cargo +nightly r -r --features pico -- --rpc-url ${RPC_URL} --prove
 endif
