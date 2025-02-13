@@ -165,7 +165,7 @@ pub(crate) fn encodable_to_proof(proof: &[Bytes]) -> Vec<Vec<u8>> {
 mod tests {
     use std::str::FromStr;
 
-    use ethrex_core::{types::AccountState, BigEndianHash, H256};
+    use ethrex_common::{types::AccountState, BigEndianHash, H256};
     use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
     use ethrex_storage::EngineType;
 

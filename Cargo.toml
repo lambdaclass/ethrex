@@ -11,7 +11,7 @@ members = [
     "crates/common/rlp",
     "cmd/ethrex",
     "cmd/ef_tests/blockchain",
-    "cmd/ef_tests/levm",
+    "cmd/ef_tests/state",
     "cmd/ethrex_l2",
     "cmd/hive_report",
     "crates/vm/levm",
@@ -32,7 +32,7 @@ edition = "2021"
 
 [workspace.dependencies]
 ethrex-blockchain = { path = "./crates/blockchain" }
-ethrex-core = { path = "./crates/common" }
+ethrex-common = { path = "./crates/common" }
 ethrex-p2p = { path = "./crates/networking/p2p" }
 ethrex-rpc = { path = "./crates/networking/rpc" }
 ethrex-storage = { path = "./crates/storage/store" }

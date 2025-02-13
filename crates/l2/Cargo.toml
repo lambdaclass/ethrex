@@ -13,7 +13,7 @@ tracing.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 ethereum-types.workspace = true
-ethrex-core.workspace = true
+ethrex-common.workspace = true
 ethrex-rlp.workspace = true
 ethrex-rpc.workspace = true
 ethrex-blockchain.workspace = true
@@ -32,7 +32,7 @@ directories = "5.0.1"
 zkvm_interface = { path = "./prover/zkvm/interface/", default-features = false }
 
 # risc0
-risc0-zkvm = { version = "1.2.0" }
+risc0-zkvm = { version = "1.2.2" }
 # sp1
 sp1-sdk = { version = "3.4.0" }
 ethrex-sdk = { path = "./sdk" }

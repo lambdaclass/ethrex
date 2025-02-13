@@ -1,4 +1,8 @@
-use ethrex_core::{types::BlockHash, Address as CoreAddress, H256 as CoreH256};
+use crate::{execution_db::ExecutionDB, EvmError};
+use ethrex_common::{
+    types::{BlockHash, ChainConfig},
+    Address as CoreAddress, H256 as CoreH256,
+};
 use ethrex_storage::{error::StoreError, Store};
 use revm::primitives::{
     AccountInfo as RevmAccountInfo, Address as RevmAddress, Bytecode as RevmBytecode,
@@ -10,54 +14,96 @@ pub struct StoreWrapper {
     pub block_hash: BlockHash,
 }
 
-cfg_if::cfg_if! {
-    if #[cfg(feature = "levm")] {
-        use ethrex_core::{U256 as CoreU256};
-        use ethrex_levm::db::Database as LevmDatabase;
+/// State used when running the EVM. The state can be represented with a [StoreWrapper] database, or
+/// with a [ExecutionDB] in case we only want to store the necessary data for some particular
+/// execution, for example when proving in L2 mode.
+///
+/// Encapsulates state behaviour to be agnostic to the evm implementation for crate users.
+pub enum EvmState {
+    Store(revm::db::State<StoreWrapper>),
+    Execution(Box<revm::db::CacheDB<ExecutionDB>>),
+}
 
-        impl LevmDatabase for StoreWrapper {
-            fn get_account_info(&self, address: CoreAddress) -> ethrex_levm::account::AccountInfo {
-                let acc_info = self
-                    .store
-                    .get_account_info_by_hash(self.block_hash, address)
-                    .unwrap()
-                    .unwrap_or_default();
-
-                let acc_code = self
-                    .store
-                    .get_account_code(acc_info.code_hash)
-                    .unwrap()
-                    .unwrap_or_default();
-
-                ethrex_levm::account::AccountInfo {
-                    balance: acc_info.balance,
-                    nonce: acc_info.nonce,
-                    bytecode: acc_code,
-                }
-            }
-
-            fn account_exists(&self, address: CoreAddress) -> bool {
-                let acc_info = self
-                .store
-                .get_account_info_by_hash(self.block_hash, address)
-                .unwrap();
-
-                acc_info.is_some()
-            }
-
-            fn get_storage_slot(&self, address: CoreAddress, key: CoreH256) -> CoreU256 {
-                self.store
-                    .get_storage_at_hash(self.block_hash, address, key)
-                    .unwrap()
-                    .unwrap_or_default()
-            }
-
-            fn get_block_hash(&self, block_number: u64) -> Option<CoreH256> {
-                let a = self.store.get_block_header(block_number).unwrap();
-
-                a.map(|a| CoreH256::from(a.compute_block_hash().0))
-            }
+impl EvmState {
+    /// Get a reference to inner `Store` database
+    pub fn database(&self) -> Option<&Store> {
+        if let EvmState::Store(db) = self {
+            Some(&db.database.store)
+        } else {
+            None
         }
+    }
+
+    /// Gets the stored chain config
+    pub fn chain_config(&self) -> Result<ChainConfig, EvmError> {
+        match self {
+            EvmState::Store(db) => db.database.store.get_chain_config().map_err(EvmError::from),
+            EvmState::Execution(db) => Ok(db.db.get_chain_config()),
+        }
+    }
+}
+
+/// Builds EvmState from a Store
+pub fn evm_state(store: Store, block_hash: BlockHash) -> EvmState {
+    EvmState::Store(
+        revm::db::State::builder()
+            .with_database(StoreWrapper { store, block_hash })
+            .with_bundle_update()
+            .without_state_clear()
+            .build(),
+    )
+}
+
+impl From<ExecutionDB> for EvmState {
+    fn from(value: ExecutionDB) -> Self {
+        EvmState::Execution(Box::new(revm::db::CacheDB::new(value)))
+    }
+}
+
+use ethrex_common::U256 as CoreU256;
+use ethrex_levm::db::Database as LevmDatabase;
+
+impl LevmDatabase for StoreWrapper {
+    fn get_account_info(&self, address: CoreAddress) -> ethrex_levm::account::AccountInfo {
+        let acc_info = self
+            .store
+            .get_account_info_by_hash(self.block_hash, address)
+            .unwrap()
+            .unwrap_or_default();
+
+        let acc_code = self
+            .store
+            .get_account_code(acc_info.code_hash)
+            .unwrap()
+            .unwrap_or_default();
+
+        ethrex_levm::account::AccountInfo {
+            balance: acc_info.balance,
+            nonce: acc_info.nonce,
+            bytecode: acc_code,
+        }
+    }
+
+    fn account_exists(&self, address: CoreAddress) -> bool {
+        let acc_info = self
+            .store
+            .get_account_info_by_hash(self.block_hash, address)
+            .unwrap();
+
+        acc_info.is_some()
+    }
+
+    fn get_storage_slot(&self, address: CoreAddress, key: CoreH256) -> CoreU256 {
+        self.store
+            .get_storage_at_hash(self.block_hash, address, key)
+            .unwrap()
+            .unwrap_or_default()
+    }
+
+    fn get_block_hash(&self, block_number: u64) -> Option<CoreH256> {
+        let a = self.store.get_block_header(block_number).unwrap();
+
+        a.map(|a| CoreH256::from(a.compute_block_hash().0))
     }
 }
 

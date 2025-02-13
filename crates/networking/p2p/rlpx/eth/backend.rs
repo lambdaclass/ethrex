@@ -1,4 +1,4 @@
-use ethrex_core::{types::ForkId, U256};
+use ethrex_common::{types::ForkId, U256};
 use ethrex_storage::Store;
 
 use crate::rlpx::error::RLPxError;
@@ -91,7 +91,7 @@ pub fn validate_status(
 mod tests {
     use super::validate_status;
     use crate::rlpx::eth::status::StatusMessage;
-    use ethrex_core::{
+    use ethrex_common::{
         types::{ForkId, Genesis},
         H256, U256,
     };

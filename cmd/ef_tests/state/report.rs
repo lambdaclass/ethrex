@@ -1,6 +1,6 @@
 use crate::runner::{EFTestRunnerError, InternalError};
 use colored::Colorize;
-use ethrex_core::{types::Fork, Address, H256};
+use ethrex_common::{types::Fork, Address, H256};
 use ethrex_levm::{
     errors::{ExecutionReport, TxResult, VMError},
     Account, StorageSlot,
@@ -127,8 +127,8 @@ pub fn summary_for_slack(reports: &[EFTestReport]) -> String {
             "type": "section",
             "text": {{
                 "type": "mrkdwn",
-                "text": "*Summary*: {total_passed}/{total_run} ({success_percentage:.2}%)\n\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n"
-            }}             
+                "text": "*Summary*: {total_passed}/{total_run} ({success_percentage:.2}%)\n\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n"
+            }}
         }}
     ]
 }}"#,
@@ -138,6 +138,7 @@ pub fn summary_for_slack(reports: &[EFTestReport]) -> String {
         fork_summary_for_slack(reports, Fork::Byzantium),
         fork_summary_for_slack(reports, Fork::Berlin),
         fork_summary_for_slack(reports, Fork::Constantinople),
+        fork_summary_for_slack(reports, Fork::Petersburg),
         fork_summary_for_slack(reports, Fork::Paris),
         fork_summary_for_slack(reports, Fork::Homestead),
         fork_summary_for_slack(reports, Fork::Istanbul),
@@ -171,13 +172,14 @@ pub fn summary_for_github(reports: &[EFTestReport]) -> String {
     let total_run = total_fork_test_run(reports);
     let success_percentage = (total_passed as f64 / total_run as f64) * 100.0;
     format!(
-        r#"Summary: {total_passed}/{total_run} ({success_percentage:.2}%)\n\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n"#,
+        r#"Summary: {total_passed}/{total_run} ({success_percentage:.2}%)\n\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n"#,
         fork_summary_for_github(reports, Fork::Prague),
         fork_summary_for_github(reports, Fork::Cancun),
         fork_summary_for_github(reports, Fork::Shanghai),
         fork_summary_for_github(reports, Fork::Byzantium),
         fork_summary_for_github(reports, Fork::Berlin),
         fork_summary_for_github(reports, Fork::Constantinople),
+        fork_summary_for_github(reports, Fork::Petersburg),
         fork_summary_for_github(reports, Fork::Paris),
         fork_summary_for_github(reports, Fork::Homestead),
         fork_summary_for_github(reports, Fork::Istanbul),
@@ -211,7 +213,7 @@ pub fn summary_for_shell(reports: &[EFTestReport]) -> String {
     let total_run = total_fork_test_run(reports);
     let success_percentage = (total_passed as f64 / total_run as f64) * 100.0;
     format!(
-        "{} {}/{total_run} ({success_percentage:.2}%)\n\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n\n\n{}\n",
+        "{} {}/{total_run} ({success_percentage:.2}%)\n\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n\n\n{}\n",
         "Summary:".bold(),
         if total_passed == total_run {
             format!("{}", total_passed).green()
@@ -228,6 +230,7 @@ pub fn summary_for_shell(reports: &[EFTestReport]) -> String {
         fork_summary_shell(reports, Fork::Berlin),
         fork_summary_shell(reports, Fork::Istanbul),
         fork_summary_shell(reports, Fork::Constantinople),
+        fork_summary_shell(reports, Fork::Petersburg),
         fork_summary_shell(reports, Fork::Byzantium),
         fork_summary_shell(reports, Fork::Homestead),
         fork_summary_shell(reports, Fork::Frontier),
@@ -349,6 +352,7 @@ impl Display for EFTestsReport {
         writeln!(f, "{}", fork_summary_shell(&self.0, Fork::Byzantium))?;
         writeln!(f, "{}", fork_summary_shell(&self.0, Fork::Berlin))?;
         writeln!(f, "{}", fork_summary_shell(&self.0, Fork::Constantinople))?;
+        writeln!(f, "{}", fork_summary_shell(&self.0, Fork::Petersburg))?;
         writeln!(f, "{}", fork_summary_shell(&self.0, Fork::Paris))?;
         writeln!(f, "{}", fork_summary_shell(&self.0, Fork::Homestead))?;
         writeln!(f, "{}", fork_summary_shell(&self.0, Fork::Istanbul))?;
