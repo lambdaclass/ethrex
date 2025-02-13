@@ -20,7 +20,7 @@ use std::{
     future::IntoFuture,
     io,
     net::{Ipv4Addr, SocketAddr, ToSocketAddrs},
-    path::{Path, PathBuf},
+    path::{self, Path, PathBuf},
     str::FromStr as _,
     sync::Arc,
     time::Duration,
@@ -156,15 +156,23 @@ async fn main() {
     let evm = EVM_BACKEND.get_or_init(|| evm.clone());
     info!("EVM_BACKEND set to: {:?}", evm);
 
-    cfg_if::cfg_if! {
-        if #[cfg(feature = "redb")] {
-            let store = Store::new(&data_dir, EngineType::RedB).expect("Failed to create Store");
-        } else if #[cfg(feature = "libmdbx")] {
-            let store = Store::new(&data_dir, EngineType::Libmdbx).expect("Failed to create Store");
-        } else {
-            let store = Store::new(&data_dir, EngineType::InMemory).expect("Failed to create Store");
+    let path = path::PathBuf::from(data_dir.clone());
+    let store: Store = if path.ends_with("memory") {
+        Store::new(&data_dir, EngineType::InMemory).expect("Failed to create Store")
+    } else {
+        cfg_if::cfg_if! {
+            if #[cfg(feature = "redb")] {
+                let engine_type = EngineType::RedB;
+            } else if #[cfg(feature = "libmdbx")] {
+                let engine_type = EngineType::Libmdbx;
+            } else {
+                let engine_type = EngineType::InMemory;
+                error!("No database specified. The feature flag `redb` or `libmdbx` should've been set while building.");
+                panic!("Specify the desired database engine.");
+            }
         }
-    }
+        Store::new(&data_dir, engine_type).expect("Failed to create Store")
+    };
 
     let genesis = read_genesis_file(&network);
     store
@@ -275,31 +283,47 @@ async fn main() {
         tracker.spawn(metrics_api);
     }
 
+    let dev_mode = *matches.get_one::<bool>("dev").unwrap_or(&false);
     // We do not want to start the networking module if the l2 feature is enabled.
     cfg_if::cfg_if! {
         if #[cfg(feature = "l2")] {
+            if dev_mode {
+                error!("Cannot run with DEV_MODE if the `l2` feature is enabled.");
+                panic!("Run without the --dev argument.");
+            }
             let l2_proposer = ethrex_l2::start_proposer(store).into_future();
             tracker.spawn(l2_proposer);
         } else if #[cfg(feature = "dev")] {
             use ethrex_dev;
-
-            let authrpc_jwtsecret = std::fs::read(authrpc_jwtsecret).expect("Failed to read JWT secret");
-            let head_block_hash = {
-                let current_block_number = store.get_latest_block_number().unwrap();
-                store.get_canonical_block_hash(current_block_number).unwrap().unwrap()
-            };
-            let max_tries = 3;
-            let url = format!("http://{authrpc_socket_addr}");
-            let block_producer_engine = ethrex_dev::block_producer::start_block_producer(
-                url,
-                authrpc_jwtsecret.into(),
-                head_block_hash,
-                max_tries,
-                1000,
-                ethrex_common::Address::default(),
-            );
-            tracker.spawn(block_producer_engine);
+            // Start the block_producer module if devmode was set
+            if dev_mode {
+                info!("Runnning in DEV_MODE");
+                let authrpc_jwtsecret =
+                    std::fs::read(authrpc_jwtsecret).expect("Failed to read JWT secret");
+                let head_block_hash = {
+                    let current_block_number = store.get_latest_block_number().unwrap();
+                    store
+                        .get_canonical_block_hash(current_block_number)
+                        .unwrap()
+                        .unwrap()
+                };
+                let max_tries = 3;
+                let url = format!("http://{authrpc_socket_addr}");
+                let block_producer_engine = ethrex_dev::block_producer::start_block_producer(
+                    url,
+                    authrpc_jwtsecret.into(),
+                    head_block_hash,
+                    max_tries,
+                    1000,
+                    ethrex_common::Address::default(),
+                );
+                tracker.spawn(block_producer_engine);
+            }
         } else {
+            if dev_mode {
+                error!("Binary wasn't built with The feature flag `dev` enabled.");
+                panic!("Build the binary with the `dev` feature in order to use the `--dev` cli's argument.");
+            }
             ethrex_p2p::start_network(
                 local_p2p_node,
                 tracker.clone(),
