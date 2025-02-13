@@ -7,8 +7,8 @@ edition = "2021"
 
 [dependencies]
 ethrex-rlp.workspace = true
-ethrex-common = { path = "../../common", default-features = false }
-ethrex-trie = { path = "../../storage/trie", default-features = false }
+ethrex-common.workspace = true
+ethrex-trie.workspace = true
 
 ethereum-types.workspace = true
 anyhow = "1.0.86"

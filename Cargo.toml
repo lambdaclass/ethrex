@@ -1,30 +1,30 @@
 [workspace]
 members = [
+    "cmd/ef_tests/blockchain",
+    "cmd/ef_tests/state",
+    "cmd/ethrex",
+    "cmd/ethrex_l2",
+    "cmd/hive_report",
+    "cmd/loc",
     "crates/blockchain",
     "crates/blockchain/dev",
     "crates/common",
+    "crates/common/rlp",
+    "crates/l2/",
+    "crates/l2/contracts",
+    "crates/l2/prover",
+    "crates/l2/sdk",
     "crates/networking/p2p",
     "crates/networking/rpc",
     "crates/storage/store",
-    "crates/vm",
     "crates/storage/trie",
-    "crates/common/rlp",
-    "cmd/ethrex",
-    "cmd/ef_tests/blockchain",
-    "cmd/ef_tests/state",
-    "cmd/ethrex_l2",
-    "cmd/hive_report",
+    "crates/vm",
     "crates/vm/levm",
     "crates/vm/levm/bench/revm_comparison",
-    "crates/l2/",
-    "crates/l2/prover",
-    "crates/l2/contracts",
-    "crates/l2/sdk",
-    "cmd/loc",
 ]
 resolver = "2"
 
-default-members = ["cmd/ethrex", "cmd/ethrex_l2", "crates/l2/prover", "cmd/loc"]
+default-members = ["cmd/ethrex"]
 
 [workspace.package]
 version = "0.1.0"
@@ -37,6 +37,7 @@ ethrex-p2p = { path = "./crates/networking/p2p" }
 ethrex-rpc = { path = "./crates/networking/rpc" }
 ethrex-storage = { path = "./crates/storage/store" }
 ethrex-vm = { path = "./crates/vm" }
+ethrex-levm = { path = "./crates/vm/levm" }
 ethrex-trie = { path = "./crates/storage/trie" }
 ethrex-rlp = { path = "./crates/common/rlp" }
 ethrex-l2 = { path = "./crates/l2" }

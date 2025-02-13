@@ -150,10 +150,10 @@ loc-stats:
 	fi
 
 loc-detailed:
-	cargo run --release --bin loc -- --detailed
+	cargo run --release -p loc --bin loc -- --detailed
 
 loc-compare-detailed:
-	cargo run --release --bin loc -- --compare-detailed
+	cargo run --release -p loc --bin loc -- --compare-detailed
 
 hive-stats:
 	make hive QUIET=true
