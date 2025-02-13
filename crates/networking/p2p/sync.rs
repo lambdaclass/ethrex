@@ -73,6 +73,8 @@ pub struct SyncManager {
 }
 
 /// Represents the permanently ongoing background trie rebuild process
+/// This process will be started whenever a state sync is initiated and will be 
+/// kept alive throughout sync cycles, only stopping once the tries are fully rebuildt or the node is stopped
 #[derive(Debug)]
 struct TrieRebuilder {
     state_trie_rebuilder: tokio::task::JoinHandle<Result<(), SyncError>>,
@@ -95,6 +97,7 @@ impl TrieRebuilder {
         self.storage_trie_rebuilder.await?
     }
 
+    /// starts the background trie rebuild process
     fn startup(cancel_token: CancellationToken, store: Store) -> Self {
         let (storage_rebuilder_sender, storage_rebuilder_receiver) =
             mpsc::channel::<Vec<(H256, H256)>>(MAX_CHANNEL_MESSAGES);
