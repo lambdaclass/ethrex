@@ -1194,14 +1194,13 @@ fn calculate_cost_and_gas_limit_call(
         .checked_sub(call_gas_costs)
         .ok_or(OutOfGasError::GasUsedOverflow)?;
 
-    // EIP 150, TANGERINE WHISTLE
-    let max_gas_for_call = gas_left
-        .checked_sub(gas_left / 64)
-        .ok_or(OutOfGasError::GasUsedOverflow)?;
-
     let gas: u64 = if fork < Fork::Tangerine {
         gas_from_stack
     } else {
+        // EIP 150, https://eips.ethereum.org/EIPS/eip-150
+        let max_gas_for_call = gas_left
+            .checked_sub(gas_left / 64)
+            .ok_or(OutOfGasError::GasUsedOverflow)?;
         gas_from_stack.min(max_gas_for_call.into())
     }
     .try_into()
