@@ -457,7 +457,7 @@ pub fn sstore(
             // https://eips.ethereum.org/EIPS/eip-1283
             Fork::Constantinople => SSTORE_DEFAULT_CONSTANTINOPLE,
             // https://eips.ethereum.org/EIPS/eip-2200
-            _f if fork == Fork::Istanbul || fork == Fork::MuirGlacier => {
+            f if f == Fork::Istanbul || f == Fork::MuirGlacier => {
                 SSTORE_DEFAULT_ISTANBUL_MUIR_GLACIER
             }
             // https://eips.ethereum.org/EIPS/eip-2929
