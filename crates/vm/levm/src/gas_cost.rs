@@ -674,22 +674,13 @@ pub fn extcodesize(address_was_cold: bool, fork: Fork) -> Result<u64, VMError> {
             EXTCODESIZE_WARM_DYNAMIC,
         ),
     };
-    let dynamic_cost: u64 = if address_was_cold {
-        cold_dynamic_cost
-    } else {
-        warm_dynamic_cost
-    };
-    //TODO: CHANGE BEFORE COMMIT
-    Ok(static_cost
-        .checked_add(dynamic_cost)
-        .ok_or(OutOfGasError::GasCostOverflow)?)
-    // address_access_cost(
-    //     address_was_cold,
-    //     static_cost,
-    //     cold_dynamic_code,
-    //     warm_dyanmic_code,
-    //     fork,
-    // )
+
+    address_access_cost(
+        address_was_cold,
+        static_cost,
+        cold_dynamic_cost,
+        warm_dynamic_cost,
+    )
 }
 
 pub fn extcodecopy(
