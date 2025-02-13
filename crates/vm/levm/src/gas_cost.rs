@@ -750,12 +750,6 @@ pub fn call(
     gas_left: u64,
     fork: Fork,
 ) -> Result<(u64, u64), VMError> {
-    // let static_cost: u64 = match fork {
-    //     // f if f < Fork::Constantinople => return VMError::InvalidOpcode,
-    //     f if f < Fork::Tangerine => 40,
-    //     f if f < Fork::Berlin => 700,
-    //     _ => 0,
-    // };
     let memory_expansion_cost = memory::expansion_cost(new_memory_size, current_memory_size)?;
 
     let (static_cost, cold_dynamic_cost, warm_dynamic_cost) = match fork {
@@ -765,16 +759,12 @@ pub fn call(
         _ => (CALL_STATIC, CALL_COLD_DYNAMIC, CALL_WARM_DYNAMIC),
     };
 
-    let dynamic_cost: u64 = if address_was_cold {
-        cold_dynamic_cost
-    } else {
-        warm_dynamic_cost
-    };
-
-    //TODO: CHANGE BEFORE COMMIT
-    let address_access_cost = static_cost
-        .checked_add(dynamic_cost)
-        .ok_or(OutOfGasError::GasCostOverflow)?;
+    let address_access_cost = address_access_cost(
+        address_was_cold,
+        static_cost,
+        cold_dynamic_cost,
+        warm_dynamic_cost,
+    )?;
 
     let positive_value_cost = if !value_to_transfer.is_zero() {
         CALL_POSITIVE_VALUE
