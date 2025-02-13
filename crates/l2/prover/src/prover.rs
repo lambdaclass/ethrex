@@ -12,7 +12,7 @@ use risc0_zkvm::{default_prover, ExecutorEnv, ProverOpts};
 use zkvm_interface::{
     io::{ProgramInput, ProgramOutput},
     methods::ZKVM_SP1_PROGRAM_ELF,
-    methods::{ZKVM_RISC0_PROGRAM_ELF, ZKVM_RISC0_PROGRAM_ID},
+    methods::{ZKVM_RISC0_PROGRAM_ELF, ZKVM_RISC0_PROGRAM_ID, ZKVM_PICO_PROGRAM_ELF},
 };
 
 // sp1
@@ -213,7 +213,7 @@ impl<'a> Prover for Sp1Prover<'a> {
 impl<'a> PicoProver<'a> {
     pub fn new() -> Self {
         Self {
-            elf: ZKVM_RISC0_PROGRAM_ELF,
+            elf: ZKVM_PICO_PROGRAM_ELF,
         }
     }
 }
