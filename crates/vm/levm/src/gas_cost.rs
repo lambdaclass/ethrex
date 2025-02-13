@@ -712,7 +712,7 @@ pub fn extcodecopy(
         current_memory_size,
         size,
         EXTCODECOPY_DYNAMIC_BASE,
-        EXTCODECOPY_STATIC,
+        100000000,
     )?;
     let (static_cost, cold_dynamic_cost, warm_dynamic_cost) = match fork {
         f if f < Fork::Tangerine => (EXTCODECOPY_STATIC_PRE_TANGERINE, 0, 0),
