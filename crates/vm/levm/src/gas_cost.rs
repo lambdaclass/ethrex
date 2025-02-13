@@ -737,25 +737,23 @@ pub fn extcodecopy(
     address_was_cold: bool,
     fork: Fork,
 ) -> Result<u64, VMError> {
-    let (base_cost, dynamic_base) = match fork {
-        f if f < Fork::Tangerine => (EXTCODECOPY_STATIC_PRE_TANGERINE, EXTCODECOPY_DYNAMIC_BASE),
-        f if f >= Fork::Tangerine && fork < Fork::Berlin => {
-            (EXTCODECOPY_STATIC_PRE_BERLIN, EXTCODECOPY_DYNAMIC_BASE)
-        }
-        _ => (EXTCODECOPY_STATIC, EXTCODECOPY_DYNAMIC_BASE),
+    let base_cost = match fork {
+        f if f < Fork::Tangerine => EXTCODECOPY_STATIC_PRE_TANGERINE,
+        f if f >= Fork::Tangerine && fork < Fork::Berlin => EXTCODECOPY_STATIC_PRE_BERLIN,
+        _ => EXTCODECOPY_STATIC,
     };
 
     let base_access_cost = copy_behavior(
         new_memory_size,
         current_memory_size,
         size,
-        dynamic_base,
+        EXTCODECOPY_DYNAMIC_BASE,
         base_cost,
     )?;
 
     let (static_cost, cold_dynamic_cost, warm_dynamic_cost) = match fork {
-        f if f < Fork::Tangerine => (EXTCODECOPY_STATIC_PRE_TANGERINE, 0, 0),
-        f if f >= Fork::Tangerine && fork < Fork::Berlin => (EXTCODECOPY_STATIC_PRE_BERLIN, 0, 0),
+        f if f < Fork::Tangerine => (0, 0, 0),
+        f if f >= Fork::Tangerine && fork < Fork::Berlin => (0, 0, 0),
         _ => (
             EXTCODECOPY_STATIC,
             EXTCODECOPY_COLD_DYNAMIC,
