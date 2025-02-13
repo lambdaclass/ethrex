@@ -89,6 +89,7 @@ pub const GASPRICE: u64 = 2;
 pub const SELFDESTRUCT_STATIC: u64 = 5000;
 pub const SELFDESTRUCT_DYNAMIC: u64 = 25000;
 pub const SELFDESTRUCT_REFUND: u64 = 24000;
+pub const SELFDESTRUCT_COST_PRE_TANGERINE: u64 = 0;
 
 pub const DEFAULT_STATIC: u64 = 0;
 pub const DEFAULT_COLD_DYNAMIC: u64 = 2600;
@@ -97,6 +98,7 @@ pub const DEFAULT_WARM_DYNAMIC: u64 = 100;
 pub const SLOAD_STATIC: u64 = 0;
 pub const SLOAD_COLD_DYNAMIC: u64 = 2100;
 pub const SLOAD_WARM_DYNAMIC: u64 = 100;
+pub const SLOAD_COST_PRE_TANGERINE: u64 = 50;
 pub const SLOAD_COST_PRE_BERLIN: u64 = 200;
 
 pub const SSTORE_STATIC: u64 = 0;
@@ -127,10 +129,12 @@ pub const EXTCODEHASH_STATIC_PRE_ISTANBUL: u64 = 400;
 pub const EXTCODEHASH_STATIC_PRE_BERLIN: u64 = 700;
 
 pub const EXTCODECOPY_STATIC: u64 = 0;
+pub const EXTCODECOPY_COST_PRE_TANGERINE: u64 = 20;
 pub const EXTCODECOPY_DYNAMIC_BASE: u64 = 3;
 pub const EXTCODECOPY_COLD_DYNAMIC: u64 = DEFAULT_COLD_DYNAMIC;
 pub const EXTCODECOPY_WARM_DYNAMIC: u64 = DEFAULT_WARM_DYNAMIC;
 
+pub const CALL_STATIC_COST_PRE_TANGERINE: u64 = 40;
 pub const CALL_STATIC: u64 = DEFAULT_STATIC;
 pub const CALL_COLD_DYNAMIC: u64 = DEFAULT_COLD_DYNAMIC;
 pub const CALL_WARM_DYNAMIC: u64 = DEFAULT_WARM_DYNAMIC;
@@ -140,12 +144,14 @@ pub const CALL_POSITIVE_VALUE_STIPEND: u64 = 2300;
 pub const CALL_TO_EMPTY_ACCOUNT: u64 = 25000;
 
 pub const CALLCODE_STATIC: u64 = DEFAULT_STATIC;
+pub const CALLCODE_STATIC_COST_PRE_TANGERINE: u64 = 40;
 pub const CALLCODE_COLD_DYNAMIC: u64 = DEFAULT_COLD_DYNAMIC;
 pub const CALLCODE_WARM_DYNAMIC: u64 = DEFAULT_WARM_DYNAMIC;
 pub const CALLCODE_POSITIVE_VALUE: u64 = 9000;
 pub const CALLCODE_POSITIVE_VALUE_STIPEND: u64 = 2300;
 
 pub const DELEGATECALL_STATIC: u64 = DEFAULT_STATIC;
+pub const DELEGATECALL_STATIC_COST_PRE_TANGERINE: u64 = 40;
 pub const DELEGATECALL_COLD_DYNAMIC: u64 = DEFAULT_COLD_DYNAMIC;
 pub const DELEGATECALL_WARM_DYNAMIC: u64 = DEFAULT_WARM_DYNAMIC;
 
@@ -400,13 +406,13 @@ fn mem_expansion_behavior(
 }
 
 pub fn sload(storage_slot_was_cold: bool, fork: Fork) -> Result<u64, VMError> {
+    // https://github.com/ethereum/EIPs/blob/master/EIPS/eip-150.md
     if fork < Fork::Tangerine {
-        return Ok(50);
+        return Ok(SLOAD_COST_PRE_TANGERINE);
+        // EIP https://eips.ethereum.org/EIPS/eip-2929
     } else if fork < Fork::Berlin {
-        // https://github.com/ethereum/EIPs/blob/master/EIPS/eip-150.md
         return Ok(SLOAD_COST_PRE_BERLIN);
     }
-    // EIP https://eips.ethereum.org/EIPS/eip-2929
     let static_gas = SLOAD_STATIC;
 
     let dynamic_cost = if storage_slot_was_cold {
@@ -573,7 +579,7 @@ pub fn selfdestruct(
 ) -> Result<u64, OutOfGasError> {
     // https://github.com/ethereum/EIPs/blob/master/EIPS/eip-150.md
     if fork < Fork::Tangerine {
-        return Ok(0);
+        return Ok(SELFDESTRUCT_COST_PRE_TANGERINE);
     }
     let mut gas_cost = SELFDESTRUCT_STATIC;
 
@@ -701,7 +707,7 @@ pub fn extcodecopy(
     fork: Fork,
 ) -> Result<u64, VMError> {
     if fork < Fork::Tangerine {
-        return Ok(20);
+        return Ok(EXTCODECOPY_COST_PRE_TANGERINE);
     }
     let base_access_cost = copy_behavior(
         new_memory_size,
@@ -753,7 +759,7 @@ pub fn call(
     let memory_expansion_cost = memory::expansion_cost(new_memory_size, current_memory_size)?;
 
     let address_access_cost = if fork < Fork::Tangerine {
-        40
+        CALL_STATIC_COST_PRE_TANGERINE
     } else {
         address_access_cost(
             address_was_cold,
@@ -803,7 +809,7 @@ pub fn callcode(
     let memory_expansion_cost = memory::expansion_cost(new_memory_size, current_memory_size)?;
 
     let address_access_cost = if fork < Fork::Tangerine {
-        40
+        CALLCODE_STATIC_COST_PRE_TANGERINE
     } else {
         address_access_cost(
             address_was_cold,
@@ -845,7 +851,7 @@ pub fn delegatecall(
     let memory_expansion_cost = memory::expansion_cost(new_memory_size, current_memory_size)?;
 
     let address_access_cost = if fork < Fork::Tangerine {
-        40
+        DELEGATECALL_STATIC_COST_PRE_TANGERINE
     } else {
         address_access_cost(
             address_was_cold,
