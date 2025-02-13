@@ -1189,6 +1189,8 @@ impl SegmentStatus {
     }
 }
 
+/// Rebuilds the state trie by processing the accounts from the state snapshot
+/// Will only stop when state sync has finished and all account have been processed or when the cancel token is cancelled
 async fn rebuild_state_trie_in_backgound(
     store: Store,
     cancel_token: CancellationToken,
@@ -1244,7 +1246,11 @@ async fn rebuild_state_trie_in_backgound(
     Ok(())
 }
 
-// Returns the current root, the last processed account hash, and the list of mismatched storages
+/// Fetches accounts from the state snasphot starting from the `start` hash and adds them to the trie
+/// Will stop when there are no more accounts within the segment bounds in the snapshot, or when the cancel token is cancelled
+// Returns the current root, the last processed account hash
+// If state sync is finished and there are no more snapshot accounts for the segment the account hash
+// returned will be the segment bound to notify that the segment has been fully rebuilt
 async fn rebuild_state_trie_segment(
     mut root: H256,
     mut start: H256,
@@ -1282,7 +1288,9 @@ async fn rebuild_state_trie_segment(
     Ok((root, start))
 }
 
-// Only receives fully downloaded storages
+/// Waits for incoming messages from the storage fetcher and rebuilds the associated storages
+/// Will stop when the stop signal is received (an empty vec) and there are no more storages in queue or when the cancel token is cancelled
+// Only receives fully downloaded storages, and will only emit a warning if there is a mismatch between the expected root and the rebuilt root, as this is considered a bug
 async fn rebuild_storage_trie_in_background(
     store: Store,
     cancel_token: CancellationToken,
@@ -1327,8 +1335,8 @@ async fn rebuild_storage_trie_in_background(
     Ok(())
 }
 
-/// Asumes that the storage has been fully downloaded
-/// Warns if the storage doesn't match
+/// Rebuilds a storage trie by reading from the storage snapshot
+/// Assumes that the storage has been fully downloaded and will only emit a warning if there is a mismatch between the expected root and the rebuilt root, as this is considered a bug
 async fn rebuild_storage_trie(
     account_hash: H256,
     expected_root: H256,
