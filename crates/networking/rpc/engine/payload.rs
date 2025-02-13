@@ -393,7 +393,7 @@ fn execute_payload(block: &Block, context: &RpcApiContext) -> Result<PayloadStat
     let block_hash = block.hash();
     let storage = &context.storage;
     // Return the valid message directly if we have it.
-    if storage.get_block_header_by_hash(block_hash)?.is_some() {
+    if storage.get_block_by_hash(block_hash)?.is_some() {
         return Ok(PayloadStatus::valid_with_hash(block_hash));
     }
 
@@ -432,6 +432,12 @@ fn execute_payload(block: &Block, context: &RpcApiContext) -> Result<PayloadStat
         }
         Err(ChainError::EvmError(error)) => {
             warn!("Error executing block: {error}");
+            context
+                .syncer
+                .try_lock()
+                .unwrap()
+                .invalid_ancestors
+                .insert(block_hash);
             Ok(PayloadStatus::invalid_with(
                 latest_valid_hash,
                 error.to_string(),
