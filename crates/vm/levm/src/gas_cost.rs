@@ -160,6 +160,8 @@ pub const DELEGATECALL_STATIC: u64 = DEFAULT_STATIC;
 pub const DELEGATECALL_COLD_DYNAMIC: u64 = DEFAULT_COLD_DYNAMIC;
 pub const DELEGATECALL_WARM_DYNAMIC: u64 = DEFAULT_WARM_DYNAMIC;
 
+pub const STATICCALLCALL_STATIC_PRE_TANGERINE: u64 = DEFAULT_CALL_STATIC_PRE_TANGERINE;
+pub const STATICCALLCALL_STATIC_PRE_BERLIN: u64 = DEFAULT_CALL_STATIC_PRE_BERLIN;
 pub const STATICCALL_STATIC: u64 = DEFAULT_STATIC;
 pub const STATICCALL_COLD_DYNAMIC: u64 = DEFAULT_COLD_DYNAMIC;
 pub const STATICCALL_WARM_DYNAMIC: u64 = DEFAULT_WARM_DYNAMIC;
@@ -900,8 +902,8 @@ pub fn staticcall(
     let memory_expansion_cost = memory::expansion_cost(new_memory_size, current_memory_size)?;
 
     let (static_cost, cold_dynamic_cost, warm_dynamic_cost) = match fork {
-        f if f < Fork::Tangerine => (40, 0, 0),
-        f if f < Fork::Berlin => (700, 0, 0),
+        f if f < Fork::Tangerine => (STATICCALLCALL_STATIC_PRE_TANGERINE, 0, 0),
+        f if f < Fork::Berlin => (STATICCALLCALL_STATIC_PRE_BERLIN, 0, 0),
         f if f < Fork::Berlin => (0, 0, 0),
         _ => (
             STATICCALL_STATIC,
