@@ -267,7 +267,7 @@ impl VM {
             gas_used: current_call_frame.gas_used,
             gas_refunded: self.env.refunded_gas,
             output: std::mem::take(&mut current_call_frame.output), // Bytes::new() if error is not RevertOpcode
-            logs: std::mem::take(&mut current_call_frame.logs),
+            logs: vec![],
         })
     }
 }
