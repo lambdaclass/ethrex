@@ -40,10 +40,10 @@ use tokio_util::codec::Framed;
 
 use super::utils::log_peer_warn;
 
-const CAP_P2P: (Capability, u8) = (Capability::P2p, 5);
-const CAP_ETH: (Capability, u8) = (Capability::Eth, 68);
-const CAP_SNAP: (Capability, u8) = (Capability::Snap, 1);
-const SUPPORTED_CAPABILITIES: [(Capability, u8); 3] = [CAP_P2P, CAP_ETH, CAP_SNAP];
+const CAP_P2P_5: (Capability, u8) = (Capability::P2p, 5);
+const CAP_ETH_68: (Capability, u8) = (Capability::Eth, 68);
+const CAP_SNAP_1: (Capability, u8) = (Capability::Snap, 1);
+const SUPPORTED_CAPABILITIES: [(Capability, u8); 3] = [CAP_P2P_5, CAP_ETH_68, CAP_SNAP_1];
 const PERIODIC_TASKS_CHECK_INTERVAL: std::time::Duration = std::time::Duration::from_secs(15);
 
 pub(crate) type Aes256Ctr64BE = ctr::Ctr64BE<aes::Aes256>;
@@ -70,6 +70,8 @@ pub(crate) struct RLPxConnection<S> {
     framed: Framed<S, RLPxCodec>,
     storage: Store,
     capabilities: Vec<(Capability, u8)>,
+    negotiated_eth_version: u8,
+    negotiated_snap_version: u8,
     next_periodic_task_check: Instant,
     /// Send end of the channel used to broadcast messages
     /// to other connected peers, is ok to have it here,
@@ -97,6 +99,8 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
             framed: Framed::new(stream, codec),
             storage,
             capabilities: vec![],
+            negotiated_eth_version: 0,
+            negotiated_snap_version: 0,
             next_periodic_task_check: Instant::now() + PERIODIC_TASKS_CHECK_INTERVAL,
             connection_broadcast_send: connection_broadcast,
         }
@@ -148,20 +152,32 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
             reason: self.match_disconnect_reason(&error),
         }))
         .await
-        .unwrap_or_else(|e| {
+        .unwrap_or_else(|_| {
             log_peer_error(
                 &self.node,
-                &format!("Could not send Disconnect message: ({e})."),
+                &format!(
+                    "Could not send Disconnect message: ({:?}).",
+                    self.match_disconnect_reason(&error)
+                ),
             )
         });
 
         // Discard peer from kademlia table
-        let remote_node_id = self.node.node_id;
-        log_peer_error(
-            &self.node,
-            &format!("{error_text}: ({error}), discarding peer {remote_node_id}"),
-        );
-        table.lock().await.replace_peer(remote_node_id);
+        match error {
+            // already connected, don't discard it
+            RLPxError::DisconnectRequested(s) if s == "Already connected" => {
+                log_peer_debug(&self.node, "Peer already connected don't replace it");
+            }
+            _ => {
+                let remote_node_id = self.node.node_id;
+                log_peer_error(
+                    &self.node,
+                    &format!("{error_text}: ({error}), discarding peer {remote_node_id}"),
+                );
+                table.lock().await.replace_peer(remote_node_id);
+            }
+        }
+
         let _ = self.framed.close().await;
     }
 
@@ -182,8 +198,16 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
         self.send(hello_msg).await?;
 
         // Receive Hello message
-        match self.receive().await? {
+        let msg = match self.receive().await {
+            Some(msg) => msg?,
+            None => return Err(RLPxError::Disconnected()),
+        };
+
+        match msg {
             Message::Hello(hello_message) => {
+                let mut negotiated_eth_cap = (Capability::Eth, 0);
+                let mut negotiated_snap_cap = (Capability::Snap, 0);
+
                 log_peer_debug(
                     &self.node,
                     &format!(
@@ -191,16 +215,32 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
                         hello_message.capabilities
                     ),
                 );
-                self.capabilities = hello_message.capabilities;
 
-                // Check if we have any capability in common
-                for cap in self.capabilities.clone() {
-                    if SUPPORTED_CAPABILITIES.contains(&cap) {
-                        return Ok(());
+                // Check if we have any capability in common and store the highest version
+                for cap in &hello_message.capabilities {
+                    match *cap {
+                        CAP_ETH_68 if CAP_ETH_68.1 > negotiated_eth_cap.1 => {
+                            negotiated_eth_cap = CAP_ETH_68
+                        }
+                        CAP_SNAP_1 if CAP_SNAP_1.1 > negotiated_snap_cap.1 => {
+                            negotiated_snap_cap = CAP_SNAP_1
+                        }
+                        _ => {}
                     }
                 }
-                // Return error if not
-                Err(RLPxError::NoMatchingCapabilities())
+
+                self.capabilities = hello_message.capabilities;
+
+                if negotiated_eth_cap.1 == 0 {
+                    return Err(RLPxError::NoMatchingCapabilities());
+                }
+                self.negotiated_eth_version = negotiated_eth_cap.1;
+
+                if negotiated_snap_cap.1 != 0 {
+                    self.negotiated_snap_version = negotiated_snap_cap.1;
+                }
+
+                Ok(())
             }
             Message::Disconnect(disconnect) => Err(RLPxError::DisconnectRequested(
                 disconnect.reason().to_string(),
@@ -222,7 +262,10 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
 
         // Subscribe this connection to the broadcasting channel.
         let mut broadcaster_receive = {
-            if self.capabilities.contains(&CAP_ETH) {
+            if self
+                .capabilities
+                .contains(&(Capability::Eth, self.negotiated_eth_version))
+            {
                 Some(self.connection_broadcast_send.subscribe())
             } else {
                 None
@@ -233,7 +276,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
         loop {
             tokio::select! {
                 // Expect a message from the remote peer
-                message = self.receive() => {
+                Some(message) = self.receive() => {
                     match message {
                         Ok(message) => {
                             log_peer_debug(&self.node, &format!("Received message {}", message));
@@ -291,7 +334,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
         message: Message,
         sender: mpsc::Sender<Message>,
     ) -> Result<(), RLPxError> {
-        let peer_supports_eth = self.capabilities.contains(&CAP_ETH);
+        let peer_supports_eth = self.negotiated_eth_version != 0;
         let is_synced = self.storage.is_synced()?;
         match message {
             Message::Disconnect(msg_data) => {
@@ -305,14 +348,17 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
                 ));
             }
             Message::Ping(_) => {
+                log_peer_debug(&self.node, "Sending pong message");
                 self.send(Message::Pong(PongMessage {})).await?;
             }
             Message::Pong(_) => {
                 // We ignore received Pong messages
             }
-            Message::Status(msg_data) if !peer_supports_eth => {
-                backend::validate_status(msg_data, &self.storage)?
-            }
+            Message::Status(msg_data) if !peer_supports_eth => backend::validate_status(
+                msg_data,
+                &self.storage,
+                self.negotiated_eth_version as u32,
+            )?,
             Message::GetAccountRange(req) => {
                 let response = process_account_range_request(req, self.storage.clone())?;
                 self.send(Message::AccountRange(response)).await?
@@ -428,17 +474,28 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
 
     async fn init_peer_conn(&mut self) -> Result<(), RLPxError> {
         // Sending eth Status if peer supports it
-        if self.capabilities.contains(&CAP_ETH) {
-            let status = backend::get_status(&self.storage)?;
+        if self
+            .capabilities
+            .contains(&(Capability::Eth, self.negotiated_eth_version))
+        {
+            let status = backend::get_status(&self.storage, self.negotiated_eth_version as u32)?;
             log_peer_debug(&self.node, "Sending status");
             self.send(Message::Status(status)).await?;
             // The next immediate message in the ETH protocol is the
             // status, reference here:
             // https://github.com/ethereum/devp2p/blob/master/caps/eth.md#status-0x00
-            match self.receive().await? {
+            let msg = match self.receive().await {
+                Some(msg) => msg?,
+                None => return Err(RLPxError::Disconnected()),
+            };
+            match msg {
                 Message::Status(msg_data) => {
-                    log_peer_debug(&self.node, &format!("Received Status {:?}", msg_data));
-                    backend::validate_status(msg_data, &self.storage)?
+                    log_peer_debug(&self.node, "Received Status");
+                    backend::validate_status(
+                        msg_data,
+                        &self.storage,
+                        self.negotiated_eth_version as u32,
+                    )?
                 }
                 Message::Disconnect(disconnect) => {
                     return Err(RLPxError::HandshakeError(format!(
@@ -453,6 +510,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
                 }
             }
         }
+
         Ok(())
     }
 
@@ -460,12 +518,19 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
         self.framed.send(message).await
     }
 
-    async fn receive(&mut self) -> Result<Message, RLPxError> {
-        if let Some(message) = self.framed.next().await {
-            message
-        } else {
-            Err(RLPxError::Disconnected())
-        }
+    /// Reads from the frame until a frame is available.
+    ///
+    /// Returns `None` when the stream buffer is 0. This could indicate that the client has disconnected,
+    /// but we cannot safely assume an EOF, as per the Tokio documentation.
+    ///
+    /// If the handshake has not been established, it is reasonable to terminate the connection.
+    ///
+    /// For an established connection, [`check_periodic_task`] will detect actual disconnections
+    /// while sending pings and you should not assume a disconnection.
+    ///
+    /// See [`Framed::new`] for more details.
+    async fn receive(&mut self) -> Option<Result<Message, RLPxError>> {
+        self.framed.next().await
     }
 
     fn broadcast_message(&self, msg: Message) -> Result<(), RLPxError> {
