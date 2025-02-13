@@ -780,9 +780,11 @@ async fn storage_fetcher(
         "Concluding storage fetcher, {} storages left in queue to be healed later",
         pending_storage.len()
     );
-    storage_healer_sender
+    if !pending_storage.is_empty() {
+        storage_healer_sender
         .send(pending_storage.into_iter().map(|(hash, _)| hash).collect())
         .await?;
+    }
     Ok(())
 }
 
