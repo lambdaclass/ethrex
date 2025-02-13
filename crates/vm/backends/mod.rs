@@ -3,11 +3,20 @@ pub mod levm;
 pub mod revm;
 
 use crate::{db::StoreWrapper, errors::EvmError, spec_id, EvmState, SpecId};
-use ethrex_common::types::{Block, BlockHeader, ChainConfig, Fork, Receipt, Transaction};
+use ethrex_common::types::{
+    Block, BlockHeader, ChainConfig, Fork, Receipt, Transaction, Withdrawal,
+};
+use ethrex_common::H256;
 use ethrex_levm::db::CacheDB;
 use ethrex_storage::{error::StoreError, AccountUpdate};
-use levm::{LevmSystemCallIn, LevmTransactionExecutionIn, LEVM};
-use revm::{RevmSystemCallIn, RevmTransactionExecutionIn, REVM};
+use levm::{
+    LevmGetStateTransitionsIn, LevmProcessWithdrawalsIn, LevmSystemCallIn,
+    LevmTransactionExecutionIn, LEVM,
+};
+use revm::{
+    RevmGetStateTransitionsIn, RevmProcessWithdrawalsIn, RevmSystemCallIn,
+    RevmTransactionExecutionIn, REVM,
+};
 use std::str::FromStr;
 use std::sync::Arc;
 
@@ -30,7 +39,7 @@ impl FromStr for EVM {
 }
 
 impl EVM {
-    /// Wraps [IEVM::execute_block]. The output is `(Vec<Receipt>, Vec<AccountUpdate>)`
+    /// Wraps [IEVM::execute_block]. The output is `(Vec<Receipt>, Vec<AccountUpdate>)`.
     pub fn execute_block(
         &self,
         block: &Block,
@@ -42,6 +51,7 @@ impl EVM {
         }
     }
 
+    /// Wraps [IEVM::execute_tx]. The output is `(Receipt, u64)` == (transaction_receipt, gas_used).
     pub fn execute_tx(
         &self,
         state: &mut EvmState,
@@ -111,6 +121,7 @@ impl EVM {
         }
     }
 
+    /// Wraps the [SystemContracts] trait. This function is used to run/apply all the system contracts to the state.
     pub fn apply_system_calls(
         &self,
         state: &mut EvmState,
@@ -177,14 +188,48 @@ impl EVM {
         }
     }
 
-    #[allow(dead_code)]
-    fn get_state_transitions() -> Vec<AccountUpdate> {
-        todo!()
+    /// Wraps the [IEVM::get_state_transitions]. The output is `Vec<AccountUpdate>`.
+    pub fn get_state_transitions(
+        &self,
+        state: &mut EvmState,
+        parent_hash: H256,
+        block_cache: &CacheDB,
+    ) -> Vec<AccountUpdate> {
+        match self {
+            EVM::REVM => REVM::get_state_transitions(RevmGetStateTransitionsIn::new(state)),
+            EVM::LEVM => LEVM::get_state_transitions(LevmGetStateTransitionsIn::new(
+                state,
+                parent_hash,
+                block_cache,
+            )),
+        }
     }
 
-    #[allow(dead_code)]
-    fn process_withdrawals() -> Result<(), StoreError> {
-        todo!()
+    /// Wraps the [IEVM::process_withdrawals]. Applies the withdrawals to the state or the block_chache if using [LEVM].
+    pub fn process_withdrawals(
+        &self,
+        withdrawals: &[Withdrawal],
+        state: &mut EvmState,
+        block_header: &BlockHeader,
+        block_cache: &mut CacheDB,
+    ) -> Result<(), StoreError> {
+        match self {
+            EVM::REVM => {
+                REVM::process_withdrawals(RevmProcessWithdrawalsIn::new(state, withdrawals))
+            }
+            EVM::LEVM => {
+                let parent_hash = block_header.parent_hash;
+                let mut new_state = CacheDB::new();
+                LEVM::process_withdrawals(LevmProcessWithdrawalsIn::new(
+                    &mut new_state,
+                    withdrawals,
+                    state.database(),
+                    parent_hash,
+                ))?;
+                block_cache.extend(new_state);
+                Ok(())
+            }
+        }
     }
 }
 

@@ -8,23 +8,17 @@ use ethrex_common::{
     types::{
         calculate_base_fee_per_blob_gas, calculate_base_fee_per_gas, compute_receipts_root,
         compute_transactions_root, compute_withdrawals_root, BlobsBundle, Block, BlockBody,
-        BlockHash, BlockHeader, BlockNumber, ChainConfig, Fork, MempoolTransaction, Receipt,
-        Transaction, Withdrawal, DEFAULT_OMMERS_HASH, DEFAULT_REQUESTS_HASH,
+        BlockHash, BlockHeader, BlockNumber, ChainConfig, MempoolTransaction, Receipt, Transaction,
+        Withdrawal, DEFAULT_OMMERS_HASH, DEFAULT_REQUESTS_HASH,
     },
     Address, Bloom, Bytes, H256, U256,
 };
 
 use ethrex_vm::{
-    backends::{
-        self,
-        levm::{CacheDB, LevmGetStateTransitionsIn, LevmProcessWithdrawalsIn, LevmSystemCallIn},
-        revm::{RevmGetStateTransitionsIn, RevmProcessWithdrawalsIn, RevmSystemCallIn},
-        SystemContracts, EVM, IEVM,
-    },
-    db::{evm_state, EvmState, StoreWrapper},
-    spec_id, EvmError, SpecId, EVM_BACKEND,
+    backends::{levm::CacheDB, EVM},
+    db::{evm_state, EvmState},
+    EvmError, EVM_BACKEND,
 };
-use std::sync::Arc;
 
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_storage::{error::StoreError, Store};
@@ -256,26 +250,16 @@ pub fn apply_withdrawals(context: &mut PayloadBuildContext) -> Result<(), EvmErr
         .withdrawals
         .as_ref()
         .unwrap_or(&binding);
-    match EVM_BACKEND.get() {
-        Some(EVM::LEVM) => {
-            let parent_hash = context.parent_hash();
-            let mut temp_block_cache = CacheDB::new();
-            backends::levm::LEVM::process_withdrawals(LevmProcessWithdrawalsIn::new(
-                &mut temp_block_cache,
-                withdrawals,
-                context.store(),
-                parent_hash,
-            ))?;
-            context.block_cache.extend(temp_block_cache);
-        }
-        Some(EVM::REVM) | None => {
-            backends::revm::REVM::process_withdrawals(RevmProcessWithdrawalsIn::new(
-                context.evm_state,
-                withdrawals,
-            ))?;
-        }
-    }
-    Ok(())
+    EVM_BACKEND
+        .get()
+        .unwrap_or(&EVM::default())
+        .process_withdrawals(
+            withdrawals,
+            context.evm_state,
+            &context.payload.header,
+            &mut context.block_cache,
+        )
+        .map_err(EvmError::from)
 }
 
 // This function applies system level operations:
@@ -508,19 +492,14 @@ fn apply_plain_transaction(
 }
 
 fn finalize_payload(context: &mut PayloadBuildContext) -> Result<(), StoreError> {
-    let account_updates = match EVM_BACKEND.get() {
-        Some(EVM::LEVM) => {
-            backends::levm::LEVM::get_state_transitions(LevmGetStateTransitionsIn::new(
-                context.evm_state,
-                context.parent_hash(),
-                &context.block_cache.clone(),
-            ))
-        }
-        // This means we are using REVM as default for tests
-        Some(EVM::REVM) | None => backends::revm::REVM::get_state_transitions(
-            RevmGetStateTransitionsIn::new(context.evm_state),
-        ),
-    };
+    let account_updates = EVM_BACKEND
+        .get()
+        .unwrap_or(&EVM::default())
+        .get_state_transitions(
+            context.evm_state,
+            context.parent_hash(),
+            &context.block_cache,
+        );
 
     context.payload.header.state_root = context
         .store()
