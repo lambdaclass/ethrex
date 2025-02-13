@@ -668,7 +668,7 @@ pub fn balance(address_was_cold: bool, fork: Fork) -> Result<u64, VMError> {
 }
 
 pub fn extcodesize(address_was_cold: bool, fork: Fork) -> Result<u64, VMError> {
-    let (static_cost, cold_dynamic_code, warm_dyanmic_code) = match fork {
+    let (static_cost, cold_dynamic_cost, warm_dynamic_cost) = match fork {
         f if f < Fork::Tangerine => (EXTCODESIZE_PRE_TANGERINE, 0, 0),
         // https://github.com/ethereum/EIPs/blob/master/EIPS/eip-2929.md#storage-read-changes
         f if f >= Fork::Tangerine && fork < Fork::Berlin => (EXTCODESIZE_TANGERINE, 0, 0),
@@ -678,13 +678,21 @@ pub fn extcodesize(address_was_cold: bool, fork: Fork) -> Result<u64, VMError> {
             EXTCODESIZE_WARM_DYNAMIC,
         ),
     };
-    address_access_cost(
-        address_was_cold,
-        static_cost,
-        cold_dynamic_code,
-        warm_dyanmic_code,
-        fork,
-    )
+    let dynamic_cost: u64 = if address_was_cold {
+        cold_dynamic_cost
+    } else {
+        warm_dynamic_cost
+    };
+    Ok(static_cost
+        .checked_add(dynamic_cost)
+        .ok_or(OutOfGasError::GasCostOverflow)?)
+    // address_access_cost(
+    //     address_was_cold,
+    //     static_cost,
+    //     cold_dynamic_code,
+    //     warm_dyanmic_code,
+    //     fork,
+    // )
 }
 
 pub fn extcodecopy(
