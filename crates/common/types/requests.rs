@@ -14,7 +14,7 @@ lazy_static::lazy_static! {
 
 pub enum Requests {
     Deposit(Vec<Deposit>),
-    Withdrawal,
+    Withdrawal(Vec<u8>),
 }
 
 impl Requests {
@@ -24,10 +24,9 @@ impl Requests {
                 let deposit_data = deposits.iter().flat_map(|d| d.to_summarized_byte_array());
                 std::iter::once(DEPOSIT_TYPE).chain(deposit_data).collect()
             }
-            Requests::Withdrawal => {
-                // TODO: implement the withdrawal type
-                vec![WITHDRAWAL_TYPE]
-            }
+            Requests::Withdrawal(data) => std::iter::once(WITHDRAWAL_TYPE)
+                .chain(data.iter().cloned())
+                .collect(),
         }
     }
     pub fn from_deposit_receipts(receipts: &[Receipt]) -> Requests {
@@ -43,6 +42,10 @@ impl Requests {
             }
         }
         Self::Deposit(deposits)
+    }
+
+    pub fn from_withdrawals_data(data: Vec<u8>) -> Requests {
+        Requests::Withdrawal(data)
     }
 }
 

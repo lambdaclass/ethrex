@@ -1,14 +1,17 @@
-use super::constants::{BEACON_ROOTS_ADDRESS_STR, HISTORY_STORAGE_ADDRESS_STR, SYSTEM_ADDRESS_STR};
+use super::constants::{
+    BEACON_ROOTS_ADDRESS_STR, HISTORY_STORAGE_ADDRESS_STR, SYSTEM_ADDRESS_STR,
+    WITHDRAWAL_REQUEST_PREDEPLOY_ADDRESS,
+};
 use crate::db::StoreWrapper;
 use crate::EvmError;
 use crate::EvmState;
-#[cfg(not(feature = "l2"))]
+use ethrex_common::types::requests::Requests;
 use ethrex_common::types::Fork;
 use ethrex_common::{
     types::{
         code_hash, AccountInfo, Block, BlockHeader, Receipt, Transaction, TxKind, GWEI_TO_WEI,
     },
-    Address, H256, U256,
+    Address, Bytes as CoreBytes, H256, U256,
 };
 
 use ethrex_levm::{
@@ -22,11 +25,17 @@ use lazy_static::lazy_static;
 use revm_primitives::Bytes;
 use std::{collections::HashMap, sync::Arc};
 
+pub struct BlockExecutionResult {
+    pub receipts: Vec<Receipt>,
+    pub requests: Vec<Requests>,
+    pub account_updates: Vec<AccountUpdate>,
+}
+
 /// Executes all transactions in a block and returns their receipts.
 pub fn execute_block(
     block: &Block,
     state: &mut EvmState,
-) -> Result<(Vec<Receipt>, Vec<AccountUpdate>), EvmError> {
+) -> Result<BlockExecutionResult, EvmError> {
     let store_wrapper = Arc::new(StoreWrapper {
         store: state.database().unwrap().clone(),
         block_hash: block.header.parent_hash,
@@ -118,13 +127,19 @@ pub fn execute_block(
         }
     }
 
+    let requests = extract_all_requests_levm(&receipts, state, &block.header, &mut block_cache)?;
+
     account_updates.extend(get_state_transitions_levm(
         state,
         block.header.parent_hash,
         &block_cache,
     ));
 
-    Ok((receipts, account_updates))
+    Ok(BlockExecutionResult {
+        receipts,
+        requests,
+        account_updates,
+    })
 }
 
 pub fn execute_tx_levm(
@@ -373,4 +388,96 @@ pub fn process_block_hash_history(
     report.new_state.remove(&*SYSTEM_ADDRESS);
 
     Ok(report)
+}
+
+fn read_withdrawal_requests_levm(
+    store_wrapper: Arc<StoreWrapper>,
+    block_header: &BlockHeader,
+    config: EVMConfig,
+) -> Option<ExecutionReport> {
+    lazy_static! {
+        static ref SYSTEM_ADDRESS: Address =
+            Address::from_slice(&hex::decode(SYSTEM_ADDRESS_STR).unwrap());
+        static ref CONTRACT_ADDRESS: Address =
+            Address::from_slice(&hex::decode(WITHDRAWAL_REQUEST_PREDEPLOY_ADDRESS).unwrap());
+    };
+
+    let env = Environment {
+        origin: *SYSTEM_ADDRESS,
+        gas_limit: 30_000_000,
+        block_number: block_header.number.into(),
+        coinbase: block_header.coinbase,
+        timestamp: block_header.timestamp.into(),
+        prev_randao: Some(block_header.prev_randao),
+        base_fee_per_gas: U256::zero(),
+        gas_price: U256::zero(),
+        block_excess_blob_gas: block_header.excess_blob_gas.map(U256::from),
+        block_blob_gas_used: block_header.blob_gas_used.map(U256::from),
+        block_gas_limit: 30_000_000,
+        transient_storage: HashMap::new(),
+        config,
+        ..Default::default()
+    };
+
+    // Here execute with LEVM but just return transaction report. And I will handle it in the calling place.
+
+    let mut vm = VM::new(
+        TxKind::Call(*CONTRACT_ADDRESS),
+        env,
+        U256::zero(),
+        CoreBytes::new(),
+        store_wrapper,
+        CacheDB::new(),
+        vec![],
+        None,
+    )
+    .ok()?;
+
+    let mut report = vm.execute().ok()?;
+
+    report.new_state.remove(&*SYSTEM_ADDRESS);
+
+    match report.result {
+        TxResult::Success => Some(report),
+        _ => None,
+    }
+}
+
+pub fn extract_all_requests_levm(
+    receipts: &[Receipt],
+    state: &mut EvmState,
+    header: &BlockHeader,
+    cache: &mut CacheDB,
+) -> Result<Vec<Requests>, EvmError> {
+    let config = state.chain_config()?;
+    let fork = config.fork(header.timestamp);
+
+    if fork < Fork::Prague {
+        return Ok(Default::default());
+    }
+
+    let blob_schedule = config
+        .get_fork_blob_schedule(header.timestamp)
+        .unwrap_or(EVMConfig::canonical_values(fork));
+
+    let evm_config = EVMConfig::new(fork, blob_schedule);
+
+    let store_wrapper = Arc::new(StoreWrapper {
+        store: state.database().unwrap().clone(),
+        block_hash: header.parent_hash,
+    });
+
+    let withdrawals_data: Vec<u8> =
+        match read_withdrawal_requests_levm(store_wrapper, header, evm_config) {
+            Some(report) => {
+                cache.extend(report.new_state.clone());
+                report.output.into()
+            }
+            None => Default::default(),
+        };
+
+    let deposits = Requests::from_deposit_receipts(receipts);
+    let withdrawals = Requests::from_withdrawals_data(withdrawals_data);
+
+    Ok(vec![deposits, withdrawals])
 }
