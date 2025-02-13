@@ -196,7 +196,7 @@ impl SyncManager {
                 .await
             {
                 Some(mut block_headers) => {
-                    info!(
+                    debug!(
                         "Received {} block headers| Last Number: {}",
                         block_headers.len(),
                         block_headers.last().as_ref().unwrap().number
@@ -637,12 +637,11 @@ async fn state_sync_segment(
                 break;
             }
         } else {
-            info!("[Segment {segment_number}: Stale Pivot");
             stale = true;
             break;
         }
     }
-    info!("[Segment {segment_number}: Account Trie Fetching ended, signaling storage & bytecode fetcher process");
+    debug!("[Segment {segment_number}]: Account Trie Fetching ended, signaling storage & bytecode fetcher process");
     // Update sync progress (this task is not vital so we can detach it)
     tokio::task::spawn(StateSyncProgress::end_segment(
         state_sync_progress.clone(),
@@ -981,7 +980,7 @@ async fn heal_state_batch(
         .request_state_trienodes(state_root, batch.clone())
         .await
     {
-        info!("Received {} state nodes", nodes.len());
+        debug!("Received {} state nodes", nodes.len());
         let mut hashed_addresses = vec![];
         let mut code_hashes = vec![];
         // For each fetched node:
@@ -1188,7 +1187,6 @@ async fn rebuild_state_trie_in_backgound(
     store: Store,
     cancel_token: CancellationToken,
 ) -> Result<(), SyncError> {
-    info!("Spawning trie rebuilder");
     // Get initial status from checkpoint if available (aka node restart)
     let checkpoint = store.get_state_trie_rebuild_checkpoint()?;
     let mut rebuild_status = array::from_fn(|i| SegmentStatus {
@@ -1449,7 +1447,7 @@ impl StateSyncProgress {
                 data.current_keys[i].into_uint() - STATE_TRIE_SEGMENTS_START[i].into_uint();
             let segment_completion_rate = (U512::from(segment_synced_accounts + 1) * 100)
                 / U512::from(U256::MAX / STATE_TRIE_SEGMENTS);
-            info!("Segment {i} completion rate: {segment_completion_rate}%");
+            debug!("Segment {i} completion rate: {segment_completion_rate}%");
             synced_accounts += segment_synced_accounts;
             synced_accounts_this_cycle +=
                 data.current_keys[i].into_uint() - data.initial_keys[i].into_uint();
