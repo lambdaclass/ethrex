@@ -2297,10 +2297,9 @@ dependencies = [
  "bytes",
  "datatest-stable",
  "ethrex-blockchain",
- "ethrex-core",
+ "ethrex-common",
  "ethrex-rlp",
  "ethrex-storage",
- "ethrex-vm",
  "hex",
  "lazy_static",
  "serde",
@@ -2316,7 +2315,7 @@ dependencies = [
  "clap_complete",
  "colored",
  "ethrex-blockchain",
- "ethrex-core",
+ "ethrex-common",
  "ethrex-levm",
  "ethrex-rlp",
  "ethrex-storage",
@@ -2798,7 +2797,7 @@ dependencies = [
  "clap 4.5.21",
  "directories",
  "ethrex-blockchain",
- "ethrex-core",
+ "ethrex-common",
  "ethrex-dev",
  "ethrex-l2",
  "ethrex-metrics",
@@ -2827,7 +2826,7 @@ version = "0.1.0"
 dependencies = [
  "bytes",
  "cfg-if",
- "ethrex-core",
+ "ethrex-common",
  "ethrex-levm",
  "ethrex-metrics",
  "ethrex-rlp",
@@ -2842,7 +2841,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "ethrex-core"
+name = "ethrex-common"
 version = "0.1.0"
 dependencies = [
  "bytes",
@@ -2895,7 +2894,7 @@ dependencies = [
  "envy",
  "ethereum-types 0.15.1",
  "ethrex-blockchain",
- "ethrex-core",
+ "ethrex-common",
  "ethrex-dev",
  "ethrex-metrics",
  "ethrex-rlp",
@@ -2928,7 +2927,7 @@ dependencies = [
  "bytes",
  "colored",
  "datatest-stable",
- "ethrex-core",
+ "ethrex-common",
  "ethrex-rlp",
  "hex",
  "k256",
@@ -2953,7 +2952,7 @@ name = "ethrex-metrics"
 version = "0.1.0"
 dependencies = [
  "axum 0.8.1",
- "ethrex-core",
+ "ethrex-common",
  "prometheus",
  "serde",
  "serde_json",
@@ -2971,7 +2970,7 @@ dependencies = [
  "concat-kdf",
  "ctr",
  "ethrex-blockchain",
- "ethrex-core",
+ "ethrex-common",
  "ethrex-rlp",
  "ethrex-storage",
  "ethrex-trie",
@@ -3000,7 +2999,7 @@ dependencies = [
  "bytes",
  "ethereum-types 0.15.1",
  "ethrex-blockchain",
- "ethrex-core",
+ "ethrex-common",
  "ethrex-l2",
  "ethrex-rlp",
  "ethrex-storage",
@@ -3040,7 +3039,7 @@ dependencies = [
  "axum-extra",
  "bytes",
  "ethrex-blockchain",
- "ethrex-core",
+ "ethrex-common",
  "ethrex-p2p",
  "ethrex-rlp",
  "ethrex-storage",
@@ -3066,7 +3065,7 @@ version = "0.1.0"
 dependencies = [
  "bytes",
  "ethereum-types 0.15.1",
- "ethrex-core",
+ "ethrex-common",
  "ethrex-rlp",
  "ethrex-rpc",
  "eyre",
@@ -3089,7 +3088,7 @@ dependencies = [
  "anyhow",
  "bytes",
  "ethereum-types 0.15.1",
- "ethrex-core",
+ "ethrex-common",
  "ethrex-rlp",
  "ethrex-trie",
  "hex",
@@ -3137,7 +3136,7 @@ dependencies = [
  "bytes",
  "cfg-if",
  "ethereum-types 0.15.1",
- "ethrex-core",
+ "ethrex-common",
  "ethrex-levm",
  "ethrex-rlp",
  "ethrex-storage",
@@ -3159,7 +3158,7 @@ dependencies = [
  "bytes",
  "colored",
  "ethereum-types 0.15.1",
- "ethrex-core",
+ "ethrex-common",
  "ethrex-l2",
  "ethrex-sdk",
  "hex",
@@ -3184,7 +3183,7 @@ dependencies = [
  "dirs 5.0.1",
  "ethereum-types 0.15.1",
  "ethrex-blockchain",
- "ethrex-core",
+ "ethrex-common",
  "ethrex-l2",
  "ethrex-prover",
  "ethrex-rlp",
@@ -6798,7 +6797,7 @@ name = "revm_comparison"
 version = "0.1.0"
 dependencies = [
  "bytes",
- "ethrex-core",
+ "ethrex-common",
  "ethrex-levm",
  "hex",
  "revm 9.0.0",
@@ -9971,7 +9970,7 @@ dependencies = [
 name = "zkvm_interface"
 version = "0.1.0"
 dependencies = [
- "ethrex-core",
+ "ethrex-common",
  "ethrex-rlp",
  "ethrex-storage",
  "ethrex-trie",

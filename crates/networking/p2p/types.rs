@@ -1,5 +1,5 @@
 use bytes::{BufMut, Bytes};
-use ethrex_core::{H264, H512};
+use ethrex_common::{H264, H512};
 use ethrex_rlp::{
     decode::RLPDecode,
     encode::RLPEncode,
@@ -138,7 +138,7 @@ impl Node {
     }
 
     pub fn from_enr_url(enr: &str) -> Result<Self, String> {
-        let base64_decoded = ethrex_core::base64::decode(enr[4..].as_bytes());
+        let base64_decoded = ethrex_common::base64::decode(enr[4..].as_bytes());
         let record = NodeRecord::decode(&base64_decoded)
             .map_err(|_| "Could not build node record from enr")?;
         let pairs = record.decode_pairs();
@@ -256,7 +256,7 @@ impl NodeRecord {
 
     pub fn enr_url(&self) -> Result<String, String> {
         let rlp_encoded = self.encode_to_vec();
-        let base64_encoded = ethrex_core::base64::encode(&rlp_encoded);
+        let base64_encoded = ethrex_common::base64::encode(&rlp_encoded);
         let mut result: String = "enr:".into();
         let base64_encoded =
             String::from_utf8(base64_encoded).map_err(|_| "Could not base 64 encode enr record")?;
@@ -390,7 +390,7 @@ mod tests {
         network::node_id_from_signing_key,
         types::{Node, NodeRecord},
     };
-    use ethrex_core::H512;
+    use ethrex_common::H512;
     use k256::ecdsa::SigningKey;
     use std::{net::SocketAddr, str::FromStr};
 

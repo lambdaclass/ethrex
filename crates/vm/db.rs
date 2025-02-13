@@ -1,5 +1,5 @@
 use crate::{execution_db::ExecutionDB, EvmError};
-use ethrex_core::{
+use ethrex_common::{
     types::{BlockHash, ChainConfig},
     Address as CoreAddress, H256 as CoreH256,
 };
@@ -60,7 +60,7 @@ impl From<ExecutionDB> for EvmState {
     }
 }
 
-use ethrex_core::U256 as CoreU256;
+use ethrex_common::U256 as CoreU256;
 use ethrex_levm::db::Database as LevmDatabase;
 
 impl LevmDatabase for StoreWrapper {

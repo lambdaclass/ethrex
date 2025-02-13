@@ -6,7 +6,7 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-ethrex-core.workspace = true
+ethrex-common.workspace = true
 ethrex-blockchain.workspace = true
 ethrex-rlp.workspace = true
 ethrex-storage.workspace = true
@@ -41,3 +41,7 @@ hex-literal = "0.4.1"
 
 [lib]
 path = "./p2p.rs"
+
+[features]
+default = ["c-kzg"]
+c-kzg = ["ethrex-blockchain/c-kzg", "ethrex-common/c-kzg"]

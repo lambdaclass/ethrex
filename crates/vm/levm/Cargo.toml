@@ -4,7 +4,7 @@ version.workspace = true
 edition.workspace = true
 
 [dependencies]
-ethrex-core = { path = "../../common", default-features = false }
+ethrex-common.workspace = true
 ethrex-rlp.workspace = true
 revm-primitives = { version = "14.0.0", features = [
   "std",
@@ -40,8 +40,8 @@ colored = "2.1.0"
 spinoff = "0.8.0"
 
 [features]
-default = ["c-kzg"]
-c-kzg = ["ethrex-core/c-kzg"]
+default = []
+c-kzg = ["ethrex-common/c-kzg"]
 ethereum_foundation_tests = []
 
 [lints.rust]

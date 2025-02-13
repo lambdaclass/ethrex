@@ -3,7 +3,7 @@ use crate::types::{
     TransactionExpectedException,
 };
 use bytes::Bytes;
-use ethrex_core::{types::Fork, H256, U256};
+use ethrex_common::{types::Fork, H256, U256};
 use serde::{Deserialize, Deserializer};
 use std::{collections::HashMap, str::FromStr};
 

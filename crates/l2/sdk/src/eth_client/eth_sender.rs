@@ -1,7 +1,7 @@
 use bytes::Bytes;
 use ethereum_types::{Address, U256};
-use ethrex_core::types::{GenericTransaction, TxKind};
-use ethrex_core::H256;
+use ethrex_common::types::{GenericTransaction, TxKind};
+use ethrex_common::H256;
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_rpc::utils::{RpcRequest, RpcRequestId};
 use keccak_hash::keccak;

@@ -13,7 +13,7 @@ use crate::{
     network::{handle_peer_as_initiator, P2PContext},
     types::{Endpoint, Node, NodeRecord},
 };
-use ethrex_core::H256;
+use ethrex_common::H256;
 use k256::ecdsa::{signature::hazmat::PrehashVerifier, Signature, VerifyingKey};
 use std::{
     collections::HashSet,

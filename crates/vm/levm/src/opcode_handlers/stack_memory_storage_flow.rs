@@ -6,7 +6,7 @@ use crate::{
     memory::{self, calculate_memory_size},
     vm::VM,
 };
-use ethrex_core::{types::Fork, H256, U256};
+use ethrex_common::{types::Fork, H256, U256};
 
 // Stack, Memory, Storage and Flow Operations (15)
 // Opcodes: POP, MLOAD, MSTORE, MSTORE8, SLOAD, SSTORE, JUMP, JUMPI, PC, MSIZE, GAS, JUMPDEST, TLOAD, TSTORE, MCOPY
@@ -194,7 +194,15 @@ impl VM {
         // Sync gas refund with global env, ensuring consistency accross contexts.
         let mut gas_refunds = self.env.refunded_gas;
 
-        if new_storage_slot_value != storage_slot.current_value {
+        if self.env.config.fork < Fork::Istanbul {
+            if new_storage_slot_value.is_zero() && !storage_slot.current_value.is_zero() {
+                gas_refunds = gas_refunds
+                    .checked_add(15000)
+                    .ok_or(VMError::GasRefundsOverflow)?;
+            }
+        } else if self.env.config.fork >= Fork::Istanbul
+            && new_storage_slot_value != storage_slot.current_value
+        {
             if !storage_slot.original_value.is_zero()
                 && !storage_slot.current_value.is_zero()
                 && new_storage_slot_value.is_zero()

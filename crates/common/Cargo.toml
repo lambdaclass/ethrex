@@ -1,5 +1,5 @@
 [package]
-name = "ethrex-core"
+name = "ethrex-common"
 version = "0.1.0"
 edition = "2021"
 
@@ -7,7 +7,7 @@ edition = "2021"
 
 [dependencies]
 ethrex-rlp.workspace = true
-ethrex-trie = { path = "../storage/trie", default-features = false }
+ethrex-trie.workspace = true
 
 tracing.workspace = true
 tinyvec = "1.6.0"
@@ -31,10 +31,10 @@ lazy_static.workspace = true
 hex-literal.workspace = true
 
 [features]
-default = ["c-kzg"]
+default = []
 libmdbx = ["ethrex-trie/libmdbx"]
 redb = ["ethrex-trie/redb"]
 c-kzg = ["dep:c-kzg"]
 
 [lib]
-path = "./core.rs"
+path = "./common.rs"

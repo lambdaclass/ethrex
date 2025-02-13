@@ -20,7 +20,7 @@ use crate::{
     types::Node,
 };
 use ethrex_blockchain::mempool::{self};
-use ethrex_core::{H256, H512};
+use ethrex_common::{H256, H512};
 use ethrex_storage::Store;
 use futures::SinkExt;
 use k256::{ecdsa::SigningKey, PublicKey, SecretKey};
@@ -156,12 +156,21 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
         });
 
         // Discard peer from kademlia table
-        let remote_node_id = self.node.node_id;
-        log_peer_error(
-            &self.node,
-            &format!("{error_text}: ({error}), discarding peer {remote_node_id}"),
-        );
-        table.lock().await.replace_peer(remote_node_id);
+        match error {
+            // already connected, don't discard it
+            RLPxError::DisconnectRequested(s) if s == "Already connected" => {
+                log_peer_debug(&self.node, "Peer already connected don't replace it");
+            }
+            _ => {
+                let remote_node_id = self.node.node_id;
+                log_peer_error(
+                    &self.node,
+                    &format!("{error_text}: ({error}), discarding peer {remote_node_id}"),
+                );
+                table.lock().await.replace_peer(remote_node_id);
+            }
+        }
+
         let _ = self.framed.close().await;
     }
 
