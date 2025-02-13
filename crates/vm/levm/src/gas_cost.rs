@@ -815,16 +815,12 @@ pub fn callcode(
         ),
     };
 
-    let dynamic_cost: u64 = if address_was_cold {
-        cold_dynamic_cost
-    } else {
-        warm_dynamic_cost
-    };
-
-    //TODO: CHANGE BEFORE COMMIT
-    let address_access_cost = static_cost
-        .checked_add(dynamic_cost)
-        .ok_or(OutOfGasError::GasCostOverflow)?;
+    let address_access_cost = address_access_cost(
+        address_was_cold,
+        static_cost,
+        cold_dynamic_cost,
+        warm_dynamic_cost,
+    )?;
 
     let positive_value_cost = if !value_to_transfer.is_zero() {
         CALLCODE_POSITIVE_VALUE
