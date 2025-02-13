@@ -126,6 +126,8 @@ pub const EXTCODEHASH_WARM_DYNAMIC: u64 = DEFAULT_WARM_DYNAMIC;
 pub const EXTCODEHASH_STATIC_PRE_ISTANBUL: u64 = 400;
 pub const EXTCODEHASH_STATIC_PRE_BERLIN: u64 = 700;
 
+pub const EXTCODECOPY_STATIC_PRE_TANGERINE: u64 = 20;
+pub const EXTCODECOPY_STATIC_PRE_BERLIN: u64 = 700;
 pub const EXTCODECOPY_STATIC: u64 = 0;
 pub const EXTCODECOPY_DYNAMIC_BASE: u64 = 3;
 pub const EXTCODECOPY_COLD_DYNAMIC: u64 = DEFAULT_COLD_DYNAMIC;
@@ -636,6 +638,7 @@ fn address_access_cost(
     warm_dynamic_cost: u64,
 ) -> Result<u64, VMError> {
     let static_gas = static_cost;
+
     let dynamic_cost: u64 = if address_was_cold {
         cold_dynamic_cost
     } else {
@@ -698,8 +701,8 @@ pub fn extcodecopy(
         EXTCODECOPY_STATIC,
     )?;
     let (static_cost, cold_dynamic_cost, warm_dynamic_cost) = match fork {
-        f if f < Fork::Tangerine => (20, 0, 0),
-        f if f >= Fork::Tangerine && fork < Fork::Berlin => (700, 0, 0),
+        f if f < Fork::Tangerine => (EXTCODECOPY_STATIC_PRE_TANGERINE, 0, 0),
+        f if f >= Fork::Tangerine && fork < Fork::Berlin => (EXTCODECOPY_STATIC_PRE_BERLIN, 0, 0),
         _ => (
             EXTCODECOPY_STATIC,
             EXTCODECOPY_COLD_DYNAMIC,
