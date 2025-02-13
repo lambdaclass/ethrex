@@ -282,67 +282,16 @@ pub fn apply_withdrawals(context: &mut PayloadBuildContext) -> Result<(), EvmErr
 // - Call beacon root contract, and obtain the new state root
 // - Call block hash process contract, and store parent block hash
 pub fn apply_system_operations(context: &mut PayloadBuildContext) -> Result<(), EvmError> {
-    match EVM_BACKEND.get() {
-        Some(EVM::LEVM) => {
-            let config = context.chain_config()?;
-            let fork = config.fork(context.payload.header.timestamp);
-            let mut new_state = HashMap::new();
-
-            let store_wrapper = Arc::new(StoreWrapper {
-                store: context.evm_state.database().unwrap().clone(),
-                block_hash: context.payload.header.parent_hash,
-            });
-
-            if context.payload.header.parent_beacon_block_root.is_some() && fork >= Fork::Cancun {
-                let report = backends::levm::LEVM::beacon_root_contract_call(
-                    &context.payload.header,
-                    LevmSystemCallIn::new(store_wrapper.clone(), config),
-                )?;
-
-                new_state.extend(report.new_state);
-            }
-
-            if fork >= Fork::Prague {
-                let report = backends::levm::LEVM::process_block_hash_history(
-                    &context.payload.header,
-                    LevmSystemCallIn::new(store_wrapper.clone(), config),
-                )?;
-
-                new_state.extend(report.new_state);
-            }
-
-            // Now original_value is going to be the same as the current_value, for the next transaction.
-            // It should have only one value but it is convenient to keep on using our CacheDB structure
-            for account in new_state.values_mut() {
-                for storage_slot in account.storage.values_mut() {
-                    storage_slot.original_value = storage_slot.current_value;
-                }
-            }
-
-            context.block_cache.extend(new_state);
-        }
-        // This means we are using REVM as default for tests
-        Some(EVM::REVM) | None => {
-            // Apply withdrawals & call beacon root contract, and obtain the new state root
-            let spec_id = spec_id(&context.chain_config()?, context.payload.header.timestamp);
-            if context.payload.header.parent_beacon_block_root.is_some()
-                && spec_id >= SpecId::CANCUN
-            {
-                backends::revm::REVM::beacon_root_contract_call(
-                    &context.payload.header,
-                    RevmSystemCallIn::new(context.evm_state, spec_id),
-                )?;
-            }
-
-            if spec_id >= SpecId::PRAGUE {
-                backends::revm::REVM::process_block_hash_history(
-                    &context.payload.header,
-                    RevmSystemCallIn::new(context.evm_state, spec_id),
-                )?;
-            }
-        }
-    }
-    Ok(())
+    let chain_config = context.chain_config()?;
+    EVM_BACKEND
+        .get()
+        .unwrap_or(&EVM::default())
+        .apply_system_calls(
+            context.evm_state,
+            &context.payload.header,
+            &mut context.block_cache,
+            &chain_config,
+        )
 }
 
 /// Fetches suitable transactions from the mempool

@@ -131,13 +131,13 @@ impl IEVM for LEVM {
             if #[cfg(not(feature = "l2"))] {
                 let fork = config.fork(block_header.timestamp);
                 if block_header.parent_beacon_block_root.is_some() && fork >= Fork::Cancun {
-                    let report = Self::beacon_root_contract_call(block_header, LevmSystemCallIn::new(store_wrapper.clone(), config))?;
+                    let report = Self::beacon_root_contract_call(block_header, LevmSystemCallIn::new(store_wrapper.clone(), &config))?;
                     block_cache.extend(report.new_state);
                 }
 
                 if fork >= Fork::Prague {
                     //eip 2935: stores parent block hash in system contract
-                    let report = Self::process_block_hash_history(block_header, LevmSystemCallIn::new(store_wrapper.clone(), config))?;
+                    let report = Self::process_block_hash_history(block_header, LevmSystemCallIn::new(store_wrapper.clone(), &config))?;
                     block_cache.extend(report.new_state);
                 }
             }
@@ -409,14 +409,14 @@ impl IEVM for LEVM {
     }
 }
 
-pub struct LevmSystemCallIn {
+pub struct LevmSystemCallIn<'a> {
     // CHECK: is it ok to use StoreWrapper.
     store_wrapper: Arc<StoreWrapper>,
-    config: ChainConfig,
+    config: &'a ChainConfig,
 }
 
-impl LevmSystemCallIn {
-    pub fn new(store_wrapper: Arc<StoreWrapper>, config: ChainConfig) -> Self {
+impl<'a> LevmSystemCallIn<'a> {
+    pub fn new(store_wrapper: Arc<StoreWrapper>, config: &'a ChainConfig) -> Self {
         LevmSystemCallIn {
             store_wrapper,
             config,
@@ -429,7 +429,7 @@ impl SystemContracts for LEVM {
 
     type Evm = LEVM;
 
-    type SystemCallInput<'a> = LevmSystemCallIn;
+    type SystemCallInput<'a> = LevmSystemCallIn<'a>;
 
     fn beacon_root_contract_call(
         block_header: &BlockHeader,
@@ -451,7 +451,7 @@ impl SystemContracts for LEVM {
             Some(beacon_root) => beacon_root,
         };
 
-        let config = EVMConfig::new_from_chain_config(&input.config, block_header);
+        let config = EVMConfig::new_from_chain_config(input.config, block_header);
         let env = Environment {
             origin: *SYSTEM_ADDRESS,
             gas_limit: 30_000_000,
@@ -506,7 +506,7 @@ impl SystemContracts for LEVM {
                 Address::from_slice(&hex::decode(HISTORY_STORAGE_ADDRESS_STR).unwrap(),);
         };
 
-        let config = EVMConfig::new_from_chain_config(&input.config, block_header);
+        let config = EVMConfig::new_from_chain_config(input.config, block_header);
         let env = Environment {
             origin: *SYSTEM_ADDRESS,
             gas_limit: 30_000_000,

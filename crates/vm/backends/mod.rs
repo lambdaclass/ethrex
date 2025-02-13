@@ -2,12 +2,12 @@ mod constants;
 pub mod levm;
 pub mod revm;
 
-use crate::{db::StoreWrapper, errors::EvmError, spec_id, EvmState};
-use ethrex_common::types::{Block, BlockHeader, ChainConfig, Receipt, Transaction};
+use crate::{db::StoreWrapper, errors::EvmError, spec_id, EvmState, SpecId};
+use ethrex_common::types::{Block, BlockHeader, ChainConfig, Fork, Receipt, Transaction};
 use ethrex_levm::db::CacheDB;
 use ethrex_storage::{error::StoreError, AccountUpdate};
-use levm::{LevmTransactionExecutionIn, LEVM};
-use revm::{RevmTransactionExecutionIn, REVM};
+use levm::{LevmSystemCallIn, LevmTransactionExecutionIn, LEVM};
+use revm::{RevmSystemCallIn, RevmTransactionExecutionIn, REVM};
 use std::str::FromStr;
 use std::sync::Arc;
 
@@ -107,6 +107,72 @@ impl EVM {
                     execution_report.logs.clone(),
                 );
                 Ok((receipt, execution_report.gas_used))
+            }
+        }
+    }
+
+    pub fn apply_system_calls(
+        &self,
+        state: &mut EvmState,
+        block_header: &BlockHeader,
+        block_cache: &mut CacheDB,
+        chain_config: &ChainConfig,
+    ) -> Result<(), EvmError> {
+        match self {
+            EVM::REVM => {
+                let spec_id = spec_id(chain_config, block_header.timestamp);
+                if block_header.parent_beacon_block_root.is_some() && spec_id >= SpecId::CANCUN {
+                    REVM::beacon_root_contract_call(
+                        block_header,
+                        RevmSystemCallIn::new(state, spec_id),
+                    )?;
+                }
+
+                if spec_id >= SpecId::PRAGUE {
+                    REVM::process_block_hash_history(
+                        block_header,
+                        RevmSystemCallIn::new(state, spec_id),
+                    )?;
+                }
+                Ok(())
+            }
+            EVM::LEVM => {
+                let store_wrapper = Arc::new(StoreWrapper {
+                    store: state.database().unwrap().clone(),
+                    block_hash: block_header.parent_hash,
+                });
+
+                let fork = chain_config.fork(block_header.timestamp);
+                let mut new_state = CacheDB::new();
+
+                if block_header.parent_beacon_block_root.is_some() && fork >= Fork::Cancun {
+                    let report = LEVM::beacon_root_contract_call(
+                        block_header,
+                        LevmSystemCallIn::new(store_wrapper.clone(), chain_config),
+                    )?;
+
+                    new_state.extend(report.new_state);
+                }
+
+                if fork >= Fork::Prague {
+                    let report = LEVM::process_block_hash_history(
+                        block_header,
+                        LevmSystemCallIn::new(store_wrapper.clone(), chain_config),
+                    )?;
+
+                    new_state.extend(report.new_state);
+                }
+
+                // Now original_value is going to be the same as the current_value, for the next transaction.
+                // It should have only one value but it is convenient to keep on using our CacheDB structure
+                for account in new_state.values_mut() {
+                    for storage_slot in account.storage.values_mut() {
+                        storage_slot.original_value = storage_slot.current_value;
+                    }
+                }
+
+                block_cache.extend(new_state);
+                Ok(())
             }
         }
     }
