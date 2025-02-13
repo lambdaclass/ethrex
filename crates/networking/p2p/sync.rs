@@ -1258,6 +1258,7 @@ async fn rebuild_state_trie_segment(
     store: Store,
     cancel_token: CancellationToken,
 ) -> Result<(H256, H256), SyncError> {
+    let mut state_trie = store.open_state_trie(root);
     loop {
         if cancel_token.is_cancelled() {
             break;
@@ -1271,8 +1272,11 @@ async fn rebuild_state_trie_segment(
             start = next_hash(last.0);
         }
         // Process batch
-        // Add accounts to state trie
-        root = state_trie_insert_batch(root, batch, store.clone())?;
+        // Add accounts to the state trie
+        for (hash, account) in batch.iter() {
+            state_trie.insert(hash.0.to_vec(), account.encode_to_vec())?;
+        }
+        root = state_trie.hash()?;
         // Return if we have no more snapshot accounts to process for this segemnt
         if unfilled_batch {
             let state_sync_complete = store
@@ -1367,21 +1371,6 @@ async fn rebuild_storage_trie(
         warn!("Mismatched storage root for account {account_hash}");
     }
     Ok(())
-}
-
-/// Helper method to insert a batch of accounts into a state trie
-/// (We have to do this separately as we cannot keep an open trie between async calls)
-fn state_trie_insert_batch(
-    root: H256,
-    batch: Vec<(H256, AccountState)>,
-    store: Store,
-) -> Result<H256, SyncError> {
-    // Add accounts to the state trie
-    let mut state_trie = store.open_state_trie(root);
-    for (hash, account) in batch.iter() {
-        state_trie.insert(hash.0.to_vec(), account.encode_to_vec())?;
-    }
-    Ok(state_trie.hash()?)
 }
 
 async fn show_trie_rebuild_progress(
