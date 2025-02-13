@@ -412,6 +412,16 @@ fn execute_payload(block: &Block, context: &RpcApiContext) -> Result<PayloadStat
         Err(e) => return Err(RpcErr::Internal(e.to_string())),
     };
 
+    // adds a bad block as a bad ancestor so we can catch it on fork_choice as well
+    let add_block_to_invalid_ancestor = || {
+        let lock = context.syncer.try_lock();
+        if let Ok(mut syncer) = lock {
+            syncer
+                .invalid_ancestors
+                .insert(block_hash, block.header.clone());
+        };
+    };
+
     match add_block(block, storage) {
         Err(ChainError::ParentNotFound) => Ok(PayloadStatus::syncing()),
         // Under the current implementation this is not possible: we always calculate the state
@@ -425,6 +435,7 @@ fn execute_payload(block: &Block, context: &RpcApiContext) -> Result<PayloadStat
         }
         Err(ChainError::InvalidBlock(error)) => {
             warn!("Error adding block: {error}");
+            add_block_to_invalid_ancestor();
             Ok(PayloadStatus::invalid_with(
                 latest_valid_hash,
                 error.to_string(),
@@ -432,12 +443,7 @@ fn execute_payload(block: &Block, context: &RpcApiContext) -> Result<PayloadStat
         }
         Err(ChainError::EvmError(error)) => {
             warn!("Error executing block: {error}");
-            context
-                .syncer
-                .try_lock()
-                .unwrap()
-                .invalid_ancestors
-                .insert(block_hash);
+            add_block_to_invalid_ancestor();
             Ok(PayloadStatus::invalid_with(
                 latest_valid_hash,
                 error.to_string(),

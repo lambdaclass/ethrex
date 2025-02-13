@@ -173,13 +173,26 @@ fn handle_forkchoice(
     // Check if there is an ongoing sync before applying the forkchoice
     let fork_choice_res = match context.sync_status()? {
         // Apply current fork choice
-        SyncStatus::Inactive => apply_fork_choice(
-            &context.storage,
-            context.syncer.try_lock().unwrap().invalid_ancestors.clone(),
-            fork_choice_state.head_block_hash,
-            fork_choice_state.safe_block_hash,
-            fork_choice_state.finalized_block_hash,
-        ),
+        SyncStatus::Inactive => {
+            let invalid_ancestors = {
+                let lock = context.syncer.try_lock();
+                match lock {
+                    Ok(sync) => sync.invalid_ancestors.clone(),
+                    Err(_) => {
+                        return Err(RpcErr::Internal(
+                            "Missing latest canonical block".to_owned(),
+                        ))
+                    }
+                }
+            };
+            apply_fork_choice(
+                &context.storage,
+                invalid_ancestors,
+                fork_choice_state.head_block_hash,
+                fork_choice_state.safe_block_hash,
+                fork_choice_state.finalized_block_hash,
+            )
+        }
         // Restart sync if needed
         _ => Err(InvalidForkChoice::Syncing),
     };

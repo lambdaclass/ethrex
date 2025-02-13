@@ -1,6 +1,6 @@
 use ethrex_blockchain::error::ChainError;
 use ethrex_common::{
-    types::{AccountState, Block, BlockHash, EMPTY_KECCACK_HASH},
+    types::{AccountState, Block, BlockHash, BlockHeader, EMPTY_KECCACK_HASH},
     BigEndianHash, H256, U256, U512,
 };
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode, error::RLPDecodeError};
@@ -8,7 +8,7 @@ use ethrex_storage::{error::StoreError, Store};
 use ethrex_trie::{Nibbles, Node, TrieError, TrieState, EMPTY_TRIE_HASH};
 use std::{
     cmp::min,
-    collections::{BTreeMap, HashSet},
+    collections::{BTreeMap, HashMap},
     sync::Arc,
 };
 use tokio::{
@@ -50,7 +50,15 @@ pub struct SyncManager {
     /// Syncing beyond this pivot should re-enable snap-sync (as we will not have that state stored)
     /// TODO: Reorgs
     last_snap_pivot: u64,
-    pub invalid_ancestors: HashSet<H256>,
+    /// The `forkchoice_update` and `new_payload` methods require the `latest_valid_hash`
+    /// when processing an invalid payload. To provide this, we must track invalid chains.
+    ///
+    /// We only store the last known valid head upon encountering a bad block,
+    /// rather than tracking every subsequent invalid block.
+    ///
+    /// This map stores the latest valid block hash of a chain and the `BlockHeader`
+    /// of the first known bad ancestor.
+    pub invalid_ancestors: HashMap<BlockHash, BlockHeader>,
 }
 
 impl SyncManager {
@@ -59,7 +67,7 @@ impl SyncManager {
             sync_mode,
             peers: PeerHandler::new(peer_table),
             last_snap_pivot: 0,
-            invalid_ancestors: HashSet::new(),
+            invalid_ancestors: HashMap::new(),
         }
     }
 
@@ -71,7 +79,7 @@ impl SyncManager {
             sync_mode: SyncMode::Full,
             peers: PeerHandler::new(dummy_peer_table),
             last_snap_pivot: 0,
-            invalid_ancestors: HashSet::new(),
+            invalid_ancestors: HashMap::new(),
         }
     }
 
@@ -260,8 +268,9 @@ async fn download_and_run_blocks(
     mut block_hashes: Vec<BlockHash>,
     peers: PeerHandler,
     store: Store,
-    invalid_ancestors: &mut HashSet<H256>,
+    invalid_ancestors: &mut HashMap<BlockHash, BlockHeader>,
 ) -> Result<(), SyncError> {
+    let mut last_valid_hash = None;
     loop {
         debug!("Requesting Block Bodies ");
         if let Some(block_bodies) = peers.request_block_bodies(block_hashes.clone()).await {
@@ -283,11 +292,14 @@ async fn download_and_run_blocks(
                         block.header.parent_hash,
                         block.hash()
                     );
-                    invalid_ancestors.insert(block.hash());
+                    if let Some(hash) = last_valid_hash {
+                        invalid_ancestors.insert(hash, block.header);
+                    };
                     return Err(error.into());
                 }
                 store.set_canonical_block(number, hash)?;
                 store.update_latest_block_number(number)?;
+                last_valid_hash = Some(hash);
                 info!(
                     "Set canonical block with number {} and hash {}",
                     number, hash
