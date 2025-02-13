@@ -454,20 +454,20 @@ pub fn sstore(
         let static_gas = SSTORE_STATIC;
 
         let default_dynamic = match fork {
-            // https://github.com/ethereum/EIPs/blob/master/EIPS/eip-1283.md
+            // https://eips.ethereum.org/EIPS/eip-1283
             Fork::Constantinople => SSTORE_DEFAULT_CONSTANTINOPLE,
-            // https://github.com/ethereum/EIPs/blob/master/EIPS/eip-2200.md
+            // https://eips.ethereum.org/EIPS/eip-2200
             _f if fork == Fork::Istanbul || fork == Fork::MuirGlacier => {
                 SSTORE_DEFAULT_ISTANBUL_MUIR_GLACIER
             }
-            // https://github.com/ethereum/EIPs/blob/master/EIPS/eip-2929.md
+            // https://eips.ethereum.org/EIPS/eip-2929
             _ => SSTORE_DEFAULT_DYNAMIC,
         };
 
         let dynamic_gas_modification = if fork < Fork::Berlin {
             SSTORE_PRE_BERLIN
         } else {
-            // https://github.com/ethereum/EIPs/blob/master/EIPS/eip-3529.md
+            // https://eips.ethereum.org/EIPS/eip-3529
             SSTORE_STORAGE_MODIFICATION
         };
 
@@ -486,7 +486,7 @@ pub fn sstore(
         if fork < Fork::Berlin {
             return Ok(base_dynamic_gas);
         }
-        // https://github.com/ethereum/EIPs/blob/master/EIPS/eip-2929.md
+        // https://eips.ethereum.org/EIPS/eip-2929
         if storage_slot_was_cold {
             base_dynamic_gas = base_dynamic_gas
                 .checked_add(SSTORE_COLD_DYNAMIC)
