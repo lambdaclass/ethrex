@@ -8,7 +8,7 @@ ethrex-blockchain.workspace = true
 ethrex-common.workspace = true
 ethrex-storage.workspace = true
 ethrex-rlp.workspace = true
-ethrex-vm.workspace = true
+
 serde.workspace = true
 serde_json.workspace = true
 bytes.workspace = true
@@ -20,6 +20,10 @@ datatest-stable = "0.2.9"
 
 [lib]
 path = "./lib.rs"
+
+[features]
+default = ["c-kzg"]
+c-kzg = ["ethrex-blockchain/c-kzg"]
 
 [[test]]
 name = "cancun"
