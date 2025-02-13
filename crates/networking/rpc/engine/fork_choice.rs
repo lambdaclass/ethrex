@@ -175,6 +175,7 @@ fn handle_forkchoice(
         // Apply current fork choice
         SyncStatus::Inactive => apply_fork_choice(
             &context.storage,
+            context.syncer.try_lock().unwrap().invalid_ancestors.clone(),
             fork_choice_state.head_block_hash,
             fork_choice_state.safe_block_hash,
             fork_choice_state.finalized_block_hash,

@@ -6,7 +6,11 @@ use ethrex_common::{
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode, error::RLPDecodeError};
 use ethrex_storage::{error::StoreError, Store};
 use ethrex_trie::{Nibbles, Node, TrieError, TrieState, EMPTY_TRIE_HASH};
-use std::{cmp::min, collections::BTreeMap, sync::Arc};
+use std::{
+    cmp::min,
+    collections::{BTreeMap, HashSet},
+    sync::Arc,
+};
 use tokio::{
     sync::{
         mpsc::{self, error::SendError, Receiver, Sender},
@@ -14,7 +18,7 @@ use tokio::{
     },
     time::Instant,
 };
-use tracing::{debug, info, warn};
+use tracing::{debug, error, info, warn};
 
 use crate::{
     kademlia::KademliaTable,
@@ -46,6 +50,7 @@ pub struct SyncManager {
     /// Syncing beyond this pivot should re-enable snap-sync (as we will not have that state stored)
     /// TODO: Reorgs
     last_snap_pivot: u64,
+    pub invalid_ancestors: HashSet<H256>,
 }
 
 impl SyncManager {
@@ -54,6 +59,7 @@ impl SyncManager {
             sync_mode,
             peers: PeerHandler::new(peer_table),
             last_snap_pivot: 0,
+            invalid_ancestors: HashSet::new(),
         }
     }
 
@@ -65,6 +71,7 @@ impl SyncManager {
             sync_mode: SyncMode::Full,
             peers: PeerHandler::new(dummy_peer_table),
             last_snap_pivot: 0,
+            invalid_ancestors: HashSet::new(),
         }
     }
 
@@ -121,14 +128,31 @@ impl SyncManager {
             {
                 Some(mut block_headers) => {
                     debug!(
-                        "Received {} block headers| Last Number: {}",
+                        "Received {} block headers| Last Number: {} | Current head {}",
                         block_headers.len(),
-                        block_headers.last().as_ref().unwrap().number
+                        block_headers.last().as_ref().unwrap().number,
+                        current_head
                     );
                     let mut block_hashes = block_headers
                         .iter()
                         .map(|header| header.compute_block_hash())
                         .collect::<Vec<_>>();
+                    debug!("Block hashes: {:?}", block_hashes);
+                    let last_header = block_headers.last().unwrap().clone();
+
+                    // attach pending block to the end if it matches the parent_hash
+                    let pending_block = match store.get_pending_block(sync_head) {
+                        Ok(res) => res,
+                        Err(e) => return Err(e.into()),
+                    };
+
+                    if let Some(block) = pending_block {
+                        if block.header.parent_hash == last_header.compute_block_hash() {
+                            block_hashes.push(block.hash());
+                            block_headers.push(block.header);
+                        }
+                    }
+
                     // Check if we already found the sync head
                     let sync_head_found = block_hashes.contains(&sync_head);
                     // Update current fetch head if needed
@@ -141,12 +165,12 @@ impl SyncManager {
                             store.set_header_download_checkpoint(current_head)?;
                         } else {
                             // If the sync head is less than 64 blocks away from our current head switch to full-sync
-                            let last_header_number = block_headers.last().unwrap().number;
                             let latest_block_number = store.get_latest_block_number()?;
-                            if last_header_number.saturating_sub(latest_block_number)
+                            if last_header.number.saturating_sub(latest_block_number)
                                 < MIN_FULL_BLOCKS as u64
                             {
                                 // Too few blocks for a snap sync, switching to full sync
+                                info!("Too few blocks for a snap sync, switching to full sync");
                                 store.clear_snap_state()?;
                                 self.sync_mode = SyncMode::Full
                             }
@@ -217,7 +241,13 @@ impl SyncManager {
             }
             SyncMode::Full => {
                 // full-sync: Fetch all block bodies and execute them sequentially to build the state
-                download_and_run_blocks(all_block_hashes, self.peers.clone(), store.clone()).await?
+                download_and_run_blocks(
+                    all_block_hashes,
+                    self.peers.clone(),
+                    store.clone(),
+                    &mut self.invalid_ancestors,
+                )
+                .await?
             }
         }
         Ok(())
@@ -230,6 +260,7 @@ async fn download_and_run_blocks(
     mut block_hashes: Vec<BlockHash>,
     peers: PeerHandler,
     store: Store,
+    invalid_ancestors: &mut HashSet<H256>,
 ) -> Result<(), SyncError> {
     loop {
         debug!("Requesting Block Bodies ");
@@ -247,13 +278,22 @@ async fn download_and_run_blocks(
                 let number = header.number;
                 let block = Block::new(header, body);
                 if let Err(error) = ethrex_blockchain::add_block(&block, &store) {
-                    warn!("Failed to add block during FullSync: {error}");
+                    warn!(
+                        "Failed to add block with parent hash {} and hash {} during FullSync: {error}",
+                        block.header.parent_hash,
+                        block.hash()
+                    );
+                    invalid_ancestors.insert(block.hash());
                     return Err(error.into());
                 }
                 store.set_canonical_block(number, hash)?;
                 store.update_latest_block_number(number)?;
+                info!(
+                    "Set canonical block with number {} and hash {}",
+                    number, hash
+                );
             }
-            debug!("Executed & stored {} blocks", block_bodies_len);
+            info!("Executed & stored {} blocks", block_bodies_len);
             // Check if we need to ask for another batch
             if block_hashes.is_empty() {
                 break;
