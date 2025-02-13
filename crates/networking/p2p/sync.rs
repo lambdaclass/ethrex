@@ -73,7 +73,7 @@ pub struct SyncManager {
 }
 
 /// Represents the permanently ongoing background trie rebuild process
-/// This process will be started whenever a state sync is initiated and will be 
+/// This process will be started whenever a state sync is initiated and will be
 /// kept alive throughout sync cycles, only stopping once the tries are fully rebuildt or the node is stopped
 #[derive(Debug)]
 struct TrieRebuilder {
@@ -462,8 +462,8 @@ impl SyncManager {
         // Clear snapshot
         store.clear_snapshot()?;
 
-        // Perfrom Healing
-        let heal_status = heal_state_trie(
+        // Perform Healing
+        let state_heal_complete = heal_state_trie(
             state_root,
             store.clone(),
             self.peers.clone(),
@@ -472,11 +472,11 @@ impl SyncManager {
         .await?;
         // Send empty batch to signal that no more batches are incoming
         storage_healer_sender.send(vec![]).await?;
-        storage_healer_handler.await??;
-        if !heal_status {
+        let storage_heal_complete = storage_healer_handler.await??;
+        if !(state_heal_complete && storage_heal_complete) {
             warn!("Stale pivot, aborting healing");
         }
-        Ok(heal_status)
+        Ok(state_heal_complete && storage_heal_complete)
     }
 }
 
@@ -1036,13 +1036,13 @@ async fn heal_state_batch(
 /// Waits for incoming hashed addresses from the receiver channel endpoint and queues the associated root nodes for state retrieval
 /// Also retrieves their children nodes until we have the full storage trie stored
 /// If the state becomes stale while fetching, returns its current queued account hashes
-/// Receives the prending storages from a previous iteration
+// Returns true if there are no more pending storages in the queue (aka storage healing was completed)
 async fn storage_healer(
     state_root: H256,
     mut receiver: Receiver<Vec<H256>>,
     peers: PeerHandler,
     store: Store,
-) -> Result<BTreeMap<H256, Vec<Nibbles>>, SyncError> {
+) -> Result<bool, SyncError> {
     let mut pending_paths: BTreeMap<H256, Vec<Nibbles>> = store
         .get_storage_heal_paths()?
         .unwrap_or_default()
@@ -1106,7 +1106,10 @@ async fn storage_healer(
             }
         }
     }
-    Ok(pending_paths)
+    let healing_complete = pending_paths.is_empty();
+    // Store pending paths
+    store.set_storage_heal_paths(pending_paths.into_iter().collect())?;
+    Ok(healing_complete)
 }
 
 /// Receives a set of storage trie paths (grouped by their corresponding account's state trie path),
