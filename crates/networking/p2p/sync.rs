@@ -533,6 +533,7 @@ async fn state_sync(
 /// Receives an optional checkpoint from a previous state sync to resume it
 /// Returns the segment number, the pivot staleness status (true if stale, false if not), and the last downloaded key
 /// If the pivot is not stale by the end of the state sync then the state sync was completed succesfuly
+#[allow(clippy::too_many_arguments)]
 async fn state_sync_segment(
     state_root: H256,
     peers: PeerHandler,
