@@ -1467,7 +1467,7 @@ impl StateSyncProgress {
         // Time to finish = Time since start / Accounts synced this cycle * Remaining accounts
         let time_to_finish_secs =
             U512::from(Instant::now().duration_since(data.cycle_start).as_secs())
-                * U512::from(remaining_accounts)
+                * remaining_accounts
                 / U512::from(synced_accounts_this_cycle);
         info!(
             "Downloading state trie, completion rate: {}%, estimated time to finish: {}",
@@ -1495,7 +1495,7 @@ fn seconds_to_readable(seconds: U512) -> String {
     let (minutes, seconds) = rest.div_mod(U512::from(60));
     if days > U512::zero() {
         if days > U512::from(15) {
-            return format!("unknown");
+            return "unknown".to_string();
         }
         return format!("Over {days} days");
     }
