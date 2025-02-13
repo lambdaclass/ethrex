@@ -547,6 +547,7 @@ pub fn ecadd(
 ) -> Result<Bytes, VMError> {
     // If calldata does not reach the required length, we should fill the rest with zeros
     let calldata = fill_with_zeros(calldata, 128)?;
+    // https://eips.ethereum.org/EIPS/eip-1108
     let gas_cost = if fork < Fork::Istanbul {
         ECADD_COST_PRE_ISTANBUL
     } else {
@@ -632,7 +633,7 @@ pub fn ecmul(
 ) -> Result<Bytes, VMError> {
     // If calldata does not reach the required length, we should fill the rest with zeros
     let calldata = fill_with_zeros(calldata, 96)?;
-
+    // https://eips.ethereum.org/EIPS/eip-1108
     let gas_cost = if fork < Fork::Istanbul {
         ECMUL_COST_PRE_ISTANBUL
     } else {

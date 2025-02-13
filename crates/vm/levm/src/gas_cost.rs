@@ -1072,7 +1072,7 @@ fn precompile(data_size: usize, static_cost: u64, dynamic_base: u64) -> Result<u
 
 pub fn ecpairing(groups_number: usize, fork: Fork) -> Result<u64, VMError> {
     let groups_number = u64::try_from(groups_number).map_err(|_| InternalError::ConversionError)?;
-
+    // https://eips.ethereum.org/EIPS/eip-1108
     let (group_cost_scalar, base_cost) = if fork < Fork::Istanbul {
         (
             ECPAIRING_GROUP_COST_PRE_ISTANBUL,
