@@ -25,7 +25,7 @@ use ethrex_storage::Store;
 use futures::SinkExt;
 use k256::{ecdsa::SigningKey, PublicKey, SecretKey};
 use rand::random;
-use std::{io::Read, sync::Arc};
+use std::sync::Arc;
 use tokio::{
     io::{AsyncRead, AsyncWrite},
     sync::{
@@ -185,7 +185,12 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
         self.send(hello_msg).await?;
 
         // Receive Hello message
-        match self.receive().await.unwrap()? {
+        let msg = match self.receive().await {
+            Some(msg) => msg?,
+            None => return Err(RLPxError::Disconnected()),
+        };
+
+        match msg {
             Message::Hello(hello_message) => {
                 log_peer_debug(
                     &self.node,
@@ -439,7 +444,11 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
             // The next immediate message in the ETH protocol is the
             // status, reference here:
             // https://github.com/ethereum/devp2p/blob/master/caps/eth.md#status-0x00
-            match self.receive().await.unwrap()? {
+            let msg = match self.receive().await {
+                Some(msg) => msg?,
+                None => return Err(RLPxError::Disconnected()),
+            };
+            match msg {
                 Message::Status(msg_data) => {
                     log_peer_debug(&self.node, &format!("Received Status {:?}", msg_data));
                     backend::validate_status(msg_data, &self.storage)?
@@ -464,10 +473,18 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
         self.framed.send(message).await
     }
 
+    /// Reads from the frame until a frame is available.
+    ///
+    /// Returns `None` when the stream buffer is 0. This could indicate that the client has disconnected,
+    /// but we cannot safely assume an EOF, as per the Tokio documentation.
+    ///
+    /// If the handshake has not been established, it is reasonable to terminate the connection.
+    ///
+    /// For an established connection, [`check_periodic_task`] will detect actual disconnections
+    /// while sending pings and you should not assume a disconnection.
+    ///
+    /// See [`Framed::new`] for more details.
     async fn receive(&mut self) -> Option<Result<Message, RLPxError>> {
-        // don't assume the stream is closed if reached an EOF
-        // send a ping first to verify its not closed
-        // otherwise we can be sure the peer has disconnected
         self.framed.next().await
     }
 

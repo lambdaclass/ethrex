@@ -18,7 +18,6 @@ use crate::{
 /// and itself are made canonical.
 ///
 /// If the fork choice state is applied correctly, the head block header is returned.
-/// TODO check if here we need to validate the reorg
 pub fn apply_fork_choice(
     store: &Store,
     head_hash: H256,
