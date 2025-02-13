@@ -428,7 +428,7 @@ impl VM {
     ) -> Result<OpcodeResult, VMError> {
         // https://eips.ethereum.org/EIPS/eip-1014
         if self.env.config.fork < Fork::Constantinople {
-            return Err(VMError::OpcodeNotAllowed);
+            return Err(VMError::InvalidOpcode);
         }
         let value_in_wei_to_send = current_call_frame.stack.pop()?;
         let code_offset_in_memory = current_call_frame.stack.pop()?;

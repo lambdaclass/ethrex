@@ -32,8 +32,6 @@ pub enum VMError {
     RevertOpcode,
     #[error("Invalid Opcode")]
     InvalidOpcode,
-    #[error("Opcode not allowed in this fork")]
-    OpcodeNotAllowed,
     #[error("Missing Blob Hashes")]
     MissingBlobHashes,
     #[error("Blob Hash Index Out Of Bounds")]
