@@ -1,5 +1,5 @@
 use super::constants::{BEACON_ROOTS_ADDRESS_STR, HISTORY_STORAGE_ADDRESS_STR, SYSTEM_ADDRESS_STR};
-use super::{SystemContracts, IEVM};
+use super::SystemContracts;
 use crate::db::StoreWrapper;
 use crate::EvmError;
 use crate::EvmState;
@@ -26,99 +26,19 @@ use std::{collections::HashMap, sync::Arc};
 // Export needed types
 pub use ethrex_levm::db::CacheDB;
 
-/// Input for [LEVM::execute_tx]
-pub struct LevmTransactionExecutionIn<'a> {
-    /// The transaction to execute.
-    tx: &'a Transaction,
-    /// The block header for the current block.
-    block_header: &'a BlockHeader,
-    /// The database to use for EVM state access.  This is wrapped in an `Arc` for shared ownership.
-    db: Arc<dyn LevmDatabase>,
-    /// A cache database for intermediate state changes during execution.
-    block_cache: &'a mut CacheDB,
-    /// The EVM configuration to use.
-    config: &'a ChainConfig,
-}
-
-impl<'a> LevmTransactionExecutionIn<'a> {
-    pub fn new(
-        tx: &'a Transaction,
-        block_header: &'a BlockHeader,
-        db: Arc<dyn LevmDatabase>,
-        block_cache: &'a mut CacheDB,
-        config: &'a ChainConfig,
-    ) -> Self {
-        LevmTransactionExecutionIn {
-            tx,
-            block_header,
-            db,
-            block_cache,
-            config,
-        }
-    }
-}
-
-/// Input for [LEVM::get_state_transitions]
-pub struct LevmGetStateTransitionsIn<'a> {
-    initial_state: &'a EvmState,
-    block_hash: H256,
-    new_state: &'a CacheDB,
-}
-
-impl<'a> LevmGetStateTransitionsIn<'a> {
-    pub fn new(initial_state: &'a EvmState, block_hash: H256, new_state: &'a CacheDB) -> Self {
-        LevmGetStateTransitionsIn {
-            initial_state,
-            block_hash,
-            new_state,
-        }
-    }
-}
-
-/// Input for [LEVM::process_withdrawals]
-pub struct LevmProcessWithdrawalsIn<'a> {
-    block_cache: &'a mut CacheDB,
-    withdrawals: &'a [Withdrawal],
-    store: Option<&'a Store>,
-    parent_hash: H256,
-}
-
-impl<'a> LevmProcessWithdrawalsIn<'a> {
-    pub fn new(
-        block_cache: &'a mut CacheDB,
-        withdrawals: &'a [Withdrawal],
-        store: Option<&'a Store>,
-        parent_hash: H256,
-    ) -> Self {
-        LevmProcessWithdrawalsIn {
-            block_cache,
-            withdrawals,
-            store,
-            parent_hash,
-        }
-    }
-}
-
+/// The struct implements the following functions:
+/// [LEVM::execute_block]
+/// [LEVM::execute_tx]
+/// [LEVM::get_state_transitions]
+/// [LEVM::process_withdrawals]
 #[derive(Debug)]
 pub struct LEVM;
 
-impl IEVM for LEVM {
-    type Error = EvmError;
-
-    type BlockExecutionOutput = (Vec<Receipt>, Vec<AccountUpdate>);
-
-    type TransactionExecutionInput<'a> = LevmTransactionExecutionIn<'a>;
-
-    type TransactionExecutionResult = ExecutionReport;
-
-    type GetStateTransitionsInput<'a> = LevmGetStateTransitionsIn<'a>;
-
-    type ProcessWithdrawalsInput<'a> = LevmProcessWithdrawalsIn<'a>;
-
-    fn execute_block(
+impl LEVM {
+    pub fn execute_block(
         block: &Block,
         state: &mut EvmState,
-    ) -> Result<Self::BlockExecutionOutput, Self::Error> {
+    ) -> Result<(Vec<Receipt>, Vec<AccountUpdate>), EvmError> {
         let store_wrapper = Arc::new(StoreWrapper {
             store: state.database().unwrap().clone(),
             block_hash: block.header.parent_hash,
@@ -144,23 +64,20 @@ impl IEVM for LEVM {
         }
 
         // Account updates are initialized like this because of the beacon_root_contract_call, it is going to be empty if it wasn't called.
-        let mut account_updates = Self::get_state_transitions(LevmGetStateTransitionsIn::new(
-            state,
-            block_header.compute_block_hash(),
-            &block_cache,
-        ));
+        let mut account_updates =
+            Self::get_state_transitions(state, block_header.compute_block_hash(), &block_cache);
 
         let mut receipts = Vec::new();
         let mut cumulative_gas_used = 0;
 
         for tx in block.body.transactions.iter() {
-            let report = Self::execute_tx(LevmTransactionExecutionIn::new(
+            let report = Self::execute_tx(
                 tx,
                 block_header,
                 store_wrapper.clone(),
                 &mut block_cache,
                 &config,
-            ))
+            )
             .map_err(EvmError::from)?;
 
             let mut new_state = report.new_state.clone();
@@ -208,26 +125,33 @@ impl IEVM for LEVM {
             }
         }
 
-        account_updates.extend(Self::get_state_transitions(LevmGetStateTransitionsIn::new(
+        account_updates.extend(Self::get_state_transitions(
             state,
             block.header.parent_hash,
             &block_cache,
-        )));
+        ));
 
         Ok((receipts, account_updates))
     }
 
-    fn execute_tx(
-        input: Self::TransactionExecutionInput<'_>,
-    ) -> Result<Self::TransactionExecutionResult, Self::Error> {
-        let block_header = input.block_header;
-        let tx = input.tx;
+    pub fn execute_tx(
+        // The transaction to execute.
+        tx: &Transaction,
+        // The block header for the current block.
+        block_header: &BlockHeader,
+        // The database to use for EVM state access.  This is wrapped in an `Arc` for shared ownership.
+        db: Arc<dyn LevmDatabase>,
+        // A cache database for intermediate state changes during execution.
+        block_cache: &mut CacheDB,
+        // The EVM configuration to use.
+        chain_config: &ChainConfig,
+    ) -> Result<ExecutionReport, EvmError> {
         let gas_price: U256 = tx
             .effective_gas_price(block_header.base_fee_per_gas)
             .ok_or(VMError::InvalidTransaction)?
             .into();
 
-        let config = EVMConfig::new_from_chain_config(input.config, input.block_header);
+        let config = EVMConfig::new_from_chain_config(chain_config, block_header);
         let env = Environment {
             origin: tx.sender(),
             refunded_gas: 0,
@@ -256,8 +180,8 @@ impl IEVM for LEVM {
             env,
             tx.value(),
             tx.data().clone(),
-            input.db,
-            input.block_cache.clone(),
+            db,
+            block_cache.clone(),
             tx.access_list(),
             tx.authorization_list(),
         )?;
@@ -265,17 +189,21 @@ impl IEVM for LEVM {
         vm.execute().map_err(VMError::into)
     }
 
-    fn get_state_transitions(input: Self::GetStateTransitionsInput<'_>) -> Vec<AccountUpdate> {
-        let current_db = match input.initial_state {
+    pub fn get_state_transitions(
+        initial_state: &EvmState,
+        block_hash: H256,
+        new_state: &CacheDB,
+    ) -> Vec<AccountUpdate> {
+        let current_db = match initial_state {
             EvmState::Store(state) => state.database.store.clone(),
             EvmState::Execution(_cache_db) => {
                 unreachable!("Execution state should not be passed here")
             }
         };
         let mut account_updates: Vec<AccountUpdate> = vec![];
-        for (new_state_account_address, new_state_account) in input.new_state {
+        for (new_state_account_address, new_state_account) in new_state {
             let initial_account_state = current_db
-                .get_account_info_by_hash(input.block_hash, *new_state_account_address)
+                .get_account_info_by_hash(block_hash, *new_state_account_address)
                 .expect("Error getting account info by address");
 
             if initial_account_state.is_none() {
@@ -338,7 +266,7 @@ impl IEVM for LEVM {
 
                 // Check if the value stored in the DB doesn't equal new_state_account.storage.value
                 let original_value = current_db
-                    .get_storage_at_hash(input.block_hash, *new_state_account_address, *key)
+                    .get_storage_at_hash(block_hash, *new_state_account_address, *key)
                     .unwrap()
                     .unwrap_or_default();
 
@@ -367,25 +295,25 @@ impl IEVM for LEVM {
         account_updates
     }
 
-    fn process_withdrawals(
-        input: Self::ProcessWithdrawalsInput<'_>,
+    pub fn process_withdrawals(
+        block_cache: &mut CacheDB,
+        withdrawals: &[Withdrawal],
+        store: Option<&Store>,
+        parent_hash: H256,
     ) -> Result<(), ethrex_storage::error::StoreError> {
         // For every withdrawal we increment the target account's balance
-        for (address, increment) in input
-            .withdrawals
+        for (address, increment) in withdrawals
             .iter()
             .filter(|withdrawal| withdrawal.amount > 0)
             .map(|w| (w.address, u128::from(w.amount) * u128::from(GWEI_TO_WEI)))
         {
             // We check if it was in block_cache, if not, we get it from DB.
-            let mut account = input.block_cache.get(&address).cloned().unwrap_or({
-                let acc_info = input
-                    .store
+            let mut account = block_cache.get(&address).cloned().unwrap_or({
+                let acc_info = store
                     .ok_or(StoreError::MissingStore)?
-                    .get_account_info_by_hash(input.parent_hash, address)?
+                    .get_account_info_by_hash(parent_hash, address)?
                     .unwrap_or_default();
-                let acc_code = input
-                    .store
+                let acc_code = store
                     .ok_or(StoreError::MissingStore)?
                     .get_account_code(acc_info.code_hash)?
                     .unwrap_or_default();
@@ -403,7 +331,7 @@ impl IEVM for LEVM {
             });
 
             account.info.balance += increment.into();
-            input.block_cache.insert(address, account);
+            block_cache.insert(address, account);
         }
         Ok(())
     }
@@ -434,7 +362,7 @@ impl SystemContracts for LEVM {
     fn beacon_root_contract_call(
         block_header: &BlockHeader,
         input: Self::SystemCallInput<'_>,
-    ) -> Result<<Self::Evm as IEVM>::TransactionExecutionResult, Self::Error> {
+    ) -> Result<<Self::Evm as IEVM>::TransactionExecutionResult, EvmError> {
         lazy_static! {
             static ref SYSTEM_ADDRESS: Address =
                 Address::from_slice(&hex::decode(SYSTEM_ADDRESS_STR).unwrap());
@@ -498,7 +426,7 @@ impl SystemContracts for LEVM {
     fn process_block_hash_history(
         block_header: &BlockHeader,
         input: Self::SystemCallInput<'_>,
-    ) -> Result<<Self::Evm as IEVM>::TransactionExecutionResult, Self::Error> {
+    ) -> Result<<Self::Evm as IEVM>::TransactionExecutionResult, EvmError> {
         lazy_static! {
             static ref SYSTEM_ADDRESS: Address =
                 Address::from_slice(&hex::decode(SYSTEM_ADDRESS_STR).unwrap());

@@ -21,7 +21,7 @@ use revm_primitives::SpecId;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    backends::{self, IEVM},
+    backends::{self},
     block_env,
     db::{evm_state, StoreWrapper},
     errors::ExecutionDBError,

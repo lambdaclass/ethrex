@@ -9,14 +9,8 @@ use ethrex_common::types::{
 use ethrex_common::H256;
 use ethrex_levm::db::CacheDB;
 use ethrex_storage::{error::StoreError, AccountUpdate};
-use levm::{
-    LevmGetStateTransitionsIn, LevmProcessWithdrawalsIn, LevmSystemCallIn,
-    LevmTransactionExecutionIn, LEVM,
-};
-use revm::{
-    RevmGetStateTransitionsIn, RevmProcessWithdrawalsIn, RevmSystemCallIn,
-    RevmTransactionExecutionIn, REVM,
-};
+use levm::{LevmSystemCallIn, LEVM};
+use revm::{RevmSystemCallIn, REVM};
 use std::str::FromStr;
 use std::sync::Arc;
 
@@ -63,13 +57,12 @@ impl EVM {
     ) -> Result<(Receipt, u64), EvmError> {
         match self {
             EVM::REVM => {
-                let input = RevmTransactionExecutionIn::new(
+                let execution_result = REVM::execute_tx(
                     tx,
                     block_header,
                     state,
                     spec_id(chain_config, block_header.timestamp),
-                );
-                let execution_result = REVM::execute_tx(input)?;
+                )?;
 
                 *remaining_gas = remaining_gas.saturating_sub(execution_result.gas_used());
 
@@ -88,14 +81,13 @@ impl EVM {
                     block_hash: block_header.parent_hash,
                 });
 
-                let input = LevmTransactionExecutionIn::new(
+                let execution_report = LEVM::execute_tx(
                     tx,
                     block_header,
                     store_wrapper.clone(),
                     block_cache,
                     chain_config,
-                );
-                let execution_report = LEVM::execute_tx(input)?;
+                )?;
 
                 *remaining_gas = remaining_gas.saturating_sub(execution_report.gas_used);
 
@@ -196,12 +188,8 @@ impl EVM {
         block_cache: &CacheDB,
     ) -> Vec<AccountUpdate> {
         match self {
-            EVM::REVM => REVM::get_state_transitions(RevmGetStateTransitionsIn::new(state)),
-            EVM::LEVM => LEVM::get_state_transitions(LevmGetStateTransitionsIn::new(
-                state,
-                parent_hash,
-                block_cache,
-            )),
+            EVM::REVM => REVM::get_state_transitions(state),
+            EVM::LEVM => LEVM::get_state_transitions(state, parent_hash, block_cache),
         }
     }
 
@@ -214,60 +202,21 @@ impl EVM {
         block_cache: &mut CacheDB,
     ) -> Result<(), StoreError> {
         match self {
-            EVM::REVM => {
-                REVM::process_withdrawals(RevmProcessWithdrawalsIn::new(state, withdrawals))
-            }
+            EVM::REVM => REVM::process_withdrawals(state, withdrawals),
             EVM::LEVM => {
                 let parent_hash = block_header.parent_hash;
                 let mut new_state = CacheDB::new();
-                LEVM::process_withdrawals(LevmProcessWithdrawalsIn::new(
+                LEVM::process_withdrawals(
                     &mut new_state,
                     withdrawals,
                     state.database(),
                     parent_hash,
-                ))?;
+                )?;
                 block_cache.extend(new_state);
                 Ok(())
             }
         }
     }
-}
-
-pub trait IEVM {
-    /// The error type for this trait's error. `EvmError` is the default, but it could be modified if needed.
-    type Error;
-
-    /// Output for [IEVM::execute_block]. The default is `(Vec<Receipt>, Vec<AccountUpdate>)`, but it could be modified if needed.
-    type BlockExecutionOutput;
-
-    /// Input for [IEVM::execute_tx]. This must be defined by the implementor. It may vary depending on the backend EVM.
-    type TransactionExecutionInput<'a>;
-
-    /// Output for [IEVM::execute_tx]. This must be defined by the implementor. It may vary depending on the backend EVM.
-    type TransactionExecutionResult;
-
-    /// Input for [IEVM::get_state_transitions]. This must be defined by the implementor. It may vary depending on the backend EVM.
-    type GetStateTransitionsInput<'a>;
-
-    /// Input for [IEVM::process_withdrawals]. This must be defined by the implementor. It may vary depending on the backend EVM.
-    type ProcessWithdrawalsInput<'a>;
-
-    /// Executes every transaction of a block returning a list of their receipts executed and a list of accounts that were updated in the execution.
-    fn execute_block(
-        block: &Block,
-        state: &mut EvmState,
-    ) -> Result<Self::BlockExecutionOutput, Self::Error>;
-
-    /// Executes a transaction returning its execution result. It may vary depending on the EVM used.
-    fn execute_tx(
-        input: Self::TransactionExecutionInput<'_>,
-    ) -> Result<Self::TransactionExecutionResult, Self::Error>;
-
-    /// Gets the state transitions performed by the execution. Returning an Array of AccounUpdates
-    fn get_state_transitions(input: Self::GetStateTransitionsInput<'_>) -> Vec<AccountUpdate>;
-
-    /// Processes a block's withdrawals, updating the account balances in the state
-    fn process_withdrawals(input: Self::ProcessWithdrawalsInput<'_>) -> Result<(), StoreError>;
 }
 
 pub trait SystemContracts {

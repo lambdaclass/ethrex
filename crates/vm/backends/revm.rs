@@ -34,75 +34,18 @@ pub struct REVM;
 #[cfg(feature = "l2")]
 use crate::mods;
 
-use super::{SystemContracts, IEVM};
+use super::SystemContracts;
 
-/// Input for [REVM::execute_tx]
-pub struct RevmTransactionExecutionIn<'a> {
-    tx: &'a Transaction,
-    header: &'a BlockHeader,
-    state: &'a mut EvmState,
-    spec_id: SpecId,
-}
-
-impl<'a> RevmTransactionExecutionIn<'a> {
-    pub fn new(
-        tx: &'a Transaction,
-        header: &'a BlockHeader,
-        state: &'a mut EvmState,
-        spec_id: SpecId,
-    ) -> Self {
-        RevmTransactionExecutionIn {
-            tx,
-            header,
-            state,
-            spec_id,
-        }
-    }
-}
-
-/// Input for [REVM::get_state_transitions]
-pub struct RevmGetStateTransitionsIn<'a> {
-    initial_state: &'a mut EvmState,
-}
-
-impl<'a> RevmGetStateTransitionsIn<'a> {
-    pub fn new(initial_state: &'a mut EvmState) -> Self {
-        RevmGetStateTransitionsIn { initial_state }
-    }
-}
-
-/// Input for [REVM::process_withdrawals]
-pub struct RevmProcessWithdrawalsIn<'a> {
-    initial_state: &'a mut EvmState,
-    withdrawals: &'a [Withdrawal],
-}
-
-impl<'a> RevmProcessWithdrawalsIn<'a> {
-    pub fn new(initial_state: &'a mut EvmState, withdrawals: &'a [Withdrawal]) -> Self {
-        RevmProcessWithdrawalsIn {
-            initial_state,
-            withdrawals,
-        }
-    }
-}
-
-impl IEVM for REVM {
-    type Error = EvmError;
-
-    type BlockExecutionOutput = (Vec<Receipt>, Vec<AccountUpdate>);
-
-    type TransactionExecutionInput<'a> = RevmTransactionExecutionIn<'a>;
-
-    type TransactionExecutionResult = ExecutionResult;
-
-    type GetStateTransitionsInput<'a> = RevmGetStateTransitionsIn<'a>;
-
-    type ProcessWithdrawalsInput<'a> = RevmProcessWithdrawalsIn<'a>;
-
-    fn execute_block(
+/// The struct implements the following functions:
+/// [REVM::execute_block]
+/// [REVM::execute_tx]
+/// [REVM::get_state_transitions]
+/// [REVM::process_withdrawals]
+impl REVM {
+    pub fn execute_block(
         block: &Block,
         state: &mut EvmState,
-    ) -> Result<Self::BlockExecutionOutput, Self::Error> {
+    ) -> Result<(Vec<Receipt>, Vec<AccountUpdate>), EvmError> {
         let block_header = &block.header;
         let spec_id = spec_id(&state.chain_config()?, block_header.timestamp);
         cfg_if::cfg_if! {
@@ -120,12 +63,7 @@ impl IEVM for REVM {
         let mut cumulative_gas_used = 0;
 
         for tx in block.body.transactions.iter() {
-            let result = Self::execute_tx(RevmTransactionExecutionIn::new(
-                tx,
-                block_header,
-                state,
-                spec_id,
-            ))?;
+            let result = Self::execute_tx(tx, block_header, state, spec_id)?;
             cumulative_gas_used += result.gas_used();
             let receipt = Receipt::new(
                 tx.tx_type(),
@@ -137,26 +75,29 @@ impl IEVM for REVM {
         }
 
         if let Some(withdrawals) = &block.body.withdrawals {
-            Self::process_withdrawals(RevmProcessWithdrawalsIn::new(state, withdrawals))?;
+            Self::process_withdrawals(state, withdrawals)?;
         }
 
-        let account_updates = Self::get_state_transitions(RevmGetStateTransitionsIn::new(state));
+        let account_updates = Self::get_state_transitions(state);
 
         Ok((receipts, account_updates))
     }
 
-    fn execute_tx(
-        input: Self::TransactionExecutionInput<'_>,
-    ) -> Result<Self::TransactionExecutionResult, Self::Error> {
-        let block_env = block_env(input.header);
-        let tx_env = tx_env(input.tx);
-        run_evm(tx_env, block_env, input.state, input.spec_id)
+    pub fn execute_tx(
+        tx: &Transaction,
+        header: &BlockHeader,
+        state: &mut EvmState,
+        spec_id: SpecId,
+    ) -> Result<ExecutionResult, EvmError> {
+        let block_env = block_env(header);
+        let tx_env = tx_env(tx);
+        run_evm(tx_env, block_env, state, spec_id)
     }
 
-    fn get_state_transitions(
-        input: Self::GetStateTransitionsInput<'_>,
+    pub fn get_state_transitions(
+        initial_state: &mut EvmState,
     ) -> Vec<ethrex_storage::AccountUpdate> {
-        match input.initial_state {
+        match initial_state {
             EvmState::Store(db) => {
                 db.merge_transitions(BundleRetention::PlainState);
                 let bundle = db.take_bundle();
@@ -283,12 +224,14 @@ impl IEVM for REVM {
         }
     }
 
-    fn process_withdrawals(input: Self::ProcessWithdrawalsInput<'_>) -> Result<(), StoreError> {
-        match input.initial_state {
+    pub fn process_withdrawals(
+        initial_state: &mut EvmState,
+        withdrawals: &[Withdrawal],
+    ) -> Result<(), StoreError> {
+        match initial_state {
             EvmState::Store(db) => {
                 //balance_increments is a vector of tuples (Address, increment as u128)
-                let balance_increments = input
-                    .withdrawals
+                let balance_increments = withdrawals
                     .iter()
                     .filter(|withdrawal| withdrawal.amount > 0)
                     .map(|withdrawal| {
@@ -656,7 +599,7 @@ impl SystemContracts for REVM {
     fn beacon_root_contract_call(
         block_header: &BlockHeader,
         input: Self::SystemCallInput<'_>,
-    ) -> Result<<Self::Evm as super::IEVM>::TransactionExecutionResult, Self::Error> {
+    ) -> Result<<Self::Evm as super::IEVM>::TransactionExecutionResult, EvmError> {
         lazy_static! {
             static ref SYSTEM_ADDRESS: RevmAddress =
                 RevmAddress::from_slice(&hex::decode(SYSTEM_ADDRESS_STR).unwrap());
@@ -722,7 +665,7 @@ impl SystemContracts for REVM {
     fn process_block_hash_history(
         block_header: &BlockHeader,
         input: Self::SystemCallInput<'_>,
-    ) -> Result<<Self::Evm as super::IEVM>::TransactionExecutionResult, Self::Error> {
+    ) -> Result<<Self::Evm as super::IEVM>::TransactionExecutionResult, EvmError> {
         lazy_static! {
             static ref SYSTEM_ADDRESS: RevmAddress =
                 RevmAddress::from_slice(&hex::decode(SYSTEM_ADDRESS_STR).unwrap());
