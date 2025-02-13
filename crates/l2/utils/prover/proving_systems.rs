@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 use std::fmt::Debug;
 
 use risc0_zkvm::sha::Digestible;
-use sp1_sdk::HashableKey;
+use sp1_sdk::{ExecutionReport as SP1ExecutionReport, HashableKey, SP1PublicValues};
 
 #[derive(Debug, Clone, Copy, Hash, PartialEq, Eq, Serialize, Deserialize)]
 /// Enum used to identify the different proving systems.
@@ -147,4 +147,10 @@ impl Sp1Proof {
 pub enum ProvingOutput {
     RISC0(Risc0Proof),
     SP1(Sp1Proof),
+}
+
+#[derive(Clone, Debug)]
+pub enum ExecuteOutput {
+    // TODO: Risc0
+    SP1((SP1PublicValues, SP1ExecutionReport)),
 }

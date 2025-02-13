@@ -19,7 +19,7 @@ use ethrex_common::{
 };
 use ethrex_storage::AccountUpdate;
 use revm::{
-    db::{states::bundle_state::BundleRetention, AccountState, AccountStatus},
+    db::{states::bundle_state::BundleRetention, AccountState as RevmAccountState, AccountStatus},
     inspector_handle_register,
     primitives::{BlockEnv, TxEnv, B256},
     Evm,
@@ -209,14 +209,14 @@ pub fn get_state_transitions(state: &mut EvmState) -> Vec<AccountUpdate> {
             // Update accounts
             let mut account_updates = Vec::new();
             for (revm_address, account) in &db.accounts {
-                if account.account_state == AccountState::None {
+                if account.account_state == RevmAccountState::None {
                     // EVM didn't interact with this account
                     continue;
                 }
 
                 let address = Address::from_slice(revm_address.0.as_slice());
                 // Remove account from DB if destroyed
-                if account.account_state == AccountState::NotExisting {
+                if account.account_state == RevmAccountState::NotExisting {
                     account_updates.push(AccountUpdate::removed(address));
                     continue;
                 }
