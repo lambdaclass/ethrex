@@ -86,6 +86,9 @@ pub const CODESIZE: u64 = 2;
 pub const CODECOPY_STATIC: u64 = 3;
 pub const CODECOPY_DYNAMIC_BASE: u64 = 3;
 pub const GASPRICE: u64 = 2;
+
+pub const SELFDESTRUCT_STATIC_PRE_TANGERINE: u64 = 0;
+pub const SELFDESTRUCT_STATIC_TANGERINE: u64 = 0;
 pub const SELFDESTRUCT_STATIC: u64 = 5000;
 pub const SELFDESTRUCT_DYNAMIC: u64 = 25000;
 pub const SELFDESTRUCT_REFUND: u64 = 24000;
@@ -94,10 +97,11 @@ pub const DEFAULT_STATIC: u64 = 0;
 pub const DEFAULT_COLD_DYNAMIC: u64 = 2600;
 pub const DEFAULT_WARM_DYNAMIC: u64 = 100;
 
+pub const SLOAD_COST_PRE_BERLIN: u64 = 200;
+pub const SLOAD_COST_PRE_TANGERINE: u64 = 50;
 pub const SLOAD_STATIC: u64 = 0;
 pub const SLOAD_COLD_DYNAMIC: u64 = 2100;
 pub const SLOAD_WARM_DYNAMIC: u64 = 100;
-pub const SLOAD_COST_PRE_BERLIN: u64 = 200;
 
 pub const SSTORE_STATIC: u64 = 0;
 pub const SSTORE_COLD_DYNAMIC: u64 = 2100;
@@ -418,21 +422,26 @@ fn mem_expansion_behavior(
 }
 
 pub fn sload(storage_slot_was_cold: bool, fork: Fork) -> Result<u64, VMError> {
-    // EIP https://eips.ethereum.org/EIPS/eip-2929
-    if fork < Fork::Berlin {
-        return Ok(SLOAD_COST_PRE_BERLIN);
+    match fork {
+        f if f < Fork::Tangerine => Ok(SLOAD_COST_PRE_TANGERINE),
+        f if f >= Fork::Tangerine && f < Fork::Berlin => {
+            // EIP https://eips.ethereum.org/EIPS/eip-2929
+            Ok(SLOAD_COST_PRE_BERLIN)
+        }
+        _ => {
+            let static_gas = SLOAD_STATIC;
+
+            let dynamic_cost = if storage_slot_was_cold {
+                SLOAD_COLD_DYNAMIC
+            } else {
+                SLOAD_WARM_DYNAMIC
+            };
+
+            Ok(static_gas
+                .checked_add(dynamic_cost)
+                .ok_or(OutOfGasError::GasCostOverflow)?)
+        }
     }
-    let static_gas = SLOAD_STATIC;
-
-    let dynamic_cost = if storage_slot_was_cold {
-        SLOAD_COLD_DYNAMIC
-    } else {
-        SLOAD_WARM_DYNAMIC
-    };
-
-    Ok(static_gas
-        .checked_add(dynamic_cost)
-        .ok_or(OutOfGasError::GasCostOverflow)?)
 }
 
 pub fn sstore(
@@ -610,23 +619,44 @@ pub fn selfdestruct(
     balance_to_transfer: U256,
     fork: Fork,
 ) -> Result<u64, OutOfGasError> {
-    let mut gas_cost = SELFDESTRUCT_STATIC;
+    let (static_cost, dynamic_cost) = match fork {
+        f if f <= Fork::DaoFork => (SELFDESTRUCT_STATIC_PRE_TANGERINE, 0),
+        Fork::Tangerine => {
+            let dynamic_cost = if account_is_empty {
+                SELFDESTRUCT_DYNAMIC
+            } else {
+                0
+            };
+            (SELFDESTRUCT_STATIC, dynamic_cost)
+        }
+        f if f > Fork::Tangerine && f < Fork::Berlin => {
+            let dynamic_cost = if account_is_empty && balance_to_transfer > U256::zero() {
+                SELFDESTRUCT_DYNAMIC
+            } else {
+                0
+            };
 
-    // https://eips.ethereum.org/EIPS/eip-2929#selfdestruct-changes
-    if fork >= Fork::Berlin && address_was_cold {
-        gas_cost = gas_cost
-            .checked_add(COLD_ADDRESS_ACCESS_COST)
-            .ok_or(OutOfGasError::GasCostOverflow)?;
-    }
+            (SELFDESTRUCT_STATIC, dynamic_cost)
+        }
+        _ => {
+            let mut dynamic_cost = if address_was_cold {
+                COLD_ADDRESS_ACCESS_COST
+            } else {
+                0
+            };
 
-    // If a positive balance is sent to an empty account, the dynamic gas is 25000
-    if account_is_empty && balance_to_transfer > U256::zero() {
-        gas_cost = gas_cost
-            .checked_add(SELFDESTRUCT_DYNAMIC)
-            .ok_or(OutOfGasError::GasCostOverflow)?;
-    }
-
-    Ok(gas_cost)
+            // If a positive balance is sent to an empty account, the dynamic gas is 25000
+            if account_is_empty && balance_to_transfer > U256::zero() {
+                dynamic_cost = dynamic_cost
+                    .checked_add(SELFDESTRUCT_DYNAMIC)
+                    .ok_or(OutOfGasError::GasCostOverflow)?;
+            }
+            (SELFDESTRUCT_STATIC, dynamic_cost)
+        }
+    };
+    static_cost
+        .checked_add(dynamic_cost)
+        .ok_or(OutOfGasError::GasCostOverflow)
 }
 
 pub fn tx_calldata(calldata: &Bytes, fork: Fork) -> Result<u64, OutOfGasError> {
@@ -733,16 +763,23 @@ pub fn extcodecopy(
     address_was_cold: bool,
     fork: Fork,
 ) -> Result<u64, VMError> {
+    let base_cost = match fork {
+        f if f < Fork::Tangerine => EXTCODECOPY_STATIC_PRE_TANGERINE,
+        f if f >= Fork::Tangerine && fork < Fork::Berlin => EXTCODECOPY_STATIC_PRE_BERLIN,
+        _ => EXTCODECOPY_STATIC,
+    };
+
     let base_access_cost = copy_behavior(
         new_memory_size,
         current_memory_size,
         size,
         EXTCODECOPY_DYNAMIC_BASE,
-        EXTCODECOPY_STATIC,
+        base_cost,
     )?;
+
     let (static_cost, cold_dynamic_cost, warm_dynamic_cost) = match fork {
-        f if f < Fork::Tangerine => (EXTCODECOPY_STATIC_PRE_TANGERINE, 0, 0),
-        f if f >= Fork::Tangerine && fork < Fork::Berlin => (EXTCODECOPY_STATIC_PRE_BERLIN, 0, 0),
+        f if f < Fork::Tangerine => (0, 0, 0),
+        f if f >= Fork::Tangerine && fork < Fork::Berlin => (0, 0, 0),
         _ => (
             EXTCODECOPY_STATIC,
             EXTCODECOPY_COLD_DYNAMIC,
