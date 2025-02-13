@@ -36,7 +36,7 @@ use eth::{
         GetTransactionByHashRequest, GetTransactionReceiptRequest,
     },
 };
-use ethrex_net::{sync::SyncManager, types::NodeRecord};
+use ethrex_p2p::{sync::SyncManager, types::NodeRecord};
 use serde_json::Value;
 use std::{
     collections::HashMap,
@@ -62,7 +62,7 @@ pub mod utils;
 mod web3;
 
 use axum::extract::State;
-use ethrex_net::types::Node;
+use ethrex_p2p::types::Node;
 use ethrex_storage::{error::StoreError, Store};
 
 #[derive(Debug, Clone)]
@@ -360,7 +360,7 @@ where
 mod tests {
     use super::*;
     use crate::utils::test_utils::{example_local_node_record, example_p2p_node};
-    use ethrex_core::types::{ChainConfig, Genesis};
+    use ethrex_common::types::{ChainConfig, Genesis};
     use ethrex_storage::EngineType;
     use sha3::{Digest, Keccak256};
     use std::fs::File;

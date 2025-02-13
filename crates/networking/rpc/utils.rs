@@ -254,8 +254,8 @@ pub fn parse_json_hex(hex: &serde_json::Value) -> Result<u64, String> {
 pub mod test_utils {
     use std::{net::SocketAddr, str::FromStr};
 
-    use ethrex_core::H512;
-    use ethrex_net::{
+    use ethrex_common::H512;
+    use ethrex_p2p::{
         sync::SyncManager,
         types::{Node, NodeRecord},
     };

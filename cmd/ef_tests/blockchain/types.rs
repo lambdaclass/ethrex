@@ -1,11 +1,11 @@
 use bytes::Bytes;
-use ethrex_core::types::{
+use ethrex_common::types::{
     code_hash, Account as ethrexAccount, AccountInfo, Block as CoreBlock, BlockBody,
     EIP1559Transaction, EIP2930Transaction, EIP4844Transaction, LegacyTransaction,
     Transaction as ethrexTransaction, TxKind,
 };
-use ethrex_core::types::{Genesis, GenesisAccount, Withdrawal};
-use ethrex_core::{types::BlockHeader, Address, Bloom, H256, H64, U256};
+use ethrex_common::types::{Genesis, GenesisAccount, Withdrawal};
+use ethrex_common::{types::BlockHeader, Address, Bloom, H256, H64, U256};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
@@ -18,13 +18,38 @@ pub struct TestUnit {
     pub info: Option<serde_json::Value>,
     pub blocks: Vec<BlockWithRLP>,
     pub genesis_block_header: Header,
-    #[serde(rename = "genesisRLP", with = "ethrex_core::serde_utils::bytes")]
+    #[serde(rename = "genesisRLP", with = "ethrex_common::serde_utils::bytes")]
     pub genesis_rlp: Bytes,
     pub lastblockhash: H256,
     pub network: Network,
     pub post_state: HashMap<Address, Account>,
     pub pre: HashMap<Address, Account>,
     pub seal_engine: serde_json::Value,
+    pub config: FixtureConfig,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FixtureConfig {
+    pub blob_schedule: Option<BlobSchedule>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ForkBlobSchedule {
+    #[serde(default, with = "ethrex_common::serde_utils::u64::hex_str")]
+    pub target: u64,
+    #[serde(default, with = "ethrex_common::serde_utils::u64::hex_str")]
+    pub max: u64,
+    #[serde(default, with = "ethrex_common::serde_utils::u64::hex_str")]
+    pub base_fee_update_fraction: u64,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "PascalCase")]
+pub struct BlobSchedule {
+    pub cancun: Option<ForkBlobSchedule>,
+    pub prague: Option<ForkBlobSchedule>,
 }
 
 impl TestUnit {
@@ -63,6 +88,7 @@ impl TestUnit {
                 .genesis_block_header
                 .excess_blob_gas
                 .map(|v| v.as_u64()),
+            requests_hash: self.genesis_block_header.requests_hash,
         }
     }
 }
@@ -70,7 +96,7 @@ impl TestUnit {
 #[derive(Debug, PartialEq, Eq, Serialize, Deserialize, Clone)]
 pub struct Account {
     pub balance: U256,
-    #[serde(with = "ethrex_core::serde_utils::bytes")]
+    #[serde(with = "ethrex_common::serde_utils::bytes")]
     pub code: Bytes,
     pub nonce: U256,
     pub storage: HashMap<U256, U256>,
@@ -109,7 +135,7 @@ pub struct Header {
     pub bloom: Bloom,
     pub coinbase: Address,
     pub difficulty: U256,
-    #[serde(with = "ethrex_core::serde_utils::bytes")]
+    #[serde(with = "ethrex_common::serde_utils::bytes")]
     pub extra_data: Bytes,
     pub gas_limit: U256,
     pub gas_used: U256,
@@ -134,7 +160,7 @@ pub struct Header {
 #[derive(Debug, PartialEq, Eq, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct BlockWithRLP {
-    #[serde(with = "ethrex_core::serde_utils::bytes")]
+    #[serde(with = "ethrex_common::serde_utils::bytes")]
     pub rlp: Bytes,
     #[serde(flatten)]
     inner: Option<BlockInner>,
@@ -191,7 +217,7 @@ impl From<Block> for CoreBlock {
 pub struct Transaction {
     #[serde(rename = "type")]
     pub transaction_type: Option<U256>,
-    #[serde(with = "ethrex_core::serde_utils::bytes")]
+    #[serde(with = "ethrex_common::serde_utils::bytes")]
     pub data: Bytes,
     pub gas_limit: U256,
     pub gas_price: Option<U256>,

@@ -6,7 +6,7 @@ use crate::{
     memory::{self, calculate_memory_size},
     vm::VM,
 };
-use ethrex_core::{types::Fork, H256, U256};
+use ethrex_common::{types::Fork, H256, U256};
 
 // Stack, Memory, Storage and Flow Operations (15)
 // Opcodes: POP, MLOAD, MSTORE, MSTORE8, SLOAD, SSTORE, JUMP, JUMPI, PC, MSIZE, GAS, JUMPDEST, TLOAD, TSTORE, MCOPY
@@ -153,7 +153,10 @@ impl VM {
         let (storage_slot, storage_slot_was_cold) =
             self.access_storage_slot(address, storage_slot_key)?;
 
-        current_call_frame.increase_consumed_gas(gas_cost::sload(storage_slot_was_cold)?)?;
+        current_call_frame.increase_consumed_gas(gas_cost::sload(
+            storage_slot_was_cold,
+            self.env.config.fork,
+        )?)?;
 
         current_call_frame.stack.push(storage_slot.current_value)?;
         Ok(OpcodeResult::Continue { pc_increment: 1 })
@@ -191,7 +194,15 @@ impl VM {
         // Sync gas refund with global env, ensuring consistency accross contexts.
         let mut gas_refunds = self.env.refunded_gas;
 
-        if new_storage_slot_value != storage_slot.current_value {
+        if self.env.config.fork < Fork::Istanbul {
+            if new_storage_slot_value.is_zero() && !storage_slot.current_value.is_zero() {
+                gas_refunds = gas_refunds
+                    .checked_add(15000)
+                    .ok_or(VMError::GasRefundsOverflow)?;
+            }
+        } else if self.env.config.fork >= Fork::Istanbul
+            && new_storage_slot_value != storage_slot.current_value
+        {
             if !storage_slot.original_value.is_zero()
                 && !storage_slot.current_value.is_zero()
                 && new_storage_slot_value.is_zero()
@@ -226,6 +237,7 @@ impl VM {
             &storage_slot,
             new_storage_slot_value,
             storage_slot_was_cold,
+            self.env.config.fork,
         )?)?;
 
         self.update_account_storage(current_call_frame.to, key, new_storage_slot_value)?;

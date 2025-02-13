@@ -1,7 +1,7 @@
 use crate::{error::StoreError, MAX_SNAPSHOT_READS, STATE_TRIE_SEGMENTS};
 use bytes::Bytes;
 use ethereum_types::{H256, U256};
-use ethrex_core::types::{
+use ethrex_common::types::{
     AccountState, BlobsBundle, Block, BlockBody, BlockHash, BlockHeader, BlockNumber, ChainConfig,
     Index, Receipt,
 };
@@ -510,7 +510,7 @@ impl StoreEngine for Store {
     fn write_snapshot_account_batch(
         &self,
         account_hashes: Vec<H256>,
-        account_states: Vec<ethrex_core::types::AccountState>,
+        account_states: Vec<ethrex_common::types::AccountState>,
     ) -> Result<(), StoreError> {
         self.inner()
             .state_snapshot
@@ -555,7 +555,7 @@ impl StoreEngine for Store {
     fn iter_account_snapshot(
         &self,
         start: H256,
-    ) -> Result<Vec<(H256, ethrex_core::types::AccountState)>, StoreError> {
+    ) -> Result<Vec<(H256, ethrex_common::types::AccountState)>, StoreError> {
         Ok(self
             .inner()
             .state_snapshot

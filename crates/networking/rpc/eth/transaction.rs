@@ -7,7 +7,7 @@ use crate::{
     utils::RpcErr,
     RpcApiContext, RpcHandler,
 };
-use ethrex_core::{
+use ethrex_common::{
     types::{AccessListEntry, BlockHash, BlockHeader, BlockNumber, GenericTransaction, TxKind},
     H256, U256,
 };
@@ -16,7 +16,7 @@ use ethrex_blockchain::mempool;
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_storage::Store;
 
-use ethrex_vm::{evm_state, ExecutionResult, SpecId};
+use ethrex_vm::{db::evm_state, ExecutionResult, SpecId};
 use serde::Serialize;
 
 use serde_json::Value;
@@ -68,7 +68,7 @@ pub struct AccessListResult {
     access_list: Vec<AccessListEntry>,
     #[serde(skip_serializing_if = "Option::is_none")]
     error: Option<String>,
-    #[serde(with = "ethrex_core::serde_utils::u64::hex_str")]
+    #[serde(with = "ethrex_common::serde_utils::u64::hex_str")]
     gas_used: u64,
 }
 
@@ -233,7 +233,7 @@ impl RpcHandler for GetTransactionByHashRequest {
                 _ => return Ok(Value::Null),
             };
 
-        let transaction: ethrex_core::types::Transaction =
+        let transaction: ethrex_common::types::Transaction =
             match storage.get_transaction_by_location(block_hash, index)? {
                 Some(transaction) => transaction,
                 _ => return Ok(Value::Null),

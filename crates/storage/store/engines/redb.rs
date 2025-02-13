@@ -1,7 +1,7 @@
 use std::{borrow::Borrow, panic::RefUnwindSafe, sync::Arc};
 
-use ethrex_core::types::{AccountState, BlockBody};
-use ethrex_core::{
+use ethrex_common::types::{AccountState, BlockBody};
+use ethrex_common::{
     types::{BlobsBundle, Block, BlockHash, BlockHeader, BlockNumber, ChainConfig, Index, Receipt},
     H256, U256,
 };
@@ -331,7 +331,7 @@ impl StoreEngine for RedBStore {
     fn add_block_total_difficulty(
         &self,
         block_hash: BlockHash,
-        block_total_difficulty: ethrex_core::U256,
+        block_total_difficulty: ethrex_common::U256,
     ) -> Result<(), StoreError> {
         // self.write::<BlockTotalDifficulties>(block_hash.into(), block_total_difficulty.into())
         self.write(
@@ -344,7 +344,7 @@ impl StoreEngine for RedBStore {
     fn get_block_total_difficulty(
         &self,
         block_hash: BlockHash,
-    ) -> Result<Option<ethrex_core::U256>, StoreError> {
+    ) -> Result<Option<ethrex_common::U256>, StoreError> {
         Ok(self
             .read(
                 BLOCK_TOTAL_DIFFICULTIES_TABLE,
@@ -355,7 +355,7 @@ impl StoreEngine for RedBStore {
 
     fn add_transaction_location(
         &self,
-        transaction_hash: ethrex_core::H256,
+        transaction_hash: ethrex_common::H256,
         block_number: BlockNumber,
         block_hash: BlockHash,
         index: Index,
@@ -373,7 +373,7 @@ impl StoreEngine for RedBStore {
 
     fn get_transaction_location(
         &self,
-        transaction_hash: ethrex_core::H256,
+        transaction_hash: ethrex_common::H256,
     ) -> Result<Option<(BlockNumber, BlockHash, Index)>, StoreError> {
         let read_txn = self.db.begin_read()?;
         let table = read_txn.open_multimap_table(TRANSACTION_LOCATIONS_TABLE)?;
@@ -419,7 +419,7 @@ impl StoreEngine for RedBStore {
 
     fn add_account_code(
         &self,
-        code_hash: ethrex_core::H256,
+        code_hash: ethrex_common::H256,
         code: bytes::Bytes,
     ) -> Result<(), StoreError> {
         self.write(
@@ -431,7 +431,7 @@ impl StoreEngine for RedBStore {
 
     fn get_account_code(
         &self,
-        code_hash: ethrex_core::H256,
+        code_hash: ethrex_common::H256,
     ) -> Result<Option<bytes::Bytes>, StoreError> {
         Ok(self
             .read(
@@ -541,7 +541,7 @@ impl StoreEngine for RedBStore {
 
     fn update_latest_total_difficulty(
         &self,
-        latest_total_difficulty: ethrex_core::U256,
+        latest_total_difficulty: ethrex_common::U256,
     ) -> Result<(), StoreError> {
         self.write(
             CHAIN_DATA_TABLE,
@@ -550,7 +550,7 @@ impl StoreEngine for RedBStore {
         )
     }
 
-    fn get_latest_total_difficulty(&self) -> Result<Option<ethrex_core::U256>, StoreError> {
+    fn get_latest_total_difficulty(&self) -> Result<Option<ethrex_common::U256>, StoreError> {
         match self.read(CHAIN_DATA_TABLE, ChainDataIndex::LatestTotalDifficulty)? {
             None => Ok(None),
             Some(ref rlp) => RLPDecode::decode(&rlp.value())
@@ -578,14 +578,14 @@ impl StoreEngine for RedBStore {
 
     fn open_storage_trie(
         &self,
-        hashed_address: ethrex_core::H256,
-        storage_root: ethrex_core::H256,
+        hashed_address: ethrex_common::H256,
+        storage_root: ethrex_common::H256,
     ) -> ethrex_trie::Trie {
         let db = Box::new(RedBMultiTableTrieDB::new(self.db.clone(), hashed_address.0));
         Trie::open(db, storage_root)
     }
 
-    fn open_state_trie(&self, state_root: ethrex_core::H256) -> ethrex_trie::Trie {
+    fn open_state_trie(&self, state_root: ethrex_common::H256) -> ethrex_trie::Trie {
         let db = Box::new(RedBTrie::new(self.db.clone()));
         Trie::open(db, state_root)
     }
@@ -803,7 +803,7 @@ impl StoreEngine for RedBStore {
     fn write_snapshot_account_batch(
         &self,
         account_hashes: Vec<H256>,
-        account_states: Vec<ethrex_core::types::AccountState>,
+        account_states: Vec<ethrex_common::types::AccountState>,
     ) -> Result<(), StoreError> {
         self.write_batch(
             STATE_SNAPSHOT_TABLE,
@@ -897,7 +897,7 @@ impl StoreEngine for RedBStore {
     fn iter_account_snapshot(
         &self,
         start: H256,
-    ) -> Result<Vec<(H256, ethrex_core::types::AccountState)>, StoreError> {
+    ) -> Result<Vec<(H256, ethrex_common::types::AccountState)>, StoreError> {
         let read_tx = self.db.begin_read()?;
         let table = read_tx.open_table(STATE_SNAPSHOT_TABLE)?;
         Ok(table

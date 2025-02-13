@@ -1,4 +1,4 @@
-use ethrex_core::{
+use ethrex_common::{
     constants::GAS_PER_BLOB,
     types::{Block, Transaction},
 };
@@ -7,7 +7,7 @@ use serde_json::Value;
 use tracing::info;
 
 use crate::{types::block_identifier::BlockIdentifier, utils::RpcErr, RpcApiContext, RpcHandler};
-use ethrex_core::types::calculate_base_fee_per_blob_gas;
+use ethrex_common::types::calculate_base_fee_per_blob_gas;
 use ethrex_storage::Store;
 
 #[derive(Clone, Debug)]
@@ -215,6 +215,9 @@ impl FeeHistoryRequest {
                     .max_priority_fee_per_gas
                     .min(t.max_fee_per_gas.saturating_sub(base_fee_per_gas)),
                 Transaction::EIP4844Transaction(t) => t
+                    .max_priority_fee_per_gas
+                    .min(t.max_fee_per_gas.saturating_sub(base_fee_per_gas)),
+                Transaction::EIP7702Transaction(t) => t
                     .max_priority_fee_per_gas
                     .min(t.max_fee_per_gas.saturating_sub(base_fee_per_gas)),
                 Transaction::PrivilegedL2Transaction(t) => t

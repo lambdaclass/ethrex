@@ -1,7 +1,7 @@
 use std::{collections::BTreeMap, sync::Arc, time::Duration};
 
 use bytes::Bytes;
-use ethrex_core::{
+use ethrex_common::{
     types::{AccountState, BlockBody, BlockHeader, Receipt},
     H256, U256,
 };
@@ -11,7 +11,7 @@ use ethrex_trie::{verify_range, Node};
 use tokio::sync::Mutex;
 
 use crate::{
-    kademlia::PeerChannels,
+    kademlia::{KademliaTable, PeerChannels},
     rlpx::{
         eth::{
             blocks::{
@@ -19,6 +19,7 @@ use crate::{
             },
             receipts::{GetReceipts, Receipts},
         },
+        message::Message as RLPxMessage,
         p2p::Capability,
         snap::{
             AccountRange, ByteCodes, GetAccountRange, GetByteCodes, GetStorageRanges, GetTrieNodes,
@@ -26,7 +27,6 @@ use crate::{
         },
     },
     snap::encodable_to_proof,
-    KademliaTable, RLPxMessage,
 };
 use tracing::info;
 pub const PEER_REPLY_TIMOUT: Duration = Duration::from_secs(45);

@@ -10,7 +10,7 @@ use crate::{MAX_SNAPSHOT_READS, STATE_TRIE_SEGMENTS};
 use anyhow::Result;
 use bytes::Bytes;
 use ethereum_types::{H256, U256};
-use ethrex_core::types::{
+use ethrex_common::types::{
     AccountState, BlobsBundle, Block, BlockBody, BlockHash, BlockHeader, BlockNumber, ChainConfig,
     Index, Receipt, Transaction,
 };

@@ -3,7 +3,7 @@ use std::marker::PhantomData;
 
 use bytes::Bytes;
 use ethereum_types::U256;
-use ethrex_core::{
+use ethrex_common::{
     types::{AccountState, Block, BlockBody, BlockHash, BlockHeader, Receipt},
     H256,
 };

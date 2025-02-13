@@ -8,7 +8,7 @@ use crate::{
     },
     error::MempoolError,
 };
-use ethrex_core::{
+use ethrex_common::{
     constants::MIN_BASE_FEE_PER_BLOB_GAS,
     types::{
         BlobsBundle, BlockHeader, ChainConfig, EIP4844Transaction, MempoolTransaction, Transaction,
@@ -310,10 +310,10 @@ mod tests {
     };
 
     use super::{transaction_intrinsic_gas, validate_transaction};
-    use ethrex_core::types::{
+    use ethrex_common::types::{
         BlockHeader, ChainConfig, EIP1559Transaction, EIP4844Transaction, Transaction, TxKind,
     };
-    use ethrex_core::{Address, Bytes, H256, U256};
+    use ethrex_common::{Address, Bytes, H256, U256};
     use ethrex_storage::EngineType;
     use ethrex_storage::{error::StoreError, Store};
 

@@ -2,9 +2,9 @@ use bytes::BufMut;
 use bytes::Bytes;
 use ethrex_blockchain::error::MempoolError;
 use ethrex_blockchain::mempool;
-use ethrex_core::types::P2PTransaction;
-use ethrex_core::types::WrappedEIP4844Transaction;
-use ethrex_core::{types::Transaction, H256};
+use ethrex_common::types::P2PTransaction;
+use ethrex_common::types::WrappedEIP4844Transaction;
+use ethrex_common::{types::Transaction, H256};
 use ethrex_rlp::{
     error::{RLPDecodeError, RLPEncodeError},
     structs::{Decoder, Encoder},
@@ -201,6 +201,7 @@ impl GetPooledTransactions {
                     blobs_bundle: bundle,
                 })
             }
+            Transaction::EIP7702Transaction(itx) => P2PTransaction::EIP7702Transaction(itx),
             Transaction::PrivilegedL2Transaction(itx) => {
                 P2PTransaction::PrivilegedL2Transaction(itx)
             }
@@ -298,7 +299,7 @@ impl RLPxMessage for PooledTransactions {
 
 #[cfg(test)]
 mod tests {
-    use ethrex_core::{types::P2PTransaction, H256};
+    use ethrex_common::{types::P2PTransaction, H256};
 
     use crate::rlpx::{
         eth::transactions::{GetPooledTransactions, PooledTransactions},

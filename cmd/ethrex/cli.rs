@@ -1,5 +1,6 @@
 use clap::{Arg, ArgAction, Command};
-use ethrex_net::types::Node;
+use ethrex_p2p::types::Node;
+use ethrex_vm::backends::EVM;
 use tracing::Level;
 
 pub fn cli() -> Command {
@@ -96,7 +97,8 @@ pub fn cli() -> Command {
             Arg::new("datadir")
                 .long("datadir")
                 .value_name("DATABASE_DIRECTORY")
-                .action(ArgAction::Set),
+                .action(ArgAction::Set)
+                .help("If the datadir is the word `memory`, ethrex will use the InMemory Engine"),
         )
         .arg(
             Arg::new("import")
@@ -108,6 +110,7 @@ pub fn cli() -> Command {
             Arg::new("syncmode")
                 .long("syncmode")
                 .required(false)
+                .default_value("full")
                 .value_name("SYNC_MODE"),
         )
         .arg(
@@ -121,6 +124,22 @@ pub fn cli() -> Command {
                 .long("metrics.port")
                 .required(false)
                 .value_name("PROMETHEUS_METRICS_PORT"),
+        )
+        .arg(
+            Arg::new("dev")
+                .long("dev")
+                .required(false)
+                .action(clap::ArgAction::SetTrue) // This turns the flag into a boolean
+                .help("Used to create blocks without requiring a Consensus Client"),
+        )
+        .arg(
+            Arg::new("evm")
+                .long("evm")
+                .required(false)
+                .default_value("revm")
+                .value_name("EVM_BACKEND")
+                .value_parser(clap::value_parser!(EVM))
+                .help("Has to be `levm` or `revm`"),
         )
         .subcommand(
             Command::new("removedb").about("Remove the database").arg(

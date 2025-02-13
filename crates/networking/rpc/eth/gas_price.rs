@@ -61,7 +61,7 @@ mod tests {
         utils::{parse_json_hex, test_utils::example_p2p_node, RpcRequest},
         RpcApiContext, RpcHandler,
     };
-    use ethrex_net::sync::SyncManager;
+    use ethrex_p2p::sync::SyncManager;
     use serde_json::json;
     use std::sync::Arc;
     use tokio::sync::Mutex;

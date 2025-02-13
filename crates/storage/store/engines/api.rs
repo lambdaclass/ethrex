@@ -1,6 +1,6 @@
 use bytes::Bytes;
 use ethereum_types::{H256, U256};
-use ethrex_core::types::{
+use ethrex_common::types::{
     AccountState, BlobsBundle, Block, BlockBody, BlockHash, BlockHeader, BlockNumber, ChainConfig,
     Index, Receipt, Transaction,
 };

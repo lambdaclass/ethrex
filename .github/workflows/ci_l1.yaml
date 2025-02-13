@@ -64,10 +64,6 @@ jobs:
       - name: Caching
         uses: Swatinem/rust-cache@v2
 
-      - name: Download test vectors
-        run: |
-          make download-test-vectors
-
       - name: Run tests
         run: |
           make test
@@ -201,6 +197,7 @@ jobs:
         run: |
           docker load --input /tmp/ethrex_image.tar
 
+      # By default ethrex uses revm as evm backend.
       - name: Run Hive Simulation
         run: chmod +x hive && ./hive --client ethrex --sim ${{ matrix.simulation }} --sim.limit "${{ matrix.test_pattern }}" --sim.parallelism 4
 
