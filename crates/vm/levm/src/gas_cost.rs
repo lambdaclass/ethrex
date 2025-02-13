@@ -898,16 +898,12 @@ pub fn staticcall(
         ),
     };
 
-    let dynamic_cost: u64 = if address_was_cold {
-        cold_dynamic_cost
-    } else {
-        warm_dynamic_cost
-    };
-
-    //TODO: CHANGE BEFORE COMMIT
-    let address_access_cost = static_cost
-        .checked_add(dynamic_cost)
-        .ok_or(OutOfGasError::GasCostOverflow)?;
+    let address_access_cost = address_access_cost(
+        address_was_cold,
+        static_cost,
+        cold_dynamic_cost,
+        warm_dynamic_cost,
+    )?;
 
     let call_gas_costs = memory_expansion_cost
         .checked_add(address_access_cost)
