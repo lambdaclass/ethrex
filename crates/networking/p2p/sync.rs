@@ -14,7 +14,7 @@ use tokio::{
     },
     time::Instant,
 };
-use tracing::{debug, info, warn};
+use tracing::{debug, error, info, warn};
 
 use crate::{
     kademlia::KademliaTable,
@@ -133,6 +133,10 @@ impl SyncManager {
                     let sync_head_found = block_hashes.contains(&sync_head);
                     // Update current fetch head if needed
                     if !sync_head_found {
+                        debug!(
+                            "Syncing head not found, updated current_head {:?}",
+                            block_hashes.last().unwrap()
+                        );
                         current_head = *block_hashes.last().unwrap();
                     }
                     if matches!(self.sync_mode, SyncMode::Snap) {
@@ -216,8 +220,16 @@ impl SyncManager {
                 self.sync_mode = SyncMode::Full;
             }
             SyncMode::Full => {
+                info!("Full syncing finished request block headers, about to start fetching bodies, running and storing them");
                 // full-sync: Fetch all block bodies and execute them sequentially to build the state
-                download_and_run_blocks(all_block_hashes, self.peers.clone(), store.clone()).await?
+                let res =
+                    download_and_run_blocks(all_block_hashes, self.peers.clone(), store.clone())
+                        .await;
+                if let Err(e) = res {
+                    error!("Failed to download and run blocks, err {:?}", e);
+                } else {
+                    info!("Full syncing finished executing!");
+                }
             }
         }
         Ok(())
