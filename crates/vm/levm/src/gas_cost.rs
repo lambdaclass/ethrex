@@ -133,8 +133,11 @@ pub const EXTCODECOPY_DYNAMIC_BASE: u64 = 3;
 pub const EXTCODECOPY_COLD_DYNAMIC: u64 = DEFAULT_COLD_DYNAMIC;
 pub const EXTCODECOPY_WARM_DYNAMIC: u64 = DEFAULT_WARM_DYNAMIC;
 
-pub const CALL_STATIC_PRE_TANGERINE: u64 = 40;
-pub const CALL_STATIC_PRE_BERLIN: u64 = 700;
+pub const DEFAULT_CALL_STATIC_PRE_TANGERINE: u64 = 40;
+pub const DEFAULT_CALL_STATIC_PRE_BERLIN: u64 = 700;
+
+pub const CALL_STATIC_PRE_TANGERINE: u64 = DEFAULT_CALL_STATIC_PRE_TANGERINE;
+pub const CALL_STATIC_PRE_BERLIN: u64 = DEFAULT_CALL_STATIC_PRE_BERLIN;
 pub const CALL_STATIC: u64 = DEFAULT_STATIC;
 pub const CALL_COLD_DYNAMIC: u64 = DEFAULT_COLD_DYNAMIC;
 pub const CALL_WARM_DYNAMIC: u64 = DEFAULT_WARM_DYNAMIC;
@@ -143,6 +146,8 @@ pub const CALL_POSITIVE_VALUE: u64 = 9000;
 pub const CALL_POSITIVE_VALUE_STIPEND: u64 = 2300;
 pub const CALL_TO_EMPTY_ACCOUNT: u64 = 25000;
 
+pub const CALLCODE_STATIC_PRE_TANGERINE: u64 = DEFAULT_CALL_STATIC_PRE_TANGERINE;
+pub const CALLCODE_STATIC_PRE_BERLIN: u64 = DEFAULT_CALL_STATIC_PRE_BERLIN;
 pub const CALLCODE_STATIC: u64 = DEFAULT_STATIC;
 pub const CALLCODE_COLD_DYNAMIC: u64 = DEFAULT_COLD_DYNAMIC;
 pub const CALLCODE_WARM_DYNAMIC: u64 = DEFAULT_WARM_DYNAMIC;
@@ -810,8 +815,8 @@ pub fn callcode(
     let memory_expansion_cost = memory::expansion_cost(new_memory_size, current_memory_size)?;
 
     let (static_cost, cold_dynamic_cost, warm_dynamic_cost) = match fork {
-        f if f < Fork::Tangerine => (40, 0, 0),
-        f if f < Fork::Berlin => (700, 0, 0),
+        f if f < Fork::Tangerine => (CALLCODE_STATIC_PRE_TANGERINE, 0, 0),
+        f if f < Fork::Berlin => (CALLCODE_STATIC_PRE_BERLIN, 0, 0),
         f if f < Fork::Berlin => (0, 0, 0),
         _ => (
             DELEGATECALL_STATIC,
