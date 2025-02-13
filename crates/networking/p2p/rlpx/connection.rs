@@ -148,10 +148,13 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
             reason: self.match_disconnect_reason(&error),
         }))
         .await
-        .unwrap_or_else(|e| {
+        .unwrap_or_else(|_| {
             log_peer_error(
                 &self.node,
-                &format!("Could not send Disconnect message: ({e})."),
+                &format!(
+                    "Could not send Disconnect message: ({:?}).",
+                    self.match_disconnect_reason(&error)
+                ),
             )
         });
 
@@ -191,7 +194,12 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
         self.send(hello_msg).await?;
 
         // Receive Hello message
-        match self.receive().await? {
+        let msg = match self.receive().await {
+            Some(msg) => msg?,
+            None => return Err(RLPxError::Disconnected()),
+        };
+
+        match msg {
             Message::Hello(hello_message) => {
                 log_peer_debug(
                     &self.node,
@@ -242,7 +250,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
         loop {
             tokio::select! {
                 // Expect a message from the remote peer
-                message = self.receive() => {
+                Some(message) = self.receive() => {
                     match message {
                         Ok(message) => {
                             log_peer_debug(&self.node, &format!("Received message {}", message));
@@ -314,6 +322,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
                 ));
             }
             Message::Ping(_) => {
+                log_peer_debug(&self.node, "Sending pong message");
                 self.send(Message::Pong(PongMessage {})).await?;
             }
             Message::Pong(_) => {
@@ -444,7 +453,11 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
             // The next immediate message in the ETH protocol is the
             // status, reference here:
             // https://github.com/ethereum/devp2p/blob/master/caps/eth.md#status-0x00
-            match self.receive().await? {
+            let msg = match self.receive().await {
+                Some(msg) => msg?,
+                None => return Err(RLPxError::Disconnected()),
+            };
+            match msg {
                 Message::Status(msg_data) => {
                     log_peer_debug(&self.node, &format!("Received Status {:?}", msg_data));
                     backend::validate_status(msg_data, &self.storage)?
@@ -469,12 +482,19 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
         self.framed.send(message).await
     }
 
-    async fn receive(&mut self) -> Result<Message, RLPxError> {
-        if let Some(message) = self.framed.next().await {
-            message
-        } else {
-            Err(RLPxError::Disconnected())
-        }
+    /// Reads from the frame until a frame is available.
+    ///
+    /// Returns `None` when the stream buffer is 0. This could indicate that the client has disconnected,
+    /// but we cannot safely assume an EOF, as per the Tokio documentation.
+    ///
+    /// If the handshake has not been established, it is reasonable to terminate the connection.
+    ///
+    /// For an established connection, [`check_periodic_task`] will detect actual disconnections
+    /// while sending pings and you should not assume a disconnection.
+    ///
+    /// See [`Framed::new`] for more details.
+    async fn receive(&mut self) -> Option<Result<Message, RLPxError>> {
+        self.framed.next().await
     }
 
     fn broadcast_message(&self, msg: Message) -> Result<(), RLPxError> {
