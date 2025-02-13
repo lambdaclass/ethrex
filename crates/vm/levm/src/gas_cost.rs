@@ -102,6 +102,8 @@ pub const SLOAD_COST_PRE_BERLIN: u64 = 200;
 pub const SSTORE_STATIC: u64 = 0;
 pub const SSTORE_COLD_DYNAMIC: u64 = 2100;
 pub const SSTORE_DEFAULT_DYNAMIC: u64 = 100;
+pub const SSTORE_DEFAULT_ISTANBUL_MUIR_GLACIER: u64 = 800;
+pub const SSTORE_DEFAULT_CONSTANTINOPLE: u64 = 200;
 pub const SSTORE_STORAGE_CREATION: u64 = 20000;
 pub const SSTORE_STORAGE_MODIFICATION: u64 = 2900;
 pub const SSTORE_STIPEND: u64 = 2300;
@@ -440,7 +442,9 @@ pub fn sstore(
     fork: Fork,
 ) -> Result<u64, VMError> {
     // https://github.com/ethereum/EIPs/blob/master/EIPS/eip-1087.md
-    if fork < Fork::Berlin {
+    // Petersburg removes EIP-1283
+    // https://github.com/ethereum/EIPs/blob/master/EIPS/eip-1716.md
+    if fork <= Fork::Byzantium || fork == Fork::Petersburg {
         if storage_slot.current_value.is_zero() && !new_value.is_zero() {
             Ok(SSTORE_PRE_BERLIN_NON_ZERO)
         } else {
@@ -449,18 +453,40 @@ pub fn sstore(
     } else {
         let static_gas = SSTORE_STATIC;
 
+        let default_dynamic = match fork {
+            // https://github.com/ethereum/EIPs/blob/master/EIPS/eip-1283.md
+            Fork::Constantinople => SSTORE_DEFAULT_CONSTANTINOPLE,
+            // https://github.com/ethereum/EIPs/blob/master/EIPS/eip-2200.md
+            _f if fork == Fork::Istanbul || fork == Fork::MuirGlacier => {
+                SSTORE_DEFAULT_ISTANBUL_MUIR_GLACIER
+            }
+            // https://github.com/ethereum/EIPs/blob/master/EIPS/eip-2929.md
+            _ => SSTORE_DEFAULT_DYNAMIC,
+        };
+
+        let dynamic_gas_modification = if fork < Fork::Berlin {
+            SSTORE_PRE_BERLIN
+        } else {
+            // https://github.com/ethereum/EIPs/blob/master/EIPS/eip-3529.md
+            SSTORE_STORAGE_MODIFICATION
+        };
+
         let mut base_dynamic_gas = if new_value == storage_slot.current_value {
-            SSTORE_DEFAULT_DYNAMIC
+            default_dynamic
         } else if storage_slot.current_value == storage_slot.original_value {
             if storage_slot.original_value.is_zero() {
                 SSTORE_STORAGE_CREATION
             } else {
-                SSTORE_STORAGE_MODIFICATION
+                dynamic_gas_modification
             }
         } else {
-            SSTORE_DEFAULT_DYNAMIC
+            default_dynamic
         };
 
+        if fork < Fork::Berlin {
+            return Ok(base_dynamic_gas);
+        }
+        // https://github.com/ethereum/EIPs/blob/master/EIPS/eip-2929.md
         if storage_slot_was_cold {
             base_dynamic_gas = base_dynamic_gas
                 .checked_add(SSTORE_COLD_DYNAMIC)
