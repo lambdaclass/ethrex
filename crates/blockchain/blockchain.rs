@@ -17,8 +17,8 @@ use ethrex_common::H256;
 
 use ethrex_storage::error::StoreError;
 use ethrex_storage::{AccountUpdate, Store};
-use ethrex_vm::backends::EVM;
-use ethrex_vm::db::{evm_state, EvmState};
+use ethrex_vm::db::evm_state;
+use ethrex_vm::{backends::EVM, EVM_BACKEND};
 
 //TODO: Implement a struct Chain or BlockChain to encapsulate
 //functionality and canonical chain state and config

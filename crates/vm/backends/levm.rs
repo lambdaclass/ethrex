@@ -200,34 +200,15 @@ impl LEVM {
         for (new_state_account_address, new_state_account) in new_state {
             let initial_account_state = current_db
                 .get_account_info_by_hash(block_hash, *new_state_account_address)
-                .expect("Error getting account info by address");
-
-            if initial_account_state.is_none() {
-                // New account, update everything
-                let new_account = AccountUpdate {
-                    address: *new_state_account_address,
-                    removed: new_state_account.is_empty(),
-                    info: Some(AccountInfo {
-                        code_hash: code_hash(&new_state_account.info.bytecode),
-                        balance: new_state_account.info.balance,
-                        nonce: new_state_account.info.nonce,
-                    }),
-                    code: Some(new_state_account.info.bytecode.clone()),
-                    added_storage: new_state_account
-                        .storage
-                        .iter()
-                        .map(|(key, storage_slot)| (*key, storage_slot.current_value))
-                        .collect(),
-                };
-
-                account_updates.push(new_account);
-                continue;
+                .expect("Error getting account info by address")
+                .unwrap_or_default();
+            let mut updates = 0;
+            if initial_account_state.balance != new_state_account.info.balance {
+                updates += 1;
             }
-
-            let initial_account_state = initial_account_state.unwrap();
-
-            let balance_changed = initial_account_state.balance != new_state_account.info.balance;
-            let nonce_changed = initial_account_state.nonce != new_state_account.info.nonce;
+            if initial_account_state.nonce != new_state_account.info.nonce {
+                updates += 1;
+            }
             let code = if new_state_account.info.bytecode.is_empty() {
                 // The new state account has no code
                 None
@@ -254,39 +235,32 @@ impl LEVM {
                     Some(code)
                 }
             };
-            let code_changed = code.is_some();
-            let mut storage_changed = false;
+            if code.is_some() {
+                updates += 1;
+            }
             let mut added_storage = HashMap::new();
             for (key, value) in &new_state_account.storage {
                 added_storage.insert(*key, value.current_value);
-
-                // Check if the value stored in the DB doesn't equal new_state_account.storage.value
-                let original_value = current_db
-                    .get_storage_at_hash(block_hash, *new_state_account_address, *key)
-                    .unwrap()
-                    .unwrap_or_default();
-
-                if original_value != value.current_value {
-                    added_storage.insert(*key, value.current_value);
-                    storage_changed = true;
-                }
+                updates += 1;
             }
 
-            if storage_changed || nonce_changed || balance_changed || code_changed {
-                let account_update = AccountUpdate {
-                    address: *new_state_account_address,
-                    removed: new_state_account.is_empty(),
-                    info: Some(AccountInfo {
-                        code_hash: code_hash(&new_state_account.info.bytecode),
-                        balance: new_state_account.info.balance,
-                        nonce: new_state_account.info.nonce,
-                    }),
-                    code,
-                    added_storage,
-                };
-
-                account_updates.push(account_update);
+            if updates == 0 && !new_state_account.is_empty() {
+                continue;
             }
+
+            let account_update = AccountUpdate {
+                address: *new_state_account_address,
+                removed: new_state_account.is_empty(),
+                info: Some(AccountInfo {
+                    code_hash: code_hash(&new_state_account.info.bytecode),
+                    balance: new_state_account.info.balance,
+                    nonce: new_state_account.info.nonce,
+                }),
+                code,
+                added_storage,
+            };
+
+            account_updates.push(account_update);
         }
         account_updates
     }
