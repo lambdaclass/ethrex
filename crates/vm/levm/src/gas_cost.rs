@@ -87,7 +87,7 @@ pub const CODECOPY_STATIC: u64 = 3;
 pub const CODECOPY_DYNAMIC_BASE: u64 = 3;
 pub const GASPRICE: u64 = 2;
 
-pub const SELFDESTRUCT_STATIC_TANGERINE: u64 = 0;
+pub const SELFDESTRUCT_STATIC_PRE_TANGERINE: u64 = 0;
 pub const SELFDESTRUCT_STATIC: u64 = 5000;
 pub const SELFDESTRUCT_DYNAMIC: u64 = 25000;
 pub const SELFDESTRUCT_REFUND: u64 = 24000;
@@ -619,7 +619,7 @@ pub fn selfdestruct(
     fork: Fork,
 ) -> Result<u64, OutOfGasError> {
     let (static_cost, dynamic_cost) = match fork {
-        f if f <= Fork::DaoFork => (SELFDESTRUCT_STATIC_TANGERINE, 0),
+        f if f <= Fork::DaoFork => (SELFDESTRUCT_STATIC_PRE_TANGERINE, 0),
         Fork::Tangerine => {
             let dynamic_cost = if account_is_empty {
                 SELFDESTRUCT_DYNAMIC
