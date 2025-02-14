@@ -399,18 +399,13 @@ fn execute_payload(block: &Block, context: &RpcApiContext) -> Result<PayloadStat
 
     // Execute and store the block
     info!("Executing payload with block hash: {block_hash:#x}");
-    let latest_block_number = match context.storage.get_latest_block_number() {
-        Ok(n) => n,
-        Err(e) => return Err(RpcErr::Internal(e.to_string())),
-    };
-    let latest_valid_hash = match context
-        .storage
-        .get_canonical_block_hash(latest_block_number)
-    {
-        Ok(hash) if hash.is_none() => return Err(RpcErr::Internal("hash not found".into())),
-        Ok(hash) => hash.unwrap(),
-        Err(e) => return Err(RpcErr::Internal(e.to_string())),
-    };
+    let latest_valid_hash =
+        context
+            .storage
+            .get_latest_canonical_block_hash()?
+            .ok_or(RpcErr::Internal(
+                "Missing latest canonical block".to_owned(),
+            ))?;
 
     // adds a bad block as a bad ancestor so we can catch it on fork_choice as well
     let add_block_to_invalid_ancestor = || {

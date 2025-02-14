@@ -126,6 +126,12 @@ impl SyncManager {
                 current_head = last_header;
             }
         }
+
+        let pending_block = match store.get_pending_block(sync_head) {
+            Ok(res) => res,
+            Err(e) => return Err(e.into()),
+        };
+
         loop {
             debug!("Requesting Block Headers from {current_head}");
             // Request Block Headers from Peer
@@ -136,28 +142,22 @@ impl SyncManager {
             {
                 Some(mut block_headers) => {
                     debug!(
-                        "Received {} block headers| Last Number: {} | Current head {}",
+                        "Received {} block headers| Last Number: {}",
                         block_headers.len(),
                         block_headers.last().as_ref().unwrap().number,
-                        current_head
                     );
                     let mut block_hashes = block_headers
                         .iter()
                         .map(|header| header.compute_block_hash())
                         .collect::<Vec<_>>();
-                    debug!("Block hashes: {:?}", block_hashes);
                     let last_header = block_headers.last().unwrap().clone();
 
-                    // attach pending block to the end if it matches the parent_hash
-                    let pending_block = match store.get_pending_block(sync_head) {
-                        Ok(res) => res,
-                        Err(e) => return Err(e.into()),
-                    };
-
-                    if let Some(block) = pending_block {
+                    // If we have a pending block from new_payload request
+                    // attach it to the end if it matches the parent_hash of the latest received header
+                    if let Some(ref block) = pending_block {
                         if block.header.parent_hash == last_header.compute_block_hash() {
                             block_hashes.push(block.hash());
-                            block_headers.push(block.header);
+                            block_headers.push(block.header.clone());
                         }
                     }
 
@@ -178,7 +178,6 @@ impl SyncManager {
                                 < MIN_FULL_BLOCKS as u64
                             {
                                 // Too few blocks for a snap sync, switching to full sync
-                                info!("Too few blocks for a snap sync, switching to full sync");
                                 store.clear_snap_state()?;
                                 self.sync_mode = SyncMode::Full
                             }
@@ -270,7 +269,7 @@ async fn download_and_run_blocks(
     store: Store,
     invalid_ancestors: &mut HashMap<BlockHash, BlockHeader>,
 ) -> Result<(), SyncError> {
-    let mut last_valid_hash = None;
+    let mut last_valid_hash = H256::default();
     loop {
         debug!("Requesting Block Bodies ");
         if let Some(block_bodies) = peers.request_block_bodies(block_hashes.clone()).await {
@@ -287,25 +286,14 @@ async fn download_and_run_blocks(
                 let number = header.number;
                 let block = Block::new(header, body);
                 if let Err(error) = ethrex_blockchain::add_block(&block, &store) {
-                    warn!(
-                        "Failed to add block with parent hash {} and hash {} during FullSync: {error}",
-                        block.header.parent_hash,
-                        block.hash()
-                    );
-                    if let Some(hash) = last_valid_hash {
-                        invalid_ancestors.insert(hash, block.header);
-                    };
+                    invalid_ancestors.insert(last_valid_hash, block.header);
                     return Err(error.into());
                 }
                 store.set_canonical_block(number, hash)?;
                 store.update_latest_block_number(number)?;
-                last_valid_hash = Some(hash);
-                info!(
-                    "Set canonical block with number {} and hash {}",
-                    number, hash
-                );
+                last_valid_hash = hash;
             }
-            info!("Executed & stored {} blocks", block_bodies_len);
+            debug!("Executed & stored {} blocks", block_bodies_len);
             // Check if we need to ask for another batch
             if block_hashes.is_empty() {
                 break;

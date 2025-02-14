@@ -32,8 +32,8 @@ pub fn apply_fork_choice(
     }
 
     // Check if the block has already been invalidated
-    if invalid_ancestors.contains_key(&head_hash) {
-        return Err(InvalidForkChoice::InvalidAncestor);
+    if let Some(header) = invalid_ancestors.get(&head_hash) {
+        return Err(InvalidForkChoice::InvalidAncestor(header.clone()));
     }
 
     let finalized_res = if !finalized_hash.is_zero() {

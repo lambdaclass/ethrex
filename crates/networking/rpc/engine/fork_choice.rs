@@ -178,11 +178,7 @@ fn handle_forkchoice(
                 let lock = context.syncer.try_lock();
                 match lock {
                     Ok(sync) => sync.invalid_ancestors.clone(),
-                    Err(_) => {
-                        return Err(RpcErr::Internal(
-                            "Missing latest canonical block".to_owned(),
-                        ))
-                    }
+                    Err(_) => return Err(RpcErr::Internal("Internal error".into())),
                 }
             };
             apply_fork_choice(
@@ -217,14 +213,9 @@ fn handle_forkchoice(
                         .storage
                         .update_sync_status(false)
                         .map_err(|e| RpcErr::Internal(e.to_string()))?;
-                    let current_number = context.storage.get_latest_block_number()?;
-                    let Some(current_head) =
-                        context.storage.get_canonical_block_hash(current_number)?
-                    else {
-                        return Err(RpcErr::Internal(
-                            "Missing latest canonical block".to_owned(),
-                        ));
-                    };
+                    let current_head = context.storage.get_latest_canonical_block_hash()?.ok_or(
+                        RpcErr::Internal("Missing latest canonical block".to_owned()),
+                    )?;
                     let sync_head = fork_choice_state.head_block_hash;
                     tokio::spawn(async move {
                         // If we can't get hold of the syncer, then it means that there is an active sync in process
@@ -240,22 +231,18 @@ fn handle_forkchoice(
                     warn!("Invalid fork choice state. Reason: {:?}", forkchoice_error);
                     return Err(RpcErr::InvalidForkChoiceState(forkchoice_error.to_string()));
                 }
+                InvalidForkChoice::InvalidAncestor(header) => {
+                    ForkChoiceResponse::from(PayloadStatus::invalid_with(
+                        header.parent_hash,
+                        InvalidForkChoice::InvalidAncestor(header).to_string(),
+                    ))
+                }
                 reason => {
                     warn!("Invalid fork choice payload. Reason: {:#?}", reason);
-                    let latest_block_number = match context.storage.get_latest_block_number() {
-                        Ok(n) => n,
-                        Err(e) => return Err(RpcErr::Internal(e.to_string())),
-                    };
-                    let latest_valid_hash = match context
-                        .storage
-                        .get_canonical_block_hash(latest_block_number)
-                    {
-                        Ok(hash) if hash.is_none() => {
-                            return Err(RpcErr::Internal("hash not found".into()))
-                        }
-                        Ok(hash) => hash.unwrap(),
-                        Err(e) => return Err(RpcErr::Internal(e.to_string())),
-                    };
+                    let latest_valid_hash =
+                        context.storage.get_latest_canonical_block_hash()?.ok_or(
+                            RpcErr::Internal("Missing latest canonical block".to_owned()),
+                        )?;
                     ForkChoiceResponse::from(PayloadStatus::invalid_with(
                         latest_valid_hash,
                         reason.to_string(),
