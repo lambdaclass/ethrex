@@ -1441,8 +1441,10 @@ impl StateSyncProgress {
                 / U512::from(U256::MAX / STATE_TRIE_SEGMENTS);
             debug!("Segment {i} completion rate: {segment_completion_rate}%");
             synced_accounts += segment_synced_accounts;
-            synced_accounts_this_cycle +=
-                data.current_keys[i].into_uint() - data.initial_keys[i].into_uint();
+            synced_accounts_this_cycle += data.current_keys[i]
+                .into_uint()
+                .checked_sub(data.initial_keys[i].into_uint())
+                .unwrap_or_default();
         }
         // Calculate current progress percentage
         let completion_rate: U512 = (U512::from(synced_accounts) * 100) / U512::from(U256::MAX);
