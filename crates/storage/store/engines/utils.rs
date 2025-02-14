@@ -44,8 +44,6 @@ impl From<u8> for ChainDataIndex {
 pub enum SnapStateIndex {
     // Hash of the last downloaded header in a previous sync cycle that was aborted
     HeaderDownloadCheckpoint = 0,
-    // Current root hash of the latest State Trie (Used during state sync)
-    StateTrieRootCheckpoint = 1,
     // Paths from the storage trie in need of healing, grouped by hashed account address
     StorageHealPaths = 2,
     // Last key fetched from the state trie
@@ -62,7 +60,6 @@ impl From<u8> for SnapStateIndex {
     fn from(value: u8) -> Self {
         match value {
             0 => SnapStateIndex::HeaderDownloadCheckpoint,
-            1 => SnapStateIndex::StateTrieRootCheckpoint,
             2 => SnapStateIndex::StorageHealPaths,
             3 => SnapStateIndex::StateTrieKeyCheckpoint,
             4 => SnapStateIndex::StateHealPaths,

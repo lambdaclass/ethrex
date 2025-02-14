@@ -537,7 +537,7 @@ impl StoreEngine for Store {
         last_keys: [H256; STATE_TRIE_SEGMENTS],
     ) -> Result<(), StoreError> {
         self.write::<SnapState>(
-            SnapStateIndex::StateTrieRootCheckpoint,
+            SnapStateIndex::StateTrieKeyCheckpoint,
             last_keys.to_vec().encode_to_vec(),
         )
     }
@@ -545,7 +545,7 @@ impl StoreEngine for Store {
     fn get_state_trie_key_checkpoint(
         &self,
     ) -> Result<Option<[H256; STATE_TRIE_SEGMENTS]>, StoreError> {
-        self.read::<SnapState>(SnapStateIndex::StateTrieRootCheckpoint)?
+        self.read::<SnapState>(SnapStateIndex::StateTrieKeyCheckpoint)?
             .map(|ref c| {
                 <Vec<H256>>::decode(c)?
                     .try_into()
