@@ -1,26 +1,26 @@
 use std::{env::temp_dir, fs::read_to_string};
 
 use crate::errors::ProverError;
-use ethrex_l2::utils::prover::proving_systems::{
-    ExecuteOutput, PicoProof, ProverType, ProvingOutput,  Sp1Proof,
-};
 #[cfg(feature = "build_risc0")]
 use ethrex_l2::prover::proving_systems::Risc0Proof;
-use pico_sdk::vk_client::KoalaBearProveVKClient;
 #[cfg(feature = "build_risc0")]
 use ethrex_l2::utils::prover::proving_systems::Risc0Proof;
+use ethrex_l2::utils::prover::proving_systems::{
+    ExecuteOutput, PicoProof, ProverType, ProvingOutput, Sp1Proof,
+};
+use pico_sdk::vk_client::KoalaBearProveVKClient;
 use tracing::info;
 
 // risc0
 #[cfg(feature = "build_risc0")]
 use risc0_zkvm::{default_prover, ExecutorEnv, ProverOpts};
-use zkvm_interface::{
-    io::{ProgramInput, ProgramOutput},
-    methods::ZKVM_SP1_PROGRAM_ELF,
-    methods::{ZKVM_PICO_PROGRAM_ELF},
-};
 #[cfg(feature = "build_risc0")]
 use zkvm_interface::methods::{ZKVM_RISC0_PROGRAM_ELF, ZKVM_RISC0_PROGRAM_ID};
+use zkvm_interface::{
+    io::{ProgramInput, ProgramOutput},
+    methods::ZKVM_PICO_PROGRAM_ELF,
+    methods::ZKVM_SP1_PROGRAM_ELF,
+};
 
 // sp1
 use sp1_sdk::{ProverClient, SP1Stdin};
@@ -234,7 +234,9 @@ impl<'a> PicoProver<'a> {
 impl<'a> Prover for PicoProver<'a> {
     fn prove(&mut self, input: ProgramInput) -> Result<ProvingOutput, Box<dyn std::error::Error>> {
         let client = DefaultProverClient::new(self.elf);
+
         let stdin_builder = client.get_stdin_builder();
+        stdin_builder.borrow_mut().write(&input);
 
         let output_dir = temp_dir();
         let constraints_path = output_dir.join("constraints.json");
