@@ -16,7 +16,7 @@ use ethrex_levm::{
 };
 use ethrex_storage::AccountUpdate;
 use ethrex_vm::{
-    backends::{self, levm::LevmGetStateTransitionsIn, IEVM},
+    backends::{self},
     db::StoreWrapper,
 };
 use keccak_hash::keccak;
@@ -316,11 +316,9 @@ pub fn ensure_post_state(
                 None => {
                     let (initial_state, block_hash) = utils::load_initial_state(test);
                     let levm_account_updates = backends::levm::LEVM::get_state_transitions(
-                        LevmGetStateTransitionsIn::new(
-                            &initial_state,
-                            block_hash,
-                            &execution_report.new_state,
-                        ),
+                        &initial_state,
+                        block_hash,
+                        &execution_report.new_state,
                     );
                     let pos_state_root = post_state_root(&levm_account_updates, test);
                     let expected_post_state_root_hash =

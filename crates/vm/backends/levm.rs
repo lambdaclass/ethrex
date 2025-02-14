@@ -1,5 +1,4 @@
-use super::constants::{BEACON_ROOTS_ADDRESS_STR, HISTORY_STORAGE_ADDRESS_STR, SYSTEM_ADDRESS_STR};
-use super::SystemContracts;
+use super::constants::{BEACON_ROOTS_ADDRESS, HISTORY_STORAGE_ADDRESS, SYSTEM_ADDRESS};
 use crate::db::StoreWrapper;
 use crate::EvmError;
 use crate::EvmState;
@@ -19,7 +18,6 @@ use ethrex_levm::{
     Account, AccountInfo as LevmAccountInfo, Environment,
 };
 use ethrex_storage::{error::StoreError, AccountUpdate, Store};
-use lazy_static::lazy_static;
 use revm_primitives::Bytes;
 use std::{collections::HashMap, sync::Arc};
 
@@ -51,14 +49,12 @@ impl LEVM {
             if #[cfg(not(feature = "l2"))] {
                 let fork = config.fork(block_header.timestamp);
                 if block_header.parent_beacon_block_root.is_some() && fork >= Fork::Cancun {
-                    let report = Self::beacon_root_contract_call(block_header, LevmSystemCallIn::new(store_wrapper.clone(), &config))?;
-                    block_cache.extend(report.new_state);
+                    Self::beacon_root_contract_call(block_header, state, new_state)?;
                 }
 
                 if fork >= Fork::Prague {
                     //eip 2935: stores parent block hash in system contract
-                    let report = Self::process_block_hash_history(block_header, LevmSystemCallIn::new(store_wrapper.clone(), &config))?;
-                    block_cache.extend(report.new_state);
+                    Self::process_block_hash_history(block_header, state, new_state)?;
                 }
             }
         }
@@ -335,41 +331,13 @@ impl LEVM {
         }
         Ok(())
     }
-}
 
-pub struct LevmSystemCallIn<'a> {
-    // CHECK: is it ok to use StoreWrapper.
-    store_wrapper: Arc<StoreWrapper>,
-    config: &'a ChainConfig,
-}
-
-impl<'a> LevmSystemCallIn<'a> {
-    pub fn new(store_wrapper: Arc<StoreWrapper>, config: &'a ChainConfig) -> Self {
-        LevmSystemCallIn {
-            store_wrapper,
-            config,
-        }
-    }
-}
-
-impl SystemContracts for LEVM {
-    type Error = EvmError;
-
-    type Evm = LEVM;
-
-    type SystemCallInput<'a> = LevmSystemCallIn<'a>;
-
-    fn beacon_root_contract_call(
+    // SYSTEM CONTRACTS
+    pub fn beacon_root_contract_call(
         block_header: &BlockHeader,
-        input: Self::SystemCallInput<'_>,
-    ) -> Result<<Self::Evm as IEVM>::TransactionExecutionResult, EvmError> {
-        lazy_static! {
-            static ref SYSTEM_ADDRESS: Address =
-                Address::from_slice(&hex::decode(SYSTEM_ADDRESS_STR).unwrap());
-            static ref CONTRACT_ADDRESS: Address =
-                Address::from_slice(&hex::decode(BEACON_ROOTS_ADDRESS_STR).unwrap());
-        };
-        // This is OK
+        state: &mut EvmState,
+        new_state: &mut CacheDB,
+    ) -> Result<(), EvmError> {
         let beacon_root = match block_header.parent_beacon_block_root {
             None => {
                 return Err(EvmError::Header(
@@ -379,99 +347,79 @@ impl SystemContracts for LEVM {
             Some(beacon_root) => beacon_root,
         };
 
-        let config = EVMConfig::new_from_chain_config(input.config, block_header);
-        let env = Environment {
-            origin: *SYSTEM_ADDRESS,
-            gas_limit: 30_000_000,
-            block_number: block_header.number.into(),
-            coinbase: block_header.coinbase,
-            timestamp: block_header.timestamp.into(),
-            prev_randao: Some(block_header.prev_randao),
-            base_fee_per_gas: U256::zero(),
-            gas_price: U256::zero(),
-            block_excess_blob_gas: block_header.excess_blob_gas.map(U256::from),
-            block_blob_gas_used: block_header.blob_gas_used.map(U256::from),
-            block_gas_limit: 30_000_000,
-            transient_storage: HashMap::new(),
-            config,
-            ..Default::default()
-        };
-
-        let calldata = Bytes::copy_from_slice(beacon_root.as_bytes()).into();
-
-        // Here execute with LEVM but just return transaction report. And I will handle it in the calling place.
-
-        let mut vm = VM::new(
-            TxKind::Call(*CONTRACT_ADDRESS),
-            env,
-            U256::zero(),
-            calldata,
-            input.store_wrapper,
-            CacheDB::new(),
-            vec![],
-            None,
+        generic_system_contract_levm(
+            block_header,
+            Bytes::copy_from_slice(beacon_root.as_bytes()),
+            state,
+            new_state,
+            *BEACON_ROOTS_ADDRESS,
+            *SYSTEM_ADDRESS,
         )
-        .map_err(EvmError::from)?;
-
-        let mut report = vm.execute().map_err(EvmError::from)?;
-
-        report.new_state.remove(&*SYSTEM_ADDRESS);
-
-        Ok(report)
     }
-
-    /// Calls the EIP-2935 process block hashes history system call contract
-    /// NOTE: This was implemented by making use of an EVM system contract, but can be changed to a
-    /// direct state trie update after the verkle fork, as explained in https://eips.ethereum.org/EIPS/eip-2935
-    fn process_block_hash_history(
+    pub fn process_block_hash_history(
         block_header: &BlockHeader,
-        input: Self::SystemCallInput<'_>,
-    ) -> Result<<Self::Evm as IEVM>::TransactionExecutionResult, EvmError> {
-        lazy_static! {
-            static ref SYSTEM_ADDRESS: Address =
-                Address::from_slice(&hex::decode(SYSTEM_ADDRESS_STR).unwrap());
-            static ref CONTRACT_ADDRESS: Address =
-                Address::from_slice(&hex::decode(HISTORY_STORAGE_ADDRESS_STR).unwrap(),);
-        };
-
-        let config = EVMConfig::new_from_chain_config(input.config, block_header);
-        let env = Environment {
-            origin: *SYSTEM_ADDRESS,
-            gas_limit: 30_000_000,
-            block_number: block_header.number.into(),
-            coinbase: block_header.coinbase,
-            timestamp: block_header.timestamp.into(),
-            prev_randao: Some(block_header.prev_randao),
-            base_fee_per_gas: U256::zero(),
-            gas_price: U256::zero(),
-            block_excess_blob_gas: block_header.excess_blob_gas.map(U256::from),
-            block_blob_gas_used: block_header.blob_gas_used.map(U256::from),
-            block_gas_limit: 30_000_000,
-            transient_storage: HashMap::new(),
-            config,
-            ..Default::default()
-        };
-
-        let calldata = Bytes::copy_from_slice(block_header.parent_hash.as_bytes()).into();
-
-        // Here execute with LEVM but just return transaction report. And I will handle it in the calling place.
-
-        let mut vm = VM::new(
-            TxKind::Call(*CONTRACT_ADDRESS),
-            env,
-            U256::zero(),
-            calldata,
-            input.store_wrapper,
-            CacheDB::new(),
-            vec![],
-            None,
+        state: &mut EvmState,
+        new_state: &mut CacheDB,
+    ) -> Result<(), EvmError> {
+        generic_system_contract_levm(
+            block_header,
+            Bytes::copy_from_slice(block_header.parent_hash.as_bytes()),
+            state,
+            new_state,
+            *HISTORY_STORAGE_ADDRESS,
+            *SYSTEM_ADDRESS,
         )
-        .map_err(EvmError::from)?;
-
-        let mut report = vm.execute().map_err(EvmError::from)?;
-
-        report.new_state.remove(&*SYSTEM_ADDRESS);
-
-        Ok(report)
     }
+}
+
+pub fn generic_system_contract_levm(
+    block_header: &BlockHeader,
+    calldata: Bytes,
+    state: &mut EvmState,
+    new_state: &mut CacheDB,
+    contract_address: Address,
+    system_address: Address,
+) -> Result<(), EvmError> {
+    let store_wrapper = Arc::new(StoreWrapper {
+        store: state.database().unwrap().clone(),
+        block_hash: block_header.parent_hash,
+    });
+
+    let chain_config = state.chain_config()?;
+    let config = EVMConfig::new_from_chain_config(&chain_config, block_header);
+    let env = Environment {
+        origin: system_address,
+        gas_limit: 30_000_000,
+        block_number: block_header.number.into(),
+        coinbase: block_header.coinbase,
+        timestamp: block_header.timestamp.into(),
+        prev_randao: Some(block_header.prev_randao),
+        base_fee_per_gas: U256::zero(),
+        gas_price: U256::zero(),
+        block_excess_blob_gas: block_header.excess_blob_gas.map(U256::from),
+        block_blob_gas_used: block_header.blob_gas_used.map(U256::from),
+        block_gas_limit: 30_000_000,
+        transient_storage: HashMap::new(),
+        config,
+        ..Default::default()
+    };
+
+    let mut vm = VM::new(
+        TxKind::Call(contract_address),
+        env,
+        U256::zero(),
+        calldata.into(),
+        store_wrapper,
+        CacheDB::new(),
+        vec![],
+        None,
+    )
+    .map_err(EvmError::from)?;
+
+    let report = vm.execute().map_err(EvmError::from)?;
+
+    // new_state is a CacheDB coming from outside the function
+    new_state.extend(report.new_state);
+
+    Ok(())
 }

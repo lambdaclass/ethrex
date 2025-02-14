@@ -9,8 +9,8 @@ use ethrex_common::types::{
 use ethrex_common::H256;
 use ethrex_levm::db::CacheDB;
 use ethrex_storage::{error::StoreError, AccountUpdate};
-use levm::{LevmSystemCallIn, LEVM};
-use revm::{RevmSystemCallIn, REVM};
+use levm::LEVM;
+use revm::REVM;
 use std::str::FromStr;
 use std::sync::Arc;
 
@@ -125,45 +125,24 @@ impl EVM {
             EVM::REVM => {
                 let spec_id = spec_id(chain_config, block_header.timestamp);
                 if block_header.parent_beacon_block_root.is_some() && spec_id >= SpecId::CANCUN {
-                    REVM::beacon_root_contract_call(
-                        block_header,
-                        RevmSystemCallIn::new(state, spec_id),
-                    )?;
+                    REVM::beacon_root_contract_call(block_header, state)?;
                 }
 
                 if spec_id >= SpecId::PRAGUE {
-                    REVM::process_block_hash_history(
-                        block_header,
-                        RevmSystemCallIn::new(state, spec_id),
-                    )?;
+                    REVM::process_block_hash_history(block_header, state)?;
                 }
                 Ok(())
             }
             EVM::LEVM => {
-                let store_wrapper = Arc::new(StoreWrapper {
-                    store: state.database().unwrap().clone(),
-                    block_hash: block_header.parent_hash,
-                });
-
                 let fork = chain_config.fork(block_header.timestamp);
                 let mut new_state = CacheDB::new();
 
                 if block_header.parent_beacon_block_root.is_some() && fork >= Fork::Cancun {
-                    let report = LEVM::beacon_root_contract_call(
-                        block_header,
-                        LevmSystemCallIn::new(store_wrapper.clone(), chain_config),
-                    )?;
-
-                    new_state.extend(report.new_state);
+                    LEVM::beacon_root_contract_call(block_header, state, &mut new_state)?;
                 }
 
                 if fork >= Fork::Prague {
-                    let report = LEVM::process_block_hash_history(
-                        block_header,
-                        LevmSystemCallIn::new(store_wrapper.clone(), chain_config),
-                    )?;
-
-                    new_state.extend(report.new_state);
+                    LEVM::process_block_hash_history(block_header, state, &mut new_state)?;
                 }
 
                 // Now original_value is going to be the same as the current_value, for the next transaction.
@@ -217,25 +196,4 @@ impl EVM {
             }
         }
     }
-}
-
-pub trait SystemContracts {
-    /// The error type for this trait's error. `EvmError` is the default, but it could be modified if needed.
-    type Error;
-
-    type Evm: IEVM;
-
-    /// Input for `beacon_root_contract_call`. This must be defined by the implementor. It may vary depending on the backend EVM.
-    /// Calls the eip4788 beacon block root system call contract
-    /// As of the Cancun hard-fork, parent_beacon_block_root needs to be present in the block header.
-    type SystemCallInput<'a>;
-    fn beacon_root_contract_call(
-        block_header: &BlockHeader,
-        input: Self::SystemCallInput<'_>,
-    ) -> Result<<Self::Evm as IEVM>::TransactionExecutionResult, Self::Error>;
-
-    fn process_block_hash_history(
-        block_header: &BlockHeader,
-        input: Self::SystemCallInput<'_>,
-    ) -> Result<<Self::Evm as IEVM>::TransactionExecutionResult, Self::Error>;
 }
