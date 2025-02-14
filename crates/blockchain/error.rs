@@ -1,4 +1,4 @@
-use ethrex_common::types::{BlobsBundleError, BlockHeader, InvalidBlockHeaderError};
+use ethrex_common::types::{BlobsBundleError, BlockHash, BlockHeader, InvalidBlockHeaderError};
 use ethrex_storage::error::StoreError;
 use ethrex_vm::EvmError;
 
@@ -100,5 +100,5 @@ pub enum InvalidForkChoice {
     #[error("Requested head is an invalid block.")]
     InvalidHead,
     #[error("Previously rejected block.")]
-    InvalidAncestor(BlockHeader),
+    InvalidAncestor(BlockHash),
 }

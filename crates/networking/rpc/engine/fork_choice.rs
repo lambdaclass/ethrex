@@ -231,14 +231,17 @@ fn handle_forkchoice(
                     warn!("Invalid fork choice state. Reason: {:?}", forkchoice_error);
                     return Err(RpcErr::InvalidForkChoiceState(forkchoice_error.to_string()));
                 }
-                InvalidForkChoice::InvalidAncestor(header) => {
+                InvalidForkChoice::InvalidAncestor(last_valid_hash) => {
                     ForkChoiceResponse::from(PayloadStatus::invalid_with(
-                        header.parent_hash,
-                        InvalidForkChoice::InvalidAncestor(header).to_string(),
+                        last_valid_hash,
+                        InvalidForkChoice::InvalidAncestor(last_valid_hash).to_string(),
                     ))
                 }
                 reason => {
-                    warn!("Invalid fork choice payload. Reason: {:#?}", reason);
+                    warn!(
+                        "Invalid fork choice payload. Reason: {}",
+                        reason.to_string()
+                    );
                     let latest_valid_hash =
                         context.storage.get_latest_canonical_block_hash()?.ok_or(
                             RpcErr::Internal("Missing latest canonical block".to_owned()),

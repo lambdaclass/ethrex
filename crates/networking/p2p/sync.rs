@@ -1,6 +1,6 @@
 use ethrex_blockchain::error::ChainError;
 use ethrex_common::{
-    types::{AccountState, Block, BlockHash, BlockHeader, EMPTY_KECCACK_HASH},
+    types::{AccountState, Block, BlockHash, EMPTY_KECCACK_HASH},
     BigEndianHash, H256, U256, U512,
 };
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode, error::RLPDecodeError};
@@ -56,9 +56,8 @@ pub struct SyncManager {
     /// We only store the last known valid head upon encountering a bad block,
     /// rather than tracking every subsequent invalid block.
     ///
-    /// This map stores the latest valid block hash of a chain and the `BlockHeader`
-    /// of the first known bad ancestor.
-    pub invalid_ancestors: HashMap<BlockHash, BlockHeader>,
+    /// This map stores the bad block hash with and latest valid block hash of the chain corresponding to the bad block
+    pub invalid_ancestors: HashMap<BlockHash, BlockHash>,
 }
 
 impl SyncManager {
@@ -267,7 +266,7 @@ async fn download_and_run_blocks(
     mut block_hashes: Vec<BlockHash>,
     peers: PeerHandler,
     store: Store,
-    invalid_ancestors: &mut HashMap<BlockHash, BlockHeader>,
+    invalid_ancestors: &mut HashMap<BlockHash, BlockHash>,
 ) -> Result<(), SyncError> {
     let mut last_valid_hash = H256::default();
     loop {
@@ -286,7 +285,7 @@ async fn download_and_run_blocks(
                 let number = header.number;
                 let block = Block::new(header, body);
                 if let Err(error) = ethrex_blockchain::add_block(&block, &store) {
-                    invalid_ancestors.insert(last_valid_hash, block.header);
+                    invalid_ancestors.insert(hash, last_valid_hash);
                     return Err(error.into());
                 }
                 store.set_canonical_block(number, hash)?;

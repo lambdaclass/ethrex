@@ -354,7 +354,17 @@ fn handle_new_payload_v1_v2(
     let payload_status = match context.sync_status()? {
         SyncStatus::Active | SyncStatus::Pending => PayloadStatus::syncing(),
         SyncStatus::Inactive => {
-            if let Err(RpcErr::Internal(error_msg)) = validate_block_hash(payload, &block) {
+            // Check if the block has already been invalidated
+            let invalid_ancestors = match context.syncer.try_lock() {
+                Ok(syncer) => syncer.invalid_ancestors.clone(),
+                Err(_) => return Err(RpcErr::Internal("Internal error".into())),
+            };
+            if let Some(latest_valid_hash) = invalid_ancestors.get(&block.hash()) {
+                PayloadStatus::invalid_with(
+                    *latest_valid_hash,
+                    "Header has been previously invalidated.".into(),
+                )
+            } else if let Err(RpcErr::Internal(error_msg)) = validate_block_hash(payload, &block) {
                 PayloadStatus::invalid_with_err(&error_msg)
             } else {
                 execute_payload(&block, &context)?
@@ -413,7 +423,7 @@ fn execute_payload(block: &Block, context: &RpcApiContext) -> Result<PayloadStat
         if let Ok(mut syncer) = lock {
             syncer
                 .invalid_ancestors
-                .insert(block_hash, block.header.clone());
+                .insert(block_hash, latest_valid_hash);
         };
     };
 

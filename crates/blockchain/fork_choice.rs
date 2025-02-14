@@ -22,7 +22,7 @@ use crate::{
 /// If the fork choice state is applied correctly, the head block header is returned.
 pub fn apply_fork_choice(
     store: &Store,
-    invalid_ancestors: HashMap<BlockHash, BlockHeader>,
+    invalid_ancestors: HashMap<BlockHash, BlockHash>,
     head_hash: H256,
     safe_hash: H256,
     finalized_hash: H256,
@@ -32,8 +32,8 @@ pub fn apply_fork_choice(
     }
 
     // Check if the block has already been invalidated
-    if let Some(header) = invalid_ancestors.get(&head_hash) {
-        return Err(InvalidForkChoice::InvalidAncestor(header.clone()));
+    if let Some(latest_valid_hash) = invalid_ancestors.get(&head_hash) {
+        return Err(InvalidForkChoice::InvalidAncestor(*latest_valid_hash));
     }
 
     let finalized_res = if !finalized_hash.is_zero() {
