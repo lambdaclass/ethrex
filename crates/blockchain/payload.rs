@@ -15,9 +15,9 @@ use ethrex_common::{
 };
 
 use ethrex_vm::{
-    backends::{levm::CacheDB, EVM},
+    backends::levm::CacheDB,
     db::{evm_state, EvmState},
-    EvmError, EVM_BACKEND,
+    get_evm_backend_or_default, EvmError,
 };
 
 use ethrex_rlp::encode::RLPEncode;
@@ -250,9 +250,7 @@ pub fn apply_withdrawals(context: &mut PayloadBuildContext) -> Result<(), EvmErr
         .withdrawals
         .as_ref()
         .unwrap_or(&binding);
-    EVM_BACKEND
-        .get()
-        .unwrap_or(&EVM::default())
+    get_evm_backend_or_default()
         .process_withdrawals(
             withdrawals,
             context.evm_state,
@@ -267,15 +265,12 @@ pub fn apply_withdrawals(context: &mut PayloadBuildContext) -> Result<(), EvmErr
 // - Call block hash process contract, and store parent block hash
 pub fn apply_system_operations(context: &mut PayloadBuildContext) -> Result<(), EvmError> {
     let chain_config = context.chain_config()?;
-    EVM_BACKEND
-        .get()
-        .unwrap_or(&EVM::default())
-        .apply_system_calls(
-            context.evm_state,
-            &context.payload.header,
-            &mut context.block_cache,
-            &chain_config,
-        )
+    get_evm_backend_or_default().apply_system_calls(
+        context.evm_state,
+        &context.payload.header,
+        &mut context.block_cache,
+        &chain_config,
+    )
 }
 
 /// Fetches suitable transactions from the mempool
@@ -479,7 +474,7 @@ fn apply_plain_transaction(
     context: &mut PayloadBuildContext,
 ) -> Result<Receipt, ChainError> {
     let chain_config = context.chain_config()?;
-    let (report, gas_used) = EVM_BACKEND.get().unwrap_or(&EVM::default()).execute_tx(
+    let (report, gas_used) = get_evm_backend_or_default().execute_tx(
         context.evm_state,
         &head.tx,
         &context.payload.header,
@@ -492,14 +487,11 @@ fn apply_plain_transaction(
 }
 
 fn finalize_payload(context: &mut PayloadBuildContext) -> Result<(), ChainError> {
-    let account_updates = EVM_BACKEND
-        .get()
-        .unwrap_or(&EVM::default())
-        .get_state_transitions(
-            context.evm_state,
-            context.parent_hash(),
-            &context.block_cache,
-        );
+    let account_updates = get_evm_backend_or_default().get_state_transitions(
+        context.evm_state,
+        context.parent_hash(),
+        &context.block_cache,
+    );
 
     context.payload.header.state_root = context
         .store()

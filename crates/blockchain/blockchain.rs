@@ -18,7 +18,7 @@ use ethrex_common::H256;
 use ethrex_storage::error::StoreError;
 use ethrex_storage::{AccountUpdate, Store};
 use ethrex_vm::db::evm_state;
-use ethrex_vm::{backends::EVM, EVM_BACKEND};
+use ethrex_vm::get_evm_backend_or_default;
 
 //TODO: Implement a struct Chain or BlockChain to encapsulate
 //functionality and canonical chain state and config
@@ -42,12 +42,8 @@ pub fn add_block(block: &Block, storage: &Store) -> Result<(), ChainError> {
 
     // Validate the block pre-execution
     validate_block(block, &parent_header, &chain_config)?;
-    let (receipts, account_updates): (Vec<Receipt>, Vec<AccountUpdate>) = {
-        EVM_BACKEND
-            .get()
-            .unwrap_or(&EVM::default())
-            .execute_block(block, &mut state)?
-    };
+    let (receipts, account_updates): (Vec<Receipt>, Vec<AccountUpdate>) =
+        get_evm_backend_or_default().execute_block(block, &mut state)?;
 
     validate_gas_used(&receipts, &block.header)?;
 
