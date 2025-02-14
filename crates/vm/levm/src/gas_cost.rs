@@ -21,6 +21,7 @@ pub const SMOD: u64 = 5;
 pub const ADDMOD: u64 = 8;
 pub const MULMOD: u64 = 8;
 pub const EXP_STATIC: u64 = 10;
+pub const EXP_DYNAMIC_BASE_PRE_SPURIOUS_DRAGON: u64 = 10;
 pub const EXP_DYNAMIC_BASE: u64 = 50;
 pub const SIGNEXTEND: u64 = 5;
 pub const LT: u64 = 3;
@@ -260,7 +261,7 @@ pub const BLS12_381_G2_K_DISCOUNT: [u64; 128] = [
 ];
 pub const G2_MUL_COST: u64 = 22500;
 
-pub fn exp(exponent: U256) -> Result<u64, VMError> {
+pub fn exp(exponent: U256, fork: Fork) -> Result<u64, VMError> {
     let exponent_byte_size = (exponent
         .bits()
         .checked_add(7)
@@ -271,7 +272,14 @@ pub fn exp(exponent: U256) -> Result<u64, VMError> {
         .try_into()
         .map_err(|_| VMError::VeryLargeNumber)?;
 
-    let exponent_byte_size_cost = EXP_DYNAMIC_BASE
+    // https://eips.ethereum.org/EIPS/eip-160
+    let dynamic_base = if fork < Fork::SpuriousDragon {
+        EXP_DYNAMIC_BASE_PRE_SPURIOUS_DRAGON
+    } else {
+        EXP_DYNAMIC_BASE
+    };
+
+    let exponent_byte_size_cost = dynamic_base
         .checked_mul(exponent_byte_size)
         .ok_or(VMError::OutOfGas(OutOfGasError::GasCostOverflow))?;
 

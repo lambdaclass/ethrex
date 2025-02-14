@@ -221,7 +221,7 @@ impl VM {
         let base = current_call_frame.stack.pop()?;
         let exponent = current_call_frame.stack.pop()?;
 
-        let gas_cost = gas_cost::exp(exponent)?;
+        let gas_cost = gas_cost::exp(exponent, self.env.config.fork)?;
 
         current_call_frame.increase_consumed_gas(gas_cost)?;
 
