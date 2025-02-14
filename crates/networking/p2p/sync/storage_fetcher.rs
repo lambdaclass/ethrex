@@ -1,7 +1,9 @@
 //! This module contains the logic for storage range downloads during state sync
 //! It works like a queue, waiting for the state sync to advertise newly downloaded accounts with non-empty storages
 //! Each storage will be queued and fetch in batches, once a storage is fully fetched it is then advertised to the storage rebuilder
+//! Each downloaded storage will be written to the storage snapshot in the DB
 //! If the pivot becomes stale while there are still pending storages in queue these will be sent to the storage healer
+//! Even if the pivot becomes stale, the fetcher will remain active and listening until a termination signal (an empty batch) is received
 //! Potential Improvements: Currenlty, we have a specific method to handle large storage tries (aka storage tries that don't fit into a single storage range request).
 //! This method is called while fetching a storage batch and can stall the fetching of other smaller storages.
 //! Large storage handling could be moved to its own separate queue process so that it runs parallel to regular storage fetching
@@ -11,14 +13,17 @@ use ethrex_storage::Store;
 use tokio::sync::mpsc::{Receiver, Sender};
 use tracing::debug;
 
-use crate::{peer_handler::PeerHandler, sync::{BATCH_SIZE, MAX_CHANNEL_READS, MAX_PARALLEL_FETCHES}};
+use crate::{
+    peer_handler::PeerHandler,
+    sync::{BATCH_SIZE, MAX_CHANNEL_READS, MAX_PARALLEL_FETCHES},
+};
 
 use super::SyncError;
 
 /// Waits for incoming account hashes & storage roots from the receiver channel endpoint, queues them, and fetches and stores their bytecodes in batches
 /// This function will remain active until either an empty vec is sent to the receiver or the pivot becomes stale
 /// Upon finsih, remaining storages will be sent to the storage healer
-async fn storage_fetcher(
+pub(crate) async fn storage_fetcher(
     mut receiver: Receiver<Vec<(H256, H256)>>,
     peers: PeerHandler,
     store: Store,
@@ -180,7 +185,7 @@ async fn handle_large_storage_range(
     // First process the initial range
     // Keep hold of the last key as this will be the first key of the next range
     let mut next_key = *keys.last().unwrap();
-        store.write_snapshot_storage_batch(account_hash, keys, values)?;
+    store.write_snapshot_storage_batch(account_hash, keys, values)?;
     let mut should_continue = true;
     // Fetch the remaining range
     while should_continue {
@@ -199,4 +204,3 @@ async fn handle_large_storage_range(
     }
     Ok(false)
 }
-

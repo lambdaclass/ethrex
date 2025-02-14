@@ -9,15 +9,21 @@ use ethrex_common::{BigEndianHash, H256, U256, U512};
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_storage::{Store, MAX_SNAPSHOT_READS, STATE_TRIE_SEGMENTS};
 use ethrex_trie::EMPTY_TRIE_HASH;
-use tokio::{sync::mpsc::{channel, Receiver, Sender}, task::JoinSet, time::Instant};
+use std::array;
+use tokio::{
+    sync::mpsc::{channel, Receiver, Sender},
+    task::JoinSet,
+    time::Instant,
+};
 use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
-use std::array;
 
 use crate::sync::seconds_to_readable;
 
-use super::{SyncError, MAX_CHANNEL_MESSAGES, MAX_CHANNEL_READS, MAX_PARALLEL_FETCHES, SHOW_PROGRESS_INTERVAL_DURATION, STATE_TRIE_SEGMENTS_END, STATE_TRIE_SEGMENTS_START};
-
+use super::{
+    SyncError, MAX_CHANNEL_MESSAGES, MAX_CHANNEL_READS, MAX_PARALLEL_FETCHES,
+    SHOW_PROGRESS_INTERVAL_DURATION, STATE_TRIE_SEGMENTS_END, STATE_TRIE_SEGMENTS_START,
+};
 
 /// Represents the permanently ongoing background trie rebuild process
 /// This process will be started whenever a state sync is initiated and will be
@@ -267,7 +273,7 @@ fn next_hash(hash: H256) -> H256 {
     H256::from_uint(&(hash.into_uint() + 1))
 }
 
-/// Shows the completion rate and estimated finish time of the state trie rebuild 
+/// Shows the completion rate and estimated finish time of the state trie rebuild
 async fn show_trie_rebuild_progress(
     start_time: Instant,
     initial_rebuild_status: [SegmentStatus; STATE_TRIE_SEGMENTS],
@@ -296,4 +302,3 @@ async fn show_trie_rebuild_progress(
         seconds_to_readable(time_to_finish)
     );
 }
-
