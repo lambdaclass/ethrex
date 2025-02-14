@@ -88,7 +88,6 @@ pub const CODECOPY_DYNAMIC_BASE: u64 = 3;
 pub const GASPRICE: u64 = 2;
 
 pub const SELFDESTRUCT_STATIC_PRE_TANGERINE: u64 = 0;
-pub const SELFDESTRUCT_STATIC_TANGERINE: u64 = 0;
 pub const SELFDESTRUCT_STATIC: u64 = 5000;
 pub const SELFDESTRUCT_DYNAMIC: u64 = 25000;
 pub const SELFDESTRUCT_REFUND: u64 = 24000;
@@ -845,7 +844,6 @@ pub fn call(
         cold_dynamic_cost,
         warm_dynamic_cost,
     )?;
-
     let positive_value_cost = if !value_to_transfer.is_zero() {
         CALL_POSITIVE_VALUE
     } else {
@@ -870,6 +868,7 @@ pub fn call(
         gas_left,
         call_gas_costs,
         CALL_POSITIVE_VALUE_STIPEND,
+        fork,
     )
 }
 
@@ -919,6 +918,7 @@ pub fn callcode(
         gas_left,
         call_gas_costs,
         CALLCODE_POSITIVE_VALUE_STIPEND,
+        fork,
     )
 }
 
@@ -954,7 +954,7 @@ pub fn delegatecall(
         .checked_add(address_access_cost)
         .ok_or(OutOfGasError::GasCostOverflow)?;
 
-    calculate_cost_and_gas_limit_call(true, gas_from_stack, gas_left, call_gas_costs, 0)
+    calculate_cost_and_gas_limit_call(true, gas_from_stack, gas_left, call_gas_costs, 0, fork)
 }
 
 pub fn staticcall(
@@ -989,7 +989,7 @@ pub fn staticcall(
         .checked_add(address_access_cost)
         .ok_or(OutOfGasError::GasCostOverflow)?;
 
-    calculate_cost_and_gas_limit_call(true, gas_from_stack, gas_left, call_gas_costs, 0)
+    calculate_cost_and_gas_limit_call(true, gas_from_stack, gas_left, call_gas_costs, 0, fork)
 }
 
 pub fn fake_exponential(factor: U256, numerator: U256, denominator: U256) -> Result<U256, VMError> {
@@ -1237,19 +1237,24 @@ fn calculate_cost_and_gas_limit_call(
     gas_left: u64,
     call_gas_costs: u64,
     stipend: u64,
+    fork: Fork,
 ) -> Result<(u64, u64), VMError> {
     let gas_stipend = if value_is_zero { 0 } else { stipend };
     let gas_left = gas_left
         .checked_sub(call_gas_costs)
         .ok_or(OutOfGasError::GasUsedOverflow)?;
-    let max_gas_for_call = gas_left
-        .checked_sub(gas_left / 64)
-        .ok_or(OutOfGasError::GasUsedOverflow)?;
 
-    let gas: u64 = gas_from_stack
-        .min(max_gas_for_call.into())
-        .try_into()
-        .map_err(|_err| OutOfGasError::MaxGasLimitExceeded)?;
+    let gas: u64 = if fork < Fork::Tangerine {
+        gas_from_stack
+    } else {
+        // EIP 150, https://eips.ethereum.org/EIPS/eip-150
+        let max_gas_for_call = gas_left
+            .checked_sub(gas_left / 64)
+            .ok_or(OutOfGasError::GasUsedOverflow)?;
+        gas_from_stack.min(max_gas_for_call.into())
+    }
+    .try_into()
+    .map_err(|_err| OutOfGasError::MaxGasLimitExceeded)?;
 
     Ok((
         gas.checked_add(call_gas_costs)
