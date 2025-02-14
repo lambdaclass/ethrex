@@ -123,7 +123,6 @@ impl VM {
         &mut self,
         current_call_frame: &mut CallFrame,
     ) -> Result<OpcodeResult, VMError> {
-        // Added in Istanbul fork
         // https://eips.ethereum.org/EIPS/eip-1344
         if self.env.config.fork < Fork::Istanbul {
             return Err(VMError::InvalidOpcode);
@@ -140,7 +139,6 @@ impl VM {
         &mut self,
         current_call_frame: &mut CallFrame,
     ) -> Result<OpcodeResult, VMError> {
-        // Added in London fork
         // https://eips.ethereum.org/EIPS/eip-1884
         if self.env.config.fork < Fork::London {
             return Err(VMError::InvalidOpcode);
@@ -160,7 +158,6 @@ impl VM {
         &mut self,
         current_call_frame: &mut CallFrame,
     ) -> Result<OpcodeResult, VMError> {
-        // Added in London fork
         // https://eips.ethereum.org/EIPS/eip-3198
         if self.env.config.fork < Fork::London {
             return Err(VMError::InvalidOpcode);
