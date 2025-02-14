@@ -315,6 +315,10 @@ impl VM {
         &mut self,
         current_call_frame: &mut CallFrame,
     ) -> Result<OpcodeResult, VMError> {
+        // https://eips.ethereum.org/EIPS/eip-214
+        if self.env.config.fork < Fork::Byzantium {
+            return Err(VMError::InvalidOpcode);
+        };
         // STACK
         let gas = current_call_frame.stack.pop()?;
         let code_address = word_to_address(current_call_frame.stack.pop()?);
@@ -583,18 +587,26 @@ impl VM {
                 .info
                 .balance = U256::zero();
 
+            // [EIP-3529](https://eips.ethereum.org/EIPS/eip-3529)
+            // https://github.com/ethereum/execution-specs/blob/master/src/ethereum/constantinople/vm/instructions/system.py#L471
+            if self.env.config.fork < Fork::London
+                && !self
+                    .accrued_substate
+                    .selfdestruct_set
+                    .contains(&current_call_frame.to)
+            {
+                self.env.refunded_gas = self
+                    .env
+                    .refunded_gas
+                    .checked_add(SELFDESTRUCT_REFUND)
+                    .ok_or(VMError::GasRefundsOverflow)?;
+            }
+
             self.accrued_substate
                 .selfdestruct_set
                 .insert(current_call_frame.to);
         }
-        // [EIP-3529](https://eips.ethereum.org/EIPS/eip-3529)
-        if self.env.config.fork < Fork::London {
-            self.env.refunded_gas = self
-                .env
-                .refunded_gas
-                .checked_add(SELFDESTRUCT_REFUND)
-                .ok_or(VMError::GasRefundsOverflow)?;
-        }
+
         Ok(OpcodeResult::Halt)
     }
 
