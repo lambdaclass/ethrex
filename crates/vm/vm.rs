@@ -111,20 +111,19 @@ fn create_access_list_inner(
             env.disable_block_gas_limit = true
         })
         .with_external_context(&mut access_list_inspector);
-
     let tx_result = {
         match state {
             EvmState::Store(db) => {
                 let mut evm = evm_builder
                     .with_db(db)
-                    .append_handler_register(inspector_handle_register)
+                    // .append_handler_register(inspector_handle_register)
                     .build();
                 evm.transact().map_err(EvmError::from)?
             }
             EvmState::Execution(db) => {
                 let mut evm = evm_builder
                     .with_db(db)
-                    .append_handler_register(inspector_handle_register)
+                    // .append_handler_register(inspector_handle_register)
                     .build();
                 evm.transact().map_err(EvmError::from)?
             }
