@@ -7,9 +7,7 @@
 //! Large storage handling could be moved to its own separate queue process so that it runs parallel to regular storage fetching
 
 use ethrex_common::{H256, U256};
-use ethrex_rlp::encode::RLPEncode;
 use ethrex_storage::Store;
-use ethrex_trie::EMPTY_TRIE_HASH;
 use tokio::sync::mpsc::{Receiver, Sender};
 use tracing::debug;
 
@@ -182,14 +180,7 @@ async fn handle_large_storage_range(
     // First process the initial range
     // Keep hold of the last key as this will be the first key of the next range
     let mut next_key = *keys.last().unwrap();
-    let mut current_root = {
-        let mut trie = store.open_storage_trie(account_hash, *EMPTY_TRIE_HASH);
-        for (key, value) in keys.into_iter().zip(values.into_iter()) {
-            trie.insert(key.0.to_vec(), value.encode_to_vec())?;
-        }
-        // Compute current root so we can extend this trie later
-        trie.hash()?
-    };
+        store.write_snapshot_storage_batch(account_hash, keys, values)?;
     let mut should_continue = true;
     // Fetch the remaining range
     while should_continue {
@@ -201,18 +192,10 @@ async fn handle_large_storage_range(
         {
             next_key = *keys.last().unwrap();
             should_continue = incomplete;
-            let mut trie = store.open_storage_trie(account_hash, current_root);
-            for (key, value) in keys.into_iter().zip(values.into_iter()) {
-                trie.insert(key.0.to_vec(), value.encode_to_vec())?;
-            }
-            // Compute current root so we can extend this trie later
-            current_root = trie.hash()?;
+            store.write_snapshot_storage_batch(account_hash, keys, values)?;
         } else {
             return Ok(true);
         }
-    }
-    if current_root != storage_root {
-        warn!("State sync failed for storage root {storage_root}");
     }
     Ok(false)
 }
