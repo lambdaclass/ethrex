@@ -21,16 +21,8 @@ impl Requests {
     pub fn to_bytes(&self) -> Vec<u8> {
         match self {
             Requests::Deposit(deposits) => {
-                let mut deposit_data = vec![];
-
-                for deposit in deposits {
-                    let data = deposit.to_summarized_byte_array();
-                    deposit_data.push(data);
-                }
-
-                std::iter::once(DEPOSIT_TYPE)
-                    .chain(deposit_data.into_iter().flatten())
-                    .collect()
+                let deposit_data = deposits.iter().flat_map(|d| d.to_summarized_byte_array());
+                std::iter::once(DEPOSIT_TYPE).chain(deposit_data).collect()
             }
             Requests::Withdrawal => {
                 // TODO: implement the withdrawal type
