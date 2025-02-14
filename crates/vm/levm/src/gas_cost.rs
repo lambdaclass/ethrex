@@ -849,11 +849,14 @@ pub fn call(
     } else {
         0
     };
-    let value_to_empty_account = if address_is_empty && !value_to_transfer.is_zero() {
+    let value_to_empty_account = if address_is_empty && fork < Fork::SpuriousDragon {
+        CALL_TO_EMPTY_ACCOUNT
+    } else if address_is_empty && !value_to_transfer.is_zero() {
         CALL_TO_EMPTY_ACCOUNT
     } else {
         0
     };
+
     let call_gas_costs = memory_expansion_cost
         .checked_add(address_access_cost)
         .ok_or(OutOfGasError::GasCostOverflow)?
