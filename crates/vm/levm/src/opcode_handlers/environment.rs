@@ -7,7 +7,7 @@ use crate::{
     utils::{access_account, has_delegation, word_to_address},
     vm::VM,
 };
-use ethrex_common::{types::Fork, U256};
+use ethrex_common::U256;
 use keccak_hash::keccak;
 
 // Environmental Information (16)
@@ -377,10 +377,6 @@ impl VM {
         &mut self,
         current_call_frame: &mut CallFrame,
     ) -> Result<OpcodeResult, VMError> {
-        // https://eips.ethereum.org/EIPS/eip-211
-        if self.env.config.fork < Fork::Byzantium {
-            return Err(VMError::InvalidOpcode);
-        };
         current_call_frame.increase_consumed_gas(gas_cost::RETURNDATASIZE)?;
 
         current_call_frame
@@ -395,10 +391,6 @@ impl VM {
         &mut self,
         current_call_frame: &mut CallFrame,
     ) -> Result<OpcodeResult, VMError> {
-        // https://eips.ethereum.org/EIPS/eip-211
-        if self.env.config.fork < Fork::Byzantium {
-            return Err(VMError::InvalidOpcode);
-        };
         let dest_offset = current_call_frame.stack.pop()?;
         let returndata_offset: usize = current_call_frame
             .stack
