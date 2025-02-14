@@ -223,7 +223,7 @@ pub fn summary_for_shell(reports: &[EFTestReport]) -> String {
             format!("{}", total_passed).red()
         },
 
-        // NOTE: Keep in order, se the Fork Enum to check
+        // NOTE: Keep in order, see the Fork Enum to check
         // NOTE: Uncomment the commented summaries if there are ever
         // EF-tests that test those specific fork.
 
