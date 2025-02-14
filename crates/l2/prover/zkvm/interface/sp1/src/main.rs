@@ -16,9 +16,13 @@ pub fn main() {
         db,
     } = sp1_zkvm::io::read::<ProgramInput>();
     let mut state = EvmState::from(db.clone());
+    let chain_config = state
+        .chain_config()
+        .map_err(ChainError::from)
+        .expect("Failed to get chain config from state");
 
     // Validate the block
-    validate_block(&block, &parent_block_header, &state).expect("invalid block");
+    validate_block(&block, &parent_block_header, &chain_config).expect("invalid block");
 
     // Tries used for validating initial and final state root
     let (mut state_trie, mut storage_tries) = db
