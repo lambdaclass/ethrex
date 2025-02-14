@@ -676,13 +676,14 @@ impl VM {
             current_call_frame.stack.push(CREATE_DEPLOYMENT_FAIL)?;
             return Ok(OpcodeResult::Continue { pc_increment: 1 });
         }
-
         // THIRD: Validations that push 0 to the stack without returning reserved gas but incrementing deployer's nonce
         let new_account = get_account(&mut self.cache, self.db.clone(), new_address);
-        if new_account.has_code_or_nonce() {
-            increment_account_nonce(&mut self.cache, self.db.clone(), deployer_address)?;
-            current_call_frame.stack.push(CREATE_DEPLOYMENT_FAIL)?;
-            return Ok(OpcodeResult::Continue { pc_increment: 1 });
+        if self.env.config.fork < Fork::SpuriousDragon {
+            if new_account.has_code_or_nonce() {
+                increment_account_nonce(&mut self.cache, self.db.clone(), deployer_address)?;
+                current_call_frame.stack.push(CREATE_DEPLOYMENT_FAIL)?;
+                return Ok(OpcodeResult::Continue { pc_increment: 1 });
+            }
         }
 
         // FOURTH: Changes to the state
