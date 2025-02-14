@@ -226,6 +226,10 @@ impl VM {
         &mut self,
         current_call_frame: &mut CallFrame,
     ) -> Result<OpcodeResult, VMError> {
+        // https://eips.ethereum.org/EIPS/eip-7
+        if self.env.config.fork < Fork::Homestead {
+            return Err(VMError::InvalidOpcode);
+        }
         // STACK
         let gas = current_call_frame.stack.pop()?;
         let code_address = word_to_address(current_call_frame.stack.pop()?);
@@ -311,6 +315,10 @@ impl VM {
         &mut self,
         current_call_frame: &mut CallFrame,
     ) -> Result<OpcodeResult, VMError> {
+        // https://eips.ethereum.org/EIPS/eip-214
+        if self.env.config.fork < Fork::Byzantium {
+            return Err(VMError::InvalidOpcode);
+        };
         // STACK
         let gas = current_call_frame.stack.pop()?;
         let code_address = word_to_address(current_call_frame.stack.pop()?);
@@ -685,7 +693,12 @@ impl VM {
             .checked_add(new_account.info.balance)
             .ok_or(VMError::BalanceOverflow)?;
 
-        let new_account = Account::new(new_balance, Bytes::new(), 1, Default::default());
+        // https://github.com/ethereum/EIPs/blob/master/EIPS/eip-161.md
+        let new_account = if self.env.config.fork < Fork::SpuriousDragon {
+            Account::new(new_balance, Bytes::new(), 0, Default::default())
+        } else {
+            Account::new(new_balance, Bytes::new(), 1, Default::default())
+        };
         cache::insert_account(&mut self.cache, new_address, new_account);
 
         // 2. Increment sender's nonce.
