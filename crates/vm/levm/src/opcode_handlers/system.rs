@@ -583,7 +583,6 @@ impl VM {
                 .selfdestruct_set
                 .insert(current_call_frame.to);
         }
-
         // [EIP-3529](https://eips.ethereum.org/EIPS/eip-3529)
         if self.env.config.fork < Fork::London {
             self.env.refunded_gas = self
@@ -592,7 +591,6 @@ impl VM {
                 .checked_add(SELFDESTRUCT_REFUND)
                 .ok_or(VMError::GasRefundsOverflow)?;
         }
-
         Ok(OpcodeResult::Halt)
     }
 
