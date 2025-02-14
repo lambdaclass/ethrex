@@ -236,8 +236,12 @@ fn handle_forkchoice(
                     });
                     ForkChoiceResponse::from(PayloadStatus::syncing())
                 }
+                InvalidForkChoice::Disconnected(_, _) | InvalidForkChoice::ElementNotFound(_) => {
+                    warn!("Invalid fork choice state. Reason: {:?}", forkchoice_error);
+                    return Err(RpcErr::InvalidForkChoiceState(forkchoice_error.to_string()));
+                }
                 reason => {
-                    warn!("Invalid fork choice state. Reason: {:#?}", reason);
+                    warn!("Invalid fork choice payload. Reason: {:#?}", reason);
                     let latest_block_number = match context.storage.get_latest_block_number() {
                         Ok(n) => n,
                         Err(e) => return Err(RpcErr::Internal(e.to_string())),
