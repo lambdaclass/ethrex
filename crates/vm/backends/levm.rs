@@ -49,12 +49,12 @@ impl LEVM {
             if #[cfg(not(feature = "l2"))] {
                 let fork = config.fork(block_header.timestamp);
                 if block_header.parent_beacon_block_root.is_some() && fork >= Fork::Cancun {
-                    Self::beacon_root_contract_call(block_header, state, new_state)?;
+                    Self::beacon_root_contract_call(block_header, state, &mut block_cache)?;
                 }
 
                 if fork >= Fork::Prague {
                     //eip 2935: stores parent block hash in system contract
-                    Self::process_block_hash_history(block_header, state, new_state)?;
+                    Self::process_block_hash_history(block_header, state, &mut block_cache)?;
                 }
             }
         }
