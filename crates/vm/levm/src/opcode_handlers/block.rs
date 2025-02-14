@@ -123,6 +123,10 @@ impl VM {
         &mut self,
         current_call_frame: &mut CallFrame,
     ) -> Result<OpcodeResult, VMError> {
+        // https://eips.ethereum.org/EIPS/eip-1344
+        if self.env.config.fork < Fork::Istanbul {
+            return Err(VMError::InvalidOpcode);
+        }
         current_call_frame.increase_consumed_gas(gas_cost::CHAINID)?;
 
         current_call_frame.stack.push(self.env.chain_id)?;
@@ -135,6 +139,10 @@ impl VM {
         &mut self,
         current_call_frame: &mut CallFrame,
     ) -> Result<OpcodeResult, VMError> {
+        // https://eips.ethereum.org/EIPS/eip-1884
+        if self.env.config.fork < Fork::London {
+            return Err(VMError::InvalidOpcode);
+        }
         current_call_frame.increase_consumed_gas(gas_cost::SELFBALANCE)?;
 
         let balance = get_account(&mut self.cache, self.db.clone(), current_call_frame.to)
@@ -150,6 +158,10 @@ impl VM {
         &mut self,
         current_call_frame: &mut CallFrame,
     ) -> Result<OpcodeResult, VMError> {
+        // https://eips.ethereum.org/EIPS/eip-3198
+        if self.env.config.fork < Fork::London {
+            return Err(VMError::InvalidOpcode);
+        }
         current_call_frame.increase_consumed_gas(gas_cost::BASEFEE)?;
 
         current_call_frame.stack.push(self.env.base_fee_per_gas)?;
