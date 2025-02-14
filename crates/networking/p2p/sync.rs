@@ -238,16 +238,36 @@ async fn download_and_run_blocks(
     peers: PeerHandler,
     store: Store,
 ) -> Result<(), SyncError> {
+    let mut last_valid_hash = H256::default();
+    // ask as much as 128 block bodies per req
+    // this magic number is not part of the protocol and it is taken from geth, see:
+    // https://github.com/ethereum/go-ethereum/blob/master/eth/downloader/downloader.go#L42
+    let max_req_len = 128;
+
+    let mut current_chunk_idx = 0;
+    let chunks: Vec<Vec<BlockHash>> = block_hashes
+        .chunks(max_req_len)
+        .map(|chunk| chunk.to_vec())
+        .collect();
+
+    let mut chunk = match chunks.get(current_chunk_idx) {
+        Some(res) => res.clone(),
+        None => return Ok(()),
+    };
+
+    let mut current_block_hash_idx = 0;
     loop {
         debug!("Requesting Block Bodies ");
-        if let Some(block_bodies) = peers.request_block_bodies(block_hashes.clone()).await {
+        if let Some(block_bodies) = peers.request_block_bodies(chunk.clone()).await {
             let block_bodies_len = block_bodies.len();
             debug!("Received {} Block Bodies", block_bodies_len);
             // Execute and store blocks
-            for (hash, body) in block_hashes
+            for (hash, body) in chunk
                 .drain(..block_bodies_len)
                 .zip(block_bodies.into_iter())
             {
+                block_hashes.remove(current_block_hash_idx);
+                current_block_hash_idx += 1;
                 let header = store
                     .get_block_header_by_hash(hash)?
                     .ok_or(SyncError::CorruptDB)?;
@@ -261,13 +281,15 @@ async fn download_and_run_blocks(
                 store.update_latest_block_number(number)?;
             }
             debug!("Executed & stored {} blocks", block_bodies_len);
-            // Check if we need to ask for another batch
-            if block_hashes.is_empty() {
-                break;
-            }
+            if chunk.len() == 0 {
+                current_chunk_idx += 1;
+                chunk = match chunks.get(current_chunk_idx) {
+                    Some(res) => res.clone(),
+                    None => return Ok(()),
+                };
+            };
         }
     }
-    Ok(())
 }
 
 /// Fetches all block bodies for the given block hashes via p2p and stores them
