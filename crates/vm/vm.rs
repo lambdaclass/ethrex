@@ -49,7 +49,7 @@ pub fn simulate_tx_from_generic(
     state: &mut EvmState,
     spec_id: SpecId,
 ) -> Result<ExecutionResult, EvmError> {
-    let block_env = block_env(header);
+    let block_env = block_env(header, spec_id);
     let tx_env = tx_env_from_generic(tx, header.base_fee_per_gas.unwrap_or(INITIAL_BASE_FEE));
     run_without_commit(tx_env, block_env, state, spec_id)
 }
@@ -63,7 +63,7 @@ pub fn create_access_list(
     spec_id: SpecId,
 ) -> Result<(ExecutionResult, AccessList), EvmError> {
     let mut tx_env = tx_env_from_generic(tx, header.base_fee_per_gas.unwrap_or(INITIAL_BASE_FEE));
-    let block_env = block_env(header);
+    let block_env = block_env(header, spec_id);
     // Run tx with access list inspector
 
     let (execution_result, access_list) =

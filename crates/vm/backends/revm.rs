@@ -77,7 +77,7 @@ pub fn execute_tx(
     state: &mut EvmState,
     spec_id: SpecId,
 ) -> Result<ExecutionResult, EvmError> {
-    let block_env = block_env(header);
+    let block_env = block_env(header, spec_id);
     let tx_env = tx_env(tx);
     run_evm(tx_env, block_env, state, spec_id)
 }
@@ -197,7 +197,7 @@ pub fn process_withdrawals(
     Ok(())
 }
 
-pub fn block_env(header: &BlockHeader) -> BlockEnv {
+pub fn block_env(header: &BlockHeader, spec_id: SpecId) -> BlockEnv {
     BlockEnv {
         number: RevmU256::from(header.number),
         coinbase: RevmAddress(header.coinbase.0.into()),
@@ -208,6 +208,7 @@ pub fn block_env(header: &BlockHeader) -> BlockEnv {
         prevrandao: Some(header.prev_randao.as_fixed_bytes().into()),
         blob_excess_gas_and_price: Some(BlobExcessGasAndPrice::new(
             header.excess_blob_gas.unwrap_or_default(),
+            spec_id == SpecId::PRAGUE,
         )),
     }
 }
@@ -291,7 +292,7 @@ pub fn tx_env(tx: &Transaction) -> TxEnv {
                 .map(|auth_t| {
                     SignedAuthorization::new_unchecked(
                         RevmAuthorization {
-                            chain_id: auth_t.chain_id.as_u64(),
+                            chain_id: RevmU256::from_limbs(auth_t.chain_id.0),
                             address: RevmAddress(auth_t.address.0.into()),
                             nonce: auth_t.nonce,
                         },
@@ -356,8 +357,7 @@ pub(crate) fn tx_env_from_generic(tx: &GenericTransaction, basefee: u64) -> TxEn
                 .map(|auth_t| {
                     SignedAuthorization::new_unchecked(
                         RevmAuthorization {
-                            //chain_id: RevmU256::from_le_bytes(auth_t.chain_id.to_little_endian()),
-                            chain_id: auth_t.chain_id.as_u64(),
+                            chain_id: RevmU256::from_le_bytes(auth_t.chain_id.to_little_endian()),
                             address: RevmAddress(auth_t.address.0.into()),
                             nonce: auth_t.nonce,
                         },
@@ -397,12 +397,7 @@ pub(crate) fn access_list_inspector(
             tx_env.caller.create(nonce)
         }
     };
-    Ok(AccessListInspector::new(
-        current_access_list,
-        tx_env.caller,
-        to,
-        precompile_addresses,
-    ))
+    Ok(AccessListInspector::new(current_access_list))
 }
 
 /// Calculating gas_price according to EIP-1559 rules
@@ -465,7 +460,7 @@ pub fn beacon_root_contract_call(
         data: revm::primitives::Bytes::copy_from_slice(beacon_root.as_bytes()),
         ..Default::default()
     };
-    let mut block_env = block_env(header);
+    let mut block_env = block_env(header, spec_id);
     block_env.basefee = RevmU256::ZERO;
     block_env.gas_limit = RevmU256::from(30_000_000);
 
@@ -523,7 +518,7 @@ pub fn process_block_hash_history(
         data: revm::primitives::Bytes::copy_from_slice(header.parent_hash.as_bytes()),
         ..Default::default()
     };
-    let mut block_env = block_env(header);
+    let mut block_env = block_env(header, spec_id);
     block_env.basefee = RevmU256::ZERO;
     block_env.gas_limit = RevmU256::from(30_000_000);
 
