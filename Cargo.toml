@@ -15,6 +15,7 @@ members = [
     "crates/l2/prover",
     "crates/l2/sdk",
     "crates/networking/p2p",
+    "crates/networking/p2p_actors",
     "crates/networking/rpc",
     "crates/storage/store",
     "crates/storage/trie",
