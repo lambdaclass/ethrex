@@ -33,4 +33,7 @@ datatest_stable::harness!(
     parse_and_execute,
     "vectors/prague/eip6110_deposits/deposits",
     r".*/.*\.json",
+    parse_and_execute,
+    "vectors/prague/eip7002_el_triggerable_withdrawals",
+    r".*/.*\.json",
 );
