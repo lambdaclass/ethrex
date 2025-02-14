@@ -782,8 +782,8 @@ async fn storage_fetcher(
     );
     if !pending_storage.is_empty() {
         storage_healer_sender
-        .send(pending_storage.into_iter().map(|(hash, _)| hash).collect())
-        .await?;
+            .send(pending_storage.into_iter().map(|(hash, _)| hash).collect())
+            .await?;
     }
     Ok(())
 }
