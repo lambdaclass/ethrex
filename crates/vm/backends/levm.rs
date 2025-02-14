@@ -1,6 +1,6 @@
 use super::constants::{
     BEACON_ROOTS_ADDRESS_STR, HISTORY_STORAGE_ADDRESS_STR, SYSTEM_ADDRESS_STR,
-    WITHDRAWAL_REQUEST_PREDEPLOY_ADDRESS,
+    WITHDRAWAL_REQUEST_PREDEPLOY_ADDRESS, CONSOLIDATION_REQUEST_PREDEPLOY_ADDRESS
 };
 use crate::db::StoreWrapper;
 use crate::EvmError;
@@ -443,6 +443,59 @@ fn read_withdrawal_requests_levm(
     }
 }
 
+fn dequeue_consolidation_requests(
+    store_wrapper: Arc<StoreWrapper>,
+    block_header: &BlockHeader,
+    config: EVMConfig,
+) -> Option<ExecutionReport> {
+    lazy_static! {
+        static ref SYSTEM_ADDRESS: Address =
+            Address::from_slice(&hex::decode(SYSTEM_ADDRESS_STR).unwrap());
+        static ref CONTRACT_ADDRESS: Address =
+            Address::from_slice(&hex::decode(CONSOLIDATION_REQUEST_PREDEPLOY_ADDRESS).unwrap());
+    };
+
+    let env = Environment {
+        origin: *SYSTEM_ADDRESS,
+        gas_limit: 30_000_000,
+        block_number: block_header.number.into(),
+        coinbase: block_header.coinbase,
+        timestamp: block_header.timestamp.into(),
+        prev_randao: Some(block_header.prev_randao),
+        base_fee_per_gas: U256::zero(),
+        gas_price: U256::zero(),
+        block_excess_blob_gas: block_header.excess_blob_gas.map(U256::from),
+        block_blob_gas_used: block_header.blob_gas_used.map(U256::from),
+        block_gas_limit: 30_000_000,
+        transient_storage: HashMap::new(),
+        config,
+        ..Default::default()
+    };
+
+    // Here execute with LEVM but just return transaction report. And I will handle it in the calling place.
+
+    let mut vm = VM::new(
+        TxKind::Call(*CONTRACT_ADDRESS),
+        env,
+        U256::zero(),
+        CoreBytes::new(),
+        store_wrapper,
+        CacheDB::new(),
+        vec![],
+        None,
+    )
+    .ok()?;
+
+    let mut report = vm.execute().ok()?;
+
+    report.new_state.remove(&*SYSTEM_ADDRESS);
+
+    match report.result {
+        TxResult::Success => Some(report),
+        _ => None,
+    }
+}
+
 pub fn extract_all_requests_levm(
     receipts: &[Receipt],
     state: &mut EvmState,
@@ -476,8 +529,23 @@ pub fn extract_all_requests_levm(
             None => Default::default(),
         };
 
+    let store_wrapper = Arc::new(StoreWrapper {
+        store: state.database().unwrap().clone(),
+        block_hash: header.parent_hash,
+    });
+
+    let consolidation_data: Vec<u8> =
+        match dequeue_consolidation_requests(store_wrapper, header, evm_config) {
+            Some(report) => {
+                cache.extend(report.new_state.clone());
+                report.output.into()
+            }
+            None => Default::default(),
+        };
+
     let deposits = Requests::from_deposit_receipts(receipts);
     let withdrawals = Requests::from_withdrawals_data(withdrawals_data);
+    let consolidation = Requests::from_consolidation_data(consolidation_data);
 
-    Ok(vec![deposits, withdrawals])
+    Ok(vec![deposits, withdrawals, consolidation])
 }

@@ -7,6 +7,7 @@ pub type Bytes32 = [u8; 32];
 pub type Bytes96 = [u8; 96];
 const DEPOSIT_TYPE: u8 = 0x00;
 const WITHDRAWAL_TYPE: u8 = 0x01;
+const CONSOLIDATION_TYPE: u8 = 0x02;
 
 lazy_static::lazy_static! {
     pub static ref DEPOSIT_CONTRACT_ADDRESS: Address = Address::from_slice(&hex::decode("00000000219ab540356cbb839cbe05303d7705fa").unwrap());
@@ -15,6 +16,7 @@ lazy_static::lazy_static! {
 pub enum Requests {
     Deposit(Vec<Deposit>),
     Withdrawal(Vec<u8>),
+    Consolidation(Vec<u8>),
 }
 
 impl Requests {
@@ -25,6 +27,9 @@ impl Requests {
                 std::iter::once(DEPOSIT_TYPE).chain(deposit_data).collect()
             }
             Requests::Withdrawal(data) => std::iter::once(WITHDRAWAL_TYPE)
+                .chain(data.iter().cloned())
+                .collect(),
+            Requests::Consolidation(data) => std::iter::once(CONSOLIDATION_TYPE)
                 .chain(data.iter().cloned())
                 .collect(),
         }
@@ -46,6 +51,10 @@ impl Requests {
 
     pub fn from_withdrawals_data(data: Vec<u8>) -> Requests {
         Requests::Withdrawal(data)
+    }
+
+    pub fn from_consolidation_data(data: Vec<u8>) -> Requests {
+        Requests::Consolidation(data)
     }
 }
 

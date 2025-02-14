@@ -1,5 +1,4 @@
-use super::constants::{BEACON_ROOTS_ADDRESS_STR, HISTORY_STORAGE_ADDRESS_STR, SYSTEM_ADDRESS_STR};
-use crate::backends::constants::WITHDRAWAL_REQUEST_PREDEPLOY_ADDRESS;
+use super::constants::{BEACON_ROOTS_ADDRESS_STR, HISTORY_STORAGE_ADDRESS_STR, SYSTEM_ADDRESS_STR, CONSOLIDATION_REQUEST_PREDEPLOY_ADDRESS, WITHDRAWAL_REQUEST_PREDEPLOY_ADDRESS};
 use crate::spec_id;
 use crate::EvmError;
 use crate::EvmState;
@@ -626,6 +625,66 @@ fn read_withdrawal_requests(
     }
 }
 
+fn dequeue_consolidation_requests(
+    state: &mut EvmState,
+    header: &BlockHeader,
+    spec_id: SpecId,
+) -> Option<Vec<u8>> {
+    lazy_static! {
+        static ref SYSTEM_ADDRESS: RevmAddress =
+            RevmAddress::from_slice(&hex::decode(SYSTEM_ADDRESS_STR).unwrap());
+        static ref CONTRACT_ADDRESS: RevmAddress = RevmAddress::from_slice(
+            &hex::decode(CONSOLIDATION_REQUEST_PREDEPLOY_ADDRESS).unwrap(),
+        );
+    };
+    let tx_env = TxEnv {
+        caller: *SYSTEM_ADDRESS,
+        transact_to: RevmTxKind::Call(*CONTRACT_ADDRESS),
+        gas_limit: 30_000_000,
+        ..Default::default()
+    };
+    let mut block_env = block_env(header);
+    block_env.basefee = RevmU256::ZERO;
+    block_env.gas_limit = RevmU256::from(30_000_000);
+
+    let tx_result = match state {
+        EvmState::Store(db) => {
+            let mut evm = Evm::builder()
+                .with_db(db)
+                .with_block_env(block_env)
+                .with_tx_env(tx_env)
+                .with_spec_id(spec_id)
+                .build();
+
+            let transaction_result = evm.transact().ok()?;
+            let mut result_state = transaction_result.state;
+            result_state.remove(&*SYSTEM_ADDRESS);
+            result_state.remove(&evm.block().coinbase);
+
+            evm.context.evm.db.commit(result_state);
+
+            transaction_result.result
+        }
+        EvmState::Execution(db) => {
+            let mut evm = Evm::builder()
+                .with_db(db)
+                .with_block_env(block_env)
+                .with_tx_env(tx_env)
+                .with_spec_id(spec_id)
+                .build();
+
+            // Not necessary to commit to DB
+            let transaction_result = evm.transact().ok()?;
+            transaction_result.result
+        }
+    };
+
+    match tx_result {
+        RevmExecutionResult::Success { output, .. } => Some(output.into_data().into()),
+        _ => None,
+    }
+}
+
 pub fn extract_all_requests(
     receipts: &[Receipt],
     state: &mut EvmState,
@@ -640,8 +699,10 @@ pub fn extract_all_requests(
 
     let deposits = Requests::from_deposit_receipts(receipts);
     let withdrawals_data = read_withdrawal_requests(state, header, spec_id);
+    let consolidation_data = dequeue_consolidation_requests(state, header, spec_id);
 
     let withdrawals = Requests::from_withdrawals_data(withdrawals_data.unwrap_or_default());
+    let consolidation = Requests::from_consolidation_data(consolidation_data.unwrap_or_default());
 
-    Ok(vec![deposits, withdrawals])
+    Ok(vec![deposits, withdrawals, consolidation])
 }
