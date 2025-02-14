@@ -18,7 +18,6 @@ pub fn main() {
     let mut state = EvmState::from(db.clone());
     let chain_config = state
         .chain_config()
-        .map_err(ChainError::from)
         .expect("Failed to get chain config from state");
 
     // Validate the block
