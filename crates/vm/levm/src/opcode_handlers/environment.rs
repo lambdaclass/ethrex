@@ -395,6 +395,10 @@ impl VM {
         &mut self,
         current_call_frame: &mut CallFrame,
     ) -> Result<OpcodeResult, VMError> {
+        // https://eips.ethereum.org/EIPS/eip-211
+        if self.env.config.fork < Fork::Byzantium {
+            return Err(VMError::InvalidOpcode);
+        };
         let dest_offset = current_call_frame.stack.pop()?;
         let returndata_offset: usize = current_call_frame
             .stack
