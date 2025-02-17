@@ -276,63 +276,27 @@ pub fn get_state_transitions_levm(
 /// More info on https://eips.ethereum.org/EIPS/eip-4788
 pub fn beacon_root_contract_call_levm(
     store_wrapper: Arc<StoreWrapper>,
-    block_header: &BlockHeader,
+    header: &BlockHeader,
     config: EVMConfig,
 ) -> Result<ExecutionReport, EvmError> {
     lazy_static! {
-        static ref SYSTEM_ADDRESS: Address =
-            Address::from_slice(&hex::decode(SYSTEM_ADDRESS_STR).unwrap());
         static ref CONTRACT_ADDRESS: Address =
-            Address::from_slice(&hex::decode(BEACON_ROOTS_ADDRESS_STR).unwrap());
-    };
-    // This is OK
-    let beacon_root = match block_header.parent_beacon_block_root {
-        None => {
-            return Err(EvmError::Header(
-                "parent_beacon_block_root field is missing".to_string(),
-            ))
-        }
-        Some(beacon_root) => beacon_root,
+            Address::from_slice(&hex::decode(BEACON_ROOTS_ADDRESS_STR).unwrap(),);
     };
 
-    let env = Environment {
-        origin: *SYSTEM_ADDRESS,
-        gas_limit: 30_000_000,
-        block_number: block_header.number.into(),
-        coinbase: block_header.coinbase,
-        timestamp: block_header.timestamp.into(),
-        prev_randao: Some(block_header.prev_randao),
-        base_fee_per_gas: U256::zero(),
-        gas_price: U256::zero(),
-        block_excess_blob_gas: block_header.excess_blob_gas.map(U256::from),
-        block_blob_gas_used: block_header.blob_gas_used.map(U256::from),
-        block_gas_limit: 30_000_000,
-        transient_storage: HashMap::new(),
-        config,
-        ..Default::default()
-    };
+    let beacon_root = header.parent_beacon_block_root.ok_or(EvmError::Header(
+        "parent_beacon_block_root field is missing".to_string(),
+    ))?;
 
     let calldata = Bytes::copy_from_slice(beacon_root.as_bytes()).into();
 
-    // Here execute with LEVM but just return transaction report. And I will handle it in the calling place.
-
-    let mut vm = VM::new(
-        TxKind::Call(*CONTRACT_ADDRESS),
-        env,
-        U256::zero(),
+    generic_system_call(
+        *CONTRACT_ADDRESS,
         calldata,
         store_wrapper,
-        CacheDB::new(),
-        vec![],
-        None,
+        header,
+        config,
     )
-    .map_err(EvmError::from)?;
-
-    let mut report = vm.execute().map_err(EvmError::from)?;
-
-    report.new_state.remove(&*SYSTEM_ADDRESS);
-
-    Ok(report)
 }
 
 /// Calls the EIP-2935 process block hashes history system call contract
@@ -344,50 +308,19 @@ pub fn process_block_hash_history(
     config: EVMConfig,
 ) -> Result<ExecutionReport, EvmError> {
     lazy_static! {
-        static ref SYSTEM_ADDRESS: Address =
-            Address::from_slice(&hex::decode(SYSTEM_ADDRESS_STR).unwrap());
         static ref CONTRACT_ADDRESS: Address =
             Address::from_slice(&hex::decode(HISTORY_STORAGE_ADDRESS_STR).unwrap(),);
     };
 
-    let env = Environment {
-        origin: *SYSTEM_ADDRESS,
-        gas_limit: 30_000_000,
-        block_number: block_header.number.into(),
-        coinbase: block_header.coinbase,
-        timestamp: block_header.timestamp.into(),
-        prev_randao: Some(block_header.prev_randao),
-        base_fee_per_gas: U256::zero(),
-        gas_price: U256::zero(),
-        block_excess_blob_gas: block_header.excess_blob_gas.map(U256::from),
-        block_blob_gas_used: block_header.blob_gas_used.map(U256::from),
-        block_gas_limit: 30_000_000,
-        transient_storage: HashMap::new(),
-        config,
-        ..Default::default()
-    };
-
     let calldata = Bytes::copy_from_slice(block_header.parent_hash.as_bytes()).into();
 
-    // Here execute with LEVM but just return transaction report. And I will handle it in the calling place.
-
-    let mut vm = VM::new(
-        TxKind::Call(*CONTRACT_ADDRESS),
-        env,
-        U256::zero(),
+    generic_system_call(
+        *CONTRACT_ADDRESS,
         calldata,
         store_wrapper,
-        CacheDB::new(),
-        vec![],
-        None,
+        block_header,
+        config,
     )
-    .map_err(EvmError::from)?;
-
-    let mut report = vm.execute().map_err(EvmError::from)?;
-
-    report.new_state.remove(&*SYSTEM_ADDRESS);
-
-    Ok(report)
 }
 
 fn read_withdrawal_requests_levm(
@@ -396,46 +329,18 @@ fn read_withdrawal_requests_levm(
     config: EVMConfig,
 ) -> Option<ExecutionReport> {
     lazy_static! {
-        static ref SYSTEM_ADDRESS: Address =
-            Address::from_slice(&hex::decode(SYSTEM_ADDRESS_STR).unwrap());
         static ref CONTRACT_ADDRESS: Address =
             Address::from_slice(&hex::decode(WITHDRAWAL_REQUEST_PREDEPLOY_ADDRESS).unwrap());
     };
 
-    let env = Environment {
-        origin: *SYSTEM_ADDRESS,
-        gas_limit: 30_000_000,
-        block_number: block_header.number.into(),
-        coinbase: block_header.coinbase,
-        timestamp: block_header.timestamp.into(),
-        prev_randao: Some(block_header.prev_randao),
-        base_fee_per_gas: U256::zero(),
-        gas_price: U256::zero(),
-        block_excess_blob_gas: block_header.excess_blob_gas.map(U256::from),
-        block_blob_gas_used: block_header.blob_gas_used.map(U256::from),
-        block_gas_limit: 30_000_000,
-        transient_storage: HashMap::new(),
-        config,
-        ..Default::default()
-    };
-
-    // Here execute with LEVM but just return transaction report. And I will handle it in the calling place.
-
-    let mut vm = VM::new(
-        TxKind::Call(*CONTRACT_ADDRESS),
-        env,
-        U256::zero(),
+    let report = generic_system_call(
+        *CONTRACT_ADDRESS,
         CoreBytes::new(),
         store_wrapper,
-        CacheDB::new(),
-        vec![],
-        None,
+        block_header,
+        config,
     )
     .ok()?;
-
-    let mut report = vm.execute().ok()?;
-
-    report.new_state.remove(&*SYSTEM_ADDRESS);
 
     match report.result {
         TxResult::Success => Some(report),
@@ -449,10 +354,35 @@ fn dequeue_consolidation_requests(
     config: EVMConfig,
 ) -> Option<ExecutionReport> {
     lazy_static! {
-        static ref SYSTEM_ADDRESS: Address =
-            Address::from_slice(&hex::decode(SYSTEM_ADDRESS_STR).unwrap());
         static ref CONTRACT_ADDRESS: Address =
             Address::from_slice(&hex::decode(CONSOLIDATION_REQUEST_PREDEPLOY_ADDRESS).unwrap());
+    };
+
+    let report = generic_system_call(
+        *CONTRACT_ADDRESS,
+        CoreBytes::new(),
+        store_wrapper,
+        block_header,
+        config,
+    )
+    .ok()?;
+
+    match report.result {
+        TxResult::Success => Some(report),
+        _ => None,
+    }
+}
+
+pub fn generic_system_call(
+    contract_address: Address,
+    calldata: CoreBytes,
+    store_wrapper: Arc<StoreWrapper>,
+    block_header: &BlockHeader,
+    config: EVMConfig,
+) -> Result<ExecutionReport, EvmError> {
+    lazy_static! {
+        static ref SYSTEM_ADDRESS: Address =
+            Address::from_slice(&hex::decode(SYSTEM_ADDRESS_STR).unwrap());
     };
 
     let env = Environment {
@@ -475,25 +405,22 @@ fn dequeue_consolidation_requests(
     // Here execute with LEVM but just return transaction report. And I will handle it in the calling place.
 
     let mut vm = VM::new(
-        TxKind::Call(*CONTRACT_ADDRESS),
+        TxKind::Call(contract_address),
         env,
         U256::zero(),
-        CoreBytes::new(),
+        calldata,
         store_wrapper,
         CacheDB::new(),
         vec![],
         None,
     )
-    .ok()?;
+    .map_err(EvmError::from)?;
 
-    let mut report = vm.execute().ok()?;
+    let mut report = vm.execute().map_err(EvmError::from)?;
 
     report.new_state.remove(&*SYSTEM_ADDRESS);
 
-    match report.result {
-        TxResult::Success => Some(report),
-        _ => None,
-    }
+    Ok(report)
 }
 
 pub fn extract_all_requests_levm(
