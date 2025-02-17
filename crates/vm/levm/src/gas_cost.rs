@@ -499,9 +499,9 @@ pub fn sstore(
             default_dynamic
         };
 
-        if fork < Fork::Berlin {
-            return Ok(base_dynamic_gas);
-        }
+        // if fork < Fork::Berlin {
+        //     return Ok(base_dynamic_gas);
+        // }
         // https://eips.ethereum.org/EIPS/eip-2929
         if storage_slot_was_cold && fork >= Fork::Berlin {
             base_dynamic_gas = base_dynamic_gas
