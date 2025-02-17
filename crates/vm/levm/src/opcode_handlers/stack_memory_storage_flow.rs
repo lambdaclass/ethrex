@@ -193,14 +193,20 @@ impl VM {
         // Gas Refunds
         // Sync gas refund with global env, ensuring consistency accross contexts.
         let mut gas_refunds = self.env.refunded_gas;
+        let (jamon, queso, pan) = match dbg!(self.env.config.fork) {
+            Fork::Constantinople => (15000, 19800, 4800),
+            f if f >= Fork::Istanbul && f < Fork::Berlin => (15000, 19200, 4200),
+            _ => (4800, 19990, 2800),
+        };
 
-        if self.env.config.fork < Fork::Istanbul {
-            if new_storage_slot_value.is_zero() && !storage_slot.current_value.is_zero() {
+        if self.env.config.fork < Fork::Istanbul && self.env.config.fork != Fork::Constantinople {
+            if !storage_slot.current_value.is_zero() && new_storage_slot_value.is_zero() {
                 gas_refunds = gas_refunds
                     .checked_add(15000)
                     .ok_or(VMError::GasRefundsOverflow)?;
             }
-        } else if self.env.config.fork >= Fork::Istanbul
+        } else if (self.env.config.fork == Fork::Constantinople
+            || self.env.config.fork >= Fork::Istanbul)
             && new_storage_slot_value != storage_slot.current_value
         {
             if !storage_slot.original_value.is_zero()
@@ -208,24 +214,24 @@ impl VM {
                 && new_storage_slot_value.is_zero()
             {
                 gas_refunds = gas_refunds
-                    .checked_add(4800)
+                    .checked_add(jamon)
                     .ok_or(VMError::GasRefundsOverflow)?;
             }
 
             if !storage_slot.original_value.is_zero() && storage_slot.current_value.is_zero() {
                 gas_refunds = gas_refunds
-                    .checked_sub(4800)
+                    .checked_sub(jamon)
                     .ok_or(VMError::GasRefundsUnderflow)?;
             }
 
             if new_storage_slot_value == storage_slot.original_value {
                 if storage_slot.original_value.is_zero() {
                     gas_refunds = gas_refunds
-                        .checked_add(19900)
+                        .checked_add(queso)
                         .ok_or(VMError::GasRefundsOverflow)?;
                 } else {
                     gas_refunds = gas_refunds
-                        .checked_add(2800)
+                        .checked_add(pan)
                         .ok_or(VMError::GasRefundsOverflow)?;
                 }
             }
