@@ -52,6 +52,9 @@ default = []
 build_risc0 = ["zkvm_interface/build_risc0", "dep:risc0-zkvm"]
 build_sp1 = ["zkvm_interface/build_sp1"]
 build_pico = ["zkvm_interface/build_pico", "ethrex-l2/pico", "dep:pico-sdk"]
+sp1 = []
+pico = []
+risc0 = []
 l2 = ["ethrex-vm/l2"]                                                        # the prover can work with both l1 or l2 blocks
 gpu = ["risc0-zkvm/cuda", "sp1-sdk/cuda"]
 

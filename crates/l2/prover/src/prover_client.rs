@@ -101,19 +101,7 @@ impl ProverClient {
     }
 
     fn submit_proof(&self, block_number: u64, proving_output: ProvingOutput) -> Result<(), String> {
-        let submit = match proving_output {
-            #[cfg(feature = "build_risc0")]
-            ProvingOutput::RISC0(risc0_proof) => {
-                ProofData::submit(block_number, ProvingOutput::RISC0(risc0_proof))
-            }
-            ProvingOutput::SP1(sp1_proof) => {
-                ProofData::submit(block_number, ProvingOutput::SP1(sp1_proof))
-            }
-            #[cfg(feature = "build_pico")]
-            ProvingOutput::Pico(pico_proof) => {
-                ProofData::submit(block_number, ProvingOutput::Pico(pico_proof))
-            }
-        };
+        let submit = ProofData::submit(block_number, proving_output);
 
         let submit_ack = connect_to_prover_server_wr(&self.prover_server_endpoint, &submit)
             .map_err(|e| format!("Failed to get SubmitAck: {e}"))?;

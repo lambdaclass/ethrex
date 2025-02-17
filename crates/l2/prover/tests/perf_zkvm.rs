@@ -1,16 +1,13 @@
 #![allow(clippy::expect_used)]
 #![allow(clippy::unwrap_used)]
-use ethrex_common::types::Block;
+use ethrex_core::types::Block;
 use std::path::Path;
 use tracing::info;
 
 use ethrex_blockchain::add_block;
 use ethrex_prover_lib::prover::{Prover, Risc0Prover, Sp1Prover};
 use ethrex_storage::{EngineType, Store};
-use ethrex_vm::{
-    db::StoreWrapper,
-    execution_db::ToExecDB,
-};
+use ethrex_vm::execution_db::{ExecutionDB, ToExecDB};
 use zkvm_interface::io::ProgramInput;
 
 #[tokio::test]
@@ -87,16 +84,16 @@ async fn setup() -> (ProgramInput, Block) {
     }
     let block_to_prove = blocks.get(2).unwrap();
 
-    let parent_block_header = store
-        .get_block_header_by_hash(block_to_prove.header.parent_hash)
-        .unwrap()
-        .unwrap();
-
     let store = StoreWrapper {
         store: store.clone(),
         block_hash: block_to_prove.header.parent_hash,
     };
     let db = store.to_exec_db(&block_to_prove).unwrap();
+
+    let parent_block_header = store
+        .get_block_header_by_hash(block_to_prove.header.parent_hash)
+        .unwrap()
+        .unwrap();
 
     let input = ProgramInput {
         block: block_to_prove.clone(),
