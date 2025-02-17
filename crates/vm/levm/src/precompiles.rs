@@ -224,7 +224,7 @@ pub fn execute_precompile(
         address if address == RIPEMD_160_ADDRESS => {
             ripemd_160(&current_call_frame.calldata, gas_for_call, consumed_gas)?
         }
-        address if address == MODEXP_ADDRESS && fork >= Fork::Byzantium => modexp(
+        address if address == MODEXP_ADDRESS => modexp(
             &current_call_frame.calldata,
             gas_for_call,
             consumed_gas,
