@@ -1,4 +1,4 @@
-use ethrex_common::{constants::MAINNET_DEPOSIT_CONTRACT_ADDRESS, types::ChainConfig, Address};
+use ethrex_common::{constants::MAINNET_DEPOSIT_CONTRACT_ADDRESS, types::ChainConfig};
 use lazy_static::lazy_static;
 use serde::Deserialize;
 
