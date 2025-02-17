@@ -6,7 +6,11 @@ use ethrex_common::{
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode, error::RLPDecodeError};
 use ethrex_storage::{error::StoreError, Store};
 use ethrex_trie::{Nibbles, Node, TrieError, TrieState, EMPTY_TRIE_HASH};
-use std::{cmp::min, collections::BTreeMap, sync::Arc};
+use std::{
+    cmp::min,
+    collections::{BTreeMap, HashMap},
+    sync::Arc,
+};
 use tokio::{
     sync::{
         mpsc::{self, error::SendError, Receiver, Sender},
@@ -14,7 +18,7 @@ use tokio::{
     },
     time::Instant,
 };
-use tracing::{debug, info, warn};
+use tracing::{debug, error, info, warn};
 
 use crate::{
     kademlia::KademliaTable,
@@ -46,6 +50,14 @@ pub struct SyncManager {
     /// Syncing beyond this pivot should re-enable snap-sync (as we will not have that state stored)
     /// TODO: Reorgs
     last_snap_pivot: u64,
+    /// The `forkchoice_update` and `new_payload` methods require the `latest_valid_hash`
+    /// when processing an invalid payload. To provide this, we must track invalid chains.
+    ///
+    /// We only store the last known valid head upon encountering a bad block,
+    /// rather than tracking every subsequent invalid block.
+    ///
+    /// This map stores the bad block hash with and latest valid block hash of the chain corresponding to the bad block
+    pub invalid_ancestors: HashMap<BlockHash, BlockHash>,
 }
 
 impl SyncManager {
@@ -54,6 +66,7 @@ impl SyncManager {
             sync_mode,
             peers: PeerHandler::new(peer_table),
             last_snap_pivot: 0,
+            invalid_ancestors: HashMap::new(),
         }
     }
 
@@ -65,6 +78,7 @@ impl SyncManager {
             sync_mode: SyncMode::Full,
             peers: PeerHandler::new(dummy_peer_table),
             last_snap_pivot: 0,
+            invalid_ancestors: HashMap::new(),
         }
     }
 
@@ -111,6 +125,12 @@ impl SyncManager {
                 current_head = last_header;
             }
         }
+
+        let pending_block = match store.get_pending_block(sync_head) {
+            Ok(res) => res,
+            Err(e) => return Err(e.into()),
+        };
+
         loop {
             debug!("Requesting Block Headers from {current_head}");
             // Request Block Headers from Peer
@@ -123,12 +143,23 @@ impl SyncManager {
                     debug!(
                         "Received {} block headers| Last Number: {}",
                         block_headers.len(),
-                        block_headers.last().as_ref().unwrap().number
+                        block_headers.last().as_ref().unwrap().number,
                     );
                     let mut block_hashes = block_headers
                         .iter()
                         .map(|header| header.compute_block_hash())
                         .collect::<Vec<_>>();
+                    let last_header = block_headers.last().unwrap().clone();
+
+                    // If we have a pending block from new_payload request
+                    // attach it to the end if it matches the parent_hash of the latest received header
+                    if let Some(ref block) = pending_block {
+                        if block.header.parent_hash == last_header.compute_block_hash() {
+                            block_hashes.push(block.hash());
+                            block_headers.push(block.header.clone());
+                        }
+                    }
+
                     // Check if we already found the sync head
                     let sync_head_found = block_hashes.contains(&sync_head);
                     // Update current fetch head if needed
@@ -141,9 +172,8 @@ impl SyncManager {
                             store.set_header_download_checkpoint(current_head)?;
                         } else {
                             // If the sync head is less than 64 blocks away from our current head switch to full-sync
-                            let last_header_number = block_headers.last().unwrap().number;
                             let latest_block_number = store.get_latest_block_number()?;
-                            if last_header_number.saturating_sub(latest_block_number)
+                            if last_header.number.saturating_sub(latest_block_number)
                                 < MIN_FULL_BLOCKS as u64
                             {
                                 // Too few blocks for a snap sync, switching to full sync
@@ -217,7 +247,13 @@ impl SyncManager {
             }
             SyncMode::Full => {
                 // full-sync: Fetch all block bodies and execute them sequentially to build the state
-                download_and_run_blocks(all_block_hashes, self.peers.clone(), store.clone()).await?
+                download_and_run_blocks(
+                    all_block_hashes,
+                    self.peers.clone(),
+                    store.clone(),
+                    &mut self.invalid_ancestors,
+                )
+                .await?
             }
         }
         Ok(())
@@ -230,7 +266,9 @@ async fn download_and_run_blocks(
     mut block_hashes: Vec<BlockHash>,
     peers: PeerHandler,
     store: Store,
+    invalid_ancestors: &mut HashMap<BlockHash, BlockHash>,
 ) -> Result<(), SyncError> {
+    let mut last_valid_hash = H256::default();
     loop {
         debug!("Requesting Block Bodies ");
         if let Some(block_bodies) = peers.request_block_bodies(block_hashes.clone()).await {
@@ -247,11 +285,12 @@ async fn download_and_run_blocks(
                 let number = header.number;
                 let block = Block::new(header, body);
                 if let Err(error) = ethrex_blockchain::add_block(&block, &store) {
-                    warn!("Failed to add block during FullSync: {error}");
+                    invalid_ancestors.insert(hash, last_valid_hash);
                     return Err(error.into());
                 }
                 store.set_canonical_block(number, hash)?;
                 store.update_latest_block_number(number)?;
+                last_valid_hash = hash;
             }
             debug!("Executed & stored {} blocks", block_bodies_len);
             // Check if we need to ask for another batch

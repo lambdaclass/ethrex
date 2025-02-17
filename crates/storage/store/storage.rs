@@ -711,6 +711,14 @@ impl Store {
         self.engine.get_canonical_block_hash(block_number)
     }
 
+    pub fn get_latest_canonical_block_hash(&self) -> Result<Option<BlockHash>, StoreError> {
+        let latest_block_number = match self.engine.get_latest_block_number() {
+            Ok(n) => n.ok_or(StoreError::MissingLatestBlockNumber)?,
+            Err(e) => return Err(e),
+        };
+        self.get_canonical_block_hash(latest_block_number)
+    }
+
     /// Marks a block number as not having any canonical blocks associated with it.
     /// Used for reorgs.
     /// Note: Should we also remove all others up to the head here?

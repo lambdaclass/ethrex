@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use ethrex_common::{
     types::{Block, BlockHash, BlockHeader, BlockNumber},
     H256,
@@ -20,6 +22,7 @@ use crate::{
 /// If the fork choice state is applied correctly, the head block header is returned.
 pub fn apply_fork_choice(
     store: &Store,
+    invalid_ancestors: HashMap<BlockHash, BlockHash>,
     head_hash: H256,
     safe_hash: H256,
     finalized_hash: H256,
@@ -28,8 +31,10 @@ pub fn apply_fork_choice(
         return Err(InvalidForkChoice::InvalidHeadHash);
     }
 
-    // We get the block bodies even if we only use headers them so we check that they are
-    // stored too.
+    // Check if the block has already been invalidated
+    if let Some(latest_valid_hash) = invalid_ancestors.get(&head_hash) {
+        return Err(InvalidForkChoice::InvalidAncestor(*latest_valid_hash));
+    }
 
     let finalized_res = if !finalized_hash.is_zero() {
         store.get_block_by_hash(finalized_hash)?
