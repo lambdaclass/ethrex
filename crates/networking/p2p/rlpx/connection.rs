@@ -189,7 +189,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
                     capabilities,
                 );
             }
-            if let Err(e) = self.connection_loop(sender, receiver).await {
+            if let Err(e) = self.connection_loop(sender, receiver, table.clone()).await {
                 self.connection_failed("Error during RLPx connection", e, table)
                     .await;
             }
@@ -316,10 +316,17 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
         &mut self,
         sender: mpsc::Sender<Message>,
         mut receiver: mpsc::Receiver<Message>,
+        table: Arc<Mutex<crate::kademlia::KademliaTable>>,
     ) -> Result<(), RLPxError> {
         self.init_peer_conn().await?;
         log_peer_debug(&self.node, "Started peer main loop");
         update_peer_conn_status(self.node, true).await;
+        table
+            .lock()
+            .await
+            .get_by_node_id_mut(self.node.node_id)
+            .unwrap()
+            .is_connected = true;
 
         // Subscribe this connection to the broadcasting channel.
         let mut broadcaster_receive = {
