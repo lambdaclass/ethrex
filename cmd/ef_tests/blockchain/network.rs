@@ -1,4 +1,4 @@
-use ethrex_common::types::ChainConfig;
+use ethrex_common::{constants::MAINNET_DEPOSIT_CONTRACT_ADDRESS, types::ChainConfig};
 use lazy_static::lazy_static;
 use serde::Deserialize;
 
@@ -43,11 +43,12 @@ lazy_static! {
     };
     pub static ref CANCUN_TO_PRAGUE_AT_15K_CONFIG: ChainConfig = ChainConfig {
         prague_time: Some(0x3a98),
+        deposit_contract_address: Some(*MAINNET_DEPOSIT_CONTRACT_ADDRESS),
         ..*CANCUN_CONFIG
     };
     pub static ref PRAGUE_CONFIG: ChainConfig = ChainConfig {
         prague_time: Some(0),
-        ..*CANCUN_CONFIG
+        ..*CANCUN_TO_PRAGUE_AT_15K_CONFIG
     };
 }
 
