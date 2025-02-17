@@ -443,7 +443,7 @@ pub fn get_state_transitions(
 
         account_updates.push(account_update);
     }
-    account_updates.retain(|x| !x.removed);
+    // account_updates.retain(|x| !x.removed);
 
     account_updates
 }

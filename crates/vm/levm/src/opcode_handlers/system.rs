@@ -53,6 +53,8 @@ impl VM {
             callee,
         );
 
+        let account_exists = self.db.account_exists(callee);
+
         let (is_delegation, eip7702_gas_consumed, code_address, bytecode) = eip7702_get_code(
             &mut self.cache,
             self.db.clone(),
@@ -72,6 +74,7 @@ impl VM {
             current_memory_size,
             address_was_cold,
             account_info.is_empty(),
+            account_exists,
             value_to_transfer,
             gas,
             gas_left,
