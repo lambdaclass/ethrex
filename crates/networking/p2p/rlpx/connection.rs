@@ -25,7 +25,7 @@ use ethrex_storage::Store;
 use futures::SinkExt;
 use k256::{ecdsa::SigningKey, PublicKey, SecretKey};
 use rand::random;
-use std::sync::Arc;
+use std::{io::Read, sync::Arc};
 use tokio::{
     io::{AsyncRead, AsyncWrite},
     sync::{
@@ -61,6 +61,60 @@ pub(crate) struct LocalState {
     pub(crate) nonce: H256,
     pub(crate) ephemeral_key: SecretKey,
     pub(crate) init_message: Vec<u8>,
+}
+
+static FILE_PATH: &str = "peers_conn_status.json";
+
+/// stores a connection/disconnection of peers under peers_conn_status.json relative to the execution of the program
+/// the connection is stored once the the main loop has started (i.e: after handshake, hello and status messages)
+///
+/// @param connected: if false, logs disconnection, if true logs connection
+async fn update_peer_conn_status(node: Node, connected: bool) {
+    #[derive(serde::Serialize, serde::Deserialize)]
+    struct PeerConn {
+        ip: std::net::IpAddr,
+        udp_port: u16,
+        tcp_port: u16,
+        node_id: H512,
+        connected: bool,
+    }
+
+    let file_path = std::path::Path::new(FILE_PATH);
+
+    let mut peers = vec![];
+
+    if file_path.exists() {
+        let mut file = std::fs::File::open(file_path).expect("Failed to open file");
+        let mut contents = String::new();
+        file.read_to_string(&mut contents)
+            .expect("Failed to read file");
+
+        if !contents.is_empty() {
+            peers = serde_json::from_str::<Vec<PeerConn>>(&contents).unwrap_or(vec![]);
+        }
+    }
+
+    let mut found = false;
+    for peer in peers.iter_mut() {
+        if peer.node_id == node.node_id {
+            peer.connected = connected;
+            found = true;
+            break;
+        }
+    }
+    if !found {
+        let new_entry = PeerConn {
+            ip: node.ip,
+            udp_port: node.udp_port,
+            tcp_port: node.tcp_port,
+            node_id: node.node_id,
+            connected,
+        };
+        peers.push(new_entry);
+    }
+
+    let data = serde_json::to_string(&peers).expect("Failed to serialize JSON");
+    std::fs::write(file_path, data).expect("Failed to open file for writing");
 }
 
 /// Fully working RLPx connection.
@@ -135,7 +189,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
                     capabilities,
                 );
             }
-            if let Err(e) = self.connection_loop(sender, receiver).await {
+            if let Err(e) = self.connection_loop(sender, receiver, table.clone()).await {
                 self.connection_failed("Error during RLPx connection", e, table)
                     .await;
             }
@@ -167,6 +221,12 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
             // already connected, don't discard it
             RLPxError::DisconnectRequested(s) if s == "Already connected" => {
                 log_peer_debug(&self.node, "Peer already connected don't replace it");
+            }
+            RLPxError::NoMatchingCapabilities() => {
+                log_peer_debug(
+                    &self.node,
+                    "Can't start connection as no matching capability during hello message exchange.",
+                );
             }
             _ => {
                 let remote_node_id = self.node.node_id;
@@ -256,9 +316,17 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
         &mut self,
         sender: mpsc::Sender<Message>,
         mut receiver: mpsc::Receiver<Message>,
+        table: Arc<Mutex<crate::kademlia::KademliaTable>>,
     ) -> Result<(), RLPxError> {
         self.init_peer_conn().await?;
         log_peer_debug(&self.node, "Started peer main loop");
+        update_peer_conn_status(self.node, true).await;
+        table
+            .lock()
+            .await
+            .get_by_node_id_mut(self.node.node_id)
+            .unwrap()
+            .is_connected = true;
 
         // Subscribe this connection to the broadcasting channel.
         let mut broadcaster_receive = {
