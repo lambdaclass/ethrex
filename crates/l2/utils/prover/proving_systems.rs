@@ -2,35 +2,42 @@ use crate::proposer::errors::ProverServerError;
 use serde::{Deserialize, Serialize};
 use std::fmt::Debug;
 
+#[cfg(feature = "risc0")]
 use risc0_zkvm::sha::Digestible;
 use sp1_sdk::{ExecutionReport as SP1ExecutionReport, HashableKey, SP1PublicValues};
 
 #[derive(Debug, Clone, Copy, Hash, PartialEq, Eq, Serialize, Deserialize)]
 /// Enum used to identify the different proving systems.
 pub enum ProverType {
+#[cfg(feature = "risc0")]
     RISC0,
     SP1,
+    #[cfg(feature = "pico")]
+    Pico,
 }
 
 /// Used to iterate through all the possible proving systems
 impl ProverType {
     pub fn all() -> &'static [ProverType] {
-        &[ProverType::RISC0, ProverType::SP1]
+        &[ ProverType::SP1]
     }
 }
 
+#[cfg(feature = "risc0")]
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct Risc0Proof {
     pub receipt: Box<risc0_zkvm::Receipt>,
     pub prover_id: Vec<u32>,
 }
 
+#[cfg(feature = "risc0")]
 pub struct Risc0ContractData {
     pub block_proof: Vec<u8>,
     pub image_id: Vec<u8>,
     pub journal_digest: Vec<u8>,
 }
 
+#[cfg(feature = "risc0")]
 impl Risc0Proof {
     // 8 times u32
     const IMAGE_ID_SIZE: usize = 8;
@@ -143,10 +150,43 @@ impl Sp1Proof {
     }
 }
 
+#[cfg(feature = "pico")]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct PicoProof {
+    pub constraints: Vec<u8>,
+    pub groth16_witness: Vec<u8>,
+}
+
+#[cfg(feature = "pico")]
+impl Debug for PicoProof {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("PicoProof")
+            .field("constraints", &self.constraints)
+            .field("groth16_witness", &self.groth16_witness)
+            .finish()
+    }
+}
+
+#[cfg(feature = "pico")]
+impl PicoProof {
+    pub fn new(
+        proof: sp1_sdk::SP1ProofWithPublicValues,
+        verifying_key: sp1_sdk::SP1VerifyingKey,
+    ) -> Self {
+        PicoProof {
+            constraints: Vec::new(),
+            groth16_witness: Vec::new(),
+        }
+    }
+}
+
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub enum ProvingOutput {
+#[cfg(feature = "risc0")]
     RISC0(Risc0Proof),
     SP1(Sp1Proof),
+    #[cfg(feature = "pico")]
+    Pico(PicoProof),
 }
 
 #[derive(Clone, Debug)]

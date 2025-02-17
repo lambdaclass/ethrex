@@ -10,8 +10,8 @@ use ethrex_prover_lib::prover::create_prover;
 use ethrex_vm::execution_db::ToExecDB;
 use zkvm_interface::io::ProgramInput;
 
-#[cfg(not(any(feature = "sp1", feature = "risc0")))]
-compile_error!("Choose prover backends (sp1, risc0).");
+#[cfg(not(any(feature = "sp1", feature = "risc0", feature = "pico")))]
+compile_error!("Choose prover backends (sp1, risc0, pico).");
 
 #[derive(Parser, Debug)]
 struct Args {
@@ -84,6 +84,8 @@ async fn main() {
     let mut prover = create_prover(ProverType::SP1);
     #[cfg(feature = "risc0")]
     let mut prover = create_prover(ProverType::RISC0);
+    #[cfg(feature = "pico")]
+    let mut prover = create_prover(ProverType::Pico);
 
     let now = std::time::Instant::now();
     if prove {

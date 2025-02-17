@@ -47,6 +47,7 @@ bincode = "1.3.3"
 
 [features]
 risc0 = ["zkvm_interface/build_risc0", "ethrex-prover/build_risc0"]
-sp1 = ["zkvm_interface/build_sp1", "zkvm_interface/build_sp1"]
+sp1 = ["zkvm_interface/build_sp1", "ethrex-prover/build_sp1"]
+pico = ["zkvm_interface/build_pico", "ethrex-prover/build_pico", "ethrex-l2/pico"]
 gpu = ["ethrex-prover/gpu"]
 l2 = ["ethrex-vm/l2"]

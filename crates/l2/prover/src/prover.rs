@@ -1,20 +1,35 @@
+use std::{env::temp_dir, fs::read_to_string};
+
 use crate::errors::ProverError;
+#[cfg(feature = "build_risc0")]
+use ethrex_l2::prover::proving_systems::Risc0Proof;
+#[cfg(feature = "build_risc0")]
+use ethrex_l2::utils::prover::proving_systems::Risc0Proof;
 use ethrex_l2::utils::prover::proving_systems::{
-    ExecuteOutput, ProverType, ProvingOutput, Risc0Proof, Sp1Proof,
+    ExecuteOutput, PicoProof, ProverType, ProvingOutput, Sp1Proof,
 };
+use pico_sdk::vk_client::KoalaBearProveVKClient;
 use tracing::info;
 
 // risc0
+#[cfg(feature = "build_risc0")]
 use risc0_zkvm::{default_prover, ExecutorEnv, ProverOpts};
+#[cfg(feature = "build_risc0")]
+use zkvm_interface::methods::{ZKVM_RISC0_PROGRAM_ELF, ZKVM_RISC0_PROGRAM_ID};
 use zkvm_interface::{
     io::{ProgramInput, ProgramOutput},
+    methods::ZKVM_PICO_PROGRAM_ELF,
     methods::ZKVM_SP1_PROGRAM_ELF,
-    methods::{ZKVM_RISC0_PROGRAM_ELF, ZKVM_RISC0_PROGRAM_ID},
 };
 
 // sp1
 use sp1_sdk::{ProverClient, SP1Stdin};
 
+// pico
+#[cfg(feature = "build_pico")]
+use pico_sdk::client::DefaultProverClient;
+
+#[cfg(feature = "build_risc0")]
 /// Structure that wraps all the needed components for the RISC0 proving system
 pub struct Risc0Prover<'a> {
     elf: &'a [u8],
@@ -22,6 +37,7 @@ pub struct Risc0Prover<'a> {
     pub stdout: Vec<u8>,
 }
 
+#[cfg(feature = "build_risc0")]
 impl<'a> Default for Risc0Prover<'a> {
     fn default() -> Self {
         Self::new()
@@ -39,11 +55,27 @@ impl<'a> Default for Sp1Prover<'a> {
     }
 }
 
+#[cfg(feature = "build_pico")]
+/// Structure that wraps all the needed components for the SP1 proving system
+pub struct PicoProver<'a> {
+    elf: &'a [u8],
+}
+
+#[cfg(feature = "build_pico")]
+impl<'a> Default for PicoProver<'a> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// Creates a prover depending on the [ProverType]
 pub fn create_prover(prover_type: ProverType) -> Box<dyn Prover> {
     match prover_type {
+        #[cfg(feature = "build_risc0")]
         ProverType::RISC0 => Box::new(Risc0Prover::new()),
         ProverType::SP1 => Box::new(Sp1Prover::new()),
+        #[cfg(feature = "build_pico")]
+        ProverType::Pico => Box::new(PicoProver::new()),
     }
 }
 
@@ -60,6 +92,7 @@ pub trait Prover {
     fn get_gas(&self) -> Result<u64, Box<dyn std::error::Error>>;
 }
 
+#[cfg(feature = "build_risc0")]
 impl<'a> Risc0Prover<'a> {
     pub fn new() -> Self {
         Self {
@@ -73,14 +106,15 @@ impl<'a> Risc0Prover<'a> {
         &self,
         proving_output: &ProvingOutput,
     ) -> Result<ProgramOutput, Box<dyn std::error::Error>> {
-        let commitment = match proving_output {
-            ProvingOutput::RISC0(proof) => proof.receipt.journal.decode()?,
-            ProvingOutput::SP1(_) => return Err(Box::new(ProverError::IncorrectProverType)),
+        let ProvingOutput::RISC0(proof) = proving_output else {
+            return Err(Box::new(ProverError::IncorrectProverType));
         };
+        let commitment = proof.receipt.journal.decode()?;
         Ok(commitment)
     }
 }
 
+#[cfg(feature = "build_risc0")]
 impl<'a> Prover for Risc0Prover<'a> {
     fn prove(&mut self, input: ProgramInput) -> Result<ProvingOutput, Box<dyn std::error::Error>> {
         let env = ExecutorEnv::builder()
@@ -114,11 +148,10 @@ impl<'a> Prover for Risc0Prover<'a> {
 
     fn verify(&self, proving_output: &ProvingOutput) -> Result<(), Box<dyn std::error::Error>> {
         // Verify the proof.
-        match proving_output {
-            ProvingOutput::RISC0(proof) => proof.receipt.verify(self.id)?,
-            ProvingOutput::SP1(_) => return Err(Box::new(ProverError::IncorrectProverType)),
-        }
-
+        let ProvingOutput::RISC0(proof) = proving_output else {
+            return Err(Box::new(ProverError::IncorrectProverType));
+        };
+        proof.receipt.verify(self.id)?;
         Ok(())
     }
 
@@ -174,15 +207,70 @@ impl<'a> Prover for Sp1Prover<'a> {
 
     fn verify(&self, proving_output: &ProvingOutput) -> Result<(), Box<dyn std::error::Error>> {
         // Verify the proof.
-        match proving_output {
-            ProvingOutput::SP1(complete_proof) => {
-                let client = ProverClient::from_env();
-                client.verify(&complete_proof.proof, &complete_proof.vk)?;
-            }
-            ProvingOutput::RISC0(_) => return Err(Box::new(ProverError::IncorrectProverType)),
-        }
+        let ProvingOutput::SP1(complete_proof) = proving_output else {
+            return Err(Box::new(ProverError::IncorrectProverType));
+        };
+        let client = ProverClient::from_env();
+        client.verify(&complete_proof.proof, &complete_proof.vk)?;
 
         Ok(())
+    }
+
+    fn get_gas(&self) -> Result<u64, Box<dyn std::error::Error>> {
+        todo!()
+    }
+}
+
+#[cfg(feature = "build_pico")]
+impl<'a> PicoProver<'a> {
+    pub fn new() -> Self {
+        Self {
+            elf: ZKVM_PICO_PROGRAM_ELF,
+        }
+    }
+}
+
+#[cfg(feature = "build_pico")]
+impl<'a> Prover for PicoProver<'a> {
+    fn prove(&mut self, input: ProgramInput) -> Result<ProvingOutput, Box<dyn std::error::Error>> {
+        let client = DefaultProverClient::new(self.elf);
+
+        let stdin_builder = client.get_stdin_builder();
+        stdin_builder.borrow_mut().write(&input);
+
+        let output_dir = temp_dir();
+        let constraints_path = output_dir.join("constraints.json");
+        let groth16_witness_path = output_dir.join("groth16_witness.json");
+
+        let proof = client.prove(output_dir)?;
+
+        let constraints_json: serde_json::Value =
+            serde_json::from_str(&read_to_string(constraints_path)?)?;
+        let groth16_witness_json: serde_json::Value =
+            serde_json::from_str(&read_to_string(groth16_witness_path)?)?;
+
+        let mut constraints = Vec::new();
+        let mut groth16_witness = Vec::new();
+
+        serde_json::to_writer(&mut constraints, &constraints_json)?;
+        serde_json::to_writer(&mut groth16_witness, &groth16_witness_json)?;
+
+        info!("Successfully generated PicoProof.");
+        Ok(ProvingOutput::Pico(PicoProof {
+            constraints,
+            groth16_witness,
+        }))
+    }
+
+    fn execute(
+        &mut self,
+        input: ProgramInput,
+    ) -> Result<ExecuteOutput, Box<dyn std::error::Error>> {
+        todo!()
+    }
+
+    fn verify(&self, proving_output: &ProvingOutput) -> Result<(), Box<dyn std::error::Error>> {
+        todo!()
     }
 
     fn get_gas(&self) -> Result<u64, Box<dyn std::error::Error>> {
