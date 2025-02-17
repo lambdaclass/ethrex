@@ -857,7 +857,11 @@ pub fn call(
     } else {
         0
     };
-    let value_to_empty_account = if address_is_empty && !value_to_transfer.is_zero() {
+    #[allow(clippy::if_same_then_else)]
+    let value_to_empty_account = if address_is_empty && fork < Fork::SpuriousDragon {
+        CALL_TO_EMPTY_ACCOUNT
+    // changed here https://eips.ethereum.org/EIPS/eip-161
+    } else if address_is_empty && !value_to_transfer.is_zero() && fork >= Fork::SpuriousDragon {
         CALL_TO_EMPTY_ACCOUNT
     } else {
         0
