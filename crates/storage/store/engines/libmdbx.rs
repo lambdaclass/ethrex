@@ -5,6 +5,8 @@ use crate::rlp::{
     AccountCodeHashRLP, AccountCodeRLP, BlockBodyRLP, BlockHashRLP, BlockHeaderRLP, BlockRLP,
     BlockTotalDifficultyRLP, ReceiptRLP, Rlp, TransactionHashRLP, TupleRLP,
 };
+use crate::trie_db::libmdbx::LibmdbxTrieDB;
+use crate::trie_db::libmdbx_dupsort::LibmdbxDupsortTrieDB;
 use anyhow::Result;
 use bytes::Bytes;
 use ethereum_types::{H256, U256};
@@ -14,7 +16,7 @@ use ethrex_common::types::{
 };
 use ethrex_rlp::decode::RLPDecode;
 use ethrex_rlp::encode::RLPEncode;
-use ethrex_trie::{LibmdbxDupsortTrieDB, LibmdbxTrieDB, Nibbles, Trie};
+use ethrex_trie::{Nibbles, Trie};
 use libmdbx::orm::{Decodable, Encodable, Table};
 use libmdbx::{
     dupsort,

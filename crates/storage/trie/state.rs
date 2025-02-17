@@ -5,7 +5,7 @@ use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
 
 use super::db::TrieDB;
 
-/// Libmdbx database representing the trie state
+/// Database representing the trie state
 /// It contains a table mapping node hashes to rlp encoded nodes
 /// All nodes are stored in the DB and no node is ever removed
 use super::{node::Node, node_hash::NodeHash};
