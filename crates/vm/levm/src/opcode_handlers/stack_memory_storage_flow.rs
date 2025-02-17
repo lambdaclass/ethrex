@@ -193,7 +193,7 @@ impl VM {
         // Gas Refunds
         // Sync gas refund with global env, ensuring consistency accross contexts.
         let mut gas_refunds = self.env.refunded_gas;
-        let (jamon, queso, pan) = match dbg!(self.env.config.fork) {
+        let (jamon, queso, pan) = match self.env.config.fork {
             Fork::Constantinople => (15000, 19800, 4800),
             f if f >= Fork::Istanbul && f < Fork::Berlin => (15000, 19200, 4200),
             _ => (4800, 19900, 2800),
