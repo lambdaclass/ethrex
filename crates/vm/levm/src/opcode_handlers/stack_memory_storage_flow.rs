@@ -209,32 +209,64 @@ impl VM {
             || self.env.config.fork >= Fork::Istanbul)
             && new_storage_slot_value != storage_slot.current_value
         {
-            if !storage_slot.original_value.is_zero()
-                && !storage_slot.current_value.is_zero()
-                && new_storage_slot_value.is_zero()
-            {
-                gas_refunds = gas_refunds
-                    .checked_add(jamon)
-                    .ok_or(VMError::GasRefundsOverflow)?;
-            }
-
-            if !storage_slot.original_value.is_zero() && storage_slot.current_value.is_zero() {
-                gas_refunds = gas_refunds
-                    .checked_sub(jamon)
-                    .ok_or(VMError::GasRefundsUnderflow)?;
-            }
-
-            if new_storage_slot_value == storage_slot.original_value {
-                if storage_slot.original_value.is_zero() {
+            if storage_slot.current_value == storage_slot.original_value {
+                if storage_slot.original_value != U256::zero()
+                    && new_storage_slot_value == U256::zero()
+                {
                     gas_refunds = gas_refunds
-                        .checked_add(queso)
-                        .ok_or(VMError::GasRefundsOverflow)?;
-                } else {
-                    gas_refunds = gas_refunds
-                        .checked_add(pan)
+                        .checked_add(jamon)
                         .ok_or(VMError::GasRefundsOverflow)?;
                 }
+            } else {
+                if storage_slot.original_value != U256::zero() {
+                    if storage_slot.current_value == U256::zero() {
+                        gas_refunds = gas_refunds
+                            .checked_sub(jamon)
+                            .ok_or(VMError::GasRefundsUnderflow)?;
+                    } else if new_storage_slot_value == U256::zero() {
+                        gas_refunds = gas_refunds
+                            .checked_add(jamon)
+                            .ok_or(VMError::GasRefundsUnderflow)?;
+                    }
+                }
+                if new_storage_slot_value == storage_slot.original_value {
+                    if storage_slot.original_value == U256::zero() {
+                        gas_refunds = gas_refunds
+                            .checked_add(queso)
+                            .ok_or(VMError::GasRefundsUnderflow)?;
+                    } else {
+                        gas_refunds = gas_refunds
+                            .checked_add(pan)
+                            .ok_or(VMError::GasRefundsUnderflow)?;
+                    }
+                }
             }
+            // if !storage_slot.original_value.is_zero()
+            //     && !storage_slot.current_value.is_zero()
+            //     && new_storage_slot_value.is_zero()
+            // {
+            //     gas_refunds = gas_refunds
+            //         .checked_add(jamon)
+            //         .ok_or(VMError::GasRefundsOverflow)?;
+            // }
+
+            // if !storage_slot.original_value.is_zero() && storage_slot.current_value.is_zero() {
+            //     gas_refunds = gas_refunds
+            //         .checked_sub(jamon)
+            //         .ok_or(VMError::GasRefundsUnderflow)?;
+            // }
+
+            // if new_storage_slot_value == storage_slot.original_value {
+            //     if storage_slot.original_value.is_zero() {
+            //         gas_refunds = gas_refunds
+            //             .checked_add(queso)
+            //             .ok_or(VMError::GasRefundsOverflow)?;
+            //     } else {
+            //         gas_refunds = gas_refunds
+            //             .checked_add(pan)
+            //             .ok_or(VMError::GasRefundsOverflow)?;
+            //     }
+            // }
         }
 
         self.env.refunded_gas = gas_refunds;
