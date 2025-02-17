@@ -857,6 +857,7 @@ pub fn call(
     } else {
         0
     };
+
     // https://eips.ethereum.org/EIPS/eip-161
     let value_to_empty_account = if (address_is_empty && fork < Fork::SpuriousDragon)
         || address_is_empty && !value_to_transfer.is_zero() && fork >= Fork::SpuriousDragon
@@ -865,6 +866,7 @@ pub fn call(
     } else {
         0
     };
+
     let call_gas_costs = memory_expansion_cost
         .checked_add(address_access_cost)
         .ok_or(OutOfGasError::GasCostOverflow)?
