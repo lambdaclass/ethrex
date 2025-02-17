@@ -397,9 +397,7 @@ pub(crate) fn access_list_inspector(
             tx_env.caller.create(nonce)
         }
     };
-    Ok(AccessListInspector::new(
-        current_access_list,
-    ))
+    Ok(AccessListInspector::new(current_access_list))
 }
 
 /// Calculating gas_price according to EIP-1559 rules
