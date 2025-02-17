@@ -244,11 +244,7 @@ pub fn build_payload(
     apply_system_operations(&mut context)?;
     apply_withdrawals(&mut context)?;
     fill_transactions(&mut context)?;
-    cfg_if::cfg_if! {
-        if #[cfg(not(feature = "l2"))] {
-            extract_requests(&mut context)?;
-        }
-    }
+    extract_requests(&mut context)?;
     finalize_payload(&mut context)?;
     Ok((context.blobs_bundle, context.block_value))
 }
