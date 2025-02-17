@@ -198,8 +198,9 @@ impl PeerHandler {
         None
     }
 
-    /// Requests an account range from any suitable peer given the state trie's root and the starting hash (the limit hash will be the maximum value of H256)
+    /// Requests an account range from any suitable peer given the state trie's root and the starting hash and the limit hash.
     /// Will also return a boolean indicating if there is more state to be fetched towards the right of the trie
+    /// (Note that the boolean will be true even if the remaining state is ouside the boundary set by the limit hash)
     /// Returns the account range or None if:
     /// - There are no available peers (the node just started up or was rejected by all other nodes)
     /// - No peer returned a valid response in the given time and retry limits
@@ -207,6 +208,7 @@ impl PeerHandler {
         &self,
         state_root: H256,
         start: H256,
+        limit: H256,
     ) -> Option<(Vec<H256>, Vec<AccountState>, bool)> {
         for _ in 0..REQUEST_RETRY_ATTEMPTS {
             let request_id = rand::random();
@@ -214,7 +216,7 @@ impl PeerHandler {
                 id: request_id,
                 root_hash: state_root,
                 starting_hash: start,
-                limit_hash: HASH_MAX,
+                limit_hash: limit,
                 response_bytes: MAX_RESPONSE_BYTES,
             });
             let peer = self.get_peer_channel_with_retry(Capability::Snap).await?;

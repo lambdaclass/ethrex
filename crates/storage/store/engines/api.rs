@@ -1,12 +1,12 @@
 use bytes::Bytes;
 use ethereum_types::{H256, U256};
 use ethrex_common::types::{
-    BlobsBundle, Block, BlockBody, BlockHash, BlockHeader, BlockNumber, ChainConfig, Index,
-    Receipt, Transaction,
+    AccountState, BlobsBundle, Block, BlockBody, BlockHash, BlockHeader, BlockNumber, ChainConfig,
+    Index, Receipt, Transaction,
 };
 use std::{fmt::Debug, panic::RefUnwindSafe};
 
-use crate::error::StoreError;
+use crate::{error::StoreError, STATE_TRIE_SEGMENTS};
 use ethrex_trie::{Nibbles, Trie};
 
 pub trait StoreEngine: Debug + Send + Sync + RefUnwindSafe {
@@ -258,17 +258,16 @@ pub trait StoreEngine: Debug + Send + Sync + RefUnwindSafe {
     /// Gets the hash of the last header downloaded during a snap sync
     fn get_header_download_checkpoint(&self) -> Result<Option<BlockHash>, StoreError>;
 
-    /// Sets the current state root of the state trie being rebuilt during snap sync
-    fn set_state_trie_root_checkpoint(&self, current_root: H256) -> Result<(), StoreError>;
-
-    /// Gets the current state root of the state trie being rebuilt during snap sync
-    fn get_state_trie_root_checkpoint(&self) -> Result<Option<H256>, StoreError>;
-
     /// Sets the last key fetched from the state trie being fetched during snap sync
-    fn set_state_trie_key_checkpoint(&self, last_key: H256) -> Result<(), StoreError>;
+    fn set_state_trie_key_checkpoint(
+        &self,
+        last_keys: [H256; STATE_TRIE_SEGMENTS],
+    ) -> Result<(), StoreError>;
 
     /// Gets the last key fetched from the state trie being fetched during snap sync
-    fn get_state_trie_key_checkpoint(&self) -> Result<Option<H256>, StoreError>;
+    fn get_state_trie_key_checkpoint(
+        &self,
+    ) -> Result<Option<[H256; STATE_TRIE_SEGMENTS]>, StoreError>;
 
     /// Sets the storage trie paths in need of healing, grouped by hashed address
     fn set_storage_heal_paths(&self, accounts: Vec<(H256, Vec<Nibbles>)>)
@@ -290,4 +289,52 @@ pub trait StoreEngine: Debug + Send + Sync + RefUnwindSafe {
     fn is_synced(&self) -> Result<bool, StoreError>;
 
     fn update_sync_status(&self, status: bool) -> Result<(), StoreError>;
+
+    /// Write an account batch into the current state snapshot
+    fn write_snapshot_account_batch(
+        &self,
+        account_hashes: Vec<H256>,
+        account_states: Vec<AccountState>,
+    ) -> Result<(), StoreError>;
+
+    /// Write a storage batch into the current storage snapshot
+    fn write_snapshot_storage_batch(
+        &self,
+        account_hash: H256,
+        storage_keys: Vec<H256>,
+        storage_values: Vec<U256>,
+    ) -> Result<(), StoreError>;
+
+    /// Set the latest root of the rebuilt state trie and the last downloaded hashes from each segment
+    fn set_state_trie_rebuild_checkpoint(
+        &self,
+        checkpoint: (H256, [H256; STATE_TRIE_SEGMENTS]),
+    ) -> Result<(), StoreError>;
+
+    /// Get the latest root of the rebuilt state trie and the last downloaded hashes from each segment
+    fn get_state_trie_rebuild_checkpoint(
+        &self,
+    ) -> Result<Option<(H256, [H256; STATE_TRIE_SEGMENTS])>, StoreError>;
+
+    /// Get the accont hashes and roots of the storage tries awaiting rebuild
+    fn set_storage_trie_rebuild_pending(
+        &self,
+        pending: Vec<(H256, H256)>,
+    ) -> Result<(), StoreError>;
+
+    /// Get the accont hashes and roots of the storage tries awaiting rebuild
+    fn get_storage_trie_rebuild_pending(&self) -> Result<Option<Vec<(H256, H256)>>, StoreError>;
+
+    /// Clears the state and storage snapshots
+    fn clear_snapshot(&self) -> Result<(), StoreError>;
+
+    /// Reads the next `MAX_SNAPSHOT_READS` accounts from the state snapshot as from the `start` hash
+    fn read_account_snapshot(&self, start: H256) -> Result<Vec<(H256, AccountState)>, StoreError>;
+
+    /// Reads the next `MAX_SNAPSHOT_READS` elements from the storage snapshot as from the `start` storage key
+    fn read_storage_snapshot(
+        &self,
+        start: H256,
+        account_hash: H256,
+    ) -> Result<Vec<(H256, U256)>, StoreError>;
 }
