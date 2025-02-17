@@ -19,7 +19,8 @@ restart: restart-local-l1 deploy-l1 restart-l2 ## 🔄 Restarts the localnet
 
 # CLI
 cli: ## 🛠️ Installs the L2 Lambda ethrex CLI
-	cargo install --path ${ethrex_PATH}/cmd/ethrex_l2/ --force
+	cd ${ethrex_PATH}/cmd/ethrex_l2 && \
+	cargo install --path . --force
 
 update-cli-contracts: ## 📜 Update the CLI's config contracts
 	@if [ -z "$$C" ]; then \
@@ -67,6 +68,7 @@ init-l1: ## 🚀 Initializes an L1 Lambda ethrex Client
 	--http.port ${L1_PORT} \
 	--http.addr 0.0.0.0 \
 	--authrpc.port ${L1_AUTH_PORT} \
+	--dev \
 	--datadir ${ethrex_L1_DEV_LIBMDBX}
 
 init-l1-levm: ## 🚀 Initializes an L1 Lambda ethrex Client with LEVM
@@ -79,6 +81,7 @@ init-l1-levm: ## 🚀 Initializes an L1 Lambda ethrex Client with LEVM
     --http.addr 0.0.0.0 \
     --authrpc.port ${L1_AUTH_PORT} \
 	--evm levm \
+	--dev \
     --datadir ${ethrex_L1_DEV_LIBMDBX}
 
 down-local-l1: ## 🛑 Shuts down the L1 Lambda ethrex Client
