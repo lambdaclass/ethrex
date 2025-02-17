@@ -290,13 +290,7 @@ pub fn beacon_root_contract_call_levm(
 
     let calldata = Bytes::copy_from_slice(beacon_root.as_bytes()).into();
 
-    generic_system_call(
-        *CONTRACT_ADDRESS,
-        calldata,
-        store_wrapper,
-        header,
-        config,
-    )
+    generic_system_call(*CONTRACT_ADDRESS, calldata, store_wrapper, header, config)
 }
 
 /// Calls the EIP-2935 process block hashes history system call contract
