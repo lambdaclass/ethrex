@@ -193,11 +193,12 @@ impl VM {
         // Gas Refunds
         // Sync gas refund with global env, ensuring consistency accross contexts.
         let mut gas_refunds = self.env.refunded_gas;
-        let (jamon, queso, pan) = match self.env.config.fork {
-            Fork::Constantinople => (15000, 19800, 4800),
-            f if f >= Fork::Istanbul && f < Fork::Berlin => (15000, 19200, 4200),
-            _ => (4800, 19900, 2800),
-        };
+        let (remove_slot_cost, restore_empty_slot_cost, restore_slot_cost) =
+            match self.env.config.fork {
+                Fork::Constantinople => (15000, 19800, 4800),
+                f if f >= Fork::Istanbul && f < Fork::Berlin => (15000, 19200, 4200),
+                _ => (4800, 19900, 2800),
+            };
 
         if self.env.config.fork < Fork::Istanbul && self.env.config.fork != Fork::Constantinople {
             if !storage_slot.current_value.is_zero() && new_storage_slot_value.is_zero() {
@@ -214,29 +215,29 @@ impl VM {
                     && new_storage_slot_value == U256::zero()
                 {
                     gas_refunds = gas_refunds
-                        .checked_add(jamon)
+                        .checked_add(remove_slot_cost)
                         .ok_or(VMError::GasRefundsOverflow)?;
                 }
             } else {
                 if storage_slot.original_value != U256::zero() {
                     if storage_slot.current_value == U256::zero() {
                         gas_refunds = gas_refunds
-                            .checked_sub(jamon)
+                            .checked_sub(remove_slot_cost)
                             .ok_or(VMError::GasRefundsUnderflow)?;
                     } else if new_storage_slot_value == U256::zero() {
                         gas_refunds = gas_refunds
-                            .checked_add(jamon)
+                            .checked_add(remove_slot_cost)
                             .ok_or(VMError::GasRefundsUnderflow)?;
                     }
                 }
                 if new_storage_slot_value == storage_slot.original_value {
                     if storage_slot.original_value == U256::zero() {
                         gas_refunds = gas_refunds
-                            .checked_add(queso)
+                            .checked_add(restore_empty_slot_cost)
                             .ok_or(VMError::GasRefundsUnderflow)?;
                     } else {
                         gas_refunds = gas_refunds
-                            .checked_add(pan)
+                            .checked_add(restore_slot_cost)
                             .ok_or(VMError::GasRefundsUnderflow)?;
                     }
                 }
