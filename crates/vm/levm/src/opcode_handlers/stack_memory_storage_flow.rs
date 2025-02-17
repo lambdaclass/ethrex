@@ -195,8 +195,11 @@ impl VM {
         let mut gas_refunds = self.env.refunded_gas;
         let (remove_slot_cost, restore_empty_slot_cost, restore_slot_cost) =
             match self.env.config.fork {
+                // https://eips.ethereum.org/EIPS/eip-1283#specification
                 Fork::Constantinople => (15000, 19800, 4800),
+                // https://eips.ethereum.org/EIPS/eip-2200
                 f if f >= Fork::Istanbul && f < Fork::Berlin => (15000, 19200, 4200),
+                // https://eips.ethereum.org/EIPS/eip-2929
                 _ => (4800, 19900, 2800),
             };
 
