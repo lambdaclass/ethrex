@@ -177,6 +177,10 @@ pub const G1_POINT_AT_INFINITY: [u8; 128] = [0_u8; 128];
 pub const G2_POINT_AT_INFINITY: [u8; 256] = [0_u8; 256];
 
 pub fn is_precompile(callee_address: &Address, fork: Fork) -> bool {
+    if *callee_address == MODEXP_ADDRESS && fork < Fork::Byzantium {
+        return false;
+    }
+
     // Cancun specs is the only one that allows point evaluation precompile
     if *callee_address == POINT_EVALUATION_ADDRESS && fork < Fork::Cancun {
         return false;
@@ -214,7 +218,7 @@ pub fn execute_precompile(
         address if address == RIPEMD_160_ADDRESS => {
             ripemd_160(&current_call_frame.calldata, gas_for_call, consumed_gas)?
         }
-        address if address == MODEXP_ADDRESS => modexp(
+        address if address == MODEXP_ADDRESS && fork >= Fork::Byzantium => modexp(
             &current_call_frame.calldata,
             gas_for_call,
             consumed_gas,
@@ -411,6 +415,7 @@ pub fn modexp(
     consumed_gas: &mut u64,
     fork: Fork,
 ) -> Result<Bytes, VMError> {
+    dbg!("ENTRO A MODEXP");
     // If calldata does not reach the required length, we should fill the rest with zeros
     let calldata = fill_with_zeros(calldata, 96)?;
 
