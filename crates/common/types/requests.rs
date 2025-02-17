@@ -9,10 +9,6 @@ const DEPOSIT_TYPE: u8 = 0x00;
 const WITHDRAWAL_TYPE: u8 = 0x01;
 const CONSOLIDATION_TYPE: u8 = 0x02;
 
-lazy_static::lazy_static! {
-    pub static ref DEPOSIT_CONTRACT_ADDRESS: Address = Address::from_slice(&hex::decode("00000000219ab540356cbb839cbe05303d7705fa").unwrap());
-}
-
 pub enum Requests {
     Deposit(Vec<Deposit>),
     Withdrawal(Vec<u8>),
@@ -34,12 +30,15 @@ impl Requests {
                 .collect(),
         }
     }
-    pub fn from_deposit_receipts(receipts: &[Receipt]) -> Requests {
+    pub fn from_deposit_receipts(
+        deposit_contract_address: Address,
+        receipts: &[Receipt],
+    ) -> Requests {
         let mut deposits = vec![];
 
         for r in receipts {
             for log in &r.logs {
-                if log.address == *DEPOSIT_CONTRACT_ADDRESS {
+                if log.address == deposit_contract_address {
                     if let Some(d) = Deposit::from_abi_byte_array(&log.data) {
                         deposits.push(d);
                     }

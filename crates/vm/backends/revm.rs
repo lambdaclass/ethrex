@@ -590,7 +590,11 @@ pub fn extract_all_requests(
         return Ok(Default::default());
     }
 
-    let deposits = Requests::from_deposit_receipts(receipts);
+    let deposit_contract_address = config.deposit_contract_address.ok_or(EvmError::Custom(
+        "deposit_contract_address config is missing".to_string(),
+    ))?;
+
+    let deposits = Requests::from_deposit_receipts(deposit_contract_address, receipts);
     let withdrawals_data = read_withdrawal_requests(state, header, spec_id);
     let consolidation_data = dequeue_consolidation_requests(state, header, spec_id);
 

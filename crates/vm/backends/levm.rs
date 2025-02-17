@@ -430,6 +430,10 @@ pub fn extract_all_requests_levm(
         return Ok(Default::default());
     }
 
+    let deposit_contract_address = config.deposit_contract_address.ok_or(EvmError::Custom(
+        "deposit_contract_address config is missing".to_string(),
+    ))?;
+
     let blob_schedule = config
         .get_fork_blob_schedule(header.timestamp)
         .unwrap_or(EVMConfig::canonical_values(fork));
@@ -464,7 +468,7 @@ pub fn extract_all_requests_levm(
             None => Default::default(),
         };
 
-    let deposits = Requests::from_deposit_receipts(receipts);
+    let deposits = Requests::from_deposit_receipts(deposit_contract_address, receipts);
     let withdrawals = Requests::from_withdrawals_data(withdrawals_data);
     let consolidation = Requests::from_consolidation_data(consolidation_data);
 
