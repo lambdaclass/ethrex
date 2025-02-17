@@ -280,15 +280,8 @@ impl ChainConfig {
         timestamp_based_forks.dedup();
 
         // Filter forks before genesis
-        block_number_based_forks = block_number_based_forks
-            .into_iter()
-            .filter(|block_number| *block_number != 0)
-            .collect();
-
-        timestamp_based_forks = timestamp_based_forks
-            .into_iter()
-            .filter(|block_timestamp| *block_timestamp > genesis_header.timestamp)
-            .collect();
+        block_number_based_forks.retain(|block_number| *block_number != 0);
+        timestamp_based_forks.retain(|block_timestamp| *block_timestamp > genesis_header.timestamp);
 
         (block_number_based_forks, timestamp_based_forks)
     }
