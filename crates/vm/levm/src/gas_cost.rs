@@ -503,7 +503,7 @@ pub fn sstore(
             return Ok(base_dynamic_gas);
         }
         // https://eips.ethereum.org/EIPS/eip-2929
-        if storage_slot_was_cold {
+        if storage_slot_was_cold && fork >= Fork::Berlin {
             base_dynamic_gas = base_dynamic_gas
                 .checked_add(SSTORE_COLD_DYNAMIC)
                 .ok_or(OutOfGasError::GasCostOverflow)?;
