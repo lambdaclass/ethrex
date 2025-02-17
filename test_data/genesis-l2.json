@@ -16,7 +16,8 @@
     "terminalTotalDifficultyPassed": true,
     "shanghaiTime": 0,
     "cancunTime": 0,
-    "pragueTime": 1718232101
+    "pragueTime": 1718232101,
+    "depositContractAddress": "0x00000000219ab540356cbb839cbe05303d7705fa"
   },
   "alloc": {
     "0x0007a881CD95B1484fca47615B64803dad620C8d": {

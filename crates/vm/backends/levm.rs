@@ -127,7 +127,13 @@ pub fn execute_block(
         }
     }
 
-    let requests = extract_all_requests_levm(&receipts, state, &block.header, &mut block_cache)?;
+    cfg_if::cfg_if! {
+        if #[cfg(not(feature = "l2"))] {
+            let requests = extract_all_requests_levm(&receipts, state, &block.header, &mut block_cache)?;
+        } else {
+            let requests = Default::default();
+        }
+    }
 
     account_updates.extend(get_state_transitions_levm(
         state,

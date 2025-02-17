@@ -75,7 +75,13 @@ pub fn execute_block(
         process_withdrawals(state, withdrawals)?;
     }
 
-    let requests = extract_all_requests(&receipts, state, block_header)?;
+    cfg_if::cfg_if! {
+        if #[cfg(not(feature = "l2"))] {
+            let requests = extract_all_requests(&receipts, state, block_header)?;
+        } else {
+            let requests = Default::default();
+        }
+    }
 
     Ok((receipts, requests))
 }
