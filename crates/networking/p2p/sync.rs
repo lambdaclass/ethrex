@@ -238,7 +238,6 @@ async fn download_and_run_blocks(
     peers: PeerHandler,
     store: Store,
 ) -> Result<(), SyncError> {
-    let mut last_valid_hash = H256::default();
     // ask as much as 128 block bodies per req
     // this magic number is not part of the protocol and it is taken from geth, see:
     // https://github.com/ethereum/go-ethereum/blob/master/eth/downloader/downloader.go#L42

@@ -222,6 +222,12 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
             RLPxError::DisconnectRequested(s) if s == "Already connected" => {
                 log_peer_debug(&self.node, "Peer already connected don't replace it");
             }
+            RLPxError::NoMatchingCapabilities() => {
+                log_peer_debug(
+                    &self.node,
+                    "Can't start connection as no matching capability during hello message exchange.",
+                );
+            }
             _ => {
                 let remote_node_id = self.node.node_id;
                 log_peer_error(
