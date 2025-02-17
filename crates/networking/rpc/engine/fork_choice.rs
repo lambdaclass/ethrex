@@ -181,13 +181,19 @@ fn handle_forkchoice(
                     Err(_) => return Err(RpcErr::Internal("Internal error".into())),
                 }
             };
-            apply_fork_choice(
-                &context.storage,
-                invalid_ancestors,
-                fork_choice_state.head_block_hash,
-                fork_choice_state.safe_block_hash,
-                fork_choice_state.finalized_block_hash,
-            )
+
+            // Check if the block has already been invalidated
+            match invalid_ancestors.get(&fork_choice_state.head_block_hash) {
+                Some(latest_valid_hash) => {
+                    Err(InvalidForkChoice::InvalidAncestor(*latest_valid_hash))
+                }
+                None => apply_fork_choice(
+                    &context.storage,
+                    fork_choice_state.head_block_hash,
+                    fork_choice_state.safe_block_hash,
+                    fork_choice_state.finalized_block_hash,
+                ),
+            }
         }
         // Restart sync if needed
         _ => Err(InvalidForkChoice::Syncing),

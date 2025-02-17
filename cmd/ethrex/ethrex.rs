@@ -455,11 +455,11 @@ fn import_blocks(store: &Store, blocks: &Vec<Block>) {
         match EVM_BACKEND.get() {
             Some(EVM::LEVM) => {
                 // We are allowing this not to unwrap so that tests can run even if block execution results in the wrong root hash with LEVM.
-                let _ = apply_fork_choice(store, HashMap::default(), hash, hash, hash);
+                let _ = apply_fork_choice(store, hash, hash, hash);
             }
             // This means we are using REVM as default
             Some(EVM::REVM) | None => {
-                apply_fork_choice(store, HashMap::default(), hash, hash, hash).unwrap();
+                apply_fork_choice(store, hash, hash, hash).unwrap();
             }
         }
     }
