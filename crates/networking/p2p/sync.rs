@@ -256,10 +256,20 @@ async fn download_and_run_blocks(
 
     let mut current_block_hash_idx = 0;
     loop {
-        debug!("Requesting Block Bodies ");
+        debug!("Requesting Block Bodies number");
         if let Some(block_bodies) = peers.request_block_bodies(chunk.clone()).await {
             let block_bodies_len = block_bodies.len();
-            debug!("Received {} Block Bodies", block_bodies_len);
+
+            let first_block_hash = chunk.first().map_or(H256::default(), |a| *a);
+            let first_block_header = store
+                .get_block_header_by_hash(first_block_hash)?
+                .map_or(0, |h| h.number);
+
+            debug!(
+                "Received {} Block Bodies, starting from block hash {:?} with number: {}",
+                block_bodies_len, first_block_hash, first_block_header
+            );
+
             // Execute and store blocks
             for (hash, body) in chunk
                 .drain(..block_bodies_len)
