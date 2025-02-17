@@ -11,10 +11,6 @@ use ethrex_trie::Nibbles;
 
 use redb::{AccessGuard, Database, Key, MultimapTableDefinition, TableDefinition, TypeName, Value};
 
-use crate::{
-    trie_db::{redb::RedBTrie, redb_multitable::RedBMultiTableTrieDB},
-    Trie,
-};
 use crate::rlp::{BlockRLP, BlockTotalDifficultyRLP, Rlp, TransactionHashRLP};
 use crate::{
     error::StoreError,
@@ -22,6 +18,10 @@ use crate::{
         AccountCodeHashRLP, AccountCodeRLP, BlockBodyRLP, BlockHashRLP, BlockHeaderRLP, ReceiptRLP,
         TupleRLP,
     },
+};
+use crate::{
+    trie_db::{redb::RedBTrie, redb_multitable::RedBMultiTableTrieDB},
+    Trie,
 };
 
 use super::utils::SnapStateIndex;

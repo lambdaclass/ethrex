@@ -1,4 +1,3 @@
-
 #[macro_export]
 /// Creates a trie node
 /// All partial paths are expressed in nibbles and values in bytes
