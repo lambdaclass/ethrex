@@ -177,7 +177,13 @@ pub const G1_POINT_AT_INFINITY: [u8; 128] = [0_u8; 128];
 pub const G2_POINT_AT_INFINITY: [u8; 256] = [0_u8; 256];
 
 pub fn is_precompile(callee_address: &Address, fork: Fork) -> bool {
-    if *callee_address == MODEXP_ADDRESS && fork < Fork::Byzantium {
+    // precompiles introduced in Byzantium https://eips.ethereum.org/EIPS/eip-609
+    if (*callee_address == MODEXP_ADDRESS
+        || *callee_address == ECADD_ADDRESS
+        || *callee_address == ECMUL_ADDRESS
+        || *callee_address == ECPAIRING_ADDRESS)
+        && fork < Fork::Byzantium
+    {
         return false;
     }
 
@@ -415,7 +421,6 @@ pub fn modexp(
     consumed_gas: &mut u64,
     fork: Fork,
 ) -> Result<Bytes, VMError> {
-    dbg!("ENTRO A MODEXP");
     // If calldata does not reach the required length, we should fill the rest with zeros
     let calldata = fill_with_zeros(calldata, 96)?;
 
