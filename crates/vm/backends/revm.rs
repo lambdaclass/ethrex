@@ -1,11 +1,12 @@
-use super::constants::{BEACON_ROOTS_ADDRESS_STR, HISTORY_STORAGE_ADDRESS_STR, SYSTEM_ADDRESS_STR};
+use super::constants::{BEACON_ROOTS_ADDRESS, HISTORY_STORAGE_ADDRESS, SYSTEM_ADDRESS};
 use crate::spec_id;
 use crate::EvmError;
 use crate::EvmState;
 use crate::ExecutionResult;
-use ethrex_storage::error::StoreError;
-use lazy_static::lazy_static;
+use ethrex_storage::{error::StoreError, AccountUpdate};
+
 use revm::{
+    db::{states::bundle_state::BundleRetention, AccountState, AccountStatus},
     inspectors::TracerEip3155,
     precompile::{PrecompileSpecId, Precompiles},
     primitives::{BlobExcessGasAndPrice, BlockEnv, TxEnv, B256},
@@ -15,10 +16,10 @@ use revm_inspectors::access_list::AccessListInspector;
 // Rename imported types for clarity
 use ethrex_common::{
     types::{
-        Block, BlockHeader, GenericTransaction, PrivilegedTxType, Receipt, Transaction, TxKind,
-        Withdrawal, GWEI_TO_WEI, INITIAL_BASE_FEE,
+        AccountInfo, Block, BlockHeader, GenericTransaction, PrivilegedTxType, Receipt,
+        Transaction, TxKind, Withdrawal, GWEI_TO_WEI, INITIAL_BASE_FEE,
     },
-    Address,
+    Address, BigEndianHash, H256, U256,
 };
 use revm_primitives::{
     ruint::Uint, AccessList as RevmAccessList, AccessListItem, Address as RevmAddress,
@@ -27,63 +28,268 @@ use revm_primitives::{
 };
 use std::cmp::min;
 
+#[derive(Debug)]
+pub struct REVM;
+
 #[cfg(feature = "l2")]
 use crate::mods;
 
-/// Executes all transactions in a block and returns their receipts.
-pub fn execute_block(block: &Block, state: &mut EvmState) -> Result<Vec<Receipt>, EvmError> {
-    let block_header = &block.header;
-    let spec_id = spec_id(&state.chain_config()?, block_header.timestamp);
-    //eip 4788: execute beacon_root_contract_call before block transactions
-    cfg_if::cfg_if! {
-        if #[cfg(not(feature = "l2"))] {
-            //eip 4788: execute beacon_root_contract_call before block transactions
-            if block_header.parent_beacon_block_root.is_some() && spec_id >= SpecId::CANCUN {
-                beacon_root_contract_call(state, block_header, spec_id)?;
-            }
+/// The struct implements the following functions:
+/// [REVM::execute_block]
+/// [REVM::execute_tx]
+/// [REVM::get_state_transitions]
+/// [REVM::process_withdrawals]
+impl REVM {
+    pub fn execute_block(
+        block: &Block,
+        state: &mut EvmState,
+    ) -> Result<(Vec<Receipt>, Vec<AccountUpdate>), EvmError> {
+        let block_header = &block.header;
+        let spec_id: SpecId = spec_id(&state.chain_config()?, block_header.timestamp);
+        cfg_if::cfg_if! {
+            if #[cfg(not(feature = "l2"))] {
+                if block_header.parent_beacon_block_root.is_some() && spec_id >= SpecId::CANCUN {
+                    Self::beacon_root_contract_call(block_header, state)?;
+                }
 
-            //eip 2935: stores parent block hash in system contract
-            if spec_id >= SpecId::PRAGUE {
-                process_block_hash_history(state, block_header, spec_id)?;
+                //eip 2935: stores parent block hash in system contract
+                if spec_id >= SpecId::PRAGUE {
+                    Self::process_block_hash_history(block_header, state)?;
+                }
+            }
+        }
+        let mut receipts = Vec::new();
+        let mut cumulative_gas_used = 0;
+
+        for tx in block.body.transactions.iter() {
+            let result = Self::execute_tx(tx, block_header, state, spec_id)?;
+            cumulative_gas_used += result.gas_used();
+            let receipt = Receipt::new(
+                tx.tx_type(),
+                result.is_success(),
+                cumulative_gas_used,
+                result.logs(),
+            );
+            receipts.push(receipt);
+        }
+
+        if let Some(withdrawals) = &block.body.withdrawals {
+            Self::process_withdrawals(state, withdrawals)?;
+        }
+
+        let account_updates = Self::get_state_transitions(state);
+
+        Ok((receipts, account_updates))
+    }
+
+    pub fn execute_tx(
+        tx: &Transaction,
+        header: &BlockHeader,
+        state: &mut EvmState,
+        spec_id: SpecId,
+    ) -> Result<ExecutionResult, EvmError> {
+        let block_env = block_env(header);
+        let tx_env = tx_env(tx);
+        run_evm(tx_env, block_env, state, spec_id)
+    }
+
+    pub fn get_state_transitions(
+        initial_state: &mut EvmState,
+    ) -> Vec<ethrex_storage::AccountUpdate> {
+        match initial_state {
+            EvmState::Store(db) => {
+                db.merge_transitions(BundleRetention::PlainState);
+                let bundle = db.take_bundle();
+
+                // Update accounts
+                let mut account_updates = Vec::new();
+                for (address, account) in bundle.state() {
+                    if account.status.is_not_modified() {
+                        continue;
+                    }
+                    let address = Address::from_slice(address.0.as_slice());
+                    // Remove account from DB if destroyed (Process DestroyedChanged as changed account)
+                    if matches!(
+                        account.status,
+                        AccountStatus::Destroyed | AccountStatus::DestroyedAgain
+                    ) {
+                        account_updates.push(AccountUpdate::removed(address));
+                        continue;
+                    }
+
+                    // If account is empty, do not add to the database
+                    if account
+                        .account_info()
+                        .is_some_and(|acc_info| acc_info.is_empty())
+                    {
+                        continue;
+                    }
+
+                    // Apply account changes to DB
+                    let mut account_update = AccountUpdate::new(address);
+                    // If the account was changed then both original and current info will be present in the bundle account
+                    if account.is_info_changed() {
+                        // Update account info in DB
+                        if let Some(new_acc_info) = account.account_info() {
+                            let code_hash = H256::from_slice(new_acc_info.code_hash.as_slice());
+                            let account_info = AccountInfo {
+                                code_hash,
+                                balance: U256::from_little_endian(
+                                    new_acc_info.balance.as_le_slice(),
+                                ),
+                                nonce: new_acc_info.nonce,
+                            };
+                            account_update.info = Some(account_info);
+                            if account.is_contract_changed() {
+                                // Update code in db
+                                if let Some(code) = new_acc_info.code {
+                                    account_update.code = Some(code.original_bytes().clone().0);
+                                }
+                            }
+                        }
+                    }
+                    // Update account storage in DB
+                    for (key, slot) in account.storage.iter() {
+                        if slot.is_changed() {
+                            // TODO check if we need to remove the value from our db when value is zero
+                            // if slot.present_value().is_zero() {
+                            //     account_update.removed_keys.push(H256::from_uint(&U256::from_little_endian(key.as_le_slice())))
+                            // }
+                            account_update.added_storage.insert(
+                                H256::from_uint(&U256::from_little_endian(key.as_le_slice())),
+                                U256::from_little_endian(slot.present_value().as_le_slice()),
+                            );
+                        }
+                    }
+                    account_updates.push(account_update)
+                }
+                account_updates
+            }
+            EvmState::Execution(db) => {
+                // Update accounts
+                let mut account_updates = Vec::new();
+                for (revm_address, account) in &db.accounts {
+                    if account.account_state == AccountState::None {
+                        // EVM didn't interact with this account
+                        continue;
+                    }
+
+                    let address = Address::from_slice(revm_address.0.as_slice());
+                    // Remove account from DB if destroyed
+                    if account.account_state == AccountState::NotExisting {
+                        account_updates.push(AccountUpdate::removed(address));
+                        continue;
+                    }
+
+                    // If account is empty, do not add to the database
+                    if account.info().is_some_and(|acc_info| acc_info.is_empty()) {
+                        continue;
+                    }
+
+                    // Apply account changes to DB
+                    let mut account_update = AccountUpdate::new(address);
+                    // Update account info in DB
+                    if let Some(new_acc_info) = account.info() {
+                        // If code changed, update
+                        if matches!(db.db.accounts.get(&address), Some(account) if B256::from(account.code_hash.0) != new_acc_info.code_hash)
+                        {
+                            account_update.code = new_acc_info
+                                .code
+                                .map(|code| bytes::Bytes::copy_from_slice(code.bytes_slice()));
+                        }
+
+                        let account_info = AccountInfo {
+                            code_hash: H256::from_slice(new_acc_info.code_hash.as_slice()),
+                            balance: U256::from_little_endian(new_acc_info.balance.as_le_slice()),
+                            nonce: new_acc_info.nonce,
+                        };
+                        account_update.info = Some(account_info);
+                    }
+                    // Update account storage in DB
+                    for (key, slot) in account.storage.iter() {
+                        // TODO check if we need to remove the value from our db when value is zero
+                        // if slot.present_value().is_zero() {
+                        //     account_update.removed_keys.push(H256::from_uint(&U256::from_little_endian(key.as_le_slice())))
+                        // }
+                        account_update.added_storage.insert(
+                            H256::from_uint(&U256::from_little_endian(key.as_le_slice())),
+                            U256::from_little_endian(slot.as_le_slice()),
+                        );
+                    }
+                    account_updates.push(account_update)
+                }
+                account_updates
             }
         }
     }
 
-    let mut receipts = Vec::new();
-    let mut cumulative_gas_used = 0;
+    pub fn process_withdrawals(
+        initial_state: &mut EvmState,
+        withdrawals: &[Withdrawal],
+    ) -> Result<(), StoreError> {
+        match initial_state {
+            EvmState::Store(db) => {
+                //balance_increments is a vector of tuples (Address, increment as u128)
+                let balance_increments = withdrawals
+                    .iter()
+                    .filter(|withdrawal| withdrawal.amount > 0)
+                    .map(|withdrawal| {
+                        (
+                            RevmAddress::from_slice(withdrawal.address.as_bytes()),
+                            (withdrawal.amount as u128 * GWEI_TO_WEI as u128),
+                        )
+                    })
+                    .collect::<Vec<_>>();
 
-    for transaction in block.body.transactions.iter() {
-        let result = execute_tx(transaction, block_header, state, spec_id)?;
-        cumulative_gas_used += result.gas_used();
-        let receipt = Receipt::new(
-            transaction.tx_type(),
-            result.is_success(),
-            cumulative_gas_used,
-            result.logs(),
-        );
-        receipts.push(receipt);
+                db.increment_balances(balance_increments)?;
+            }
+            EvmState::Execution(_) => {
+                // TODO: We should check withdrawals are valid
+                // (by checking that accounts exist if this is the only error) but there's no state to
+                // change.
+            }
+        }
+        Ok(())
     }
 
-    if let Some(withdrawals) = &block.body.withdrawals {
-        process_withdrawals(state, withdrawals)?;
-    }
+    // SYSTEM CONTRACTS
+    pub fn beacon_root_contract_call(
+        block_header: &BlockHeader,
+        state: &mut EvmState,
+    ) -> Result<(), EvmError> {
+        let beacon_root = match block_header.parent_beacon_block_root {
+            None => {
+                return Err(EvmError::Header(
+                    "parent_beacon_block_root field is missing".to_string(),
+                ))
+            }
+            Some(beacon_root) => beacon_root,
+        };
 
-    Ok(receipts)
-}
-// Executes a single tx, doesn't perform state transitions
-pub fn execute_tx(
-    tx: &Transaction,
-    header: &BlockHeader,
-    state: &mut EvmState,
-    spec_id: SpecId,
-) -> Result<ExecutionResult, EvmError> {
-    let block_env = block_env(header);
-    let tx_env = tx_env(tx);
-    run_evm(tx_env, block_env, state, spec_id)
+        generic_system_contract_revm(
+            block_header,
+            Bytes::copy_from_slice(beacon_root.as_bytes()),
+            state,
+            *BEACON_ROOTS_ADDRESS,
+            *SYSTEM_ADDRESS,
+        )
+    }
+    pub fn process_block_hash_history(
+        block_header: &BlockHeader,
+        state: &mut EvmState,
+    ) -> Result<(), EvmError> {
+        generic_system_contract_revm(
+            block_header,
+            Bytes::copy_from_slice(block_header.parent_hash.as_bytes()),
+            state,
+            *HISTORY_STORAGE_ADDRESS,
+            *SYSTEM_ADDRESS,
+        )
+    }
 }
 
 /// Runs the transaction and returns the result, but does not commit it.
-pub fn run_without_commit(
+pub(crate) fn run_without_commit(
     tx_env: TxEnv,
     mut block_env: BlockEnv,
     state: &mut EvmState,
@@ -165,36 +371,6 @@ fn run_evm(
         }
     };
     Ok(tx_result.into())
-}
-
-/// Processes a block's withdrawals, updating the account balances in the state
-pub fn process_withdrawals(
-    state: &mut EvmState,
-    withdrawals: &[Withdrawal],
-) -> Result<(), StoreError> {
-    match state {
-        EvmState::Store(db) => {
-            //balance_increments is a vector of tuples (Address, increment as u128)
-            let balance_increments = withdrawals
-                .iter()
-                .filter(|withdrawal| withdrawal.amount > 0)
-                .map(|withdrawal| {
-                    (
-                        RevmAddress::from_slice(withdrawal.address.as_bytes()),
-                        (withdrawal.amount as u128 * GWEI_TO_WEI as u128),
-                    )
-                })
-                .collect::<Vec<_>>();
-
-            db.increment_balances(balance_increments)?;
-        }
-        EvmState::Execution(_) => {
-            // TODO: We should check withdrawals are valid
-            // (by checking that accounts exist if this is the only error) but there's no state to
-            // change.
-        }
-    }
-    Ok(())
 }
 
 pub fn block_env(header: &BlockHeader) -> BlockEnv {
@@ -436,36 +612,22 @@ fn adjust_disabled_base_fee(
     }
 }
 
-/// Calls the eip4788 beacon block root system call contract
-/// As of the Cancun hard-fork, parent_beacon_block_root needs to be present in the block header.
-pub fn beacon_root_contract_call(
+pub(crate) fn generic_system_contract_revm(
+    block_header: &BlockHeader,
+    calldata: Bytes,
     state: &mut EvmState,
-    header: &BlockHeader,
-    spec_id: SpecId,
-) -> Result<ExecutionResult, EvmError> {
-    lazy_static! {
-        static ref SYSTEM_ADDRESS: RevmAddress =
-            RevmAddress::from_slice(&hex::decode(SYSTEM_ADDRESS_STR).unwrap());
-        static ref CONTRACT_ADDRESS: RevmAddress =
-            RevmAddress::from_slice(&hex::decode(BEACON_ROOTS_ADDRESS_STR).unwrap());
-    };
-    let beacon_root = match header.parent_beacon_block_root {
-        None => {
-            return Err(EvmError::Header(
-                "parent_beacon_block_root field is missing".to_string(),
-            ))
-        }
-        Some(beacon_root) => beacon_root,
-    };
-
+    contract_address: Address,
+    system_address: Address,
+) -> Result<(), EvmError> {
+    let spec_id = spec_id(&state.chain_config()?, block_header.timestamp);
     let tx_env = TxEnv {
-        caller: *SYSTEM_ADDRESS,
-        transact_to: RevmTxKind::Call(*CONTRACT_ADDRESS),
+        caller: RevmAddress::from_slice(system_address.as_bytes()),
+        transact_to: RevmTxKind::Call(RevmAddress::from_slice(contract_address.as_bytes())),
         gas_limit: 30_000_000,
-        data: revm::primitives::Bytes::copy_from_slice(beacon_root.as_bytes()),
+        data: calldata,
         ..Default::default()
     };
-    let mut block_env = block_env(header);
+    let mut block_env = block_env(block_header);
     block_env.basefee = RevmU256::ZERO;
     block_env.gas_limit = RevmU256::from(30_000_000);
 
@@ -480,12 +642,12 @@ pub fn beacon_root_contract_call(
 
             let transaction_result = evm.transact()?;
             let mut result_state = transaction_result.state;
-            result_state.remove(&*SYSTEM_ADDRESS);
+            result_state.remove(SYSTEM_ADDRESS.as_ref());
             result_state.remove(&evm.block().coinbase);
 
             evm.context.evm.db.commit(result_state);
 
-            Ok(transaction_result.result.into())
+            Ok(())
         }
         EvmState::Execution(db) => {
             let mut evm = Evm::builder()
@@ -496,66 +658,8 @@ pub fn beacon_root_contract_call(
                 .build();
 
             // Not necessary to commit to DB
-            let transaction_result = evm.transact()?;
-            Ok(transaction_result.result.into())
-        }
-    }
-}
-
-/// Calls the EIP-2935 process block hashes history system call contract
-/// NOTE: This was implemented by making use of an EVM system contract, but can be changed to a
-/// direct state trie update after the verkle fork, as explained in https://eips.ethereum.org/EIPS/eip-2935
-pub fn process_block_hash_history(
-    state: &mut EvmState,
-    header: &BlockHeader,
-    spec_id: SpecId,
-) -> Result<ExecutionResult, EvmError> {
-    lazy_static! {
-        static ref SYSTEM_ADDRESS: RevmAddress =
-            RevmAddress::from_slice(&hex::decode(SYSTEM_ADDRESS_STR).unwrap());
-        static ref CONTRACT_ADDRESS: RevmAddress =
-            RevmAddress::from_slice(&hex::decode(HISTORY_STORAGE_ADDRESS_STR).unwrap(),);
-    };
-    let tx_env = TxEnv {
-        caller: *SYSTEM_ADDRESS,
-        transact_to: RevmTxKind::Call(*CONTRACT_ADDRESS),
-        gas_limit: 30_000_000,
-        data: revm::primitives::Bytes::copy_from_slice(header.parent_hash.as_bytes()),
-        ..Default::default()
-    };
-    let mut block_env = block_env(header);
-    block_env.basefee = RevmU256::ZERO;
-    block_env.gas_limit = RevmU256::from(30_000_000);
-
-    match state {
-        EvmState::Store(db) => {
-            let mut evm = Evm::builder()
-                .with_db(db)
-                .with_block_env(block_env)
-                .with_tx_env(tx_env)
-                .with_spec_id(spec_id)
-                .build();
-
-            let transaction_result = evm.transact()?;
-            let mut result_state = transaction_result.state;
-            result_state.remove(&*SYSTEM_ADDRESS);
-            result_state.remove(&evm.block().coinbase);
-
-            evm.context.evm.db.commit(result_state);
-
-            Ok(transaction_result.result.into())
-        }
-        EvmState::Execution(db) => {
-            let mut evm = Evm::builder()
-                .with_db(db)
-                .with_block_env(block_env)
-                .with_tx_env(tx_env)
-                .with_spec_id(spec_id)
-                .build();
-
-            // Not necessary to commit to DB
-            let transaction_result = evm.transact()?;
-            Ok(transaction_result.result.into())
+            let _transaction_result = evm.transact()?;
+            Ok(())
         }
     }
 }
