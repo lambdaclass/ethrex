@@ -33,7 +33,8 @@ impl FromStr for EVM {
 }
 
 impl EVM {
-    /// Wraps [IEVM::execute_block]. The output is `(Vec<Receipt>, Vec<AccountUpdate>)`.
+    /// Wraps [REVM::execute_block] and [LEVM::execute_block].
+    /// The output is `(Vec<Receipt>, Vec<AccountUpdate>)`.
     pub fn execute_block(
         &self,
         block: &Block,
@@ -45,7 +46,8 @@ impl EVM {
         }
     }
 
-    /// Wraps [IEVM::execute_tx]. The output is `(Receipt, u64)` == (transaction_receipt, gas_used).
+    /// Wraps [REVM::execute_tx] and [LEVM::execute_tx].
+    /// The output is `(Receipt, u64)` == (transaction_receipt, gas_used).
     pub fn execute_tx(
         &self,
         state: &mut EvmState,
@@ -85,7 +87,7 @@ impl EVM {
                     tx,
                     block_header,
                     store_wrapper.clone(),
-                    block_cache,
+                    block_cache.clone(),
                     chain_config,
                 )?;
 
@@ -113,7 +115,9 @@ impl EVM {
         }
     }
 
-    /// Wraps the [SystemContracts] trait. This function is used to run/apply all the system contracts to the state.
+    /// Wraps [REVM::beacon_root_contract_call], [REVM::process_block_hash_history]
+    /// and [LEVM::beacon_root_contract_call], [LEVM::process_block_hash_history].
+    /// This function is used to run/apply all the system contracts to the state.
     pub fn apply_system_calls(
         &self,
         state: &mut EvmState,
@@ -159,7 +163,8 @@ impl EVM {
         }
     }
 
-    /// Wraps the [IEVM::get_state_transitions]. The output is `Vec<AccountUpdate>`.
+    /// Wraps the [REVM::get_state_transitions] and [LEVM::get_state_transitions].
+    /// The output is `Vec<AccountUpdate>`.
     pub fn get_state_transitions(
         &self,
         state: &mut EvmState,
@@ -172,7 +177,8 @@ impl EVM {
         }
     }
 
-    /// Wraps the [IEVM::process_withdrawals]. Applies the withdrawals to the state or the block_chache if using [LEVM].
+    /// Wraps the [REVM::process_withdrawals] and [LEVM::process_withdrawals].
+    /// Applies the withdrawals to the state or the block_chache if using [LEVM].
     pub fn process_withdrawals(
         &self,
         withdrawals: &[Withdrawal],

@@ -71,13 +71,12 @@ impl LEVM {
                 tx,
                 block_header,
                 store_wrapper.clone(),
-                &mut block_cache,
+                block_cache.clone(),
                 &config,
             )
             .map_err(EvmError::from)?;
 
             let mut new_state = report.new_state.clone();
-
             // Now original_value is going to be the same as the current_value, for the next transaction.
             // It should have only one value but it is convenient to keep on using our CacheDB structure
             for account in new_state.values_mut() {
@@ -138,7 +137,7 @@ impl LEVM {
         // The database to use for EVM state access.  This is wrapped in an `Arc` for shared ownership.
         db: Arc<dyn LevmDatabase>,
         // A cache database for intermediate state changes during execution.
-        block_cache: &mut CacheDB,
+        block_cache: CacheDB,
         // The EVM configuration to use.
         chain_config: &ChainConfig,
     ) -> Result<ExecutionReport, EvmError> {
@@ -307,6 +306,7 @@ impl LEVM {
     }
 
     // SYSTEM CONTRACTS
+    /// `new_state` is being modified inside [generic_system_contract_levm].
     pub fn beacon_root_contract_call(
         block_header: &BlockHeader,
         state: &mut EvmState,
@@ -330,6 +330,8 @@ impl LEVM {
             *SYSTEM_ADDRESS,
         )
     }
+
+    /// `new_state` is being modified inside [generic_system_contract_levm].
     pub fn process_block_hash_history(
         block_header: &BlockHeader,
         state: &mut EvmState,
@@ -346,6 +348,7 @@ impl LEVM {
     }
 }
 
+/// `new_state` is being modified at the end.
 pub fn generic_system_contract_levm(
     block_header: &BlockHeader,
     calldata: Bytes,
