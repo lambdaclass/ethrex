@@ -2809,7 +2809,6 @@ dependencies = [
  "hex",
  "k256",
  "lazy_static",
- "libmdbx",
  "local-ip-address",
  "rand 0.8.5",
  "redb",
