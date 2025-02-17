@@ -1,8 +1,6 @@
-use std::{marker::PhantomData, sync::Arc};
-
 use ethrex_trie::error::TrieError;
 use libmdbx::orm::{Database, Table};
-
+use std::{marker::PhantomData, sync::Arc};
 /// Libmdbx implementation for the TrieDB trait, with get and put operations.
 pub struct LibmdbxTrieDB<T: Table> {
     db: Arc<Database>,
@@ -34,16 +32,14 @@ where
 
     fn put(&self, key: Vec<u8>, value: Vec<u8>) -> Result<(), TrieError> {
         let txn = self.db.begin_readwrite().map_err(TrieError::DbError)?;
-        txn.upsert::<T>(key, value)
-            .map_err(TrieError::DbError)?;
+        txn.upsert::<T>(key, value).map_err(TrieError::DbError)?;
         txn.commit().map_err(TrieError::DbError)
     }
 
     fn put_batch(&self, key_values: Vec<(Vec<u8>, Vec<u8>)>) -> Result<(), TrieError> {
         let txn = self.db.begin_readwrite().map_err(TrieError::DbError)?;
         for (key, value) in key_values {
-            txn.upsert::<T>(key, value)
-                .map_err(TrieError::DbError)?;
+            txn.upsert::<T>(key, value).map_err(TrieError::DbError)?;
         }
         txn.commit().map_err(TrieError::DbError)
     }
@@ -51,16 +47,16 @@ where
 
 #[cfg(test)]
 mod test {
-    use std::sync::Arc;
-    use crate::trie_db::test_utils::libmdbx::{new_db, TestNodes };
     use super::LibmdbxTrieDB;
+    use crate::trie_db::test_utils::libmdbx::{new_db, TestNodes};
+    use ethrex_trie::Trie;
     use ethrex_trie::TrieDB;
     use libmdbx::{
         orm::{table, Database},
         table_info,
     };
+    use std::sync::Arc;
     use tempdir::TempDir;
-    use ethrex_trie::Trie;
 
     #[test]
     fn simple_addition() {

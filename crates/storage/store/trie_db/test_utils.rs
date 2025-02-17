@@ -1,4 +1,3 @@
-
 #[cfg(feature = "libmdbx")]
 pub mod libmdbx {
     use std::{path::PathBuf, sync::Arc};

@@ -1,10 +1,9 @@
 use std::{marker::PhantomData, sync::Arc};
 
-use ethrex_trie::error::TrieError;
-use libmdbx::orm::{Database, DupSort, Encodable};
-
-use ethrex_trie::TrieDB;
 use super::utils::node_hash_to_fixed_size;
+use ethrex_trie::error::TrieError;
+use ethrex_trie::TrieDB;
+use libmdbx::orm::{Database, DupSort, Encodable};
 
 /// Libmdbx implementation for the TrieDB trait for a dupsort table with a fixed primary key.
 /// For a dupsort table (A, B)[A] -> C, this trie will have a fixed A and just work on B -> C
