@@ -9,7 +9,7 @@ use ethrex_rlp::{
 use ethereum_types::H32;
 use tracing::debug;
 
-use super::{BlockHash, BlockNumber, ChainConfig};
+use super::{BlockHash, BlockHeader, BlockNumber, ChainConfig};
 
 // See https://github.com/ethereum/go-ethereum/blob/530adfc8e3ef9c8b6356facecdec10b30fb81d7d/core/forkid/forkid.go#L51
 const TIMESTAMP_THRESHOLD: u64 = 1438269973;
@@ -23,11 +23,14 @@ pub struct ForkId {
 impl ForkId {
     pub fn new(
         chain_config: ChainConfig,
-        genesis_hash: BlockHash,
+        genesis_header: BlockHeader,
         head_timestamp: u64,
         head_block_number: u64,
     ) -> Self {
-        let (block_number_based_forks, timestamp_based_forks) = chain_config.gather_forks();
+        let genesis_hash = genesis_header.compute_block_hash();
+        let (block_number_based_forks, timestamp_based_forks) =
+            chain_config.gather_forks(genesis_header);
+
         let mut fork_next;
         let mut hasher = Hasher::new();
         // Calculate the starting checksum from the genesis hash
@@ -60,9 +63,11 @@ impl ForkId {
         latest_block_number: u64,
         head_timestamp: u64,
         chain_config: ChainConfig,
-        genesis_hash: BlockHash,
+        genesis_header: BlockHeader,
     ) -> bool {
-        let (block_number_based_forks, timestamp_based_forks) = chain_config.gather_forks();
+        let genesis_hash = genesis_header.compute_block_hash();
+        let (block_number_based_forks, timestamp_based_forks) =
+            chain_config.gather_forks(genesis_header);
 
         // Determine whether to compare the remote fork_next using a block number or a timestamp.
         let head = if head_timestamp >= TIMESTAMP_THRESHOLD {
@@ -220,17 +225,22 @@ mod tests {
     fn assert_test_cases(
         test_cases: Vec<TestCase>,
         chain_config: ChainConfig,
-        genesis_hash: BlockHash,
+        genesis_header: BlockHeader,
     ) {
         for test_case in test_cases {
-            let fork_id = ForkId::new(chain_config, genesis_hash, test_case.time, test_case.head);
+            let fork_id = ForkId::new(
+                chain_config,
+                genesis_header.clone(),
+                test_case.time,
+                test_case.head,
+            );
             assert_eq!(
                 fork_id.is_valid(
                     test_case.fork_id,
                     test_case.head,
                     test_case.time,
                     chain_config,
-                    genesis_hash
+                    genesis_header.clone()
                 ),
                 test_case.is_valid
             )
@@ -244,7 +254,7 @@ mod tests {
         let genesis_reader = BufReader::new(genesis_file);
         let genesis: Genesis =
             serde_json::from_reader(genesis_reader).expect("Failed to read genesis file");
-        let genesis_hash = genesis.get_block().hash();
+        let genesis_header = genesis.get_block().header;
 
         // See https://github.com/ethereum/go-ethereum/blob/4d94bd83b20ce430e435f3107f29632c627cfb26/core/forkid/forkid_test.go#L98
         let test_cases: Vec<TestCase> = vec![
@@ -303,17 +313,17 @@ mod tests {
                 is_valid: true,
             },
         ];
-        assert_test_cases(test_cases, genesis.config, genesis_hash);
+        assert_test_cases(test_cases, genesis.config, genesis_header);
     }
 
-    fn get_sepolia_genesis() -> (Genesis, BlockHash) {
+    fn get_sepolia_genesis() -> (Genesis, BlockHeader) {
         let genesis_file = std::fs::File::open("../../cmd/ethrex/networks/sepolia/genesis.json")
             .expect("Failed to open genesis file");
         let genesis_reader = BufReader::new(genesis_file);
         let genesis: Genesis =
             serde_json::from_reader(genesis_reader).expect("Failed to read genesis file");
-        let genesis_hash = genesis.get_block().hash();
-        (genesis, genesis_hash)
+        let genesis_header = genesis.get_block().header;
+        (genesis, genesis_header)
     }
     #[test]
     fn sepolia_test_cases() {
@@ -417,14 +427,14 @@ mod tests {
             local_head_block_number,
             0,
             ChainConfig::default(),
-            BlockHash::random(),
+            BlockHeader::default(),
         );
         let result_b = local_b.is_valid(
             remote,
             local_head_block_number,
             0,
             ChainConfig::default(),
-            BlockHash::random(),
+            BlockHeader::default(),
         );
         assert!(!result_a);
         assert!(!result_b);
