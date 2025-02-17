@@ -19,7 +19,8 @@ restart: restart-local-l1 deploy-l1 restart-l2 ## 🔄 Restarts the localnet
 
 # CLI
 cli: ## 🛠️ Installs the L2 Lambda ethrex CLI
-	cargo install --path ${ethrex_PATH}/cmd/ethrex_l2/ --force
+	cd ${ethrex_PATH}/cmd/ethrex_l2 && \
+	cargo install --path . --force
 
 update-cli-contracts: ## 📜 Update the CLI's config contracts
 	@if [ -z "$$C" ]; then \
