@@ -14,16 +14,20 @@ This diagram illustrates the process described above:
 
 ### Snap State Rebuild
 
-During snap sync we need to fully rebuild the pivot block's state. We can divide this process into the initial sync and the healing phase.
-For the first phase we will spawn two processes, the `bytecode_fetcher` and the `storage_fetcher` which will both remain active and listening for requests from the main rebuild process which they will then queue and process in fixed size batches (more on this later). It will then request the full extent of accounts from the pivot block's state trie via p2p snap requests. For each obtained range we will send the account's code hash and storage root to the `bytecode_fetcher` and `storage_fetcher` respectively for fetching. Once we fetch all accounts (or the account state is no longer available), we will signal the `storage_fetcher` to finish all pending requests and move on to the next phase, while keeping the `bytecode_fetcher` active.
+During snap sync we need to fully rebuild the pivot block's state.
+We can divide snap sync into 3 core processes: State Sync, Trie Rebuild, and Healing.
+The State Sync consists of downloading the plain state of the pivot block, aka the values on the leafs of the state & storage tries. For this process we will divide the state trie into segments and fetch each segment in parallel. We will also be relying on two side processes, the `bytecode_fetcher` and the `storage_fetcher` which will both remain active throughout the state sync, and fetch the bytecodes and storages of each account downloaded during the state sync.
+The Trie Rebuild process works in the background while State Sync is active. It consists of two processes running in parallel, one to rebuild the state trie and one to rebuild the storage tries. Both will read the data downloaded by the State Sync but while the state rebuild works independently, the storage rebuild will wait for the `storage_fetcher` to advertise which storages have been fully downloaded before attempting to rebuild them.
+The Healing process consists of fixing any inconsistencies leftover from the State Sync & Trie Rebuild processes after they finish. As state sync can spawn across multiple cycles with different pivot blocks the state will not be consistent with the latest pivot block, so we need to fetch all the nodes that the pivot's tries have and ours don't. The `bytecode_fetcher` and `storage_healer` processes will be involved to heal the bytecodes & storages of each account healed by the main state heal process.
+Also, the `storage_healer` will be spawned earlier, during state sync so that it can begin healing the storages that couldn't be fetched due to pivot staleness.
 
-In the healing phase we will spawn another queue-like process called `storage_healer`, and we will begin requesting state trie nodes. We will begin by requesting the pivot block's state's root node proceed by requesting the current node's children (if they are not already part of the state) until we have the full trie stored (aka all child nodes are known). For each fetched leaf node we will send its code hash to the `bytecode_fetcher` and account hash to the `storage_healer`.
+This diagram illustrates all the processes involved in snap sync:
 
-The `storage_healer` will contain a list of pending account hashes and paths. And will add new entries by either adding the root node of an account's storage trie when receiving an account hash from the main process or by adding the unknown children of nodes returned by peers.
+![SnapSync](/crates/networking/docs/diagrams/SnapSync.jpg).
 
-This diagram illustrates the process described above:
+And this diagram shows the interaction between the different processes involved in State Sync, Trie Rebuild and Healing:
+![StateSyncAndHealing](/crates/networking/docs/diagrams/StateSyncAndHealing.jpg).
 
-![rebuild_state](/crates/networking/docs/diagrams/rebuild_state_trie.jpg).
 
 To exemplify how queue-like processes work we will explain how the `bytecode_fetcher` works:
 
