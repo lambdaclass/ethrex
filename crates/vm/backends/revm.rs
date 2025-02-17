@@ -399,9 +399,6 @@ pub(crate) fn access_list_inspector(
     };
     Ok(AccessListInspector::new(
         current_access_list,
-        tx_env.caller,
-        to,
-        precompile_addresses,
     ))
 }
 
