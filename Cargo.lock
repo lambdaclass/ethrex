@@ -3098,6 +3098,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha3",
+ "tempdir",
  "thiserror 2.0.9",
  "tracing",
 ]
@@ -3118,7 +3119,6 @@ dependencies = [
  "lazy_static",
  "libmdbx",
  "proptest",
- "redb",
  "serde",
  "serde_json",
  "sha3",

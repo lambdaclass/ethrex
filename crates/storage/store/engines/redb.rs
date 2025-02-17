@@ -8,12 +8,13 @@ use ethrex_common::{
 use ethrex_rlp::decode::RLPDecode;
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_trie::Nibbles;
-use ethrex_trie::{
-    db::{redb::RedBTrie, redb_multitable::RedBMultiTableTrieDB},
-    Trie,
-};
+
 use redb::{AccessGuard, Database, Key, MultimapTableDefinition, TableDefinition, TypeName, Value};
 
+use crate::{
+    trie_db::{redb::RedBTrie, redb_multitable::RedBMultiTableTrieDB},
+    Trie,
+};
 use crate::rlp::{BlockRLP, BlockTotalDifficultyRLP, Rlp, TransactionHashRLP};
 use crate::{
     error::StoreError,

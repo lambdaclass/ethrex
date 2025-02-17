@@ -33,6 +33,6 @@ path = "./blockchain.rs"
 
 [features]
 default = []
-libmdbx = ["ethrex-common/libmdbx", "ethrex-storage/default", "ethrex-vm/libmdbx"]
+libmdbx = ["ethrex-storage/default", "ethrex-vm/libmdbx"]
 c-kzg = ["ethrex-common/c-kzg", "ethrex-vm/c-kzg", "ethrex-levm/c-kzg"]
 metrics = ["ethrex-metrics/transactions"]
