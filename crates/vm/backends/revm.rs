@@ -7,9 +7,8 @@ use ethrex_storage::error::StoreError;
 use lazy_static::lazy_static;
 use revm::{
     inspectors::TracerEip3155,
-    precompile::{PrecompileSpecId, Precompiles},
     primitives::{BlobExcessGasAndPrice, BlockEnv, TxEnv, B256},
-    Database, DatabaseCommit, Evm,
+    DatabaseCommit, Evm,
 };
 use revm_inspectors::access_list::AccessListInspector;
 // Rename imported types for clarity
