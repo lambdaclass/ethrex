@@ -136,7 +136,7 @@ impl<'a> Prover for Sp1Prover<'a> {
 
         // Proof information by proving the specified ELF binary.
         // This struct contains the receipt along with statistics about execution of the guest
-        let proof = client.prove(&pk, stdin).groth16().run()?;
+        let proof = client.prove(&pk, &stdin).groth16().run()?;
         // Wrap Proof and vk
         let sp1_proof = Sp1Proof::new(proof, vk);
         info!("Successfully generated SP1Proof.");
