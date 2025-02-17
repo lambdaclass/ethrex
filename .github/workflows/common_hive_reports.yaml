@@ -37,11 +37,6 @@ jobs:
           - { name: "Sync tests", file_name: sync, simulation: ethereum/sync }
 
     steps:
-      - name: Pull image
-        run: |
-          docker pull ghcr.io/lambdaclass/ethrex:latest
-          docker tag ghcr.io/lambdaclass/ethrex:latest ethrex:latest
-
       - name: Checkout sources
         if: ${{ inputs.job_type != 'main' }}
         uses: actions/checkout@v4
@@ -51,6 +46,16 @@ jobs:
         uses: actions/checkout@v4
         with:
           ref: main
+
+      - name: Build image
+        if: ${{ inputs.job_type != 'main' }}
+        run: make build-image
+
+      - name: Pull image
+        if: ${{ inputs.job_type == 'main' }}
+        run: |
+          docker pull ghcr.io/lambdaclass/ethrex:latest
+          docker tag ghcr.io/lambdaclass/ethrex:latest ethrex:latest
 
       - name: Setup Go
         uses: actions/setup-go@v5
