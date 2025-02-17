@@ -708,7 +708,7 @@ pub fn eip7702_get_code(
     accrued_substate: &mut Substate,
     address: Address,
 ) -> Result<(bool, u64, Address, Bytes), VMError> {
-    // Address is the delgated address
+    // Address is the delegated address
     let account = get_account(cache, db.clone(), address);
     let bytecode = account.info.bytecode.clone();
 
