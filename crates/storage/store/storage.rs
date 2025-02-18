@@ -596,6 +596,20 @@ impl Store {
         self.engine.get_transaction_by_hash(transaction_hash)
     }
 
+    pub fn get_transaction_by_hash_from_mempool(
+        &self,
+        transaction_hash: H256,
+    ) -> Result<Option<Transaction>, StoreError> {
+        let tx = self
+            .mempool
+            .lock()
+            .unwrap()
+            .get(&transaction_hash)
+            .map(|e| e.clone().into());
+
+        Ok(tx)
+    }
+
     pub fn get_transaction_by_location(
         &self,
         block_hash: BlockHash,

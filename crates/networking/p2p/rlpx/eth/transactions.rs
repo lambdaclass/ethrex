@@ -181,7 +181,7 @@ impl GetPooledTransactions {
         hash: &H256,
         store: &Store,
     ) -> Result<Option<P2PTransaction>, StoreError> {
-        let Some(tx) = store.get_transaction_by_hash(*hash)? else {
+        let Some(tx) = store.get_transaction_by_hash_from_mempool(*hash)? else {
             return Ok(None);
         };
         let result = match tx {
