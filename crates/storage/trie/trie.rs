@@ -1,5 +1,5 @@
 pub mod db;
-mod error;
+pub mod error;
 mod nibbles;
 mod node;
 mod node_hash;
@@ -15,10 +15,7 @@ use node_hash::NodeHash;
 use sha3::{Digest, Keccak256};
 use std::collections::HashSet;
 
-#[cfg(feature = "libmdbx")]
-pub use self::db::{libmdbx::LibmdbxTrieDB, libmdbx_dupsort::LibmdbxDupsortTrieDB};
-
-pub use self::db::{in_memory::InMemoryTrieDB, TrieDB};
+pub use self::db::{InMemoryTrieDB, TrieDB};
 pub use self::nibbles::Nibbles;
 pub use self::verify_range::verify_range;
 pub use self::{node::Node, state::TrieState};
@@ -332,16 +329,7 @@ impl Trie {
         &self.state
     }
 
-    #[cfg(all(test, feature = "libmdbx"))]
-    /// Creates a new Trie based on a temporary Libmdbx DB
-    fn new_temp() -> Self {
-        let db = test_utils::libmdbx::new_db::<test_utils::libmdbx::TestNodes>();
-        Trie::new(Box::new(
-            LibmdbxTrieDB::<test_utils::libmdbx::TestNodes>::new(db),
-        ))
-    }
-
-    #[cfg(all(test, not(feature = "libmdbx")))]
+    #[cfg(test)]
     /// Creates a new Trie based on a temporary InMemory DB
     fn new_temp() -> Self {
         use std::collections::HashMap;
@@ -371,13 +359,6 @@ mod test {
     use std::sync::Arc;
 
     use super::*;
-
-    #[cfg(feature = "libmdbx")]
-    use crate::test_utils::libmdbx::TestNodes;
-    #[cfg(feature = "libmdbx")]
-    use db::libmdbx::LibmdbxTrieDB;
-    #[cfg(feature = "libmdbx")]
-    use tempdir::TempDir;
 
     use hasher::HasherKeccak;
     use hex_literal::hex;
@@ -682,137 +663,6 @@ mod test {
             trie.hash().unwrap().0.as_slice(),
             hex!("7a320748f780ad9ad5b0837302075ce0eeba6c26e3d8562c67ccc0f1b273298a").as_slice(),
         );
-    }
-
-    #[cfg(feature = "libmdbx")]
-    #[test]
-    fn get_old_state() {
-        let db = test_utils::libmdbx::new_db::<TestNodes>();
-        let mut trie = Trie::new(Box::new(LibmdbxTrieDB::<TestNodes>::new(db.clone())));
-
-        trie.insert([0; 32].to_vec(), [0; 32].to_vec()).unwrap();
-        trie.insert([1; 32].to_vec(), [1; 32].to_vec()).unwrap();
-
-        let root = trie.hash().unwrap();
-
-        trie.insert([0; 32].to_vec(), [2; 32].to_vec()).unwrap();
-        trie.insert([1; 32].to_vec(), [3; 32].to_vec()).unwrap();
-
-        assert_eq!(trie.get(&[0; 32].to_vec()).unwrap(), Some([2; 32].to_vec()));
-        assert_eq!(trie.get(&[1; 32].to_vec()).unwrap(), Some([3; 32].to_vec()));
-
-        let trie = Trie::open(Box::new(LibmdbxTrieDB::<TestNodes>::new(db.clone())), root);
-
-        assert_eq!(trie.get(&[0; 32].to_vec()).unwrap(), Some([0; 32].to_vec()));
-        assert_eq!(trie.get(&[1; 32].to_vec()).unwrap(), Some([1; 32].to_vec()));
-    }
-
-    #[cfg(feature = "libmdbx")]
-    #[test]
-    fn get_old_state_with_removals() {
-        let db = test_utils::libmdbx::new_db::<TestNodes>();
-        let mut trie = Trie::new(Box::new(LibmdbxTrieDB::<TestNodes>::new(db.clone())));
-
-        trie.insert([0; 32].to_vec(), [0; 32].to_vec()).unwrap();
-        trie.insert([1; 32].to_vec(), [1; 32].to_vec()).unwrap();
-        trie.insert([2; 32].to_vec(), [2; 32].to_vec()).unwrap();
-
-        let root = trie.hash().unwrap();
-
-        trie.insert([0; 32].to_vec(), vec![0x04]).unwrap();
-        trie.remove([1; 32].to_vec()).unwrap();
-        trie.insert([2; 32].to_vec(), vec![0x05]).unwrap();
-        trie.remove([0; 32].to_vec()).unwrap();
-
-        assert_eq!(trie.get(&[0; 32].to_vec()).unwrap(), None);
-        assert_eq!(trie.get(&[1; 32].to_vec()).unwrap(), None);
-        assert_eq!(trie.get(&[2; 32].to_vec()).unwrap(), Some(vec![0x05]));
-
-        let trie = Trie::open(Box::new(LibmdbxTrieDB::<TestNodes>::new(db.clone())), root);
-
-        assert_eq!(trie.get(&[0; 32].to_vec()).unwrap(), Some([0; 32].to_vec()));
-        assert_eq!(trie.get(&[1; 32].to_vec()).unwrap(), Some([1; 32].to_vec()));
-        assert_eq!(trie.get(&[2; 32].to_vec()).unwrap(), Some([2; 32].to_vec()));
-    }
-
-    #[cfg(feature = "libmdbx")]
-    #[test]
-    fn revert() {
-        let db = test_utils::libmdbx::new_db::<TestNodes>();
-        let mut trie = Trie::new(Box::new(LibmdbxTrieDB::<TestNodes>::new(db.clone())));
-
-        trie.insert([0; 32].to_vec(), [0; 32].to_vec()).unwrap();
-        trie.insert([1; 32].to_vec(), [1; 32].to_vec()).unwrap();
-
-        let root = trie.hash().unwrap();
-
-        trie.insert([0; 32].to_vec(), [2; 32].to_vec()).unwrap();
-        trie.insert([1; 32].to_vec(), [3; 32].to_vec()).unwrap();
-
-        let mut trie = Trie::open(Box::new(LibmdbxTrieDB::<TestNodes>::new(db.clone())), root);
-
-        trie.insert([2; 32].to_vec(), [4; 32].to_vec()).unwrap();
-
-        assert_eq!(trie.get(&[0; 32].to_vec()).unwrap(), Some([0; 32].to_vec()));
-        assert_eq!(trie.get(&[1; 32].to_vec()).unwrap(), Some([1; 32].to_vec()));
-        assert_eq!(trie.get(&[2; 32].to_vec()).unwrap(), Some([4; 32].to_vec()));
-    }
-
-    #[cfg(feature = "libmdbx")]
-    #[test]
-    fn revert_with_removals() {
-        let db = test_utils::libmdbx::new_db::<TestNodes>();
-        let mut trie = Trie::new(Box::new(LibmdbxTrieDB::<TestNodes>::new(db.clone())));
-
-        trie.insert([0; 32].to_vec(), [0; 32].to_vec()).unwrap();
-        trie.insert([1; 32].to_vec(), [1; 32].to_vec()).unwrap();
-        trie.insert([2; 32].to_vec(), [2; 32].to_vec()).unwrap();
-
-        let root = trie.hash().unwrap();
-
-        trie.insert([0; 32].to_vec(), [4; 32].to_vec()).unwrap();
-        trie.remove([1; 32].to_vec()).unwrap();
-        trie.insert([2; 32].to_vec(), [5; 32].to_vec()).unwrap();
-        trie.remove([0; 32].to_vec()).unwrap();
-
-        let mut trie = Trie::open(Box::new(LibmdbxTrieDB::<TestNodes>::new(db.clone())), root);
-
-        trie.remove([2; 32].to_vec()).unwrap();
-
-        assert_eq!(trie.get(&[0; 32].to_vec()).unwrap(), Some([0; 32].to_vec()));
-        assert_eq!(trie.get(&[1; 32].to_vec()).unwrap(), Some([1; 32].to_vec()));
-        assert_eq!(trie.get(&vec![0x02]).unwrap(), None);
-    }
-
-    #[cfg(feature = "libmdbx")]
-    #[test]
-    fn resume_trie() {
-        const TRIE_DIR: &str = "trie-db-resume-trie-test";
-        let trie_dir = TempDir::new(TRIE_DIR).expect("Failed to create temp dir");
-        let trie_dir = trie_dir.path();
-
-        // Create new trie from clean DB
-        let db = test_utils::libmdbx::new_db_with_path::<TestNodes>(trie_dir.into());
-        let mut trie = Trie::new(Box::new(LibmdbxTrieDB::<TestNodes>::new(db.clone())));
-
-        trie.insert([0; 32].to_vec(), [1; 32].to_vec()).unwrap();
-        trie.insert([1; 32].to_vec(), [2; 32].to_vec()).unwrap();
-        trie.insert([2; 32].to_vec(), [4; 32].to_vec()).unwrap();
-
-        // Save current root
-        let root = trie.hash().unwrap();
-
-        // Release DB
-        drop(db);
-        drop(trie);
-
-        let db2 = test_utils::libmdbx::open_db::<TestNodes>(trie_dir.to_str().unwrap());
-        // Create a new trie based on the previous trie's DB
-        let trie = Trie::open(Box::new(LibmdbxTrieDB::<TestNodes>::new(db2)), root);
-
-        assert_eq!(trie.get(&[0; 32].to_vec()).unwrap(), Some([1; 32].to_vec()));
-        assert_eq!(trie.get(&[1; 32].to_vec()).unwrap(), Some([2; 32].to_vec()));
-        assert_eq!(trie.get(&[2; 32].to_vec()).unwrap(), Some([4; 32].to_vec()));
     }
 
     // Proptests

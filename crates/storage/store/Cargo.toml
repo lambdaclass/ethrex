@@ -24,12 +24,13 @@ redb = { workspace = true, optional = true }
 
 [features]
 default = []
-libmdbx = ["dep:libmdbx", "ethrex-trie/libmdbx", "ethrex-common/libmdbx"]
-redb = ["dep:redb", "ethrex-trie/redb", "ethrex-common/redb"]
+libmdbx = ["dep:libmdbx", "ethrex-trie/libmdbx"]
+redb = ["dep:redb"]
 
 [dev-dependencies]
 hex.workspace = true
 hex-literal.workspace = true
+tempdir = "0.3.7"
 
 [lib]
 path = "./storage.rs"

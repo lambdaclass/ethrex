@@ -6,6 +6,8 @@ use crate::rlp::{
     BlockHashRLP, BlockHeaderRLP, BlockRLP, BlockTotalDifficultyRLP, ReceiptRLP, Rlp,
     TransactionHashRLP, TupleRLP,
 };
+use crate::trie_db::libmdbx::LibmdbxTrieDB;
+use crate::trie_db::libmdbx_dupsort::LibmdbxDupsortTrieDB;
 use crate::{MAX_SNAPSHOT_READS, STATE_TRIE_SEGMENTS};
 use anyhow::Result;
 use bytes::Bytes;
@@ -17,7 +19,7 @@ use ethrex_common::types::{
 use ethrex_rlp::decode::RLPDecode;
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_rlp::error::RLPDecodeError;
-use ethrex_trie::{LibmdbxDupsortTrieDB, LibmdbxTrieDB, Nibbles, Trie};
+use ethrex_trie::{Nibbles, Trie};
 use libmdbx::orm::{Decodable, Encodable, Table};
 use libmdbx::{
     dupsort,
