@@ -1,4 +1,5 @@
 use super::constants::{BEACON_ROOTS_ADDRESS, HISTORY_STORAGE_ADDRESS, SYSTEM_ADDRESS};
+use crate::backends::get_state_transitions;
 use crate::db::StoreWrapper;
 use crate::EvmError;
 use crate::EvmState;
@@ -60,9 +61,8 @@ impl LEVM {
         }
 
         // Account updates are initialized like this because of the beacon_root_contract_call, it is going to be empty if it wasn't called.
-        let mut account_updates =
-            Self::get_state_transitions(state, block_header.compute_block_hash(), &block_cache);
-
+        // Here we get the state_transitions from the db and then we get the state_transitions from the cache_db.
+        let mut account_updates = get_state_transitions(state);
         let mut receipts = Vec::new();
         let mut cumulative_gas_used = 0;
 

@@ -186,7 +186,7 @@ impl ExecutionDB {
         let mut state = evm_state(store.clone(), block.header.parent_hash);
 
         let (_, account_updates) =
-            backends::revm::REVM::execute_block(block, &mut state).map_err(Box::new)?;
+            backends::revm_b::REVM::execute_block(block, &mut state).map_err(Box::new)?;
         Ok(account_updates)
     }
 
