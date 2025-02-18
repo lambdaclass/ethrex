@@ -131,7 +131,7 @@ impl<'a> Prover for Sp1Prover<'a> {
         stdin.write(&input);
 
         // Generate the ProverClient
-        let client = ProverClient::new();
+        let client = ProverClient::from_env();
         let (pk, vk) = client.setup(self.elf);
 
         // Proof information by proving the specified ELF binary.
@@ -147,7 +147,7 @@ impl<'a> Prover for Sp1Prover<'a> {
         // Verify the proof.
         match proving_output {
             ProvingOutput::SP1(complete_proof) => {
-                let client = ProverClient::new();
+                let client = ProverClient::from_env();
                 client.verify(&complete_proof.proof, &complete_proof.vk)?;
             }
             ProvingOutput::RISC0(_) => return Err(Box::new(ProverError::IncorrectProverType)),
