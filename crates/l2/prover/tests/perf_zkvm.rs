@@ -31,8 +31,6 @@ async fn test_performance_zkvm() {
     info!("[MINUTES] Proving Took: {}[m]", duration.as_secs() / 60);
 
     prover.verify(&receipt).unwrap();
-
-    let _program_output = prover.get_commitment(&receipt).unwrap();
 }
 
 #[tokio::test]
