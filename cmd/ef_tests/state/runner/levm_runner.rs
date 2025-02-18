@@ -448,6 +448,7 @@ pub fn get_state_transitions(
             .get_account_info_by_hash(block_hash, account_update.address)
             .unwrap()
         {
+            // https://eips.ethereum.org/EIPS/eip-161
             if new_info.balance == U256::zero()
                 && new_info.nonce == 0
                 && new_info.code_hash == code_hash(&Bytes::new())
@@ -456,16 +457,12 @@ pub fn get_state_transitions(
                 && old_info.code_hash == code_hash(&Bytes::new())
                 && *fork < Fork::SpuriousDragon
             {
-                // dbg!("ENTRO ACA");
                 continue;
             }
         }
 
         account_updates.push(account_update);
     }
-    // let temp = H160::from_slice(&hex::decode("c94f5374fce5edbc8e2a8697c15331677e6ebf0b").unwrap());
-    // dbg!(temp);
-    // account_updates.retain(|x| x.address != temp);
 
     account_updates
 }

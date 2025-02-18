@@ -318,13 +318,7 @@ impl VM {
             self.env.transient_storage.clone(),
         );
 
-        // dbg!(&current_call_frame.to);
-        // dbg!(&current_call_frame.msg_sender);
-        // dbg!(&current_call_frame.gas_limit);
-        // dbg!(&current_call_frame.gas_used);
-
         if is_precompile(&current_call_frame.code_address, self.env.config.fork) {
-            // dbg!("IS PRECOMPILE");
             let precompile_result = execute_precompile(current_call_frame, self.env.config.fork);
             return self.handle_precompile_result(precompile_result, current_call_frame, backup);
         }
@@ -332,14 +326,7 @@ impl VM {
         loop {
             let opcode = current_call_frame.next_opcode();
 
-            // dbg!(&opcode);
-
             let op_result = self.handle_current_opcode(opcode, current_call_frame);
-
-            // dbg!(&op_result);
-            // dbg!(&current_call_frame.gas_used);
-            // dbg!(&self.env.refunded_gas);
-            // dbg!(&current_call_frame.stack);
 
             match op_result {
                 Ok(OpcodeResult::Continue { pc_increment }) => {
