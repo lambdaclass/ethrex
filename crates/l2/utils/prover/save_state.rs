@@ -391,9 +391,7 @@ mod tests {
     use ethrex_vm::execution_db::ExecutionDB;
     use risc0_zkvm::sha::Digest;
     use sp1_recursion_gnark_ffi::PlonkBn254Proof;
-    use sp1_sdk::{
-        client::ProverClientBuilder, HashableKey, Prover, SP1Proof, SP1PublicValues,
-    };
+    use sp1_sdk::{client::ProverClientBuilder, HashableKey, Prover, SP1Proof, SP1PublicValues};
 
     use super::*;
     use crate::utils::{
