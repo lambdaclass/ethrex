@@ -226,6 +226,38 @@ impl RpcHandler for GetPayloadV3Request {
         Ok(Self { payload_id })
     }
 
+    async fn call(req: &RpcRequest, context: RpcApiContext) -> Result<Value, RpcErr> {
+        let request = Self::parse(&req.params)?;
+        cfg_if::cfg_if! {
+            if #[cfg(feature = "l2")] {
+                info!("Relaying engine_getPayloadV3 to gateway");
+                let gateway_response = context.gateway_auth_client.engine_get_payload_v3(request.payload_id)
+                    .await
+                    .map_err(|err| {
+                        RpcErr::Internal(format!(
+                            "Could not relay engine_getPayloadV3 to gateway: {err}",
+                        ))
+                    }).and_then(|response| {
+                        serde_json::to_value(response).map_err(|error| RpcErr::Internal(error.to_string()))
+                    });
+
+                // Parse ir again as it was consumed for gateway_response and it is the same as cloning it.
+                let request = Self::parse(&req.params)?;
+                let client_response = request.handle(context);
+
+                if gateway_response.is_err() {
+                    warn!(error = ?gateway_response, "Gateway engine_getPayloadV3 failed, falling back to local node");
+                } else {
+                    info!("Successfully relayed engine_getPayloadV3 to gateway");
+                }
+
+                gateway_response.or(client_response)
+            } else {
+                request.handle(context)
+            }
+        }
+    }
+
     fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
         let payload = get_payload(self.payload_id, &context)?;
         validate_fork(&payload.0, Fork::Cancun, &context)?;
