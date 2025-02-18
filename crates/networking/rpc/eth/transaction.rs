@@ -4,7 +4,7 @@ use crate::{
         block_identifier::BlockIdentifier,
         transaction::{RpcTransaction, SendRawTransactionRequest},
     },
-    utils::RpcErr,
+    utils::{RpcErr, RpcRequest},
     RpcApiContext, RpcHandler,
 };
 use ethrex_common::{
@@ -567,27 +567,49 @@ fn simulate_tx(
 
 impl RpcHandler for SendRawTransactionRequest {
     fn parse(params: &Option<Vec<Value>>) -> Result<SendRawTransactionRequest, RpcErr> {
-        let params = params
-            .as_ref()
-            .ok_or(RpcErr::BadParams("No params provided".to_owned()))?;
-        if params.len() != 1 {
-            return Err(RpcErr::BadParams(format!(
-                "Expected one param and {} were provided",
-                params.len()
-            )));
-        };
-
-        let str_data = serde_json::from_value::<String>(params[0].clone())?;
-        let str_data = str_data
-            .strip_prefix("0x")
-            .ok_or(RpcErr::BadParams("Params are note 0x prefixed".to_owned()))?;
-        let data = hex::decode(str_data).map_err(|error| RpcErr::BadParams(error.to_string()))?;
+        let data = get_transaction_data(params)?;
 
         let transaction = SendRawTransactionRequest::decode_canonical(&data)
             .map_err(|error| RpcErr::BadParams(error.to_string()))?;
 
         Ok(transaction)
     }
+
+    async fn call(req: &RpcRequest, context: RpcApiContext) -> Result<Value, RpcErr> {
+        cfg_if::cfg_if! {
+            if #[cfg(feature = "l2")] {
+                use tracing::warn;
+
+                info!("Relaying eth_sendRawTransaction to gateway");
+                let gateway_response = context.gateway_eth_client
+                    .send_raw_transaction(&get_transaction_data(&req.params)?)
+                    .await
+                    .map_err(|err| {
+                        RpcErr::Internal(format!(
+                            "Could not relay eth_sendRawTransaction to gateway: {err}",
+                        ))
+                    }).and_then(|hash| {
+                        serde_json::to_value(format!("{hash:#x}"))
+                            .map_err(|error| RpcErr::Internal(error.to_string()))
+                    });
+
+                let request = Self::parse(&req.params)?;
+                let client_response = request.handle(context);
+
+                if gateway_response.is_err() {
+                    warn!(error = ?gateway_response, "Gateway eth_sendRawTransaction failed, falling back to local node");
+                } else {
+                    info!("Successfully relayed eth_sendRawTransaction to gateway");
+                }
+
+                gateway_response.or(client_response)
+            } else {
+                let request = Self::parse(&req.params)?;
+                request.handle(context)
+            }
+        }
+    }
+
     fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
         let hash = if let SendRawTransactionRequest::EIP4844(wrapped_blob_tx) = self {
             mempool::add_blob_transaction(
@@ -601,4 +623,22 @@ impl RpcHandler for SendRawTransactionRequest {
         serde_json::to_value(format!("{:#x}", hash))
             .map_err(|error| RpcErr::Internal(error.to_string()))
     }
+}
+
+fn get_transaction_data(rpc_req_params: &Option<Vec<Value>>) -> Result<Vec<u8>, RpcErr> {
+    let params = rpc_req_params
+        .as_ref()
+        .ok_or(RpcErr::BadParams("No params provided".to_owned()))?;
+    if params.len() != 1 {
+        return Err(RpcErr::BadParams(format!(
+            "Expected one param and {} were provided",
+            params.len()
+        )));
+    };
+
+    let str_data = serde_json::from_value::<String>(params[0].clone())?;
+    let str_data = str_data
+        .strip_prefix("0x")
+        .ok_or(RpcErr::BadParams("Params are note 0x prefixed".to_owned()))?;
+    hex::decode(str_data).map_err(|error| RpcErr::BadParams(error.to_string()))
 }
