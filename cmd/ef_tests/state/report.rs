@@ -585,7 +585,7 @@ impl fmt::Display for ComparisonReport {
         if self.revm_post_state_root != self.expected_post_state_root {
             writeln!(
                 f,
-                " =============== WARNING: REVM *fails* this tests ================== "
+                "================ WARNING: REVM *fails* this tests ==================="
             )?
         }
         if self.levm_post_state_root != self.revm_post_state_root {
