@@ -14,6 +14,7 @@ use std::{
     io::{self, BufRead},
     path::Path,
     thread::sleep,
+    time::Duration,
 };
 
 #[derive(Subcommand)]
@@ -129,6 +130,7 @@ async fn transfer_from(
             retries += 1;
             sleep(std::time::Duration::from_secs(2));
         }
+        sleep(Duration::from_millis(3));
     }
 
     retries
