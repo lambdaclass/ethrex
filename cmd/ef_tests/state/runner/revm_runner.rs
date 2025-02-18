@@ -396,6 +396,7 @@ pub fn compare_levm_revm_account_updates(
         levm_post_state_root,
         revm_post_state_root,
         initial_accounts,
+        expected_post_state_root: test.post.vector_post_value(vector, *fork).hash,
         levm_account_updates: levm_account_updates.to_vec(),
         revm_account_updates: revm_account_updates.to_vec(),
         levm_updated_accounts_only: levm_updated_accounts

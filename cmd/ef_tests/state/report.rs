@@ -569,6 +569,7 @@ impl EFTestReportForkResult {
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
 pub struct ComparisonReport {
+    pub expected_post_state_root: H256,
     pub levm_post_state_root: H256,
     pub revm_post_state_root: H256,
     pub initial_accounts: HashMap<Address, Account>,
@@ -581,6 +582,12 @@ pub struct ComparisonReport {
 
 impl fmt::Display for ComparisonReport {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if self.revm_post_state_root != self.expected_post_state_root {
+            writeln!(
+                f,
+                " =============== WARNING: REVM *fails* this tests ================== "
+            )?
+        }
         if self.levm_post_state_root != self.revm_post_state_root {
             writeln!(
                 f,
