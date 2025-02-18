@@ -50,7 +50,7 @@ pub enum SendRawTransactionRequest {
     EIP2930(EIP2930Transaction),
     EIP1559(EIP1559Transaction),
     EIP4844(WrappedEIP4844Transaction),
-    PriviligedL2(PrivilegedL2Transaction),
+    PrivilegeL2(PrivilegedL2Transaction),
 }
 
 impl SendRawTransactionRequest {
@@ -60,7 +60,7 @@ impl SendRawTransactionRequest {
             SendRawTransactionRequest::EIP1559(t) => Transaction::EIP1559Transaction(t.clone()),
             SendRawTransactionRequest::EIP2930(t) => Transaction::EIP2930Transaction(t.clone()),
             SendRawTransactionRequest::EIP4844(t) => Transaction::EIP4844Transaction(t.tx.clone()),
-            SendRawTransactionRequest::PriviligedL2(t) => {
+            SendRawTransactionRequest::PrivilegeL2(t) => {
                 Transaction::PrivilegedL2Transaction(t.clone())
             }
         }
@@ -90,7 +90,7 @@ impl SendRawTransactionRequest {
                     0x3 => WrappedEIP4844Transaction::decode(tx_bytes)
                         .map(SendRawTransactionRequest::EIP4844),
                     0x7e => PrivilegedL2Transaction::decode(tx_bytes)
-                        .map(SendRawTransactionRequest::PriviligedL2),
+                        .map(SendRawTransactionRequest::PrivilegeL2),
                     ty => Err(RLPDecodeError::Custom(format!(
                         "Invalid transaction type: {ty}"
                     ))),
