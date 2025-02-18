@@ -33,8 +33,6 @@ use std::ops::Div;
 use tokio::time::{sleep, Instant};
 use tracing::warn;
 
-use super::get_address_from_secret_key;
-
 pub mod errors;
 pub mod eth_sender;
 
@@ -1040,6 +1038,32 @@ impl EthClient {
 
         Ok(value)
     }
+
+    pub async fn wait_for_transaction_receipt(
+        &self,
+        tx_hash: H256,
+        max_retries: u64,
+    ) -> Result<RpcReceipt, EthClientError> {
+        let mut receipt = self.get_transaction_receipt(tx_hash).await?;
+        let mut r#try = 1;
+        while receipt.is_none() {
+            println!("[{try}/{max_retries}] Retrying to get transaction receipt for {tx_hash:#x}");
+
+            if max_retries == r#try {
+                return Err(EthClientError::Custom(format!(
+                    "Transaction receipt for {tx_hash:#x} not found after {max_retries} retries"
+                )));
+            }
+            r#try += 1;
+
+            tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+
+            receipt = self.get_transaction_receipt(tx_hash).await?;
+        }
+        receipt.ok_or(EthClientError::Custom(
+            "Transaction receipt is None".to_owned(),
+        ))
+    }
 }
 
 pub fn from_hex_string_to_u256(hex_str: &str) -> Result<U256, EthClientError> {
@@ -1059,6 +1083,27 @@ pub fn from_hex_string_to_u256(hex_str: &str) -> Result<U256, EthClientError> {
         )
     })?;
     Ok(value)
+}
+
+pub fn get_address_from_secret_key(secret_key: &SecretKey) -> Result<Address, EthClientError> {
+    let public_key = secret_key
+        .public_key(secp256k1::SECP256K1)
+        .serialize_uncompressed();
+    let hash = keccak(&public_key[1..]);
+
+    // Get the last 20 bytes of the hash
+    let address_bytes: [u8; 20] = hash
+        .as_ref()
+        .get(12..32)
+        .ok_or(EthClientError::Custom(
+            "Failed to get_address_from_secret_key: error slicing address_bytes".to_owned(),
+        ))?
+        .try_into()
+        .map_err(|err| {
+            EthClientError::Custom(format!("Failed to get_address_from_secret_key: {err}"))
+        })?;
+
+    Ok(Address::from(address_bytes))
 }
 
 #[derive(Serialize, Deserialize, Debug)]

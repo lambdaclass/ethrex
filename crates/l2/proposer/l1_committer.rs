@@ -14,10 +14,10 @@ use ethrex_common::{
     },
     Address, H256, U256,
 };
+use ethrex_l2_sdk::calldata::{encode_calldata, Value};
 use ethrex_l2_sdk::merkle_tree::merkelize;
-use ethrex_l2_sdk::{
-    calldata::{encode_calldata, Value},
-    eth_client::{eth_sender::Overrides, BlockByNumber, EthClient, WrappedTransaction},
+use ethrex_rpc_clients::eth::{
+    eth_sender::Overrides, BlockByNumber, EthClient, WrappedTransaction,
 };
 use ethrex_storage::{error::StoreError, Store};
 use ethrex_vm::{backends::revm::execute_block, db::evm_state, get_state_transitions};

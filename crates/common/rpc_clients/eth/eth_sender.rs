@@ -1,3 +1,7 @@
+use crate::eth::{
+    errors::{CallError, EthClientError},
+    EthClient, RpcResponse,
+};
 use bytes::Bytes;
 use ethereum_types::{Address, U256};
 use ethrex_common::types::{GenericTransaction, TxKind};
@@ -7,13 +11,6 @@ use ethrex_rpc::utils::{RpcRequest, RpcRequestId};
 use keccak_hash::keccak;
 use secp256k1::SecretKey;
 use serde_json::json;
-
-use crate::wait_for_transaction_receipt;
-
-use super::{
-    errors::{CallError, EthClientError},
-    EthClient, RpcResponse,
-};
 
 #[derive(Default, Clone, Debug)]
 pub struct Overrides {
@@ -103,7 +100,8 @@ impl EthClient {
                 EthClientError::Custom("Failed to get deployed_address".to_owned()),
             )?);
 
-        wait_for_transaction_receipt(deploy_tx_hash, self, 1000).await?;
+        self.wait_for_transaction_receipt(deploy_tx_hash, 1000)
+            .await?;
 
         Ok((deploy_tx_hash, deployed_address))
     }

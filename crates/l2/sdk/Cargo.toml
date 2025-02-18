@@ -6,6 +6,7 @@ edition.workspace = true
 [dependencies]
 ethrex-common.workspace = true
 ethrex-rpc.workspace = true
+ethrex-rpc-clients.workspace = true
 
 ethereum-types.workspace = true
 tokio.workspace = true
