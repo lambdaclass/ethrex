@@ -20,7 +20,7 @@ pub enum EFTestParseError {
     FailedToParseTestFile(String),
 }
 
-const IGNORED_TESTS: [&str; 7] = [
+const IGNORED_TESTS: [&str; 11] = [
     "ValueOverflowParis.json",                 // Skip because of errors
     "loopMul.json",                            // Skip because it takes too long to run
     "dynamicAccountOverwriteEmpty_Paris.json", // Skip because it fails on REVM
@@ -28,6 +28,10 @@ const IGNORED_TESTS: [&str; 7] = [
     "RevertInCreateInInit_Paris.json", // Skip because it fails on REVM. See https://github.com/lambdaclass/ethrex/issues/1555
     "create2collisionStorageParis.json", // Skip because it fails on REVM
     "InitCollisionParis.json",         // Skip because it fails on REVM
+    "InitCollision.json",              // Skip because it fails on REVM
+    "basefeeExample.json",             // Skip because it has access list before Berlin fork
+    "eip1559.json",                    // Skip because it has access list before Berlin fork
+    "mergeTest.json",                  // Skip because it has access list before Berlin fork
 ];
 
 pub fn parse_ef_tests(opts: &EFTestRunnerOptions) -> Result<Vec<EFTest>, EFTestParseError> {
