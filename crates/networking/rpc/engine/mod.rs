@@ -8,6 +8,7 @@ use serde_json::{json, Value};
 pub type ExchangeCapabilitiesRequest = Vec<String>;
 
 /// List of capabilities that the execution layer client supports. Add new capabilities here.
+/// More info: https://github.com/ethereum/execution-apis/blob/main/src/engine/common.md#engine_exchangecapabilities
 pub const CAPABILITIES: [&str; 12] = [
     "engine_forkchoiceUpdatedV1",
     "engine_forkchoiceUpdatedV2",
