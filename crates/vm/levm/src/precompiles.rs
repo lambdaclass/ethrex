@@ -177,6 +177,16 @@ pub const G1_POINT_AT_INFINITY: [u8; 128] = [0_u8; 128];
 pub const G2_POINT_AT_INFINITY: [u8; 256] = [0_u8; 256];
 
 pub fn is_precompile(callee_address: &Address, fork: Fork) -> bool {
+    // precompiles introduced in Byzantium https://eips.ethereum.org/EIPS/eip-609
+    if (*callee_address == MODEXP_ADDRESS
+        || *callee_address == ECADD_ADDRESS
+        || *callee_address == ECMUL_ADDRESS
+        || *callee_address == ECPAIRING_ADDRESS)
+        && fork < Fork::Byzantium
+    {
+        return false;
+    }
+
     // Cancun specs is the only one that allows point evaluation precompile
     if *callee_address == POINT_EVALUATION_ADDRESS && fork < Fork::Cancun {
         return false;

@@ -126,10 +126,10 @@ pub fn prepare_revm_for_tx<'state>(
         basefee: RevmU256::from_limbs(test.env.current_base_fee.unwrap_or_default().0),
         difficulty: RevmU256::from_limbs(test.env.current_difficulty.0),
         prevrandao: test.env.current_random.map(|v| v.0.into()),
-        blob_excess_gas_and_price: test
-            .env
-            .current_excess_blob_gas
-            .map(|gas| BlobExcessGasAndPrice::new(gas.as_u64())),
+        blob_excess_gas_and_price: Some(BlobExcessGasAndPrice {
+            blob_gasprice: 0,
+            excess_blob_gas: test.env.current_excess_blob_gas.unwrap().as_u64(),
+        }),
     };
     let tx = &test
         .transactions
@@ -164,8 +164,7 @@ pub fn prepare_revm_for_tx<'state>(
                 SignedAuthorization::new_unchecked(
                     Authorization {
                         // The latest spec defined chain_id as a U256
-                        //chain_id: RevmU256::from_le_bytes(auth_t.chain_id.to_little_endian()),
-                        chain_id: auth_t.chain_id.as_u64(),
+                        chain_id: RevmU256::from_le_bytes(auth_t.chain_id.to_little_endian()),
                         address: RevmAddress(auth_t.address.0.into()),
                         nonce: auth_t.nonce,
                     },
@@ -333,7 +332,9 @@ pub fn ensure_post_state(
             );
             let revm_account_updates = ethrex_vm::get_state_transitions(revm_state);
             let account_updates_report = compare_levm_revm_account_updates(
+                vector,
                 test,
+                fork,
                 &levm_account_updates,
                 &revm_account_updates,
             );
@@ -345,7 +346,9 @@ pub fn ensure_post_state(
 }
 
 pub fn compare_levm_revm_account_updates(
+    vector: &TestVector,
     test: &EFTest,
+    fork: &Fork,
     levm_account_updates: &[AccountUpdate],
     revm_account_updates: &[AccountUpdate],
 ) -> ComparisonReport {
@@ -392,6 +395,7 @@ pub fn compare_levm_revm_account_updates(
         levm_post_state_root,
         revm_post_state_root,
         initial_accounts,
+        expected_post_state_root: test.post.vector_post_value(vector, *fork).hash,
         levm_account_updates: levm_account_updates.to_vec(),
         revm_account_updates: revm_account_updates.to_vec(),
         levm_updated_accounts_only: levm_updated_accounts

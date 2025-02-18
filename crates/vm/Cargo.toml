@@ -10,7 +10,7 @@ ethrex-levm.workspace = true
 ethrex-trie.workspace = true
 ethrex-rlp.workspace = true
 
-revm = { version = "19.4.0", features = [
+revm = { version = "19.0.0", features = [
   "serde",
   "std",
   "serde-json",
@@ -19,7 +19,7 @@ revm = { version = "19.4.0", features = [
 ], default-features = false }
 
 # These dependencies must be kept up to date with the corresponding revm version, otherwise errors may pop up because of trait implementation mismatches
-revm-inspectors = { version = "0.13.0" }
+revm-inspectors = { version = "0.15.0" }
 revm-primitives = { version = "15.2.0", features = [
   "std",
 ], default-features = false }
@@ -44,7 +44,6 @@ default = []
 l2 = []
 c-kzg = ["revm/c-kzg", "ethrex-levm/c-kzg", "ethrex-common/c-kzg"]
 blst = ["revm/blst"]
-libmdbx = ["ethrex-storage/default", "ethrex-common/libmdbx"]
 
 [profile.test]
 opt-level = 3
