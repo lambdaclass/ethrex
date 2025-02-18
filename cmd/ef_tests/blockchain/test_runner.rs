@@ -59,10 +59,10 @@ pub fn run_ef_test(test_key: &str, test: &TestUnit) {
 
 /// Tests the rlp decoding of a block
 fn exception_in_rlp_decoding(block_fixture: &BlockWithRLP) -> bool {
-    let expects_rlp_exception = block_fixture.expect_exception.as_ref().map_or(false, |s| {
-        s.starts_with("BlockException.RLP_")
-            || s.starts_with("TransactionException.TYPE_4_TX_CONTRACT_CREATION")
-    });
+    let expects_rlp_exception = block_fixture
+        .expect_exception
+        .as_ref()
+        .map_or(false, |s| s.starts_with("BlockException.RLP_"));
     match CoreBlock::decode(block_fixture.rlp.as_ref()) {
         Ok(_) => {
             assert!(!expects_rlp_exception);
