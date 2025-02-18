@@ -427,7 +427,12 @@ impl VM {
                 return self.handle_create_non_empty_account(&initial_call_frame);
             }
 
-            let created_contract = Account::new(balance, Bytes::new(), 1, HashMap::new());
+            // https://eips.ethereum.org/EIPS/eip-161
+            let created_contract = if self.env.config.fork < Fork::SpuriousDragon {
+                Account::new(balance, Bytes::new(), 0, HashMap::new())
+            } else {
+                Account::new(balance, Bytes::new(), 1, HashMap::new())
+            };
             cache::insert_account(&mut self.cache, new_contract_address, created_contract);
         }
 
