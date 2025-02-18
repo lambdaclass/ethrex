@@ -425,10 +425,14 @@ impl Store {
         let Some(mut state_trie) = self.state_trie(block_hash)? else {
             return Ok(None);
         };
+        // dbg!(&account_updates);
         for update in account_updates.iter() {
+            // dbg!(&update.address);
             let hashed_address = hash_address(&update.address);
             if update.removed {
                 // Remove account from trie
+                // dbg!("Removing account");
+                // dbg!(&update.address);
                 state_trie.remove(hashed_address)?;
             } else {
                 // Add or update AccountState in the trie

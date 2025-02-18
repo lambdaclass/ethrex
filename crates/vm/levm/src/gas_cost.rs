@@ -838,12 +838,6 @@ pub fn call(
     gas_left: u64,
     fork: Fork,
 ) -> Result<(u64, u64), VMError> {
-    dbg!(
-        new_memory_size,
-        current_memory_size,
-        address_was_cold,
-        address_is_empty
-    );
     let memory_expansion_cost = memory::expansion_cost(new_memory_size, current_memory_size)?;
 
     let (static_cost, cold_dynamic_cost, warm_dynamic_cost) = match fork {
@@ -868,7 +862,6 @@ pub fn call(
     let value_to_empty_account = if (!account_exists && fork < Fork::SpuriousDragon)
         || address_is_empty && !value_to_transfer.is_zero() && fork >= Fork::SpuriousDragon
     {
-        dbg!("entro aca");
         CALL_TO_EMPTY_ACCOUNT
     } else {
         0

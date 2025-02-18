@@ -4,9 +4,10 @@ use crate::{
     types::{EFTest, TransactionExpectedException},
     utils::{self, effective_gas_price},
 };
+use bytes::Bytes;
 use ethrex_common::{
     types::{code_hash, tx_fields::*, AccountInfo, Fork},
-    H256, U256,
+    H160, H256, U256,
 };
 use ethrex_levm::{
     db::CacheDB,
@@ -313,7 +314,7 @@ pub fn ensure_post_state(
                 None => {
                     let (initial_state, block_hash) = utils::load_initial_state(test);
                     let levm_account_updates =
-                        get_state_transitions(&initial_state, block_hash, execution_report);
+                        get_state_transitions(&initial_state, block_hash, execution_report, fork);
                     let pos_state_root = post_state_root(&levm_account_updates, test);
                     let expected_post_state_root_hash =
                         test.post.vector_post_value(vector, *fork).hash;
@@ -372,6 +373,7 @@ pub fn get_state_transitions(
     initial_state: &EvmState,
     block_hash: H256,
     execution_report: &ExecutionReport,
+    fork: &Fork,
 ) -> Vec<AccountUpdate> {
     let current_db = match initial_state {
         EvmState::Store(state) => state.database.store.clone(),
@@ -441,9 +443,29 @@ pub fn get_state_transitions(
             added_storage,
         };
 
+        let new_info = &account_update.info.clone().unwrap();
+        if let Some(old_info) = current_db
+            .get_account_info_by_hash(block_hash, account_update.address)
+            .unwrap()
+        {
+            if new_info.balance == U256::zero()
+                && new_info.nonce == 0
+                && new_info.code_hash == code_hash(&Bytes::new())
+                && old_info.balance == U256::zero()
+                && old_info.nonce == 0
+                && old_info.code_hash == code_hash(&Bytes::new())
+                && *fork < Fork::SpuriousDragon
+            {
+                // dbg!("ENTRO ACA");
+                continue;
+            }
+        }
+
         account_updates.push(account_update);
     }
-    // account_updates.retain(|x| !x.removed);
+    // let temp = H160::from_slice(&hex::decode("c94f5374fce5edbc8e2a8697c15331677e6ebf0b").unwrap());
+    // dbg!(temp);
+    // account_updates.retain(|x| x.address != temp);
 
     account_updates
 }
