@@ -267,6 +267,10 @@ mod tests {
         types::block_identifier::BlockIdentifier,
         utils::{test_utils::example_p2p_node, RpcRequest},
     };
+    #[cfg(feature = "l2")]
+    use crate::{EngineClient, EthClient};
+    #[cfg(feature = "l2")]
+    use bytes::Bytes;
     use ethrex_common::types::Genesis;
     use ethrex_p2p::sync::SyncManager;
     use ethrex_storage::{EngineType, Store};
@@ -274,8 +278,8 @@ mod tests {
     use serde_json::{json, Value};
     use test_utils::TEST_GENESIS;
 
-    #[test]
-    fn filter_request_smoke_test_valid_params() {
+    #[tokio::test]
+    async fn filter_request_smoke_test_valid_params() {
         let filter_req_params = json!(
                 {
                     "fromBlock": "0x1",
@@ -295,7 +299,7 @@ mod tests {
                 ,"id":1
         });
         let filters = Arc::new(Mutex::new(HashMap::new()));
-        let id = run_new_filter_request_test(raw_json.clone(), filters.clone());
+        let id = run_new_filter_request_test(raw_json.clone(), filters.clone()).await;
         let filters = filters.lock().unwrap();
         assert!(filters.len() == 1);
         let (_, filter) = filters.clone().get(&id).unwrap().clone();
@@ -314,8 +318,8 @@ mod tests {
         ));
     }
 
-    #[test]
-    fn filter_request_smoke_test_valid_null_topics_null_addr() {
+    #[tokio::test]
+    async fn filter_request_smoke_test_valid_null_topics_null_addr() {
         let raw_json = json!(
         {
             "jsonrpc":"2.0",
@@ -332,7 +336,7 @@ mod tests {
                 ,"id":1
         });
         let filters = Arc::new(Mutex::new(HashMap::new()));
-        let id = run_new_filter_request_test(raw_json.clone(), filters.clone());
+        let id = run_new_filter_request_test(raw_json.clone(), filters.clone()).await;
         let filters = filters.lock().unwrap();
         assert!(filters.len() == 1);
         let (_, filter) = filters.clone().get(&id).unwrap().clone();
@@ -348,8 +352,8 @@ mod tests {
         assert!(matches!(&filter.filter_data.topics[..], []));
     }
 
-    #[test]
-    fn filter_request_smoke_test_valid_addr_topic_null() {
+    #[tokio::test]
+    async fn filter_request_smoke_test_valid_addr_topic_null() {
         let raw_json = json!(
         {
             "jsonrpc":"2.0",
@@ -366,7 +370,7 @@ mod tests {
                 ,"id":1
         });
         let filters = Arc::new(Mutex::new(HashMap::new()));
-        let id = run_new_filter_request_test(raw_json.clone(), filters.clone());
+        let id = run_new_filter_request_test(raw_json.clone(), filters.clone()).await;
         let filters = filters.lock().unwrap();
         assert!(filters.len() == 1);
         let (_, filter) = filters.clone().get(&id).unwrap().clone();
@@ -385,9 +389,9 @@ mod tests {
         assert!(matches!(&filter.filter_data.topics[..], []));
     }
 
-    #[test]
+    #[tokio::test]
     #[should_panic]
-    fn filter_request_smoke_test_invalid_block_range() {
+    async fn filter_request_smoke_test_invalid_block_range() {
         let raw_json = json!(
         {
             "jsonrpc":"2.0",
@@ -403,12 +407,12 @@ mod tests {
             ]
                 ,"id":1
         });
-        run_new_filter_request_test(raw_json.clone(), Default::default());
+        run_new_filter_request_test(raw_json.clone(), Default::default()).await;
     }
 
-    #[test]
+    #[tokio::test]
     #[should_panic]
-    fn filter_request_smoke_test_from_block_missing() {
+    async fn filter_request_smoke_test_from_block_missing() {
         let raw_json = json!(
         {
             "jsonrpc":"2.0",
@@ -425,10 +429,10 @@ mod tests {
                 ,"id":1
         });
         let filters = Arc::new(Mutex::new(HashMap::new()));
-        run_new_filter_request_test(raw_json.clone(), filters.clone());
+        run_new_filter_request_test(raw_json.clone(), filters.clone()).await;
     }
 
-    fn run_new_filter_request_test(
+    async fn run_new_filter_request_test(
         json_req: serde_json::Value,
         filters_pointer: ActiveFilters,
     ) -> u64 {
@@ -440,6 +444,10 @@ mod tests {
             local_node_record: example_local_node_record(),
             active_filters: filters_pointer.clone(),
             syncer: Arc::new(TokioMutex::new(SyncManager::dummy())),
+            #[cfg(feature = "l2")]
+            gateway_eth_client: EthClient::new(""),
+            #[cfg(feature = "l2")]
+            gateway_auth_client: EngineClient::new("", Bytes::default()),
         };
         let request: RpcRequest = serde_json::from_value(json_req).expect("Test json is incorrect");
         let genesis_config: Genesis =
@@ -449,7 +457,10 @@ mod tests {
             .storage
             .add_initial_state(genesis_config)
             .expect("Fatal: could not add test genesis in test");
-        let response = map_http_requests(&request, context).unwrap().to_string();
+        let response = map_http_requests(&request, context)
+            .await
+            .unwrap()
+            .to_string();
         let trimmed_id = response.trim().trim_matches('"');
         assert!(trimmed_id.starts_with("0x"));
         let hex = trimmed_id.trim_start_matches("0x");
@@ -458,8 +469,8 @@ mod tests {
         parsed.unwrap()
     }
 
-    #[test]
-    fn install_filter_removed_correctly_test() {
+    #[tokio::test]
+    async fn install_filter_removed_correctly_test() {
         let uninstall_filter_req: RpcRequest = serde_json::from_value(json!(
         {
             "jsonrpc":"2.0",
@@ -487,6 +498,7 @@ mod tests {
             ),
         );
         let active_filters = Arc::new(Mutex::new(HashMap::from([filter])));
+
         let context = RpcApiContext {
             storage: Store::new("in-mem", EngineType::InMemory).unwrap(),
             local_p2p_node: example_p2p_node(),
@@ -494,9 +506,15 @@ mod tests {
             jwt_secret: Default::default(),
             active_filters: active_filters.clone(),
             syncer: Arc::new(TokioMutex::new(SyncManager::dummy())),
+            #[cfg(feature = "l2")]
+            gateway_eth_client: EthClient::new(""),
+            #[cfg(feature = "l2")]
+            gateway_auth_client: EngineClient::new("", Bytes::default()),
         };
 
-        map_http_requests(&uninstall_filter_req, context).unwrap();
+        map_http_requests(&uninstall_filter_req, context)
+            .await
+            .unwrap();
 
         assert!(
             active_filters.clone().lock().unwrap().len() == 0,
@@ -504,8 +522,8 @@ mod tests {
         );
     }
 
-    #[test]
-    fn removing_non_existing_filter_returns_false() {
+    #[tokio::test]
+    async fn removing_non_existing_filter_returns_false() {
         let active_filters = Arc::new(Mutex::new(HashMap::new()));
 
         let context = RpcApiContext {
@@ -515,6 +533,10 @@ mod tests {
             active_filters: active_filters.clone(),
             jwt_secret: Default::default(),
             syncer: Arc::new(TokioMutex::new(SyncManager::dummy())),
+            #[cfg(feature = "l2")]
+            gateway_eth_client: EthClient::new(""),
+            #[cfg(feature = "l2")]
+            gateway_auth_client: EngineClient::new("", Bytes::default()),
         };
         let uninstall_filter_req: RpcRequest = serde_json::from_value(json!(
         {
@@ -527,7 +549,9 @@ mod tests {
                 ,"id":1
         }))
         .expect("Json for test is not a valid request");
-        let res = map_http_requests(&uninstall_filter_req, context).unwrap();
+        let res = map_http_requests(&uninstall_filter_req, context)
+            .await
+            .unwrap();
         assert!(matches!(res, serde_json::Value::Bool(false)));
     }
 

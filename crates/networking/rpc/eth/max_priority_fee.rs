@@ -44,6 +44,10 @@ mod tests {
         utils::{parse_json_hex, test_utils::example_p2p_node, RpcRequest},
         RpcApiContext, RpcHandler,
     };
+    #[cfg(feature = "l2")]
+    use crate::{EngineClient, EthClient};
+    #[cfg(feature = "l2")]
+    use bytes::Bytes;
     use ethrex_p2p::sync::SyncManager;
     use serde_json::{json, Value};
     use std::sync::Arc;
@@ -57,6 +61,10 @@ mod tests {
             local_node_record: example_local_node_record(),
             active_filters: Default::default(),
             syncer: Arc::new(Mutex::new(SyncManager::dummy())),
+            #[cfg(feature = "l2")]
+            gateway_eth_client: EthClient::new(""),
+            #[cfg(feature = "l2")]
+            gateway_auth_client: EngineClient::new("", Bytes::default()),
         }
     }
 
@@ -112,8 +120,8 @@ mod tests {
         let response = gas_price.handle(context).unwrap();
         assert_eq!(response, Value::Null);
     }
-    #[test]
-    fn request_smoke_test() {
+    #[tokio::test]
+    async fn request_smoke_test() {
         let raw_json = json!(
         {
             "jsonrpc":"2.0",
@@ -127,7 +135,7 @@ mod tests {
 
         add_eip1559_tx_blocks(&context.storage, 100, 3);
 
-        let response = map_http_requests(&request, context).unwrap();
+        let response = map_http_requests(&request, context).await.unwrap();
         assert_eq!(response, expected_response)
     }
 }

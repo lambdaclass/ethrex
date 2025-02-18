@@ -263,6 +263,10 @@ pub mod test_utils {
     use k256::ecdsa::SigningKey;
 
     use crate::start_api;
+    #[cfg(feature = "l2")]
+    use crate::{EngineClient, EthClient};
+    #[cfg(feature = "l2")]
+    use bytes::Bytes;
 
     pub const TEST_GENESIS: &str = include_str!("../../../test_data/genesis-l1.json");
     pub fn example_p2p_node() -> Node {
@@ -310,6 +314,10 @@ pub mod test_utils {
 
         let jwt_secret = Default::default();
         let local_p2p_node = example_p2p_node();
+        #[cfg(feature = "l2")]
+        let gateway_eth_client = EthClient::new("");
+        #[cfg(feature = "l2")]
+        let gateway_auth_client = EngineClient::new("", Bytes::default());
         start_api(
             http_addr,
             authrpc_addr,
@@ -318,6 +326,10 @@ pub mod test_utils {
             local_p2p_node,
             example_local_node_record(),
             SyncManager::dummy(),
+            #[cfg(feature = "l2")]
+            gateway_eth_client,
+            #[cfg(feature = "l2")]
+            gateway_auth_client,
         )
         .await;
     }

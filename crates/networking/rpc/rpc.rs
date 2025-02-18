@@ -394,14 +394,19 @@ mod tests {
     use std::fs::File;
     use std::io::BufReader;
 
+    #[cfg(feature = "l2")]
+    use crate::{EngineClient, EthClient};
+    #[cfg(feature = "l2")]
+    use bytes::Bytes;
+
     // Maps string rpc response to RpcSuccessResponse as serde Value
     // This is used to avoid failures due to field order and allow easier string comparisons for responses
     fn to_rpc_response_success_value(str: &str) -> serde_json::Value {
         serde_json::to_value(serde_json::from_str::<RpcSuccessResponse>(str).unwrap()).unwrap()
     }
 
-    #[test]
-    fn admin_nodeinfo_request() {
+    #[tokio::test]
+    async fn admin_nodeinfo_request() {
         let body = r#"{"jsonrpc":"2.0", "method":"admin_nodeInfo", "params":[], "id":1}"#;
         let request: RpcRequest = serde_json::from_str(body).unwrap();
         let local_p2p_node = example_p2p_node();
@@ -415,9 +420,13 @@ mod tests {
             jwt_secret: Default::default(),
             active_filters: Default::default(),
             syncer: Arc::new(TokioMutex::new(SyncManager::dummy())),
+            #[cfg(feature = "l2")]
+            gateway_eth_client: EthClient::new(""),
+            #[cfg(feature = "l2")]
+            gateway_auth_client: EngineClient::new("", Bytes::default()),
         };
         let enr_url = context.local_node_record.enr_url().unwrap();
-        let result = map_http_requests(&request, context);
+        let result = map_http_requests(&request, context).await;
         let rpc_response = rpc_response(request.id, result);
         let blob_schedule = serde_json::json!({
             "cancun": { "target": 3, "max": 6, "baseFeeUpdateFraction": 3338477 },
@@ -478,8 +487,8 @@ mod tests {
         serde_json::from_reader(reader).expect("Failed to deserialize genesis file")
     }
 
-    #[test]
-    fn create_access_list_simple_transfer() {
+    #[tokio::test]
+    async fn create_access_list_simple_transfer() {
         // Create Request
         // Request taken from https://github.com/ethereum/execution-apis/blob/main/tests/eth_createAccessList/create-al-value-transfer.io
         let body = r#"{"jsonrpc":"2.0","id":1,"method":"eth_createAccessList","params":[{"from":"0x0c2c51a0990aee1d73c1228de158688341557508","nonce":"0x0","to":"0x0100000000000000000000000000000000000000","value":"0xa"},"0x00"]}"#;
@@ -500,8 +509,12 @@ mod tests {
             jwt_secret: Default::default(),
             active_filters: Default::default(),
             syncer: Arc::new(TokioMutex::new(SyncManager::dummy())),
+            #[cfg(feature = "l2")]
+            gateway_eth_client: EthClient::new(""),
+            #[cfg(feature = "l2")]
+            gateway_auth_client: EngineClient::new("", Bytes::default()),
         };
-        let result = map_http_requests(&request, context);
+        let result = map_http_requests(&request, context).await;
         let response = rpc_response(request.id, result);
         let expected_response = to_rpc_response_success_value(
             r#"{"jsonrpc":"2.0","id":1,"result":{"accessList":[],"gasUsed":"0x5208"}}"#,
@@ -509,8 +522,8 @@ mod tests {
         assert_eq!(response.to_string(), expected_response.to_string());
     }
 
-    #[test]
-    fn create_access_list_create() {
+    #[tokio::test]
+    async fn create_access_list_create() {
         // Create Request
         // Request taken from https://github.com/ethereum/execution-apis/blob/main/tests/eth_createAccessList/create-al-contract.io
         let body = r#"{"jsonrpc":"2.0","id":1,"method":"eth_createAccessList","params":[{"from":"0x0c2c51a0990aee1d73c1228de158688341557508","gas":"0xea60","gasPrice":"0x44103f2","input":"0x010203040506","nonce":"0x0","to":"0x7dcd17433742f4c0ca53122ab541d0ba67fc27df"},"0x00"]}"#;
@@ -531,8 +544,12 @@ mod tests {
             jwt_secret: Default::default(),
             active_filters: Default::default(),
             syncer: Arc::new(TokioMutex::new(SyncManager::dummy())),
+            #[cfg(feature = "l2")]
+            gateway_eth_client: EthClient::new(""),
+            #[cfg(feature = "l2")]
+            gateway_auth_client: EngineClient::new("", Bytes::default()),
         };
-        let result = map_http_requests(&request, context);
+        let result = map_http_requests(&request, context).await;
         let response =
             serde_json::from_value::<RpcSuccessResponse>(rpc_response(request.id, result).0)
                 .expect("Request failed");
@@ -571,8 +588,8 @@ mod tests {
         }
     }
 
-    #[test]
-    fn net_version_test() {
+    #[tokio::test]
+    async fn net_version_test() {
         let body = r#"{"jsonrpc":"2.0","method":"net_version","params":[],"id":67}"#;
         let request: RpcRequest = serde_json::from_str(body).expect("serde serialization failed");
         // Setup initial storage
@@ -592,9 +609,13 @@ mod tests {
             jwt_secret: Default::default(),
             active_filters: Default::default(),
             syncer: Arc::new(TokioMutex::new(SyncManager::dummy())),
+            #[cfg(feature = "l2")]
+            gateway_eth_client: EthClient::new(""),
+            #[cfg(feature = "l2")]
+            gateway_auth_client: EngineClient::new("", Bytes::default()),
         };
         // Process request
-        let result = map_http_requests(&request, context);
+        let result = map_http_requests(&request, context).await;
         let response = rpc_response(request.id, result);
         let expected_response_string =
             format!(r#"{{"id":67,"jsonrpc": "2.0","result": "{}"}}"#, chain_id);
