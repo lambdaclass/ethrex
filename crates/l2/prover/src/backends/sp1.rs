@@ -1,21 +1,19 @@
+use ethrex_l2_sdk::calldata::Value;
+use sp1_sdk::{HashableKey, ProverClient, SP1ProofWithPublicValues, SP1Stdin, SP1VerifyingKey};
 use tracing::info;
 use zkvm_interface::io::ProgramInput;
-use sp1_sdk::{SP1Stdin, ProverClient};
 
-static PROGRAM_ELF: &'static [u8] = include_bytes!("../../zkvm/interface/sp1/elf/riscv32im-succinct-zkvm-elf");
+static PROGRAM_ELF: &'static [u8] =
+    include_bytes!("../../zkvm/interface/sp1/elf/riscv32im-succinct-zkvm-elf");
 
-pub struct Proof {
-    pub proof: Box<sp1_sdk::SP1ProofWithPublicValues>,
-    pub vk: sp1_sdk::SP1VerifyingKey,
+pub struct ProveOutput {
+    pub proof: SP1ProofWithPublicValues,
+    pub vk: SP1VerifyingKey,
 }
 
-pub struct ContractData {
-    pub public_values: Vec<u8>,
-    pub vk: Vec<u8>,
-    pub proof_bytes: Vec<u8>,
-}
+// TODO: Error enum
 
-impl Debug for Sp1Proof {
+impl Debug for ProveOutput {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Sp1Proof")
             .field("proof", &self.proof)
@@ -24,76 +22,56 @@ impl Debug for Sp1Proof {
     }
 }
 
-impl Proof {
-    pub fn new(
-        proof: sp1_sdk::SP1ProofWithPublicValues,
-        verifying_key: sp1_sdk::SP1VerifyingKey,
-    ) -> Self {
-        Sp1Proof {
+impl ProveOutput {
+    pub fn new(proof: SP1ProofWithPublicValues, verifying_key: SP1VerifyingKey) -> Self {
+        ProveOutput {
             proof: Box::new(proof),
             vk: verifying_key,
         }
     }
-
-    pub fn contract_data(&self) -> Result<ContractData, ProverServerError> {
-        let vk = self
-            .vk
-            .bytes32()
-            .strip_prefix("0x")
-            .ok_or(ProverServerError::Custom(
-                "Failed to strip_prefix of sp1 vk".to_owned(),
-            ))?
-            .to_string();
-        let vk_bytes = hex::decode(&vk)
-            .map_err(|_| ProverServerError::Custom("Failed hex::decode(&vk)".to_owned()))?;
-
-        Ok(ContractData {
-            public_values: self.proof.public_values.to_vec(),
-            vk: vk_bytes,
-            proof_bytes: self.proof.bytes(),
-        })
-    }
 }
 
-pub fn execute(input: ProgramInput) -> Result<ExecutionOutput, Box<dyn std::error::Error>> {
+pub fn execute(input: ProgramInput) -> Result<(), Box<dyn std::error::Error>> {
     let mut stdin = SP1Stdin::new();
     stdin.write(&input);
 
-    // Generate the ProverClient
     let client = ProverClient::new();
 
-    let output = client.execute(*PROGRAM_ELF, &stdin).run()?;
+    let output = client.execute(PROGRAM_ELF, &stdin).run()?;
 
     info!("Successfully executed SP1 program.");
-    Ok(ExecuteOutput::SP1(output))
+    Ok(())
 }
 
-pub fn prove(input: ProgramInput) -> Result<ProvingOutput, Box<dyn std::error::Error>> {
+pub fn prove(input: ProgramInput) -> Result<ProveOutput, Box<dyn std::error::Error>> {
     let mut stdin = SP1Stdin::new();
     stdin.write(&input);
 
-    // Generate the ProverClient
     let client = ProverClient::from_env();
-    let (pk, vk) = client.setup(*PROGRAM_ELF);
+    let (pk, vk) = client.setup(PROGRAM_ELF);
 
-    // Proof information by proving the specified ELF binary.
-    // This struct contains the receipt along with statistics about execution of the guest
+    // contains the receipt along with statistics about execution of the guest
     let proof = client.prove(&pk, &stdin).groth16().run()?;
-    // Wrap Proof and vk
-    let sp1_proof = Sp1Proof::new(proof, vk);
     info!("Successfully generated SP1Proof.");
-    Ok(ProvingOutput::SP1(sp1_proof))
+    Ok(ProveOutput::new(proof, vk))
 }
 
-pub fn verify(input: ProgramInput) -> Result<bool, Box<dyn std::error::Error>> {
-    // Verify the proof.
-    let ProvingOutput::SP1(complete_proof) = proving_output else {
-        return Err(Box::new(ProverError::IncorrectProverType));
-    };
+pub fn verify(output: ProveOutput) -> Result<bool, Box<dyn std::error::Error>> {
     let client = ProverClient::from_env();
-    client.verify(&complete_proof.proof, &complete_proof.vk)?;
+    client.verify(&output.proof, &output.vk)?;
 
     Ok(())
+}
+
+pub fn to_calldata(proof: ProveOutput) -> Result<Vec<Value>, Box<dyn std::error::Error>> {
+    // bytes32 programVKey,
+    // bytes calldata publicValues,
+    // bytes calldata proofBytes
+    Ok(vec![
+        Value::FixedBytes(proof.vk.bytes32_raw()),
+        Value::Bytes(proof.public_values.to_vec().into()),
+        Value::Bytes(proof.proof.bytes().into()),
+    ])
 }
 
 fn get_gas() -> Result<u64, Box<dyn std::error::Error>> {
