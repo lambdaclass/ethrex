@@ -6,7 +6,7 @@ edition = "2021"
 [workspace]
 
 [dependencies]
-sp1-zkvm = "4.0.1"
+sp1-zkvm = "3.4.0"
 zkvm_interface = { path = "../" }
 
 ethrex-common = { path = "../../../../../common", default-features = false }
