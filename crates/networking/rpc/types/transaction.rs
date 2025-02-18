@@ -51,7 +51,7 @@ pub enum SendRawTransactionRequest {
     EIP1559(EIP1559Transaction),
     EIP4844(WrappedEIP4844Transaction),
     EIP7702(EIP7702Transaction),
-    PriviligedL2(PrivilegedL2Transaction),
+    PrivilegedL2(PrivilegedL2Transaction),
 }
 
 impl SendRawTransactionRequest {
@@ -62,7 +62,7 @@ impl SendRawTransactionRequest {
             SendRawTransactionRequest::EIP2930(t) => Transaction::EIP2930Transaction(t.clone()),
             SendRawTransactionRequest::EIP4844(t) => Transaction::EIP4844Transaction(t.tx.clone()),
             SendRawTransactionRequest::EIP7702(t) => Transaction::EIP7702Transaction(t.clone()),
-            SendRawTransactionRequest::PriviligedL2(t) => {
+            SendRawTransactionRequest::PrivilegedL2(t) => {
                 Transaction::PrivilegedL2Transaction(t.clone())
             }
         }
