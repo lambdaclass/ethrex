@@ -15,7 +15,7 @@ use ethrex_common::{
     Address, H256, U256,
 };
 use ethrex_l2_sdk::calldata::{encode_calldata, Value};
-use ethrex_rpc_clients::eth::{eth_sender::Overrides, EthClient, WrappedTransaction};
+use ethrex_rpc::clients::eth::{eth_sender::Overrides, EthClient, WrappedTransaction};
 use ethrex_storage::Store;
 use ethrex_vm::{execution_db::ExecutionDB, EvmError};
 use secp256k1::SecretKey;

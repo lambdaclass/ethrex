@@ -4,10 +4,10 @@ use bytes::Bytes;
 use ethereum_types::{Address, H160, U256};
 use ethrex_l2::utils::config::read_env_file;
 use ethrex_l2_sdk::calldata;
-use ethrex_rpc::types::receipt::RpcReceipt;
-use ethrex_rpc_clients::eth::{
+use ethrex_rpc::clients::eth::{
     eth_sender::Overrides, from_hex_string_to_u256, BlockByNumber, EthClient,
 };
+use ethrex_rpc::types::receipt::RpcReceipt;
 use keccak_hash::H256;
 use secp256k1::SecretKey;
 use std::{ops::Mul, str::FromStr, time::Duration};

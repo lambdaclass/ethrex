@@ -1,6 +1,5 @@
 use crate::proposer::errors::ProposerError;
-use ethrex_rpc_clients::auth;
-use ethrex_rpc_clients::eth;
+use ethrex_rpc::clients::{auth, eth};
 
 #[derive(Debug, thiserror::Error)]
 pub enum ConfigError {

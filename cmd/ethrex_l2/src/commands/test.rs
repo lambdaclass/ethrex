@@ -4,7 +4,7 @@ use clap::Subcommand;
 use ethereum_types::{Address, H256, U256};
 use ethrex_blockchain::constants::TX_GAS_COST;
 use ethrex_l2_sdk::calldata::{self, Value};
-use ethrex_rpc_clients::eth::{eth_sender::Overrides, EthClient};
+use ethrex_rpc::clients::eth::{eth_sender::Overrides, EthClient};
 use keccak_hash::keccak;
 use secp256k1::SecretKey;
 use std::{

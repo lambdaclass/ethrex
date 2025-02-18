@@ -1,5 +1,12 @@
 use std::{fmt, time::Duration};
 
+use crate::{
+    types::{
+        block::RpcBlock,
+        receipt::{RpcLog, RpcReceipt},
+    },
+    utils::{RpcErrorResponse, RpcRequest, RpcRequestId, RpcSuccessResponse},
+};
 use bytes::Bytes;
 use errors::{
     EstimateGasPriceError, EthClientError, GetBalanceError, GetBlockByHashError,
@@ -7,23 +14,15 @@ use errors::{
     GetTransactionByHashError, GetTransactionReceiptError, SendRawTransactionError,
 };
 use eth_sender::Overrides;
-use ethereum_types::{Address, H256, U256};
 use ethrex_common::{
     types::{
         BlobsBundle, EIP1559Transaction, EIP4844Transaction, GenericTransaction,
         PrivilegedL2Transaction, PrivilegedTxType, Signable, TxKind, TxType,
         WrappedEIP4844Transaction,
     },
-    H160,
+    Address, H160, H256, U256,
 };
 use ethrex_rlp::encode::RLPEncode;
-use ethrex_rpc::{
-    types::{
-        block::RpcBlock,
-        receipt::{RpcLog, RpcReceipt},
-    },
-    utils::{RpcErrorResponse, RpcRequest, RpcRequestId, RpcSuccessResponse},
-};
 use keccak_hash::keccak;
 use reqwest::Client;
 use secp256k1::SecretKey;

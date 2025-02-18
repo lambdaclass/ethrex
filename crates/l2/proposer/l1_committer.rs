@@ -16,7 +16,7 @@ use ethrex_common::{
 };
 use ethrex_l2_sdk::calldata::{encode_calldata, Value};
 use ethrex_l2_sdk::merkle_tree::merkelize;
-use ethrex_rpc_clients::eth::{
+use ethrex_rpc::clients::eth::{
     eth_sender::Overrides, BlockByNumber, EthClient, WrappedTransaction,
 };
 use ethrex_storage::{error::StoreError, Store};

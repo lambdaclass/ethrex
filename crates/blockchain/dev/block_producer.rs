@@ -1,7 +1,7 @@
 use bytes::Bytes;
 use ethereum_types::{Address, H256};
+use ethrex_rpc::clients::{EngineClient, EngineClientError};
 use ethrex_rpc::types::fork_choice::{ForkChoiceState, PayloadAttributesV3};
-use ethrex_rpc_clients::{EngineClient, EngineClientError};
 use sha2::{Digest, Sha256};
 use std::time::{SystemTime, UNIX_EPOCH};
 
