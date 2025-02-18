@@ -76,6 +76,10 @@ pub struct RpcApiContext {
     local_node_record: NodeRecord,
     active_filters: ActiveFilters,
     syncer: Arc<TokioMutex<SyncManager>>,
+    #[cfg(feature = "l2")]
+    gateway_eth_client: EthClient,
+    #[cfg(feature = "l2")]
+    gateway_auth_client: EngineClient,
 }
 
 /// Describes the client's current sync status:
@@ -123,6 +127,7 @@ const FILTER_DURATION: Duration = {
     }
 };
 
+#[allow(clippy::too_many_arguments)]
 pub async fn start_api(
     http_addr: SocketAddr,
     authrpc_addr: SocketAddr,
@@ -131,6 +136,8 @@ pub async fn start_api(
     local_p2p_node: Node,
     local_node_record: NodeRecord,
     syncer: SyncManager,
+    #[cfg(feature = "l2")] gateway_eth_client: EthClient,
+    #[cfg(feature = "l2")] gateway_auth_client: EngineClient,
 ) {
     // TODO: Refactor how filters are handled,
     // filters are used by the filters endpoints (eth_newFilter, eth_getFilterChanges, ...etc)
@@ -142,6 +149,10 @@ pub async fn start_api(
         local_node_record,
         active_filters: active_filters.clone(),
         syncer: Arc::new(TokioMutex::new(syncer)),
+        #[cfg(feature = "l2")]
+        gateway_eth_client,
+        #[cfg(feature = "l2")]
+        gateway_auth_client,
     };
 
     // Periodically clean up the active filters for the filters endpoints.

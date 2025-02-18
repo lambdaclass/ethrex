@@ -255,23 +255,67 @@ async fn main() {
 
     // TODO: Check every module starts properly.
     let tracker = TaskTracker::new();
-    let rpc_api = ethrex_rpc::start_api(
-        http_socket_addr,
-        authrpc_socket_addr,
-        store.clone(),
-        jwt_secret,
-        local_p2p_node,
-        local_node_record,
-        syncer,
-    )
-    .into_future();
+    cfg_if::cfg_if! {
+        if #[cfg(feature = "l2")] {
+            use ethrex_rpc::{EngineClient, EthClient};
+
+            let gateway_addr = matches
+                .get_one::<String>("gateway.addr")
+                .expect("gateway.addr is required");
+            let gateway_eth_port = matches
+                .get_one::<String>("gateway.eth_port")
+                .expect("gateway.eth_port is required");
+            let gateway_auth_port = matches
+                .get_one::<String>("gateway.auth_port")
+                .expect("gateway.auth_port is required");
+            let gateway_authrpc_jwtsecret = matches
+                .get_one::<String>("gateway.jwtsecret")
+                .expect("gateway.jwtsecret is required");
+
+            let gateway_http_socket_addr =
+                parse_socket_addr(gateway_addr, gateway_eth_port).expect("Failed to parse gateway http address and port");
+            let gateway_authrpc_socket_addr = parse_socket_addr(gateway_addr, gateway_auth_port)
+                .expect("Failed to parse gateway authrpc address and port");
+
+            let gateway_eth_client = EthClient::new(&gateway_http_socket_addr.to_string());
+
+            let gateway_jwtsecret = read_jwtsecret_file(gateway_authrpc_jwtsecret);
+            let gateway_auth_client = EngineClient::new(&gateway_authrpc_socket_addr.to_string(), gateway_jwtsecret);
+
+            let rpc_api = ethrex_rpc::start_api(
+                http_socket_addr,
+                authrpc_socket_addr,
+                store.clone(),
+                jwt_secret,
+                local_p2p_node,
+                local_node_record,
+                syncer,
+                gateway_eth_client,
+                gateway_auth_client,
+            )
+            .into_future();
+
+            tracker.spawn(rpc_api);
+        } else {
+            let rpc_api = ethrex_rpc::start_api(
+                http_socket_addr,
+                authrpc_socket_addr,
+                store.clone(),
+                jwt_secret,
+                local_p2p_node,
+                local_node_record,
+                syncer,
+            )
+            .into_future();
+
+            tracker.spawn(rpc_api);
+        }
+    }
 
     // TODO Find a proper place to show node information
     // https://github.com/lambdaclass/ethrex/issues/836
     let enode = local_p2p_node.enode_url();
     info!("Node: {enode}");
-
-    tracker.spawn(rpc_api);
 
     // Check if the metrics.port is present, else set it to 0
     let metrics_port = matches

@@ -34,8 +34,13 @@ thiserror.workspace = true
 secp256k1.workspace = true
 keccak-hash.workspace = true
 
+cfg-if.workspace = true
+
 [dev-dependencies]
 hex-literal = "0.4.1"
 
 [lib]
 path = "./rpc.rs"
+
+[features]
+l2 = []

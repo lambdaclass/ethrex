@@ -30,6 +30,8 @@ pub enum RpcResponse {
     Success(RpcSuccessResponse),
     Error(RpcErrorResponse),
 }
+
+#[derive(Debug, Clone)]
 pub struct EngineClient {
     client: Client,
     secret: Bytes,
