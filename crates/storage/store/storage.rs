@@ -27,6 +27,12 @@ pub mod error;
 mod rlp;
 mod trie_db;
 
+/// Number of state trie segments to fetch concurrently during state sync
+pub const STATE_TRIE_SEGMENTS: usize = 2;
+// Maximum amount of reads from the snapshot in a single transaction to avoid performance hits due to long-living reads
+// This will always be the amount yielded by snapshot reads unless there are less elements left
+pub const MAX_SNAPSHOT_READS: usize = 100;
+
 #[derive(Debug, Clone)]
 pub struct Store {
     engine: Arc<dyn StoreEngine>,
@@ -1013,23 +1019,18 @@ impl Store {
         self.engine.get_header_download_checkpoint()
     }
 
-    /// Sets the current state root of the state trie being rebuilt during snap sync
-    pub fn set_state_trie_root_checkpoint(&self, current_root: H256) -> Result<(), StoreError> {
-        self.engine.set_state_trie_root_checkpoint(current_root)
-    }
-
-    /// Gets the current state root of the state trie being rebuilt during snap sync
-    pub fn get_state_trie_root_checkpoint(&self) -> Result<Option<H256>, StoreError> {
-        self.engine.get_state_trie_root_checkpoint()
-    }
-
     /// Sets the last key fetched from the state trie being fetched during snap sync
-    pub fn set_state_trie_key_checkpoint(&self, last_key: H256) -> Result<(), StoreError> {
-        self.engine.set_state_trie_key_checkpoint(last_key)
+    pub fn set_state_trie_key_checkpoint(
+        &self,
+        last_keys: [H256; STATE_TRIE_SEGMENTS],
+    ) -> Result<(), StoreError> {
+        self.engine.set_state_trie_key_checkpoint(last_keys)
     }
 
     /// Gets the last key fetched from the state trie being fetched during snap sync
-    pub fn get_state_trie_key_checkpoint(&self) -> Result<Option<H256>, StoreError> {
+    pub fn get_state_trie_key_checkpoint(
+        &self,
+    ) -> Result<Option<[H256; STATE_TRIE_SEGMENTS]>, StoreError> {
         self.engine.get_state_trie_key_checkpoint()
     }
 
@@ -1057,16 +1058,89 @@ impl Store {
         self.engine.get_state_heal_paths()
     }
 
-    /// Clears all checkpoint data created during the last snap sync
-    pub fn clear_snap_state(&self) -> Result<(), StoreError> {
-        self.engine.clear_snap_state()
-    }
-
     pub fn is_synced(&self) -> Result<bool, StoreError> {
         self.engine.is_synced()
     }
     pub fn update_sync_status(&self, status: bool) -> Result<(), StoreError> {
         self.engine.update_sync_status(status)
+    }
+
+    /// Write an account batch into the current state snapshot
+    pub fn write_snapshot_account_batch(
+        &self,
+        account_hashes: Vec<H256>,
+        account_states: Vec<AccountState>,
+    ) -> Result<(), StoreError> {
+        self.engine
+            .write_snapshot_account_batch(account_hashes, account_states)
+    }
+
+    /// Write a storage batch into the current storage snapshot
+    pub fn write_snapshot_storage_batch(
+        &self,
+        account_hash: H256,
+        storage_keys: Vec<H256>,
+        storage_values: Vec<U256>,
+    ) -> Result<(), StoreError> {
+        self.engine
+            .write_snapshot_storage_batch(account_hash, storage_keys, storage_values)
+    }
+
+    /// Clears all checkpoint data created during the last snap sync
+    pub fn clear_snap_state(&self) -> Result<(), StoreError> {
+        self.engine.clear_snap_state()
+    }
+
+    /// Set the latest root of the rebuilt state trie and the last downloaded hashes from each segment
+    pub fn set_state_trie_rebuild_checkpoint(
+        &self,
+        checkpoint: (H256, [H256; STATE_TRIE_SEGMENTS]),
+    ) -> Result<(), StoreError> {
+        self.engine.set_state_trie_rebuild_checkpoint(checkpoint)
+    }
+
+    /// Get the latest root of the rebuilt state trie and the last downloaded hashes from each segment
+    pub fn get_state_trie_rebuild_checkpoint(
+        &self,
+    ) -> Result<Option<(H256, [H256; STATE_TRIE_SEGMENTS])>, StoreError> {
+        self.engine.get_state_trie_rebuild_checkpoint()
+    }
+
+    /// Set the accont hashes and roots of the storage tries awaiting rebuild
+    pub fn set_storage_trie_rebuild_pending(
+        &self,
+        pending: Vec<(H256, H256)>,
+    ) -> Result<(), StoreError> {
+        self.engine.set_storage_trie_rebuild_pending(pending)
+    }
+
+    /// Get the accont hashes and roots of the storage tries awaiting rebuild
+    pub fn get_storage_trie_rebuild_pending(
+        &self,
+    ) -> Result<Option<Vec<(H256, H256)>>, StoreError> {
+        self.engine.get_storage_trie_rebuild_pending()
+    }
+
+    /// Clears the state and storage snapshots
+    pub fn clear_snapshot(&self) -> Result<(), StoreError> {
+        self.engine.clear_snapshot()
+    }
+
+    /// Reads the next `MAX_SNAPSHOT_READS` accounts from the state snapshot as from the `start` hash
+    pub fn read_account_snapshot(
+        &self,
+        start: H256,
+    ) -> Result<Vec<(H256, AccountState)>, StoreError> {
+        self.engine.read_account_snapshot(start)
+    }
+
+    /// Reads the next `MAX_SNAPSHOT_READS` elements from the storage snapshot as from the `start` storage key
+    pub fn read_storage_snapshot(
+        &self,
+        account_hash: H256,
+        start: H256,
+    ) -> Result<Vec<(H256, U256)>, StoreError> {
+        self.engine.read_storage_snapshot(account_hash, start)
     }
 }
 
