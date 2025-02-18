@@ -97,6 +97,38 @@ impl RpcHandler for NewPayloadV3Request {
         })
     }
 
+    async fn call(req: &RpcRequest, context: RpcApiContext) -> Result<Value, RpcErr> {
+        let request = Self::parse(&req.params)?;
+        cfg_if::cfg_if! {
+            if #[cfg(feature = "l2")] {
+                info!("Relaying engine_newPayloadV3 to gateway");
+                let gateway_response = context.gateway_auth_client.engine_new_payload_v3(request.payload, request.expected_blob_versioned_hashes, request.parent_beacon_block_root)
+                    .await
+                    .map_err(|err| {
+                        RpcErr::Internal(format!(
+                            "Could not relay engine_newPayloadV3 to gateway: {err}",
+                        ))
+                    }).and_then(|response| {
+                        serde_json::to_value(response).map_err(|error| RpcErr::Internal(error.to_string()))
+                    });
+
+                // Parse ir again as it was consumed for gateway_response and it is the same as cloning it.
+                let request = Self::parse(&req.params)?;
+                let client_response = request.handle(context);
+
+                if gateway_response.is_err() {
+                    warn!(error = ?gateway_response, "Gateway engine_newPayloadV3 failed, falling back to local node");
+                } else {
+                    info!("Successfully relayed engine_newPayloadV3 to gateway");
+                }
+
+                gateway_response.or(client_response)
+            } else {
+                request.handle(context)
+            }
+        }
+    }
+
     fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
         let block = get_block_from_payload(&self.payload, Some(self.parent_beacon_block_root))?;
         validate_fork(&block, Fork::Cancun, &context)?;
