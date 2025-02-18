@@ -2873,6 +2873,7 @@ dependencies = [
  "envy",
  "ethereum-types 0.15.1",
  "ethrex-rpc",
+ "ethrex-rpc-clients",
  "hex",
  "jsonwebtoken 9.3.0",
  "keccak-hash",
@@ -2899,6 +2900,7 @@ dependencies = [
  "ethrex-metrics",
  "ethrex-rlp",
  "ethrex-rpc",
+ "ethrex-rpc-clients",
  "ethrex-sdk",
  "ethrex-storage",
  "ethrex-vm",
@@ -3038,6 +3040,7 @@ dependencies = [
  "axum 0.8.1",
  "axum-extra",
  "bytes",
+ "cfg-if",
  "ethrex-blockchain",
  "ethrex-common",
  "ethrex-p2p",
@@ -3057,6 +3060,29 @@ dependencies = [
  "tokio-util",
  "tracing",
  "tracing-subscriber 0.3.18",
+]
+
+[[package]]
+name = "ethrex-rpc-clients"
+version = "0.1.0"
+dependencies = [
+ "bytes",
+ "envy",
+ "ethereum-types 0.15.1",
+ "ethrex-common",
+ "ethrex-rlp",
+ "ethrex-rpc",
+ "hex",
+ "jsonwebtoken 9.3.0",
+ "keccak-hash",
+ "reqwest 0.12.9",
+ "secp256k1",
+ "serde",
+ "serde_json",
+ "sha2 0.10.8",
+ "thiserror 2.0.9",
+ "tokio",
+ "tracing",
 ]
 
 [[package]]

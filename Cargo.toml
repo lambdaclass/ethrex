@@ -10,6 +10,7 @@ members = [
     "crates/blockchain/dev",
     "crates/common",
     "crates/common/rlp",
+    "crates/common/rpc_clients",
     "crates/l2/",
     "crates/l2/contracts",
     "crates/l2/prover",
@@ -43,6 +44,7 @@ ethrex-rlp = { path = "./crates/common/rlp" }
 ethrex-l2 = { path = "./crates/l2" }
 ethrex-sdk = { path = "./crates/l2/sdk" }
 ethrex-prover = { path = "./crates/l2/prover" }
+ethrex-rpc-clients = { path = "./crates/common/rpc_clients" }
 
 tracing = { version = "0.1", features = ["log"] }
 tracing-subscriber = { version = "0.3.0", features = ["env-filter"] }
