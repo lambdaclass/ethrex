@@ -1,6 +1,6 @@
 use std::io::{BufRead, Write};
 
-use tracing::debug;
+use tracing::{debug, info};
 
 pub mod committer;
 pub mod eth;
@@ -13,7 +13,14 @@ pub mod errors;
 
 pub fn read_env_file() -> Result<(), errors::ConfigError> {
     let env_file_name = std::env::var("ENV_FILE").unwrap_or(".env".to_string());
-    let env_file = std::fs::File::open(env_file_name)?;
+    let env_file = match std::fs::File::open(env_file_name) {
+        Ok(file) => file,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+            info!(".env file not found, create one by copying .env.example");
+            return Err(err.into());
+        }
+        Err(err) => return Err(err.into()),
+    };
     let reader = std::io::BufReader::new(env_file);
 
     for line in reader.lines() {
@@ -43,7 +50,14 @@ pub fn read_env_file() -> Result<(), errors::ConfigError> {
 pub fn read_env_as_lines(
 ) -> Result<std::io::Lines<std::io::BufReader<std::fs::File>>, errors::ConfigError> {
     let env_file_name = std::env::var("ENV_FILE").unwrap_or(".env".to_owned());
-    let env_file = std::fs::File::open(env_file_name)?;
+    let env_file = match std::fs::File::open(env_file_name) {
+        Ok(file) => file,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+            info!(".env file not found, create one by copying .env.example");
+            return Err(err.into());
+        }
+        Err(err) => return Err(err.into()),
+    };
     let reader = std::io::BufReader::new(env_file);
 
     Ok(reader.lines())
@@ -51,13 +65,20 @@ pub fn read_env_as_lines(
 
 pub fn write_env(lines: Vec<String>) -> Result<(), errors::ConfigError> {
     let env_file_name = std::env::var("ENV_FILE").unwrap_or(".env".to_string());
-
-    let file = std::fs::OpenOptions::new()
+    let env_file = match std::fs::OpenOptions::new()
         .write(true)
         .truncate(true)
-        .open(&env_file_name)?;
+        .open(&env_file_name)
+    {
+        Ok(file) => file,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+            info!(".env file not found, create one by copying .env.example");
+            return Err(err.into());
+        }
+        Err(err) => return Err(err.into()),
+    };
 
-    let mut writer = std::io::BufWriter::new(file);
+    let mut writer = std::io::BufWriter::new(env_file);
     for line in lines {
         writeln!(writer, "{line}")?;
     }
