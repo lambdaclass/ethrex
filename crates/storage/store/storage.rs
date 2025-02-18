@@ -15,7 +15,7 @@ use ethrex_common::types::{
 use ethrex_rlp::decode::RLPDecode;
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_trie::{Nibbles, Trie};
-use scc::HashMap as Map;
+use scc::HashMap as ConcurrentMap;
 use serde::{Deserialize, Serialize};
 use sha3::{Digest as _, Keccak256};
 use std::collections::{HashMap, HashSet};
@@ -36,7 +36,7 @@ pub const MAX_SNAPSHOT_READS: usize = 100;
 #[derive(Debug, Clone)]
 pub struct Store {
     engine: Arc<dyn StoreEngine>,
-    pub mempool: Map<H256, MempoolTransaction>,
+    pub mempool: ConcurrentMap<H256, MempoolTransaction>,
     pub blobs_bundle_pool: Arc<Mutex<HashMap<H256, BlobsBundle>>>,
 }
 
@@ -87,18 +87,18 @@ impl Store {
             #[cfg(feature = "libmdbx")]
             EngineType::Libmdbx => Self {
                 engine: Arc::new(LibmdbxStore::new(path)?),
-                mempool: Map::new(),
+                mempool: ConcurrentMap::new(),
                 blobs_bundle_pool: Arc::new(Mutex::new(HashMap::new())),
             },
             EngineType::InMemory => Self {
                 engine: Arc::new(InMemoryStore::new()),
-                mempool: Map::new(),
+                mempool: ConcurrentMap::new(),
                 blobs_bundle_pool: Arc::new(Mutex::new(HashMap::new())),
             },
             #[cfg(feature = "redb")]
             EngineType::RedB => Self {
                 engine: Arc::new(RedBStore::new()?),
-                mempool: Map::new(),
+                mempool: ConcurrentMap::new(),
                 blobs_bundle_pool: Arc::new(Mutex::new(HashMap::new())),
             },
         };
