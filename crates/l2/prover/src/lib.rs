@@ -1,6 +1,7 @@
 pub mod errors;
 pub mod prover;
 pub mod prover_client;
+pub mod backends;
 
 use ethrex_l2::utils::{
     config::prover_client::ProverClientConfig, prover::proving_systems::ProverType,
