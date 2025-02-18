@@ -1,12 +1,13 @@
-use crate::error::StoreError;
+use crate::{error::StoreError, MAX_SNAPSHOT_READS, STATE_TRIE_SEGMENTS};
 use bytes::Bytes;
 use ethereum_types::{H256, U256};
 use ethrex_common::types::{
-    BlobsBundle, Block, BlockBody, BlockHash, BlockHeader, BlockNumber, ChainConfig, Index, Receipt,
+    AccountState, BlobsBundle, Block, BlockBody, BlockHash, BlockHeader, BlockNumber, ChainConfig,
+    Index, Receipt,
 };
 use ethrex_trie::{InMemoryTrieDB, Nibbles, Trie};
 use std::{
-    collections::HashMap,
+    collections::{BTreeMap, HashMap},
     fmt::Debug,
     sync::{Arc, Mutex, MutexGuard},
 };
@@ -40,6 +41,10 @@ struct StoreInner {
     pending_blocks: HashMap<BlockHash, Block>,
     // Stores current Snap Sate
     snap_state: SnapState,
+    // Stores State trie leafs from the last downloaded tries
+    state_snapshot: BTreeMap<H256, AccountState>,
+    // Stores Storage trie leafs from the last downloaded tries
+    storage_snapshot: HashMap<H256, BTreeMap<H256, U256>>,
 }
 
 #[derive(Default, Debug)]
@@ -60,14 +65,16 @@ struct ChainData {
 pub struct SnapState {
     /// Latest downloaded block header's hash from a previously aborted sync
     header_download_checkpoint: Option<BlockHash>,
-    /// Current root hash of the latest State Trie (Used for both fetching and healing)
-    state_trie_root_checkpoint: Option<H256>,
     /// Last downloaded key of the latest State Trie
-    state_trie_key_checkpoint: Option<H256>,
+    state_trie_key_checkpoint: Option<[H256; STATE_TRIE_SEGMENTS]>,
     /// Accounts which storage needs healing
     storage_heal_paths: Option<Vec<(H256, Vec<Nibbles>)>>,
     /// State trie Paths in need of healing
     state_heal_paths: Option<Vec<Nibbles>>,
+    /// Storage tries waiting rebuild
+    storage_trie_rebuild_pending: Option<Vec<(H256, H256)>>,
+    // Latest root of the rebuilt state trie + the last inserted keys for each state trie segment
+    state_trie_rebuild_checkpoint: Option<(H256, [H256; STATE_TRIE_SEGMENTS])>,
 }
 
 impl Store {
@@ -451,21 +458,17 @@ impl StoreEngine for Store {
         Ok(self.inner().snap_state.header_download_checkpoint)
     }
 
-    fn set_state_trie_root_checkpoint(&self, current_root: H256) -> Result<(), StoreError> {
-        self.inner().snap_state.state_trie_root_checkpoint = Some(current_root);
+    fn set_state_trie_key_checkpoint(
+        &self,
+        last_keys: [H256; STATE_TRIE_SEGMENTS],
+    ) -> Result<(), StoreError> {
+        self.inner().snap_state.state_trie_key_checkpoint = Some(last_keys);
         Ok(())
     }
 
-    fn get_state_trie_root_checkpoint(&self) -> Result<Option<H256>, StoreError> {
-        Ok(self.inner().snap_state.state_trie_root_checkpoint)
-    }
-
-    fn set_state_trie_key_checkpoint(&self, last_key: H256) -> Result<(), StoreError> {
-        self.inner().snap_state.state_trie_key_checkpoint = Some(last_key);
-        Ok(())
-    }
-
-    fn get_state_trie_key_checkpoint(&self) -> Result<Option<H256>, StoreError> {
+    fn get_state_trie_key_checkpoint(
+        &self,
+    ) -> Result<Option<[H256; STATE_TRIE_SEGMENTS]>, StoreError> {
         Ok(self.inner().snap_state.state_trie_key_checkpoint)
     }
 
@@ -502,6 +505,94 @@ impl StoreEngine for Store {
 
     fn get_state_heal_paths(&self) -> Result<Option<Vec<Nibbles>>, StoreError> {
         Ok(self.inner().snap_state.state_heal_paths.clone())
+    }
+
+    fn write_snapshot_account_batch(
+        &self,
+        account_hashes: Vec<H256>,
+        account_states: Vec<ethrex_common::types::AccountState>,
+    ) -> Result<(), StoreError> {
+        self.inner()
+            .state_snapshot
+            .extend(account_hashes.into_iter().zip(account_states));
+        Ok(())
+    }
+
+    fn write_snapshot_storage_batch(
+        &self,
+        account_hash: H256,
+        storage_keys: Vec<H256>,
+        storage_values: Vec<U256>,
+    ) -> Result<(), StoreError> {
+        self.inner()
+            .storage_snapshot
+            .entry(account_hash)
+            .or_default()
+            .extend(storage_keys.into_iter().zip(storage_values));
+        Ok(())
+    }
+
+    fn set_state_trie_rebuild_checkpoint(
+        &self,
+        checkpoint: (H256, [H256; STATE_TRIE_SEGMENTS]),
+    ) -> Result<(), StoreError> {
+        self.inner().snap_state.state_trie_rebuild_checkpoint = Some(checkpoint);
+        Ok(())
+    }
+
+    fn get_state_trie_rebuild_checkpoint(
+        &self,
+    ) -> Result<Option<(H256, [H256; STATE_TRIE_SEGMENTS])>, StoreError> {
+        Ok(self.inner().snap_state.state_trie_rebuild_checkpoint)
+    }
+
+    fn clear_snapshot(&self) -> Result<(), StoreError> {
+        self.inner().snap_state.state_trie_rebuild_checkpoint = None;
+        self.inner().snap_state.storage_trie_rebuild_pending = None;
+        Ok(())
+    }
+
+    fn read_account_snapshot(
+        &self,
+        start: H256,
+    ) -> Result<Vec<(H256, ethrex_common::types::AccountState)>, StoreError> {
+        Ok(self
+            .inner()
+            .state_snapshot
+            .iter()
+            .filter(|(hash, _)| **hash < start)
+            .take(MAX_SNAPSHOT_READS)
+            .map(|(h, a)| (*h, a.clone()))
+            .collect())
+    }
+
+    fn read_storage_snapshot(
+        &self,
+        start: H256,
+        account_hash: H256,
+    ) -> Result<Vec<(H256, U256)>, StoreError> {
+        if let Some(snapshot) = self.inner().storage_snapshot.get(&account_hash) {
+            Ok(snapshot
+                .iter()
+                .filter(|(hash, _)| **hash < start)
+                .take(MAX_SNAPSHOT_READS)
+                .map(|(k, v)| (*k, *v))
+                .collect())
+        } else {
+            Ok(vec![])
+        }
+    }
+
+    fn set_storage_trie_rebuild_pending(
+        &self,
+        pending: Vec<(H256, H256)>,
+    ) -> Result<(), StoreError> {
+        self.inner().snap_state.storage_trie_rebuild_pending = Some(pending);
+        Ok(())
+    }
+
+    fn get_storage_trie_rebuild_pending(&self) -> Result<Option<Vec<(H256, H256)>>, StoreError> {
+        Ok(self.inner().snap_state.storage_trie_rebuild_pending.clone())
     }
 }
 
