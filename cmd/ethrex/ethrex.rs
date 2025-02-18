@@ -15,7 +15,6 @@ use k256::ecdsa::SigningKey;
 use local_ip_address::local_ip;
 use rand::rngs::OsRng;
 use std::{
-    collections::HashMap,
     fs::{self, File},
     future::IntoFuture,
     io,

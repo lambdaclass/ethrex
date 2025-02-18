@@ -1,5 +1,3 @@
-use std::collections::HashMap;
-
 use ethrex_common::{
     types::{Block, BlockHash, BlockHeader, BlockNumber},
     H256,
