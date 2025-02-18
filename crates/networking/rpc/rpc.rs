@@ -111,7 +111,7 @@ impl RpcApiContext {
 trait RpcHandler: Sized {
     fn parse(params: &Option<Vec<Value>>) -> Result<Self, RpcErr>;
 
-    fn call(req: &RpcRequest, context: RpcApiContext) -> Result<Value, RpcErr> {
+    async fn call(req: &RpcRequest, context: RpcApiContext) -> Result<Value, RpcErr> {
         let request = Self::parse(&req.params)?;
         request.handle(context)
     }
@@ -202,7 +202,7 @@ pub async fn handle_http_request(
     body: String,
 ) -> Json<Value> {
     let req: RpcRequest = serde_json::from_str(&body).unwrap();
-    let res = map_http_requests(&req, service_context);
+    let res = map_http_requests(&req, service_context).await;
     rpc_response(req.id, res)
 }
 
@@ -216,18 +216,18 @@ pub async fn handle_authrpc_request(
         Err(error) => rpc_response(req.id, Err(error)),
         Ok(()) => {
             // Proceed with the request
-            let res = map_authrpc_requests(&req, service_context);
+            let res = map_authrpc_requests(&req, service_context).await;
             rpc_response(req.id, res)
         }
     }
 }
 
 /// Handle requests that can come from either clients or other users
-pub fn map_http_requests(req: &RpcRequest, context: RpcApiContext) -> Result<Value, RpcErr> {
+pub async fn map_http_requests(req: &RpcRequest, context: RpcApiContext) -> Result<Value, RpcErr> {
     match req.namespace() {
-        Ok(RpcNamespace::Eth) => map_eth_requests(req, context),
+        Ok(RpcNamespace::Eth) => map_eth_requests(req, context).await,
         Ok(RpcNamespace::Admin) => map_admin_requests(req, context),
-        Ok(RpcNamespace::Debug) => map_debug_requests(req, context),
+        Ok(RpcNamespace::Debug) => map_debug_requests(req, context).await,
         Ok(RpcNamespace::Web3) => map_web3_requests(req, context),
         Ok(RpcNamespace::Net) => map_net_requests(req, context),
         _ => Err(RpcErr::MethodNotFound(req.method.clone())),
@@ -235,44 +235,49 @@ pub fn map_http_requests(req: &RpcRequest, context: RpcApiContext) -> Result<Val
 }
 
 /// Handle requests from consensus client
-pub fn map_authrpc_requests(req: &RpcRequest, context: RpcApiContext) -> Result<Value, RpcErr> {
+pub async fn map_authrpc_requests(
+    req: &RpcRequest,
+    context: RpcApiContext,
+) -> Result<Value, RpcErr> {
     match req.namespace() {
-        Ok(RpcNamespace::Engine) => map_engine_requests(req, context),
-        Ok(RpcNamespace::Eth) => map_eth_requests(req, context),
+        Ok(RpcNamespace::Engine) => map_engine_requests(req, context).await,
+        Ok(RpcNamespace::Eth) => map_eth_requests(req, context).await,
         _ => Err(RpcErr::MethodNotFound(req.method.clone())),
     }
 }
 
-pub fn map_eth_requests(req: &RpcRequest, context: RpcApiContext) -> Result<Value, RpcErr> {
+pub async fn map_eth_requests(req: &RpcRequest, context: RpcApiContext) -> Result<Value, RpcErr> {
     match req.method.as_str() {
-        "eth_chainId" => ChainId::call(req, context),
-        "eth_syncing" => Syncing::call(req, context),
-        "eth_getBlockByNumber" => GetBlockByNumberRequest::call(req, context),
-        "eth_getBlockByHash" => GetBlockByHashRequest::call(req, context),
-        "eth_getBalance" => GetBalanceRequest::call(req, context),
-        "eth_getCode" => GetCodeRequest::call(req, context),
-        "eth_getStorageAt" => GetStorageAtRequest::call(req, context),
+        "eth_chainId" => ChainId::call(req, context).await,
+        "eth_syncing" => Syncing::call(req, context).await,
+        "eth_getBlockByNumber" => GetBlockByNumberRequest::call(req, context).await,
+        "eth_getBlockByHash" => GetBlockByHashRequest::call(req, context).await,
+        "eth_getBalance" => GetBalanceRequest::call(req, context).await,
+        "eth_getCode" => GetCodeRequest::call(req, context).await,
+        "eth_getStorageAt" => GetStorageAtRequest::call(req, context).await,
         "eth_getBlockTransactionCountByNumber" => {
-            GetBlockTransactionCountRequest::call(req, context)
+            GetBlockTransactionCountRequest::call(req, context).await
         }
-        "eth_getBlockTransactionCountByHash" => GetBlockTransactionCountRequest::call(req, context),
+        "eth_getBlockTransactionCountByHash" => {
+            GetBlockTransactionCountRequest::call(req, context).await
+        }
         "eth_getTransactionByBlockNumberAndIndex" => {
-            GetTransactionByBlockNumberAndIndexRequest::call(req, context)
+            GetTransactionByBlockNumberAndIndexRequest::call(req, context).await
         }
         "eth_getTransactionByBlockHashAndIndex" => {
-            GetTransactionByBlockHashAndIndexRequest::call(req, context)
+            GetTransactionByBlockHashAndIndexRequest::call(req, context).await
         }
-        "eth_getBlockReceipts" => GetBlockReceiptsRequest::call(req, context),
-        "eth_getTransactionByHash" => GetTransactionByHashRequest::call(req, context),
-        "eth_getTransactionReceipt" => GetTransactionReceiptRequest::call(req, context),
-        "eth_createAccessList" => CreateAccessListRequest::call(req, context),
-        "eth_blockNumber" => BlockNumberRequest::call(req, context),
-        "eth_call" => CallRequest::call(req, context),
-        "eth_blobBaseFee" => GetBlobBaseFee::call(req, context),
-        "eth_getTransactionCount" => GetTransactionCountRequest::call(req, context),
-        "eth_feeHistory" => FeeHistoryRequest::call(req, context),
-        "eth_estimateGas" => EstimateGasRequest::call(req, context),
-        "eth_getLogs" => LogsFilter::call(req, context),
+        "eth_getBlockReceipts" => GetBlockReceiptsRequest::call(req, context).await,
+        "eth_getTransactionByHash" => GetTransactionByHashRequest::call(req, context).await,
+        "eth_getTransactionReceipt" => GetTransactionReceiptRequest::call(req, context).await,
+        "eth_createAccessList" => CreateAccessListRequest::call(req, context).await,
+        "eth_blockNumber" => BlockNumberRequest::call(req, context).await,
+        "eth_call" => CallRequest::call(req, context).await,
+        "eth_blobBaseFee" => GetBlobBaseFee::call(req, context).await,
+        "eth_getTransactionCount" => GetTransactionCountRequest::call(req, context).await,
+        "eth_feeHistory" => FeeHistoryRequest::call(req, context).await,
+        "eth_estimateGas" => EstimateGasRequest::call(req, context).await,
+        "eth_getLogs" => LogsFilter::call(req, context).await,
         "eth_newFilter" => {
             NewFilterRequest::stateful_call(req, context.storage, context.active_filters)
         }
@@ -282,41 +287,50 @@ pub fn map_eth_requests(req: &RpcRequest, context: RpcApiContext) -> Result<Valu
         "eth_getFilterChanges" => {
             FilterChangesRequest::stateful_call(req, context.storage, context.active_filters)
         }
-        "eth_sendRawTransaction" => SendRawTransactionRequest::call(req, context),
-        "eth_getProof" => GetProofRequest::call(req, context),
-        "eth_gasPrice" => GasPrice::call(req, context),
-        "eth_maxPriorityFeePerGas" => eth::max_priority_fee::MaxPriorityFee::call(req, context),
+        "eth_sendRawTransaction" => SendRawTransactionRequest::call(req, context).await,
+        "eth_getProof" => GetProofRequest::call(req, context).await,
+        "eth_gasPrice" => GasPrice::call(req, context).await,
+        "eth_maxPriorityFeePerGas" => {
+            eth::max_priority_fee::MaxPriorityFee::call(req, context).await
+        }
         unknown_eth_method => Err(RpcErr::MethodNotFound(unknown_eth_method.to_owned())),
     }
 }
 
-pub fn map_debug_requests(req: &RpcRequest, context: RpcApiContext) -> Result<Value, RpcErr> {
+pub async fn map_debug_requests(req: &RpcRequest, context: RpcApiContext) -> Result<Value, RpcErr> {
     match req.method.as_str() {
-        "debug_getRawHeader" => GetRawHeaderRequest::call(req, context),
-        "debug_getRawBlock" => GetRawBlockRequest::call(req, context),
-        "debug_getRawTransaction" => GetRawTransaction::call(req, context),
-        "debug_getRawReceipts" => GetRawReceipts::call(req, context),
+        "debug_getRawHeader" => GetRawHeaderRequest::call(req, context).await,
+        "debug_getRawBlock" => GetRawBlockRequest::call(req, context).await,
+        "debug_getRawTransaction" => GetRawTransaction::call(req, context).await,
+        "debug_getRawReceipts" => GetRawReceipts::call(req, context).await,
         unknown_debug_method => Err(RpcErr::MethodNotFound(unknown_debug_method.to_owned())),
     }
 }
 
-pub fn map_engine_requests(req: &RpcRequest, context: RpcApiContext) -> Result<Value, RpcErr> {
+pub async fn map_engine_requests(
+    req: &RpcRequest,
+    context: RpcApiContext,
+) -> Result<Value, RpcErr> {
     match req.method.as_str() {
-        "engine_exchangeCapabilities" => ExchangeCapabilitiesRequest::call(req, context),
-        "engine_forkchoiceUpdatedV1" => ForkChoiceUpdatedV1::call(req, context),
-        "engine_forkchoiceUpdatedV2" => ForkChoiceUpdatedV2::call(req, context),
-        "engine_forkchoiceUpdatedV3" => ForkChoiceUpdatedV3::call(req, context),
-        "engine_newPayloadV3" => NewPayloadV3Request::call(req, context),
-        "engine_newPayloadV2" => NewPayloadV2Request::call(req, context),
-        "engine_newPayloadV1" => NewPayloadV1Request::call(req, context),
+        "engine_exchangeCapabilities" => ExchangeCapabilitiesRequest::call(req, context).await,
+        "engine_forkchoiceUpdatedV1" => ForkChoiceUpdatedV1::call(req, context).await,
+        "engine_forkchoiceUpdatedV2" => ForkChoiceUpdatedV2::call(req, context).await,
+        "engine_forkchoiceUpdatedV3" => ForkChoiceUpdatedV3::call(req, context).await,
+        "engine_newPayloadV3" => NewPayloadV3Request::call(req, context).await,
+        "engine_newPayloadV2" => NewPayloadV2Request::call(req, context).await,
+        "engine_newPayloadV1" => NewPayloadV1Request::call(req, context).await,
         "engine_exchangeTransitionConfigurationV1" => {
-            ExchangeTransitionConfigV1Req::call(req, context)
+            ExchangeTransitionConfigV1Req::call(req, context).await
         }
-        "engine_getPayloadV3" => GetPayloadV3Request::call(req, context),
-        "engine_getPayloadV2" => GetPayloadV2Request::call(req, context),
-        "engine_getPayloadV1" => GetPayloadV1Request::call(req, context),
-        "engine_getPayloadBodiesByHashV1" => GetPayloadBodiesByHashV1Request::call(req, context),
-        "engine_getPayloadBodiesByRangeV1" => GetPayloadBodiesByRangeV1Request::call(req, context),
+        "engine_getPayloadV3" => GetPayloadV3Request::call(req, context).await,
+        "engine_getPayloadV2" => GetPayloadV2Request::call(req, context).await,
+        "engine_getPayloadV1" => GetPayloadV1Request::call(req, context).await,
+        "engine_getPayloadBodiesByHashV1" => {
+            GetPayloadBodiesByHashV1Request::call(req, context).await
+        }
+        "engine_getPayloadBodiesByRangeV1" => {
+            GetPayloadBodiesByRangeV1Request::call(req, context).await
+        }
         unknown_engine_method => Err(RpcErr::MethodNotFound(unknown_engine_method.to_owned())),
     }
 }
