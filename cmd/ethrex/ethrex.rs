@@ -249,8 +249,10 @@ async fn main() {
         .expect("Node record could not be created from local node");
     // Create Kademlia Table here so we can access it from rpc server (for syncing)
     let peer_table = peer_table(signer.clone());
+    // Create a cancellation_token for long_living tasks
+    let cancel_token = tokio_util::sync::CancellationToken::new();
     // Create SyncManager
-    let syncer = SyncManager::new(peer_table.clone(), sync_mode);
+    let syncer = SyncManager::new(peer_table.clone(), sync_mode, cancel_token.clone());
 
     // TODO: Check every module starts properly.
     let tracker = TaskTracker::new();
@@ -341,6 +343,7 @@ async fn main() {
         _ = tokio::signal::ctrl_c() => {
             info!("Server shut down started...");
             info!("Storing known peers at {:?}...", peers_file);
+            cancel_token.cancel();
             store_known_peers(peer_table, peers_file).await;
             tokio::time::sleep(Duration::from_secs(1)).await;
             info!("Server shutting down!");
