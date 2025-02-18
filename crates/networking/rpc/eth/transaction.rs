@@ -1,10 +1,12 @@
+#[cfg(feature = "l2")]
+use crate::utils::RpcRequest;
 use crate::{
     eth::block,
     types::{
         block_identifier::BlockIdentifier,
         transaction::{RpcTransaction, SendRawTransactionRequest},
     },
-    utils::{RpcErr, RpcRequest},
+    utils::RpcErr,
     RpcApiContext, RpcHandler,
 };
 use ethrex_common::{
@@ -575,39 +577,37 @@ impl RpcHandler for SendRawTransactionRequest {
         Ok(transaction)
     }
 
-    async fn call(req: &RpcRequest, context: RpcApiContext) -> Result<Value, RpcErr> {
-        cfg_if::cfg_if! {
-            if #[cfg(feature = "l2")] {
-                use tracing::warn;
+    #[cfg(feature = "l2")]
+    async fn relay_to_gateway_or_fallback(
+        req: &RpcRequest,
+        context: RpcApiContext,
+    ) -> Result<Value, RpcErr> {
+        use tracing::warn;
 
-                info!("Relaying eth_sendRawTransaction to gateway");
-                let gateway_response = context.gateway_eth_client
-                    .send_raw_transaction(&get_transaction_data(&req.params)?)
-                    .await
-                    .map_err(|err| {
-                        RpcErr::Internal(format!(
-                            "Could not relay eth_sendRawTransaction to gateway: {err}",
-                        ))
-                    }).and_then(|hash| {
-                        serde_json::to_value(format!("{hash:#x}"))
-                            .map_err(|error| RpcErr::Internal(error.to_string()))
-                    });
+        info!("Relaying eth_sendRawTransaction to gateway");
+        let gateway_response = context
+            .gateway_eth_client
+            .send_raw_transaction(&get_transaction_data(&req.params)?)
+            .await
+            .map_err(|err| {
+                RpcErr::Internal(format!(
+                    "Could not relay eth_sendRawTransaction to gateway: {err}",
+                ))
+            })
+            .and_then(|hash| {
+                serde_json::to_value(format!("{hash:#x}"))
+                    .map_err(|error| RpcErr::Internal(error.to_string()))
+            });
 
-                let request = Self::parse(&req.params)?;
-                let client_response = request.handle(context);
-
-                if gateway_response.is_err() {
-                    warn!(error = ?gateway_response, "Gateway eth_sendRawTransaction failed, falling back to local node");
-                } else {
-                    info!("Successfully relayed eth_sendRawTransaction to gateway");
-                }
-
-                gateway_response.or(client_response)
-            } else {
-                let request = Self::parse(&req.params)?;
-                request.handle(context)
-            }
+        if gateway_response.is_err() {
+            warn!(error = ?gateway_response, "Gateway eth_sendRawTransaction failed, falling back to local node");
+        } else {
+            info!("Successfully relayed eth_sendRawTransaction to gateway");
         }
+
+        let client_response = Self::call(req, context);
+
+        gateway_response.or(client_response)
     }
 
     fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
