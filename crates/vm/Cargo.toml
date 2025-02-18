@@ -44,7 +44,6 @@ default = []
 l2 = []
 c-kzg = ["revm/c-kzg", "ethrex-levm/c-kzg", "ethrex-common/c-kzg"]
 blst = ["revm/blst"]
-libmdbx = ["ethrex-storage/default", "ethrex-common/libmdbx"]
 
 [profile.test]
 opt-level = 3
