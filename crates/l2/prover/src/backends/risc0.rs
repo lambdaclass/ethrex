@@ -6,11 +6,14 @@ use zkvm_interface::io::ProgramInput;
 
 include!(concat!(env!("OUT_DIR"), "/methods.rs"));
 
-fn execute(&mut self, input: ProgramInput) -> Result<ExecuteOutput, Box<dyn std::error::Error>> {
+pub fn execute(
+    &mut self,
+    input: ProgramInput,
+) -> Result<ExecuteOutput, Box<dyn std::error::Error>> {
     unimplemented!()
 }
 
-fn prove(input: ProgramInput) -> Result<Receipt, Box<dyn std::error::Error>> {
+pub fn prove(input: ProgramInput) -> Result<Receipt, Box<dyn std::error::Error>> {
     let mut stdout = Vec::new();
 
     let env = ExecutorEnv::builder()
