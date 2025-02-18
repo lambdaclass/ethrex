@@ -351,7 +351,9 @@ pub fn compare_levm_revm_account_updates(
     revm_account_updates: &[AccountUpdate],
 ) -> ComparisonReport {
     let levm_post_state_root = post_state_root(levm_account_updates, test);
+    // dbg!("LEVM", &levm_account_updates);
     let revm_post_state_root = post_state_root(revm_account_updates, test);
+    // dbg!("REVM", &revm_account_updates);
     let mut initial_accounts: HashMap<Address, Account> = test
         .pre
         .0
