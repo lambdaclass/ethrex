@@ -1,6 +1,6 @@
 //! This module contains the logic for storage healing during snap sync
 //! It becomes active as soon as state sync begins and acts like a queue, waiting for storages in need of healing to be advertised
-//! It will receive storages from the storage_fetcher queue whose that couldn't be downloaded due to the pivot becoming stale,
+//! It will receive storages from the storage_fetcher queue that couldn't be downloaded due to the pivot becoming stale,
 //! and also storages belonging to newly healed accounts from the state healing
 //! For each storage received, the process will first queue their root nodes and then queue all the missing children from each node fetched in the same way as state healing
 //! Even if the pivot becomes stale, the healer will remain active and listening until a termination signal (an empty batch) is received
