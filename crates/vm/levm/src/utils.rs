@@ -265,7 +265,7 @@ pub fn get_intrinsic_gas(
 
     // Create Cost
     if is_create {
-        if fork > Fork::Frontier {
+        if fork > Fork::FrontierThawing {
             intrinsic_gas = intrinsic_gas
                 .checked_add(CREATE_BASE_COST)
                 .ok_or(OutOfGasError::ConsumedGasOverflow)?;
