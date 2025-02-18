@@ -203,7 +203,7 @@ impl VM {
                 _ => (4800, 19900, 2800),
             };
 
-        if self.env.config.fork < Fork::Istanbul && self.env.config.fork != Fork::Constantinople {
+        if self.env.config.fork <= Fork::Byzantium || self.env.config.fork == Fork::Petersburg {
             if !storage_slot.current_value.is_zero() && new_storage_slot_value.is_zero() {
                 gas_refunds = gas_refunds
                     .checked_add(15000)
