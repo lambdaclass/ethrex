@@ -154,10 +154,7 @@ impl EngineClient {
         // Claims
         let valid_iat = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs() as usize;
         let claims = json!({"iat": valid_iat});
-        // Encoding Key
-        let decoded_secret = hex::decode(self.secret.clone())
-            .map_err(|error| EngineClientError::FailedToDecodeJWTSecret(error.to_string()))?;
-        let encoding_key = jsonwebtoken::EncodingKey::from_secret(decoded_secret.as_ref());
+        let encoding_key = jsonwebtoken::EncodingKey::from_secret(&self.secret);
         // JWT Token
         jsonwebtoken::encode(&header, &claims, &encoding_key).map_err(EngineClientError::from)
     }
