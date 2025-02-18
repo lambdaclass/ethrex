@@ -4,7 +4,7 @@ use std::marker::PhantomData;
 use bytes::Bytes;
 use ethereum_types::U256;
 use ethrex_common::{
-    types::{Block, BlockBody, BlockHash, BlockHeader, Receipt},
+    types::{AccountState, Block, BlockBody, BlockHash, BlockHeader, Receipt},
     H256,
 };
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
@@ -18,6 +18,8 @@ use std::any::type_name;
 // Account types
 pub type AccountCodeHashRLP = Rlp<H256>;
 pub type AccountCodeRLP = Rlp<Bytes>;
+pub type AccountHashRLP = Rlp<H256>;
+pub type AccountStateRLP = Rlp<AccountState>;
 
 // Block types
 pub type BlockHashRLP = Rlp<BlockHash>;
