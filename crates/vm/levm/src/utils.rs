@@ -265,9 +265,11 @@ pub fn get_intrinsic_gas(
 
     // Create Cost
     if is_create {
-        intrinsic_gas = intrinsic_gas
-            .checked_add(CREATE_BASE_COST)
-            .ok_or(OutOfGasError::ConsumedGasOverflow)?;
+        if fork > Fork::Frontier {
+            intrinsic_gas = intrinsic_gas
+                .checked_add(CREATE_BASE_COST)
+                .ok_or(OutOfGasError::ConsumedGasOverflow)?;
+        }
 
         // https://eips.ethereum.org/EIPS/eip-3860
         if fork >= Fork::Shanghai {
