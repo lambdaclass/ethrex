@@ -333,7 +333,9 @@ pub fn ensure_post_state(
             );
             let revm_account_updates = ethrex_vm::get_state_transitions(revm_state);
             let account_updates_report = compare_levm_revm_account_updates(
+                vector,
                 test,
+                fork,
                 &levm_account_updates,
                 &revm_account_updates,
             );
@@ -345,7 +347,9 @@ pub fn ensure_post_state(
 }
 
 pub fn compare_levm_revm_account_updates(
+    vector: &TestVector,
     test: &EFTest,
+    fork: &Fork,
     levm_account_updates: &[AccountUpdate],
     revm_account_updates: &[AccountUpdate],
 ) -> ComparisonReport {
