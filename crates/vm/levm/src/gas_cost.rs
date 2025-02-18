@@ -626,6 +626,7 @@ pub fn selfdestruct(
     let (static_cost, dynamic_cost) = match fork {
         f if f <= Fork::DaoFork => (SELFDESTRUCT_STATIC_PRE_TANGERINE, 0),
         Fork::Tangerine => {
+            // dbg!(account_is_empty);
             let dynamic_cost = if account_is_empty {
                 SELFDESTRUCT_DYNAMIC
             } else {
@@ -658,6 +659,7 @@ pub fn selfdestruct(
             (SELFDESTRUCT_STATIC, dynamic_cost)
         }
     };
+    // dbg!(fork, static_cost, dynamic_cost);
     static_cost
         .checked_add(dynamic_cost)
         .ok_or(OutOfGasError::GasCostOverflow)

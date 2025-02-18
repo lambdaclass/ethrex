@@ -473,9 +473,8 @@ pub fn get_state_transitions(
                 && old_info.balance.is_zero()
                 && old_info.nonce == 0
                 && old_info.code_hash == code_hash(&Bytes::new())
-            // && *fork < Fork::SpuriousDragon
+                && *fork < Fork::SpuriousDragon
             {
-                // dbg!("entro aca");
                 continue;
             }
         }
