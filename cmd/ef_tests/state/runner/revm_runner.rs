@@ -333,6 +333,8 @@ pub fn ensure_post_state(
                 fork,
             );
             let revm_account_updates = ethrex_vm::get_state_transitions(revm_state);
+            // dbg!("LEVM", &levm_account_updates);
+            // dbg!("REVM", &revm_account_updates);
             let account_updates_report = compare_levm_revm_account_updates(
                 test,
                 &levm_account_updates,

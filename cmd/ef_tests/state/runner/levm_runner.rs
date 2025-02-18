@@ -385,6 +385,27 @@ pub fn get_state_transitions(
             .get_account_info_by_hash(block_hash, *new_state_account_address)
             .expect("Error getting account info by address")
             .unwrap_or_default();
+        // https://eips.ethereum.org/EIPS/eip-161
+        // No account may change state from non-existent to existent-but-_empty_. If an operation would do this, the account SHALL instead remain non-existent.
+        // if new_state_account.is_empty() && fork < &Fork::SpuriousDragon {
+        //     match current_db.get_account_info_by_hash(block_hash, *new_state_account_address) {
+        //         Ok(Some(info)) => {
+        //             dbg!("entro aca");
+        //             if info.balance.is_zero()
+        //                 && info.nonce == 0
+        //                 && info.code_hash == code_hash(&Bytes::new())
+        //             {
+        //                 continue;
+        //             }
+        //         }
+        //         Ok(None) => {
+        //             continue;
+        //         }
+        //         Err(_) => {
+        //             continue;
+        //         } // _ => (),
+        //     }
+        // }
         let mut updates = 0;
         if initial_account_state.balance != new_state_account.info.balance {
             updates += 1;
@@ -443,38 +464,21 @@ pub fn get_state_transitions(
             added_storage,
         };
 
-        if account_update.removed && fork < &Fork::SpuriousDragon {
-            match current_db.get_account_info_by_hash(block_hash, account_update.address) {
-                Ok(Some(info)) => {
-                    if info.balance.is_zero()
-                        && info.nonce == 0
-                        && info.code_hash == code_hash(&Bytes::new())
-                    {
-                        continue;
-                    }
-                }
-                Ok(None) => {
-                    continue;
-                }
-                Err(_) => {
-                    continue;
-                }
+        if let Some(old_info) = current_db
+            .get_account_info_by_hash(block_hash, account_update.address)
+            .unwrap()
+        {
+            // https://eips.ethereum.org/EIPS/eip-161
+            if account_update.removed
+                && old_info.balance.is_zero()
+                && old_info.nonce == 0
+                && old_info.code_hash == code_hash(&Bytes::new())
+            // && *fork < Fork::SpuriousDragon
+            {
+                // dbg!("entro aca");
+                continue;
             }
         }
-        // if let Some(old_info) = current_db
-        //     .get_account_state_by_hash(block_hash, account_update.address)
-        //     .unwrap()
-        // {
-        //     // https://eips.ethereum.org/EIPS/eip-161
-        //     if account_update.removed
-        //         && old_info.balance.is_zero()
-        //         && old_info.nonce == 0
-        //         && old_info.code_hash == code_hash(&Bytes::new())
-        //         && *fork < Fork::SpuriousDragon
-        //     {
-        //         continue;
-        //     }
-        // }
 
         account_updates.push(account_update);
     }
