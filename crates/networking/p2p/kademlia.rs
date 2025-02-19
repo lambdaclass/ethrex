@@ -312,7 +312,6 @@ impl KademliaTable {
         if let Some(peer) = peer {
             peer.channels = Some(channels);
             peer.supported_capabilities = capabilities;
-            peer.is_connected = true;
         } else {
             debug!(
                 "[PEERS] Peer with node_id {:?} not found in the kademlia table when trying to init backend communication",

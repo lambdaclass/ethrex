@@ -5,7 +5,9 @@ use crate::rlpx::error::RLPxError;
 
 use super::status::StatusMessage;
 
-pub fn get_status(storage: &Store, eth_version: u32) -> Result<StatusMessage, RLPxError> {
+pub const ETH_VERSION: u32 = 68;
+
+pub fn get_status(storage: &Store) -> Result<StatusMessage, RLPxError> {
     let chain_config = storage.get_chain_config()?;
     let total_difficulty = U256::from(chain_config.terminal_total_difficulty.unwrap_or_default());
     let network_id = chain_config.chain_id;
@@ -28,7 +30,7 @@ pub fn get_status(storage: &Store, eth_version: u32) -> Result<StatusMessage, RL
         block_number,
     );
     Ok(StatusMessage {
-        eth_version,
+        eth_version: ETH_VERSION,
         network_id,
         total_difficulty,
         block_hash,
@@ -37,11 +39,7 @@ pub fn get_status(storage: &Store, eth_version: u32) -> Result<StatusMessage, RL
     })
 }
 
-pub fn validate_status(
-    msg_data: StatusMessage,
-    storage: &Store,
-    eth_version: u32,
-) -> Result<(), RLPxError> {
+pub fn validate_status(msg_data: StatusMessage, storage: &Store) -> Result<(), RLPxError> {
     let chain_config = storage.get_chain_config()?;
 
     // These blocks must always be available
@@ -67,7 +65,7 @@ pub fn validate_status(
         ));
     }
     //Check Protocol Version
-    if msg_data.eth_version != eth_version {
+    if msg_data.eth_version != ETH_VERSION {
         return Err(RLPxError::HandshakeError(
             "Eth protocol version does not match".to_string(),
         ));
@@ -124,16 +122,15 @@ mod tests {
         let genesis_hash = genesis_header.compute_block_hash();
         let fork_id = ForkId::new(config, genesis_header, 2707305664, 123);
 
-        let eth_version = 68;
         let message = StatusMessage {
-            eth_version,
+            eth_version: 68u32,
             network_id: 3503995874084926,
             total_difficulty,
             block_hash: H256::random(),
             genesis: genesis_hash,
             fork_id,
         };
-        let result = validate_status(message, &storage, eth_version);
+        let result = validate_status(message, &storage);
         assert!(result.is_ok());
     }
 }
