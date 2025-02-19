@@ -1,6 +1,6 @@
 use ethrex_blockchain::error::ChainError;
 use ethrex_common::{
-    types::{AccountState, Block, BlockHash, BlockHeader, EMPTY_KECCACK_HASH},
+    types::{AccountState, Block, BlockHash, EMPTY_KECCACK_HASH},
     BigEndianHash, H256, U256, U512,
 };
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode, error::RLPDecodeError};
@@ -156,14 +156,14 @@ impl SyncManager {
                     block_headers.remove(0);
                     // Store headers and save hashes for full block retrieval
                     self.block_hashes.extend_from_slice(&block_hashes[..]);
-                    store.add_block_headers(block_hashes, block_headers)?;
+                    store.add_block_headers(block_hashes.clone(), block_headers)?;
 
                     if sync_head_found {
                         // No more headers to request
                         break;
                     } else {
                         download_and_run_blocks(
-                            &mut block_hashes,
+                            &mut self.block_hashes,
                             self.peers.clone(),
                             store.clone(),
                         )
