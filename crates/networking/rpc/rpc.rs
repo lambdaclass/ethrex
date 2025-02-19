@@ -82,6 +82,7 @@ pub struct RpcApiContext {
 /// Inactive: There is no active sync process
 /// Active: The client is currently syncing
 /// Pending: The previous sync process became stale, awaiting restart
+#[derive(Debug)]
 pub enum SyncStatus {
     Inactive,
     Active,
