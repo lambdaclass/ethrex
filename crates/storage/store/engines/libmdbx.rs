@@ -68,7 +68,6 @@ impl Store {
         debug!("Inserting values");
         let mut i = 0;
         for (key, value) in key_values {
-            debug!("Index {}", i);
             i += 1;
             txn.upsert::<T>(key, value)
                 .map_err(StoreError::LibmdbxError)?;
@@ -496,6 +495,7 @@ impl StoreEngine for Store {
         receipts: Vec<Receipt>,
     ) -> Result<(), StoreError> {
         tracing::debug!("Receipts forming key values");
+        tracing::debug!("Receipts number {}: {:?}", receipts.len(), receipts);
         let key_values = receipts.into_iter().enumerate().map(|(index, receipt)| {
             (
                 <(H256, u64) as Into<TupleRLP<BlockHash, Index>>>::into((block_hash, index as u64)),
