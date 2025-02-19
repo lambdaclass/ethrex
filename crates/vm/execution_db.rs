@@ -219,7 +219,7 @@ impl ExecutionDB {
         spec_id: SpecId,
         db: ExtDB,
     ) -> Result<CacheDB<ExtDB>, RevmError<ExtDB::Error>> {
-        let block_env = block_env(&block.header);
+        let block_env = block_env(&block.header, spec_id);
         let mut db = CacheDB::new(db);
 
         for transaction in &block.body.transactions {
