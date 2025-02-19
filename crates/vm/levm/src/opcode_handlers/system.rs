@@ -474,6 +474,9 @@ impl VM {
         // Returns: VMError RevertOpcode if executed correctly.
         // Notes:
         //      The actual reversion of changes is made in the execute() function.
+        if self.env.config.fork < Fork::Byzantium {
+            return Err(VMError::InvalidOpcode);
+        }
 
         let offset = current_call_frame.stack.pop()?;
 

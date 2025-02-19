@@ -237,8 +237,8 @@ impl ChainConfig {
         self.get_fork(block_timestamp)
     }
 
-    pub fn gather_forks(&self) -> (Vec<u64>, Vec<u64>) {
-        let block_number_based_forks: Vec<u64> = vec![
+    pub fn gather_forks(&self, genesis_header: BlockHeader) -> (Vec<u64>, Vec<u64>) {
+        let mut block_number_based_forks: Vec<u64> = vec![
             self.homestead_block,
             if self.dao_fork_support {
                 self.dao_fork_block
@@ -263,7 +263,11 @@ impl ChainConfig {
         .flatten()
         .collect();
 
-        let timestamp_based_forks: Vec<u64> = vec![
+        // Remove repeated values
+        block_number_based_forks.sort();
+        block_number_based_forks.dedup();
+
+        let mut timestamp_based_forks: Vec<u64> = vec![
             self.shanghai_time,
             self.cancun_time,
             self.prague_time,
@@ -272,6 +276,14 @@ impl ChainConfig {
         .into_iter()
         .flatten()
         .collect();
+
+        // Remove repeated values
+        timestamp_based_forks.sort();
+        timestamp_based_forks.dedup();
+
+        // Filter forks before genesis
+        block_number_based_forks.retain(|block_number| *block_number != 0);
+        timestamp_based_forks.retain(|block_timestamp| *block_timestamp > genesis_header.timestamp);
 
         (block_number_based_forks, timestamp_based_forks)
     }
