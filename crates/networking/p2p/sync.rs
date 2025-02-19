@@ -298,6 +298,10 @@ async fn download_and_run_blocks(
                 store.set_canonical_block(number, hash)?;
                 store.update_latest_block_number(number)?;
                 store.set_header_download_checkpoint(hash)?;
+                debug!(
+                    "Executed and stored block number {} with hash {}",
+                    number, hash
+                );
             }
             debug!("Executed & stored {} blocks", block_bodies_len);
             if chunk.len() == 0 {
