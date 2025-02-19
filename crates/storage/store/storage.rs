@@ -299,7 +299,6 @@ impl Store {
         //     .mempool
         //     .map_err(|error| StoreError::Custom(error.to_string()))?;
         self.mempool.insert(hash, transaction);
-
         Ok(())
     }
 
@@ -360,6 +359,9 @@ impl Store {
                     .push(tx.clone())
             }
         });
+
+        txs_by_sender.iter_mut().for_each(|(_, txs)| txs.sort());
+
         Ok(txs_by_sender)
     }
 
