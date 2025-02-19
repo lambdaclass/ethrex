@@ -23,7 +23,12 @@ pub fn get_status(storage: &Store) -> Result<StatusMessage, RLPxError> {
 
     let genesis = genesis_header.compute_block_hash();
     let block_hash = block_header.compute_block_hash();
-    let fork_id = ForkId::new(chain_config, genesis, block_header.timestamp, block_number);
+    let fork_id = ForkId::new(
+        chain_config,
+        genesis_header,
+        block_header.timestamp,
+        block_number,
+    );
     Ok(StatusMessage {
         eth_version: ETH_VERSION,
         network_id,
@@ -41,14 +46,14 @@ pub fn validate_status(msg_data: StatusMessage, storage: &Store) -> Result<(), R
     let genesis_header = storage
         .get_block_header(0)?
         .ok_or(RLPxError::NotFound("Genesis Block".to_string()))?;
+    let genesis_hash = genesis_header.compute_block_hash();
     let latest_block_number = storage.get_latest_block_number()?;
     let latest_block_header = storage
         .get_block_header(latest_block_number)?
         .ok_or(RLPxError::NotFound(format!("Block {latest_block_number}")))?;
-    let genesis = genesis_header.compute_block_hash();
     let fork_id = ForkId::new(
         chain_config,
-        genesis,
+        genesis_header.clone(),
         latest_block_header.timestamp,
         latest_block_number,
     );
@@ -66,7 +71,7 @@ pub fn validate_status(msg_data: StatusMessage, storage: &Store) -> Result<(), R
         ));
     }
     //Check Genesis
-    if msg_data.genesis != genesis {
+    if msg_data.genesis != genesis_hash {
         return Err(RLPxError::HandshakeError(
             "Genesis does not match".to_string(),
         ));
@@ -77,7 +82,7 @@ pub fn validate_status(msg_data: StatusMessage, storage: &Store) -> Result<(), R
         latest_block_number,
         latest_block_header.timestamp,
         chain_config,
-        genesis,
+        genesis_header,
     ) {
         return Err(RLPxError::HandshakeError("Invalid Fork Id".to_string()));
     }
@@ -113,8 +118,9 @@ mod tests {
             .expect("Failed to add genesis block to DB");
         let config = genesis.config;
         let total_difficulty = U256::from(config.terminal_total_difficulty.unwrap_or_default());
-        let genesis_hash = genesis.get_block().hash();
-        let fork_id = ForkId::new(config, genesis_hash, 2707305664, 123);
+        let genesis_header = genesis.get_block().header;
+        let genesis_hash = genesis_header.compute_block_hash();
+        let fork_id = ForkId::new(config, genesis_header, 2707305664, 123);
 
         let message = StatusMessage {
             eth_version: 68u32,

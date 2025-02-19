@@ -42,8 +42,9 @@ use crate::{
     gas_cost::{
         self, BLAKE2F_ROUND_COST, BLS12_381_G1ADD_COST, BLS12_381_G1_K_DISCOUNT,
         BLS12_381_G2ADD_COST, BLS12_381_G2_K_DISCOUNT, BLS12_381_MAP_FP2_TO_G2_COST,
-        BLS12_381_MAP_FP_TO_G1_COST, ECADD_COST, ECMUL_COST, ECRECOVER_COST, G1_MUL_COST,
-        G2_MUL_COST, MODEXP_STATIC_COST, POINT_EVALUATION_COST,
+        BLS12_381_MAP_FP_TO_G1_COST, ECADD_COST, ECADD_COST_PRE_ISTANBUL, ECMUL_COST,
+        ECMUL_COST_PRE_ISTANBUL, ECRECOVER_COST, G1_MUL_COST, G2_MUL_COST, MODEXP_STATIC_COST,
+        POINT_EVALUATION_COST,
     },
 };
 
@@ -176,6 +177,16 @@ pub const G1_POINT_AT_INFINITY: [u8; 128] = [0_u8; 128];
 pub const G2_POINT_AT_INFINITY: [u8; 256] = [0_u8; 256];
 
 pub fn is_precompile(callee_address: &Address, fork: Fork) -> bool {
+    // precompiles introduced in Byzantium https://eips.ethereum.org/EIPS/eip-609
+    if (*callee_address == MODEXP_ADDRESS
+        || *callee_address == ECADD_ADDRESS
+        || *callee_address == ECMUL_ADDRESS
+        || *callee_address == ECPAIRING_ADDRESS)
+        && fork < Fork::Byzantium
+    {
+        return false;
+    }
+
     // Cancun specs is the only one that allows point evaluation precompile
     if *callee_address == POINT_EVALUATION_ADDRESS && fork < Fork::Cancun {
         return false;
@@ -219,15 +230,24 @@ pub fn execute_precompile(
             consumed_gas,
             fork,
         )?,
-        address if address == ECADD_ADDRESS => {
-            ecadd(&current_call_frame.calldata, gas_for_call, consumed_gas)?
-        }
-        address if address == ECMUL_ADDRESS => {
-            ecmul(&current_call_frame.calldata, gas_for_call, consumed_gas)?
-        }
-        address if address == ECPAIRING_ADDRESS => {
-            ecpairing(&current_call_frame.calldata, gas_for_call, consumed_gas)?
-        }
+        address if address == ECADD_ADDRESS => ecadd(
+            &current_call_frame.calldata,
+            gas_for_call,
+            consumed_gas,
+            fork,
+        )?,
+        address if address == ECMUL_ADDRESS => ecmul(
+            &current_call_frame.calldata,
+            gas_for_call,
+            consumed_gas,
+            fork,
+        )?,
+        address if address == ECPAIRING_ADDRESS => ecpairing(
+            &current_call_frame.calldata,
+            gas_for_call,
+            consumed_gas,
+            fork,
+        )?,
         address if address == BLAKE2F_ADDRESS => {
             blake2f(&current_call_frame.calldata, gas_for_call, consumed_gas)?
         }
@@ -533,10 +553,17 @@ pub fn ecadd(
     calldata: &Bytes,
     gas_for_call: u64,
     consumed_gas: &mut u64,
+    fork: Fork,
 ) -> Result<Bytes, VMError> {
     // If calldata does not reach the required length, we should fill the rest with zeros
     let calldata = fill_with_zeros(calldata, 128)?;
-    increase_precompile_consumed_gas(gas_for_call, ECADD_COST, consumed_gas)?;
+    // https://eips.ethereum.org/EIPS/eip-1108
+    let gas_cost = if fork < Fork::Istanbul {
+        ECADD_COST_PRE_ISTANBUL
+    } else {
+        ECADD_COST
+    };
+    increase_precompile_consumed_gas(gas_for_call, gas_cost, consumed_gas)?;
     let first_point_x = calldata
         .get(0..32)
         .ok_or(PrecompileError::ParsingInputError)?;
@@ -612,11 +639,18 @@ pub fn ecmul(
     calldata: &Bytes,
     gas_for_call: u64,
     consumed_gas: &mut u64,
+    fork: Fork,
 ) -> Result<Bytes, VMError> {
     // If calldata does not reach the required length, we should fill the rest with zeros
     let calldata = fill_with_zeros(calldata, 96)?;
+    // https://eips.ethereum.org/EIPS/eip-1108
+    let gas_cost = if fork < Fork::Istanbul {
+        ECMUL_COST_PRE_ISTANBUL
+    } else {
+        ECMUL_COST
+    };
 
-    increase_precompile_consumed_gas(gas_for_call, ECMUL_COST, consumed_gas)?;
+    increase_precompile_consumed_gas(gas_for_call, gas_cost, consumed_gas)?;
 
     let point_x = calldata
         .get(0..32)
@@ -820,6 +854,7 @@ pub fn ecpairing(
     calldata: &Bytes,
     gas_for_call: u64,
     consumed_gas: &mut u64,
+    fork: Fork,
 ) -> Result<Bytes, VMError> {
     // The input must always be a multiple of 192 (6 32-byte values)
     if calldata.len() % 192 != 0 {
@@ -829,7 +864,7 @@ pub fn ecpairing(
     let inputs_amount = calldata.len() / 192;
 
     // Consume gas
-    let gas_cost = gas_cost::ecpairing(inputs_amount)?;
+    let gas_cost = gas_cost::ecpairing(inputs_amount, fork)?;
     increase_precompile_consumed_gas(gas_for_call, gas_cost, consumed_gas)?;
 
     let mut mul: FieldElement<Degree12ExtensionField> = QuadraticExtensionFieldElement::one();
