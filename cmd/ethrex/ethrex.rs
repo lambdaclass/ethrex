@@ -149,7 +149,7 @@ async fn main() {
         Err(e) => error!("Could not read from peers file: {}", e),
     };
 
-    let sync_mode = sync_mode(&matches);
+    let sync_mode = sync_mode(&matches, &network);
 
     let evm = matches.get_one::<EVM>("evm").unwrap_or(&EVM::REVM);
     let evm = EVM_BACKEND.get_or_init(|| evm.clone());
@@ -401,10 +401,19 @@ fn parse_socket_addr(addr: &str, port: &str) -> io::Result<SocketAddr> {
         ))
 }
 
-fn sync_mode(matches: &clap::ArgMatches) -> SyncMode {
+fn sync_mode(matches: &clap::ArgMatches, network: &str) -> SyncMode {
     let syncmode = matches.get_one::<String>("syncmode");
-    match syncmode {
-        Some(mode) if mode == "full" => SyncMode::Full,
+    match syncmode.as_deref() {
+        Some(mode) if mode == "full" => {
+            if network == "sepolia" || network == "mainnet" {
+                format!("Full sync is not supported for {network}. Starting Snap Sync");
+                SyncMode::Snap
+            } else if network == "holesky" || network == "mekong" {
+                SyncMode::Full
+            } else {
+                SyncMode::Snap
+            }
+        }
         Some(mode) if mode == "snap" => SyncMode::Snap,
         other => panic!("Invalid syncmode {:?} expected either snap or full", other),
     }
