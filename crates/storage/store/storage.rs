@@ -26,6 +26,7 @@ use tracing::info;
 mod engines;
 pub mod error;
 mod rlp;
+mod trie_db;
 
 /// Number of state trie segments to fetch concurrently during state sync
 pub const STATE_TRIE_SEGMENTS: usize = 2;
@@ -103,6 +104,21 @@ impl Store {
             },
         };
         info!("Started store engine");
+        Ok(store)
+    }
+
+    pub fn new_from_genesis(
+        store_path: &str,
+        engine_type: EngineType,
+        genesis_path: &str,
+    ) -> Result<Self, StoreError> {
+        let file = std::fs::File::open(genesis_path)
+            .map_err(|error| StoreError::Custom(format!("Failed to open genesis file: {error}")))?;
+        let reader = std::io::BufReader::new(file);
+        let genesis: Genesis =
+            serde_json::from_reader(reader).expect("Failed to deserialize genesis file");
+        let store = Self::new(store_path, engine_type)?;
+        store.add_initial_state(genesis)?;
         Ok(store)
     }
 
