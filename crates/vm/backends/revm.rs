@@ -372,11 +372,7 @@ pub(crate) fn tx_env_from_generic(tx: &GenericTransaction, basefee: u64) -> TxEn
 }
 
 // Creates an AccessListInspector that will collect the accesses used by the evm execution
-pub(crate) fn access_list_inspector(
-    tx_env: &TxEnv,
-    _state: &mut EvmState,
-    _spec_id: SpecId,
-) -> Result<AccessListInspector, EvmError> {
+pub(crate) fn access_list_inspector(tx_env: &TxEnv) -> Result<AccessListInspector, EvmError> {
     // Access list provided by the transaction
     let current_access_list = RevmAccessList(tx_env.access_list.clone());
     // Addresses accessed when using precompiles

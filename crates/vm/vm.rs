@@ -100,7 +100,7 @@ fn create_access_list_inner(
     state: &mut EvmState,
     spec_id: SpecId,
 ) -> Result<(ExecutionResult, RevmAccessList), EvmError> {
-    let mut access_list_inspector = access_list_inspector(&tx_env, state, spec_id)?;
+    let mut access_list_inspector = access_list_inspector(&tx_env)?;
     #[allow(unused_mut)]
     let mut evm_builder = Evm::builder()
         .with_block_env(block_env)
