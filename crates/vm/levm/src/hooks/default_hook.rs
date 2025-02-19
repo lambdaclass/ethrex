@@ -328,8 +328,10 @@ impl Hook for DefaultHook {
         let sender_address = initial_call_frame.msg_sender;
         let receiver_address = initial_call_frame.to;
 
+        let was_revert = matches!(report.result, TxResult::Revert(_));
+
         // 1. Undo value transfer if the transaction has reverted
-        if let TxResult::Revert(_) = report.result {
+        if was_revert {
             let existing_account = get_account(&mut vm.cache, vm.db.clone(), receiver_address); //TO Account
 
             if has_delegation(&existing_account.info)? {
@@ -370,11 +372,15 @@ impl Hook for DefaultHook {
         } else {
             MAX_REFUND_QUOTIENT
         };
-        let refunded_gas = report.gas_refunded.min(
-            consumed_gas
-                .checked_div(quotient)
-                .ok_or(VMError::Internal(InternalError::UndefinedState(-1)))?,
-        );
+        let refunded_gas = if was_revert {
+            0
+        } else {
+            report.gas_refunded.min(
+                consumed_gas
+                    .checked_div(quotient)
+                    .ok_or(VMError::Internal(InternalError::UndefinedState(-1)))?,
+            )
+        };
         // "The max refundable proportion of gas was reduced from one half to one fifth by EIP-3529 by Buterin and Swende [2021] in the London release"
         report.gas_refunded = refunded_gas;
 
