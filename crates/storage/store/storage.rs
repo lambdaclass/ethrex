@@ -106,13 +106,19 @@ impl Store {
         Ok(store)
     }
 
-    pub fn init_genesis(&self, genesis_path: &str) -> Result<(), StoreError> {
+    pub fn new_from_genesis(
+        store_path: &str,
+        engine_type: EngineType,
+        genesis_path: &str,
+    ) -> Result<Self, StoreError> {
         let file = std::fs::File::open(genesis_path)
             .map_err(|error| StoreError::Custom(format!("Failed to open genesis file: {error}")))?;
         let reader = std::io::BufReader::new(file);
         let genesis: Genesis =
             serde_json::from_reader(reader).expect("Failed to deserialize genesis file");
-        self.add_initial_state(genesis)
+        let store = Self::new(store_path, engine_type)?;
+        store.add_initial_state(genesis)?;
+        Ok(store)
     }
 
     pub fn get_account_info(
