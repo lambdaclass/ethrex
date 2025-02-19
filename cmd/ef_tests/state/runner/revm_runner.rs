@@ -118,6 +118,14 @@ pub fn prepare_revm_for_tx<'state>(
         .chain_config()
         .map_err(|err| EFTestRunnerError::VMInitializationFailed(err.to_string()))?;
 
+    let blob_excess_gas_and_price = if test.env.current_excess_blob_gas.is_none() {
+        None
+    } else {
+        Some(BlobExcessGasAndPrice {
+            blob_gasprice: 0,
+            excess_blob_gas: test.env.current_excess_blob_gas.unwrap().as_u64(),
+        })
+    };
     let block_env = RevmBlockEnv {
         number: RevmU256::from_limbs(test.env.current_number.0),
         coinbase: RevmAddress(test.env.current_coinbase.0.into()),
@@ -126,10 +134,7 @@ pub fn prepare_revm_for_tx<'state>(
         basefee: RevmU256::from_limbs(test.env.current_base_fee.unwrap_or_default().0),
         difficulty: RevmU256::from_limbs(test.env.current_difficulty.0),
         prevrandao: test.env.current_random.map(|v| v.0.into()),
-        blob_excess_gas_and_price: Some(BlobExcessGasAndPrice {
-            blob_gasprice: 0,
-            excess_blob_gas: test.env.current_excess_blob_gas.unwrap().as_u64(),
-        }),
+        blob_excess_gas_and_price,
     };
     let tx = &test
         .transactions
