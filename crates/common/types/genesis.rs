@@ -133,6 +133,8 @@ pub struct ChainConfig {
     pub terminal_total_difficulty_passed: bool,
     #[serde(default)]
     pub blob_schedule: BlobSchedule,
+    // Deposits system contract address
+    pub deposit_contract_address: Option<Address>,
 }
 
 #[repr(u8)]
