@@ -37,7 +37,7 @@ pub const MAX_SNAPSHOT_READS: usize = 100;
 #[derive(Debug, Clone)]
 pub struct Store {
     engine: Arc<dyn StoreEngine>,
-    pub mempool: ConcurrentMap<H256, MempoolTransaction>,
+    pub mempool: Arc<ConcurrentMap<H256, MempoolTransaction>>,
     pub blobs_bundle_pool: Arc<Mutex<HashMap<H256, BlobsBundle>>>,
 }
 
@@ -88,18 +88,18 @@ impl Store {
             #[cfg(feature = "libmdbx")]
             EngineType::Libmdbx => Self {
                 engine: Arc::new(LibmdbxStore::new(path)?),
-                mempool: ConcurrentMap::new(),
+                mempool: ConcurrentMap::new().into(),
                 blobs_bundle_pool: Arc::new(Mutex::new(HashMap::new())),
             },
             EngineType::InMemory => Self {
                 engine: Arc::new(InMemoryStore::new()),
-                mempool: ConcurrentMap::new(),
+                mempool: ConcurrentMap::new().into(),
                 blobs_bundle_pool: Arc::new(Mutex::new(HashMap::new())),
             },
             #[cfg(feature = "redb")]
             EngineType::RedB => Self {
                 engine: Arc::new(RedBStore::new()?),
-                mempool: ConcurrentMap::new(),
+                mempool: ConcurrentMap::new().into(),
                 blobs_bundle_pool: Arc::new(Mutex::new(HashMap::new())),
             },
         };
