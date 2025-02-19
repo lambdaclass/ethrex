@@ -151,7 +151,7 @@ pub fn cli() -> Command {
         );
 
     cfg_if::cfg_if! {
-        if #[cfg(feature = "l2")] {
+        if #[cfg(feature = "preconfs")] {
             cmd.arg(
                 Arg::new("gateway.addr")
                     .long("gateway.addr")

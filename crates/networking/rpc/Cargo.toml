@@ -43,4 +43,4 @@ hex-literal = "0.4.1"
 path = "./rpc.rs"
 
 [features]
-l2 = []
+preconfs = []
