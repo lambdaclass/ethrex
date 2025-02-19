@@ -4,8 +4,11 @@ use ethereum_types::{Address, H160, H256};
 use ethrex_l2::utils::config::errors;
 use ethrex_l2::utils::config::{read_env_as_lines, read_env_file, write_env};
 use ethrex_l2_sdk::calldata::{encode_calldata, Value};
-use ethrex_l2_sdk::eth_client::errors::{CalldataEncodeError, EthClientError};
-use ethrex_l2_sdk::eth_client::{eth_sender::Overrides, EthClient};
+use ethrex_rpc::clients::eth::{
+    errors::{CalldataEncodeError, EthClientError},
+    eth_sender::Overrides,
+    EthClient,
+};
 use keccak_hash::keccak;
 use secp256k1::SecretKey;
 use spinoff::{spinner, spinners, Color, Spinner};

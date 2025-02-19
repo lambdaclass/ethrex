@@ -21,6 +21,7 @@ thiserror.workspace = true
 ethrex-l2 = { path = "../../l2" }
 ethrex-sdk = { path = "../../l2/sdk" }
 ethrex-common = { path = "../../common" }
+ethrex-rpc = { path = "../../networking/rpc" }
 
 [[bin]]
 name = "ethrex_l2_l1_deployer"

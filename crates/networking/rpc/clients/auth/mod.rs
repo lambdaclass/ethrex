@@ -1,10 +1,4 @@
-use bytes::Bytes;
-use errors::{
-    EngineClientError, ExchangeCapabilitiesError, ForkChoiceUpdateError, GetPayloadError,
-    NewPayloadError,
-};
-use ethereum_types::H256;
-use ethrex_rpc::{
+use crate::{
     engine::{
         fork_choice::ForkChoiceUpdatedV3,
         payload::{GetPayloadV3Request, NewPayloadV3Request},
@@ -16,6 +10,12 @@ use ethrex_rpc::{
     },
     utils::{RpcErrorResponse, RpcRequest, RpcSuccessResponse},
 };
+use bytes::Bytes;
+use errors::{
+    EngineClientError, ExchangeCapabilitiesError, ForkChoiceUpdateError, GetPayloadError,
+    NewPayloadError,
+};
+use ethrex_common::H256;
 use reqwest::Client;
 use serde::Deserialize;
 use serde_json::json;
