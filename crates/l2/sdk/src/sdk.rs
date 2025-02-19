@@ -221,10 +221,10 @@ pub async fn claim_withdraw(
 /// or None if the transaction is not a withdrawal.
 /// The hash is computed as keccak256(to || value || tx_hash)
 pub fn get_withdrawal_hash(tx: &Transaction) -> Option<H256> {
-    let mut to_bytes = [0; 20];
-    for (i, byte) in tx.data()[16..36].iter().enumerate() {
-        to_bytes[i] = *byte;
-    }
+    let to_bytes: [u8; 20] = match tx.data().get(16..36)?.try_into() {
+        Ok(value) => value,
+        Err(_) => return None,
+    };
     let to = Address::from(to_bytes);
 
     let value = tx.value().to_big_endian();

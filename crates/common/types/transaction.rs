@@ -5,7 +5,7 @@ use ethereum_types::{Address, H256, U256};
 use keccak_hash::keccak;
 pub use mempool::MempoolTransaction;
 use secp256k1::{ecdsa::RecoveryId, Message, SecretKey};
-use serde::{ser::SerializeStruct, Deserialize, Serialize};
+use serde::{ser::SerializeStruct, Serialize};
 pub use serde_impl::{AccessListEntry, GenericTransaction};
 use sha3::{Digest, Keccak256};
 
