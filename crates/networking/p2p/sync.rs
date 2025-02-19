@@ -46,7 +46,7 @@ pub struct SyncManager {
     /// Syncing beyond this pivot should re-enable snap-sync (as we will not have that state stored)
     /// TODO: Reorgs
     last_snap_pivot: u64,
-    block_hashes: Vec<BlockHash>,
+    block_hashes: Arc<Mutex<Vec<BlockHash>>>,
 }
 
 impl SyncManager {
@@ -161,6 +161,8 @@ impl SyncManager {
                     if sync_head_found {
                         // No more headers to request
                         break;
+                    } else {
+                        download_and_run_blocks(&mut block_hashes, peers, store).await?;
                     }
                 }
                 _ => {
