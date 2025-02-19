@@ -28,9 +28,6 @@ pub fn apply_fork_choice(
         return Err(InvalidForkChoice::InvalidHeadHash);
     }
 
-    // We get the block bodies even if we only use headers them so we check that they are
-    // stored too.
-
     let finalized_res = if !finalized_hash.is_zero() {
         store.get_block_by_hash(finalized_hash)?
     } else {
