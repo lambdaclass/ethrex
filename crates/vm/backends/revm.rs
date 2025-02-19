@@ -13,16 +13,13 @@ use revm::{
 };
 use revm_inspectors::access_list::AccessListInspector;
 // Rename imported types for clarity
-use ethrex_common::{
-    types::{
-        Block, BlockHeader, GenericTransaction, Receipt, Transaction, TxKind, Withdrawal,
-        GWEI_TO_WEI, INITIAL_BASE_FEE,
-    },
-    Address,
+use ethrex_common::types::{
+    Block, BlockHeader, GenericTransaction, Receipt, Transaction, TxKind, Withdrawal, GWEI_TO_WEI,
+    INITIAL_BASE_FEE,
 };
 use revm_primitives::{
     ruint::Uint, AccessList as RevmAccessList, AccessListItem, Address as RevmAddress,
-    Authorization as RevmAuthorization, Bytes, FixedBytes, SignedAuthorization, SpecId,
+    Authorization as RevmAuthorization, FixedBytes, SignedAuthorization, SpecId,
     TxKind as RevmTxKind, U256 as RevmU256,
 };
 use std::cmp::min;
@@ -224,11 +221,9 @@ pub fn tx_env(tx: &Transaction) -> TxEnv {
         },
         gas_limit: tx.gas_limit(),
         gas_price: RevmU256::from(tx.gas_price()),
-        transact_to: match tx {
-            _ => match tx.to() {
-                TxKind::Call(address) => RevmTxKind::Call(address.0.into()),
-                TxKind::Create => RevmTxKind::Create,
-            },
+        transact_to: match tx.to() {
+            TxKind::Call(address) => RevmTxKind::Call(address.0.into()),
+            TxKind::Create => RevmTxKind::Create,
         },
         value: RevmU256::from_limbs(tx.value().0),
         data: match tx {

@@ -1,8 +1,8 @@
 use revm::{
     primitives::{EVMError, Spec},
-    Context, Database, FrameResult,
+    Context, Database,
 };
-use revm_primitives::{Address, TxKind, U256};
+use revm_primitives::{Address, U256};
 use tracing::info;
 
 use crate::DEPOSIT_MAGIC_DATA;

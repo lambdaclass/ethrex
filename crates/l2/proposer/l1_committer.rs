@@ -101,7 +101,7 @@ impl Committer {
                 for (index, tx) in block_to_commit_body.transactions.iter().enumerate() {
                     let receipt = self
                         .store
-                        .get_receipt(block_number_to_fetch, index as u64)?
+                        .get_receipt(block_number_to_fetch, index.try_into()?)?
                         .ok_or(CommitterError::InternalError(
                             "Transactions in a block should have a receipt".to_owned(),
                         ))?;
@@ -116,7 +116,7 @@ impl Committer {
                 let mut withdrawal_hashes = vec![];
 
                 for (_, tx) in &withdrawals {
-                    let hash = get_withdrawal_hash(&tx)
+                    let hash = get_withdrawal_hash(tx)
                         .ok_or(CommitterError::InvalidWithdrawalTransaction)?;
                     withdrawal_hashes.push(hash);
                 }
@@ -169,7 +169,7 @@ impl Committer {
         txs_and_receipts: &[(Transaction, Receipt)],
     ) -> Result<Vec<(H256, Transaction)>, CommitterError> {
         // WithdrawalInitiated(address,address,uint256)
-        let WITHDRAWAL_EVENT_SELECTOR: H256 =
+        let withdrawal_event_selector: H256 =
             H256::from_str("bb2689ff876f7ef453cf8865dde5ab10349d222e2e1383c5152fbdb083f02da2")
                 .unwrap();
         let mut ret = vec![];
@@ -180,7 +180,7 @@ impl Committer {
                     if receipt.logs.iter().any(|log| {
                         log.topics
                             .iter()
-                            .any(|topic| *topic == WITHDRAWAL_EVENT_SELECTOR)
+                            .any(|topic| *topic == withdrawal_event_selector)
                     }) {
                         ret.push((tx.compute_hash(), tx.clone()))
                     }
