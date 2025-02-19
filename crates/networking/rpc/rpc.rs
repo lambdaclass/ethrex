@@ -62,6 +62,9 @@ pub mod types;
 pub mod utils;
 mod web3;
 
+pub mod clients;
+pub use clients::{EngineClient, EthClient};
+
 use axum::extract::State;
 use ethrex_p2p::types::Node;
 use ethrex_storage::{error::StoreError, Store};

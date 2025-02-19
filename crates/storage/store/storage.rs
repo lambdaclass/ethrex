@@ -25,6 +25,7 @@ use tracing::info;
 mod engines;
 pub mod error;
 mod rlp;
+mod trie_db;
 
 /// Number of state trie segments to fetch concurrently during state sync
 pub const STATE_TRIE_SEGMENTS: usize = 2;

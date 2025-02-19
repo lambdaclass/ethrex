@@ -9,10 +9,7 @@ use ethrex_rlp::decode::RLPDecode;
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_rlp::error::RLPDecodeError;
 use ethrex_trie::Nibbles;
-use ethrex_trie::{
-    db::{redb::RedBTrie, redb_multitable::RedBMultiTableTrieDB},
-    Trie,
-};
+
 use redb::{AccessGuard, Database, Key, MultimapTableDefinition, TableDefinition, TypeName, Value};
 
 use crate::rlp::{
@@ -25,6 +22,10 @@ use crate::{
         AccountCodeHashRLP, AccountCodeRLP, BlockBodyRLP, BlockHashRLP, BlockHeaderRLP, ReceiptRLP,
         TupleRLP,
     },
+};
+use crate::{
+    trie_db::{redb::RedBTrie, redb_multitable::RedBMultiTableTrieDB},
+    Trie,
 };
 
 use super::utils::SnapStateIndex;
