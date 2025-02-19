@@ -423,6 +423,8 @@ pub fn generic_system_call(
     Ok(report)
 }
 
+#[allow(unreachable_code)]
+#[allow(unused_variables)]
 pub fn extract_all_requests_levm(
     receipts: &[Receipt],
     state: &mut EvmState,
@@ -434,6 +436,12 @@ pub fn extract_all_requests_levm(
 
     if fork < Fork::Prague {
         return Ok(Default::default());
+    }
+
+    cfg_if::cfg_if! {
+        if #[cfg(feature = "l2")] {
+            return Ok(Default::default());
+        }
     }
 
     let deposit_contract_address = config.deposit_contract_address.ok_or(EvmError::Custom(
