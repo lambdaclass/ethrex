@@ -326,6 +326,8 @@ impl VM {
         loop {
             let opcode = current_call_frame.next_opcode();
 
+            dbg!(&opcode);
+
             let op_result = self.handle_current_opcode(opcode, current_call_frame);
 
             match op_result {
