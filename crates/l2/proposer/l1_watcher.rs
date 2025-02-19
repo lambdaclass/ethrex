@@ -6,7 +6,7 @@ use bytes::Bytes;
 use ethereum_types::{Address, BigEndianHash, H256, U256};
 use ethrex_blockchain::{constants::TX_GAS_COST, mempool};
 use ethrex_common::types::{Signable, Transaction};
-use ethrex_l2_sdk::eth_client::{errors::EthClientError, eth_sender::Overrides, EthClient};
+use ethrex_rpc::clients::eth::{errors::EthClientError, eth_sender::Overrides, EthClient};
 use ethrex_rpc::types::receipt::RpcLog;
 use ethrex_storage::Store;
 use keccak_hash::keccak;

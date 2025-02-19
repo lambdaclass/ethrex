@@ -14,11 +14,11 @@ use ethrex_common::{
     },
     Address, H256, U256,
 };
-use ethrex_l2_sdk::{
-    calldata::{encode_calldata, Value},
-    eth_client::{eth_sender::Overrides, BlockByNumber, EthClient, WrappedTransaction},
-};
+use ethrex_l2_sdk::calldata::{encode_calldata, Value};
 use ethrex_l2_sdk::{get_withdrawal_hash, merkle_tree::merkelize, COMMON_BRIDGE_L2_ADDRESS};
+use ethrex_rpc::clients::eth::{
+    eth_sender::Overrides, BlockByNumber, EthClient, WrappedTransaction,
+};
 use ethrex_storage::{error::StoreError, Store};
 use ethrex_vm::{backends::revm::execute_block, db::evm_state, get_state_transitions};
 use keccak_hash::keccak;

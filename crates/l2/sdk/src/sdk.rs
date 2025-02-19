@@ -1,12 +1,12 @@
 use bytes::Bytes;
 use calldata::{encode_calldata, Value};
-use eth_client::{
+use ethereum_types::{Address, H160, H256, U256};
+use ethrex_common::types::{Transaction, TxKind};
+use ethrex_rpc::clients::eth::{
     errors::{EthClientError, GetTransactionReceiptError},
     eth_sender::Overrides,
     EthClient,
 };
-use ethereum_types::{Address, H160, H256, U256};
-use ethrex_common::types::{Transaction, TxKind};
 use ethrex_rpc::types::{block::BlockBodyWrapper, receipt::RpcReceipt};
 use itertools::Itertools;
 use keccak_hash::keccak;
@@ -14,7 +14,6 @@ use merkle_tree::merkle_proof;
 use secp256k1::SecretKey;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 pub mod calldata;
-pub mod eth_client;
 pub mod merkle_tree;
 
 // 0x6bf26397c5676a208d5c4e5f35cb479bacbbe454
