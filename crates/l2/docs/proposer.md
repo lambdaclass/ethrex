@@ -30,7 +30,9 @@ Verify transactions are sent by the Proposer after the prover has successfully g
 
 ### Prover Server
 
-TODO
+The Prover Server is a simple TCP server that manages communication with a component called the `Prover Client`. The Prover Client acts as a simple TCP client, handling incoming requests to prove a block. It then "calls" a zkVM, generates the Groth16 proof, and sends it back to the Server. In this setup, the state is managed solely by the Prover Server, which, in theory, makes it less error-prone than the zkVMs.
+
+For more information about the Prover Server, the [Prover Docs](./prover.md) provides more insight.
 
 ## Configuration
 

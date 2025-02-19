@@ -2,17 +2,18 @@
 
 ## ToC
 
-- [ToC](#toc)
-- [What](#what)
-- [Workflow](#workflow)
-- [How](#how)
-  - [Dev Mode](#dev-mode)
-    - [Quick Test](#quick-test)
-    - [Run the whole system with the prover](#run-the-whole-system-with-the-prover)
-  - [GPU mode](#gpu-mode)
-    - [Proving Process Test](#proving-process-test)
-    - [Run the whole system with a GPU Prover](#run-the-whole-system-with-a-gpu-prover)
-- [Configuration](#configuration)
+- [ethrex L2 Prover](#ethrex-l2-prover)
+  - [ToC](#toc)
+  - [What](#what)
+  - [Workflow](#workflow)
+  - [How](#how)
+      - [Quick Test](#quick-test)
+    - [Dev Mode](#dev-mode)
+      - [Run the whole system with the prover](#run-the-whole-system-with-the-prover)
+    - [GPU mode](#gpu-mode)
+      - [Proving Process Test](#proving-process-test)
+      - [Run the whole system with a GPU Prover](#run-the-whole-system-with-a-gpu-prover)
+  - [Configuration](#configuration)
 
 >[!NOTE]
 > The shipping/deploying process and the `Prover` itself are under development.
@@ -43,11 +44,29 @@ sequenceDiagram
 
 ## How
 
-### Dev Mode
-
 **Dependencies:**
 - [RISC0](https://dev.risczero.com/api/zkvm/install)
-- [SP1](https://docs.succinct.xyz/docs/getting-started/install)
+   1. `curl -L https://risczero.com/install | bash`
+   2. `rzup install cargo-risczero 1.2.0`
+- [SP1](https://docs.succinct.xyz/docs/sp1/introduction)
+   1. `curl -L https://sp1up.succinct.xyz | bash`
+   2. `sp1up --version 3.4.0`
+
+After installing the toolchains, a quick test can be performed to check if we have everything installed correctly.
+
+#### Quick Test
+
+To test the `zkvm` execution quickly, the following test can be run:
+
+```sh
+cd crates/l2/prover
+```
+
+Then run any of the targets:
+- `make perf-risc0`
+- `make perf-sp1`
+
+### Dev Mode
 
 To run the blockchain (`proposer`) and prover in conjunction in a development environment, set the following environment variables in the `.env` file:
 - `PROVER_SERVER_DEV_MODE=false`
@@ -62,18 +81,6 @@ make init-prover T="prover_type (risc0 or sp1) G=true"
 ```
 
 If neither `risc0` nor `sp1` is installed on the system, the prover can be built without the "build" features to check whether all the surrounding components of the prover (except for the RISC-V zkVMs) can be compiled.
-
-#### Quick Test
-
-To test the `zkvm` execution quickly, the following test can be run:
-
-```sh
-cd crates/l2/prover
-```
-
-Then run any of the targets:
-- `make perf-risc0`
-- `make perf-sp1`
 
 #### Run the whole system with the prover
 
