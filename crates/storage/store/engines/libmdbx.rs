@@ -26,6 +26,7 @@ use serde_json;
 use std::fmt::{Debug, Formatter};
 use std::path::Path;
 use std::sync::Arc;
+use tracing::debug;
 
 pub struct Store {
     db: Arc<Database>,
@@ -53,17 +54,23 @@ impl Store {
         &self,
         key_values: impl Iterator<Item = (T::Key, T::Value)>,
     ) -> Result<(), StoreError> {
+        debug!("Beginning read write transaction");
         let txn = self
             .db
             .begin_readwrite()
             .map_err(StoreError::LibmdbxError)?;
 
+        debug!("Inserting values");
         for (key, value) in key_values {
             txn.upsert::<T>(key, value)
                 .map_err(StoreError::LibmdbxError)?;
         }
+        debug!("Finished inserting values");
 
-        txn.commit().map_err(StoreError::LibmdbxError)
+        debug!("About to commit");
+        let res = txn.commit().map_err(StoreError::LibmdbxError);
+        debug!("Committed transaction");
+        res
     }
 
     // Helper method to read from a libmdbx table
@@ -480,14 +487,21 @@ impl StoreEngine for Store {
         block_hash: BlockHash,
         receipts: Vec<Receipt>,
     ) -> Result<(), StoreError> {
+        tracing::debug!("Receipts forming key values");
         let key_values = receipts.into_iter().enumerate().map(|(index, receipt)| {
             (
                 <(H256, u64) as Into<TupleRLP<BlockHash, Index>>>::into((block_hash, index as u64)),
                 <Receipt as Into<ReceiptRLP>>::into(receipt),
             )
         });
+        tracing::debug!("Key values formed");
 
-        self.write_batch::<Receipts>(key_values)
+        tracing::debug!("Before writing in batch");
+
+        let a = self.write_batch::<Receipts>(key_values);
+
+        tracing::debug!("Finished writing in batch");
+        a
     }
 
     fn get_receipts_for_block(&self, block_hash: &BlockHash) -> Result<Vec<Receipt>, StoreError> {
