@@ -6,11 +6,11 @@ use std::{
 use ethrex_common::{
     constants::GAS_PER_BLOB,
     types::{
-        calculate_base_fee_per_blob_gas, calculate_base_fee_per_gas, calculate_requests_hash,
-        compute_receipts_root, compute_transactions_root, compute_withdrawals_root, BlobsBundle,
-        Block, BlockBody, BlockHash, BlockHeader, BlockNumber, ChainConfig, Fork,
-        MempoolTransaction, Receipt, Transaction, Withdrawal, DEFAULT_OMMERS_HASH,
-        DEFAULT_REQUESTS_HASH,
+        calculate_base_fee_per_blob_gas, calculate_base_fee_per_gas, compute_receipts_root,
+        compute_requests_hash, compute_transactions_root, compute_withdrawals_root,
+        requests::Requests, BlobsBundle, Block, BlockBody, BlockHash, BlockHeader, BlockNumber,
+        ChainConfig, Fork, MempoolTransaction, Receipt, Transaction, Withdrawal,
+        DEFAULT_OMMERS_HASH, DEFAULT_REQUESTS_HASH,
     },
     Address, Bloom, Bytes, H256, U256,
 };
@@ -18,8 +18,7 @@ use ethrex_common::{
 use ethrex_common::types::GWEI_TO_WEI;
 use ethrex_levm::{db::CacheDB, vm::EVMConfig, Account, AccountInfo};
 use ethrex_vm::{
-    backends,
-    backends::EVM,
+    backends::{self, levm::extract_all_requests_levm, revm::extract_all_requests, EVM},
     db::{evm_state, EvmState, StoreWrapper},
     get_state_transitions, spec_id, EvmError, SpecId, EVM_BACKEND,
 };
@@ -181,6 +180,7 @@ pub struct PayloadBuildContext<'a> {
     pub block_cache: CacheDB,
     pub remaining_gas: u64,
     pub receipts: Vec<Receipt>,
+    pub requests: Vec<Requests>,
     pub block_value: U256,
     base_fee_per_blob_gas: U256,
     pub blobs_bundle: BlobsBundle,
@@ -200,6 +200,7 @@ impl<'a> PayloadBuildContext<'a> {
         Ok(PayloadBuildContext {
             remaining_gas: payload.header.gas_limit,
             receipts: vec![],
+            requests: vec![],
             block_value: U256::zero(),
             base_fee_per_blob_gas: U256::from(base_fee_per_blob_gas),
             payload,
@@ -243,6 +244,7 @@ pub fn build_payload(
     apply_system_operations(&mut context)?;
     apply_withdrawals(&mut context)?;
     fill_transactions(&mut context)?;
+    extract_requests(&mut context)?;
     finalize_payload(&mut context)?;
     Ok((context.blobs_bundle, context.block_value))
 }
@@ -653,10 +655,34 @@ fn apply_plain_transaction(
     }
 }
 
+pub fn extract_requests(context: &mut PayloadBuildContext) -> Result<(), EvmError> {
+    match EVM_BACKEND.get() {
+        Some(EVM::LEVM) => {
+            let requests = extract_all_requests_levm(
+                &context.receipts,
+                context.evm_state,
+                &context.payload.header,
+                &mut context.block_cache,
+            )?;
+            context.requests = requests;
+        }
+        // This means we are using REVM as default for tests
+        Some(EVM::REVM) | None => {
+            let requests = extract_all_requests(
+                &context.receipts,
+                context.evm_state,
+                &context.payload.header,
+            )?;
+            context.requests = requests;
+        }
+    }
+
+    Ok(())
+}
+
 fn finalize_payload(context: &mut PayloadBuildContext) -> Result<(), ChainError> {
-    let is_prague_activated = context
-        .chain_config()?
-        .is_prague_activated(context.payload.header.timestamp);
+    let config = context.chain_config()?;
+    let is_prague_activated = config.is_prague_activated(context.payload.header.timestamp);
     let account_updates = match EVM_BACKEND.get() {
         Some(EVM::LEVM) => backends::levm::get_state_transitions_levm(
             context.evm_state,
@@ -676,7 +702,7 @@ fn finalize_payload(context: &mut PayloadBuildContext) -> Result<(), ChainError>
         compute_transactions_root(&context.payload.body.transactions);
     context.payload.header.receipts_root = compute_receipts_root(&context.receipts);
     context.payload.header.requests_hash =
-        is_prague_activated.then_some(calculate_requests_hash(&context.receipts));
+        is_prague_activated.then_some(compute_requests_hash(&context.requests));
     context.payload.header.gas_used = context.payload.header.gas_limit - context.remaining_gas;
     Ok(())
 }

@@ -262,14 +262,8 @@ pub fn compute_withdrawals_root(withdrawals: &[Withdrawal]) -> H256 {
     Trie::compute_hash_from_unsorted_iter(iter)
 }
 
-pub fn calculate_requests_hash(receipts: &[Receipt]) -> H256 {
-    let requests = Requests::from_deposit_receipts(receipts);
-    // TODO: implement other requests
-    compute_requests_hash(&[requests])
-}
-
 // See https://github.com/ethereum/EIPs/blob/2a6b6965e64787815f7fffb9a4c27660d9683846/EIPS/eip-7685.md?plain=1#L62.
-fn compute_requests_hash(requests: &[Requests]) -> H256 {
+pub fn compute_requests_hash(requests: &[Requests]) -> H256 {
     let mut hasher = Sha256::new();
     for request in requests {
         let request_bytes = request.to_bytes();
