@@ -38,7 +38,7 @@ pub const MAX_SNAPSHOT_READS: usize = 100;
 pub struct Store {
     engine: Arc<dyn StoreEngine>,
     pub mempool: Arc<ConcurrentMap<H256, MempoolTransaction>>,
-    pub blobs_bundle_pool: Arc<Mutex<HashMap<H256, BlobsBundle>>>,
+    pub blobs_bundle_pool: Arc<ConcurrentMap<H256, BlobsBundle>>,
 }
 
 #[allow(dead_code)]
@@ -89,18 +89,18 @@ impl Store {
             EngineType::Libmdbx => Self {
                 engine: Arc::new(LibmdbxStore::new(path)?),
                 mempool: ConcurrentMap::new().into(),
-                blobs_bundle_pool: Arc::new(Mutex::new(HashMap::new())),
+                blobs_bundle_pool: ConcurrentMap::new().into(),
             },
             EngineType::InMemory => Self {
                 engine: Arc::new(InMemoryStore::new()),
                 mempool: ConcurrentMap::new().into(),
-                blobs_bundle_pool: Arc::new(Mutex::new(HashMap::new())),
+                blobs_bundle_pool: ConcurrentMap::new().into(),
             },
             #[cfg(feature = "redb")]
             EngineType::RedB => Self {
                 engine: Arc::new(RedBStore::new()?),
                 mempool: ConcurrentMap::new().into(),
-                blobs_bundle_pool: Arc::new(Mutex::new(HashMap::new())),
+                blobs_bundle_pool: ConcurrentMap::new().into(),
             },
         };
         info!("Started store engine");
@@ -295,10 +295,7 @@ impl Store {
         hash: H256,
         transaction: MempoolTransaction,
     ) -> Result<(), StoreError> {
-        // let mut mempool = self
-        //     .mempool
-        //     .map_err(|error| StoreError::Custom(error.to_string()))?;
-        self.mempool.insert(hash, transaction);
+        self.mempool.entry(hash).or_insert(transaction);
         Ok(())
     }
 
@@ -309,9 +306,8 @@ impl Store {
         blobs_bundle: BlobsBundle,
     ) -> Result<(), StoreError> {
         self.blobs_bundle_pool
-            .lock()
-            .map_err(|error| StoreError::Custom(error.to_string()))?
-            .insert(tx_hash, blobs_bundle);
+            .entry(tx_hash)
+            .or_insert(blobs_bundle);
         Ok(())
     }
 
@@ -320,25 +316,18 @@ impl Store {
         &self,
         tx_hash: H256,
     ) -> Result<Option<BlobsBundle>, StoreError> {
-        Ok(self
-            .blobs_bundle_pool
-            .lock()
-            .map_err(|error| StoreError::Custom(error.to_string()))?
-            .get(&tx_hash)
-            .cloned())
+        Ok(self.blobs_bundle_pool.read(&tx_hash, |k, v| v.clone()))
     }
 
     /// Remove a transaction from the pool
     pub fn remove_transaction_from_pool(&self, hash: &H256) -> Result<(), StoreError> {
         if let Some(tx) = self.mempool.get(hash) {
             if matches!(tx.tx_type(), TxType::EIP4844) {
-                self.blobs_bundle_pool
-                    .lock()
-                    .map_err(|error| StoreError::Custom(error.to_string()))?
-                    .remove(&tx.compute_hash());
+                if let Some(blob) = self.blobs_bundle_pool.get(&tx.compute_hash()) {
+                    blob.remove();
+                }
             }
-
-            self.mempool.remove(hash);
+            tx.remove();
         };
 
         Ok(())
