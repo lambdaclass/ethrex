@@ -108,6 +108,8 @@ impl SyncManager {
             // Set latest downloaded header as current head for header fetching
             current_head = *last_hash;
             //TODO check that the last hash is > current_head
+        } else if let Some(last_hash) = store.get_header_download_checkpoint()? {
+            current_head = last_hash;
         }
 
         loop {
@@ -131,12 +133,13 @@ impl SyncManager {
                     // Check if we already found the sync head
                     let sync_head_found = block_hashes.contains(&sync_head);
                     // Update current fetch head if needed
+                    let last_block_hash = *block_hashes.last().unwrap();
                     if !sync_head_found {
                         debug!(
                             "Syncing head not found, updated current_head {:?}",
-                            block_hashes.last().unwrap()
+                            last_block_hash
                         );
-                        current_head = *block_hashes.last().unwrap();
+                        current_head = last_block_hash;
                     }
                     // If the sync head is less than 64 blocks away from our current head switch to full-sync
                     let last_header_number = block_headers.last().unwrap().number;
@@ -241,7 +244,7 @@ async fn download_and_run_blocks(
     // ask as much as 128 block bodies per req
     // this magic number is not part of the protocol and it is taken from geth, see:
     // https://github.com/ethereum/go-ethereum/blob/master/eth/downloader/downloader.go#L42
-    let max_req_len = 128;
+    let max_req_len = 64;
 
     let mut current_chunk_idx = 0;
     let chunks: Vec<Vec<BlockHash>> = block_hashes
@@ -269,14 +272,20 @@ async fn download_and_run_blocks(
                 "Received {} Block Bodies, starting from block hash {:?} with number: {}",
                 block_bodies_len, first_block_hash, first_block_header
             );
-
             // Execute and store blocks
+            let mut i = 0;
             for (hash, body) in chunk
                 .drain(..block_bodies_len)
                 .zip(block_bodies.into_iter())
             {
+                debug!(
+                    "About to add block with hash {} and number {}",
+                    hash,
+                    first_block_header + i
+                );
                 block_hashes.remove(current_block_hash_idx);
                 current_block_hash_idx += 1;
+                i += 1;
                 let header = store
                     .get_block_header_by_hash(hash)?
                     .ok_or(SyncError::CorruptDB)?;
@@ -288,6 +297,7 @@ async fn download_and_run_blocks(
                 }
                 store.set_canonical_block(number, hash)?;
                 store.update_latest_block_number(number)?;
+                store.set_header_download_checkpoint(hash)?;
             }
             debug!("Executed & stored {} blocks", block_bodies_len);
             if chunk.len() == 0 {

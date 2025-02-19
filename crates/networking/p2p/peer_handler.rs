@@ -29,7 +29,7 @@ use crate::{
     snap::encodable_to_proof,
 };
 use tracing::info;
-pub const PEER_REPLY_TIMOUT: Duration = Duration::from_secs(45);
+pub const PEER_REPLY_TIMOUT: Duration = Duration::from_secs(5);
 pub const PEER_SELECT_RETRY_ATTEMPTS: usize = 3;
 pub const REQUEST_RETRY_ATTEMPTS: usize = 5;
 pub const MAX_RESPONSE_BYTES: u64 = 512 * 1024;
