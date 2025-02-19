@@ -11,7 +11,6 @@ use crate::{
 };
 use bytes::Bytes;
 use ethrex_common::{types::Fork, Address, U256};
-use keccak_hash::H256;
 
 // System Operations (10)
 // Opcodes: CREATE, CALL, CALLCODE, RETURN, DELEGATECALL, CREATE2, STATICCALL, REVERT, INVALID, SELFDESTRUCT
@@ -54,8 +53,6 @@ impl VM {
             callee,
         );
 
-        let account_exists = self.db.account_exists(callee);
-
         let (is_delegation, eip7702_gas_consumed, code_address, bytecode) = eip7702_get_code(
             &mut self.cache,
             self.db.clone(),
@@ -75,7 +72,7 @@ impl VM {
             current_memory_size,
             address_was_cold,
             account_info.is_empty(),
-            account_exists,
+            self.db.account_exists(callee),
             value_to_transfer,
             gas,
             gas_left,
@@ -534,7 +531,6 @@ impl VM {
             &mut self.accrued_substate,
             target_address,
         );
-        self.db.get_storage_slot(target_address, H256::zero());
 
         let (current_account_info, _current_account_is_cold) = access_account(
             &mut self.cache,
