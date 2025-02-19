@@ -219,7 +219,6 @@ impl Committer {
 
     fn get_deposit_hash(&self, deposit_hashes: Vec<H256>) -> Result<H256, CommitterError> {
         if !deposit_hashes.is_empty() {
-            println!("DEPOSIT HASHES IS NOT EMPTY");
             let deposit_hashes_len: u16 = deposit_hashes
                 .len()
                 .try_into()
