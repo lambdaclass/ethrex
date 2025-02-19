@@ -448,6 +448,7 @@ pub fn get_state_transitions(
             .unwrap()
         {
             // https://eips.ethereum.org/EIPS/eip-161
+            // if an account was empty and is now empty, after spurious dragon, it should be removed
             if account_update.removed
                 && old_info.balance.is_zero()
                 && old_info.nonce == 0
