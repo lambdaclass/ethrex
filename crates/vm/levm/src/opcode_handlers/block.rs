@@ -96,10 +96,8 @@ impl VM {
     ) -> Result<OpcodeResult, VMError> {
         current_call_frame.increase_consumed_gas(gas_cost::PREVRANDAO)?;
 
-        let randao = self.env.prev_randao.unwrap_or_default(); // Assuming block_env has been integrated
-        current_call_frame
-            .stack
-            .push(U256::from_big_endian(randao.0.as_slice()))?;
+        let _randao = self.env.prev_randao.unwrap_or_default(); // Assuming block_env has been integrated
+        current_call_frame.stack.push(self.env.difficulty)?;
 
         Ok(OpcodeResult::Continue { pc_increment: 1 })
     }

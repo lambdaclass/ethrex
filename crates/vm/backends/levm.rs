@@ -148,6 +148,7 @@ pub fn execute_tx_levm(
         coinbase: block_header.coinbase,
         timestamp: block_header.timestamp.into(),
         prev_randao: Some(block_header.prev_randao),
+        difficulty: block_header.difficulty,
         chain_id: tx.chain_id().unwrap_or_default().into(),
         base_fee_per_gas: block_header.base_fee_per_gas.unwrap_or_default().into(),
         gas_price,
