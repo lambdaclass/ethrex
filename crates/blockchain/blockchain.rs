@@ -75,7 +75,7 @@ pub fn add_block(block: &Block, storage: &Store) -> Result<(), ChainError> {
     store_block(storage, block.clone())?;
     debug!("Block stored");
 
-    debug!("Before storing receipts {:?}", receipts);
+    debug!("Before storing receipts {:?}", receipts.len());
     store_receipts(storage, receipts, block_hash)?;
     debug!("Receipts stored");
 

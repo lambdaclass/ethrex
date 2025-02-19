@@ -122,8 +122,9 @@ impl SyncManager {
             {
                 Some(mut block_headers) => {
                     debug!(
-                        "Received {} block headers| Last Number: {}",
+                        "Received {} block headers| First Number: {} Last Number: {}",
                         block_headers.len(),
+                        block_headers.first().as_ref().unwrap().number,
                         block_headers.last().as_ref().unwrap().number
                     );
                     let mut block_hashes = block_headers
