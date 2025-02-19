@@ -4,7 +4,6 @@ use crate::{
     types::{EFTest, TransactionExpectedException},
     utils::{self, effective_gas_price},
 };
-use bytes::Bytes;
 use ethrex_common::{
     types::{tx_fields::*, Fork},
     H256, U256,

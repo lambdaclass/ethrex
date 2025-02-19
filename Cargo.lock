@@ -2800,7 +2800,7 @@ dependencies = [
  "k256",
  "keccak-hash",
  "rand 0.8.5",
- "reqwest 0.12.9",
+ "reqwest",
  "secp256k1",
  "serde",
  "serde_json",
