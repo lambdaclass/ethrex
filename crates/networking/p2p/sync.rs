@@ -46,7 +46,7 @@ pub struct SyncManager {
     /// Syncing beyond this pivot should re-enable snap-sync (as we will not have that state stored)
     /// TODO: Reorgs
     last_snap_pivot: u64,
-    block_hashes: Arc<Mutex<Vec<BlockHash>>>,
+    block_hashes: Vec<BlockHash>,
 }
 
 impl SyncManager {
