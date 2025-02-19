@@ -11,7 +11,7 @@ use crate::{
 };
 use bytes::Bytes;
 use ethrex_common::{types::Fork, Address, U256};
-use revm_primitives::HashMap;
+use keccak_hash::H256;
 
 // System Operations (10)
 // Opcodes: CREATE, CALL, CALLCODE, RETURN, DELEGATECALL, CREATE2, STATICCALL, REVERT, INVALID, SELFDESTRUCT
@@ -534,13 +534,7 @@ impl VM {
             &mut self.accrued_substate,
             target_address,
         );
-        // dbg!(&target_account_info, &target_account_info.is_empty());
-        // dbg!(
-        //     "EXISTE CUENTA",
-        //     self.db.account_exists(target_address),
-        //     get_account(&mut HashMap::new(), self.db.clone(), target_address),
-        //     &target_address
-        // );
+        self.db.get_storage_slot(target_address, H256::zero());
 
         let (current_account_info, _current_account_is_cold) = access_account(
             &mut self.cache,
@@ -549,11 +543,26 @@ impl VM {
             current_call_frame.to,
         );
         let balance_to_transfer = current_account_info.balance;
-        // dbg!("balance_to_transfer", &balance_to_transfer);
 
+        let account_is_empty = if self.env.config.fork >= Fork::SpuriousDragon {
+            target_account_info.is_empty()
+        } else {
+            let mut temp = true;
+            for i in 0..50 {
+                if self
+                    .db
+                    .get_storage_slot(target_address, H256::from_low_u64_be(i))
+                    != U256::zero()
+                {
+                    temp = false;
+                    break;
+                }
+            }
+            temp && target_account_info.is_empty()
+        };
         current_call_frame.increase_consumed_gas(gas_cost::selfdestruct(
             target_account_is_cold,
-            target_account_info.is_empty(),
+            account_is_empty,
             balance_to_transfer,
             self.env.config.fork,
         )?)?;

@@ -23,7 +23,7 @@ use ethrex_common::{
         tx_fields::{AccessList, AuthorizationList},
         Fork, ForkBlobSchedule, TxKind,
     },
-    Address, H256, U256,
+    Address, H160, H256, U256,
 };
 use std::{
     cmp::max,
@@ -317,6 +317,11 @@ impl VM {
             self.env.refunded_gas,
             self.env.transient_storage.clone(),
         );
+
+        // let temp = H160::from_slice(
+        //     &hex::decode("c94f5374fce5edbc8e2a8697c15331677e6ebf0b")
+        //         .map_err(|_| VMError::AddressAlreadyOccupied)?,
+        // );
 
         if is_precompile(&current_call_frame.code_address, self.env.config.fork) {
             let precompile_result = execute_precompile(current_call_frame, self.env.config.fork);

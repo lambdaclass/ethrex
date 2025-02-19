@@ -64,6 +64,7 @@ impl Database for Db {
     }
 
     fn get_storage_slot(&self, address: Address, key: H256) -> U256 {
+        dbg!("ENTRO ACA");
         // both `original_value` and `current_value` should work here because they have the same values on Db
         self.accounts
             .get(&address)
