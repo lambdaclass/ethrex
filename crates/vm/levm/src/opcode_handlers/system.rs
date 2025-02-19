@@ -547,18 +547,7 @@ impl VM {
         let account_is_empty = if self.env.config.fork >= Fork::SpuriousDragon {
             target_account_info.is_empty()
         } else {
-            let mut temp = true;
-            for i in 0..50 {
-                if self
-                    .db
-                    .get_storage_slot(target_address, H256::from_low_u64_be(i))
-                    != U256::zero()
-                {
-                    temp = false;
-                    break;
-                }
-            }
-            temp && target_account_info.is_empty()
+            !self.db.account_exists(target_address)
         };
         current_call_frame.increase_consumed_gas(gas_cost::selfdestruct(
             target_account_is_cold,

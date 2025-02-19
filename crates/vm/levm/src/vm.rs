@@ -318,11 +318,6 @@ impl VM {
             self.env.transient_storage.clone(),
         );
 
-        // let temp = H160::from_slice(
-        //     &hex::decode("c94f5374fce5edbc8e2a8697c15331677e6ebf0b")
-        //         .map_err(|_| VMError::AddressAlreadyOccupied)?,
-        // );
-
         if is_precompile(&current_call_frame.code_address, self.env.config.fork) {
             let precompile_result = execute_precompile(current_call_frame, self.env.config.fork);
             return self.handle_precompile_result(precompile_result, current_call_frame, backup);

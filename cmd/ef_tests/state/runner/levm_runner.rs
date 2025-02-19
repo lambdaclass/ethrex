@@ -7,7 +7,7 @@ use crate::{
 use bytes::Bytes;
 use ethrex_common::{
     types::{code_hash, tx_fields::*, AccountInfo, Fork},
-    H160, H256, U256,
+    H256, U256,
 };
 use ethrex_levm::{
     db::CacheDB,
