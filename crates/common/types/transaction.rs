@@ -2405,6 +2405,10 @@ mod mempool {
         pub fn sender(&self) -> Address {
             self.sender
         }
+
+        pub fn into_inner(self) -> Transaction {
+            self.inner
+        }
     }
 
     impl RLPEncode for MempoolTransaction {

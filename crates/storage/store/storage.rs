@@ -301,6 +301,19 @@ impl Store {
         Ok(())
     }
 
+    /// Get a transaction from the pool given its hash
+    pub fn get_transaction_from_pool(
+        &self,
+        hash: &H256,
+    ) -> Result<Option<MempoolTransaction>, StoreError> {
+        Ok(self
+            .mempool
+            .lock()
+            .map_err(|error| StoreError::Custom(error.to_string()))?
+            .get(hash)
+            .cloned())
+    }
+
     /// Get a blobs bundle to the pool given its blob transaction hash
     pub fn get_blobs_bundle_from_pool(
         &self,

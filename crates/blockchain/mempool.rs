@@ -58,6 +58,14 @@ pub fn add_transaction(transaction: Transaction, store: &Store) -> Result<H256, 
     Ok(hash)
 }
 
+/// Fetch a transaction from the mempool given its transaction hash
+pub fn get_transaction(
+    tx_hash: &H256,
+    store: Store,
+) -> Result<Option<MempoolTransaction>, MempoolError> {
+    Ok(store.get_transaction_from_pool(tx_hash)?)
+}
+
 /// Fetch a blobs bundle from the mempool given its blob transaction hash
 pub fn get_blobs_bundle(tx_hash: H256, store: Store) -> Result<Option<BlobsBundle>, MempoolError> {
     Ok(store.get_blobs_bundle_from_pool(tx_hash)?)
