@@ -73,6 +73,7 @@ pub enum SyncMode {
 #[derive(Debug)]
 pub struct SyncManager {
     sync_mode: SyncMode,
+    last_processed_header_hash: Option<H256>,
     peers: PeerHandler,
     /// The last block number used as a pivot for snap-sync
     /// Syncing beyond this pivot should re-enable snap-sync (as we will not have that state stored)
@@ -91,6 +92,7 @@ impl SyncManager {
         cancel_token: CancellationToken,
     ) -> Self {
         Self {
+            last_processed_header_hash: None,
             sync_mode,
             peers: PeerHandler::new(peer_table),
             last_snap_pivot: 0,
@@ -105,6 +107,7 @@ impl SyncManager {
     pub fn dummy() -> Self {
         let dummy_peer_table = Arc::new(Mutex::new(KademliaTable::new(Default::default())));
         Self {
+            last_processed_header_hash: None,
             sync_mode: SyncMode::Full,
             peers: PeerHandler::new(dummy_peer_table),
             last_snap_pivot: 0,
@@ -148,78 +151,78 @@ impl SyncManager {
         store: Store,
     ) -> Result<(), SyncError> {
         // Check if we have some blocks downloaded from a previous attempt
-        if let Some(last_hash) = self.block_hashes.last() {
+        if let Some(last_hash) = self.last_processed_header_hash {
             // Set latest downloaded header as current head for header fetching
-            current_head = *last_hash;
-            //TODO check that the last hash is > current_head
-        } else if let Some(last_hash) = store.get_header_download_checkpoint()? {
             current_head = last_hash;
+            //TODO check that the last hash is > current_head
         }
 
         loop {
             debug!("Requesting Block Headers from {current_head}");
             // Request Block Headers from Peer
-            match self
+            let Some(mut block_headers) = self
                 .peers
                 .request_block_headers(current_head, BlockRequestOrder::OldToNew)
                 .await
-            {
-                Some(mut block_headers) => {
-                    debug!(
-                        "Received {} block headers| First Number: {} Last Number: {}",
-                        block_headers.len(),
-                        block_headers.first().as_ref().unwrap().number,
-                        block_headers.last().as_ref().unwrap().number
-                    );
-                    let mut block_hashes = block_headers
-                        .iter()
-                        .map(|header| header.compute_block_hash())
-                        .collect::<Vec<_>>();
-                    // Check if we already found the sync head
-                    let sync_head_found = block_hashes.contains(&sync_head);
-                    // Update current fetch head if needed
-                    let last_block_hash = *block_hashes.last().unwrap();
-                    if !sync_head_found {
-                        debug!(
-                            "Syncing head not found, updated current_head {:?}",
-                            last_block_hash
-                        );
-                        current_head = last_block_hash;
-                    }
-                    // If the sync head is less than 64 blocks away from our current head switch to full-sync
-                    let last_header_number = block_headers.last().unwrap().number;
-                    let latest_block_number = store.get_latest_block_number()?;
-                    if last_header_number.saturating_sub(latest_block_number)
-                        < MIN_FULL_BLOCKS as u64
-                    {
-                        // Too few blocks for a snap sync, switching to full sync
-                        store.clear_snap_state()?;
-                        self.sync_mode = SyncMode::Full
-                    }
-                    // Discard the first header as we already have it
-                    block_hashes.remove(0);
-                    block_headers.remove(0);
-                    // Store headers and save hashes for full block retrieval
-                    self.block_hashes.extend_from_slice(&block_hashes[..]);
-                    store.add_block_headers(block_hashes.clone(), block_headers)?;
+            else {
+                warn!("Sync failed to find target block header, aborting");
+                return Ok(());
+            };
 
-                    if sync_head_found {
-                        // No more headers to request
-                        break;
-                    } else {
-                        download_and_run_blocks(
-                            &mut self.block_hashes,
-                            self.peers.clone(),
-                            store.clone(),
-                        )
-                        .await?;
-                    }
-                }
-                _ => {
-                    warn!("Sync failed to find target block header, aborting");
-                    return Ok(());
-                }
+            let first_block_header = block_headers.first().unwrap().clone();
+            let last_block_header = block_headers.last().unwrap().clone();
+            let mut block_hashes = block_headers
+                .iter()
+                .map(|header| header.compute_block_hash())
+                .collect::<Vec<_>>();
+
+            debug!(
+                "Received {} block headers| First Number: {} Last Number: {}",
+                block_headers.len(),
+                first_block_header.number,
+                last_block_header.number
+            );
+
+            // Check if we already found the sync head
+            let sync_head_found = block_hashes.contains(&sync_head);
+            // Update current fetch head if needed
+            let last_block_hash = last_block_header.compute_block_hash();
+            if !sync_head_found {
+                debug!(
+                    "Syncing head not found, updated current_head {:?}",
+                    last_block_hash
+                );
+                current_head = last_block_hash;
             }
+            // If the sync head is less than 64 blocks away from our current head switch to full-sync
+            let latest_block_number = store.get_latest_block_number()?;
+            if last_block_header.number.saturating_sub(latest_block_number) < MIN_FULL_BLOCKS as u64
+            {
+                // Too few blocks for a snap sync, switching to full sync
+                store.clear_snap_state()?;
+                self.sync_mode = SyncMode::Full
+            }
+
+            // Discard the first header as we already have it
+            block_hashes.remove(0);
+            block_headers.remove(0);
+
+            // Store headers and save hashes for full block retrieval
+            self.block_hashes.extend_from_slice(&block_hashes[..]);
+            store.add_block_headers(block_hashes.clone(), block_headers)?;
+            self.last_processed_header_hash = Some(last_block_header.compute_block_hash());
+
+            match self.sync_mode {
+                SyncMode::Full => {
+                    self.download_and_run_blocks(&mut block_hashes, store.clone())
+                        .await?
+                }
+                _ => {}
+            }
+
+            if sync_head_found {
+                break;
+            };
         }
         // We finished fetching all headers, now we can process them
         match self.sync_mode {
@@ -267,103 +270,88 @@ impl SyncManager {
                 // Next sync will be full-sync
                 self.sync_mode = SyncMode::Full;
             }
-            SyncMode::Full => {
-                info!("Full syncing finished request block headers, about to start fetching bodies, running and storing them");
-                // full-sync: Fetch all block bodies and execute them sequentially to build the state
-                let res = download_and_run_blocks(
-                    &mut self.block_hashes,
-                    self.peers.clone(),
-                    store.clone(),
-                )
-                .await;
-                if let Err(e) = res {
-                    error!("Failed to download and run blocks, err {:?}", e);
-                } else {
-                    info!("Full syncing finished executing!");
-                }
-            }
+            _ => {}
         }
         Ok(())
     }
-}
 
-/// Requests block bodies from peers via p2p, executes and stores them
-/// Returns an error if there was a problem while executing or validating the blocks
-async fn download_and_run_blocks(
-    block_hashes: &mut Vec<BlockHash>,
-    peers: PeerHandler,
-    store: Store,
-) -> Result<(), SyncError> {
-    // ask as much as 128 block bodies per req
-    // this magic number is not part of the protocol and it is taken from geth, see:
-    // https://github.com/ethereum/go-ethereum/blob/master/eth/downloader/downloader.go#L42
-    let max_req_len = 64;
+    /// Requests block bodies from peers via p2p, executes and stores them
+    /// Returns an error if there was a problem while executing or validating the blocks
+    async fn download_and_run_blocks(
+        &mut self,
+        block_hashes: &mut Vec<BlockHash>,
+        store: Store,
+    ) -> Result<(), SyncError> {
+        // ask as much as 128 block bodies per req
+        // this magic number is not part of the protocol and it is taken from geth, see:
+        // https://github.com/ethereum/go-ethereum/blob/master/eth/downloader/downloader.go#L42
+        let max_req_len = 16;
 
-    let mut current_chunk_idx = 0;
-    let chunks: Vec<Vec<BlockHash>> = block_hashes
-        .chunks(max_req_len)
-        .map(|chunk| chunk.to_vec())
-        .collect();
+        let mut current_chunk_idx = 0;
+        let chunks: Vec<Vec<BlockHash>> = block_hashes
+            .chunks(max_req_len)
+            .map(|chunk| chunk.to_vec())
+            .collect();
 
-    let mut chunk = match chunks.get(current_chunk_idx) {
-        Some(res) => res.clone(),
-        None => return Ok(()),
-    };
+        let mut chunk = match chunks.get(current_chunk_idx) {
+            Some(res) => res.clone(),
+            None => return Ok(()),
+        };
 
-    let mut current_block_hash_idx = 0;
-    loop {
-        debug!("Requesting Block Bodies number");
-        if let Some(block_bodies) = peers.request_block_bodies(chunk.clone()).await {
-            let block_bodies_len = block_bodies.len();
+        loop {
+            debug!("Requesting Block Bodies");
+            if let Some(block_bodies) = self.peers.request_block_bodies(chunk.clone()).await {
+                let block_bodies_len = block_bodies.len();
 
-            let first_block_hash = chunk.first().map_or(H256::default(), |a| *a);
-            let first_block_header = store
-                .get_block_header_by_hash(first_block_hash)?
-                .map_or(0, |h| h.number);
+                let first_block_hash = chunk.first().map_or(H256::default(), |a| *a);
+                let first_block_header_number = store
+                    .get_block_header_by_hash(first_block_hash)?
+                    .map_or(0, |h| h.number);
 
-            debug!(
-                "Received {} Block Bodies, starting from block hash {:?} with number: {}",
-                block_bodies_len, first_block_hash, first_block_header
-            );
-            // Execute and store blocks
-            let mut i = 0;
-            for (hash, body) in chunk
-                .drain(..block_bodies_len)
-                .zip(block_bodies.into_iter())
-            {
                 debug!(
-                    "About to add block with hash {} and number {}",
-                    hash,
-                    first_block_header + i
+                    "Received {} Block Bodies, starting from block hash {:?} with number: {}",
+                    block_bodies_len, first_block_hash, first_block_header_number
                 );
-                block_hashes.remove(current_block_hash_idx);
-                current_block_hash_idx += 1;
-                i += 1;
-                let header = store
-                    .get_block_header_by_hash(hash)?
-                    .ok_or(SyncError::CorruptDB)?;
-                let number = header.number;
-                let block = Block::new(header, body);
-                if let Err(error) = ethrex_blockchain::add_block(&block, &store) {
-                    warn!("Failed to add block during FullSync: {error}");
-                    return Err(error.into());
+
+                // Execute and store blocks
+                let mut i = 0;
+                for (hash, body) in chunk
+                    .drain(..block_bodies_len)
+                    .zip(block_bodies.into_iter())
+                {
+                    debug!(
+                        "About to add block with hash {} and number {}",
+                        hash,
+                        first_block_header_number + i
+                    );
+
+                    i += 1;
+                    let header = store
+                        .get_block_header_by_hash(hash)?
+                        .ok_or(SyncError::CorruptDB)?;
+                    let number = header.number;
+                    let block = Block::new(header, body);
+                    if let Err(error) = ethrex_blockchain::add_block(&block, &store) {
+                        warn!("Failed to add block during FullSync: {error}");
+                        return Err(error.into());
+                    }
+                    store.set_canonical_block(number, hash)?;
+                    store.update_latest_block_number(number)?;
+                    store.set_header_download_checkpoint(hash)?;
+                    debug!(
+                        "Executed and stored block number {} with hash {}",
+                        number, hash
+                    );
                 }
-                store.set_canonical_block(number, hash)?;
-                store.update_latest_block_number(number)?;
-                store.set_header_download_checkpoint(hash)?;
-                debug!(
-                    "Executed and stored block number {} with hash {}",
-                    number, hash
-                );
-            }
-            debug!("Executed & stored {} blocks", block_bodies_len);
-            if chunk.len() == 0 {
-                current_chunk_idx += 1;
-                chunk = match chunks.get(current_chunk_idx) {
-                    Some(res) => res.clone(),
-                    None => return Ok(()),
+                debug!("Executed & stored {} blocks", block_bodies_len);
+                if chunk.len() == 0 {
+                    current_chunk_idx += 1;
+                    chunk = match chunks.get(current_chunk_idx) {
+                        Some(res) => res.clone(),
+                        None => return Ok(()),
+                    };
                 };
-            };
+            }
         }
     }
 }
