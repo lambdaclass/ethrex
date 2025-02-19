@@ -170,8 +170,7 @@ impl Committer {
     ) -> Result<Vec<(H256, Transaction)>, CommitterError> {
         // WithdrawalInitiated(address,address,uint256)
         let withdrawal_event_selector: H256 =
-            H256::from_str("bb2689ff876f7ef453cf8865dde5ab10349d222e2e1383c5152fbdb083f02da2")
-                .unwrap();
+            H256::from_str("bb2689ff876f7ef453cf8865dde5ab10349d222e2e1383c5152fbdb083f02da2").map_err(|_| CommitterError::InternalError("Failed to convert WithdrawalInitiated event selector to H256. This should never happen.".to_owned()))?;
         let mut ret = vec![];
 
         for (tx, receipt) in txs_and_receipts {
