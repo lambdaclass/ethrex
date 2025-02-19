@@ -331,7 +331,9 @@ pub fn ensure_post_state(
             );
             let revm_account_updates = backends::revm_b::REVM::get_state_transitions(revm_state);
             let account_updates_report = compare_levm_revm_account_updates(
+                vector,
                 test,
+                fork,
                 &levm_account_updates,
                 &revm_account_updates,
             );
@@ -343,7 +345,9 @@ pub fn ensure_post_state(
 }
 
 pub fn compare_levm_revm_account_updates(
+    vector: &TestVector,
     test: &EFTest,
+    fork: &Fork,
     levm_account_updates: &[AccountUpdate],
     revm_account_updates: &[AccountUpdate],
 ) -> ComparisonReport {
@@ -390,6 +394,7 @@ pub fn compare_levm_revm_account_updates(
         levm_post_state_root,
         revm_post_state_root,
         initial_accounts,
+        expected_post_state_root: test.post.vector_post_value(vector, *fork).hash,
         levm_account_updates: levm_account_updates.to_vec(),
         revm_account_updates: revm_account_updates.to_vec(),
         levm_updated_accounts_only: levm_updated_accounts
