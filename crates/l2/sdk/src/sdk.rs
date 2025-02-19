@@ -116,7 +116,7 @@ pub async fn withdraw(
     let withdraw_transaction = proposer_client
         .build_privileged_transaction(
             PrivilegedTxType::Withdrawal,
-            from,
+            Address::zero(),
             from,
             Default::default(),
             Overrides {
@@ -155,7 +155,10 @@ pub async fn claim_withdraw(
         .get_transaction_by_hash(l2_withdrawal_tx_hash)
         .await?
     {
-        Some(l2_withdrawal_tx) => (l2_withdrawal_tx.block_number, l2_withdrawal_tx.value),
+        Some(l2_withdrawal_tx) => {
+            dbg!(&l2_withdrawal_tx);
+            (l2_withdrawal_tx.block_number, l2_withdrawal_tx.value)
+        },
         None => {
             println!("Withdrawal transaction not found in L2");
             return Err(EthClientError::GetTransactionReceiptError(
@@ -165,6 +168,7 @@ pub async fn claim_withdraw(
             ));
         }
     };
+
 
     let (index, proof) = get_withdraw_merkle_proof(proposer_client, l2_withdrawal_tx_hash).await?;
 
