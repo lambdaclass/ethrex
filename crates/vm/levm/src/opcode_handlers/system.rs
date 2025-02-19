@@ -58,6 +58,7 @@ impl VM {
             self.db.clone(),
             &mut self.accrued_substate,
             callee,
+            self.env.config.fork,
         )?;
 
         let gas_left = current_call_frame

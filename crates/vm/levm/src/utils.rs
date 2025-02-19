@@ -710,6 +710,7 @@ pub fn eip7702_get_code(
     db: Arc<dyn Database>,
     accrued_substate: &mut Substate,
     address: Address,
+    fork: Fork,
 ) -> Result<(bool, u64, Address, Bytes), VMError> {
     // Address is the delgated address
     let account = get_account(cache, db.clone(), address);
@@ -719,7 +720,7 @@ pub fn eip7702_get_code(
     // return false meaning that is not a delegation
     // return the same address given
     // return the bytecode of the given address
-    if !has_delegation(&account.info)? {
+    if !has_delegation(&account.info)? || fork < Fork::Prague {
         return Ok((false, 0, address, bytecode));
     }
 
