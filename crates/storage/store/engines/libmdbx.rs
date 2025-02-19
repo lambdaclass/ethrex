@@ -61,7 +61,10 @@ impl Store {
             .map_err(StoreError::LibmdbxError)?;
 
         debug!("Inserting values");
+        let mut i = 0;
         for (key, value) in key_values {
+            debug!("Index {}", i);
+            i += 1;
             txn.upsert::<T>(key, value)
                 .map_err(StoreError::LibmdbxError)?;
         }
