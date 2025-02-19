@@ -712,7 +712,7 @@ pub fn eip7702_get_code(
     address: Address,
 ) -> Result<(bool, u64, Address, Bytes), VMError> {
     // Address is the delgated address
-    let account = get_account(cache, db.clone(), address);
+    let account = get_account_no_push_cache(cache, db.clone(), address);
     let bytecode = account.info.bytecode.clone();
 
     // If the Address doesn't have a delegation code
