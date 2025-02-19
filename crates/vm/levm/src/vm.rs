@@ -9,7 +9,7 @@ use crate::{
     environment::Environment,
     errors::{ExecutionReport, InternalError, OpcodeResult, TxResult, VMError},
     gas_cost::{self, STANDARD_TOKEN_COST, TOTAL_COST_FLOOR_PER_TOKEN},
-    hooks::{default_hook::DefaultHook, hook::Hook, l2_hook::L2Hook},
+    hooks::{default_hook::DefaultHook, hook::Hook},
     precompiles::{
         execute_precompile, is_precompile, SIZE_PRECOMPILES_CANCUN, SIZE_PRECOMPILES_PRAGUE,
         SIZE_PRECOMPILES_PRE_CANCUN,
@@ -218,8 +218,7 @@ impl VM {
         }
 
         let default_hook: Arc<dyn Hook> = Arc::new(DefaultHook);
-        let l2_hook: Arc<dyn Hook> = Arc::new(L2Hook);
-        let hooks = vec![default_hook, l2_hook];
+        let hooks = vec![default_hook];
         match to {
             TxKind::Call(address_to) => {
                 default_touched_accounts.insert(address_to);

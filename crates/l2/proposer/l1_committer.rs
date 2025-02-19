@@ -97,7 +97,6 @@ impl Committer {
                         "Failed to get_block_header() after get_block_body()".to_owned(),
                     ))?;
 
-                // let receipts = self.store.get_receipts_for_block(&block_to_commit_header.compute_block_hash());
                 let mut txs_and_receipts = vec![];
                 for (index, tx) in block_to_commit_body.transactions.iter().enumerate() {
                     let receipt = self
