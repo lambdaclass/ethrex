@@ -162,7 +162,12 @@ impl SyncManager {
                         // No more headers to request
                         break;
                     } else {
-                        download_and_run_blocks(&mut block_hashes, peers, store).await?;
+                        download_and_run_blocks(
+                            &mut block_hashes,
+                            self.peers.clone(),
+                            store.clone(),
+                        )
+                        .await?;
                     }
                 }
                 _ => {
