@@ -100,7 +100,7 @@ impl RLPDecode for P2PTransaction {
                 // EIP7702
                 0x4 => EIP7702Transaction::decode_unfinished(tx_encoding)
                     .map(|(tx, rem)| (P2PTransaction::EIP7702Transaction(tx), rem)),
-                // PriviligedL2
+                // PrivilegedL2
                 0x7e => PrivilegedL2Transaction::decode_unfinished(tx_encoding)
                     .map(|(tx, rem)| (P2PTransaction::PrivilegedL2Transaction(tx), rem)),
                 ty => Err(RLPDecodeError::Custom(format!(
@@ -391,7 +391,7 @@ impl RLPDecode for Transaction {
                 // EIP7702
                 0x4 => EIP7702Transaction::decode_unfinished(tx_encoding)
                     .map(|(tx, rem)| (Transaction::EIP7702Transaction(tx), rem)),
-                // PriviligedL2
+                // PrivilegedL2
                 0x7e => PrivilegedL2Transaction::decode_unfinished(tx_encoding)
                     .map(|(tx, rem)| (Transaction::PrivilegedL2Transaction(tx), rem)),
                 ty => Err(RLPDecodeError::Custom(format!(
@@ -1653,7 +1653,6 @@ mod serde_impl {
         pub chain_id: U256,
         pub address: Address,
         pub nonce: u64,
-        pub v: U256,
         pub y_parity: U256,
         pub r: U256,
         pub s: U256,
@@ -1665,7 +1664,6 @@ mod serde_impl {
                 chain_id: value.chain_id,
                 address: value.address,
                 nonce: value.nonce,
-                v: value.y_parity,
                 y_parity: value.y_parity,
                 r: value.r_signature,
                 s: value.s_signature,
