@@ -126,10 +126,10 @@ pub fn prepare_revm_for_tx<'state>(
         basefee: RevmU256::from_limbs(test.env.current_base_fee.unwrap_or_default().0),
         difficulty: RevmU256::from_limbs(test.env.current_difficulty.0),
         prevrandao: test.env.current_random.map(|v| v.0.into()),
-        blob_excess_gas_and_price: test
-            .env
-            .current_excess_blob_gas
-            .map(|gas| BlobExcessGasAndPrice::new(gas.as_u64())),
+        blob_excess_gas_and_price: Some(BlobExcessGasAndPrice {
+            blob_gasprice: 0,
+            excess_blob_gas: test.env.current_excess_blob_gas.unwrap().as_u64(),
+        }),
     };
     let tx = &test
         .transactions
@@ -164,8 +164,7 @@ pub fn prepare_revm_for_tx<'state>(
                 SignedAuthorization::new_unchecked(
                     Authorization {
                         // The latest spec defined chain_id as a U256
-                        //chain_id: RevmU256::from_le_bytes(auth_t.chain_id.to_little_endian()),
-                        chain_id: auth_t.chain_id.as_u64(),
+                        chain_id: RevmU256::from_le_bytes(auth_t.chain_id.to_little_endian()),
                         address: RevmAddress(auth_t.address.0.into()),
                         nonce: auth_t.nonce,
                     },
