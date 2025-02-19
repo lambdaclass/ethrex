@@ -9,6 +9,7 @@ const DEPOSIT_TYPE: u8 = 0x00;
 const WITHDRAWAL_TYPE: u8 = 0x01;
 const CONSOLIDATION_TYPE: u8 = 0x02;
 
+#[derive(Clone)]
 pub enum Requests {
     Deposit(Vec<Deposit>),
     Withdrawal(Vec<u8>),
@@ -57,7 +58,7 @@ impl Requests {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Deposit {
     pub pub_key: Bytes48,
     pub withdrawal_credentials: Bytes32,

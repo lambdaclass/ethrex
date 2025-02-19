@@ -203,11 +203,7 @@ impl From<&EFTestPreValue> for GenesisAccount {
     fn from(value: &EFTestPreValue) -> Self {
         Self {
             code: value.code.clone(),
-            storage: value
-                .storage
-                .iter()
-                .map(|(k, v)| (H256::from_slice(&k.to_big_endian()), *v))
-                .collect(),
+            storage: value.storage.clone(),
             balance: value.balance,
             nonce: value.nonce.as_u64(),
         }

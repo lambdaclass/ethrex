@@ -1,7 +1,10 @@
 use ethrex_blockchain::add_block;
 use ethrex_blockchain::error::ChainError;
 use ethrex_blockchain::payload::build_payload;
-use ethrex_common::types::{BlobsBundle, Block, BlockBody, BlockHash, BlockNumber, Fork};
+use ethrex_common::types::requests::Requests;
+use ethrex_common::types::{
+    compute_requests_hash, BlobsBundle, Block, BlockBody, BlockHash, BlockNumber, Fork,
+};
 use ethrex_common::{H256, U256};
 use serde_json::Value;
 use tracing::{debug, error, info, warn};
@@ -98,7 +101,8 @@ impl RpcHandler for NewPayloadV3Request {
     }
 
     fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
-        let block = get_block_from_payload(&self.payload, Some(self.parent_beacon_block_root))?;
+        let block =
+            get_block_from_payload(&self.payload, Some(self.parent_beacon_block_root), None)?;
         validate_fork(&block, Fork::Cancun, &context)?;
         validate_execution_payload_v3(&self.payload)?;
         let payload_status = {
@@ -127,6 +131,69 @@ impl RpcHandler for NewPayloadV3Request {
                 }
             }
         };
+        serde_json::to_value(payload_status).map_err(|error| RpcErr::Internal(error.to_string()))
+    }
+}
+pub struct NewPayloadV4Request {
+    pub payload: ExecutionPayload,
+    pub expected_blob_versioned_hashes: Vec<H256>,
+    pub parent_beacon_block_root: H256,
+    pub execution_requests: Vec<Requests>,
+}
+
+impl From<NewPayloadV4Request> for RpcRequest {
+    fn from(val: NewPayloadV4Request) -> Self {
+        RpcRequest {
+            method: "engine_newPayloadV4".to_string(),
+            params: Some(vec![
+                serde_json::json!(val.payload),
+                serde_json::json!(val.expected_blob_versioned_hashes),
+                serde_json::json!(val.parent_beacon_block_root),
+                serde_json::json!(val.execution_requests),
+            ]),
+            ..Default::default()
+        }
+    }
+}
+
+impl RpcHandler for NewPayloadV4Request {
+    fn parse(params: &Option<Vec<Value>>) -> Result<Self, RpcErr> {
+        let params = params
+            .as_ref()
+            .ok_or(RpcErr::BadParams("No params provided".to_owned()))?;
+        if params.len() != 4 {
+            return Err(RpcErr::BadParams("Expected 4 params".to_owned()));
+        }
+        Ok(NewPayloadV4Request {
+            payload: serde_json::from_value(params[0].clone())
+                .map_err(|_| RpcErr::WrongParam("payload".to_string()))?,
+            expected_blob_versioned_hashes: serde_json::from_value(params[1].clone())
+                .map_err(|_| RpcErr::WrongParam("expected_blob_versioned_hashes".to_string()))?,
+            parent_beacon_block_root: serde_json::from_value(params[2].clone())
+                .map_err(|_| RpcErr::WrongParam("parent_beacon_block_root".to_string()))?,
+            execution_requests: serde_json::from_value(params[3].clone())
+                .map_err(|_| RpcErr::WrongParam("execution_requests".to_string()))?,
+        })
+    }
+
+    fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
+        // TODO: VALIDATE EMPTY REQUESTS HASH
+        let requests_hash = compute_requests_hash(&self.execution_requests);
+        let block = get_block_from_payload(
+            &self.payload,
+            Some(self.parent_beacon_block_root),
+            Some(requests_hash),
+        )?;
+        validate_fork(&block, Fork::Prague, &context)?;
+        // execution payload remains the same.
+        validate_execution_payload_v3(&self.payload)?;
+        let payload_status = handle_new_payload_v4(
+            &self.payload,
+            context,
+            block,
+            self.expected_blob_versioned_hashes.clone(),
+            self.execution_requests.clone(),
+        )?;
         serde_json::to_value(payload_status).map_err(|error| RpcErr::Internal(error.to_string()))
     }
 }
@@ -350,7 +417,7 @@ fn handle_new_payload_v1_v2(
     payload: &ExecutionPayload,
     context: RpcApiContext,
 ) -> Result<Value, RpcErr> {
-    let block = get_block_from_payload(payload, None)?;
+    let block = get_block_from_payload(payload, None, None)?;
     let payload_status = match context.sync_status()? {
         SyncStatus::Active | SyncStatus::Pending => PayloadStatus::syncing(),
         SyncStatus::Inactive => {
@@ -374,16 +441,49 @@ fn handle_new_payload_v1_v2(
     serde_json::to_value(payload_status).map_err(|error| RpcErr::Internal(error.to_string()))
 }
 
+fn handle_new_payload_v4(
+    payload: &ExecutionPayload,
+    context: RpcApiContext,
+    block: Block,
+    expected_blob_versioned_hashes: Vec<H256>,
+    _execution_requests: Vec<Requests>,
+) -> Result<PayloadStatus, RpcErr> {
+    // Ignore incoming
+    match context.sync_status()? {
+        SyncStatus::Active | SyncStatus::Pending => Ok(PayloadStatus::syncing()),
+        SyncStatus::Inactive => {
+            if let Err(RpcErr::Internal(error_msg)) = validate_block_hash(&payload, &block) {
+                return Ok(PayloadStatus::invalid_with_err(&error_msg));
+            }
+            let blob_versioned_hashes: Vec<H256> = block
+                .body
+                .transactions
+                .iter()
+                .flat_map(|tx| tx.blob_versioned_hashes())
+                .collect();
+
+            if expected_blob_versioned_hashes != blob_versioned_hashes {
+                return Ok(PayloadStatus::invalid_with_err(
+                    "Invalid blob_versioned_hashes",
+                ));
+            }
+            // TODO: CHECK REQUESTS HASH
+            execute_payload(&block, &context)
+        }
+    }
+}
+
 fn get_block_from_payload(
     payload: &ExecutionPayload,
     parent_beacon_block_root: Option<H256>,
+    requests_hash: Option<H256>,
 ) -> Result<Block, RpcErr> {
     let block_hash = payload.block_hash;
     info!("Received new payload with block hash: {block_hash:#x}");
 
     payload
         .clone()
-        .into_block(parent_beacon_block_root)
+        .into_block(parent_beacon_block_root, requests_hash)
         .map_err(|error| RpcErr::Internal(error.to_string()))
 }
 

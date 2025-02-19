@@ -49,7 +49,6 @@ pub struct ExecutionPayload {
         default
     )]
     pub excess_blob_gas: Option<u64>,
-    pub requests_hash: Option<H256>,
 }
 
 #[derive(Clone, Debug)]
@@ -95,6 +94,7 @@ impl ExecutionPayload {
     pub fn into_block(
         self,
         parent_beacon_block_root: Option<H256>,
+        requests_hash: Option<H256>,
     ) -> Result<Block, RLPDecodeError> {
         let body = BlockBody {
             transactions: self
@@ -130,7 +130,7 @@ impl ExecutionPayload {
             excess_blob_gas: self.excess_blob_gas,
             parent_beacon_block_root,
             // TODO: set the value properly
-            requests_hash: self.requests_hash,
+            requests_hash,
         };
 
         Ok(Block::new(header, body))
