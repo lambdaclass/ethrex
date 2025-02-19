@@ -329,6 +329,7 @@ pub fn ensure_post_state(
                 &initial_state,
                 block_hash,
                 levm_execution_report,
+                fork,
             );
             let revm_account_updates = ethrex_vm::get_state_transitions(revm_state);
             let account_updates_report = compare_levm_revm_account_updates(
