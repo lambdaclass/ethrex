@@ -6,8 +6,8 @@ use crate::{
     },
 };
 use ethereum_types::Address;
-use ethrex_l2_sdk::eth_client::{errors::EthClientError, EthClient};
 use ethrex_metrics::metrics_l2::{MetricsL2BlockType, METRICS_L2};
+use ethrex_rpc::clients::eth::{errors::EthClientError, EthClient};
 use std::time::Duration;
 use tokio::time::sleep;
 use tracing::{debug, error};
