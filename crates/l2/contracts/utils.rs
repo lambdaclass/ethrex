@@ -12,6 +12,10 @@ pub enum ContractCompilationError {
     EnvFileError(#[from] errors::ConfigError),
     #[error("Could not read file")]
     FailedToReadFile(#[from] std::io::Error),
+    #[error("Failed to serialize/deserialize")]
+    SerializationError(#[from] serde_json::Error),
+    #[error("Internal Error. This is most likely a bug: {0}")]
+    InternalError(String),
 }
 
 pub fn compile_contract(

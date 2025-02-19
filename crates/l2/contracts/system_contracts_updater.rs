@@ -1,9 +1,6 @@
 mod utils;
 use std::collections::HashMap;
-use std::io::BufWriter;
-use std::io::Write;
 use std::path::Path;
-use std::str::FromStr;
 
 use bytes::Bytes;
 use ethrex_common::types::Genesis;
@@ -38,23 +35,26 @@ fn main() -> Result<(), ContractCompilationError> {
 
     let file = std::fs::File::open(&genesis_path)?;
     let reader = std::io::BufReader::new(file);
-    let mut genesis: Genesis =
-        serde_json::from_reader(reader).expect("Failed to deserialize genesis file");
+    let mut genesis: Genesis = serde_json::from_reader(reader)?;
 
     let runtime_code = std::fs::read("contracts/solc_out/CommonBridgeL2.bin-runtime")?;
 
     genesis.alloc.insert(
         COMMON_BRIDGE_L2_ADDRESS,
         GenesisAccount {
-            code: Bytes::from(hex::decode(runtime_code).unwrap()),
+            code: Bytes::from(hex::decode(runtime_code).map_err(|_| {
+                ContractCompilationError::InternalError(
+                    "Failed to decode runtime code as a hexstring".to_owned(),
+                )
+            })?),
             storage: HashMap::new(),
             balance: U256::zero(),
             nonce: 1,
         },
     );
 
-    let modified_genesis = serde_json::to_string(&genesis).unwrap();
-    std::fs::write(&genesis_path, modified_genesis).unwrap();
+    let modified_genesis = serde_json::to_string(&genesis)?;
+    std::fs::write(&genesis_path, modified_genesis)?;
 
     Ok(())
 }
