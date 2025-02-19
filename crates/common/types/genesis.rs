@@ -261,7 +261,7 @@ impl ChainConfig {
         .flatten()
         .collect();
 
-        // Remove repatead values
+        // Remove repeated values
         block_number_based_forks.sort();
         block_number_based_forks.dedup();
 
@@ -275,7 +275,7 @@ impl ChainConfig {
         .flatten()
         .collect();
 
-        // Remove repatead values
+        // Remove repeated values
         timestamp_based_forks.sort();
         timestamp_based_forks.dedup();
 
