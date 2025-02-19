@@ -207,7 +207,7 @@ pub fn block_env(header: &BlockHeader, spec_id: SpecId) -> BlockEnv {
         prevrandao: Some(header.prev_randao.as_fixed_bytes().into()),
         blob_excess_gas_and_price: Some(BlobExcessGasAndPrice::new(
             header.excess_blob_gas.unwrap_or_default(),
-            spec_id == SpecId::PRAGUE,
+            spec_id >= SpecId::PRAGUE,
         )),
     }
 }
