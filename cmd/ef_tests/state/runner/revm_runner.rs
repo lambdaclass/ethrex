@@ -241,11 +241,11 @@ pub fn compare_levm_revm_execution_results(
                         output: _,
                     },
                 ) => {
-                    if levm_tx_report.gas_used != revm_gas_used + revm_gas_refunded {
+                    if levm_tx_report.gas_used != revm_gas_used {
                         re_run_report.register_gas_used_mismatch(
                             *vector,
                             levm_tx_report.gas_used,
-                            revm_gas_used + revm_gas_refunded,
+                            revm_gas_used,
                             *fork,
                         );
                     }
