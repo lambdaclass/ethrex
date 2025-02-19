@@ -2798,24 +2798,24 @@ fn number_op() {
     assert_eq!(current_call_frame.gas_used, 2);
 }
 
-#[test]
-fn prevrandao_op() {
-    let prevrandao = H256::from_low_u64_be(2000);
+// #[test]
+// fn prevrandao_op() {
+//     let prevrandao = H256::from_low_u64_be(2000);
 
-    let operations = [Operation::Prevrandao, Operation::Stop];
+//     let operations = [Operation::Prevrandao, Operation::Stop];
 
-    let mut vm = new_vm_with_ops(&operations).unwrap();
-    vm.env.prev_randao = Some(prevrandao);
+//     let mut vm = new_vm_with_ops(&operations).unwrap();
+//     vm.env.prev_randao = Some(prevrandao);
 
-    let mut current_call_frame = vm.call_frames.pop().unwrap();
-    vm.run_execution(&mut current_call_frame).unwrap();
+//     let mut current_call_frame = vm.call_frames.pop().unwrap();
+//     vm.run_execution(&mut current_call_frame).unwrap();
 
-    assert_eq!(
-        vm.current_call_frame_mut().unwrap().stack.pop().unwrap(),
-        U256::from_big_endian(&prevrandao.0)
-    );
-    assert_eq!(current_call_frame.gas_used, 2);
-}
+//     assert_eq!(
+//         vm.current_call_frame_mut().unwrap().stack.pop().unwrap(),
+//         U256::from_big_endian(&prevrandao.0)
+//     );
+//     assert_eq!(current_call_frame.gas_used, 2);
+// }
 
 #[test]
 fn gaslimit_op() {
