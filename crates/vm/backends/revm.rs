@@ -16,16 +16,14 @@ use revm::{
 };
 use revm_inspectors::access_list::AccessListInspector;
 // Rename imported types for clarity
-use ethrex_common::{
-    types::{
-        Block, BlockHeader, GenericTransaction, PrivilegedTxType, Receipt, Transaction, TxKind,
-        Withdrawal, GWEI_TO_WEI, INITIAL_BASE_FEE,
-    },
-    Address,
+use ethrex_common::types::{
+    Block, BlockHeader, GenericTransaction, Receipt, Transaction, TxKind, Withdrawal, GWEI_TO_WEI,
+    INITIAL_BASE_FEE,
 };
+use revm_primitives::Bytes;
 use revm_primitives::{
     ruint::Uint, AccessList as RevmAccessList, AccessListItem, Address as RevmAddress,
-    Authorization as RevmAuthorization, Bytes, FixedBytes, SignedAuthorization, SpecId,
+    Authorization as RevmAuthorization, FixedBytes, SignedAuthorization, SpecId,
     TxKind as RevmTxKind, U256 as RevmU256,
 };
 use std::cmp::min;
@@ -159,7 +157,6 @@ fn run_evm(
                     let mut evm_handler = Handler::new(HandlerCfg::new(SpecId::LATEST));
                     evm_handler.pre_execution.deduct_caller = Arc::new(mods::deduct_caller::<CancunSpec, _, _>);
                     evm_handler.validation.tx_against_state = Arc::new(mods::validate_tx_against_state::<CancunSpec, _, _>);
-                    evm_handler.execution.last_frame_return = Arc::new(mods::last_frame_return::<CancunSpec, _, _>);
                     // TODO: Override `end` function. We should deposit even if we revert.
                     // evm_handler.pre_execution.end
                     evm_handler
@@ -228,7 +225,6 @@ pub fn block_env(header: &BlockHeader, spec_id: SpecId) -> BlockEnv {
 }
 
 // Used for the L2
-pub const WITHDRAWAL_MAGIC_DATA: &[u8] = b"burn";
 pub const DEPOSIT_MAGIC_DATA: &[u8] = b"mint";
 pub fn tx_env(tx: &Transaction) -> TxEnv {
     let max_fee_per_blob_gas = tx
@@ -236,38 +232,18 @@ pub fn tx_env(tx: &Transaction) -> TxEnv {
         .map(|x| RevmU256::from_be_bytes(x.to_big_endian()));
     TxEnv {
         caller: match tx {
-            Transaction::PrivilegedL2Transaction(tx) if tx.tx_type == PrivilegedTxType::Deposit => {
-                RevmAddress::ZERO
-            }
+            Transaction::PrivilegedL2Transaction(_tx) => RevmAddress::ZERO,
             _ => RevmAddress(tx.sender().0.into()),
         },
         gas_limit: tx.gas_limit(),
         gas_price: RevmU256::from(tx.gas_price()),
-        transact_to: match tx {
-            Transaction::PrivilegedL2Transaction(tx)
-                if tx.tx_type == PrivilegedTxType::Withdrawal =>
-            {
-                RevmTxKind::Call(RevmAddress::ZERO)
-            }
-            _ => match tx.to() {
-                TxKind::Call(address) => RevmTxKind::Call(address.0.into()),
-                TxKind::Create => RevmTxKind::Create,
-            },
+        transact_to: match tx.to() {
+            TxKind::Call(address) => RevmTxKind::Call(address.0.into()),
+            TxKind::Create => RevmTxKind::Create,
         },
         value: RevmU256::from_limbs(tx.value().0),
         data: match tx {
-            Transaction::PrivilegedL2Transaction(tx) => match tx.tx_type {
-                PrivilegedTxType::Deposit => DEPOSIT_MAGIC_DATA.into(),
-                PrivilegedTxType::Withdrawal => {
-                    let to = match tx.to {
-                        TxKind::Call(to) => to,
-                        _ => Address::zero(),
-                    };
-                    [Bytes::from(WITHDRAWAL_MAGIC_DATA), Bytes::from(to.0)]
-                        .concat()
-                        .into()
-                }
-            },
+            Transaction::PrivilegedL2Transaction(_tx) => DEPOSIT_MAGIC_DATA.into(),
             _ => tx.data().clone().into(),
         },
         nonce: Some(tx.nonce()),

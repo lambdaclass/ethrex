@@ -18,6 +18,9 @@ use std::{
     str::FromStr,
 };
 
+mod utils;
+use utils::compile_contract;
+
 struct SetupResult {
     deployer_address: Address,
     deployer_private_key: SecretKey,
@@ -43,7 +46,7 @@ pub enum DeployError {
     #[error("Deployer dependency error: {0}")]
     DependencyError(String),
     #[error("Deployer compilation error: {0}")]
-    CompilationError(String),
+    CompilationError(#[from] utils::ContractCompilationError),
     #[error("Deployer EthClient error: {0}")]
     EthClientError(#[from] EthClientError),
     #[error("Deployer decoding error: {0}")]
@@ -252,105 +255,13 @@ fn download_contract_deps(contracts_path: &Path) -> Result<(), DeployError> {
 }
 
 fn compile_contracts(contracts_path: &Path) -> Result<(), DeployError> {
-    // Both the contract path and the output path are relative to where the Makefile is.
-    if !Command::new("solc")
-        .arg("--bin")
-        .arg(
-            contracts_path
-                .join("src/l1/OnChainProposer.sol")
-                .to_str()
-                .ok_or(DeployError::FailedToGetStringFromPath)?,
-        )
-        .arg("-o")
-        .arg(
-            contracts_path
-                .join("solc_out")
-                .to_str()
-                .ok_or(DeployError::FailedToGetStringFromPath)?,
-        )
-        .arg("--overwrite")
-        .arg("--allow-paths")
-        .arg(
-            contracts_path
-                .to_str()
-                .ok_or(DeployError::FailedToGetStringFromPath)?,
-        )
-        .spawn()
-        .map_err(|err| DeployError::CompilationError(format!("Failed to spawn solc: {err}")))?
-        .wait()
-        .map_err(|err| DeployError::CompilationError(format!("Failed to wait for solc: {err}")))?
-        .success()
-    {
-        return Err(DeployError::CompilationError(
-            "Failed to compile OnChainProposer.sol".to_owned(),
-        ));
-    }
-
-    if !Command::new("solc")
-        .arg("--bin")
-        .arg(
-            contracts_path
-                .join("src/l1/CommonBridge.sol")
-                .to_str()
-                .ok_or(DeployError::FailedToGetStringFromPath)?,
-        )
-        .arg("-o")
-        .arg(
-            contracts_path
-                .join("solc_out")
-                .to_str()
-                .ok_or(DeployError::FailedToGetStringFromPath)?,
-        )
-        .arg("--overwrite")
-        .arg("--allow-paths")
-        .arg(
-            contracts_path
-                .to_str()
-                .ok_or(DeployError::FailedToGetStringFromPath)?,
-        )
-        .spawn()
-        .map_err(|err| DeployError::CompilationError(format!("Failed to spawn solc: {err}")))?
-        .wait()
-        .map_err(|err| DeployError::CompilationError(format!("Failed to wait for solc: {err}")))?
-        .success()
-    {
-        return Err(DeployError::CompilationError(
-            "Failed to compile CommonBridge.sol".to_owned(),
-        ));
-    }
-
-    if !Command::new("solc")
-        .arg("--bin")
-        .arg(
-            contracts_path
-                .join("lib/sp1-contracts/contracts/src/v3.0.0/SP1VerifierGroth16.sol")
-                .to_str()
-                .ok_or(DeployError::FailedToGetStringFromPath)?,
-        )
-        .arg("-o")
-        .arg(
-            contracts_path
-                .join("solc_out")
-                .to_str()
-                .ok_or(DeployError::FailedToGetStringFromPath)?,
-        )
-        .arg("--overwrite")
-        .arg("--allow-paths")
-        .arg(
-            contracts_path
-                .to_str()
-                .ok_or(DeployError::FailedToGetStringFromPath)?,
-        )
-        .spawn()
-        .map_err(|err| DeployError::CompilationError(format!("Failed to spawn solc: {err}")))?
-        .wait()
-        .map_err(|err| DeployError::CompilationError(format!("Failed to wait for solc: {err}")))?
-        .success()
-    {
-        return Err(DeployError::CompilationError(
-            "Failed to compile SP1VerifierGroth16.sol".to_owned(),
-        ));
-    }
+    compile_contract(contracts_path, "src/l1/OnChainProposer.sol", false)?;
+    compile_contract(contracts_path, "src/l1/CommonBridge.sol", false)?;
+    compile_contract(
+        contracts_path,
+        "lib/sp1-contracts/contracts/src/v3.0.0/SP1VerifierGroth16.sol",
+        false,
+    )?;
     Ok(())
 }
 

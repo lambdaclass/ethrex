@@ -32,7 +32,7 @@ fn default_datadir() -> Result<PathBuf, SaveStateError> {
 #[inline(always)]
 fn create_datadir(dir_name: &str) -> Result<PathBuf, SaveStateError> {
     let path_buf_data_dir = ProjectDirs::from("", "", dir_name)
-        .ok_or_else(|| SaveStateError::FailedToCrateDataDir)?
+        .ok_or(SaveStateError::FailedToCrateDataDir)?
         .data_local_dir()
         .to_path_buf();
     Ok(path_buf_data_dir)
@@ -49,7 +49,6 @@ fn create_datadir(dir_name: &str) -> Result<PathBuf, SaveStateError> {
 ///     proof_sp1_2.json
 /// All the files are saved at the path defined by [ProjectDirs::data_local_dir]
 /// and the [DEFAULT_DATADIR] when calling [create_datadir]
-
 /// Enum used to differentiate between the possible types of data we can store per block.
 #[derive(Serialize, Deserialize, Debug)]
 pub enum StateType {
