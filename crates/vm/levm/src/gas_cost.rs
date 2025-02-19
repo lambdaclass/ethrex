@@ -658,7 +658,6 @@ pub fn selfdestruct(
             (SELFDESTRUCT_STATIC, dynamic_cost)
         }
     };
-    dbg!(fork, static_cost, dynamic_cost);
     static_cost
         .checked_add(dynamic_cost)
         .ok_or(OutOfGasError::GasCostOverflow)

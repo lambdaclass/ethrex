@@ -333,8 +333,6 @@ pub fn ensure_post_state(
                 fork,
             );
             let revm_account_updates = ethrex_vm::get_state_transitions(revm_state);
-            // dbg!("LEVM", &levm_account_updates);
-            // dbg!("REVM", &revm_account_updates);
             let account_updates_report = compare_levm_revm_account_updates(
                 test,
                 &levm_account_updates,
@@ -353,9 +351,7 @@ pub fn compare_levm_revm_account_updates(
     revm_account_updates: &[AccountUpdate],
 ) -> ComparisonReport {
     let levm_post_state_root = post_state_root(levm_account_updates, test);
-    // dbg!("LEVM", &levm_account_updates);
     let revm_post_state_root = post_state_root(revm_account_updates, test);
-    // dbg!("REVM", &revm_account_updates);
     let mut initial_accounts: HashMap<Address, Account> = test
         .pre
         .0

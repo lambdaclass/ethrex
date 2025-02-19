@@ -385,27 +385,6 @@ pub fn get_state_transitions(
             .get_account_info_by_hash(block_hash, *new_state_account_address)
             .expect("Error getting account info by address")
             .unwrap_or_default();
-        // https://eips.ethereum.org/EIPS/eip-161
-        // No account may change state from non-existent to existent-but-_empty_. If an operation would do this, the account SHALL instead remain non-existent.
-        // if new_state_account.is_empty() && fork < &Fork::SpuriousDragon {
-        //     match current_db.get_account_info_by_hash(block_hash, *new_state_account_address) {
-        //         Ok(Some(info)) => {
-        //             dbg!("entro aca");
-        //             if info.balance.is_zero()
-        //                 && info.nonce == 0
-        //                 && info.code_hash == code_hash(&Bytes::new())
-        //             {
-        //                 continue;
-        //             }
-        //         }
-        //         Ok(None) => {
-        //             continue;
-        //         }
-        //         Err(_) => {
-        //             continue;
-        //         } // _ => (),
-        //     }
-        // }
         let mut updates = 0;
         if initial_account_state.balance != new_state_account.info.balance {
             updates += 1;
@@ -481,10 +460,6 @@ pub fn get_state_transitions(
 
         account_updates.push(account_update);
     }
-    // let temp = H160::from_slice(&hex::decode("c94f5374fce5edbc8e2a8697c15331677e6ebf0b").unwrap());
-    // dbg!(current_db
-    //     .get_account_info_by_hash(block_hash, temp)
-    //     .unwrap());
 
     account_updates
 }
