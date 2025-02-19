@@ -245,17 +245,9 @@ pub struct PrivilegedL2Transaction {
     pub value: U256,
     pub data: Bytes,
     pub access_list: AccessList,
-    pub tx_type: PrivilegedTxType,
     pub signature_y_parity: bool,
     pub signature_r: U256,
     pub signature_s: U256,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Default, Serialize, Deserialize)]
-pub enum PrivilegedTxType {
-    #[default]
-    Deposit = 0x01,
-    Withdrawal = 0x02,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
@@ -433,24 +425,6 @@ impl RLPDecode for TxKind {
     }
 }
 
-impl RLPEncode for PrivilegedTxType {
-    fn encode(&self, buf: &mut dyn bytes::BufMut) {
-        match self {
-            Self::Deposit => buf.put_u8(0x01),
-            Self::Withdrawal => buf.put_u8(0x02),
-        }
-    }
-}
-
-impl RLPDecode for PrivilegedTxType {
-    fn decode_unfinished(rlp: &[u8]) -> Result<(Self, &[u8]), RLPDecodeError> {
-        let decoded = u8::decode_unfinished(rlp)?;
-        let tx_type = PrivilegedTxType::from_u8(decoded.0)
-            .ok_or(RLPDecodeError::Custom("Invalid".to_string()))?;
-        Ok((tx_type, decoded.1))
-    }
-}
-
 impl RLPEncode for LegacyTransaction {
     fn encode(&self, buf: &mut dyn bytes::BufMut) {
         Encoder::new(buf)
@@ -557,7 +531,6 @@ impl RLPEncode for PrivilegedL2Transaction {
             .encode_field(&self.value)
             .encode_field(&self.data)
             .encode_field(&self.access_list)
-            .encode_field(&self.tx_type)
             .encode_field(&self.signature_y_parity)
             .encode_field(&self.signature_r)
             .encode_field(&self.signature_s)
@@ -669,7 +642,6 @@ impl PayloadRLPEncode for PrivilegedL2Transaction {
             .encode_field(&self.value)
             .encode_field(&self.data)
             .encode_field(&self.access_list)
-            .encode_field(&self.tx_type)
             .finish();
     }
 }
@@ -858,7 +830,6 @@ impl RLPDecode for PrivilegedL2Transaction {
         let (value, decoder) = decoder.decode_field("value")?;
         let (data, decoder) = decoder.decode_field("data")?;
         let (access_list, decoder) = decoder.decode_field("access_list")?;
-        let (tx_type, decoder) = decoder.decode_field("tx_type")?;
         let (signature_y_parity, decoder) = decoder.decode_field("signature_y_parity")?;
         let (signature_r, decoder) = decoder.decode_field("signature_r")?;
         let (signature_s, decoder) = decoder.decode_field("signature_s")?;
@@ -873,7 +844,6 @@ impl RLPDecode for PrivilegedL2Transaction {
             value,
             data,
             access_list,
-            tx_type,
             signature_y_parity,
             signature_r,
             signature_s,
@@ -1135,7 +1105,6 @@ impl Transaction {
                     .encode_field(&tx.value)
                     .encode_field(&tx.data)
                     .encode_field(&tx.access_list)
-                    .encode_field(&tx.tx_type)
                     .finish();
                 recover_address(
                     &tx.signature_r,
@@ -1384,65 +1353,26 @@ impl TxType {
     }
 }
 
-impl PrivilegedTxType {
-    pub fn from_u8(value: u8) -> Option<Self> {
-        match value {
-            0x01 => Some(Self::Deposit),
-            0x02 => Some(Self::Withdrawal),
-            _ => None,
-        }
-    }
-}
-
 impl PrivilegedL2Transaction {
-    /// Returns the formated hash of the withdrawal transaction,
-    /// or None if the transaction is not a withdrawal.
-    /// The hash is computed as keccak256(to || value || tx_hash)
-    pub fn get_withdrawal_hash(&self) -> Option<H256> {
-        match self.tx_type {
-            PrivilegedTxType::Withdrawal => {
-                let to = match self.to {
-                    TxKind::Call(to) => to,
-                    _ => return None,
-                };
-
-                let value = self.value.to_big_endian();
-
-                let mut encoded = self.encode_to_vec();
-                encoded.insert(0, TxType::Privileged as u8);
-                let tx_hash = keccak_hash::keccak(encoded);
-                Some(keccak_hash::keccak(
-                    [to.as_bytes(), &value, tx_hash.as_bytes()].concat(),
-                ))
-            }
-            _ => None,
-        }
-    }
-
     /// Returns the formated hash of the deposit transaction,
     /// or None if the transaction is not a deposit.
     /// The hash is computed as keccak256(to || value || deposit_id == nonce)
     pub fn get_deposit_hash(&self) -> Option<H256> {
-        match self.tx_type {
-            PrivilegedTxType::Deposit => {
-                let to = match self.to {
-                    TxKind::Call(to) => to,
-                    _ => return None,
-                };
+        let to = match self.to {
+            TxKind::Call(to) => to,
+            _ => return None,
+        };
 
-                let value = self.value.to_big_endian();
+        let value = self.value.to_big_endian();
 
-                // The nonce should be a U256,
-                // in solidity the depositId is a U256.
-                let u256_nonce = U256::from(self.nonce);
-                let nonce = u256_nonce.to_big_endian();
+        // The nonce should be a U256,
+        // in solidity the depositId is a U256.
+        let u256_nonce = U256::from(self.nonce);
+        let nonce = u256_nonce.to_big_endian();
 
-                Some(keccak_hash::keccak(
-                    [to.as_bytes(), &value, &nonce].concat(),
-                ))
-            }
-            _ => None,
-        }
+        Some(keccak_hash::keccak(
+            [to.as_bytes(), &value, &nonce].concat(),
+        ))
     }
 }
 
@@ -1906,7 +1836,6 @@ mod serde_impl {
                 .serialize_field("v", &format!("{:#x}", self.signature_y_parity as u8))?; // added to match Hive tests
             struct_serializer.serialize_field("r", &self.signature_r)?;
             struct_serializer.serialize_field("s", &self.signature_s)?;
-            struct_serializer.serialize_field("tx_type", &self.tx_type)?;
             struct_serializer.end()
         }
     }
@@ -2215,7 +2144,6 @@ mod serde_impl {
                     != 0,
                 signature_r: deserialize_field::<U256, D>(&mut map, "r")?,
                 signature_s: deserialize_field::<U256, D>(&mut map, "s")?,
-                tx_type: deserialize_field::<PrivilegedTxType, D>(&mut map, "tx_type")?,
             })
         }
     }

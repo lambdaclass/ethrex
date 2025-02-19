@@ -11,8 +11,7 @@ use ethereum_types::{Address, H256, U256};
 use ethrex_common::{
     types::{
         BlobsBundle, EIP1559Transaction, EIP4844Transaction, GenericTransaction,
-        PrivilegedL2Transaction, PrivilegedTxType, Signable, TxKind, TxType,
-        WrappedEIP4844Transaction,
+        PrivilegedL2Transaction, Signable, TxKind, TxType, WrappedEIP4844Transaction,
     },
     H160,
 };
@@ -892,7 +891,6 @@ impl EthClient {
     /// If `overrides.gas_limit` is not provided, the client will estimate the tx cost.
     pub async fn build_privileged_transaction(
         &self,
-        tx_type: PrivilegedTxType,
         to: Address,
         from: Address,
         calldata: Bytes,
@@ -901,7 +899,6 @@ impl EthClient {
     ) -> Result<PrivilegedL2Transaction, EthClientError> {
         let mut get_gas_price = 1;
         let mut tx = PrivilegedL2Transaction {
-            tx_type,
             to: TxKind::Call(to),
             chain_id: if let Some(chain_id) = overrides.chain_id {
                 chain_id

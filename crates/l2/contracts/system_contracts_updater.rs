@@ -8,13 +8,11 @@ use std::str::FromStr;
 use bytes::Bytes;
 use ethrex_common::types::Genesis;
 use ethrex_common::types::GenesisAccount;
-use ethrex_common::H160;
 use ethrex_common::U256;
 use ethrex_l2::utils::config::read_env_file;
+use ethrex_l2_sdk::COMMON_BRIDGE_L2_ADDRESS;
 use utils::compile_contract;
 use utils::ContractCompilationError;
-
-const COMMON_BRIDGE_L2_ADDRESS : &str = "0x000000000000000000000000000000000000FFFF";
 
 fn main() -> Result<(), ContractCompilationError> {
     read_env_file()?;
@@ -34,7 +32,9 @@ fn main() -> Result<(), ContractCompilationError> {
     }
 
     args.next();
-    let genesis_path = args.next().ok_or(ContractCompilationError::FailedToGetStringFromPath)?;
+    let genesis_path = args
+        .next()
+        .ok_or(ContractCompilationError::FailedToGetStringFromPath)?;
 
     let file = std::fs::File::open(&genesis_path)?;
     let reader = std::io::BufReader::new(file);
@@ -43,12 +43,15 @@ fn main() -> Result<(), ContractCompilationError> {
 
     let runtime_code = std::fs::read("contracts/solc_out/CommonBridgeL2.bin-runtime")?;
 
-    genesis.alloc.insert(H160::from_str(COMMON_BRIDGE_L2_ADDRESS).unwrap(), GenesisAccount{
-        code: Bytes::from(hex::decode(runtime_code).unwrap()),
-        storage: HashMap::new(),
-        balance: U256::zero(),
-        nonce: 1,
-    });
+    genesis.alloc.insert(
+        COMMON_BRIDGE_L2_ADDRESS,
+        GenesisAccount {
+            code: Bytes::from(hex::decode(runtime_code).unwrap()),
+            storage: HashMap::new(),
+            balance: U256::zero(),
+            nonce: 1,
+        },
+    );
 
     let modified_genesis = serde_json::to_string(&genesis).unwrap();
     std::fs::write(&genesis_path, modified_genesis).unwrap();

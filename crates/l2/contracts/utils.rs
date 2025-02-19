@@ -11,10 +11,14 @@ pub enum ContractCompilationError {
     #[error("Failed to interact with .env file, error: {0}")]
     EnvFileError(#[from] errors::ConfigError),
     #[error("Could not read file")]
-    FailedToReadFile(#[from] std::io::Error)
+    FailedToReadFile(#[from] std::io::Error),
 }
 
-pub fn compile_contract(general_contracts_path: &Path, contract_path: &str, runtime_bin: bool) -> Result<(), ContractCompilationError> {
+pub fn compile_contract(
+    general_contracts_path: &Path,
+    contract_path: &str,
+    runtime_bin: bool,
+) -> Result<(), ContractCompilationError> {
     let bin_flag = if runtime_bin {
         "--bin-runtime"
     } else {
@@ -45,9 +49,13 @@ pub fn compile_contract(general_contracts_path: &Path, contract_path: &str, runt
                 .ok_or(ContractCompilationError::FailedToGetStringFromPath)?,
         )
         .spawn()
-        .map_err(|err| ContractCompilationError::CompilationError(format!("Failed to spawn solc: {err}")))?
+        .map_err(|err| {
+            ContractCompilationError::CompilationError(format!("Failed to spawn solc: {err}"))
+        })?
         .wait()
-        .map_err(|err| ContractCompilationError::CompilationError(format!("Failed to wait for solc: {err}")))?
+        .map_err(|err| {
+            ContractCompilationError::CompilationError(format!("Failed to wait for solc: {err}"))
+        })?
         .success()
     {
         return Err(ContractCompilationError::CompilationError(

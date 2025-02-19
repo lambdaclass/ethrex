@@ -2,10 +2,11 @@ use crate::config::EthrexL2Config;
 use bytes::Bytes;
 use clap::Subcommand;
 use ethereum_types::{Address, H256, U256};
-use ethrex_common::types::{PrivilegedTxType, Transaction};
+use ethrex_common::types::Transaction;
 use ethrex_l2_sdk::calldata::{encode_calldata, Value};
 use ethrex_l2_sdk::eth_client::{eth_sender::Overrides, EthClient};
 use ethrex_l2_sdk::merkle_tree::merkle_proof;
+use ethrex_l2_sdk::{get_withdrawal_hash, COMMON_BRIDGE_L2_ADDRESS, L2_WITHDRAW_SIGNATURE};
 use ethrex_rpc::types::block::BlockBodyWrapper;
 use eyre::OptionExt;
 use hex::FromHexError;
@@ -223,26 +224,14 @@ async fn get_withdraw_merkle_proof(
 
     let (index, tx_withdrawal_hash) = transactions
         .iter()
-        .filter(|tx| match &tx.tx {
-            Transaction::PrivilegedL2Transaction(tx) => tx.tx_type == PrivilegedTxType::Withdrawal,
-            _ => false,
-        })
         .find_position(|tx| tx.hash == tx_hash)
-        .map(|(i, tx)| match &tx.tx {
-            Transaction::PrivilegedL2Transaction(tx) => {
-                (i as u64, tx.get_withdrawal_hash().unwrap())
-            }
-            _ => unreachable!(),
-        })
+        .map(|(i, tx)| (i as u64, get_withdrawal_hash(&tx.tx).unwrap()))
         .ok_or_eyre("Transaction is not a Withdrawal")?;
 
     let path = merkle_proof(
         transactions
             .iter()
-            .filter_map(|tx| match &tx.tx {
-                Transaction::PrivilegedL2Transaction(tx) => tx.get_withdrawal_hash(),
-                _ => None,
-            })
+            .filter_map(|tx| get_withdrawal_hash(&tx.tx))
             .collect(),
         tx_withdrawal_hash,
     )
@@ -441,10 +430,12 @@ impl Command {
             } => {
                 let withdraw_transaction = rollup_client
                     .build_privileged_transaction(
-                        PrivilegedTxType::Withdrawal,
                         to.unwrap_or(cfg.wallet.address),
-                        to.unwrap_or(cfg.wallet.address),
-                        Bytes::new(),
+                        COMMON_BRIDGE_L2_ADDRESS,
+                        Bytes::from(encode_calldata(
+                            L2_WITHDRAW_SIGNATURE,
+                            &[Value::Address(from)],
+                        )?),
                         Overrides {
                             nonce,
                             from: Some(cfg.wallet.address),
