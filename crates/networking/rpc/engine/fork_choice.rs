@@ -124,9 +124,16 @@ impl RpcHandler for ForkChoiceUpdatedV3 {
 
         let request = Self::parse(&req.params)?;
 
-        let gateway_response = context
-            .gateway_auth_client
-            .engine_forkchoice_updated_v3(request.fork_choice_state, request.payload_attributes)
+        let gateway_auth_client = context.gateway_auth_client.clone();
+
+        let gateway_request = gateway_auth_client
+            .engine_forkchoice_updated_v3(request.fork_choice_state, request.payload_attributes);
+
+        // Parse it again as it was consumed for gateway_response and it is the same as cloning it.
+        let request = Self::parse(&req.params)?;
+        let client_response = request.handle(context);
+
+        let gateway_response = gateway_request
             .await
             .map_err(|err| {
                 RpcErr::Internal(format!(
@@ -142,10 +149,6 @@ impl RpcHandler for ForkChoiceUpdatedV3 {
         } else {
             info!("Successfully relayed engine_forkchoiceUpdatedV3 to gateway");
         }
-
-        // Parse it again as it was consumed for gateway_response and it is the same as cloning it.
-        let request = Self::parse(&req.params)?;
-        let client_response = request.handle(context);
 
         gateway_response.or(client_response)
     }

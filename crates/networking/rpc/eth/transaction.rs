@@ -585,9 +585,16 @@ impl RpcHandler for SendRawTransactionRequest {
         use tracing::warn;
 
         info!("Relaying eth_sendRawTransaction to gateway");
-        let gateway_response = context
-            .gateway_eth_client
-            .send_raw_transaction(&get_transaction_data(&req.params)?)
+
+        let gateway_eth_client = context.gateway_eth_client.clone();
+
+        let tx_data = get_transaction_data(&req.params)?;
+
+        let gateway_request = gateway_eth_client.send_raw_transaction(&tx_data);
+
+        let client_response = Self::call(req, context);
+
+        let gateway_response = gateway_request
             .await
             .map_err(|err| {
                 RpcErr::Internal(format!(
@@ -604,8 +611,6 @@ impl RpcHandler for SendRawTransactionRequest {
         } else {
             info!("Successfully relayed eth_sendRawTransaction to gateway");
         }
-
-        let client_response = Self::call(req, context);
 
         gateway_response.or(client_response)
     }

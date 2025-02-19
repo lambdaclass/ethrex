@@ -106,13 +106,17 @@ impl RpcHandler for NewPayloadV3Request {
 
         let request = Self::parse(&req.params)?;
 
-        let gateway_response = context
-            .gateway_auth_client
-            .engine_new_payload_v3(
-                request.payload,
-                request.expected_blob_versioned_hashes,
-                request.parent_beacon_block_root,
-            )
+        let gateway_auth_client = context.gateway_auth_client.clone();
+
+        let gateway_request = gateway_auth_client.engine_new_payload_v3(
+            request.payload,
+            request.expected_blob_versioned_hashes,
+            request.parent_beacon_block_root,
+        );
+
+        let client_response = Self::call(req, context);
+
+        let gateway_response = gateway_request
             .await
             .map_err(|err| {
                 RpcErr::Internal(format!(
@@ -128,8 +132,6 @@ impl RpcHandler for NewPayloadV3Request {
         } else {
             info!("Successfully relayed engine_newPayloadV3 to gateway");
         }
-
-        let client_response = Self::call(req, context);
 
         gateway_response.or(client_response)
     }
@@ -240,9 +242,13 @@ impl RpcHandler for GetPayloadV3Request {
 
         let request = Self::parse(&req.params)?;
 
-        let gateway_response = context
-            .gateway_auth_client
-            .engine_get_payload_v3(request.payload_id)
+        let gateway_auth_client = context.gateway_auth_client.clone();
+
+        let gateway_request = gateway_auth_client.engine_get_payload_v3(request.payload_id);
+
+        let client_response = Self::call(req, context);
+
+        let gateway_response = gateway_request
             .await
             .map_err(|err| {
                 RpcErr::Internal(format!(
@@ -258,8 +264,6 @@ impl RpcHandler for GetPayloadV3Request {
         } else {
             info!("Successfully relayed engine_getPayloadV3 to gateway");
         }
-
-        let client_response = Self::call(req, context);
 
         gateway_response.or(client_response)
     }
