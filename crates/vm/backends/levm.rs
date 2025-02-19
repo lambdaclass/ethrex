@@ -393,7 +393,9 @@ pub fn generic_system_contract_levm(
     )
     .map_err(EvmError::from)?;
 
-    let report = vm.execute().map_err(EvmError::from)?;
+    let mut report = vm.execute().map_err(EvmError::from)?;
+
+    report.new_state.remove(&system_address);
 
     // new_state is a CacheDB coming from outside the function
     new_state.extend(report.new_state);
