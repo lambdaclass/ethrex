@@ -1,5 +1,10 @@
-use super::constants::{BEACON_ROOTS_ADDRESS, HISTORY_STORAGE_ADDRESS, SYSTEM_ADDRESS};
+use super::constants::{
+    BEACON_ROOTS_ADDRESS, CONSOLIDATION_REQUEST_PREDEPLOY_ADDRESS, HISTORY_STORAGE_ADDRESS,
+    SYSTEM_ADDRESS, WITHDRAWAL_REQUEST_PREDEPLOY_ADDRESS,
+};
+use super::BlockExecutionResult;
 use crate::backends::get_state_transitions;
+
 use crate::spec_id;
 use crate::EvmError;
 use crate::EvmState;
@@ -15,14 +20,15 @@ use revm_inspectors::access_list::AccessListInspector;
 // Rename imported types for clarity
 use ethrex_common::{
     types::{
-        Block, BlockHeader, GenericTransaction, PrivilegedTxType, Receipt, Transaction, TxKind,
+        requests::Requests, Block, BlockHeader, GenericTransaction, Receipt, Transaction, TxKind,
         Withdrawal, GWEI_TO_WEI, INITIAL_BASE_FEE,
     },
     Address,
 };
+use revm_primitives::Bytes;
 use revm_primitives::{
     ruint::Uint, AccessList as RevmAccessList, AccessListItem, Address as RevmAddress,
-    Authorization as RevmAuthorization, Bytes, FixedBytes, SignedAuthorization, SpecId,
+    Authorization as RevmAuthorization, FixedBytes, SignedAuthorization, SpecId,
     TxKind as RevmTxKind, U256 as RevmU256,
 };
 use std::cmp::min;
@@ -42,7 +48,7 @@ impl REVM {
     pub fn execute_block(
         block: &Block,
         state: &mut EvmState,
-    ) -> Result<(Vec<Receipt>, Vec<AccountUpdate>), EvmError> {
+    ) -> Result<BlockExecutionResult, EvmError> {
         let block_header = &block.header;
         let spec_id: SpecId = spec_id(&state.chain_config()?, block_header.timestamp);
         cfg_if::cfg_if! {
@@ -76,9 +82,21 @@ impl REVM {
             Self::process_withdrawals(state, withdrawals)?;
         }
 
+        cfg_if::cfg_if! {
+            if #[cfg(not(feature = "l2"))] {
+                let requests = extract_all_requests(&receipts, state, block_header)?;
+            } else {
+                let requests = Default::default();
+            }
+        }
+
         let account_updates = get_state_transitions(state);
 
-        Ok((receipts, account_updates))
+        Ok(BlockExecutionResult {
+            receipts,
+            requests,
+            account_updates,
+        })
     }
 
     pub fn execute_tx(
@@ -145,7 +163,8 @@ impl REVM {
             state,
             *BEACON_ROOTS_ADDRESS,
             *SYSTEM_ADDRESS,
-        )
+        )?;
+        Ok(())
     }
     pub fn process_block_hash_history(
         block_header: &BlockHeader,
@@ -157,12 +176,51 @@ impl REVM {
             state,
             *HISTORY_STORAGE_ADDRESS,
             *SYSTEM_ADDRESS,
+        )?;
+        Ok(())
+    }
+    pub(crate) fn read_withdrawal_requests(
+        block_header: &BlockHeader,
+        state: &mut EvmState,
+    ) -> Option<Vec<u8>> {
+        let tx_result = generic_system_contract_revm(
+            block_header,
+            Bytes::new(),
+            state,
+            *WITHDRAWAL_REQUEST_PREDEPLOY_ADDRESS,
+            *SYSTEM_ADDRESS,
         )
+        .unwrap(); //handle
+
+        if tx_result.is_success() {
+            Some(tx_result.output().into())
+        } else {
+            None
+        }
+    }
+    pub(crate) fn dequeue_consolidation_requests(
+        block_header: &BlockHeader,
+        state: &mut EvmState,
+    ) -> Option<Vec<u8>> {
+        let tx_result = generic_system_contract_revm(
+            block_header,
+            Bytes::new(),
+            state,
+            *CONSOLIDATION_REQUEST_PREDEPLOY_ADDRESS,
+            *SYSTEM_ADDRESS,
+        )
+        .unwrap(); //handle
+
+        if tx_result.is_success() {
+            Some(tx_result.output().into())
+        } else {
+            None
+        }
     }
 }
 
 /// Runs the transaction and returns the result, but does not commit it.
-pub(crate) fn run_without_commit(
+pub fn run_without_commit(
     tx_env: TxEnv,
     mut block_env: BlockEnv,
     state: &mut EvmState,
@@ -224,7 +282,6 @@ fn run_evm(
                     let mut evm_handler = Handler::new(HandlerCfg::new(SpecId::LATEST));
                     evm_handler.pre_execution.deduct_caller = Arc::new(mods::deduct_caller::<CancunSpec, _, _>);
                     evm_handler.validation.tx_against_state = Arc::new(mods::validate_tx_against_state::<CancunSpec, _, _>);
-                    evm_handler.execution.last_frame_return = Arc::new(mods::last_frame_return::<CancunSpec, _, _>);
                     // TODO: Override `end` function. We should deposit even if we revert.
                     // evm_handler.pre_execution.end
                     evm_handler
@@ -246,6 +303,36 @@ fn run_evm(
     Ok(tx_result.into())
 }
 
+/// Processes a block's withdrawals, updating the account balances in the state
+pub fn process_withdrawals(
+    state: &mut EvmState,
+    withdrawals: &[Withdrawal],
+) -> Result<(), StoreError> {
+    match state {
+        EvmState::Store(db) => {
+            //balance_increments is a vector of tuples (Address, increment as u128)
+            let balance_increments = withdrawals
+                .iter()
+                .filter(|withdrawal| withdrawal.amount > 0)
+                .map(|withdrawal| {
+                    (
+                        RevmAddress::from_slice(withdrawal.address.as_bytes()),
+                        (withdrawal.amount as u128 * GWEI_TO_WEI as u128),
+                    )
+                })
+                .collect::<Vec<_>>();
+
+            db.increment_balances(balance_increments)?;
+        }
+        EvmState::Execution(_) => {
+            // TODO: We should check withdrawals are valid
+            // (by checking that accounts exist if this is the only error) but there's no state to
+            // change.
+        }
+    }
+    Ok(())
+}
+
 pub fn block_env(header: &BlockHeader, spec_id: SpecId) -> BlockEnv {
     BlockEnv {
         number: RevmU256::from(header.number),
@@ -263,7 +350,6 @@ pub fn block_env(header: &BlockHeader, spec_id: SpecId) -> BlockEnv {
 }
 
 // Used for the L2
-pub const WITHDRAWAL_MAGIC_DATA: &[u8] = b"burn";
 pub const DEPOSIT_MAGIC_DATA: &[u8] = b"mint";
 pub fn tx_env(tx: &Transaction) -> TxEnv {
     let max_fee_per_blob_gas = tx
@@ -271,38 +357,18 @@ pub fn tx_env(tx: &Transaction) -> TxEnv {
         .map(|x| RevmU256::from_be_bytes(x.to_big_endian()));
     TxEnv {
         caller: match tx {
-            Transaction::PrivilegedL2Transaction(tx) if tx.tx_type == PrivilegedTxType::Deposit => {
-                RevmAddress::ZERO
-            }
+            Transaction::PrivilegedL2Transaction(_tx) => RevmAddress::ZERO,
             _ => RevmAddress(tx.sender().0.into()),
         },
         gas_limit: tx.gas_limit(),
         gas_price: RevmU256::from(tx.gas_price()),
-        transact_to: match tx {
-            Transaction::PrivilegedL2Transaction(tx)
-                if tx.tx_type == PrivilegedTxType::Withdrawal =>
-            {
-                RevmTxKind::Call(RevmAddress::ZERO)
-            }
-            _ => match tx.to() {
-                TxKind::Call(address) => RevmTxKind::Call(address.0.into()),
-                TxKind::Create => RevmTxKind::Create,
-            },
+        transact_to: match tx.to() {
+            TxKind::Call(address) => RevmTxKind::Call(address.0.into()),
+            TxKind::Create => RevmTxKind::Create,
         },
         value: RevmU256::from_limbs(tx.value().0),
         data: match tx {
-            Transaction::PrivilegedL2Transaction(tx) => match tx.tx_type {
-                PrivilegedTxType::Deposit => DEPOSIT_MAGIC_DATA.into(),
-                PrivilegedTxType::Withdrawal => {
-                    let to = match tx.to {
-                        TxKind::Call(to) => to,
-                        _ => Address::zero(),
-                    };
-                    [Bytes::from(WITHDRAWAL_MAGIC_DATA), Bytes::from(to.0)]
-                        .concat()
-                        .into()
-                }
-            },
+            Transaction::PrivilegedL2Transaction(_tx) => DEPOSIT_MAGIC_DATA.into(),
             _ => tx.data().clone().into(),
         },
         nonce: Some(tx.nonce()),
@@ -466,7 +532,7 @@ pub(crate) fn generic_system_contract_revm(
     state: &mut EvmState,
     contract_address: Address,
     system_address: Address,
-) -> Result<(), EvmError> {
+) -> Result<ExecutionResult, EvmError> {
     let spec_id = spec_id(&state.chain_config()?, block_header.timestamp);
     let tx_env = TxEnv {
         caller: RevmAddress::from_slice(system_address.as_bytes()),
@@ -495,7 +561,7 @@ pub(crate) fn generic_system_contract_revm(
 
             evm.context.evm.db.commit(result_state);
 
-            Ok(())
+            Ok(transaction_result.result.into())
         }
         EvmState::Execution(db) => {
             let mut evm = Evm::builder()
@@ -506,8 +572,42 @@ pub(crate) fn generic_system_contract_revm(
                 .build();
 
             // Not necessary to commit to DB
-            let _transaction_result = evm.transact()?;
-            Ok(())
+            let transaction_result = evm.transact()?;
+            Ok(transaction_result.result.into())
         }
     }
+}
+
+#[allow(unreachable_code)]
+#[allow(unused_variables)]
+pub fn extract_all_requests(
+    receipts: &[Receipt],
+    state: &mut EvmState,
+    header: &BlockHeader,
+) -> Result<Vec<Requests>, EvmError> {
+    let config = state.chain_config()?;
+    let spec_id = spec_id(&config, header.timestamp);
+
+    if spec_id < SpecId::PRAGUE {
+        return Ok(Default::default());
+    }
+
+    cfg_if::cfg_if! {
+        if #[cfg(feature = "l2")] {
+            return Ok(Default::default());
+        }
+    }
+
+    let deposit_contract_address = config.deposit_contract_address.ok_or(EvmError::Custom(
+        "deposit_contract_address config is missing".to_string(),
+    ))?;
+
+    let deposits = Requests::from_deposit_receipts(deposit_contract_address, receipts);
+    let withdrawals_data = REVM::read_withdrawal_requests(header, state);
+    let consolidation_data = REVM::dequeue_consolidation_requests(header, state);
+
+    let withdrawals = Requests::from_withdrawals_data(withdrawals_data.unwrap_or_default());
+    let consolidation = Requests::from_consolidation_data(consolidation_data.unwrap_or_default());
+
+    Ok(vec![deposits, withdrawals, consolidation])
 }

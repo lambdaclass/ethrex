@@ -6,10 +6,11 @@ use std::{
 use ethrex_common::{
     constants::GAS_PER_BLOB,
     types::{
-        calculate_base_fee_per_blob_gas, calculate_base_fee_per_gas, calculate_requests_hash,
-        compute_receipts_root, compute_transactions_root, compute_withdrawals_root, BlobsBundle,
-        Block, BlockBody, BlockHash, BlockHeader, BlockNumber, ChainConfig, MempoolTransaction,
-        Receipt, Transaction, Withdrawal, DEFAULT_OMMERS_HASH, DEFAULT_REQUESTS_HASH,
+        calculate_base_fee_per_blob_gas, calculate_base_fee_per_gas, compute_receipts_root,
+        compute_requests_hash, compute_transactions_root, compute_withdrawals_root,
+        requests::Requests, BlobsBundle, Block, BlockBody, BlockHash, BlockHeader, BlockNumber,
+        ChainConfig, MempoolTransaction, Receipt, Transaction, Withdrawal, DEFAULT_OMMERS_HASH,
+        DEFAULT_REQUESTS_HASH,
     },
     Address, Bloom, Bytes, H256, U256,
 };
@@ -176,6 +177,7 @@ pub struct PayloadBuildContext<'a> {
     pub block_cache: CacheDB,
     pub remaining_gas: u64,
     pub receipts: Vec<Receipt>,
+    pub requests: Vec<Requests>,
     pub block_value: U256,
     base_fee_per_blob_gas: U256,
     pub blobs_bundle: BlobsBundle,
@@ -195,6 +197,7 @@ impl<'a> PayloadBuildContext<'a> {
         Ok(PayloadBuildContext {
             remaining_gas: payload.header.gas_limit,
             receipts: vec![],
+            requests: vec![],
             block_value: U256::zero(),
             base_fee_per_blob_gas: U256::from(base_fee_per_blob_gas),
             payload,
@@ -238,6 +241,7 @@ pub fn build_payload(
     apply_system_operations(&mut context)?;
     apply_withdrawals(&mut context)?;
     fill_transactions(&mut context)?;
+    extract_requests(&mut context)?;
     finalize_payload(&mut context)?;
     Ok((context.blobs_bundle, context.block_value))
 }
@@ -486,6 +490,18 @@ fn apply_plain_transaction(
     Ok(report)
 }
 
+pub fn extract_requests(context: &mut PayloadBuildContext) -> Result<(), EvmError> {
+    let requests = get_evm_backend_or_default().extract_requests(
+        &context.receipts,
+        context.evm_state,
+        &context.payload.header,
+        &mut context.block_cache,
+    );
+    context.requests = requests?;
+
+    Ok(())
+}
+
 fn finalize_payload(context: &mut PayloadBuildContext) -> Result<(), ChainError> {
     let account_updates = get_evm_backend_or_default().get_state_transitions(
         context.evm_state,
@@ -504,7 +520,7 @@ fn finalize_payload(context: &mut PayloadBuildContext) -> Result<(), ChainError>
     context.payload.header.requests_hash = context
         .chain_config()?
         .is_prague_activated(context.payload.header.timestamp)
-        .then_some(calculate_requests_hash(&context.receipts));
+        .then_some(compute_requests_hash(&context.requests));
     context.payload.header.gas_used = context.payload.header.gas_limit - context.remaining_gas;
     Ok(())
 }

@@ -185,9 +185,8 @@ impl ExecutionDB {
 
         let mut state = evm_state(store.clone(), block.header.parent_hash);
 
-        let (_, account_updates) =
-            backends::revm_b::REVM::execute_block(block, &mut state).map_err(Box::new)?;
-        Ok(account_updates)
+        let result = backends::revm_b::REVM::execute_block(block, &mut state).map_err(Box::new)?;
+        Ok(result.account_updates)
     }
 
     pub fn get_chain_config(&self) -> ChainConfig {

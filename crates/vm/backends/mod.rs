@@ -3,6 +3,7 @@ pub mod levm;
 pub mod revm_b;
 
 use crate::{db::StoreWrapper, errors::EvmError, spec_id, EvmState, SpecId};
+use ethrex_common::types::requests::Requests;
 use ethrex_common::types::{
     Block, BlockHeader, ChainConfig, Fork, Receipt, Transaction, Withdrawal,
 };
@@ -36,14 +37,20 @@ impl FromStr for EVM {
     }
 }
 
+pub struct BlockExecutionResult {
+    pub receipts: Vec<Receipt>,
+    pub requests: Vec<Requests>,
+    pub account_updates: Vec<AccountUpdate>,
+}
+
 impl EVM {
     /// Wraps [REVM::execute_block] and [LEVM::execute_block].
-    /// The output is `(Vec<Receipt>, Vec<AccountUpdate>)`.
+    /// The output is [BlockExecutionResult].
     pub fn execute_block(
         &self,
         block: &Block,
         state: &mut EvmState,
-    ) -> Result<(Vec<Receipt>, Vec<AccountUpdate>), EvmError> {
+    ) -> Result<BlockExecutionResult, EvmError> {
         match self {
             EVM::REVM => REVM::execute_block(block, state),
             EVM::LEVM => LEVM::execute_block(block, state),
@@ -210,6 +217,19 @@ impl EVM {
                 block_cache.extend(new_state);
                 Ok(())
             }
+        }
+    }
+
+    pub fn extract_requests(
+        &self,
+        receipts: &[Receipt],
+        state: &mut EvmState,
+        header: &BlockHeader,
+        cache: &mut CacheDB,
+    ) -> Result<Vec<Requests>, EvmError> {
+        match self {
+            EVM::LEVM => levm::extract_all_requests_levm(receipts, state, header, cache),
+            EVM::REVM => revm_b::extract_all_requests(receipts, state, header),
         }
     }
 }

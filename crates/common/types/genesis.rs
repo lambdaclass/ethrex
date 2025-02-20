@@ -13,7 +13,7 @@ use super::{
 };
 
 #[allow(unused)]
-#[derive(Debug, Deserialize, Clone, Default)]
+#[derive(Debug, Deserialize, Serialize, Clone, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct Genesis {
     /// Chain configuration
@@ -32,6 +32,7 @@ pub struct Genesis {
     #[serde(alias = "mixHash", alias = "mixhash")]
     pub mix_hash: H256,
     #[serde(deserialize_with = "crate::serde_utils::u64::deser_hex_or_dec_str")]
+    #[serde(serialize_with = "crate::serde_utils::u256::serialize_number")]
     pub timestamp: u64,
     #[serde(default, with = "crate::serde_utils::u64::hex_str_opt")]
     pub base_fee_per_gas: Option<u64>,
@@ -132,6 +133,8 @@ pub struct ChainConfig {
     pub terminal_total_difficulty_passed: bool,
     #[serde(default)]
     pub blob_schedule: BlobSchedule,
+    // Deposits system contract address
+    pub deposit_contract_address: Option<Address>,
 }
 
 #[repr(u8)]
@@ -288,7 +291,7 @@ impl ChainConfig {
 }
 
 #[allow(unused)]
-#[derive(Clone, Debug, Deserialize, PartialEq)]
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
 pub struct GenesisAccount {
     #[serde(default, with = "crate::serde_utils::bytes")]
     pub code: Bytes,
@@ -559,7 +562,7 @@ mod tests {
     #[test]
     fn deserialize_chain_config_blob_schedule() {
         let json = r#"
-            
+
             {
                 "chainId": 123,
                 "blobSchedule": {

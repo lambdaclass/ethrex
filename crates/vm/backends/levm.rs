@@ -1,9 +1,14 @@
-use super::constants::{BEACON_ROOTS_ADDRESS, HISTORY_STORAGE_ADDRESS, SYSTEM_ADDRESS};
+use super::constants::{
+    BEACON_ROOTS_ADDRESS, CONSOLIDATION_REQUEST_PREDEPLOY_ADDRESS, HISTORY_STORAGE_ADDRESS,
+    SYSTEM_ADDRESS, WITHDRAWAL_REQUEST_PREDEPLOY_ADDRESS,
+};
+use super::BlockExecutionResult;
 use crate::backends::get_state_transitions;
+
 use crate::db::StoreWrapper;
 use crate::EvmError;
 use crate::EvmState;
-#[cfg(not(feature = "l2"))]
+use ethrex_common::types::requests::Requests;
 use ethrex_common::types::Fork;
 use ethrex_common::{
     types::{
@@ -24,7 +29,6 @@ use std::{collections::HashMap, sync::Arc};
 
 // Export needed types
 pub use ethrex_levm::db::CacheDB;
-
 /// The struct implements the following functions:
 /// [LEVM::execute_block]
 /// [LEVM::execute_tx]
@@ -37,7 +41,7 @@ impl LEVM {
     pub fn execute_block(
         block: &Block,
         state: &mut EvmState,
-    ) -> Result<(Vec<Receipt>, Vec<AccountUpdate>), EvmError> {
+    ) -> Result<BlockExecutionResult, EvmError> {
         let store_wrapper = Arc::new(StoreWrapper {
             store: state.database().unwrap().clone(),
             block_hash: block.header.parent_hash,
@@ -120,13 +124,20 @@ impl LEVM {
             }
         }
 
+        let requests =
+            extract_all_requests_levm(&receipts, state, &block.header, &mut block_cache)?;
+
         account_updates.extend(Self::get_state_transitions(
             state,
             block.header.parent_hash,
             &block_cache,
         ));
 
-        Ok((receipts, account_updates))
+        Ok(BlockExecutionResult {
+            receipts,
+            requests,
+            account_updates,
+        })
     }
 
     pub fn execute_tx(
@@ -328,9 +339,9 @@ impl LEVM {
             new_state,
             *BEACON_ROOTS_ADDRESS,
             *SYSTEM_ADDRESS,
-        )
+        )?;
+        Ok(())
     }
-
     /// `new_state` is being modified inside [generic_system_contract_levm].
     pub fn process_block_hash_history(
         block_header: &BlockHeader,
@@ -344,7 +355,48 @@ impl LEVM {
             new_state,
             *HISTORY_STORAGE_ADDRESS,
             *SYSTEM_ADDRESS,
+        )?;
+        Ok(())
+    }
+    pub(crate) fn read_withdrawal_requests(
+        block_header: &BlockHeader,
+        state: &mut EvmState,
+        new_state: &mut CacheDB,
+    ) -> Option<ExecutionReport> {
+        let report = generic_system_contract_levm(
+            block_header,
+            Bytes::new(),
+            state,
+            new_state,
+            *WITHDRAWAL_REQUEST_PREDEPLOY_ADDRESS,
+            *SYSTEM_ADDRESS,
         )
+        .ok()?;
+
+        match report.result {
+            TxResult::Success => Some(report),
+            _ => None,
+        }
+    }
+    pub(crate) fn dequeue_consolidation_requests(
+        block_header: &BlockHeader,
+        state: &mut EvmState,
+        new_state: &mut CacheDB,
+    ) -> Option<ExecutionReport> {
+        let report = generic_system_contract_levm(
+            block_header,
+            Bytes::new(),
+            state,
+            new_state,
+            *CONSOLIDATION_REQUEST_PREDEPLOY_ADDRESS,
+            *SYSTEM_ADDRESS,
+        )
+        .ok()?;
+
+        match report.result {
+            TxResult::Success => Some(report),
+            _ => None,
+        }
     }
 }
 
@@ -356,7 +408,7 @@ pub fn generic_system_contract_levm(
     new_state: &mut CacheDB,
     contract_address: Address,
     system_address: Address,
-) -> Result<(), EvmError> {
+) -> Result<ExecutionReport, EvmError> {
     let store_wrapper = Arc::new(StoreWrapper {
         store: state.database().unwrap().clone(),
         block_hash: block_header.parent_hash,
@@ -397,8 +449,68 @@ pub fn generic_system_contract_levm(
 
     report.new_state.remove(&system_address);
 
-    // new_state is a CacheDB coming from outside the function
-    new_state.extend(report.new_state);
+    match report.result {
+        TxResult::Success => {
+            new_state.extend(report.new_state.clone());
+        }
+        _ => {
+            return Err(EvmError::Custom(
+                "ERROR in generic_system_contract_levm(). TX didn't succeed.".to_owned(),
+            ))
+        }
+    }
 
-    Ok(())
+    // new_state is a CacheDB coming from outside the function
+    new_state.extend(report.new_state.clone());
+
+    Ok(report)
+}
+
+#[allow(unreachable_code)]
+#[allow(unused_variables)]
+pub fn extract_all_requests_levm(
+    receipts: &[Receipt],
+    state: &mut EvmState,
+    header: &BlockHeader,
+    cache: &mut CacheDB,
+) -> Result<Vec<Requests>, EvmError> {
+    let config = state.chain_config()?;
+    let fork = config.fork(header.timestamp);
+
+    if fork < Fork::Prague {
+        return Ok(Default::default());
+    }
+
+    cfg_if::cfg_if! {
+        if #[cfg(feature = "l2")] {
+            return Ok(Default::default());
+        }
+    }
+
+    let deposit_contract_address = config.deposit_contract_address.ok_or(EvmError::Custom(
+        "deposit_contract_address config is missing".to_string(),
+    ))?;
+
+    let withdrawals_data: Vec<u8> = match LEVM::read_withdrawal_requests(header, state, cache) {
+        Some(report) => {
+            // the cache is updated inside the generic_system_call
+            report.output.into()
+        }
+        None => Default::default(),
+    };
+
+    let consolidation_data: Vec<u8> =
+        match LEVM::dequeue_consolidation_requests(header, state, cache) {
+            Some(report) => {
+                // the cache is updated inside the generic_system_call
+                report.output.into()
+            }
+            None => Default::default(),
+        };
+
+    let deposits = Requests::from_deposit_receipts(deposit_contract_address, receipts);
+    let withdrawals = Requests::from_withdrawals_data(withdrawals_data);
+    let consolidation = Requests::from_consolidation_data(consolidation_data);
+
+    Ok(vec![deposits, withdrawals, consolidation])
 }

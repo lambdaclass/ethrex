@@ -33,4 +33,21 @@ datatest_stable::harness!(
     parse_and_execute,
     "vectors/prague/eip6110_deposits/deposits",
     r".*/.*\.json",
+    parse_and_execute,
+    "vectors/prague/eip7002_el_triggerable_withdrawals",
+    r".*/.*\.json",
+    parse_and_execute,
+    "vectors/prague/eip7251_consolidations",
+    r".*/.*\.json",
+    // TODO: enable these tests once the evm is updated.
+    // parse_and_execute,
+    // "vectors/prague/eip2537_bls_12_381_precompiles",
+    // r".*/.*\.json",
+    // TODO: enable these tests once the evm is updated.
+    // parse_and_execute,
+    // "vectors/prague/eip7623_increase_calldata_cost",
+    // r".*/.*\.json",
+    parse_and_execute,
+    "vectors/prague/eip7685_general_purpose_el_requests",
+    r".*/.*\.json",
 );
