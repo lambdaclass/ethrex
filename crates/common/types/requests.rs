@@ -7,14 +7,12 @@ pub type Bytes32 = [u8; 32];
 pub type Bytes96 = [u8; 96];
 const DEPOSIT_TYPE: u8 = 0x00;
 const WITHDRAWAL_TYPE: u8 = 0x01;
-
-lazy_static::lazy_static! {
-    pub static ref DEPOSIT_CONTRACT_ADDRESS: Address = Address::from_slice(&hex::decode("00000000219ab540356cbb839cbe05303d7705fa").unwrap());
-}
+const CONSOLIDATION_TYPE: u8 = 0x02;
 
 pub enum Requests {
     Deposit(Vec<Deposit>),
-    Withdrawal,
+    Withdrawal(Vec<u8>),
+    Consolidation(Vec<u8>),
 }
 
 impl Requests {
@@ -24,18 +22,23 @@ impl Requests {
                 let deposit_data = deposits.iter().flat_map(|d| d.to_summarized_byte_array());
                 std::iter::once(DEPOSIT_TYPE).chain(deposit_data).collect()
             }
-            Requests::Withdrawal => {
-                // TODO: implement the withdrawal type
-                vec![WITHDRAWAL_TYPE]
-            }
+            Requests::Withdrawal(data) => std::iter::once(WITHDRAWAL_TYPE)
+                .chain(data.iter().cloned())
+                .collect(),
+            Requests::Consolidation(data) => std::iter::once(CONSOLIDATION_TYPE)
+                .chain(data.iter().cloned())
+                .collect(),
         }
     }
-    pub fn from_deposit_receipts(receipts: &[Receipt]) -> Requests {
+    pub fn from_deposit_receipts(
+        deposit_contract_address: Address,
+        receipts: &[Receipt],
+    ) -> Requests {
         let mut deposits = vec![];
 
         for r in receipts {
             for log in &r.logs {
-                if log.address == *DEPOSIT_CONTRACT_ADDRESS {
+                if log.address == deposit_contract_address {
                     if let Some(d) = Deposit::from_abi_byte_array(&log.data) {
                         deposits.push(d);
                     }
@@ -43,6 +46,14 @@ impl Requests {
             }
         }
         Self::Deposit(deposits)
+    }
+
+    pub fn from_withdrawals_data(data: Vec<u8>) -> Requests {
+        Requests::Withdrawal(data)
+    }
+
+    pub fn from_consolidation_data(data: Vec<u8>) -> Requests {
+        Requests::Consolidation(data)
     }
 }
 

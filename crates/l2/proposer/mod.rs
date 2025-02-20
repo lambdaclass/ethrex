@@ -3,7 +3,7 @@ use std::time::Duration;
 use crate::utils::config::{errors::ConfigError, proposer::ProposerConfig, read_env_file};
 use errors::ProposerError;
 use ethereum_types::Address;
-use ethrex_dev::utils::engine_client::config::EngineApiConfig;
+use ethrex_rpc::clients::EngineApiConfig;
 use ethrex_storage::Store;
 use tokio::task::JoinSet;
 use tokio::time::sleep;

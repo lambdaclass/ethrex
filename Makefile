@@ -190,6 +190,7 @@ start-node-with-flamegraph: rm-test-db ## 🚀🔥 Starts an ethrex client used 
 	--evm $$LEVM \
 	--network test_data/genesis-l2.json \
 	--http.port 1729 \
+	--dev \
 	--datadir test_ethrex
 
 load-node: install-cli ## 🚧 Runs a load-test. Run make start-node-with-flamegraph and in a new terminal make load-node
@@ -207,4 +208,4 @@ rm-test-db:  ## 🛑 Removes the DB used by the ethrex client used for testing
 	sudo cargo run --release --bin ethrex -- removedb --datadir test_ethrex
 
 flamegraph: ## 🚧 Runs a load-test. Run make start-node-with-flamegraph and in a new terminal make flamegraph
-	bash scripts/flamegraph.sh
+	sudo bash scripts/flamegraph.sh

@@ -9,7 +9,7 @@ L1_GENESIS_FILE_PATH=../../test_data/genesis-l1.json
 help: ## 📚 Show help for each of the Makefile recipes
 	@grep -E '^[a-zA-Z0-9_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-30s\033[0m %s\n", $$1, $$2}'
 
-init: init-local-l1 deploy-l1 init-l2 ## 🚀 Initializes a localnet with Lambda ethrex client as both L1 and L2
+init: init-local-l1 deploy-l1 update-system-contracts  init-l2 ## 🚀 Initializes a localnet with Lambda ethrex client as both L1 and L2
 
 down: down-local-l1 down-l2 down-metrics## 🛑 Shuts down the localnet
 
@@ -19,7 +19,8 @@ restart: restart-local-l1 deploy-l1 restart-l2 ## 🔄 Restarts the localnet
 
 # CLI
 cli: ## 🛠️ Installs the L2 Lambda ethrex CLI
-	cargo install --path ${ethrex_PATH}/cmd/ethrex_l2/ --force
+	cd ${ethrex_PATH}/cmd/ethrex_l2 && \
+	cargo install --path . --force
 
 update-cli-contracts: ## 📜 Update the CLI's config contracts
 	@if [ -z "$$C" ]; then \
@@ -67,6 +68,7 @@ init-l1: ## 🚀 Initializes an L1 Lambda ethrex Client
 	--http.port ${L1_PORT} \
 	--http.addr 0.0.0.0 \
 	--authrpc.port ${L1_AUTH_PORT} \
+	--dev \
 	--datadir ${ethrex_L1_DEV_LIBMDBX}
 
 init-l1-levm: ## 🚀 Initializes an L1 Lambda ethrex Client with LEVM
@@ -79,6 +81,7 @@ init-l1-levm: ## 🚀 Initializes an L1 Lambda ethrex Client with LEVM
     --http.addr 0.0.0.0 \
     --authrpc.port ${L1_AUTH_PORT} \
 	--evm levm \
+	--dev \
     --datadir ${ethrex_L1_DEV_LIBMDBX}
 
 down-local-l1: ## 🛑 Shuts down the L1 Lambda ethrex Client
@@ -100,6 +103,9 @@ restart-contract-deps: clean-contract-deps ## 🔄 Restarts the dependencies for
 deploy-l1: ## 📜 Deploys the L1 contracts
 	DEPLOYER_CONTRACTS_PATH=contracts cargo run --release --bin ethrex_l2_l1_deployer --manifest-path ${ethrex_L2_CONTRACTS_PATH}/Cargo.toml
 
+update-system-contracts:
+	DEPLOYER_CONTRACTS_PATH=contracts cargo run --release --bin ethrex_l2_system_contracts_updater --manifest-path ${ethrex_L2_CONTRACTS_PATH}/Cargo.toml -- ${L2_GENESIS_FILE_PATH}
+
 # L2
 init-l2: init-metrics ## 🚀 Initializes an L2 Lambda ethrex Client
 	cargo run --release --manifest-path ../../Cargo.toml --bin ethrex --features "l2,metrics" -- \
@@ -109,10 +115,10 @@ init-l2: init-metrics ## 🚀 Initializes an L2 Lambda ethrex Client
 	--authrpc.port ${L2_AUTH_PORT} \
 	--metrics.port ${L2_PROMETHEUS_METRICS_PORT} \
 	--datadir ${ethrex_L2_DEV_LIBMDBX}
-	
+
 init-metrics: ## 🚀 Initializes Grafana and Prometheus with containers
 	docker compose -f ${ethrex_METRICS_DOCKER_COMPOSE_PATH} -f ${ethrex_METRICS_OVERRIDES_L2_DOCKER_COMPOSE_PATH} up -d
-	
+
 down-metrics: ## 🛑 Shuts down the metrics' containers
 	docker compose -f ${ethrex_METRICS_DOCKER_COMPOSE_PATH} -f ${ethrex_METRICS_OVERRIDES_L2_DOCKER_COMPOSE_PATH} down
 
@@ -135,7 +141,7 @@ init-prover: ## 🚀 Initializes the Prover
 	else \
 		GPU=",gpu"; \
 	fi; \
-	cargo run --release --features "build_$$T$$GPU" --manifest-path ../../Cargo.toml --bin ethrex_prover -- $$T
+	cargo run --release --features "build_$$T$$GPU" --manifest-path ./prover/Cargo.toml --bin ethrex_prover -- $$T
 
 rm-db-l2: ## 🛑 Removes the DB used by the L2
 	cargo run --release --manifest-path ../../Cargo.toml --bin ethrex -- removedb --datadir ${ethrex_L2_DEV_LIBMDBX}
