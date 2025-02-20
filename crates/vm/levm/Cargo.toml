@@ -4,7 +4,7 @@ version.workspace = true
 edition.workspace = true
 
 [dependencies]
-ethrex-core.workspace = true
+ethrex-common.workspace = true
 ethrex-rlp.workspace = true
 revm-primitives = { version = "14.0.0", features = [
   "std",
@@ -26,17 +26,23 @@ num-bigint = "0.4.5"
 lambdaworks-math = "0.11.0"
 k256 = { version = "0.13.3", features = ["ecdh"] }
 kzg-rs = "0.2.3"
-bls12_381 = { git = "https://github.com/lambdaclass/bls12_381", branch = "expose-fp-struct", features = ["groups", "bits", "pairings", "alloc", "experimental"] }
+bls12_381 = { git = "https://github.com/lambdaclass/bls12_381", branch = "expose-fp-struct", features = [
+  "groups",
+  "bits",
+  "pairings",
+  "alloc",
+  "experimental",
+] }
 
 [dev-dependencies]
 hex.workspace = true
 colored = "2.1.0"
 spinoff = "0.8.0"
 
-
 [features]
+default = []
+c-kzg = ["ethrex-common/c-kzg"]
 ethereum_foundation_tests = []
-
 
 [lints.rust]
 unsafe_code = "forbid"

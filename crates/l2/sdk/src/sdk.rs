@@ -1,11 +1,12 @@
+use bytes::Bytes;
 use calldata::{encode_calldata, Value};
-use eth_client::{
+use ethereum_types::{Address, H160, H256, U256};
+use ethrex_common::types::{Transaction, TxKind};
+use ethrex_rpc::clients::eth::{
     errors::{EthClientError, GetTransactionReceiptError},
     eth_sender::Overrides,
     EthClient,
 };
-use ethereum_types::{Address, H160, H256, U256};
-use ethrex_core::types::{PrivilegedTxType, Transaction};
 use ethrex_rpc::types::{block::BlockBodyWrapper, receipt::RpcReceipt};
 use itertools::Itertools;
 use keccak_hash::keccak;
@@ -13,7 +14,6 @@ use merkle_tree::merkle_proof;
 use secp256k1::SecretKey;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 pub mod calldata;
-pub mod eth_client;
 pub mod merkle_tree;
 
 // 0x6bf26397c5676a208d5c4e5f35cb479bacbbe454
@@ -21,6 +21,13 @@ pub const DEFAULT_BRIDGE_ADDRESS: Address = H160([
     0x6b, 0xf2, 0x63, 0x97, 0xc5, 0x67, 0x6a, 0x20, 0x8d, 0x5c, 0x4e, 0x5f, 0x35, 0xcb, 0x47, 0x9b,
     0xac, 0xbb, 0xe4, 0x54,
 ]);
+
+pub const COMMON_BRIDGE_L2_ADDRESS: Address = H160([
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0xff, 0xff,
+]);
+
+pub const L2_WITHDRAW_SIGNATURE: &str = "withdraw(address)";
 
 #[derive(Debug, thiserror::Error)]
 pub enum SdkError {
@@ -114,11 +121,13 @@ pub async fn withdraw(
     proposer_client: &EthClient,
 ) -> Result<H256, EthClientError> {
     let withdraw_transaction = proposer_client
-        .build_privileged_transaction(
-            PrivilegedTxType::Withdrawal,
+        .build_eip1559_transaction(
+            COMMON_BRIDGE_L2_ADDRESS,
             from,
-            from,
-            Default::default(),
+            Bytes::from(encode_calldata(
+                L2_WITHDRAW_SIGNATURE,
+                &[Value::Address(from)],
+            )?),
             Overrides {
                 value: Some(amount),
                 // CHECK: If we don't set max_fee_per_gas and max_priority_fee_per_gas
@@ -134,7 +143,7 @@ pub async fn withdraw(
         .await?;
 
     proposer_client
-        .send_privileged_l2_transaction(&withdraw_transaction, &from_pk)
+        .send_eip1559_transaction(&withdraw_transaction, &from_pk)
         .await
 }
 
@@ -208,6 +217,23 @@ pub async fn claim_withdraw(
         .await
 }
 
+/// Returns the formated hash of the withdrawal transaction,
+/// or None if the transaction is not a withdrawal.
+/// The hash is computed as keccak256(to || value || tx_hash)
+pub fn get_withdrawal_hash(tx: &Transaction) -> Option<H256> {
+    let to_bytes: [u8; 20] = match tx.data().get(16..36)?.try_into() {
+        Ok(value) => value,
+        Err(_) => return None,
+    };
+    let to = Address::from(to_bytes);
+
+    let value = tx.value().to_big_endian();
+
+    Some(keccak_hash::keccak(
+        [to.as_bytes(), &value, tx.compute_hash().as_bytes()].concat(),
+    ))
+}
+
 pub async fn get_withdraw_merkle_proof(
     client: &EthClient,
     tx_hash: H256,
@@ -230,19 +256,12 @@ pub async fn get_withdraw_merkle_proof(
     };
     let Some(Some((index, tx_withdrawal_hash))) = transactions
         .iter()
-        .filter(|tx| match &tx.tx {
-            Transaction::PrivilegedL2Transaction(tx) => tx.tx_type == PrivilegedTxType::Withdrawal,
-            _ => false,
+        .filter(|tx| match &tx.tx.to() {
+            ethrex_common::types::TxKind::Call(to) => *to == COMMON_BRIDGE_L2_ADDRESS,
+            ethrex_common::types::TxKind::Create => false,
         })
         .find_position(|tx| tx.hash == tx_hash)
-        .map(|(i, tx)| match &tx.tx {
-            Transaction::PrivilegedL2Transaction(privileged_l2_transaction) => {
-                privileged_l2_transaction
-                    .get_withdrawal_hash()
-                    .map(|withdrawal_hash| (i, (withdrawal_hash)))
-            }
-            _ => unreachable!(),
-        })
+        .map(|(i, tx)| get_withdrawal_hash(&tx.tx).map(|withdrawal_hash| (i, (withdrawal_hash))))
     else {
         return Err(EthClientError::Custom(
             "Failed to get widthdrawal hash, transaction is not a withdrawal".to_string(),
@@ -252,8 +271,8 @@ pub async fn get_withdraw_merkle_proof(
     let path = merkle_proof(
         transactions
             .iter()
-            .filter_map(|tx| match &tx.tx {
-                Transaction::PrivilegedL2Transaction(tx) => tx.get_withdrawal_hash(),
+            .filter_map(|tx| match tx.tx.to() {
+                TxKind::Call(to) if to == COMMON_BRIDGE_L2_ADDRESS => get_withdrawal_hash(&tx.tx),
                 _ => None,
             })
             .collect(),

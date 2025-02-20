@@ -9,6 +9,8 @@ use crate::{
     vm::{StateBackup, VM},
 };
 
+use ethrex_common::types::Fork;
+
 use bytes::Bytes;
 
 impl VM {
@@ -189,23 +191,29 @@ impl VM {
             // If the first byte of code is 0xef
             // If the code_length > MAX_CODE_SIZE
             // If current_consumed_gas + code_deposit_cost > gas_limit
-            let validate_create = if code_length > MAX_CODE_SIZE {
-                Err(VMError::ContractOutputTooBig)
-            } else if contract_code.first().unwrap_or(&0) == &INVALID_CONTRACT_PREFIX {
-                Err(VMError::InvalidContractPrefix)
-            } else if current_call_frame
-                .increase_consumed_gas(code_deposit_cost)
-                .is_err()
-            {
-                Err(VMError::OutOfGas(OutOfGasError::MaxGasLimitExceeded))
-            } else {
-                Ok(current_call_frame.to)
-            };
+            let validate_create =
+                if code_length > MAX_CODE_SIZE && self.env.config.fork >= Fork::SpuriousDragon {
+                    Err(VMError::ContractOutputTooBig)
+                } else if contract_code.first().unwrap_or(&0) == &INVALID_CONTRACT_PREFIX {
+                    Err(VMError::InvalidContractPrefix)
+                } else if current_call_frame
+                    .increase_consumed_gas(code_deposit_cost)
+                    .is_err()
+                {
+                    Err(VMError::OutOfGas(OutOfGasError::MaxGasLimitExceeded))
+                } else {
+                    Ok(current_call_frame.to)
+                };
 
             match validate_create {
                 Ok(new_address) => {
                     // Set bytecode to new account if success
-                    update_account_bytecode(&mut self.cache, &self.db, new_address, contract_code)?;
+                    update_account_bytecode(
+                        &mut self.cache,
+                        self.db.clone(),
+                        new_address,
+                        contract_code,
+                    )?;
                 }
                 Err(error) => {
                     // Revert if error
@@ -262,7 +270,7 @@ impl VM {
             gas_used: current_call_frame.gas_used,
             gas_refunded: self.env.refunded_gas,
             output: std::mem::take(&mut current_call_frame.output), // Bytes::new() if error is not RevertOpcode
-            logs: std::mem::take(&mut current_call_frame.logs),
+            logs: vec![],
         })
     }
 }

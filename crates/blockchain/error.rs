@@ -1,4 +1,4 @@
-use ethrex_core::types::{BlobsBundleError, InvalidBlockHeaderError};
+use ethrex_common::types::{BlobsBundleError, BlockHash, InvalidBlockHeaderError};
 use ethrex_storage::error::StoreError;
 use ethrex_vm::EvmError;
 
@@ -22,6 +22,8 @@ pub enum ChainError {
 
 #[derive(Debug, thiserror::Error)]
 pub enum InvalidBlockError {
+    #[error("Requests hash does not match the one in the header after executing")]
+    RequestsHashMismatch,
     #[error("World State Root does not match the one in the header after executing")]
     StateRootMismatch,
     #[error("Receipts Root does not match the one in the header after executing")]
@@ -99,4 +101,6 @@ pub enum InvalidForkChoice {
     Disconnected(ForkChoiceElement, ForkChoiceElement),
     #[error("Requested head is an invalid block.")]
     InvalidHead,
+    #[error("Previously rejected block.")]
+    InvalidAncestor(BlockHash),
 }

@@ -15,7 +15,7 @@ on:
   workflow_dispatch:
 
 env:
-  RUST_VERSION: 1.84.0
+  RUST_VERSION: 1.82.0
   RUST_RETH_VERSION: 1.84.0
 
 jobs:
@@ -40,7 +40,7 @@ jobs:
             ${{ env.HOME }}/.cargo/bin/addr2line
             ${{ env.HOME }}/.cargo/bin/flamegraph
             ${{ env.HOME }}/.cargo/bin/inferno-*
-            ${{ env.HOME }}/ethrex/ethrex/cmd/ef_tests/levm/vectors
+            ${{ env.HOME }}/ethrex/ethrex/cmd/ef_tests/state/vectors
           key: ${{ runner.os }}-${{ env.RUST_VERSION }}-extra-binaries
 
       - name: Change perf settings
@@ -91,7 +91,7 @@ jobs:
 
       - name: Download EF Tests
         run: |
-          if [ ! -f "$HOME/ethrex/ethrex/cmd/ef_tests/levm/vectors" ]; then
+          if [ ! -f "$HOME/ethrex/ethrex/cmd/ef_tests/state/vectors" ]; then
             cd crates/vm/levm
             make download-evm-ef-tests
           fi
@@ -101,13 +101,13 @@ jobs:
           start_time=$(date +%s)
 
           if [ "${{ matrix.name }}" == "levm" ]; then
-            rm -rf target/debug/ef_tests_levm
+            rm -rf target/debug/ef_tests_state
             CARGO_PROFILE_RELEASE_DEBUG=true cargo flamegraph -c "record -o perf.data -F997 --call-graph dwarf,16384 -g" \
-            -p ef_tests-levm -- --tests stSolidityTest,stCallCodes
+            -p ef_tests-state --test all -- --tests stSolidityTest,stCallCodes
           elif [ "${{ matrix.name }}" == "revm" ]; then
-            rm -rf target/debug/ef_tests_levm
+            rm -rf target/debug/ef_tests_state
             CARGO_PROFILE_RELEASE_DEBUG=true cargo flamegraph -c "record -o perf.data -F997 --call-graph dwarf,16384 -g" \
-            -p ef_tests-levm -- --revm --tests stSolidityTest,stCallCodes
+            -p ef_tests-state --test all -- --revm --tests stSolidityTest,stCallCodes
           fi
 
           end_time=$(date +%s)
@@ -252,13 +252,14 @@ jobs:
           ethrex_l2 config create default --default
           ethrex_l2 config set default
 
+      # By default ethrex uses revm as evm backend.
       - id: generate-flamegraph-ethrex
         name: Generate Flamegraph data for Ethrex
         shell: bash
         run: |
           rm -rf target/release/ethrex
           CARGO_PROFILE_RELEASE_DEBUG=true cargo flamegraph -c "record -o perf.data -F997 --call-graph dwarf,16384 -g" \
-          --bin ethrex --features dev -- --network /home/runner/work/ethrex/ethrex/test_data/genesis-l2.json --http.port 1729 >/dev/null &
+          --bin ethrex --features dev -- --dev --network /home/runner/work/ethrex/ethrex/test_data/genesis-l2.json --http.port 1729 >/dev/null &
           while [ ! -x "./target/release/ethrex" ]; do
             echo "Waiting for ethrex binary to be ready..."
             sleep 2

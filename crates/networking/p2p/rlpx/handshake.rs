@@ -1,6 +1,7 @@
 use std::net::SocketAddr;
 
 use crate::{
+    network::P2PContext,
     rlpx::{
         connection::{LocalState, RLPxConnection, RemoteState},
         error::RLPxError,
@@ -8,10 +9,9 @@ use crate::{
         utils::{ecdh_xchng, id2pubkey, kdf, log_peer_debug, pubkey2id, sha256, sha256_hmac},
     },
     types::Node,
-    P2PContext,
 };
 use aes::cipher::{KeyIvInit, StreamCipher};
-use ethrex_core::{Signature, H128, H256, H512};
+use ethrex_common::{Signature, H128, H256, H512};
 use ethrex_rlp::{
     decode::RLPDecode,
     encode::RLPEncode,
@@ -51,7 +51,7 @@ where
         node_id: remote_state.node_id,
     };
     let codec = RLPxCodec::new(&local_state, &remote_state, hashed_nonces);
-    log_peer_debug(&node, "Completed handshake!");
+    log_peer_debug(&node, "Completed handshake as receiver!");
     Ok(RLPxConnection::new(
         context.signer,
         node,
@@ -77,7 +77,7 @@ where
     let hashed_nonces: [u8; 32] =
         Keccak256::digest([remote_state.nonce.0, local_state.nonce.0].concat()).into();
     let codec = RLPxCodec::new(&local_state, &remote_state, hashed_nonces);
-    log_peer_debug(&node, "Completed handshake!");
+    log_peer_debug(&node, "Completed handshake as initiator!");
     Ok(RLPxConnection::new(
         context.signer,
         node,
@@ -505,7 +505,7 @@ impl RLPDecode for AckMessage {
 mod tests {
     use std::str::FromStr;
 
-    use ethrex_core::H256;
+    use ethrex_common::H256;
     use hex_literal::hex;
     use k256::SecretKey;
 

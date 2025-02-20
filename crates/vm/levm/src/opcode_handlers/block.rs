@@ -6,7 +6,7 @@ use crate::{
     utils::*,
     vm::VM,
 };
-use ethrex_core::{
+use ethrex_common::{
     types::{Fork, BLOB_BASE_FEE_UPDATE_FRACTION, MIN_BASE_FEE_PER_BLOB_GAS},
     U256,
 };
@@ -123,6 +123,10 @@ impl VM {
         &mut self,
         current_call_frame: &mut CallFrame,
     ) -> Result<OpcodeResult, VMError> {
+        // https://eips.ethereum.org/EIPS/eip-1344
+        if self.env.config.fork < Fork::Istanbul {
+            return Err(VMError::InvalidOpcode);
+        }
         current_call_frame.increase_consumed_gas(gas_cost::CHAINID)?;
 
         current_call_frame.stack.push(self.env.chain_id)?;
@@ -135,9 +139,13 @@ impl VM {
         &mut self,
         current_call_frame: &mut CallFrame,
     ) -> Result<OpcodeResult, VMError> {
+        // https://eips.ethereum.org/EIPS/eip-1884
+        if self.env.config.fork < Fork::London {
+            return Err(VMError::InvalidOpcode);
+        }
         current_call_frame.increase_consumed_gas(gas_cost::SELFBALANCE)?;
 
-        let balance = get_account(&mut self.cache, &self.db, current_call_frame.to)
+        let balance = get_account(&mut self.cache, self.db.clone(), current_call_frame.to)
             .info
             .balance;
 
@@ -150,6 +158,10 @@ impl VM {
         &mut self,
         current_call_frame: &mut CallFrame,
     ) -> Result<OpcodeResult, VMError> {
+        // https://eips.ethereum.org/EIPS/eip-3198
+        if self.env.config.fork < Fork::London {
+            return Err(VMError::InvalidOpcode);
+        }
         current_call_frame.increase_consumed_gas(gas_cost::BASEFEE)?;
 
         current_call_frame.stack.push(self.env.base_fee_per_gas)?;

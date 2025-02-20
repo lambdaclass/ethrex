@@ -1,6 +1,6 @@
 #![allow(clippy::expect_used)]
 #![allow(clippy::unwrap_used)]
-use ethrex_core::types::Block;
+use ethrex_common::types::Block;
 use std::path::Path;
 use tracing::info;
 
@@ -82,7 +82,7 @@ async fn setup() -> (ProgramInput, Block) {
         );
         add_block(block, &store).unwrap();
     }
-    let block_to_prove = blocks.get(2).unwrap();
+    let block_to_prove = blocks.last().unwrap();
 
     let db = ExecutionDB::from_store(block_to_prove, store.clone()).unwrap();
 

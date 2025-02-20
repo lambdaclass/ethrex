@@ -1,8 +1,8 @@
 use ethrex_blockchain::add_block;
 use ethrex_blockchain::error::ChainError;
 use ethrex_blockchain::payload::build_payload;
-use ethrex_core::types::{BlobsBundle, Block, BlockBody, BlockHash, BlockNumber, Fork};
-use ethrex_core::{H256, U256};
+use ethrex_common::types::{BlobsBundle, Block, BlockBody, BlockHash, BlockNumber, Fork};
+use ethrex_common::{H256, U256};
 use serde_json::Value;
 use tracing::{debug, error, info, warn};
 
@@ -354,7 +354,17 @@ fn handle_new_payload_v1_v2(
     let payload_status = match context.sync_status()? {
         SyncStatus::Active | SyncStatus::Pending => PayloadStatus::syncing(),
         SyncStatus::Inactive => {
-            if let Err(RpcErr::Internal(error_msg)) = validate_block_hash(payload, &block) {
+            // Check if the block has already been invalidated
+            let invalid_ancestors = match context.syncer.try_lock() {
+                Ok(syncer) => syncer.invalid_ancestors.clone(),
+                Err(_) => return Err(RpcErr::Internal("Internal error".into())),
+            };
+            if let Some(latest_valid_hash) = invalid_ancestors.get(&block.hash()) {
+                PayloadStatus::invalid_with(
+                    *latest_valid_hash,
+                    "Header has been previously invalidated.".into(),
+                )
+            } else if let Err(RpcErr::Internal(error_msg)) = validate_block_hash(payload, &block) {
                 PayloadStatus::invalid_with_err(&error_msg)
             } else {
                 execute_payload(&block, &context)?
@@ -393,12 +403,30 @@ fn execute_payload(block: &Block, context: &RpcApiContext) -> Result<PayloadStat
     let block_hash = block.hash();
     let storage = &context.storage;
     // Return the valid message directly if we have it.
-    if storage.get_block_header_by_hash(block_hash)?.is_some() {
+    if storage.get_block_by_hash(block_hash)?.is_some() {
         return Ok(PayloadStatus::valid_with_hash(block_hash));
     }
 
     // Execute and store the block
     info!("Executing payload with block hash: {block_hash:#x}");
+    let latest_valid_hash =
+        context
+            .storage
+            .get_latest_canonical_block_hash()?
+            .ok_or(RpcErr::Internal(
+                "Missing latest canonical block".to_owned(),
+            ))?;
+
+    // adds a bad block as a bad ancestor so we can catch it on fork_choice as well
+    let add_block_to_invalid_ancestor = || {
+        let lock = context.syncer.try_lock();
+        if let Ok(mut syncer) = lock {
+            syncer
+                .invalid_ancestors
+                .insert(block_hash, latest_valid_hash);
+        };
+    };
+
     match add_block(block, storage) {
         Err(ChainError::ParentNotFound) => Ok(PayloadStatus::syncing()),
         // Under the current implementation this is not possible: we always calculate the state
@@ -412,16 +440,17 @@ fn execute_payload(block: &Block, context: &RpcApiContext) -> Result<PayloadStat
         }
         Err(ChainError::InvalidBlock(error)) => {
             warn!("Error adding block: {error}");
-            // TODO(#982): this is only valid for the cases where the parent was found, but fully invalid ones may also happen.
+            add_block_to_invalid_ancestor();
             Ok(PayloadStatus::invalid_with(
-                block.header.parent_hash,
+                latest_valid_hash,
                 error.to_string(),
             ))
         }
         Err(ChainError::EvmError(error)) => {
             warn!("Error executing block: {error}");
+            add_block_to_invalid_ancestor();
             Ok(PayloadStatus::invalid_with(
-                block.header.parent_hash,
+                latest_valid_hash,
                 error.to_string(),
             ))
         }

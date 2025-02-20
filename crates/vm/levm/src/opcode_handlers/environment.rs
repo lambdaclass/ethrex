@@ -3,10 +3,10 @@ use crate::{
     errors::{InternalError, OpcodeResult, VMError},
     gas_cost::{self},
     memory::{self, calculate_memory_size},
-    utils::word_to_address,
+    utils::{access_account, word_to_address},
     vm::VM,
 };
-use ethrex_core::U256;
+use ethrex_common::{types::Fork, U256};
 use keccak_hash::keccak;
 
 // Environmental Information (16)
@@ -36,9 +36,15 @@ impl VM {
     ) -> Result<OpcodeResult, VMError> {
         let address = word_to_address(current_call_frame.stack.pop()?);
 
-        let (account_info, address_was_cold) = self.access_account(address);
+        let (account_info, address_was_cold) = access_account(
+            &mut self.cache,
+            self.db.clone(),
+            &mut self.accrued_substate,
+            address,
+        );
 
-        current_call_frame.increase_consumed_gas(gas_cost::balance(address_was_cold)?)?;
+        current_call_frame
+            .increase_consumed_gas(gas_cost::balance(address_was_cold, self.env.config.fork)?)?;
 
         current_call_frame.stack.push(account_info.balance)?;
 
@@ -280,9 +286,17 @@ impl VM {
     ) -> Result<OpcodeResult, VMError> {
         let address = word_to_address(current_call_frame.stack.pop()?);
 
-        let (account_info, address_was_cold) = self.access_account(address);
+        let (account_info, address_was_cold) = access_account(
+            &mut self.cache,
+            self.db.clone(),
+            &mut self.accrued_substate,
+            address,
+        );
 
-        current_call_frame.increase_consumed_gas(gas_cost::extcodesize(address_was_cold)?)?;
+        current_call_frame.increase_consumed_gas(gas_cost::extcodesize(
+            address_was_cold,
+            self.env.config.fork,
+        )?)?;
 
         current_call_frame
             .stack
@@ -305,7 +319,12 @@ impl VM {
             .try_into()
             .map_err(|_| VMError::VeryLargeNumber)?;
 
-        let (account_info, address_was_cold) = self.access_account(address);
+        let (account_info, address_was_cold) = access_account(
+            &mut self.cache,
+            self.db.clone(),
+            &mut self.accrued_substate,
+            address,
+        );
 
         let new_memory_size = calculate_memory_size(dest_offset, size)?;
 
@@ -314,6 +333,7 @@ impl VM {
             new_memory_size,
             current_call_frame.memory.len(),
             address_was_cold,
+            self.env.config.fork,
         )?)?;
 
         if size == 0 {
@@ -346,6 +366,10 @@ impl VM {
         &mut self,
         current_call_frame: &mut CallFrame,
     ) -> Result<OpcodeResult, VMError> {
+        // https://eips.ethereum.org/EIPS/eip-211
+        if self.env.config.fork < Fork::Byzantium {
+            return Err(VMError::InvalidOpcode);
+        };
         current_call_frame.increase_consumed_gas(gas_cost::RETURNDATASIZE)?;
 
         current_call_frame
@@ -360,6 +384,10 @@ impl VM {
         &mut self,
         current_call_frame: &mut CallFrame,
     ) -> Result<OpcodeResult, VMError> {
+        // https://eips.ethereum.org/EIPS/eip-211
+        if self.env.config.fork < Fork::Byzantium {
+            return Err(VMError::InvalidOpcode);
+        };
         let dest_offset = current_call_frame.stack.pop()?;
         let returndata_offset: usize = current_call_frame
             .stack
@@ -421,9 +449,17 @@ impl VM {
     ) -> Result<OpcodeResult, VMError> {
         let address = word_to_address(current_call_frame.stack.pop()?);
 
-        let (account_info, address_was_cold) = self.access_account(address);
+        let (account_info, address_was_cold) = access_account(
+            &mut self.cache,
+            self.db.clone(),
+            &mut self.accrued_substate,
+            address,
+        );
 
-        current_call_frame.increase_consumed_gas(gas_cost::extcodehash(address_was_cold)?)?;
+        current_call_frame.increase_consumed_gas(gas_cost::extcodehash(
+            address_was_cold,
+            self.env.config.fork,
+        )?)?;
 
         // An account is considered empty when it has no code and zero nonce and zero balance. [EIP-161]
         if account_info.is_empty() {

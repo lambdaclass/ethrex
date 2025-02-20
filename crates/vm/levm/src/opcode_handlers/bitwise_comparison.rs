@@ -5,7 +5,7 @@ use crate::{
     gas_cost,
     vm::VM,
 };
-use ethrex_core::U256;
+use ethrex_common::{types::Fork, U256};
 use std::collections::HashMap;
 use std::sync::LazyLock;
 
@@ -196,6 +196,10 @@ impl VM {
 
     // SHL operation (shift left)
     pub fn op_shl(&mut self, current_call_frame: &mut CallFrame) -> Result<OpcodeResult, VMError> {
+        // Shift opcodes introduced in Constantinople https://eips.ethereum.org/EIPS/eip-145
+        if self.env.config.fork < Fork::Constantinople {
+            return Err(VMError::InvalidOpcode);
+        }
         current_call_frame.increase_consumed_gas(gas_cost::SHL)?;
         let shift = current_call_frame.stack.pop()?;
         let value = current_call_frame.stack.pop()?;
@@ -240,6 +244,10 @@ impl VM {
 
     // SHR operation (shift right)
     pub fn op_shr(&mut self, current_call_frame: &mut CallFrame) -> Result<OpcodeResult, VMError> {
+        // Shift opcodes introduced in Constantinople https://eips.ethereum.org/EIPS/eip-145
+        if self.env.config.fork < Fork::Constantinople {
+            return Err(VMError::InvalidOpcode);
+        }
         current_call_frame.increase_consumed_gas(gas_cost::SHR)?;
         let shift = current_call_frame.stack.pop()?;
         let value = current_call_frame.stack.pop()?;
@@ -257,6 +265,10 @@ impl VM {
 
     // SAR operation (arithmetic shift right)
     pub fn op_sar(&mut self, current_call_frame: &mut CallFrame) -> Result<OpcodeResult, VMError> {
+        // Shift opcodes introduced in Constantinople https://eips.ethereum.org/EIPS/eip-145
+        if self.env.config.fork < Fork::Constantinople {
+            return Err(VMError::InvalidOpcode);
+        }
         current_call_frame.increase_consumed_gas(gas_cost::SAR)?;
         let shift = current_call_frame.stack.pop()?;
         let value = current_call_frame.stack.pop()?;

@@ -2,7 +2,7 @@
 #![allow(clippy::unwrap_used)]
 
 use bytes::Bytes;
-use ethrex_core::{
+use ethrex_common::{
     types::{Fork, TxKind},
     Address, H256, U256,
 };
@@ -4592,7 +4592,7 @@ fn ecadd_test() {
     let calldata = Bytes::from(calldata);
 
     let mut consumed_gas = 0;
-    let result = ecadd(&calldata, 10000, &mut consumed_gas).unwrap();
+    let result = ecadd(&calldata, 10000, &mut consumed_gas, Fork::Istanbul).unwrap();
 
     let expected_result = Bytes::from(hex::decode("030644e72e131a029b85045b68181585d97816a916871ca8d3c208c16d87cfd315ed738c0e0a7c92e7845f96b2ae9c0a68a6a449e3538fc7ff3ebf7a5a18a2c4").unwrap());
 
@@ -4606,7 +4606,7 @@ fn ecmul_test() {
     let calldata = Bytes::from(calldata);
 
     let mut consumed_gas = 0;
-    let result = ecmul(&calldata, 10000, &mut consumed_gas).unwrap();
+    let result = ecmul(&calldata, 10000, &mut consumed_gas, Fork::Istanbul).unwrap();
 
     let expected_result = Bytes::from(hex::decode("030644e72e131a029b85045b68181585d97816a916871ca8d3c208c16d87cfd315ed738c0e0a7c92e7845f96b2ae9c0a68a6a449e3538fc7ff3ebf7a5a18a2c4").unwrap());
 
@@ -4621,7 +4621,7 @@ fn ecmul_test_2() {
     let calldata = Bytes::from(calldata);
 
     let mut consumed_gas = 0;
-    let result = ecmul(&calldata, 10000, &mut consumed_gas).unwrap();
+    let result = ecmul(&calldata, 10000, &mut consumed_gas, Fork::Istanbul).unwrap();
 
     let expected_result = Bytes::from(hex::decode("00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000").unwrap());
 
@@ -4637,7 +4637,7 @@ fn ecpairing_test() {
     let calldata = Bytes::from(calldata);
 
     let mut consumed_gas = 0;
-    let result = ecpairing(&calldata, 10000000, &mut consumed_gas).unwrap();
+    let result = ecpairing(&calldata, 10000000, &mut consumed_gas, Fork::Istanbul).unwrap();
 
     let expected_result = Bytes::from(
         hex::decode("0000000000000000000000000000000000000000000000000000000000000001").unwrap(),

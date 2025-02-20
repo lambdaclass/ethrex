@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use bytes::Bytes;
 use ethereum_types::H160;
-use ethrex_core::{
+use ethrex_common::{
     types::{AccountInfo, Block, ChainConfig},
     Address, H256, U256,
 };
@@ -21,8 +21,11 @@ use revm_primitives::SpecId;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    block_env, db::StoreWrapper, errors::ExecutionDBError, evm_state, execute_block,
-    get_state_transitions, spec_id, tx_env, EvmError,
+    backends::{self},
+    block_env,
+    db::{evm_state, StoreWrapper},
+    errors::ExecutionDBError,
+    spec_id, tx_env, EvmError,
 };
 
 /// In-memory EVM database for single execution data.
@@ -182,10 +185,8 @@ impl ExecutionDB {
 
         let mut state = evm_state(store.clone(), block.header.parent_hash);
 
-        execute_block(block, &mut state).map_err(Box::new)?;
-
-        let account_updates = get_state_transitions(&mut state);
-        Ok(account_updates)
+        let result = backends::revm_b::REVM::execute_block(block, &mut state).map_err(Box::new)?;
+        Ok(result.account_updates)
     }
 
     pub fn get_chain_config(&self) -> ChainConfig {
@@ -217,7 +218,7 @@ impl ExecutionDB {
         spec_id: SpecId,
         db: ExtDB,
     ) -> Result<CacheDB<ExtDB>, RevmError<ExtDB::Error>> {
-        let block_env = block_env(&block.header);
+        let block_env = block_env(&block.header, spec_id);
         let mut db = CacheDB::new(db);
 
         for transaction in &block.body.transactions {

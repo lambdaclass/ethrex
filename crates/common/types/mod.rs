@@ -5,6 +5,7 @@ mod constants;
 mod fork_id;
 mod genesis;
 mod receipt;
+pub mod requests;
 pub mod transaction;
 pub mod tx_fields;
 

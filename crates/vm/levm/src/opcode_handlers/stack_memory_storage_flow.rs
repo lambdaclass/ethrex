@@ -6,7 +6,7 @@ use crate::{
     memory::{self, calculate_memory_size},
     vm::VM,
 };
-use ethrex_core::{types::Fork, H256, U256};
+use ethrex_common::{types::Fork, H256, U256};
 
 // Stack, Memory, Storage and Flow Operations (15)
 // Opcodes: POP, MLOAD, MSTORE, MSTORE8, SLOAD, SSTORE, JUMP, JUMPI, PC, MSIZE, GAS, JUMPDEST, TLOAD, TSTORE, MCOPY
@@ -153,7 +153,10 @@ impl VM {
         let (storage_slot, storage_slot_was_cold) =
             self.access_storage_slot(address, storage_slot_key)?;
 
-        current_call_frame.increase_consumed_gas(gas_cost::sload(storage_slot_was_cold)?)?;
+        current_call_frame.increase_consumed_gas(gas_cost::sload(
+            storage_slot_was_cold,
+            self.env.config.fork,
+        )?)?;
 
         current_call_frame.stack.push(storage_slot.current_value)?;
         Ok(OpcodeResult::Continue { pc_increment: 1 })
@@ -190,32 +193,56 @@ impl VM {
         // Gas Refunds
         // Sync gas refund with global env, ensuring consistency accross contexts.
         let mut gas_refunds = self.env.refunded_gas;
+        let (remove_slot_cost, restore_empty_slot_cost, restore_slot_cost) =
+            match self.env.config.fork {
+                // https://eips.ethereum.org/EIPS/eip-1283#specification
+                Fork::Constantinople => (15000, 19800, 4800),
+                // https://eips.ethereum.org/EIPS/eip-2200
+                f if f >= Fork::Istanbul && f < Fork::Berlin => (15000, 19200, 4200),
+                // https://eips.ethereum.org/EIPS/eip-2929
+                _ => (4800, 19900, 2800),
+            };
 
-        if new_storage_slot_value != storage_slot.current_value {
-            if !storage_slot.original_value.is_zero()
-                && !storage_slot.current_value.is_zero()
-                && new_storage_slot_value.is_zero()
-            {
+        if self.env.config.fork < Fork::Istanbul && self.env.config.fork != Fork::Constantinople {
+            if !storage_slot.current_value.is_zero() && new_storage_slot_value.is_zero() {
                 gas_refunds = gas_refunds
-                    .checked_add(4800)
+                    .checked_add(15000)
                     .ok_or(VMError::GasRefundsOverflow)?;
             }
-
-            if !storage_slot.original_value.is_zero() && storage_slot.current_value.is_zero() {
-                gas_refunds = gas_refunds
-                    .checked_sub(4800)
-                    .ok_or(VMError::GasRefundsUnderflow)?;
-            }
-
-            if new_storage_slot_value == storage_slot.original_value {
-                if storage_slot.original_value.is_zero() {
+        } else if (self.env.config.fork == Fork::Constantinople
+            || self.env.config.fork >= Fork::Istanbul)
+            && new_storage_slot_value != storage_slot.current_value
+        {
+            if storage_slot.current_value == storage_slot.original_value {
+                if storage_slot.original_value != U256::zero()
+                    && new_storage_slot_value == U256::zero()
+                {
                     gas_refunds = gas_refunds
-                        .checked_add(19900)
+                        .checked_add(remove_slot_cost)
                         .ok_or(VMError::GasRefundsOverflow)?;
-                } else {
-                    gas_refunds = gas_refunds
-                        .checked_add(2800)
-                        .ok_or(VMError::GasRefundsOverflow)?;
+                }
+            } else {
+                if storage_slot.original_value != U256::zero() {
+                    if storage_slot.current_value == U256::zero() {
+                        gas_refunds = gas_refunds
+                            .checked_sub(remove_slot_cost)
+                            .ok_or(VMError::GasRefundsUnderflow)?;
+                    } else if new_storage_slot_value == U256::zero() {
+                        gas_refunds = gas_refunds
+                            .checked_add(remove_slot_cost)
+                            .ok_or(VMError::GasRefundsUnderflow)?;
+                    }
+                }
+                if new_storage_slot_value == storage_slot.original_value {
+                    if storage_slot.original_value == U256::zero() {
+                        gas_refunds = gas_refunds
+                            .checked_add(restore_empty_slot_cost)
+                            .ok_or(VMError::GasRefundsUnderflow)?;
+                    } else {
+                        gas_refunds = gas_refunds
+                            .checked_add(restore_slot_cost)
+                            .ok_or(VMError::GasRefundsUnderflow)?;
+                    }
                 }
             }
         }
@@ -226,6 +253,7 @@ impl VM {
             &storage_slot,
             new_storage_slot_value,
             storage_slot_was_cold,
+            self.env.config.fork,
         )?)?;
 
         self.update_account_storage(current_call_frame.to, key, new_storage_slot_value)?;

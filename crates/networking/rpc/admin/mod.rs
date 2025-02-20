@@ -1,5 +1,5 @@
-use ethrex_core::types::ChainConfig;
-use ethrex_net::types::{Node, NodeRecord};
+use ethrex_common::types::ChainConfig;
+use ethrex_p2p::types::{Node, NodeRecord};
 use ethrex_storage::Store;
 use serde::Serialize;
 use serde_json::Value;
@@ -52,7 +52,7 @@ pub fn node_info(
         enode: enode_url,
         enr: enr_url,
         id: hex::encode(Keccak256::digest(local_node.node_id.as_bytes())),
-        name: "ethrex/0.1.0/rust1.81".to_string(),
+        name: "ethrex/0.1.0/rust1.82".to_string(),
         ip: local_node.ip.to_string(),
         ports: Ports {
             discovery: local_node.udp_port,

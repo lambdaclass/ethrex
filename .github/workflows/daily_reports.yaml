@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
 
 env:
-  RUST_VERSION: 1.81.0
+  RUST_VERSION: 1.82.0
 
 jobs:
   hive-report-creation-levm:
@@ -108,6 +108,7 @@ jobs:
       - name: Run tests
         run: |
           cd crates/vm/levm
+          set -o pipefail
           make generate-evm-ef-tests-report | tee test_result.txt
 
       - name: Post results in summary

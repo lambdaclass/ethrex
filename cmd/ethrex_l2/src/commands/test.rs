@@ -3,10 +3,8 @@ use bytes::Bytes;
 use clap::Subcommand;
 use ethereum_types::{Address, H256, U256};
 use ethrex_blockchain::constants::TX_GAS_COST;
-use ethrex_l2_sdk::{
-    calldata::{self, Value},
-    eth_client::{eth_sender::Overrides, EthClient},
-};
+use ethrex_l2_sdk::calldata::{self, Value};
+use ethrex_rpc::clients::eth::{eth_sender::Overrides, EthClient};
 use keccak_hash::keccak;
 use secp256k1::SecretKey;
 use std::{
@@ -14,6 +12,7 @@ use std::{
     io::{self, BufRead},
     path::Path,
     thread::sleep,
+    time::Duration,
 };
 
 #[derive(Subcommand)]
@@ -129,6 +128,7 @@ async fn transfer_from(
             retries += 1;
             sleep(std::time::Duration::from_secs(2));
         }
+        sleep(Duration::from_millis(3));
     }
 
     retries

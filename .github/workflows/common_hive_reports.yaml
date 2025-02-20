@@ -14,7 +14,7 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
-  RUST_VERSION: 1.81.0
+  RUST_VERSION: 1.82.0
 
 jobs:
   run-hive:
@@ -37,12 +37,6 @@ jobs:
           - { name: "Sync tests", file_name: sync, simulation: ethereum/sync }
 
     steps:
-      - name: Pull image
-        if: ${{ inputs.evm == 'revm' }}
-        run: |
-          docker pull ghcr.io/lambdaclass/ethrex:latest
-          docker tag ghcr.io/lambdaclass/ethrex:latest ethrex:latest
-
       - name: Checkout sources
         if: ${{ inputs.job_type != 'main' }}
         uses: actions/checkout@v4
@@ -53,9 +47,15 @@ jobs:
         with:
           ref: main
 
-      - name: Build Image with LEVM
-        if: ${{ inputs.evm == 'levm' }}
-        run: cd crates/vm/levm && make build-image-levm
+      - name: Build image
+        if: ${{ inputs.job_type != 'main' }}
+        run: make build-image
+
+      - name: Pull image
+        if: ${{ inputs.job_type == 'main' }}
+        run: |
+          docker pull ghcr.io/lambdaclass/ethrex:latest
+          docker tag ghcr.io/lambdaclass/ethrex:latest ethrex:latest
 
       - name: Setup Go
         uses: actions/setup-go@v5
@@ -64,7 +64,7 @@ jobs:
         run: make setup-hive
 
       - name: Run Hive Simulation
-        run: cd hive && ./hive --client ethrex --sim ${{ matrix.test.simulation }} --sim.parallelism 16
+        run: cd hive && ./hive --client ethrex --sim ${{ matrix.test.simulation }} --ethrex.flags "--evm ${{ inputs.evm }}" --sim.parallelism 16
         continue-on-error: true
 
       - name: Upload results

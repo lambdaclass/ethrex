@@ -5,7 +5,7 @@ use crate::{
     opcode_handlers::bitwise_comparison::checked_shift_left,
     vm::VM,
 };
-use ethrex_core::{U256, U512};
+use ethrex_common::{U256, U512};
 
 use super::bitwise_comparison::checked_shift_right;
 
@@ -221,7 +221,7 @@ impl VM {
         let base = current_call_frame.stack.pop()?;
         let exponent = current_call_frame.stack.pop()?;
 
-        let gas_cost = gas_cost::exp(exponent)?;
+        let gas_cost = gas_cost::exp(exponent, self.env.config.fork)?;
 
         current_call_frame.increase_consumed_gas(gas_cost)?;
 

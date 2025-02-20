@@ -2,19 +2,24 @@ use super::api::StoreEngine;
 use super::utils::{ChainDataIndex, SnapStateIndex};
 use crate::error::StoreError;
 use crate::rlp::{
-    AccountCodeHashRLP, AccountCodeRLP, BlockBodyRLP, BlockHashRLP, BlockHeaderRLP, BlockRLP,
-    BlockTotalDifficultyRLP, ReceiptRLP, Rlp, TransactionHashRLP, TupleRLP,
+    AccountCodeHashRLP, AccountCodeRLP, AccountHashRLP, AccountStateRLP, BlockBodyRLP,
+    BlockHashRLP, BlockHeaderRLP, BlockRLP, BlockTotalDifficultyRLP, ReceiptRLP, Rlp,
+    TransactionHashRLP, TupleRLP,
 };
+use crate::trie_db::libmdbx::LibmdbxTrieDB;
+use crate::trie_db::libmdbx_dupsort::LibmdbxDupsortTrieDB;
+use crate::{MAX_SNAPSHOT_READS, STATE_TRIE_SEGMENTS};
 use anyhow::Result;
 use bytes::Bytes;
 use ethereum_types::{H256, U256};
-use ethrex_core::types::{
-    BlobsBundle, Block, BlockBody, BlockHash, BlockHeader, BlockNumber, ChainConfig, Index,
-    Receipt, Transaction,
+use ethrex_common::types::{
+    AccountState, BlobsBundle, Block, BlockBody, BlockHash, BlockHeader, BlockNumber, ChainConfig,
+    Index, Receipt, Transaction,
 };
 use ethrex_rlp::decode::RLPDecode;
 use ethrex_rlp::encode::RLPEncode;
-use ethrex_trie::{LibmdbxDupsortTrieDB, LibmdbxTrieDB, Nibbles, Trie};
+use ethrex_rlp::error::RLPDecodeError;
+use ethrex_trie::{Nibbles, Trie};
 use libmdbx::orm::{Decodable, Encodable, Table};
 use libmdbx::{
     dupsort,
@@ -529,30 +534,25 @@ impl StoreEngine for Store {
             .map_err(StoreError::RLPDecode)
     }
 
-    fn set_state_trie_root_checkpoint(&self, current_root: H256) -> Result<(), StoreError> {
+    fn set_state_trie_key_checkpoint(
+        &self,
+        last_keys: [H256; STATE_TRIE_SEGMENTS],
+    ) -> Result<(), StoreError> {
         self.write::<SnapState>(
-            SnapStateIndex::StateTrieRootCheckpoint,
-            current_root.encode_to_vec(),
+            SnapStateIndex::StateTrieKeyCheckpoint,
+            last_keys.to_vec().encode_to_vec(),
         )
     }
 
-    fn get_state_trie_root_checkpoint(&self) -> Result<Option<H256>, StoreError> {
-        self.read::<SnapState>(SnapStateIndex::StateTrieRootCheckpoint)?
-            .map(|ref h| H256::decode(h))
-            .transpose()
-            .map_err(StoreError::RLPDecode)
-    }
-
-    fn set_state_trie_key_checkpoint(&self, last_key: H256) -> Result<(), StoreError> {
-        self.write::<SnapState>(
-            SnapStateIndex::StateTrieRootCheckpoint,
-            last_key.encode_to_vec(),
-        )
-    }
-
-    fn get_state_trie_key_checkpoint(&self) -> Result<Option<H256>, StoreError> {
-        self.read::<SnapState>(SnapStateIndex::StateTrieRootCheckpoint)?
-            .map(|ref h| H256::decode(h))
+    fn get_state_trie_key_checkpoint(
+        &self,
+    ) -> Result<Option<[H256; STATE_TRIE_SEGMENTS]>, StoreError> {
+        self.read::<SnapState>(SnapStateIndex::StateTrieKeyCheckpoint)?
+            .map(|ref c| {
+                <Vec<H256>>::decode(c)?
+                    .try_into()
+                    .map_err(|_| RLPDecodeError::InvalidLength)
+            })
             .transpose()
             .map_err(StoreError::RLPDecode)
     }
@@ -601,6 +601,127 @@ impl StoreEngine for Store {
         txn.clear_table::<SnapState>()
             .map_err(StoreError::LibmdbxError)?;
         txn.commit().map_err(StoreError::LibmdbxError)
+    }
+
+    fn write_snapshot_account_batch(
+        &self,
+        account_hashes: Vec<H256>,
+        account_states: Vec<AccountState>,
+    ) -> Result<(), StoreError> {
+        self.write_batch::<StateSnapShot>(
+            account_hashes
+                .into_iter()
+                .map(|h| h.into())
+                .zip(account_states.into_iter().map(|a| a.into())),
+        )
+    }
+
+    fn write_snapshot_storage_batch(
+        &self,
+        account_hash: H256,
+        storage_keys: Vec<H256>,
+        storage_values: Vec<U256>,
+    ) -> Result<(), StoreError> {
+        let txn = self
+            .db
+            .begin_readwrite()
+            .map_err(StoreError::LibmdbxError)?;
+
+        for (key, value) in storage_keys.into_iter().zip(storage_values.into_iter()) {
+            txn.upsert::<StorageSnapShot>(account_hash.into(), (key.into(), value.into()))
+                .map_err(StoreError::LibmdbxError)?;
+        }
+
+        txn.commit().map_err(StoreError::LibmdbxError)
+    }
+
+    fn set_state_trie_rebuild_checkpoint(
+        &self,
+        checkpoint: (H256, [H256; STATE_TRIE_SEGMENTS]),
+    ) -> Result<(), StoreError> {
+        self.write::<SnapState>(
+            SnapStateIndex::StateTrieRebuildCheckpoint,
+            (checkpoint.0, checkpoint.1.to_vec()).encode_to_vec(),
+        )
+    }
+
+    fn get_state_trie_rebuild_checkpoint(
+        &self,
+    ) -> Result<Option<(H256, [H256; STATE_TRIE_SEGMENTS])>, StoreError> {
+        let Some((root, checkpoints)) = self
+            .read::<SnapState>(SnapStateIndex::StateTrieRebuildCheckpoint)?
+            .map(|ref c| <(H256, Vec<H256>)>::decode(c))
+            .transpose()?
+        else {
+            return Ok(None);
+        };
+        Ok(Some((
+            root,
+            checkpoints
+                .try_into()
+                .map_err(|_| RLPDecodeError::InvalidLength)?,
+        )))
+    }
+
+    fn set_storage_trie_rebuild_pending(
+        &self,
+        pending: Vec<(H256, H256)>,
+    ) -> Result<(), StoreError> {
+        self.write::<SnapState>(
+            SnapStateIndex::StorageTrieRebuildPending,
+            pending.encode_to_vec(),
+        )
+    }
+
+    fn get_storage_trie_rebuild_pending(&self) -> Result<Option<Vec<(H256, H256)>>, StoreError> {
+        self.read::<SnapState>(SnapStateIndex::StorageTrieRebuildPending)?
+            .map(|ref h| <Vec<(H256, H256)>>::decode(h))
+            .transpose()
+            .map_err(StoreError::RLPDecode)
+    }
+
+    fn clear_snapshot(&self) -> Result<(), StoreError> {
+        let txn = self
+            .db
+            .begin_readwrite()
+            .map_err(StoreError::LibmdbxError)?;
+        txn.clear_table::<StateSnapShot>()
+            .map_err(StoreError::LibmdbxError)?;
+        txn.clear_table::<StorageSnapShot>()
+            .map_err(StoreError::LibmdbxError)?;
+        txn.commit().map_err(StoreError::LibmdbxError)?;
+        Ok(())
+    }
+
+    fn read_account_snapshot(&self, start: H256) -> Result<Vec<(H256, AccountState)>, StoreError> {
+        let txn = self.db.begin_read().map_err(StoreError::LibmdbxError)?;
+        let cursor = txn
+            .cursor::<StateSnapShot>()
+            .map_err(StoreError::LibmdbxError)?;
+        let iter = cursor
+            .walk(Some(start.into()))
+            .map_while(|res| res.ok().map(|(hash, acc)| (hash.to(), acc.to())))
+            .take(MAX_SNAPSHOT_READS);
+        Ok(iter.collect::<Vec<_>>())
+    }
+
+    fn read_storage_snapshot(
+        &self,
+        account_hash: H256,
+        start: H256,
+    ) -> Result<Vec<(H256, U256)>, StoreError> {
+        let txn = self.db.begin_read().map_err(StoreError::LibmdbxError)?;
+        let cursor = txn
+            .cursor::<StorageSnapShot>()
+            .map_err(StoreError::LibmdbxError)?;
+        let iter = cursor
+            .walk_key(account_hash.into(), Some(start.into()))
+            .map_while(|res| {
+                res.ok()
+                    .map(|(k, v)| (H256(k.0), U256::from_big_endian(&v.0)))
+            })
+            .take(MAX_SNAPSHOT_READS);
+        Ok(iter.collect::<Vec<_>>())
     }
 }
 
@@ -686,6 +807,15 @@ table!(
 table!(
     /// Stores blocks that are pending validation.
     ( PendingBlocks ) BlockHashRLP => BlockRLP
+);
+table!(
+    /// State Snapshot used by an ongoing sync process
+    ( StateSnapShot ) AccountHashRLP => AccountStateRLP
+);
+
+dupsort!(
+    /// Storage Snapshot used by an ongoing sync process
+    ( StorageSnapShot ) AccountHashRLP => (AccountStorageKeyBytes, AccountStorageValueBytes)[AccountStorageKeyBytes]
 );
 
 // Storage values are stored as bytes instead of using their rlp encoding
@@ -779,6 +909,8 @@ pub fn init_db(path: Option<impl AsRef<Path>>) -> Database {
         table_info!(Payloads),
         table_info!(PendingBlocks),
         table_info!(SnapState),
+        table_info!(StateSnapShot),
+        table_info!(StorageSnapShot),
     ]
     .into_iter()
     .collect();

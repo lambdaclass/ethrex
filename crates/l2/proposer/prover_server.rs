@@ -10,14 +10,12 @@ use crate::utils::{
         save_state::{StateFileType, StateType, *},
     },
 };
-use ethrex_core::{
+use ethrex_common::{
     types::{Block, BlockHeader},
     Address, H256, U256,
 };
-use ethrex_l2_sdk::{
-    calldata::{encode_calldata, Value},
-    eth_client::{eth_sender::Overrides, EthClient, WrappedTransaction},
-};
+use ethrex_l2_sdk::calldata::{encode_calldata, Value};
+use ethrex_rpc::clients::eth::{eth_sender::Overrides, EthClient, WrappedTransaction};
 use ethrex_storage::Store;
 use ethrex_vm::{execution_db::ExecutionDB, EvmError};
 use secp256k1::SecretKey;
