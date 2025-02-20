@@ -12,7 +12,7 @@ pub mod prover_server;
 pub mod errors;
 
 pub fn read_env_file() -> Result<(), errors::ConfigError> {
-    let env_file_name = std::env::var("ENV_FILE").unwrap_or("config.toml".to_string());
+    let env_file_name = std::env::var("L2_CONFIG_FILE").unwrap_or("config.toml".to_string());
     let env_file_path = open_readable(env_file_name)?;
     let reader = std::io::BufReader::new(env_file_path);
 
