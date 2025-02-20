@@ -124,7 +124,11 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
     pub async fn start(&mut self, table: Arc<Mutex<crate::kademlia::KademliaTable>>) {
         log_peer_debug(&self.node, "Starting RLPx connection");
 
-        let peer_count = table.lock().await.count_peers();
+        let peer_count = {
+            let table_lock = table.lock().await;
+            table_lock.count_peers()
+        };
+
         if let Err(e) = self.exchange_hello_messages(peer_count).await {
             self.connection_failed("Hello messages exchange failed", e, table)
                 .await;
