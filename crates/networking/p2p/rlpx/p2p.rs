@@ -199,7 +199,7 @@ impl RLPxMessage for DisconnectMessage {
     fn encode(&self, buf: &mut dyn BufMut) -> Result<(), RLPEncodeError> {
         let mut encoded_data = vec![];
         // Disconnect msg_data is reason or none
-        match self.reason.map(|r| Into::<u8>::into(r)) {
+        match self.reason.map(Into::<u8>::into) {
             Some(value) => Encoder::new(&mut encoded_data)
                 .encode_field(&value)
                 .finish(),
