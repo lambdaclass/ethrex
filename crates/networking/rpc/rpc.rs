@@ -410,7 +410,7 @@ mod tests {
                 "enr": enr_url,
                 "id": hex::encode(Keccak256::digest(local_p2p_node.node_id)),
                 "ip": "127.0.0.1",
-                "name": "ethrex/0.1.0/rust1.81",
+                "name": "ethrex/0.1.0/rust1.82",
                 "ports": {
                     "discovery": 30303,
                     "listener": 30303

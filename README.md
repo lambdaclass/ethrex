@@ -223,7 +223,7 @@ asdf plugin add golang https://github.com/asdf-community/asdf-golang.git
 
 And uncommenting the golang line in the asdf `.tool-versions` file:
 ```
-rust 1.81.0
+rust 1.82.0
 golang 1.23.2
 ```
 
@@ -547,7 +547,7 @@ If we forgot to include anyone, please file an issue so we can add you. We alway
 
 # Security
 
-We take security seriously. If you discover a vulnerability in this project, please report it responsibly. 
+We take security seriously. If you discover a vulnerability in this project, please report it responsibly.
 
 - You can report vulnerabilities directly via the **[GitHub "Report a Vulnerability" feature](../../security/advisories/new)**.
 - Alternatively, send an email to **[security@lambdaclass.com](mailto:security@lambdaclass.com)**.
