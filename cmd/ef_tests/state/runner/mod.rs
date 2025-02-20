@@ -19,7 +19,7 @@ pub enum EFTestRunnerError {
     VMInitializationFailed(String),
     #[error("Transaction execution failed when it was not expected to fail: {0}")]
     ExecutionFailedUnexpectedly(VMError),
-    #[error("Failed to ensure post-state: {0}")]
+    #[error("Failed to ensure pre-state: {0}")]
     FailedToEnsurePreState(String),
     #[error("Failed to ensure post-state: {1}")]
     FailedToEnsurePostState(ExecutionReport, String),
@@ -39,6 +39,8 @@ pub enum InternalError {
     ReRunInternal(String, TestReRunReport),
     #[error("Main runner failed unexpectedly: {0}")]
     MainRunnerInternal(String),
+    #[error("{0}")]
+    Custom(String),
 }
 
 #[derive(Parser)]

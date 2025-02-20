@@ -10,15 +10,12 @@ ethrex-rlp.workspace = true
 ethrex-common.workspace = true
 ethrex-storage.workspace = true
 ethrex-vm.workspace = true
-ethrex-levm.workspace = true
 
 thiserror.workspace = true
 sha3.workspace = true
 tracing.workspace = true
 bytes.workspace = true
 cfg-if = "1.0.0"
-
-
 
 k256 = { version = "0.13.3", features = ["ecdh"] }
 
@@ -33,6 +30,5 @@ path = "./blockchain.rs"
 
 [features]
 default = []
-libmdbx = ["ethrex-common/libmdbx", "ethrex-storage/default", "ethrex-vm/libmdbx"]
-c-kzg = ["ethrex-common/c-kzg", "ethrex-vm/c-kzg", "ethrex-levm/c-kzg"]
+c-kzg = ["ethrex-common/c-kzg", "ethrex-vm/c-kzg"]
 metrics = ["ethrex-metrics/transactions"]

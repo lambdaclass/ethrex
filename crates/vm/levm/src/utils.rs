@@ -265,9 +265,12 @@ pub fn get_intrinsic_gas(
 
     // Create Cost
     if is_create {
-        intrinsic_gas = intrinsic_gas
-            .checked_add(CREATE_BASE_COST)
-            .ok_or(OutOfGasError::ConsumedGasOverflow)?;
+        // https://eips.ethereum.org/EIPS/eip-2#specification
+        if fork >= Fork::Homestead {
+            intrinsic_gas = intrinsic_gas
+                .checked_add(CREATE_BASE_COST)
+                .ok_or(OutOfGasError::ConsumedGasOverflow)?;
+        }
 
         // https://eips.ethereum.org/EIPS/eip-3860
         if fork >= Fork::Shanghai {
@@ -709,7 +712,7 @@ pub fn eip7702_get_code(
     address: Address,
 ) -> Result<(bool, u64, Address, Bytes), VMError> {
     // Address is the delgated address
-    let account = get_account(cache, db.clone(), address);
+    let account = get_account_no_push_cache(cache, db.clone(), address);
     let bytecode = account.info.bytecode.clone();
 
     // If the Address doesn't have a delegation code
