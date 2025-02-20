@@ -1,7 +1,10 @@
 use bytes::Bytes;
 use directories::ProjectDirs;
 use ethrex_blockchain::{add_block, fork_choice::apply_fork_choice};
-use ethrex_common::types::{Block, Genesis};
+use ethrex_common::{
+    types::{Block, Genesis},
+    H160, U256,
+};
 use ethrex_p2p::{
     kademlia::KademliaTable,
     network::{node_id_from_signing_key, peer_table},
@@ -174,6 +177,23 @@ async fn main() {
     };
 
     let genesis = read_genesis_file(&network);
+
+    // Show top rich accounts
+    let mut top_accounts: Vec<(&H160, U256)> = genesis
+        .alloc
+        .iter()
+        .map(|(address, account)| (address, account.balance))
+        .collect();
+    top_accounts.sort_by(|a, b| b.1.cmp(&a.1)); // sort by greater balance
+    let number_of_top_accounts = 10;
+    top_accounts.truncate(number_of_top_accounts);
+    info!(
+        "Showing {number_of_top_accounts} top rich accounts\n     {:<42} Balance",
+        "Address"
+    );
+    for (address, balance) in top_accounts {
+        println!("     {address:?} {balance}");
+    }
     store
         .add_initial_state(genesis.clone())
         .expect("Failed to create genesis block");
