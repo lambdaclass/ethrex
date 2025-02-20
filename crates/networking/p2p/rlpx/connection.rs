@@ -121,17 +121,36 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
         }
     }
 
-    /// Handshake already performed, now it starts a peer connection.
-    /// It runs in it's own task and blocks until the connection is dropped
-    pub async fn start(&mut self, table: Arc<Mutex<crate::kademlia::KademliaTable>>) {
-        log_peer_debug(&self.node, "Starting RLPx connection");
-
+    async fn post_handshake_checks(
+        &self,
+        table: Arc<Mutex<crate::kademlia::KademliaTable>>,
+    ) -> Result<(), DisconnectReason> {
+        // Check if connected peers exceed the limit
         let peer_count = {
             let table_lock = table.lock().await;
             table_lock.count_connected_peers()
         };
 
-        if let Err(e) = self.exchange_hello_messages(peer_count).await {
+        if peer_count >= MAX_PEERS {
+            return Err(DisconnectReason::TooManyPeers);
+        }
+
+        // We can also add other checks like "Peer already connected"
+        Ok(())
+    }
+
+    /// Handshake already performed, now it starts a peer connection.
+    /// It runs in it's own task and blocks until the connection is dropped
+    pub async fn start(&mut self, table: Arc<Mutex<crate::kademlia::KademliaTable>>) {
+        log_peer_debug(&self.node, "Starting RLPx connection");
+
+        if let Err(reason) = self.post_handshake_checks(table.clone()).await {
+            self.send_disconnect_message(Some(reason)).await;
+            let _ = self.framed.close().await;
+            return;
+        }
+
+        if let Err(e) = self.exchange_hello_messages().await {
             self.connection_failed("Hello messages exchange failed", e, table)
                 .await;
         } else {
@@ -163,25 +182,31 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
         }
     }
 
+    async fn send_disconnect_message(&mut self, reason: Option<DisconnectReason>) {
+        self.send(Message::Disconnect(DisconnectMessage { reason }))
+            .await
+            .unwrap_or_else(|_| {
+                log_peer_error(
+                    &self.node,
+                    &format!("Could not send Disconnect message: ({:?}).", reason),
+                );
+            });
+    }
+
     async fn connection_failed(
         &mut self,
         error_text: &str,
         error: RLPxError,
         table: Arc<Mutex<crate::kademlia::KademliaTable>>,
     ) {
-        self.send(Message::Disconnect(DisconnectMessage {
-            reason: self.match_disconnect_reason(&error),
-        }))
-        .await
-        .unwrap_or_else(|_| {
-            log_peer_error(
-                &self.node,
-                &format!(
-                    "Could not send Disconnect message: ({:?}).",
-                    self.match_disconnect_reason(&error)
-                ),
-            )
-        });
+        // Send disconnect message only if error is different than RLPxError::DisconnectRequested
+        // because if it is a DisconnectRequested error it means that the peer requested the disconnection, not us.
+        if let RLPxError::DisconnectRequested(_) = error {
+            log_peer_error(&self.node, &format!("{error_text}: ({error})"));
+        } else {
+            self.send_disconnect_message(self.match_disconnect_reason(&error))
+                .await;
+        }
 
         // Discard peer from kademlia table
         match error {
@@ -210,15 +235,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
         }
     }
 
-    async fn exchange_hello_messages(&mut self, peer_count: usize) -> Result<(), RLPxError> {
-        if peer_count >= MAX_PEERS {
-            let disconnect_msg = Message::Disconnect(DisconnectMessage {
-                reason: Some(DisconnectReason::TooManyPeers), // Too many peers
-            });
-            self.send(disconnect_msg).await?;
-            return Err(RLPxError::DisconnectSent(DisconnectReason::TooManyPeers));
-        }
-
+    async fn exchange_hello_messages(&mut self) -> Result<(), RLPxError> {
         let hello_msg = Message::Hello(p2p::HelloMessage::new(
             SUPPORTED_CAPABILITIES.to_vec(),
             PublicKey::from(self.signer.verifying_key()),
