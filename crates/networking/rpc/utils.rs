@@ -150,6 +150,8 @@ pub enum RpcNamespace {
     Debug,
     Web3,
     Net,
+    #[cfg(feature = "based")]
+    Based,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -178,6 +180,8 @@ impl RpcRequest {
                 "debug" => Ok(RpcNamespace::Debug),
                 "web3" => Ok(RpcNamespace::Web3),
                 "net" => Ok(RpcNamespace::Net),
+                #[cfg(feature = "based")]
+                "based" => Ok(RpcNamespace::Based),
                 _ => Err(RpcErr::MethodNotFound(self.method.clone())),
             }
         } else {

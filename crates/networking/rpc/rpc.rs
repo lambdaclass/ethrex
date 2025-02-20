@@ -54,6 +54,10 @@ use utils::{
 };
 mod admin;
 mod authentication;
+#[cfg(feature = "based")]
+mod based;
+#[cfg(feature = "based")]
+use based::{env::EnvV0, frag::FragV0, seal::SealV0};
 pub mod engine;
 mod eth;
 mod net;
@@ -242,7 +246,12 @@ pub async fn map_http_requests(req: &RpcRequest, context: RpcApiContext) -> Resu
         Ok(RpcNamespace::Debug) => map_debug_requests(req, context).await,
         Ok(RpcNamespace::Web3) => map_web3_requests(req, context),
         Ok(RpcNamespace::Net) => map_net_requests(req, context),
-        _ => Err(RpcErr::MethodNotFound(req.method.clone())),
+        Ok(RpcNamespace::Engine) => Err(RpcErr::Internal(
+            "Engine namespace not allowed in map_http_requests".to_owned(),
+        )),
+        #[cfg(feature = "based")]
+        Ok(RpcNamespace::Based) => map_based_requests(req, context),
+        Err(rpc_err) => Err(rpc_err),
     }
 }
 
@@ -393,6 +402,16 @@ pub fn map_net_requests(req: &RpcRequest, contex: RpcApiContext) -> Result<Value
     match req.method.as_str() {
         "net_version" => net::version(req, contex),
         unknown_net_method => Err(RpcErr::MethodNotFound(unknown_net_method.to_owned())),
+    }
+}
+
+#[cfg(feature = "based")]
+pub fn map_based_requests(req: &RpcRequest, _context: RpcApiContext) -> Result<Value, RpcErr> {
+    match req.method.as_str() {
+        "based_env" => EnvV0::call(req, _context),
+        "based_newFrag" => FragV0::call(req, _context),
+        "based_sealFrag" => SealV0::call(req, _context),
+        unknown_based_method => Err(RpcErr::MethodNotFound(unknown_based_method.to_owned())),
     }
 }
 
