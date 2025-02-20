@@ -437,7 +437,7 @@ fn handle_new_payload_v4(
     match context.sync_status()? {
         SyncStatus::Active | SyncStatus::Pending => Ok(PayloadStatus::syncing()),
         SyncStatus::Inactive => {
-            if let Err(RpcErr::Internal(error_msg)) = validate_block_hash(&payload, &block) {
+            if let Err(RpcErr::Internal(error_msg)) = validate_block_hash(payload, &block) {
                 return Ok(PayloadStatus::invalid_with_err(&error_msg));
             }
             let blob_versioned_hashes: Vec<H256> = block
