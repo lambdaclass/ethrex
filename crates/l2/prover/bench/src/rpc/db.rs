@@ -435,7 +435,15 @@ impl ToExecDB for RpcDB {
     }
 }
 
+/// Get all potential child nodes of a node whose value was deleted.
+///
+/// After deleting a value from a (partial) trie it's possible that the node containing the value gets
+/// replaced by its child, whose prefix is possibly modified by appending some nibbles to it.
+/// If we don't have this child node (because we're modifying a partial trie), then we can't
+/// perform the deletion. If we have the final proof of exclusion of the deleted value, we can
+/// calculate all posible child nodes.
 fn get_potential_child_nodes(proof: &[NodeRLP], key: &PathRLP) -> Option<Vec<Node>> {
+    // TODO: Perhaps it's possible to calculate the child nodes instead of storing all possible ones.
     let trie = Trie::from_nodes(
         proof.first(),
         &proof.iter().skip(1).cloned().collect::<Vec<_>>(),
