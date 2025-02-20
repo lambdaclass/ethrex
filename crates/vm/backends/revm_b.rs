@@ -27,9 +27,9 @@ use ethrex_common::{
 };
 use revm_primitives::Bytes;
 use revm_primitives::{
-    ruint::Uint, AccessList as RevmAccessList, AccessListItem, Address as RevmAddress,
-    Authorization as RevmAuthorization, FixedBytes, SignedAuthorization, SpecId,
-    TxKind as RevmTxKind, U256 as RevmU256,
+    ruint::Uint, AccessList as RevmAccessList, AccessListItem, AccountState as RevmAccountState,
+    Address as RevmAddress, Authorization as RevmAuthorization, FixedBytes, SignedAuthorization,
+    SpecId, TxKind as RevmTxKind, U256 as RevmU256,
 };
 use std::cmp::min;
 
