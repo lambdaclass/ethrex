@@ -17,7 +17,6 @@ use ethrex_common::{
     Address, H256,
 };
 use revm::{
-    db::{states::bundle_state::BundleRetention, AccountState as RevmAccountState, AccountStatus},
     inspector_handle_register,
     primitives::{BlockEnv, TxEnv},
     Evm,
