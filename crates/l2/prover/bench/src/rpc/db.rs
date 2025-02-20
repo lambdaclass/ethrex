@@ -296,7 +296,6 @@ impl ToExecDB for RpcDB {
         // TODO: remove unwraps
 
         let initial_account_proofs = initial_accounts
-            .iter()
             .map(|(_, account)| account.get_account_proof());
         let final_account_proofs = final_accounts
             .iter()
@@ -312,7 +311,7 @@ impl ToExecDB for RpcDB {
         // get potential child nodes of deleted nodes after execution
         let potential_account_child_nodes = final_account_proofs
             .filter_map(|(address, proof)| {
-                get_potential_child_nodes(proof, &hash_address(&address))
+                get_potential_child_nodes(proof, &hash_address(address))
             })
             .flat_map(|nodes| nodes.into_iter().map(|node| node.encode_raw()));
 
@@ -333,7 +332,7 @@ impl ToExecDB for RpcDB {
             pub storage: &'a HashMap<H256, U256>,
             pub code: &'a Option<Bytes>,
             pub storage_proofs: &'a HashMap<H256, Vec<NodeRLP>>,
-        };
+        }
 
         let existing_accs = initial_accounts.iter().filter_map(|(address, account)| {
             if let Account::Existing {
@@ -392,7 +391,6 @@ impl ToExecDB for RpcDB {
             .collect();
 
         let state_root = initial_account_proofs
-            .clone()
             .next()
             .clone()
             .and_then(|proof| proof.first().cloned());
