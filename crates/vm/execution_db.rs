@@ -8,7 +8,6 @@ use ethrex_common::{
 };
 use ethrex_storage::{AccountUpdate, Store};
 use ethrex_trie::{NodeRLP, Trie, TrieError};
-use lazy_static::lazy_static;
 use revm::{
     db::CacheDB,
     inspectors::TracerEip3155,
@@ -16,17 +15,17 @@ use revm::{
         result::EVMError as RevmError, AccountInfo as RevmAccountInfo, Address as RevmAddress,
         Bytecode as RevmBytecode, Bytes as RevmBytes, B256 as RevmB256, U256 as RevmU256,
     },
-    Database, DatabaseCommit, DatabaseRef, Evm,
+    Database, DatabaseRef, Evm,
 };
-use revm_primitives::{SpecId, TxEnv, TxKind as RevmTxKind};
+use revm_primitives::SpecId;
 use serde::{Deserialize, Serialize};
 
 use crate::{
     backends::{self},
     block_env,
-    db::{evm_state, StoreWrapper},
+    db::evm_state,
     errors::ExecutionDBError,
-    spec_id, tx_env, EvmError,
+    tx_env,
 };
 
 /// In-memory EVM database for single execution data.
