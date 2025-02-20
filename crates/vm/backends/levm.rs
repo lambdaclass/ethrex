@@ -198,6 +198,7 @@ impl LEVM {
 
     pub fn get_state_transitions(
         // Warning only pass the fork if running the ef-tests.
+        // ISSUE #2021: https://github.com/lambdaclass/ethrex/issues/2021
         ef_tests: Option<Fork>,
         initial_state: &EvmState,
         block_hash: H256,
@@ -277,11 +278,8 @@ impl LEVM {
                 .get_block_header_by_hash(block_hash)?
                 .ok_or(StoreError::MissingStore)?;
             let fork_from_config = initial_state.chain_config()?.fork(block_header.timestamp);
-            // Weird, getting two different forks
-            dbg!(fork_from_config);
-            // Here we take the passed fork through the ef_tests variable, or we set fork to the fork based on the timestamp.
+            // Here we take the passed fork through the ef_tests variable, or we set it to the fork based on the timestamp.
             let fork = ef_tests.unwrap_or(fork_from_config);
-            dbg!(fork);
             if let Some(old_info) =
                 current_db.get_account_info_by_hash(block_hash, account_update.address)?
             {

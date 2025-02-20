@@ -35,7 +35,7 @@ use std::sync::OnceLock;
 // Then, we can retrieve the evm with:
 // EVM_BACKEND.get(); -> returns Option<EVM>
 pub static EVM_BACKEND: OnceLock<EVM> = OnceLock::new();
-
+/// Function used to access the global variable holding the chosen backend.
 pub fn get_evm_backend_or_default() -> EVM {
     EVM_BACKEND.get().unwrap_or(&EVM::default()).clone()
 }
