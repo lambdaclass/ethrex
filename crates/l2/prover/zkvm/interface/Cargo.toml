@@ -8,15 +8,15 @@ serde = { version = "1.0.203", features = ["derive"] }
 serde_with = "3.11.0"
 thiserror = "2.0.9"
 
-ethrex-core = { path = "../../../../common/", default-features = false }
+ethrex-common = { path = "../../../../common/", default-features = false }
 ethrex-vm = { path = "../../../../vm", default-features = false }
 ethrex-rlp = { path = "../../../../common/rlp", default-features = false }
 ethrex-storage = { path = "../../../../storage/store", default-features = false }
 ethrex-trie = { path = "../../../../storage/trie", default-features = false }
 
 [build-dependencies]
-risc0-build = { version = "1.2.0" }
-sp1-build = "3.4.0"
+risc0-build = { version = "1.2.2" }
+sp1-build = "4.0.1"
 
 [package.metadata.risc0]
 methods = ["risc0"]
@@ -25,7 +25,6 @@ methods = ["risc0"]
 default = []
 build_risc0 = []
 build_sp1 = []
-
 
 [lib]
 path = "./src/lib.rs"

@@ -1,6 +1,17 @@
-use crate::rlpx::utils::{ecdh_xchng, id2pubkey, kdf, pubkey2id, sha256, sha256_hmac};
+use std::net::SocketAddr;
+
+use crate::{
+    network::P2PContext,
+    rlpx::{
+        connection::{LocalState, RLPxConnection, RemoteState},
+        error::RLPxError,
+        frame::RLPxCodec,
+        utils::{ecdh_xchng, id2pubkey, kdf, log_peer_debug, pubkey2id, sha256, sha256_hmac},
+    },
+    types::Node,
+};
 use aes::cipher::{KeyIvInit, StreamCipher};
-use ethrex_core::{Signature, H128, H256, H512};
+use ethrex_common::{Signature, H128, H256, H512};
 use ethrex_rlp::{
     decode::RLPDecode,
     encode::RLPEncode,
@@ -13,13 +24,185 @@ use k256::{
     PublicKey, SecretKey,
 };
 use rand::Rng;
-
-use super::error::RLPxError;
+use sha3::{Digest, Keccak256};
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
 type Aes128Ctr64BE = ctr::Ctr64BE<aes::Aes128>;
 
+// https://github.com/ethereum/go-ethereum/blob/master/p2p/peer.go#L44
+pub const P2P_MAX_MESSAGE_SIZE: usize = 2048;
+
+pub(crate) async fn as_receiver<S>(
+    context: P2PContext,
+    peer_addr: SocketAddr,
+    mut stream: S,
+) -> Result<RLPxConnection<S>, RLPxError>
+where
+    S: AsyncRead + AsyncWrite + std::marker::Unpin,
+{
+    let remote_state = receive_auth(&context.signer, &mut stream).await?;
+    let local_state = send_ack(remote_state.node_id, &mut stream).await?;
+    let hashed_nonces: [u8; 32] =
+        Keccak256::digest([local_state.nonce.0, remote_state.nonce.0].concat()).into();
+    let node = Node {
+        ip: peer_addr.ip(),
+        udp_port: peer_addr.port(),
+        tcp_port: peer_addr.port(),
+        node_id: remote_state.node_id,
+    };
+    let codec = RLPxCodec::new(&local_state, &remote_state, hashed_nonces);
+    log_peer_debug(&node, "Completed handshake as receiver!");
+    Ok(RLPxConnection::new(
+        context.signer,
+        node,
+        stream,
+        codec,
+        context.storage,
+        context.broadcast,
+    ))
+}
+
+pub(crate) async fn as_initiator<S>(
+    context: P2PContext,
+    node: Node,
+    mut stream: S,
+) -> Result<RLPxConnection<S>, RLPxError>
+where
+    S: AsyncRead + AsyncWrite + std::marker::Unpin,
+{
+    let local_state = send_auth(&context.signer, node.node_id, &mut stream).await?;
+    let remote_state = receive_ack(&context.signer, node.node_id, &mut stream).await?;
+    // Local node is initator
+    // keccak256(nonce || initiator-nonce)
+    let hashed_nonces: [u8; 32] =
+        Keccak256::digest([remote_state.nonce.0, local_state.nonce.0].concat()).into();
+    let codec = RLPxCodec::new(&local_state, &remote_state, hashed_nonces);
+    log_peer_debug(&node, "Completed handshake as initiator!");
+    Ok(RLPxConnection::new(
+        context.signer,
+        node,
+        stream,
+        codec,
+        context.storage,
+        context.broadcast,
+    ))
+}
+
+async fn send_auth<S: AsyncWrite + std::marker::Unpin>(
+    signer: &SigningKey,
+    remote_node_id: H512,
+    mut stream: S,
+) -> Result<LocalState, RLPxError> {
+    let secret_key: SecretKey = signer.clone().into();
+    let peer_pk = id2pubkey(remote_node_id).ok_or(RLPxError::InvalidPeerId())?;
+
+    let local_nonce = H256::random_using(&mut rand::thread_rng());
+    let local_ephemeral_key = SecretKey::random(&mut rand::thread_rng());
+
+    let msg = encode_auth_message(&secret_key, local_nonce, &peer_pk, &local_ephemeral_key)?;
+    stream.write_all(&msg).await?;
+
+    Ok(LocalState {
+        nonce: local_nonce,
+        ephemeral_key: local_ephemeral_key,
+        init_message: msg,
+    })
+}
+
+async fn send_ack<S: AsyncWrite + std::marker::Unpin>(
+    remote_node_id: H512,
+    mut stream: S,
+) -> Result<LocalState, RLPxError> {
+    let peer_pk = id2pubkey(remote_node_id).ok_or(RLPxError::InvalidPeerId())?;
+
+    let local_nonce = H256::random_using(&mut rand::thread_rng());
+    let local_ephemeral_key = SecretKey::random(&mut rand::thread_rng());
+
+    let msg = encode_ack_message(&local_ephemeral_key, local_nonce, &peer_pk)?;
+    stream.write_all(&msg).await?;
+
+    Ok(LocalState {
+        nonce: local_nonce,
+        ephemeral_key: local_ephemeral_key,
+        init_message: msg,
+    })
+}
+
+async fn receive_auth<S: AsyncRead + std::marker::Unpin>(
+    signer: &SigningKey,
+    stream: S,
+) -> Result<RemoteState, RLPxError> {
+    let secret_key: SecretKey = signer.clone().into();
+
+    let msg_bytes = receive_handshake_msg(stream).await?;
+    let size_data = &msg_bytes
+        .get(..2)
+        .ok_or(RLPxError::InvalidMessageLength())?;
+    let msg = &msg_bytes
+        .get(2..)
+        .ok_or(RLPxError::InvalidMessageLength())?;
+    let (auth, remote_ephemeral_key) = decode_auth_message(&secret_key, msg, size_data)?;
+
+    Ok(RemoteState {
+        node_id: auth.node_id,
+        nonce: auth.nonce,
+        ephemeral_key: remote_ephemeral_key,
+        init_message: msg_bytes.to_owned(),
+    })
+}
+
+async fn receive_ack<S: AsyncRead + std::marker::Unpin>(
+    signer: &SigningKey,
+    remote_node_id: H512,
+    stream: S,
+) -> Result<RemoteState, RLPxError> {
+    let secret_key: SecretKey = signer.clone().into();
+    let msg_bytes = receive_handshake_msg(stream).await?;
+    let size_data = &msg_bytes
+        .get(..2)
+        .ok_or(RLPxError::InvalidMessageLength())?;
+    let msg = &msg_bytes
+        .get(2..)
+        .ok_or(RLPxError::InvalidMessageLength())?;
+    let ack = decode_ack_message(&secret_key, msg, size_data)?;
+    let remote_ephemeral_key = ack
+        .get_ephemeral_pubkey()
+        .ok_or(RLPxError::NotFound("Remote ephemeral key".to_string()))?;
+
+    Ok(RemoteState {
+        node_id: remote_node_id,
+        nonce: ack.nonce,
+        ephemeral_key: remote_ephemeral_key,
+        init_message: msg_bytes.to_owned(),
+    })
+}
+
+async fn receive_handshake_msg<S: AsyncRead + std::marker::Unpin>(
+    mut stream: S,
+) -> Result<Vec<u8>, RLPxError> {
+    let mut buf = vec![0; 2];
+
+    // Read the message's size
+    stream.read_exact(&mut buf).await?;
+    let ack_data = [buf[0], buf[1]];
+    let msg_size = u16::from_be_bytes(ack_data) as usize;
+    if msg_size > P2P_MAX_MESSAGE_SIZE {
+        return Err(RLPxError::InvalidMessageLength());
+    }
+    buf.resize(msg_size + 2, 0);
+
+    // Read the rest of the message
+    // Guard unwrap
+    if buf.len() < msg_size + 2 {
+        return Err(RLPxError::CryptographyError(String::from("bad buf size")));
+    }
+    stream.read_exact(&mut buf[2..msg_size + 2]).await?;
+    let ack_bytes = &buf[..msg_size + 2];
+    Ok(ack_bytes.to_vec())
+}
+
 /// Encodes an Auth message, to start a handshake.
-pub(crate) fn encode_auth_message(
+fn encode_auth_message(
     static_key: &SecretKey,
     local_nonce: H256,
     remote_static_pubkey: &PublicKey,
@@ -47,7 +230,7 @@ pub(crate) fn encode_auth_message(
 }
 
 /// Decodes an incomming Auth message, starting a handshake.
-pub(crate) fn decode_auth_message(
+fn decode_auth_message(
     static_key: &SecretKey,
     msg: &[u8],
     auth_data: &[u8],
@@ -66,7 +249,7 @@ pub(crate) fn decode_auth_message(
 }
 
 /// Encodes an Ack message, to complete a handshake
-pub(crate) fn encode_ack_message(
+fn encode_ack_message(
     local_ephemeral_key: &SecretKey,
     local_nonce: H256,
     remote_static_pubkey: &PublicKey,
@@ -81,7 +264,7 @@ pub(crate) fn encode_ack_message(
 }
 
 /// Decodes an Ack message, completing a handshake.
-pub(crate) fn decode_ack_message(
+fn decode_ack_message(
     static_key: &SecretKey,
     msg: &[u8],
     auth_data: &[u8],
@@ -116,7 +299,9 @@ fn decrypt_message(
 
     // Verify the MAC.
     let expected_d = sha256_hmac(&mac_key, &[iv, c], size_data);
-    assert_eq!(d, expected_d);
+    if d != expected_d {
+        return Err(RLPxError::HandshakeError(String::from("Invalid MAC")));
+    }
 
     // Decrypt the message with the AES key.
     let mut stream_cipher = Aes128Ctr64BE::new_from_slices(aes_key, iv)?;
@@ -320,7 +505,7 @@ impl RLPDecode for AckMessage {
 mod tests {
     use std::str::FromStr;
 
-    use ethrex_core::H256;
+    use ethrex_common::H256;
     use hex_literal::hex;
     use k256::SecretKey;
 

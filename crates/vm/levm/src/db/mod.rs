@@ -1,5 +1,5 @@
 use crate::account::{Account, AccountInfo, StorageSlot};
-use ethrex_core::{Address, H256, U256};
+use ethrex_common::{Address, H256, U256};
 use std::collections::HashMap;
 
 pub mod cache;

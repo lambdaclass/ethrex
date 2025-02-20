@@ -1,0 +1,108 @@
+name: Run Hive Tests
+
+on:
+  workflow_call:
+    inputs:
+      # Must be 'levm' or 'revm'
+      evm:
+        required: true
+        type: string
+      # Must be 'main'/'trigger' or 'daily'
+      job_type:
+        required: true
+        type: string
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_VERSION: 1.82.0
+
+jobs:
+  run-hive:
+    name: Hive (${{ inputs.evm }}) - ${{ matrix.test.name }}
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        test:
+          - {
+              name: "Rpc Compat tests",
+              file_name: rpc-compat,
+              simulation: ethereum/rpc-compat,
+            }
+          - { name: "Devp2p eth tests", file_name: devp2p, simulation: devp2p }
+          - {
+              name: "Cancun Engine tests",
+              file_name: engine,
+              simulation: ethereum/engine,
+            }
+          - { name: "Sync tests", file_name: sync, simulation: ethereum/sync }
+
+    steps:
+      - name: Pull image
+        run: |
+          docker pull ghcr.io/lambdaclass/ethrex:latest
+          docker tag ghcr.io/lambdaclass/ethrex:latest ethrex:latest
+
+      - name: Checkout sources
+        if: ${{ inputs.job_type != 'main' }}
+        uses: actions/checkout@v4
+
+      - name: Checkout sources
+        if: ${{ inputs.job_type == 'main' }}
+        uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+
+      - name: Setup Hive
+        run: make setup-hive
+
+      - name: Run Hive Simulation
+        run: cd hive && ./hive --client ethrex --sim ${{ matrix.test.simulation }} --ethrex.flags "--evm ${{ inputs.evm }}" --sim.parallelism 16
+        continue-on-error: true
+
+      - name: Upload results
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.test.file_name }}_${{ inputs.evm }}_${{ inputs.job_type }}_logs
+          path: hive/workspace/logs/*-*.json
+          if-no-files-found: error
+
+  hive-report:
+    name: Generate and Save report (${{ inputs.evm }})
+    needs: run-hive
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v4
+
+      - name: Rustup toolchain install
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: ${{ env.RUST_VERSION }}
+
+      - name: Download all results
+        uses: actions/download-artifact@v4
+        with:
+          path: hive/workspace/logs
+          pattern: "*_${{ inputs.evm }}_${{ inputs.job_type }}_logs"
+          merge-multiple: true
+
+      - name: Caching
+        uses: Swatinem/rust-cache@v2
+
+      - name: Generate the hive report
+        run: cargo run -p hive_report > results.md
+
+      - name: Upload ${{inputs.evm}}_${{ inputs.job_type }} result
+        uses: actions/upload-artifact@v4
+        with:
+          name: results_${{inputs.evm}}_${{ inputs.job_type }}.md
+          path: results.md
+          if-no-files-found: error
+
+      - name: Post results in summary
+        run: |
+          echo "# Hive coverage report (${{ inputs.evm }})" >> $GITHUB_STEP_SUMMARY
+          cat results.md >> $GITHUB_STEP_SUMMARY

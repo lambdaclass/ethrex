@@ -3,7 +3,7 @@ use std::time::Duration;
 use crate::utils::config::{errors::ConfigError, proposer::ProposerConfig, read_env_file};
 use errors::ProposerError;
 use ethereum_types::Address;
-use ethrex_dev::utils::engine_client::config::EngineApiConfig;
+use ethrex_rpc::clients::EngineApiConfig;
 use ethrex_storage::Store;
 use tokio::task::JoinSet;
 use tokio::time::sleep;
@@ -35,7 +35,7 @@ pub async fn start_proposer(store: Store) {
 
     let mut task_set = JoinSet::new();
     task_set.spawn(l1_watcher::start_l1_watcher(store.clone()));
-    task_set.spawn(l1_committer::start_l1_commiter(store.clone()));
+    task_set.spawn(l1_committer::start_l1_committer(store.clone()));
     task_set.spawn(prover_server::start_prover_server(store.clone()));
     task_set.spawn(start_proposer_server(store.clone()));
     #[cfg(feature = "metrics")]

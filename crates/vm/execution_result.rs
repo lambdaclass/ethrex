@@ -1,6 +1,6 @@
 use bytes::Bytes;
-use ethrex_core::Address;
-use ethrex_core::{types::Log, H256};
+use ethrex_common::Address;
+use ethrex_common::{types::Log, H256};
 use revm::primitives::result::Output as RevmOutput;
 use revm::primitives::result::SuccessReason as RevmSuccessReason;
 use revm::primitives::ExecutionResult as RevmExecutionResult;

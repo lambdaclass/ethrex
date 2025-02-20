@@ -2,14 +2,14 @@ use std::collections::HashMap;
 
 use crate::{
     constants::{
-        MAX_INITCODE_SIZE, MIN_BASE_FEE_PER_BLOB_GAS, TX_ACCESS_LIST_ADDRESS_GAS,
-        TX_ACCESS_LIST_STORAGE_KEY_GAS, TX_CREATE_GAS_COST, TX_DATA_NON_ZERO_GAS,
-        TX_DATA_NON_ZERO_GAS_EIP2028, TX_DATA_ZERO_GAS_COST, TX_GAS_COST,
-        TX_INIT_CODE_WORD_GAS_COST,
+        MAX_INITCODE_SIZE, TX_ACCESS_LIST_ADDRESS_GAS, TX_ACCESS_LIST_STORAGE_KEY_GAS,
+        TX_CREATE_GAS_COST, TX_DATA_NON_ZERO_GAS, TX_DATA_NON_ZERO_GAS_EIP2028,
+        TX_DATA_ZERO_GAS_COST, TX_GAS_COST, TX_INIT_CODE_WORD_GAS_COST,
     },
     error::MempoolError,
 };
-use ethrex_core::{
+use ethrex_common::{
+    constants::MIN_BASE_FEE_PER_BLOB_GAS,
     types::{
         BlobsBundle, BlockHeader, ChainConfig, EIP4844Transaction, MempoolTransaction, Transaction,
     },
@@ -310,10 +310,10 @@ mod tests {
     };
 
     use super::{transaction_intrinsic_gas, validate_transaction};
-    use ethrex_core::types::{
+    use ethrex_common::types::{
         BlockHeader, ChainConfig, EIP1559Transaction, EIP4844Transaction, Transaction, TxKind,
     };
-    use ethrex_core::{Address, Bytes, H256, U256};
+    use ethrex_common::{Address, Bytes, H256, U256};
     use ethrex_storage::EngineType;
     use ethrex_storage::{error::StoreError, Store};
 

@@ -10,14 +10,12 @@ use crate::utils::{
         save_state::{StateFileType, StateType, *},
     },
 };
-use ethrex_core::{
+use ethrex_common::{
     types::{Block, BlockHeader},
     Address, H256, U256,
 };
-use ethrex_l2_sdk::{
-    calldata::{encode_calldata, Value},
-    eth_client::{eth_sender::Overrides, EthClient, WrappedTransaction},
-};
+use ethrex_l2_sdk::calldata::{encode_calldata, Value};
+use ethrex_rpc::clients::eth::{eth_sender::Overrides, EthClient, WrappedTransaction};
 use ethrex_storage::Store;
 use ethrex_vm::{execution_db::ExecutionDB, EvmError};
 use secp256k1::SecretKey;
@@ -405,7 +403,8 @@ impl ProverServer {
 
         let block = Block::new(header, body);
 
-        let db = ExecutionDB::from_exec(&block, &self.store).map_err(EvmError::ExecutionDB)?;
+        let db =
+            ExecutionDB::from_store(&block, self.store.clone()).map_err(EvmError::ExecutionDB)?;
 
         let parent_block_header = self
             .store
@@ -504,7 +503,7 @@ impl ProverServer {
             .await?;
 
             if last_committed_block == last_verified_block {
-                warn!("No new blocks to prove");
+                debug!("No new blocks to prove");
                 continue;
             }
 

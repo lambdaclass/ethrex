@@ -38,26 +38,23 @@ mod tests {
         BASE_PRICE_IN_WEI,
     };
 
+    use crate::utils::test_utils::example_local_node_record;
     use crate::{
         map_http_requests,
         utils::{parse_json_hex, test_utils::example_p2p_node, RpcRequest},
         RpcApiContext, RpcHandler,
     };
-    use ethrex_net::{sync::SyncManager, types::Node};
+    use ethrex_p2p::sync::SyncManager;
     use serde_json::{json, Value};
-    use std::{net::Ipv4Addr, sync::Arc};
+    use std::sync::Arc;
     use tokio::sync::Mutex;
 
     fn default_context() -> RpcApiContext {
         RpcApiContext {
             storage: setup_store(),
             jwt_secret: Default::default(),
-            local_p2p_node: Node {
-                ip: std::net::IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)),
-                udp_port: Default::default(),
-                tcp_port: Default::default(),
-                node_id: Default::default(),
-            },
+            local_p2p_node: example_p2p_node(),
+            local_node_record: example_local_node_record(),
             active_filters: Default::default(),
             syncer: Arc::new(Mutex::new(SyncManager::dummy())),
         }

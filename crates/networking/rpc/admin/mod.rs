@@ -1,8 +1,9 @@
-use ethrex_core::types::ChainConfig;
-use ethrex_net::types::Node;
+use ethrex_common::types::ChainConfig;
+use ethrex_p2p::types::{Node, NodeRecord};
 use ethrex_storage::Store;
 use serde::Serialize;
 use serde_json::Value;
+use sha3::{Digest, Keccak256};
 use std::collections::HashMap;
 
 use crate::utils::RpcErr;
@@ -10,6 +11,7 @@ use crate::utils::RpcErr;
 #[derive(Serialize, Debug)]
 struct NodeInfo {
     enode: String,
+    enr: String,
     id: String,
     ip: String,
     name: String,
@@ -29,8 +31,16 @@ enum Protocol {
     Eth(ChainConfig),
 }
 
-pub fn node_info(storage: Store, local_node: Node) -> Result<Value, RpcErr> {
+pub fn node_info(
+    storage: Store,
+    local_node: Node,
+    local_node_record: NodeRecord,
+) -> Result<Value, RpcErr> {
     let enode_url = local_node.enode_url();
+    let enr_url = match local_node_record.enr_url() {
+        Ok(enr) => enr,
+        Err(_) => "".into(),
+    };
     let mut protocols = HashMap::new();
 
     let chain_config = storage
@@ -40,7 +50,8 @@ pub fn node_info(storage: Store, local_node: Node) -> Result<Value, RpcErr> {
 
     let node_info = NodeInfo {
         enode: enode_url,
-        id: hex::encode(local_node.node_id),
+        enr: enr_url,
+        id: hex::encode(Keccak256::digest(local_node.node_id.as_bytes())),
         name: "ethrex/0.1.0/rust1.81".to_string(),
         ip: local_node.ip.to_string(),
         ports: Ports {

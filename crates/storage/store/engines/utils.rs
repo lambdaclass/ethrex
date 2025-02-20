@@ -1,5 +1,5 @@
 /// Represents the key for each unique value of the chain data stored in the db
-// (TODO: Remove this comment once full) Will store chain-specific data such as chain id and latest finalized/pending/safe block number
+//  Stores chain-specific data such as chain id and latest finalized/pending/safe block number
 #[derive(Debug, Copy, Clone)]
 pub enum ChainDataIndex {
     ChainConfig = 0,
@@ -33,6 +33,39 @@ impl From<u8> for ChainDataIndex {
             }
             x if x == ChainDataIndex::IsSynced as u8 => ChainDataIndex::IsSynced,
             _ => panic!("Invalid value when casting to ChainDataIndex: {}", value),
+        }
+    }
+}
+
+/// Represents the key for each unique value of the snap state stored in the db
+//  Stores the snap state from previous sync cycles. Currently stores the header & state trie download checkpoint
+//, but will later on also include the body download checkpoint and the last pivot used
+#[derive(Debug, Copy, Clone)]
+pub enum SnapStateIndex {
+    // Hash of the last downloaded header in a previous sync cycle that was aborted
+    HeaderDownloadCheckpoint = 0,
+    // Paths from the storage trie in need of healing, grouped by hashed account address
+    StorageHealPaths = 2,
+    // Last key fetched from the state trie
+    StateTrieKeyCheckpoint = 3,
+    // Paths from the state trie in need of healing
+    StateHealPaths = 4,
+    // Trie Rebuild Checkpoint (Current State Trie Root, Last Inserted Key Per Segment)
+    StateTrieRebuildCheckpoint = 5,
+    // Storage tries awaiting rebuild (AccountHash, ExpectedRoot)
+    StorageTrieRebuildPending = 6,
+}
+
+impl From<u8> for SnapStateIndex {
+    fn from(value: u8) -> Self {
+        match value {
+            0 => SnapStateIndex::HeaderDownloadCheckpoint,
+            2 => SnapStateIndex::StorageHealPaths,
+            3 => SnapStateIndex::StateTrieKeyCheckpoint,
+            4 => SnapStateIndex::StateHealPaths,
+            5 => SnapStateIndex::StateTrieRebuildCheckpoint,
+            6 => SnapStateIndex::StorageTrieRebuildPending,
+            _ => panic!("Invalid value when casting to SnapDataIndex: {}", value),
         }
     }
 }

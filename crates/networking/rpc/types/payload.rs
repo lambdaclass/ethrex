@@ -2,7 +2,7 @@ use bytes::Bytes;
 use ethrex_rlp::error::RLPDecodeError;
 use serde::{Deserialize, Serialize};
 
-use ethrex_core::{
+use ethrex_common::{
     serde_utils,
     types::{
         compute_transactions_root, compute_withdrawals_root, BlobsBundle, Block, BlockBody,
@@ -49,6 +49,7 @@ pub struct ExecutionPayload {
         default
     )]
     pub excess_blob_gas: Option<u64>,
+    pub requests_hash: Option<H256>,
 }
 
 #[derive(Clone, Debug)]
@@ -128,6 +129,8 @@ impl ExecutionPayload {
             blob_gas_used: self.blob_gas_used,
             excess_blob_gas: self.excess_blob_gas,
             parent_beacon_block_root,
+            // TODO: set the value properly
+            requests_hash: self.requests_hash,
         };
 
         Ok(Block::new(header, body))
@@ -157,6 +160,7 @@ impl ExecutionPayload {
             withdrawals: block.body.withdrawals,
             blob_gas_used: block.header.blob_gas_used,
             excess_blob_gas: block.header.excess_blob_gas,
+            requests_hash: block.header.requests_hash,
         }
     }
 }

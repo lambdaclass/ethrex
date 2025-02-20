@@ -1,15 +1,16 @@
 use bytes::Bytes;
 use directories::ProjectDirs;
 use ethrex_blockchain::{add_block, fork_choice::apply_fork_choice};
-use ethrex_core::types::{Block, Genesis};
-use ethrex_net::{
-    bootnode::BootNode,
-    node_id_from_signing_key, peer_table,
+use ethrex_common::types::{Block, Genesis};
+use ethrex_p2p::{
+    kademlia::KademliaTable,
+    network::{node_id_from_signing_key, peer_table},
     sync::{SyncManager, SyncMode},
-    types::Node,
+    types::{Node, NodeRecord},
 };
 use ethrex_rlp::decode::RLPDecode;
 use ethrex_storage::{EngineType, Store};
+use ethrex_vm::{backends::EVM, EVM_BACKEND};
 use k256::ecdsa::SigningKey;
 use local_ip_address::local_ip;
 use rand::rngs::OsRng;
@@ -18,10 +19,12 @@ use std::{
     future::IntoFuture,
     io,
     net::{Ipv4Addr, SocketAddr, ToSocketAddrs},
-    path::Path,
+    path::{self, Path, PathBuf},
     str::FromStr as _,
+    sync::Arc,
     time::Duration,
 };
+use tokio::sync::Mutex;
 use tokio_util::task::TaskTracker;
 use tracing::{error, info, warn};
 use tracing_subscriber::{filter::Directive, EnvFilter, FmtSubscriber};
@@ -94,24 +97,31 @@ async fn main() {
         .expect("network is required")
         .clone();
 
-    let mut bootnodes: Vec<BootNode> = matches
+    let mut bootnodes: Vec<Node> = matches
         .get_many("bootnodes")
         .map(Iterator::copied)
         .map(Iterator::collect)
         .unwrap_or_default();
 
     if network == "holesky" {
-        warn!("Using holesky presets, bootnodes field will be ignored");
+        info!("Adding holesky preset bootnodes");
         // Set holesky presets
         network = String::from(networks::HOLESKY_GENESIS_PATH);
-        bootnodes = networks::HOLESKY_BOOTNODES.to_vec();
+        bootnodes.extend(networks::HOLESKY_BOOTNODES.iter());
     }
 
     if network == "sepolia" {
-        warn!("Using sepolia presets, bootnodes field will be ignored");
+        info!("Adding sepolia preset bootnodes");
         // Set sepolia presets
         network = String::from(networks::SEPOLIA_GENESIS_PATH);
-        bootnodes = networks::SEPOLIA_BOOTNODES.to_vec();
+        bootnodes.extend(networks::SEPOLIA_BOOTNODES.iter());
+    }
+
+    if network == "mekong" {
+        info!("Adding mekong preset bootnodes");
+        // Set mekong presets
+        network = String::from(networks::MEKONG_GENESIS_PATH);
+        bootnodes.extend(networks::MEKONG_BOOTNODES.iter());
     }
 
     if bootnodes.is_empty() {
@@ -132,17 +142,36 @@ async fn main() {
         .get_one::<String>("datadir")
         .map_or(set_datadir(DEFAULT_DATADIR), |datadir| set_datadir(datadir));
 
+    let peers_file = PathBuf::from(data_dir.clone() + "/peers.json");
+    info!("Reading known peers from {:?}", peers_file);
+    match read_known_peers(peers_file.clone()) {
+        Ok(ref mut known_peers) => bootnodes.append(known_peers),
+        Err(e) => error!("Could not read from peers file: {}", e),
+    };
+
     let sync_mode = sync_mode(&matches);
 
-    cfg_if::cfg_if! {
-        if #[cfg(feature = "redb")] {
-            let store = Store::new(&data_dir, EngineType::RedB).expect("Failed to create Store");
-        } else if #[cfg(feature = "libmdbx")] {
-            let store = Store::new(&data_dir, EngineType::Libmdbx).expect("Failed to create Store");
-        } else {
-            let store = Store::new(&data_dir, EngineType::InMemory).expect("Failed to create Store");
+    let evm = matches.get_one::<EVM>("evm").unwrap_or(&EVM::REVM);
+    let evm = EVM_BACKEND.get_or_init(|| evm.clone());
+    info!("EVM_BACKEND set to: {:?}", evm);
+
+    let path = path::PathBuf::from(data_dir.clone());
+    let store: Store = if path.ends_with("memory") {
+        Store::new(&data_dir, EngineType::InMemory).expect("Failed to create Store")
+    } else {
+        cfg_if::cfg_if! {
+            if #[cfg(feature = "redb")] {
+                let engine_type = EngineType::RedB;
+            } else if #[cfg(feature = "libmdbx")] {
+                let engine_type = EngineType::Libmdbx;
+            } else {
+                let engine_type = EngineType::InMemory;
+                error!("No database specified. The feature flag `redb` or `libmdbx` should've been set while building.");
+                panic!("Specify the desired database engine.");
+            }
         }
-    }
+        Store::new(&data_dir, engine_type).expect("Failed to create Store")
+    };
 
     let genesis = read_genesis_file(&network);
     store
@@ -211,10 +240,18 @@ async fn main() {
         tcp_port: tcp_socket_addr.port(),
         node_id: local_node_id,
     };
+    let enr_seq = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    let local_node_record = NodeRecord::from_node(local_p2p_node, enr_seq, &signer)
+        .expect("Node record could not be created from local node");
     // Create Kademlia Table here so we can access it from rpc server (for syncing)
     let peer_table = peer_table(signer.clone());
+    // Create a cancellation_token for long_living tasks
+    let cancel_token = tokio_util::sync::CancellationToken::new();
     // Create SyncManager
-    let syncer = SyncManager::new(peer_table.clone(), sync_mode);
+    let syncer = SyncManager::new(peer_table.clone(), sync_mode, cancel_token.clone());
 
     // TODO: Check every module starts properly.
     let tracker = TaskTracker::new();
@@ -224,6 +261,7 @@ async fn main() {
         store.clone(),
         jwt_secret,
         local_p2p_node,
+        local_node_record,
         syncer,
     )
     .into_future();
@@ -246,43 +284,66 @@ async fn main() {
         tracker.spawn(metrics_api);
     }
 
+    let dev_mode = *matches.get_one::<bool>("dev").unwrap_or(&false);
     // We do not want to start the networking module if the l2 feature is enabled.
     cfg_if::cfg_if! {
         if #[cfg(feature = "l2")] {
+            if dev_mode {
+                error!("Cannot run with DEV_MODE if the `l2` feature is enabled.");
+                panic!("Run without the --dev argument.");
+            }
             let l2_proposer = ethrex_l2::start_proposer(store).into_future();
             tracker.spawn(l2_proposer);
         } else if #[cfg(feature = "dev")] {
             use ethrex_dev;
-
-            let authrpc_jwtsecret = std::fs::read(authrpc_jwtsecret).expect("Failed to read JWT secret");
-            let head_block_hash = {
-                let current_block_number = store.get_latest_block_number().unwrap();
-                store.get_canonical_block_hash(current_block_number).unwrap().unwrap()
-            };
-            let max_tries = 3;
-            let url = format!("http://{authrpc_socket_addr}");
-            let block_producer_engine = ethrex_dev::block_producer::start_block_producer(url, authrpc_jwtsecret.into(), head_block_hash, max_tries, 1000, ethrex_core::Address::default());
-            tracker.spawn(block_producer_engine);
+            // Start the block_producer module if devmode was set
+            if dev_mode {
+                info!("Runnning in DEV_MODE");
+                let authrpc_jwtsecret =
+                    std::fs::read(authrpc_jwtsecret).expect("Failed to read JWT secret");
+                let head_block_hash = {
+                    let current_block_number = store.get_latest_block_number().unwrap();
+                    store
+                        .get_canonical_block_hash(current_block_number)
+                        .unwrap()
+                        .unwrap()
+                };
+                let max_tries = 3;
+                let url = format!("http://{authrpc_socket_addr}");
+                let block_producer_engine = ethrex_dev::block_producer::start_block_producer(
+                    url,
+                    authrpc_jwtsecret.into(),
+                    head_block_hash,
+                    max_tries,
+                    1000,
+                    ethrex_common::Address::default(),
+                );
+                tracker.spawn(block_producer_engine);
+            }
         } else {
-            let networking = ethrex_net::start_network(
+            if dev_mode {
+                error!("Binary wasn't built with The feature flag `dev` enabled.");
+                panic!("Build the binary with the `dev` feature in order to use the `--dev` cli's argument.");
+            }
+            ethrex_p2p::start_network(
                 local_p2p_node,
                 tracker.clone(),
-                udp_socket_addr,
-                tcp_socket_addr,
                 bootnodes,
                 signer,
                 peer_table.clone(),
                 store,
             )
-            .into_future();
-            tracker.spawn(networking);
-            tracker.spawn(ethrex_net::periodically_show_peer_stats(peer_table));
+            .await.expect("Network starts");
+            tracker.spawn(ethrex_p2p::periodically_show_peer_stats(peer_table.clone()));
         }
     }
 
     tokio::select! {
         _ = tokio::signal::ctrl_c() => {
             info!("Server shut down started...");
+            info!("Storing known peers at {:?}...", peers_file);
+            cancel_token.cancel();
+            store_known_peers(peer_table, peers_file).await;
             tokio::time::sleep(Duration::from_secs(1)).await;
             info!("Server shutting down!");
             return;
@@ -342,14 +403,10 @@ fn parse_socket_addr(addr: &str, port: &str) -> io::Result<SocketAddr> {
 
 fn sync_mode(matches: &clap::ArgMatches) -> SyncMode {
     let syncmode = matches.get_one::<String>("syncmode");
-    if let Some(syncmode) = syncmode {
-        match &**syncmode {
-            "full" => SyncMode::Full,
-            "snap" => SyncMode::Snap,
-            other => panic!("Invalid syncmode {other} expected either snap or full"),
-        }
-    } else {
-        SyncMode::Snap
+    match syncmode {
+        Some(mode) if mode == "full" => SyncMode::Full,
+        Some(mode) if mode == "snap" => SyncMode::Snap,
+        other => panic!("Invalid syncmode {:?} expected either snap or full", other),
     }
 }
 
@@ -397,15 +454,46 @@ fn import_blocks(store: &Store, blocks: &Vec<Block>) {
     }
     if let Some(last_block) = blocks.last() {
         let hash = last_block.hash();
-        cfg_if::cfg_if! {
-            if #[cfg(feature = "levm")] {
+        match EVM_BACKEND.get() {
+            Some(EVM::LEVM) => {
                 // We are allowing this not to unwrap so that tests can run even if block execution results in the wrong root hash with LEVM.
                 let _ = apply_fork_choice(store, hash, hash, hash);
             }
-            else {
+            // This means we are using REVM as default
+            Some(EVM::REVM) | None => {
                 apply_fork_choice(store, hash, hash, hash).unwrap();
             }
         }
     }
     info!("Added {} blocks to blockchain", size);
+}
+
+async fn store_known_peers(table: Arc<Mutex<KademliaTable>>, file_path: PathBuf) {
+    let mut connected_peers = vec![];
+
+    for peer in table.lock().await.iter_peers() {
+        if peer.is_connected {
+            connected_peers.push(peer.node.enode_url());
+        }
+    }
+
+    let json = match serde_json::to_string(&connected_peers) {
+        Ok(json) => json,
+        Err(e) => {
+            error!("Could not store peers in file: {:?}", e);
+            return;
+        }
+    };
+
+    if let Err(e) = std::fs::write(file_path, json) {
+        error!("Could not store peers in file: {:?}", e);
+    };
+}
+
+fn read_known_peers(file_path: PathBuf) -> Result<Vec<Node>, serde_json::Error> {
+    let Ok(file) = std::fs::File::open(file_path) else {
+        return Ok(vec![]);
+    };
+
+    serde_json::from_reader(file)
 }

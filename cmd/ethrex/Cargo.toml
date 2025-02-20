@@ -8,9 +8,9 @@ edition = "2021"
 [dependencies]
 ethrex-blockchain.workspace = true
 ethrex-rpc.workspace = true
-ethrex-core.workspace = true
-ethrex-net.workspace = true
-ethrex-storage = { workspace = true, optional = true }
+ethrex-common.workspace = true
+ethrex-p2p.workspace = true
+ethrex-storage.workspace = true
 ethrex-vm.workspace = true
 ethrex-rlp.workspace = true
 ethrex-l2 = { workspace = true, optional = true }
@@ -28,7 +28,6 @@ anyhow = "1.0.86"
 rand = "0.8.5"
 local-ip-address = "0.6"
 tokio-util.workspace = true
-libmdbx = { workspace = true, optional = true }
 redb = { workspace = true, optional = true }
 lazy_static.workspace = true
 
@@ -42,10 +41,11 @@ name = "ethrex"
 path = "./ethrex.rs"
 
 [features]
-default = ["dep:ethrex-storage", "libmdbx"]
+default = ["libmdbx", "c-kzg", "blst"]
 dev = ["dep:ethrex-dev"]
+c-kzg = ["ethrex-vm/c-kzg", "ethrex-common/c-kzg", "ethrex-blockchain/c-kzg", "ethrex-p2p/c-kzg"]
 metrics = ["ethrex-blockchain/metrics", "ethrex-l2/metrics"]
-libmdbx = ["dep:libmdbx", "ethrex-storage/libmdbx"]
+libmdbx = ["ethrex-storage/libmdbx"]
 redb = ["dep:redb", "ethrex-storage/redb"]
+blst = ["ethrex-vm/blst"]
 l2 = ["dep:ethrex-l2", "ethrex-vm/l2"]
-levm = ["default", "ethrex-vm/levm", "ethrex-blockchain/levm"]

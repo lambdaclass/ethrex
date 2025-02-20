@@ -5,18 +5,23 @@ pub mod mempool;
 pub mod payload;
 mod smoke_test;
 
-use constants::{GAS_PER_BLOB, MAX_BLOB_GAS_PER_BLOCK, MAX_BLOB_NUMBER_PER_BLOCK};
 use error::{ChainError, InvalidBlockError};
-use ethrex_core::types::{
-    compute_receipts_root, validate_block_header, validate_cancun_header_fields,
-    validate_no_cancun_header_fields, Block, BlockHash, BlockHeader, BlockNumber,
+use ethrex_common::constants::GAS_PER_BLOB;
+use ethrex_common::types::requests::Requests;
+use ethrex_common::types::{
+    compute_receipts_root, compute_requests_hash, validate_block_header,
+    validate_cancun_header_fields, validate_prague_header_fields,
+    validate_pre_cancun_header_fields, Block, BlockHash, BlockHeader, BlockNumber, ChainConfig,
     EIP4844Transaction, Receipt, Transaction,
 };
-use ethrex_core::H256;
+use ethrex_common::H256;
 
 use ethrex_storage::error::StoreError;
-use ethrex_storage::{AccountUpdate, Store};
-use ethrex_vm::{evm_state, execute_block, spec_id, EvmState, SpecId};
+use ethrex_storage::Store;
+use ethrex_vm::db::evm_state;
+
+use ethrex_vm::EVM_BACKEND;
+use ethrex_vm::{backends, backends::EVM};
 
 //TODO: Implement a struct Chain or BlockChain to encapsulate
 //functionality and canonical chain state and config
@@ -36,20 +41,22 @@ pub fn add_block(block: &Block, storage: &Store) -> Result<(), ChainError> {
         return Err(ChainError::ParentNotFound);
     };
     let mut state = evm_state(storage.clone(), block.header.parent_hash);
+    let chain_config = state.chain_config().map_err(ChainError::from)?;
 
     // Validate the block pre-execution
-    validate_block(block, &parent_header, &state)?;
-    let (receipts, account_updates): (Vec<Receipt>, Vec<AccountUpdate>) = {
-        // TODO: Consider refactoring both implementations so that they have the same signature
-        #[cfg(feature = "levm")]
-        {
-            execute_block(block, &mut state)?
-        }
-        #[cfg(not(feature = "levm"))]
-        {
-            let receipts = execute_block(block, &mut state)?;
-            let account_updates = ethrex_vm::get_state_transitions(&mut state);
-            (receipts, account_updates)
+    validate_block(block, &parent_header, &chain_config)?;
+    let (receipts, requests, account_updates) = {
+        match EVM_BACKEND.get() {
+            Some(EVM::LEVM) => {
+                let r = backends::levm::execute_block(block, &mut state)?;
+                (r.receipts, r.requests, r.account_updates)
+            }
+            // This means we are using REVM as default for tests
+            Some(EVM::REVM) | None => {
+                let (receipts, requests) = backends::revm::execute_block(block, &mut state)?;
+                let account_updates = ethrex_vm::get_state_transitions(&mut state);
+                (receipts, requests, account_updates)
+            }
         }
     };
 
@@ -68,8 +75,35 @@ pub fn add_block(block: &Block, storage: &Store) -> Result<(), ChainError> {
     // Check receipts root matches the one in block header after execution
     validate_receipts_root(&block.header, &receipts)?;
 
+    // Processes requests from receipts, computes the requests_hash and compares it against the header
+    validate_requests_hash(&block.header, &chain_config, &requests)?;
+
     store_block(storage, block.clone())?;
     store_receipts(storage, receipts, block_hash)?;
+
+    Ok(())
+}
+
+pub fn validate_requests_hash(
+    header: &BlockHeader,
+    chain_config: &ChainConfig,
+    requests: &[Requests],
+) -> Result<(), ChainError> {
+    if !chain_config.is_prague_activated(header.timestamp) {
+        return Ok(());
+    }
+
+    let computed_requests_hash = compute_requests_hash(requests);
+    let valid = header
+        .requests_hash
+        .map(|requests_hash| requests_hash == computed_requests_hash)
+        .unwrap_or(false);
+
+    if !valid {
+        return Err(ChainError::InvalidBlock(
+            InvalidBlockError::RequestsHashMismatch,
+        ));
+    }
 
     Ok(())
 }
@@ -149,27 +183,23 @@ pub fn find_parent_header(
 pub fn validate_block(
     block: &Block,
     parent_header: &BlockHeader,
-    state: &EvmState,
+    chain_config: &ChainConfig,
 ) -> Result<(), ChainError> {
-    let spec = spec_id(
-        &state.chain_config().map_err(ChainError::from)?,
-        block.header.timestamp,
-    );
-
     // Verify initial header validity against parent
     validate_block_header(&block.header, parent_header).map_err(InvalidBlockError::from)?;
 
-    match spec {
-        SpecId::CANCUN => validate_cancun_header_fields(&block.header, parent_header)
-            .map_err(InvalidBlockError::from)?,
-        _other_specs => {
-            validate_no_cancun_header_fields(&block.header).map_err(InvalidBlockError::from)?
-        }
-    };
-
-    if spec == SpecId::CANCUN {
-        verify_blob_gas_usage(block)?
+    if chain_config.is_prague_activated(block.header.timestamp) {
+        validate_prague_header_fields(&block.header, parent_header)
+            .map_err(InvalidBlockError::from)?;
+        verify_blob_gas_usage(block, chain_config)?;
+    } else if chain_config.is_cancun_activated(block.header.timestamp) {
+        validate_cancun_header_fields(&block.header, parent_header)
+            .map_err(InvalidBlockError::from)?;
+        verify_blob_gas_usage(block, chain_config)?;
+    } else {
+        validate_pre_cancun_header_fields(&block.header).map_err(InvalidBlockError::from)?
     }
+
     Ok(())
 }
 
@@ -199,21 +229,29 @@ pub fn validate_gas_used(
     Ok(())
 }
 
-fn verify_blob_gas_usage(block: &Block) -> Result<(), ChainError> {
+// Perform validations over the block's blob gas usage.
+// Must be called only if the block has cancun activated
+fn verify_blob_gas_usage(block: &Block, config: &ChainConfig) -> Result<(), ChainError> {
     let mut blob_gas_used = 0_u64;
     let mut blobs_in_block = 0_u64;
+    let max_blob_number_per_block = config
+        .get_fork_blob_schedule(block.header.timestamp)
+        .map(|schedule| schedule.max)
+        .ok_or(ChainError::Custom("Provided block fork is invalid".into()))?;
+    let max_blob_gas_per_block = max_blob_number_per_block * GAS_PER_BLOB;
+
     for transaction in block.body.transactions.iter() {
         if let Transaction::EIP4844Transaction(tx) = transaction {
             blob_gas_used += get_total_blob_gas(tx);
             blobs_in_block += tx.blob_versioned_hashes.len() as u64;
         }
     }
-    if blob_gas_used > MAX_BLOB_GAS_PER_BLOCK {
+    if blob_gas_used > max_blob_gas_per_block {
         return Err(ChainError::InvalidBlock(
             InvalidBlockError::ExceededMaxBlobGasPerBlock,
         ));
     }
-    if blobs_in_block > MAX_BLOB_NUMBER_PER_BLOCK {
+    if blobs_in_block > max_blob_number_per_block {
         return Err(ChainError::InvalidBlock(
             InvalidBlockError::ExceededMaxBlobNumberPerBlock,
         ));

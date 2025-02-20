@@ -9,7 +9,7 @@ use aes::{
     Aes256Enc,
 };
 use bytes::{Buf, BytesMut};
-use ethrex_core::{H128, H256};
+use ethrex_common::{H128, H256};
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode as _};
 use sha3::{Digest as _, Keccak256};
 use tokio::io::{AsyncRead, AsyncWrite};
@@ -28,12 +28,11 @@ pub(crate) struct RLPxCodec {
 }
 
 impl RLPxCodec {
-    pub(crate) fn update_secrets(
-        &mut self,
-        local_state: LocalState,
-        remote_state: RemoteState,
+    pub(crate) fn new(
+        local_state: &LocalState,
+        remote_state: &RemoteState,
         hashed_nonces: [u8; 32],
-    ) {
+    ) -> Self {
         let ephemeral_key_secret =
             ecdh_xchng(&local_state.ephemeral_key, &remote_state.ephemeral_key);
 
@@ -44,35 +43,26 @@ impl RLPxCodec {
         let aes_key =
             H256(Keccak256::digest([ephemeral_key_secret, shared_secret].concat()).into());
         // mac-secret = keccak256(ephemeral-key || aes-secret)
-        self.mac_key = H256(Keccak256::digest([ephemeral_key_secret, aes_key.0].concat()).into());
+        let mac_key = H256(Keccak256::digest([ephemeral_key_secret, aes_key.0].concat()).into());
 
         // egress-mac = keccak256.init((mac-secret ^ remote-nonce) || auth)
-        self.egress_mac = Keccak256::default()
-            .chain_update(self.mac_key ^ remote_state.nonce)
+        let egress_mac = Keccak256::default()
+            .chain_update(mac_key ^ remote_state.nonce)
             .chain_update(&local_state.init_message);
 
         // ingress-mac = keccak256.init((mac-secret ^ initiator-nonce) || ack)
-        self.ingress_mac = Keccak256::default()
-            .chain_update(self.mac_key ^ local_state.nonce)
+        let ingress_mac = Keccak256::default()
+            .chain_update(mac_key ^ local_state.nonce)
             .chain_update(&remote_state.init_message);
 
-        self.ingress_aes = <Aes256Ctr64BE as KeyIvInit>::new(&aes_key.0.into(), &[0; 16].into());
-        self.egress_aes = self.ingress_aes.clone();
-    }
-}
-
-impl Default for RLPxCodec {
-    fn default() -> Self {
-        let default_mac_key = H256::default();
-        let default_aes =
-            <Aes256Ctr64BE as KeyIvInit>::new(&default_mac_key.0.into(), &[0; 16].into());
-        let default_mac = Keccak256::default();
+        let ingress_aes = <Aes256Ctr64BE as KeyIvInit>::new(&aes_key.0.into(), &[0; 16].into());
+        let egress_aes = ingress_aes.clone();
         Self {
-            mac_key: default_mac_key,
-            ingress_mac: default_mac.clone(),
-            egress_mac: default_mac,
-            ingress_aes: default_aes.clone(),
-            egress_aes: default_aes,
+            mac_key,
+            ingress_mac,
+            egress_mac,
+            ingress_aes,
+            egress_aes,
         }
     }
 }
@@ -131,10 +121,6 @@ impl Decoder for RLPxCodec {
         // Use temporary value as it can be discarded if the buffer does not contain yet the full message
         let mut temp_ingress_aes = self.ingress_aes.clone();
         temp_ingress_aes.apply_keystream(header_text);
-
-        // header-data = [capability-id, context-id]
-        // Both are unused, and always zero
-        assert_eq!(&header_text[3..6], &(0_u8, 0_u8).encode_to_vec());
 
         let frame_size: usize =
             u32::from_be_bytes([0, header_text[0], header_text[1], header_text[2]])

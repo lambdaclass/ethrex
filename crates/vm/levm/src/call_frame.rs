@@ -1,12 +1,12 @@
 use crate::{
     constants::STACK_LIMIT,
-    errors::{InternalError, VMError},
+    errors::{InternalError, OutOfGasError, VMError},
     memory::Memory,
     opcodes::Opcode,
-    vm::get_valid_jump_destinations,
+    utils::get_valid_jump_destinations,
 };
 use bytes::Bytes;
-use ethrex_core::{types::Log, Address, U256};
+use ethrex_common::{types::Log, Address, U256};
 use std::collections::HashSet;
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -151,5 +151,20 @@ impl CallFrame {
 
     pub fn pc(&self) -> usize {
         self.pc
+    }
+
+    /// Increases gas consumption of CallFrame and Environment, returning an error if the callframe gas limit is reached.
+    pub fn increase_consumed_gas(&mut self, gas: u64) -> Result<(), VMError> {
+        let potential_consumed_gas = self
+            .gas_used
+            .checked_add(gas)
+            .ok_or(OutOfGasError::ConsumedGasOverflow)?;
+        if potential_consumed_gas > self.gas_limit {
+            return Err(VMError::OutOfGas(OutOfGasError::MaxGasLimitExceeded));
+        }
+
+        self.gas_used = potential_consumed_gas;
+
+        Ok(())
     }
 }

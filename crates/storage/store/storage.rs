@@ -7,14 +7,14 @@ use engines::api::StoreEngine;
 #[cfg(feature = "redb")]
 use engines::redb::RedBStore;
 use ethereum_types::{Address, H256, U256};
-use ethrex_core::types::{
+use ethrex_common::types::{
     code_hash, AccountInfo, AccountState, BlobsBundle, Block, BlockBody, BlockHash, BlockHeader,
     BlockNumber, ChainConfig, Genesis, GenesisAccount, Index, MempoolTransaction, Receipt,
     Transaction, TxType, EMPTY_TRIE_HASH,
 };
 use ethrex_rlp::decode::RLPDecode;
 use ethrex_rlp::encode::RLPEncode;
-use ethrex_trie::Trie;
+use ethrex_trie::{Nibbles, Trie};
 use serde::{Deserialize, Serialize};
 use sha3::{Digest as _, Keccak256};
 use std::collections::{HashMap, HashSet};
@@ -25,17 +25,23 @@ use tracing::info;
 mod engines;
 pub mod error;
 mod rlp;
+mod trie_db;
+
+/// Number of state trie segments to fetch concurrently during state sync
+pub const STATE_TRIE_SEGMENTS: usize = 2;
+// Maximum amount of reads from the snapshot in a single transaction to avoid performance hits due to long-living reads
+// This will always be the amount yielded by snapshot reads unless there are less elements left
+pub const MAX_SNAPSHOT_READS: usize = 100;
 
 #[derive(Debug, Clone)]
 pub struct Store {
-    // TODO: Check if we can remove this mutex and move it to the in_memory::Store struct
     engine: Arc<dyn StoreEngine>,
     pub mempool: Arc<Mutex<HashMap<H256, MempoolTransaction>>>,
     pub blobs_bundle_pool: Arc<Mutex<HashMap<H256, BlobsBundle>>>,
 }
 
 #[allow(dead_code)]
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EngineType {
     InMemory,
     #[cfg(feature = "libmdbx")]
@@ -97,6 +103,21 @@ impl Store {
             },
         };
         info!("Started store engine");
+        Ok(store)
+    }
+
+    pub fn new_from_genesis(
+        store_path: &str,
+        engine_type: EngineType,
+        genesis_path: &str,
+    ) -> Result<Self, StoreError> {
+        let file = std::fs::File::open(genesis_path)
+            .map_err(|error| StoreError::Custom(format!("Failed to open genesis file: {error}")))?;
+        let reader = std::io::BufReader::new(file);
+        let genesis: Genesis =
+            serde_json::from_reader(reader).expect("Failed to deserialize genesis file");
+        let store = Self::new(store_path, engine_type)?;
+        store.add_initial_state(genesis)?;
         Ok(store)
     }
 
@@ -712,6 +733,14 @@ impl Store {
         self.engine.get_canonical_block_hash(block_number)
     }
 
+    pub fn get_latest_canonical_block_hash(&self) -> Result<Option<BlockHash>, StoreError> {
+        let latest_block_number = match self.engine.get_latest_block_number() {
+            Ok(n) => n.ok_or(StoreError::MissingLatestBlockNumber)?,
+            Err(e) => return Err(e),
+        };
+        self.get_canonical_block_hash(latest_block_number)
+    }
+
     /// Marks a block number as not having any canonical blocks associated with it.
     /// Used for reorgs.
     /// Note: Should we also remove all others up to the head here?
@@ -1003,11 +1032,138 @@ impl Store {
             .is_some())
     }
 
+    /// Sets the hash of the last header downloaded during a snap sync
+    pub fn set_header_download_checkpoint(&self, block_hash: BlockHash) -> Result<(), StoreError> {
+        self.engine.set_header_download_checkpoint(block_hash)
+    }
+
+    /// Gets the hash of the last header downloaded during a snap sync
+    pub fn get_header_download_checkpoint(&self) -> Result<Option<BlockHash>, StoreError> {
+        self.engine.get_header_download_checkpoint()
+    }
+
+    /// Sets the last key fetched from the state trie being fetched during snap sync
+    pub fn set_state_trie_key_checkpoint(
+        &self,
+        last_keys: [H256; STATE_TRIE_SEGMENTS],
+    ) -> Result<(), StoreError> {
+        self.engine.set_state_trie_key_checkpoint(last_keys)
+    }
+
+    /// Gets the last key fetched from the state trie being fetched during snap sync
+    pub fn get_state_trie_key_checkpoint(
+        &self,
+    ) -> Result<Option<[H256; STATE_TRIE_SEGMENTS]>, StoreError> {
+        self.engine.get_state_trie_key_checkpoint()
+    }
+
+    /// Sets the storage trie paths in need of healing, grouped by hashed address
+    pub fn set_storage_heal_paths(
+        &self,
+        accounts: Vec<(H256, Vec<Nibbles>)>,
+    ) -> Result<(), StoreError> {
+        self.engine.set_storage_heal_paths(accounts)
+    }
+
+    /// Gets the storage trie paths in need of healing, grouped by hashed address
+    #[allow(clippy::type_complexity)]
+    pub fn get_storage_heal_paths(&self) -> Result<Option<Vec<(H256, Vec<Nibbles>)>>, StoreError> {
+        self.engine.get_storage_heal_paths()
+    }
+
+    /// Sets the state trie paths in need of healing
+    pub fn set_state_heal_paths(&self, paths: Vec<Nibbles>) -> Result<(), StoreError> {
+        self.engine.set_state_heal_paths(paths)
+    }
+
+    /// Gets the state trie paths in need of healing
+    pub fn get_state_heal_paths(&self) -> Result<Option<Vec<Nibbles>>, StoreError> {
+        self.engine.get_state_heal_paths()
+    }
+
     pub fn is_synced(&self) -> Result<bool, StoreError> {
         self.engine.is_synced()
     }
     pub fn update_sync_status(&self, status: bool) -> Result<(), StoreError> {
         self.engine.update_sync_status(status)
+    }
+
+    /// Write an account batch into the current state snapshot
+    pub fn write_snapshot_account_batch(
+        &self,
+        account_hashes: Vec<H256>,
+        account_states: Vec<AccountState>,
+    ) -> Result<(), StoreError> {
+        self.engine
+            .write_snapshot_account_batch(account_hashes, account_states)
+    }
+
+    /// Write a storage batch into the current storage snapshot
+    pub fn write_snapshot_storage_batch(
+        &self,
+        account_hash: H256,
+        storage_keys: Vec<H256>,
+        storage_values: Vec<U256>,
+    ) -> Result<(), StoreError> {
+        self.engine
+            .write_snapshot_storage_batch(account_hash, storage_keys, storage_values)
+    }
+
+    /// Clears all checkpoint data created during the last snap sync
+    pub fn clear_snap_state(&self) -> Result<(), StoreError> {
+        self.engine.clear_snap_state()
+    }
+
+    /// Set the latest root of the rebuilt state trie and the last downloaded hashes from each segment
+    pub fn set_state_trie_rebuild_checkpoint(
+        &self,
+        checkpoint: (H256, [H256; STATE_TRIE_SEGMENTS]),
+    ) -> Result<(), StoreError> {
+        self.engine.set_state_trie_rebuild_checkpoint(checkpoint)
+    }
+
+    /// Get the latest root of the rebuilt state trie and the last downloaded hashes from each segment
+    pub fn get_state_trie_rebuild_checkpoint(
+        &self,
+    ) -> Result<Option<(H256, [H256; STATE_TRIE_SEGMENTS])>, StoreError> {
+        self.engine.get_state_trie_rebuild_checkpoint()
+    }
+
+    /// Set the accont hashes and roots of the storage tries awaiting rebuild
+    pub fn set_storage_trie_rebuild_pending(
+        &self,
+        pending: Vec<(H256, H256)>,
+    ) -> Result<(), StoreError> {
+        self.engine.set_storage_trie_rebuild_pending(pending)
+    }
+
+    /// Get the accont hashes and roots of the storage tries awaiting rebuild
+    pub fn get_storage_trie_rebuild_pending(
+        &self,
+    ) -> Result<Option<Vec<(H256, H256)>>, StoreError> {
+        self.engine.get_storage_trie_rebuild_pending()
+    }
+
+    /// Clears the state and storage snapshots
+    pub fn clear_snapshot(&self) -> Result<(), StoreError> {
+        self.engine.clear_snapshot()
+    }
+
+    /// Reads the next `MAX_SNAPSHOT_READS` accounts from the state snapshot as from the `start` hash
+    pub fn read_account_snapshot(
+        &self,
+        start: H256,
+    ) -> Result<Vec<(H256, AccountState)>, StoreError> {
+        self.engine.read_account_snapshot(start)
+    }
+
+    /// Reads the next `MAX_SNAPSHOT_READS` elements from the storage snapshot as from the `start` storage key
+    pub fn read_storage_snapshot(
+        &self,
+        account_hash: H256,
+        start: H256,
+    ) -> Result<Vec<(H256, U256)>, StoreError> {
+        self.engine.read_storage_snapshot(account_hash, start)
     }
 }
 
@@ -1032,15 +1188,14 @@ pub fn hash_key(key: &H256) -> Vec<u8> {
 
 #[cfg(test)]
 mod tests {
-    use std::{fs, panic, str::FromStr};
-
     use bytes::Bytes;
     use ethereum_types::{H256, U256};
-    use ethrex_core::{
-        types::{Transaction, TxType, BYTES_PER_BLOB},
+    use ethrex_common::{
+        types::{Transaction, TxType, BYTES_PER_BLOB, EMPTY_KECCACK_HASH},
         Bloom,
     };
     use ethrex_rlp::decode::RLPDecode;
+    use std::{fs, panic, str::FromStr};
 
     use super::*;
 
@@ -1176,6 +1331,7 @@ mod tests {
             blob_gas_used: Some(0x00),
             excess_blob_gas: Some(0x00),
             parent_beacon_block_root: Some(H256::zero()),
+            requests_hash: Some(*EMPTY_KECCACK_HASH),
         };
         let block_body = BlockBody {
             transactions: vec![Transaction::decode(&hex::decode("b86f02f86c8330182480114e82f618946177843db3138ae69679a54b95cf345ed759450d870aa87bee53800080c080a0151ccc02146b9b11adf516e6787b59acae3e76544fdcd75e77e67c6b598ce65da064c5dd5aae2fbb535830ebbdad0234975cd7ece3562013b63ea18cc0df6c97d4").unwrap()).unwrap(),

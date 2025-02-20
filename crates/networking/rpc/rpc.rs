@@ -36,7 +36,7 @@ use eth::{
         GetTransactionByHashRequest, GetTransactionReceiptRequest,
     },
 };
-use ethrex_net::sync::SyncManager;
+use ethrex_p2p::{sync::SyncManager, types::NodeRecord};
 use serde_json::Value;
 use std::{
     collections::HashMap,
@@ -61,17 +61,48 @@ pub mod types;
 pub mod utils;
 mod web3;
 
+pub mod clients;
+pub use clients::{EngineClient, EthClient};
+
 use axum::extract::State;
-use ethrex_net::types::Node;
-use ethrex_storage::Store;
+use ethrex_p2p::types::Node;
+use ethrex_storage::{error::StoreError, Store};
 
 #[derive(Debug, Clone)]
 pub struct RpcApiContext {
     storage: Store,
     jwt_secret: Bytes,
     local_p2p_node: Node,
+    local_node_record: NodeRecord,
     active_filters: ActiveFilters,
     syncer: Arc<TokioMutex<SyncManager>>,
+}
+
+/// Describes the client's current sync status:
+/// Inactive: There is no active sync process
+/// Active: The client is currently syncing
+/// Pending: The previous sync process became stale, awaiting restart
+#[derive(Debug)]
+pub enum SyncStatus {
+    Inactive,
+    Active,
+    Pending,
+}
+
+impl RpcApiContext {
+    /// Returns the engine's current sync status, see [SyncStatus]
+    pub fn sync_status(&self) -> Result<SyncStatus, StoreError> {
+        // Try to get hold of the sync manager, if we can't then it means it is currently involved in a sync process
+        Ok(if self.syncer.try_lock().is_err() {
+            SyncStatus::Active
+        // Check if there is a checkpoint left from a previous aborted sync
+        } else if self.storage.get_header_download_checkpoint()?.is_some() {
+            SyncStatus::Pending
+        // No trace of a sync being handled
+        } else {
+            SyncStatus::Inactive
+        })
+    }
 }
 
 trait RpcHandler: Sized {
@@ -99,6 +130,7 @@ pub async fn start_api(
     storage: Store,
     jwt_secret: Bytes,
     local_p2p_node: Node,
+    local_node_record: NodeRecord,
     syncer: SyncManager,
 ) {
     // TODO: Refactor how filters are handled,
@@ -108,6 +140,7 @@ pub async fn start_api(
         storage: storage.clone(),
         jwt_secret,
         local_p2p_node,
+        local_node_record,
         active_filters: active_filters.clone(),
         syncer: Arc::new(TokioMutex::new(syncer)),
     };
@@ -280,7 +313,11 @@ pub fn map_engine_requests(req: &RpcRequest, context: RpcApiContext) -> Result<V
 
 pub fn map_admin_requests(req: &RpcRequest, context: RpcApiContext) -> Result<Value, RpcErr> {
     match req.method.as_str() {
-        "admin_nodeInfo" => admin::node_info(context.storage, context.local_p2p_node),
+        "admin_nodeInfo" => admin::node_info(
+            context.storage,
+            context.local_p2p_node,
+            context.local_node_record,
+        ),
         unknown_admin_method => Err(RpcErr::MethodNotFound(unknown_admin_method.to_owned())),
     }
 }
@@ -326,9 +363,13 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::utils::test_utils::example_p2p_node;
-    use ethrex_core::types::{ChainConfig, Genesis};
+    use crate::utils::test_utils::{example_local_node_record, example_p2p_node};
+    use ethrex_common::{
+        constants::MAINNET_DEPOSIT_CONTRACT_ADDRESS,
+        types::{ChainConfig, Genesis},
+    };
     use ethrex_storage::EngineType;
+    use sha3::{Digest, Keccak256};
     use std::fs::File;
     use std::io::BufReader;
 
@@ -348,16 +389,64 @@ mod tests {
         storage.set_chain_config(&example_chain_config()).unwrap();
         let context = RpcApiContext {
             local_p2p_node,
+            local_node_record: example_local_node_record(),
             storage,
             jwt_secret: Default::default(),
             active_filters: Default::default(),
             syncer: Arc::new(TokioMutex::new(SyncManager::dummy())),
         };
+        let enr_url = context.local_node_record.enr_url().unwrap();
         let result = map_http_requests(&request, context);
         let rpc_response = rpc_response(request.id, result);
-        let expected_response = to_rpc_response_success_value(
-            r#"{"jsonrpc":"2.0","id":1,"result":{"enode":"enode://d860a01f9722d78051619d1e2351aba3f43f943f6f00718d1b9baa4101932a1f5011f16bb2b1bb35db20d6fe28fa0bf09636d26a87d31de9ec6203eeedb1f666@127.0.0.1:30303","id":"d860a01f9722d78051619d1e2351aba3f43f943f6f00718d1b9baa4101932a1f5011f16bb2b1bb35db20d6fe28fa0bf09636d26a87d31de9ec6203eeedb1f666","ip":"127.0.0.1","name":"ethrex/0.1.0/rust1.81","ports":{"discovery":30303,"listener":30303},"protocols":{"eth":{"chainId":3151908,"homesteadBlock":0,"daoForkBlock":null,"daoForkSupport":false,"eip150Block":0,"eip155Block":0,"eip158Block":0,"byzantiumBlock":0,"constantinopleBlock":0,"petersburgBlock":0,"istanbulBlock":0,"muirGlacierBlock":null,"berlinBlock":0,"londonBlock":0,"arrowGlacierBlock":null,"grayGlacierBlock":null,"mergeNetsplitBlock":0,"shanghaiTime":0,"cancunTime":0,"pragueTime":1718232101,"verkleTime":null,"terminalTotalDifficulty":0,"terminalTotalDifficultyPassed":true}}}}"#,
-        );
+        let blob_schedule = serde_json::json!({
+            "cancun": { "target": 3, "max": 6, "baseFeeUpdateFraction": 3338477 },
+            "prague": { "target": 6, "max": 9, "baseFeeUpdateFraction": 5007716 }
+        });
+        let json = serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "result": {
+                "enode": "enode://d860a01f9722d78051619d1e2351aba3f43f943f6f00718d1b9baa4101932a1f5011f16bb2b1bb35db20d6fe28fa0bf09636d26a87d31de9ec6203eeedb1f666@127.0.0.1:30303",
+                "enr": enr_url,
+                "id": hex::encode(Keccak256::digest(local_p2p_node.node_id)),
+                "ip": "127.0.0.1",
+                "name": "ethrex/0.1.0/rust1.81",
+                "ports": {
+                    "discovery": 30303,
+                    "listener": 30303
+                },
+                "protocols": {
+                    "eth": {
+                        "chainId": 3151908,
+                        "homesteadBlock": 0,
+                        "daoForkBlock": null,
+                        "daoForkSupport": false,
+                        "eip150Block": 0,
+                        "eip155Block": 0,
+                        "eip158Block": 0,
+                        "byzantiumBlock": 0,
+                        "constantinopleBlock": 0,
+                        "petersburgBlock": 0,
+                        "istanbulBlock": 0,
+                        "muirGlacierBlock": null,
+                        "berlinBlock": 0,
+                        "londonBlock": 0,
+                        "arrowGlacierBlock": null,
+                        "grayGlacierBlock": null,
+                        "mergeNetsplitBlock": 0,
+                        "shanghaiTime": 0,
+                        "cancunTime": 0,
+                        "pragueTime": 1718232101,
+                        "verkleTime": null,
+                        "terminalTotalDifficulty": 0,
+                        "terminalTotalDifficultyPassed": true,
+                        "blobSchedule": blob_schedule,
+                        "depositContractAddress": *MAINNET_DEPOSIT_CONTRACT_ADDRESS
+                    }
+                },
+            }
+        }).to_string();
+        let expected_response = to_rpc_response_success_value(&json);
         assert_eq!(rpc_response.to_string(), expected_response.to_string())
     }
 
@@ -386,6 +475,7 @@ mod tests {
         // Process request
         let context = RpcApiContext {
             local_p2p_node,
+            local_node_record: example_local_node_record(),
             storage,
             jwt_secret: Default::default(),
             active_filters: Default::default(),
@@ -416,6 +506,7 @@ mod tests {
         // Process request
         let context = RpcApiContext {
             local_p2p_node,
+            local_node_record: example_local_node_record(),
             storage,
             jwt_secret: Default::default(),
             active_filters: Default::default(),
@@ -456,6 +547,7 @@ mod tests {
             prague_time: Some(1718232101),
             terminal_total_difficulty: Some(0),
             terminal_total_difficulty_passed: true,
+            deposit_contract_address: Some(*MAINNET_DEPOSIT_CONTRACT_ADDRESS),
             ..Default::default()
         }
     }
@@ -477,6 +569,7 @@ mod tests {
         let context = RpcApiContext {
             storage,
             local_p2p_node,
+            local_node_record: example_local_node_record(),
             jwt_secret: Default::default(),
             active_filters: Default::default(),
             syncer: Arc::new(TokioMutex::new(SyncManager::dummy())),

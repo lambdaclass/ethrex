@@ -5,16 +5,161 @@ permissions:
   pages: write
   id-token: write
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
+  cancel-in-progress: true
+
 on:
   push:
-    branches: [ "main", "automate-perf-tests" ]
+    branches: ["main"]
   workflow_dispatch:
 
 env:
-  RUST_VERSION: 1.84.0
+  RUST_VERSION: 1.82.0
   RUST_RETH_VERSION: 1.84.0
 
 jobs:
+  generate-flamegraph-evm:
+    name: Generate Flamegraph LEVM
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        name: ["levm", "revm"]
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v4
+
+      - name: Rustup toolchain install
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Extra Binaries
+        id: cache-binaries
+        uses: actions/cache@v4
+        with:
+          path: |
+            ${{ env.HOME }}/.cargo/bin/addr2line
+            ${{ env.HOME }}/.cargo/bin/flamegraph
+            ${{ env.HOME }}/.cargo/bin/inferno-*
+            ${{ env.HOME }}/ethrex/ethrex/cmd/ef_tests/state/vectors
+          key: ${{ runner.os }}-${{ env.RUST_VERSION }}-extra-binaries
+
+      - name: Change perf settings
+        run: |
+          sudo sysctl kernel.perf_event_paranoid=-1
+          sudo sysctl -w kernel.kptr_restrict=0
+          sudo chmod +r /proc/kallsyms
+          sudo perf list hw
+
+      - name: Check addr2line installation
+        id: check-addr2line
+        run: |
+          if [ -f "$HOME/.cargo/bin/addr2line" ]; then
+            echo "$HOME/.cargo/bin/addr2line found"
+            echo "addr2line_exists=true" >> $GITHUB_OUTPUT
+          else
+            echo "$HOME/.cargo/bin/addr2line NOT found"
+            echo "addr2line_exists=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Checkout gimli addr2line
+        if: steps.check-addr2line.outputs.addr2line_exists != 'true'
+        uses: actions/checkout@v4
+        with:
+          repository: gimli-rs/addr2line
+          path: "addr2line"
+
+      - name: Build gimli addr2line
+        if: steps.check-addr2line.outputs.addr2line_exists != 'true'
+        working-directory: ./addr2line
+        run: |
+          # Little hack we need else it throws error building
+          echo "[workspace]" >> ./Cargo.toml
+          cargo install --force --features="bin" addr2line
+
+      - name: Install flamegraph tools
+        run: |
+          if [ ! -f "$HOME/.cargo/bin/flamegraph" ]; then
+            cargo install --force flamegraph
+          else
+            echo "$HOME/.cargo/bin/flamegraph already found"
+          fi
+          if [ ! -f "$HOME/.cargo/bin/inferno-collapse-perf" ]; then
+            cargo install --force inferno
+          else
+            echo "$HOME/.cargo/bin/inferno-collapse-perf already found"
+          fi
+
+      - name: Download EF Tests
+        run: |
+          if [ ! -f "$HOME/ethrex/ethrex/cmd/ef_tests/state/vectors" ]; then
+            cd crates/vm/levm
+            make download-evm-ef-tests
+          fi
+
+      - name: Generate Flamegraph data for ${{ matrix.name }}
+        run: |
+          start_time=$(date +%s)
+
+          if [ "${{ matrix.name }}" == "levm" ]; then
+            rm -rf target/debug/ef_tests_state
+            CARGO_PROFILE_RELEASE_DEBUG=true cargo flamegraph -c "record -o perf.data -F997 --call-graph dwarf,16384 -g" \
+            -p ef_tests-state --test all -- --tests stSolidityTest,stCallCodes
+          elif [ "${{ matrix.name }}" == "revm" ]; then
+            rm -rf target/debug/ef_tests_state
+            CARGO_PROFILE_RELEASE_DEBUG=true cargo flamegraph -c "record -o perf.data -F997 --call-graph dwarf,16384 -g" \
+            -p ef_tests-state --test all -- --revm --tests stSolidityTest,stCallCodes
+          fi
+
+          end_time=$(date +%s)
+          elapsed_time=$((end_time - start_time))
+          echo "time_${{ matrix.name }}=${elapsed_time}" >> time_${{ matrix.name }}.txt
+
+      - name: Generate SVG
+        shell: bash
+        run: |
+          PATH=$HOME/.cargo/bin:$PATH which addr2line
+          PATH=$HOME/.cargo/bin:$PATH perf script -v -i /home/runner/work/ethrex/ethrex/perf.data --no-inline > stack.data
+          PATH=$HOME/.cargo/bin:$PATH inferno-collapse-perf -q < stack.data > collapsed.data
+
+          if [ "${{ matrix.name }}" == "levm" ]; then
+            PATH=$HOME/.cargo/bin:$PATH inferno-flamegraph --title "LEVM Flamegraph" < collapsed.data > flamegraph_levm.svg
+          elif [ "${{ matrix.name }}" == "revm" ]; then
+            PATH=$HOME/.cargo/bin:$PATH inferno-flamegraph --title "REVM Flamegraph" < collapsed.data > flamegraph_revm.svg
+          fi
+
+      - name: Upload artifact - time_${{ matrix.name }}.txt
+        uses: actions/upload-artifact@v4
+        with:
+          name: time_${{ matrix.name }}.txt
+          path: time_${{ matrix.name }}.txt
+
+      - name: Upload artifact - ${{ matrix.name }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: flamegraph_${{ matrix.name }}.svg
+          path: ./flamegraph_${{ matrix.name }}.svg
+
+  test-output:
+    name: Test Output
+    runs-on: ubuntu-latest
+    needs: [generate-flamegraph-evm]
+    steps:
+      - name: Download artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: time_levm.txt
+          path: time_levm.txt
+
+      - name: Download artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: time_revm.txt
+          path: time_revm.txt
+      - name: echo Output
+        run: |
+          echo "LevM Time: $(grep "time_levm" time_levm.txt/time_levm.txt | cut -d '=' -f2)"
+          echo "Revm Time: $(grep "time_revm" time_revm.txt/time_revm.txt | cut -d '=' -f2)"
+
   flamegraph-ethrex:
     name: Generate Flamegraph for Ethrex
     runs-on: ubuntu-latest
@@ -107,13 +252,14 @@ jobs:
           ethrex_l2 config create default --default
           ethrex_l2 config set default
 
+      # By default ethrex uses revm as evm backend.
       - id: generate-flamegraph-ethrex
         name: Generate Flamegraph data for Ethrex
         shell: bash
         run: |
           rm -rf target/release/ethrex
           CARGO_PROFILE_RELEASE_DEBUG=true cargo flamegraph -c "record -o perf.data -F997 --call-graph dwarf,16384 -g" \
-          --bin ethrex --features dev -- --network /home/runner/work/ethrex/ethrex/test_data/genesis-l2.json --http.port 1729 >/dev/null &
+          --bin ethrex --features dev -- --dev --network /home/runner/work/ethrex/ethrex/test_data/genesis-l2.json --http.port 1729 >/dev/null &
           while [ ! -x "./target/release/ethrex" ]; do
             echo "Waiting for ethrex binary to be ready..."
             sleep 2
@@ -163,8 +309,8 @@ jobs:
       - name: Caching
         uses: Swatinem/rust-cache@v2
         with:
-          workspaces: '. -> target
-          ./reth -> ./reth/target'
+          workspaces: ". -> target \
+            ./reth -> ./reth/target"
 
       - name: Cache Extra Binaries
         id: cache-binaries
@@ -260,7 +406,6 @@ jobs:
           bash /home/runner/work/ethrex/ethrex/.github/scripts/flamegraph_watcher.sh &&
           echo "Load test finished"
 
-
       - name: Generate SVG
         shell: bash
         run: |
@@ -281,7 +426,7 @@ jobs:
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
-    needs: [ flamegraph-ethrex, flamegraph-reth ]
+    needs: [generate-flamegraph-evm, flamegraph-ethrex, flamegraph-reth]
     steps:
       - name: Checkout sources
         uses: actions/checkout@v4
@@ -298,23 +443,67 @@ jobs:
           name: flamegraph_reth.svg
           path: flamegraph_reth.svg
 
+      - name: Download levm flamegraph artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: flamegraph_levm.svg
+          path: flamegraph_levm.svg
+
+      - name: Download revm flamegraph artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: flamegraph_revm.svg
+          path: flamegraph_revm.svg
+
+      - name: Download levm time artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: time_levm.txt
+          path: time_levm.txt
+
+      - name: Download revm time artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: time_revm.txt
+          path: time_revm.txt
+
       - name: Update static page locally with new data
         shell: bash
         run: |
+          cp -r flamegraph_levm.svg pages/
+          cp -r flamegraph_revm.svg pages/
           cp -r flamegraph_ethrex.svg pages/
           cp -r flamegraph_reth.svg pages/
+
+          # ETHREX HTML
           sed -i "s/{{LAST_UPDATE}}/$(TZ='Etc/GMT+3' date +'%Y-%m-%dT%H:%M:%S')/g" pages/index.html
           sed -i "s/{{ETHREX_TIME}}/${{ needs.flamegraph-ethrex.outputs.time }}/g" pages/index.html
           sed -i "s/{{RETH_TIME}}/${{ needs.flamegraph-reth.outputs.time }}/g" pages/index.html
 
+          # LEVM HTML
+          sed -i "s/{{LAST_UPDATE}}/$(TZ='Etc/GMT+3' date +'%Y-%m-%dT%H:%M:%S')/g" pages/levm.html
+          time_levm=$(grep "time_levm" time_levm.txt/time_levm.txt | cut -d '=' -f2)
+
+          minutes=$(bc -l <<< "scale=0; $time_levm / 60")
+          seconds=$(bc -l <<< "scale=0; $time_levm % 60")
+
+          time_levm_str="${minutes} minutes ${seconds} seconds"
+          sed -i "s/{{LEVM_TIME}}/${time_levm_str}/g" pages/levm.html
+
+          time_revm=$(grep "time_revm" time_revm.txt/time_revm.txt | cut -d '=' -f2)
+
+          minutes=$(bc -l <<< "scale=0; $time_revm / 60")
+          seconds=$(bc -l <<< "scale=0; $time_revm % 60")
+
+          time_revm_str="${minutes} minutes ${seconds} seconds"
+          sed -i "s/{{REVM_TIME}}/${time_revm_str}/g" pages/levm.html
+
       - name: Setup Pages
         uses: actions/configure-pages@v5
-
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
         with:
           path: "pages/"
-
       - name: Deploy to GitHub Pages
         id: deployment
         uses: actions/deploy-pages@v4

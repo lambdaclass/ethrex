@@ -1,3 +1,4 @@
+pub mod backends;
 pub mod db;
 pub mod errors;
 pub mod execution_db;
@@ -5,384 +6,42 @@ mod execution_result;
 #[cfg(feature = "l2")]
 mod mods;
 
-use db::StoreWrapper;
-use execution_db::ExecutionDB;
-use std::cmp::min;
+use backends::EVM;
+use db::EvmState;
 
-use ethrex_core::{
+use crate::backends::revm::*;
+use ethrex_common::{
     types::{
-        AccountInfo, Block, BlockHash, BlockHeader, ChainConfig, Fork, GenericTransaction,
-        PrivilegedTxType, Receipt, Transaction, TxKind, Withdrawal, GWEI_TO_WEI, INITIAL_BASE_FEE,
+        tx_fields::AccessList, AccountInfo, BlockHeader, ChainConfig, Fork, GenericTransaction,
+        INITIAL_BASE_FEE,
     },
     Address, BigEndianHash, H256, U256,
 };
-use ethrex_storage::{error::StoreError, AccountUpdate, Store};
-use lazy_static::lazy_static;
+use ethrex_storage::AccountUpdate;
 use revm::{
     db::{states::bundle_state::BundleRetention, AccountState, AccountStatus},
     inspector_handle_register,
-    inspectors::TracerEip3155,
-    precompile::{PrecompileSpecId, Precompiles},
-    primitives::{BlobExcessGasAndPrice, BlockEnv, TxEnv, B256},
-    Database, DatabaseCommit, Evm,
+    primitives::{BlockEnv, TxEnv, B256},
+    Evm,
 };
-use revm_inspectors::access_list::AccessListInspector;
 // Rename imported types for clarity
-use revm_primitives::{
-    ruint::Uint, AccessList as RevmAccessList, AccessListItem, Bytes, FixedBytes,
-    TxKind as RevmTxKind,
-};
+use revm_primitives::AccessList as RevmAccessList;
 // Export needed types
 pub use errors::EvmError;
 pub use execution_result::*;
 pub use revm::primitives::{Address as RevmAddress, SpecId, U256 as RevmU256};
 
-type AccessList = Vec<(Address, Vec<H256>)>;
+use std::sync::OnceLock;
 
-pub const WITHDRAWAL_MAGIC_DATA: &[u8] = b"burn";
-pub const DEPOSIT_MAGIC_DATA: &[u8] = b"mint";
+// This global variable can be initialized by the ethrex cli.
+// EVM_BACKEND.get_or_init(|| evm);
+// Then, we can retrieve the evm with:
+// EVM_BACKEND.get(); -> returns Option<EVM>
+pub static EVM_BACKEND: OnceLock<EVM> = OnceLock::new();
 
-/// State used when running the EVM. The state can be represented with a [StoreWrapper] database, or
-/// with a [ExecutionDB] in case we only want to store the necessary data for some particular
-/// execution, for example when proving in L2 mode.
-///
-/// Encapsulates state behaviour to be agnostic to the evm implementation for crate users.
-pub enum EvmState {
-    Store(revm::db::State<StoreWrapper>),
-    Execution(Box<revm::db::CacheDB<ExecutionDB>>),
-}
+// ================== Commonly used functions ======================
 
-impl EvmState {
-    /// Get a reference to inner `Store` database
-    pub fn database(&self) -> Option<&Store> {
-        if let EvmState::Store(db) = self {
-            Some(&db.database.store)
-        } else {
-            None
-        }
-    }
-
-    /// Gets the stored chain config
-    pub fn chain_config(&self) -> Result<ChainConfig, EvmError> {
-        match self {
-            EvmState::Store(db) => db.database.store.get_chain_config().map_err(EvmError::from),
-            EvmState::Execution(db) => Ok(db.db.get_chain_config()),
-        }
-    }
-}
-
-impl From<ExecutionDB> for EvmState {
-    fn from(value: ExecutionDB) -> Self {
-        EvmState::Execution(Box::new(revm::db::CacheDB::new(value)))
-    }
-}
-
-cfg_if::cfg_if! {
-    if #[cfg(feature = "levm")] {
-        use ethrex_levm::{
-            db::{CacheDB, Database as LevmDatabase},
-            errors::{TransactionReport, TxResult, VMError},
-            vm::VM,
-            Environment,
-            Account
-        };
-        use std::{collections::HashMap, sync::Arc};
-        use ethrex_core::types::code_hash;
-
-        /// Calls the eip4788 beacon block root system call contract
-        /// More info on https://eips.ethereum.org/EIPS/eip-4788
-        pub fn beacon_root_contract_call_levm(
-            store_wrapper: Arc<StoreWrapper>,
-            block_header: &BlockHeader,
-            spec_id: SpecId,
-        ) -> Result<TransactionReport, EvmError> {
-            lazy_static! {
-                static ref SYSTEM_ADDRESS: Address =
-                    Address::from_slice(&hex::decode("fffffffffffffffffffffffffffffffffffffffe").unwrap());
-                static ref CONTRACT_ADDRESS: Address =
-                    Address::from_slice(&hex::decode("000F3df6D732807Ef1319fB7B8bB8522d0Beac02").unwrap(),);
-            };
-            // This is OK
-            let beacon_root = match block_header.parent_beacon_block_root {
-                None => {
-                    return Err(EvmError::Header(
-                        "parent_beacon_block_root field is missing".to_string(),
-                    ))
-                }
-                Some(beacon_root) => beacon_root,
-            };
-
-            let env = Environment {
-                origin: *SYSTEM_ADDRESS,
-                gas_limit: 30_000_000,
-                block_number: block_header.number.into(),
-                coinbase: block_header.coinbase,
-                timestamp: block_header.timestamp.into(),
-                prev_randao: Some(block_header.prev_randao),
-                base_fee_per_gas: U256::zero(),
-                gas_price: U256::zero(),
-                block_excess_blob_gas: block_header.excess_blob_gas.map(U256::from),
-                block_blob_gas_used: block_header.blob_gas_used.map(U256::from),
-                block_gas_limit: 30_000_000,
-                transient_storage: HashMap::new(),
-                spec_id,
-                ..Default::default()
-            };
-
-            let calldata = Bytes::copy_from_slice(beacon_root.as_bytes()).into();
-
-            // Here execute with LEVM but just return transaction report. And I will handle it in the calling place.
-
-            let mut vm = VM::new(
-                TxKind::Call(*CONTRACT_ADDRESS),
-                env,
-                U256::zero(),
-                calldata,
-                store_wrapper,
-                CacheDB::new(),
-                vec![],
-                None
-            )
-            .map_err(EvmError::from)?;
-
-            let mut report = vm.transact().map_err(EvmError::from)?;
-
-            report.new_state.remove(&*SYSTEM_ADDRESS);
-
-            Ok(report)
-
-        }
-
-        pub fn get_state_transitions_levm(
-            initial_state: &EvmState,
-            block_hash: H256,
-            new_state: &CacheDB,
-        ) -> Vec<AccountUpdate> {
-            let current_db = match initial_state {
-                EvmState::Store(state) => state.database.store.clone(),
-                EvmState::Execution(_cache_db) => unreachable!("Execution state should not be passed here"),
-            };
-            let mut account_updates: Vec<AccountUpdate> = vec![];
-            for (new_state_account_address, new_state_account) in new_state {
-                // This stores things that have changed in the account.
-                let mut account_update = AccountUpdate::new(*new_state_account_address);
-
-                // Account state before block execution.
-                let initial_account_state = current_db
-                    .get_account_info_by_hash(block_hash, *new_state_account_address)
-                    .expect("Error getting account info by address")
-                    .unwrap_or_default();
-                // Account state after block execution.
-                let new_state_acc_info = AccountInfo {
-                    code_hash: code_hash(&new_state_account.info.bytecode),
-                    balance: new_state_account.info.balance,
-                    nonce: new_state_account.info.nonce,
-                };
-
-                // Compare Account Info
-                if initial_account_state != new_state_acc_info {
-                    account_update.info = Some(new_state_acc_info.clone());
-                }
-
-                // If code hash is different it means the code is different too.
-                if initial_account_state.code_hash != new_state_acc_info.code_hash {
-                    account_update.code = Some(new_state_account.info.bytecode.clone());
-                }
-
-                let mut updated_storage = HashMap::new();
-                for (key, storage_slot) in &new_state_account.storage {
-                    // original_value in storage_slot is not the original_value on the DB, be careful.
-                    let original_value = current_db.get_storage_at_hash(block_hash, *new_state_account_address, *key).unwrap().unwrap_or_default(); // Option inside result, I guess I have to assume it is zero.
-
-                    if original_value != storage_slot.current_value {
-                        updated_storage.insert(*key, storage_slot.current_value);
-                    }
-                }
-                account_update.added_storage = updated_storage;
-
-                account_update.removed = new_state_account.is_empty();
-
-                if account_update != AccountUpdate::new(*new_state_account_address) {
-                    account_updates.push(account_update);
-                }
-            }
-            account_updates
-        }
-
-        /// Executes all transactions in a block and returns their receipts.
-        pub fn execute_block(
-            block: &Block,
-            state: &mut EvmState,
-        ) -> Result<(Vec<Receipt>, Vec<AccountUpdate>), EvmError> {
-            let store_wrapper = Arc::new(StoreWrapper {
-                store: state.database().unwrap().clone(),
-                block_hash: block.header.parent_hash,
-            });
-            let mut block_cache: CacheDB = HashMap::new();
-            let block_header = &block.header;
-            let spec_id = spec_id(&state.chain_config()?, block_header.timestamp);
-            //eip 4788: execute beacon_root_contract_call before block transactions
-            cfg_if::cfg_if! {
-                if #[cfg(not(feature = "l2"))] {
-                    if block_header.parent_beacon_block_root.is_some() && spec_id == SpecId::CANCUN {
-                        let report = beacon_root_contract_call_levm(store_wrapper.clone(), block_header, spec_id)?;
-                        block_cache.extend(report.new_state);
-                    }
-                }
-            }
-
-
-            // Account updates are initialized like this because of the beacon_root_contract_call, it is going to be empty if it wasn't called.
-            let mut account_updates = get_state_transitions(state);
-
-            let mut receipts = Vec::new();
-            let mut cumulative_gas_used = 0;
-
-            for tx in block.body.transactions.iter() {
-                let report = execute_tx_levm(tx, block_header, store_wrapper.clone(), block_cache.clone(), spec_id).map_err(EvmError::from)?;
-
-                let mut new_state = report.new_state.clone();
-
-                // Now original_value is going to be the same as the current_value, for the next transaction.
-                // It should have only one value but it is convenient to keep on using our CacheDB structure
-                for account in new_state.values_mut() {
-                    for storage_slot in account.storage.values_mut() {
-                        storage_slot.original_value = storage_slot.current_value;
-                    }
-                }
-
-                block_cache.extend(new_state);
-
-                // Currently, in LEVM, we don't substract refunded gas to used gas, but that can change in the future.
-                let gas_used = report.gas_used - report.gas_refunded;
-                cumulative_gas_used += gas_used;
-                let receipt = Receipt::new(
-                    tx.tx_type(),
-                    matches!(report.result.clone(), TxResult::Success),
-                    cumulative_gas_used,
-                    report.logs.clone(),
-                );
-
-                receipts.push(receipt);
-            }
-
-            // Here we update block_cache with balance increments caused by withdrawals.
-            if let Some(withdrawals) = &block.body.withdrawals {
-                // For every withdrawal we increment the target account's balance
-                for (address, increment) in withdrawals.iter().filter(|withdrawal| withdrawal.amount > 0).map(|w| (w.address, u128::from(w.amount) * u128::from(GWEI_TO_WEI))) {
-                    // We check if it was in block_cache, if not, we get it from DB.
-                    let mut account = block_cache.get(&address).cloned().unwrap_or({
-                        let acc_info = store_wrapper.get_account_info(address);
-                        Account::from(acc_info)
-                    });
-
-                    account.info.balance += increment.into();
-
-                    block_cache.insert(address, account);
-                }
-            }
-
-            account_updates.extend(get_state_transitions_levm(state, block.header.parent_hash, &block_cache));
-
-            Ok((receipts, account_updates))
-        }
-
-        pub fn execute_tx_levm(
-            tx: &Transaction,
-            block_header: &BlockHeader,
-            db: Arc<dyn LevmDatabase>,
-            block_cache: CacheDB,
-            spec_id: SpecId
-        ) -> Result<TransactionReport, VMError> {
-            let gas_price : U256 = tx.effective_gas_price(block_header.base_fee_per_gas).ok_or(VMError::InvalidTransaction)?.into();
-
-            let env = Environment {
-                origin: tx.sender(),
-                refunded_gas: 0,
-                gas_limit: tx.gas_limit(),
-                spec_id,
-                block_number: block_header.number.into(),
-                coinbase: block_header.coinbase,
-                timestamp: block_header.timestamp.into(),
-                prev_randao: Some(block_header.prev_randao),
-                chain_id: tx.chain_id().unwrap_or_default().into(),
-                base_fee_per_gas: block_header.base_fee_per_gas.unwrap_or_default().into(),
-                gas_price,
-                block_excess_blob_gas: block_header.excess_blob_gas.map(U256::from),
-                block_blob_gas_used: block_header.blob_gas_used.map(U256::from),
-                tx_blob_hashes: tx.blob_versioned_hashes(),
-                tx_max_priority_fee_per_gas: tx.max_priority_fee().map(U256::from),
-                tx_max_fee_per_gas: tx.max_fee_per_gas().map(U256::from),
-                tx_max_fee_per_blob_gas: tx.max_fee_per_blob_gas().map(U256::from),
-                block_gas_limit: block_header.gas_limit,
-                transient_storage: HashMap::new(),
-            };
-
-            let mut vm = VM::new(
-                tx.to(),
-                env,
-                tx.value(),
-                tx.data().clone(),
-                db,
-                block_cache,
-                tx.access_list(),
-                // TODO: Here we should pass the tx.authorization_list
-                // We have to implement the EIP7702 tx in ethrex_core
-                None
-            )?;
-
-            vm.transact()
-        }
-    } else if #[cfg(not(feature = "levm"))] {
-        /// Executes all transactions in a block and returns their receipts.
-        pub fn execute_block(block: &Block, state: &mut EvmState) -> Result<Vec<Receipt>, EvmError> {
-            let block_header = &block.header;
-            let spec_id = spec_id(&state.chain_config()?, block_header.timestamp);
-            //eip 4788: execute beacon_root_contract_call before block transactions
-            cfg_if::cfg_if! {
-                if #[cfg(not(feature = "l2"))] {
-                    //eip 4788: execute beacon_root_contract_call before block transactions
-                    if block_header.parent_beacon_block_root.is_some() && spec_id == SpecId::CANCUN {
-                        beacon_root_contract_call(state, block_header, spec_id)?;
-                    }
-                }
-            }
-            let mut receipts = Vec::new();
-            let mut cumulative_gas_used = 0;
-
-            for transaction in block.body.transactions.iter() {
-                let result = execute_tx(transaction, block_header, state, spec_id)?;
-                cumulative_gas_used += result.gas_used();
-                let receipt = Receipt::new(
-                    transaction.tx_type(),
-                    result.is_success(),
-                    cumulative_gas_used,
-                    result.logs(),
-                );
-                receipts.push(receipt);
-            }
-
-            if let Some(withdrawals) = &block.body.withdrawals {
-                process_withdrawals(state, withdrawals)?;
-            }
-
-            Ok(receipts)
-        }
-    }
-}
-
-// Executes a single tx, doesn't perform state transitions
-pub fn execute_tx(
-    tx: &Transaction,
-    header: &BlockHeader,
-    state: &mut EvmState,
-    spec_id: SpecId,
-) -> Result<ExecutionResult, EvmError> {
-    let block_env = block_env(header);
-    let tx_env = tx_env(tx);
-    run_evm(tx_env, block_env, state, spec_id)
-}
-
+// TODO: IMPLEMENT FOR LEVM
 // Executes a single GenericTransaction, doesn't commit the result or perform state transitions
 pub fn simulate_tx_from_generic(
     tx: &GenericTransaction,
@@ -390,76 +49,12 @@ pub fn simulate_tx_from_generic(
     state: &mut EvmState,
     spec_id: SpecId,
 ) -> Result<ExecutionResult, EvmError> {
-    let block_env = block_env(header);
+    let block_env = block_env(header, spec_id);
     let tx_env = tx_env_from_generic(tx, header.base_fee_per_gas.unwrap_or(INITIAL_BASE_FEE));
     run_without_commit(tx_env, block_env, state, spec_id)
 }
 
-/// When basefee tracking is disabled  (ie. env.disable_base_fee = true; env.disable_block_gas_limit = true;)
-/// and no gas prices were specified, lower the basefee to 0 to avoid breaking EVM invariants (basefee < feecap)
-/// See https://github.com/ethereum/go-ethereum/blob/00294e9d28151122e955c7db4344f06724295ec5/core/vm/evm.go#L137
-fn adjust_disabled_base_fee(
-    block_env: &mut BlockEnv,
-    tx_gas_price: Uint<256, 4>,
-    tx_blob_gas_price: Option<Uint<256, 4>>,
-) {
-    if tx_gas_price == RevmU256::from(0) {
-        block_env.basefee = RevmU256::from(0);
-    }
-    if tx_blob_gas_price.is_some_and(|v| v == RevmU256::from(0)) {
-        block_env.blob_excess_gas_and_price = None;
-    }
-}
-
-/// Runs EVM, doesn't perform state transitions, but stores them
-fn run_evm(
-    tx_env: TxEnv,
-    block_env: BlockEnv,
-    state: &mut EvmState,
-    spec_id: SpecId,
-) -> Result<ExecutionResult, EvmError> {
-    let tx_result = {
-        let chain_spec = state.chain_config()?;
-        #[allow(unused_mut)]
-        let mut evm_builder = Evm::builder()
-            .with_block_env(block_env)
-            .with_tx_env(tx_env)
-            .modify_cfg_env(|cfg| cfg.chain_id = chain_spec.chain_id)
-            .with_spec_id(spec_id)
-            .with_external_context(
-                TracerEip3155::new(Box::new(std::io::stderr())).without_summary(),
-            );
-        cfg_if::cfg_if! {
-            if #[cfg(feature = "l2")] {
-                use revm::{Handler, primitives::{CancunSpec, HandlerCfg}};
-                use std::sync::Arc;
-
-                evm_builder = evm_builder.with_handler({
-                    let mut evm_handler = Handler::new(HandlerCfg::new(SpecId::LATEST));
-                    evm_handler.pre_execution.deduct_caller = Arc::new(mods::deduct_caller::<CancunSpec, _, _>);
-                    evm_handler.validation.tx_against_state = Arc::new(mods::validate_tx_against_state::<CancunSpec, _, _>);
-                    evm_handler.execution.last_frame_return = Arc::new(mods::last_frame_return::<CancunSpec, _, _>);
-                    // TODO: Override `end` function. We should deposit even if we revert.
-                    // evm_handler.pre_execution.end
-                    evm_handler
-                });
-            }
-        }
-
-        match state {
-            EvmState::Store(db) => {
-                let mut evm = evm_builder.with_db(db).build();
-                evm.transact_commit().map_err(EvmError::from)?
-            }
-            EvmState::Execution(db) => {
-                let mut evm = evm_builder.with_db(db).build();
-                evm.transact_commit().map_err(EvmError::from)?
-            }
-        }
-    };
-    Ok(tx_result.into())
-}
-
+// TODO: IMPLEMENT FOR LEVM
 /// Runs the transaction and returns the access list and estimated gas use (when running the tx with said access list)
 pub fn create_access_list(
     tx: &GenericTransaction,
@@ -468,7 +63,7 @@ pub fn create_access_list(
     spec_id: SpecId,
 ) -> Result<(ExecutionResult, AccessList), EvmError> {
     let mut tx_env = tx_env_from_generic(tx, header.base_fee_per_gas.unwrap_or(INITIAL_BASE_FEE));
-    let block_env = block_env(header);
+    let block_env = block_env(header, spec_id);
     // Run tx with access list inspector
 
     let (execution_result, access_list) =
@@ -497,6 +92,7 @@ pub fn create_access_list(
     Ok((execution_result, access_list))
 }
 
+// TODO: IMPLEMENT FOR LEVM
 /// Runs the transaction and returns the access list for it
 fn create_access_list_inner(
     tx_env: TxEnv,
@@ -504,7 +100,7 @@ fn create_access_list_inner(
     state: &mut EvmState,
     spec_id: SpecId,
 ) -> Result<(ExecutionResult, RevmAccessList), EvmError> {
-    let mut access_list_inspector = access_list_inspector(&tx_env, state, spec_id)?;
+    let mut access_list_inspector = access_list_inspector(&tx_env)?;
     #[allow(unused_mut)]
     let mut evm_builder = Evm::builder()
         .with_block_env(block_env)
@@ -515,7 +111,6 @@ fn create_access_list_inner(
             env.disable_block_gas_limit = true
         })
         .with_external_context(&mut access_list_inspector);
-
     let tx_result = {
         match state {
             EvmState::Store(db) => {
@@ -537,42 +132,6 @@ fn create_access_list_inner(
 
     let access_list = access_list_inspector.into_access_list();
     Ok((tx_result.result.into(), access_list))
-}
-
-/// Runs the transaction and returns the result, but does not commit it.
-fn run_without_commit(
-    tx_env: TxEnv,
-    mut block_env: BlockEnv,
-    state: &mut EvmState,
-    spec_id: SpecId,
-) -> Result<ExecutionResult, EvmError> {
-    adjust_disabled_base_fee(
-        &mut block_env,
-        tx_env.gas_price,
-        tx_env.max_fee_per_blob_gas,
-    );
-    let chain_config = state.chain_config()?;
-    #[allow(unused_mut)]
-    let mut evm_builder = Evm::builder()
-        .with_block_env(block_env)
-        .with_tx_env(tx_env)
-        .with_spec_id(spec_id)
-        .modify_cfg_env(|env| {
-            env.disable_base_fee = true;
-            env.disable_block_gas_limit = true;
-            env.chain_id = chain_config.chain_id;
-        });
-    let tx_result = match state {
-        EvmState::Store(db) => {
-            let mut evm = evm_builder.with_db(db).build();
-            evm.transact().map_err(EvmError::from)?
-        }
-        EvmState::Execution(db) => {
-            let mut evm = evm_builder.with_db(db).build();
-            evm.transact().map_err(EvmError::from)?
-        }
-    };
-    Ok(tx_result.result.into())
 }
 
 /// Merges transitions stored when executing transactions and returns the resulting account updates
@@ -670,10 +229,8 @@ pub fn get_state_transitions(state: &mut EvmState) -> Vec<AccountUpdate> {
                 let mut account_update = AccountUpdate::new(address);
                 // Update account info in DB
                 if let Some(new_acc_info) = account.info() {
-                    let code_hash = H256::from_slice(new_acc_info.code_hash.as_slice());
-
                     // If code changed, update
-                    if matches!(db.db.accounts.get(revm_address), Some(account) if account.code_hash != code_hash)
+                    if matches!(db.db.accounts.get(&address), Some(account) if B256::from(account.code_hash.0) != new_acc_info.code_hash)
                     {
                         account_update.code = new_acc_info
                             .code
@@ -681,7 +238,7 @@ pub fn get_state_transitions(state: &mut EvmState) -> Vec<AccountUpdate> {
                     }
 
                     let account_info = AccountInfo {
-                        code_hash,
+                        code_hash: H256::from_slice(new_acc_info.code_hash.as_slice()),
                         balance: U256::from_little_endian(new_acc_info.balance.as_le_slice()),
                         nonce: new_acc_info.nonce,
                     };
@@ -705,305 +262,33 @@ pub fn get_state_transitions(state: &mut EvmState) -> Vec<AccountUpdate> {
     }
 }
 
-/// Processes a block's withdrawals, updating the account balances in the state
-pub fn process_withdrawals(
-    state: &mut EvmState,
-    withdrawals: &[Withdrawal],
-) -> Result<(), StoreError> {
-    match state {
-        EvmState::Store(db) => {
-            //balance_increments is a vector of tuples (Address, increment as u128)
-            let balance_increments = withdrawals
-                .iter()
-                .filter(|withdrawal| withdrawal.amount > 0)
-                .map(|withdrawal| {
-                    (
-                        RevmAddress::from_slice(withdrawal.address.as_bytes()),
-                        (withdrawal.amount as u128 * GWEI_TO_WEI as u128),
-                    )
-                })
-                .collect::<Vec<_>>();
-
-            db.increment_balances(balance_increments)?;
-        }
-        EvmState::Execution(_) => {
-            // TODO: We should check withdrawals are valid
-            // (by checking that accounts exist if this is the only error) but there's no state to
-            // change.
-        }
-    }
-    Ok(())
-}
-
-/// Builds EvmState from a Store
-pub fn evm_state(store: Store, block_hash: BlockHash) -> EvmState {
-    EvmState::Store(
-        revm::db::State::builder()
-            .with_database(StoreWrapper { store, block_hash })
-            .with_bundle_update()
-            .without_state_clear()
-            .build(),
-    )
-}
-
-/// Calls the eip4788 beacon block root system call contract
-/// As of the Cancun hard-fork, parent_beacon_block_root needs to be present in the block header.
-pub fn beacon_root_contract_call(
-    state: &mut EvmState,
-    header: &BlockHeader,
-    spec_id: SpecId,
-) -> Result<ExecutionResult, EvmError> {
-    lazy_static! {
-        static ref SYSTEM_ADDRESS: RevmAddress = RevmAddress::from_slice(
-            &hex::decode("fffffffffffffffffffffffffffffffffffffffe").unwrap()
-        );
-        static ref CONTRACT_ADDRESS: RevmAddress = RevmAddress::from_slice(
-            &hex::decode("000F3df6D732807Ef1319fB7B8bB8522d0Beac02").unwrap(),
-        );
-    };
-    let beacon_root = match header.parent_beacon_block_root {
-        None => {
-            return Err(EvmError::Header(
-                "parent_beacon_block_root field is missing".to_string(),
-            ))
-        }
-        Some(beacon_root) => beacon_root,
-    };
-
-    let tx_env = TxEnv {
-        caller: *SYSTEM_ADDRESS,
-        transact_to: RevmTxKind::Call(*CONTRACT_ADDRESS),
-        gas_limit: 30_000_000,
-        data: revm::primitives::Bytes::copy_from_slice(beacon_root.as_bytes()),
-        ..Default::default()
-    };
-    let mut block_env = block_env(header);
-    block_env.basefee = RevmU256::ZERO;
-    block_env.gas_limit = RevmU256::from(30_000_000);
-
-    match state {
-        EvmState::Store(db) => {
-            let mut evm = Evm::builder()
-                .with_db(db)
-                .with_block_env(block_env)
-                .with_tx_env(tx_env)
-                .with_spec_id(spec_id)
-                .build();
-
-            let transaction_result = evm.transact()?;
-            let mut result_state = transaction_result.state;
-            result_state.remove(&*SYSTEM_ADDRESS);
-            result_state.remove(&evm.block().coinbase);
-
-            evm.context.evm.db.commit(result_state);
-
-            Ok(transaction_result.result.into())
-        }
-        EvmState::Execution(db) => {
-            let mut evm = Evm::builder()
-                .with_db(db)
-                .with_block_env(block_env)
-                .with_tx_env(tx_env)
-                .with_spec_id(spec_id)
-                .build();
-
-            // Not necessary to commit to DB
-            let transaction_result = evm.transact()?;
-            Ok(transaction_result.result.into())
-        }
-    }
-}
-
-pub fn block_env(header: &BlockHeader) -> BlockEnv {
-    BlockEnv {
-        number: RevmU256::from(header.number),
-        coinbase: RevmAddress(header.coinbase.0.into()),
-        timestamp: RevmU256::from(header.timestamp),
-        gas_limit: RevmU256::from(header.gas_limit),
-        basefee: RevmU256::from(header.base_fee_per_gas.unwrap_or(INITIAL_BASE_FEE)),
-        difficulty: RevmU256::from_limbs(header.difficulty.0),
-        prevrandao: Some(header.prev_randao.as_fixed_bytes().into()),
-        blob_excess_gas_and_price: Some(BlobExcessGasAndPrice::new(
-            header.excess_blob_gas.unwrap_or_default(),
-        )),
-    }
-}
-
-pub fn tx_env(tx: &Transaction) -> TxEnv {
-    let max_fee_per_blob_gas = tx
-        .max_fee_per_blob_gas()
-        .map(|x| RevmU256::from_be_bytes(x.to_big_endian()));
-    TxEnv {
-        caller: match tx {
-            Transaction::PrivilegedL2Transaction(tx) if tx.tx_type == PrivilegedTxType::Deposit => {
-                RevmAddress::ZERO
-            }
-            _ => RevmAddress(tx.sender().0.into()),
-        },
-        gas_limit: tx.gas_limit(),
-        gas_price: RevmU256::from(tx.gas_price()),
-        transact_to: match tx {
-            Transaction::PrivilegedL2Transaction(tx)
-                if tx.tx_type == PrivilegedTxType::Withdrawal =>
-            {
-                RevmTxKind::Call(RevmAddress::ZERO)
-            }
-            _ => match tx.to() {
-                TxKind::Call(address) => RevmTxKind::Call(address.0.into()),
-                TxKind::Create => RevmTxKind::Create,
-            },
-        },
-        value: RevmU256::from_limbs(tx.value().0),
-        data: match tx {
-            Transaction::PrivilegedL2Transaction(tx) => match tx.tx_type {
-                PrivilegedTxType::Deposit => DEPOSIT_MAGIC_DATA.into(),
-                PrivilegedTxType::Withdrawal => {
-                    let to = match tx.to {
-                        TxKind::Call(to) => to,
-                        _ => Address::zero(),
-                    };
-                    [Bytes::from(WITHDRAWAL_MAGIC_DATA), Bytes::from(to.0)]
-                        .concat()
-                        .into()
-                }
-            },
-            _ => tx.data().clone().into(),
-        },
-        nonce: Some(tx.nonce()),
-        chain_id: tx.chain_id(),
-        access_list: tx
-            .access_list()
-            .into_iter()
-            .map(|(addr, list)| {
-                let (address, storage_keys) = (
-                    RevmAddress(addr.0.into()),
-                    list.into_iter()
-                        .map(|a| FixedBytes::from_slice(a.as_bytes()))
-                        .collect(),
-                );
-                AccessListItem {
-                    address,
-                    storage_keys,
-                }
-            })
-            .collect(),
-        gas_priority_fee: tx.max_priority_fee().map(RevmU256::from),
-        blob_hashes: tx
-            .blob_versioned_hashes()
-            .into_iter()
-            .map(|hash| B256::from(hash.0))
-            .collect(),
-        max_fee_per_blob_gas,
-        // TODO revise
-        // https://eips.ethereum.org/EIPS/eip-7702
-        authorization_list: None,
-    }
-}
-
-// Used to estimate gas and create access lists
-fn tx_env_from_generic(tx: &GenericTransaction, basefee: u64) -> TxEnv {
-    let gas_price = calculate_gas_price(tx, basefee);
-    TxEnv {
-        caller: RevmAddress(tx.from.0.into()),
-        gas_limit: tx.gas.unwrap_or(u64::MAX), // Ensure tx doesn't fail due to gas limit
-        gas_price,
-        transact_to: match tx.to {
-            TxKind::Call(address) => RevmTxKind::Call(address.0.into()),
-            TxKind::Create => RevmTxKind::Create,
-        },
-        value: RevmU256::from_limbs(tx.value.0),
-        data: tx.input.clone().into(),
-        nonce: tx.nonce,
-        chain_id: tx.chain_id,
-        access_list: tx
-            .access_list
-            .iter()
-            .map(|list| {
-                let (address, storage_keys) = (
-                    RevmAddress::from_slice(list.address.as_bytes()),
-                    list.storage_keys
-                        .iter()
-                        .map(|a| FixedBytes::from_slice(a.as_bytes()))
-                        .collect(),
-                );
-                AccessListItem {
-                    address,
-                    storage_keys,
-                }
-            })
-            .collect(),
-        gas_priority_fee: tx.max_priority_fee_per_gas.map(RevmU256::from),
-        blob_hashes: tx
-            .blob_versioned_hashes
-            .iter()
-            .map(|hash| B256::from(hash.0))
-            .collect(),
-        max_fee_per_blob_gas: tx.max_fee_per_blob_gas.map(|x| RevmU256::from_limbs(x.0)),
-        // TODO revise
-        // https://eips.ethereum.org/EIPS/eip-7702
-        authorization_list: None,
-    }
-}
-
-// Creates an AccessListInspector that will collect the accesses used by the evm execution
-fn access_list_inspector(
-    tx_env: &TxEnv,
-    state: &mut EvmState,
-    spec_id: SpecId,
-) -> Result<AccessListInspector, EvmError> {
-    // Access list provided by the transaction
-    let current_access_list = RevmAccessList(tx_env.access_list.clone());
-    // Addresses accessed when using precompiles
-    let precompile_addresses = Precompiles::new(PrecompileSpecId::from_spec_id(spec_id))
-        .addresses()
-        .cloned();
-    // Address that is either called or created by the transaction
-    let to = match tx_env.transact_to {
-        RevmTxKind::Call(address) => address,
-        RevmTxKind::Create => {
-            let nonce = match state {
-                EvmState::Store(db) => db.basic(tx_env.caller)?,
-                EvmState::Execution(db) => db.basic(tx_env.caller)?,
-            }
-            .map(|info| info.nonce)
-            .unwrap_or_default();
-            tx_env.caller.create(nonce)
-        }
-    };
-    Ok(AccessListInspector::new(
-        current_access_list,
-        tx_env.caller,
-        to,
-        precompile_addresses,
-    ))
-}
-
 /// Returns the spec id according to the block timestamp and the stored chain config
 /// WARNING: Assumes at least Merge fork is active
 pub fn spec_id(chain_config: &ChainConfig, block_timestamp: u64) -> SpecId {
-    match chain_config.get_fork(block_timestamp) {
-        Fork::Cancun => SpecId::CANCUN,
-        Fork::Shanghai => SpecId::SHANGHAI,
+    fork_to_spec_id(chain_config.get_fork(block_timestamp))
+}
+
+pub fn fork_to_spec_id(fork: Fork) -> SpecId {
+    match fork {
+        Fork::Frontier => SpecId::FRONTIER,
+        Fork::FrontierThawing => SpecId::FRONTIER_THAWING,
+        Fork::Homestead => SpecId::HOMESTEAD,
+        Fork::DaoFork => SpecId::DAO_FORK,
+        Fork::Tangerine => SpecId::TANGERINE,
+        Fork::SpuriousDragon => SpecId::SPURIOUS_DRAGON,
+        Fork::Byzantium => SpecId::BYZANTIUM,
+        Fork::Constantinople => SpecId::CONSTANTINOPLE,
+        Fork::Petersburg => SpecId::PETERSBURG,
+        Fork::Istanbul => SpecId::ISTANBUL,
+        Fork::MuirGlacier => SpecId::MUIR_GLACIER,
+        Fork::Berlin => SpecId::BERLIN,
+        Fork::London => SpecId::LONDON,
+        Fork::ArrowGlacier => SpecId::ARROW_GLACIER,
+        Fork::GrayGlacier => SpecId::GRAY_GLACIER,
         Fork::Paris => SpecId::MERGE,
+        Fork::Shanghai => SpecId::SHANGHAI,
+        Fork::Cancun => SpecId::CANCUN,
+        Fork::Prague => SpecId::PRAGUE,
+        Fork::Osaka => SpecId::OSAKA,
     }
 }
-
-/// Calculating gas_price according to EIP-1559 rules
-/// See https://github.com/ethereum/go-ethereum/blob/7ee9a6e89f59cee21b5852f5f6ffa2bcfc05a25f/internal/ethapi/transaction_args.go#L430
-fn calculate_gas_price(tx: &GenericTransaction, basefee: u64) -> Uint<256, 4> {
-    if tx.gas_price != 0 {
-        // Legacy gas field was specified, use it
-        RevmU256::from(tx.gas_price)
-    } else {
-        // Backfill the legacy gas price for EVM execution, (zero if max_fee_per_gas is zero)
-        RevmU256::from(min(
-            tx.max_priority_fee_per_gas.unwrap_or(0) + basefee,
-            tx.max_fee_per_gas.unwrap_or(0),
-        ))
-    }
-}
-
-// USED for revm ^19.0.0
-//pub fn is_prague(spec_id: SpecId) -> bool {
-//    spec_id >= SpecId::PRAGUE
-//}

@@ -2,7 +2,7 @@
 #![allow(clippy::expect_used)]
 
 use ethrex_blockchain::add_block;
-use ethrex_core::types::{Block, Genesis};
+use ethrex_common::types::{Block, Genesis};
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
 use ethrex_storage::{EngineType, Store};
 use ethrex_vm::execution_db::ExecutionDB;
@@ -35,10 +35,9 @@ pub fn read_genesis_file(genesis_file_path: &str) -> Genesis {
 /// before calling `send_commitment()` to send the block commitment.
 pub fn generate_rlp(
     up_to_block_number: u64,
-    block: Block,
     store: &Store,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    if block.header.number == up_to_block_number {
+    if store.get_latest_block_number()? == up_to_block_number {
         let mut path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
         let file_name = "l2-test.rlp";
 
@@ -81,7 +80,7 @@ pub fn generate_program_input(
         .ok_or(ProverInputError::InvalidParentBlock(
             block.header.parent_hash,
         ))?;
-    let db = ExecutionDB::from_exec(&block, &store)?;
+    let db = ExecutionDB::from_store(&block, store)?;
 
     Ok(ProgramInput {
         db,
