@@ -27,9 +27,9 @@ update-cli-contracts: ## 📜 Update the CLI's config contracts
 		echo "Error: CONFIG_NAME (C) is missing.\nPlease provide it as an argument:\nmake update-cli-contracts C=<config_name>."; \
 		exit 1; \
 	fi && \
-	CB=$$(grep 'L1_WATCHER_BRIDGE_ADDRESS' .env | cut -d= -f2) && \
+	CB=$$(grep 'L1_WATCHER_BRIDGE_ADDRESS' config.toml | cut -d= -f2) && \
 	ethrex_l2 config edit --common-bridge $$CB $$C && \
-	OP=$$(grep 'COMMITTER_ON_CHAIN_PROPOSER_ADDRESS' .env | cut -d= -f2) && \
+	OP=$$(grep 'COMMITTER_ON_CHAIN_PROPOSER_ADDRESS' config.toml | cut -d= -f2) && \
 	ethrex_l2 config edit --on-chain-proposer $$OP $$C
 
 # Variables
@@ -52,7 +52,7 @@ ethrex_L1_DEV_LIBMDBX=dev_ethrex_l1
 L1_PORT=8545
 L2_PORT=1729
 L1_AUTH_PORT=8551
-# Used in the .env file. Ensure the same port is used for `ENGINE_API_RPC_URL`.
+# Used in the config.toml file. Ensure the same port is used for `ENGINE_API_RPC_URL`.
 L2_AUTH_PORT=8552
 
 # Matches the ports used by the blockchain/metrics dir
@@ -153,11 +153,11 @@ rm-db-l2: ## 🛑 Removes the DB used by the L2
 ci_test: ## 🚧 Runs the L2's integration test, used by the github's CI
 	docker compose -f ${ethrex_L2_DOCKER_COMPOSE_PATH} down
 	docker compose -f ${ethrex_L2_DOCKER_COMPOSE_PATH} up -d --build
-	BRIDGE_ADDRESS=$$(grep 'L1_WATCHER_BRIDGE_ADDRESS' .env | cut -d= -f2) ON_CHAIN_PROPOSER_ADDRESS=$$(grep 'COMMITTER_ON_CHAIN_PROPOSER_ADDRESS' .env | cut -d= -f2) cargo test l2 --release -- --nocapture --test-threads=1
+	BRIDGE_ADDRESS=$$(grep 'L1_WATCHER_BRIDGE_ADDRESS' config.toml | cut -d= -f2) ON_CHAIN_PROPOSER_ADDRESS=$$(grep 'COMMITTER_ON_CHAIN_PROPOSER_ADDRESS' config.toml | cut -d= -f2) cargo test l2 --release -- --nocapture --test-threads=1
 	docker compose -f ${ethrex_L2_DOCKER_COMPOSE_PATH} down
 
 test: ## 🚧 Runs the L2's integration test, run `make init` and in a new terminal make test
-	BRIDGE_ADDRESS=$$(grep 'L1_WATCHER_BRIDGE_ADDRESS' .env | cut -d= -f2) ON_CHAIN_PROPOSER_ADDRESS=$$(grep 'COMMITTER_ON_CHAIN_PROPOSER_ADDRESS' .env | cut -d= -f2) cargo test l2 --release -- --nocapture --test-threads=1
+	BRIDGE_ADDRESS=$$(grep 'L1_WATCHER_BRIDGE_ADDRESS' config.toml | cut -d= -f2) ON_CHAIN_PROPOSER_ADDRESS=$$(grep 'COMMITTER_ON_CHAIN_PROPOSER_ADDRESS' config.toml | cut -d= -f2) cargo test l2 --release -- --nocapture --test-threads=1
 
 
 # Purge L2's state

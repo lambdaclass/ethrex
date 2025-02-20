@@ -51,7 +51,7 @@ pub enum DeployError {
     EthClientError(#[from] EthClientError),
     #[error("Deployer decoding error: {0}")]
     DecodingError(String),
-    #[error("Failed to interact with .env file, error: {0}")]
+    #[error("Failed to interact with config.toml file, error: {0}")]
     EnvFileError(#[from] errors::ConfigError),
     #[error("Failed to encode calldata: {0}")]
     CalldataEncodeError(#[from] CalldataEncodeError),
