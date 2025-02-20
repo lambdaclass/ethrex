@@ -211,7 +211,8 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
         // Discard peer from kademlia table
         match error {
             // already connected, don't discard it
-            RLPxError::DisconnectRequested(r) if r == DisconnectReason::AlreadyConnected => {
+            RLPxError::DisconnectRequested(DisconnectReason::AlreadyConnected)
+            | RLPxError::DisconnectSent(DisconnectReason::AlreadyConnected) => {
                 log_peer_debug(&self.node, "Peer already connected don't replace it");
             }
             _ => {
