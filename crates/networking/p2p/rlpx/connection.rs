@@ -42,7 +42,9 @@ use tokio::{
 use tokio_stream::StreamExt;
 use tokio_util::codec::Framed;
 
-use super::{eth::transactions::NewPooledTransactionHashes, utils::log_peer_warn};
+use super::{
+    eth::transactions::NewPooledTransactionHashes, p2p::DisconnectReason, utils::log_peer_warn,
+};
 
 const CAP_P2P_5: (Capability, u8) = (Capability::P2p, 5);
 const CAP_ETH_68: (Capability, u8) = (Capability::Eth, 68);
@@ -184,7 +186,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
         // Discard peer from kademlia table
         match error {
             // already connected, don't discard it
-            RLPxError::DisconnectRequested(s) if s == "Already connected" => {
+            RLPxError::DisconnectRequested(r) if r == DisconnectReason::AlreadyConnected => {
                 log_peer_debug(&self.node, "Peer already connected don't replace it");
             }
             _ => {
@@ -200,9 +202,9 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
         let _ = self.framed.close().await;
     }
 
-    fn match_disconnect_reason(&self, error: &RLPxError) -> Option<u8> {
+    fn match_disconnect_reason(&self, error: &RLPxError) -> Option<DisconnectReason> {
         match error {
-            RLPxError::RLPDecodeError(_) => Some(2_u8),
+            RLPxError::RLPDecodeError(_) => Some(DisconnectReason::NetworkError),
             // TODO build a proper matching between error types and disconnection reasons
             _ => None,
         }
@@ -211,10 +213,10 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
     async fn exchange_hello_messages(&mut self, peer_count: usize) -> Result<(), RLPxError> {
         if peer_count >= MAX_PEERS {
             let disconnect_msg = Message::Disconnect(DisconnectMessage {
-                reason: Some(0x04), // Too many peers
+                reason: Some(DisconnectReason::TooManyPeers), // Too many peers
             });
             self.send(disconnect_msg).await?;
-            return Err(RLPxError::DisconnectSent("Too many peers".to_string()));
+            return Err(RLPxError::DisconnectSent(DisconnectReason::TooManyPeers));
         }
 
         let hello_msg = Message::Hello(p2p::HelloMessage::new(
@@ -269,9 +271,9 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
 
                 Ok(())
             }
-            Message::Disconnect(disconnect) => Err(RLPxError::DisconnectRequested(
-                disconnect.reason().to_string(),
-            )),
+            Message::Disconnect(disconnect) => {
+                Err(RLPxError::DisconnectRequested(disconnect.reason()))
+            }
             _ => {
                 // Fail if it is not a hello message
                 Err(RLPxError::BadRequest("Expected Hello message".to_string()))
@@ -406,9 +408,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
                     &format!("Received Disconnect: {}", msg_data.reason()),
                 );
                 // TODO handle the disconnection request
-                return Err(RLPxError::DisconnectRequested(
-                    msg_data.reason().to_string(),
-                ));
+                return Err(RLPxError::DisconnectRequested(msg_data.reason()));
             }
             Message::Ping(_) => {
                 log_peer_debug(&self.node, "Sending pong message");
