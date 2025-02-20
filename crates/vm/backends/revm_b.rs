@@ -12,10 +12,10 @@ use crate::ExecutionResult;
 use ethrex_storage::{error::StoreError, AccountUpdate};
 
 use revm::{
+    db::AccountState as RevmAccountState,
     inspectors::TracerEip3155,
     primitives::{BlobExcessGasAndPrice, BlockEnv, TxEnv, B256},
     DatabaseCommit, Evm,
-db::{AccountState as RevmAccountState}
 };
 use revm_inspectors::access_list::AccessListInspector;
 // Rename imported types for clarity
@@ -28,9 +28,9 @@ use ethrex_common::{
 };
 use revm_primitives::Bytes;
 use revm_primitives::{
-    ruint::Uint, AccessList as RevmAccessList, AccessListItem, 
-    Address as RevmAddress, Authorization as RevmAuthorization, FixedBytes, SignedAuthorization,
-    SpecId, TxKind as RevmTxKind, U256 as RevmU256,
+    ruint::Uint, AccessList as RevmAccessList, AccessListItem, Address as RevmAddress,
+    Authorization as RevmAuthorization, FixedBytes, SignedAuthorization, SpecId,
+    TxKind as RevmTxKind, U256 as RevmU256,
 };
 use std::cmp::min;
 

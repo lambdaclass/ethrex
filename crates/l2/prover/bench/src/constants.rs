@@ -2,7 +2,10 @@
 
 use std::time::Duration;
 
-use ethrex_common::{types::{BlobSchedule, ChainConfig}, constants::MAINNET_DEPOSIT_CONTRACT_ADDRESS};
+use ethrex_common::{
+    constants::MAINNET_DEPOSIT_CONTRACT_ADDRESS,
+    types::{BlobSchedule, ChainConfig},
+};
 use revm_primitives::SpecId;
 
 use lazy_static::lazy_static;

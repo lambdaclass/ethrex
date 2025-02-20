@@ -5,7 +5,7 @@ use ethrex_l2::utils::prover::proving_systems::{
 use tracing::info;
 
 // risc0
-use risc0_zkvm::{default_prover, ExecutorEnv, ProverOpts};
+use risc0_zkvm::{default_executor, default_prover, ExecutorEnv, ProverOpts};
 use zkvm_interface::{
     io::{ProgramInput, ProgramOutput},
     methods::ZKVM_SP1_PROGRAM_ELF,
@@ -109,7 +109,17 @@ impl<'a> Prover for Risc0Prover<'a> {
         &mut self,
         input: ProgramInput,
     ) -> Result<ExecuteOutput, Box<dyn std::error::Error>> {
-        todo!()
+        let env = ExecutorEnv::builder()
+            .stdout(&mut self.stdout)
+            .write(&input)?
+            .build()?;
+
+        let executor = default_executor();
+
+        let session_info = executor.execute(env, self.elf)?;
+
+        info!("Successfully generated session info.");
+        Ok(ExecuteOutput::RISC0(session_info))
     }
 
     fn verify(&self, proving_output: &ProvingOutput) -> Result<(), Box<dyn std::error::Error>> {

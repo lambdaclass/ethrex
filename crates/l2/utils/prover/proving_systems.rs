@@ -2,7 +2,7 @@ use crate::proposer::errors::ProverServerError;
 use serde::{Deserialize, Serialize};
 use std::fmt::Debug;
 
-use risc0_zkvm::sha::Digestible;
+use risc0_zkvm::{sha::Digestible, SessionInfo};
 use sp1_sdk::{ExecutionReport as SP1ExecutionReport, HashableKey, SP1PublicValues};
 
 #[derive(Debug, Clone, Copy, Hash, PartialEq, Eq, Serialize, Deserialize)]
@@ -151,6 +151,6 @@ pub enum ProvingOutput {
 
 #[derive(Clone, Debug)]
 pub enum ExecuteOutput {
-    // TODO: Risc0
+    RISC0(SessionInfo),
     SP1((SP1PublicValues, SP1ExecutionReport)),
 }
