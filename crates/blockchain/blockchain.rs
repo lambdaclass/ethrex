@@ -5,6 +5,12 @@ pub mod mempool;
 pub mod payload;
 mod smoke_test;
 
+use std::{
+    time::Instant,
+    sync::atomic::{AtomicU64, Ordering},
+};
+use tracing::info;
+
 use error::{ChainError, InvalidBlockError};
 use ethrex_common::constants::GAS_PER_BLOB;
 use ethrex_common::types::{
@@ -22,8 +28,6 @@ use ethrex_vm::db::evm_state;
 use ethrex_vm::EVM_BACKEND;
 use ethrex_vm::{backends, backends::EVM};
 
-use std::sync::atomic::{AtomicU64, Ordering};
-
 //TODO: Implement a struct Chain or BlockChain to encapsulate
 //functionality and canonical chain state and config
 
@@ -39,6 +43,8 @@ pub fn get_gas_counter() -> u64 {
 ///
 /// Performs pre and post execution validation, and updates the database with the post state.
 pub fn add_block(block: &Block, storage: &Store) -> Result<(), ChainError> {
+    let since = Instant::now();
+
     let block_hash = block.header.compute_block_hash();
 
     // Validate if it can be the new head and find the parent
@@ -85,7 +91,19 @@ pub fn add_block(block: &Block, storage: &Store) -> Result<(), ChainError> {
     store_block(storage, block.clone())?;
     store_receipts(storage, receipts, block_hash)?;
 
-    _ = GAS_COUNTER.fetch_add(block.header.gas_used, Ordering::Relaxed);
+    let old_counter = GAS_COUNTER.fetch_add(block.header.gas_used, Ordering::Relaxed);
+    // Detect overflow, if this happens two or more times between reads they will be
+    // underestimated by (N-1) * u64::MAX, where N is the number of overflows in that
+    // period.
+    if old_counter.checked_add(block.header.gas_used).is_none() {
+        info!("GAS_COUNTER overflowed");
+    }
+
+    let interval = Instant::now().duration_since(since).as_millis();
+    if interval != 0 {
+        let throughput = (block.header.gas_used as u128 / interval) * 1000;
+        info!("[METRIC] BLOCK THROUGHPUT: {throughput} Gas/s TIME SPENT: {interval} msecs");
+    }
 
     Ok(())
 }
