@@ -327,12 +327,10 @@ impl ToExecDB for StoreWrapper {
             .clone()
             .map(|(address, _)| hash_address(&address))
             .collect();
-        let initial_state_proofs = state_trie.get_proofs(&hashed_addresses)?;
+        let initial_state_proofs = parent_state_trie.get_proofs(&hashed_addresses)?;
         let final_state_proofs: Vec<_> = hashed_addresses
             .iter()
-            .map(|hashed_address| {
-                Ok((hashed_address, parent_state_trie.get_proof(hashed_address)?))
-            })
+            .map(|hashed_address| Ok((hashed_address, state_trie.get_proof(hashed_address)?)))
             .collect::<Result<_, TrieError>>()?;
         let potential_account_child_nodes = final_state_proofs
             .iter()
@@ -345,7 +343,7 @@ impl ToExecDB for StoreWrapper {
         );
 
         // get storage proofs
-        let mut initial_storage_proofs = HashMap::new();
+        let mut storage_proofs = HashMap::new();
         let mut final_storage_proofs = HashMap::new();
         for (address, storage_keys) in index {
             let storage_trie = self.store.storage_trie(block.hash(), address)?.ok_or(
@@ -376,7 +374,7 @@ impl ToExecDB for StoreWrapper {
                 [initial_proofs.1, potential_child_nodes].concat(),
             );
 
-            initial_storage_proofs.insert(address, proofs);
+            storage_proofs.insert(address, proofs);
             final_storage_proofs.insert(address, final_proofs);
         }
 
@@ -387,7 +385,7 @@ impl ToExecDB for StoreWrapper {
             block_hashes,
             chain_config,
             state_proofs,
-            storage_proofs: initial_storage_proofs,
+            storage_proofs,
         })
     }
 }
