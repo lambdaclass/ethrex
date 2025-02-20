@@ -345,9 +345,9 @@ async fn main() {
         loop {
             let instant = interval.tick().await;
             let counter = ethrex_blockchain::get_gas_counter();
-            let duration = instant.duration_since(since);
+            let duration = instant.duration_since(since).as_secs();
 
-            if duration.as_secs() <= 0 {
+            if duration <= 0 {
                 continue;
             }
 
@@ -357,9 +357,9 @@ async fn main() {
             // Note the counter itself also wraps on overflow.
             let gas_used = counter.wrapping_sub(old_counter);
 
-            let gps = gas_used / duration.as_secs();
+            let gps = gas_used / duration;
 
-            info!("[METRIC] GPS: {gps}");
+            info!("[METRIC] GPS: {gps} INTERVAL: {duration}");
 
             old_counter = counter;
             since = instant;
