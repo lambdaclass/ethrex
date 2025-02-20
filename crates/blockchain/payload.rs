@@ -7,10 +7,10 @@ use ethrex_common::{
     constants::GAS_PER_BLOB,
     types::{
         calculate_base_fee_per_blob_gas, calculate_base_fee_per_gas, compute_receipts_root,
-        compute_requests_hash, compute_transactions_root, compute_withdrawals_root,
-        requests::Requests, BlobsBundle, Block, BlockBody, BlockHash, BlockHeader, BlockNumber,
-        ChainConfig, Fork, MempoolTransaction, Receipt, Transaction, Withdrawal,
-        DEFAULT_OMMERS_HASH, DEFAULT_REQUESTS_HASH,
+        compute_transactions_root, compute_withdrawals_root, requests::Requests, BlobsBundle,
+        Block, BlockBody, BlockHash, BlockHeader, BlockNumber, ChainConfig, Fork,
+        MempoolTransaction, Receipt, Transaction, Withdrawal, DEFAULT_OMMERS_HASH,
+        DEFAULT_REQUESTS_HASH,
     },
     Address, Bloom, Bytes, H256, U256,
 };
@@ -681,8 +681,6 @@ pub fn extract_requests(context: &mut PayloadBuildContext) -> Result<(), EvmErro
 }
 
 fn finalize_payload(context: &mut PayloadBuildContext) -> Result<(), ChainError> {
-    let config = context.chain_config()?;
-    let is_prague_activated = config.is_prague_activated(context.payload.header.timestamp);
     let account_updates = match EVM_BACKEND.get() {
         Some(EVM::LEVM) => backends::levm::get_state_transitions_levm(
             context.evm_state,
@@ -701,8 +699,6 @@ fn finalize_payload(context: &mut PayloadBuildContext) -> Result<(), ChainError>
     context.payload.header.transactions_root =
         compute_transactions_root(&context.payload.body.transactions);
     context.payload.header.receipts_root = compute_receipts_root(&context.receipts);
-    context.payload.header.requests_hash =
-        is_prague_activated.then_some(compute_requests_hash(&context.requests));
     context.payload.header.gas_used = context.payload.header.gas_limit - context.remaining_gas;
     Ok(())
 }

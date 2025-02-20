@@ -576,7 +576,6 @@ impl Store {
         let genesis_block_number = genesis_block.header.number;
 
         let genesis_hash = genesis_block.hash();
-        info!("Genesis hash: {}", genesis_hash);
 
         if let Some(header) = self.get_block_header(genesis_block_number)? {
             if header.compute_block_hash() == genesis_hash {

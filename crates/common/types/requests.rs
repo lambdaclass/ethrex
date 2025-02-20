@@ -1,5 +1,9 @@
+use bytes::Bytes;
 use ethereum_types::Address;
+use serde::{Deserialize, Serialize};
 use tracing::error;
+
+use crate::serde_utils;
 
 use super::{Bytes48, Receipt};
 
@@ -9,6 +13,29 @@ const DEPOSIT_TYPE: u8 = 0x00;
 const WITHDRAWAL_TYPE: u8 = 0x01;
 const CONSOLIDATION_TYPE: u8 = 0x02;
 
+#[derive(Clone, Debug)]
+pub struct EncodedRequests(pub Bytes);
+
+impl<'de> Deserialize<'de> for EncodedRequests {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        Ok(EncodedRequests(serde_utils::bytes::deserialize(
+            deserializer,
+        )?))
+    }
+}
+
+impl Serialize for EncodedRequests {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        serde_utils::bytes::serialize(&self.0, serializer)
+    }
+}
+
 #[derive(Clone)]
 pub enum Requests {
     Deposit(Vec<Deposit>),
@@ -17,8 +44,8 @@ pub enum Requests {
 }
 
 impl Requests {
-    pub fn to_bytes(&self) -> Vec<u8> {
-        match self {
+    pub fn encode(&self) -> EncodedRequests {
+        let bytes: Vec<u8> = match self {
             Requests::Deposit(deposits) => {
                 let deposit_data = deposits.iter().flat_map(|d| d.to_summarized_byte_array());
                 std::iter::once(DEPOSIT_TYPE).chain(deposit_data).collect()
@@ -29,8 +56,11 @@ impl Requests {
             Requests::Consolidation(data) => std::iter::once(CONSOLIDATION_TYPE)
                 .chain(data.iter().cloned())
                 .collect(),
-        }
+        };
+
+        EncodedRequests(Bytes::from(bytes))
     }
+
     pub fn from_deposit_receipts(
         deposit_contract_address: Address,
         receipts: &[Receipt],

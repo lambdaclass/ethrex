@@ -1,10 +1,10 @@
 use super::{
-    BASE_FEE_MAX_CHANGE_DENOMINATOR, ELASTICITY_MULTIPLIER, GAS_LIMIT_ADJUSTMENT_FACTOR,
-    GAS_LIMIT_MINIMUM, INITIAL_BASE_FEE,
+    requests::EncodedRequests, BASE_FEE_MAX_CHANGE_DENOMINATOR, ELASTICITY_MULTIPLIER,
+    GAS_LIMIT_ADJUSTMENT_FACTOR, GAS_LIMIT_MINIMUM, INITIAL_BASE_FEE,
 };
 use crate::{
     constants::MIN_BASE_FEE_PER_BLOB_GAS,
-    types::{requests::Requests, Receipt, Transaction},
+    types::{Receipt, Transaction},
     Address, H256, U256,
 };
 use bytes::Bytes;
@@ -263,10 +263,10 @@ pub fn compute_withdrawals_root(withdrawals: &[Withdrawal]) -> H256 {
 }
 
 // See https://github.com/ethereum/EIPs/blob/2a6b6965e64787815f7fffb9a4c27660d9683846/EIPS/eip-7685.md?plain=1#L62.
-pub fn compute_requests_hash(requests: &[Requests]) -> H256 {
+pub fn compute_requests_hash(requests: &[EncodedRequests]) -> H256 {
     let mut hasher = Sha256::new();
     for request in requests {
-        let request_bytes = request.to_bytes();
+        let request_bytes = request.0.as_ref();
         if request_bytes.len() > 1 {
             hasher.update(Sha256::digest(request_bytes));
         }

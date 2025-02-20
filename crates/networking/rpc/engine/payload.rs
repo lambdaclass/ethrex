@@ -1,7 +1,7 @@
 use ethrex_blockchain::add_block;
 use ethrex_blockchain::error::ChainError;
 use ethrex_blockchain::payload::build_payload;
-use ethrex_common::types::requests::Requests;
+use ethrex_common::types::requests::EncodedRequests;
 use ethrex_common::types::{
     compute_requests_hash, BlobsBundle, Block, BlockBody, BlockHash, BlockNumber, Fork,
 };
@@ -138,22 +138,7 @@ pub struct NewPayloadV4Request {
     pub payload: ExecutionPayload,
     pub expected_blob_versioned_hashes: Vec<H256>,
     pub parent_beacon_block_root: H256,
-    pub execution_requests: Vec<Requests>,
-}
-
-impl From<NewPayloadV4Request> for RpcRequest {
-    fn from(val: NewPayloadV4Request) -> Self {
-        RpcRequest {
-            method: "engine_newPayloadV4".to_string(),
-            params: Some(vec![
-                serde_json::json!(val.payload),
-                serde_json::json!(val.expected_blob_versioned_hashes),
-                serde_json::json!(val.parent_beacon_block_root),
-                serde_json::json!(val.execution_requests),
-            ]),
-            ..Default::default()
-        }
-    }
+    pub execution_requests: Vec<EncodedRequests>,
 }
 
 impl RpcHandler for NewPayloadV4Request {
@@ -177,7 +162,9 @@ impl RpcHandler for NewPayloadV4Request {
     }
 
     fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
-        // TODO: VALIDATE EMPTY REQUESTS HASH
+        // validate the received requests
+        validate_execution_requests(&self.execution_requests)?;
+
         let requests_hash = compute_requests_hash(&self.execution_requests);
         let block = get_block_from_payload(
             &self.payload,
@@ -192,7 +179,6 @@ impl RpcHandler for NewPayloadV4Request {
             context,
             block,
             self.expected_blob_versioned_hashes.clone(),
-            self.execution_requests.clone(),
         )?;
         serde_json::to_value(payload_status).map_err(|error| RpcErr::Internal(error.to_string()))
     }
@@ -446,7 +432,6 @@ fn handle_new_payload_v4(
     context: RpcApiContext,
     block: Block,
     expected_blob_versioned_hashes: Vec<H256>,
-    _execution_requests: Vec<Requests>,
 ) -> Result<PayloadStatus, RpcErr> {
     // Ignore incoming
     match context.sync_status()? {
@@ -467,10 +452,26 @@ fn handle_new_payload_v4(
                     "Invalid blob_versioned_hashes",
                 ));
             }
-            // TODO: CHECK REQUESTS HASH
             execute_payload(&block, &context)
         }
     }
+}
+
+// Elements of the list MUST be ordered by request_type in ascending order.
+// Elements with empty request_data MUST be excluded from the list.
+fn validate_execution_requests(execution_requests: &[EncodedRequests]) -> Result<(), RpcErr> {
+    let mut last_type: i32 = -1;
+    for requests in execution_requests {
+        if requests.0.len() < 2 {
+            return Err(RpcErr::WrongParam("Empty requests data.".to_string()));
+        }
+        let request_type = requests.0[0] as i32;
+        if last_type >= request_type {
+            return Err(RpcErr::WrongParam("Invalid requests order.".to_string()));
+        }
+        last_type = request_type;
+    }
+    Ok(())
 }
 
 fn get_block_from_payload(
