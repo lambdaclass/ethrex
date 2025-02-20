@@ -276,7 +276,7 @@ impl ToExecDB for RpcDB {
             spec_id(&chain_config, block.header.timestamp),
             self,
         )
-        .unwrap(); // TODO: remove unwrap
+        .map_err(|err| Box::new(EvmError::from(err)))?; // TODO: ugly error handling
 
         // index read and touched account addresses and storage keys
         let index: Vec<_> = cache_db
