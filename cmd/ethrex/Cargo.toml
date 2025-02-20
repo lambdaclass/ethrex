@@ -35,7 +35,6 @@ cfg-if = "1.0.0"
 
 ethrex-dev = { path = "../../crates/blockchain/dev", optional = true }
 ethrex-metrics = { path = "../../crates/blockchain/metrics" }
-num_enum = "0.7.3"
 
 [[bin]]
 name = "ethrex"
