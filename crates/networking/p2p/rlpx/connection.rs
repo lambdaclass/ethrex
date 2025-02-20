@@ -113,7 +113,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
 
         let peer_count = {
             let table_lock = table.lock().await;
-            table_lock.count_peers()
+            table_lock.count_connected_peers()
         };
 
         if let Err(e) = self.exchange_hello_messages(peer_count).await {
