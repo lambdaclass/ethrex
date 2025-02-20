@@ -263,6 +263,9 @@ impl ToExecDB for RpcDB {
         &self,
         block: &Block,
     ) -> Result<ethrex_vm::execution_db::ExecutionDB, ethrex_vm::errors::ExecutionDBError> {
+        // TODO: Simplify this function and potentially merge with the implementation for
+        // StoreWrapper.
+
         let parent_hash = block.header.parent_hash;
         let chain_config = *CANCUN_CONFIG;
 

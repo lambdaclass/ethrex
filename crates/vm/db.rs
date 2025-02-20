@@ -219,6 +219,9 @@ impl revm::DatabaseRef for StoreWrapper {
 
 impl ToExecDB for StoreWrapper {
     fn to_exec_db(&self, block: &Block) -> Result<ExecutionDB, ExecutionDBError> {
+        // TODO: Simplify this function and potentially merge with the implementation for
+        // RpcDB.
+
         let parent_hash = block.header.parent_hash;
         let chain_config = self.store.get_chain_config()?;
 
