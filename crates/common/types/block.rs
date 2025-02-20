@@ -128,9 +128,7 @@ pub struct BlockHeader {
     )]
     pub excess_blob_gas: Option<u64>,
     pub parent_beacon_block_root: Option<H256>,
-    // TODO: this breaks L2 benchmarks cache, and serialization into SP1 program,
-    // so this is temporarily commented out.
-    //#[serde(skip_serializing_if = "Option::is_none", default = "Option::default")]
+    #[serde(skip_serializing_if = "Option::is_none", default = "Option::default")]
     pub requests_hash: Option<H256>,
 }
 
