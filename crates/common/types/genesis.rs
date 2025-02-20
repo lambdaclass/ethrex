@@ -13,7 +13,7 @@ use super::{
 };
 
 #[allow(unused)]
-#[derive(Debug, Deserialize, Clone, Default)]
+#[derive(Debug, Deserialize, Serialize, Clone, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct Genesis {
     /// Chain configuration
@@ -32,6 +32,7 @@ pub struct Genesis {
     #[serde(alias = "mixHash", alias = "mixhash")]
     pub mix_hash: H256,
     #[serde(deserialize_with = "crate::serde_utils::u64::deser_hex_or_dec_str")]
+    #[serde(serialize_with = "crate::serde_utils::u256::serialize_number")]
     pub timestamp: u64,
     #[serde(default, with = "crate::serde_utils::u64::hex_str_opt")]
     pub base_fee_per_gas: Option<u64>,
@@ -132,6 +133,8 @@ pub struct ChainConfig {
     pub terminal_total_difficulty_passed: bool,
     #[serde(default)]
     pub blob_schedule: BlobSchedule,
+    // Deposits system contract address
+    pub deposit_contract_address: Option<Address>,
 }
 
 #[repr(u8)]
@@ -235,8 +238,8 @@ impl ChainConfig {
         self.get_fork(block_timestamp)
     }
 
-    pub fn gather_forks(&self) -> (Vec<u64>, Vec<u64>) {
-        let block_number_based_forks: Vec<u64> = vec![
+    pub fn gather_forks(&self, genesis_header: BlockHeader) -> (Vec<u64>, Vec<u64>) {
+        let mut block_number_based_forks: Vec<u64> = vec![
             self.homestead_block,
             if self.dao_fork_support {
                 self.dao_fork_block
@@ -261,7 +264,11 @@ impl ChainConfig {
         .flatten()
         .collect();
 
-        let timestamp_based_forks: Vec<u64> = vec![
+        // Remove repeated values
+        block_number_based_forks.sort();
+        block_number_based_forks.dedup();
+
+        let mut timestamp_based_forks: Vec<u64> = vec![
             self.shanghai_time,
             self.cancun_time,
             self.prague_time,
@@ -271,12 +278,20 @@ impl ChainConfig {
         .flatten()
         .collect();
 
+        // Remove repeated values
+        timestamp_based_forks.sort();
+        timestamp_based_forks.dedup();
+
+        // Filter forks before genesis
+        block_number_based_forks.retain(|block_number| *block_number != 0);
+        timestamp_based_forks.retain(|block_timestamp| *block_timestamp > genesis_header.timestamp);
+
         (block_number_based_forks, timestamp_based_forks)
     }
 }
 
 #[allow(unused)]
-#[derive(Clone, Debug, Deserialize, PartialEq)]
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
 pub struct GenesisAccount {
     #[serde(default, with = "crate::serde_utils::bytes")]
     pub code: Bytes,
@@ -547,7 +562,7 @@ mod tests {
     #[test]
     fn deserialize_chain_config_blob_schedule() {
         let json = r#"
-            
+
             {
                 "chainId": 123,
                 "blobSchedule": {

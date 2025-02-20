@@ -21,10 +21,11 @@ use revm_primitives::SpecId;
 use serde::{Deserialize, Serialize};
 
 use crate::{
+    backends::{self},
     block_env,
     db::{evm_state, StoreWrapper},
     errors::ExecutionDBError,
-    execute_block, get_state_transitions, spec_id, tx_env, EvmError,
+    spec_id, tx_env, EvmError,
 };
 
 /// In-memory EVM database for single execution data.
@@ -184,10 +185,8 @@ impl ExecutionDB {
 
         let mut state = evm_state(store.clone(), block.header.parent_hash);
 
-        execute_block(block, &mut state).map_err(Box::new)?;
-
-        let account_updates = get_state_transitions(&mut state);
-        Ok(account_updates)
+        let result = backends::revm_b::REVM::execute_block(block, &mut state).map_err(Box::new)?;
+        Ok(result.account_updates)
     }
 
     pub fn get_chain_config(&self) -> ChainConfig {
@@ -219,7 +218,7 @@ impl ExecutionDB {
         spec_id: SpecId,
         db: ExtDB,
     ) -> Result<CacheDB<ExtDB>, RevmError<ExtDB::Error>> {
-        let block_env = block_env(&block.header);
+        let block_env = block_env(&block.header, spec_id);
         let mut db = CacheDB::new(db);
 
         for transaction in &block.body.transactions {

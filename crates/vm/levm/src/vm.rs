@@ -21,7 +21,7 @@ use bytes::Bytes;
 use ethrex_common::{
     types::{
         tx_fields::{AccessList, AuthorizationList},
-        Fork, ForkBlobSchedule, TxKind,
+        BlockHeader, ChainConfig, Fork, ForkBlobSchedule, TxKind,
     },
     Address, H256, U256,
 };
@@ -90,6 +90,16 @@ impl EVMConfig {
             fork,
             blob_schedule,
         }
+    }
+
+    pub fn new_from_chain_config(chain_config: &ChainConfig, block_header: &BlockHeader) -> Self {
+        let fork = chain_config.fork(block_header.timestamp);
+
+        let blob_schedule = chain_config
+            .get_fork_blob_schedule(block_header.timestamp)
+            .unwrap_or_else(|| EVMConfig::canonical_values(fork));
+
+        EVMConfig::new(fork, blob_schedule)
     }
 
     /// This function is used for running the EF tests. If you don't
@@ -414,7 +424,12 @@ impl VM {
                 return self.handle_create_non_empty_account(&initial_call_frame);
             }
 
-            let created_contract = Account::new(balance, Bytes::new(), 1, HashMap::new());
+            // https://eips.ethereum.org/EIPS/eip-161
+            let created_contract = if self.env.config.fork < Fork::SpuriousDragon {
+                Account::new(balance, Bytes::new(), 0, HashMap::new())
+            } else {
+                Account::new(balance, Bytes::new(), 1, HashMap::new())
+            };
             cache::insert_account(&mut self.cache, new_contract_address, created_contract);
         }
 

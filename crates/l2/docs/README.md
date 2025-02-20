@@ -31,7 +31,15 @@ Configuration is done through env vars. A detailed list is available in each par
 
 ## Testing
 
-Load tests are available via L2 CLI. The test take a list of private keys and send a bunch of transactions from each of them to some address. To run them, use the following command on the root of this repo:
+Load tests are available via L2 CLI. The test take a list of private keys and send a bunch of transactions from each of them to some address. 
+
+The CLI can be installed with the `cli` target:
+
+```sh
+make cli
+```
+
+To run the load-test, use the following command on the root of this repo:
 
 ```bash
 ethrex_l2 test load --path ./test_data/private_keys.txt -i 1000 -v  --value 1
@@ -74,7 +82,7 @@ To analyze performance during load tests (both `ethrex` and `reth`) you can use 
 For `ethrex`, you can run the server with:
 
 ```
-sudo -E CARGO_PROFILE_RELEASE_DEBUG=true cargo flamegraph --bin ethrex --features dev  --  --network test_data/genesis-l2.json --http.port 1729
+sudo -E CARGO_PROFILE_RELEASE_DEBUG=true cargo flamegraph --bin ethrex --features dev  --  --network test_data/genesis-l2.json --http.port 1729 --dev
 ```
 
 For `reth`:
@@ -82,6 +90,14 @@ For `reth`:
 ```
 sudo cargo flamegraph --profile profiling -- node --chain <path_to_genesis-load-test.json> --dev --dev.block-time 5000ms --http.port 1729
 ```
+
+### With Make Targets
+
+There are some make targets inside the root's Makefile.
+
+You will need two terminals:
+1. `make start-node-with-flamegraph` &rarr; This starts the ethrex client.
+2. `make flamegraph` &rarr; This starts a script that sends a bunch of transactions, the script will stop ethrex when the account reaches a certain balance.
 
 ### Samply
 

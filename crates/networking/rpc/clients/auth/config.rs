@@ -1,4 +1,4 @@
-use crate::utils::engine_client::errors::ConfigError;
+use crate::clients::auth::errors::ConfigError;
 use serde::Deserialize;
 
 #[derive(Deserialize)]
