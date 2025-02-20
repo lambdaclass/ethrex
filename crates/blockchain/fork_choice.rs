@@ -56,7 +56,8 @@ pub fn apply_fork_choice(
 
     let head = head_block.header;
 
-    total_difficulty_check(&head_hash, &head, store)?;
+    // TODO: Check if we don't have to remove this and the terminal_difficulty
+    total_difficulty_check(&head, store)?;
 
     let latest = store.get_latest_block_number()?;
 
@@ -199,7 +200,6 @@ fn find_link_with_canonical_chain(
 }
 
 fn total_difficulty_check<'a>(
-    head_block_hash: &'a H256,
     head_block: &'a BlockHeader,
     storage: &'a Store,
 ) -> Result<(), InvalidForkChoice> {
@@ -208,43 +208,12 @@ fn total_difficulty_check<'a>(
         return Ok(());
     }
 
-    let total_difficulty = storage
-        .get_block_total_difficulty(*head_block_hash)?
-        .ok_or(StoreError::Custom(
-            "Block difficulty not found for head block".to_string(),
-        ))?;
-
-    let terminal_total_difficulty = storage
+    let _ = storage
         .get_chain_config()?
         .terminal_total_difficulty
         .ok_or(StoreError::Custom(
             "Terminal total difficulty not found in chain config".to_string(),
         ))?;
 
-    // Check that the header is post-merge.
-    if total_difficulty < terminal_total_difficulty.into() {
-        return Err(InvalidForkChoice::PreMergeBlock);
-    }
-
-    if head_block.number == 0 {
-        return Ok(());
-    }
-
-    // Non genesis checks
-
-    let parent_total_difficulty = storage
-        .get_block_total_difficulty(head_block.parent_hash)?
-        .ok_or(StoreError::Custom(
-            "Block difficulty not found for parent block".to_string(),
-        ))?;
-
-    // TODO(#790): is this check necessary and correctly implemented?
-    if parent_total_difficulty >= terminal_total_difficulty.into() {
-        Err((StoreError::Custom(
-            "Parent block is already post terminal total difficulty".to_string(),
-        ))
-        .into())
-    } else {
-        Ok(())
-    }
+    Ok(())
 }

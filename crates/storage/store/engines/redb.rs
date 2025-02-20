@@ -12,9 +12,7 @@ use ethrex_trie::Nibbles;
 
 use redb::{AccessGuard, Database, Key, MultimapTableDefinition, TableDefinition, TypeName, Value};
 
-use crate::rlp::{
-    AccountHashRLP, AccountStateRLP, BlockRLP, BlockTotalDifficultyRLP, Rlp, TransactionHashRLP,
-};
+use crate::rlp::{AccountHashRLP, AccountStateRLP, BlockRLP, Rlp, TransactionHashRLP};
 use crate::MAX_SNAPSHOT_READS;
 use crate::{
     error::StoreError,
@@ -35,8 +33,6 @@ const STATE_TRIE_NODES_TABLE: TableDefinition<&[u8], &[u8]> =
     TableDefinition::new("StateTrieNodes");
 const BLOCK_NUMBERS_TABLE: TableDefinition<BlockHashRLP, BlockNumber> =
     TableDefinition::new("BlockNumbers");
-const BLOCK_TOTAL_DIFFICULTIES_TABLE: TableDefinition<BlockHashRLP, BlockTotalDifficultyRLP> =
-    TableDefinition::new("BlockTotalDifficulties");
 const HEADERS_TABLE: TableDefinition<BlockHashRLP, BlockHeaderRLP> =
     TableDefinition::new("Headers");
 const BLOCK_BODIES_TABLE: TableDefinition<BlockHashRLP, BlockBodyRLP> =
@@ -329,31 +325,6 @@ impl StoreEngine for RedBStore {
             .map(|b| b.value()))
     }
 
-    fn add_block_total_difficulty(
-        &self,
-        block_hash: BlockHash,
-        block_total_difficulty: ethrex_common::U256,
-    ) -> Result<(), StoreError> {
-        // self.write::<BlockTotalDifficulties>(block_hash.into(), block_total_difficulty.into())
-        self.write(
-            BLOCK_TOTAL_DIFFICULTIES_TABLE,
-            <H256 as Into<BlockHashRLP>>::into(block_hash),
-            <U256 as Into<Rlp<U256>>>::into(block_total_difficulty),
-        )
-    }
-
-    fn get_block_total_difficulty(
-        &self,
-        block_hash: BlockHash,
-    ) -> Result<Option<ethrex_common::U256>, StoreError> {
-        Ok(self
-            .read(
-                BLOCK_TOTAL_DIFFICULTIES_TABLE,
-                <H256 as Into<BlockHashRLP>>::into(block_hash),
-            )?
-            .map(|b| b.value().to()))
-    }
-
     fn add_transaction_location(
         &self,
         transaction_hash: ethrex_common::H256,
@@ -533,26 +504,6 @@ impl StoreEngine for RedBStore {
 
     fn get_latest_block_number(&self) -> Result<Option<BlockNumber>, StoreError> {
         match self.read(CHAIN_DATA_TABLE, ChainDataIndex::LatestBlockNumber)? {
-            None => Ok(None),
-            Some(ref rlp) => RLPDecode::decode(&rlp.value())
-                .map(Some)
-                .map_err(|_| StoreError::DecodeError),
-        }
-    }
-
-    fn update_latest_total_difficulty(
-        &self,
-        latest_total_difficulty: ethrex_common::U256,
-    ) -> Result<(), StoreError> {
-        self.write(
-            CHAIN_DATA_TABLE,
-            ChainDataIndex::LatestTotalDifficulty,
-            latest_total_difficulty.encode_to_vec(),
-        )
-    }
-
-    fn get_latest_total_difficulty(&self) -> Result<Option<ethrex_common::U256>, StoreError> {
-        match self.read(CHAIN_DATA_TABLE, ChainDataIndex::LatestTotalDifficulty)? {
             None => Ok(None),
             Some(ref rlp) => RLPDecode::decode(&rlp.value())
                 .map(Some)
@@ -1023,7 +974,6 @@ pub fn init_db() -> Result<Database, StoreError> {
     let table_creation_txn = db.begin_write()?;
     table_creation_txn.open_table(STATE_TRIE_NODES_TABLE)?;
     table_creation_txn.open_table(BLOCK_NUMBERS_TABLE)?;
-    table_creation_txn.open_table(BLOCK_TOTAL_DIFFICULTIES_TABLE)?;
     table_creation_txn.open_table(CANONICAL_BLOCK_HASHES_TABLE)?;
     table_creation_txn.open_table(RECEIPTS_TABLE)?;
     table_creation_txn.open_multimap_table(STORAGE_TRIE_NODES_TABLE)?;
