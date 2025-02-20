@@ -51,6 +51,7 @@ sequenceDiagram
 - [SP1](https://docs.succinct.xyz/docs/sp1/introduction)
    1. `curl -L https://sp1up.succinct.xyz | bash`
    2. `sp1up --version 3.4.0`
+- [SOLC](https://docs.soliditylang.org/en/latest/installing-solidity.html)
 
 After installing the toolchains, a quick test can be performed to check if we have everything installed correctly.
 
@@ -89,6 +90,7 @@ If neither `risc0` nor `sp1` is installed on the system, the prover can be built
    - It will remove any old database, if present, stored in your computer. The absolute path of libmdbx is defined by [data_dir](https://docs.rs/dirs/latest/dirs/fn.data_dir.html).
 3. `cp .env.example .env` &rarr; check if you want to change any config.
 4. `make init`
+   - Make sure you have the `solc` compiler installed in your system.
    - Init the L1 in a docker container on port `8545`.
    - Deploy the needed contracts for the L2 on the L1.
    - Start the L2 locally on port `1729`.
