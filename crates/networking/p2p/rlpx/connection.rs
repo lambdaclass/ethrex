@@ -1,5 +1,5 @@
 use crate::{
-    kademlia::PeerChannels,
+    kademlia::{PeerChannels, MAX_PEERS},
     rlpx::{
         error::RLPxError,
         eth::{
@@ -110,7 +110,9 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
     /// It runs in it's own task and blocks until the connection is dropped
     pub async fn start(&mut self, table: Arc<Mutex<crate::kademlia::KademliaTable>>) {
         log_peer_debug(&self.node, "Starting RLPx connection");
-        if let Err(e) = self.exchange_hello_messages().await {
+
+        let peer_count = table.lock().await.count_peers();
+        if let Err(e) = self.exchange_hello_messages(peer_count).await {
             self.connection_failed("Hello messages exchange failed", e, table)
                 .await;
         } else {
@@ -189,7 +191,15 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
         }
     }
 
-    async fn exchange_hello_messages(&mut self) -> Result<(), RLPxError> {
+    async fn exchange_hello_messages(&mut self, peer_count: usize) -> Result<(), RLPxError> {
+        if peer_count >= MAX_PEERS {
+            let disconnect_msg = Message::Disconnect(DisconnectMessage {
+                reason: Some(0x04), // Too many peers
+            });
+            self.send(disconnect_msg).await?;
+            return Err(RLPxError::DisconnectSent("Too many peers".to_string()));
+        }
+
         let hello_msg = Message::Hello(p2p::HelloMessage::new(
             SUPPORTED_CAPABILITIES.to_vec(),
             PublicKey::from(self.signer.verifying_key()),
