@@ -316,10 +316,17 @@ pub fn ensure_post_state(
                 None => {
                     let (initial_state, block_hash) = utils::load_initial_state(test);
                     let levm_account_updates = backends::levm::LEVM::get_state_transitions(
+                        Some(*fork),
                         &initial_state,
                         block_hash,
                         &execution_report.new_state,
-                    );
+                    )
+                    .map_err(|_| {
+                        InternalError::Custom(
+                            "Error at LEVM::get_state_transitions in ensure_post_state()"
+                                .to_owned(),
+                        )
+                    })?;
                     let pos_state_root = post_state_root(&levm_account_updates, test);
                     let expected_post_state_root_hash =
                         test.post.vector_post_value(vector, *fork).hash;

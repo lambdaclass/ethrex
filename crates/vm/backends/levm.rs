@@ -128,10 +128,11 @@ impl LEVM {
             extract_all_requests_levm(&receipts, state, &block.header, &mut block_cache)?;
 
         account_updates.extend(Self::get_state_transitions(
+            None,
             state,
             block.header.parent_hash,
             &block_cache,
-        ));
+        )?);
 
         Ok(BlockExecutionResult {
             receipts,
@@ -196,10 +197,12 @@ impl LEVM {
     }
 
     pub fn get_state_transitions(
+        // Warning only pass the fork if running the ef-tests.
+        ef_tests: Option<Fork>,
         initial_state: &EvmState,
         block_hash: H256,
         new_state: &CacheDB,
-    ) -> Vec<AccountUpdate> {
+    ) -> Result<Vec<AccountUpdate>, EvmError> {
         let current_db = match initial_state {
             EvmState::Store(state) => state.database.store.clone(),
             EvmState::Execution(_cache_db) => {
@@ -270,9 +273,33 @@ impl LEVM {
                 added_storage,
             };
 
+            let block_header = current_db
+                .get_block_header_by_hash(block_hash)?
+                .ok_or(StoreError::MissingStore)?;
+            let fork_from_config = initial_state.chain_config()?.fork(block_header.timestamp);
+            // Weird, getting two different forks
+            dbg!(fork_from_config);
+            // Here we take the passed fork through the ef_tests variable, or we set fork to the fork based on the timestamp.
+            let fork = ef_tests.unwrap_or(fork_from_config);
+            dbg!(fork);
+            if let Some(old_info) =
+                current_db.get_account_info_by_hash(block_hash, account_update.address)?
+            {
+                // https://eips.ethereum.org/EIPS/eip-161
+                // if an account was empty and is now empty, after spurious dragon, it should be removed
+                if account_update.removed
+                    && old_info.balance.is_zero()
+                    && old_info.nonce == 0
+                    && old_info.code_hash == code_hash(&Bytes::new())
+                    && fork < Fork::SpuriousDragon
+                {
+                    continue;
+                }
+            }
+
             account_updates.push(account_update);
         }
-        account_updates
+        Ok(account_updates)
     }
 
     pub fn process_withdrawals(

@@ -507,7 +507,7 @@ fn finalize_payload(context: &mut PayloadBuildContext) -> Result<(), ChainError>
         context.evm_state,
         context.parent_hash(),
         &context.block_cache,
-    );
+    )?;
 
     context.payload.header.state_root = context
         .store()

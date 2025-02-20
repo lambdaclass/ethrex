@@ -187,10 +187,10 @@ impl EVM {
         state: &mut EvmState,
         parent_hash: H256,
         block_cache: &CacheDB,
-    ) -> Vec<AccountUpdate> {
+    ) -> Result<Vec<AccountUpdate>, EvmError> {
         match self {
             EVM::REVM => REVM::get_state_transitions(state),
-            EVM::LEVM => LEVM::get_state_transitions(state, parent_hash, block_cache),
+            EVM::LEVM => LEVM::get_state_transitions(None, state, parent_hash, block_cache),
         }
     }
 

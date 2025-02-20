@@ -110,8 +110,10 @@ impl REVM {
         run_evm(tx_env, block_env, state, spec_id)
     }
 
-    pub fn get_state_transitions(initial_state: &mut EvmState) -> Vec<AccountUpdate> {
-        get_state_transitions(initial_state)
+    pub fn get_state_transitions(
+        initial_state: &mut EvmState,
+    ) -> Result<Vec<AccountUpdate>, EvmError> {
+        Ok(get_state_transitions(initial_state))
     }
 
     pub fn process_withdrawals(
@@ -190,7 +192,7 @@ impl REVM {
             *WITHDRAWAL_REQUEST_PREDEPLOY_ADDRESS,
             *SYSTEM_ADDRESS,
         )
-        .unwrap(); //handle
+        .ok()?;
 
         if tx_result.is_success() {
             Some(tx_result.output().into())
@@ -209,7 +211,7 @@ impl REVM {
             *CONSOLIDATION_REQUEST_PREDEPLOY_ADDRESS,
             *SYSTEM_ADDRESS,
         )
-        .unwrap(); //handle
+        .ok()?;
 
         if tx_result.is_success() {
             Some(tx_result.output().into())
