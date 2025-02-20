@@ -9,7 +9,7 @@ use super::{
     },
 };
 use crate::{
-    kademlia::{KademliaTable, MAX_NODES_PER_BUCKET},
+    kademlia::{KademliaTable, MAX_NODES_PER_BUCKET, MAX_PEERS},
     network::{handle_peer_as_initiator, P2PContext},
     types::{Endpoint, Node, NodeRecord},
 };
@@ -211,6 +211,15 @@ impl Discv4Server {
                 // We won't initiate a connection if we are already connected.
                 // This will typically be the case when revalidating a node.
                 if peer.is_connected {
+                    return Ok(());
+                }
+
+                // We won't initiate a connection if we have reached the maximum number of peers.
+                let active_connections = {
+                    let table = self.ctx.table.lock().await;
+                    table.count_connected_peers()
+                };
+                if active_connections >= MAX_PEERS {
                     return Ok(());
                 }
 

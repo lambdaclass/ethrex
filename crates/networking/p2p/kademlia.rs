@@ -116,11 +116,8 @@ impl KademliaTable {
 
         let peer = PeerData::new(node, NodeRecord::default(), false);
 
-        // If bucket is full or max number of peers is reached, push to replacements. Unless forced
-        if (self.buckets[bucket_idx].peers.len() >= MAX_NODES_PER_BUCKET
-            || self.count_connected_peers() >= MAX_PEERS)
-            && !force_push
-        {
+        // If bucket is full push to replacements. Unless forced
+        if self.buckets[bucket_idx].peers.len() >= MAX_NODES_PER_BUCKET && !force_push {
             self.insert_as_replacement(&peer, bucket_idx);
             (Some(peer), false)
         } else {
