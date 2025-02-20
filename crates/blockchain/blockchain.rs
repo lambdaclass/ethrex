@@ -22,8 +22,16 @@ use ethrex_vm::db::evm_state;
 use ethrex_vm::EVM_BACKEND;
 use ethrex_vm::{backends, backends::EVM};
 
+use std::sync::atomic::{AtomicU64, Ordering};
+
 //TODO: Implement a struct Chain or BlockChain to encapsulate
 //functionality and canonical chain state and config
+
+static GAS_COUNTER: AtomicU64 = AtomicU64::new(0);
+
+pub fn get_gas_counter() -> u64 {
+    GAS_COUNTER.load(Ordering::Relaxed)
+}
 
 /// Adds a new block to the store. It may or may not be canonical, as long as its ancestry links
 /// with the canonical chain and its parent's post-state is calculated. It doesn't modify the
@@ -76,6 +84,8 @@ pub fn add_block(block: &Block, storage: &Store) -> Result<(), ChainError> {
 
     store_block(storage, block.clone())?;
     store_receipts(storage, receipts, block_hash)?;
+
+    _ = GAS_COUNTER.fetch_add(block.header.gas_used, Ordering::Relaxed);
 
     Ok(())
 }
