@@ -107,6 +107,10 @@ impl ExecutionDB {
         // beacon root call
         #[cfg(not(feature = "l2"))]
         {
+            use lazy_static::lazy_static;
+            use revm::DatabaseCommit;
+            use revm_primitives::{TxEnv, TxKind as RevmTxKind};
+
             lazy_static! {
                 static ref SYSTEM_ADDRESS: RevmAddress = RevmAddress::from_slice(
                     &hex::decode("fffffffffffffffffffffffffffffffffffffffe").unwrap()
