@@ -1151,35 +1151,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8c3c1a368f70d6cf7302d78f8f7093da241fb8e8807c05cc9e51a125895a6d5b"
 
 [[package]]
-name = "bench"
-version = "0.1.0"
-dependencies = [
- "again",
- "bincode",
- "bytes",
- "clap 4.5.30",
- "ethrex-common",
- "ethrex-l2",
- "ethrex-prover",
- "ethrex-rlp",
- "ethrex-storage",
- "ethrex-trie",
- "ethrex-vm",
- "futures-util",
- "hex",
- "lazy_static",
- "reqwest",
- "revm 19.5.0",
- "revm-inspectors",
- "revm-primitives 15.2.0",
- "serde",
- "serde_json",
- "tokio",
- "tokio-utils",
- "zkvm_interface",
-]
-
-[[package]]
 name = "bincode"
 version = "1.3.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2868,6 +2839,35 @@ dependencies = [
  "tokio-util",
  "tracing",
  "tracing-subscriber 0.3.19",
+ "zkvm_interface",
+]
+
+[[package]]
+name = "ethrex-prover-bench"
+version = "0.1.0"
+dependencies = [
+ "again",
+ "bincode",
+ "bytes",
+ "clap 4.5.30",
+ "ethrex-common",
+ "ethrex-l2",
+ "ethrex-prover",
+ "ethrex-rlp",
+ "ethrex-storage",
+ "ethrex-trie",
+ "ethrex-vm",
+ "futures-util",
+ "hex",
+ "lazy_static",
+ "reqwest",
+ "revm 19.5.0",
+ "revm-inspectors",
+ "revm-primitives 15.2.0",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tokio-utils",
  "zkvm_interface",
 ]
 
