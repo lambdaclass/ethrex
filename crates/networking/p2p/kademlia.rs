@@ -118,7 +118,7 @@ impl KademliaTable {
 
         // If bucket is full or max number of peers is reached, push to replacements. Unless forced
         if (self.buckets[bucket_idx].peers.len() >= MAX_NODES_PER_BUCKET
-            || self.count_peers() >= MAX_PEERS)
+            || self.count_connected_peers() >= MAX_PEERS)
             && !force_push
         {
             self.insert_as_replacement(&peer, bucket_idx);
@@ -235,9 +235,12 @@ impl KademliaTable {
         self.buckets.iter().flat_map(|bucket| bucket.peers.iter())
     }
 
-    /// Counts the number of peers in the table
-    pub fn count_peers(&self) -> usize {
-        self.buckets.iter().map(|bucket| bucket.peers.len()).sum()
+    /// Counts the number of connected peers
+    pub fn count_connected_peers(&self) -> usize {
+        self.buckets
+            .iter()
+            .map(|bucket| bucket.peers.iter().filter(|peer| peer.is_connected).count())
+            .sum()
     }
 
     /// Returns an iterator for all peers in the table that match the filter
