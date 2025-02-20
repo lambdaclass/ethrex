@@ -22,4 +22,4 @@ secp256k1 = { git = "https://github.com/sp1-patches/rust-secp256k1", branch = "p
 ecdsa-core = { git = "https://github.com/sp1-patches/signatures", package = "ecdsa", branch = "patch-ecdsa-v0.16.9" }
 
 [features]
-l2 = ["ethrex-vm/l2"]
+l2 = ["ethrex-vm/l2", "zkvm_interface/l2"]
