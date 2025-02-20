@@ -6,19 +6,18 @@ use crate::constants::{CANCUN_CONFIG, RPC_RATE_LIMIT};
 use crate::rpc::{get_account, get_block, get_storage, retry};
 
 use bytes::Bytes;
-use ethrex_common::types::{AccountInfo, AccountState};
-use ethrex_common::U256;
 use ethrex_common::{
-    types::{Account as CoreAccount, Block, TxKind},
-    Address, H256,
+    types::{Account as CoreAccount, AccountInfo, AccountState, Block, TxKind},
+    Address, H256, U256,
 };
 use ethrex_storage::{hash_address, hash_key};
 use ethrex_trie::{Node, PathRLP, Trie};
-use ethrex_vm::execution_db::{ExecutionDB, ToExecDB};
-use ethrex_vm::spec_id;
+use ethrex_vm::{
+    execution_db::{ExecutionDB, ToExecDB},
+    spec_id, EvmError,
+};
 use futures_util::future::join_all;
-use revm::db::CacheDB;
-use revm::DatabaseRef;
+use revm::{db::CacheDB, DatabaseRef};
 use revm_primitives::{
     AccountInfo as RevmAccountInfo, Address as RevmAddress, Bytecode as RevmBytecode,
     Bytes as RevmBytes, B256 as RevmB256, U256 as RevmU256,
