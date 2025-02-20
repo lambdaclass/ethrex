@@ -4,7 +4,7 @@ use ethrex_storage::error::StoreError;
 use thiserror::Error;
 use tokio::sync::broadcast::error::RecvError;
 
-use super::message::Message;
+use super::{message::Message, p2p::DisconnectReason};
 
 // TODO improve errors
 #[derive(Debug, Error)]
@@ -16,9 +16,9 @@ pub(crate) enum RLPxError {
     #[error("Peer disconnected")]
     Disconnected(),
     #[error("Diconnect sent: {0}")]
-    DisconnectSent(String),
+    DisconnectSent(DisconnectReason),
     #[error("Disconnect requested: {0}")]
-    DisconnectRequested(String),
+    DisconnectRequested(DisconnectReason),
     #[error("Not Found: {0}")]
     NotFound(String),
     #[error("Invalid peer id")]
