@@ -173,8 +173,7 @@ impl<'a> Prover for Sp1Prover<'a> {
         stdin.write(&input);
 
         // Generate the ProverClient
-        let client = ProverClient::new();
-        let (pk, vk) = client.setup(self.elf);
+        let client = ProverClient::from_env();
 
         let output = client.execute(self.elf, &stdin).run()?;
 
