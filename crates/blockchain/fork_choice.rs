@@ -56,9 +56,6 @@ pub fn apply_fork_choice(
 
     let head = head_block.header;
 
-    // TODO: Check if we don't have to remove this and the terminal_difficulty
-    total_difficulty_check(&head, store)?;
-
     let latest = store.get_latest_block_number()?;
 
     // If the head block is an already present head ancestor, skip the update.
@@ -197,23 +194,4 @@ fn find_link_with_canonical_chain(
     }
 
     Ok(None)
-}
-
-fn total_difficulty_check<'a>(
-    head_block: &'a BlockHeader,
-    storage: &'a Store,
-) -> Result<(), InvalidForkChoice> {
-    // This check is performed only for genesis or for blocks with difficulty.
-    if head_block.difficulty.is_zero() && head_block.number != 0 {
-        return Ok(());
-    }
-
-    let _ = storage
-        .get_chain_config()?
-        .terminal_total_difficulty
-        .ok_or(StoreError::Custom(
-            "Terminal total difficulty not found in chain config".to_string(),
-        ))?;
-
-    Ok(())
 }
