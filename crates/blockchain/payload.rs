@@ -9,20 +9,17 @@ use ethrex_common::{
         calculate_base_fee_per_blob_gas, calculate_base_fee_per_gas, compute_receipts_root,
         compute_requests_hash, compute_transactions_root, compute_withdrawals_root,
         requests::Requests, BlobsBundle, Block, BlockBody, BlockHash, BlockHeader, BlockNumber,
-        ChainConfig, Fork, MempoolTransaction, Receipt, Transaction, Withdrawal,
-        DEFAULT_OMMERS_HASH, DEFAULT_REQUESTS_HASH,
+        ChainConfig, MempoolTransaction, Receipt, Transaction, Withdrawal, DEFAULT_OMMERS_HASH,
+        DEFAULT_REQUESTS_HASH,
     },
     Address, Bloom, Bytes, H256, U256,
 };
 
-use ethrex_common::types::GWEI_TO_WEI;
-use ethrex_levm::{db::CacheDB, vm::EVMConfig, Account, AccountInfo};
 use ethrex_vm::{
-    backends::{self, levm::extract_all_requests_levm, revm::extract_all_requests, EVM},
-    db::{evm_state, EvmState, StoreWrapper},
-    get_state_transitions, spec_id, EvmError, SpecId, EVM_BACKEND,
+    backends::levm::CacheDB,
+    db::{evm_state, EvmState},
+    get_evm_backend_or_default, EvmError,
 };
-use std::sync::Arc;
 
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_storage::{error::StoreError, Store};
@@ -250,138 +247,34 @@ pub fn build_payload(
 }
 
 pub fn apply_withdrawals(context: &mut PayloadBuildContext) -> Result<(), EvmError> {
-    match EVM_BACKEND.get() {
-        Some(EVM::LEVM) => {
-            if let Some(withdrawals) = &context.payload.body.withdrawals {
-                // For every withdrawal we increment the target account's balance
-                for (address, increment) in withdrawals
-                    .iter()
-                    .filter(|withdrawal| withdrawal.amount > 0)
-                    .map(|w| (w.address, u128::from(w.amount) * u128::from(GWEI_TO_WEI)))
-                {
-                    // We check if it was in block_cache, if not, we get it from DB.
-                    let mut account = context.block_cache.get(&address).cloned().unwrap_or({
-                        let acc_info = context
-                            .store()
-                            .ok_or(StoreError::MissingStore)?
-                            .get_account_info_by_hash(context.parent_hash(), address)?
-                            .unwrap_or_default();
-                        let acc_code = context
-                            .store()
-                            .ok_or(StoreError::MissingStore)?
-                            .get_account_code(acc_info.code_hash)?
-                            .unwrap_or_default();
-
-                        Account {
-                            info: AccountInfo {
-                                balance: acc_info.balance,
-                                bytecode: acc_code,
-                                nonce: acc_info.nonce,
-                            },
-                            // This is the added_storage for the withdrawal.
-                            // If not involved in the TX, there won't be any updates in the storage
-                            storage: HashMap::new(),
-                        }
-                    });
-
-                    account.info.balance += increment.into();
-                    context.block_cache.insert(address, account);
-                }
-            }
-        }
-        Some(EVM::REVM) | None => {
-            backends::revm::process_withdrawals(
-                context.evm_state,
-                context
-                    .payload
-                    .body
-                    .withdrawals
-                    .as_ref()
-                    .unwrap_or(&Vec::new()),
-            )?;
-        }
-    }
-    Ok(())
+    let binding = Vec::new();
+    let withdrawals = context
+        .payload
+        .body
+        .withdrawals
+        .as_ref()
+        .unwrap_or(&binding);
+    get_evm_backend_or_default()
+        .process_withdrawals(
+            withdrawals,
+            context.evm_state,
+            &context.payload.header,
+            &mut context.block_cache,
+        )
+        .map_err(EvmError::from)
 }
 
 // This function applies system level operations:
 // - Call beacon root contract, and obtain the new state root
 // - Call block hash process contract, and store parent block hash
 pub fn apply_system_operations(context: &mut PayloadBuildContext) -> Result<(), EvmError> {
-    match EVM_BACKEND.get() {
-        Some(EVM::LEVM) => {
-            let fork = context
-                .chain_config()?
-                .fork(context.payload.header.timestamp);
-            let blob_schedule = context
-                .chain_config()?
-                .get_fork_blob_schedule(context.payload.header.timestamp)
-                .unwrap_or(EVMConfig::canonical_values(fork));
-            let config = EVMConfig::new(fork, blob_schedule);
-            let mut new_state = HashMap::new();
-
-            if context.payload.header.parent_beacon_block_root.is_some() && fork >= Fork::Cancun {
-                let store_wrapper = Arc::new(StoreWrapper {
-                    store: context.evm_state.database().unwrap().clone(),
-                    block_hash: context.payload.header.parent_hash,
-                });
-                let report = backends::levm::beacon_root_contract_call_levm(
-                    store_wrapper,
-                    &context.payload.header,
-                    config,
-                )?;
-
-                new_state.extend(report.new_state);
-            }
-
-            if fork >= Fork::Prague {
-                let store_wrapper = Arc::new(StoreWrapper {
-                    store: context.evm_state.database().unwrap().clone(),
-                    block_hash: context.payload.header.parent_hash,
-                });
-                let report = backends::levm::process_block_hash_history(
-                    store_wrapper,
-                    &context.payload.header,
-                    config,
-                )?;
-
-                new_state.extend(report.new_state);
-            }
-
-            // Now original_value is going to be the same as the current_value, for the next transaction.
-            // It should have only one value but it is convenient to keep on using our CacheDB structure
-            for account in new_state.values_mut() {
-                for storage_slot in account.storage.values_mut() {
-                    storage_slot.original_value = storage_slot.current_value;
-                }
-            }
-
-            context.block_cache.extend(new_state);
-        }
-        // This means we are using REVM as default for tests
-        Some(EVM::REVM) | None => {
-            // Apply withdrawals & call beacon root contract, and obtain the new state root
-            let spec_id = spec_id(&context.chain_config()?, context.payload.header.timestamp);
-            if context.payload.header.parent_beacon_block_root.is_some()
-                && spec_id >= SpecId::CANCUN
-            {
-                backends::revm::beacon_root_contract_call(
-                    context.evm_state,
-                    &context.payload.header,
-                    spec_id,
-                )?;
-            }
-
-            if spec_id >= SpecId::PRAGUE {
-                backends::revm::process_block_hash_history(
-                    context.evm_state,
-                    &context.payload.header,
-                    spec_id,
-                )?;
-            }
-        }
-    }
-    Ok(())
+    let chain_config = context.chain_config()?;
+    get_evm_backend_or_default().apply_system_calls(
+        context.evm_state,
+        &context.payload.header,
+        &mut context.block_cache,
+        &chain_config,
+    )
 }
 
 /// Fetches suitable transactions from the mempool
@@ -584,114 +477,37 @@ fn apply_plain_transaction(
     head: &HeadTransaction,
     context: &mut PayloadBuildContext,
 ) -> Result<Receipt, ChainError> {
-    match EVM_BACKEND.get() {
-        Some(EVM::LEVM) => {
-            let store_wrapper = Arc::new(StoreWrapper {
-                store: context.evm_state.database().unwrap().clone(),
-                block_hash: context.payload.header.parent_hash,
-            });
-
-            let fork = context
-                .chain_config()?
-                .fork(context.payload.header.timestamp);
-            let blob_schedule = context
-                .chain_config()?
-                .get_fork_blob_schedule(context.payload.header.timestamp)
-                .unwrap_or(EVMConfig::canonical_values(fork));
-            let config = EVMConfig::new(fork, blob_schedule);
-
-            let report = backends::levm::execute_tx_levm(
-                &head.tx,
-                &context.payload.header,
-                store_wrapper.clone(),
-                context.block_cache.clone(),
-                config,
-            )
-            .map_err(|e| EvmError::Transaction(format!("Invalid Transaction: {e:?}")))?;
-            context.remaining_gas = context.remaining_gas.saturating_sub(report.gas_used);
-            context.block_value += U256::from(report.gas_used) * head.tip;
-
-            let mut new_state = report.new_state.clone();
-
-            // Now original_value is going to be the same as the current_value, for the next transaction.
-            // It should have only one value but it is convenient to keep on using our CacheDB structure
-            for account in new_state.values_mut() {
-                for storage_slot in account.storage.values_mut() {
-                    storage_slot.original_value = storage_slot.current_value;
-                }
-            }
-
-            context.block_cache.extend(new_state);
-
-            let receipt = Receipt::new(
-                head.tx.tx_type(),
-                report.is_success(),
-                context.payload.header.gas_limit - context.remaining_gas,
-                report.logs.clone(),
-            );
-            Ok(receipt)
-        }
-        // This means we are using REVM as default for tests
-        Some(EVM::REVM) | None => {
-            let report = backends::revm::execute_tx(
-                &head.tx,
-                &context.payload.header,
-                context.evm_state,
-                spec_id(
-                    &context.chain_config().map_err(ChainError::from)?,
-                    context.payload.header.timestamp,
-                ),
-            )?;
-            context.remaining_gas = context.remaining_gas.saturating_sub(report.gas_used());
-            context.block_value += U256::from(report.gas_used()) * head.tip;
-            let receipt = Receipt::new(
-                head.tx.tx_type(),
-                report.is_success(),
-                context.payload.header.gas_limit - context.remaining_gas,
-                report.logs(),
-            );
-            Ok(receipt)
-        }
-    }
+    let chain_config = context.chain_config()?;
+    let (report, gas_used) = get_evm_backend_or_default().execute_tx(
+        context.evm_state,
+        &head.tx,
+        &context.payload.header,
+        &mut context.block_cache,
+        &chain_config,
+        &mut context.remaining_gas,
+    )?;
+    context.block_value += U256::from(gas_used) * head.tip;
+    Ok(report)
 }
 
 pub fn extract_requests(context: &mut PayloadBuildContext) -> Result<(), EvmError> {
-    match EVM_BACKEND.get() {
-        Some(EVM::LEVM) => {
-            let requests = extract_all_requests_levm(
-                &context.receipts,
-                context.evm_state,
-                &context.payload.header,
-                &mut context.block_cache,
-            )?;
-            context.requests = requests;
-        }
-        // This means we are using REVM as default for tests
-        Some(EVM::REVM) | None => {
-            let requests = extract_all_requests(
-                &context.receipts,
-                context.evm_state,
-                &context.payload.header,
-            )?;
-            context.requests = requests;
-        }
-    }
+    let requests = get_evm_backend_or_default().extract_requests(
+        &context.receipts,
+        context.evm_state,
+        &context.payload.header,
+        &mut context.block_cache,
+    );
+    context.requests = requests?;
 
     Ok(())
 }
 
 fn finalize_payload(context: &mut PayloadBuildContext) -> Result<(), ChainError> {
-    let config = context.chain_config()?;
-    let is_prague_activated = config.is_prague_activated(context.payload.header.timestamp);
-    let account_updates = match EVM_BACKEND.get() {
-        Some(EVM::LEVM) => backends::levm::get_state_transitions_levm(
-            context.evm_state,
-            context.parent_hash(),
-            &context.block_cache.clone(),
-        ),
-        // This means we are using REVM as default for tests
-        Some(EVM::REVM) | None => get_state_transitions(context.evm_state),
-    };
+    let account_updates = get_evm_backend_or_default().get_state_transitions(
+        context.evm_state,
+        context.parent_hash(),
+        &context.block_cache,
+    )?;
 
     context.payload.header.state_root = context
         .store()
@@ -701,8 +517,10 @@ fn finalize_payload(context: &mut PayloadBuildContext) -> Result<(), ChainError>
     context.payload.header.transactions_root =
         compute_transactions_root(&context.payload.body.transactions);
     context.payload.header.receipts_root = compute_receipts_root(&context.receipts);
-    context.payload.header.requests_hash =
-        is_prague_activated.then_some(compute_requests_hash(&context.requests));
+    context.payload.header.requests_hash = context
+        .chain_config()?
+        .is_prague_activated(context.payload.header.timestamp)
+        .then_some(compute_requests_hash(&context.requests));
     context.payload.header.gas_used = context.payload.header.gas_limit - context.remaining_gas;
     Ok(())
 }
