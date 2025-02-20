@@ -1,4 +1,4 @@
-use ethrex_rpc::utils::RpcRequest;
+use crate::utils::RpcRequest;
 
 #[derive(Debug, thiserror::Error)]
 pub enum EthClientError {

@@ -1,9 +1,9 @@
 use std::{marker::PhantomData, sync::Arc};
 
-use crate::error::TrieError;
+use super::utils::node_hash_to_fixed_size;
+use ethrex_trie::error::TrieError;
+use ethrex_trie::TrieDB;
 use libmdbx::orm::{Database, DupSort, Encodable};
-
-use super::{utils::node_hash_to_fixed_size, TrieDB};
 
 /// Libmdbx implementation for the TrieDB trait for a dupsort table with a fixed primary key.
 /// For a dupsort table (A, B)[A] -> C, this trie will have a fixed A and just work on B -> C
@@ -38,39 +38,39 @@ where
     SK: Clone + Encodable,
 {
     fn get(&self, key: Vec<u8>) -> Result<Option<Vec<u8>>, TrieError> {
-        let txn = self.db.begin_read().map_err(TrieError::LibmdbxError)?;
+        let txn = self.db.begin_read().map_err(TrieError::DbError)?;
         txn.get::<T>((self.fixed_key.clone(), node_hash_to_fixed_size(key)))
-            .map_err(TrieError::LibmdbxError)
+            .map_err(TrieError::DbError)
     }
 
     fn put(&self, key: Vec<u8>, value: Vec<u8>) -> Result<(), TrieError> {
-        let txn = self.db.begin_readwrite().map_err(TrieError::LibmdbxError)?;
+        let txn = self.db.begin_readwrite().map_err(TrieError::DbError)?;
         txn.upsert::<T>(
             (self.fixed_key.clone(), node_hash_to_fixed_size(key)),
             value,
         )
-        .map_err(TrieError::LibmdbxError)?;
-        txn.commit().map_err(TrieError::LibmdbxError)
+        .map_err(TrieError::DbError)?;
+        txn.commit().map_err(TrieError::DbError)
     }
 
     fn put_batch(&self, key_values: Vec<(Vec<u8>, Vec<u8>)>) -> Result<(), TrieError> {
-        let txn = self.db.begin_readwrite().map_err(TrieError::LibmdbxError)?;
+        let txn = self.db.begin_readwrite().map_err(TrieError::DbError)?;
         for (key, value) in key_values {
             txn.upsert::<T>(
                 (self.fixed_key.clone(), node_hash_to_fixed_size(key)),
                 value,
             )
-            .map_err(TrieError::LibmdbxError)?;
+            .map_err(TrieError::DbError)?;
         }
-        txn.commit().map_err(TrieError::LibmdbxError)
+        txn.commit().map_err(TrieError::DbError)
     }
 }
 
 #[cfg(test)]
 mod test {
+    use crate::trie_db::test_utils::libmdbx::new_db;
 
     use super::*;
-    use crate::test_utils::libmdbx::new_db;
     use libmdbx::{dupsort, table};
 
     dupsort!(

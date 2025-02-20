@@ -1,5 +1,3 @@
-use std::collections::HashMap;
-
 fn main() {
     let features = if cfg!(feature = "l2") {
         vec!["l2".to_string()]
@@ -9,7 +7,7 @@ fn main() {
 
     #[cfg(not(clippy))]
     #[cfg(feature = "build_risc0")]
-    risc0_build::embed_methods_with_options(HashMap::from([(
+    risc0_build::embed_methods_with_options(std::collections::HashMap::from([(
         "zkvm-risc0-program",
         risc0_build::GuestOptions {
             features,

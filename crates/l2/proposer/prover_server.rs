@@ -14,10 +14,8 @@ use ethrex_common::{
     types::{Block, BlockHeader},
     Address, H256, U256,
 };
-use ethrex_l2_sdk::{
-    calldata::{encode_calldata, Value},
-    eth_client::{eth_sender::Overrides, EthClient, WrappedTransaction},
-};
+use ethrex_l2_sdk::calldata::{encode_calldata, Value};
+use ethrex_rpc::clients::eth::{eth_sender::Overrides, EthClient, WrappedTransaction};
 use ethrex_storage::Store;
 use ethrex_vm::{
     db::StoreWrapper,

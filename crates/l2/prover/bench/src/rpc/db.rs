@@ -298,8 +298,8 @@ impl ToExecDB for RpcDB {
         let final_accounts = self.fetch_accounts_blocking(&index, true).unwrap();
         // TODO: remove unwraps
 
-        let initial_account_proofs = initial_accounts
-            .map(|(_, account)| account.get_account_proof());
+        let initial_account_proofs =
+            initial_accounts.map(|(_, account)| account.get_account_proof());
         let final_account_proofs = final_accounts
             .iter()
             .map(|(address, account)| (address, account.get_account_proof()));
@@ -313,9 +313,7 @@ impl ToExecDB for RpcDB {
 
         // get potential child nodes of deleted nodes after execution
         let potential_account_child_nodes = final_account_proofs
-            .filter_map(|(address, proof)| {
-                get_potential_child_nodes(proof, &hash_address(address))
-            })
+            .filter_map(|(address, proof)| get_potential_child_nodes(proof, &hash_address(address)))
             .flat_map(|nodes| nodes.into_iter().map(|node| node.encode_raw()));
 
         let potential_storage_child_nodes: HashMap<_, _> = final_storage_proofs

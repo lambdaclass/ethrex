@@ -19,7 +19,7 @@ ethrex-rpc.workspace = true
 ethrex-blockchain.workspace = true
 ethrex-storage.workspace = true
 ethrex-vm.workspace = true
-ethrex-dev = { path = "../../crates/blockchain/dev" }
+ethrex-dev = { path = "../../crates/blockchain/dev", default-features = false }
 hex.workspace = true
 bytes.workspace = true
 jsonwebtoken.workspace = true
@@ -35,6 +35,7 @@ zkvm_interface = { path = "./prover/zkvm/interface/", default-features = false }
 risc0-zkvm = { version = "1.2.2" }
 # sp1
 sp1-sdk = { version = "4.1.0" }
+sp1-recursion-gnark-ffi = "4.1.1"
 ethrex-sdk = { path = "./sdk" }
 
 ethrex-metrics = { path = "../blockchain/metrics", default-features = false }

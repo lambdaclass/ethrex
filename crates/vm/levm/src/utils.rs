@@ -265,20 +265,26 @@ pub fn get_intrinsic_gas(
 
     // Create Cost
     if is_create {
-        intrinsic_gas = intrinsic_gas
-            .checked_add(CREATE_BASE_COST)
-            .ok_or(OutOfGasError::ConsumedGasOverflow)?;
+        // https://eips.ethereum.org/EIPS/eip-2#specification
+        if fork >= Fork::Homestead {
+            intrinsic_gas = intrinsic_gas
+                .checked_add(CREATE_BASE_COST)
+                .ok_or(OutOfGasError::ConsumedGasOverflow)?;
+        }
 
-        let number_of_words = initial_call_frame.calldata.len().div_ceil(WORD_SIZE);
-        let double_number_of_words: u64 = number_of_words
-            .checked_mul(2)
-            .ok_or(OutOfGasError::ConsumedGasOverflow)?
-            .try_into()
-            .map_err(|_| VMError::Internal(InternalError::ConversionError))?;
+        // https://eips.ethereum.org/EIPS/eip-3860
+        if fork >= Fork::Shanghai {
+            let number_of_words = initial_call_frame.calldata.len().div_ceil(WORD_SIZE);
+            let double_number_of_words: u64 = number_of_words
+                .checked_mul(2)
+                .ok_or(OutOfGasError::ConsumedGasOverflow)?
+                .try_into()
+                .map_err(|_| VMError::Internal(InternalError::ConversionError))?;
 
-        intrinsic_gas = intrinsic_gas
-            .checked_add(double_number_of_words)
-            .ok_or(OutOfGasError::ConsumedGasOverflow)?;
+            intrinsic_gas = intrinsic_gas
+                .checked_add(double_number_of_words)
+                .ok_or(OutOfGasError::ConsumedGasOverflow)?;
+        }
     }
 
     // Access List Cost
@@ -706,7 +712,7 @@ pub fn eip7702_get_code(
     address: Address,
 ) -> Result<(bool, u64, Address, Bytes), VMError> {
     // Address is the delgated address
-    let account = get_account(cache, db.clone(), address);
+    let account = get_account_no_push_cache(cache, db.clone(), address);
     let bytecode = account.info.bytecode.clone();
 
     // If the Address doesn't have a delegation code

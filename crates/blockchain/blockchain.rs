@@ -7,19 +7,19 @@ mod smoke_test;
 
 use error::{ChainError, InvalidBlockError};
 use ethrex_common::constants::GAS_PER_BLOB;
+use ethrex_common::types::requests::Requests;
 use ethrex_common::types::{
-    compute_receipts_root, validate_block_header, validate_post_cancun_header_fields,
+    compute_receipts_root, compute_requests_hash, validate_block_header,
+    validate_cancun_header_fields, validate_prague_header_fields,
     validate_pre_cancun_header_fields, Block, BlockHash, BlockHeader, BlockNumber, ChainConfig,
     EIP4844Transaction, Receipt, Transaction,
 };
 use ethrex_common::H256;
 
 use ethrex_storage::error::StoreError;
-use ethrex_storage::{AccountUpdate, Store};
-use ethrex_vm::db::{evm_state, EvmState};
-
-use ethrex_vm::EVM_BACKEND;
-use ethrex_vm::{backends, backends::EVM};
+use ethrex_storage::Store;
+use ethrex_vm::db::evm_state;
+use ethrex_vm::{backends::BlockExecutionResult, get_evm_backend_or_default};
 
 //TODO: Implement a struct Chain or BlockChain to encapsulate
 //functionality and canonical chain state and config
@@ -39,20 +39,15 @@ pub fn add_block(block: &Block, storage: &Store) -> Result<(), ChainError> {
         return Err(ChainError::ParentNotFound);
     };
     let mut state = evm_state(storage.clone(), block.header.parent_hash);
+    let chain_config = state.chain_config().map_err(ChainError::from)?;
 
     // Validate the block pre-execution
-    validate_block(block, &parent_header, &state)?;
-    let (receipts, account_updates): (Vec<Receipt>, Vec<AccountUpdate>) = {
-        match EVM_BACKEND.get() {
-            Some(EVM::LEVM) => backends::levm::execute_block(block, &mut state)?,
-            // This means we are using REVM as default for tests
-            Some(EVM::REVM) | None => {
-                let receipts = backends::revm::execute_block(block, &mut state)?;
-                let account_updates = ethrex_vm::get_state_transitions(&mut state);
-                (receipts, account_updates)
-            }
-        }
-    };
+    validate_block(block, &parent_header, &chain_config)?;
+    let BlockExecutionResult {
+        receipts,
+        requests,
+        account_updates,
+    } = get_evm_backend_or_default().execute_block(block, &mut state)?;
 
     validate_gas_used(&receipts, &block.header)?;
 
@@ -69,8 +64,35 @@ pub fn add_block(block: &Block, storage: &Store) -> Result<(), ChainError> {
     // Check receipts root matches the one in block header after execution
     validate_receipts_root(&block.header, &receipts)?;
 
+    // Processes requests from receipts, computes the requests_hash and compares it against the header
+    validate_requests_hash(&block.header, &chain_config, &requests)?;
+
     store_block(storage, block.clone())?;
     store_receipts(storage, receipts, block_hash)?;
+
+    Ok(())
+}
+
+pub fn validate_requests_hash(
+    header: &BlockHeader,
+    chain_config: &ChainConfig,
+    requests: &[Requests],
+) -> Result<(), ChainError> {
+    if !chain_config.is_prague_activated(header.timestamp) {
+        return Ok(());
+    }
+
+    let computed_requests_hash = compute_requests_hash(requests);
+    let valid = header
+        .requests_hash
+        .map(|requests_hash| requests_hash == computed_requests_hash)
+        .unwrap_or(false);
+
+    if !valid {
+        return Err(ChainError::InvalidBlock(
+            InvalidBlockError::RequestsHashMismatch,
+        ));
+    }
 
     Ok(())
 }
@@ -150,18 +172,19 @@ pub fn find_parent_header(
 pub fn validate_block(
     block: &Block,
     parent_header: &BlockHeader,
-    state: &EvmState,
+    chain_config: &ChainConfig,
 ) -> Result<(), ChainError> {
-    let chain_config = state.chain_config().map_err(ChainError::from)?;
-
     // Verify initial header validity against parent
     validate_block_header(&block.header, parent_header).map_err(InvalidBlockError::from)?;
 
-    // TODO: Add Prague header validation here
-    if chain_config.is_cancun_activated(block.header.timestamp) {
-        validate_post_cancun_header_fields(&block.header, parent_header)
+    if chain_config.is_prague_activated(block.header.timestamp) {
+        validate_prague_header_fields(&block.header, parent_header)
             .map_err(InvalidBlockError::from)?;
-        verify_blob_gas_usage(block, &chain_config)?;
+        verify_blob_gas_usage(block, chain_config)?;
+    } else if chain_config.is_cancun_activated(block.header.timestamp) {
+        validate_cancun_header_fields(&block.header, parent_header)
+            .map_err(InvalidBlockError::from)?;
+        verify_blob_gas_usage(block, chain_config)?;
     } else {
         validate_pre_cancun_header_fields(&block.header).map_err(InvalidBlockError::from)?
     }

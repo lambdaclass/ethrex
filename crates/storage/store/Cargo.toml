@@ -7,8 +7,8 @@ edition = "2021"
 
 [dependencies]
 ethrex-rlp.workspace = true
-ethrex-common = { path = "../../common", default-features = false }
-ethrex-trie = { path = "../../storage/trie", default-features = false }
+ethrex-common.workspace = true
+ethrex-trie.workspace = true
 
 ethereum-types.workspace = true
 anyhow = "1.0.86"
@@ -24,12 +24,13 @@ redb = { workspace = true, optional = true }
 
 [features]
 default = []
-libmdbx = ["dep:libmdbx", "ethrex-trie/libmdbx", "ethrex-common/libmdbx"]
-redb = ["dep:redb", "ethrex-trie/redb", "ethrex-common/redb"]
+libmdbx = ["dep:libmdbx", "ethrex-trie/libmdbx"]
+redb = ["dep:redb"]
 
 [dev-dependencies]
 hex.workspace = true
 hex-literal.workspace = true
+tempdir = "0.3.7"
 
 [lib]
 path = "./storage.rs"

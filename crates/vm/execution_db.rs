@@ -22,8 +22,11 @@ use revm_primitives::{SpecId, TxEnv, TxKind as RevmTxKind};
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    block_env, db::evm_state, errors::ExecutionDBError, execute_block, get_state_transitions,
-    tx_env,
+    backends::{self},
+    block_env,
+    db::{evm_state, StoreWrapper},
+    errors::ExecutionDBError,
+    spec_id, tx_env, EvmError,
 };
 
 /// In-memory EVM database for single execution data.
@@ -63,10 +66,8 @@ impl ExecutionDB {
 
         let mut state = evm_state(store.clone(), block.header.parent_hash);
 
-        execute_block(block, &mut state).map_err(Box::new)?;
-
-        let account_updates = get_state_transitions(&mut state);
-        Ok(account_updates)
+        let result = backends::revm_b::REVM::execute_block(block, &mut state).map_err(Box::new)?;
+        Ok(result.account_updates)
     }
 
     pub fn get_chain_config(&self) -> ChainConfig {
@@ -131,7 +132,7 @@ impl ExecutionDB {
                 data: revm::primitives::Bytes::copy_from_slice(beacon_root.as_bytes()),
                 ..Default::default()
             };
-            let mut block_env = block_env(&block.header);
+            let mut block_env = block_env(&block.header, spec_id);
             block_env.basefee = RevmU256::ZERO;
             block_env.gas_limit = RevmU256::from(30_000_000);
 
@@ -152,7 +153,7 @@ impl ExecutionDB {
         }
 
         // execute block
-        let block_env = block_env(&block.header);
+        let block_env = block_env(&block.header, spec_id);
 
         for transaction in &block.body.transactions {
             let tx_env = tx_env(transaction);

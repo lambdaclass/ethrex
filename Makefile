@@ -30,6 +30,16 @@ build-image: $(STAMP_FILE) ## 🐳 Build the Docker image
 run-image: build-image ## 🏃 Run the Docker image
 	docker run --rm -p 127.0.0.1:8545:8545 ethrex --http.addr 0.0.0.0
 
+dev: ## 🏃 Run the ethrex client in DEV_MODE with the InMemory Engine
+	cargo run --bin ethrex --features dev -- \
+			--network ./test_data/genesis-l1.json \
+			--http.port 8545 \
+			--http.addr 0.0.0.0 \
+			--authrpc.port 8551 \
+			--evm levm \
+			--dev \
+			--datadir memory
+
 ETHEREUM_PACKAGE_REVISION := 5b49d02ee556232a73ea1e28000ec5b3fca1073f
 # Shallow clones can't specify a single revision, but at least we avoid working
 # the whole history by making it shallow since a given date (one day before our
@@ -140,10 +150,10 @@ loc-stats:
 	fi
 
 loc-detailed:
-	cargo run --release --bin loc -- --detailed
+	cargo run --release -p loc --bin loc -- --detailed
 
 loc-compare-detailed:
-	cargo run --release --bin loc -- --compare-detailed
+	cargo run --release -p loc --bin loc -- --compare-detailed
 
 hive-stats:
 	make hive QUIET=true
@@ -180,6 +190,7 @@ start-node-with-flamegraph: rm-test-db ## 🚀🔥 Starts an ethrex client used 
 	--evm $$LEVM \
 	--network test_data/genesis-l2.json \
 	--http.port 1729 \
+	--dev \
 	--datadir test_ethrex
 
 load-node: install-cli ## 🚧 Runs a load-test. Run make start-node-with-flamegraph and in a new terminal make load-node
@@ -197,4 +208,4 @@ rm-test-db:  ## 🛑 Removes the DB used by the ethrex client used for testing
 	sudo cargo run --release --bin ethrex -- removedb --datadir test_ethrex
 
 flamegraph: ## 🚧 Runs a load-test. Run make start-node-with-flamegraph and in a new terminal make flamegraph
-	bash scripts/flamegraph.sh
+	sudo bash scripts/flamegraph.sh
