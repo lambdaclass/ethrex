@@ -12,7 +12,7 @@ pub mod prover_server;
 pub mod errors;
 
 pub fn read_env_file() -> Result<(), errors::ConfigError> {
-    let env_file_name = std::env::var("ENV_FILE").unwrap_or(".env".to_string());
+    let env_file_name = std::env::var("ENV_FILE").unwrap_or("config.toml".to_string());
     let env_file_path = open_readable(env_file_name)?;
     let reader = std::io::BufReader::new(env_file_path);
 
@@ -24,7 +24,7 @@ pub fn read_env_file() -> Result<(), errors::ConfigError> {
             continue;
         };
 
-        match line.split_once('=') {
+        match line.split_once(" = ") {
             Some((key, value)) => {
                 if std::env::vars().any(|(k, _)| k == key) {
                     debug!("Env var {key} already set, skipping");
