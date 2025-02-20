@@ -275,7 +275,7 @@ impl ToExecDB for RpcDB {
             spec_id(&chain_config, block.header.timestamp),
             self,
         )
-        .map_err(|err| Box::new(EvmError::from(err)))?; // TODO: ugly error handling
+        .map_err(|err| Box::new(EvmError::Custom(err.to_string())))?; // TODO: ugly error handling
 
         // index read and touched account addresses and storage keys
         let index: Vec<_> = cache_db
@@ -298,7 +298,7 @@ impl ToExecDB for RpcDB {
         // TODO: remove unwraps
 
         let initial_account_proofs =
-            initial_accounts.map(|(_, account)| account.get_account_proof());
+            initial_accounts.iter().map(|(_, account)| account.get_account_proof());
         let final_account_proofs = final_accounts
             .iter()
             .map(|(address, account)| (address, account.get_account_proof()));
@@ -391,6 +391,7 @@ impl ToExecDB for RpcDB {
             .collect();
 
         let state_root = initial_account_proofs
+            .clone()
             .next()
             .clone()
             .and_then(|proof| proof.first().cloned());
