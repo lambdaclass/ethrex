@@ -1,14 +1,17 @@
-use super::constants::{BEACON_ROOTS_ADDRESS_STR, HISTORY_STORAGE_ADDRESS_STR, SYSTEM_ADDRESS_STR};
+use super::constants::{
+    BEACON_ROOTS_ADDRESS_STR, CONSOLIDATION_REQUEST_PREDEPLOY_ADDRESS, HISTORY_STORAGE_ADDRESS_STR,
+    SYSTEM_ADDRESS_STR, WITHDRAWAL_REQUEST_PREDEPLOY_ADDRESS,
+};
 use crate::db::StoreWrapper;
 use crate::EvmError;
 use crate::EvmState;
-#[cfg(not(feature = "l2"))]
+use ethrex_common::types::requests::Requests;
 use ethrex_common::types::Fork;
 use ethrex_common::{
     types::{
         code_hash, AccountInfo, Block, BlockHeader, Receipt, Transaction, TxKind, GWEI_TO_WEI,
     },
-    Address, H256, U256,
+    Address, Bytes as CoreBytes, H256, U256,
 };
 
 use ethrex_levm::{
@@ -22,11 +25,17 @@ use lazy_static::lazy_static;
 use revm_primitives::Bytes;
 use std::{collections::HashMap, sync::Arc};
 
+pub struct BlockExecutionResult {
+    pub receipts: Vec<Receipt>,
+    pub requests: Vec<Requests>,
+    pub account_updates: Vec<AccountUpdate>,
+}
+
 /// Executes all transactions in a block and returns their receipts.
 pub fn execute_block(
     block: &Block,
     state: &mut EvmState,
-) -> Result<(Vec<Receipt>, Vec<AccountUpdate>), EvmError> {
+) -> Result<BlockExecutionResult, EvmError> {
     let store_wrapper = Arc::new(StoreWrapper {
         store: state.database().unwrap().clone(),
         block_hash: block.header.parent_hash,
@@ -118,13 +127,19 @@ pub fn execute_block(
         }
     }
 
+    let requests = extract_all_requests_levm(&receipts, state, &block.header, &mut block_cache)?;
+
     account_updates.extend(get_state_transitions_levm(
         state,
         block.header.parent_hash,
         &block_cache,
     ));
 
-    Ok((receipts, account_updates))
+    Ok(BlockExecutionResult {
+        receipts,
+        requests,
+        account_updates,
+    })
 }
 
 pub fn execute_tx_levm(
@@ -262,23 +277,107 @@ pub fn get_state_transitions_levm(
 /// More info on https://eips.ethereum.org/EIPS/eip-4788
 pub fn beacon_root_contract_call_levm(
     store_wrapper: Arc<StoreWrapper>,
+    header: &BlockHeader,
+    config: EVMConfig,
+) -> Result<ExecutionReport, EvmError> {
+    lazy_static! {
+        static ref CONTRACT_ADDRESS: Address =
+            Address::from_slice(&hex::decode(BEACON_ROOTS_ADDRESS_STR).unwrap(),);
+    };
+
+    let beacon_root = header.parent_beacon_block_root.ok_or(EvmError::Header(
+        "parent_beacon_block_root field is missing".to_string(),
+    ))?;
+
+    let calldata = Bytes::copy_from_slice(beacon_root.as_bytes()).into();
+
+    generic_system_call(*CONTRACT_ADDRESS, calldata, store_wrapper, header, config)
+}
+
+/// Calls the EIP-2935 process block hashes history system call contract
+/// NOTE: This was implemented by making use of an EVM system contract, but can be changed to a
+/// direct state trie update after the verkle fork, as explained in https://eips.ethereum.org/EIPS/eip-2935
+pub fn process_block_hash_history(
+    store_wrapper: Arc<StoreWrapper>,
+    block_header: &BlockHeader,
+    config: EVMConfig,
+) -> Result<ExecutionReport, EvmError> {
+    lazy_static! {
+        static ref CONTRACT_ADDRESS: Address =
+            Address::from_slice(&hex::decode(HISTORY_STORAGE_ADDRESS_STR).unwrap(),);
+    };
+
+    let calldata = Bytes::copy_from_slice(block_header.parent_hash.as_bytes()).into();
+
+    generic_system_call(
+        *CONTRACT_ADDRESS,
+        calldata,
+        store_wrapper,
+        block_header,
+        config,
+    )
+}
+
+fn read_withdrawal_requests_levm(
+    store_wrapper: Arc<StoreWrapper>,
+    block_header: &BlockHeader,
+    config: EVMConfig,
+) -> Option<ExecutionReport> {
+    lazy_static! {
+        static ref CONTRACT_ADDRESS: Address =
+            Address::from_slice(&hex::decode(WITHDRAWAL_REQUEST_PREDEPLOY_ADDRESS).unwrap());
+    };
+
+    let report = generic_system_call(
+        *CONTRACT_ADDRESS,
+        CoreBytes::new(),
+        store_wrapper,
+        block_header,
+        config,
+    )
+    .ok()?;
+
+    match report.result {
+        TxResult::Success => Some(report),
+        _ => None,
+    }
+}
+
+fn dequeue_consolidation_requests(
+    store_wrapper: Arc<StoreWrapper>,
+    block_header: &BlockHeader,
+    config: EVMConfig,
+) -> Option<ExecutionReport> {
+    lazy_static! {
+        static ref CONTRACT_ADDRESS: Address =
+            Address::from_slice(&hex::decode(CONSOLIDATION_REQUEST_PREDEPLOY_ADDRESS).unwrap());
+    };
+
+    let report = generic_system_call(
+        *CONTRACT_ADDRESS,
+        CoreBytes::new(),
+        store_wrapper,
+        block_header,
+        config,
+    )
+    .ok()?;
+
+    match report.result {
+        TxResult::Success => Some(report),
+        _ => None,
+    }
+}
+
+pub fn generic_system_call(
+    contract_address: Address,
+    calldata: CoreBytes,
+    store_wrapper: Arc<StoreWrapper>,
     block_header: &BlockHeader,
     config: EVMConfig,
 ) -> Result<ExecutionReport, EvmError> {
     lazy_static! {
         static ref SYSTEM_ADDRESS: Address =
             Address::from_slice(&hex::decode(SYSTEM_ADDRESS_STR).unwrap());
-        static ref CONTRACT_ADDRESS: Address =
-            Address::from_slice(&hex::decode(BEACON_ROOTS_ADDRESS_STR).unwrap());
-    };
-    // This is OK
-    let beacon_root = match block_header.parent_beacon_block_root {
-        None => {
-            return Err(EvmError::Header(
-                "parent_beacon_block_root field is missing".to_string(),
-            ))
-        }
-        Some(beacon_root) => beacon_root,
     };
 
     let env = Environment {
@@ -298,12 +397,10 @@ pub fn beacon_root_contract_call_levm(
         ..Default::default()
     };
 
-    let calldata = Bytes::copy_from_slice(beacon_root.as_bytes()).into();
-
     // Here execute with LEVM but just return transaction report. And I will handle it in the calling place.
 
     let mut vm = VM::new(
-        TxKind::Call(*CONTRACT_ADDRESS),
+        TxKind::Call(contract_address),
         env,
         U256::zero(),
         calldata,
@@ -321,57 +418,68 @@ pub fn beacon_root_contract_call_levm(
     Ok(report)
 }
 
-/// Calls the EIP-2935 process block hashes history system call contract
-/// NOTE: This was implemented by making use of an EVM system contract, but can be changed to a
-/// direct state trie update after the verkle fork, as explained in https://eips.ethereum.org/EIPS/eip-2935
-pub fn process_block_hash_history(
-    store_wrapper: Arc<StoreWrapper>,
-    block_header: &BlockHeader,
-    config: EVMConfig,
-) -> Result<ExecutionReport, EvmError> {
-    lazy_static! {
-        static ref SYSTEM_ADDRESS: Address =
-            Address::from_slice(&hex::decode(SYSTEM_ADDRESS_STR).unwrap());
-        static ref CONTRACT_ADDRESS: Address =
-            Address::from_slice(&hex::decode(HISTORY_STORAGE_ADDRESS_STR).unwrap(),);
-    };
+#[allow(unreachable_code)]
+#[allow(unused_variables)]
+pub fn extract_all_requests_levm(
+    receipts: &[Receipt],
+    state: &mut EvmState,
+    header: &BlockHeader,
+    cache: &mut CacheDB,
+) -> Result<Vec<Requests>, EvmError> {
+    let config = state.chain_config()?;
+    let fork = config.fork(header.timestamp);
 
-    let env = Environment {
-        origin: *SYSTEM_ADDRESS,
-        gas_limit: 30_000_000,
-        block_number: block_header.number.into(),
-        coinbase: block_header.coinbase,
-        timestamp: block_header.timestamp.into(),
-        prev_randao: Some(block_header.prev_randao),
-        base_fee_per_gas: U256::zero(),
-        gas_price: U256::zero(),
-        block_excess_blob_gas: block_header.excess_blob_gas.map(U256::from),
-        block_blob_gas_used: block_header.blob_gas_used.map(U256::from),
-        block_gas_limit: 30_000_000,
-        transient_storage: HashMap::new(),
-        config,
-        ..Default::default()
-    };
+    if fork < Fork::Prague {
+        return Ok(Default::default());
+    }
 
-    let calldata = Bytes::copy_from_slice(block_header.parent_hash.as_bytes()).into();
+    cfg_if::cfg_if! {
+        if #[cfg(feature = "l2")] {
+            return Ok(Default::default());
+        }
+    }
 
-    // Here execute with LEVM but just return transaction report. And I will handle it in the calling place.
+    let deposit_contract_address = config.deposit_contract_address.ok_or(EvmError::Custom(
+        "deposit_contract_address config is missing".to_string(),
+    ))?;
 
-    let mut vm = VM::new(
-        TxKind::Call(*CONTRACT_ADDRESS),
-        env,
-        U256::zero(),
-        calldata,
-        store_wrapper,
-        CacheDB::new(),
-        vec![],
-        None,
-    )
-    .map_err(EvmError::from)?;
+    let blob_schedule = config
+        .get_fork_blob_schedule(header.timestamp)
+        .unwrap_or(EVMConfig::canonical_values(fork));
 
-    let mut report = vm.execute().map_err(EvmError::from)?;
+    let evm_config = EVMConfig::new(fork, blob_schedule);
 
-    report.new_state.remove(&*SYSTEM_ADDRESS);
+    let store_wrapper = Arc::new(StoreWrapper {
+        store: state.database().unwrap().clone(),
+        block_hash: header.parent_hash,
+    });
 
-    Ok(report)
+    let withdrawals_data: Vec<u8> =
+        match read_withdrawal_requests_levm(store_wrapper, header, evm_config) {
+            Some(report) => {
+                cache.extend(report.new_state.clone());
+                report.output.into()
+            }
+            None => Default::default(),
+        };
+
+    let store_wrapper = Arc::new(StoreWrapper {
+        store: state.database().unwrap().clone(),
+        block_hash: header.parent_hash,
+    });
+
+    let consolidation_data: Vec<u8> =
+        match dequeue_consolidation_requests(store_wrapper, header, evm_config) {
+            Some(report) => {
+                cache.extend(report.new_state.clone());
+                report.output.into()
+            }
+            None => Default::default(),
+        };
+
+    let deposits = Requests::from_deposit_receipts(deposit_contract_address, receipts);
+    let withdrawals = Requests::from_withdrawals_data(withdrawals_data);
+    let consolidation = Requests::from_consolidation_data(consolidation_data);
+
+    Ok(vec![deposits, withdrawals, consolidation])
 }
