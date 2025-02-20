@@ -9,19 +9,16 @@ mod mods;
 use backends::EVM;
 use db::EvmState;
 
-use crate::backends::revm::*;
+use crate::backends::revm_b::*;
 use ethrex_common::{
     types::{
-        tx_fields::AccessList, AccountInfo, BlockHeader, ChainConfig, Fork, GenericTransaction,
-        INITIAL_BASE_FEE,
+        tx_fields::AccessList, BlockHeader, ChainConfig, Fork, GenericTransaction, INITIAL_BASE_FEE,
     },
-    Address, BigEndianHash, H256, U256,
+    Address, H256,
 };
-use ethrex_storage::AccountUpdate;
 use revm::{
-    db::{states::bundle_state::BundleRetention, AccountState, AccountStatus},
     inspector_handle_register,
-    primitives::{BlockEnv, TxEnv, B256},
+    primitives::{BlockEnv, TxEnv},
     Evm,
 };
 // Rename imported types for clarity
@@ -38,6 +35,10 @@ use std::sync::OnceLock;
 // Then, we can retrieve the evm with:
 // EVM_BACKEND.get(); -> returns Option<EVM>
 pub static EVM_BACKEND: OnceLock<EVM> = OnceLock::new();
+/// Function used to access the global variable holding the chosen backend.
+pub fn get_evm_backend_or_default() -> EVM {
+    EVM_BACKEND.get().unwrap_or(&EVM::default()).clone()
+}
 
 // ================== Commonly used functions ======================
 
@@ -132,134 +133,6 @@ fn create_access_list_inner(
 
     let access_list = access_list_inspector.into_access_list();
     Ok((tx_result.result.into(), access_list))
-}
-
-/// Merges transitions stored when executing transactions and returns the resulting account updates
-/// Doesn't update the DB
-pub fn get_state_transitions(state: &mut EvmState) -> Vec<AccountUpdate> {
-    match state {
-        EvmState::Store(db) => {
-            db.merge_transitions(BundleRetention::PlainState);
-            let bundle = db.take_bundle();
-
-            // Update accounts
-            let mut account_updates = Vec::new();
-            for (address, account) in bundle.state() {
-                if account.status.is_not_modified() {
-                    continue;
-                }
-                let address = Address::from_slice(address.0.as_slice());
-                // Remove account from DB if destroyed (Process DestroyedChanged as changed account)
-                if matches!(
-                    account.status,
-                    AccountStatus::Destroyed | AccountStatus::DestroyedAgain
-                ) {
-                    account_updates.push(AccountUpdate::removed(address));
-                    continue;
-                }
-
-                // If account is empty, do not add to the database
-                if account
-                    .account_info()
-                    .is_some_and(|acc_info| acc_info.is_empty())
-                {
-                    continue;
-                }
-
-                // Apply account changes to DB
-                let mut account_update = AccountUpdate::new(address);
-                // If the account was changed then both original and current info will be present in the bundle account
-                if account.is_info_changed() {
-                    // Update account info in DB
-                    if let Some(new_acc_info) = account.account_info() {
-                        let code_hash = H256::from_slice(new_acc_info.code_hash.as_slice());
-                        let account_info = AccountInfo {
-                            code_hash,
-                            balance: U256::from_little_endian(new_acc_info.balance.as_le_slice()),
-                            nonce: new_acc_info.nonce,
-                        };
-                        account_update.info = Some(account_info);
-                        if account.is_contract_changed() {
-                            // Update code in db
-                            if let Some(code) = new_acc_info.code {
-                                account_update.code = Some(code.original_bytes().clone().0);
-                            }
-                        }
-                    }
-                }
-                // Update account storage in DB
-                for (key, slot) in account.storage.iter() {
-                    if slot.is_changed() {
-                        // TODO check if we need to remove the value from our db when value is zero
-                        // if slot.present_value().is_zero() {
-                        //     account_update.removed_keys.push(H256::from_uint(&U256::from_little_endian(key.as_le_slice())))
-                        // }
-                        account_update.added_storage.insert(
-                            H256::from_uint(&U256::from_little_endian(key.as_le_slice())),
-                            U256::from_little_endian(slot.present_value().as_le_slice()),
-                        );
-                    }
-                }
-                account_updates.push(account_update)
-            }
-            account_updates
-        }
-        EvmState::Execution(db) => {
-            // Update accounts
-            let mut account_updates = Vec::new();
-            for (revm_address, account) in &db.accounts {
-                if account.account_state == AccountState::None {
-                    // EVM didn't interact with this account
-                    continue;
-                }
-
-                let address = Address::from_slice(revm_address.0.as_slice());
-                // Remove account from DB if destroyed
-                if account.account_state == AccountState::NotExisting {
-                    account_updates.push(AccountUpdate::removed(address));
-                    continue;
-                }
-
-                // If account is empty, do not add to the database
-                if account.info().is_some_and(|acc_info| acc_info.is_empty()) {
-                    continue;
-                }
-
-                // Apply account changes to DB
-                let mut account_update = AccountUpdate::new(address);
-                // Update account info in DB
-                if let Some(new_acc_info) = account.info() {
-                    // If code changed, update
-                    if matches!(db.db.accounts.get(&address), Some(account) if B256::from(account.code_hash.0) != new_acc_info.code_hash)
-                    {
-                        account_update.code = new_acc_info
-                            .code
-                            .map(|code| bytes::Bytes::copy_from_slice(code.bytes_slice()));
-                    }
-
-                    let account_info = AccountInfo {
-                        code_hash: H256::from_slice(new_acc_info.code_hash.as_slice()),
-                        balance: U256::from_little_endian(new_acc_info.balance.as_le_slice()),
-                        nonce: new_acc_info.nonce,
-                    };
-                    account_update.info = Some(account_info);
-                }
-                // Update account storage in DB
-                for (key, slot) in account.storage.iter() {
-                    // TODO check if we need to remove the value from our db when value is zero
-                    // if slot.present_value().is_zero() {
-                    //     account_update.removed_keys.push(H256::from_uint(&U256::from_little_endian(key.as_le_slice())))
-                    // }
-                    account_update.added_storage.insert(
-                        H256::from_uint(&U256::from_little_endian(key.as_le_slice())),
-                        U256::from_little_endian(slot.as_le_slice()),
-                    );
-                }
-                account_updates.push(account_update)
-            }
-            account_updates
-        }
-    }
 }
 
 /// Returns the spec id according to the block timestamp and the stored chain config

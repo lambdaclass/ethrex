@@ -10,7 +10,6 @@ ethrex-rlp.workspace = true
 ethrex-common.workspace = true
 ethrex-storage.workspace = true
 ethrex-vm.workspace = true
-ethrex-levm.workspace = true
 
 thiserror.workspace = true
 sha3.workspace = true
@@ -31,5 +30,5 @@ path = "./blockchain.rs"
 
 [features]
 default = []
-c-kzg = ["ethrex-common/c-kzg", "ethrex-vm/c-kzg", "ethrex-levm/c-kzg"]
+c-kzg = ["ethrex-common/c-kzg", "ethrex-vm/c-kzg"]
 metrics = ["ethrex-metrics/transactions"]

@@ -20,7 +20,7 @@ use ethrex_rpc::clients::eth::{
     eth_sender::Overrides, BlockByNumber, EthClient, WrappedTransaction,
 };
 use ethrex_storage::{error::StoreError, Store};
-use ethrex_vm::{backends::revm::execute_block, db::evm_state, get_state_transitions};
+use ethrex_vm::{backends::EVM, db::evm_state};
 use keccak_hash::keccak;
 use secp256k1::SecretKey;
 use std::{collections::HashMap, str::FromStr, time::Duration};
@@ -255,8 +255,11 @@ impl Committer {
         info!("Preparing state diff for block {}", block.header.number);
 
         let mut state = evm_state(store.clone(), block.header.parent_hash);
-        execute_block(block, &mut state).map_err(CommitterError::from)?;
-        let account_updates = get_state_transitions(&mut state);
+
+        let result = EVM::default()
+            .execute_block(block, &mut state)
+            .map_err(CommitterError::from)?;
+        let account_updates = result.account_updates;
 
         let mut modified_accounts = HashMap::new();
         for account_update in &account_updates {

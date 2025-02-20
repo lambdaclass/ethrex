@@ -2575,7 +2575,6 @@ dependencies = [
  "bytes",
  "cfg-if",
  "ethrex-common",
- "ethrex-levm",
  "ethrex-metrics",
  "ethrex-rlp",
  "ethrex-storage",
