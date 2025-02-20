@@ -36,8 +36,9 @@ fn main() {
         panic!("invalid database")
     };
 
-    let (receipts, account_updates) =
-        REVM::execute_block(&block, &mut state).expect("failed to execute block");
+    let result = REVM::execute_block(&block, &mut state).expect("failed to execute block");
+    let receipts = result.receipts;
+    let account_updates = result.account_updates;
     validate_gas_used(&receipts, &block.header).expect("invalid gas used");
 
     // Output gas for measurement purposes
