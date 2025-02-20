@@ -1,4 +1,4 @@
-#[cfg(feature = "preconfs")]
+#[cfg(feature = "based")]
 use crate::utils::RpcRequest;
 use crate::{
     eth::block,
@@ -577,7 +577,7 @@ impl RpcHandler for SendRawTransactionRequest {
         Ok(transaction)
     }
 
-    #[cfg(feature = "preconfs")]
+    #[cfg(feature = "based")]
     async fn relay_to_gateway_or_fallback(
         req: &RpcRequest,
         context: RpcApiContext,

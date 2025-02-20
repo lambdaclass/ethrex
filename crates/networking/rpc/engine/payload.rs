@@ -97,7 +97,7 @@ impl RpcHandler for NewPayloadV3Request {
         })
     }
 
-    #[cfg(feature = "preconfs")]
+    #[cfg(feature = "based")]
     async fn relay_to_gateway_or_fallback(
         req: &RpcRequest,
         context: RpcApiContext,
@@ -233,7 +233,7 @@ impl RpcHandler for GetPayloadV3Request {
         Ok(Self { payload_id })
     }
 
-    #[cfg(feature = "preconfs")]
+    #[cfg(feature = "based")]
     async fn relay_to_gateway_or_fallback(
         req: &RpcRequest,
         context: RpcApiContext,

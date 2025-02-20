@@ -105,12 +105,12 @@ deploy-l1: ## 📜 Deploys the L1 contracts
 
 # L2
 init-l2: init-metrics ## 🚀 Initializes an L2 Lambda ethrex Client
-	if [[ -z "$$PRECONFS" ]]; then \
+	if [[ -z "$$BASED" ]]; then \
 		FEATURES="l2,metrics"; \
 		echo "Running ethrex L2 vanilla"; \
 	else \
-		FEATURES="l2,metrics,preconfs"; \
-		echo "Running ethrex L2 with preconfs"; \
+		FEATURES="metrics,based"; \
+		echo "Running ethrex L2 with based"; \
 	fi; \
 	cargo run --release --manifest-path ../../Cargo.toml --bin ethrex --features $$FEATURES -- \
 	--network ${L2_GENESIS_FILE_PATH} \

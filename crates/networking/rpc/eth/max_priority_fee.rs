@@ -44,9 +44,9 @@ mod tests {
         utils::{parse_json_hex, test_utils::example_p2p_node, RpcRequest},
         RpcApiContext, RpcHandler,
     };
-    #[cfg(feature = "preconfs")]
+    #[cfg(feature = "based")]
     use crate::{EngineClient, EthClient};
-    #[cfg(feature = "preconfs")]
+    #[cfg(feature = "based")]
     use bytes::Bytes;
     use ethrex_p2p::sync::SyncManager;
     use serde_json::{json, Value};
@@ -61,9 +61,9 @@ mod tests {
             local_node_record: example_local_node_record(),
             active_filters: Default::default(),
             syncer: Arc::new(Mutex::new(SyncManager::dummy())),
-            #[cfg(feature = "preconfs")]
+            #[cfg(feature = "based")]
             gateway_eth_client: EthClient::new(""),
-            #[cfg(feature = "preconfs")]
+            #[cfg(feature = "based")]
             gateway_auth_client: EngineClient::new("", Bytes::default()),
         }
     }

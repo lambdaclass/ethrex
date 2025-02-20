@@ -256,7 +256,7 @@ async fn main() {
     // TODO: Check every module starts properly.
     let tracker = TaskTracker::new();
     cfg_if::cfg_if! {
-        if #[cfg(feature = "preconfs")] {
+        if #[cfg(feature = "based")] {
             use ethrex_rpc::{EngineClient, EthClient};
 
             let gateway_addr = matches

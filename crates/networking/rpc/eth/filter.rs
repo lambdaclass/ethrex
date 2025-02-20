@@ -267,9 +267,9 @@ mod tests {
         types::block_identifier::BlockIdentifier,
         utils::{test_utils::example_p2p_node, RpcRequest},
     };
-    #[cfg(feature = "preconfs")]
+    #[cfg(feature = "based")]
     use crate::{EngineClient, EthClient};
-    #[cfg(feature = "preconfs")]
+    #[cfg(feature = "based")]
     use bytes::Bytes;
     use ethrex_common::types::Genesis;
     use ethrex_p2p::sync::SyncManager;
@@ -444,9 +444,9 @@ mod tests {
             local_node_record: example_local_node_record(),
             active_filters: filters_pointer.clone(),
             syncer: Arc::new(TokioMutex::new(SyncManager::dummy())),
-            #[cfg(feature = "preconfs")]
+            #[cfg(feature = "based")]
             gateway_eth_client: EthClient::new(""),
-            #[cfg(feature = "preconfs")]
+            #[cfg(feature = "based")]
             gateway_auth_client: EngineClient::new("", Bytes::default()),
         };
         let request: RpcRequest = serde_json::from_value(json_req).expect("Test json is incorrect");
@@ -506,9 +506,9 @@ mod tests {
             jwt_secret: Default::default(),
             active_filters: active_filters.clone(),
             syncer: Arc::new(TokioMutex::new(SyncManager::dummy())),
-            #[cfg(feature = "preconfs")]
+            #[cfg(feature = "based")]
             gateway_eth_client: EthClient::new(""),
-            #[cfg(feature = "preconfs")]
+            #[cfg(feature = "based")]
             gateway_auth_client: EngineClient::new("", Bytes::default()),
         };
 
@@ -533,9 +533,9 @@ mod tests {
             active_filters: active_filters.clone(),
             jwt_secret: Default::default(),
             syncer: Arc::new(TokioMutex::new(SyncManager::dummy())),
-            #[cfg(feature = "preconfs")]
+            #[cfg(feature = "based")]
             gateway_eth_client: EthClient::new(""),
-            #[cfg(feature = "preconfs")]
+            #[cfg(feature = "based")]
             gateway_auth_client: EngineClient::new("", Bytes::default()),
         };
         let uninstall_filter_req: RpcRequest = serde_json::from_value(json!(

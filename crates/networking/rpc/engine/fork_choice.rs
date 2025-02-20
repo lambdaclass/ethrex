@@ -115,7 +115,7 @@ impl RpcHandler for ForkChoiceUpdatedV3 {
         })
     }
 
-    #[cfg(feature = "preconfs")]
+    #[cfg(feature = "based")]
     async fn relay_to_gateway_or_fallback(
         req: &RpcRequest,
         context: RpcApiContext,

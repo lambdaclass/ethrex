@@ -76,9 +76,9 @@ pub struct RpcApiContext {
     local_node_record: NodeRecord,
     active_filters: ActiveFilters,
     syncer: Arc<TokioMutex<SyncManager>>,
-    #[cfg(feature = "preconfs")]
+    #[cfg(feature = "based")]
     gateway_eth_client: EthClient,
-    #[cfg(feature = "preconfs")]
+    #[cfg(feature = "based")]
     gateway_auth_client: EngineClient,
 }
 
@@ -120,7 +120,7 @@ trait RpcHandler: Sized {
     /// The default implementation of this method is to call `RpcHandler::call` method because
     /// not all requests need to be relayed to the gateway client, and the only ones that have to
     /// must override this method.
-    #[cfg(feature = "preconfs")]
+    #[cfg(feature = "based")]
     async fn relay_to_gateway_or_fallback(
         req: &RpcRequest,
         context: RpcApiContext,
@@ -148,8 +148,8 @@ pub async fn start_api(
     local_p2p_node: Node,
     local_node_record: NodeRecord,
     syncer: SyncManager,
-    #[cfg(feature = "preconfs")] gateway_eth_client: EthClient,
-    #[cfg(feature = "preconfs")] gateway_auth_client: EngineClient,
+    #[cfg(feature = "based")] gateway_eth_client: EthClient,
+    #[cfg(feature = "based")] gateway_auth_client: EngineClient,
 ) {
     // TODO: Refactor how filters are handled,
     // filters are used by the filters endpoints (eth_newFilter, eth_getFilterChanges, ...etc)
@@ -161,9 +161,9 @@ pub async fn start_api(
         local_node_record,
         active_filters: active_filters.clone(),
         syncer: Arc::new(TokioMutex::new(syncer)),
-        #[cfg(feature = "preconfs")]
+        #[cfg(feature = "based")]
         gateway_eth_client,
-        #[cfg(feature = "preconfs")]
+        #[cfg(feature = "based")]
         gateway_auth_client,
     };
 
@@ -299,7 +299,7 @@ pub async fn map_eth_requests(req: &RpcRequest, context: RpcApiContext) -> Resul
         }
         "eth_sendRawTransaction" => {
             cfg_if::cfg_if! {
-                if #[cfg(feature = "preconfs")] {
+                if #[cfg(feature = "based")] {
                     SendRawTransactionRequest::relay_to_gateway_or_fallback(req, context).await
                 } else {
                     SendRawTransactionRequest::call(req, context)
@@ -333,7 +333,7 @@ pub async fn map_engine_requests(
         "engine_forkchoiceUpdatedV2" => ForkChoiceUpdatedV2::call(req, context),
         "engine_forkchoiceUpdatedV3" => {
             cfg_if::cfg_if! {
-                if #[cfg(feature = "preconfs")] {
+                if #[cfg(feature = "based")] {
                     ForkChoiceUpdatedV3::relay_to_gateway_or_fallback(req, context).await
                 } else {
                     ForkChoiceUpdatedV3::call(req, context)
@@ -342,7 +342,7 @@ pub async fn map_engine_requests(
         }
         "engine_newPayloadV3" => {
             cfg_if::cfg_if! {
-                if #[cfg(feature = "preconfs")] {
+                if #[cfg(feature = "based")] {
                     NewPayloadV3Request::relay_to_gateway_or_fallback(req, context).await
                 } else {
                     NewPayloadV3Request::call(req, context)
@@ -356,7 +356,7 @@ pub async fn map_engine_requests(
         }
         "engine_getPayloadV3" => {
             cfg_if::cfg_if! {
-                if #[cfg(feature = "preconfs")] {
+                if #[cfg(feature = "based")] {
                     GetPayloadV3Request::relay_to_gateway_or_fallback(req, context).await
                 } else {
                     GetPayloadV3Request::call(req, context)
@@ -430,9 +430,9 @@ mod tests {
     use std::fs::File;
     use std::io::BufReader;
 
-    #[cfg(feature = "preconfs")]
+    #[cfg(feature = "based")]
     use crate::{EngineClient, EthClient};
-    #[cfg(feature = "preconfs")]
+    #[cfg(feature = "based")]
     use bytes::Bytes;
 
     // Maps string rpc response to RpcSuccessResponse as serde Value
@@ -456,9 +456,9 @@ mod tests {
             jwt_secret: Default::default(),
             active_filters: Default::default(),
             syncer: Arc::new(TokioMutex::new(SyncManager::dummy())),
-            #[cfg(feature = "preconfs")]
+            #[cfg(feature = "based")]
             gateway_eth_client: EthClient::new(""),
-            #[cfg(feature = "preconfs")]
+            #[cfg(feature = "based")]
             gateway_auth_client: EngineClient::new("", Bytes::default()),
         };
         let enr_url = context.local_node_record.enr_url().unwrap();
@@ -545,9 +545,9 @@ mod tests {
             jwt_secret: Default::default(),
             active_filters: Default::default(),
             syncer: Arc::new(TokioMutex::new(SyncManager::dummy())),
-            #[cfg(feature = "preconfs")]
+            #[cfg(feature = "based")]
             gateway_eth_client: EthClient::new(""),
-            #[cfg(feature = "preconfs")]
+            #[cfg(feature = "based")]
             gateway_auth_client: EngineClient::new("", Bytes::default()),
         };
         let result = map_http_requests(&request, context).await;
@@ -580,9 +580,9 @@ mod tests {
             jwt_secret: Default::default(),
             active_filters: Default::default(),
             syncer: Arc::new(TokioMutex::new(SyncManager::dummy())),
-            #[cfg(feature = "preconfs")]
+            #[cfg(feature = "based")]
             gateway_eth_client: EthClient::new(""),
-            #[cfg(feature = "preconfs")]
+            #[cfg(feature = "based")]
             gateway_auth_client: EngineClient::new("", Bytes::default()),
         };
         let result = map_http_requests(&request, context).await;
@@ -645,9 +645,9 @@ mod tests {
             jwt_secret: Default::default(),
             active_filters: Default::default(),
             syncer: Arc::new(TokioMutex::new(SyncManager::dummy())),
-            #[cfg(feature = "preconfs")]
+            #[cfg(feature = "based")]
             gateway_eth_client: EthClient::new(""),
-            #[cfg(feature = "preconfs")]
+            #[cfg(feature = "based")]
             gateway_auth_client: EngineClient::new("", Bytes::default()),
         };
         // Process request
