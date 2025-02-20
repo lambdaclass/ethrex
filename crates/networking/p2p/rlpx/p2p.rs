@@ -172,12 +172,11 @@ impl From<u8> for DisconnectReason {
     }
 }
 
-impl Into<u8> for DisconnectReason {
-    fn into(self) -> u8 {
-        self as u8
+impl From<DisconnectReason> for u8 {
+    fn from(val: DisconnectReason) -> Self {
+        val as u8
     }
 }
-
 #[derive(Debug)]
 pub(crate) struct DisconnectMessage {
     pub(crate) reason: Option<DisconnectReason>,
