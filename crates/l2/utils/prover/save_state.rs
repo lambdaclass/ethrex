@@ -32,7 +32,7 @@ fn default_datadir() -> Result<PathBuf, SaveStateError> {
 #[inline(always)]
 fn create_datadir(dir_name: &str) -> Result<PathBuf, SaveStateError> {
     let path_buf_data_dir = ProjectDirs::from("", "", dir_name)
-        .ok_or_else(|| SaveStateError::FailedToCrateDataDir)?
+        .ok_or(SaveStateError::FailedToCrateDataDir)?
         .data_local_dir()
         .to_path_buf();
     Ok(path_buf_data_dir)
@@ -49,7 +49,6 @@ fn create_datadir(dir_name: &str) -> Result<PathBuf, SaveStateError> {
 ///     proof_sp1_2.json
 /// All the files are saved at the path defined by [ProjectDirs::data_local_dir]
 /// and the [DEFAULT_DATADIR] when calling [create_datadir]
-
 /// Enum used to differentiate between the possible types of data we can store per block.
 #[derive(Serialize, Deserialize, Debug)]
 pub enum StateType {
@@ -390,7 +389,8 @@ mod tests {
     use ethrex_storage::{EngineType, Store};
     use ethrex_vm::execution_db::ExecutionDB;
     use risc0_zkvm::sha::Digest;
-    use sp1_sdk::{HashableKey, PlonkBn254Proof, ProverClient, SP1Proof, SP1PublicValues};
+    use sp1_recursion_gnark_ffi::PlonkBn254Proof;
+    use sp1_sdk::{client::ProverClientBuilder, HashableKey, Prover, SP1Proof, SP1PublicValues};
 
     use super::*;
     use crate::utils::{
@@ -458,7 +458,8 @@ mod tests {
             0x28, 0x00,
         ];
 
-        let prover = ProverClient::mock();
+        let prover_client_builder = ProverClientBuilder::mock(&ProverClientBuilder {});
+        let prover = prover_client_builder.build();
         let (_pk, vk) =
             prover.setup(&[magic_bytes1, magic_bytes2, magic_bytes3, &[0; 256]].concat());
 
@@ -470,7 +471,6 @@ mod tests {
                     raw_proof: "d".repeat(4),
                     plonk_vkey_hash: [1; 32],
                 }),
-                stdin: sp1_sdk::SP1Stdin::new(),
                 public_values: SP1PublicValues::new(),
                 sp1_version: "dummy".to_owned(),
             }),

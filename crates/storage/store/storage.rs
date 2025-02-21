@@ -106,6 +106,21 @@ impl Store {
         Ok(store)
     }
 
+    pub fn new_from_genesis(
+        store_path: &str,
+        engine_type: EngineType,
+        genesis_path: &str,
+    ) -> Result<Self, StoreError> {
+        let file = std::fs::File::open(genesis_path)
+            .map_err(|error| StoreError::Custom(format!("Failed to open genesis file: {error}")))?;
+        let reader = std::io::BufReader::new(file);
+        let genesis: Genesis =
+            serde_json::from_reader(reader).expect("Failed to deserialize genesis file");
+        let store = Self::new(store_path, engine_type)?;
+        store.add_initial_state(genesis)?;
+        Ok(store)
+    }
+
     pub fn get_account_info(
         &self,
         block_number: BlockNumber,
@@ -716,6 +731,14 @@ impl Store {
         block_number: BlockNumber,
     ) -> Result<Option<BlockHash>, StoreError> {
         self.engine.get_canonical_block_hash(block_number)
+    }
+
+    pub fn get_latest_canonical_block_hash(&self) -> Result<Option<BlockHash>, StoreError> {
+        let latest_block_number = match self.engine.get_latest_block_number() {
+            Ok(n) => n.ok_or(StoreError::MissingLatestBlockNumber)?,
+            Err(e) => return Err(e),
+        };
+        self.get_canonical_block_hash(latest_block_number)
     }
 
     /// Marks a block number as not having any canonical blocks associated with it.

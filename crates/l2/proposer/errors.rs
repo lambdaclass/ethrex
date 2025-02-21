@@ -119,6 +119,8 @@ pub enum CommitterError {
     TryIntoError(#[from] std::num::TryFromIntError),
     #[error("Failed to encode calldata: {0}")]
     CalldataEncodeError(#[from] CalldataEncodeError),
+    #[error("Unexpected Error: {0}")]
+    InternalError(String),
 }
 
 #[derive(Debug, thiserror::Error)]

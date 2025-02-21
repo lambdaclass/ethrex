@@ -72,6 +72,7 @@ impl VM {
             current_memory_size,
             address_was_cold,
             account_info.is_empty(),
+            self.db.account_exists(callee),
             value_to_transfer,
             gas,
             gas_left,
@@ -474,6 +475,9 @@ impl VM {
         // Returns: VMError RevertOpcode if executed correctly.
         // Notes:
         //      The actual reversion of changes is made in the execute() function.
+        if self.env.config.fork < Fork::Byzantium {
+            return Err(VMError::InvalidOpcode);
+        }
 
         let offset = current_call_frame.stack.pop()?;
 
@@ -539,9 +543,14 @@ impl VM {
         );
         let balance_to_transfer = current_account_info.balance;
 
+        let account_is_empty = if self.env.config.fork >= Fork::SpuriousDragon {
+            target_account_info.is_empty()
+        } else {
+            !self.db.account_exists(target_address)
+        };
         current_call_frame.increase_consumed_gas(gas_cost::selfdestruct(
             target_account_is_cold,
-            target_account_info.is_empty(),
+            account_is_empty,
             balance_to_transfer,
             self.env.config.fork,
         )?)?;

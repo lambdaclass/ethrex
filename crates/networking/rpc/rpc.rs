@@ -86,6 +86,7 @@ pub struct RpcApiContext {
 /// Inactive: There is no active sync process
 /// Active: The client is currently syncing
 /// Pending: The previous sync process became stale, awaiting restart
+#[derive(Debug)]
 pub enum SyncStatus {
     Inactive,
     Active,
@@ -424,7 +425,10 @@ where
 mod tests {
     use super::*;
     use crate::utils::test_utils::{example_local_node_record, example_p2p_node};
-    use ethrex_common::types::{ChainConfig, Genesis};
+    use ethrex_common::{
+        constants::MAINNET_DEPOSIT_CONTRACT_ADDRESS,
+        types::{ChainConfig, Genesis},
+    };
     use ethrex_storage::EngineType;
     use sha3::{Digest, Keccak256};
     use std::fs::File;
@@ -476,7 +480,7 @@ mod tests {
                 "enr": enr_url,
                 "id": hex::encode(Keccak256::digest(local_p2p_node.node_id)),
                 "ip": "127.0.0.1",
-                "name": "ethrex/0.1.0/rust1.81",
+                "name": "ethrex/0.1.0/rust1.82",
                 "ports": {
                     "discovery": 30303,
                     "listener": 30303
@@ -506,7 +510,8 @@ mod tests {
                         "verkleTime": null,
                         "terminalTotalDifficulty": 0,
                         "terminalTotalDifficultyPassed": true,
-                        "blobSchedule": blob_schedule
+                        "blobSchedule": blob_schedule,
+                        "depositContractAddress": *MAINNET_DEPOSIT_CONTRACT_ADDRESS
                     }
                 },
             }
@@ -620,6 +625,7 @@ mod tests {
             prague_time: Some(1718232101),
             terminal_total_difficulty: Some(0),
             terminal_total_difficulty_passed: true,
+            deposit_contract_address: Some(*MAINNET_DEPOSIT_CONTRACT_ADDRESS),
             ..Default::default()
         }
     }
