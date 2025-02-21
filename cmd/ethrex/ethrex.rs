@@ -528,7 +528,7 @@ fn show_rich_accounts(genesis: &Genesis, contents: &str) {
         };
         let Ok(address) = get_address_from_secret_key(&secret_key) else {
             return;
-        }; // better to use the sdk function
+        };
         address_to_pk.insert(address, pk);
     }
 
