@@ -1,6 +1,7 @@
 use std::{
     cmp::{max, Ordering},
     collections::HashMap,
+    ops::Div,
     time::Instant,
 };
 
@@ -239,10 +240,11 @@ pub fn build_payload(
     store: &Store,
 ) -> Result<(BlobsBundle, U256), ChainError> {
     let since = Instant::now();
-    let limit: u64 = 150000000;
+    let gas_limit = payload.header.gas_limit;
     debug!("Building payload");
     let mut evm_state = evm_state(store.clone(), payload.header.parent_hash);
     let mut context = PayloadBuildContext::new(payload, &mut evm_state)?;
+
     apply_system_operations(&mut context)?;
     apply_withdrawals(&mut context)?;
     fill_transactions(&mut context)?;
@@ -250,10 +252,14 @@ pub fn build_payload(
 
     let interval = Instant::now().duration_since(since).as_millis();
     tracing::info!("[METRIC] BUILDING PAYLOAD TOOK: {interval} ms");
-    let gas_used = limit.checked_add(context.remaining_gas).unwrap();
+    let gas_used = gas_limit.checked_add(context.remaining_gas).unwrap();
+    let as_gigas = (gas_used as f64).div(10_f64.powf(9_f64));
+
     if interval != 0 {
-        let throughput = (gas_used as u128) / interval * 1000;
-        tracing::info!("[METRIC] BLOCK THROUGHPUT: {throughput} Gas/s TIME SPENT: {interval} msecs");
+        let throughput = (as_gigas) / (interval as f64) * 1000_f64;
+        tracing::info!(
+            "[METRIC] BLOCK THROUGHPUT: {throughput} Ggas/s TIME SPENT: {interval} msecs"
+        );
     }
 
     Ok((context.blobs_bundle, context.block_value))
