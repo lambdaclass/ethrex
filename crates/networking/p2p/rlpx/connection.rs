@@ -1,5 +1,5 @@
 use crate::{
-    kademlia::PeerChannels,
+    kademlia::{PeerChannels, MAX_PEERS},
     rlpx::{
         error::RLPxError,
         eth::{
@@ -38,7 +38,7 @@ use tokio::{
 use tokio_stream::StreamExt;
 use tokio_util::codec::Framed;
 
-use super::utils::log_peer_warn;
+use super::{p2p::DisconnectReason, utils::log_peer_warn};
 
 const CAP_P2P_5: (Capability, u8) = (Capability::P2p, 5);
 const CAP_ETH_68: (Capability, u8) = (Capability::Eth, 68);
@@ -106,10 +106,35 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
         }
     }
 
+    async fn post_handshake_checks(
+        &self,
+        table: Arc<Mutex<crate::kademlia::KademliaTable>>,
+    ) -> Result<(), DisconnectReason> {
+        // Check if connected peers exceed the limit
+        let peer_count = {
+            let table_lock = table.lock().await;
+            table_lock.count_connected_peers()
+        };
+
+        if peer_count >= MAX_PEERS {
+            return Err(DisconnectReason::TooManyPeers);
+        }
+
+        // We can also add other checks like "Peer already connected"
+        Ok(())
+    }
+
     /// Handshake already performed, now it starts a peer connection.
     /// It runs in it's own task and blocks until the connection is dropped
     pub async fn start(&mut self, table: Arc<Mutex<crate::kademlia::KademliaTable>>) {
         log_peer_debug(&self.node, "Starting RLPx connection");
+
+        if let Err(reason) = self.post_handshake_checks(table.clone()).await {
+            self.send_disconnect_message(Some(reason)).await;
+            let _ = self.framed.close().await;
+            return;
+        }
+
         if let Err(e) = self.exchange_hello_messages().await {
             self.connection_failed("Hello messages exchange failed", e, table)
                 .await;
@@ -142,30 +167,36 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
         }
     }
 
+    async fn send_disconnect_message(&mut self, reason: Option<DisconnectReason>) {
+        self.send(Message::Disconnect(DisconnectMessage { reason }))
+            .await
+            .unwrap_or_else(|_| {
+                log_peer_error(
+                    &self.node,
+                    &format!("Could not send Disconnect message: ({:?}).", reason),
+                );
+            });
+    }
+
     async fn connection_failed(
         &mut self,
         error_text: &str,
         error: RLPxError,
         table: Arc<Mutex<crate::kademlia::KademliaTable>>,
     ) {
-        self.send(Message::Disconnect(DisconnectMessage {
-            reason: self.match_disconnect_reason(&error),
-        }))
-        .await
-        .unwrap_or_else(|_| {
-            log_peer_error(
-                &self.node,
-                &format!(
-                    "Could not send Disconnect message: ({:?}).",
-                    self.match_disconnect_reason(&error)
-                ),
-            )
-        });
+        // Send disconnect message only if error is different than RLPxError::DisconnectRequested
+        // because if it is a DisconnectRequested error it means that the peer requested the disconnection, not us.
+        if let RLPxError::DisconnectRequested(_) = error {
+            log_peer_error(&self.node, &format!("{error_text}: ({error})"));
+        } else {
+            self.send_disconnect_message(self.match_disconnect_reason(&error))
+                .await;
+        }
 
         // Discard peer from kademlia table
         match error {
             // already connected, don't discard it
-            RLPxError::DisconnectRequested(s) if s == "Already connected" => {
+            RLPxError::DisconnectRequested(DisconnectReason::AlreadyConnected) => {
                 log_peer_debug(&self.node, "Peer already connected don't replace it");
             }
             _ => {
@@ -181,9 +212,9 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
         let _ = self.framed.close().await;
     }
 
-    fn match_disconnect_reason(&self, error: &RLPxError) -> Option<u8> {
+    fn match_disconnect_reason(&self, error: &RLPxError) -> Option<DisconnectReason> {
         match error {
-            RLPxError::RLPDecodeError(_) => Some(2_u8),
+            RLPxError::RLPDecodeError(_) => Some(DisconnectReason::NetworkError),
             // TODO build a proper matching between error types and disconnection reasons
             _ => None,
         }
@@ -242,9 +273,9 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
 
                 Ok(())
             }
-            Message::Disconnect(disconnect) => Err(RLPxError::DisconnectRequested(
-                disconnect.reason().to_string(),
-            )),
+            Message::Disconnect(disconnect) => {
+                Err(RLPxError::DisconnectRequested(disconnect.reason()))
+            }
             _ => {
                 // Fail if it is not a hello message
                 Err(RLPxError::BadRequest("Expected Hello message".to_string()))
@@ -343,9 +374,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
                     &format!("Received Disconnect: {}", msg_data.reason()),
                 );
                 // TODO handle the disconnection request
-                return Err(RLPxError::DisconnectRequested(
-                    msg_data.reason().to_string(),
-                ));
+                return Err(RLPxError::DisconnectRequested(msg_data.reason()));
             }
             Message::Ping(_) => {
                 log_peer_debug(&self.node, "Sending pong message");
