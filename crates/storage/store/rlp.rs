@@ -41,6 +41,16 @@ pub type TupleRLP<A, B> = Rlp<(A, B)>;
 #[derive(Clone, Debug)]
 pub struct Rlp<T>(Vec<u8>, PhantomData<T>);
 
+impl<T> Rlp<T> {
+    pub fn from_bytes(bytes: Vec<u8>) -> Self {
+        Self(bytes, Default::default())
+    }
+
+    pub fn bytes(&self) -> &Vec<u8> {
+        &self.0
+    }
+}
+
 impl<T: RLPEncode> From<T> for Rlp<T> {
     fn from(value: T) -> Self {
         let mut buf = Vec::new();

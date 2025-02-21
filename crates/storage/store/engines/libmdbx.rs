@@ -66,11 +66,10 @@ impl Store {
             .map_err(StoreError::LibmdbxError)?;
 
         debug!("Inserting values");
-        let mut cursor = txn.cursor::<T>().map_err(StoreError::LibmdbxError)?;
-
         for (key, value) in key_values {
-            cursor
-                .upsert(key, value)
+            // limit size followed according to docs:
+            // see https://github.com/erthink/libmdbx/tree/master?tab=readme-ov-file#limitations
+            txn.upsert::<T>(key, value)
                 .map_err(StoreError::LibmdbxError)?;
         }
         debug!("Finished inserting values");
@@ -92,6 +91,25 @@ impl Store {
         number: BlockNumber,
     ) -> Result<Option<BlockHash>, StoreError> {
         Ok(self.read::<CanonicalBlockHashes>(number)?.map(|a| a.to()))
+    }
+
+    fn dup_sort_split_into_chunks<T: Table>(
+        &self,
+        data: &[u8],
+    ) -> Result<Vec<Vec<u8>>, StoreError> {
+        let page_size = self
+            .db
+            .stat()
+            .map_err(|e| StoreError::LibmdbxError(e.into()))?
+            .page_size();
+
+        // limit size followed according to docs:
+        // see https://github.com/erthink/libmdbx/tree/master?tab=readme-ov-file#limitations
+        let max_size = page_size / 2;
+
+        let chunks: Vec<Vec<u8>> = data.chunks(max_size as usize).map(|i| i.to_vec()).collect();
+
+        Ok(chunks)
     }
 }
 
@@ -497,17 +515,23 @@ impl StoreEngine for Store {
     ) -> Result<(), StoreError> {
         tracing::debug!("Receipts forming key values");
         tracing::debug!("Receipts number {}: {:?}", receipts.len(), receipts);
-        let key_values = receipts.into_iter().enumerate().map(|(index, receipt)| {
-            (
-                <(H256, u64) as Into<TupleRLP<BlockHash, Index>>>::into((block_hash, index as u64)),
-                <Receipt as Into<ReceiptRLP>>::into(receipt),
-            )
-        });
+        let mut key_values = vec![];
+
+        for (index, receipt) in receipts.into_iter().enumerate() {
+            let key =
+                <(H256, u64) as Into<TupleRLP<BlockHash, Index>>>::into((block_hash, index as u64));
+            let value = <Receipt as Into<ReceiptRLP>>::into(receipt);
+            let chunks = self.dup_sort_split_into_chunks::<Receipts>(value.bytes())?;
+
+            for chunk in chunks {
+                key_values.push((key.clone(), Rlp::<Receipt>::from_bytes(chunk)))
+            }
+        }
         tracing::debug!("Key values formed");
 
         tracing::debug!("Before writing in batch");
 
-        let a = self.write_batch::<Receipts>(key_values);
+        let a = self.write_batch::<Receipts>(key_values.into_iter());
 
         tracing::debug!("Finished writing in batch");
         a
