@@ -149,8 +149,6 @@ async fn main() {
         Err(e) => error!("Could not read from peers file: {}", e),
     };
 
-    let sync_mode = sync_mode(&matches);
-
     let evm = matches.get_one::<EVM>("evm").unwrap_or(&EVM::REVM);
     let evm = EVM_BACKEND.get_or_init(|| evm.clone());
     info!("EVM_BACKEND set to: {:?}", evm);
@@ -201,6 +199,17 @@ async fn main() {
         }
 
         import_blocks(&store, &blocks);
+    }
+    let mut sync_mode = sync_mode(&matches);
+    if sync_mode == SyncMode::Full
+        && (genesis
+            .config
+            .terminal_total_difficulty
+            .is_some_and(|t_difficulty| t_difficulty != 0)
+            || !genesis.config.terminal_total_difficulty_passed)
+    {
+        warn!("Using full sync for a chain that has POW is not supported, using snap sync");
+        sync_mode = SyncMode::Snap;
     }
 
     let jwt_secret = read_jwtsecret_file(authrpc_jwtsecret);
