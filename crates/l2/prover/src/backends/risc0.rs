@@ -1,16 +1,23 @@
+use ethrex_l2::utils::prover::proving_systems::{ProofCalldata, ProverType};
 use ethrex_l2_sdk::calldata::Value;
 use risc0_ethereum_contracts::encode_seal;
-use risc0_zkvm::{default_prover, sha::Digestible, ExecutorEnv, ProverOpts, Receipt};
+use risc0_zkvm::{
+    default_executor, default_prover, sha::Digestible, ExecutorEnv, ProverOpts, Receipt,
+};
 use tracing::info;
 use zkvm_interface::io::ProgramInput;
 
 include!(concat!(env!("OUT_DIR"), "/methods.rs"));
 
-pub fn execute(
-    &mut self,
-    input: ProgramInput,
-) -> Result<ExecuteOutput, Box<dyn std::error::Error>> {
-    unimplemented!()
+pub fn execute(input: ProgramInput) -> Result<(), Box<dyn std::error::Error>> {
+    let env = ExecutorEnv::builder().write(&input)?.build()?;
+
+    let executor = default_executor();
+
+    let session_info = executor.execute(env, ZKVM_RISC0_PROGRAM_ELF)?;
+
+    info!("Successfully generated session info.");
+    Ok(())
 }
 
 pub fn prove(input: ProgramInput) -> Result<Receipt, Box<dyn std::error::Error>> {
@@ -35,7 +42,7 @@ pub fn verify(receipt: &Receipt) -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-pub fn to_calldata(receipt: Receipt) -> Result<Vec<Value>, Box<dyn std::error::Error>> {
+pub fn to_calldata(receipt: Receipt) -> Result<ProofCalldata, Box<dyn std::error::Error>> {
     let seal = encode_seal(&receipt)?;
     let image_id = ZKVM_RISC_PROGRAM_ID;
     let journal_digest = receipt.journal.digest().as_bytes();
@@ -43,11 +50,16 @@ pub fn to_calldata(receipt: Receipt) -> Result<Vec<Value>, Box<dyn std::error::E
     // bytes calldata seal,
     // bytes32 imageId,
     // bytes32 journalDigest
-    Ok(vec![
+    let calldata = vec![
         Value::Bytes(seal.into()),
         Value::FixedBytes(image_id.into()),
         Value::FixedBytes(journal_digest.into()),
-    ])
+    ];
+
+    Ok(ProofCalldata {
+        prover_type: ProverType::RISC0,
+        calldata,
+    })
 }
 
 fn get_gas(stdout: &[u8]) -> Result<u64, Box<dyn std::error::Error>> {

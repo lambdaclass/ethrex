@@ -1,5 +1,10 @@
+use std::fmt::Debug;
+
+use ethrex_l2::utils::prover::proving_systems::{ProofCalldata, ProverType};
 use ethrex_l2_sdk::calldata::Value;
-use sp1_sdk::{HashableKey, ProverClient, SP1ProofWithPublicValues, SP1Stdin, SP1VerifyingKey};
+use sp1_sdk::{
+    HashableKey, Prover, ProverClient, SP1ProofWithPublicValues, SP1Stdin, SP1VerifyingKey,
+};
 use tracing::info;
 use zkvm_interface::io::ProgramInput;
 
@@ -63,17 +68,22 @@ pub fn verify(output: ProveOutput) -> Result<bool, Box<dyn std::error::Error>> {
     Ok(())
 }
 
-pub fn to_calldata(proof: ProveOutput) -> Result<Vec<Value>, Box<dyn std::error::Error>> {
+pub fn to_calldata(proof: ProveOutput) -> ProofCalldata {
     // bytes32 programVKey,
     // bytes calldata publicValues,
     // bytes calldata proofBytes
-    Ok(vec![
+    let calldata = vec![
         Value::FixedBytes(proof.vk.bytes32_raw()),
         Value::Bytes(proof.public_values.to_vec().into()),
         Value::Bytes(proof.proof.bytes().into()),
-    ])
+    ];
+
+    ProofCalldata {
+        prover_type: ProverType::SP1,
+        calldata,
+    }
 }
 
 fn get_gas() -> Result<u64, Box<dyn std::error::Error>> {
-    todo!()
+    unimplemented!()
 }
