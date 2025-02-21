@@ -145,6 +145,19 @@ struct Prover {
     risc0_dev_mode: u64,
 }
 
+impl Prover {
+    pub fn to_env(&self) -> String {
+        let prefix = "PROVER";
+        format!(
+            "
+{prefix}_SP1_PROVER={},
+{prefix}_RISC0_DEV_MODE={},
+",
+            self.sp1_prover, self.risc0_dev_mode,
+        )
+    }
+}
+
 #[derive(Deserialize, Debug)]
 struct L2Config {
     deployer: Deployer,
@@ -162,6 +175,9 @@ impl L2Config {
         println!("{}", self.eth.to_env());
         println!("{}", self.auth.to_env());
         println!("{}", self.watcher.to_env());
+        println!("{}", self.proposer.to_env());
+        println!("{}", self.committer.to_env());
+        println!("{}", self.prover.to_env());
     }
 }
 
