@@ -1,11 +1,12 @@
-use self::engines::in_memory::Store as InMemoryStore;
+use crate::api::StoreEngine;
+use crate::error::StoreError;
+use crate::store_db::in_memory::Store as InMemoryStore;
 #[cfg(feature = "libmdbx")]
-use self::engines::libmdbx::Store as LibmdbxStore;
-use self::error::StoreError;
-use bytes::Bytes;
-use engines::api::StoreEngine;
+use crate::store_db::libmdbx::Store as LibmdbxStore;
 #[cfg(feature = "redb")]
-use engines::redb::RedBStore;
+use crate::store_db::redb::RedBStore;
+use bytes::Bytes;
+
 use ethereum_types::{Address, H256, U256};
 use ethrex_common::types::{
     code_hash, AccountInfo, AccountState, BlobsBundle, Block, BlockBody, BlockHash, BlockHeader,
@@ -21,11 +22,6 @@ use std::collections::{HashMap, HashSet};
 use std::fmt::Debug;
 use std::sync::{Arc, Mutex};
 use tracing::info;
-
-mod engines;
-pub mod error;
-mod rlp;
-mod trie_db;
 
 /// Number of state trie segments to fetch concurrently during state sync
 pub const STATE_TRIE_SEGMENTS: usize = 2;
