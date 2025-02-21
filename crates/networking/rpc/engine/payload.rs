@@ -431,7 +431,9 @@ fn execute_payload(block: &Block, context: &RpcApiContext) -> Result<PayloadStat
         if let Ok(syncer) = lock {
             syncer.blockchain.add_block(block, storage)
         } else {
-            Err(ChainError::Custom("Internal error".to_string()))
+            Err(ChainError::Custom(
+                "Error when trying to lock syncer".to_string(),
+            ))
         }
     };
 
@@ -542,7 +544,7 @@ fn build_execution_payload_response(
             should_override_builder,
         })
     } else {
-        let result = {
+        let (blobs_bundle, block_value) = {
             let syncer = context
                 .syncer
                 .try_lock()
@@ -552,7 +554,6 @@ fn build_execution_payload_response(
                 .build_payload(&mut payload_block, &context.storage)
                 .map_err(|err| RpcErr::Internal(err.to_string()))?
         };
-        let (blobs_bundle, block_value) = result;
 
         context.storage.update_payload(
             payload_id,
