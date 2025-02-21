@@ -9667,6 +9667,7 @@ dependencies = [
  "ethrex-vm",
  "risc0-build",
  "serde",
+ "serde_json",
  "serde_with",
  "sp1-build",
  "thiserror 2.0.11",

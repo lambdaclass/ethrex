@@ -30,7 +30,7 @@ pub mod io {
     #[derive(Serialize, Deserialize)]
     pub struct ProgramInput {
         /// block to execute
-        #[serde_as(as = "RLPBlock")]
+        #[serde_as(as = "JSONBlock")]
         pub block: Block,
         /// header of the previous block
         pub parent_block_header: BlockHeader,
@@ -48,29 +48,28 @@ pub mod io {
         pub final_state_hash: H256,
     }
 
-    /// Used with [serde_with] to encode a Block into RLP before serializing its bytes. This is
-    /// necessary because the [ethrex_common::types::Transaction] type doesn't serializes into any
-    /// format other than JSON.
-    pub struct RLPBlock;
+    /// Used with [serde_with] to encode a Block into JSON before serializing its bytes. This is
+    /// necessary because a [Block] isn't compatible with other encoding formats like bincode.
+    pub struct JSONBlock;
 
-    impl SerializeAs<Block> for RLPBlock {
+    impl SerializeAs<Block> for JSONBlock {
         fn serialize_as<S>(val: &Block, serializer: S) -> Result<S::Ok, S::Error>
         where
             S: serde::Serializer,
         {
             let mut encoded = Vec::new();
-            val.encode(&mut encoded);
+            serde_json::to_writer(&mut encoded, val).map_err(serde::ser::Error::custom)?;
             serde_with::Bytes::serialize_as(&encoded, serializer)
         }
     }
 
-    impl<'de> DeserializeAs<'de, Block> for RLPBlock {
+    impl<'de> DeserializeAs<'de, Block> for JSONBlock {
         fn deserialize_as<D>(deserializer: D) -> Result<Block, D::Error>
         where
             D: serde::Deserializer<'de>,
         {
             let encoded: Vec<u8> = serde_with::Bytes::deserialize_as(deserializer)?;
-            Block::decode(&encoded).map_err(serde::de::Error::custom)
+            serde_json::from_reader(&encoded[..]).map_err(serde::de::Error::custom)
         }
     }
 }

@@ -6,6 +6,7 @@ edition = "2021"
 [dependencies]
 serde = { version = "1.0.203", features = ["derive"] }
 serde_with = "3.11.0"
+serde_json.workspace = true
 thiserror = "2.0.9"
 
 ethrex-common = { path = "../../../../common/", default-features = false }
