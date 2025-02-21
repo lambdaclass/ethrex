@@ -3,10 +3,12 @@ use bytes::Bytes;
 use clap::Subcommand;
 use ethereum_types::{Address, H256, U256};
 use ethrex_blockchain::constants::TX_GAS_COST;
+use ethrex_common::H160;
 use ethrex_l2_sdk::calldata::{self, Value};
 use ethrex_rpc::clients::eth::{eth_sender::Overrides, EthClient};
 use keccak_hash::keccak;
 use secp256k1::SecretKey;
+use std::str::FromStr;
 use std::{
     fs::File,
     io::{self, BufRead},
@@ -61,6 +63,13 @@ pub(crate) enum Command {
             help = "send value to address with contract"
         )]
         contract: bool,
+        #[clap(
+            short = 'e',
+            long = "erc20",
+            default_value = "false",
+            help = "run the erc-20 transfer load test"
+        )]
+        erc20: bool,
     },
 }
 
@@ -155,10 +164,45 @@ async fn test_connection(cfg: EthrexL2Config) -> bool {
     false
 }
 
+async fn erc20_load_test(config: &EthrexL2Config) -> eyre::Result<()> {
+    let client = EthClient::new(&config.network.l2_rpc_url);
+    let erc20_bytecode = hex::decode(ERC20)?;
+    let (_, contract_address) = client
+        .deploy(
+            config.wallet.address,
+            config.wallet.private_key,
+            erc20_bytecode.into(),
+            Overrides::default(),
+        )
+        .await
+        .expect("Failed to deploy ERC20 with config: {config}");
+    println!("ERC20 deployed to address: {contract_address}");
+    println!("Checking ERC20 contract is reachable...");
+    let balance_calldata = calldata::encode_calldata(
+        "balanceOf(address)",
+        &[Value::Address(config.wallet.address)],
+    )?;
+    let balance_request_tx = client
+        .build_eip1559_transaction(
+            contract_address,
+            config.wallet.address,
+            balance_calldata.into(),
+            Default::default(),
+            100,
+        )
+        .await
+        .unwrap();
+    let balance_response = client
+        .send_eip1559_transaction(&balance_request_tx, &config.wallet.private_key)
+        .await
+        .expect("Failed to query balance for test load account");
+    println!("ERC20 contract is reachable. Starting load test with balance: {balance_response}");
+
+    Ok(())
+}
+
 impl Command {
     pub async fn run(self, cfg: EthrexL2Config) -> eyre::Result<()> {
-        println!("RUNNING");
-        dbg!(&self);
         match self {
             Command::Load {
                 path,
@@ -167,8 +211,8 @@ impl Command {
                 iterations,
                 verbose,
                 contract,
+                erc20,
             } => {
-                println!("INSIDE LOAD");
                 let Ok(lines) = read_lines(path) else {
                     return Ok(());
                 };
@@ -202,8 +246,13 @@ impl Command {
                 to_address = contract_address;
 
                 let calldata = calldata::encode_calldata(
-                    "balanceOf(address)",
-                    &[Value::Address(cfg.wallet.address)],
+                    "transfer(address,uint256)",
+                    &[
+                        Value::Address(
+                            H160::from_str("C257274276a4E539741Ca11b590B9447B26A8051").unwrap(),
+                        ),
+                        Value::Uint(U256::one()),
+                    ],
                 )?;
                 let tx = client
                     .build_eip1559_transaction(
@@ -215,8 +264,10 @@ impl Command {
                     )
                     .await
                     .unwrap();
-                let res = client.send_eip1559_transaction(&tx, &cfg.wallet.private_key).await.unwrap();
-                println!("THE RES: {res}");
+                let res = client
+                    .send_eip1559_transaction(&tx, &cfg.wallet.private_key)
+                    .await
+                    .unwrap();
                 Ok(())
             }
         }
