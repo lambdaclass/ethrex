@@ -164,7 +164,8 @@ async fn test_connection(cfg: EthrexL2Config) -> bool {
     false
 }
 
-async fn erc20_load_test(config: &EthrexL2Config) -> eyre::Result<()> {
+async fn erc20_load_test(config: &EthrexL2Config, count: Option<u64>) -> eyre::Result<()> {
+    let count = count.unwrap_or_else(|| 10_000_u64);
     let client = EthClient::new(&config.network.l2_rpc_url);
     let erc20_bytecode = hex::decode(ERC20)?;
     let (_, contract_address) = client
