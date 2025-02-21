@@ -9,6 +9,26 @@ struct Deployer {
     sp1_deploy_verifier: bool,
 }
 
+impl Deployer {
+    pub fn to_env(&self) -> String {
+        let prefix = "DEPLOYER";
+        format!(
+            "
+{prefix}_ADDRESS={},
+{prefix}_PRIVATE_KEY={},
+{prefix}_RISC0_CONTRACT_VERIFIER={},
+{prefix}_SP1_CONTRACT_VERIFIER={},
+{prefix}_SP1_DEPLOY_VERIFIER={},
+",
+            self.address,
+            self.private_key,
+            self.risc0_contract_verifier,
+            self.sp1_contract_verifier,
+            self.sp1_deploy_verifier
+        )
+    }
+}
+
 #[derive(Deserialize, Debug)]
 struct Eth {
     rpc_url: String,
@@ -58,6 +78,12 @@ struct L2Config {
     proposer: Proposer,
     committer: Committer,
     prover: Prover,
+}
+
+impl L2Config {
+    pub fn to_env(&self) {
+        println!("{}", self.deployer.to_env());
+    }
 }
 
 pub fn read_toml() {
