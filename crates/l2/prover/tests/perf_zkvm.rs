@@ -82,7 +82,7 @@ async fn setup() -> (ProgramInput, Block) {
         );
         add_block(block, &store).unwrap();
     }
-    let block_to_prove = blocks.last().unwrap();
+    let block_to_prove = blocks.get(7).unwrap();
 
     let db = ExecutionDB::from_store(block_to_prove, store.clone()).unwrap();
 
