@@ -104,33 +104,13 @@ impl RpcHandler for NewPayloadV3Request {
         let block =
             get_block_from_payload(&self.payload, Some(self.parent_beacon_block_root), None)?;
         validate_fork(&block, Fork::Cancun, &context)?;
-        validate_execution_payload_v3(&self.payload)?;
-        let payload_status = {
-            // Ignore incoming
-            match context.sync_status()? {
-                SyncStatus::Active | SyncStatus::Pending => PayloadStatus::syncing(),
-                SyncStatus::Inactive => {
-                    if let Err(RpcErr::Internal(error_msg)) =
-                        validate_block_hash(&self.payload, &block)
-                    {
-                        PayloadStatus::invalid_with_err(&error_msg)
-                    } else {
-                        let blob_versioned_hashes: Vec<H256> = block
-                            .body
-                            .transactions
-                            .iter()
-                            .flat_map(|tx| tx.blob_versioned_hashes())
-                            .collect();
-
-                        if self.expected_blob_versioned_hashes != blob_versioned_hashes {
-                            PayloadStatus::invalid_with_err("Invalid blob_versioned_hashes")
-                        } else {
-                            execute_payload(&block, &context)?
-                        }
-                    }
-                }
-            }
-        };
+        validate_execution_payload_v3_v4(&self.payload)?;
+        let payload_status = handle_new_payload_v3_v4(
+            &self.payload,
+            context,
+            block,
+            self.expected_blob_versioned_hashes.clone(),
+        )?;
         serde_json::to_value(payload_status).map_err(|error| RpcErr::Internal(error.to_string()))
     }
 }
@@ -172,9 +152,9 @@ impl RpcHandler for NewPayloadV4Request {
             Some(requests_hash),
         )?;
         validate_fork(&block, Fork::Prague, &context)?;
-        // execution payload remains the same.
-        validate_execution_payload_v3(&self.payload)?;
-        let payload_status = handle_new_payload_v4(
+
+        validate_execution_payload_v3_v4(&self.payload)?;
+        let payload_status = handle_new_payload_v3_v4(
             &self.payload,
             context,
             block,
@@ -374,7 +354,7 @@ fn validate_execution_payload_v2(payload: &ExecutionPayload) -> Result<(), RpcEr
     Ok(())
 }
 
-fn validate_execution_payload_v3(payload: &ExecutionPayload) -> Result<(), RpcErr> {
+fn validate_execution_payload_v3_v4(payload: &ExecutionPayload) -> Result<(), RpcErr> {
     // Validate that only the required arguments are present
     if payload.withdrawals.is_none() {
         return Err(RpcErr::WrongParam("withdrawals".to_string()));
@@ -427,7 +407,7 @@ fn handle_new_payload_v1_v2(
     serde_json::to_value(payload_status).map_err(|error| RpcErr::Internal(error.to_string()))
 }
 
-fn handle_new_payload_v4(
+fn handle_new_payload_v3_v4(
     payload: &ExecutionPayload,
     context: RpcApiContext,
     block: Block,
