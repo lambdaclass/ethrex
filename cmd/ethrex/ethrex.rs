@@ -181,7 +181,6 @@ async fn main() {
     };
 
     let genesis = read_genesis_file(&network);
-
     store
         .add_initial_state(genesis.clone())
         .expect("Failed to create genesis block");
@@ -291,6 +290,7 @@ async fn main() {
         let metrics_api = ethrex_metrics::api::start_prometheus_metrics_api(metrics_port);
         tracker.spawn(metrics_api);
     }
+
     let dev_mode = *matches.get_one::<bool>("dev").unwrap_or(&false);
     // We do not want to start the networking module if the l2 feature is enabled.
     cfg_if::cfg_if! {
@@ -311,7 +311,7 @@ async fn main() {
                 let l1_pks = include_str!("../../test_data/private_keys_l1.txt");
                 show_rich_accounts(&genesis, l1_pks);
                 let authrpc_jwtsecret =
-                        std::fs::read(authrpc_jwtsecret).expect("Failed to read JWT secret");
+                    std::fs::read(authrpc_jwtsecret).expect("Failed to read JWT secret");
                 let head_block_hash = {
                     let current_block_number = store.get_latest_block_number().unwrap();
                     store
@@ -510,11 +510,6 @@ fn read_known_peers(file_path: PathBuf) -> Result<Vec<Node>, serde_json::Error> 
 }
 
 fn show_rich_accounts(genesis: &Genesis, contents: &str) {
-    dbg!("entro");
-    // let Ok(contents) = fs::read_to_string(path) else {
-    //     return;
-    // };
-
     let private_keys: Vec<String> = contents
         .lines()
         .filter(|line| !line.trim().is_empty())
