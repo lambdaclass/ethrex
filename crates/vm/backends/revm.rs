@@ -6,7 +6,6 @@ use crate::spec_id;
 use crate::EvmError;
 use crate::EvmState;
 use crate::ExecutionResult;
-use ethrex_common::constants::MAINNET_DEPOSIT_CONTRACT_ADDRESS;
 use ethrex_common::types::requests::Requests;
 use ethrex_storage::error::StoreError;
 use lazy_static::lazy_static;
@@ -579,9 +578,9 @@ pub fn extract_all_requests(
         }
     }
 
-    let deposit_contract_address = config
-        .deposit_contract_address
-        .unwrap_or(*MAINNET_DEPOSIT_CONTRACT_ADDRESS);
+    let deposit_contract_address = config.deposit_contract_address.ok_or(EvmError::Custom(
+        "deposit_contract_address config is missing".to_string(),
+    ))?;
 
     let deposits = Requests::from_deposit_receipts(deposit_contract_address, receipts);
     let withdrawals_data = read_withdrawal_requests(state, header, spec_id);
