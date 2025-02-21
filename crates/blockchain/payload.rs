@@ -7,9 +7,10 @@ use ethrex_common::{
     constants::GAS_PER_BLOB,
     types::{
         calculate_base_fee_per_blob_gas, calculate_base_fee_per_gas, compute_receipts_root,
-        compute_requests_hash, compute_transactions_root, compute_withdrawals_root,
-        requests::Requests, BlobsBundle, Block, BlockBody, BlockHash, BlockHeader, BlockNumber,
-        ChainConfig, MempoolTransaction, Receipt, Transaction, Withdrawal, DEFAULT_OMMERS_HASH,
+        compute_transactions_root, compute_withdrawals_root,
+        requests::{compute_requests_hash_from_requests, Requests},
+        BlobsBundle, Block, BlockBody, BlockHash, BlockHeader, BlockNumber, ChainConfig,
+        MempoolTransaction, Receipt, Transaction, Withdrawal, DEFAULT_OMMERS_HASH,
         DEFAULT_REQUESTS_HASH,
     },
     Address, Bloom, Bytes, H256, U256,
@@ -520,7 +521,7 @@ fn finalize_payload(context: &mut PayloadBuildContext) -> Result<(), ChainError>
     context.payload.header.requests_hash = context
         .chain_config()?
         .is_prague_activated(context.payload.header.timestamp)
-        .then_some(compute_requests_hash(&context.requests));
+        .then_some(compute_requests_hash_from_requests(&context.requests));
     context.payload.header.gas_used = context.payload.header.gas_limit - context.remaining_gas;
     Ok(())
 }

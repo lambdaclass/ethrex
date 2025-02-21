@@ -1,6 +1,9 @@
 use bytes::Bytes;
 use ethereum_types::Address;
+use k256::sha2::Sha256;
+use keccak_hash::H256;
 use serde::{Deserialize, Serialize};
+use sha3::Digest;
 use tracing::error;
 
 use crate::serde_utils;
@@ -160,4 +163,21 @@ fn fixed_bytes<const N: usize>(data: &[u8], offset: usize) -> [u8; N] {
         .expect("Couldn't convert to fixed bytes")
         .try_into()
         .expect("Couldn't convert to fixed bytes")
+}
+
+pub fn compute_requests_hash_from_requests(requests: &[Requests]) -> H256 {
+    let encoded_requests: Vec<EncodedRequests> = requests.iter().map(|r| r.encode()).collect();
+    compute_requests_hash(&encoded_requests)
+}
+
+// See https://github.com/ethereum/EIPs/blob/2a6b6965e64787815f7fffb9a4c27660d9683846/EIPS/eip-7685.md?plain=1#L62.
+pub fn compute_requests_hash(requests: &[EncodedRequests]) -> H256 {
+    let mut hasher = Sha256::new();
+    for request in requests {
+        let request_bytes = request.0.as_ref();
+        if request_bytes.len() > 1 {
+            hasher.update(Sha256::digest(request_bytes));
+        }
+    }
+    H256::from_slice(&hasher.finalize())
 }

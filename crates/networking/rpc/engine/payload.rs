@@ -1,10 +1,8 @@
 use ethrex_blockchain::add_block;
 use ethrex_blockchain::error::ChainError;
 use ethrex_blockchain::payload::build_payload;
-use ethrex_common::types::requests::EncodedRequests;
-use ethrex_common::types::{
-    compute_requests_hash, BlobsBundle, Block, BlockBody, BlockHash, BlockNumber, Fork,
-};
+use ethrex_common::types::requests::{compute_requests_hash, EncodedRequests};
+use ethrex_common::types::{BlobsBundle, Block, BlockBody, BlockHash, BlockNumber, Fork};
 use ethrex_common::{H256, U256};
 use serde_json::Value;
 use tracing::{debug, error, info, warn};
