@@ -228,7 +228,15 @@ impl RpcHandler for GetPayloadV3Request {
 
     fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
         let payload = get_payload(self.payload_id, &context)?;
-        validate_fork(&payload.0, Fork::Cancun, &context)?;
+        let chain_config = context.storage.get_chain_config()?;
+
+        if !chain_config.is_prague_activated(payload.0.header.timestamp) {
+            return Err(RpcErr::UnsuportedFork(format!(
+                "{:?}",
+                chain_config.get_fork(payload.0.header.timestamp)
+            )));
+        }
+
         let execution_payload_response =
             build_execution_payload_response(self.payload_id, payload, Some(false), context)?;
 
@@ -592,8 +600,8 @@ fn validate_fork(block: &Block, fork: Fork, context: &RpcApiContext) -> Result<(
     // Check timestamp matches valid fork
     let chain_config = &context.storage.get_chain_config()?;
     let current_fork = chain_config.get_fork(block.header.timestamp);
-    // If current_fork is less than Fork::Cancun, return an error.
-    if current_fork < fork {
+
+    if current_fork != fork {
         return Err(RpcErr::UnsuportedFork(format!("{current_fork:?}")));
     }
     Ok(())
