@@ -45,7 +45,7 @@ const CAP_ETH_68: (Capability, u8) = (Capability::Eth, 68);
 const CAP_SNAP_1: (Capability, u8) = (Capability::Snap, 1);
 const SUPPORTED_CAPABILITIES: [(Capability, u8); 3] = [CAP_P2P_5, CAP_ETH_68, CAP_SNAP_1];
 const PERIODIC_TASKS_CHECK_INTERVAL: std::time::Duration = std::time::Duration::from_secs(15);
-const BROADCAST_TX_FROM_MEMPOOL_INTERVAL: std::time::Duration = std::time::Duration::from_secs(10);
+const BROADCAST_TX_FROM_MEMPOOL_INTERVAL: std::time::Duration = std::time::Duration::from_secs(1);
 
 pub(crate) type Aes256Ctr64BE = ctr::Ctr64BE<aes::Aes256>;
 
