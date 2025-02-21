@@ -518,13 +518,7 @@ impl StoreEngine for Store {
             let key =
                 <(H256, u64) as Into<TupleRLP<BlockHash, Index>>>::into((block_hash, index as u64));
             let value = <Receipt as Into<ReceiptRLP>>::into(receipt);
-            let chunks = self.dup_sort_split_into_chunks::<Receipts>(value.bytes())?;
-
-            for chunk in chunks {
-                debug!("Chunk size {}", chunk.len());
-                debug!("RECEIPT CHUNK BYTES {:?}", chunk);
-                key_values.push((key.clone(), Rlp::<Receipt>::from_bytes(chunk)))
-            }
+            key_values.push((key.clone(), value))
         }
         tracing::debug!("Key values formed");
 
