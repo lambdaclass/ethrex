@@ -20,7 +20,6 @@ pub mod io {
         types::{Block, BlockHeader},
         H256,
     };
-    use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
     use ethrex_vm::execution_db::ExecutionDB;
     use serde::{Deserialize, Serialize};
     use serde_with::{serde_as, DeserializeAs, SerializeAs};
