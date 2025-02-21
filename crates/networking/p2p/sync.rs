@@ -62,7 +62,7 @@ lazy_static::lazy_static! {
     };
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub enum SyncMode {
     Full,
     Snap,

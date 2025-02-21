@@ -1,7 +1,7 @@
 use bytes::Bytes;
 use directories::ProjectDirs;
 use ethrex_blockchain::{add_block, fork_choice::apply_fork_choice};
-use ethrex_common::types::{Block, Genesis};
+use ethrex_common::types::{Block, ChainConfig, Genesis};
 use ethrex_p2p::{
     kademlia::KademliaTable,
     network::{node_id_from_signing_key, peer_table},
@@ -149,8 +149,6 @@ async fn main() {
         Err(e) => error!("Could not read from peers file: {}", e),
     };
 
-    let sync_mode = sync_mode(&matches);
-
     let evm = matches.get_one::<EVM>("evm").unwrap_or(&EVM::REVM);
     let evm = EVM_BACKEND.get_or_init(|| evm.clone());
     info!("EVM_BACKEND set to: {:?}", evm);
@@ -202,6 +200,7 @@ async fn main() {
 
         import_blocks(&store, &blocks);
     }
+    let sync_mode = sync_mode(&matches, &genesis.config);
 
     let jwt_secret = read_jwtsecret_file(authrpc_jwtsecret);
 
@@ -401,13 +400,26 @@ fn parse_socket_addr(addr: &str, port: &str) -> io::Result<SocketAddr> {
         ))
 }
 
-fn sync_mode(matches: &clap::ArgMatches) -> SyncMode {
+fn sync_mode(matches: &clap::ArgMatches, chain_config: &ChainConfig) -> SyncMode {
     let syncmode = matches.get_one::<String>("syncmode");
-    match syncmode {
+    let sync_mode = match syncmode {
         Some(mode) if mode == "full" => SyncMode::Full,
         Some(mode) if mode == "snap" => SyncMode::Snap,
+        None => SyncMode::Full,
         other => panic!("Invalid syncmode {:?} expected either snap or full", other),
+    };
+    if sync_mode == SyncMode::Full
+        && (chain_config
+            .terminal_total_difficulty
+            .is_some_and(|t_difficulty| t_difficulty != 0)
+            || !chain_config.terminal_total_difficulty_passed)
+    {
+        if syncmode.is_some() {
+            warn!("Using full sync for a chain that has POW is not supported, using snap sync");
+        }
+        return SyncMode::Snap;
     }
+    sync_mode
 }
 
 fn set_datadir(datadir: &str) -> String {
