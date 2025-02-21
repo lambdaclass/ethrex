@@ -1,8 +1,6 @@
 use std::{borrow::Borrow, panic::RefUnwindSafe, sync::Arc};
 
-use crate::rlp::{
-    AccountHashRLP, AccountStateRLP, BlockRLP, Rlp, TransactionHashRLP,
-};
+use crate::rlp::{AccountHashRLP, AccountStateRLP, BlockRLP, Rlp, TransactionHashRLP};
 use crate::store::MAX_SNAPSHOT_READS;
 use crate::trie_db::{redb::RedBTrie, redb_multitable::RedBMultiTableTrieDB};
 use crate::{
