@@ -66,10 +66,12 @@ impl Store {
             .map_err(StoreError::LibmdbxError)?;
 
         debug!("Inserting values");
+        let mut cursor = txn.cursor::<T>().map_err(StoreError::LibmdbxError)?;
         for (key, value) in key_values {
             // limit size followed according to docs:
             // see https://github.com/erthink/libmdbx/tree/master?tab=readme-ov-file#limitations
-            txn.upsert::<T>(key, value)
+            cursor
+                .upsert(key, value)
                 .map_err(StoreError::LibmdbxError)?;
         }
         debug!("Finished inserting values");
@@ -102,10 +104,10 @@ impl Store {
             .stat()
             .map_err(|e| StoreError::LibmdbxError(e.into()))?
             .page_size();
-
         // limit size followed according to docs:
         // see https://github.com/erthink/libmdbx/tree/master?tab=readme-ov-file#limitations
         let max_size = page_size / 2;
+        debug!("PAGE SIZE {} MAX SIZE {}", page_size, max_size);
 
         let chunks: Vec<Vec<u8>> = data.chunks(max_size as usize).map(|i| i.to_vec()).collect();
 
@@ -524,6 +526,7 @@ impl StoreEngine for Store {
             let chunks = self.dup_sort_split_into_chunks::<Receipts>(value.bytes())?;
 
             for chunk in chunks {
+                debug!("Chunk size {}", chunk.len());
                 key_values.push((key.clone(), Rlp::<Receipt>::from_bytes(chunk)))
             }
         }
