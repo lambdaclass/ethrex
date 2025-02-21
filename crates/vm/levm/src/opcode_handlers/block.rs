@@ -96,10 +96,15 @@ impl VM {
     ) -> Result<OpcodeResult, VMError> {
         current_call_frame.increase_consumed_gas(gas_cost::PREVRANDAO)?;
 
-        let randao = self.env.prev_randao.unwrap_or_default(); // Assuming block_env has been integrated
-        current_call_frame
-            .stack
-            .push(U256::from_big_endian(randao.0.as_slice()))?;
+        // https://eips.ethereum.org/EIPS/eip-4399
+        // After Paris the prev randao is the prev_randao (or current_random) field
+        let randao = if self.env.config.fork >= Fork::Paris {
+            let randao = self.env.prev_randao.unwrap_or_default(); // Assuming prev_randao has been integrated
+            U256::from_big_endian(randao.0.as_slice())
+        } else {
+            self.env.difficulty
+        };
+        current_call_frame.stack.push(randao)?;
 
         Ok(OpcodeResult::Continue { pc_increment: 1 })
     }

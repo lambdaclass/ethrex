@@ -141,6 +141,7 @@ pub fn prepare_vm_for_tx(
             coinbase: test.env.current_coinbase,
             timestamp: test.env.current_timestamp,
             prev_randao: test.env.current_random,
+            difficulty: test.env.current_difficulty,
             chain_id: U256::from(1),
             base_fee_per_gas: test.env.current_base_fee.unwrap_or_default(),
             gas_price: effective_gas_price(test, &tx)?,
