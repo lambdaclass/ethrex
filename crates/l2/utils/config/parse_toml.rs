@@ -34,10 +34,35 @@ struct Eth {
     rpc_url: String,
 }
 
+impl Eth {
+    pub fn to_env(&self) -> String {
+        let prefix = "ETH";
+        format!(
+            "
+{prefix}_RPC_URL={},
+",
+            self.rpc_url,
+        )
+    }
+}
+
 #[derive(Deserialize, Debug)]
 struct Auth {
     rpc_url: String,
     jwt_path: String,
+}
+
+impl Auth {
+    pub fn to_env(&self) -> String {
+        let prefix = "ETH";
+        format!(
+            "
+{prefix}_RPC_URL={},
+{prefix}_JWT_PATH={},
+",
+            self.rpc_url, self.jwt_path,
+        )
+    }
 }
 
 #[derive(Deserialize, Debug)]
@@ -46,6 +71,24 @@ struct Watcher {
     check_interval_ms: u64,
     max_block_step: u64,
     l2_proposer_private_key: String,
+}
+
+impl Watcher {
+    pub fn to_env(&self) -> String {
+        let prefix = "ETH";
+        format!(
+            "
+{prefix}_BRIDGE_ADDRESS={},
+{prefix}_CHECK_INTERVAL_MS={},
+{prefix}_MAX_BLOCK_STEP={},
+{prefix}_L2_PROPOSER_PRIVATE_KEY={},
+",
+            self.bridge_address,
+            self.check_interval_ms,
+            self.max_block_step,
+            self.l2_proposer_private_key
+        )
+    }
 }
 
 #[derive(Deserialize, Debug)]
@@ -83,6 +126,9 @@ struct L2Config {
 impl L2Config {
     pub fn to_env(&self) {
         println!("{}", self.deployer.to_env());
+        println!("{}", self.eth.to_env());
+        println!("{}", self.auth.to_env());
+        println!("{}", self.watcher.to_env());
     }
 }
 
