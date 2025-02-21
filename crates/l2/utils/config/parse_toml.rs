@@ -143,6 +143,23 @@ impl Committer {
 struct Prover {
     sp1_prover: String,
     risc0_dev_mode: u64,
+    client: Client,
+    server: Server,
+}
+
+#[derive(Deserialize, Debug)]
+struct Client {
+    prover_server_endpoint: String,
+    interval_ms: u64,
+}
+
+#[derive(Deserialize, Debug)]
+struct Server {
+    listen_ip: String,
+    listen_port: u64,
+    verifier_address: String,
+    verifier_private_key: String,
+    dev_mode: bool,
 }
 
 impl Prover {
@@ -178,14 +195,15 @@ impl L2Config {
         println!("{}", self.proposer.to_env());
         println!("{}", self.committer.to_env());
         println!("{}", self.prover.to_env());
+        dbg!("JAAAAAAAAAAAAAAAAAAAAAAAAAAAA");
     }
 }
 
 pub fn read_toml() {
     println!("Hello ARGENTINA");
     let file = std::fs::read_to_string("config.toml").unwrap();
-    // let file = file.replace("\n", "");
     println!("{}\n", &file);
     let config: L2Config = toml::from_str(&file).unwrap();
-    dbg!(config);
+    dbg!(&config.prover.server);
+    config.to_env();
 }
