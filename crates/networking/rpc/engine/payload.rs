@@ -1,5 +1,4 @@
 use ethrex_blockchain::error::ChainError;
-use ethrex_blockchain::payload::build_payload;
 use ethrex_common::types::{BlobsBundle, Block, BlockBody, BlockHash, BlockNumber, Fork};
 use ethrex_common::{H256, U256};
 use serde_json::Value;
@@ -543,8 +542,17 @@ fn build_execution_payload_response(
             should_override_builder,
         })
     } else {
-        let (blobs_bundle, block_value) = build_payload(&mut payload_block, &context.storage)
-            .map_err(|err| RpcErr::Internal(err.to_string()))?;
+        let result = {
+            let syncer = context
+                .syncer
+                .try_lock()
+                .map_err(|_| RpcErr::Internal("Error locking syncer".to_string()))?;
+            syncer
+                .blockchain
+                .build_payload(&mut payload_block, &context.storage)
+                .map_err(|err| RpcErr::Internal(err.to_string()))?
+        };
+        let (blobs_bundle, block_value) = result;
 
         context.storage.update_payload(
             payload_id,

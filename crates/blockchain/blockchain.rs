@@ -25,7 +25,7 @@ use ethrex_vm::db::evm_state;
 //TODO: Implement a struct Chain or BlockChain to encapsulate
 //functionality and canonical chain state and config
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct Blockchain {
     pub vm: EVM,
 }
@@ -77,12 +77,6 @@ impl Blockchain {
         store_receipts(storage, receipts, block_hash)?;
 
         Ok(())
-    }
-}
-
-impl Default for Blockchain {
-    fn default() -> Self {
-        Self { vm: EVM::default() }
     }
 }
 

@@ -6,7 +6,7 @@ mod blockchain_integration_test {
         error::{ChainError, InvalidForkChoice},
         fork_choice::apply_fork_choice,
         is_canonical, latest_canonical_block_hash,
-        payload::{build_payload, create_payload, BuildPayloadArgs},
+        payload::{create_payload, BuildPayloadArgs},
         Blockchain,
     };
 
@@ -260,7 +260,9 @@ mod blockchain_integration_test {
         };
 
         let mut block = create_payload(&args, store).unwrap();
-        build_payload(&mut block, store).unwrap();
+        Blockchain::default()
+            .build_payload(&mut block, store)
+            .unwrap();
         block
     }
 
