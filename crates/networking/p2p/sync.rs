@@ -151,7 +151,7 @@ impl SyncManager {
         store: Store,
     ) -> Result<(), SyncError> {
         // Check if we have some blocks downloaded from a previous attempt
-        if let Some(last_hash) = self.last_processed_header_hash {
+        if let Some(last_hash) = store.get_header_download_checkpoint()? {
             // Set latest downloaded header as current head for header fetching
             current_head = last_hash;
             //TODO check that the last hash is > current_head
@@ -208,9 +208,7 @@ impl SyncManager {
             block_headers.remove(0);
 
             // Store headers and save hashes for full block retrieval
-            self.block_hashes.extend_from_slice(&block_hashes[..]);
             store.add_block_headers(block_hashes.clone(), block_headers)?;
-            self.last_processed_header_hash = Some(last_block_header.compute_block_hash());
 
             match self.sync_mode {
                 SyncMode::Full => {
