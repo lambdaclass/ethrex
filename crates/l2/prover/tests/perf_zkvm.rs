@@ -82,7 +82,7 @@ async fn setup() -> (ProgramInput, Block) {
         );
         add_block(block, &store).unwrap();
     }
-    let block_to_prove = blocks.last().unwrap();
+    let block_to_prove = blocks.get(7).unwrap();
 
     let parent_block_header = store
         .get_block_header_by_hash(block_to_prove.header.parent_hash)
