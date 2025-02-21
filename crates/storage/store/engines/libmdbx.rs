@@ -549,7 +549,7 @@ impl StoreEngine for Store {
     }
 
     fn get_receipts_for_block(&self, block_hash: &BlockHash) -> Result<Vec<Receipt>, StoreError> {
-        let mut receipts: Vec<ReceiptRLP> = vec![];
+        let mut receipts: Vec<Vec<u8>> = vec![];
         let mut receipt_index = 0;
         let mut key: TupleRLP<BlockHash, Index> = (*block_hash, 0).into();
         let txn = self.db.begin_read().map_err(|_| StoreError::ReadError)?;
@@ -562,20 +562,21 @@ impl StoreEngine for Store {
         // So we search for values in the db that match with this kind
         // of key, until we reach an Index that returns None
         // and we stop the search.
-        while let Some((_, encoded_receipt)) =
-            cursor.seek_exact(key).map_err(|_| StoreError::ReadError)?
-        {
+        while let Some((_, value)) = cursor.seek_exact(key).map_err(StoreError::LibmdbxError)? {
             let mut receipt_bytes = vec![];
-            receipt_bytes.extend_from_slice(encoded_receipt.bytes());
-            while let Some((_, chunk)) = cursor.next().map_err(StoreError::LibmdbxError)? {
-                receipt_bytes.extend_from_slice(chunk.bytes());
+            receipt_bytes.extend_from_slice(&value.bytes());
+            while let Some((_, value)) = cursor.next_value().map_err(StoreError::LibmdbxError)? {
+                receipt_bytes.extend_from_slice(&value.bytes());
             }
-            receipts.push(ReceiptRLP::from_bytes(receipt_bytes));
+            receipts.push(receipt_bytes);
             receipt_index += 1;
             key = (*block_hash, receipt_index).into();
         }
 
-        Ok(receipts.into_iter().map(|receipt| receipt.to()).collect())
+        Ok(receipts
+            .into_iter()
+            .map(|receipt| Receipt::decode(&receipt).unwrap())
+            .collect())
     }
 
     fn set_header_download_checkpoint(&self, block_hash: BlockHash) -> Result<(), StoreError> {
