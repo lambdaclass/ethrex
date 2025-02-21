@@ -115,6 +115,44 @@ impl RpcHandler for ForkChoiceUpdatedV3 {
         })
     }
 
+    #[cfg(feature = "based")]
+    async fn relay_to_gateway_or_fallback(
+        req: &RpcRequest,
+        context: RpcApiContext,
+    ) -> Result<Value, RpcErr> {
+        info!("Relaying engine_forkchoiceUpdatedV3 to gateway");
+
+        let request = Self::parse(&req.params)?;
+
+        let gateway_auth_client = context.gateway_auth_client.clone();
+
+        let gateway_request = gateway_auth_client
+            .engine_forkchoice_updated_v3(request.fork_choice_state, request.payload_attributes);
+
+        // Parse it again as it was consumed for gateway_response and it is the same as cloning it.
+        let request = Self::parse(&req.params)?;
+        let client_response = request.handle(context);
+
+        let gateway_response = gateway_request
+            .await
+            .map_err(|err| {
+                RpcErr::Internal(format!(
+                    "Could not relay engine_forkchoiceUpdatedV3 to gateway: {err}",
+                ))
+            })
+            .and_then(|response| {
+                serde_json::to_value(response).map_err(|error| RpcErr::Internal(error.to_string()))
+            });
+
+        if gateway_response.is_err() {
+            warn!(error = ?gateway_response, "Gateway engine_forkchoiceUpdatedV3 failed, falling back to local node");
+        } else {
+            info!("Successfully relayed engine_forkchoiceUpdatedV3 to gateway");
+        }
+
+        gateway_response.or(client_response)
+    }
+
     fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
         let (head_block_opt, mut response) =
             handle_forkchoice(&self.fork_choice_state, context.clone(), 3)?;

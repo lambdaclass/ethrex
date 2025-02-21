@@ -81,6 +81,8 @@ pub enum ProposerError {
     StorageDataIsNone,
     #[error("Proposer failed to read jwt_secret: {0}")]
     FailedToReadJWT(#[from] std::io::Error),
+    #[error("Proposer failed to decode jwt_secret: {0}")]
+    FailedToDecodeJWT(#[from] hex::FromHexError),
 }
 
 #[derive(Debug, thiserror::Error)]
