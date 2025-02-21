@@ -5,6 +5,12 @@ pub mod mempool;
 pub mod payload;
 mod smoke_test;
 
+use std::{
+    time::Instant,
+    sync::atomic::{AtomicU64, Ordering},
+};
+use tracing::info;
+
 use error::{ChainError, InvalidBlockError};
 use ethrex_common::constants::GAS_PER_BLOB;
 use ethrex_common::types::requests::{compute_requests_hash, EncodedRequests, Requests};
@@ -23,12 +29,20 @@ use ethrex_vm::{backends::BlockExecutionResult, get_evm_backend_or_default};
 //TODO: Implement a struct Chain or BlockChain to encapsulate
 //functionality and canonical chain state and config
 
+static GAS_COUNTER: AtomicU64 = AtomicU64::new(0);
+
+pub fn get_gas_counter() -> u64 {
+    GAS_COUNTER.load(Ordering::Relaxed)
+}
+
 /// Adds a new block to the store. It may or may not be canonical, as long as its ancestry links
 /// with the canonical chain and its parent's post-state is calculated. It doesn't modify the
 /// canonical chain/head. Fork choice needs to be updated for that in a separate step.
 ///
 /// Performs pre and post execution validation, and updates the database with the post state.
 pub fn add_block(block: &Block, storage: &Store) -> Result<(), ChainError> {
+    let since = Instant::now();
+
     let block_hash = block.header.compute_block_hash();
 
     // Validate if it can be the new head and find the parent
@@ -68,6 +82,20 @@ pub fn add_block(block: &Block, storage: &Store) -> Result<(), ChainError> {
 
     store_block(storage, block.clone())?;
     store_receipts(storage, receipts, block_hash)?;
+
+    let old_counter = GAS_COUNTER.fetch_add(block.header.gas_used, Ordering::Relaxed);
+    // Detect overflow, if this happens two or more times between reads they will be
+    // underestimated by (N-1) * u64::MAX, where N is the number of overflows in that
+    // period.
+    if old_counter.checked_add(block.header.gas_used).is_none() {
+        info!("GAS_COUNTER overflowed");
+    }
+
+    let interval = Instant::now().duration_since(since).as_millis();
+    if interval != 0 {
+        let throughput = (block.header.gas_used as u128 / interval) * 1000;
+        info!("[METRIC] BLOCK THROUGHPUT: {throughput} Gas/s TIME SPENT: {interval} msecs");
+    }
 
     Ok(())
 }
