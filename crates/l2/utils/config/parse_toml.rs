@@ -54,7 +54,7 @@ struct Auth {
 
 impl Auth {
     pub fn to_env(&self) -> String {
-        let prefix = "ETH";
+        let prefix = "AUTH";
         format!(
             "
 {prefix}_RPC_URL={},
@@ -75,7 +75,7 @@ struct Watcher {
 
 impl Watcher {
     pub fn to_env(&self) -> String {
-        let prefix = "ETH";
+        let prefix = "WATCHER";
         format!(
             "
 {prefix}_BRIDGE_ADDRESS={},
