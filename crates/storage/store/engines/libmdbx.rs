@@ -522,6 +522,7 @@ impl StoreEngine for Store {
 
             for chunk in chunks {
                 debug!("Chunk size {}", chunk.len());
+                debug!("RECEIPT CHUNK BYTES {:?}", chunk);
                 key_values.push((key.clone(), Rlp::<Receipt>::from_bytes(chunk)))
             }
         }
@@ -565,7 +566,9 @@ impl StoreEngine for Store {
         while let Some((_, value)) = cursor.seek_exact(key).map_err(StoreError::LibmdbxError)? {
             let mut receipt_bytes = vec![];
             receipt_bytes.extend_from_slice(&value.bytes());
+            debug!("RECEIPT CHUNK BYTES {:?}", value.bytes());
             while let Some((_, value)) = cursor.next_value().map_err(StoreError::LibmdbxError)? {
+                debug!("RECEIPT CHUNK BYTES {:?}", value.bytes());
                 receipt_bytes.extend_from_slice(&value.bytes());
             }
             receipts.push(receipt_bytes);
