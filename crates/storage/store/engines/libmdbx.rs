@@ -99,17 +99,12 @@ impl Store {
         &self,
         data: &[u8],
     ) -> Result<Vec<Vec<u8>>, StoreError> {
-        let page_size = self
-            .db
-            .stat()
-            .map_err(|e| StoreError::LibmdbxError(e.into()))?
-            .page_size();
-        // limit size followed according to docs:
+        // We are implementing the default page size of 4096 bytes
+        // the maximum key-value size is 2022 according to the official docs:
         // see https://github.com/erthink/libmdbx/tree/master?tab=readme-ov-file#limitations
-        let max_size = page_size / 2;
-        debug!("PAGE SIZE {} MAX SIZE {}", page_size, max_size);
-
-        let chunks: Vec<Vec<u8>> = data.chunks(max_size as usize).map(|i| i.to_vec()).collect();
+        // and here https://libmdbx.dqdkfa.ru/structmdbx_1_1env_1_1geometry.html#a45048bf2de9120d01dae2151c060d459
+        let max_size = 2022;
+        let chunks: Vec<Vec<u8>> = data.chunks(max_size).map(|i| i.to_vec()).collect();
 
         Ok(chunks)
     }
@@ -519,7 +514,7 @@ impl StoreEngine for Store {
         tracing::debug!("Receipts number {}: {:?}", receipts.len(), receipts);
         let mut key_values = vec![];
 
-        for (index, receipt) in receipts.into_iter().enumerate() {
+        for (index, receipt) in receipts.clone().into_iter().enumerate() {
             let key =
                 <(H256, u64) as Into<TupleRLP<BlockHash, Index>>>::into((block_hash, index as u64));
             let value = <Receipt as Into<ReceiptRLP>>::into(receipt);
@@ -537,11 +532,24 @@ impl StoreEngine for Store {
         let a = self.write_batch::<Receipts>(key_values.into_iter());
 
         tracing::debug!("Finished writing in batch");
+
+        tracing::debug!("About to get stored receipts");
+        // retrieve receipts to make sure they were store alright in chunks
+        // temporarily here for testing purposes
+        let stored_receipts = self.get_receipts_for_block(&block_hash)?;
+        tracing::debug!(
+            "Stored receipts number {}: {:?}",
+            stored_receipts.len(),
+            stored_receipts
+        );
+        assert_eq!(receipts, stored_receipts);
+        tracing::debug!("Finished verifying stored receipts");
+
         a
     }
 
     fn get_receipts_for_block(&self, block_hash: &BlockHash) -> Result<Vec<Receipt>, StoreError> {
-        let mut receipts = vec![];
+        let mut receipts: Vec<ReceiptRLP> = vec![];
         let mut receipt_index = 0;
         let mut key: TupleRLP<BlockHash, Index> = (*block_hash, 0).into();
         let txn = self.db.begin_read().map_err(|_| StoreError::ReadError)?;
@@ -557,7 +565,12 @@ impl StoreEngine for Store {
         while let Some((_, encoded_receipt)) =
             cursor.seek_exact(key).map_err(|_| StoreError::ReadError)?
         {
-            receipts.push(encoded_receipt);
+            let mut receipt_bytes = vec![];
+            receipt_bytes.extend_from_slice(encoded_receipt.bytes());
+            while let Some((_, chunk)) = cursor.next().map_err(StoreError::LibmdbxError)? {
+                receipt_bytes.extend_from_slice(chunk.bytes());
+            }
+            receipts.push(ReceiptRLP::from_bytes(receipt_bytes));
             receipt_index += 1;
             key = (*block_hash, receipt_index).into();
         }
