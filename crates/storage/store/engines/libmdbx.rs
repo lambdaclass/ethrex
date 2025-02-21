@@ -26,7 +26,7 @@ use libmdbx::{
     orm::{table, Database},
     table_info,
 };
-use libmdbx::{DatabaseOptions, Mode, ReadWriteOptions};
+use libmdbx::{DatabaseOptions, Mode, PageSize, ReadWriteOptions};
 use serde_json;
 use std::fmt::{Debug, Formatter};
 use std::path::Path;
@@ -978,6 +978,7 @@ pub fn init_db(path: Option<impl AsRef<Path>>) -> Database {
     .collect();
     let path = path.map(|p| p.as_ref().to_path_buf());
     let options = DatabaseOptions {
+        page_size: Some(PageSize::Set(65536)),
         mode: Mode::ReadWrite(ReadWriteOptions {
             // Set max DB size to 1TB
             max_size: Some(1024_isize.pow(4)),
