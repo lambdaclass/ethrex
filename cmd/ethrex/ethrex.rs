@@ -181,7 +181,6 @@ async fn main() {
     };
 
     let genesis = read_genesis_file(&network);
-    show_rich_accounts(&genesis);
 
     store
         .add_initial_state(genesis.clone())
@@ -301,6 +300,7 @@ async fn main() {
                 error!("Cannot run with DEV_MODE if the `l2` feature is enabled.");
                 panic!("Run without the --dev argument.");
             }
+            show_rich_accounts(&genesis, "../../test_data/private_keys.txt");
             let l2_proposer = ethrex_l2::start_proposer(store).into_future();
             tracker.spawn(l2_proposer);
         } else if #[cfg(feature = "dev")] {
@@ -308,7 +308,8 @@ async fn main() {
             // Start the block_producer module if devmode was set
             if dev_mode {
                 info!("Runnning in DEV_MODE");
-                let authrpc_jwtsecret =
+            show_rich_accounts(&genesis, "test_data/private_keys_l1.txt");
+            let authrpc_jwtsecret =
                     std::fs::read(authrpc_jwtsecret).expect("Failed to read JWT secret");
                 let head_block_hash = {
                     let current_block_number = store.get_latest_block_number().unwrap();
@@ -507,8 +508,8 @@ fn read_known_peers(file_path: PathBuf) -> Result<Vec<Node>, serde_json::Error> 
     serde_json::from_reader(file)
 }
 
-fn show_rich_accounts(genesis: &Genesis) {
-    let Ok(contents) = fs::read_to_string("../../test_data/private_keys.txt") else {
+fn show_rich_accounts(genesis: &Genesis, path: &str) {
+    let Ok(contents) = fs::read_to_string(path) else {
         return;
     };
 
