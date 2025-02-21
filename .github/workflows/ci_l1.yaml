@@ -153,7 +153,7 @@ jobs:
         include:
           - name: "Rpc Compat tests"
             simulation: ethereum/rpc-compat
-            test_pattern: /debug_getRawBlock|debug_getRawHeader|debug_getRawReceipts|debug_getRawTransaction|eth_blobBaseFee|eth_blockNumber|eth_call|eth_chainId|eth_createAccessList|eth_estimateGas|eth_getBalance|eth_getBlockByHash|eth_getBlockByNumber|eth_getBlockReceipts|eth_getBlockTransactionCountByHash|eth_getBlockTransactionCountByNumber|eth_getCode|eth_getLogs|eth_getProof|eth_getStorageAt|eth_getTransactionByBlockHashAndIndex|eth_getTransactionByBlockNumberAndIndex|eth_getTransactionByHash|eth_getTransactionCount|eth_getTransactionReceipt|eth_sendRawTransaction|eth_syncing
+            test_pattern: ""
           - name: "Devp2p discv4 tests"
             simulation: devp2p
             test_pattern: discv4

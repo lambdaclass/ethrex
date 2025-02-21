@@ -1,20 +1,31 @@
+use ethrex_blockchain::payload::{calc_excess_blob_gas, calc_gas_limit};
 use ethrex_common::{
     constants::GAS_PER_BLOB,
-    types::{Block, Transaction},
+    types::{
+        calculate_base_fee_per_blob_gas, calculate_base_fee_per_gas, Block, BlockHeader,
+        Transaction,
+    },
 };
 use serde::Serialize;
 use serde_json::Value;
 use tracing::info;
 
-use crate::{types::block_identifier::BlockIdentifier, utils::RpcErr, RpcApiContext, RpcHandler};
-use ethrex_common::types::calculate_base_fee_per_blob_gas;
+use crate::{
+    types::block_identifier::BlockIdentifier,
+    utils::{parse_json_hex, RpcErr},
+    RpcApiContext, RpcHandler,
+};
 use ethrex_storage::Store;
+
+// Those are some offspec constants
+const MAX_PERCENTILE_ARRAY_LEN: usize = 128;
+const MAX_BLOCK_COUNT: u64 = 1024;
 
 #[derive(Clone, Debug)]
 pub struct FeeHistoryRequest {
     pub block_count: u64,
     pub newest_block: BlockIdentifier,
-    pub reward_percentiles: Option<Vec<f32>>,
+    pub reward_percentiles: Vec<f32>,
 }
 
 #[derive(Serialize, Default, Clone, Debug)]
@@ -28,44 +39,48 @@ pub struct FeeHistoryResponse {
     pub reward: Vec<Vec<String>>,
 }
 
+// Implemented by reading:
+// - https://github.com/ethereum/EIPs/blob/master/EIPS/eip-4844.md
+// - https://ethereum.github.io/execution-apis/api-documentation/
+// - https://github.com/ethereum/go-ethereum/blob/master/eth/gasprice/feehistory.go
 impl RpcHandler for FeeHistoryRequest {
     fn parse(params: &Option<Vec<Value>>) -> Result<FeeHistoryRequest, RpcErr> {
         let params = params
             .as_ref()
             .ok_or(RpcErr::BadParams("No params provided".to_owned()))?;
-        if params.len() < 2 || params.len() > 3 {
+        if params.len() != 3 {
             return Err(RpcErr::BadParams(format!(
-                "Expected 2 or 3 params, got {}",
+                "Expected 3 params, got {}",
                 params.len()
             )));
         };
-
-        let reward_percentiles = match params.get(2).cloned() {
-            Some(rp) => {
-                let rp: Vec<f32> = serde_json::from_value(rp)?;
-                let all_ok = rp
-                    .windows(2)
-                    .all(|w| w[0] <= w[1] || w[0] >= 0.0 && w[0] <= 100.0);
-                // We want to return None if any value is wrong
-                Some(
-                    all_ok
-                        .then_some(rp)
-                        .ok_or(RpcErr::BadParams("Some of the params are wrong".to_owned()))?,
-                )
-            }
-            None => None,
-        };
-
-        let block_count_str: String = serde_json::from_value(params[0].clone())?;
-        let block_count_str = block_count_str.strip_prefix("0x").ok_or(RpcErr::BadParams(
-            "Expected param to be 0x prefixed".to_owned(),
-        ))?;
+        let block_count: u64 = parse_json_hex(&params[0]).map_err(RpcErr::BadParams)?;
+        // NOTE: This check is offspec
+        if block_count > MAX_BLOCK_COUNT {
+            return Err(RpcErr::BadParams(
+                "Too large block_count parameter".to_owned(),
+            ));
+        }
+        let rp: Vec<f32> = serde_json::from_value(params[2].clone())?;
+        // NOTE: This check is offspec
+        if rp.len() > MAX_PERCENTILE_ARRAY_LEN {
+            return Err(RpcErr::BadParams(
+                format!("Wrong size reward_percentiles parameter, must be {MAX_PERCENTILE_ARRAY_LEN} at max"),
+            ));
+        }
+        // Restric them to be monotnically increasing and in the range [0.0; 100.0]
+        let mut ok = rp.iter().all(|a| *a >= 0.0 && *a <= 100.0);
+        ok &= rp.windows(2).all(|w| w[0] <= w[1]);
+        if !ok {
+            return Err(RpcErr::BadParams(
+                "Wrong reward_percentiles parameter".to_owned(),
+            ));
+        }
 
         Ok(FeeHistoryRequest {
-            block_count: u64::from_str_radix(block_count_str, 16)
-                .map_err(|error| RpcErr::BadParams(error.to_string()))?,
-            newest_block: BlockIdentifier::parse(params[0].clone(), 0)?,
-            reward_percentiles,
+            block_count,
+            newest_block: BlockIdentifier::parse(params[1].clone(), 0)?,
+            reward_percentiles: rp,
         })
     }
 
@@ -82,17 +97,17 @@ impl RpcHandler for FeeHistoryRequest {
                 .map_err(|error| RpcErr::Internal(error.to_string()));
         }
 
-        let (start_block, end_block) =
-            Self::get_range(storage, self.block_count, &self.newest_block)?;
+        let (start_block, end_block) = get_range(storage, self.block_count, &self.newest_block)?;
         let oldest_block = start_block;
-        let block_count = (end_block - start_block) as usize;
-        let mut base_fee_per_gas = Vec::<u64>::with_capacity(block_count + 1);
-        let mut base_fee_per_blob_gas = Vec::<u64>::with_capacity(block_count + 1);
-        let mut gas_used_ratio = Vec::<f64>::with_capacity(block_count);
-        let mut blob_gas_used_ratio = Vec::<f64>::with_capacity(block_count);
+        let block_count = (end_block - start_block + 1) as usize;
+        let mut base_fee_per_gas = vec![0_u64; block_count + 1];
+        let mut base_fee_per_blob_gas = vec![0_u64; block_count + 1];
+        let mut gas_used_ratio = vec![0_f64; block_count];
+        let mut blob_gas_used_ratio = vec![0_f64; block_count];
         let mut reward = Vec::<Vec<u64>>::with_capacity(block_count);
 
-        for block_number in start_block..end_block {
+        for block_number in start_block..=end_block {
+            let idx: usize = (block_number - start_block) as usize;
             let header = storage
                 .get_block_header(block_number)?
                 .ok_or(RpcErr::Internal(format!(
@@ -104,14 +119,6 @@ impl RpcHandler for FeeHistoryRequest {
                     "Could not get body for block {block_number}"
                 )))?;
 
-            let blob_base_fee = calculate_base_fee_per_blob_gas(
-                header.excess_blob_gas.unwrap_or_default(),
-                config
-                    .get_fork_blob_schedule(header.timestamp)
-                    .map(|schedule| schedule.base_fee_update_fraction)
-                    .unwrap_or_default(),
-            );
-
             let max_blob_gas_per_block = config
                 .get_fork_blob_schedule(header.timestamp)
                 .map(|schedule| schedule.max * GAS_PER_BLOB);
@@ -122,33 +129,41 @@ impl RpcHandler for FeeHistoryRequest {
                 _ => 0.0,
             };
 
-            base_fee_per_gas.push(header.base_fee_per_gas.unwrap_or_default());
-            base_fee_per_blob_gas.push(blob_base_fee);
-            gas_used_ratio.push(header.gas_used as f64 / header.gas_limit as f64);
-            blob_gas_used_ratio.push(blob_gas_used_r);
-
-            if let Some(percentiles) = &self.reward_percentiles {
-                let block = Block::new(header, body);
-                reward.push(Self::calculate_percentiles_for_block(block, percentiles));
-            }
-        }
-
-        // Now we project base_fee_per_gas and base_fee_per_blob_gas from last block
-        let header = storage
-            .get_block_header(end_block)?
-            .ok_or(RpcErr::Internal(format!(
-                "Could not get header for block {end_block}"
-            )))?;
-
-        let blob_base_fee = calculate_base_fee_per_blob_gas(
-            header.excess_blob_gas.unwrap_or_default(),
-            config
+            let base_fee_update_fraction = config
                 .get_fork_blob_schedule(header.timestamp)
                 .map(|schedule| schedule.base_fee_update_fraction)
-                .unwrap_or_default(),
-        );
-        base_fee_per_gas.push(header.base_fee_per_gas.unwrap_or_default());
-        base_fee_per_blob_gas.push(blob_base_fee);
+                .unwrap_or_default();
+
+            let blob_base_fee = calculate_base_fee_per_blob_gas(
+                header.excess_blob_gas.unwrap_or_default(),
+                base_fee_update_fraction,
+            );
+
+            base_fee_per_gas[idx] = header.base_fee_per_gas.unwrap_or_default();
+            base_fee_per_blob_gas[idx] = blob_base_fee;
+            gas_used_ratio[idx] = header.gas_used as f64 / header.gas_limit as f64;
+            blob_gas_used_ratio[idx] = blob_gas_used_r;
+
+            if block_number == end_block {
+                let blob_target = config
+                    .get_fork_blob_schedule(header.timestamp)
+                    .map(|schedule| schedule.target)
+                    .unwrap_or_default();
+
+                (base_fee_per_gas[idx + 1], base_fee_per_blob_gas[idx + 1]) =
+                    project_next_block_base_fee_values(
+                        &header,
+                        base_fee_update_fraction,
+                        blob_target,
+                    );
+            }
+            if !self.reward_percentiles.is_empty() {
+                reward.push(calculate_percentiles_for_block(
+                    Block::new(header, body),
+                    &self.reward_percentiles,
+                ));
+            }
+        }
 
         let u64_to_hex_str = |x: u64| format!("0x{:x}", x);
         let response = FeeHistoryResponse {
@@ -165,76 +180,95 @@ impl RpcHandler for FeeHistoryRequest {
                 .map(|v| v.into_iter().map(u64_to_hex_str).collect())
                 .collect(),
         };
-
         serde_json::to_value(response).map_err(|error| RpcErr::Internal(error.to_string()))
     }
 }
 
-impl FeeHistoryRequest {
-    fn get_range(
-        storage: &Store,
-        block_num: u64,
-        finish_block: &BlockIdentifier,
-    ) -> Result<(u64, u64), RpcErr> {
-        // TODO: We should probably restrict how many blocks we are fetching to a certain limit
+// Project base_fee_per_gas and base_fee_per_blob_gas of next block, from provided block
+fn project_next_block_base_fee_values(
+    header: &BlockHeader,
+    base_fee_update_fraction: u64,
+    blob_target: u64,
+) -> (u64, u64) {
+    // NOTE: Given that this client supports the Paris fork and later versions, we are sure that the next block
+    // will have the London update active, so the base fee calculation makes sense
+    // Geth performs a validation for this case:
+    // -> https://github.com/ethereum/go-ethereum/blob/master/eth/gasprice/feehistory.go#L93
+    let next_gas_limit = calc_gas_limit(header.gas_limit);
+    let base_fee_per_gas = calculate_base_fee_per_gas(
+        next_gas_limit,
+        header.gas_limit,
+        header.gas_used,
+        header.base_fee_per_gas.unwrap_or_default(),
+    )
+    .unwrap_or_default();
+    let next_excess_blob_gas = calc_excess_blob_gas(
+        header.excess_blob_gas.unwrap_or_default(),
+        header.blob_gas_used.unwrap_or_default(),
+        blob_target,
+    );
+    let base_fee_per_blob =
+        calculate_base_fee_per_blob_gas(next_excess_blob_gas, base_fee_update_fraction);
+    (base_fee_per_gas, base_fee_per_blob)
+}
 
-        // Get earliest block
-        let earliest_block_num = storage.get_earliest_block_number()?;
+fn get_range(
+    storage: &Store,
+    block_count: u64,
+    expected_finish_block: &BlockIdentifier,
+) -> Result<(u64, u64), RpcErr> {
+    // NOTE: The amount of blocks to retrieve is capped by MAX_BLOCK_COUNT
 
-        // Get latest block
-        let latest_block_num = storage.get_latest_block_number()?;
-
-        // Get finish_block number
-        let finish_block = finish_block
+    // Get earliest block
+    let earliest_block_num = storage.get_earliest_block_number()?;
+    // Get latest block
+    let latest_block_num = storage.get_latest_block_number()?;
+    // Get the expected finish block number from the parameter
+    let expected_finish_block_num =
+        expected_finish_block
             .resolve_block_number(storage)?
             .ok_or(RpcErr::Internal(
                 "Could not resolve block number".to_owned(),
             ))?;
+    // Calculate start and finish block numbers, considering finish block inclusion
+    let finish_block_num = expected_finish_block_num.min(latest_block_num);
+    let expected_start_block_num = (finish_block_num + 1).saturating_sub(block_count);
+    let start_block_num = earliest_block_num.max(expected_start_block_num);
 
-        // finish block has to be included in the range
-        let finish_block = finish_block + 1;
+    Ok((start_block_num, finish_block_num))
+}
 
-        // Acomodate finish_block to be <= latest_block
-        let finish_block = finish_block.min(latest_block_num);
+fn calculate_percentiles_for_block(block: Block, percentiles: &[f32]) -> Vec<u64> {
+    let base_fee_per_gas = block.header.base_fee_per_gas.unwrap_or_default();
+    let mut effective_priority_fees: Vec<u64> = block
+        .body
+        .transactions
+        .into_iter()
+        .map(|t: Transaction| match t {
+            Transaction::LegacyTransaction(_) | Transaction::EIP2930Transaction(_) => 0,
+            Transaction::EIP1559Transaction(t) => t
+                .max_priority_fee_per_gas
+                .min(t.max_fee_per_gas.saturating_sub(base_fee_per_gas)),
+            Transaction::EIP4844Transaction(t) => t
+                .max_priority_fee_per_gas
+                .min(t.max_fee_per_gas.saturating_sub(base_fee_per_gas)),
+            Transaction::EIP7702Transaction(t) => t
+                .max_priority_fee_per_gas
+                .min(t.max_fee_per_gas.saturating_sub(base_fee_per_gas)),
+            Transaction::PrivilegedL2Transaction(t) => t
+                .max_priority_fee_per_gas
+                .min(t.max_fee_per_gas.saturating_sub(base_fee_per_gas)),
+        })
+        .collect();
 
-        // Acomodate start_block to be >= earliest_block
-        let start_block = earliest_block_num.max(finish_block.saturating_sub(block_num));
+    effective_priority_fees.sort();
+    let t_len = effective_priority_fees.len() as f32;
 
-        Ok((start_block, finish_block))
-    }
-
-    fn calculate_percentiles_for_block(block: Block, percentiles: &[f32]) -> Vec<u64> {
-        let base_fee_per_gas = block.header.base_fee_per_gas.unwrap_or_default();
-        let mut effective_priority_fees: Vec<u64> = block
-            .body
-            .transactions
-            .into_iter()
-            .map(|t: Transaction| match t {
-                Transaction::LegacyTransaction(_) | Transaction::EIP2930Transaction(_) => 0,
-                Transaction::EIP1559Transaction(t) => t
-                    .max_priority_fee_per_gas
-                    .min(t.max_fee_per_gas.saturating_sub(base_fee_per_gas)),
-                Transaction::EIP4844Transaction(t) => t
-                    .max_priority_fee_per_gas
-                    .min(t.max_fee_per_gas.saturating_sub(base_fee_per_gas)),
-                Transaction::EIP7702Transaction(t) => t
-                    .max_priority_fee_per_gas
-                    .min(t.max_fee_per_gas.saturating_sub(base_fee_per_gas)),
-                Transaction::PrivilegedL2Transaction(t) => t
-                    .max_priority_fee_per_gas
-                    .min(t.max_fee_per_gas.saturating_sub(base_fee_per_gas)),
-            })
-            .collect();
-
-        effective_priority_fees.sort();
-        let t_len = effective_priority_fees.len() as f32;
-
-        percentiles
-            .iter()
-            .map(|x: &f32| {
-                let i = (x * t_len / 100_f32) as usize;
-                effective_priority_fees.get(i).cloned().unwrap_or_default()
-            })
-            .collect()
-    }
+    percentiles
+        .iter()
+        .map(|x: &f32| {
+            let i = (x * t_len / 100_f32) as usize;
+            effective_priority_fees.get(i).cloned().unwrap_or_default()
+        })
+        .collect()
 }
