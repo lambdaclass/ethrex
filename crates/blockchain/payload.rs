@@ -252,7 +252,7 @@ pub fn build_payload(
 
     let interval = Instant::now().duration_since(since).as_millis();
     tracing::info!("[METRIC] BUILDING PAYLOAD TOOK: {interval} ms");
-    let gas_used = gas_limit.checked_add(context.remaining_gas).unwrap();
+    if let Some(gas_used) = gas_limit.checked_sub(context.remaining_gas) {
     let as_gigas = (gas_used as f64).div(10_f64.powf(9_f64));
 
     if interval != 0 {
@@ -260,6 +260,7 @@ pub fn build_payload(
         tracing::info!(
             "[METRIC] BLOCK THROUGHPUT: {throughput} Ggas/s TIME SPENT: {interval} msecs"
         );
+    }
     }
 
     Ok((context.blobs_bundle, context.block_value))

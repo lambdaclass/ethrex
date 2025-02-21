@@ -338,34 +338,6 @@ async fn main() {
         }
     }
 
-    tokio::spawn(async {
-        let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(30));
-        let mut since = tokio::time::Instant::now();
-        let mut old_counter = ethrex_blockchain::get_gas_counter();
-        loop {
-            let instant = interval.tick().await;
-            let counter = ethrex_blockchain::get_gas_counter();
-            let duration = instant.duration_since(since).as_secs();
-
-            if duration <= 0 {
-                continue;
-            }
-
-            // Wrapping sub is the correct behavior for up to one
-            // overflow of the global counter since last check.
-            // More would lead us to underestimate gas usage.
-            // Note the counter itself also wraps on overflow.
-            let gas_used = counter.wrapping_sub(old_counter);
-
-            let gps = gas_used / duration;
-
-            info!("[METRIC] GPS: {gps} INTERVAL: {duration}");
-
-            old_counter = counter;
-            since = instant;
-        }
-    });
-
     tokio::select! {
         _ = tokio::signal::ctrl_c() => {
             info!("Server shut down started...");

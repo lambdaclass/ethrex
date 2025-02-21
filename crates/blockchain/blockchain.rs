@@ -6,8 +6,7 @@ pub mod payload;
 mod smoke_test;
 
 use std::{
-    time::Instant,
-    sync::atomic::{AtomicU64, Ordering},
+    ops::Div, sync::atomic::{AtomicU64, Ordering}, time::Instant
 };
 use tracing::info;
 
@@ -30,12 +29,6 @@ use ethrex_vm::{backends, backends::EVM};
 
 //TODO: Implement a struct Chain or BlockChain to encapsulate
 //functionality and canonical chain state and config
-
-static GAS_COUNTER: AtomicU64 = AtomicU64::new(0);
-
-pub fn get_gas_counter() -> u64 {
-    GAS_COUNTER.load(Ordering::Relaxed)
-}
 
 /// Adds a new block to the store. It may or may not be canonical, as long as its ancestry links
 /// with the canonical chain and its parent's post-state is calculated. It doesn't modify the
@@ -91,17 +84,10 @@ pub fn add_block(block: &Block, storage: &Store) -> Result<(), ChainError> {
     store_block(storage, block.clone())?;
     store_receipts(storage, receipts, block_hash)?;
 
-    let old_counter = GAS_COUNTER.fetch_add(block.header.gas_used, Ordering::Relaxed);
-    // Detect overflow, if this happens two or more times between reads they will be
-    // underestimated by (N-1) * u64::MAX, where N is the number of overflows in that
-    // period.
-    if old_counter.checked_add(block.header.gas_used).is_none() {
-        info!("GAS_COUNTER overflowed");
-    }
-
     let interval = Instant::now().duration_since(since).as_millis();
     if interval != 0 {
-        let throughput = (block.header.gas_used as u128 / interval) * 1000;
+        let as_gigas = (block.header.gas_used as f64).div(10_f64.powf(9_f64));
+        let throughput = (as_gigas) / (interval as f64) * 1000_f64;
         info!("[METRIC] BLOCK THROUGHPUT: {throughput} Gas/s TIME SPENT: {interval} msecs");
     }
 
