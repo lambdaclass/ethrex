@@ -5,9 +5,7 @@ pub mod mempool;
 pub mod payload;
 mod smoke_test;
 
-use std::{
-    ops::Div, time::Instant
-};
+use std::{ops::Div, time::Instant};
 use tracing::info;
 
 use error::{ChainError, InvalidBlockError};
