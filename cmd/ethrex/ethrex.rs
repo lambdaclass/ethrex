@@ -40,6 +40,9 @@ mod decode;
 mod networks;
 
 const DEFAULT_DATADIR: &str = "ethrex";
+const L1_PK_PATH: &str = "test_data/private_keys_l1.txt";
+#[cfg(feature = "l2")]
+const L2_PK_PATH: &str = "../../test_data/private_keys.txt";
 #[tokio::main]
 async fn main() {
     let matches = cli::cli().get_matches();
@@ -291,7 +294,8 @@ async fn main() {
         let metrics_api = ethrex_metrics::api::start_prometheus_metrics_api(metrics_port);
         tracker.spawn(metrics_api);
     }
-
+    let l2_pks = include_str!(L2_PK_PATH);
+    show_rich_accounts(&genesis, l2_pks);
     let dev_mode = *matches.get_one::<bool>("dev").unwrap_or(&false);
     // We do not want to start the networking module if the l2 feature is enabled.
     cfg_if::cfg_if! {
@@ -300,7 +304,6 @@ async fn main() {
                 error!("Cannot run with DEV_MODE if the `l2` feature is enabled.");
                 panic!("Run without the --dev argument.");
             }
-            show_rich_accounts(&genesis, "../../test_data/private_keys.txt");
             let l2_proposer = ethrex_l2::start_proposer(store).into_future();
             tracker.spawn(l2_proposer);
         } else if #[cfg(feature = "dev")] {
@@ -308,9 +311,9 @@ async fn main() {
             // Start the block_producer module if devmode was set
             if dev_mode {
                 info!("Runnning in DEV_MODE");
-            show_rich_accounts(&genesis, "test_data/private_keys_l1.txt");
-            let authrpc_jwtsecret =
-                    std::fs::read(authrpc_jwtsecret).expect("Failed to read JWT secret");
+                show_rich_accounts(&genesis, L1_PK_PATH);
+                let authrpc_jwtsecret =
+                        std::fs::read(authrpc_jwtsecret).expect("Failed to read JWT secret");
                 let head_block_hash = {
                     let current_block_number = store.get_latest_block_number().unwrap();
                     store
@@ -508,10 +511,11 @@ fn read_known_peers(file_path: PathBuf) -> Result<Vec<Node>, serde_json::Error> 
     serde_json::from_reader(file)
 }
 
-fn show_rich_accounts(genesis: &Genesis, path: &str) {
-    let Ok(contents) = fs::read_to_string(path) else {
-        return;
-    };
+fn show_rich_accounts(genesis: &Genesis, contents: &str) {
+    dbg!("entro");
+    // let Ok(contents) = fs::read_to_string(path) else {
+    //     return;
+    // };
 
     let private_keys: Vec<String> = contents
         .lines()
@@ -548,14 +552,15 @@ fn show_rich_accounts(genesis: &Genesis, path: &str) {
     println!("-------------------------------------------------------------------------------");
     for (address, balance) in top_accounts {
         let Some(pk) = address_to_pk.get(address) else {
-            return;
+            continue;
         };
         println!("Private Key: {}", pk);
-        println!(
-            "Address:     {:?} (Ξ {})",
-            address,
-            balance.checked_div(U256::exp10(18)).unwrap_or(U256::zero())
-        );
+        println!("Address:     {:?} (Ξ {})", address, wei_to_eth(balance));
         println!("-------------------------------------------------------------------------------");
     }
+}
+
+fn wei_to_eth(wei: U256) -> U256 {
+    wei.checked_div(U256::from_dec_str("1000000000000000000").unwrap())
+        .unwrap_or(U256::zero())
 }
