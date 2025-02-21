@@ -165,11 +165,6 @@ fn fixed_bytes<const N: usize>(data: &[u8], offset: usize) -> [u8; N] {
         .expect("Couldn't convert to fixed bytes")
 }
 
-pub fn compute_requests_hash_from_requests(requests: &[Requests]) -> H256 {
-    let encoded_requests: Vec<EncodedRequests> = requests.iter().map(|r| r.encode()).collect();
-    compute_requests_hash(&encoded_requests)
-}
-
 // See https://github.com/ethereum/EIPs/blob/2a6b6965e64787815f7fffb9a4c27660d9683846/EIPS/eip-7685.md?plain=1#L62.
 pub fn compute_requests_hash(requests: &[EncodedRequests]) -> H256 {
     let mut hasher = Sha256::new();

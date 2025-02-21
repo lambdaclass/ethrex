@@ -149,8 +149,15 @@ impl RpcHandler for NewPayloadV4Request {
             Some(self.parent_beacon_block_root),
             Some(requests_hash),
         )?;
-        validate_fork(&block, Fork::Prague, &context)?;
 
+        let chain_config = context.storage.get_chain_config()?;
+
+        if !chain_config.is_prague_activated(block.header.timestamp) {
+            return Err(RpcErr::UnsuportedFork(format!(
+                "{:?}",
+                chain_config.get_fork(block.header.timestamp)
+            )));
+        }
         // We use v3 since the execution payload remains the same.
         validate_execution_payload_v3(&self.payload)?;
         let payload_status = handle_new_payload_v3(
@@ -228,15 +235,7 @@ impl RpcHandler for GetPayloadV3Request {
 
     fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
         let payload = get_payload(self.payload_id, &context)?;
-        let chain_config = context.storage.get_chain_config()?;
-
-        if !chain_config.is_prague_activated(payload.0.header.timestamp) {
-            return Err(RpcErr::UnsuportedFork(format!(
-                "{:?}",
-                chain_config.get_fork(payload.0.header.timestamp)
-            )));
-        }
-
+        validate_fork(&payload.0, Fork::Cancun, &context)?;
         let execution_payload_response =
             build_execution_payload_response(self.payload_id, payload, Some(false), context)?;
 
