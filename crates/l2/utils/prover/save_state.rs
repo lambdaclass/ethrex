@@ -385,7 +385,7 @@ pub fn block_number_has_all_proofs(block_number: u64) -> Result<bool, SaveStateE
 #[cfg(test)]
 #[allow(clippy::expect_used)]
 mod tests {
-    use ethrex_blockchain::add_block;
+    use ethrex_blockchain::Blockchain;
     use ethrex_storage::{EngineType, Store};
     use ethrex_vm::execution_db::ExecutionDB;
     use risc0_zkvm::sha::Digest;
@@ -420,7 +420,7 @@ mod tests {
 
         let blocks = test_data_io::read_chain_file(chain_file_path.to_str().unwrap());
         for block in &blocks {
-            add_block(block, &store).unwrap();
+            Blockchain::default().add_block(block, &store).unwrap();
         }
 
         let mut account_updates_vec: Vec<Vec<AccountUpdate>> = Vec::new();
