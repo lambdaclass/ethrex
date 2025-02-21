@@ -82,7 +82,11 @@ impl From<GenesisAccount> for Account {
                 nonce: genesis.nonce,
             },
             code: genesis.code,
-            storage: genesis.storage,
+            storage: genesis
+                .storage
+                .iter()
+                .map(|(k, v)| (H256(k.to_big_endian()), *v))
+                .collect(),
         }
     }
 }
@@ -144,9 +148,12 @@ impl RLPDecode for AccountState {
     }
 }
 
-pub fn compute_storage_root(storage: &HashMap<H256, U256>) -> H256 {
+pub fn compute_storage_root(storage: &HashMap<U256, U256>) -> H256 {
     let iter = storage.iter().filter_map(|(k, v)| {
-        (!v.is_zero()).then_some((Keccak256::digest(k).to_vec(), v.encode_to_vec()))
+        (!v.is_zero()).then_some((
+            Keccak256::digest(k.to_big_endian()).to_vec(),
+            v.encode_to_vec(),
+        ))
     });
     Trie::compute_hash_from_unsorted_iter(iter)
 }

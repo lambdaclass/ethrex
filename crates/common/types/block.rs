@@ -4,7 +4,7 @@ use super::{
 };
 use crate::{
     constants::MIN_BASE_FEE_PER_BLOB_GAS,
-    types::{requests::Requests, Receipt, Transaction},
+    types::{Receipt, Transaction},
     Address, H256, U256,
 };
 use bytes::Bytes;
@@ -16,7 +16,6 @@ use ethrex_rlp::{
     structs::{Decoder, Encoder},
 };
 use ethrex_trie::Trie;
-use k256::sha2::{Digest, Sha256};
 use keccak_hash::keccak;
 use serde::{Deserialize, Serialize};
 
@@ -260,18 +259,6 @@ pub fn compute_withdrawals_root(withdrawals: &[Withdrawal]) -> H256 {
         .enumerate()
         .map(|(idx, withdrawal)| (idx.encode_to_vec(), withdrawal.encode_to_vec()));
     Trie::compute_hash_from_unsorted_iter(iter)
-}
-
-// See https://github.com/ethereum/EIPs/blob/2a6b6965e64787815f7fffb9a4c27660d9683846/EIPS/eip-7685.md?plain=1#L62.
-pub fn compute_requests_hash(requests: &[Requests]) -> H256 {
-    let mut hasher = Sha256::new();
-    for request in requests {
-        let request_bytes = request.to_bytes();
-        if request_bytes.len() > 1 {
-            hasher.update(Sha256::digest(request_bytes));
-        }
-    }
-    H256::from_slice(&hasher.finalize())
 }
 
 impl RLPEncode for BlockBody {

@@ -296,7 +296,7 @@ pub struct GenesisAccount {
     #[serde(default, with = "crate::serde_utils::bytes")]
     pub code: Bytes,
     #[serde(default)]
-    pub storage: HashMap<H256, U256>,
+    pub storage: HashMap<U256, U256>,
     #[serde(deserialize_with = "crate::serde_utils::u256::deser_hex_or_dec_str")]
     pub balance: U256,
     #[serde(default, with = "crate::serde_utils::u64::hex_str")]
@@ -450,7 +450,7 @@ mod tests {
         let addr_b_storage = &genesis.alloc[&addr_b].storage;
         assert_eq!(
             addr_b_storage.get(
-                &H256::from_str(
+                &U256::from_str(
                     "0x0000000000000000000000000000000000000000000000000000000000000022"
                 )
                 .unwrap()
@@ -464,7 +464,7 @@ mod tests {
         );
         assert_eq!(
             addr_b_storage.get(
-                &H256::from_str(
+                &U256::from_str(
                     "0x0000000000000000000000000000000000000000000000000000000000000038"
                 )
                 .unwrap()
