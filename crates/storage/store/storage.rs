@@ -234,6 +234,22 @@ impl Store {
         self.engine.get_block_number(block_hash)
     }
 
+    pub fn add_block_total_difficulty(
+        &self,
+        block_hash: BlockHash,
+        block_difficulty: U256,
+    ) -> Result<(), StoreError> {
+        self.engine
+            .add_block_total_difficulty(block_hash, block_difficulty)
+    }
+
+    pub fn get_block_total_difficulty(
+        &self,
+        block_hash: BlockHash,
+    ) -> Result<Option<U256>, StoreError> {
+        self.engine.get_block_total_difficulty(block_hash)
+    }
+
     pub fn add_transaction_location(
         &self,
         transaction_hash: H256,
@@ -537,11 +553,16 @@ impl Store {
         // TODO Maybe add both in a single tx?
         let header = block.header;
         let number = header.number;
+        let latest_total_difficulty = self.get_latest_total_difficulty()?;
+        let block_total_difficulty =
+            latest_total_difficulty.unwrap_or(U256::zero()) + header.difficulty;
         let hash = header.compute_block_hash();
         self.add_transaction_locations(&block.body.transactions, number, hash)?;
         self.add_block_body(hash, block.body)?;
         self.add_block_header(hash, header)?;
-        self.add_block_number(hash, number)
+        self.add_block_number(hash, number)?;
+        self.add_block_total_difficulty(hash, block_total_difficulty)?;
+        self.update_latest_total_difficulty(block_total_difficulty)
     }
 
     pub fn add_initial_state(&self, genesis: Genesis) -> Result<(), StoreError> {
@@ -679,6 +700,14 @@ impl Store {
         self.engine
             .get_latest_block_number()?
             .ok_or(StoreError::MissingLatestBlockNumber)
+    }
+
+    pub fn update_latest_total_difficulty(&self, block_difficulty: U256) -> Result<(), StoreError> {
+        self.engine.update_latest_total_difficulty(block_difficulty)
+    }
+
+    pub fn get_latest_total_difficulty(&self) -> Result<Option<U256>, StoreError> {
+        self.engine.get_latest_total_difficulty()
     }
 
     pub fn update_pending_block_number(&self, block_number: BlockNumber) -> Result<(), StoreError> {
