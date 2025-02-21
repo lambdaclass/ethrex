@@ -11,6 +11,8 @@ pub mod prover_server;
 
 pub mod errors;
 
+use serde::Deserialize;
+
 pub fn read_env_file() -> Result<(), errors::ConfigError> {
     let env_file_name = std::env::var("ENV_FILE").unwrap_or(".env".to_string());
     let env_file_path = open_readable(env_file_name)?;
@@ -81,4 +83,23 @@ pub fn write_env(lines: Vec<String>) -> Result<(), errors::ConfigError> {
     }
 
     Ok(())
+}
+
+#[derive(Deserialize, Debug)]
+struct Eth {
+    rpc_url: String,
+}
+
+#[derive(Deserialize, Debug)]
+struct L2Config {
+    eth: Eth,
+}
+
+pub fn read_toml() {
+    println!("Hello ARGENTINA");
+    let file = std::fs::read_to_string("config.toml").unwrap();
+    // let file = file.replace("\n", "");
+    println!("{}\n", &file);
+    let config: L2Config = toml::from_str(&file).unwrap();
+    dbg!(config);
 }
