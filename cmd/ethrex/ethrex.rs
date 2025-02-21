@@ -3,7 +3,7 @@ use directories::ProjectDirs;
 use ethrex_blockchain::{add_block, fork_choice::apply_fork_choice};
 use ethrex_common::{
     types::{Block, Genesis},
-    H160, U256,
+    H160, H256, U256,
 };
 use ethrex_p2p::{
     kademlia::KademliaTable,
@@ -12,12 +12,16 @@ use ethrex_p2p::{
     types::{Node, NodeRecord},
 };
 use ethrex_rlp::decode::RLPDecode;
+use ethrex_rpc::clients::eth::get_address_from_secret_key;
 use ethrex_storage::{EngineType, Store};
 use ethrex_vm::{backends::EVM, EVM_BACKEND};
 use k256::ecdsa::SigningKey;
+use secp256k1::SecretKey;
+
 use local_ip_address::local_ip;
 use rand::rngs::OsRng;
 use std::{
+    collections::HashMap,
     fs::{self, File},
     future::IntoFuture,
     io,
@@ -177,23 +181,8 @@ async fn main() {
     };
 
     let genesis = read_genesis_file(&network);
+    show_rich_accounts(&genesis);
 
-    // Show top rich accounts
-    let mut top_accounts: Vec<(&H160, U256)> = genesis
-        .alloc
-        .iter()
-        .map(|(address, account)| (address, account.balance))
-        .collect();
-    top_accounts.sort_by(|a, b| b.1.cmp(&a.1)); // sort by greater balance
-    let number_of_top_accounts = 10;
-    top_accounts.truncate(number_of_top_accounts);
-    info!(
-        "Showing {number_of_top_accounts} top rich accounts\n     {:<42} Balance",
-        "Address"
-    );
-    for (address, balance) in top_accounts {
-        println!("     {address:?} {balance}");
-    }
     store
         .add_initial_state(genesis.clone())
         .expect("Failed to create genesis block");
@@ -516,4 +505,56 @@ fn read_known_peers(file_path: PathBuf) -> Result<Vec<Node>, serde_json::Error> 
     };
 
     serde_json::from_reader(file)
+}
+
+fn show_rich_accounts(genesis: &Genesis) {
+    let Ok(contents) = fs::read_to_string("../../test_data/private_keys.txt") else {
+        return;
+    };
+
+    let private_keys: Vec<String> = contents
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .map(|line| line.trim().to_string())
+        .collect();
+
+    let mut address_to_pk = HashMap::new();
+    for pk in private_keys.iter() {
+        let pk_str = pk.strip_prefix("0x").unwrap_or(pk);
+        let Ok(pk_h256) = pk_str.parse::<H256>() else {
+            return;
+        };
+        let pk_bytes = pk_h256.as_bytes();
+        let Ok(secret_key) = SecretKey::from_slice(pk_bytes) else {
+            return;
+        };
+        let Ok(address) = get_address_from_secret_key(&secret_key) else {
+            return;
+        }; // better to use the sdk function
+        address_to_pk.insert(address, pk);
+    }
+
+    let mut top_accounts: Vec<(&H160, U256)> = genesis
+        .alloc
+        .iter()
+        .map(|(address, account)| (address, account.balance))
+        .collect();
+    top_accounts.sort_by(|a, b| b.1.cmp(&a.1)); // sort by greater balance
+    let number_of_top_accounts = 10;
+    top_accounts.truncate(number_of_top_accounts);
+
+    println!("Showing first {} accounts", number_of_top_accounts);
+    println!("-------------------------------------------------------------------------------");
+    for (address, balance) in top_accounts {
+        let Some(pk) = address_to_pk.get(address) else {
+            return;
+        };
+        println!("Private Key: {}", pk);
+        println!(
+            "Address:     {:?} (Ξ {})",
+            address,
+            balance.checked_div(U256::exp10(18)).unwrap_or(U256::zero())
+        );
+        println!("-------------------------------------------------------------------------------");
+    }
 }
