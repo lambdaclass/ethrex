@@ -97,7 +97,7 @@ async fn transfer_from(
 
     let mut retries = 0;
 
-    for i in nonce..nonce + iterations {
+    for i in 0..1 {
         if verbose {
             println!("transfer {i} from {pk}");
         }
@@ -109,7 +109,7 @@ async fn transfer_from(
                 calldata.clone(),
                 Overrides {
                     chain_id: Some(cfg.network.l2_chain_id),
-                    nonce: Some(i),
+                    nonce: Some(nonce),
                     value: if calldata.is_empty() {
                         Some(value)
                     } else {
@@ -201,37 +201,22 @@ impl Command {
                 println!("{:?}", contract_address);
                 to_address = contract_address;
 
-                // calldata::encode_calldata(
-                //     "fibonacci(uint256)",
-                //     &[Value::Uint(100000000000000_u64.into())],
-                // )?
-                // .into();
-                // } else {
-                //     Bytes::new()
-                // };
-
-                // println!("Sending to: {to_address:#x}");
-
-                // let mut threads = vec![];
-                // for pk in lines.map_while(Result::ok) {
-                //     let thread = tokio::spawn(transfer_from(
-                //         pk,
-                //         to_address,
-                //         value,
-                //         iterations,
-                //         verbose,
-                //         calldata.clone(),
-                //         cfg.clone(),
-                //     ));
-                //     threads.push(thread);
-                // }
-
-                // let mut retries = 0;
-                // for thread in threads {
-                //     retries += thread.await?;
-                // }
-
-                // println!("Total retries: {retries}");
+                let calldata = calldata::encode_calldata(
+                    "balanceOf(address)",
+                    &[Value::Address(cfg.wallet.address)],
+                )?;
+                let tx = client
+                    .build_eip1559_transaction(
+                        contract_address,
+                        cfg.wallet.address,
+                        calldata.into(),
+                        Default::default(),
+                        100,
+                    )
+                    .await
+                    .unwrap();
+                let res = client.send_eip1559_transaction(&tx, &cfg.wallet.private_key).await.unwrap();
+                println!("THE RES: {res}");
                 Ok(())
             }
         }
