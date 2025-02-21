@@ -1,14 +1,14 @@
-use super::api::StoreEngine;
-use super::utils::{ChainDataIndex, SnapStateIndex};
+use crate::api::StoreEngine;
 use crate::error::StoreError;
 use crate::rlp::{
     AccountCodeHashRLP, AccountCodeRLP, AccountHashRLP, AccountStateRLP, BlockBodyRLP,
     BlockHashRLP, BlockHeaderRLP, BlockRLP, BlockTotalDifficultyRLP, ReceiptRLP, Rlp,
     TransactionHashRLP, TupleRLP,
 };
+use crate::store::{MAX_SNAPSHOT_READS, STATE_TRIE_SEGMENTS};
 use crate::trie_db::libmdbx::LibmdbxTrieDB;
 use crate::trie_db::libmdbx_dupsort::LibmdbxDupsortTrieDB;
-use crate::{MAX_SNAPSHOT_READS, STATE_TRIE_SEGMENTS};
+use crate::utils::{ChainDataIndex, SnapStateIndex};
 use anyhow::Result;
 use bytes::Bytes;
 use ethereum_types::{H256, U256};

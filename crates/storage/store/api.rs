@@ -6,7 +6,7 @@ use ethrex_common::types::{
 };
 use std::{fmt::Debug, panic::RefUnwindSafe};
 
-use crate::{error::StoreError, STATE_TRIE_SEGMENTS};
+use crate::{error::StoreError, store::STATE_TRIE_SEGMENTS};
 use ethrex_trie::{Nibbles, Trie};
 
 pub trait StoreEngine: Debug + Send + Sync + RefUnwindSafe {
