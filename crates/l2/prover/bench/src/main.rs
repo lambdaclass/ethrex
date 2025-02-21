@@ -3,7 +3,7 @@ use std::{fs::File, io::Write};
 use clap::Parser;
 use ethrex_l2::utils::prover::proving_systems::ProverType;
 use ethrex_prover_bench::{
-    cache::{load_cache, write_cache},
+    cache::{load_cache, write_cache, Cache},
     rpc::{db::RpcDB, get_block, get_latest_block_number},
 };
 use ethrex_prover_lib::prover::create_prover;
@@ -41,7 +41,11 @@ async fn main() {
         }
     };
 
-    let program_input = match load_cache(block_number) {
+    let Cache {
+        block,
+        parent_block_header,
+        db,
+    } = match load_cache(block_number) {
         Ok(cache) => cache,
         Err(err) => {
             println!("failed to load cache for block {block_number}: {err}");
@@ -66,13 +70,13 @@ async fn main() {
                 .to_exec_db(&block)
                 .expect("failed to build execution db");
 
-            let input = ProgramInput {
+            let cache = Cache {
                 block,
                 parent_block_header,
                 db,
             };
-            write_cache(&input).expect("failed to write cache");
-            input
+            write_cache(&cache).expect("failed to write cache");
+            cache
         }
     };
 
@@ -84,10 +88,22 @@ async fn main() {
     let now = std::time::Instant::now();
     if prove {
         println!("proving");
-        prover.prove(program_input).expect("proving failed");
+        prover
+            .prove(ProgramInput {
+                block,
+                parent_block_header,
+                db,
+            })
+            .expect("proving failed");
     } else {
         println!("executing");
-        prover.execute(program_input).expect("proving failed");
+        prover
+            .execute(ProgramInput {
+                block,
+                parent_block_header,
+                db,
+            })
+            .expect("proving failed");
     }
     let elapsed = now.elapsed().as_secs();
     println!(
