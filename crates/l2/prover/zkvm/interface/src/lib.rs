@@ -21,7 +21,7 @@ pub mod io {
         H256,
     };
     use ethrex_vm::execution_db::ExecutionDB;
-    use serde::{Deserialize, Serialize};
+    use serde::{de::DeserializeOwned, Deserialize, Serialize};
     use serde_with::{serde_as, DeserializeAs, SerializeAs};
 
     /// Private input variables passed into the zkVM execution program.
@@ -29,9 +29,10 @@ pub mod io {
     #[derive(Serialize, Deserialize)]
     pub struct ProgramInput {
         /// block to execute
-        #[serde_as(as = "JSONBlock")]
+        #[serde_as(as = "SerdeJSON")]
         pub block: Block,
         /// header of the previous block
+        #[serde_as(as = "SerdeJSON")]
         pub parent_block_header: BlockHeader,
         /// database containing only the data necessary to execute
         pub db: ExecutionDB,
@@ -47,12 +48,12 @@ pub mod io {
         pub final_state_hash: H256,
     }
 
-    /// Used with [serde_with] to encode a Block into JSON before serializing its bytes. This is
-    /// necessary because a [Block] isn't compatible with other encoding formats like bincode.
-    pub struct JSONBlock;
+    /// Used with [serde_with] to encode a fields into JSON before serializing its bytes. This is
+    /// necessary because a [BlockHeader] isn't compatible with other encoding formats like bincode or RLP.
+    pub struct SerdeJSON;
 
-    impl SerializeAs<Block> for JSONBlock {
-        fn serialize_as<S>(val: &Block, serializer: S) -> Result<S::Ok, S::Error>
+    impl<T: Serialize> SerializeAs<T> for SerdeJSON {
+        fn serialize_as<S>(val: &T, serializer: S) -> Result<S::Ok, S::Error>
         where
             S: serde::Serializer,
         {
@@ -62,8 +63,8 @@ pub mod io {
         }
     }
 
-    impl<'de> DeserializeAs<'de, Block> for JSONBlock {
-        fn deserialize_as<D>(deserializer: D) -> Result<Block, D::Error>
+    impl<'de, T: DeserializeOwned> DeserializeAs<'de, T> for SerdeJSON {
+        fn deserialize_as<D>(deserializer: D) -> Result<T, D::Error>
         where
             D: serde::Deserializer<'de>,
         {
