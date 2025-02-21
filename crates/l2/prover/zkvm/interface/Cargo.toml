@@ -6,6 +6,7 @@ edition = "2021"
 [dependencies]
 serde = { version = "1.0.203", features = ["derive"] }
 serde_with = "3.11.0"
+serde_json.workspace = true
 thiserror = "2.0.9"
 
 ethrex-common = { path = "../../../../common/", default-features = false }
@@ -16,7 +17,7 @@ ethrex-trie = { path = "../../../../storage/trie", default-features = false }
 
 [build-dependencies]
 risc0-build = { version = "1.2.2" }
-sp1-build = "4.0.1"
+sp1-build = "4.1.0"
 
 [package.metadata.risc0]
 methods = ["risc0"]
@@ -25,6 +26,7 @@ methods = ["risc0"]
 default = []
 build_risc0 = []
 build_sp1 = []
+l2 = ["ethrex-vm/l2"]
 
 [lib]
 path = "./src/lib.rs"
