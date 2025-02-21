@@ -97,6 +97,19 @@ struct Proposer {
     coinbase_address: String,
 }
 
+impl Proposer {
+    pub fn to_env(&self) -> String {
+        let prefix = "PROPOSER";
+        format!(
+            "
+{prefix}_INTERVAL_MS={},
+{prefix}_COINBASE_ADDRESS={},
+",
+            self.interval_ms, self.coinbase_address,
+        )
+    }
+}
+
 #[derive(Deserialize, Debug)]
 struct Committer {
     on_chain_proposer_address: String,
@@ -104,6 +117,26 @@ struct Committer {
     l1_private_key: String,
     interval_ms: u64,
     arbitrary_base_blob_gas_price: u64,
+}
+
+impl Committer {
+    pub fn to_env(&self) -> String {
+        let prefix = "COMMITTER";
+        format!(
+            "
+{prefix}_ON_CHAIN_PROPOSER_ADDRESS={},
+{prefix}_L1_ADDRESS={},
+{prefix}_L1_PRIVATE_KEY={},
+{prefix}_INTERVAL_MS={},
+{prefix}_ARBITRARY_BASE_BLOB_GAS_PRICE={},
+",
+            self.on_chain_proposer_address,
+            self.l1_address,
+            self.l1_private_key,
+            self.interval_ms,
+            self.arbitrary_base_blob_gas_price,
+        )
+    }
 }
 
 #[derive(Deserialize, Debug)]
