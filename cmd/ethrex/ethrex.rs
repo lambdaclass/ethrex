@@ -40,9 +40,6 @@ mod decode;
 mod networks;
 
 const DEFAULT_DATADIR: &str = "ethrex";
-const L1_PK_PATH: &str = "test_data/private_keys_l1.txt";
-#[cfg(feature = "l2")]
-const L2_PK_PATH: &str = "../../test_data/private_keys.txt";
 #[tokio::main]
 async fn main() {
     let matches = cli::cli().get_matches();
@@ -294,8 +291,6 @@ async fn main() {
         let metrics_api = ethrex_metrics::api::start_prometheus_metrics_api(metrics_port);
         tracker.spawn(metrics_api);
     }
-    let l2_pks = include_str!(L2_PK_PATH);
-    show_rich_accounts(&genesis, l2_pks);
     let dev_mode = *matches.get_one::<bool>("dev").unwrap_or(&false);
     // We do not want to start the networking module if the l2 feature is enabled.
     cfg_if::cfg_if! {
@@ -304,6 +299,8 @@ async fn main() {
                 error!("Cannot run with DEV_MODE if the `l2` feature is enabled.");
                 panic!("Run without the --dev argument.");
             }
+            let l2_pks = include_str!("../../test_data/private_keys.txt");
+            show_rich_accounts(&genesis, l2_pks);
             let l2_proposer = ethrex_l2::start_proposer(store).into_future();
             tracker.spawn(l2_proposer);
         } else if #[cfg(feature = "dev")] {
@@ -311,7 +308,8 @@ async fn main() {
             // Start the block_producer module if devmode was set
             if dev_mode {
                 info!("Runnning in DEV_MODE");
-                show_rich_accounts(&genesis, L1_PK_PATH);
+                let l1_pks = include_str!("../../test_data/private_keys_l1.txt");
+                show_rich_accounts(&genesis, l1_pks);
                 let authrpc_jwtsecret =
                         std::fs::read(authrpc_jwtsecret).expect("Failed to read JWT secret");
                 let head_block_hash = {
