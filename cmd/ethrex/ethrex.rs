@@ -1,7 +1,10 @@
 use bytes::Bytes;
 use directories::ProjectDirs;
 use ethrex_blockchain::{add_block, fork_choice::apply_fork_choice};
-use ethrex_common::types::{Block, Genesis};
+use ethrex_common::{
+    types::{Block, Genesis},
+    H160, H256, U256,
+};
 use ethrex_p2p::{
     kademlia::KademliaTable,
     network::{node_id_from_signing_key, peer_table},
@@ -9,12 +12,16 @@ use ethrex_p2p::{
     types::{Node, NodeRecord},
 };
 use ethrex_rlp::decode::RLPDecode;
+use ethrex_rpc::clients::eth::get_address_from_secret_key;
 use ethrex_storage::{EngineType, Store};
 use ethrex_vm::{backends::EVM, EVM_BACKEND};
 use k256::ecdsa::SigningKey;
+use secp256k1::SecretKey;
+
 use local_ip_address::local_ip;
 use rand::rngs::OsRng;
 use std::{
+    collections::HashMap,
     fs::{self, File},
     future::IntoFuture,
     io,
@@ -174,6 +181,7 @@ async fn main() {
     };
 
     let genesis = read_genesis_file(&network);
+
     store
         .add_initial_state(genesis.clone())
         .expect("Failed to create genesis block");
@@ -292,6 +300,7 @@ async fn main() {
                 error!("Cannot run with DEV_MODE if the `l2` feature is enabled.");
                 panic!("Run without the --dev argument.");
             }
+            show_rich_accounts(&genesis, "../../test_data/private_keys.txt");
             let l2_proposer = ethrex_l2::start_proposer(store).into_future();
             tracker.spawn(l2_proposer);
         } else if #[cfg(feature = "dev")] {
@@ -299,7 +308,8 @@ async fn main() {
             // Start the block_producer module if devmode was set
             if dev_mode {
                 info!("Runnning in DEV_MODE");
-                let authrpc_jwtsecret =
+            show_rich_accounts(&genesis, "test_data/private_keys_l1.txt");
+            let authrpc_jwtsecret =
                     std::fs::read(authrpc_jwtsecret).expect("Failed to read JWT secret");
                 let head_block_hash = {
                     let current_block_number = store.get_latest_block_number().unwrap();
@@ -496,4 +506,56 @@ fn read_known_peers(file_path: PathBuf) -> Result<Vec<Node>, serde_json::Error> 
     };
 
     serde_json::from_reader(file)
+}
+
+fn show_rich_accounts(genesis: &Genesis, path: &str) {
+    let Ok(contents) = fs::read_to_string(path) else {
+        return;
+    };
+
+    let private_keys: Vec<String> = contents
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .map(|line| line.trim().to_string())
+        .collect();
+
+    let mut address_to_pk = HashMap::new();
+    for pk in private_keys.iter() {
+        let pk_str = pk.strip_prefix("0x").unwrap_or(pk);
+        let Ok(pk_h256) = pk_str.parse::<H256>() else {
+            return;
+        };
+        let pk_bytes = pk_h256.as_bytes();
+        let Ok(secret_key) = SecretKey::from_slice(pk_bytes) else {
+            return;
+        };
+        let Ok(address) = get_address_from_secret_key(&secret_key) else {
+            return;
+        }; // better to use the sdk function
+        address_to_pk.insert(address, pk);
+    }
+
+    let mut top_accounts: Vec<(&H160, U256)> = genesis
+        .alloc
+        .iter()
+        .map(|(address, account)| (address, account.balance))
+        .collect();
+    top_accounts.sort_by(|a, b| b.1.cmp(&a.1)); // sort by greater balance
+    let number_of_top_accounts = 10;
+    top_accounts.truncate(number_of_top_accounts);
+
+    println!("Showing first {} accounts", number_of_top_accounts);
+    println!("-------------------------------------------------------------------------------");
+    for (address, balance) in top_accounts {
+        let Some(pk) = address_to_pk.get(address) else {
+            return;
+        };
+        println!("Private Key: {}", pk);
+        println!(
+            "Address:     {:?} (Ξ {})",
+            address,
+            balance.checked_div(U256::exp10(18)).unwrap_or(U256::zero())
+        );
+        println!("-------------------------------------------------------------------------------");
+    }
 }
