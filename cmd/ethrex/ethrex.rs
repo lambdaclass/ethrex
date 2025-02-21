@@ -1,6 +1,6 @@
 use bytes::Bytes;
 use directories::ProjectDirs;
-use ethrex_blockchain::{add_block, fork_choice::apply_fork_choice};
+use ethrex_blockchain::{fork_choice::apply_fork_choice, Blockchain};
 use ethrex_common::types::{Block, Genesis};
 use ethrex_p2p::{
     kademlia::KademliaTable,
@@ -155,6 +155,8 @@ async fn main() {
     let evm = EVM_BACKEND.get_or_init(|| evm.clone());
     info!("EVM_BACKEND set to: {:?}", evm);
 
+    let blockchain = Blockchain::new(evm.clone());
+
     let path = path::PathBuf::from(data_dir.clone());
     let store: Store = if path.ends_with("memory") {
         Store::new(&data_dir, EngineType::InMemory).expect("Failed to create Store")
@@ -181,7 +183,7 @@ async fn main() {
     if let Some(chain_rlp_path) = matches.get_one::<String>("import") {
         info!("Importing blocks from chain file: {}", chain_rlp_path);
         let blocks = read_chain_file(chain_rlp_path);
-        import_blocks(&store, &blocks);
+        import_blocks(&store, &blocks, &blockchain);
     }
 
     if let Some(blocks_path) = matches.get_one::<String>("import_dir") {
@@ -200,7 +202,7 @@ async fn main() {
             blocks.push(read_block_file(s));
         }
 
-        import_blocks(&store, &blocks);
+        import_blocks(&store, &blocks, &blockchain);
     }
 
     let jwt_secret = read_jwtsecret_file(authrpc_jwtsecret);
@@ -251,7 +253,12 @@ async fn main() {
     // Create a cancellation_token for long_living tasks
     let cancel_token = tokio_util::sync::CancellationToken::new();
     // Create SyncManager
-    let syncer = SyncManager::new(peer_table.clone(), sync_mode, cancel_token.clone());
+    let syncer = SyncManager::new(
+        peer_table.clone(),
+        sync_mode,
+        cancel_token.clone(),
+        blockchain,
+    );
 
     // TODO: Check every module starts properly.
     let tracker = TaskTracker::new();
@@ -419,7 +426,7 @@ fn set_datadir(datadir: &str) -> String {
         .to_owned()
 }
 
-fn import_blocks(store: &Store, blocks: &Vec<Block>) {
+fn import_blocks(store: &Store, blocks: &Vec<Block>, blockchain: &Blockchain) {
     let size = blocks.len();
     for block in blocks {
         let hash = block.hash();
@@ -427,8 +434,7 @@ fn import_blocks(store: &Store, blocks: &Vec<Block>) {
             "Adding block {} with hash {:#x}.",
             block.header.number, hash
         );
-        let result = add_block(block, store);
-        if let Some(error) = result.err() {
+        if let Err(error) = blockchain.add_block(block, store) {
             warn!(
                 "Failed to add block {} with hash {:#x}: {}.",
                 block.header.number, hash, error

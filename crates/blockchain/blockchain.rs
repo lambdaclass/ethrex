@@ -18,13 +18,14 @@ use ethrex_common::H256;
 
 use ethrex_storage::error::StoreError;
 use ethrex_storage::Store;
+use ethrex_vm::backends::BlockExecutionResult;
 use ethrex_vm::backends::EVM;
 use ethrex_vm::db::evm_state;
-use ethrex_vm::{backends::BlockExecutionResult, get_evm_backend_or_default};
 
 //TODO: Implement a struct Chain or BlockChain to encapsulate
 //functionality and canonical chain state and config
 
+#[derive(Debug, Clone)]
 pub struct Blockchain {
     pub vm: EVM,
 }
@@ -83,55 +84,6 @@ impl Default for Blockchain {
     fn default() -> Self {
         Self { vm: EVM::default() }
     }
-}
-
-/// Adds a new block to the store. It may or may not be canonical, as long as its ancestry links
-/// with the canonical chain and its parent's post-state is calculated. It doesn't modify the
-/// canonical chain/head. Fork choice needs to be updated for that in a separate step.
-///
-/// Performs pre and post execution validation, and updates the database with the post state.
-pub fn add_block(block: &Block, storage: &Store) -> Result<(), ChainError> {
-    let block_hash = block.header.compute_block_hash();
-
-    // Validate if it can be the new head and find the parent
-    let Ok(parent_header) = find_parent_header(&block.header, storage) else {
-        // If the parent is not present, we store it as pending.
-        storage.add_pending_block(block.clone())?;
-        return Err(ChainError::ParentNotFound);
-    };
-    let mut state = evm_state(storage.clone(), block.header.parent_hash);
-    let chain_config = state.chain_config().map_err(ChainError::from)?;
-
-    // Validate the block pre-execution
-    validate_block(block, &parent_header, &chain_config)?;
-    let BlockExecutionResult {
-        receipts,
-        requests,
-        account_updates,
-    } = get_evm_backend_or_default().execute_block(block, &mut state)?;
-
-    validate_gas_used(&receipts, &block.header)?;
-
-    // Apply the account updates over the last block's state and compute the new state root
-    let new_state_root = state
-        .database()
-        .ok_or(ChainError::StoreError(StoreError::MissingStore))?
-        .apply_account_updates(block.header.parent_hash, &account_updates)?
-        .ok_or(ChainError::ParentStateNotFound)?;
-
-    // Check state root matches the one in block header after execution
-    validate_state_root(&block.header, new_state_root)?;
-
-    // Check receipts root matches the one in block header after execution
-    validate_receipts_root(&block.header, &receipts)?;
-
-    // Processes requests from receipts, computes the requests_hash and compares it against the header
-    validate_requests_hash(&block.header, &chain_config, &requests)?;
-
-    store_block(storage, block.clone())?;
-    store_receipts(storage, receipts, block_hash)?;
-
-    Ok(())
 }
 
 pub fn validate_requests_hash(

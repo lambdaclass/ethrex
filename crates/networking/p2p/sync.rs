@@ -6,7 +6,7 @@ mod storage_healing;
 mod trie_rebuild;
 
 use bytecode_fetcher::bytecode_fetcher;
-use ethrex_blockchain::error::ChainError;
+use ethrex_blockchain::{error::ChainError, Blockchain};
 use ethrex_common::{
     types::{Block, BlockHash},
     BigEndianHash, H256, U256, U512,
@@ -89,6 +89,7 @@ pub struct SyncManager {
     trie_rebuilder: Option<TrieRebuilder>,
     // Used for cancelling long-living tasks upon shutdown
     cancel_token: CancellationToken,
+    pub blockchain: Blockchain,
 }
 
 impl SyncManager {
@@ -96,6 +97,7 @@ impl SyncManager {
         peer_table: Arc<Mutex<KademliaTable>>,
         sync_mode: SyncMode,
         cancel_token: CancellationToken,
+        blockchain: Blockchain,
     ) -> Self {
         Self {
             sync_mode,
@@ -104,6 +106,7 @@ impl SyncManager {
             invalid_ancestors: HashMap::new(),
             trie_rebuilder: None,
             cancel_token,
+            blockchain,
         }
     }
 
@@ -119,6 +122,7 @@ impl SyncManager {
             trie_rebuilder: None,
             // This won't be used
             cancel_token: CancellationToken::new(),
+            blockchain: Blockchain::default(),
         }
     }
 
@@ -276,7 +280,7 @@ impl SyncManager {
                     let block = store
                         .get_block_by_hash(*hash)?
                         .ok_or(SyncError::CorruptDB)?;
-                    ethrex_blockchain::add_block(&block, &store)?;
+                    self.blockchain.add_block(&block, &store)?;
                     store.set_canonical_block(block.header.number, *hash)?;
                     store.update_latest_block_number(block.header.number)?;
                 }
@@ -293,6 +297,7 @@ impl SyncManager {
                     self.peers.clone(),
                     store.clone(),
                     &mut self.invalid_ancestors,
+                    &self.blockchain,
                 )
                 .await?
             }
@@ -308,6 +313,7 @@ async fn download_and_run_blocks(
     peers: PeerHandler,
     store: Store,
     invalid_ancestors: &mut HashMap<BlockHash, BlockHash>,
+    blockchain: &Blockchain,
 ) -> Result<(), SyncError> {
     let mut last_valid_hash = H256::default();
     loop {
@@ -325,7 +331,7 @@ async fn download_and_run_blocks(
                     .ok_or(SyncError::CorruptDB)?;
                 let number = header.number;
                 let block = Block::new(header, body);
-                if let Err(error) = ethrex_blockchain::add_block(&block, &store) {
+                if let Err(error) = blockchain.add_block(&block, &store) {
                     invalid_ancestors.insert(hash, last_valid_hash);
                     return Err(error.into());
                 }
