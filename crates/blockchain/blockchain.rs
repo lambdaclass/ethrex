@@ -6,7 +6,7 @@ pub mod payload;
 mod smoke_test;
 
 use std::{
-    ops::Div, sync::atomic::{AtomicU64, Ordering}, time::Instant
+    ops::Div, time::Instant
 };
 use tracing::info;
 

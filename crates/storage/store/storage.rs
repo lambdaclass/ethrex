@@ -18,9 +18,8 @@ use ethrex_trie::{Nibbles, Trie};
 use scc::HashMap as ConcurrentMap;
 use serde::{Deserialize, Serialize};
 use sha3::{Digest as _, Keccak256};
-use std::collections::{HashMap, HashSet};
-use std::fmt::Debug;
-use std::sync::{Arc, Mutex};
+use std::collections::HashMap;
+use std::sync::Arc;
 use tracing::info;
 
 mod engines;
@@ -316,7 +315,7 @@ impl Store {
         &self,
         tx_hash: H256,
     ) -> Result<Option<BlobsBundle>, StoreError> {
-        Ok(self.blobs_bundle_pool.read(&tx_hash, |k, v| v.clone()))
+        Ok(self.blobs_bundle_pool.read(&tx_hash, |_, v| v.clone()))
     }
 
     /// Remove a transaction from the pool
@@ -324,10 +323,10 @@ impl Store {
         if let Some(tx) = self.mempool.get(hash) {
             if matches!(tx.tx_type(), TxType::EIP4844) {
                 if let Some(blob) = self.blobs_bundle_pool.get(&tx.compute_hash()) {
-                    blob.remove();
+                    let _removed = blob.remove();
                 }
             }
-            tx.remove();
+            let _removed = tx.remove();
         };
 
         Ok(())
