@@ -793,7 +793,8 @@ impl<T: RLPEncode + RLPDecode> IndexedChunk<T> {
     /// Each chunk is assigned an index to ensure correct ordering when retrieved.
     pub fn from(bytes: &[u8]) -> Vec<Self> {
         let chunks: Vec<Vec<u8>> = bytes
-            .chunks(DB_MAX_VALUE_SIZE)
+            // -1 to account for the index byte
+            .chunks(DB_MAX_VALUE_SIZE - 1)
             .map(|i| i.to_vec())
             .collect();
         chunks
