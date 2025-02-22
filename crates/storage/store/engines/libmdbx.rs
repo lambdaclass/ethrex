@@ -20,7 +20,7 @@ use ethrex_rlp::decode::RLPDecode;
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_rlp::error::RLPDecodeError;
 use ethrex_trie::{Nibbles, Trie};
-use libmdbx::orm::{Decodable, Encodable, Table};
+use libmdbx::orm::{Decodable, DupSort, Encodable, Table};
 use libmdbx::{
     dupsort,
     orm::{table, Database},
@@ -815,6 +815,7 @@ impl<T: RLPEncode + RLPDecode> IndexedChunk<T> {
     where
         Tab::Key: Decodable,
         Tab::Value: ChunkTrait<T>,
+        Tab: DupSort,
     {
         let mut value = vec![];
 
@@ -825,7 +826,7 @@ impl<T: RLPEncode + RLPDecode> IndexedChunk<T> {
         }
 
         // Fetch remaining parts
-        while let Some((_, chunk)) = cursor.next().map_err(StoreError::LibmdbxError)? {
+        while let Some((_, chunk)) = cursor.next_value().map_err(StoreError::LibmdbxError)? {
             value.extend_from_slice(chunk.value_bytes());
         }
 
