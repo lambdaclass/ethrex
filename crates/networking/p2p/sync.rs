@@ -140,7 +140,7 @@ impl SyncStatsMonitor {
 
         let elapsed_diff = elapsed - prev_elapsed;
 
-        info!(
+        tracing::info!(
             "[SYNCING PERF] Last {} blocks performance:\n\
             \tTotal time: {} seconds\n\
             \tAverage block time: {:.3} seconds\n\
@@ -180,6 +180,7 @@ pub struct SyncManager {
     trie_rebuilder: Option<TrieRebuilder>,
     // Used for cancelling long-living tasks upon shutdown
     cancel_token: CancellationToken,
+    sync_monitors: Vec<SyncStatsMonitor>,
 }
 
 impl SyncManager {
@@ -195,6 +196,7 @@ impl SyncManager {
             block_hashes: vec![],
             trie_rebuilder: None,
             cancel_token,
+            sync_monitors: vec![],
         }
     }
 
@@ -210,6 +212,7 @@ impl SyncManager {
             trie_rebuilder: None,
             // This won't be used
             cancel_token: CancellationToken::new(),
+            sync_monitors: vec![],
         }
     }
 
@@ -263,7 +266,7 @@ impl SyncManager {
         // - 10.000 blocks
         // - 100.000 blocks
         // - 1.000.000 blocks
-        let mut sync_monitors = [
+        self.sync_monitors = vec![
             SyncStatsMonitor::new(current_head_block_num, current_head, 100),
             SyncStatsMonitor::new(current_head_block_num, current_head, 1000),
             SyncStatsMonitor::new(current_head_block_num, current_head, 10000),
@@ -326,16 +329,8 @@ impl SyncManager {
 
             match self.sync_mode {
                 SyncMode::Full => {
-                    let executed_blocks = self
-                        .download_and_run_blocks(&mut block_hashes, store.clone())
+                    self.download_and_run_blocks(&mut block_hashes, store.clone())
                         .await?;
-                    let block_num = store.get_latest_block_number()?;
-                    let block_hash = store
-                        .get_canonical_block_hash(block_num)?
-                        .unwrap_or_default();
-                    for monitor in &mut sync_monitors {
-                        monitor.log_cycle(executed_blocks, block_num, block_hash);
-                    }
                 }
                 _ => {}
             }
@@ -401,7 +396,7 @@ impl SyncManager {
         &mut self,
         block_hashes: &mut Vec<BlockHash>,
         store: Store,
-    ) -> Result<u32, SyncError> {
+    ) -> Result<(), SyncError> {
         // ask as much as 128 block bodies per req
         // this magic number is not part of the protocol and it is taken from geth, see:
         // https://github.com/ethereum/go-ethereum/blob/master/eth/downloader/downloader.go#L42
@@ -415,8 +410,11 @@ impl SyncManager {
 
         let mut chunk = match chunks.get(current_chunk_idx) {
             Some(res) => res.clone(),
-            None => return Ok(0),
+            None => return Ok(()),
         };
+
+        let mut last_block_number = 0;
+        let mut last_block_hash = H256::default();
 
         loop {
             debug!("Requesting Block Bodies");
@@ -458,17 +456,24 @@ impl SyncManager {
                     store.set_canonical_block(number, hash)?;
                     store.update_latest_block_number(number)?;
                     store.set_header_download_checkpoint(hash)?;
+                    last_block_number = number;
+                    last_block_hash = hash;
                     debug!(
                         "Executed and stored block number {} with hash {}",
                         number, hash
                     );
                 }
                 debug!("Executed & stored {} blocks", block_bodies_len);
+
+                for monitor in &mut self.sync_monitors {
+                    monitor.log_cycle(block_bodies_len as u32, last_block_number, last_block_hash);
+                }
+
                 if chunk.len() == 0 {
                     current_chunk_idx += 1;
                     chunk = match chunks.get(current_chunk_idx) {
                         Some(res) => res.clone(),
-                        None => return Ok(block_bodies_len as u32),
+                        None => return Ok(()),
                     };
                 };
             }
