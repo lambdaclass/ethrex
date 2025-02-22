@@ -16,14 +16,11 @@ use ethrex_storage::{error::StoreError, Store, STATE_TRIE_SEGMENTS};
 use ethrex_trie::{Nibbles, Node, TrieError, TrieState};
 use state_healing::heal_state_trie;
 use state_sync::state_sync;
-use std::{array, sync::Arc};
+use std::{array, sync::Arc, time::Instant};
 use storage_healing::storage_healer;
-use tokio::{
-    sync::{
-        mpsc::{self, error::SendError},
-        Mutex,
-    },
-    time::{Duration, Instant},
+use tokio::sync::{
+    mpsc::{self, error::SendError},
+    Mutex,
 };
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, warn};
@@ -47,7 +44,7 @@ const MAX_CHANNEL_MESSAGES: usize = 500;
 /// Maximum amount of messages to read from a channel at once
 const MAX_CHANNEL_READS: usize = 200;
 /// Pace at which progress is shown via info tracing
-const SHOW_PROGRESS_INTERVAL_DURATION: Duration = Duration::from_secs(30);
+const SHOW_PROGRESS_INTERVAL_DURATION: tokio::time::Duration = tokio::time::Duration::from_secs(30);
 
 lazy_static::lazy_static! {
     // Size of each state trie segment
@@ -60,6 +57,108 @@ lazy_static::lazy_static! {
     static ref STATE_TRIE_SEGMENTS_END: [H256; STATE_TRIE_SEGMENTS] = {
         array::from_fn(|i| H256::from_uint(&(*STATE_TRIE_SEGMENT_SIZE * (i+1))))
     };
+
+}
+
+#[derive(Debug, Clone)]
+struct ExecutionCycle {
+    started_at: Instant,
+    finished_at: Instant,
+    started_at_block_num: u64,
+    started_at_block_hash: H256,
+    finished_at_block_num: u64,
+    finished_at_block_hash: H256,
+    executed_blocks_count: u32,
+}
+
+impl Default for ExecutionCycle {
+    fn default() -> Self {
+        Self {
+            started_at: Instant::now(),
+            finished_at: Instant::now(),
+            started_at_block_num: 0,
+            started_at_block_hash: H256::default(),
+            finished_at_block_num: 0,
+            finished_at_block_hash: H256::default(),
+            executed_blocks_count: 0,
+        }
+    }
+}
+
+#[derive(Debug, Default)]
+struct SyncStatsMonitor {
+    current_cycle: ExecutionCycle,
+    prev_cycle: ExecutionCycle,
+    blocks_to_restart_cycle: u32,
+}
+
+impl SyncStatsMonitor {
+    pub fn new(start_block_num: u64, start_block_hash: H256, blocks_to_restart_cycle: u32) -> Self {
+        Self {
+            blocks_to_restart_cycle,
+            prev_cycle: ExecutionCycle::default(),
+            current_cycle: ExecutionCycle {
+                started_at_block_num: start_block_num,
+                started_at_block_hash: start_block_hash,
+                ..Default::default()
+            },
+        }
+    }
+
+    pub fn log_cycle(&mut self, executed_blocks: u32, block_num: u64, block_hash: H256) {
+        self.current_cycle.executed_blocks_count += executed_blocks;
+
+        if self.current_cycle.executed_blocks_count >= self.blocks_to_restart_cycle {
+            self.current_cycle.finished_at = Instant::now();
+            self.current_cycle.finished_at_block_num = block_num;
+            self.current_cycle.finished_at_block_hash = block_hash;
+            self.show_stats();
+
+            // restart cycle
+            self.prev_cycle = self.current_cycle.clone();
+            self.current_cycle = ExecutionCycle {
+                started_at_block_num: block_num,
+                started_at_block_hash: block_hash,
+                ..ExecutionCycle::default()
+            };
+        }
+    }
+
+    fn show_stats(&self) {
+        let elapsed = self
+            .current_cycle
+            .finished_at
+            .duration_since(self.current_cycle.started_at)
+            .as_secs();
+        let avg = elapsed as f64 / self.current_cycle.executed_blocks_count as f64;
+
+        let prev_elapsed = self
+            .prev_cycle
+            .finished_at
+            .duration_since(self.prev_cycle.started_at)
+            .as_secs();
+
+        let elapsed_diff = elapsed - prev_elapsed;
+
+        info!(
+            "[SYNCING PERF] Last {} blocks performance:\n\
+            \tTotal time: {} seconds\n\
+            \tAverage block time: {:.3} seconds\n\
+            \tStarted at block: {} (hash: {:?})\n\
+            \tFinished at block: {} (hash: {:?})\n\
+            \tExecution count: {}\n\
+            \t======= Overall, this cycle took {} seconds with respect to the previous one =======",
+            self.current_cycle.executed_blocks_count,
+            elapsed,
+            avg,
+            self.current_cycle.started_at_block_num,
+            self.current_cycle.started_at_block_hash,
+            self.current_cycle.finished_at_block_num,
+            self.current_cycle.finished_at_block_hash,
+            self.current_cycle.executed_blocks_count,
+            elapsed_diff
+        );
+    }
 }
 
 #[derive(Debug)]
@@ -67,13 +166,11 @@ pub enum SyncMode {
     Full,
     Snap,
 }
-
 /// Manager in charge the sync process
 /// Only performs full-sync but will also be in charge of snap-sync in the future
 #[derive(Debug)]
 pub struct SyncManager {
     sync_mode: SyncMode,
-    last_processed_header_hash: Option<H256>,
     peers: PeerHandler,
     /// The last block number used as a pivot for snap-sync
     /// Syncing beyond this pivot should re-enable snap-sync (as we will not have that state stored)
@@ -92,7 +189,6 @@ impl SyncManager {
         cancel_token: CancellationToken,
     ) -> Self {
         Self {
-            last_processed_header_hash: None,
             sync_mode,
             peers: PeerHandler::new(peer_table),
             last_snap_pivot: 0,
@@ -107,7 +203,6 @@ impl SyncManager {
     pub fn dummy() -> Self {
         let dummy_peer_table = Arc::new(Mutex::new(KademliaTable::new(Default::default())));
         Self {
-            last_processed_header_hash: None,
             sync_mode: SyncMode::Full,
             peers: PeerHandler::new(dummy_peer_table),
             last_snap_pivot: 0,
@@ -156,6 +251,25 @@ impl SyncManager {
             current_head = last_hash;
             //TODO check that the last hash is > current_head
         }
+
+        let current_head_block_num = store
+            .get_block_header_by_hash(current_head)?
+            .unwrap_or_default()
+            .number;
+
+        // start 6 monitors to show stats every:
+        // - 100 blocks
+        // - 1.000 blocks
+        // - 10.000 blocks
+        // - 100.000 blocks
+        // - 1.000.000 blocks
+        let mut sync_monitors = [
+            SyncStatsMonitor::new(current_head_block_num, current_head, 100),
+            SyncStatsMonitor::new(current_head_block_num, current_head, 1000),
+            SyncStatsMonitor::new(current_head_block_num, current_head, 10000),
+            SyncStatsMonitor::new(current_head_block_num, current_head, 100000),
+            SyncStatsMonitor::new(current_head_block_num, current_head, 1000000),
+        ];
 
         loop {
             debug!("Requesting Block Headers from {current_head}");
@@ -212,8 +326,16 @@ impl SyncManager {
 
             match self.sync_mode {
                 SyncMode::Full => {
-                    self.download_and_run_blocks(&mut block_hashes, store.clone())
-                        .await?
+                    let executed_blocks = self
+                        .download_and_run_blocks(&mut block_hashes, store.clone())
+                        .await?;
+                    let block_num = store.get_latest_block_number()?;
+                    let block_hash = store
+                        .get_canonical_block_hash(block_num)?
+                        .unwrap_or_default();
+                    for monitor in &mut sync_monitors {
+                        monitor.log_cycle(executed_blocks, block_num, block_hash);
+                    }
                 }
                 _ => {}
             }
@@ -279,7 +401,7 @@ impl SyncManager {
         &mut self,
         block_hashes: &mut Vec<BlockHash>,
         store: Store,
-    ) -> Result<(), SyncError> {
+    ) -> Result<u32, SyncError> {
         // ask as much as 128 block bodies per req
         // this magic number is not part of the protocol and it is taken from geth, see:
         // https://github.com/ethereum/go-ethereum/blob/master/eth/downloader/downloader.go#L42
@@ -293,7 +415,7 @@ impl SyncManager {
 
         let mut chunk = match chunks.get(current_chunk_idx) {
             Some(res) => res.clone(),
-            None => return Ok(()),
+            None => return Ok(0),
         };
 
         loop {
@@ -346,7 +468,7 @@ impl SyncManager {
                     current_chunk_idx += 1;
                     chunk = match chunks.get(current_chunk_idx) {
                         Some(res) => res.clone(),
-                        None => return Ok(()),
+                        None => return Ok(block_bodies_len as u32),
                     };
                 };
             }
