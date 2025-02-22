@@ -21,7 +21,6 @@ use ethrex_vm::db::evm_state;
 
 use ethrex_vm::EVM_BACKEND;
 use ethrex_vm::{backends, backends::EVM};
-use tracing::debug;
 
 //TODO: Implement a struct Chain or BlockChain to encapsulate
 //functionality and canonical chain state and config
@@ -59,29 +58,23 @@ pub fn add_block(block: &Block, storage: &Store) -> Result<(), ChainError> {
 
     validate_gas_used(&receipts, &block.header)?;
 
-    debug!("Before applying account updated in evm state");
     // Apply the account updates over the last block's state and compute the new state root
     let new_state_root = state
         .database()
         .ok_or(ChainError::StoreError(StoreError::MissingStore))?
         .apply_account_updates(block.header.parent_hash, &account_updates)?
         .ok_or(ChainError::ParentStateNotFound)?;
-    debug!("Account update done");
 
     // Check state root matches the one in block header after execution
     validate_state_root(&block.header, new_state_root)?;
 
     // Check receipts root matches the one in block header after execution
     validate_receipts_root(&block.header, &receipts)?;
-    debug!("Before storing block");
     // Processes requests from receipts, computes the requests_hash and compares it against the header
     validate_requests_hash(&block.header, &receipts, &chain_config)?;
     store_block(storage, block.clone())?;
-    debug!("Block stored");
 
-    debug!("Before storing receipts");
     store_receipts(storage, receipts, block_hash)?;
-    debug!("Receipts stored");
 
     Ok(())
 }

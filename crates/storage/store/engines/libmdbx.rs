@@ -31,7 +31,6 @@ use serde_json;
 use std::fmt::{Debug, Formatter};
 use std::path::Path;
 use std::sync::Arc;
-use tracing::debug;
 
 pub struct Store {
     db: Arc<Database>,
@@ -59,26 +58,18 @@ impl Store {
         &self,
         key_values: impl Iterator<Item = (T::Key, T::Value)>,
     ) -> Result<(), StoreError> {
-        debug!("Beginning read write transaction");
         let txn = self
             .db
             .begin_readwrite()
             .map_err(StoreError::LibmdbxError)?;
 
-        debug!("Inserting values");
         let mut cursor = txn.cursor::<T>().map_err(StoreError::LibmdbxError)?;
         for (key, value) in key_values {
-            // limit size followed according to docs:
-            // see https://github.com/erthink/libmdbx/tree/master?tab=readme-ov-file#limitations
             cursor
                 .upsert(key, value)
                 .map_err(StoreError::LibmdbxError)?;
         }
-        debug!("Finished inserting values");
-
-        debug!("About to commit");
         let res = txn.commit().map_err(StoreError::LibmdbxError);
-        debug!("Committed transaction");
         res
     }
 
@@ -93,20 +84,6 @@ impl Store {
         number: BlockNumber,
     ) -> Result<Option<BlockHash>, StoreError> {
         Ok(self.read::<CanonicalBlockHashes>(number)?.map(|a| a.to()))
-    }
-
-    fn dup_sort_split_into_chunks<T: Table>(
-        &self,
-        data: &[u8],
-    ) -> Result<Vec<Vec<u8>>, StoreError> {
-        // We are implementing the default page size of 4096 bytes
-        // the maximum key-value size is 2022 according to the official docs:
-        // see https://github.com/erthink/libmdbx/tree/master?tab=readme-ov-file#limitations
-        // and here https://libmdbx.dqdkfa.ru/structmdbx_1_1env_1_1geometry.html#a45048bf2de9120d01dae2151c060d459
-        let max_size = 2022;
-        let chunks: Vec<Vec<u8>> = data.chunks(max_size).map(|i| i.to_vec()).collect();
-
-        Ok(chunks)
     }
 }
 
@@ -510,8 +487,6 @@ impl StoreEngine for Store {
         block_hash: BlockHash,
         receipts: Vec<Receipt>,
     ) -> Result<(), StoreError> {
-        tracing::debug!("Receipts forming key values");
-        tracing::debug!("Receipts number {}: {:?}", receipts.len(), receipts);
         let mut key_values = vec![];
 
         for (index, receipt) in receipts.clone().into_iter().enumerate() {
@@ -520,27 +495,8 @@ impl StoreEngine for Store {
             let value = <Receipt as Into<ReceiptRLP>>::into(receipt);
             key_values.push((key.clone(), value))
         }
-        tracing::debug!("Key values formed");
 
-        tracing::debug!("Before writing in batch");
-
-        let a = self.write_batch::<Receipts>(key_values.into_iter());
-
-        tracing::debug!("Finished writing in batch");
-
-        tracing::debug!("About to get stored receipts");
-        // retrieve receipts to make sure they were store alright in chunks
-        // temporarily here for testing purposes
-        let stored_receipts = self.get_receipts_for_block(&block_hash)?;
-        tracing::debug!(
-            "Stored receipts number {}: {:?}",
-            stored_receipts.len(),
-            stored_receipts
-        );
-        assert_eq!(receipts, stored_receipts);
-        tracing::debug!("Finished verifying stored receipts");
-
-        a
+        self.write_batch::<Receipts>(key_values.into_iter())
     }
 
     fn get_receipts_for_block(&self, block_hash: &BlockHash) -> Result<Vec<Receipt>, StoreError> {
