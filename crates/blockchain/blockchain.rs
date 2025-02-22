@@ -21,6 +21,7 @@ use ethrex_vm::db::evm_state;
 
 use ethrex_vm::EVM_BACKEND;
 use ethrex_vm::{backends, backends::EVM};
+use tracing::debug;
 
 //TODO: Implement a struct Chain or BlockChain to encapsulate
 //functionality and canonical chain state and config
@@ -74,7 +75,15 @@ pub fn add_block(block: &Block, storage: &Store) -> Result<(), ChainError> {
     validate_requests_hash(&block.header, &receipts, &chain_config)?;
     store_block(storage, block.clone())?;
 
-    store_receipts(storage, receipts, block_hash)?;
+    debug!("About to store receipts");
+    store_receipts(storage, receipts.clone(), block_hash)?;
+    debug!("Receipts stored correctly");
+
+    let receipts_from_db = storage.get_receipts_for_block(&block_hash)?;
+    // temporarily assert to make sure receipts have been stored correctly on libmdbx with the chunks implementation
+    debug!("About to check if receipts were stored correctly");
+    assert_eq!(receipts_from_db, receipts);
+    debug!("Receipts stored correctly!");
 
     Ok(())
 }
