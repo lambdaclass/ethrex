@@ -608,7 +608,7 @@ impl Store {
         self.engine.get_transaction_by_hash(transaction_hash)
     }
 
-    pub fn get_transaction_by_hash_from_mempool(
+    pub fn get_transaction_by_hash_from_pool(
         &self,
         transaction_hash: H256,
     ) -> Result<Option<Transaction>, StoreError> {
