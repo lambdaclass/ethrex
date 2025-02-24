@@ -119,52 +119,41 @@ impl PeerHandler {
     /// - There are no available peers (the node just started up or was rejected by all other nodes)
     /// - No peer returned a valid response in the given time and retry limits
     pub async fn request_block_bodies(&self, block_hashes: Vec<H256>) -> Option<Vec<BlockBody>> {
-        const CHUNK_SIZE: usize = 32;
-        let mut all_block_bodies = Vec::new();
-
-        for chunk in block_hashes.chunks(CHUNK_SIZE) {
-            let chunk_hashes = chunk.to_vec();
-            let chunk_hashes_len = chunk_hashes.len();
-
-            for _ in 0..REQUEST_RETRY_ATTEMPTS {
-                let request_id = rand::random();
-                let request = RLPxMessage::GetBlockBodies(GetBlockBodies {
-                    id: request_id,
-                    block_hashes: chunk_hashes.clone(),
-                });
-
-                let peer = self.get_peer_channel_with_retry(Capability::Eth).await?;
-                let mut receiver = peer.receiver.lock().await;
-                peer.sender.send(request).await.ok()?;
-
-                if let Some(block_bodies) = tokio::time::timeout(PEER_REPLY_TIMOUT, async move {
-                    loop {
-                        match receiver.recv().await {
-                            Some(RLPxMessage::BlockBodies(BlockBodies { id, block_bodies }))
-                                if id == request_id =>
-                            {
-                                return Some(block_bodies)
-                            }
-                            // Ignore replies that don't match the expected id (such as late responses)
-                            Some(_) => continue,
-                            None => return None,
+        let block_hashes_len = block_hashes.len();
+        for _ in 0..REQUEST_RETRY_ATTEMPTS {
+            let request_id = rand::random();
+            let request = RLPxMessage::GetBlockBodies(GetBlockBodies {
+                id: request_id,
+                block_hashes: block_hashes.clone(),
+            });
+            let peer = self.get_peer_channel_with_retry(Capability::Eth).await?;
+            let mut receiver = peer.receiver.lock().await;
+            peer.sender.send(request).await.ok()?;
+            if let Some(block_bodies) = tokio::time::timeout(PEER_REPLY_TIMOUT, async move {
+                loop {
+                    match receiver.recv().await {
+                        Some(RLPxMessage::BlockBodies(BlockBodies { id, block_bodies }))
+                            if id == request_id =>
+                        {
+                            return Some(block_bodies)
                         }
+                        // Ignore replies that don't match the expected id (such as late responses)
+                        Some(_) => continue,
+                        None => return None,
                     }
-                })
-                .await
-                .ok()
-                .flatten()
-                .and_then(|bodies| {
-                    // Check that the response is not empty and does not contain more bodies than the ones requested
-                    (!bodies.is_empty() && bodies.len() <= chunk_hashes_len).then_some(bodies)
-                }) {
-                    all_block_bodies.extend(block_bodies);
-                    break;
                 }
+            })
+            .await
+            .ok()
+            .flatten()
+            .and_then(|bodies| {
+                // Check that the response is not empty and does not contain more bodies than the ones requested
+                (!bodies.is_empty() && bodies.len() <= block_hashes_len).then_some(bodies)
+            }) {
+                return Some(block_bodies);
             }
         }
-
-        Some(all_block_bodies)
+        None
     }
 
     /// Requests all receipts in a set of blocks from any suitable peer given their block hashes
