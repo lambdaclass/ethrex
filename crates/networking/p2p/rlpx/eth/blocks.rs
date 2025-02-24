@@ -72,8 +72,7 @@ pub struct GetBlockHeaders {
 }
 
 // Limit taken from here: https://github.com/ethereum/go-ethereum/blob/20bf543a64d7c2a590b18a1e1d907cae65707013/eth/protocols/eth/handler.go#L40
-// pub const BLOCK_HEADER_LIMIT: u64 = 1024;
-pub const BLOCK_HEADER_LIMIT: u64 = 32;
+pub const BLOCK_HEADER_LIMIT: u64 = 1024;
 
 impl GetBlockHeaders {
     pub fn new(id: u64, startblock: HashOrNumber, limit: u64, skip: u64, reverse: bool) -> Self {
