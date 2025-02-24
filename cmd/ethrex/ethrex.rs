@@ -38,6 +38,7 @@ async fn main() {
     let matches = cli::cli().get_matches();
     cfg_if::cfg_if! {
         if #[cfg(feature = "l2")] {
+            use ethrex_l2;
             launch_l2(matches).await;
         } else {
             launch_l1(matches).await;
@@ -446,8 +447,11 @@ async fn launch_l2(matches: clap::ArgMatches) {
         error!("Cannot run with DEV_MODE if the `l2` feature is enabled.");
         panic!("Run without the --dev argument.");
     }
-    let l2_proposer = ethrex_l2::start_proposer(store).into_future();
-    tracker.spawn(l2_proposer);
+    #[cfg(feature = "l2")]
+    {
+        let l2_proposer = ethrex_l2::start_proposer(store).into_future();
+        tracker.spawn(l2_proposer);
+    }
 
     tokio::select! {
         _ = tokio::signal::ctrl_c() => {
