@@ -4,7 +4,7 @@ use ethrex_rlp::encode::RLPEncode;
 use ethrex_trie::Trie;
 use serde::{Deserialize, Serialize};
 use sha3::{Digest, Keccak256};
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 
 use super::{
     compute_receipts_root, compute_transactions_root, compute_withdrawals_root, AccountState,
@@ -19,7 +19,7 @@ pub struct Genesis {
     /// Chain configuration
     pub config: ChainConfig,
     /// The initial state of the accounts in the genesis block.
-    pub alloc: HashMap<Address, GenesisAccount>,
+    pub alloc: BTreeMap<Address, GenesisAccount>,
     /// Genesis header values
     pub coinbase: Address,
     pub difficulty: U256,
