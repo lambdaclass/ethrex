@@ -347,11 +347,12 @@ async fn download_and_run_blocks(
             }
         }
     }
+    let latest = store.get_latest_block_number()?;
+    info!("latest block number {} ", latest);
+
     // Remove anything after the head from the canonical chain.
     if let Ok(Some(sync_head_number)) = store.get_block_number(sync_head) {
-        let latest = store.get_latest_block_number()?;
         info!("synced_head_number: {:?}", sync_head_number);
-        info!("latest: {:?}", latest);
         for number in (sync_head_number + 1)..(latest + 1) {
             store.unset_canonical_block(number)?;
         }
