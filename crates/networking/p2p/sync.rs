@@ -258,13 +258,11 @@ impl SyncManager {
             all_block_hashes.extend_from_slice(&block_hashes[..]);
             store.add_block_headers(block_hashes.clone(), block_headers)?;
 
-            match self.sync_mode {
-                SyncMode::Full => {
-                    self.download_and_run_blocks(&mut block_hashes, store.clone())
-                        .await?;
-                }
-                _ => {}
+            if self.sync_mode == SyncMode::Full {
+                self.download_and_run_blocks(&mut block_hashes, store.clone())
+                    .await?;
             }
+
             if sync_head_found {
                 break;
             };
@@ -324,7 +322,7 @@ impl SyncManager {
     /// Returns an error if there was a problem while executing or validating the blocks
     async fn download_and_run_blocks(
         &mut self,
-        block_hashes: &mut Vec<BlockHash>,
+        block_hashes: &mut [BlockHash],
         store: Store,
     ) -> Result<(), SyncError> {
         let mut last_valid_hash = H256::default();
@@ -380,7 +378,7 @@ impl SyncManager {
                 }
                 debug!("Executed & stored {} blocks", block_bodies_len);
 
-                if chunk.len() == 0 {
+                if chunk.is_empty() {
                     current_chunk_idx += 1;
                     chunk = match chunks.get(current_chunk_idx) {
                         Some(res) => res.clone(),
