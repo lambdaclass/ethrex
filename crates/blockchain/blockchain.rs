@@ -86,7 +86,7 @@ pub fn add_block(block: &Block, storage: &Store) -> Result<(), ChainError> {
     if interval != 0 {
         let as_gigas = (block.header.gas_used as f64).div(10_f64.powf(9_f64));
         let throughput = (as_gigas) / (interval as f64) * 1000_f64;
-        info!("[METRIC] BLOCK THROUGHPUT: {throughput} Gigagas/s TIME SPENT: {interval} msecs");
+        info!("[METRIC] BLOCK EXECUTION THROUGHPUT: {throughput} Gigagas/s TIME SPENT: {interval} msecs");
     }
 
     Ok(())
