@@ -48,5 +48,4 @@ hex-literal = "0.4.1"
 path = "./rpc.rs"
 
 [features]
-default = ["based"]
 based = ["dep:ssz_types", "dep:tree_hash", "dep:tree_hash_derive", "dep:strum_macros"]
