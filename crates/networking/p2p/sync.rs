@@ -31,7 +31,10 @@ use trie_rebuild::TrieRebuilder;
 
 use crate::{
     kademlia::KademliaTable,
-    peer_handler::{BlockRequestOrder, PeerHandler, HASH_MAX},
+    peer_handler::{
+        BlockRequestOrder, PeerHandler, HASH_MAX, MAX_BLOCK_BODIES_TO_REQUEST,
+        MAX_BLOCK_HEADERS_TO_REQUEST,
+    },
 };
 
 /// The minimum amount of blocks from the head that we want to full sync during a snap sync
@@ -157,7 +160,7 @@ impl SyncManager {
         // Request all block headers between the current head and the sync head
         // We will begin from the current head so that we download the earliest state first
         // This step is not parallelized
-        let all_block_hashes = vec![];
+        let mut all_block_hashes = vec![];
         // Check if we have some blocks downloaded from a previous sync attempt
         // We only check for snap syncing as full sync will start fetching headers starting from the canonical block
         // which is update every time a new block is added which is done as we fetch block headers
@@ -175,10 +178,20 @@ impl SyncManager {
 
         loop {
             debug!("Requesting Block Headers from {current_head}");
+            let block_header_limit = match self.sync_mode {
+                SyncMode::Snap => MAX_BLOCK_HEADERS_TO_REQUEST,
+                // In Full sync mode, request the same number of block bodies as headers,
+                // since they are processed together at the same rate.
+                SyncMode::Full => MAX_BLOCK_BODIES_TO_REQUEST,
+            } as u64;
 
             let Some(mut block_headers) = self
                 .peers
-                .request_block_headers(current_head, BlockRequestOrder::OldToNew)
+                .request_block_headers(
+                    current_head,
+                    BlockRequestOrder::OldToNew,
+                    block_header_limit,
+                )
                 .await
             else {
                 warn!("Sync failed to find target block header, aborting");
@@ -242,63 +255,20 @@ impl SyncManager {
             block_hashes.remove(0);
             block_headers.remove(0);
             // Store headers and save hashes for full block retrieval
+            all_block_hashes.extend_from_slice(&block_hashes[..]);
             store.add_block_headers(block_hashes.clone(), block_headers)?;
 
             match self.sync_mode {
-                SyncMode::Snap => {
-                    // snap-sync: launch tasks to fetch blocks and state in parallel
-                    // - Fetch each block's body and its receipt via eth p2p requests
-                    // - Fetch the pivot block's state via snap p2p requests
-                    // - Execute blocks after the pivot (like in full-sync)
-                    let pivot_idx = all_block_hashes.len().saturating_sub(MIN_FULL_BLOCKS);
-                    let pivot_header = store
-                        .get_block_header_by_hash(all_block_hashes[pivot_idx])?
-                        .ok_or(SyncError::CorruptDB)?;
-                    debug!(
-                        "Selected block {} as pivot for snap sync",
-                        pivot_header.number
-                    );
-                    let store_bodies_handle = tokio::spawn(store_block_bodies(
-                        all_block_hashes[pivot_idx + 1..].to_vec(),
-                        self.peers.clone(),
-                        store.clone(),
-                    ));
-                    // Perform snap sync
-                    if !self
-                        .snap_sync(pivot_header.state_root, store.clone())
-                        .await?
-                    {
-                        // Snap sync was not completed, abort and resume it on the next cycle
-                        return Ok(());
-                    }
-                    // Wait for all bodies to be downloaded
-                    store_bodies_handle.await??;
-                    // For all blocks before the pivot: Store the bodies and fetch the receipts (TODO)
-                    // For all blocks after the pivot: Process them fully
-                    for hash in &all_block_hashes[pivot_idx + 1..] {
-                        let block = store
-                            .get_block_by_hash(*hash)?
-                            .ok_or(SyncError::CorruptDB)?;
-                        ethrex_blockchain::add_block(&block, &store)?;
-                        store.set_canonical_block(block.header.number, *hash)?;
-                        store.update_latest_block_number(block.header.number)?;
-                    }
-                    self.last_snap_pivot = pivot_header.number;
-                    // Finished a sync cycle without aborting halfway, clear current checkpoint
-                    store.clear_snap_state()?;
-                    // Next sync will be full-sync
-                    self.sync_mode = SyncMode::Full;
-                }
                 SyncMode::Full => {
                     self.download_and_run_blocks(&mut block_hashes, store.clone())
                         .await?;
                 }
+                _ => {}
             }
             if sync_head_found {
                 break;
             };
         }
-        // We finished fetching all headers, now we can process them
         match self.sync_mode {
             SyncMode::Snap => {
                 // snap-sync: launch tasks to fetch blocks and state in parallel
@@ -357,15 +327,11 @@ impl SyncManager {
         block_hashes: &mut Vec<BlockHash>,
         store: Store,
     ) -> Result<(), SyncError> {
-        // ask as much as 128 block bodies per req
-        // this magic number is not part of the protocol and it is taken from geth, see:
-        // https://github.com/ethereum/go-ethereum/blob/master/eth/downloader/downloader.go#L42
-        let max_req_len = 128;
         let mut last_valid_hash = H256::default();
 
         let mut current_chunk_idx = 0;
         let chunks: Vec<Vec<BlockHash>> = block_hashes
-            .chunks(max_req_len)
+            .chunks(MAX_BLOCK_BODIES_TO_REQUEST)
             .map(|chunk| chunk.to_vec())
             .collect();
 
