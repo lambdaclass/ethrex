@@ -20,13 +20,13 @@ use ethrex_rlp::decode::RLPDecode;
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_rlp::error::RLPDecodeError;
 use ethrex_trie::{Nibbles, Trie};
-use libmdbx::orm::{Decodable, Encodable, Table};
+use libmdbx::orm::{Decodable, DupSort, Encodable, Table};
 use libmdbx::{
     dupsort,
     orm::{table, Database},
     table_info,
 };
-use libmdbx::{DatabaseOptions, Mode, ReadWriteOptions};
+use libmdbx::{DatabaseOptions, Mode, PageSize, ReadWriteOptions, TransactionKind};
 use serde_json;
 use std::fmt::{Debug, Formatter};
 use std::path::Path;
@@ -63,11 +63,12 @@ impl Store {
             .begin_readwrite()
             .map_err(StoreError::LibmdbxError)?;
 
+        let mut cursor = txn.cursor::<T>().map_err(StoreError::LibmdbxError)?;
         for (key, value) in key_values {
-            txn.upsert::<T>(key, value)
+            cursor
+                .upsert(key, value)
                 .map_err(StoreError::LibmdbxError)?;
         }
-
         txn.commit().map_err(StoreError::LibmdbxError)
     }
 
@@ -733,6 +734,98 @@ impl Debug for Store {
 
 // Define tables
 
+/// For `dupsort` tables, multiple values can be stored under the same key.
+/// To maintain an explicit order, each value is assigned an `index`.
+/// This is useful when storing large byte sequences that exceed the maximum size limit,
+/// requiring them to be split into smaller chunks for storage.
+pub struct IndexedChunk<T: RLPEncode + RLPDecode> {
+    index: u8,
+    value: Rlp<T>,
+}
+
+pub trait ChunkTrait<T: RLPEncode + RLPDecode> {
+    #[allow(unused)]
+    fn index(&self) -> u8;
+    fn value_bytes(&self) -> &Vec<u8>;
+}
+
+impl<T: RLPEncode + RLPDecode> ChunkTrait<T> for IndexedChunk<T> {
+    fn index(&self) -> u8 {
+        self.index
+    }
+
+    fn value_bytes(&self) -> &Vec<u8> {
+        self.value.bytes()
+    }
+}
+
+impl<T: Send + Sync + RLPEncode + RLPDecode> Decodable for IndexedChunk<T> {
+    fn decode(b: &[u8]) -> anyhow::Result<Self> {
+        let index = b[0];
+        let value = Rlp::from_bytes(b[1..].to_vec());
+        Ok(Self { index, value })
+    }
+}
+
+impl<T: Send + Sync + RLPEncode + RLPDecode> Encodable for IndexedChunk<T> {
+    type Encoded = Vec<u8>;
+
+    fn encode(self) -> Self::Encoded {
+        // by appending the index at the begging, we enforce the btree ordering from lowest to highest
+        let mut buf = vec![self.index];
+        buf.extend_from_slice(self.value.bytes());
+        buf
+    }
+}
+
+impl<T: RLPEncode + RLPDecode> IndexedChunk<T> {
+    /// Splits a value into a indexed chunks if it exceeds the maximum storage size.
+    /// Each chunk is assigned an index to ensure correct ordering when retrieved.
+    pub fn from(bytes: &[u8]) -> Vec<Self> {
+        let chunks: Vec<Vec<u8>> = bytes
+            // -1 to account for the index byte
+            .chunks(DB_MAX_VALUE_SIZE - 1)
+            .map(|i| i.to_vec())
+            .collect();
+        chunks
+            .into_iter()
+            .enumerate()
+            .map(|(index, chunk)| IndexedChunk {
+                index: index as u8,
+                value: Rlp::from_bytes(chunk),
+            })
+            .collect()
+    }
+
+    /// Reads multiple stored chunks and reconstructs the original full value.
+    /// The chunks are appended in order based on their assigned index.
+    pub fn read_from_db<'txn, Tab: Table, K: TransactionKind>(
+        cursor: &mut libmdbx::orm::Cursor<'txn, K, Tab>,
+        key: Tab::Key,
+    ) -> Result<Option<T>, StoreError>
+    where
+        Tab::Key: Decodable,
+        Tab::Value: ChunkTrait<T>,
+        Tab: DupSort,
+    {
+        let mut value = vec![];
+
+        if let Some((_, chunk)) = cursor.seek_exact(key).map_err(StoreError::LibmdbxError)? {
+            value.extend_from_slice(chunk.value_bytes());
+        } else {
+            return Ok(None);
+        }
+
+        // Fetch remaining parts
+        while let Some((_, chunk)) = cursor.next_value().map_err(StoreError::LibmdbxError)? {
+            value.extend_from_slice(chunk.value_bytes());
+        }
+
+        let decoded = T::decode(&value).map_err(StoreError::RLPDecode)?;
+        Ok(Some(decoded))
+    }
+}
+
 table!(
     /// The canonical block hash for each block number. It represents the canonical chain.
     ( CanonicalBlockHashes ) BlockNumber => BlockHashRLP
@@ -890,6 +983,15 @@ impl Encodable for SnapStateIndex {
         (self as u32).encode()
     }
 }
+
+/// default page size recommended by libmdbx
+///
+/// - See here: https://github.com/erthink/libmdbx/tree/master?tab=readme-ov-file#limitations
+/// - and here: https://libmdbx.dqdkfa.ru/structmdbx_1_1env_1_1geometry.html#a45048bf2de9120d01dae2151c060d459
+const DB_PAGE_SIZE: usize = 4096;
+/// For a default page size of 4096, the max value size is roughly 1/2 page size.
+const DB_MAX_VALUE_SIZE: usize = 2022;
+
 /// Initializes a new database with the provided path. If the path is `None`, the database
 /// will be temporary.
 pub fn init_db(path: Option<impl AsRef<Path>>) -> Database {
@@ -916,6 +1018,7 @@ pub fn init_db(path: Option<impl AsRef<Path>>) -> Database {
     .collect();
     let path = path.map(|p| p.as_ref().to_path_buf());
     let options = DatabaseOptions {
+        page_size: Some(PageSize::Set(DB_PAGE_SIZE)),
         mode: Mode::ReadWrite(ReadWriteOptions {
             // Set max DB size to 1TB
             max_size: Some(1024_isize.pow(4)),
