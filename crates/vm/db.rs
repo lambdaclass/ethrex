@@ -247,20 +247,21 @@ impl ToExecDB for StoreWrapper {
         });
 
         // fetch all read/written values from store
-        let already_existing_accounts = cache
-            .accounts
-            .iter()
-            // filter out new accounts, we're only interested in already existing accounts.
-            // new accounts are storage cleared, self-destructed accounts too but they're marked with "not
-            // existing" status instead.
-            .filter_map(|(address, account)| {
-                if !account.account_state.is_storage_cleared() {
-                    Some((CoreAddress::from(address.0.as_ref()), account))
-                } else {
-                    None
-                }
-            });
-        let accounts = already_existing_accounts
+        let cache_accounts = cache.accounts.iter().filter_map(|(address, account)| {
+            let address = CoreAddress::from(address.0.as_ref());
+            // filter new accounts (accounts that didn't exist before) assuming our store is
+            // correct (based on the success of the pre-execution).
+            if store_wrapper
+                .store
+                .get_account_info_by_hash(parent_hash, address)
+                .is_ok_and(|account| account.is_some())
+            {
+                Some((address, account))
+            } else {
+                None
+            }
+        });
+        let accounts = cache_accounts
             .clone()
             .map(|(address, _)| {
                 // return error if account is missing
@@ -268,14 +269,15 @@ impl ToExecDB for StoreWrapper {
                     .store
                     .get_account_info_by_hash(parent_hash, address)
                 {
-                    Ok(None) => Err(ExecutionDBError::NewMissingAccountInfo(address)),
                     Ok(Some(some)) => Ok(some),
                     Err(err) => Err(ExecutionDBError::Store(err)),
+                    Ok(None) => unreachable!(), // we are filtering out accounts that are not present
+                                                // in the store
                 };
                 Ok((address, account?))
             })
             .collect::<Result<HashMap<_, _>, ExecutionDBError>>()?;
-        let code = already_existing_accounts
+        let code = cache_accounts
             .clone()
             .map(|(_, account)| {
                 // return error if code is missing
@@ -289,7 +291,7 @@ impl ToExecDB for StoreWrapper {
                 ))
             })
             .collect::<Result<_, ExecutionDBError>>()?;
-        let storage = already_existing_accounts
+        let storage = cache_accounts
             .map(|(address, account)| {
                 // return error if storage is missing
                 Ok((
@@ -349,11 +351,13 @@ impl ToExecDB for StoreWrapper {
         let mut storage_proofs = HashMap::new();
         let mut final_storage_proofs = HashMap::new();
         for (address, storage_keys) in index {
+            let Some(parent_storage_trie) = self.store.storage_trie(parent_hash, address)? else {
+                // the storage of this account was empty or the account is newly created, either
+                // way the storage trie was initially empty so there aren't any proofs to add.
+                continue;
+            };
             let storage_trie = self.store.storage_trie(block.hash(), address)?.ok_or(
                 ExecutionDBError::NewMissingStorageTrie(block.hash(), address),
-            )?;
-            let parent_storage_trie = self.store.storage_trie(parent_hash, address)?.ok_or(
-                ExecutionDBError::NewMissingStorageTrie(parent_hash, address),
             )?;
             let paths = storage_keys.iter().map(hash_key).collect::<Vec<_>>();
 
