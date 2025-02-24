@@ -1,11 +1,12 @@
-use self::engines::in_memory::Store as InMemoryStore;
+use crate::api::StoreEngine;
+use crate::error::StoreError;
+use crate::store_db::in_memory::Store as InMemoryStore;
 #[cfg(feature = "libmdbx")]
-use self::engines::libmdbx::Store as LibmdbxStore;
-use self::error::StoreError;
-use bytes::Bytes;
-use engines::api::StoreEngine;
+use crate::store_db::libmdbx::Store as LibmdbxStore;
 #[cfg(feature = "redb")]
-use engines::redb::RedBStore;
+use crate::store_db::redb::RedBStore;
+use bytes::Bytes;
+
 use ethereum_types::{Address, H256, U256};
 use ethrex_common::types::{
     code_hash, AccountInfo, AccountState, BlobsBundle, Block, BlockBody, BlockHash, BlockHeader,
@@ -21,11 +22,6 @@ use std::collections::{HashMap, HashSet};
 use std::fmt::Debug;
 use std::sync::{Arc, Mutex};
 use tracing::info;
-
-mod engines;
-pub mod error;
-mod rlp;
-mod trie_db;
 
 /// Number of state trie segments to fetch concurrently during state sync
 pub const STATE_TRIE_SEGMENTS: usize = 2;
@@ -103,6 +99,21 @@ impl Store {
             },
         };
         info!("Started store engine");
+        Ok(store)
+    }
+
+    pub fn new_from_genesis(
+        store_path: &str,
+        engine_type: EngineType,
+        genesis_path: &str,
+    ) -> Result<Self, StoreError> {
+        let file = std::fs::File::open(genesis_path)
+            .map_err(|error| StoreError::Custom(format!("Failed to open genesis file: {error}")))?;
+        let reader = std::io::BufReader::new(file);
+        let genesis: Genesis =
+            serde_json::from_reader(reader).expect("Failed to deserialize genesis file");
+        let store = Self::new(store_path, engine_type)?;
+        store.add_initial_state(genesis)?;
         Ok(store)
     }
 
@@ -492,7 +503,7 @@ impl Store {
                 .open_storage_trie(H256::from_slice(&hashed_address), *EMPTY_TRIE_HASH);
             for (storage_key, storage_value) in account.storage {
                 if !storage_value.is_zero() {
-                    let hashed_key = hash_key(&storage_key);
+                    let hashed_key = hash_key(&H256(storage_key.to_big_endian()));
                     storage_trie.insert(hashed_key, storage_value.encode_to_vec())?;
                 }
             }
@@ -716,6 +727,14 @@ impl Store {
         block_number: BlockNumber,
     ) -> Result<Option<BlockHash>, StoreError> {
         self.engine.get_canonical_block_hash(block_number)
+    }
+
+    pub fn get_latest_canonical_block_hash(&self) -> Result<Option<BlockHash>, StoreError> {
+        let latest_block_number = match self.engine.get_latest_block_number() {
+            Ok(n) => n.ok_or(StoreError::MissingLatestBlockNumber)?,
+            Err(e) => return Err(e),
+        };
+        self.get_canonical_block_hash(latest_block_number)
     }
 
     /// Marks a block number as not having any canonical blocks associated with it.

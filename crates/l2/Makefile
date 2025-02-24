@@ -9,7 +9,7 @@ L1_GENESIS_FILE_PATH=../../test_data/genesis-l1.json
 help: ## 📚 Show help for each of the Makefile recipes
 	@grep -E '^[a-zA-Z0-9_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-30s\033[0m %s\n", $$1, $$2}'
 
-init: init-local-l1 deploy-l1 init-l2 ## 🚀 Initializes a localnet with Lambda ethrex client as both L1 and L2
+init: init-local-l1 deploy-l1 update-system-contracts  init-l2 ## 🚀 Initializes a localnet with Lambda ethrex client as both L1 and L2
 
 down: down-local-l1 down-l2 down-metrics## 🛑 Shuts down the localnet
 
@@ -103,6 +103,9 @@ restart-contract-deps: clean-contract-deps ## 🔄 Restarts the dependencies for
 deploy-l1: ## 📜 Deploys the L1 contracts
 	DEPLOYER_CONTRACTS_PATH=contracts cargo run --release --bin ethrex_l2_l1_deployer --manifest-path ${ethrex_L2_CONTRACTS_PATH}/Cargo.toml
 
+update-system-contracts:
+	DEPLOYER_CONTRACTS_PATH=contracts cargo run --release --bin ethrex_l2_system_contracts_updater --manifest-path ${ethrex_L2_CONTRACTS_PATH}/Cargo.toml -- ${L2_GENESIS_FILE_PATH}
+
 # L2
 init-l2: init-metrics ## 🚀 Initializes an L2 Lambda ethrex Client
 	if [[ -z "$$BASED" ]]; then \
@@ -119,10 +122,10 @@ init-l2: init-metrics ## 🚀 Initializes an L2 Lambda ethrex Client
 	--authrpc.port ${L2_AUTH_PORT} \
 	--metrics.port ${L2_PROMETHEUS_METRICS_PORT} \
 	--datadir ${ethrex_L2_DEV_LIBMDBX}
-	
+
 init-metrics: ## 🚀 Initializes Grafana and Prometheus with containers
 	docker compose -f ${ethrex_METRICS_DOCKER_COMPOSE_PATH} -f ${ethrex_METRICS_OVERRIDES_L2_DOCKER_COMPOSE_PATH} up -d
-	
+
 down-metrics: ## 🛑 Shuts down the metrics' containers
 	docker compose -f ${ethrex_METRICS_DOCKER_COMPOSE_PATH} -f ${ethrex_METRICS_OVERRIDES_L2_DOCKER_COMPOSE_PATH} down
 

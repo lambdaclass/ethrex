@@ -7,20 +7,18 @@ mod smoke_test;
 
 use error::{ChainError, InvalidBlockError};
 use ethrex_common::constants::GAS_PER_BLOB;
+use ethrex_common::types::requests::{compute_requests_hash, EncodedRequests, Requests};
 use ethrex_common::types::{
-    calculate_requests_hash, compute_receipts_root, validate_block_header,
-    validate_cancun_header_fields, validate_prague_header_fields,
-    validate_pre_cancun_header_fields, Block, BlockHash, BlockHeader, BlockNumber, ChainConfig,
-    EIP4844Transaction, Receipt, Transaction,
+    compute_receipts_root, validate_block_header, validate_cancun_header_fields,
+    validate_prague_header_fields, validate_pre_cancun_header_fields, Block, BlockHash,
+    BlockHeader, BlockNumber, ChainConfig, EIP4844Transaction, Receipt, Transaction,
 };
 use ethrex_common::H256;
 
 use ethrex_storage::error::StoreError;
-use ethrex_storage::{AccountUpdate, Store};
+use ethrex_storage::Store;
 use ethrex_vm::db::evm_state;
-
-use ethrex_vm::EVM_BACKEND;
-use ethrex_vm::{backends, backends::EVM};
+use ethrex_vm::{backends::BlockExecutionResult, get_evm_backend_or_default};
 
 //TODO: Implement a struct Chain or BlockChain to encapsulate
 //functionality and canonical chain state and config
@@ -44,17 +42,11 @@ pub fn add_block(block: &Block, storage: &Store) -> Result<(), ChainError> {
 
     // Validate the block pre-execution
     validate_block(block, &parent_header, &chain_config)?;
-    let (receipts, account_updates): (Vec<Receipt>, Vec<AccountUpdate>) = {
-        match EVM_BACKEND.get() {
-            Some(EVM::LEVM) => backends::levm::execute_block(block, &mut state)?,
-            // This means we are using REVM as default for tests
-            Some(EVM::REVM) | None => {
-                let receipts = backends::revm::execute_block(block, &mut state)?;
-                let account_updates = ethrex_vm::get_state_transitions(&mut state);
-                (receipts, account_updates)
-            }
-        }
-    };
+    let BlockExecutionResult {
+        receipts,
+        requests,
+        account_updates,
+    } = get_evm_backend_or_default().execute_block(block, &mut state)?;
 
     validate_gas_used(&receipts, &block.header)?;
 
@@ -72,7 +64,7 @@ pub fn add_block(block: &Block, storage: &Store) -> Result<(), ChainError> {
     validate_receipts_root(&block.header, &receipts)?;
 
     // Processes requests from receipts, computes the requests_hash and compares it against the header
-    validate_requests_hash(&block.header, &receipts, &chain_config)?;
+    validate_requests_hash(&block.header, &chain_config, &requests)?;
 
     store_block(storage, block.clone())?;
     store_receipts(storage, receipts, block_hash)?;
@@ -82,13 +74,15 @@ pub fn add_block(block: &Block, storage: &Store) -> Result<(), ChainError> {
 
 pub fn validate_requests_hash(
     header: &BlockHeader,
-    receipts: &[Receipt],
     chain_config: &ChainConfig,
+    requests: &[Requests],
 ) -> Result<(), ChainError> {
     if !chain_config.is_prague_activated(header.timestamp) {
         return Ok(());
     }
-    let computed_requests_hash = calculate_requests_hash(receipts);
+
+    let encoded_requests: Vec<EncodedRequests> = requests.iter().map(|r| r.encode()).collect();
+    let computed_requests_hash = compute_requests_hash(&encoded_requests);
     let valid = header
         .requests_hash
         .map(|requests_hash| requests_hash == computed_requests_hash)
