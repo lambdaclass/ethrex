@@ -8,7 +8,7 @@ use ethrex_common::{
     types::{
         calculate_base_fee_per_blob_gas, calculate_base_fee_per_gas, compute_receipts_root,
         compute_transactions_root, compute_withdrawals_root,
-        requests::{compute_requests_hash, EncodedRequests, Requests},
+        requests::{compute_requests_hash, EncodedRequests},
         BlobsBundle, Block, BlockBody, BlockHash, BlockHeader, BlockNumber, ChainConfig,
         MempoolTransaction, Receipt, Transaction, Withdrawal, DEFAULT_OMMERS_HASH,
         DEFAULT_REQUESTS_HASH,
@@ -178,7 +178,7 @@ pub struct PayloadBuildContext<'a> {
     pub block_cache: CacheDB,
     pub remaining_gas: u64,
     pub receipts: Vec<Receipt>,
-    pub requests: Vec<Requests>,
+    pub requests: Vec<EncodedRequests>,
     pub requests_hash: Option<H256>,
     pub block_value: U256,
     base_fee_per_blob_gas: U256,
@@ -237,7 +237,7 @@ impl<'a> PayloadBuildContext<'a> {
 pub fn build_payload(
     payload: &mut Block,
     store: &Store,
-) -> Result<(BlobsBundle, U256), ChainError> {
+) -> Result<(BlobsBundle, Vec<EncodedRequests>, U256), ChainError> {
     debug!("Building payload");
     let mut evm_state = evm_state(store.clone(), payload.header.parent_hash);
     let mut context = PayloadBuildContext::new(payload, &mut evm_state)?;
@@ -246,7 +246,7 @@ pub fn build_payload(
     fill_transactions(&mut context)?;
     extract_requests(&mut context)?;
     finalize_payload(&mut context)?;
-    Ok((context.blobs_bundle, context.block_value))
+    Ok((context.blobs_bundle, context.requests, context.block_value))
 }
 
 pub fn apply_withdrawals(context: &mut PayloadBuildContext) -> Result<(), EvmError> {
@@ -506,11 +506,9 @@ pub fn extract_requests(context: &mut PayloadBuildContext) -> Result<(), EvmErro
         context.evm_state,
         &context.payload.header,
         &mut context.block_cache,
-    );
-    context.requests = requests?;
-    let encoded_requests: Vec<EncodedRequests> =
-        context.requests.iter().map(|r| r.encode()).collect();
-    context.requests_hash = Some(compute_requests_hash(&encoded_requests));
+    )?;
+    context.requests = requests.iter().map(|r| r.encode()).collect();
+    context.requests_hash = Some(compute_requests_hash(&context.requests));
 
     Ok(())
 }

@@ -1,8 +1,8 @@
 use bytes::Bytes;
 use ethereum_types::{H256, U256};
 use ethrex_common::types::{
-    AccountState, BlobsBundle, Block, BlockBody, BlockHash, BlockHeader, BlockNumber, ChainConfig,
-    Index, Receipt, Transaction,
+    payload::PayloadBundle, AccountState, Block, BlockBody, BlockHash, BlockHeader, BlockNumber,
+    ChainConfig, Index, Receipt, Transaction,
 };
 use std::{fmt::Debug, panic::RefUnwindSafe};
 
@@ -234,19 +234,9 @@ pub trait StoreEngine: Debug + Send + Sync + RefUnwindSafe {
 
     fn add_payload(&self, payload_id: u64, block: Block) -> Result<(), StoreError>;
 
-    fn get_payload(
-        &self,
-        payload_id: u64,
-    ) -> Result<Option<(Block, U256, BlobsBundle, bool)>, StoreError>;
+    fn get_payload(&self, payload_id: u64) -> Result<Option<PayloadBundle>, StoreError>;
 
-    fn update_payload(
-        &self,
-        payload_id: u64,
-        block: Block,
-        block_value: U256,
-        blobs_bundle: BlobsBundle,
-        completed: bool,
-    ) -> Result<(), StoreError>;
+    fn update_payload(&self, payload_id: u64, payload: PayloadBundle) -> Result<(), StoreError>;
 
     fn get_receipts_for_block(&self, block_hash: &BlockHash) -> Result<Vec<Receipt>, StoreError>;
 

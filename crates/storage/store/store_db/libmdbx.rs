@@ -2,8 +2,8 @@ use crate::api::StoreEngine;
 use crate::error::StoreError;
 use crate::rlp::{
     AccountCodeHashRLP, AccountCodeRLP, AccountHashRLP, AccountStateRLP, BlockBodyRLP,
-    BlockHashRLP, BlockHeaderRLP, BlockRLP, BlockTotalDifficultyRLP, ReceiptRLP, Rlp,
-    TransactionHashRLP, TupleRLP,
+    BlockHashRLP, BlockHeaderRLP, BlockRLP, BlockTotalDifficultyRLP, PayloadBundleRLP, ReceiptRLP,
+    Rlp, TransactionHashRLP, TupleRLP,
 };
 use crate::store::{MAX_SNAPSHOT_READS, STATE_TRIE_SEGMENTS};
 use crate::trie_db::libmdbx::LibmdbxTrieDB;
@@ -13,8 +13,8 @@ use anyhow::Result;
 use bytes::Bytes;
 use ethereum_types::{H256, U256};
 use ethrex_common::types::{
-    AccountState, BlobsBundle, Block, BlockBody, BlockHash, BlockHeader, BlockNumber, ChainConfig,
-    Index, Receipt, Transaction,
+    payload::PayloadBundle, AccountState, Block, BlockBody, BlockHash, BlockHeader, BlockNumber,
+    ChainConfig, Index, Receipt, Transaction,
 };
 use ethrex_rlp::decode::RLPDecode;
 use ethrex_rlp::encode::RLPEncode;
@@ -381,31 +381,16 @@ impl StoreEngine for Store {
     }
 
     fn add_payload(&self, payload_id: u64, block: Block) -> Result<(), StoreError> {
-        self.write::<Payloads>(
-            payload_id,
-            (block, U256::zero(), BlobsBundle::empty(), false).into(),
-        )
+        self.write::<Payloads>(payload_id, PayloadBundle::from_block(block).into())
     }
 
-    fn get_payload(
-        &self,
-        payload_id: u64,
-    ) -> Result<Option<(Block, U256, BlobsBundle, bool)>, StoreError> {
-        Ok(self.read::<Payloads>(payload_id)?.map(|b| b.to()))
+    fn get_payload(&self, payload_id: u64) -> Result<Option<PayloadBundle>, StoreError> {
+        let r = self.read::<Payloads>(payload_id)?;
+        Ok(r.map(|b| b.to()))
     }
 
-    fn update_payload(
-        &self,
-        payload_id: u64,
-        block: Block,
-        block_value: U256,
-        blobs_bundle: BlobsBundle,
-        completed: bool,
-    ) -> Result<(), StoreError> {
-        self.write::<Payloads>(
-            payload_id,
-            (block, block_value, blobs_bundle, completed).into(),
-        )
+    fn update_payload(&self, payload_id: u64, payload: PayloadBundle) -> Result<(), StoreError> {
+        self.write::<Payloads>(payload_id, payload.into())
     }
 
     fn get_transaction_by_hash(
@@ -801,7 +786,7 @@ table!(
 
 table!(
     /// payload id to payload table
-    ( Payloads ) u64 => Rlp<(Block, U256, BlobsBundle, bool)>
+    ( Payloads ) u64 => PayloadBundleRLP
 );
 
 table!(
