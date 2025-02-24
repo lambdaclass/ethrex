@@ -10,6 +10,8 @@ risc0_contract_verifier = "0x00000000000000000000000000000000000000AA"
 # Only use in dev mode.
 sp1_contract_verifier = "0x00000000000000000000000000000000000000AA"
 sp1_deploy_verifier = false
+# If set to false, the salt will be randomized.
+salt_is_zero = true
 
 [eth]
 rpc_url = "http://localhost:8545"
