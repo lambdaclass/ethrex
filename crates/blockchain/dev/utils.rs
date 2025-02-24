@@ -6,6 +6,8 @@ use ethrex_l2_sdk::get_address_from_secret_key;
 use keccak_hash::H256;
 use secp256k1::SecretKey;
 
+pub const NUMBER_OF_TOP_ACCOUNTS: usize = 10;
+
 pub fn show_rich_accounts(genesis: &Genesis, contents: &str) {
     let private_keys: Vec<String> = contents
         .lines()
@@ -35,10 +37,9 @@ pub fn show_rich_accounts(genesis: &Genesis, contents: &str) {
         .map(|(address, account)| (address, account.balance))
         .collect();
     top_accounts.sort_by(|a, b| b.1.cmp(&a.1)); // sort by greater balance
-    let number_of_top_accounts = 10;
-    top_accounts.truncate(number_of_top_accounts);
+    top_accounts.truncate(NUMBER_OF_TOP_ACCOUNTS);
 
-    println!("Showing first {} accounts", number_of_top_accounts);
+    println!("Showing first {} accounts", NUMBER_OF_TOP_ACCOUNTS);
     println!("-------------------------------------------------------------------------------");
     for (address, balance) in top_accounts {
         let Some(pk) = address_to_pk.get(address) else {

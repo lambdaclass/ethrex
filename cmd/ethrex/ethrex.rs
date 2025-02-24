@@ -12,7 +12,6 @@ use ethrex_rlp::decode::RLPDecode;
 use ethrex_storage::{EngineType, Store};
 use ethrex_vm::{backends::EVM, EVM_BACKEND};
 use k256::ecdsa::SigningKey;
-
 use local_ip_address::local_ip;
 use rand::rngs::OsRng;
 use std::{
