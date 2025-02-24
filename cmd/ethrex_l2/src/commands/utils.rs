@@ -4,7 +4,11 @@ use secp256k1::SecretKey;
 
 #[derive(Subcommand)]
 pub(crate) enum Command {
-    #[clap(about = "Convert private key to address.")]
+    #[clap(
+        name = "address",
+        visible_aliases = ["a"],
+        about = "Convert private key to address."
+    )]
     PrivateKeyToAddress {
         #[arg(long = "pk", help = "Private key in hex format.", required = true)]
         private_key: String,
