@@ -92,6 +92,7 @@ impl Blockchain {
         Ok(())
     }
 
+    //TODO: Forkchoice Update shouldn't be part of this function
     pub fn import_blocks(&self, blocks: &Vec<Block>) {
         let size = blocks.len();
         for block in blocks {
