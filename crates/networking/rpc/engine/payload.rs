@@ -513,7 +513,6 @@ fn execute_payload(block: &Block, context: &RpcApiContext) -> Result<PayloadStat
     };
 
     let add_block_result = {
-        //TODO: Think if there is a problem with using try_lock() here
         let lock = context.syncer.try_lock();
         if let Ok(syncer) = lock {
             syncer.blockchain.add_block(block)
