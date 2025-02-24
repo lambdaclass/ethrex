@@ -206,7 +206,7 @@ fn handle_forkchoice(
             // See https://github.com/lambdaclass/ethrex/issues/797
             if let Ok(Some(block)) = context.storage.get_block_by_hash(head.compute_block_hash()) {
                 let mut mempool =
-                    context.storage.mempool.lock().map_err(|err| {
+                    context.storage.mempool.write().map_err(|err| {
                         RpcErr::Internal(format!("Failed to lock mempool: {err}",))
                     })?;
                 for tx in block.body.transactions {

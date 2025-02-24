@@ -353,7 +353,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
             for (hash, mempool_tx) in self
                 .storage
                 .mempool
-                .lock()
+                .read()
                 .map_err(|_err| {
                     RLPxError::StoreError(ethrex_storage::error::StoreError::Custom(
                         "Failed to lock mempool".to_string(),
