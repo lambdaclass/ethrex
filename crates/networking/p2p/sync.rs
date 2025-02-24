@@ -340,6 +340,8 @@ async fn download_and_run_blocks(
                     last_valid_hash = hash;
                 }
                 info!("stored {} blocks", block_bodies_len);
+                let latest = store.get_latest_block_number()?;
+                info!("latest block number {} ", latest);
                 // Check if we need to ask for another batch
                 if chunk.is_empty() {
                     break;
