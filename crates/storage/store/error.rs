@@ -46,4 +46,8 @@ pub enum StoreError {
     MissingLatestBlockNumber,
     #[error("Missing earliest block number")]
     MissingEarliestBlockNumber,
+    #[error("Failed to lock mempool for writing")]
+    MempoolWriteLock,
+    #[error("Failed to lock mempool for reading")]
+    MempoolReadLock,
 }
