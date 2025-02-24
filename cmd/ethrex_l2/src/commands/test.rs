@@ -5,7 +5,10 @@ use ethereum_types::{Address, H256, U256};
 use ethrex_blockchain::constants::TX_GAS_COST;
 use ethrex_common::H160;
 use ethrex_l2_sdk::calldata::{self, Value};
-use ethrex_rpc::clients::eth::{eth_sender::Overrides, EthClient};
+use ethrex_rpc::{
+    clients::eth::{eth_sender::Overrides, EthClient},
+    types::receipt::RpcReceipt,
+};
 use keccak_hash::keccak;
 use secp256k1::SecretKey;
 use std::{
@@ -228,7 +231,20 @@ async fn erc20_load_test(config: &EthrexL2Config, count: u64) -> eyre::Result<()
         tasks.spawn(async move {
             let sent = client.send_eip1559_transaction(&tx, &pk).await;
             match sent {
-                Ok(_) => println!("ERC-20 transfer number {i} sent!"),
+                Ok(hash) => {
+                    println!("ERC-20 transfer number {i} sent! Waiting for receipt...");
+                    let mut retries = 10_u64;
+                    for _ in 0..retries {
+                        match client.get_transaction_receipt(hash).await {
+                            Ok(Some(RpcReceipt { receipt, .. })) if receipt.status => {
+                                println!("ERC-20 transfer number {i} was sucessful");
+                            }
+                            _ => {
+                                let _ = tokio::time::sleep(Duration::from_secs(1)).await;
+                            }
+                        }
+                    }
+                }
                 Err(_) => println!("ERC-20 transfer number {i} FAILED"),
             }
         });
