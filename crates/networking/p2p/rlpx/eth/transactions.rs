@@ -72,8 +72,6 @@ pub(crate) struct NewPooledTransactionHashes {
 }
 
 impl NewPooledTransactionHashes {
-    // delete this after we use this in the main loop
-    #[allow(dead_code)]
     pub fn new(transactions: Vec<Transaction>, storage: &Store) -> Result<Self, StoreError> {
         let transactions_len = transactions.len();
         let mut transaction_types = Vec::with_capacity(transactions_len);
