@@ -92,8 +92,7 @@ impl NewPooledTransactionHashes {
                     let tx_blobs_bundle = storage
                         .get_blobs_bundle_from_pool(transaction_hash)?
                         .unwrap_or(BlobsBundle::empty());
-                    // add 1 because the size of tx_type is 1 byte
-                    eip4844_tx.rlp_length_as_pooled_tx(&tx_blobs_bundle) + 1
+                    eip4844_tx.rlp_length_as_pooled_tx(&tx_blobs_bundle)
                 }
                 _ => transaction.encode_canonical_to_vec().len(),
             };

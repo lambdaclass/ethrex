@@ -505,6 +505,7 @@ impl EIP4844Transaction {
         buf: &mut dyn bytes::BufMut,
         tx_blobs_bundle: &BlobsBundle,
     ) {
+        buf.put_bytes(TxType::EIP4844.into(), 1);
         self.encode(buf);
         let mut encoded_blobs = Vec::new();
         Encoder::new(&mut encoded_blobs)
