@@ -258,7 +258,7 @@ pub fn build_payload(
         if interval != 0 {
             let throughput = (as_gigas) / (interval as f64) * 1000_f64;
             tracing::info!(
-                "[METRIC] BLOCK THROUGHPUT: {throughput} Ggas/s TIME SPENT: {interval} msecs"
+                "[METRIC] BLOCK THROUGHPUT: {throughput} Gigagas/s TIME SPENT: {interval} msecs"
             );
         }
     }
