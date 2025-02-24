@@ -63,3 +63,8 @@ cmd/ef_tests/state/levm_perfgraphs
 *.svg
 prof_*.json
 prof.json
+
+# Used by the ERC 20 under cmd/ethrex_l2
+artifacts
+node_modules
+cache
