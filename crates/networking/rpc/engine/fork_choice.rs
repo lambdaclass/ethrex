@@ -262,7 +262,8 @@ fn handle_forkchoice(
             Ok((None, forkchoice_response))
         }
     };
-    let info!("fork_choice response: {:?}");
+    info!("fork_choice response: {:?}", response);
+    response
 }
 
 fn validate_attributes_v1(
