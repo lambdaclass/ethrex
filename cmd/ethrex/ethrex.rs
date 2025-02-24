@@ -44,8 +44,6 @@ async fn main() {
         }
     };
 
-    ethrex_common::parse_toml::read_toml().unwrap();
-
     if let Some(matches) = matches.subcommand_matches("removedb") {
         let data_dir = matches
             .get_one::<String>("datadir")
