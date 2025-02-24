@@ -153,8 +153,6 @@ async fn main() {
 
     let evm = matches.get_one::<EVM>("evm").unwrap_or(&EVM::REVM);
 
-    let blockchain = Blockchain::new(evm.clone());
-
     let path = path::PathBuf::from(data_dir.clone());
     let store: Store = if path.ends_with("memory") {
         Store::new(&data_dir, EngineType::InMemory).expect("Failed to create Store")
@@ -172,16 +170,18 @@ async fn main() {
         }
         Store::new(&data_dir, engine_type).expect("Failed to create Store")
     };
+    let blockchain = Blockchain::new(evm.clone(), &store);
 
     let genesis = read_genesis_file(&network);
-    store
+    blockchain
+        .storage
         .add_initial_state(genesis.clone())
         .expect("Failed to create genesis block");
 
     if let Some(chain_rlp_path) = matches.get_one::<String>("import") {
         info!("Importing blocks from chain file: {}", chain_rlp_path);
         let blocks = read_chain_file(chain_rlp_path);
-        blockchain.import_blocks(&store, &blocks);
+        blockchain.import_blocks(&blocks);
     }
 
     if let Some(blocks_path) = matches.get_one::<String>("import_dir") {
@@ -200,7 +200,7 @@ async fn main() {
             blocks.push(read_block_file(s));
         }
 
-        blockchain.import_blocks(&store, &blocks);
+        blockchain.import_blocks(&blocks);
     }
 
     let jwt_secret = read_jwtsecret_file(authrpc_jwtsecret);

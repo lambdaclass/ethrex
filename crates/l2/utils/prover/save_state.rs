@@ -420,9 +420,9 @@ mod tests {
 
         let blocks = test_data_io::read_chain_file(chain_file_path.to_str().unwrap());
         // create blockchain
-        let blockchain = Blockchain::default();
+        let blockchain = Blockchain::default(store);
         for block in &blocks {
-            blockchain.add_block(block, &store).unwrap();
+            blockchain.add_block(block).unwrap();
         }
 
         let mut account_updates_vec: Vec<Vec<AccountUpdate>> = Vec::new();
