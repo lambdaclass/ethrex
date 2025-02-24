@@ -11,7 +11,7 @@ use engine::{
     payload::{
         GetPayloadBodiesByHashV1Request, GetPayloadBodiesByRangeV1Request, GetPayloadV1Request,
         GetPayloadV2Request, GetPayloadV3Request, NewPayloadV1Request, NewPayloadV2Request,
-        NewPayloadV3Request,
+        NewPayloadV3Request, NewPayloadV4Request,
     },
     ExchangeCapabilitiesRequest,
 };
@@ -341,6 +341,7 @@ pub async fn map_engine_requests(
                 }
             }
         }
+        "engine_newPayloadV4" => NewPayloadV4Request::call(req, context),
         "engine_newPayloadV3" => {
             cfg_if::cfg_if! {
                 if #[cfg(feature = "based")] {
