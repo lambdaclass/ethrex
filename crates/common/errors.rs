@@ -8,6 +8,17 @@ cp crates/l2/config_example.toml crates/l2/config.toml
 "
     )]
     TomlFileNotFound,
-    #[error("Could not parse config.toml")]
+
+    #[error(
+        "\x1b[91mCould not parse config.toml
+Check the provided example to see if you have all the required fields.
+The example can be found in:
+crates/l2/config_example.toml
+
+You can also see the differences with:
+diff crates/l2/config_example.toml crates/l2/config.toml
+\x1b[0m
+"
+    )]
     TomlFormat,
 }
