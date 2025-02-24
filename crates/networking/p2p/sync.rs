@@ -312,7 +312,6 @@ async fn download_and_run_blocks(
     sync_head: H256,
 ) -> Result<(), SyncError> {
     let mut last_valid_hash = H256::default();
-    let mut synced = false;
     loop {
         debug!("Requesting Block Bodies ");
         if let Some(block_bodies) = peers.request_block_bodies(block_hashes.clone()).await {
@@ -328,10 +327,6 @@ async fn download_and_run_blocks(
                     .ok_or(SyncError::CorruptDB)?;
                 let number = header.number;
                 let block = Block::new(header, body);
-                if synced {
-                    store.add_pending_block(block.clone())?;
-                    continue;
-                }
 
                 if let Err(error) = ethrex_blockchain::add_block(&block, &store) {
                     invalid_ancestors.insert(hash, last_valid_hash);
@@ -340,10 +335,6 @@ async fn download_and_run_blocks(
                 store.set_canonical_block(number, hash)?;
                 store.update_latest_block_number(number)?;
                 last_valid_hash = hash;
-                if last_valid_hash == sync_head {
-                    synced = true;
-                    store.update_sync_status(true)?;
-                }
             }
             info!("stored {} blocks", block_bodies_len);
             // Check if we need to ask for another batch
@@ -352,6 +343,14 @@ async fn download_and_run_blocks(
             }
         }
     }
+    // Remove anything after the head from the canonical chain.
+    if let Ok(Some(sync_head_number)) = store.get_block_number(sync_head) {
+        let latest = store.get_latest_block_number()?;
+        for number in (sync_head_number + 1)..(latest + 1) {
+            store.unset_canonical_block(number)?;
+        }
+    }
+
     Ok(())
 }
 
