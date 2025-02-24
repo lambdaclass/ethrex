@@ -7,12 +7,11 @@ mod smoke_test;
 
 use error::{ChainError, InvalidBlockError};
 use ethrex_common::constants::GAS_PER_BLOB;
-use ethrex_common::types::requests::Requests;
+use ethrex_common::types::requests::{compute_requests_hash, EncodedRequests, Requests};
 use ethrex_common::types::{
-    compute_receipts_root, compute_requests_hash, validate_block_header,
-    validate_cancun_header_fields, validate_prague_header_fields,
-    validate_pre_cancun_header_fields, Block, BlockHash, BlockHeader, BlockNumber, ChainConfig,
-    EIP4844Transaction, Receipt, Transaction,
+    compute_receipts_root, validate_block_header, validate_cancun_header_fields,
+    validate_prague_header_fields, validate_pre_cancun_header_fields, Block, BlockHash,
+    BlockHeader, BlockNumber, ChainConfig, EIP4844Transaction, Receipt, Transaction,
 };
 use ethrex_common::H256;
 
@@ -152,7 +151,8 @@ pub fn validate_requests_hash(
         return Ok(());
     }
 
-    let computed_requests_hash = compute_requests_hash(requests);
+    let encoded_requests: Vec<EncodedRequests> = requests.iter().map(|r| r.encode()).collect();
+    let computed_requests_hash = compute_requests_hash(&encoded_requests);
     let valid = header
         .requests_hash
         .map(|requests_hash| requests_hash == computed_requests_hash)

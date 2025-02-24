@@ -471,11 +471,7 @@ impl From<Account> for GenesisAccount {
     fn from(val: Account) -> Self {
         GenesisAccount {
             code: val.code,
-            storage: val
-                .storage
-                .into_iter()
-                .map(|(k, v)| (H256(k.to_big_endian()), v))
-                .collect(),
+            storage: val.storage,
             balance: val.balance,
             nonce: val.nonce.as_u64(),
         }

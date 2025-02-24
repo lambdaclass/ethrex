@@ -7,9 +7,10 @@ use ethrex_common::{
     constants::GAS_PER_BLOB,
     types::{
         calculate_base_fee_per_blob_gas, calculate_base_fee_per_gas, compute_receipts_root,
-        compute_requests_hash, compute_transactions_root, compute_withdrawals_root,
-        requests::Requests, BlobsBundle, Block, BlockBody, BlockHash, BlockHeader, BlockNumber,
-        ChainConfig, MempoolTransaction, Receipt, Transaction, Withdrawal, DEFAULT_OMMERS_HASH,
+        compute_transactions_root, compute_withdrawals_root,
+        requests::{compute_requests_hash, EncodedRequests, Requests},
+        BlobsBundle, Block, BlockBody, BlockHash, BlockHeader, BlockNumber, ChainConfig,
+        MempoolTransaction, Receipt, Transaction, Withdrawal, DEFAULT_OMMERS_HASH,
         DEFAULT_REQUESTS_HASH,
     },
     Address, Bloom, Bytes, H256, U256,
@@ -179,6 +180,7 @@ pub struct PayloadBuildContext<'a> {
     pub remaining_gas: u64,
     pub receipts: Vec<Receipt>,
     pub requests: Vec<Requests>,
+    pub requests_hash: Option<H256>,
     pub block_value: U256,
     base_fee_per_blob_gas: U256,
     pub blobs_bundle: BlobsBundle,
@@ -199,6 +201,7 @@ impl<'a> PayloadBuildContext<'a> {
             remaining_gas: payload.header.gas_limit,
             receipts: vec![],
             requests: vec![],
+            requests_hash: None,
             block_value: U256::zero(),
             base_fee_per_blob_gas: U256::from(base_fee_per_blob_gas),
             payload,
@@ -498,6 +501,13 @@ impl Blockchain {
     }
 
     pub fn extract_requests(&self, context: &mut PayloadBuildContext) -> Result<(), EvmError> {
+        if !context
+            .chain_config()?
+            .is_prague_activated(context.payload.header.timestamp)
+        {
+            return Ok(());
+        };
+
         let requests = self.vm.extract_requests(
             &context.receipts,
             context.evm_state,
@@ -505,6 +515,9 @@ impl Blockchain {
             &mut context.block_cache,
         );
         context.requests = requests?;
+        let encoded_requests: Vec<EncodedRequests> =
+            context.requests.iter().map(|r| r.encode()).collect();
+        context.requests_hash = Some(compute_requests_hash(&encoded_requests));
 
         Ok(())
     }
@@ -524,10 +537,7 @@ impl Blockchain {
         context.payload.header.transactions_root =
             compute_transactions_root(&context.payload.body.transactions);
         context.payload.header.receipts_root = compute_receipts_root(&context.receipts);
-        context.payload.header.requests_hash = context
-            .chain_config()?
-            .is_prague_activated(context.payload.header.timestamp)
-            .then_some(compute_requests_hash(&context.requests));
+        context.payload.header.requests_hash = context.requests_hash;
         context.payload.header.gas_used = context.payload.header.gas_limit - context.remaining_gas;
         Ok(())
     }

@@ -1,5 +1,17 @@
 use std::{borrow::Borrow, panic::RefUnwindSafe, sync::Arc};
 
+use crate::rlp::{
+    AccountHashRLP, AccountStateRLP, BlockRLP, BlockTotalDifficultyRLP, Rlp, TransactionHashRLP,
+};
+use crate::store::MAX_SNAPSHOT_READS;
+use crate::trie_db::{redb::RedBTrie, redb_multitable::RedBMultiTableTrieDB};
+use crate::{
+    error::StoreError,
+    rlp::{
+        AccountCodeHashRLP, AccountCodeRLP, BlockBodyRLP, BlockHashRLP, BlockHeaderRLP, ReceiptRLP,
+        TupleRLP,
+    },
+};
 use ethrex_common::types::{AccountState, BlockBody};
 use ethrex_common::{
     types::{BlobsBundle, Block, BlockHash, BlockHeader, BlockNumber, ChainConfig, Index, Receipt},
@@ -8,28 +20,11 @@ use ethrex_common::{
 use ethrex_rlp::decode::RLPDecode;
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_rlp::error::RLPDecodeError;
-use ethrex_trie::Nibbles;
-
+use ethrex_trie::{Nibbles, Trie};
 use redb::{AccessGuard, Database, Key, MultimapTableDefinition, TableDefinition, TypeName, Value};
 
-use crate::rlp::{
-    AccountHashRLP, AccountStateRLP, BlockRLP, BlockTotalDifficultyRLP, Rlp, TransactionHashRLP,
-};
-use crate::MAX_SNAPSHOT_READS;
-use crate::{
-    error::StoreError,
-    rlp::{
-        AccountCodeHashRLP, AccountCodeRLP, BlockBodyRLP, BlockHashRLP, BlockHeaderRLP, ReceiptRLP,
-        TupleRLP,
-    },
-};
-use crate::{
-    trie_db::{redb::RedBTrie, redb_multitable::RedBMultiTableTrieDB},
-    Trie,
-};
-
-use super::utils::SnapStateIndex;
-use super::{api::StoreEngine, utils::ChainDataIndex};
+use crate::utils::SnapStateIndex;
+use crate::{api::StoreEngine, utils::ChainDataIndex};
 
 const STATE_TRIE_NODES_TABLE: TableDefinition<&[u8], &[u8]> =
     TableDefinition::new("StateTrieNodes");
