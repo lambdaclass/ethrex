@@ -15,11 +15,11 @@ impl Deployer {
         let prefix = "DEPLOYER";
         format!(
             "
-{prefix}_ADDRESS={},
-{prefix}_PRIVATE_KEY={},
-{prefix}_RISC0_CONTRACT_VERIFIER={},
-{prefix}_SP1_CONTRACT_VERIFIER={},
-{prefix}_SP1_DEPLOY_VERIFIER={},
+{prefix}_ADDRESS={}
+{prefix}_PRIVATE_KEY={}
+{prefix}_RISC0_CONTRACT_VERIFIER={}
+{prefix}_SP1_CONTRACT_VERIFIER={}
+{prefix}_SP1_DEPLOY_VERIFIER={}
 ",
             self.address,
             self.private_key,
@@ -40,7 +40,7 @@ impl Eth {
         let prefix = "ETH";
         format!(
             "
-{prefix}_RPC_URL={},
+{prefix}_RPC_URL={}
 ",
             self.rpc_url,
         )
@@ -55,11 +55,11 @@ struct Auth {
 
 impl Auth {
     pub fn to_env(&self) -> String {
-        let prefix = "AUTH";
+        let prefix = "ENGINE_API";
         format!(
             "
-{prefix}_RPC_URL={},
-{prefix}_JWT_PATH={},
+{prefix}_RPC_URL={}
+{prefix}_JWT_PATH={}
 ",
             self.rpc_url, self.jwt_path,
         )
@@ -76,13 +76,13 @@ struct Watcher {
 
 impl Watcher {
     pub fn to_env(&self) -> String {
-        let prefix = "WATCHER";
+        let prefix = "L1_WATCHER";
         format!(
             "
-{prefix}_BRIDGE_ADDRESS={},
-{prefix}_CHECK_INTERVAL_MS={},
-{prefix}_MAX_BLOCK_STEP={},
-{prefix}_L2_PROPOSER_PRIVATE_KEY={},
+{prefix}_BRIDGE_ADDRESS={}
+{prefix}_CHECK_INTERVAL_MS={}
+{prefix}_MAX_BLOCK_STEP={}
+{prefix}_L2_PROPOSER_PRIVATE_KEY={}
 ",
             self.bridge_address,
             self.check_interval_ms,
@@ -103,8 +103,8 @@ impl Proposer {
         let prefix = "PROPOSER";
         format!(
             "
-{prefix}_INTERVAL_MS={},
-{prefix}_COINBASE_ADDRESS={},
+{prefix}_INTERVAL_MS={}
+{prefix}_COINBASE_ADDRESS={}
 ",
             self.interval_ms, self.coinbase_address,
         )
@@ -125,11 +125,11 @@ impl Committer {
         let prefix = "COMMITTER";
         format!(
             "
-{prefix}_ON_CHAIN_PROPOSER_ADDRESS={},
-{prefix}_L1_ADDRESS={},
-{prefix}_L1_PRIVATE_KEY={},
-{prefix}_INTERVAL_MS={},
-{prefix}_ARBITRARY_BASE_BLOB_GAS_PRICE={},
+{prefix}_ON_CHAIN_PROPOSER_ADDRESS={}
+{prefix}_L1_ADDRESS={}
+{prefix}_L1_PRIVATE_KEY={}
+{prefix}_INTERVAL_MS={}
+{prefix}_ARBITRARY_BASE_BLOB_GAS_PRICE={}
 ",
             self.on_chain_proposer_address,
             self.l1_address,
@@ -151,8 +151,8 @@ impl Client {
         let prefix = "PROVER_CLIENT";
         format!(
             "
-{prefix}_PROVER_SERVER_ENDPOINT={},
-{prefix}_INTERVAL_MS={},
+{prefix}_PROVER_SERVER_ENDPOINT={}
+{prefix}_INTERVAL_MS={}
 ",
             self.prover_server_endpoint, self.interval_ms
         )
@@ -173,11 +173,11 @@ impl Server {
         let prefix = "PROVER_SERVER";
         format!(
             "
-{prefix}_LISTEN_IP={},
-{prefix}_LISTEN_PORT={},
-{prefix}_VERIFIER_ADDRESS={},
-{prefix}_VERIFIER_PRIVATE_KEY={},
-{prefix}_DEV_MODE={},
+{prefix}_LISTEN_IP={}
+{prefix}_LISTEN_PORT={}
+{prefix}_VERIFIER_ADDRESS={}
+{prefix}_VERIFIER_PRIVATE_KEY={}
+{prefix}_DEV_MODE={}
 ",
             self.listen_ip,
             self.listen_port,
@@ -198,11 +198,10 @@ struct Prover {
 
 impl Prover {
     pub fn to_env(&self) -> String {
-        let prefix = "PROVER";
         let mut env = format!(
             "
-{prefix}_SP1_PROVER={},
-{prefix}_RISC0_DEV_MODE={},
+SP1_PROVER={}
+RISC0_DEV_MODE={}
 ",
             self.sp1_prover, self.risc0_dev_mode,
         );
