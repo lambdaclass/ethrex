@@ -10,7 +10,7 @@ pub(crate) enum Command {
         about = "Convert private key to address."
     )]
     PrivateKeyToAddress {
-        #[arg(long = "pk", help = "Private key in hex format.", required = true)]
+        #[arg(help = "Private key in hex format.", required = true)]
         private_key: String,
     },
 }
