@@ -157,8 +157,8 @@ impl SyncManager {
         // Request all block headers between the current head and the sync head
         // We will begin from the current head so that we download the earliest state first
         // This step is not parallelized
+        let mut all_block_hashes = vec![];
         // Check if we have some blocks downloaded from a previous sync attempt
-        let all_block_hashes = [];
         if matches!(self.sync_mode, SyncMode::Snap) {
             if let Some(last_header) = store.get_header_download_checkpoint()? {
                 // Set latest downloaded header as current head for header fetching
@@ -200,59 +200,38 @@ impl SyncManager {
                         }
                     }
 
-                    // Check if we already found the sync head
-                    // let sync_head_found = block_hashes.contains(&sync_head);
-                    // // Update current fetch head if needed
-                    // if !sync_head_found {
-                    //     current_head = *block_hashes.last().unwrap();
-                    // }
-                    info!("current_head: {:?}", current_head);
-                    info!("sync_head: {:?}", sync_head);
-
-                    // if matches!(self.sync_mode, SyncMode::Snap) {
-                    //     if !sync_head_found {
-                    //         // Update snap state
-                    //         store.set_header_download_checkpoint(current_head)?;
-                    //     } else {
-                    //         // If the sync head is less than 64 blocks away from our current head switch to full-sync
-                    //         let latest_block_number = store.get_latest_block_number()?;
-                    //         if last_header.number.saturating_sub(latest_block_number)
-                    //             < MIN_FULL_BLOCKS as u64
-                    //         {
-                    //             // Too few blocks for a snap sync, switching to full sync
-                    //             store.clear_snap_state()?;
-                    //             self.sync_mode = SyncMode::Full
-                    //         }
-                    //     }
-                    // }
+                    let sync_head_found = block_hashes.contains(&sync_head);
+                    // Update current fetch head if needed
+                    if !sync_head_found {
+                        current_head = *block_hashes.last().unwrap();
+                    }
+                    if matches!(self.sync_mode, SyncMode::Snap) {
+                        if !sync_head_found {
+                            // Update snap state
+                            store.set_header_download_checkpoint(current_head)?;
+                        } else {
+                            // If the sync head is less than 64 blocks away from our current head switch to full-sync
+                            let latest_block_number = store.get_latest_block_number()?;
+                            if last_header.number.saturating_sub(latest_block_number)
+                                < MIN_FULL_BLOCKS as u64
+                            {
+                                // Too few blocks for a snap sync, switching to full sync
+                                store.clear_snap_state()?;
+                                self.sync_mode = SyncMode::Full
+                            }
+                        }
+                    }
                     // Discard the first header as we already have it
                     block_hashes.remove(0);
                     block_headers.remove(0);
                     // Store headers and save hashes for full block retrieval
+                    all_block_hashes.extend_from_slice(&block_hashes[..]);
+                    store.add_block_headers(block_hashes, block_headers)?;
                     store.add_block_headers(block_hashes.clone(), block_headers)?;
 
-                    // if sync_head_found {
-                    //     // No more headers to request
-                    //     info!("No more headers to request!");
-                    //     break;
-                    // }
-                    download_and_run_blocks(
-                        block_hashes,
-                        self.peers.clone(),
-                        store.clone(),
-                        &mut self.invalid_ancestors,
-                    )
-                    .await?;
-                    if let Ok(Some(number)) = store.get_block_number(sync_head) {
-                        info!("sync_head is at block_number: {:?}", number);
-                        let current_block_number = store.get_latest_block_number()?;
-                        info!("Latest block number is: {:?}", current_block_number);
-
+                    if sync_head_found {
+                        // No more headers to request
                         break;
-                    }
-                    let current_block_number = store.get_latest_block_number()?;
-                    if let Some(hash) = store.get_canonical_block_hash(current_block_number)? {
-                        current_head = hash;
                     }
                 }
                 _ => {
@@ -309,13 +288,13 @@ impl SyncManager {
             }
             SyncMode::Full => {
                 // full-sync: Fetch all block bodies and execute them sequentially to build the state
-                // download_and_run_blocks(
-                //     all_block_hashes,
-                //     self.peers.clone(),
-                //     store.clone(),
-                //     &mut self.invalid_ancestors,
-                // )
-                // .await?
+                download_and_run_blocks(
+                    all_block_hashes,
+                    self.peers.clone(),
+                    store.clone(),
+                    &mut self.invalid_ancestors,
+                )
+                .await?
             }
         }
         Ok(())
