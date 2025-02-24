@@ -202,8 +202,7 @@ fn handle_forkchoice(
     match fork_choice_res {
         Ok(head) => {
             // Remove included transactions from the mempool after we accept the fork choice
-            // This implementation could be incomplete
-            // See https://github.com/lambdaclass/ethrex/issues/797
+            // TODO(#797): The remove of transactions from the mempool could be incomplete (i.e. REORGS)
             if let Ok(Some(block)) = context.storage.get_block_by_hash(head.compute_block_hash()) {
                 let mut mempool =
                     context.storage.mempool.write().map_err(|err| {
