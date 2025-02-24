@@ -35,6 +35,7 @@ impl From<EnvV0> for VersionedMessage {
 mod tests {
     use crate::based::{
         env::{EnvV0, ExtraData},
+        frag::{FragV0, Transaction, Transactions},
         seal::SealV0,
         versioned_message::VersionedMessage,
     };
@@ -76,25 +77,26 @@ mod tests {
         );
     }
 
-    // #[test]
-    // fn test_frag_v0() {
-    //     let tx = Transaction::from(vec![1, 2, 3]);
-    //     let txs = Transactions::from(vec![tx]);
+    #[test]
+    fn test_frag_v0() {
+        let tx = Transaction::from(vec![1, 2, 3]);
+        let txs = Transactions::from(vec![tx]);
 
-    //     let frag = FragV0 {
-    //         block_number: 1,
-    //         seq: 0,
-    //         is_last: true,
-    //         txs,
-    //     };
+        let frag = FragV0 {
+            block_number: 1,
+            seq: 0,
+            is_last: true,
+            txs,
+        };
 
-    //     let message = VersionedMessage::from(frag);
-    //     let hash = message.tree_hash_root();
-    //     assert_eq!(
-    //         hash,
-    //         b256!("2a5ebad20a81878e5f229928e5c2043580051673b89a7a286008d30f62b10963")
-    //     );
-    // }
+        let message = VersionedMessage::from(frag);
+        let hash = H256::from_slice(message.tree_hash_root().as_ref());
+        assert_eq!(
+            hash,
+            H256::from_str("0x2a5ebad20a81878e5f229928e5c2043580051673b89a7a286008d30f62b10963")
+                .unwrap()
+        );
+    }
 
     #[test]
     fn test_seal_v0() {
