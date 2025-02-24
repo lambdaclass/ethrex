@@ -157,7 +157,6 @@ impl SyncManager {
         // Request all block headers between the current head and the sync head
         // We will begin from the current head so that we download the earliest state first
         // This step is not parallelized
-        let mut all_block_hashes = vec![];
         // Check if we have some blocks downloaded from a previous sync attempt
         if matches!(self.sync_mode, SyncMode::Snap) {
             if let Some(last_header) = store.get_header_download_checkpoint()? {
@@ -229,7 +228,6 @@ impl SyncManager {
                     block_hashes.remove(0);
                     block_headers.remove(0);
                     // Store headers and save hashes for full block retrieval
-                    all_block_hashes.extend_from_slice(&block_hashes[..]);
                     store.add_block_headers(block_hashes, block_headers)?;
 
                     // if sync_head_found {
@@ -238,7 +236,7 @@ impl SyncManager {
                     //     break;
                     // }
                     download_and_run_blocks(
-                        all_block_hashes,
+                        block_hashes,
                         self.peers.clone(),
                         store.clone(),
                         &mut self.invalid_ancestors,
@@ -246,6 +244,10 @@ impl SyncManager {
                     .await?;
                     if let Ok(Some(_number)) = store.get_block_number(sync_head) {
                         break;
+                    }
+                    let current_block_number = store.get_latest_block_number()?;
+                    if let Some(hash) = store.get_canonical_block_hash(current_block_number)? {
+                        current_head = hash;
                     }
                 }
                 _ => {
