@@ -5,9 +5,10 @@ use risc0_zkvm::{
     default_executor, default_prover, sha::Digestible, ExecutorEnv, ProverOpts, Receipt,
 };
 use tracing::info;
-use zkvm_interface::io::ProgramInput;
-
-include!(concat!(env!("OUT_DIR"), "/methods.rs"));
+use zkvm_interface::{
+    io::ProgramInput,
+    methods::{ZKVM_RISC0_PROGRAM_ELF, ZKVM_RISC0_PROGRAM_ID},
+};
 
 pub fn execute(input: ProgramInput) -> Result<(), Box<dyn std::error::Error>> {
     let env = ExecutorEnv::builder().write(&input)?.build()?;
@@ -44,8 +45,17 @@ pub fn verify(receipt: &Receipt) -> Result<(), Box<dyn std::error::Error>> {
 
 pub fn to_calldata(receipt: Receipt) -> Result<ProofCalldata, Box<dyn std::error::Error>> {
     let seal = encode_seal(&receipt)?;
-    let image_id = ZKVM_RISC_PROGRAM_ID;
-    let journal_digest = receipt.journal.digest().as_bytes();
+    let image_id = ZKVM_RISC0_PROGRAM_ID;
+    let journal_digest = receipt.journal.digest().as_bytes().to_vec();
+
+    // convert image_id into bytes
+    let image_id = {
+        let mut res = [0; 32];
+        for i in 0..8 {
+            res[4 * i..][..4].copy_from_slice(&image_id[i].to_be_bytes());
+        }
+        res.to_vec()
+    };
 
     // bytes calldata seal,
     // bytes32 imageId,

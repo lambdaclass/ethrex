@@ -28,24 +28,6 @@ async fn main() {
 
     let args: Vec<String> = env::args().collect();
 
-    let prover_type = match args.len() {
-        2 => {
-            let prover_type_str = args.get(1).map_or("none", |v| v);
-            match prover_type_str {
-                "sp1" => ProverType::SP1,
-                "risc0" => ProverType::RISC0,
-                _ => {
-                    error!("Wrong argument, try with 'risc0' or 'sp1'.");
-                    return;
-                }
-            }
-        }
-        _ => {
-            error!("Try passing 'risc0' or 'sp1' as argument.");
-            return;
-        }
-    };
-
     debug!("Prover Client has started");
-    init_client(config, prover_type).await;
+    init_client(config).await;
 }

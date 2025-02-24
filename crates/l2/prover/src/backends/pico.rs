@@ -1,10 +1,10 @@
 #[derive(Serialize, Deserialize, Clone)]
-pub struct PicoProof {
+pub struct ProveOutput {
     pub constraints: Vec<u8>,
     pub groth16_witness: Vec<u8>,
 }
 
-impl Debug for PicoProof {
+impl Debug for ProveOutput {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("PicoProof")
             .field("constraints", &self.constraints)
@@ -13,12 +13,12 @@ impl Debug for PicoProof {
     }
 }
 
-impl PicoProof {
+impl ProveOutput {
     pub fn new(
         proof: sp1_sdk::SP1ProofWithPublicValues,
         verifying_key: sp1_sdk::SP1VerifyingKey,
     ) -> Self {
-        PicoProof {
+        ProveOutput {
             constraints: Vec::new(),
             groth16_witness: Vec::new(),
         }
@@ -49,15 +49,13 @@ fn prove(input: ProgramInput) -> Result<ProvingOutput, Box<dyn std::error::Error
     serde_json::to_writer(&mut groth16_witness, &groth16_witness_json)?;
 
     info!("Successfully generated PicoProof.");
-    Ok(ProvingOutput::Pico(PicoProof {
+    Ok(ProvingOutput::Pico(ProveOutput {
         constraints,
         groth16_witness,
     }))
 }
 
-fn execute(
-    input: ProgramInput,
-) -> Result<ExecuteOutput, Box<dyn std::error::Error>> {
+fn execute(input: ProgramInput) -> Result<ExecuteOutput, Box<dyn std::error::Error>> {
     todo!()
 }
 

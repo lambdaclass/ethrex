@@ -1,10 +1,7 @@
-use crate::prover::create_prover;
+use crate::{prove, to_calldata};
 use ethrex_l2::{
     proposer::prover_server::ProofData,
-    utils::{
-        config::prover_client::ProverClientConfig,
-        prover::proving_systems::{ProverType, ProvingOutput},
-    },
+    utils::{config::prover_client::ProverClientConfig, prover::proving_systems::ProofCalldata},
 };
 use std::{
     io::{BufReader, BufWriter},
@@ -15,9 +12,9 @@ use tokio::time::sleep;
 use tracing::{debug, error, info, warn};
 use zkvm_interface::io::ProgramInput;
 
-pub async fn start_proof_data_client(config: ProverClientConfig, prover_type: ProverType) {
+pub async fn start_proof_data_client(config: ProverClientConfig) {
     let proof_data_client = ProverClient::new(config);
-    proof_data_client.start(prover_type).await;
+    proof_data_client.start().await;
 }
 
 struct ProverData {
@@ -38,16 +35,14 @@ impl ProverClient {
         }
     }
 
-    pub async fn start(&self, prover_type: ProverType) {
+    pub async fn start(&self) {
         // Build the prover depending on the prover_type passed as argument.
-        let mut prover = create_prover(prover_type);
-
         loop {
             match self.request_new_input() {
                 // If we get the input
                 Ok(prover_data) => {
                     // Generate the Proof
-                    match prover.prove(prover_data.input) {
+                    match prove(prover_data.input).and_then(to_calldata) {
                         Ok(proving_output) => {
                             if let Err(e) =
                                 self.submit_proof(prover_data.block_number, proving_output)
@@ -100,7 +95,7 @@ impl ProverClient {
         }
     }
 
-    fn submit_proof(&self, block_number: u64, proving_output: ProvingOutput) -> Result<(), String> {
+    fn submit_proof(&self, block_number: u64, proving_output: ProofCalldata) -> Result<(), String> {
         let submit = ProofData::submit(block_number, proving_output);
 
         let submit_ack = connect_to_prover_server_wr(&self.prover_server_endpoint, &submit)

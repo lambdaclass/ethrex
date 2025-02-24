@@ -1,13 +1,15 @@
 #![allow(clippy::expect_used)]
 #![allow(clippy::unwrap_used)]
-use ethrex_core::types::Block;
+use ethrex_blockchain::add_block;
+use ethrex_common::types::Block;
+use ethrex_prover_lib::{prove, verify};
+use ethrex_storage::{EngineType, Store};
+use ethrex_vm::{
+    db::StoreWrapper,
+    execution_db::{ExecutionDB, ToExecDB},
+};
 use std::path::Path;
 use tracing::info;
-
-use ethrex_blockchain::add_block;
-use ethrex_prover_lib::prover::{Prover, Risc0Prover, Sp1Prover};
-use ethrex_storage::{EngineType, Store};
-use ethrex_vm::execution_db::{ExecutionDB, ToExecDB};
 use zkvm_interface::io::ProgramInput;
 
 #[tokio::test]
@@ -16,11 +18,9 @@ async fn test_performance_zkvm() {
 
     let (input, block_to_prove) = setup().await;
 
-    let mut prover = Risc0Prover::new();
-
     let start = std::time::Instant::now();
 
-    let receipt = prover.prove(input).unwrap();
+    let receipt = prove(input).unwrap();
 
     let duration = start.elapsed();
     info!(
@@ -30,30 +30,7 @@ async fn test_performance_zkvm() {
     info!("[SECONDS] Proving Took: {:?}", duration);
     info!("[MINUTES] Proving Took: {}[m]", duration.as_secs() / 60);
 
-    prover.verify(&receipt).unwrap();
-}
-
-#[tokio::test]
-async fn test_performance_sp1_zkvm() {
-    tracing_subscriber::fmt::init();
-
-    let (input, block_to_prove) = setup().await;
-
-    let mut prover = Sp1Prover::new();
-
-    let start = std::time::Instant::now();
-
-    let output = prover.prove(input).unwrap();
-
-    let duration = start.elapsed();
-    info!(
-        "Number of EIP1559 transactions in the proven block: {}",
-        block_to_prove.body.transactions.len()
-    );
-    info!("[SECONDS] Proving Took: {:?}", duration);
-    info!("[MINUTES] Proving Took: {}[m]", duration.as_secs() / 60);
-
-    prover.verify(&output).unwrap();
+    verify(&receipt).unwrap();
 }
 
 async fn setup() -> (ProgramInput, Block) {
@@ -89,6 +66,7 @@ async fn setup() -> (ProgramInput, Block) {
     let db = store.to_exec_db(&block_to_prove).unwrap();
 
     let parent_block_header = store
+        .store
         .get_block_header_by_hash(block_to_prove.header.parent_hash)
         .unwrap()
         .unwrap();
