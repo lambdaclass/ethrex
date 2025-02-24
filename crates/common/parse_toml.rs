@@ -1,7 +1,9 @@
-use serde::Deserialize;
-use std::fs;
-
 use crate::errors::*;
+use serde::Deserialize;
+use std::io::ErrorKind;
+use std::io::Write;
+
+const ENV_FILE_NAME: &str = ".env";
 
 #[derive(Deserialize, Debug)]
 struct Deployer {
@@ -242,25 +244,23 @@ impl L2Config {
 }
 
 pub fn write_to_env(config: String) {
-    // let env_file_name = std::env::var("ENV_FILE").unwrap_or(".env".to_string());
-    let env_file_name = ".env";
-    // let mut env_file = std::fs::File::create(env_file_name).unwrap();
-    // let mut writer = std::io::BufWriter::new(env_file);
-    // for line in lines {
-    //     writeln!(writer, "{line}")?;
-    // }
-
-    // Ok(())
-    // env_file.write(config)
-    fs::write(env_file_name, config).unwrap();
+    // NOTE: If this returns an error, that means the file already
+    // exists. That SHOULD mean that the .toml has already been turned
+    // into an .env, so we simply do nothing
+    if let Ok(mut env_file) = std::fs::File::create_new(ENV_FILE_NAME) {
+        env_file.write(&config.into_bytes());
+    };
 }
 
 pub fn read_toml() -> Result<(), ConfigError> {
-    println!("Hello ARGENTINA");
     let toml_config = std::env::var("CONFIG_FILE").unwrap_or("config.toml".to_string());
     let file = std::fs::read_to_string(toml_config)?;
-    println!("{}\n", &file);
-    let config: L2Config = toml::from_str(&file).unwrap();
+    let config: L2Config = toml::from_str(&file).map_err(|_| {
+        ConfigError::EnvFileError(std::io::Error::new(
+            ErrorKind::NotFound,
+            "Error in TOML format",
+        ))
+    })?;
     write_to_env(config.to_env());
     Ok(())
 }
