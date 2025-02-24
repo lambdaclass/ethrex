@@ -174,6 +174,7 @@ fn handle_forkchoice(
     let fork_choice_res = match context.sync_status()? {
         // Apply current fork choice
         SyncStatus::Inactive => {
+            info!("Inactive sync status");
             let invalid_ancestors = {
                 let lock = context.syncer.try_lock();
                 match lock {
@@ -199,7 +200,7 @@ fn handle_forkchoice(
         _ => Err(InvalidForkChoice::Syncing),
     };
 
-    match fork_choice_res {
+    let response = match fork_choice_res {
         Ok(head) => Ok((
             Some(head),
             ForkChoiceResponse::from(PayloadStatus::valid_with_hash(
@@ -260,7 +261,8 @@ fn handle_forkchoice(
             };
             Ok((None, forkchoice_response))
         }
-    }
+    };
+    let info!("fork_choice response: {:?}");
 }
 
 fn validate_attributes_v1(

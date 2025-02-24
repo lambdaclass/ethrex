@@ -342,6 +342,7 @@ async fn download_and_run_blocks(
                 last_valid_hash = hash;
                 if last_valid_hash == sync_head {
                     synced = true;
+                    store.update_sync_status(true)?;
                 }
             }
             info!("stored {} blocks", block_bodies_len);
