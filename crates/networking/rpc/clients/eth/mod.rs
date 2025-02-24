@@ -1060,7 +1060,6 @@ impl EthClient {
             "Transaction receipt is None".to_owned(),
         ))
     }
-
 }
 
 pub fn from_hex_string_to_u256(hex_str: &str) -> Result<U256, EthClientError> {
