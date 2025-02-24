@@ -5,7 +5,6 @@ use tracing::{debug, info};
 pub mod committer;
 pub mod eth;
 pub mod l1_watcher;
-pub mod parse_toml;
 pub mod proposer;
 pub mod prover_client;
 pub mod prover_server;

@@ -241,7 +241,7 @@ impl L2Config {
 
 pub fn write_to_env(config: String) {
     // let env_file_name = std::env::var("ENV_FILE").unwrap_or(".env".to_string());
-    let env_file_name = ".env_new";
+    let env_file_name = ".env";
     // let mut env_file = std::fs::File::create(env_file_name).unwrap();
     // let mut writer = std::io::BufWriter::new(env_file);
     // for line in lines {

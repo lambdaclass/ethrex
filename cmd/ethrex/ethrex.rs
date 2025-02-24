@@ -36,7 +36,7 @@ const DEFAULT_DATADIR: &str = "ethrex";
 #[tokio::main]
 async fn main() {
     let matches = cli::cli().get_matches();
-
+    ethrex_common::parse_toml::read_toml();
     if let Some(matches) = matches.subcommand_matches("removedb") {
         let data_dir = matches
             .get_one::<String>("datadir")
@@ -288,12 +288,12 @@ async fn main() {
     // We do not want to start the networking module if the l2 feature is enabled.
     cfg_if::cfg_if! {
         if #[cfg(feature = "l2")] {
-            use ethrex_l2::utils::config::parse_toml;
+            // use ethrex_l2::utils::config::parse_toml;
+            ethrex_common::parse_toml::read_toml();
             if dev_mode {
                 error!("Cannot run with DEV_MODE if the `l2` feature is enabled.");
                 panic!("Run without the --dev argument.");
             }
-            parse_toml::read_toml();
             let l2_proposer = ethrex_l2::start_proposer(store).into_future();
             tracker.spawn(l2_proposer);
         } else if #[cfg(feature = "dev")] {
