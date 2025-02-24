@@ -30,18 +30,18 @@ use tracing::{error, info, warn};
 #[derive(Debug, Clone)]
 pub struct Blockchain {
     pub vm: EVM,
-    pub storage: &Store,
+    pub storage: Store,
 }
 
 impl Blockchain {
-    pub fn new(evm: EVM, store: &Store) -> Self {
+    pub fn new(evm: EVM, store: Store) -> Self {
         Self {
             vm: evm,
             storage: store,
         }
     }
 
-    pub fn default(store: &Store) -> Self {
+    pub fn default_with_store(store: Store) -> Self {
         Self {
             vm: Default::default(),
             storage: store,

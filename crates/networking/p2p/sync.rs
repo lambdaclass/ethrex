@@ -122,7 +122,9 @@ impl SyncManager {
             trie_rebuilder: None,
             // This won't be used
             cancel_token: CancellationToken::new(),
-            blockchain: Blockchain::default(&Store::new("", EngineType::InMemory).unwrap()),
+            blockchain: Blockchain::default_with_store(
+                Store::new("", EngineType::InMemory).unwrap(),
+            ),
         }
     }
 

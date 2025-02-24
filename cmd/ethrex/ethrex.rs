@@ -170,11 +170,10 @@ async fn main() {
         }
         Store::new(&data_dir, engine_type).expect("Failed to create Store")
     };
-    let blockchain = Blockchain::new(evm.clone(), &store);
+    let blockchain = Blockchain::new(evm.clone(), store.clone());
 
     let genesis = read_genesis_file(&network);
-    blockchain
-        .storage
+    store
         .add_initial_state(genesis.clone())
         .expect("Failed to create genesis block");
 

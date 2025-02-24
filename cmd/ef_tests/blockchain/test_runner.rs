@@ -20,7 +20,7 @@ pub fn run_ef_test(test_key: &str, test: &TestUnit) {
     // Check world_state
     check_prestate_against_db(test_key, test, &store);
 
-    let blockchain = Blockchain::default(store);
+    let blockchain = Blockchain::default_with_store(store.clone());
     // Execute all blocks in test
     for block_fixture in test.blocks.iter() {
         let expects_exception = block_fixture.expect_exception.is_some();
@@ -50,11 +50,11 @@ pub fn run_ef_test(test_key: &str, test: &TestUnit) {
                     test_key,
                     block_fixture.expect_exception.clone().unwrap()
                 );
-                apply_fork_choice(&blockchain.storage, hash, hash, hash).unwrap();
+                apply_fork_choice(&store, hash, hash, hash).unwrap();
             }
         }
     }
-    check_poststate_against_db(test_key, test, &blockchain.storage)
+    check_poststate_against_db(test_key, test, &store)
 }
 
 /// Tests the rlp decoding of a block
