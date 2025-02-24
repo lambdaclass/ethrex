@@ -312,41 +312,35 @@ async fn download_and_run_blocks(
     let mut last_valid_hash = H256::default();
 
     const CHUNK_SIZE: usize = 32;
-
     for chunk in block_hashes.chunks(CHUNK_SIZE) {
-        loop {
-            debug!("Requesting Block Bodies ");
-            if let Some(block_bodies) = peers.request_block_bodies(chunk.to_vec()).await {
-                let block_bodies_len = block_bodies.len();
-                debug!("Received {} Block Bodies", block_bodies_len);
-                // Execute and store blocks
-                for (hash, body) in chunk
-                    .to_vec()
-                    .drain(..block_bodies_len)
-                    .zip(block_bodies.into_iter())
-                {
-                    let header = store
-                        .get_block_header_by_hash(hash)?
-                        .ok_or(SyncError::CorruptDB)?;
-                    let number = header.number;
-                    let block = Block::new(header, body);
+        debug!("Requesting Block Bodies for chunk of size {}", chunk.len());
+        if let Some(block_bodies) = peers.request_block_bodies(chunk.to_vec()).await {
+            let block_bodies_len = block_bodies.len();
+            debug!("Received {} Block Bodies", block_bodies_len);
 
-                    if let Err(error) = ethrex_blockchain::add_block(&block, &store) {
-                        invalid_ancestors.insert(hash, last_valid_hash);
-                        return Err(error.into());
-                    }
-                    store.set_canonical_block(number, hash)?;
-                    store.update_latest_block_number(number)?;
-                    last_valid_hash = hash;
+            // Execute and store blocks
+            for (hash, body) in chunk.iter().zip(block_bodies.into_iter()) {
+                let header = store
+                    .get_block_header_by_hash(*hash)?
+                    .ok_or(SyncError::CorruptDB)?;
+                let number = header.number;
+                let block = Block::new(header, body);
+
+                if let Err(error) = ethrex_blockchain::add_block(&block, &store) {
+                    invalid_ancestors.insert(*hash, last_valid_hash);
+                    return Err(error.into());
                 }
-                info!("stored {} blocks", block_bodies_len);
-                let latest = store.get_latest_block_number()?;
-                info!("latest block number {} ", latest);
-                // Check if we need to ask for another batch
-                if chunk.is_empty() {
-                    break;
-                }
+                store.set_canonical_block(number, *hash)?;
+                store.update_latest_block_number(number)?;
+                last_valid_hash = *hash;
             }
+
+            info!("Stored {} blocks", block_bodies_len);
+            let latest = store.get_latest_block_number()?;
+            info!("Latest block number: {}", latest);
+        } else {
+            warn!("Failed to retrieve block bodies for chunk");
+            break;
         }
     }
     let latest = store.get_latest_block_number()?;
