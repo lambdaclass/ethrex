@@ -26,26 +26,26 @@ impl RpcHandler for SealV0 {
         tracing::info!("parsing seal");
 
         let Some(params) = params else {
-            return Err(RpcErr::InvalidEnv("Expected some params".to_string()));
+            return Err(RpcErr::InvalidSeal("Expected some params".to_string()));
         };
 
         let envelope: HashMap<String, serde_json::Value> = serde_json::from_value(
             params
                 .first()
-                .ok_or(RpcErr::InvalidEnv("Expected envelope".to_string()))?
+                .ok_or(RpcErr::InvalidSeal("Expected envelope".to_string()))?
                 .clone(),
         )
-        .map_err(|e| RpcErr::InvalidEnv(e.to_string()))?;
+        .map_err(|e| RpcErr::InvalidSeal(e.to_string()))?;
 
         // TODO: Parse and validate gateway's signature
 
         serde_json::from_value(
             envelope
                 .get("message")
-                .ok_or_else(|| RpcErr::InvalidEnv("Expected message".to_string()))?
+                .ok_or_else(|| RpcErr::InvalidSeal("Expected message".to_string()))?
                 .clone(),
         )
-        .map_err(|e| RpcErr::InvalidEnv(e.to_string()))
+        .map_err(|e| RpcErr::InvalidSeal(e.to_string()))
     }
 
     fn handle(

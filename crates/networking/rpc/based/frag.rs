@@ -28,26 +28,26 @@ impl RpcHandler for FragV0 {
         tracing::info!("parsing frag");
 
         let Some(params) = params else {
-            return Err(RpcErr::InvalidEnv("Expected some params".to_string()));
+            return Err(RpcErr::InvalidFrag("Expected some params".to_string()));
         };
 
         let envelope: HashMap<String, serde_json::Value> = serde_json::from_value(
             params
                 .first()
-                .ok_or(RpcErr::InvalidEnv("Expected envelope".to_string()))?
+                .ok_or(RpcErr::InvalidFrag("Expected envelope".to_string()))?
                 .clone(),
         )
-        .map_err(|e| RpcErr::InvalidEnv(e.to_string()))?;
+        .map_err(|e| RpcErr::InvalidFrag(e.to_string()))?;
 
         // TODO: Parse and validate gateway's signature
 
         serde_json::from_value(
             envelope
                 .get("message")
-                .ok_or_else(|| RpcErr::InvalidEnv("Expected message".to_string()))?
+                .ok_or_else(|| RpcErr::InvalidFrag("Expected message".to_string()))?
                 .clone(),
         )
-        .map_err(|e| RpcErr::InvalidEnv(e.to_string()))
+        .map_err(|e| RpcErr::InvalidFrag(e.to_string()))
     }
 
     fn handle(

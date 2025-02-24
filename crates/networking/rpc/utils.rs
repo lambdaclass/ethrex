@@ -24,6 +24,8 @@ pub enum RpcErr {
     InvalidPayloadAttributes(String),
     UnknownPayload(String),
     InvalidEnv(String),
+    InvalidFrag(String),
+    InvalidSeal(String),
 }
 
 impl From<RpcErr> for RpcErrorMetadata {
@@ -124,9 +126,19 @@ impl From<RpcErr> for RpcErrorMetadata {
                 message: format!("Unknown payload: {context}"),
             },
             RpcErr::InvalidEnv(context) => RpcErrorMetadata {
-                code: -38000,
+                code: -38004,
                 data: None,
                 message: format!("Invalid env: {context}"),
+            },
+            RpcErr::InvalidFrag(context) => RpcErrorMetadata {
+                code: -38005,
+                data: None,
+                message: format!("Invalid frag: {context}"),
+            },
+            RpcErr::InvalidSeal(context) => RpcErrorMetadata {
+                code: -38006,
+                data: None,
+                message: format!("Invalid seal: {context}"),
             },
         }
     }
