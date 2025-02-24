@@ -18,7 +18,7 @@ impl ProverType {
 }
 
 /// Contains the data ready to be sent to the on-chain verifiers.
-#[derive(Serialize, Deserialize, Clone, Debug)]
+#[derive(PartialEq, Serialize, Deserialize, Clone, Debug)]
 pub struct ProofCalldata {
     pub prover_type: ProverType,
     pub calldata: Vec<Value>,

@@ -1,6 +1,7 @@
 use ethrex_common::Bytes;
 use ethrex_common::{Address, H32, U256};
 use keccak_hash::keccak;
+use serde::{Deserialize, Serialize};
 
 use crate::eth_client::errors::CalldataEncodeError;
 
@@ -14,7 +15,7 @@ use crate::eth_client::errors::CalldataEncodeError;
 /// - `Tuple` -> `(X_1, ..., X_k)`
 /// - `FixedArray` -> `T[k]`
 /// - `FixedBytes` -> `bytesN`
-#[derive(Debug, PartialEq, Clone)]
+#[derive(Serialize, Deserialize, Debug, PartialEq, Clone)]
 pub enum Value {
     Address(Address),
     Uint(U256),
