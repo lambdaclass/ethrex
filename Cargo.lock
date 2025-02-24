@@ -2849,7 +2849,6 @@ dependencies = [
  "hex-literal",
  "libmdbx",
  "redb",
- "scc",
  "serde",
  "serde_json",
  "sha3",
@@ -6889,9 +6888,9 @@ dependencies = [
 
 [[package]]
 name = "scc"
-version = "2.3.3"
+version = "2.2.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ea091f6cac2595aa38993f04f4ee692ed43757035c36e67c180b6828356385b1"
+checksum = "66b202022bb57c049555430e11fc22fea12909276a80a4c3d368da36ac1d88ed"
 dependencies = [
  "sdd",
 ]

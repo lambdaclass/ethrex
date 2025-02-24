@@ -16,11 +16,11 @@ use ethrex_common::types::{
 use ethrex_rlp::decode::RLPDecode;
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_trie::{Nibbles, Trie};
-use scc::HashMap as ConcurrentMap;
 use serde::{Deserialize, Serialize};
 use sha3::{Digest as _, Keccak256};
-use std::collections::HashMap;
-use std::sync::Arc;
+use std::collections::{HashMap, HashSet};
+use std::fmt::Debug;
+use std::sync::{Arc, Mutex};
 use tracing::info;
 
 /// Number of state trie segments to fetch concurrently during state sync
@@ -32,8 +32,8 @@ pub const MAX_SNAPSHOT_READS: usize = 100;
 #[derive(Debug, Clone)]
 pub struct Store {
     engine: Arc<dyn StoreEngine>,
-    pub mempool: Arc<ConcurrentMap<H256, MempoolTransaction>>,
-    pub blobs_bundle_pool: Arc<ConcurrentMap<H256, BlobsBundle>>,
+    pub mempool: Arc<Mutex<HashMap<H256, MempoolTransaction>>>,
+    pub blobs_bundle_pool: Arc<Mutex<HashMap<H256, BlobsBundle>>>,
 }
 
 #[allow(dead_code)]
@@ -83,19 +83,19 @@ impl Store {
             #[cfg(feature = "libmdbx")]
             EngineType::Libmdbx => Self {
                 engine: Arc::new(LibmdbxStore::new(path)?),
-                mempool: ConcurrentMap::new().into(),
-                blobs_bundle_pool: ConcurrentMap::new().into(),
+                mempool: Arc::new(Mutex::new(HashMap::new())),
+                blobs_bundle_pool: Arc::new(Mutex::new(HashMap::new())),
             },
             EngineType::InMemory => Self {
                 engine: Arc::new(InMemoryStore::new()),
-                mempool: ConcurrentMap::new().into(),
-                blobs_bundle_pool: ConcurrentMap::new().into(),
+                mempool: Arc::new(Mutex::new(HashMap::new())),
+                blobs_bundle_pool: Arc::new(Mutex::new(HashMap::new())),
             },
             #[cfg(feature = "redb")]
             EngineType::RedB => Self {
                 engine: Arc::new(RedBStore::new()?),
-                mempool: ConcurrentMap::new().into(),
-                blobs_bundle_pool: ConcurrentMap::new().into(),
+                mempool: Arc::new(Mutex::new(HashMap::new())),
+                blobs_bundle_pool: Arc::new(Mutex::new(HashMap::new())),
             },
         };
         info!("Started store engine");
@@ -290,7 +290,12 @@ impl Store {
         hash: H256,
         transaction: MempoolTransaction,
     ) -> Result<(), StoreError> {
-        self.mempool.entry(hash).or_insert(transaction);
+        let mut mempool = self
+            .mempool
+            .lock()
+            .map_err(|error| StoreError::Custom(error.to_string()))?;
+        mempool.insert(hash, transaction);
+
         Ok(())
     }
 
@@ -301,8 +306,9 @@ impl Store {
         blobs_bundle: BlobsBundle,
     ) -> Result<(), StoreError> {
         self.blobs_bundle_pool
-            .entry(tx_hash)
-            .or_insert(blobs_bundle);
+            .lock()
+            .map_err(|error| StoreError::Custom(error.to_string()))?
+            .insert(tx_hash, blobs_bundle);
         Ok(())
     }
 
@@ -311,18 +317,29 @@ impl Store {
         &self,
         tx_hash: H256,
     ) -> Result<Option<BlobsBundle>, StoreError> {
-        Ok(self.blobs_bundle_pool.read(&tx_hash, |_, v| v.clone()))
+        Ok(self
+            .blobs_bundle_pool
+            .lock()
+            .map_err(|error| StoreError::Custom(error.to_string()))?
+            .get(&tx_hash)
+            .cloned())
     }
 
     /// Remove a transaction from the pool
     pub fn remove_transaction_from_pool(&self, hash: &H256) -> Result<(), StoreError> {
-        if let Some(tx) = self.mempool.get(hash) {
+        let mut mempool = self
+            .mempool
+            .lock()
+            .map_err(|error| StoreError::Custom(error.to_string()))?;
+        if let Some(tx) = mempool.get(hash) {
             if matches!(tx.tx_type(), TxType::EIP4844) {
-                if let Some(blob) = self.blobs_bundle_pool.get(&tx.compute_hash()) {
-                    let _removed = blob.remove();
-                }
+                self.blobs_bundle_pool
+                    .lock()
+                    .map_err(|error| StoreError::Custom(error.to_string()))?
+                    .remove(&tx.compute_hash());
             }
-            let _removed = tx.remove();
+
+            mempool.remove(hash);
         };
 
         Ok(())
@@ -335,17 +352,21 @@ impl Store {
         filter: &dyn Fn(&Transaction) -> bool,
     ) -> Result<HashMap<Address, Vec<MempoolTransaction>>, StoreError> {
         let mut txs_by_sender: HashMap<Address, Vec<MempoolTransaction>> = HashMap::new();
-        self.mempool.scan(|_, tx| {
+        let mempool = self
+            .mempool
+            .lock()
+            .map_err(|error| StoreError::Custom(error.to_string()))?;
+
+        for (_, tx) in mempool.iter() {
             if filter(tx) {
                 txs_by_sender
                     .entry(tx.sender())
                     .or_default()
                     .push(tx.clone())
             }
-        });
+        }
 
         txs_by_sender.iter_mut().for_each(|(_, txs)| txs.sort());
-
         Ok(txs_by_sender)
     }
 
@@ -354,9 +375,15 @@ impl Store {
         &self,
         possible_hashes: &[H256],
     ) -> Result<Vec<H256>, StoreError> {
+        let mempool = self
+            .mempool
+            .lock()
+            .map_err(|error| StoreError::Custom(error.to_string()))?;
+
+        let tx_set: HashSet<_> = mempool.iter().map(|(hash, _)| hash).collect();
         Ok(possible_hashes
             .iter()
-            .filter(|hash| self.mempool.get(*hash).is_none())
+            .filter(|hash| !tx_set.contains(hash))
             .copied()
             .collect())
     }
