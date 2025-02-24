@@ -16,7 +16,7 @@ use ethrex_storage::{error::StoreError, Store, STATE_TRIE_SEGMENTS};
 use ethrex_trie::{Nibbles, Node, TrieError, TrieState};
 use state_healing::heal_state_trie;
 use state_sync::state_sync;
-use std::{array, collections::HashMap, sync::Arc};
+use std::{array, collections::HashMap, sync::Arc, thread::current};
 use storage_healing::storage_healer;
 use tokio::{
     sync::{
@@ -201,11 +201,14 @@ impl SyncManager {
                     }
 
                     // Check if we already found the sync head
-                    let sync_head_found = block_hashes.contains(&sync_head);
-                    // Update current fetch head if needed
-                    if !sync_head_found {
-                        current_head = *block_hashes.last().unwrap();
-                    }
+                    // let sync_head_found = block_hashes.contains(&sync_head);
+                    // // Update current fetch head if needed
+                    // if !sync_head_found {
+                    //     current_head = *block_hashes.last().unwrap();
+                    // }
+                    info!("current_head: {:?}", current_);
+                    info!("sync_head: {:?}", sync_head);
+
                     if matches!(self.sync_mode, SyncMode::Snap) {
                         if !sync_head_found {
                             // Update snap state
@@ -229,8 +232,19 @@ impl SyncManager {
                     all_block_hashes.extend_from_slice(&block_hashes[..]);
                     store.add_block_headers(block_hashes, block_headers)?;
 
-                    if sync_head_found {
-                        // No more headers to request
+                    // if sync_head_found {
+                    //     // No more headers to request
+                    //     info!("No more headers to request!");
+                    //     break;
+                    // }
+                    download_and_run_blocks(
+                        all_block_hashes,
+                        self.peers.clone(),
+                        store.clone(),
+                        &mut self.invalid_ancestors,
+                    )
+                    .await?;
+                    if let Ok(Some(_number)) = store.get_block_number(sync_head) {
                         break;
                     }
                 }
@@ -288,13 +302,13 @@ impl SyncManager {
             }
             SyncMode::Full => {
                 // full-sync: Fetch all block bodies and execute them sequentially to build the state
-                download_and_run_blocks(
-                    all_block_hashes,
-                    self.peers.clone(),
-                    store.clone(),
-                    &mut self.invalid_ancestors,
-                )
-                .await?
+                // download_and_run_blocks(
+                //     all_block_hashes,
+                //     self.peers.clone(),
+                //     store.clone(),
+                //     &mut self.invalid_ancestors,
+                // )
+                // .await?
             }
         }
         Ok(())
