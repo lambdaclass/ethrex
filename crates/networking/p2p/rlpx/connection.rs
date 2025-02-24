@@ -145,8 +145,12 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
         log_peer_debug(&self.node, "Starting RLPx connection");
 
         if let Err(reason) = self.post_handshake_checks(table.clone()).await {
-            self.send_disconnect_message(Some(reason)).await;
-            let _ = self.framed.close().await;
+            self.connection_failed(
+                "Post handshake validations failed",
+                RLPxError::DisconnectSent(reason),
+                table,
+            )
+            .await;
             return;
         }
 
@@ -199,20 +203,25 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
         error: RLPxError,
         table: Arc<Mutex<crate::kademlia::KademliaTable>>,
     ) {
+        log_peer_error(&self.node, &format!("{error_text}: ({error})"));
+
         // Send disconnect message only if error is different than RLPxError::DisconnectRequested
         // because if it is a DisconnectRequested error it means that the peer requested the disconnection, not us.
-        if let RLPxError::DisconnectRequested(_) = error {
-            log_peer_error(&self.node, &format!("{error_text}: ({error})"));
-        } else {
+        if !matches!(error, RLPxError::DisconnectRequested(_)) {
             self.send_disconnect_message(self.match_disconnect_reason(&error))
                 .await;
         }
 
-        // Discard peer from kademlia table
+        // Discard peer from kademlia table in some cases
         match error {
             // already connected, don't discard it
-            RLPxError::DisconnectRequested(DisconnectReason::AlreadyConnected) => {
-                log_peer_debug(&self.node, "Peer already connected don't replace it");
+            RLPxError::DisconnectRequested(DisconnectReason::AlreadyConnected)
+            | RLPxError::DisconnectSent(DisconnectReason::AlreadyConnected) => {
+                log_peer_debug(&self.node, "Peer already connected, don't replace it");
+            }
+            // Too many peers, even if we replace it we will keep on disconnecting to peers.
+            RLPxError::DisconnectSent(DisconnectReason::TooManyPeers) => {
+                log_peer_debug(&self.node, "Too many peers sent, don't replace peer");
             }
             _ => {
                 let remote_node_id = self.node.node_id;
