@@ -171,73 +171,71 @@ impl SyncManager {
             Err(e) => return Err(e.into()),
         };
 
-        loop {
-            debug!("Requesting Block Headers from {current_head}");
-            // Request Block Headers from Peer
-            match self
-                .peers
-                .request_block_headers(current_head, BlockRequestOrder::OldToNew)
-                .await
-            {
-                Some(mut block_headers) => {
-                    debug!(
-                        "Received {} block headers| Last Number: {}",
-                        block_headers.len(),
-                        block_headers.last().as_ref().unwrap().number,
-                    );
-                    let mut block_hashes = block_headers
-                        .iter()
-                        .map(|header| header.compute_block_hash())
-                        .collect::<Vec<_>>();
-                    let last_header = block_headers.last().unwrap().clone();
+        debug!("Requesting Block Headers from {current_head}");
+        // Request Block Headers from Peer
+        match self
+            .peers
+            .request_block_headers(current_head, BlockRequestOrder::OldToNew)
+            .await
+        {
+            Some(mut block_headers) => {
+                debug!(
+                    "Received {} block headers| Last Number: {}",
+                    block_headers.len(),
+                    block_headers.last().as_ref().unwrap().number,
+                );
+                let mut block_hashes = block_headers
+                    .iter()
+                    .map(|header| header.compute_block_hash())
+                    .collect::<Vec<_>>();
+                let last_header = block_headers.last().unwrap().clone();
 
-                    // If we have a pending block from new_payload request
-                    // attach it to the end if it matches the parent_hash of the latest received header
-                    if let Some(ref block) = pending_block {
-                        if block.header.parent_hash == last_header.compute_block_hash() {
-                            block_hashes.push(block.hash());
-                            block_headers.push(block.header.clone());
-                        }
+                // If we have a pending block from new_payload request
+                // attach it to the end if it matches the parent_hash of the latest received header
+                if let Some(ref block) = pending_block {
+                    if block.header.parent_hash == last_header.compute_block_hash() {
+                        block_hashes.push(block.hash());
+                        block_headers.push(block.header.clone());
                     }
+                }
 
-                    // Check if we already found the sync head
-                    let sync_head_found = block_hashes.contains(&sync_head);
-                    // Update current fetch head if needed
+                // Check if we already found the sync head
+                let sync_head_found = block_hashes.contains(&sync_head);
+                // Update current fetch head if needed
+                if !sync_head_found {
+                    current_head = *block_hashes.last().unwrap();
+                }
+                if matches!(self.sync_mode, SyncMode::Snap) {
                     if !sync_head_found {
-                        current_head = *block_hashes.last().unwrap();
-                    }
-                    if matches!(self.sync_mode, SyncMode::Snap) {
-                        if !sync_head_found {
-                            // Update snap state
-                            store.set_header_download_checkpoint(current_head)?;
-                        } else {
-                            // If the sync head is less than 64 blocks away from our current head switch to full-sync
-                            let latest_block_number = store.get_latest_block_number()?;
-                            if last_header.number.saturating_sub(latest_block_number)
-                                < MIN_FULL_BLOCKS as u64
-                            {
-                                // Too few blocks for a snap sync, switching to full sync
-                                store.clear_snap_state()?;
-                                self.sync_mode = SyncMode::Full
-                            }
+                        // Update snap state
+                        store.set_header_download_checkpoint(current_head)?;
+                    } else {
+                        // If the sync head is less than 64 blocks away from our current head switch to full-sync
+                        let latest_block_number = store.get_latest_block_number()?;
+                        if last_header.number.saturating_sub(latest_block_number)
+                            < MIN_FULL_BLOCKS as u64
+                        {
+                            // Too few blocks for a snap sync, switching to full sync
+                            store.clear_snap_state()?;
+                            self.sync_mode = SyncMode::Full
                         }
                     }
-                    // Discard the first header as we already have it
-                    block_hashes.remove(0);
-                    block_headers.remove(0);
-                    // Store headers and save hashes for full block retrieval
-                    all_block_hashes.extend_from_slice(&block_hashes[..]);
-                    store.add_block_headers(block_hashes, block_headers)?;
+                }
+                // Discard the first header as we already have it
+                block_hashes.remove(0);
+                block_headers.remove(0);
+                // Store headers and save hashes for full block retrieval
+                all_block_hashes.extend_from_slice(&block_hashes[..]);
+                store.add_block_headers(block_hashes, block_headers)?;
 
-                    if sync_head_found {
-                        // No more headers to request
-                        break;
-                    }
-                }
-                _ => {
-                    warn!("Sync failed to find target block header, aborting");
-                    return Ok(());
-                }
+                // if sync_head_found {
+                //     // No more headers to request
+                //     break;
+                // }
+            }
+            _ => {
+                warn!("Sync failed to find target block header, aborting");
+                return Ok(());
             }
         }
         // We finished fetching all headers, now we can process them
