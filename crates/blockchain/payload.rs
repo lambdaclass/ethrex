@@ -233,13 +233,9 @@ impl<'a> PayloadBuildContext<'a> {
 
 impl Blockchain {
     /// Completes the payload building process, return the block value
-    pub fn build_payload(
-        &self,
-        payload: &mut Block,
-        store: &Store,
-    ) -> Result<(BlobsBundle, U256), ChainError> {
+    pub fn build_payload(&self, payload: &mut Block) -> Result<(BlobsBundle, U256), ChainError> {
         debug!("Building payload");
-        let mut evm_state = evm_state(store.clone(), payload.header.parent_hash);
+        let mut evm_state = evm_state(self.storage.clone(), payload.header.parent_hash);
         let mut context = PayloadBuildContext::new(payload, &mut evm_state)?;
         self.apply_system_operations(&mut context)?;
         self.apply_withdrawals(&mut context)?;

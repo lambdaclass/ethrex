@@ -278,7 +278,7 @@ mod blockchain_integration_test {
         let blockchain = Blockchain::default_with_store(store.clone().clone());
 
         let mut block = create_payload(&args, store).unwrap();
-        blockchain.build_payload(&mut block, store).unwrap();
+        blockchain.build_payload(&mut block).unwrap();
         block
     }
 

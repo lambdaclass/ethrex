@@ -551,7 +551,7 @@ fn build_execution_payload_response(
                 .map_err(|_| RpcErr::Internal("Error locking syncer".to_string()))?;
             syncer
                 .blockchain
-                .build_payload(&mut payload_block, &context.storage)
+                .build_payload(&mut payload_block)
                 .map_err(|err| RpcErr::Internal(err.to_string()))?
         };
 
