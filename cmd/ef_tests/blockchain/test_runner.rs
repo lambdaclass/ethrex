@@ -1,7 +1,7 @@
 use std::{collections::HashMap, path::Path};
 
 use crate::types::{BlockWithRLP, TestUnit};
-use ethrex_blockchain::{add_block, fork_choice::apply_fork_choice};
+use ethrex_blockchain::{fork_choice::apply_fork_choice, Blockchain};
 use ethrex_common::types::{
     Account as CoreAccount, Block as CoreBlock, BlockHeader as CoreBlockHeader,
 };
@@ -20,8 +20,8 @@ pub fn run_ef_test(test_key: &str, test: &TestUnit) {
     // Check world_state
     check_prestate_against_db(test_key, test, &store);
 
+    let blockchain = Blockchain::default_with_store(store.clone());
     // Execute all blocks in test
-
     for block_fixture in test.blocks.iter() {
         let expects_exception = block_fixture.expect_exception.is_some();
         if exception_in_rlp_decoding(block_fixture) {
@@ -33,7 +33,7 @@ pub fn run_ef_test(test_key: &str, test: &TestUnit) {
         let hash = block.hash();
 
         // Attempt to add the block as the head of the chain
-        let chain_result = add_block(block, &store);
+        let chain_result = blockchain.add_block(block);
         match chain_result {
             Err(error) => {
                 assert!(

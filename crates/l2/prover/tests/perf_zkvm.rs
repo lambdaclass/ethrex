@@ -1,10 +1,10 @@
 #![allow(clippy::expect_used)]
 #![allow(clippy::unwrap_used)]
+use ethrex_blockchain::Blockchain;
 use ethrex_common::types::Block;
 use std::path::Path;
 use tracing::info;
 
-use ethrex_blockchain::add_block;
 use ethrex_prover_lib::prover::{Prover, Risc0Prover, Sp1Prover};
 use ethrex_storage::{EngineType, Store};
 use ethrex_vm::{db::StoreWrapper, execution_db::ToExecDB};
@@ -74,13 +74,14 @@ async fn setup() -> (ProgramInput, Block) {
     let blocks = ethrex_l2::utils::test_data_io::read_chain_file(chain_file_path.to_str().unwrap());
     info!("Number of blocks to insert: {}", blocks.len());
 
+    let blockchain = Blockchain::default_with_store(store.clone());
     for block in &blocks {
         info!(
             "txs {} in block{}",
             block.body.transactions.len(),
             block.header.number
         );
-        add_block(block, &store).unwrap();
+        blockchain.add_block(block).unwrap();
     }
     let block_to_prove = blocks.get(3).unwrap();
 

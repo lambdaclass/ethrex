@@ -6,7 +6,6 @@ mod execution_result;
 #[cfg(feature = "l2")]
 mod mods;
 
-use backends::EVM;
 use db::EvmState;
 
 use crate::backends::revm_b::*;
@@ -27,18 +26,6 @@ use revm_primitives::AccessList as RevmAccessList;
 pub use errors::EvmError;
 pub use execution_result::*;
 pub use revm::primitives::{Address as RevmAddress, SpecId, U256 as RevmU256};
-
-use std::sync::OnceLock;
-
-// This global variable can be initialized by the ethrex cli.
-// EVM_BACKEND.get_or_init(|| evm);
-// Then, we can retrieve the evm with:
-// EVM_BACKEND.get(); -> returns Option<EVM>
-pub static EVM_BACKEND: OnceLock<EVM> = OnceLock::new();
-/// Function used to access the global variable holding the chosen backend.
-pub fn get_evm_backend_or_default() -> EVM {
-    EVM_BACKEND.get().unwrap_or(&EVM::default()).clone()
-}
 
 // ================== Commonly used functions ======================
 
