@@ -1,4 +1,5 @@
 use serde::Deserialize;
+use std::fs;
 
 #[derive(Deserialize, Debug)]
 struct Deployer {
@@ -223,16 +224,31 @@ struct L2Config {
 }
 
 impl L2Config {
-    pub fn to_env(&self) {
-        println!("{}", self.deployer.to_env());
-        println!("{}", self.eth.to_env());
-        println!("{}", self.auth.to_env());
-        println!("{}", self.watcher.to_env());
-        println!("{}", self.proposer.to_env());
-        println!("{}", self.committer.to_env());
-        println!("{}", self.prover.to_env());
-        dbg!("JAAAAAAAAAAAAAAAAAAAAAAAAAAAA");
+    pub fn to_env(&self) -> String {
+        let mut env_representation = String::new();
+        env_representation.push_str(&self.deployer.to_env());
+        env_representation.push_str(&self.eth.to_env());
+        env_representation.push_str(&self.auth.to_env());
+        env_representation.push_str(&self.watcher.to_env());
+        env_representation.push_str(&self.proposer.to_env());
+        env_representation.push_str(&self.committer.to_env());
+        env_representation.push_str(&self.prover.to_env());
+        env_representation
     }
+}
+
+pub fn write_to_env(config: String) {
+    // let env_file_name = std::env::var("ENV_FILE").unwrap_or(".env".to_string());
+    let env_file_name = ".env_new";
+    // let mut env_file = std::fs::File::create(env_file_name).unwrap();
+    // let mut writer = std::io::BufWriter::new(env_file);
+    // for line in lines {
+    //     writeln!(writer, "{line}")?;
+    // }
+
+    // Ok(())
+    // env_file.write(config)
+    fs::write(env_file_name, config).unwrap();
 }
 
 pub fn read_toml() {
@@ -240,5 +256,5 @@ pub fn read_toml() {
     let file = std::fs::read_to_string("config.toml").unwrap();
     println!("{}\n", &file);
     let config: L2Config = toml::from_str(&file).unwrap();
-    config.to_env();
+    write_to_env(config.to_env());
 }
