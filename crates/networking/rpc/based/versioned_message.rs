@@ -35,6 +35,7 @@ impl From<EnvV0> for VersionedMessage {
 mod tests {
     use crate::based::{
         env::{EnvV0, ExtraData},
+        seal::SealV0,
         versioned_message::VersionedMessage,
     };
     use ethrex_common::{H160, H256, U256};
@@ -95,29 +96,41 @@ mod tests {
     //     );
     // }
 
-    // #[test]
-    // fn test_seal_v0() {
-    //     let sealed = SealV0 {
-    //         total_frags: 8,
-    //         block_number: 123,
-    //         gas_used: 25_000,
-    //         gas_limit: 1_000_000,
-    //         parent_hash: b256!("e75fae0065403d4091f3d6549c4219db69c96d9de761cfc75fe9792b6166c758"),
-    //         transactions_root: b256!(
-    //             "e75fae0065403d4091f3d6549c4219db69c96d9de761cfc75fe9792b6166c758"
-    //         ),
-    //         receipts_root: b256!(
-    //             "e75fae0065403d4091f3d6549c4219db69c96d9de761cfc75fe9792b6166c758"
-    //         ),
-    //         state_root: b256!("e75fae0065403d4091f3d6549c4219db69c96d9de761cfc75fe9792b6166c758"),
-    //         block_hash: b256!("e75fae0065403d4091f3d6549c4219db69c96d9de761cfc75fe9792b6166c758"),
-    //     };
+    #[test]
+    fn test_seal_v0() {
+        let sealed = SealV0 {
+            total_frags: 8,
+            block_number: 123,
+            gas_used: 25_000,
+            gas_limit: 1_000_000,
+            parent_hash: H256::from_str(
+                "e75fae0065403d4091f3d6549c4219db69c96d9de761cfc75fe9792b6166c758",
+            )
+            .unwrap(),
+            transactions_root: H256::from_str(
+                "e75fae0065403d4091f3d6549c4219db69c96d9de761cfc75fe9792b6166c758",
+            )
+            .unwrap(),
+            receipts_root: H256::from_str(
+                "e75fae0065403d4091f3d6549c4219db69c96d9de761cfc75fe9792b6166c758",
+            )
+            .unwrap(),
+            state_root: H256::from_str(
+                "e75fae0065403d4091f3d6549c4219db69c96d9de761cfc75fe9792b6166c758",
+            )
+            .unwrap(),
+            block_hash: H256::from_str(
+                "e75fae0065403d4091f3d6549c4219db69c96d9de761cfc75fe9792b6166c758",
+            )
+            .unwrap(),
+        };
 
-    //     let message = VersionedMessage::from(sealed);
-    //     let hash = message.tree_hash_root();
-    //     assert_eq!(
-    //         hash,
-    //         b256!("e86afda21ddc7338c7e84561681fde45e2ab55cce8cde3163e0ae5f1c378439e")
-    //     );
-    // }
+        let message = VersionedMessage::from(sealed);
+        let hash = H256::from_slice(message.tree_hash_root().as_ref());
+        assert_eq!(
+            hash,
+            H256::from_str("e86afda21ddc7338c7e84561681fde45e2ab55cce8cde3163e0ae5f1c378439e")
+                .unwrap()
+        );
+    }
 }
