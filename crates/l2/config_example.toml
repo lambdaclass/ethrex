@@ -16,7 +16,7 @@ salt_is_zero = true
 [eth]
 rpc_url = "http://localhost:8545"
 
-[auth]
+[engine]
 rpc_url = "http://localhost:8552"
 jwt_path = "./jwt.hex"
 

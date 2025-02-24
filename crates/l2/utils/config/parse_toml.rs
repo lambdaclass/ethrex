@@ -51,12 +51,12 @@ impl Eth {
 }
 
 #[derive(Deserialize, Debug)]
-struct Auth {
+struct Engine {
     rpc_url: String,
     jwt_path: String,
 }
 
-impl Auth {
+impl Engine {
     pub fn to_env(&self) -> String {
         let prefix = "ENGINE_API";
         format!(
@@ -218,7 +218,7 @@ RISC0_DEV_MODE={}
 struct L2Config {
     deployer: Deployer,
     eth: Eth,
-    auth: Auth,
+    engine: Engine,
     watcher: Watcher,
     proposer: Proposer,
     committer: Committer,
@@ -230,7 +230,7 @@ impl L2Config {
         let mut env_representation = String::new();
         env_representation.push_str(&self.deployer.to_env());
         env_representation.push_str(&self.eth.to_env());
-        env_representation.push_str(&self.auth.to_env());
+        env_representation.push_str(&self.engine.to_env());
         env_representation.push_str(&self.watcher.to_env());
         env_representation.push_str(&self.proposer.to_env());
         env_representation.push_str(&self.committer.to_env());
