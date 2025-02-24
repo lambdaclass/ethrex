@@ -75,13 +75,11 @@ impl BuildPayloadArgs {
 /// Creates a new payload based on the payload arguments
 // Basic payload block building, can and should be improved
 pub fn create_payload(args: &BuildPayloadArgs, storage: &Store) -> Result<Block, ChainError> {
-    // TODO: check where we should get builder values from
-    const DEFAULT_BUILDER_GAS_CEIL: u64 = 30_000_000;
     let parent_block = storage
         .get_block_header_by_hash(args.parent)?
         .ok_or_else(|| ChainError::ParentNotFound)?;
     let chain_config = storage.get_chain_config()?;
-    let gas_limit = calc_gas_limit(parent_block.gas_limit, DEFAULT_BUILDER_GAS_CEIL);
+    let gas_limit = calc_gas_limit(parent_block.gas_limit);
     let excess_blob_gas = chain_config
         .get_fork_blob_schedule(args.timestamp)
         .map(|schedule| {
@@ -140,10 +138,12 @@ pub fn create_payload(args: &BuildPayloadArgs, storage: &Store) -> Result<Block,
     Ok(Block::new(header, body))
 }
 
-fn calc_gas_limit(parent_gas_limit: u64, desired_limit: u64) -> u64 {
+pub fn calc_gas_limit(parent_gas_limit: u64) -> u64 {
+    // TODO: check where we should get builder values from
+    const DEFAULT_BUILDER_GAS_CEIL: u64 = 30_000_000;
     let delta = parent_gas_limit / GAS_LIMIT_BOUND_DIVISOR - 1;
     let mut limit = parent_gas_limit;
-    let desired_limit = max(desired_limit, MIN_GAS_LIMIT);
+    let desired_limit = max(DEFAULT_BUILDER_GAS_CEIL, MIN_GAS_LIMIT);
     if limit < desired_limit {
         limit = parent_gas_limit + delta;
         if limit > desired_limit {
@@ -160,7 +160,7 @@ fn calc_gas_limit(parent_gas_limit: u64, desired_limit: u64) -> u64 {
     limit
 }
 
-fn calc_excess_blob_gas(
+pub fn calc_excess_blob_gas(
     parent_excess_blob_gas: u64,
     parent_blob_gas_used: u64,
     target: u64,
