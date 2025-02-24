@@ -7,7 +7,7 @@ use tracing::info;
 
 use ethrex_prover_lib::prover::{Prover, Risc0Prover, Sp1Prover};
 use ethrex_storage::{EngineType, Store};
-use ethrex_vm::execution_db::ExecutionDB;
+use ethrex_vm::{db::StoreWrapper, execution_db::ToExecDB};
 use zkvm_interface::io::ProgramInput;
 
 #[tokio::test]
@@ -83,14 +83,18 @@ async fn setup() -> (ProgramInput, Block) {
         );
         blockchain.add_block(block).unwrap();
     }
-    let block_to_prove = blocks.last().unwrap();
-
-    let db = ExecutionDB::from_store(block_to_prove, store.clone()).unwrap();
+    let block_to_prove = blocks.get(6).unwrap();
 
     let parent_block_header = store
         .get_block_header_by_hash(block_to_prove.header.parent_hash)
         .unwrap()
         .unwrap();
+
+    let store = StoreWrapper {
+        store: store.clone(),
+        block_hash: block_to_prove.header.parent_hash,
+    };
+    let db = store.to_exec_db(&block_to_prove).unwrap();
 
     let input = ProgramInput {
         block: block_to_prove.clone(),
