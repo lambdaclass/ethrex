@@ -3,6 +3,7 @@ use bytes::Bytes;
 use clap::Subcommand;
 use ethereum_types::{Address, H256, U256};
 use ethrex_blockchain::constants::TX_GAS_COST;
+use ethrex_common::H160;
 use ethrex_l2_sdk::calldata::{self, Value};
 use ethrex_rpc::clients::eth::{eth_sender::Overrides, EthClient};
 use keccak_hash::keccak;
@@ -14,6 +15,7 @@ use std::{
     thread::sleep,
     time::Duration,
 };
+use tokio::task::JoinSet;
 
 // ERC20 compiled artifact generated from this tutorial:
 // https://medium.com/@kaishinaw/erc20-using-hardhat-a-comprehensive-guide-3211efba98d4
@@ -201,7 +203,37 @@ async fn erc20_load_test(config: &EthrexL2Config, count: u64) -> eyre::Result<()
         .await
         .expect("Failed to query balance for test load account");
     println!("ERC20 contract is reachable. Starting load test with balance: {balance_response}");
-
+    let mut tasks = JoinSet::new();
+    let send_calldata = calldata::encode_calldata(
+        "transfer(address,uint256)",
+        &[
+            Value::Address(config.wallet.address),
+            Value::Uint(U256::one()),
+        ],
+    )
+    .unwrap();
+    let send_tx = client
+        .build_eip1559_transaction(
+            H160::random(),
+            config.wallet.address.clone(),
+            send_calldata.into(),
+            Default::default(),
+            1,
+        )
+        .await?;
+    for i in 0..count {
+        let tx = send_tx.clone();
+        let client = client.clone();
+        let pk = config.wallet.private_key.clone();
+        tasks.spawn(async move {
+            let sent = client.send_eip1559_transaction(&tx, &pk).await;
+            match sent {
+                Ok(_) => println!("ERC-20 transfer number {i} sent!"),
+                Err(_) => println!("ERC-20 transfer number {i} FAILED"),
+            }
+        });
+    }
+    tasks.join_all().await;
     Ok(())
 }
 
