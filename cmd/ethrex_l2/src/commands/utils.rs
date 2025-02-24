@@ -20,7 +20,7 @@ impl Command {
                 let pk_bytes = pk_h256.as_bytes();
                 let secret_key = SecretKey::from_slice(pk_bytes)?;
                 let address = ethrex_l2_sdk::get_address_from_secret_key(&secret_key)?;
-                println!("Address: {address:#x}");
+                println!("{address:#x}");
             }
         }
         Ok(())
