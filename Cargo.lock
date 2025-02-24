@@ -2538,6 +2538,45 @@ dependencies = [
 ]
 
 [[package]]
+name = "ethereum_hashing"
+version = "0.7.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c853bd72c9e5787f8aafc3df2907c2ed03cff3150c3acd94e2e53a98ab70a8ab"
+dependencies = [
+ "cpufeatures",
+ "ring",
+ "sha2 0.10.8",
+]
+
+[[package]]
+name = "ethereum_serde_utils"
+version = "0.7.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "70cbccfccf81d67bff0ab36e591fa536c8a935b078a7b0e58c1d00d418332fc9"
+dependencies = [
+ "alloy-primitives 0.8.15",
+ "hex",
+ "serde",
+ "serde_derive",
+ "serde_json",
+]
+
+[[package]]
+name = "ethereum_ssz"
+version = "0.8.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "86da3096d1304f5f28476ce383005385459afeaf0eea08592b65ddbc9b258d16"
+dependencies = [
+ "alloy-primitives 0.8.15",
+ "ethereum_serde_utils",
+ "itertools 0.13.0",
+ "serde",
+ "serde_derive",
+ "smallvec",
+ "typenum",
+]
+
+[[package]]
 name = "ethrex"
 version = "0.1.0"
 dependencies = [
@@ -2807,11 +2846,15 @@ dependencies = [
  "serde",
  "serde_json",
  "sha3",
+ "ssz_types",
+ "strum_macros 0.24.3",
  "thiserror 2.0.9",
  "tokio",
  "tokio-util",
  "tracing",
  "tracing-subscriber 0.3.18",
+ "tree_hash",
+ "tree_hash_derive",
 ]
 
 [[package]]
@@ -7366,7 +7409,7 @@ dependencies = [
  "sp1-primitives",
  "sp1-stark",
  "strum",
- "strum_macros",
+ "strum_macros 0.26.4",
  "subenum",
  "thiserror 1.0.69",
  "tiny-keccak",
@@ -7422,7 +7465,7 @@ dependencies = [
  "sp1-stark",
  "static_assertions",
  "strum",
- "strum_macros",
+ "strum_macros 0.26.4",
  "tempfile",
  "thiserror 1.0.69",
  "tracing",
@@ -7730,7 +7773,7 @@ dependencies = [
  "sp1-prover",
  "sp1-stark",
  "strum",
- "strum_macros",
+ "strum_macros 0.26.4",
  "tempfile",
  "thiserror 1.0.69",
  "tokio",
@@ -7769,7 +7812,7 @@ dependencies = [
  "sp1-derive",
  "sp1-primitives",
  "strum",
- "strum_macros",
+ "strum_macros 0.26.4",
  "sysinfo",
  "tracing",
 ]
@@ -7827,6 +7870,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "ssz_types"
+version = "0.10.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "dad0fa7e9a85c06d0a6ba5100d733fff72e231eb6db2d86078225cf716fd2d95"
+dependencies = [
+ "ethereum_serde_utils",
+ "ethereum_ssz",
+ "itertools 0.13.0",
+ "serde",
+ "serde_derive",
+ "smallvec",
+ "tree_hash",
+ "typenum",
+]
+
+[[package]]
 name = "stability"
 version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -7866,7 +7925,20 @@ version = "0.26.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8fec0f0aef304996cf250b31b5a10dee7980c85da9d759361292b8bca5a18f06"
 dependencies = [
- "strum_macros",
+ "strum_macros 0.26.4",
+]
+
+[[package]]
+name = "strum_macros"
+version = "0.24.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1e385be0d24f186b4ce2f9982191e7101bb737312ad61c1f2f984f34bcf85d59"
+dependencies = [
+ "heck 0.4.1",
+ "proc-macro2",
+ "quote",
+ "rustversion",
+ "syn 1.0.109",
 ]
 
 [[package]]
@@ -8550,6 +8622,31 @@ dependencies = [
  "tracing",
  "tracing-core",
  "tracing-log",
+]
+
+[[package]]
+name = "tree_hash"
+version = "0.9.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6c58eb0f518840670270d90d97ffee702d8662d9c5494870c9e1e9e0fa00f668"
+dependencies = [
+ "alloy-primitives 0.8.15",
+ "ethereum_hashing",
+ "ethereum_ssz",
+ "smallvec",
+ "typenum",
+]
+
+[[package]]
+name = "tree_hash_derive"
+version = "0.9.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "699e7fb6b3fdfe0c809916f251cf5132d64966858601695c3736630a87e7166a"
+dependencies = [
+ "darling",
+ "proc-macro2",
+ "quote",
+ "syn 2.0.89",
 ]
 
 [[package]]

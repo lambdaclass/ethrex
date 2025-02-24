@@ -36,6 +36,11 @@ keccak-hash.workspace = true
 
 cfg-if.workspace = true
 
+ssz_types = { version = "0.10", optional = true}
+tree_hash = { version = "0.9.1", optional = true}
+tree_hash_derive = { version = "0.9.1", optional = true}
+strum_macros = { version = "0.24", optional = true }
+
 [dev-dependencies]
 hex-literal = "0.4.1"
 
@@ -43,4 +48,5 @@ hex-literal = "0.4.1"
 path = "./rpc.rs"
 
 [features]
-based = []
+default = ["based"]
+based = ["dep:ssz_types", "dep:tree_hash", "dep:tree_hash_derive", "dep:strum_macros"]

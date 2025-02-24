@@ -1,5 +1,9 @@
 use crate::RpcHandler;
+use serde::{Deserialize, Serialize};
+use tree_hash_derive::TreeHash;
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TreeHash)]
+#[serde(rename_all = "camelCase")]
 pub struct FragV0;
 
 impl RpcHandler for FragV0 {
