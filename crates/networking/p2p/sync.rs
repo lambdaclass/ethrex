@@ -16,7 +16,7 @@ use ethrex_storage::{error::StoreError, Store, STATE_TRIE_SEGMENTS};
 use ethrex_trie::{Nibbles, Node, TrieError, TrieState};
 use state_healing::heal_state_trie;
 use state_sync::state_sync;
-use std::{array, collections::HashMap, sync::Arc, thread::current};
+use std::{array, collections::HashMap, sync::Arc};
 use storage_healing::storage_healer;
 use tokio::{
     sync::{
@@ -206,25 +206,25 @@ impl SyncManager {
                     // if !sync_head_found {
                     //     current_head = *block_hashes.last().unwrap();
                     // }
-                    info!("current_head: {:?}", current_);
+                    info!("current_head: {:?}", current_head);
                     info!("sync_head: {:?}", sync_head);
 
-                    if matches!(self.sync_mode, SyncMode::Snap) {
-                        if !sync_head_found {
-                            // Update snap state
-                            store.set_header_download_checkpoint(current_head)?;
-                        } else {
-                            // If the sync head is less than 64 blocks away from our current head switch to full-sync
-                            let latest_block_number = store.get_latest_block_number()?;
-                            if last_header.number.saturating_sub(latest_block_number)
-                                < MIN_FULL_BLOCKS as u64
-                            {
-                                // Too few blocks for a snap sync, switching to full sync
-                                store.clear_snap_state()?;
-                                self.sync_mode = SyncMode::Full
-                            }
-                        }
-                    }
+                    // if matches!(self.sync_mode, SyncMode::Snap) {
+                    //     if !sync_head_found {
+                    //         // Update snap state
+                    //         store.set_header_download_checkpoint(current_head)?;
+                    //     } else {
+                    //         // If the sync head is less than 64 blocks away from our current head switch to full-sync
+                    //         let latest_block_number = store.get_latest_block_number()?;
+                    //         if last_header.number.saturating_sub(latest_block_number)
+                    //             < MIN_FULL_BLOCKS as u64
+                    //         {
+                    //             // Too few blocks for a snap sync, switching to full sync
+                    //             store.clear_snap_state()?;
+                    //             self.sync_mode = SyncMode::Full
+                    //         }
+                    //     }
+                    // }
                     // Discard the first header as we already have it
                     block_hashes.remove(0);
                     block_headers.remove(0);
