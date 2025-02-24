@@ -5,6 +5,9 @@ pub mod mempool;
 pub mod payload;
 mod smoke_test;
 
+use std::{ops::Div, time::Instant};
+use tracing::info;
+
 use error::{ChainError, InvalidBlockError};
 use ethrex_common::constants::GAS_PER_BLOB;
 use ethrex_common::types::requests::{compute_requests_hash, EncodedRequests, Requests};
@@ -48,6 +51,8 @@ impl Blockchain {
     }
 
     pub fn add_block(&self, block: &Block) -> Result<(), ChainError> {
+        let since = Instant::now();
+
         let block_hash = block.header.compute_block_hash();
 
         // Validate if it can be the new head and find the parent
@@ -87,6 +92,13 @@ impl Blockchain {
 
         store_block(&self.storage, block.clone())?;
         store_receipts(&self.storage, receipts, block_hash)?;
+
+        let interval = Instant::now().duration_since(since).as_millis();
+        if interval != 0 {
+            let as_gigas = (block.header.gas_used as f64).div(10_f64.powf(9_f64));
+            let throughput = (as_gigas) / (interval as f64) * 1000_f64;
+            info!("[METRIC] BLOCK EXECUTION THROUGHPUT: {throughput} Gigagas/s TIME SPENT: {interval} msecs");
+        }
 
         Ok(())
     }

@@ -1,6 +1,8 @@
 use std::{
     cmp::{max, Ordering},
     collections::HashMap,
+    ops::Div,
+    time::Instant,
 };
 
 use ethrex_common::{
@@ -237,6 +239,9 @@ impl<'a> PayloadBuildContext<'a> {
 impl Blockchain {
     /// Completes the payload building process, return the block value
     pub fn build_payload(&self, payload: &mut Block) -> Result<(BlobsBundle, U256), ChainError> {
+        let since = Instant::now();
+        let gas_limit = payload.header.gas_limit;
+
         debug!("Building payload");
         let mut evm_state = evm_state(self.storage.clone(), payload.header.parent_hash);
         let mut context = PayloadBuildContext::new(payload, &mut evm_state)?;
@@ -245,6 +250,20 @@ impl Blockchain {
         self.fill_transactions(&mut context)?;
         self.extract_requests(&mut context)?;
         self.finalize_payload(&mut context)?;
+
+        let interval = Instant::now().duration_since(since).as_millis();
+        tracing::info!("[METRIC] BUILDING PAYLOAD TOOK: {interval} ms");
+        if let Some(gas_used) = gas_limit.checked_sub(context.remaining_gas) {
+            let as_gigas = (gas_used as f64).div(10_f64.powf(9_f64));
+
+            if interval != 0 {
+                let throughput = (as_gigas) / (interval as f64) * 1000_f64;
+                tracing::info!(
+                "[METRIC] BLOCK BUILDING THROUGHPUT: {throughput} Gigagas/s TIME SPENT: {interval} msecs"
+            );
+            }
+        }
+
         Ok((context.blobs_bundle, context.block_value))
     }
 
