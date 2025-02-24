@@ -140,17 +140,22 @@ impl Committer {
 }
 
 #[derive(Deserialize, Debug)]
-struct Prover {
-    sp1_prover: String,
-    risc0_dev_mode: u64,
-    client: Client,
-    server: Server,
-}
-
-#[derive(Deserialize, Debug)]
 struct Client {
     prover_server_endpoint: String,
     interval_ms: u64,
+}
+
+impl Client {
+    pub fn to_env(&self) -> String {
+        let prefix = "PROVER_CLIENT";
+        format!(
+            "
+{prefix}_PROVER_SERVER_ENDPOINT={},
+{prefix}_INTERVAL_MS={},
+",
+            self.prover_server_endpoint, self.interval_ms
+        )
+    }
 }
 
 #[derive(Deserialize, Debug)]
@@ -162,16 +167,47 @@ struct Server {
     dev_mode: bool,
 }
 
+impl Server {
+    pub fn to_env(&self) -> String {
+        let prefix = "PROVER_SERVER";
+        format!(
+            "
+{prefix}_LISTEN_IP={},
+{prefix}_LISTEN_PORT={},
+{prefix}_VERIFIER_ADDRESS={},
+{prefix}_VERIFIER_PRIVATE_KEY={},
+{prefix}_DEV_MODE={},
+",
+            self.listen_ip,
+            self.listen_port,
+            self.verifier_address,
+            self.verifier_private_key,
+            self.dev_mode
+        )
+    }
+}
+
+#[derive(Deserialize, Debug)]
+struct Prover {
+    sp1_prover: String,
+    risc0_dev_mode: u64,
+    client: Client,
+    server: Server,
+}
+
 impl Prover {
     pub fn to_env(&self) -> String {
         let prefix = "PROVER";
-        format!(
+        let mut env = format!(
             "
 {prefix}_SP1_PROVER={},
 {prefix}_RISC0_DEV_MODE={},
 ",
             self.sp1_prover, self.risc0_dev_mode,
-        )
+        );
+        env.push_str(&self.client.to_env());
+        env.push_str(&self.server.to_env());
+        env
     }
 }
 
@@ -204,6 +240,5 @@ pub fn read_toml() {
     let file = std::fs::read_to_string("config.toml").unwrap();
     println!("{}\n", &file);
     let config: L2Config = toml::from_str(&file).unwrap();
-    dbg!(&config.prover.server);
     config.to_env();
 }

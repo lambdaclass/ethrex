@@ -2663,6 +2663,7 @@ dependencies = [
  "thiserror 2.0.9",
  "tokio",
  "tokio-util",
+ "toml 0.8.19",
  "tracing",
  "zkvm_interface",
 ]
