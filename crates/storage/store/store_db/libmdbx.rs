@@ -190,11 +190,9 @@ impl StoreEngine for Store {
         index: Index,
         receipt: Receipt,
     ) -> Result<(), StoreError> {
-        let chunks = IndexedChunk::from(&receipt.encode_to_vec());
         let key: Rlp<(BlockHash, Index)> = (block_hash, index).into();
-        let key_values = chunks.into_iter().map(|chunk| (key.clone(), chunk));
-
-        self.write_batch::<Receipts>(key_values)
+        let entries = IndexedChunk::from::<Receipts>(key, &receipt.encode_to_vec());
+        self.write_batch::<Receipts>(entries.into_iter())
     }
 
     fn get_receipt(
@@ -499,10 +497,8 @@ impl StoreEngine for Store {
             let key =
                 <(H256, u64) as Into<TupleRLP<BlockHash, Index>>>::into((block_hash, index as u64));
             let receipt_rlp = receipt.encode_to_vec();
-            let chunks = IndexedChunk::from(&receipt_rlp);
-            for value in chunks {
-                key_values.push((key.clone(), value));
-            }
+            let mut entries = IndexedChunk::from::<Receipts>(key, &receipt_rlp);
+            key_values.append(&mut entries);
         }
 
         self.write_batch::<Receipts>(key_values.into_iter())
@@ -791,7 +787,10 @@ impl<T: Send + Sync + RLPEncode + RLPDecode> Encodable for IndexedChunk<T> {
 impl<T: RLPEncode + RLPDecode> IndexedChunk<T> {
     /// Splits a value into a indexed chunks if it exceeds the maximum storage size.
     /// Each chunk is assigned an index to ensure correct ordering when retrieved.
-    pub fn from(bytes: &[u8]) -> Vec<Self> {
+    pub fn from<Tab: Table>(key: Tab::Key, bytes: &[u8]) -> Vec<(Tab::Key, Self)>
+    where
+        Tab::Key: Clone,
+    {
         let chunks: Vec<Vec<u8>> = bytes
             // -1 to account for the index byte
             .chunks(DB_MAX_VALUE_SIZE - 1)
@@ -800,9 +799,14 @@ impl<T: RLPEncode + RLPDecode> IndexedChunk<T> {
         chunks
             .into_iter()
             .enumerate()
-            .map(|(index, chunk)| IndexedChunk {
-                index: index as u8,
-                value: Rlp::from_bytes(chunk),
+            .map(|(index, chunk)| {
+                (
+                    key.clone(),
+                    IndexedChunk {
+                        index: index as u8,
+                        value: Rlp::from_bytes(chunk),
+                    },
+                )
             })
             .collect()
     }
