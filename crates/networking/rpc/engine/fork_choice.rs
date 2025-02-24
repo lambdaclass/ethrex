@@ -200,12 +200,31 @@ fn handle_forkchoice(
     };
 
     match fork_choice_res {
-        Ok(head) => Ok((
-            Some(head),
-            ForkChoiceResponse::from(PayloadStatus::valid_with_hash(
-                fork_choice_state.head_block_hash,
-            )),
-        )),
+        Ok(head) => {
+            // Remove included transactions from the mempool after we accept the fork choice
+            // This implementation could be incomplete
+            // See https://github.com/lambdaclass/ethrex/issues/797
+            if let Ok(Some(block)) = context.storage.get_block_by_hash(head.compute_block_hash()) {
+                let mut mempool =
+                    context.storage.mempool.lock().map_err(|err| {
+                        RpcErr::Internal(format!("Failed to lock mempool: {err}",))
+                    })?;
+                for tx in block.body.transactions {
+                    mempool.remove(&tx.compute_hash());
+                }
+            } else {
+                return Err(RpcErr::Internal(
+                    "Failed to get block by hash to remove transactions from the mempool"
+                        .to_string(),
+                ));
+            }
+            Ok((
+                Some(head),
+                ForkChoiceResponse::from(PayloadStatus::valid_with_hash(
+                    fork_choice_state.head_block_hash,
+                )),
+            ))
+        }
         Err(forkchoice_error) => {
             let forkchoice_response = match forkchoice_error {
                 InvalidForkChoice::NewHeadAlreadyCanonical => {
