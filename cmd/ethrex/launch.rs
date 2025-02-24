@@ -28,6 +28,7 @@ use tracing_subscriber::{filter::Directive, EnvFilter, FmtSubscriber};
 
 const DEFAULT_DATADIR: &str = "ethrex";
 
+#[cfg(feature = "l2")]
 pub async fn launch_l2(matches: clap::ArgMatches) {
     if let Some(matches) = matches.subcommand_matches("removedb") {
         let data_dir = matches
@@ -282,11 +283,8 @@ pub async fn launch_l2(matches: clap::ArgMatches) {
         error!("Cannot run with DEV_MODE if the `l2` feature is enabled.");
         panic!("Run without the --dev argument.");
     }
-    #[cfg(feature = "l2")]
-    {
-        let l2_proposer = ethrex_l2::start_proposer(store).into_future();
-        tracker.spawn(l2_proposer);
-    }
+    let l2_proposer = ethrex_l2::start_proposer(store).into_future();
+    tracker.spawn(l2_proposer);
 
     tokio::select! {
         _ = tokio::signal::ctrl_c() => {
@@ -300,6 +298,7 @@ pub async fn launch_l2(matches: clap::ArgMatches) {
     }
 }
 
+#[cfg(not(feature = "l2"))]
 pub async fn launch_l1(matches: clap::ArgMatches) {
     if let Some(matches) = matches.subcommand_matches("removedb") {
         let data_dir = matches
