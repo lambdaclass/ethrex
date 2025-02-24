@@ -5,9 +5,6 @@ pub mod mempool;
 pub mod payload;
 mod smoke_test;
 
-use std::{ops::Div, time::Instant};
-use tracing::info;
-
 use error::{ChainError, InvalidBlockError};
 use ethrex_common::constants::GAS_PER_BLOB;
 use ethrex_common::types::requests::{compute_requests_hash, EncodedRequests, Requests};
@@ -17,6 +14,7 @@ use ethrex_common::types::{
     BlockHeader, BlockNumber, ChainConfig, EIP4844Transaction, Receipt, Transaction,
 };
 use ethrex_common::H256;
+use std::{ops::Div, time::Instant};
 
 use ethrex_storage::error::StoreError;
 use ethrex_storage::Store;
