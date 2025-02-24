@@ -21,6 +21,8 @@ use ethrex_storage::Store;
 use ethrex_vm::backends::BlockExecutionResult;
 use ethrex_vm::backends::EVM;
 use ethrex_vm::db::evm_state;
+use fork_choice::apply_fork_choice;
+use tracing::{error, info, warn};
 
 //TODO: Implement a struct Chain or BlockChain to encapsulate
 //functionality and canonical chain state and config
@@ -77,6 +79,53 @@ impl Blockchain {
         store_receipts(storage, receipts, block_hash)?;
 
         Ok(())
+    }
+
+    pub fn import_blocks(&self, store: &Store, blocks: &Vec<Block>) {
+        let size = blocks.len();
+        for block in blocks {
+            let hash = block.hash();
+            info!(
+                "Adding block {} with hash {:#x}.",
+                block.header.number, hash
+            );
+            if let Err(error) = self.add_block(block, store) {
+                warn!(
+                    "Failed to add block {} with hash {:#x}: {}.",
+                    block.header.number, hash, error
+                );
+            }
+            if store
+                .update_latest_block_number(block.header.number)
+                .is_err()
+            {
+                error!("Fatal: added block {} but could not update the block number -- aborting block import", block.header.number);
+                break;
+            };
+            if store
+                .set_canonical_block(block.header.number, hash)
+                .is_err()
+            {
+                error!(
+                    "Fatal: added block {} but could not set it as canonical -- aborting block import",
+                    block.header.number
+                );
+                break;
+            };
+        }
+        if let Some(last_block) = blocks.last() {
+            let hash = last_block.hash();
+            match self.vm {
+                EVM::LEVM => {
+                    // We are allowing this not to unwrap so that tests can run even if block execution results in the wrong root hash with LEVM.
+                    let _ = apply_fork_choice(store, hash, hash, hash);
+                }
+                EVM::REVM => {
+                    apply_fork_choice(store, hash, hash, hash).unwrap();
+                }
+            }
+        }
+        info!("Added {} blocks to blockchain", size);
     }
 }
 

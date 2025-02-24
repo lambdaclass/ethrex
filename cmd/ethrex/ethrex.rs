@@ -1,6 +1,6 @@
 use bytes::Bytes;
 use directories::ProjectDirs;
-use ethrex_blockchain::{fork_choice::apply_fork_choice, Blockchain};
+use ethrex_blockchain::Blockchain;
 use ethrex_common::types::{Block, Genesis};
 use ethrex_p2p::{
     kademlia::KademliaTable,
@@ -181,7 +181,7 @@ async fn main() {
     if let Some(chain_rlp_path) = matches.get_one::<String>("import") {
         info!("Importing blocks from chain file: {}", chain_rlp_path);
         let blocks = read_chain_file(chain_rlp_path);
-        import_blocks(&store, &blocks, &blockchain);
+        blockchain.import_blocks(&store, &blocks);
     }
 
     if let Some(blocks_path) = matches.get_one::<String>("import_dir") {
@@ -200,7 +200,7 @@ async fn main() {
             blocks.push(read_block_file(s));
         }
 
-        import_blocks(&store, &blocks, &blockchain);
+        blockchain.import_blocks(&store, &blocks);
     }
 
     let jwt_secret = read_jwtsecret_file(authrpc_jwtsecret);
@@ -422,53 +422,6 @@ fn set_datadir(datadir: &str) -> String {
         .to_str()
         .expect("invalid data directory")
         .to_owned()
-}
-
-fn import_blocks(store: &Store, blocks: &Vec<Block>, blockchain: &Blockchain) {
-    let size = blocks.len();
-    for block in blocks {
-        let hash = block.hash();
-        info!(
-            "Adding block {} with hash {:#x}.",
-            block.header.number, hash
-        );
-        if let Err(error) = blockchain.add_block(block, store) {
-            warn!(
-                "Failed to add block {} with hash {:#x}: {}.",
-                block.header.number, hash, error
-            );
-        }
-        if store
-            .update_latest_block_number(block.header.number)
-            .is_err()
-        {
-            error!("Fatal: added block {} but could not update the block number -- aborting block import", block.header.number);
-            break;
-        };
-        if store
-            .set_canonical_block(block.header.number, hash)
-            .is_err()
-        {
-            error!(
-                "Fatal: added block {} but could not set it as canonical -- aborting block import",
-                block.header.number
-            );
-            break;
-        };
-    }
-    if let Some(last_block) = blocks.last() {
-        let hash = last_block.hash();
-        match blockchain.vm {
-            EVM::LEVM => {
-                // We are allowing this not to unwrap so that tests can run even if block execution results in the wrong root hash with LEVM.
-                let _ = apply_fork_choice(store, hash, hash, hash);
-            }
-            EVM::REVM => {
-                apply_fork_choice(store, hash, hash, hash).unwrap();
-            }
-        }
-    }
-    info!("Added {} blocks to blockchain", size);
 }
 
 async fn store_known_peers(table: Arc<Mutex<KademliaTable>>, file_path: PathBuf) {
