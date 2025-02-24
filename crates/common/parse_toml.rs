@@ -248,7 +248,7 @@ pub fn write_to_env(config: String) {
     // exists. That SHOULD mean that the .toml has already been turned
     // into an .env, so we simply do nothing
     if let Ok(mut env_file) = std::fs::File::create_new(ENV_FILE_NAME) {
-        env_file.write(&config.into_bytes());
+        let _ = env_file.write(&config.into_bytes());
     };
 }
 
