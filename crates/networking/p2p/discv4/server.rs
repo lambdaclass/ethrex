@@ -9,8 +9,9 @@ use super::{
     },
 };
 use crate::{
-    kademlia::{KademliaTable, MAX_NODES_PER_BUCKET, MAX_PEERS},
+    kademlia::{KademliaTable, MAX_NODES_PER_BUCKET},
     network::{handle_peer_as_initiator, P2PContext},
+    rlpx::connection::MAX_PEERS_TCP_CONNECTIONS,
     types::{Endpoint, Node, NodeRecord},
 };
 use ethrex_common::H256;
@@ -219,7 +220,7 @@ impl Discv4Server {
                     let table = self.ctx.table.lock().await;
                     table.count_connected_peers()
                 };
-                if active_connections >= MAX_PEERS {
+                if active_connections >= MAX_PEERS_TCP_CONNECTIONS {
                     return Ok(());
                 }
 

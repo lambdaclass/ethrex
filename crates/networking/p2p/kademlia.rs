@@ -12,7 +12,6 @@ use tokio::sync::{mpsc, Mutex};
 use tracing::debug;
 
 pub const MAX_NODES_PER_BUCKET: usize = 16;
-pub const MAX_PEERS: usize = 100;
 const NUMBER_OF_BUCKETS: usize = 256;
 const MAX_NUMBER_OF_REPLACEMENTS: usize = 10;
 

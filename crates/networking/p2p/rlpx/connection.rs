@@ -1,5 +1,5 @@
 use crate::{
-    kademlia::{PeerChannels, MAX_PEERS},
+    kademlia::PeerChannels,
     rlpx::{
         error::RLPxError,
         eth::{
@@ -53,6 +53,7 @@ const SUPPORTED_CAPABILITIES: [(Capability, u8); 3] = [CAP_P2P_5, CAP_ETH_68, CA
 const PERIODIC_PING_INTERVAL: std::time::Duration = std::time::Duration::from_secs(10);
 const PERIODIC_TX_BROADCAST_INTERVAL: std::time::Duration = std::time::Duration::from_secs(5);
 const PERIODIC_TASKS_CHECK_INTERVAL: std::time::Duration = std::time::Duration::from_secs(5);
+pub const MAX_PEERS_TCP_CONNECTIONS: usize = 100;
 
 pub(crate) type Aes256Ctr64BE = ctr::Ctr64BE<aes::Aes256>;
 
@@ -131,11 +132,10 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
             table_lock.count_connected_peers()
         };
 
-        if peer_count >= MAX_PEERS {
+        if peer_count >= MAX_PEERS_TCP_CONNECTIONS {
             return Err(DisconnectReason::TooManyPeers);
         }
 
-        // We can also add other checks like "Peer already connected"
         Ok(())
     }
 
