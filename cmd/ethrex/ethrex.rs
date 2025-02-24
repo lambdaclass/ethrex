@@ -36,7 +36,16 @@ const DEFAULT_DATADIR: &str = "ethrex";
 #[tokio::main]
 async fn main() {
     let matches = cli::cli().get_matches();
-    ethrex_common::parse_toml::read_toml();
+
+    match ethrex_common::parse_toml::read_toml() {
+        Ok(_) => (),
+        Err(err) => {
+            panic!("{}", err);
+        }
+    };
+
+    ethrex_common::parse_toml::read_toml().unwrap();
+
     if let Some(matches) = matches.subcommand_matches("removedb") {
         let data_dir = matches
             .get_one::<String>("datadir")
