@@ -293,6 +293,7 @@ impl SyncManager {
                     self.peers.clone(),
                     store.clone(),
                     &mut self.invalid_ancestors,
+                    sync_head,
                 )
                 .await?
             }
@@ -308,8 +309,10 @@ async fn download_and_run_blocks(
     peers: PeerHandler,
     store: Store,
     invalid_ancestors: &mut HashMap<BlockHash, BlockHash>,
+    sync_head: H256,
 ) -> Result<(), SyncError> {
     let mut last_valid_hash = H256::default();
+    let mut synced = false;
     loop {
         debug!("Requesting Block Bodies ");
         if let Some(block_bodies) = peers.request_block_bodies(block_hashes.clone()).await {
@@ -325,6 +328,11 @@ async fn download_and_run_blocks(
                     .ok_or(SyncError::CorruptDB)?;
                 let number = header.number;
                 let block = Block::new(header, body);
+                if synced {
+                    store.add_pending_block(block.clone())?;
+                    continue;
+                }
+
                 if let Err(error) = ethrex_blockchain::add_block(&block, &store) {
                     invalid_ancestors.insert(hash, last_valid_hash);
                     return Err(error.into());
@@ -332,8 +340,11 @@ async fn download_and_run_blocks(
                 store.set_canonical_block(number, hash)?;
                 store.update_latest_block_number(number)?;
                 last_valid_hash = hash;
+                if last_valid_hash == sync_head {
+                    synced = true;
+                }
             }
-            info!("Executed & stored {} blocks", block_bodies_len);
+            info!("stored {} blocks", block_bodies_len);
             // Check if we need to ask for another batch
             if block_hashes.is_empty() {
                 break;
