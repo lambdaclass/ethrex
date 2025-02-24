@@ -23,6 +23,7 @@ pub enum RpcErr {
     InvalidForkChoiceState(String),
     InvalidPayloadAttributes(String),
     UnknownPayload(String),
+    InvalidEnv(String),
 }
 
 impl From<RpcErr> for RpcErrorMetadata {
@@ -121,6 +122,11 @@ impl From<RpcErr> for RpcErrorMetadata {
                 code: -38001,
                 data: None,
                 message: format!("Unknown payload: {context}"),
+            },
+            RpcErr::InvalidEnv(context) => RpcErrorMetadata {
+                code: -38000,
+                data: None,
+                message: format!("Invalid env: {context}"),
             },
         }
     }
