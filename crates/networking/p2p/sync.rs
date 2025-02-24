@@ -243,8 +243,11 @@ impl SyncManager {
                         &mut self.invalid_ancestors,
                     )
                     .await?;
-                    if let Ok(Some(_number)) = store.get_block_number(sync_head) {
-                        // We processed the sync_head
+                    if let Ok(Some(number)) = store.get_block_number(sync_head) {
+                        info!("sync_head is at block_number: {:?}", number);
+                        let current_block_number = store.get_latest_block_number()?;
+                        info!("Latest block number is: {:?}", current_block_number);
+
                         break;
                     }
                     let current_block_number = store.get_latest_block_number()?;
