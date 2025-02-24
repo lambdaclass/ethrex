@@ -158,6 +158,7 @@ impl SyncManager {
         // We will begin from the current head so that we download the earliest state first
         // This step is not parallelized
         // Check if we have some blocks downloaded from a previous sync attempt
+        let all_block_hashes = [];
         if matches!(self.sync_mode, SyncMode::Snap) {
             if let Some(last_header) = store.get_header_download_checkpoint()? {
                 // Set latest downloaded header as current head for header fetching
@@ -228,7 +229,7 @@ impl SyncManager {
                     block_hashes.remove(0);
                     block_headers.remove(0);
                     // Store headers and save hashes for full block retrieval
-                    store.add_block_headers(block_hashes, block_headers)?;
+                    store.add_block_headers(block_hashes.clone(), block_headers)?;
 
                     // if sync_head_found {
                     //     // No more headers to request
@@ -243,6 +244,7 @@ impl SyncManager {
                     )
                     .await?;
                     if let Ok(Some(_number)) = store.get_block_number(sync_head) {
+                        // We processed the sync_head
                         break;
                     }
                     let current_block_number = store.get_latest_block_number()?;
