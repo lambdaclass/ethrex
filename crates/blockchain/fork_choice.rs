@@ -3,6 +3,7 @@ use ethrex_common::{
     H256,
 };
 use ethrex_storage::{error::StoreError, Store};
+use tracing::info;
 
 use crate::{
     error::{self, InvalidForkChoice},
@@ -24,6 +25,7 @@ pub fn apply_fork_choice(
     safe_hash: H256,
     finalized_hash: H256,
 ) -> Result<BlockHeader, InvalidForkChoice> {
+    info!("Applying forkchoice");
     if head_hash.is_zero() {
         return Err(InvalidForkChoice::InvalidHeadHash);
     }
@@ -54,6 +56,8 @@ pub fn apply_fork_choice(
         return Err(InvalidForkChoice::Syncing);
     };
 
+    info!("Head block is present");
+
     let head = head_block.header;
 
     total_difficulty_check(&head_hash, &head, store)?;
@@ -62,6 +66,9 @@ pub fn apply_fork_choice(
 
     // If the head block is an already present head ancestor, skip the update.
     if is_canonical(store, head.number, head_hash)? && head.number < latest {
+        info!("ALREADY CANONICAL. recieved head_number: {:?}", head.number);
+        info!("latest: {:?}", latest);
+
         return Err(InvalidForkChoice::NewHeadAlreadyCanonical);
     }
 
@@ -128,6 +135,10 @@ pub fn apply_fork_choice(
     }
     store.update_latest_block_number(head.number)?;
     store.update_sync_status(true)?;
+
+    info!("Fork choice applied.");
+    info!("new_head: {:?}", head.compute_block_hash());
+    info!("new_head_number: {:?}", head.number);
 
     Ok(head)
 }

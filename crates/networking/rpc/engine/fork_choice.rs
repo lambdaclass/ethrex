@@ -210,6 +210,7 @@ fn handle_forkchoice(
         Err(forkchoice_error) => {
             let forkchoice_response = match forkchoice_error {
                 InvalidForkChoice::NewHeadAlreadyCanonical => {
+                    info!("New head already canonical!!");
                     ForkChoiceResponse::from(PayloadStatus::valid_with_hash(
                         latest_canonical_block_hash(&context.storage).unwrap(),
                     ))

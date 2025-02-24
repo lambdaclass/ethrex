@@ -351,7 +351,6 @@ async fn download_and_run_blocks(
         for number in (sync_head_number + 1)..(latest + 1) {
             store.unset_canonical_block(number)?;
         }
-        last_valid_hash = sync_head;
     }
 
     Ok(())
