@@ -27,26 +27,37 @@ use tracing::{error, info, warn};
 //TODO: Implement a struct Chain or BlockChain to encapsulate
 //functionality and canonical chain state and config
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct Blockchain {
     pub vm: EVM,
+    pub storage: Store,
 }
 
 impl Blockchain {
-    pub fn new(evm: EVM) -> Self {
-        Self { vm: evm }
+    pub fn new(evm: EVM, store: Store) -> Self {
+        Self {
+            vm: evm,
+            storage: store,
+        }
     }
 
-    pub fn add_block(&self, block: &Block, storage: &Store) -> Result<(), ChainError> {
+    pub fn default_with_store(store: Store) -> Self {
+        Self {
+            vm: Default::default(),
+            storage: store,
+        }
+    }
+
+    pub fn add_block(&self, block: &Block) -> Result<(), ChainError> {
         let block_hash = block.header.compute_block_hash();
 
         // Validate if it can be the new head and find the parent
-        let Ok(parent_header) = find_parent_header(&block.header, storage) else {
+        let Ok(parent_header) = find_parent_header(&block.header, &self.storage) else {
             // If the parent is not present, we store it as pending.
-            storage.add_pending_block(block.clone())?;
+            self.storage.add_pending_block(block.clone())?;
             return Err(ChainError::ParentNotFound);
         };
-        let mut state = evm_state(storage.clone(), block.header.parent_hash);
+        let mut state = evm_state(self.storage.clone(), block.header.parent_hash);
         let chain_config = state.chain_config().map_err(ChainError::from)?;
 
         // Validate the block pre-execution
@@ -75,13 +86,13 @@ impl Blockchain {
         // Processes requests from receipts, computes the requests_hash and compares it against the header
         validate_requests_hash(&block.header, &chain_config, &requests)?;
 
-        store_block(storage, block.clone())?;
-        store_receipts(storage, receipts, block_hash)?;
+        store_block(&self.storage, block.clone())?;
+        store_receipts(&self.storage, receipts, block_hash)?;
 
         Ok(())
     }
 
-    pub fn import_blocks(&self, store: &Store, blocks: &Vec<Block>) {
+    pub fn import_blocks(&self, blocks: &Vec<Block>) {
         let size = blocks.len();
         for block in blocks {
             let hash = block.hash();
@@ -89,20 +100,22 @@ impl Blockchain {
                 "Adding block {} with hash {:#x}.",
                 block.header.number, hash
             );
-            if let Err(error) = self.add_block(block, store) {
+            if let Err(error) = self.add_block(block) {
                 warn!(
                     "Failed to add block {} with hash {:#x}: {}.",
                     block.header.number, hash, error
                 );
             }
-            if store
+            if self
+                .storage
                 .update_latest_block_number(block.header.number)
                 .is_err()
             {
                 error!("Fatal: added block {} but could not update the block number -- aborting block import", block.header.number);
                 break;
             };
-            if store
+            if self
+                .storage
                 .set_canonical_block(block.header.number, hash)
                 .is_err()
             {
@@ -118,10 +131,10 @@ impl Blockchain {
             match self.vm {
                 EVM::LEVM => {
                     // We are allowing this not to unwrap so that tests can run even if block execution results in the wrong root hash with LEVM.
-                    let _ = apply_fork_choice(store, hash, hash, hash);
+                    let _ = apply_fork_choice(&self.storage, hash, hash, hash);
                 }
                 EVM::REVM => {
-                    apply_fork_choice(store, hash, hash, hash).unwrap();
+                    apply_fork_choice(&self.storage, hash, hash, hash).unwrap();
                 }
             }
         }

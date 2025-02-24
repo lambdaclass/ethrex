@@ -72,9 +72,9 @@ pub fn generate_program_input(
     let store = Store::new("memory", EngineType::InMemory)?;
     store.add_initial_state(genesis)?;
     // create blockchain
-    let blockchain = Blockchain::default();
+    let blockchain = Blockchain::default_with_store(store.clone());
     for block in chain {
-        blockchain.add_block(&block, &store)?;
+        blockchain.add_block(&block)?;
     }
 
     let parent_block_header = store
