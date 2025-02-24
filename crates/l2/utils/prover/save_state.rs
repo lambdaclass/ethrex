@@ -419,8 +419,10 @@ mod tests {
         store.add_initial_state(genesis.clone()).unwrap();
 
         let blocks = test_data_io::read_chain_file(chain_file_path.to_str().unwrap());
+        // create blockchain
+        let blockchain = Blockchain::default();
         for block in &blocks {
-            Blockchain::default().add_block(block, &store).unwrap();
+            blockchain.add_block(block, &store).unwrap();
         }
 
         let mut account_updates_vec: Vec<Vec<AccountUpdate>> = Vec::new();
