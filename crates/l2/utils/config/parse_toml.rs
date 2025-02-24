@@ -8,6 +8,7 @@ struct Deployer {
     risc0_contract_verifier: String,
     sp1_contract_verifier: String,
     sp1_deploy_verifier: bool,
+    salt_is_zero: bool,
 }
 
 impl Deployer {
@@ -20,12 +21,14 @@ impl Deployer {
 {prefix}_RISC0_CONTRACT_VERIFIER={}
 {prefix}_SP1_CONTRACT_VERIFIER={}
 {prefix}_SP1_DEPLOY_VERIFIER={}
+{prefix}_SALT_IS_ZERO={}
 ",
             self.address,
             self.private_key,
             self.risc0_contract_verifier,
             self.sp1_contract_verifier,
-            self.sp1_deploy_verifier
+            self.sp1_deploy_verifier,
+            self.salt_is_zero
         )
     }
 }
