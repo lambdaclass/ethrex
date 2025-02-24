@@ -813,14 +813,13 @@ impl<T: RLPEncode + RLPDecode> IndexedChunk<T> {
 
     /// Reads multiple stored chunks and reconstructs the original full value.
     /// The chunks are appended in order based on their assigned index.
-    pub fn read_from_db<'txn, Tab: Table, K: TransactionKind>(
-        cursor: &mut libmdbx::orm::Cursor<'txn, K, Tab>,
+    pub fn read_from_db<Tab: Table + DupSort, K: TransactionKind>(
+        cursor: &mut libmdbx::orm::Cursor<'_, K, Tab>,
         key: Tab::Key,
     ) -> Result<Option<T>, StoreError>
     where
         Tab::Key: Decodable,
         Tab::Value: ChunkTrait<T>,
-        Tab: DupSort,
     {
         let mut value = vec![];
 
