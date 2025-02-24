@@ -148,7 +148,7 @@ impl Blockchain {
                 }
             }
         }
-        info!("Added {} blocks to blockchain", size);
+        info!("Added {size} blocks to blockchain");
     }
 }
 
