@@ -138,7 +138,7 @@ impl SyncStatsMonitor {
             .duration_since(self.prev_cycle.started_at)
             .as_secs();
 
-        let elapsed_diff = elapsed - prev_elapsed;
+        let elapsed_diff = elapsed as i128 - prev_elapsed as i128;
 
         tracing::info!(
             "[SYNCING PERF] Last {} blocks performance:\n\
