@@ -200,6 +200,7 @@ impl SyncManager {
                         }
                     }
 
+                    // Check if we already found the sync head
                     let sync_head_found = block_hashes.contains(&sync_head);
                     // Update current fetch head if needed
                     if !sync_head_found {
@@ -227,7 +228,6 @@ impl SyncManager {
                     // Store headers and save hashes for full block retrieval
                     all_block_hashes.extend_from_slice(&block_hashes[..]);
                     store.add_block_headers(block_hashes, block_headers)?;
-                    store.add_block_headers(block_hashes.clone(), block_headers)?;
 
                     if sync_head_found {
                         // No more headers to request
