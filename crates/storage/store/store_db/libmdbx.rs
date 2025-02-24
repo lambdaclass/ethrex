@@ -494,8 +494,7 @@ impl StoreEngine for Store {
         let mut key_values = vec![];
 
         for (index, receipt) in receipts.clone().into_iter().enumerate() {
-            let key =
-                <(H256, u64) as Into<TupleRLP<BlockHash, Index>>>::into((block_hash, index as u64));
+            let key = (block_hash, index as u64).into();
             let receipt_rlp = receipt.encode_to_vec();
             let mut entries = IndexedChunk::from::<Receipts>(key, &receipt_rlp);
             key_values.append(&mut entries);
@@ -507,7 +506,7 @@ impl StoreEngine for Store {
     fn get_receipts_for_block(&self, block_hash: &BlockHash) -> Result<Vec<Receipt>, StoreError> {
         let mut receipts = vec![];
         let mut receipt_index = 0;
-        let mut key: TupleRLP<BlockHash, Index> = (*block_hash, 0).into();
+        let mut key = (*block_hash, 0).into();
         let txn = self.db.begin_read().map_err(|_| StoreError::ReadError)?;
         let mut cursor = txn
             .cursor::<Receipts>()
@@ -1044,10 +1043,12 @@ pub fn init_db(path: Option<impl AsRef<Path>>) -> Database {
 
 #[cfg(test)]
 mod tests {
-    use libmdbx::{
-        dupsort,
-        orm::{table, Database, Decodable, Encodable},
-        table_info,
+    use super::*;
+    use crate::rlp::TupleRLP;
+    use bytes::Bytes;
+    use ethrex_common::{
+        types::{BlockHash, Index, Log, TxType},
+        Address, Bloom, H256,
     };
 
     #[test]
@@ -1233,6 +1234,90 @@ mod tests {
             }
 
             assert_eq!(acc, 58);
+        }
+    }
+
+    // Test IndexedChunks implementation with receipts as the type
+    #[test]
+    fn mdbx_indexed_chunks_test() {
+        dupsort!(
+            /// Receipts table.
+            ( Receipts ) TupleRLP<BlockHash, Index>[Index] => IndexedChunk<Receipt>
+        );
+
+        let tables = [table_info!(Receipts)].into_iter().collect();
+        let options = DatabaseOptions {
+            page_size: Some(PageSize::Set(DB_PAGE_SIZE)),
+            mode: Mode::ReadWrite(ReadWriteOptions {
+                max_size: Some(1024_isize.pow(4)),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let db = Database::create_with_options(None, options, &tables).unwrap();
+
+        let mut receipts = vec![];
+        for i in 0..10 {
+            receipts.push(generate_big_receipt(100 * (i + 1), 10, 10 * (i + 1)));
+        }
+
+        // encode receipts
+        let block_hash = H256::random();
+        let mut key_values = vec![];
+        for (i, receipt) in receipts.iter().enumerate() {
+            let key = (block_hash, i as u64).into();
+            let receipt_rlp = receipt.encode_to_vec();
+            let mut entries = IndexedChunk::from::<Receipts>(key, &receipt_rlp);
+            key_values.append(&mut entries);
+        }
+
+        // store values
+        let txn = db.begin_readwrite().unwrap();
+        let mut cursor = txn.cursor::<Receipts>().unwrap();
+        for (key, value) in key_values {
+            cursor.upsert(key, value).unwrap()
+        }
+        txn.commit().unwrap();
+
+        // now retrieve the values and assert they are the same
+        let mut stored_receipts = vec![];
+        let mut receipt_index = 0;
+        let mut key: TupleRLP<BlockHash, Index> = (block_hash, 0).into();
+        let txn = db.begin_read().unwrap();
+        let mut cursor = txn.cursor::<Receipts>().unwrap();
+        while let Some(receipt) = IndexedChunk::read_from_db(&mut cursor, key).unwrap() {
+            stored_receipts.push(receipt);
+            receipt_index += 1;
+            key = (block_hash, receipt_index).into();
+        }
+
+        assert_eq!(receipts, stored_receipts);
+    }
+
+    fn generate_big_receipt(
+        data_size_in_bytes: usize,
+        logs_size: usize,
+        topics_size: usize,
+    ) -> Receipt {
+        let large_data: Bytes = Bytes::from(vec![1u8; data_size_in_bytes]);
+        let large_topics: Vec<H256> = std::iter::repeat(H256::random())
+            .take(topics_size)
+            .collect();
+
+        let logs = std::iter::repeat(Log {
+            address: Address::random(),
+            topics: large_topics.clone(),
+            data: large_data.clone(),
+        })
+        .take(logs_size)
+        .collect();
+
+        Receipt {
+            tx_type: TxType::EIP7702,
+            succeeded: true,
+            cumulative_gas_used: u64::MAX,
+            bloom: Bloom::default(),
+            logs,
         }
     }
 }
