@@ -2,8 +2,8 @@ use crate::api::StoreEngine;
 use crate::error::StoreError;
 use crate::rlp::{
     AccountCodeHashRLP, AccountCodeRLP, AccountHashRLP, AccountStateRLP, BlockBodyRLP,
-    BlockHashRLP, BlockHeaderRLP, BlockRLP, BlockTotalDifficultyRLP, ReceiptRLP, Rlp,
-    TransactionHashRLP, TupleRLP,
+    BlockHashRLP, BlockHeaderRLP, BlockRLP, BlockTotalDifficultyRLP, Rlp, TransactionHashRLP,
+    TupleRLP,
 };
 use crate::store::{MAX_SNAPSHOT_READS, STATE_TRIE_SEGMENTS};
 use crate::trie_db::libmdbx::LibmdbxTrieDB;
@@ -190,7 +190,11 @@ impl StoreEngine for Store {
         index: Index,
         receipt: Receipt,
     ) -> Result<(), StoreError> {
-        self.write::<Receipts>((block_hash, index).into(), receipt.into())
+        let chunks = IndexedChunk::from(&receipt.encode_to_vec());
+        let key: Rlp<(BlockHash, Index)> = (block_hash, index).into();
+        let key_values = chunks.into_iter().map(|chunk| (key.clone(), chunk));
+
+        self.write_batch::<Receipts>(key_values)
     }
 
     fn get_receipt(
@@ -199,7 +203,10 @@ impl StoreEngine for Store {
         index: Index,
     ) -> Result<Option<Receipt>, StoreError> {
         if let Some(hash) = self.get_block_hash_by_block_number(block_number)? {
-            Ok(self.read::<Receipts>((hash, index).into())?.map(|b| b.to()))
+            let txn = self.db.begin_read().map_err(StoreError::LibmdbxError)?;
+            let mut cursor = txn.cursor::<Receipts>().map_err(StoreError::LibmdbxError)?;
+            let key = (hash, index).into();
+            IndexedChunk::read_from_db(&mut cursor, key)
         } else {
             Ok(None)
         }
@@ -486,14 +493,19 @@ impl StoreEngine for Store {
         block_hash: BlockHash,
         receipts: Vec<Receipt>,
     ) -> Result<(), StoreError> {
-        let key_values = receipts.into_iter().enumerate().map(|(index, receipt)| {
-            (
-                <(H256, u64) as Into<TupleRLP<BlockHash, Index>>>::into((block_hash, index as u64)),
-                <Receipt as Into<ReceiptRLP>>::into(receipt),
-            )
-        });
+        let mut key_values = vec![];
 
-        self.write_batch::<Receipts>(key_values)
+        for (index, receipt) in receipts.clone().into_iter().enumerate() {
+            let key =
+                <(H256, u64) as Into<TupleRLP<BlockHash, Index>>>::into((block_hash, index as u64));
+            let receipt_rlp = receipt.encode_to_vec();
+            let chunks = IndexedChunk::from(&receipt_rlp);
+            for value in chunks {
+                key_values.push((key.clone(), value));
+            }
+        }
+
+        self.write_batch::<Receipts>(key_values.into_iter())
     }
 
     fn get_receipts_for_block(&self, block_hash: &BlockHash) -> Result<Vec<Receipt>, StoreError> {
@@ -510,15 +522,13 @@ impl StoreEngine for Store {
         // So we search for values in the db that match with this kind
         // of key, until we reach an Index that returns None
         // and we stop the search.
-        while let Some((_, encoded_receipt)) =
-            cursor.seek_exact(key).map_err(|_| StoreError::ReadError)?
-        {
-            receipts.push(encoded_receipt);
+        while let Some(receipt) = IndexedChunk::read_from_db(&mut cursor, key)? {
+            receipts.push(receipt);
             receipt_index += 1;
             key = (*block_hash, receipt_index).into();
         }
 
-        Ok(receipts.into_iter().map(|receipt| receipt.to()).collect())
+        Ok(receipts)
     }
 
     fn set_header_download_checkpoint(&self, block_hash: BlockHash) -> Result<(), StoreError> {
@@ -857,7 +867,7 @@ table!(
 
 dupsort!(
     /// Receipts table.
-    ( Receipts ) TupleRLP<BlockHash, Index>[Index] => ReceiptRLP
+    ( Receipts ) TupleRLP<BlockHash, Index>[Index] => IndexedChunk<Receipt>
 );
 
 dupsort!(
