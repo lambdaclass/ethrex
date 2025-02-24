@@ -234,10 +234,7 @@ impl KademliaTable {
 
     /// Counts the number of connected peers
     pub fn count_connected_peers(&self) -> usize {
-        self.buckets
-            .iter()
-            .map(|bucket| bucket.peers.iter().filter(|peer| peer.is_connected).count())
-            .sum()
+        self.filter_peers(&|peer| peer.is_connected).count()
     }
 
     /// Returns an iterator for all peers in the table that match the filter
