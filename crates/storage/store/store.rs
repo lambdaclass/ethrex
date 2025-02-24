@@ -345,6 +345,17 @@ impl Store {
         Ok(())
     }
 
+    pub fn remove_transactions_from_pool(&self, filter: &[Transaction]) -> Result<(), StoreError> {
+        let mut mempool = self
+            .mempool
+            .write()
+            .map_err(|_| StoreError::MempoolWriteLock)?;
+        for tx in filter {
+            mempool.remove(&tx.compute_hash());
+        }
+        Ok(())
+    }
+
     /// Applies the filter and returns a set of suitable transactions from the mempool.
     /// These transactions will be grouped by sender and sorted by nonce
     pub fn filter_pool_transactions(
