@@ -1,6 +1,8 @@
 use serde::Deserialize;
 use std::fs;
 
+use crate::errors::*;
+
 #[derive(Deserialize, Debug)]
 struct Deployer {
     address: String,
@@ -253,10 +255,12 @@ pub fn write_to_env(config: String) {
     fs::write(env_file_name, config).unwrap();
 }
 
-pub fn read_toml() {
+pub fn read_toml() -> Result<(), ConfigError> {
     println!("Hello ARGENTINA");
-    let file = std::fs::read_to_string("config.toml").unwrap();
+    let toml_config = std::env::var("CONFIG_FILE").unwrap_or("config.toml".to_string());
+    let file = std::fs::read_to_string(toml_config)?;
     println!("{}\n", &file);
     let config: L2Config = toml::from_str(&file).unwrap();
     write_to_env(config.to_env());
+    Ok(())
 }
