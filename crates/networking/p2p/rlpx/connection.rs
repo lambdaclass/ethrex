@@ -20,7 +20,10 @@ use crate::{
     types::Node,
 };
 use ethrex_blockchain::mempool::{self};
-use ethrex_common::{types::Transaction, H256, H512};
+use ethrex_common::{
+    types::{MempoolTransaction, Transaction},
+    H256, H512,
+};
 use ethrex_storage::Store;
 use futures::SinkExt;
 use k256::{ecdsa::SigningKey, PublicKey, SecretKey};
@@ -348,33 +351,23 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
 
     async fn send_new_pooled_tx_hashes(&mut self) -> Result<(), RLPxError> {
         if self.capabilities.contains(&CAP_ETH_68) {
-            let mut txs: Vec<Transaction> = Vec::new();
-            let mut hashes = Vec::new();
-            for (hash, mempool_tx) in self
+            let filter =
+                |tx: &Transaction| -> bool { !self.broadcasted_txs.contains(&tx.compute_hash()) };
+            let txs: Vec<MempoolTransaction> = self
                 .storage
-                .mempool
-                .read()
-                .map_err(|_err| {
-                    RLPxError::StoreError(ethrex_storage::error::StoreError::Custom(
-                        "Failed to lock mempool".to_string(),
-                    ))
-                })?
-                .iter()
-            {
-                if !self.broadcasted_txs.contains(hash) {
-                    hashes.push(*hash);
-                    txs.push((**mempool_tx).clone());
-                }
-            }
+                .filter_pool_transactions(&filter)?
+                .into_values()
+                .flatten()
+                .collect();
             if !txs.is_empty() {
                 let tx_count = txs.len();
                 for tx in txs {
                     self.send(Message::NewPooledTransactionHashes(
-                        NewPooledTransactionHashes::new(vec![tx], &self.storage)?,
+                        NewPooledTransactionHashes::new(vec![(*tx).clone()], &self.storage)?,
                     ))
                     .await?;
+                    self.broadcasted_txs.insert((*tx).compute_hash());
                 }
-                self.broadcasted_txs.extend(hashes.iter());
                 log_peer_debug(
                     &self.node,
                     &format!("Sent {} transactions to peer", tx_count),
