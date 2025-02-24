@@ -1,11 +1,12 @@
-use self::engines::in_memory::Store as InMemoryStore;
+use crate::api::StoreEngine;
+use crate::error::StoreError;
+use crate::store_db::in_memory::Store as InMemoryStore;
 #[cfg(feature = "libmdbx")]
-use self::engines::libmdbx::Store as LibmdbxStore;
-use self::error::StoreError;
-use bytes::Bytes;
-use engines::api::StoreEngine;
+use crate::store_db::libmdbx::Store as LibmdbxStore;
 #[cfg(feature = "redb")]
-use engines::redb::RedBStore;
+use crate::store_db::redb::RedBStore;
+use bytes::Bytes;
+
 use ethereum_types::{Address, H256, U256};
 use ethrex_common::types::{
     code_hash, AccountInfo, AccountState, BlobsBundle, Block, BlockBody, BlockHash, BlockHeader,
@@ -21,11 +22,6 @@ use std::collections::{HashMap, HashSet};
 use std::fmt::Debug;
 use std::sync::{Arc, Mutex};
 use tracing::info;
-
-mod engines;
-pub mod error;
-mod rlp;
-mod trie_db;
 
 /// Number of state trie segments to fetch concurrently during state sync
 pub const STATE_TRIE_SEGMENTS: usize = 2;
@@ -507,7 +503,7 @@ impl Store {
                 .open_storage_trie(H256::from_slice(&hashed_address), *EMPTY_TRIE_HASH);
             for (storage_key, storage_value) in account.storage {
                 if !storage_value.is_zero() {
-                    let hashed_key = hash_key(&storage_key);
+                    let hashed_key = hash_key(&H256(storage_key.to_big_endian()));
                     storage_trie.insert(hashed_key, storage_value.encode_to_vec())?;
                 }
             }
