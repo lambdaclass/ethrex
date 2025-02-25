@@ -37,6 +37,7 @@ use eth::{
     },
 };
 use ethrex_p2p::{sync::SyncManager, types::NodeRecord};
+use serde::Deserialize;
 use serde_json::Value;
 use std::{
     collections::HashMap,
@@ -67,6 +68,13 @@ pub use clients::{EngineClient, EthClient};
 use axum::extract::State;
 use ethrex_p2p::types::Node;
 use ethrex_storage::{error::StoreError, Store};
+
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum RpcRequestWrapper {
+    Single(RpcRequest),
+    Multiple(Vec<RpcRequest>),
+}
 
 #[derive(Debug, Clone)]
 pub struct RpcApiContext {
@@ -214,9 +222,22 @@ pub async fn handle_http_request(
     State(service_context): State<RpcApiContext>,
     body: String,
 ) -> Json<Value> {
-    let req: RpcRequest = serde_json::from_str(&body).unwrap();
-    let res = map_http_requests(&req, service_context).await;
-    rpc_response(req.id, res)
+    let req = serde_json::from_str::<RpcRequestWrapper>(&body).unwrap();
+    let res = match req {
+        RpcRequestWrapper::Single(request) => {
+            let res = map_http_requests(&request, service_context).await;
+            rpc_response(request.id, res)
+        }
+        RpcRequestWrapper::Multiple(requests) => {
+            let mut responses = Vec::new();
+            for req in requests {
+                let res = map_http_requests(&req, service_context.clone()).await;
+                responses.push(rpc_response(req.id, res));
+            }
+            serde_json::to_value(responses).unwrap()
+        }
+    };
+    Json(res)
 }
 
 pub async fn handle_authrpc_request(
@@ -226,11 +247,11 @@ pub async fn handle_authrpc_request(
 ) -> Json<Value> {
     let req: RpcRequest = serde_json::from_str(&body).unwrap();
     match authenticate(&service_context.jwt_secret, auth_header) {
-        Err(error) => rpc_response(req.id, Err(error)),
+        Err(error) => Json(rpc_response(req.id, Err(error))),
         Ok(()) => {
             // Proceed with the request
             let res = map_authrpc_requests(&req, service_context).await;
-            rpc_response(req.id, res)
+            Json(rpc_response(req.id, res))
         }
     }
 }
@@ -398,28 +419,23 @@ pub fn map_net_requests(req: &RpcRequest, contex: RpcApiContext) -> Result<Value
     }
 }
 
-fn rpc_response<E>(id: RpcRequestId, res: Result<Value, E>) -> Json<Value>
+fn rpc_response<E>(id: RpcRequestId, res: Result<Value, E>) -> Value
 where
     E: Into<RpcErrorMetadata>,
 {
     match res {
-        Ok(result) => Json(
-            serde_json::to_value(RpcSuccessResponse {
-                id,
-                jsonrpc: "2.0".to_string(),
-                result,
-            })
-            .unwrap(),
-        ),
-        Err(error) => Json(
-            serde_json::to_value(RpcErrorResponse {
-                id,
-                jsonrpc: "2.0".to_string(),
-                error: error.into(),
-            })
-            .unwrap(),
-        ),
+        Ok(result) => serde_json::to_value(RpcSuccessResponse {
+            id,
+            jsonrpc: "2.0".to_string(),
+            result,
+        }),
+        Err(error) => serde_json::to_value(RpcErrorResponse {
+            id,
+            jsonrpc: "2.0".to_string(),
+            error: error.into(),
+        }),
     }
+    .unwrap()
 }
 
 #[cfg(test)]
@@ -593,7 +609,7 @@ mod tests {
         };
         let result = map_http_requests(&request, context).await;
         let response =
-            serde_json::from_value::<RpcSuccessResponse>(rpc_response(request.id, result).0)
+            serde_json::from_value::<RpcSuccessResponse>(rpc_response(request.id, result))
                 .expect("Request failed");
         let expected_response_string = r#"{"jsonrpc":"2.0","id":1,"result":{"accessList":[{"address":"0x7dcd17433742f4c0ca53122ab541d0ba67fc27df","storageKeys":["0x0000000000000000000000000000000000000000000000000000000000000000","0x13a08e3cd39a1bc7bf9103f63f83273cced2beada9f723945176d6b983c65bd2"]}],"gasUsed":"0xca3c"}}"#;
         let expected_response =
