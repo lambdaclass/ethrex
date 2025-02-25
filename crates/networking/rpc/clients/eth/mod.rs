@@ -333,14 +333,9 @@ impl EthClient {
         &self,
         transaction: GenericTransaction,
     ) -> Result<u64, EthClientError> {
-        // If the transaction.to field matches TxKind::Create, we use an empty string.
-        // In this way, when the blockchain receives the request, it deserializes the json into a GenericTransaction,
-        // with the 'to' field set to TxKind::Create.
-        // The TxKind has TxKind::Create as #[default]
-        // https://github.com/lambdaclass/ethrex/blob/41b124c39030ad5d0b2674d7369be3599c7a3008/crates/common/types/transaction.rs#L267
         let to = match transaction.to {
-            TxKind::Call(addr) => format!("{addr:#x}"),
-            TxKind::Create => String::new(),
+            TxKind::Call(addr) => Some(format!("{addr:#x}")),
+            TxKind::Create => None,
         };
         let mut data = json!({
             "to": to,
