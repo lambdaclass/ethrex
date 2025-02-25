@@ -55,7 +55,7 @@ async fn main() {
         Command::new("ls")
             .arg("-l")
             .arg("-a")
-            .arg(" cmd/")
+            .arg("cmd")
             .spawn()
             .expect("ls command failed to start")
     );
