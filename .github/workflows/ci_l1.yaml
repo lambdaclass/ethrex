@@ -154,30 +154,43 @@ jobs:
           - name: "Rpc Compat tests"
             simulation: ethereum/rpc-compat
             test_pattern: ""
+            ethrex_flags: ""
           - name: "Devp2p discv4 tests"
             simulation: devp2p
             test_pattern: discv4
+            ethrex_flags: ""
           - name: "Devp2p snap tests"
             simulation: devp2p
             test_pattern: /AccountRange|StorageRanges|ByteCodes|TrieNodes
+            ethrex_flags: ""
           - name: "Devp2p eth tests"
             simulation: devp2p
             test_pattern: eth/Status|GetBlockHeaders|SimultaneousRequests|SameRequestID|ZeroRequestID|GetBlockBodies|MaliciousHandshake|MaliciousStatus|Transaction|NewPooledTxs|GetBlockReceipts|LargeTxRequest
+            ethrex_flags: ""
           - name: "Engine Auth and EC tests"
             simulation: ethereum/engine
             test_pattern: engine-(auth|exchange-capabilities)/
+            ethrex_flags: ""
           - name: "Cancun Engine tests"
             simulation: ethereum/engine
-            test_pattern: "engine-cancun/Blob Transactions On Block 1|Blob Transaction Ordering, Single|Blob Transaction Ordering, Multiple Accounts|Replace Blob Transactions|Parallel Blob Transactions|ForkchoiceUpdatedV3|ForkchoiceUpdatedV2|ForkchoiceUpdated Version|GetPayload|NewPayloadV3 After Cancun|NewPayloadV3 Before Cancun|NewPayloadV3 Versioned Hashes|Incorrect BlobGasUsed|ParentHash equals BlockHash|RPC:|in ForkchoiceState|Unknown SafeBlockHash|Unknown FinalizedBlockHash|Unique|Re-Execute Payload|Multiple New Payloads|NewPayload with|Build Payload with|Re-org to Previously|Safe Re-Org to Side Chain|Transaction Re-Org|Re-Org Back into Canonical Chain, Depth=5|Suggested Fee Recipient Test|PrevRandao Opcode|Fork ID: *|Invalid Missing .* .*CanonicalReOrg=False"
+            test_pattern: "engine-cancun/Blob Transactions On Block 1|Blob Transaction Ordering, Single|Blob Transaction Ordering, Multiple Accounts|Replace Blob Transactions|Parallel Blob Transactions|ForkchoiceUpdatedV3|ForkchoiceUpdatedV2|ForkchoiceUpdated Version|GetPayload|NewPayloadV3 After Cancun|NewPayloadV3 Before Cancun|NewPayloadV3 Versioned Hashes|Incorrect BlobGasUsed|ParentHash equals BlockHash|RPC:|in ForkchoiceState|Unknown SafeBlockHash|Unknown FinalizedBlockHash|Unique|Re-Execute Payload|Multiple New Payloads|NewPayload with|Build Payload with|Re-org to Previously|Safe Re-Org to Side Chain|Transaction Re-Org|Re-Org Back into Canonical Chain, Depth=5|Suggested Fee Recipient Test|PrevRandao Opcode|Fork ID: *|Invalid Missing .* .*CanonicalReOrg=False|Request Blob Pooled Transactions"
+            ethrex_flags: ""
           - name: "Paris Engine tests"
             simulation: ethereum/engine
             test_pattern: "engine-api/RPC|Re-org to Previously Validated Sidechain Payload|Re-Org Back into Canonical Chain, Depth=5|Safe Re-Org|Transaction Re-Org|Inconsistent|Suggested Fee|PrevRandao Opcode Transactions|Fork ID|Unknown SafeBlockHash|Unknown FinalizedBlockHash|Unique Payload ID|Re-Execute Payload|Multiple New Payloads|NewPayload with|Payload Build|Build Payload"
+            ethrex_flags: ""
           - name: "Engine withdrawal tests"
             simulation: ethereum/engine
-            test_pattern: "engine-withdrawals/engine-withdrawals test loader|GetPayloadV2 Block Value|Sync after 2 blocks - Withdrawals on Genesis|Max Initcode Size|Pre-Merge Fork Number > 0|Empty Withdrawals|Corrupted Block Hash Payload|Withdrawals Fork on Block 2|Withdrawals Fork on Block 3|GetPayloadBodies"
-          - name: "Sync"
+            test_pattern: "engine-withdrawals/engine-withdrawals test loader|GetPayloadV2 Block Value|Sync after 2 blocks - Withdrawals on Genesis|Max Initcode Size|Pre-Merge Fork Number > 0|Empty Withdrawals|Corrupted Block Hash Payload|Withdrawals Fork on Block 2|Withdrawals Fork on Block 3|GetPayloadBodies|Withdrawals Fork on Block 1 - 1 Block Re-Org|Withdrawals Fork on Block 1 - 8 Block Re-Org NewPayload|Withdrawals Fork on Block 8 - 10 Block Re-Org NewPayload|Withdrawals Fork on Canonical Block 8 / Side Block 7 - 10 Block Re-Org [^S]|Withdrawals Fork on Canonical Block 8 / Side Block 9 - 10 Block Re-Org [^S]"
+            ethrex_flags: ""
+          - name: "Sync full"
             simulation: ethereum/sync
             test_pattern: ""
+            ethrex_flags: "--syncmode full"
+          - name: "Sync snap"
+            simulation: ethereum/sync
+            test_pattern: ""
+            ethrex_flags: "--syncmode snap"
     steps:
       - name: Checkout sources
         uses: actions/checkout@v4
@@ -199,7 +212,7 @@ jobs:
 
       # By default ethrex uses revm as evm backend.
       - name: Run Hive Simulation
-        run: chmod +x hive && ./hive --client ethrex --sim ${{ matrix.simulation }} --sim.limit "${{ matrix.test_pattern }}" --sim.parallelism 4
+        run: chmod +x hive && ./hive --client ethrex --ethrex.flags "${{ matrix.ethrex_flags }}" --sim ${{ matrix.simulation }} --sim.limit "${{ matrix.test_pattern }}" --sim.parallelism 4
 
   # The purpose of this job is to add it as a required check in GitHub so that we don't have to add every individual job as a required check
   all-tests:
