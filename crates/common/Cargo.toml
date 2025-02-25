@@ -37,3 +37,7 @@ c-kzg = ["dep:c-kzg"]
 
 [lib]
 path = "./common.rs"
+
+[[bin]]
+name = "jamon"
+# path = "./parse_on_demand.rs"
