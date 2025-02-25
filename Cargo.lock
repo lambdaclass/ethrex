@@ -2686,7 +2686,7 @@ dependencies = [
  "sha3",
  "thiserror 2.0.11",
  "tinyvec",
- "toml 0.8.19",
+ "toml 0.8.20",
  "tracing",
 ]
 
