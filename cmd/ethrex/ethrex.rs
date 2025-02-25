@@ -10,7 +10,7 @@ async fn main() {
     cfg_if::cfg_if! {
         if #[cfg(feature = "l2")] {
             launch::l2::launch(matches).await;
-        } else {
+      } else {
             launch::l1::launch(matches).await;
         }
     }
