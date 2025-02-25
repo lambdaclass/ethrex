@@ -1,6 +1,7 @@
 mod cli;
 mod decode;
 mod launch;
+#[cfg(not(feature = "l2"))]
 mod networks;
 mod utils;
 
