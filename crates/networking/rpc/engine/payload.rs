@@ -589,7 +589,7 @@ fn execute_payload(block: &Block, context: &RpcApiContext) -> Result<PayloadStat
     let add_block_result = {
         let lock = context.syncer.try_lock();
         if let Ok(syncer) = lock {
-            syncer.blockchain.add_block(block)
+            syncer.blockchain.add_block(block, true)
         } else {
             Err(ChainError::Custom(
                 "Error when trying to lock syncer".to_string(),

@@ -319,7 +319,7 @@ impl SyncManager {
                     let block = store
                         .get_block_by_hash(*hash)?
                         .ok_or(SyncError::CorruptDB)?;
-                    self.blockchain.add_block(&block)?;
+                    self.blockchain.add_block(&block, true)?;
                     store.set_canonical_block(block.header.number, *hash)?;
                     store.update_latest_block_number(block.header.number)?;
                 }
@@ -343,6 +343,7 @@ impl SyncManager {
         store: Store,
     ) -> Result<(), SyncError> {
         let mut last_valid_hash = H256::default();
+        let block_hash_to_validate = *block_hashes.last().unwrap();
 
         let mut current_chunk_idx = 0;
         let chunks: Vec<Vec<BlockHash>> = block_hashes
@@ -386,7 +387,12 @@ impl SyncManager {
                         .ok_or(SyncError::CorruptDB)?;
                     let number = header.number;
                     let block = Block::new(header, body);
-                    match self.blockchain.add_block(&block) {
+
+                    let should_apply_account_updates = hash == block_hash_to_validate;
+                    match self
+                        .blockchain
+                        .add_block(&block, should_apply_account_updates)
+                    {
                         Ok(elapsed) => time_spent_applying_account_updates += elapsed,
                         Err(error) => {
                             warn!("Failed to add block during FullSync: {error}");
