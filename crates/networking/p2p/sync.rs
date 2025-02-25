@@ -1,4 +1,5 @@
 mod bytecode_fetcher;
+mod metrics;
 mod state_healing;
 mod state_sync;
 mod storage_fetcher;
@@ -14,6 +15,7 @@ use ethrex_common::{
 use ethrex_rlp::error::RLPDecodeError;
 use ethrex_storage::{error::StoreError, Store, STATE_TRIE_SEGMENTS};
 use ethrex_trie::{Nibbles, Node, TrieError, TrieState};
+use metrics::SyncMetrics;
 use state_healing::heal_state_trie;
 use state_sync::state_sync;
 use std::{array, collections::HashMap, sync::Arc};
@@ -92,6 +94,7 @@ pub struct SyncManager {
     trie_rebuilder: Option<TrieRebuilder>,
     // Used for cancelling long-living tasks upon shutdown
     cancel_token: CancellationToken,
+    metrics: SyncMetrics,
 }
 
 impl SyncManager {
@@ -107,6 +110,7 @@ impl SyncManager {
             invalid_ancestors: HashMap::new(),
             trie_rebuilder: None,
             cancel_token,
+            metrics: SyncMetrics::default(),
         }
     }
 
@@ -122,6 +126,7 @@ impl SyncManager {
             trie_rebuilder: None,
             // This won't be used
             cancel_token: CancellationToken::new(),
+            metrics: SyncMetrics::default(),
         }
     }
 
@@ -175,6 +180,12 @@ impl SyncManager {
             Ok(res) => res,
             Err(e) => return Err(e.into()),
         };
+
+        let current_head_block_num = store
+            .get_block_header_by_hash(current_head)?
+            .unwrap_or_default()
+            .number;
+        self.metrics = SyncMetrics::new(current_head_block_num, current_head);
 
         loop {
             debug!("Requesting Block Headers from {current_head}");
@@ -348,9 +359,14 @@ impl SyncManager {
                     .get_block_header_by_hash(first_block_hash)?
                     .map_or(0, |h| h.number);
 
+                let last_block_hash = chunk.first().map_or(H256::default(), |a| *a);
+                let last_block_number = store
+                    .get_block_header_by_hash(first_block_hash)?
+                    .map_or(0, |h| h.number);
+
                 debug!(
-                    "Received {} Block Bodies, starting from block hash {:?} with number: {}",
-                    block_bodies_len, first_block_hash, first_block_header_number
+                    "Received {} Block Bodies, starting from block hash {:?} with number: {} to block hash {:?} with number {}",
+                    block_bodies_len, first_block_hash, first_block_header_number, last_block_hash, last_block_number
                 );
 
                 // Execute and store blocks
@@ -377,6 +393,8 @@ impl SyncManager {
                     );
                 }
                 debug!("Executed & stored {} blocks", block_bodies_len);
+                self.metrics
+                    .log_cycle(block_bodies_len as u32, last_block_number, last_block_hash);
 
                 if chunk.is_empty() {
                     current_chunk_idx += 1;
