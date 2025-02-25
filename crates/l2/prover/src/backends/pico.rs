@@ -1,66 +1,100 @@
-#[derive(Serialize, Deserialize, Clone)]
-pub struct ProveOutput {
-    pub constraints: Vec<u8>,
-    pub groth16_witness: Vec<u8>,
+use std::{env::temp_dir, path::PathBuf};
+
+use ethrex_common::U256;
+use ethrex_l2::utils::prover::proving_systems::{ProofCalldata, ProverType};
+use ethrex_l2_sdk::calldata::Value;
+use pico_sdk::vk_client::KoalaBearProveVKClient;
+use serde::{Deserialize, Serialize};
+use thiserror::Error;
+use tracing::{info, warn};
+use zkvm_interface::{io::ProgramInput, methods::ZKVM_PICO_PROGRAM_ELF};
+
+#[derive(Debug, Error)]
+pub enum PicoBackendError {
+    #[error("proof byte count ({0}) isn't the expected (256)")]
+    ProofLen(usize),
 }
 
-impl Debug for ProveOutput {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("PicoProof")
-            .field("constraints", &self.constraints)
-            .field("groth16_witness", &self.groth16_witness)
-            .finish()
-    }
+#[derive(Serialize, Deserialize, Clone)]
+pub struct ProveOutput {
+    pub public_values: Vec<u8>,
+    pub proof: Vec<u8>,
 }
 
 impl ProveOutput {
-    pub fn new(
-        proof: sp1_sdk::SP1ProofWithPublicValues,
-        verifying_key: sp1_sdk::SP1VerifyingKey,
-    ) -> Self {
-        ProveOutput {
-            constraints: Vec::new(),
-            groth16_witness: Vec::new(),
+    pub fn new(output_dir: PathBuf) -> Result<Self, Box<dyn std::error::Error>> {
+        let public_values = std::fs::read(output_dir.join("pv_file"))?;
+        let proof = std::fs::read(output_dir.join("proof.data"))?;
+
+        // uint256[8]
+        if proof.len() != 256 {
+            return Err(Box::new(PicoBackendError::ProofLen(proof.len())));
         }
+
+        Ok(ProveOutput {
+            public_values,
+            proof,
+        })
     }
 }
 
-fn prove(input: ProgramInput) -> Result<ProvingOutput, Box<dyn std::error::Error>> {
-    let client = DefaultProverClient::new(self.elf);
+pub fn prove(input: ProgramInput) -> Result<ProveOutput, Box<dyn std::error::Error>> {
+    // TODO: Determine which field is better for our use case: KoalaBear or BabyBear
+    let client = KoalaBearProveVKClient::new(ZKVM_PICO_PROGRAM_ELF);
 
     let stdin_builder = client.get_stdin_builder();
     stdin_builder.borrow_mut().write(&input);
 
     let output_dir = temp_dir();
-    let constraints_path = output_dir.join("constraints.json");
-    let groth16_witness_path = output_dir.join("groth16_witness.json");
 
-    let proof = client.prove(output_dir)?;
+    let proof = client.prove(output_dir.clone())?;
 
-    let constraints_json: serde_json::Value =
-        serde_json::from_str(&read_to_string(constraints_path)?)?;
-    let groth16_witness_json: serde_json::Value =
-        serde_json::from_str(&read_to_string(groth16_witness_path)?)?;
+    // assumes setup (keypair generation) was done before
+    client.prove_evm(false, output_dir.clone(), "kb")?;
 
-    let mut constraints = Vec::new();
-    let mut groth16_witness = Vec::new();
-
-    serde_json::to_writer(&mut constraints, &constraints_json)?;
-    serde_json::to_writer(&mut groth16_witness, &groth16_witness_json)?;
-
-    info!("Successfully generated PicoProof.");
-    Ok(ProvingOutput::Pico(ProveOutput {
-        constraints,
-        groth16_witness,
-    }))
+    info!("Successfully generated Pico proof.");
+    ProveOutput::new(output_dir)
 }
 
-fn execute(input: ProgramInput) -> Result<ExecuteOutput, Box<dyn std::error::Error>> {
-    todo!()
+pub fn execute(input: ProgramInput) -> Result<(), Box<dyn std::error::Error>> {
+    // TODO: Determine which field is better for our use case: KoalaBear or BabyBear
+    let client = KoalaBearProveVKClient::new(ZKVM_PICO_PROGRAM_ELF);
+
+    let stdin_builder = client.get_stdin_builder();
+    stdin_builder.borrow_mut().write(&input);
+
+    warn!("Pico doesn't implement execution only so the backend's execute() function will generate a \"fast\" proof, without entering the recursion phase");
+    let proof = client.prove_fast()?;
+
+    info!("Successfully generated Pico fast proof.");
+    Ok(())
 }
 
-fn verify(proving_output: &ProvingOutput) -> Result<(), Box<dyn std::error::Error>> {
-    todo!()
+pub fn verify(output: &ProveOutput) -> Result<(), Box<dyn std::error::Error>> {
+    warn!("Pico backend's verify() does nothing, this is because Pico doesn't expose a verification function but will verify each phase during proving as a sanity check");
+    Ok(())
+}
+
+pub fn to_calldata(output: ProveOutput) -> Result<ProofCalldata, Box<dyn std::error::Error>> {
+    let ProveOutput {
+        public_values,
+        proof,
+    } = output;
+
+    // TODO: double check big endian is correct
+    let proof = proof
+        .chunks(32)
+        .map(|integer| Value::Int(U256::from_big_endian(integer)))
+        .collect();
+
+    // bytes calldata publicValues,
+    // uint256[8] calldata proof
+    let calldata = vec![Value::Bytes(public_values.into()), Value::FixedArray(proof)];
+
+    Ok(ProofCalldata {
+        prover_type: ProverType::Pico,
+        calldata,
+    })
 }
 
 fn get_gas() -> Result<u64, Box<dyn std::error::Error>> {

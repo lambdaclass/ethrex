@@ -1,5 +1,3 @@
-cargo-features = ["edition2024"]
-
 [package]
 name = "zkvm-pico-program"
 version = "0.1.0"
@@ -11,7 +9,7 @@ edition = "2024"
 pico-sdk = { git = "https://github.com/brevis-network/pico" }
 zkvm_interface = { path = "../" }
 
-ethrex-core = { path = "../../../../../common", default-features = false }
+ethrex-common = { path = "../../../../../common", default-features = false }
 ethrex-rlp = { path = "../../../../../common/rlp" }
 ethrex-vm = { path = "../../../../../vm", default-features = false }
 ethrex-blockchain = { path = "../../../../../blockchain", default-features = false }
