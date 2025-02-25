@@ -104,7 +104,7 @@ impl Monitor {
             elapsed,
             avg,
             self.current_cycle.time_applying_updates,
-            self.current_cycle.time_applying_updates / elapsed,
+            self.current_cycle.time_applying_updates as f64 / elapsed as f64,
             self.current_cycle.started_at_block_num,
             self.current_cycle.started_at_block_hash,
             self.current_cycle.finished_at_block_num,
