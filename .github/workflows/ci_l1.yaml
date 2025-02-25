@@ -181,7 +181,7 @@ jobs:
             ethrex_flags: ""
           - name: "Engine withdrawal tests"
             simulation: ethereum/engine
-            test_pattern: "engine-withdrawals/engine-withdrawals test loader|GetPayloadV2 Block Value|Sync after 2 blocks - Withdrawals on Genesis|Max Initcode Size|Pre-Merge Fork Number > 0|Empty Withdrawals|Corrupted Block Hash Payload|Withdrawals Fork on Block 2|Withdrawals Fork on Block 3|GetPayloadBodies"
+            test_pattern: "engine-withdrawals/engine-withdrawals test loader|GetPayloadV2 Block Value|Sync after 2 blocks - Withdrawals on Genesis|Max Initcode Size|Pre-Merge Fork Number > 0|Empty Withdrawals|Corrupted Block Hash Payload|Withdrawals Fork on Block 2|Withdrawals Fork on Block 3|GetPayloadBodies|Withdrawals Fork on Block 1 - 1 Block Re-Org|Withdrawals Fork on Block 1 - 8 Block Re-Org NewPayload|Withdrawals Fork on Block 8 - 10 Block Re-Org NewPayload|Withdrawals Fork on Canonical Block 8 / Side Block 7 - 10 Block Re-Org [^S]|Withdrawals Fork on Canonical Block 8 / Side Block 9 - 10 Block Re-Org [^S]"
             ethrex_flags: ""
           - name: "Sync full"
             simulation: ethereum/sync
