@@ -7,6 +7,7 @@ use ethrex_l2_sdk::calldata::{self, Value};
 use ethrex_rpc::clients::eth::{eth_sender::Overrides, EthClient};
 use keccak_hash::keccak;
 use secp256k1::SecretKey;
+use std::time::Instant;
 use std::{
     fs::File,
     io::{self, BufRead},
@@ -206,6 +207,7 @@ impl Command {
 
                 println!("Sending to: {to_address:#x}");
 
+                let now = Instant::now();
                 let mut threads = vec![];
                 for pk in lines.map_while(Result::ok) {
                     let thread = tokio::spawn(transfer_from(
@@ -226,6 +228,8 @@ impl Command {
                 }
 
                 println!("Total retries: {retries}");
+                println!("Total time elapsed: {:.2?}", now.elapsed());
+
                 Ok(())
             }
         }
