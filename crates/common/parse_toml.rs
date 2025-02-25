@@ -251,9 +251,8 @@ pub fn write_to_env(config: String) {
     };
 }
 
-pub fn read_toml() -> Result<(), ConfigError> {
-    let toml_config = std::env::var("CONFIG_FILE").unwrap_or("config.toml".to_string());
-    let file = std::fs::read_to_string(toml_config).map_err(|_| ConfigError::TomlFileNotFound)?;
+pub fn read_toml(toml_path: String) -> Result<(), ConfigError> {
+    let file = std::fs::read_to_string(toml_path).map_err(|_| ConfigError::TomlFileNotFound)?;
     let config: L2Config = toml::from_str(&file).map_err(|_| ConfigError::TomlFormat)?;
     write_to_env(config.to_env());
     Ok(())
