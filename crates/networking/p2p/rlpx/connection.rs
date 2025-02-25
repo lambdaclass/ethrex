@@ -238,8 +238,8 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
 
     fn match_disconnect_reason(&self, error: &RLPxError) -> Option<DisconnectReason> {
         match error {
-            RLPxError::DisconnectSent(reason) => Some(reason.clone()),
-            RLPxError::DisconnectRequested(reason) => Some(reason.clone()),
+            RLPxError::DisconnectSent(reason) => Some(*reason),
+            RLPxError::DisconnectRequested(reason) => Some(*reason),
             RLPxError::RLPDecodeError(_) => Some(DisconnectReason::NetworkError),
             // TODO build a proper matching between error types and disconnection reasons
             _ => None,
