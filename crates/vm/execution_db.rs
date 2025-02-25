@@ -23,6 +23,7 @@ use serde::{Deserialize, Serialize};
 use crate::{
     backends::{self},
     block_env,
+    db::evm_state,
     errors::ExecutionDBError,
     tx_env,
 };
@@ -62,10 +63,9 @@ impl ExecutionDB {
     ) -> Result<Vec<AccountUpdate>, ExecutionDBError> {
         // TODO: perform validation to exit early
 
-        // let mut state = evm_state(store.clone(), block.header.parent_hash);
+        let mut state = evm_state(store.clone(), block.header.parent_hash);
 
-        let result =
-            backends::revm_b::REVM::execute_block(block, store.clone()).map_err(Box::new)?;
+        let result = backends::revm_b::REVM::execute_block(block, &mut state).map_err(Box::new)?;
         Ok(result.account_updates)
     }
 

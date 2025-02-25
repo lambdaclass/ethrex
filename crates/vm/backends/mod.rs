@@ -2,6 +2,7 @@ mod constants;
 pub mod levm;
 pub mod revm_b;
 
+use crate::db::evm_state;
 use crate::{db::StoreWrapper, errors::EvmError, spec_id, EvmState, SpecId};
 use ethrex_common::types::requests::Requests;
 use ethrex_common::types::{
@@ -53,7 +54,10 @@ impl EVM {
         storage: Store,
     ) -> Result<BlockExecutionResult, EvmError> {
         match self {
-            EVM::REVM => REVM::execute_block(block, storage),
+            EVM::REVM => {
+                let mut state = evm_state(storage.clone(), block.header.parent_hash);
+                REVM::execute_block(block, &mut state)
+            }
             EVM::LEVM => LEVM::execute_block(block, storage),
         }
     }
