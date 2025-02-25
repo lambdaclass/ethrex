@@ -27,9 +27,9 @@ use tokio::task::JoinSet;
 
 // ERC20 compiled artifact generated from this tutorial:
 // https://medium.com/@kaishinaw/erc20-using-hardhat-a-comprehensive-guide-3211efba98d4
-// If you want to create a new one, follow the steps above and take
-// the resulting artifact from the hardhat project.
-const ERC20: &str = include_str!("../ERC20.bin/ERC20.bin").trim_ascii();
+// If you want to modify the behaviour of the contract, edit the ERC20.sol file,
+// and compile it with solc.
+const ERC20: &str = include_str!("../ERC20-source/ERC20.bin/ERC20.bin").trim_ascii();
 
 #[derive(Subcommand)]
 pub(crate) enum Command {
@@ -76,12 +76,12 @@ pub(crate) enum Command {
         )]
         contract: bool,
     },
+    #[clap(about = "Load test that deploys an ERC20 and runs transactions")]
     ERC20 {
         #[clap(
             short = 't',
-            long = "transactions",
-            default_value = "10000",
-            help = "Number of ERC20 transactions to do"
+            long = "transactions_amount",
+            help = "How many transactions each given account will do"
         )]
         transactions: u64,
         #[clap(
@@ -213,6 +213,7 @@ async fn wait_receipt(
     ))
 }
 
+// Deploy the ERC20 from the raw bytecode.
 async fn erc20_deploy(config: &EthrexL2Config) -> eyre::Result<Address> {
     let client = EthClient::new(&config.network.l2_rpc_url);
     let erc20_bytecode = hex::decode(ERC20)?;
@@ -232,6 +233,8 @@ async fn erc20_deploy(config: &EthrexL2Config) -> eyre::Result<Address> {
     }
 }
 
+// Given a vector of private keys, derive an address and claim
+// ERC20 balance for each one of them.
 async fn claim_erc20_balances(
     cfg: &EthrexL2Config,
     contract_address: Address,
@@ -267,34 +270,29 @@ async fn claim_erc20_balances(
         });
     }
     let responses = tasks.join_all().await;
-    let every_account_has_balance = responses.iter().all(|response| match response {
-        Ok(RpcReceipt { receipt, .. }) => receipt.status,
-        Err(_) => false,
-    });
-
-    if every_account_has_balance {
-        Ok(())
-    } else {
-        Err(eyre::eyre!("Failed to give balance to every account"))
-    }
+    let Some(Err(failed_reponse)) = responses.iter().find(|response| response.is_err()) else {
+        return Ok(());
+    };
+    return Err(eyre::eyre!(
+        "Failed to give balance to at least an account!: {failed_reponse}"
+    ));
 }
 
 async fn erc20_load_test(
     config: &EthrexL2Config,
-    count: u64,
+    tx_amount: u64,
     contract_address: Address,
     senders: &Vec<SecretKey>,
 ) -> eyre::Result<()> {
     let client = EthClient::new(&config.network.l2_rpc_url);
     let mut tasks = JoinSet::new();
-    let successful_txs = Arc::new(AtomicU64::new(0));
     let accounts = senders
         .iter()
         .map(|pk| (pk.clone(), pk.public_key(secp256k1::SECP256K1)))
         .collect_vec();
     let transfer_number = Arc::new(AtomicU64::new(0));
     for (sk, pk) in accounts {
-        for i in 0..count {
+        for _ in 0..tx_amount {
             let send_calldata = calldata::encode_calldata(
                 "transfer(address,uint256)",
                 &[Value::Address(H160::random()), Value::Uint(U256::one())],
@@ -310,22 +308,18 @@ async fn erc20_load_test(
                 )
                 .await?;
             let client = client.clone();
-            let count = successful_txs.clone();
+            let transfer_number = transfer_number.clone();
             tasks.spawn(async move {
+                let tx_number = transfer_number.fetch_add(1, Ordering::Relaxed);
                 let sent = client.send_eip1559_transaction(&send_tx, &sk).await;
-                let transfer_number = tx_number.fetch_add(1, Ordering::Relaxed);
                 match sent {
                     Ok(hash) => {
-                        println!(
-                            "ERC-20 transfer number {transfer_number} sent! Waiting for receipt..."
-                        );
-                        let mut retries = 10_u64;
+                        println!("ERC-20 transfer number {tx_number} sent! Waiting for receipt...");
+                        let retries = 10_u64;
                         'retry_loop: for _ in 0..retries {
                             match client.get_transaction_receipt(hash).await {
                                 Ok(Some(RpcReceipt { receipt, .. })) if receipt.status => {
-                                    println!(
-                                        "ERC-20 transfer number {transfer_number} was sucessful"
-                                    );
+                                    println!("ERC-20 transfer number {tx_number} was sucessful");
                                     break 'retry_loop;
                                 }
                                 _ => {
@@ -334,7 +328,7 @@ async fn erc20_load_test(
                             }
                         }
                     }
-                    Err(_) => println!("ERC-20 transfer number {transfer_number} FAILED"),
+                    Err(_) => println!("ERC-20 transfer number {tx_number} FAILED"),
                 }
             });
         }
