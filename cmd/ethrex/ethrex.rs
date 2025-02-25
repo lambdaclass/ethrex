@@ -266,6 +266,7 @@ async fn main() {
 
     // TODO: Check every module starts properly.
     let tracker = TaskTracker::new();
+    let jwt_secret_clone = jwt_secret.clone();
     cfg_if::cfg_if! {
         if #[cfg(feature = "based")] {
             use ethrex_rpc::{EngineClient, EthClient};
@@ -297,7 +298,7 @@ async fn main() {
                 http_socket_addr,
                 authrpc_socket_addr,
                 store.clone(),
-                jwt_secret,
+                jwt_secret_clone,
                 local_p2p_node,
                 local_node_record,
                 syncer,
@@ -312,7 +313,7 @@ async fn main() {
                 http_socket_addr,
                 authrpc_socket_addr,
                 store.clone(),
-                jwt_secret,
+                jwt_secret_clone,
                 local_p2p_node,
                 local_node_record,
                 syncer,
@@ -354,8 +355,6 @@ async fn main() {
             // Start the block_producer module if devmode was set
             if dev_mode {
                 info!("Runnning in DEV_MODE");
-                let authrpc_jwtsecret =
-                    std::fs::read(authrpc_jwtsecret).expect("Failed to read JWT secret");
                 let head_block_hash = {
                     let current_block_number = store.get_latest_block_number().unwrap();
                     store
@@ -367,7 +366,7 @@ async fn main() {
                 let url = format!("http://{authrpc_socket_addr}");
                 let block_producer_engine = ethrex_dev::block_producer::start_block_producer(
                     url,
-                    authrpc_jwtsecret.into(),
+                    jwt_secret,
                     head_block_hash,
                     max_tries,
                     1000,
