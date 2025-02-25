@@ -362,8 +362,6 @@ async fn main() {
             // Start the block_producer module if devmode was set
             if dev_mode {
                 info!("Runnning in DEV_MODE");
-                let authrpc_jwtsecret =
-                    std::fs::read(authrpc_jwtsecret).expect("Failed to read JWT secret");
                 let head_block_hash = {
                     let current_block_number = store.get_latest_block_number().unwrap();
                     store
@@ -375,7 +373,7 @@ async fn main() {
                 let url = format!("http://{authrpc_socket_addr}");
                 let block_producer_engine = ethrex_dev::block_producer::start_block_producer(
                     url,
-                    authrpc_jwtsecret.into(),
+                    jwt_secret,
                     head_block_hash,
                     max_tries,
                     1000,
