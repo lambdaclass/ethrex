@@ -3,11 +3,8 @@ use super::constants::{
     SYSTEM_ADDRESS, WITHDRAWAL_REQUEST_PREDEPLOY_ADDRESS,
 };
 use super::BlockExecutionResult;
-use crate::backends::get_state_transitions;
-
 use crate::db::StoreWrapper;
 use crate::EvmError;
-use crate::EvmState;
 use ethrex_common::types::requests::Requests;
 use ethrex_common::types::Fork;
 use ethrex_common::{
@@ -24,7 +21,6 @@ use ethrex_levm::{
     Account, AccountInfo as LevmAccountInfo, Environment,
 };
 use ethrex_storage::{error::StoreError, AccountUpdate, Store};
-use revm_primitives::bitvec::store;
 use revm_primitives::Bytes;
 use std::{collections::HashMap, sync::Arc};
 

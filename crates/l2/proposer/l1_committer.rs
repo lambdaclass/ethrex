@@ -20,7 +20,7 @@ use ethrex_rpc::clients::eth::{
     eth_sender::Overrides, BlockByNumber, EthClient, WrappedTransaction,
 };
 use ethrex_storage::{error::StoreError, Store};
-use ethrex_vm::{backends::EVM, db::evm_state};
+use ethrex_vm::backends::EVM;
 use keccak_hash::keccak;
 use secp256k1::SecretKey;
 use std::{collections::HashMap, str::FromStr, time::Duration};

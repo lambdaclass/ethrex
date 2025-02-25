@@ -23,7 +23,6 @@ use serde::{Deserialize, Serialize};
 use crate::{
     backends::{self},
     block_env,
-    db::evm_state,
     errors::ExecutionDBError,
     tx_env,
 };
