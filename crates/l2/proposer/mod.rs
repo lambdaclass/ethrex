@@ -73,7 +73,7 @@ impl Proposer {
         proposer_config: &ProposerConfig,
         engine_config: EngineApiConfig,
     ) -> Result<Self, ProposerError> {
-        let jwt_secret = std::fs::read(&engine_config.jwt_path)?;
+        let jwt_secret = hex::decode(std::fs::read(&engine_config.jwt_path)?)?;
         Ok(Self {
             engine_config,
             block_production_interval: proposer_config.interval_ms,
