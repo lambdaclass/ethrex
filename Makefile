@@ -119,7 +119,7 @@ run-hive: build-image setup-hive ## 🧪 Run Hive testing suite
 	cd hive && ./hive --client ethrex --sim $(SIMULATION) --sim.limit "$(TEST_PATTERN)" --sim.parallelism $(SIM_PARALLELISM)
 
 run-hive-levm: build-image setup-hive ## 🧪 Run Hive testing suite with LEVM
-	cd hive && ./hive --client ethrex --ethrex.flags "--evm levm" --sim $(SIMULATION) --sim.limit "$(TEST_PATTERN)" --docker.output
+	cd hive && ./hive --client ethrex --ethrex.flags "--evm levm" --sim $(SIMULATION) --sim.limit "$(TEST_PATTERN)"
 
 run-hive-all: build-image setup-hive ## 🧪 Run all Hive testing suites
 	cd hive && ./hive --client ethrex --sim ".*" --sim.parallelism $(SIM_PARALLELISM)
