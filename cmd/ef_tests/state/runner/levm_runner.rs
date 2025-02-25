@@ -315,10 +315,10 @@ pub fn ensure_post_state(
                 }
                 // Execution result was successful and no exception was expected.
                 None => {
-                    let (initial_state, block_hash) = utils::load_initial_state(test);
+                    let (initial_state, block_hash) = utils::load_initial_state(test); //TODO: Stop using EvmState in LEVM
                     let levm_account_updates = backends::levm::LEVM::get_state_transitions(
                         Some(*fork),
-                        &initial_state,
+                        &initial_state.database().unwrap(),
                         block_hash,
                         &execution_report.new_state,
                     )
