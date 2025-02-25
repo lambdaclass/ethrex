@@ -108,7 +108,14 @@ update-system-contracts:
 
 # L2
 init-l2: init-metrics ## 🚀 Initializes an L2 Lambda ethrex Client
-	cargo run --release --manifest-path ../../Cargo.toml --bin ethrex --features "l2,metrics" -- \
+	if [[ -z "$$BASED" ]]; then \
+		FEATURES="l2,metrics"; \
+		echo "Running ethrex L2 vanilla"; \
+	else \
+		FEATURES="metrics,based"; \
+		echo "Running ethrex L2 with based"; \
+	fi; \
+	cargo run --release --manifest-path ../../Cargo.toml --bin ethrex --features $$FEATURES -- \
 	--network ${L2_GENESIS_FILE_PATH} \
 	--http.port ${L2_PORT} \
 	--http.addr 0.0.0.0 \
