@@ -397,7 +397,7 @@ async fn main() {
                 peer_table.clone(),
                 store,
             )
-                .await.expect("Network starts");
+            .await.expect("Network starts");
             tracker.spawn(ethrex_p2p::periodically_show_peer_stats(peer_table.clone()));
         }
     }
