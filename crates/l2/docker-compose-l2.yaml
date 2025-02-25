@@ -13,7 +13,7 @@ services:
       dockerfile: ./crates/l2/contracts/Dockerfile
     volumes:
       - ./contracts:/contracts
-      - .config.toml:/.config.toml
+      - .config.toml:/config.toml
     environment:
       - ETH_RPC_URL=http://ethrex_l1:8545
       - DEPLOYER_CONTRACTS_PATH=/contracts
@@ -39,7 +39,7 @@ services:
       - ENV_FILE=/.env
     volumes:
       - ../../test_data/genesis-l2.json:/genesis-l2.json
-      - .config.toml:/.config.toml
+      - .config.toml:/config.toml
     command: --network /genesis-l2.json --http.addr 0.0.0.0 --http.port 1729 --authrpc.port 8552
     depends_on:
       contract_deployer:
