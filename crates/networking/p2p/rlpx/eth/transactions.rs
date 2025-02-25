@@ -2,6 +2,7 @@ use bytes::BufMut;
 use bytes::Bytes;
 use ethrex_blockchain::error::MempoolError;
 use ethrex_blockchain::mempool;
+use ethrex_common::types::BlobsBundle;
 use ethrex_common::types::P2PTransaction;
 use ethrex_common::types::WrappedEIP4844Transaction;
 use ethrex_common::{types::Transaction, H256};
@@ -71,9 +72,7 @@ pub(crate) struct NewPooledTransactionHashes {
 }
 
 impl NewPooledTransactionHashes {
-    // delete this after we use this in the main loop
-    #[allow(dead_code)]
-    pub fn new(transactions: Vec<Transaction>) -> Self {
+    pub fn new(transactions: Vec<Transaction>, storage: &Store) -> Result<Self, StoreError> {
         let transactions_len = transactions.len();
         let mut transaction_types = Vec::with_capacity(transactions_len);
         let mut transaction_sizes = Vec::with_capacity(transactions_len);
@@ -81,18 +80,29 @@ impl NewPooledTransactionHashes {
         for transaction in transactions {
             let transaction_type = transaction.tx_type();
             transaction_types.push(transaction_type as u8);
-            // size is defined as the len of the concatenation of tx_type and the tx_data
-            // as the tx_type goes from 0x00 to 0xff, the size of tx_type is 1 byte
-            let transaction_size = 1 + transaction.data().len();
-            transaction_sizes.push(transaction_size);
             let transaction_hash = transaction.compute_hash();
             transaction_hashes.push(transaction_hash);
+            // size is defined as the len of the concatenation of tx_type and the tx_data
+            // as the tx_type goes from 0x00 to 0xff, the size of tx_type is 1 byte
+            // https://eips.ethereum.org/EIPS/eip-2718
+            let transaction_size = match transaction {
+                // Network representation for PooledTransactions
+                // https://eips.ethereum.org/EIPS/eip-4844#networking
+                Transaction::EIP4844Transaction(eip4844_tx) => {
+                    let tx_blobs_bundle = storage
+                        .get_blobs_bundle_from_pool(transaction_hash)?
+                        .unwrap_or(BlobsBundle::empty());
+                    eip4844_tx.rlp_length_as_pooled_tx(&tx_blobs_bundle)
+                }
+                _ => transaction.encode_canonical_to_vec().len(),
+            };
+            transaction_sizes.push(transaction_size);
         }
-        Self {
+        Ok(Self {
             transaction_types: transaction_types.into(),
             transaction_sizes,
             transaction_hashes,
-        }
+        })
     }
 
     pub fn get_transactions_to_request(&self, storage: &Store) -> Result<Vec<H256>, StoreError> {
@@ -181,7 +191,7 @@ impl GetPooledTransactions {
         hash: &H256,
         store: &Store,
     ) -> Result<Option<P2PTransaction>, StoreError> {
-        let Some(tx) = store.get_transaction_by_hash(*hash)? else {
+        let Some(tx) = store.get_transaction_by_hash_from_pool(*hash)? else {
             return Ok(None);
         };
         let result = match tx {
