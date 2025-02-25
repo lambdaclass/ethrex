@@ -31,7 +31,6 @@ use tracing_subscriber::{filter::Directive, EnvFilter, FmtSubscriber};
 mod cli;
 mod decode;
 mod networks;
-use std::process::Command;
 
 const DEFAULT_DATADIR: &str = "ethrex";
 #[tokio::main]
