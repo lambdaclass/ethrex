@@ -76,6 +76,10 @@ pub struct RpcApiContext {
     local_node_record: NodeRecord,
     active_filters: ActiveFilters,
     syncer: Arc<TokioMutex<SyncManager>>,
+    #[cfg(feature = "based")]
+    gateway_eth_client: EthClient,
+    #[cfg(feature = "based")]
+    gateway_auth_client: EngineClient,
 }
 
 /// Describes the client's current sync status:
@@ -113,6 +117,18 @@ trait RpcHandler: Sized {
         request.handle(context)
     }
 
+    /// Relay the request to the gateway client, if the request fails, fallback to the local node
+    /// The default implementation of this method is to call `RpcHandler::call` method because
+    /// not all requests need to be relayed to the gateway client, and the only ones that have to
+    /// must override this method.
+    #[cfg(feature = "based")]
+    async fn relay_to_gateway_or_fallback(
+        req: &RpcRequest,
+        context: RpcApiContext,
+    ) -> Result<Value, RpcErr> {
+        Self::call(req, context)
+    }
+
     fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr>;
 }
 
@@ -124,6 +140,7 @@ const FILTER_DURATION: Duration = {
     }
 };
 
+#[allow(clippy::too_many_arguments)]
 pub async fn start_api(
     http_addr: SocketAddr,
     authrpc_addr: SocketAddr,
@@ -132,6 +149,8 @@ pub async fn start_api(
     local_p2p_node: Node,
     local_node_record: NodeRecord,
     syncer: SyncManager,
+    #[cfg(feature = "based")] gateway_eth_client: EthClient,
+    #[cfg(feature = "based")] gateway_auth_client: EngineClient,
 ) {
     // TODO: Refactor how filters are handled,
     // filters are used by the filters endpoints (eth_newFilter, eth_getFilterChanges, ...etc)
@@ -143,6 +162,10 @@ pub async fn start_api(
         local_node_record,
         active_filters: active_filters.clone(),
         syncer: Arc::new(TokioMutex::new(syncer)),
+        #[cfg(feature = "based")]
+        gateway_eth_client,
+        #[cfg(feature = "based")]
+        gateway_auth_client,
     };
 
     // Periodically clean up the active filters for the filters endpoints.
@@ -192,7 +215,7 @@ pub async fn handle_http_request(
     body: String,
 ) -> Json<Value> {
     let req: RpcRequest = serde_json::from_str(&body).unwrap();
-    let res = map_http_requests(&req, service_context);
+    let res = map_http_requests(&req, service_context).await;
     rpc_response(req.id, res)
 }
 
@@ -206,18 +229,18 @@ pub async fn handle_authrpc_request(
         Err(error) => rpc_response(req.id, Err(error)),
         Ok(()) => {
             // Proceed with the request
-            let res = map_authrpc_requests(&req, service_context);
+            let res = map_authrpc_requests(&req, service_context).await;
             rpc_response(req.id, res)
         }
     }
 }
 
 /// Handle requests that can come from either clients or other users
-pub fn map_http_requests(req: &RpcRequest, context: RpcApiContext) -> Result<Value, RpcErr> {
+pub async fn map_http_requests(req: &RpcRequest, context: RpcApiContext) -> Result<Value, RpcErr> {
     match req.namespace() {
-        Ok(RpcNamespace::Eth) => map_eth_requests(req, context),
+        Ok(RpcNamespace::Eth) => map_eth_requests(req, context).await,
         Ok(RpcNamespace::Admin) => map_admin_requests(req, context),
-        Ok(RpcNamespace::Debug) => map_debug_requests(req, context),
+        Ok(RpcNamespace::Debug) => map_debug_requests(req, context).await,
         Ok(RpcNamespace::Web3) => map_web3_requests(req, context),
         Ok(RpcNamespace::Net) => map_net_requests(req, context),
         _ => Err(RpcErr::MethodNotFound(req.method.clone())),
@@ -225,15 +248,18 @@ pub fn map_http_requests(req: &RpcRequest, context: RpcApiContext) -> Result<Val
 }
 
 /// Handle requests from consensus client
-pub fn map_authrpc_requests(req: &RpcRequest, context: RpcApiContext) -> Result<Value, RpcErr> {
+pub async fn map_authrpc_requests(
+    req: &RpcRequest,
+    context: RpcApiContext,
+) -> Result<Value, RpcErr> {
     match req.namespace() {
-        Ok(RpcNamespace::Engine) => map_engine_requests(req, context),
-        Ok(RpcNamespace::Eth) => map_eth_requests(req, context),
+        Ok(RpcNamespace::Engine) => map_engine_requests(req, context).await,
+        Ok(RpcNamespace::Eth) => map_eth_requests(req, context).await,
         _ => Err(RpcErr::MethodNotFound(req.method.clone())),
     }
 }
 
-pub fn map_eth_requests(req: &RpcRequest, context: RpcApiContext) -> Result<Value, RpcErr> {
+pub async fn map_eth_requests(req: &RpcRequest, context: RpcApiContext) -> Result<Value, RpcErr> {
     match req.method.as_str() {
         "eth_chainId" => ChainId::call(req, context),
         "eth_syncing" => Syncing::call(req, context),
@@ -272,7 +298,15 @@ pub fn map_eth_requests(req: &RpcRequest, context: RpcApiContext) -> Result<Valu
         "eth_getFilterChanges" => {
             FilterChangesRequest::stateful_call(req, context.storage, context.active_filters)
         }
-        "eth_sendRawTransaction" => SendRawTransactionRequest::call(req, context),
+        "eth_sendRawTransaction" => {
+            cfg_if::cfg_if! {
+                if #[cfg(feature = "based")] {
+                    SendRawTransactionRequest::relay_to_gateway_or_fallback(req, context).await
+                } else {
+                    SendRawTransactionRequest::call(req, context)
+                }
+            }
+        }
         "eth_getProof" => GetProofRequest::call(req, context),
         "eth_gasPrice" => GasPrice::call(req, context),
         "eth_maxPriorityFeePerGas" => eth::max_priority_fee::MaxPriorityFee::call(req, context),
@@ -280,7 +314,7 @@ pub fn map_eth_requests(req: &RpcRequest, context: RpcApiContext) -> Result<Valu
     }
 }
 
-pub fn map_debug_requests(req: &RpcRequest, context: RpcApiContext) -> Result<Value, RpcErr> {
+pub async fn map_debug_requests(req: &RpcRequest, context: RpcApiContext) -> Result<Value, RpcErr> {
     match req.method.as_str() {
         "debug_getRawHeader" => GetRawHeaderRequest::call(req, context),
         "debug_getRawBlock" => GetRawBlockRequest::call(req, context),
@@ -290,20 +324,47 @@ pub fn map_debug_requests(req: &RpcRequest, context: RpcApiContext) -> Result<Va
     }
 }
 
-pub fn map_engine_requests(req: &RpcRequest, context: RpcApiContext) -> Result<Value, RpcErr> {
+pub async fn map_engine_requests(
+    req: &RpcRequest,
+    context: RpcApiContext,
+) -> Result<Value, RpcErr> {
     match req.method.as_str() {
         "engine_exchangeCapabilities" => ExchangeCapabilitiesRequest::call(req, context),
         "engine_forkchoiceUpdatedV1" => ForkChoiceUpdatedV1::call(req, context),
         "engine_forkchoiceUpdatedV2" => ForkChoiceUpdatedV2::call(req, context),
-        "engine_forkchoiceUpdatedV3" => ForkChoiceUpdatedV3::call(req, context),
+        "engine_forkchoiceUpdatedV3" => {
+            cfg_if::cfg_if! {
+                if #[cfg(feature = "based")] {
+                    ForkChoiceUpdatedV3::relay_to_gateway_or_fallback(req, context).await
+                } else {
+                    ForkChoiceUpdatedV3::call(req, context)
+                }
+            }
+        }
         "engine_newPayloadV4" => NewPayloadV4Request::call(req, context),
-        "engine_newPayloadV3" => NewPayloadV3Request::call(req, context),
+        "engine_newPayloadV3" => {
+            cfg_if::cfg_if! {
+                if #[cfg(feature = "based")] {
+                    NewPayloadV3Request::relay_to_gateway_or_fallback(req, context).await
+                } else {
+                    NewPayloadV3Request::call(req, context)
+                }
+            }
+        }
         "engine_newPayloadV2" => NewPayloadV2Request::call(req, context),
         "engine_newPayloadV1" => NewPayloadV1Request::call(req, context),
         "engine_exchangeTransitionConfigurationV1" => {
             ExchangeTransitionConfigV1Req::call(req, context)
         }
-        "engine_getPayloadV3" => GetPayloadV3Request::call(req, context),
+        "engine_getPayloadV3" => {
+            cfg_if::cfg_if! {
+                if #[cfg(feature = "based")] {
+                    GetPayloadV3Request::relay_to_gateway_or_fallback(req, context).await
+                } else {
+                    GetPayloadV3Request::call(req, context)
+                }
+            }
+        }
         "engine_getPayloadV2" => GetPayloadV2Request::call(req, context),
         "engine_getPayloadV1" => GetPayloadV1Request::call(req, context),
         "engine_getPayloadBodiesByHashV1" => GetPayloadBodiesByHashV1Request::call(req, context),
@@ -374,14 +435,19 @@ mod tests {
     use std::fs::File;
     use std::io::BufReader;
 
+    #[cfg(feature = "based")]
+    use crate::{EngineClient, EthClient};
+    #[cfg(feature = "based")]
+    use bytes::Bytes;
+
     // Maps string rpc response to RpcSuccessResponse as serde Value
     // This is used to avoid failures due to field order and allow easier string comparisons for responses
     fn to_rpc_response_success_value(str: &str) -> serde_json::Value {
         serde_json::to_value(serde_json::from_str::<RpcSuccessResponse>(str).unwrap()).unwrap()
     }
 
-    #[test]
-    fn admin_nodeinfo_request() {
+    #[tokio::test]
+    async fn admin_nodeinfo_request() {
         let body = r#"{"jsonrpc":"2.0", "method":"admin_nodeInfo", "params":[], "id":1}"#;
         let request: RpcRequest = serde_json::from_str(body).unwrap();
         let local_p2p_node = example_p2p_node();
@@ -395,9 +461,13 @@ mod tests {
             jwt_secret: Default::default(),
             active_filters: Default::default(),
             syncer: Arc::new(TokioMutex::new(SyncManager::dummy())),
+            #[cfg(feature = "based")]
+            gateway_eth_client: EthClient::new(""),
+            #[cfg(feature = "based")]
+            gateway_auth_client: EngineClient::new("", Bytes::default()),
         };
         let enr_url = context.local_node_record.enr_url().unwrap();
-        let result = map_http_requests(&request, context);
+        let result = map_http_requests(&request, context).await;
         let rpc_response = rpc_response(request.id, result);
         let blob_schedule = serde_json::json!({
             "cancun": { "target": 3, "max": 6, "baseFeeUpdateFraction": 3338477 },
@@ -459,8 +529,8 @@ mod tests {
         serde_json::from_reader(reader).expect("Failed to deserialize genesis file")
     }
 
-    #[test]
-    fn create_access_list_simple_transfer() {
+    #[tokio::test]
+    async fn create_access_list_simple_transfer() {
         // Create Request
         // Request taken from https://github.com/ethereum/execution-apis/blob/main/tests/eth_createAccessList/create-al-value-transfer.io
         let body = r#"{"jsonrpc":"2.0","id":1,"method":"eth_createAccessList","params":[{"from":"0x0c2c51a0990aee1d73c1228de158688341557508","nonce":"0x0","to":"0x0100000000000000000000000000000000000000","value":"0xa"},"0x00"]}"#;
@@ -481,8 +551,12 @@ mod tests {
             jwt_secret: Default::default(),
             active_filters: Default::default(),
             syncer: Arc::new(TokioMutex::new(SyncManager::dummy())),
+            #[cfg(feature = "based")]
+            gateway_eth_client: EthClient::new(""),
+            #[cfg(feature = "based")]
+            gateway_auth_client: EngineClient::new("", Bytes::default()),
         };
-        let result = map_http_requests(&request, context);
+        let result = map_http_requests(&request, context).await;
         let response = rpc_response(request.id, result);
         let expected_response = to_rpc_response_success_value(
             r#"{"jsonrpc":"2.0","id":1,"result":{"accessList":[],"gasUsed":"0x5208"}}"#,
@@ -490,8 +564,8 @@ mod tests {
         assert_eq!(response.to_string(), expected_response.to_string());
     }
 
-    #[test]
-    fn create_access_list_create() {
+    #[tokio::test]
+    async fn create_access_list_create() {
         // Create Request
         // Request taken from https://github.com/ethereum/execution-apis/blob/main/tests/eth_createAccessList/create-al-contract.io
         let body = r#"{"jsonrpc":"2.0","id":1,"method":"eth_createAccessList","params":[{"from":"0x0c2c51a0990aee1d73c1228de158688341557508","gas":"0xea60","gasPrice":"0x44103f2","input":"0x010203040506","nonce":"0x0","to":"0x7dcd17433742f4c0ca53122ab541d0ba67fc27df"},"0x00"]}"#;
@@ -512,8 +586,12 @@ mod tests {
             jwt_secret: Default::default(),
             active_filters: Default::default(),
             syncer: Arc::new(TokioMutex::new(SyncManager::dummy())),
+            #[cfg(feature = "based")]
+            gateway_eth_client: EthClient::new(""),
+            #[cfg(feature = "based")]
+            gateway_auth_client: EngineClient::new("", Bytes::default()),
         };
-        let result = map_http_requests(&request, context);
+        let result = map_http_requests(&request, context).await;
         let response =
             serde_json::from_value::<RpcSuccessResponse>(rpc_response(request.id, result).0)
                 .expect("Request failed");
@@ -553,8 +631,8 @@ mod tests {
         }
     }
 
-    #[test]
-    fn net_version_test() {
+    #[tokio::test]
+    async fn net_version_test() {
         let body = r#"{"jsonrpc":"2.0","method":"net_version","params":[],"id":67}"#;
         let request: RpcRequest = serde_json::from_str(body).expect("serde serialization failed");
         // Setup initial storage
@@ -574,9 +652,13 @@ mod tests {
             jwt_secret: Default::default(),
             active_filters: Default::default(),
             syncer: Arc::new(TokioMutex::new(SyncManager::dummy())),
+            #[cfg(feature = "based")]
+            gateway_eth_client: EthClient::new(""),
+            #[cfg(feature = "based")]
+            gateway_auth_client: EngineClient::new("", Bytes::default()),
         };
         // Process request
-        let result = map_http_requests(&request, context);
+        let result = map_http_requests(&request, context).await;
         let response = rpc_response(request.id, result);
         let expected_response_string =
             format!(r#"{{"id":67,"jsonrpc": "2.0","result": "{}"}}"#, chain_id);
