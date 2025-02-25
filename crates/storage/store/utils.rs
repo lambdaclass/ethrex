@@ -8,7 +8,7 @@ pub enum ChainDataIndex {
     SafeBlockNumber = 3,
     LatestBlockNumber = 4,
     PendingBlockNumber = 5,
-    IsSynced = 7,
+    IsSynced = 6,
 }
 
 impl From<u8> for ChainDataIndex {
