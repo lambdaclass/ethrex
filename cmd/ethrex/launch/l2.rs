@@ -10,16 +10,17 @@ use std::{
 use crate::launch::DEFAULT_DATADIR;
 use crate::networks;
 use crate::utils::{
-    import_blocks, parse_socket_addr, read_block_file, read_chain_file, read_genesis_file,
-    read_jwtsecret_file, read_known_peers, set_datadir, store_known_peers, sync_mode,
+    parse_socket_addr, read_block_file, read_chain_file, read_genesis_file, read_jwtsecret_file,
+    read_known_peers, set_datadir, store_known_peers, sync_mode,
 };
+use ethrex_blockchain::Blockchain;
 use ethrex_p2p::{
     network::{node_id_from_signing_key, peer_table},
     sync::SyncManager,
     types::{Node, NodeRecord},
 };
 use ethrex_storage::{EngineType, Store};
-use ethrex_vm::{backends::EVM, EVM_BACKEND};
+use ethrex_vm::backends::EVM;
 use k256::ecdsa::SigningKey;
 use local_ip_address::local_ip;
 use rand::rngs::OsRng;
@@ -143,8 +144,6 @@ pub async fn launch(matches: clap::ArgMatches) {
     let sync_mode = sync_mode(&matches);
 
     let evm = matches.get_one::<EVM>("evm").unwrap_or(&EVM::REVM);
-    let evm = EVM_BACKEND.get_or_init(|| evm.clone());
-    info!("EVM_BACKEND set to: {:?}", evm);
 
     let path = path::PathBuf::from(data_dir.clone());
     let store: Store = if path.ends_with("memory") {
@@ -163,6 +162,7 @@ pub async fn launch(matches: clap::ArgMatches) {
         }
         Store::new(&data_dir, engine_type).expect("Failed to create Store")
     };
+    let blockchain = Blockchain::new(evm.clone(), store.clone());
 
     let genesis = read_genesis_file(&network);
     store
@@ -172,7 +172,7 @@ pub async fn launch(matches: clap::ArgMatches) {
     if let Some(chain_rlp_path) = matches.get_one::<String>("import") {
         info!("Importing blocks from chain file: {}", chain_rlp_path);
         let blocks = read_chain_file(chain_rlp_path);
-        import_blocks(&store, &blocks);
+        blockchain.import_blocks(&blocks);
     }
 
     if let Some(blocks_path) = matches.get_one::<String>("import_dir") {
@@ -191,7 +191,7 @@ pub async fn launch(matches: clap::ArgMatches) {
             blocks.push(read_block_file(s));
         }
 
-        import_blocks(&store, &blocks);
+        blockchain.import_blocks(&blocks);
     }
 
     let jwt_secret = read_jwtsecret_file(authrpc_jwtsecret);
@@ -242,7 +242,12 @@ pub async fn launch(matches: clap::ArgMatches) {
     // Create a cancellation_token for long_living tasks
     let cancel_token = tokio_util::sync::CancellationToken::new();
     // Create SyncManager
-    let syncer = SyncManager::new(peer_table.clone(), sync_mode, cancel_token.clone());
+    let syncer = SyncManager::new(
+        peer_table.clone(),
+        sync_mode,
+        cancel_token.clone(),
+        blockchain,
+    );
 
     // TODO: Check every module starts properly.
     let tracker = TaskTracker::new();

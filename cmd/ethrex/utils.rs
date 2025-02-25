@@ -1,12 +1,9 @@
 use crate::decode;
 use bytes::Bytes;
 use directories::ProjectDirs;
-use ethrex_blockchain::{add_block, fork_choice::apply_fork_choice};
 use ethrex_common::types::{Block, Genesis};
 use ethrex_p2p::{kademlia::KademliaTable, sync::SyncMode, types::Node};
 use ethrex_rlp::decode::RLPDecode;
-use ethrex_storage::Store;
-use ethrex_vm::{backends::EVM, EVM_BACKEND};
 use std::{
     fs::File,
     io,
@@ -15,7 +12,7 @@ use std::{
     sync::Arc,
 };
 use tokio::sync::Mutex;
-use tracing::{error, info, warn};
+use tracing::{error, info};
 
 pub fn read_jwtsecret_file(jwt_secret_path: &str) -> Bytes {
     match File::open(jwt_secret_path) {
@@ -83,55 +80,6 @@ pub fn set_datadir(datadir: &str) -> String {
         .to_str()
         .expect("invalid data directory")
         .to_owned()
-}
-
-pub fn import_blocks(store: &Store, blocks: &Vec<Block>) {
-    let size = blocks.len();
-    for block in blocks {
-        let hash = block.hash();
-        info!(
-            "Adding block {} with hash {:#x}.",
-            block.header.number, hash
-        );
-        let result = add_block(block, store);
-        if let Some(error) = result.err() {
-            warn!(
-                "Failed to add block {} with hash {:#x}: {}.",
-                block.header.number, hash, error
-            );
-        }
-        if store
-            .update_latest_block_number(block.header.number)
-            .is_err()
-        {
-            error!("Fatal: added block {} but could not update the block number -- aborting block import", block.header.number);
-            break;
-        };
-        if store
-            .set_canonical_block(block.header.number, hash)
-            .is_err()
-        {
-            error!(
-                "Fatal: added block {} but could not set it as canonical -- aborting block import",
-                block.header.number
-            );
-            break;
-        };
-    }
-    if let Some(last_block) = blocks.last() {
-        let hash = last_block.hash();
-        match EVM_BACKEND.get() {
-            Some(EVM::LEVM) => {
-                // We are allowing this not to unwrap so that tests can run even if block execution results in the wrong root hash with LEVM.
-                let _ = apply_fork_choice(store, hash, hash, hash);
-            }
-            // This means we are using REVM as default
-            Some(EVM::REVM) | None => {
-                apply_fork_choice(store, hash, hash, hash).unwrap();
-            }
-        }
-    }
-    info!("Added {} blocks to blockchain", size);
 }
 
 pub async fn store_known_peers(table: Arc<Mutex<KademliaTable>>, file_path: PathBuf) {
