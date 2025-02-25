@@ -219,10 +219,6 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
             | RLPxError::DisconnectSent(DisconnectReason::AlreadyConnected) => {
                 log_peer_debug(&self.node, "Peer already connected, don't replace it");
             }
-            // Too many peers, even if we replace it we will keep on disconnecting to peers.
-            RLPxError::DisconnectSent(DisconnectReason::TooManyPeers) => {
-                log_peer_debug(&self.node, "Too many peers sent, don't replace peer");
-            }
             _ => {
                 let remote_node_id = self.node.node_id;
                 log_peer_error(
