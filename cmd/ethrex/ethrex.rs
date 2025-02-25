@@ -46,7 +46,6 @@ async fn main() {
         Command::new("ls")
             .arg("-l")
             .arg("-a")
-            .arg(" ethrex/")
             .spawn()
             .expect("ls command failed to start")
     );
