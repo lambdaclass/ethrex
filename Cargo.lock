@@ -2893,6 +2893,7 @@ dependencies = [
  "axum 0.8.1",
  "axum-extra",
  "bytes",
+ "cfg-if",
  "envy",
  "ethrex-blockchain",
  "ethrex-common",
