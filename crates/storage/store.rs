@@ -20,7 +20,11 @@ use serde::{Deserialize, Serialize};
 use sha3::{Digest as _, Keccak256};
 use std::collections::HashMap;
 use std::fmt::Debug;
+<<<<<<< HEAD:crates/storage/store.rs
 use std::sync::Arc;
+=======
+use std::sync::{Arc, Mutex, RwLock};
+>>>>>>> 1713914d (fix(l1): p2p pooled transactions (#1990)):crates/storage/store/store.rs
 use tracing::info;
 
 /// Number of state trie segments to fetch concurrently during state sync
@@ -32,6 +36,11 @@ pub const MAX_SNAPSHOT_READS: usize = 100;
 #[derive(Debug, Clone)]
 pub struct Store {
     engine: Arc<dyn StoreEngine>,
+<<<<<<< HEAD:crates/storage/store.rs
+=======
+    pub mempool: Arc<RwLock<HashMap<H256, MempoolTransaction>>>,
+    pub blobs_bundle_pool: Arc<Mutex<HashMap<H256, BlobsBundle>>>,
+>>>>>>> 1713914d (fix(l1): p2p pooled transactions (#1990)):crates/storage/store/store.rs
 }
 
 #[allow(dead_code)]
@@ -81,13 +90,28 @@ impl Store {
             #[cfg(feature = "libmdbx")]
             EngineType::Libmdbx => Self {
                 engine: Arc::new(LibmdbxStore::new(path)?),
+<<<<<<< HEAD:crates/storage/store.rs
             },
             EngineType::InMemory => Self {
                 engine: Arc::new(InMemoryStore::new()),
+=======
+                mempool: Arc::new(RwLock::new(HashMap::new())),
+                blobs_bundle_pool: Arc::new(Mutex::new(HashMap::new())),
+            },
+            EngineType::InMemory => Self {
+                engine: Arc::new(InMemoryStore::new()),
+                mempool: Arc::new(RwLock::new(HashMap::new())),
+                blobs_bundle_pool: Arc::new(Mutex::new(HashMap::new())),
+>>>>>>> 1713914d (fix(l1): p2p pooled transactions (#1990)):crates/storage/store/store.rs
             },
             #[cfg(feature = "redb")]
             EngineType::RedB => Self {
                 engine: Arc::new(RedBStore::new()?),
+<<<<<<< HEAD:crates/storage/store.rs
+=======
+                mempool: Arc::new(RwLock::new(HashMap::new())),
+                blobs_bundle_pool: Arc::new(Mutex::new(HashMap::new())),
+>>>>>>> 1713914d (fix(l1): p2p pooled transactions (#1990)):crates/storage/store/store.rs
             },
         };
         info!("Started store engine");
@@ -260,6 +284,124 @@ impl Store {
         self.engine.get_transaction_location(transaction_hash)
     }
 
+<<<<<<< HEAD:crates/storage/store.rs
+=======
+    /// Add transaction to the pool
+    pub fn add_transaction_to_pool(
+        &self,
+        hash: H256,
+        transaction: MempoolTransaction,
+    ) -> Result<(), StoreError> {
+        let mut mempool = self
+            .mempool
+            .write()
+            .map_err(|error| StoreError::MempoolWriteLock(error.to_string()))?;
+        mempool.insert(hash, transaction);
+
+        Ok(())
+    }
+
+    /// Add a blobs bundle to the pool by its blob transaction hash
+    pub fn add_blobs_bundle_to_pool(
+        &self,
+        tx_hash: H256,
+        blobs_bundle: BlobsBundle,
+    ) -> Result<(), StoreError> {
+        self.blobs_bundle_pool
+            .lock()
+            .map_err(|error| StoreError::Custom(error.to_string()))?
+            .insert(tx_hash, blobs_bundle);
+        Ok(())
+    }
+
+    /// Get a blobs bundle to the pool given its blob transaction hash
+    pub fn get_blobs_bundle_from_pool(
+        &self,
+        tx_hash: H256,
+    ) -> Result<Option<BlobsBundle>, StoreError> {
+        Ok(self
+            .blobs_bundle_pool
+            .lock()
+            .map_err(|error| StoreError::Custom(error.to_string()))?
+            .get(&tx_hash)
+            .cloned())
+    }
+
+    /// Remove a transaction from the pool
+    pub fn remove_transaction_from_pool(&self, hash: &H256) -> Result<(), StoreError> {
+        let mut mempool = self
+            .mempool
+            .write()
+            .map_err(|error| StoreError::MempoolWriteLock(error.to_string()))?;
+        if let Some(tx) = mempool.get(hash) {
+            if matches!(tx.tx_type(), TxType::EIP4844) {
+                self.blobs_bundle_pool
+                    .lock()
+                    .map_err(|error| StoreError::Custom(error.to_string()))?
+                    .remove(&tx.compute_hash());
+            }
+
+            mempool.remove(hash);
+        };
+
+        Ok(())
+    }
+
+    pub fn remove_transactions_from_pool(&self, filter: &[Transaction]) -> Result<(), StoreError> {
+        let mut mempool = self
+            .mempool
+            .write()
+            .map_err(|err| StoreError::MempoolWriteLock(err.to_string()))?;
+        for tx in filter {
+            mempool.remove(&tx.compute_hash());
+        }
+        Ok(())
+    }
+
+    /// Applies the filter and returns a set of suitable transactions from the mempool.
+    /// These transactions will be grouped by sender and sorted by nonce
+    pub fn filter_pool_transactions(
+        &self,
+        filter: &dyn Fn(&Transaction) -> bool,
+    ) -> Result<HashMap<Address, Vec<MempoolTransaction>>, StoreError> {
+        let mut txs_by_sender: HashMap<Address, Vec<MempoolTransaction>> = HashMap::new();
+        let mempool = self
+            .mempool
+            .read()
+            .map_err(|error| StoreError::MempoolReadLock(error.to_string()))?;
+
+        for (_, tx) in mempool.iter() {
+            if filter(tx) {
+                txs_by_sender
+                    .entry(tx.sender())
+                    .or_default()
+                    .push(tx.clone())
+            }
+        }
+
+        txs_by_sender.iter_mut().for_each(|(_, txs)| txs.sort());
+        Ok(txs_by_sender)
+    }
+
+    /// Gets hashes from possible_hashes that are not already known in the mempool.
+    pub fn filter_unknown_transactions(
+        &self,
+        possible_hashes: &[H256],
+    ) -> Result<Vec<H256>, StoreError> {
+        let mempool = self
+            .mempool
+            .read()
+            .map_err(|error| StoreError::MempoolReadLock(error.to_string()))?;
+
+        let tx_set: HashSet<_> = mempool.iter().map(|(hash, _)| hash).collect();
+        Ok(possible_hashes
+            .iter()
+            .filter(|hash| !tx_set.contains(hash))
+            .copied()
+            .collect())
+    }
+
+>>>>>>> 1713914d (fix(l1): p2p pooled transactions (#1990)):crates/storage/store/store.rs
     pub fn add_account_code(&self, code_hash: H256, code: Bytes) -> Result<(), StoreError> {
         self.engine.add_account_code(code_hash, code)
     }
@@ -473,6 +615,20 @@ impl Store {
         transaction_hash: H256,
     ) -> Result<Option<Transaction>, StoreError> {
         self.engine.get_transaction_by_hash(transaction_hash)
+    }
+
+    pub fn get_transaction_by_hash_from_pool(
+        &self,
+        transaction_hash: H256,
+    ) -> Result<Option<Transaction>, StoreError> {
+        let tx = self
+            .mempool
+            .read()
+            .map_err(|error| StoreError::MempoolReadLock(error.to_string()))?
+            .get(&transaction_hash)
+            .map(|e| e.clone().into());
+
+        Ok(tx)
     }
 
     pub fn get_transaction_by_location(
