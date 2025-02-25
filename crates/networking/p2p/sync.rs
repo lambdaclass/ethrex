@@ -6,17 +6,17 @@ mod storage_healing;
 mod trie_rebuild;
 
 use bytecode_fetcher::bytecode_fetcher;
-use ethrex_blockchain::error::ChainError;
+use ethrex_blockchain::{error::ChainError, Blockchain};
 use ethrex_common::{
     types::{Block, BlockHash},
     BigEndianHash, H256, U256, U512,
 };
 use ethrex_rlp::error::RLPDecodeError;
-use ethrex_storage::{error::StoreError, Store, STATE_TRIE_SEGMENTS};
+use ethrex_storage::{error::StoreError, EngineType, Store, STATE_TRIE_SEGMENTS};
 use ethrex_trie::{Nibbles, Node, TrieError, TrieState};
 use state_healing::heal_state_trie;
 use state_sync::state_sync;
-use std::{array, sync::Arc};
+use std::{array, collections::HashMap, sync::Arc};
 use storage_healing::storage_healer;
 use tokio::{
     sync::{
@@ -26,7 +26,7 @@ use tokio::{
     time::{Duration, Instant},
 };
 use tokio_util::sync::CancellationToken;
-use tracing::{debug, info, warn};
+use tracing::{debug, error, info, warn};
 use trie_rebuild::TrieRebuilder;
 
 use crate::{
@@ -78,9 +78,18 @@ pub struct SyncManager {
     /// Syncing beyond this pivot should re-enable snap-sync (as we will not have that state stored)
     /// TODO: Reorgs
     last_snap_pivot: u64,
+    /// The `forkchoice_update` and `new_payload` methods require the `latest_valid_hash`
+    /// when processing an invalid payload. To provide this, we must track invalid chains.
+    ///
+    /// We only store the last known valid head upon encountering a bad block,
+    /// rather than tracking every subsequent invalid block.
+    ///
+    /// This map stores the bad block hash with and latest valid block hash of the chain corresponding to the bad block
+    pub invalid_ancestors: HashMap<BlockHash, BlockHash>,
     trie_rebuilder: Option<TrieRebuilder>,
     // Used for cancelling long-living tasks upon shutdown
     cancel_token: CancellationToken,
+    pub blockchain: Blockchain,
 }
 
 impl SyncManager {
@@ -88,13 +97,16 @@ impl SyncManager {
         peer_table: Arc<Mutex<KademliaTable>>,
         sync_mode: SyncMode,
         cancel_token: CancellationToken,
+        blockchain: Blockchain,
     ) -> Self {
         Self {
             sync_mode,
             peers: PeerHandler::new(peer_table),
             last_snap_pivot: 0,
+            invalid_ancestors: HashMap::new(),
             trie_rebuilder: None,
             cancel_token,
+            blockchain,
         }
     }
 
@@ -106,9 +118,13 @@ impl SyncManager {
             sync_mode: SyncMode::Full,
             peers: PeerHandler::new(dummy_peer_table),
             last_snap_pivot: 0,
+            invalid_ancestors: HashMap::new(),
             trie_rebuilder: None,
             // This won't be used
             cancel_token: CancellationToken::new(),
+            blockchain: Blockchain::default_with_store(
+                Store::new("", EngineType::InMemory).unwrap(),
+            ),
         }
     }
 
@@ -155,6 +171,12 @@ impl SyncManager {
                 current_head = last_header;
             }
         }
+
+        let pending_block = match store.get_pending_block(sync_head) {
+            Ok(res) => res,
+            Err(e) => return Err(e.into()),
+        };
+
         loop {
             debug!("Requesting Block Headers from {current_head}");
             // Request Block Headers from Peer
@@ -167,12 +189,23 @@ impl SyncManager {
                     debug!(
                         "Received {} block headers| Last Number: {}",
                         block_headers.len(),
-                        block_headers.last().as_ref().unwrap().number
+                        block_headers.last().as_ref().unwrap().number,
                     );
                     let mut block_hashes = block_headers
                         .iter()
                         .map(|header| header.compute_block_hash())
                         .collect::<Vec<_>>();
+                    let last_header = block_headers.last().unwrap().clone();
+
+                    // If we have a pending block from new_payload request
+                    // attach it to the end if it matches the parent_hash of the latest received header
+                    if let Some(ref block) = pending_block {
+                        if block.header.parent_hash == last_header.compute_block_hash() {
+                            block_hashes.push(block.hash());
+                            block_headers.push(block.header.clone());
+                        }
+                    }
+
                     // Check if we already found the sync head
                     let sync_head_found = block_hashes.contains(&sync_head);
                     // Update current fetch head if needed
@@ -185,9 +218,8 @@ impl SyncManager {
                             store.set_header_download_checkpoint(current_head)?;
                         } else {
                             // If the sync head is less than 64 blocks away from our current head switch to full-sync
-                            let last_header_number = block_headers.last().unwrap().number;
                             let latest_block_number = store.get_latest_block_number()?;
-                            if last_header_number.saturating_sub(latest_block_number)
+                            if last_header.number.saturating_sub(latest_block_number)
                                 < MIN_FULL_BLOCKS as u64
                             {
                                 // Too few blocks for a snap sync, switching to full sync
@@ -250,7 +282,7 @@ impl SyncManager {
                     let block = store
                         .get_block_by_hash(*hash)?
                         .ok_or(SyncError::CorruptDB)?;
-                    ethrex_blockchain::add_block(&block, &store)?;
+                    self.blockchain.add_block(&block)?;
                     store.set_canonical_block(block.header.number, *hash)?;
                     store.update_latest_block_number(block.header.number)?;
                 }
@@ -262,7 +294,14 @@ impl SyncManager {
             }
             SyncMode::Full => {
                 // full-sync: Fetch all block bodies and execute them sequentially to build the state
-                download_and_run_blocks(all_block_hashes, self.peers.clone(), store.clone()).await?
+                download_and_run_blocks(
+                    all_block_hashes,
+                    self.peers.clone(),
+                    store.clone(),
+                    &mut self.invalid_ancestors,
+                    &self.blockchain,
+                )
+                .await?
             }
         }
         Ok(())
@@ -275,7 +314,10 @@ async fn download_and_run_blocks(
     mut block_hashes: Vec<BlockHash>,
     peers: PeerHandler,
     store: Store,
+    invalid_ancestors: &mut HashMap<BlockHash, BlockHash>,
+    blockchain: &Blockchain,
 ) -> Result<(), SyncError> {
+    let mut last_valid_hash = H256::default();
     loop {
         debug!("Requesting Block Bodies ");
         if let Some(block_bodies) = peers.request_block_bodies(block_hashes.clone()).await {
@@ -291,12 +333,13 @@ async fn download_and_run_blocks(
                     .ok_or(SyncError::CorruptDB)?;
                 let number = header.number;
                 let block = Block::new(header, body);
-                if let Err(error) = ethrex_blockchain::add_block(&block, &store) {
-                    warn!("Failed to add block during FullSync: {error}");
+                if let Err(error) = blockchain.add_block(&block) {
+                    invalid_ancestors.insert(hash, last_valid_hash);
                     return Err(error.into());
                 }
                 store.set_canonical_block(number, hash)?;
                 store.update_latest_block_number(number)?;
+                last_valid_hash = hash;
             }
             info!("Executed & stored {} blocks", block_bodies_len);
             // Check if we need to ask for another batch

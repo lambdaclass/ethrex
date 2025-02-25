@@ -1,5 +1,12 @@
+use bytes::Bytes;
 use ethereum_types::Address;
+use k256::sha2::Sha256;
+use keccak_hash::H256;
+use serde::{Deserialize, Serialize};
+use sha3::Digest;
 use tracing::error;
+
+use crate::serde_utils;
 
 use super::{Bytes48, Receipt};
 
@@ -7,35 +14,64 @@ pub type Bytes32 = [u8; 32];
 pub type Bytes96 = [u8; 96];
 const DEPOSIT_TYPE: u8 = 0x00;
 const WITHDRAWAL_TYPE: u8 = 0x01;
+const CONSOLIDATION_TYPE: u8 = 0x02;
 
-lazy_static::lazy_static! {
-    pub static ref DEPOSIT_CONTRACT_ADDRESS: Address = Address::from_slice(&hex::decode("00000000219ab540356cbb839cbe05303d7705fa").unwrap());
+#[derive(Clone, Debug)]
+pub struct EncodedRequests(pub Bytes);
+
+impl<'de> Deserialize<'de> for EncodedRequests {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        Ok(EncodedRequests(serde_utils::bytes::deserialize(
+            deserializer,
+        )?))
+    }
+}
+
+impl Serialize for EncodedRequests {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        serde_utils::bytes::serialize(&self.0, serializer)
+    }
 }
 
 pub enum Requests {
     Deposit(Vec<Deposit>),
-    Withdrawal,
+    Withdrawal(Vec<u8>),
+    Consolidation(Vec<u8>),
 }
 
 impl Requests {
-    pub fn to_bytes(&self) -> Vec<u8> {
-        match self {
+    pub fn encode(&self) -> EncodedRequests {
+        let bytes: Vec<u8> = match self {
             Requests::Deposit(deposits) => {
                 let deposit_data = deposits.iter().flat_map(|d| d.to_summarized_byte_array());
                 std::iter::once(DEPOSIT_TYPE).chain(deposit_data).collect()
             }
-            Requests::Withdrawal => {
-                // TODO: implement the withdrawal type
-                vec![WITHDRAWAL_TYPE]
-            }
-        }
+            Requests::Withdrawal(data) => std::iter::once(WITHDRAWAL_TYPE)
+                .chain(data.iter().cloned())
+                .collect(),
+            Requests::Consolidation(data) => std::iter::once(CONSOLIDATION_TYPE)
+                .chain(data.iter().cloned())
+                .collect(),
+        };
+
+        EncodedRequests(Bytes::from(bytes))
     }
-    pub fn from_deposit_receipts(receipts: &[Receipt]) -> Requests {
+
+    pub fn from_deposit_receipts(
+        deposit_contract_address: Address,
+        receipts: &[Receipt],
+    ) -> Requests {
         let mut deposits = vec![];
 
         for r in receipts {
             for log in &r.logs {
-                if log.address == *DEPOSIT_CONTRACT_ADDRESS {
+                if log.address == deposit_contract_address {
                     if let Some(d) = Deposit::from_abi_byte_array(&log.data) {
                         deposits.push(d);
                     }
@@ -43,6 +79,14 @@ impl Requests {
             }
         }
         Self::Deposit(deposits)
+    }
+
+    pub fn from_withdrawals_data(data: Vec<u8>) -> Requests {
+        Requests::Withdrawal(data)
+    }
+
+    pub fn from_consolidation_data(data: Vec<u8>) -> Requests {
+        Requests::Consolidation(data)
     }
 }
 
@@ -119,4 +163,16 @@ fn fixed_bytes<const N: usize>(data: &[u8], offset: usize) -> [u8; N] {
         .expect("Couldn't convert to fixed bytes")
         .try_into()
         .expect("Couldn't convert to fixed bytes")
+}
+
+// See https://github.com/ethereum/EIPs/blob/2a6b6965e64787815f7fffb9a4c27660d9683846/EIPS/eip-7685.md?plain=1#L62.
+pub fn compute_requests_hash(requests: &[EncodedRequests]) -> H256 {
+    let mut hasher = Sha256::new();
+    for request in requests {
+        let request_bytes = request.0.as_ref();
+        if request_bytes.len() > 1 {
+            hasher.update(Sha256::digest(request_bytes));
+        }
+    }
+    H256::from_slice(&hasher.finalize())
 }

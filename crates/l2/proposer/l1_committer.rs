@@ -9,21 +9,21 @@ use crate::{
 use ethrex_common::{
     types::{
         blobs_bundle, fake_exponential_checked, BlobsBundle, BlobsBundleError, Block,
-        PrivilegedL2Transaction, PrivilegedTxType, Transaction, TxKind,
-        BLOB_BASE_FEE_UPDATE_FRACTION, MIN_BASE_FEE_PER_BLOB_GAS,
+        PrivilegedL2Transaction, Receipt, Transaction, TxKind, BLOB_BASE_FEE_UPDATE_FRACTION,
+        MIN_BASE_FEE_PER_BLOB_GAS,
     },
     Address, H256, U256,
 };
 use ethrex_l2_sdk::calldata::{encode_calldata, Value};
-use ethrex_l2_sdk::merkle_tree::merkelize;
+use ethrex_l2_sdk::{get_withdrawal_hash, merkle_tree::merkelize, COMMON_BRIDGE_L2_ADDRESS};
 use ethrex_rpc::clients::eth::{
     eth_sender::Overrides, BlockByNumber, EthClient, WrappedTransaction,
 };
 use ethrex_storage::{error::StoreError, Store};
-use ethrex_vm::{backends::revm::execute_block, db::evm_state, get_state_transitions};
+use ethrex_vm::{backends::EVM, db::evm_state};
 use keccak_hash::keccak;
 use secp256k1::SecretKey;
-use std::{collections::HashMap, time::Duration};
+use std::{collections::HashMap, str::FromStr, time::Duration};
 use tokio::time::sleep;
 use tracing::{error, info};
 
@@ -97,16 +97,26 @@ impl Committer {
                         "Failed to get_block_header() after get_block_body()".to_owned(),
                     ))?;
 
+                let mut txs_and_receipts = vec![];
+                for (index, tx) in block_to_commit_body.transactions.iter().enumerate() {
+                    let receipt = self
+                        .store
+                        .get_receipt(block_number_to_fetch, index.try_into()?)?
+                        .ok_or(CommitterError::InternalError(
+                            "Transactions in a block should have a receipt".to_owned(),
+                        ))?;
+                    txs_and_receipts.push((tx.clone(), receipt));
+                }
+
                 let block_to_commit = Block::new(block_to_commit_header, block_to_commit_body);
 
-                let withdrawals = self.get_block_withdrawals(&block_to_commit)?;
+                let withdrawals = self.get_block_withdrawals(&txs_and_receipts)?;
                 let deposits = self.get_block_deposits(&block_to_commit);
 
                 let mut withdrawal_hashes = vec![];
 
                 for (_, tx) in &withdrawals {
-                    let hash = tx
-                        .get_withdrawal_hash()
+                    let hash = get_withdrawal_hash(tx)
                         .ok_or(CommitterError::InvalidWithdrawalTransaction)?;
                     withdrawal_hashes.push(hash);
                 }
@@ -156,23 +166,29 @@ impl Committer {
 
     fn get_block_withdrawals(
         &self,
-        block: &Block,
-    ) -> Result<Vec<(H256, PrivilegedL2Transaction)>, CommitterError> {
-        let withdrawals = block
-            .body
-            .transactions
-            .iter()
-            .filter_map(|tx| match tx {
-                Transaction::PrivilegedL2Transaction(priv_tx)
-                    if priv_tx.tx_type == PrivilegedTxType::Withdrawal =>
-                {
-                    Some((tx.compute_hash(), priv_tx.clone()))
-                }
-                _ => None,
-            })
-            .collect();
+        txs_and_receipts: &[(Transaction, Receipt)],
+    ) -> Result<Vec<(H256, Transaction)>, CommitterError> {
+        // WithdrawalInitiated(address,address,uint256)
+        let withdrawal_event_selector: H256 =
+            H256::from_str("bb2689ff876f7ef453cf8865dde5ab10349d222e2e1383c5152fbdb083f02da2").map_err(|_| CommitterError::InternalError("Failed to convert WithdrawalInitiated event selector to H256. This should never happen.".to_owned()))?;
+        let mut ret = vec![];
 
-        Ok(withdrawals)
+        for (tx, receipt) in txs_and_receipts {
+            match tx.to() {
+                TxKind::Call(to) if to == COMMON_BRIDGE_L2_ADDRESS => {
+                    if receipt.logs.iter().any(|log| {
+                        log.topics
+                            .iter()
+                            .any(|topic| *topic == withdrawal_event_selector)
+                    }) {
+                        ret.push((tx.compute_hash(), tx.clone()))
+                    }
+                }
+                _ => continue,
+            }
+        }
+
+        Ok(ret)
     }
 
     fn get_withdrawals_merkle_root(
@@ -192,11 +208,7 @@ impl Committer {
             .transactions
             .iter()
             .filter_map(|tx| match tx {
-                Transaction::PrivilegedL2Transaction(tx)
-                    if tx.tx_type == PrivilegedTxType::Deposit =>
-                {
-                    Some(tx.clone())
-                }
+                Transaction::PrivilegedL2Transaction(tx) => Some(tx.clone()),
                 _ => None,
             })
             .collect();
@@ -237,14 +249,17 @@ impl Committer {
         &self,
         block: &Block,
         store: Store,
-        withdrawals: Vec<(H256, PrivilegedL2Transaction)>,
+        withdrawals: Vec<(H256, Transaction)>,
         deposits: Vec<PrivilegedL2Transaction>,
     ) -> Result<StateDiff, CommitterError> {
         info!("Preparing state diff for block {}", block.header.number);
 
         let mut state = evm_state(store.clone(), block.header.parent_hash);
-        execute_block(block, &mut state).map_err(CommitterError::from)?;
-        let account_updates = get_state_transitions(&mut state);
+
+        let result = EVM::default()
+            .execute_block(block, &mut state)
+            .map_err(CommitterError::from)?;
+        let account_updates = result.account_updates;
 
         let mut modified_accounts = HashMap::new();
         for account_update in &account_updates {
@@ -286,11 +301,11 @@ impl Committer {
             withdrawal_logs: withdrawals
                 .iter()
                 .map(|(hash, tx)| WithdrawalLog {
-                    address: match tx.to {
+                    address: match tx.to() {
                         TxKind::Call(address) => address,
                         TxKind::Create => Address::zero(),
                     },
-                    amount: tx.value,
+                    amount: tx.value(),
                     tx_hash: *hash,
                 })
                 .collect(),

@@ -1,85 +1,235 @@
-use super::constants::{BEACON_ROOTS_ADDRESS_STR, HISTORY_STORAGE_ADDRESS_STR, SYSTEM_ADDRESS_STR};
+use super::constants::{
+    BEACON_ROOTS_ADDRESS, CONSOLIDATION_REQUEST_PREDEPLOY_ADDRESS, HISTORY_STORAGE_ADDRESS,
+    SYSTEM_ADDRESS, WITHDRAWAL_REQUEST_PREDEPLOY_ADDRESS,
+};
+use super::BlockExecutionResult;
+use crate::backends::get_state_transitions;
+
 use crate::spec_id;
 use crate::EvmError;
 use crate::EvmState;
 use crate::ExecutionResult;
-use ethrex_storage::error::StoreError;
-use lazy_static::lazy_static;
+use ethrex_storage::{error::StoreError, AccountUpdate};
+
 use revm::{
+    db::AccountState as RevmAccountState,
     inspectors::TracerEip3155,
-    precompile::{PrecompileSpecId, Precompiles},
     primitives::{BlobExcessGasAndPrice, BlockEnv, TxEnv, B256},
-    Database, DatabaseCommit, Evm,
+    DatabaseCommit, Evm,
 };
 use revm_inspectors::access_list::AccessListInspector;
 // Rename imported types for clarity
 use ethrex_common::{
     types::{
-        Block, BlockHeader, GenericTransaction, PrivilegedTxType, Receipt, Transaction, TxKind,
+        requests::Requests, Block, BlockHeader, GenericTransaction, Receipt, Transaction, TxKind,
         Withdrawal, GWEI_TO_WEI, INITIAL_BASE_FEE,
     },
     Address,
 };
+use revm_primitives::Bytes;
 use revm_primitives::{
     ruint::Uint, AccessList as RevmAccessList, AccessListItem, Address as RevmAddress,
-    Authorization as RevmAuthorization, Bytes, FixedBytes, SignedAuthorization, SpecId,
+    Authorization as RevmAuthorization, FixedBytes, SignedAuthorization, SpecId,
     TxKind as RevmTxKind, U256 as RevmU256,
 };
 use std::cmp::min;
 
+#[derive(Debug)]
+pub struct REVM;
+
 #[cfg(feature = "l2")]
 use crate::mods;
 
-/// Executes all transactions in a block and returns their receipts.
-pub fn execute_block(block: &Block, state: &mut EvmState) -> Result<Vec<Receipt>, EvmError> {
-    let block_header = &block.header;
-    let spec_id = spec_id(&state.chain_config()?, block_header.timestamp);
-    //eip 4788: execute beacon_root_contract_call before block transactions
-    cfg_if::cfg_if! {
-        if #[cfg(not(feature = "l2"))] {
-            //eip 4788: execute beacon_root_contract_call before block transactions
-            if block_header.parent_beacon_block_root.is_some() && spec_id >= SpecId::CANCUN {
-                beacon_root_contract_call(state, block_header, spec_id)?;
-            }
+/// The struct implements the following functions:
+/// [REVM::execute_block]
+/// [REVM::execute_tx]
+/// [REVM::get_state_transitions]
+/// [REVM::process_withdrawals]
+impl REVM {
+    pub fn execute_block(
+        block: &Block,
+        state: &mut EvmState,
+    ) -> Result<BlockExecutionResult, EvmError> {
+        let block_header = &block.header;
+        let spec_id: SpecId = spec_id(&state.chain_config()?, block_header.timestamp);
+        cfg_if::cfg_if! {
+            if #[cfg(not(feature = "l2"))] {
+                if block_header.parent_beacon_block_root.is_some() && spec_id >= SpecId::CANCUN {
+                    Self::beacon_root_contract_call(block_header, state)?;
+                }
 
-            //eip 2935: stores parent block hash in system contract
-            if spec_id >= SpecId::PRAGUE {
-                process_block_hash_history(state, block_header, spec_id)?;
+                //eip 2935: stores parent block hash in system contract
+                if spec_id >= SpecId::PRAGUE {
+                    Self::process_block_hash_history(block_header, state)?;
+                }
             }
         }
+        let mut receipts = Vec::new();
+        let mut cumulative_gas_used = 0;
+
+        for tx in block.body.transactions.iter() {
+            let result = Self::execute_tx(tx, block_header, state, spec_id)?;
+            cumulative_gas_used += result.gas_used();
+            let receipt = Receipt::new(
+                tx.tx_type(),
+                result.is_success(),
+                cumulative_gas_used,
+                result.logs(),
+            );
+            receipts.push(receipt);
+        }
+
+        if let Some(withdrawals) = &block.body.withdrawals {
+            Self::process_withdrawals(state, withdrawals)?;
+        }
+
+        cfg_if::cfg_if! {
+            if #[cfg(not(feature = "l2"))] {
+                let requests = extract_all_requests(&receipts, state, block_header)?;
+            } else {
+                let requests = Default::default();
+            }
+        }
+
+        let account_updates = get_state_transitions(state);
+
+        Ok(BlockExecutionResult {
+            receipts,
+            requests,
+            account_updates,
+        })
     }
 
-    let mut receipts = Vec::new();
-    let mut cumulative_gas_used = 0;
-
-    for transaction in block.body.transactions.iter() {
-        let result = execute_tx(transaction, block_header, state, spec_id)?;
-        cumulative_gas_used += result.gas_used();
-        let receipt = Receipt::new(
-            transaction.tx_type(),
-            result.is_success(),
-            cumulative_gas_used,
-            result.logs(),
-        );
-        receipts.push(receipt);
+    pub fn execute_tx(
+        tx: &Transaction,
+        header: &BlockHeader,
+        state: &mut EvmState,
+        spec_id: SpecId,
+    ) -> Result<ExecutionResult, EvmError> {
+        let block_env = block_env(header, spec_id);
+        let tx_env = tx_env(tx);
+        run_evm(tx_env, block_env, state, spec_id)
     }
 
-    if let Some(withdrawals) = &block.body.withdrawals {
-        process_withdrawals(state, withdrawals)?;
+    pub fn get_state_transitions(
+        initial_state: &mut EvmState,
+    ) -> Result<Vec<AccountUpdate>, EvmError> {
+        Ok(get_state_transitions(initial_state))
     }
 
-    Ok(receipts)
-}
-// Executes a single tx, doesn't perform state transitions
-pub fn execute_tx(
-    tx: &Transaction,
-    header: &BlockHeader,
-    state: &mut EvmState,
-    spec_id: SpecId,
-) -> Result<ExecutionResult, EvmError> {
-    let block_env = block_env(header);
-    let tx_env = tx_env(tx);
-    run_evm(tx_env, block_env, state, spec_id)
+    pub fn process_withdrawals(
+        initial_state: &mut EvmState,
+        withdrawals: &[Withdrawal],
+    ) -> Result<(), StoreError> {
+        //balance_increments is a vector of tuples (Address, increment as u128)
+        let balance_increments = withdrawals
+            .iter()
+            .filter(|withdrawal| withdrawal.amount > 0)
+            .map(|withdrawal| {
+                (
+                    RevmAddress::from_slice(withdrawal.address.as_bytes()),
+                    (withdrawal.amount as u128 * GWEI_TO_WEI as u128),
+                )
+            })
+            .collect::<Vec<_>>();
+        match initial_state {
+            EvmState::Store(db) => {
+                db.increment_balances(balance_increments)?;
+            }
+            EvmState::Execution(db) => {
+                for (address, balance) in balance_increments {
+                    if balance == 0 {
+                        continue;
+                    }
+
+                    let account = db
+                        .load_account(address)
+                        .map_err(|err| StoreError::Custom(format!("revm CacheDB error: {err}")))?;
+
+                    account.info.balance += RevmU256::from(balance);
+                    if account.account_state == RevmAccountState::None {
+                        account.account_state = RevmAccountState::Touched;
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
+    // SYSTEM CONTRACTS
+    pub fn beacon_root_contract_call(
+        block_header: &BlockHeader,
+        state: &mut EvmState,
+    ) -> Result<(), EvmError> {
+        let beacon_root = match block_header.parent_beacon_block_root {
+            None => {
+                return Err(EvmError::Header(
+                    "parent_beacon_block_root field is missing".to_string(),
+                ))
+            }
+            Some(beacon_root) => beacon_root,
+        };
+
+        generic_system_contract_revm(
+            block_header,
+            Bytes::copy_from_slice(beacon_root.as_bytes()),
+            state,
+            *BEACON_ROOTS_ADDRESS,
+            *SYSTEM_ADDRESS,
+        )?;
+        Ok(())
+    }
+    pub fn process_block_hash_history(
+        block_header: &BlockHeader,
+        state: &mut EvmState,
+    ) -> Result<(), EvmError> {
+        generic_system_contract_revm(
+            block_header,
+            Bytes::copy_from_slice(block_header.parent_hash.as_bytes()),
+            state,
+            *HISTORY_STORAGE_ADDRESS,
+            *SYSTEM_ADDRESS,
+        )?;
+        Ok(())
+    }
+    pub(crate) fn read_withdrawal_requests(
+        block_header: &BlockHeader,
+        state: &mut EvmState,
+    ) -> Option<Vec<u8>> {
+        let tx_result = generic_system_contract_revm(
+            block_header,
+            Bytes::new(),
+            state,
+            *WITHDRAWAL_REQUEST_PREDEPLOY_ADDRESS,
+            *SYSTEM_ADDRESS,
+        )
+        .ok()?;
+
+        if tx_result.is_success() {
+            Some(tx_result.output().into())
+        } else {
+            None
+        }
+    }
+    pub(crate) fn dequeue_consolidation_requests(
+        block_header: &BlockHeader,
+        state: &mut EvmState,
+    ) -> Option<Vec<u8>> {
+        let tx_result = generic_system_contract_revm(
+            block_header,
+            Bytes::new(),
+            state,
+            *CONSOLIDATION_REQUEST_PREDEPLOY_ADDRESS,
+            *SYSTEM_ADDRESS,
+        )
+        .ok()?;
+
+        if tx_result.is_success() {
+            Some(tx_result.output().into())
+        } else {
+            None
+        }
+    }
 }
 
 /// Runs the transaction and returns the result, but does not commit it.
@@ -145,7 +295,6 @@ fn run_evm(
                     let mut evm_handler = Handler::new(HandlerCfg::new(SpecId::LATEST));
                     evm_handler.pre_execution.deduct_caller = Arc::new(mods::deduct_caller::<CancunSpec, _, _>);
                     evm_handler.validation.tx_against_state = Arc::new(mods::validate_tx_against_state::<CancunSpec, _, _>);
-                    evm_handler.execution.last_frame_return = Arc::new(mods::last_frame_return::<CancunSpec, _, _>);
                     // TODO: Override `end` function. We should deposit even if we revert.
                     // evm_handler.pre_execution.end
                     evm_handler
@@ -172,32 +321,42 @@ pub fn process_withdrawals(
     state: &mut EvmState,
     withdrawals: &[Withdrawal],
 ) -> Result<(), StoreError> {
+    //balance_increments is a vector of tuples (Address, increment as u128)
+    let balance_increments = withdrawals
+        .iter()
+        .filter(|withdrawal| withdrawal.amount > 0)
+        .map(|withdrawal| {
+            (
+                RevmAddress::from_slice(withdrawal.address.as_bytes()),
+                (withdrawal.amount as u128 * GWEI_TO_WEI as u128),
+            )
+        })
+        .collect::<Vec<_>>();
     match state {
         EvmState::Store(db) => {
-            //balance_increments is a vector of tuples (Address, increment as u128)
-            let balance_increments = withdrawals
-                .iter()
-                .filter(|withdrawal| withdrawal.amount > 0)
-                .map(|withdrawal| {
-                    (
-                        RevmAddress::from_slice(withdrawal.address.as_bytes()),
-                        (withdrawal.amount as u128 * GWEI_TO_WEI as u128),
-                    )
-                })
-                .collect::<Vec<_>>();
-
             db.increment_balances(balance_increments)?;
         }
-        EvmState::Execution(_) => {
-            // TODO: We should check withdrawals are valid
-            // (by checking that accounts exist if this is the only error) but there's no state to
-            // change.
+        EvmState::Execution(db) => {
+            for (address, balance) in balance_increments {
+                if balance == 0 {
+                    continue;
+                }
+
+                let account = db
+                    .load_account(address)
+                    .map_err(|err| StoreError::Custom(format!("revm CacheDB error: {err}")))?;
+
+                account.info.balance += RevmU256::from(balance);
+                if account.account_state == RevmAccountState::None {
+                    account.account_state = RevmAccountState::Touched;
+                }
+            }
         }
     }
     Ok(())
 }
 
-pub fn block_env(header: &BlockHeader) -> BlockEnv {
+pub fn block_env(header: &BlockHeader, spec_id: SpecId) -> BlockEnv {
     BlockEnv {
         number: RevmU256::from(header.number),
         coinbase: RevmAddress(header.coinbase.0.into()),
@@ -208,12 +367,12 @@ pub fn block_env(header: &BlockHeader) -> BlockEnv {
         prevrandao: Some(header.prev_randao.as_fixed_bytes().into()),
         blob_excess_gas_and_price: Some(BlobExcessGasAndPrice::new(
             header.excess_blob_gas.unwrap_or_default(),
+            spec_id >= SpecId::PRAGUE,
         )),
     }
 }
 
 // Used for the L2
-pub const WITHDRAWAL_MAGIC_DATA: &[u8] = b"burn";
 pub const DEPOSIT_MAGIC_DATA: &[u8] = b"mint";
 pub fn tx_env(tx: &Transaction) -> TxEnv {
     let max_fee_per_blob_gas = tx
@@ -221,38 +380,18 @@ pub fn tx_env(tx: &Transaction) -> TxEnv {
         .map(|x| RevmU256::from_be_bytes(x.to_big_endian()));
     TxEnv {
         caller: match tx {
-            Transaction::PrivilegedL2Transaction(tx) if tx.tx_type == PrivilegedTxType::Deposit => {
-                RevmAddress::ZERO
-            }
+            Transaction::PrivilegedL2Transaction(_tx) => RevmAddress::ZERO,
             _ => RevmAddress(tx.sender().0.into()),
         },
         gas_limit: tx.gas_limit(),
         gas_price: RevmU256::from(tx.gas_price()),
-        transact_to: match tx {
-            Transaction::PrivilegedL2Transaction(tx)
-                if tx.tx_type == PrivilegedTxType::Withdrawal =>
-            {
-                RevmTxKind::Call(RevmAddress::ZERO)
-            }
-            _ => match tx.to() {
-                TxKind::Call(address) => RevmTxKind::Call(address.0.into()),
-                TxKind::Create => RevmTxKind::Create,
-            },
+        transact_to: match tx.to() {
+            TxKind::Call(address) => RevmTxKind::Call(address.0.into()),
+            TxKind::Create => RevmTxKind::Create,
         },
         value: RevmU256::from_limbs(tx.value().0),
         data: match tx {
-            Transaction::PrivilegedL2Transaction(tx) => match tx.tx_type {
-                PrivilegedTxType::Deposit => DEPOSIT_MAGIC_DATA.into(),
-                PrivilegedTxType::Withdrawal => {
-                    let to = match tx.to {
-                        TxKind::Call(to) => to,
-                        _ => Address::zero(),
-                    };
-                    [Bytes::from(WITHDRAWAL_MAGIC_DATA), Bytes::from(to.0)]
-                        .concat()
-                        .into()
-                }
-            },
+            Transaction::PrivilegedL2Transaction(_tx) => DEPOSIT_MAGIC_DATA.into(),
             _ => tx.data().clone().into(),
         },
         nonce: Some(tx.nonce()),
@@ -291,7 +430,7 @@ pub fn tx_env(tx: &Transaction) -> TxEnv {
                 .map(|auth_t| {
                     SignedAuthorization::new_unchecked(
                         RevmAuthorization {
-                            chain_id: auth_t.chain_id.as_u64(),
+                            chain_id: RevmU256::from_limbs(auth_t.chain_id.0),
                             address: RevmAddress(auth_t.address.0.into()),
                             nonce: auth_t.nonce,
                         },
@@ -356,8 +495,7 @@ pub(crate) fn tx_env_from_generic(tx: &GenericTransaction, basefee: u64) -> TxEn
                 .map(|auth_t| {
                     SignedAuthorization::new_unchecked(
                         RevmAuthorization {
-                            //chain_id: RevmU256::from_le_bytes(auth_t.chain_id.to_little_endian()),
-                            chain_id: auth_t.chain_id.as_u64(),
+                            chain_id: RevmU256::from_le_bytes(auth_t.chain_id.to_little_endian()),
                             address: RevmAddress(auth_t.address.0.into()),
                             nonce: auth_t.nonce,
                         },
@@ -373,36 +511,11 @@ pub(crate) fn tx_env_from_generic(tx: &GenericTransaction, basefee: u64) -> TxEn
 }
 
 // Creates an AccessListInspector that will collect the accesses used by the evm execution
-pub(crate) fn access_list_inspector(
-    tx_env: &TxEnv,
-    state: &mut EvmState,
-    spec_id: SpecId,
-) -> Result<AccessListInspector, EvmError> {
+pub(crate) fn access_list_inspector(tx_env: &TxEnv) -> Result<AccessListInspector, EvmError> {
     // Access list provided by the transaction
     let current_access_list = RevmAccessList(tx_env.access_list.clone());
     // Addresses accessed when using precompiles
-    let precompile_addresses = Precompiles::new(PrecompileSpecId::from_spec_id(spec_id))
-        .addresses()
-        .cloned();
-    // Address that is either called or created by the transaction
-    let to = match tx_env.transact_to {
-        RevmTxKind::Call(address) => address,
-        RevmTxKind::Create => {
-            let nonce = match state {
-                EvmState::Store(db) => db.basic(tx_env.caller)?,
-                EvmState::Execution(db) => db.basic(tx_env.caller)?,
-            }
-            .map(|info| info.nonce)
-            .unwrap_or_default();
-            tx_env.caller.create(nonce)
-        }
-    };
-    Ok(AccessListInspector::new(
-        current_access_list,
-        tx_env.caller,
-        to,
-        precompile_addresses,
-    ))
+    Ok(AccessListInspector::new(current_access_list))
 }
 
 /// Calculating gas_price according to EIP-1559 rules
@@ -436,36 +549,22 @@ fn adjust_disabled_base_fee(
     }
 }
 
-/// Calls the eip4788 beacon block root system call contract
-/// As of the Cancun hard-fork, parent_beacon_block_root needs to be present in the block header.
-pub fn beacon_root_contract_call(
+pub(crate) fn generic_system_contract_revm(
+    block_header: &BlockHeader,
+    calldata: Bytes,
     state: &mut EvmState,
-    header: &BlockHeader,
-    spec_id: SpecId,
+    contract_address: Address,
+    system_address: Address,
 ) -> Result<ExecutionResult, EvmError> {
-    lazy_static! {
-        static ref SYSTEM_ADDRESS: RevmAddress =
-            RevmAddress::from_slice(&hex::decode(SYSTEM_ADDRESS_STR).unwrap());
-        static ref CONTRACT_ADDRESS: RevmAddress =
-            RevmAddress::from_slice(&hex::decode(BEACON_ROOTS_ADDRESS_STR).unwrap());
-    };
-    let beacon_root = match header.parent_beacon_block_root {
-        None => {
-            return Err(EvmError::Header(
-                "parent_beacon_block_root field is missing".to_string(),
-            ))
-        }
-        Some(beacon_root) => beacon_root,
-    };
-
+    let spec_id = spec_id(&state.chain_config()?, block_header.timestamp);
     let tx_env = TxEnv {
-        caller: *SYSTEM_ADDRESS,
-        transact_to: RevmTxKind::Call(*CONTRACT_ADDRESS),
+        caller: RevmAddress::from_slice(system_address.as_bytes()),
+        transact_to: RevmTxKind::Call(RevmAddress::from_slice(contract_address.as_bytes())),
         gas_limit: 30_000_000,
-        data: revm::primitives::Bytes::copy_from_slice(beacon_root.as_bytes()),
+        data: calldata,
         ..Default::default()
     };
-    let mut block_env = block_env(header);
+    let mut block_env = block_env(block_header, spec_id);
     block_env.basefee = RevmU256::ZERO;
     block_env.gas_limit = RevmU256::from(30_000_000);
 
@@ -480,7 +579,7 @@ pub fn beacon_root_contract_call(
 
             let transaction_result = evm.transact()?;
             let mut result_state = transaction_result.state;
-            result_state.remove(&*SYSTEM_ADDRESS);
+            result_state.remove(SYSTEM_ADDRESS.as_ref());
             result_state.remove(&evm.block().coinbase);
 
             evm.context.evm.db.commit(result_state);
@@ -495,67 +594,48 @@ pub fn beacon_root_contract_call(
                 .with_spec_id(spec_id)
                 .build();
 
-            // Not necessary to commit to DB
             let transaction_result = evm.transact()?;
+            let mut result_state = transaction_result.state;
+            result_state.remove(SYSTEM_ADDRESS.as_ref());
+            result_state.remove(&evm.block().coinbase);
+
+            evm.context.evm.db.commit(result_state);
+
             Ok(transaction_result.result.into())
         }
     }
 }
 
-/// Calls the EIP-2935 process block hashes history system call contract
-/// NOTE: This was implemented by making use of an EVM system contract, but can be changed to a
-/// direct state trie update after the verkle fork, as explained in https://eips.ethereum.org/EIPS/eip-2935
-pub fn process_block_hash_history(
+#[allow(unreachable_code)]
+#[allow(unused_variables)]
+pub fn extract_all_requests(
+    receipts: &[Receipt],
     state: &mut EvmState,
     header: &BlockHeader,
-    spec_id: SpecId,
-) -> Result<ExecutionResult, EvmError> {
-    lazy_static! {
-        static ref SYSTEM_ADDRESS: RevmAddress =
-            RevmAddress::from_slice(&hex::decode(SYSTEM_ADDRESS_STR).unwrap());
-        static ref CONTRACT_ADDRESS: RevmAddress =
-            RevmAddress::from_slice(&hex::decode(HISTORY_STORAGE_ADDRESS_STR).unwrap(),);
-    };
-    let tx_env = TxEnv {
-        caller: *SYSTEM_ADDRESS,
-        transact_to: RevmTxKind::Call(*CONTRACT_ADDRESS),
-        gas_limit: 30_000_000,
-        data: revm::primitives::Bytes::copy_from_slice(header.parent_hash.as_bytes()),
-        ..Default::default()
-    };
-    let mut block_env = block_env(header);
-    block_env.basefee = RevmU256::ZERO;
-    block_env.gas_limit = RevmU256::from(30_000_000);
+) -> Result<Vec<Requests>, EvmError> {
+    let config = state.chain_config()?;
+    let spec_id = spec_id(&config, header.timestamp);
 
-    match state {
-        EvmState::Store(db) => {
-            let mut evm = Evm::builder()
-                .with_db(db)
-                .with_block_env(block_env)
-                .with_tx_env(tx_env)
-                .with_spec_id(spec_id)
-                .build();
+    if spec_id < SpecId::PRAGUE {
+        return Ok(Default::default());
+    }
 
-            let transaction_result = evm.transact()?;
-            let mut result_state = transaction_result.state;
-            result_state.remove(&*SYSTEM_ADDRESS);
-            result_state.remove(&evm.block().coinbase);
-
-            evm.context.evm.db.commit(result_state);
-
-            Ok(transaction_result.result.into())
-        }
-        EvmState::Execution(db) => {
-            let mut evm = Evm::builder()
-                .with_db(db)
-                .with_block_env(block_env)
-                .with_tx_env(tx_env)
-                .with_spec_id(spec_id)
-                .build();
-
-            // Not necessary to commit to DB
-            let transaction_result = evm.transact()?;
-            Ok(transaction_result.result.into())
+    cfg_if::cfg_if! {
+        if #[cfg(feature = "l2")] {
+            return Ok(Default::default());
         }
     }
+
+    let deposit_contract_address = config.deposit_contract_address.ok_or(EvmError::Custom(
+        "deposit_contract_address config is missing".to_string(),
+    ))?;
+
+    let deposits = Requests::from_deposit_receipts(deposit_contract_address, receipts);
+    let withdrawals_data = REVM::read_withdrawal_requests(header, state);
+    let consolidation_data = REVM::dequeue_consolidation_requests(header, state);
+
+    let withdrawals = Requests::from_withdrawals_data(withdrawals_data.unwrap_or_default());
+    let consolidation = Requests::from_consolidation_data(consolidation_data.unwrap_or_default());
+
+    Ok(vec![deposits, withdrawals, consolidation])
 }

@@ -1,7 +1,8 @@
 use risc0_zkvm::guest::env;
 
-use ethrex_blockchain::{error::ChainError, validate_block, validate_gas_used};
-use ethrex_vm::{backends::revm::execute_block, db::EvmState, get_state_transitions};
+use ethrex_blockchain::{validate_block, validate_gas_used};
+use ethrex_vm::{backends::revm_b::REVM, db::EvmState};
+
 use zkvm_interface::{
     io::{ProgramInput, ProgramOutput},
     trie::{update_tries, verify_db},
@@ -16,7 +17,6 @@ fn main() {
     let mut state = EvmState::from(db.clone());
     let chain_config = state
         .chain_config()
-        .map_err(ChainError::from)
         .expect("Failed to get chain config from state");
 
     // Validate the block
@@ -36,7 +36,9 @@ fn main() {
         panic!("invalid database")
     };
 
-    let receipts = execute_block(&block, &mut state).expect("failed to execute block");
+    let result = REVM::execute_block(&block, &mut state).expect("failed to execute block");
+    let receipts = result.receipts;
+    let account_updates = result.account_updates;
     validate_gas_used(&receipts, &block.header).expect("invalid gas used");
 
     // Output gas for measurement purposes
@@ -46,12 +48,11 @@ fn main() {
         .unwrap_or_default();
     env::write(&cumulative_gas_used);
 
-    let account_updates = get_state_transitions(&mut state);
-
-    // Update tries and calculate final state root hash
+    // Update state trie
     update_tries(&mut state_trie, &mut storage_tries, &account_updates)
         .expect("failed to update state and storage tries");
 
+    // Calculate final state root hash and check
     let final_state_hash = state_trie.hash_no_commit();
     if final_state_hash != block.header.state_root {
         panic!("invalid final state trie");
