@@ -214,7 +214,15 @@ pub async fn handle_http_request(
     State(service_context): State<RpcApiContext>,
     body: String,
 ) -> Json<Value> {
-    let req: RpcRequest = serde_json::from_str(&body).unwrap();
+    let req: RpcRequest = match serde_json::from_str(&body) {
+        Ok(req) => req,
+        Err(e) => {
+            return rpc_response(
+                RpcRequestId::String("".to_string()),
+                Err(RpcErr::BadParams("Invalid request body".to_string())),
+            );
+        }
+    };
     let res = map_http_requests(&req, service_context).await;
     rpc_response(req.id, res)
 }
@@ -224,7 +232,15 @@ pub async fn handle_authrpc_request(
     auth_header: Option<TypedHeader<Authorization<Bearer>>>,
     body: String,
 ) -> Json<Value> {
-    let req: RpcRequest = serde_json::from_str(&body).unwrap();
+    let req: RpcRequest = match serde_json::from_str(&body) {
+        Ok(req) => req,
+        Err(e) => {
+            return rpc_response(
+                RpcRequestId::String("".to_string()),
+                Err(RpcErr::BadParams("Invalid request body".to_string())),
+            );
+        }
+    };
     match authenticate(&service_context.jwt_secret, auth_header) {
         Err(error) => rpc_response(req.id, Err(error)),
         Ok(()) => {
