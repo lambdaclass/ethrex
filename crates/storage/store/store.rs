@@ -20,7 +20,7 @@ use serde::{Deserialize, Serialize};
 use sha3::{Digest as _, Keccak256};
 use std::collections::{HashMap, HashSet};
 use std::fmt::Debug;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, RwLock};
 use tracing::info;
 
 /// Number of state trie segments to fetch concurrently during state sync
@@ -32,7 +32,7 @@ pub const MAX_SNAPSHOT_READS: usize = 100;
 #[derive(Debug, Clone)]
 pub struct Store {
     engine: Arc<dyn StoreEngine>,
-    pub mempool: Arc<Mutex<HashMap<H256, MempoolTransaction>>>,
+    pub mempool: Arc<RwLock<HashMap<H256, MempoolTransaction>>>,
     pub blobs_bundle_pool: Arc<Mutex<HashMap<H256, BlobsBundle>>>,
 }
 
@@ -83,18 +83,18 @@ impl Store {
             #[cfg(feature = "libmdbx")]
             EngineType::Libmdbx => Self {
                 engine: Arc::new(LibmdbxStore::new(path)?),
-                mempool: Arc::new(Mutex::new(HashMap::new())),
+                mempool: Arc::new(RwLock::new(HashMap::new())),
                 blobs_bundle_pool: Arc::new(Mutex::new(HashMap::new())),
             },
             EngineType::InMemory => Self {
                 engine: Arc::new(InMemoryStore::new()),
-                mempool: Arc::new(Mutex::new(HashMap::new())),
+                mempool: Arc::new(RwLock::new(HashMap::new())),
                 blobs_bundle_pool: Arc::new(Mutex::new(HashMap::new())),
             },
             #[cfg(feature = "redb")]
             EngineType::RedB => Self {
                 engine: Arc::new(RedBStore::new()?),
-                mempool: Arc::new(Mutex::new(HashMap::new())),
+                mempool: Arc::new(RwLock::new(HashMap::new())),
                 blobs_bundle_pool: Arc::new(Mutex::new(HashMap::new())),
             },
         };
@@ -292,8 +292,8 @@ impl Store {
     ) -> Result<(), StoreError> {
         let mut mempool = self
             .mempool
-            .lock()
-            .map_err(|error| StoreError::Custom(error.to_string()))?;
+            .write()
+            .map_err(|error| StoreError::MempoolWriteLock(error.to_string()))?;
         mempool.insert(hash, transaction);
 
         Ok(())
@@ -329,8 +329,8 @@ impl Store {
     pub fn remove_transaction_from_pool(&self, hash: &H256) -> Result<(), StoreError> {
         let mut mempool = self
             .mempool
-            .lock()
-            .map_err(|error| StoreError::Custom(error.to_string()))?;
+            .write()
+            .map_err(|error| StoreError::MempoolWriteLock(error.to_string()))?;
         if let Some(tx) = mempool.get(hash) {
             if matches!(tx.tx_type(), TxType::EIP4844) {
                 self.blobs_bundle_pool
@@ -345,6 +345,17 @@ impl Store {
         Ok(())
     }
 
+    pub fn remove_transactions_from_pool(&self, filter: &[Transaction]) -> Result<(), StoreError> {
+        let mut mempool = self
+            .mempool
+            .write()
+            .map_err(|err| StoreError::MempoolWriteLock(err.to_string()))?;
+        for tx in filter {
+            mempool.remove(&tx.compute_hash());
+        }
+        Ok(())
+    }
+
     /// Applies the filter and returns a set of suitable transactions from the mempool.
     /// These transactions will be grouped by sender and sorted by nonce
     pub fn filter_pool_transactions(
@@ -354,8 +365,8 @@ impl Store {
         let mut txs_by_sender: HashMap<Address, Vec<MempoolTransaction>> = HashMap::new();
         let mempool = self
             .mempool
-            .lock()
-            .map_err(|error| StoreError::Custom(error.to_string()))?;
+            .read()
+            .map_err(|error| StoreError::MempoolReadLock(error.to_string()))?;
 
         for (_, tx) in mempool.iter() {
             if filter(tx) {
@@ -377,8 +388,8 @@ impl Store {
     ) -> Result<Vec<H256>, StoreError> {
         let mempool = self
             .mempool
-            .lock()
-            .map_err(|error| StoreError::Custom(error.to_string()))?;
+            .read()
+            .map_err(|error| StoreError::MempoolReadLock(error.to_string()))?;
 
         let tx_set: HashSet<_> = mempool.iter().map(|(hash, _)| hash).collect();
         Ok(possible_hashes
@@ -606,6 +617,20 @@ impl Store {
         transaction_hash: H256,
     ) -> Result<Option<Transaction>, StoreError> {
         self.engine.get_transaction_by_hash(transaction_hash)
+    }
+
+    pub fn get_transaction_by_hash_from_pool(
+        &self,
+        transaction_hash: H256,
+    ) -> Result<Option<Transaction>, StoreError> {
+        let tx = self
+            .mempool
+            .read()
+            .map_err(|error| StoreError::MempoolReadLock(error.to_string()))?
+            .get(&transaction_hash)
+            .map(|e| e.clone().into());
+
+        Ok(tx)
     }
 
     pub fn get_transaction_by_location(
