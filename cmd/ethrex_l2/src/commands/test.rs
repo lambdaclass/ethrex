@@ -29,7 +29,7 @@ use tokio::task::JoinSet;
 // https://medium.com/@kaishinaw/erc20-using-hardhat-a-comprehensive-guide-3211efba98d4
 // If you want to modify the behaviour of the contract, edit the ERC20.sol file,
 // and compile it with solc.
-const ERC20: &str = include_str!("../ERC20-source/ERC20.bin/ERC20.bin").trim_ascii();
+const ERC20: &str = include_str!("../ERC20-source/ERC20.bin/TestToken.bin").trim_ascii();
 
 #[derive(Subcommand)]
 pub(crate) enum Command {
