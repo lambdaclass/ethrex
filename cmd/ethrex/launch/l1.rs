@@ -116,6 +116,13 @@ pub async fn launch(matches: clap::ArgMatches) {
         bootnodes.extend(networks::MEKONG_BOOTNODES.iter());
     }
 
+    if network == "ephemery" {
+        info!("Adding ephemery preset bootnodes");
+        // Set ephemery presets
+        network = String::from(networks::EPHEMERY_GENESIS_PATH);
+        bootnodes.extend(networks::EPHEMERY_BOOTNODES.iter());
+    }
+
     if bootnodes.is_empty() {
         warn!("No bootnodes specified. This node will not be able to connect to the network.");
     }
