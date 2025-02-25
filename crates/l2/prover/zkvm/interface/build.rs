@@ -30,7 +30,7 @@ fn main() {
                 features: features.clone(),
                 ..Default::default()
             },
-        )
+        );
 
         if cfg!(feature = "pico") {
             let output = std::process::Command::new("make")
@@ -44,6 +44,5 @@ fn main() {
                 );
             }
         }
-
     }
 }
