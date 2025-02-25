@@ -84,9 +84,9 @@ mod tests {
 
         let frag = FragV0 {
             block_number: 1,
-            seq: 0,
+            sequence: 0,
             is_last: true,
-            txs,
+            transactions: txs,
         };
 
         let message = VersionedMessage::from(frag);

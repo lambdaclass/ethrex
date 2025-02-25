@@ -9,7 +9,6 @@ use tree_hash::TreeHash;
 pub struct SealV0 {
     /// How many frags for this block were in this sequence
     pub total_frags: u64,
-
     // Header fields
     pub block_number: u64,
     pub gas_used: u64,
