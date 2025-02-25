@@ -6,9 +6,8 @@ help: ## 📚 Show help for each of the Makefile recipes
 	@grep -E '^[a-zA-Z0-9_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-30s\033[0m %s\n", $$1, $$2}'
 
 
-PROVER_BACKEND ?= sp1
 build: ## 🔨 Build the client
-	cargo build --workspace -F $(PROVER_BACKEND)
+	cargo build --workspace
 
 lint: ## 🧹 Linter check
 	cargo clippy --all-targets --all-features --workspace --exclude ethrex-prover -- -D warnings
