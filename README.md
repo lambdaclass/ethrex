@@ -330,8 +330,8 @@ At a high level, the following new parts are added to the node:
 | 6         | The network can be run as a Based Rollup, meaning sequencing is done by the Ethereum Validator set; transactions are sent to a private mempool and L1 Validators that opt into the L2 sequencing propose blocks for the L2 on every L1 block.                                                                                                                                                                  | ❌     |
 | 7         | The L2 can also be deployed using a custom native token, meaning that a certain ERC20 can be the common currency that's used for paying network fees.                                                                                                                                                                              | ❌     |
 | 8         | The L2 has added security mechanisms in place, running on Trusted Execution Environments and Multi Prover setup where multiple guarantees (Execution on TEEs, zkVMs/proving systems) are required for settlement on the L1. This better protects against possible security bugs on implementations.                                                         | ❌     |
-| 9         | Support multiple L2s sharing the same bridge contract on L1 for seamless interoperability.               | ❌     |
-| 10         | The L2 can be initialized in Validium Mode, meaning the Data Availability layer is no longer the L1, but rather a DA layer of the user's choice.                                                                                                                                                                  | ❌     |
+| 9         | The L2 can be initialized in Validium Mode, meaning the Data Availability layer is no longer the L1, but rather a DA layer of the user's choice.                                                                                                                                                                  | ❌     |
+| 10         | Support multiple L2s sharing the same bridge contract on L1 for seamless interoperability.               | ❌     |
 
 
 ### Milestone 0
