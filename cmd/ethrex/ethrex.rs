@@ -333,7 +333,7 @@ async fn main() {
     cfg_if::cfg_if! {
         if #[cfg(feature = "l2")] {
             let toml_config =
-                std::env::var("CONFIG_FILE").unwrap_or("cmd/ethrex/crates/l2/config.toml".to_string());
+                std::env::var("CONFIG_FILE").unwrap_or("config.toml".to_string());
 
             // match ethrex_common::parse_toml::read_toml(toml_config) {
             match ethrex_l2::parse_toml::read_toml(toml_config) {
