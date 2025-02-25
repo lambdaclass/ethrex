@@ -36,6 +36,7 @@ use eth::{
         GetTransactionByHashRequest, GetTransactionReceiptRequest,
     },
 };
+use ethrex_blockchain::mempool::Mempool;
 use ethrex_p2p::{sync::SyncManager, types::NodeRecord};
 use serde_json::Value;
 use std::{
@@ -71,6 +72,7 @@ use ethrex_storage::{error::StoreError, Store};
 #[derive(Debug, Clone)]
 pub struct RpcApiContext {
     storage: Store,
+    mempool: Arc<Mempool>,
     jwt_secret: Bytes,
     local_p2p_node: Node,
     local_node_record: NodeRecord,
@@ -145,6 +147,7 @@ pub async fn start_api(
     http_addr: SocketAddr,
     authrpc_addr: SocketAddr,
     storage: Store,
+    mempool: Arc<Mempool>,
     jwt_secret: Bytes,
     local_p2p_node: Node,
     local_node_record: NodeRecord,
@@ -157,6 +160,7 @@ pub async fn start_api(
     let active_filters = Arc::new(Mutex::new(HashMap::new()));
     let service_context = RpcApiContext {
         storage: storage.clone(),
+        mempool: mempool.clone(),
         jwt_secret,
         local_p2p_node,
         local_node_record,
@@ -426,6 +430,7 @@ where
 mod tests {
     use super::*;
     use crate::utils::test_utils::{example_local_node_record, example_p2p_node};
+    use ethrex_blockchain::Blockchain;
     use ethrex_common::{
         constants::MAINNET_DEPOSIT_CONTRACT_ADDRESS,
         types::{ChainConfig, Genesis},
@@ -453,11 +458,16 @@ mod tests {
         let local_p2p_node = example_p2p_node();
         let storage =
             Store::new("temp.db", EngineType::InMemory).expect("Failed to create test DB");
-        storage.set_chain_config(&example_chain_config()).unwrap();
+        let blockchain = Blockchain::default_with_store(storage);
+        blockchain
+            .storage
+            .set_chain_config(&example_chain_config())
+            .unwrap();
         let context = RpcApiContext {
             local_p2p_node,
             local_node_record: example_local_node_record(),
-            storage,
+            storage: blockchain.storage,
+            mempool: blockchain.mempool,
             jwt_secret: Default::default(),
             active_filters: Default::default(),
             syncer: Arc::new(TokioMutex::new(SyncManager::dummy())),
@@ -538,8 +548,10 @@ mod tests {
         // Setup initial storage
         let storage =
             Store::new("temp.db", EngineType::InMemory).expect("Failed to create test DB");
+        let blockchain = Blockchain::default_with_store(storage);
         let genesis = read_execution_api_genesis_file();
-        storage
+        blockchain
+            .storage
             .add_initial_state(genesis)
             .expect("Failed to add genesis block to DB");
         let local_p2p_node = example_p2p_node();
@@ -547,7 +559,8 @@ mod tests {
         let context = RpcApiContext {
             local_p2p_node,
             local_node_record: example_local_node_record(),
-            storage,
+            storage: blockchain.storage,
+            mempool: blockchain.mempool,
             jwt_secret: Default::default(),
             active_filters: Default::default(),
             syncer: Arc::new(TokioMutex::new(SyncManager::dummy())),
@@ -573,8 +586,10 @@ mod tests {
         // Setup initial storage
         let storage =
             Store::new("temp.db", EngineType::InMemory).expect("Failed to create test DB");
+        let blockchain = Blockchain::default_with_store(storage);
         let genesis = read_execution_api_genesis_file();
-        storage
+        blockchain
+            .storage
             .add_initial_state(genesis)
             .expect("Failed to add genesis block to DB");
         let local_p2p_node = example_p2p_node();
@@ -582,7 +597,8 @@ mod tests {
         let context = RpcApiContext {
             local_p2p_node,
             local_node_record: example_local_node_record(),
-            storage,
+            storage: blockchain.storage,
+            mempool: blockchain.mempool,
             jwt_secret: Default::default(),
             active_filters: Default::default(),
             syncer: Arc::new(TokioMutex::new(SyncManager::dummy())),
@@ -638,15 +654,21 @@ mod tests {
         // Setup initial storage
         let storage =
             Store::new("temp.db", EngineType::InMemory).expect("Failed to create test DB");
-        storage.set_chain_config(&example_chain_config()).unwrap();
-        let chain_id = storage
+        let blockchain = Blockchain::default_with_store(storage);
+        blockchain
+            .storage
+            .set_chain_config(&example_chain_config())
+            .unwrap();
+        let chain_id = blockchain
+            .storage
             .get_chain_config()
             .expect("failed to get chain_id")
             .chain_id
             .to_string();
         let local_p2p_node = example_p2p_node();
         let context = RpcApiContext {
-            storage,
+            storage: blockchain.storage,
+            mempool: blockchain.mempool,
             local_p2p_node,
             local_node_record: example_local_node_record(),
             jwt_secret: Default::default(),

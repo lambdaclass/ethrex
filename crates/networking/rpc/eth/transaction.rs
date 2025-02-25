@@ -621,9 +621,10 @@ impl RpcHandler for SendRawTransactionRequest {
                 wrapped_blob_tx.tx.clone(),
                 wrapped_blob_tx.blobs_bundle.clone(),
                 &context.storage,
+                &context.mempool,
             )
         } else {
-            mempool::add_transaction(self.to_transaction(), &context.storage)
+            mempool::add_transaction(self.to_transaction(), &context.storage, &context.mempool)
         }?;
         serde_json::to_value(format!("{:#x}", hash))
             .map_err(|error| RpcErr::Internal(error.to_string()))

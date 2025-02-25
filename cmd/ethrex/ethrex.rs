@@ -178,6 +178,7 @@ async fn main() {
         Store::new(&data_dir, engine_type).expect("Failed to create Store")
     };
     let blockchain = Blockchain::new(evm.clone(), store.clone());
+    let mempool = blockchain.mempool.clone();
 
     let genesis = read_genesis_file(&network);
     store
@@ -313,6 +314,7 @@ async fn main() {
                 http_socket_addr,
                 authrpc_socket_addr,
                 store.clone(),
+                mempool.clone(),
                 jwt_secret_clone,
                 local_p2p_node,
                 local_node_record,
@@ -386,6 +388,7 @@ async fn main() {
                 signer,
                 peer_table.clone(),
                 store,
+                mempool
             )
             .await.expect("Network starts");
             tracker.spawn(ethrex_p2p::periodically_show_peer_stats(peer_table.clone()));

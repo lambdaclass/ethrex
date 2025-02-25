@@ -58,6 +58,7 @@ where
         stream,
         codec,
         context.storage,
+        context.mempool,
         context.broadcast,
     ))
 }
@@ -84,6 +85,7 @@ where
         stream,
         codec,
         context.storage,
+        context.mempool,
         context.broadcast,
     ))
 }
