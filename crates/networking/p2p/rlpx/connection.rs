@@ -47,8 +47,9 @@ const CAP_P2P_5: (Capability, u8) = (Capability::P2p, 5);
 const CAP_ETH_68: (Capability, u8) = (Capability::Eth, 68);
 const CAP_SNAP_1: (Capability, u8) = (Capability::Snap, 1);
 const SUPPORTED_CAPABILITIES: [(Capability, u8); 3] = [CAP_P2P_5, CAP_ETH_68, CAP_SNAP_1];
-const PERIODIC_TASKS_CHECK_INTERVAL: std::time::Duration = std::time::Duration::from_secs(15);
-const BROADCAST_TX_FROM_MEMPOOL_INTERVAL: std::time::Duration = std::time::Duration::from_secs(5);
+const PERIODIC_PING_INTERVAL: std::time::Duration = std::time::Duration::from_secs(10);
+const PERIODIC_TX_BROADCAST_INTERVAL: std::time::Duration = std::time::Duration::from_secs(5);
+const PERIODIC_TASKS_CHECK_INTERVAL: std::time::Duration = std::time::Duration::from_secs(5);
 
 pub(crate) type Aes256Ctr64BE = ctr::Ctr64BE<aes::Aes256>;
 
@@ -76,7 +77,7 @@ pub(crate) struct RLPxConnection<S> {
     capabilities: Vec<(Capability, u8)>,
     negotiated_eth_version: u8,
     negotiated_snap_version: u8,
-    next_periodic_task_check: Instant,
+    next_periodic_ping: Instant,
     next_tx_broadcast: Instant,
     broadcasted_txs: HashSet<H256>,
     /// Send end of the channel used to broadcast messages
@@ -107,8 +108,8 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
             capabilities: vec![],
             negotiated_eth_version: 0,
             negotiated_snap_version: 0,
-            next_periodic_task_check: Instant::now() + PERIODIC_TASKS_CHECK_INTERVAL,
-            next_tx_broadcast: Instant::now() + BROADCAST_TX_FROM_MEMPOOL_INTERVAL,
+            next_periodic_ping: Instant::now() + PERIODIC_TASKS_CHECK_INTERVAL,
+            next_tx_broadcast: Instant::now() + PERIODIC_TX_BROADCAST_INTERVAL,
             broadcasted_txs: HashSet::new(),
             connection_broadcast_send: connection_broadcast,
         }
@@ -316,10 +317,8 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
                 }
                 // Allow an interruption to check periodic tasks
                 _ = sleep(PERIODIC_TASKS_CHECK_INTERVAL) => (), // noop
-                _ = sleep(BROADCAST_TX_FROM_MEMPOOL_INTERVAL) => ()
             }
             self.check_periodic_tasks().await?;
-            self.check_if_should_broadcast_tx().await?;
         }
     }
 
@@ -333,18 +332,14 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
     }
 
     async fn check_periodic_tasks(&mut self) -> Result<(), RLPxError> {
-        if Instant::now() >= self.next_periodic_task_check {
+        if Instant::now() >= self.next_periodic_ping {
             self.send(Message::Ping(PingMessage {})).await?;
             log_peer_debug(&self.node, "Ping sent");
-            self.next_periodic_task_check = Instant::now() + PERIODIC_TASKS_CHECK_INTERVAL;
+            self.next_periodic_ping = Instant::now() + PERIODIC_PING_INTERVAL;
         };
-        Ok(())
-    }
-
-    async fn check_if_should_broadcast_tx(&mut self) -> Result<(), RLPxError> {
         if Instant::now() >= self.next_tx_broadcast {
             self.send_new_pooled_tx_hashes().await?;
-            self.next_tx_broadcast = Instant::now() + BROADCAST_TX_FROM_MEMPOOL_INTERVAL;
+            self.next_tx_broadcast = Instant::now() + PERIODIC_TX_BROADCAST_INTERVAL;
         }
         Ok(())
     }
