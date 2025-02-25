@@ -1,4 +1,5 @@
 mod bytecode_fetcher;
+mod metrics;
 mod state_healing;
 mod state_sync;
 mod storage_fetcher;
@@ -14,6 +15,7 @@ use ethrex_common::{
 use ethrex_rlp::error::RLPDecodeError;
 use ethrex_storage::{error::StoreError, EngineType, Store, STATE_TRIE_SEGMENTS};
 use ethrex_trie::{Nibbles, Node, TrieError, TrieState};
+use metrics::SyncMetrics;
 use state_healing::heal_state_trie;
 use state_sync::state_sync;
 use std::{array, collections::HashMap, sync::Arc};
@@ -93,6 +95,7 @@ pub struct SyncManager {
     // Used for cancelling long-living tasks upon shutdown
     cancel_token: CancellationToken,
     pub blockchain: Blockchain,
+    metrics: SyncMetrics,
 }
 
 impl SyncManager {
@@ -110,6 +113,7 @@ impl SyncManager {
             trie_rebuilder: None,
             cancel_token,
             blockchain,
+            metrics: SyncMetrics::default(),
         }
     }
 
@@ -128,6 +132,7 @@ impl SyncManager {
             blockchain: Blockchain::default_with_store(
                 Store::new("", EngineType::InMemory).unwrap(),
             ),
+            metrics: SyncMetrics::default(),
         }
     }
 
@@ -181,6 +186,12 @@ impl SyncManager {
             Ok(res) => res,
             Err(e) => return Err(e.into()),
         };
+
+        let current_head_block_num = store
+            .get_block_header_by_hash(current_head)?
+            .unwrap_or_default()
+            .number;
+        self.metrics = SyncMetrics::new(current_head_block_num, current_head);
 
         loop {
             debug!("Requesting Block Headers from {current_head}");
@@ -354,11 +365,17 @@ impl SyncManager {
                     .get_block_header_by_hash(first_block_hash)?
                     .map_or(0, |h| h.number);
 
+                let last_block_hash = chunk.last().map_or(H256::default(), |a| *a);
+                let last_block_number = store
+                    .get_block_header_by_hash(last_block_hash)?
+                    .map_or(0, |h| h.number);
+
                 debug!(
-                    "Received {} Block Bodies, starting from block hash {:?} with number: {}",
-                    block_bodies_len, first_block_hash, first_block_header_number
+                    "Received {} Block Bodies, starting from block hash {:?} with number: {} to block hash {:?} with number {}",
+                    block_bodies_len, first_block_hash, first_block_header_number, last_block_hash, last_block_number
                 );
 
+                let mut time_spent_applying_account_updates = 0;
                 // Execute and store blocks
                 for (hash, body) in chunk
                     .drain(..block_bodies_len)
@@ -369,11 +386,15 @@ impl SyncManager {
                         .ok_or(SyncError::CorruptDB)?;
                     let number = header.number;
                     let block = Block::new(header, body);
-                    if let Err(error) = self.blockchain.add_block(&block) {
-                        warn!("Failed to add block during FullSync: {error}");
-                        self.invalid_ancestors.insert(hash, last_valid_hash);
-                        return Err(error.into());
-                    }
+                    match self.blockchain.add_block(&block) {
+                        Ok(elapsed) => time_spent_applying_account_updates += elapsed,
+                        Err(error) => {
+                            warn!("Failed to add block during FullSync: {error}");
+                            self.invalid_ancestors.insert(hash, last_valid_hash);
+                            return Err(error.into());
+                        }
+                    };
+
                     store.set_canonical_block(number, hash)?;
                     store.update_latest_block_number(number)?;
                     last_valid_hash = hash;
@@ -383,6 +404,12 @@ impl SyncManager {
                     );
                 }
                 debug!("Executed & stored {} blocks", block_bodies_len);
+                self.metrics.log_cycle(
+                    block_bodies_len as u32,
+                    last_block_number,
+                    last_block_hash,
+                    time_spent_applying_account_updates,
+                );
 
                 if chunk.is_empty() {
                     current_chunk_idx += 1;

@@ -48,7 +48,7 @@ impl Blockchain {
         }
     }
 
-    pub fn add_block(&self, block: &Block) -> Result<(), ChainError> {
+    pub fn add_block(&self, block: &Block) -> Result<u64, ChainError> {
         let since = Instant::now();
 
         let block_hash = block.header.compute_block_hash();
@@ -73,11 +73,13 @@ impl Blockchain {
         validate_gas_used(&receipts, &block.header)?;
 
         // Apply the account updates over the last block's state and compute the new state root
+        let account_updates_started_at = std::time::Instant::now();
         let new_state_root = state
             .database()
             .ok_or(ChainError::StoreError(StoreError::MissingStore))?
             .apply_account_updates(block.header.parent_hash, &account_updates)?
             .ok_or(ChainError::ParentStateNotFound)?;
+        let account_updates_elapsed = account_updates_started_at.elapsed().as_secs();
 
         // Check state root matches the one in block header after execution
         validate_state_root(&block.header, new_state_root)?;
@@ -98,7 +100,7 @@ impl Blockchain {
             info!("[METRIC] BLOCK EXECUTION THROUGHPUT: {throughput} Gigagas/s TIME SPENT: {interval} msecs");
         }
 
-        Ok(())
+        Ok(account_updates_elapsed)
     }
 
     //TODO: Forkchoice Update shouldn't be part of this function
