@@ -26,7 +26,6 @@ use ethrex_storage::error::StoreError;
 use ethrex_storage::Store;
 use ethrex_vm::backends::BlockExecutionResult;
 use ethrex_vm::backends::EVM;
-use ethrex_vm::db::evm_state;
 use fork_choice::apply_fork_choice;
 use tracing::{error, info, warn};
 
