@@ -16,6 +16,7 @@ pub struct EnvV0 {
     pub beneficiary: Address,
     pub timestamp: u64,
     pub gas_limit: u64,
+    #[serde(rename = "baseFee")]
     pub basefee: u64,
     pub difficulty: U256,
     pub prevrandao: H256,
