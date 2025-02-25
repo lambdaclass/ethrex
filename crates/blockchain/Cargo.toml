@@ -24,6 +24,7 @@ ethrex-metrics = { path = "./metrics", default-features = false }
 [dev-dependencies]
 serde_json.workspace = true
 hex = "0.4.3"
+hex-literal.workspace = true
 
 [lib]
 path = "./blockchain.rs"
