@@ -11,7 +11,12 @@ use ethrex_vm::execution_db::ToExecDB;
 use zkvm_interface::io::ProgramInput;
 
 #[cfg(not(any(feature = "sp1", feature = "risc0")))]
-compile_error!("Choose prover backends (sp1, risc0).");
+compile_error!(
+    "Choose prover backends (sp1, risc0).
+To do so either:
+- Pass a feature flag to cargo (--feature or -F) with the desired backed. e.g: cargo build --workspace -F sp1.
+- Run `make build` in the project root. You can use the PROVER_BACKEND variable to customize the backend. e.g: make build PROVER_BACKEND=sp1"
+);
 
 #[derive(Parser, Debug)]
 struct Args {
