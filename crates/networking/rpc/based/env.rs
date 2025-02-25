@@ -1,9 +1,9 @@
-use crate::{utils::RpcErr, RpcHandler};
 use ethrex_common::{Address, H256, U256};
 use serde::{Deserialize, Serialize};
 use ssz_types::{typenum, VariableList};
-use std::collections::HashMap;
 use tree_hash::TreeHash;
+
+use crate::{utils::RpcErr, RpcApiContext};
 
 pub type MaxExtraDataSize = typenum::U256;
 pub type ExtraData = VariableList<u8, MaxExtraDataSize>;
@@ -25,37 +25,8 @@ pub struct EnvV0 {
     pub parent_beacon_block_root: H256,
 }
 
-impl RpcHandler for EnvV0 {
-    fn parse(params: &Option<Vec<serde_json::Value>>) -> Result<Self, RpcErr> {
-        tracing::info!("parsing env");
-
-        let Some(params) = params else {
-            return Err(RpcErr::InvalidEnv("Expected some params".to_string()));
-        };
-
-        let envelope: HashMap<String, serde_json::Value> = serde_json::from_value(
-            params
-                .first()
-                .ok_or(RpcErr::InvalidEnv("Expected envelope".to_string()))?
-                .clone(),
-        )
-        .map_err(|e| RpcErr::InvalidEnv(e.to_string()))?;
-
-        // TODO: Parse and validate gateway's signature
-
-        serde_json::from_value(
-            envelope
-                .get("message")
-                .ok_or_else(|| RpcErr::InvalidEnv("Expected message".to_string()))?
-                .clone(),
-        )
-        .map_err(|e| RpcErr::InvalidEnv(e.to_string()))
-    }
-
-    fn handle(
-        &self,
-        _context: crate::RpcApiContext,
-    ) -> Result<serde_json::Value, crate::utils::RpcErr> {
+impl EnvV0 {
+    pub fn handle(&self, _context: RpcApiContext) -> Result<serde_json::Value, RpcErr> {
         tracing::info!("handling env");
         Ok(serde_json::Value::Null)
     }

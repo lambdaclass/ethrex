@@ -1,6 +1,12 @@
-use crate::based::{env::EnvV0, frag::FragV0, seal::SealV0};
+use crate::{
+    based::{env::EnvV0, frag::FragV0, seal::SealV0},
+    utils::{RpcErr, RpcRequest},
+    RpcApiContext,
+};
+use ethrex_common::{Public, Signature};
 use serde::{Deserialize, Serialize};
 use strum_macros::AsRefStr;
+use tree_hash::TreeHash;
 use tree_hash_derive::TreeHash;
 
 #[derive(Debug, Clone, PartialEq, Eq, TreeHash, Serialize, Deserialize, AsRefStr)]
@@ -28,6 +34,97 @@ impl From<SealV0> for VersionedMessage {
 impl From<EnvV0> for VersionedMessage {
     fn from(value: EnvV0) -> Self {
         Self::EnvV0(value)
+    }
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct SignedMessage {
+    pub signature: Signature,
+    pub message: VersionedMessage,
+}
+
+impl SignedMessage {
+    fn parse(params: &Option<Vec<serde_json::Value>>) -> Result<Self, RpcErr> {
+        tracing::info!("Parsing based message");
+
+        let Some(params) = params else {
+            return Err(RpcErr::InvalidBasedMessage(
+                "Expected some params".to_string(),
+            ));
+        };
+
+        serde_json::from_value(
+            params
+                .first()
+                .ok_or(RpcErr::InvalidBasedMessage(
+                    "Expected based message".to_string(),
+                ))?
+                .clone(),
+        )
+        .map_err(|e| RpcErr::InvalidBasedMessage(e.to_string()))
+    }
+
+    pub fn call_env(req: &RpcRequest, context: RpcApiContext) -> Result<serde_json::Value, RpcErr> {
+        let request = Self::parse(&req.params)?;
+        if let VersionedMessage::EnvV0(env) = &request.message {
+            request.check_signature(&context.gateway_pubkey)?;
+            env.handle(context)
+        } else {
+            Err(RpcErr::InvalidBasedMessage(
+                "Expected Env message".to_string(),
+            ))
+        }
+    }
+
+    pub fn call_new_frag(
+        req: &RpcRequest,
+        context: RpcApiContext,
+    ) -> Result<serde_json::Value, RpcErr> {
+        let request = Self::parse(&req.params)?;
+        if let VersionedMessage::FragV0(new_frag) = &request.message {
+            request.check_signature(&context.gateway_pubkey)?;
+            new_frag.handle(context)
+        } else {
+            Err(RpcErr::InvalidBasedMessage(
+                "Expected New Frag message".to_string(),
+            ))
+        }
+    }
+
+    pub fn call_seal_frag(
+        req: &RpcRequest,
+        context: RpcApiContext,
+    ) -> Result<serde_json::Value, RpcErr> {
+        let request = Self::parse(&req.params)?;
+        if let VersionedMessage::SealV0(seal_frag) = &request.message {
+            request.check_signature(&context.gateway_pubkey)?;
+            seal_frag.handle(context)
+        } else {
+            Err(RpcErr::InvalidBasedMessage(
+                "Expected Seal Frag message".to_string(),
+            ))
+        }
+    }
+
+    fn check_signature(&self, expected: &Public) -> Result<(), RpcErr> {
+        let message = libsecp256k1::Message::parse(&self.message.tree_hash_root().0);
+        let signature = libsecp256k1::Signature::parse_standard_slice(&self.signature[..64])
+            .map_err(|e| RpcErr::InvalidBasedMessage(format!("Invalid signature: {e}")))?;
+        let recovery_id = libsecp256k1::RecoveryId::parse_rpc(self.signature.0[64])
+            .map_err(|_| RpcErr::InvalidBasedMessage(format!("Invalid signature recovery ID")))?;
+
+        let signer = libsecp256k1::recover(&message, &signature, &recovery_id)
+            .map_err(|_| RpcErr::InvalidBasedMessage(format!("Invalid signature")))?;
+
+        // First byte is compression flag, which is always 0x04 for uncompressed keys
+        if signer.serialize()[1..] != expected.0 {
+            return Err(RpcErr::InvalidBasedMessage(format!(
+                "Unexpected signer: 0x{}",
+                hex::encode(signer.serialize())
+            )));
+        }
+
+        Ok(())
     }
 }
 

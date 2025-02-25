@@ -1,7 +1,10 @@
 use bytes::Bytes;
 use directories::ProjectDirs;
 use ethrex_blockchain::Blockchain;
-use ethrex_common::types::{Block, Genesis};
+use ethrex_common::{
+    types::{Block, Genesis},
+    Public,
+};
 use ethrex_p2p::{
     kademlia::KademliaTable,
     network::{node_id_from_signing_key, peer_table},
@@ -282,6 +285,9 @@ async fn main() {
             let gateway_authrpc_jwtsecret = matches
                 .get_one::<String>("gateway.jwtsecret")
                 .expect("gateway.jwtsecret is required");
+            let gateway_pubkey = matches
+                .get_one::<String>("gateway.pubkey")
+                .expect("gateway.pubkey is required");
 
             let gateway_http_socket_addr =
                 parse_socket_addr(gateway_addr, gateway_eth_port).expect("Failed to parse gateway http address and port");
@@ -292,6 +298,7 @@ async fn main() {
 
             let gateway_jwtsecret = read_jwtsecret_file(gateway_authrpc_jwtsecret);
             let gateway_auth_client = EngineClient::new(&gateway_authrpc_socket_addr.to_string(), gateway_jwtsecret);
+            let gateway_pubkey = Public::from_str(&gateway_pubkey).expect("Failed to parse gateway pubkey");
 
             let rpc_api = ethrex_rpc::start_api(
                 http_socket_addr,
@@ -303,6 +310,7 @@ async fn main() {
                 syncer,
                 gateway_eth_client,
                 gateway_auth_client,
+                gateway_pubkey,
             )
             .into_future();
 

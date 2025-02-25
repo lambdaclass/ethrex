@@ -36,6 +36,7 @@ use eth::{
         GetTransactionByHashRequest, GetTransactionReceiptRequest,
     },
 };
+use ethrex_common::Public;
 use ethrex_p2p::{sync::SyncManager, types::NodeRecord};
 use serde_json::Value;
 use std::{
@@ -57,7 +58,7 @@ mod authentication;
 #[cfg(feature = "based")]
 mod based;
 #[cfg(feature = "based")]
-use based::{env::EnvV0, frag::FragV0, seal::SealV0};
+use based::versioned_message::SignedMessage;
 pub mod engine;
 mod eth;
 mod net;
@@ -84,6 +85,8 @@ pub struct RpcApiContext {
     gateway_eth_client: EthClient,
     #[cfg(feature = "based")]
     gateway_auth_client: EngineClient,
+    #[cfg(feature = "based")]
+    gateway_pubkey: Public,
 }
 
 /// Describes the client's current sync status:
@@ -155,6 +158,7 @@ pub async fn start_api(
     syncer: SyncManager,
     #[cfg(feature = "based")] gateway_eth_client: EthClient,
     #[cfg(feature = "based")] gateway_auth_client: EngineClient,
+    #[cfg(feature = "based")] gateway_pubkey: Public,
 ) {
     // TODO: Refactor how filters are handled,
     // filters are used by the filters endpoints (eth_newFilter, eth_getFilterChanges, ...etc)
@@ -170,6 +174,8 @@ pub async fn start_api(
         gateway_eth_client,
         #[cfg(feature = "based")]
         gateway_auth_client,
+        #[cfg(feature = "based")]
+        gateway_pubkey,
     };
 
     // Periodically clean up the active filters for the filters endpoints.
@@ -408,11 +414,11 @@ pub fn map_net_requests(req: &RpcRequest, contex: RpcApiContext) -> Result<Value
 }
 
 #[cfg(feature = "based")]
-pub fn map_based_requests(req: &RpcRequest, _context: RpcApiContext) -> Result<Value, RpcErr> {
+pub fn map_based_requests(req: &RpcRequest, context: RpcApiContext) -> Result<Value, RpcErr> {
     match req.method.as_str() {
-        "based_env" => EnvV0::call(req, _context),
-        "based_newFrag" => FragV0::call(req, _context),
-        "based_sealFrag" => SealV0::call(req, _context),
+        "based_env" => SignedMessage::call_env(req, context),
+        "based_newFrag" => SignedMessage::call_new_frag(req, context),
+        "based_sealFrag" => SignedMessage::call_seal_frag(req, context),
         unknown_based_method => Err(RpcErr::MethodNotFound(unknown_based_method.to_owned())),
     }
 }
@@ -484,6 +490,8 @@ mod tests {
             gateway_eth_client: EthClient::new(""),
             #[cfg(feature = "based")]
             gateway_auth_client: EngineClient::new("", Bytes::default()),
+            #[cfg(feature = "based")]
+            gateway_pubkey: Default::default(),
         };
         let enr_url = context.local_node_record.enr_url().unwrap();
         let result = map_http_requests(&request, context).await;
@@ -574,6 +582,8 @@ mod tests {
             gateway_eth_client: EthClient::new(""),
             #[cfg(feature = "based")]
             gateway_auth_client: EngineClient::new("", Bytes::default()),
+            #[cfg(feature = "based")]
+            gateway_pubkey: Default::default(),
         };
         let result = map_http_requests(&request, context).await;
         let response = rpc_response(request.id, result);
@@ -609,6 +619,8 @@ mod tests {
             gateway_eth_client: EthClient::new(""),
             #[cfg(feature = "based")]
             gateway_auth_client: EngineClient::new("", Bytes::default()),
+            #[cfg(feature = "based")]
+            gateway_pubkey: Default::default(),
         };
         let result = map_http_requests(&request, context).await;
         let response =
@@ -675,6 +687,8 @@ mod tests {
             gateway_eth_client: EthClient::new(""),
             #[cfg(feature = "based")]
             gateway_auth_client: EngineClient::new("", Bytes::default()),
+            #[cfg(feature = "based")]
+            gateway_pubkey: Default::default(),
         };
         // Process request
         let result = map_http_requests(&request, context).await;

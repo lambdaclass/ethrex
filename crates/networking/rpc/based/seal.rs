@@ -1,7 +1,6 @@
-use crate::{utils::RpcErr, RpcHandler};
+use crate::{utils::RpcErr, RpcApiContext};
 use ethrex_common::H256;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 use tree_hash::TreeHash;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -20,37 +19,8 @@ pub struct SealV0 {
     pub block_hash: H256,
 }
 
-impl RpcHandler for SealV0 {
-    fn parse(params: &Option<Vec<serde_json::Value>>) -> Result<Self, crate::utils::RpcErr> {
-        tracing::info!("parsing seal");
-
-        let Some(params) = params else {
-            return Err(RpcErr::InvalidSeal("Expected some params".to_string()));
-        };
-
-        let envelope: HashMap<String, serde_json::Value> = serde_json::from_value(
-            params
-                .first()
-                .ok_or(RpcErr::InvalidSeal("Expected envelope".to_string()))?
-                .clone(),
-        )
-        .map_err(|e| RpcErr::InvalidSeal(e.to_string()))?;
-
-        // TODO: Parse and validate gateway's signature
-
-        serde_json::from_value(
-            envelope
-                .get("message")
-                .ok_or_else(|| RpcErr::InvalidSeal("Expected message".to_string()))?
-                .clone(),
-        )
-        .map_err(|e| RpcErr::InvalidSeal(e.to_string()))
-    }
-
-    fn handle(
-        &self,
-        _context: crate::RpcApiContext,
-    ) -> Result<serde_json::Value, crate::utils::RpcErr> {
+impl SealV0 {
+    pub fn handle(&self, _context: RpcApiContext) -> Result<serde_json::Value, RpcErr> {
         tracing::info!("handling seal");
         Ok(serde_json::Value::Null)
     }

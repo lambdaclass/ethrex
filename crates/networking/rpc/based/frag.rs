@@ -1,7 +1,6 @@
-use crate::{utils::RpcErr, RpcHandler};
+use crate::{utils::RpcErr, RpcApiContext};
 use serde::{Deserialize, Serialize};
 use ssz_types::{typenum, VariableList};
-use std::collections::HashMap;
 use tree_hash_derive::TreeHash;
 
 pub type MaxBytesPerTransaction = typenum::U1073741824;
@@ -24,37 +23,8 @@ pub struct FragV0 {
     pub transactions: Transactions,
 }
 
-impl RpcHandler for FragV0 {
-    fn parse(params: &Option<Vec<serde_json::Value>>) -> Result<Self, crate::utils::RpcErr> {
-        tracing::info!("parsing frag");
-
-        let Some(params) = params else {
-            return Err(RpcErr::InvalidFrag("Expected some params".to_string()));
-        };
-
-        let envelope: HashMap<String, serde_json::Value> = serde_json::from_value(
-            params
-                .first()
-                .ok_or(RpcErr::InvalidFrag("Expected envelope".to_string()))?
-                .clone(),
-        )
-        .map_err(|e| RpcErr::InvalidFrag(e.to_string()))?;
-
-        // TODO: Parse and validate gateway's signature
-
-        serde_json::from_value(
-            envelope
-                .get("message")
-                .ok_or_else(|| RpcErr::InvalidFrag("Expected message".to_string()))?
-                .clone(),
-        )
-        .map_err(|e| RpcErr::InvalidFrag(e.to_string()))
-    }
-
-    fn handle(
-        &self,
-        _context: crate::RpcApiContext,
-    ) -> Result<serde_json::Value, crate::utils::RpcErr> {
+impl FragV0 {
+    pub fn handle(&self, _context: RpcApiContext) -> Result<serde_json::Value, RpcErr> {
         tracing::info!("handling frag");
         Ok(serde_json::Value::Null)
     }

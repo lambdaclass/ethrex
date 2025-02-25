@@ -23,9 +23,7 @@ pub enum RpcErr {
     InvalidForkChoiceState(String),
     InvalidPayloadAttributes(String),
     UnknownPayload(String),
-    InvalidEnv(String),
-    InvalidFrag(String),
-    InvalidSeal(String),
+    InvalidBasedMessage(String),
 }
 
 impl From<RpcErr> for RpcErrorMetadata {
@@ -125,20 +123,10 @@ impl From<RpcErr> for RpcErrorMetadata {
                 data: None,
                 message: format!("Unknown payload: {context}"),
             },
-            RpcErr::InvalidEnv(context) => RpcErrorMetadata {
+            RpcErr::InvalidBasedMessage(context) => RpcErrorMetadata {
                 code: -38004,
                 data: None,
-                message: format!("Invalid env: {context}"),
-            },
-            RpcErr::InvalidFrag(context) => RpcErrorMetadata {
-                code: -38005,
-                data: None,
-                message: format!("Invalid frag: {context}"),
-            },
-            RpcErr::InvalidSeal(context) => RpcErrorMetadata {
-                code: -38006,
-                data: None,
-                message: format!("Invalid seal: {context}"),
+                message: format!("Invalid based message: {context}"),
             },
         }
     }
@@ -352,6 +340,8 @@ pub mod test_utils {
             gateway_eth_client,
             #[cfg(feature = "based")]
             gateway_auth_client,
+            #[cfg(feature = "based")]
+            Default::default(),
         )
         .await;
     }

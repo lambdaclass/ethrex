@@ -26,6 +26,7 @@ rand.workspace = true
 tokio-util.workspace = true
 reqwest.workspace = true
 k256 = { version = "0.13.3", features = ["ecdh"] }
+libsecp256k1 = "0.7.1"
 sha3 = "0.10.8"
 
 # Clients

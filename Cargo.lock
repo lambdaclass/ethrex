@@ -2945,6 +2945,7 @@ dependencies = [
  "jsonwebtoken",
  "k256",
  "keccak-hash",
+ "libsecp256k1",
  "rand 0.8.5",
  "reqwest",
  "secp256k1",
