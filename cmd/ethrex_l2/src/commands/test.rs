@@ -9,12 +9,17 @@ use ethrex_rpc::{
     clients::eth::{eth_sender::Overrides, EthClient},
     types::receipt::RpcReceipt,
 };
+use itertools::Itertools;
 use keccak_hash::keccak;
-use secp256k1::SecretKey;
+use secp256k1::{PublicKey, SecretKey};
 use std::{
     fs::File,
     io::{self, BufRead},
     path::Path,
+    sync::{
+        atomic::{AtomicU64, Ordering},
+        Arc,
+    },
     thread::sleep,
     time::Duration,
 };
@@ -24,7 +29,7 @@ use tokio::task::JoinSet;
 // https://medium.com/@kaishinaw/erc20-using-hardhat-a-comprehensive-guide-3211efba98d4
 // If you want to create a new one, follow the steps above and take
 // the resulting artifact from the hardhat project.
-const ERC20: &str = include_str!("./erc20.bin").trim_ascii();
+const ERC20: &str = include_str!("../ERC20.bin/ERC20.bin").trim_ascii();
 
 #[derive(Subcommand)]
 pub(crate) enum Command {
@@ -79,6 +84,12 @@ pub(crate) enum Command {
             help = "Number of ERC20 transactions to do"
         )]
         transactions: u64,
+        #[clap(
+            short = 'p',
+            long = "path",
+            help = "Path to the file containing private keys."
+        )]
+        path: String,
     },
 }
 
@@ -88,6 +99,15 @@ where
 {
     let file = File::open(filename)?;
     Ok(io::BufReader::new(file).lines())
+}
+
+fn address_from_pub_key(public_key: PublicKey) -> H160 {
+    let bytes = public_key.serialize_uncompressed();
+    let hash = keccak(&bytes[1..]);
+    let address_bytes: [u8; 20] = hash.as_ref().get(12..32).unwrap().try_into().unwrap();
+    let address = Address::from(address_bytes);
+
+    return address;
 }
 
 async fn transfer_from(
@@ -173,10 +193,30 @@ async fn test_connection(cfg: EthrexL2Config) -> bool {
     false
 }
 
-async fn erc20_load_test(config: &EthrexL2Config, count: u64) -> eyre::Result<()> {
+async fn wait_receipt(
+    client: EthClient,
+    tx_hash: H256,
+    retries: Option<u64>,
+) -> eyre::Result<RpcReceipt> {
+    let retries = retries.unwrap_or_else(|| 10_u64);
+    for _ in 0..retries {
+        match client.get_transaction_receipt(tx_hash).await {
+            Err(_) | Ok(None) => {
+                let _ = tokio::time::sleep(Duration::from_secs(1)).await;
+            }
+            Ok(Some(receipt)) => return Ok(receipt),
+        };
+    }
+    Err(eyre::eyre!(
+        "Failed to fetch receipt for tx with hash: {}",
+        tx_hash
+    ))
+}
+
+async fn erc20_deploy(config: &EthrexL2Config) -> eyre::Result<Address> {
     let client = EthClient::new(&config.network.l2_rpc_url);
     let erc20_bytecode = hex::decode(ERC20)?;
-    let (_, contract_address) = client
+    let (tx_hash, contract_address) = client
         .deploy(
             config.wallet.address,
             config.wallet.private_key,
@@ -185,27 +225,53 @@ async fn erc20_load_test(config: &EthrexL2Config, count: u64) -> eyre::Result<()
         )
         .await
         .expect("Failed to deploy ERC20 with config: {config}");
-    println!("ERC20 deployed to address: {contract_address}");
-    println!("Checking ERC20 contract is reachable...");
-    let balance_calldata = calldata::encode_calldata(
-        "balanceOf(address)",
-        &[Value::Address(config.wallet.address)],
-    )?;
-    let balance_request_tx = client
-        .build_eip1559_transaction(
-            contract_address,
-            config.wallet.address,
-            balance_calldata.into(),
-            Default::default(),
-            100,
-        )
-        .await
-        .unwrap();
-    let balance_response = client
-        .send_eip1559_transaction(&balance_request_tx, &config.wallet.private_key)
-        .await
-        .expect("Failed to query balance for test load account");
-    println!("ERC20 contract is reachable. Starting load test with balance: {balance_response}");
+    let receipt = wait_receipt(client, tx_hash, None).await?;
+    match receipt {
+        RpcReceipt { receipt, .. } if receipt.status => Ok(contract_address),
+        _ => Err(eyre::eyre!("ERC20 deploy failed: deploy tx failed")),
+    }
+}
+
+async fn claim_erc20_balances(
+    cfg: EthrexL2Config,
+    contract_address: Address,
+    private_keys: Vec<SecretKey>,
+) {
+    let accounts = private_keys
+        .iter()
+        .map(|pk| (pk.clone(), pk.public_key(secp256k1::SECP256K1)))
+        .collect_vec();
+    let mut tasks = JoinSet::new();
+
+    for (sk, pk) in accounts {
+        let contract = contract_address.clone();
+        let url = cfg.network.l2_rpc_url.clone();
+        tasks.spawn(async move {
+            let client = EthClient::new(url.as_str());
+            let claim_balance_calldata = calldata::encode_calldata("freeMint()", &[]).unwrap();
+            let claim_tx = client
+                .build_eip1559_transaction(
+                    contract,
+                    address_from_pub_key(pk),
+                    claim_balance_calldata.into(),
+                    Default::default(),
+                    10,
+                )
+                .await
+                .unwrap();
+            let tx_hash = client.send_eip1559_transaction(&claim_tx, &sk).await.unwrap();
+            wait_receipt(client, tx_hash, None)
+        });
+    }
+}
+
+async fn erc20_load_test(
+    config: &EthrexL2Config,
+    count: u64,
+    contract_address: Address,
+    senders: Vec<SecretKey>,
+) -> eyre::Result<()> {
+    let client = EthClient::new(&config.network.l2_rpc_url);
     let mut tasks = JoinSet::new();
     let send_calldata = calldata::encode_calldata(
         "transfer(address,uint256)",
@@ -224,10 +290,12 @@ async fn erc20_load_test(config: &EthrexL2Config, count: u64) -> eyre::Result<()
             1,
         )
         .await?;
+    let successful_txs = Arc::new(AtomicU64::new(0));
     for i in 0..count {
         let tx = send_tx.clone();
         let client = client.clone();
         let pk = config.wallet.private_key.clone();
+        let count = successful_txs.clone();
         tasks.spawn(async move {
             let sent = client.send_eip1559_transaction(&tx, &pk).await;
             match sent {
@@ -238,6 +306,7 @@ async fn erc20_load_test(config: &EthrexL2Config, count: u64) -> eyre::Result<()
                         match client.get_transaction_receipt(hash).await {
                             Ok(Some(RpcReceipt { receipt, .. })) if receipt.status => {
                                 println!("ERC-20 transfer number {i} was sucessful");
+                                count.fetch_add(1_u64, Ordering::Relaxed);
                             }
                             _ => {
                                 let _ = tokio::time::sleep(Duration::from_secs(1)).await;
@@ -248,6 +317,14 @@ async fn erc20_load_test(config: &EthrexL2Config, count: u64) -> eyre::Result<()
                 Err(_) => println!("ERC-20 transfer number {i} FAILED"),
             }
         });
+    }
+    if successful_txs.load(Ordering::Relaxed) == count {
+        println!("Every transaction was sucessful!");
+    } else {
+        eprintln!(
+            "Only {} out of {count} were successful",
+            successful_txs.load(Ordering::Relaxed)
+        );
     }
     tasks.join_all().await;
     Ok(())
@@ -328,8 +405,21 @@ impl Command {
                 println!("Total retries: {retries}");
                 Ok(())
             }
-            Command::ERC20 { transactions } => {
-                erc20_load_test(&cfg, transactions).await?;
+            Command::ERC20 {
+                transactions: transaction_count,
+                path,
+            } => {
+                let contract_address = erc20_deploy(&cfg).await?;
+                let private_keys: Result<Vec<_>, _> = read_lines(path)?
+                    .into_iter()
+                    .map(|pk| {
+                        pk.unwrap()
+                            .parse::<H256>()
+                            .expect("One of the private keys is invalid")
+                    })
+                    .map(|pk| SecretKey::from_slice(pk.as_bytes()))
+                    .collect();
+                erc20_load_test(&cfg, transaction_count, contract_address, private_keys?).await?;
                 Ok(())
             }
         }
