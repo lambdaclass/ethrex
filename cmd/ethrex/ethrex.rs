@@ -303,6 +303,9 @@ async fn main() {
                 error!("Cannot run with DEV_MODE if the `l2` feature is enabled.");
                 panic!("Run without the --dev argument.");
             }
+            use ethrex_dev;
+            let l2_pks = include_str!("../../test_data/private_keys.txt");
+            ethrex_dev::utils::show_rich_accounts(&genesis, l2_pks);
             let l2_proposer = ethrex_l2::start_proposer(store).into_future();
             tracker.spawn(l2_proposer);
         } else if #[cfg(feature = "dev")] {
@@ -310,6 +313,8 @@ async fn main() {
             // Start the block_producer module if devmode was set
             if dev_mode {
                 info!("Runnning in DEV_MODE");
+                let l1_pks = include_str!("../../test_data/private_keys_l1.txt");
+                ethrex_dev::utils::show_rich_accounts(&genesis, l1_pks);
                 let authrpc_jwtsecret =
                     std::fs::read(authrpc_jwtsecret).expect("Failed to read JWT secret");
                 let head_block_hash = {
