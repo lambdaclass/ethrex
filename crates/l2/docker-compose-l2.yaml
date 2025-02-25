@@ -14,8 +14,6 @@ services:
     volumes:
       - ./contracts:/contracts
       - .config.toml:/.config.toml
-    env_file:
-      - config.toml
     environment:
       - ETH_RPC_URL=http://ethrex_l1:8545
       - DEPLOYER_CONTRACTS_PATH=/contracts

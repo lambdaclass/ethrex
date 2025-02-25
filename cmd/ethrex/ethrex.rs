@@ -38,38 +38,6 @@ const DEFAULT_DATADIR: &str = "ethrex";
 async fn main() {
     let matches = cli::cli().get_matches();
 
-    let path = std::env::current_dir().unwrap();
-    println!("The current directory is {}", path.display());
-
-    println!(
-        "{:?}",
-        Command::new("ls")
-            .arg("-l")
-            .arg("-a")
-            .spawn()
-            .expect("ls command failed to start")
-    );
-
-    println!(
-        "{:?}",
-        Command::new("ls")
-            .arg("-l")
-            .arg("-a")
-            .arg("cmd")
-            .spawn()
-            .expect("ls command failed to start")
-    );
-
-    println!(
-        "{:?}",
-        Command::new("ls")
-            .arg("-l")
-            .arg("-a")
-            .arg("cmd/ethrex")
-            .spawn()
-            .expect("ls command failed to start")
-    );
-
     if let Some(matches) = matches.subcommand_matches("removedb") {
         let data_dir = matches
             .get_one::<String>("datadir")
