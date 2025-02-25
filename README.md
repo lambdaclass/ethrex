@@ -427,14 +427,6 @@ The network can be run as a Based Rollup, meaning sequencing is done by the Ethe
 
 TODO: Expand on this.
 
-#### Status
-
-| Task Description                                                                                                                  | Status |
-| --------------------------------------------------------------------------------------------------------------------------------- | ------ |
-| Make the `onChainProposer` L1 contract conditional on the data availability mode. On validium, don't check for data availability. | ❌      |
-| The sequencer can initialize on Validium mode, not sending state diff data on `commit` transactions                               | ❌      |
-| Add a DA integration example for Validium mode                                                                                    |
-
 ### Milestone 7: Custom Native token
 
 The L2 can also be deployed using a custom native token, meaning that a certain ERC20 can be the common currency that's used for paying network fees.
@@ -459,7 +451,19 @@ The L2 has added security mechanisms in place, running on Trusted Execution Envi
 | Support verifying multiple different zkVM executions on the `onChainProposer` L1 contract. | ❌      |
 | Support running the operator on a TEE environment                                          | ❌      |
 
-### Milestone 9: L2s interoperability
+### Milestone 9: Validium
+
+The L2 can be initialized in Validium Mode, meaning the Data Availability layer is no longer the L1, but rather a DA layer of the user's choice.
+
+#### Status
+
+| Task Description                                                                                                                  | Status |
+| --------------------------------------------------------------------------------------------------------------------------------- | ------ |
+| Make the `onChainProposer` L1 contract conditional on the data availability mode. On validium, don't check for data availability. | ❌      |
+| The sequencer can initialize on Validium mode, not sending state diff data on `commit` transactions                               | ❌      |
+| Add a DA integration example for Validium mode                                                                                    | ❌      |
+
+### Milestone 10: L2s interoperability
 
 Support multiple L2s sharing the same bridge contract on L1 for seamless interoperability.
 
@@ -471,11 +475,6 @@ Support multiple L2s sharing the same bridge contract on L1 for seamless interop
 | Adapt sequencer to be aware of its chain id and interact with the L1 contracts accordingly | ❌      |
 
 TODO: Expand on tasks about proper interoperability between chains (seamlessly bridging between chains, etc).
-
-### Milestone 10: Validium
-
-The L2 can be initialized in Validium Mode, meaning the Data Availability layer is no longer the L1, but rather a DA layer of the user's choice.
-                                                  | ❌      |
 
 ## Prerequisites
 
