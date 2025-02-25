@@ -1,8 +1,8 @@
 use bytes::Bytes;
 use ethrex_common::types::{
     code_hash, Account as ethrexAccount, AccountInfo, Block as CoreBlock, BlockBody,
-    EIP1559Transaction, EIP2930Transaction, EIP4844Transaction, LegacyTransaction,
-    Transaction as ethrexTransaction, TxKind,
+    EIP1559Transaction, EIP2930Transaction, EIP4844Transaction, EIP7702Transaction,
+    LegacyTransaction, Transaction as ethrexTransaction, TxKind,
 };
 use ethrex_common::types::{Genesis, GenesisAccount, Withdrawal};
 use ethrex_common::{types::BlockHeader, Address, Bloom, H256, H64, U256};
@@ -126,8 +126,20 @@ pub struct AccessListItem {
     pub address: Address,
     pub storage_keys: Vec<H256>,
 }
-
 pub type AccessList = Vec<AccessListItem>;
+
+#[derive(Debug, PartialEq, Eq, Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct AuthorizationListItem {
+    pub chain_id: U256,
+    pub address: Address,
+    pub nonce: U256,
+    pub v: U256,
+    pub r: U256,
+    pub s: U256,
+    pub signer: Option<Address>,
+}
+pub type AuthorizationList = Vec<AuthorizationListItem>;
 
 #[derive(Debug, PartialEq, Eq, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -228,6 +240,7 @@ pub struct Transaction {
     pub value: U256,
     pub chain_id: Option<U256>,
     pub access_list: Option<AccessList>,
+    pub authorization_list: Option<AuthorizationList>,
     pub max_fee_per_gas: Option<U256>,
     pub max_fee_per_blob_gas: Option<U256>,
     pub max_priority_fee_per_gas: Option<U256>,
@@ -274,6 +287,7 @@ impl From<Transaction> for ethrexTransaction {
                 1 => ethrexTransaction::EIP2930Transaction(val.into()),
                 2 => ethrexTransaction::EIP1559Transaction(val.into()),
                 3 => ethrexTransaction::EIP4844Transaction(val.into()),
+                4 => ethrexTransaction::EIP7702Transaction(val.into()),
                 _ => unimplemented!(),
             },
             None => ethrexTransaction::LegacyTransaction(val.into()),
@@ -338,6 +352,49 @@ impl From<Transaction> for EIP4844Transaction {
                 .collect(),
             max_fee_per_blob_gas: val.max_fee_per_blob_gas.unwrap(),
             blob_versioned_hashes: val.blob_versioned_hashes.unwrap_or_default(),
+            signature_y_parity: !val.v.is_zero(),
+            signature_r: val.r,
+            signature_s: val.s,
+        }
+    }
+}
+
+impl From<Transaction> for EIP7702Transaction {
+    fn from(val: Transaction) -> Self {
+        EIP7702Transaction {
+            chain_id: val.chain_id.map(|id: U256| id.as_u64()).unwrap_or(1), // TODO: Consider converting this into Option
+            nonce: val.nonce.as_u64(),
+            max_priority_fee_per_gas: val.max_priority_fee_per_gas.unwrap_or_default().as_u64(), // TODO: Consider converting this into Option
+            max_fee_per_gas: val
+                .max_fee_per_gas
+                .unwrap_or(val.gas_price.unwrap_or_default())
+                .as_u64(),
+            gas_limit: val.gas_limit.as_u64(),
+            to: match val.to {
+                TxKind::Call(address) => address,
+                TxKind::Create => panic!("EIP7702Transaction cannot be contract creation"),
+            },
+            value: val.value,
+            data: val.data,
+            access_list: val
+                .access_list
+                .unwrap_or_default()
+                .into_iter()
+                .map(|a| (a.address, a.storage_keys))
+                .collect(),
+            authorization_list: val
+                .authorization_list
+                .unwrap_or_default()
+                .into_iter()
+                .map(|a| ethrex_common::types::AuthorizationTuple {
+                    chain_id: a.chain_id,
+                    address: a.address,
+                    nonce: a.nonce.as_u64(),
+                    y_parity: a.v,
+                    r_signature: a.r,
+                    s_signature: a.s,
+                })
+                .collect(),
             signature_y_parity: !val.v.is_zero(),
             signature_r: val.r,
             signature_s: val.s,
@@ -414,11 +471,7 @@ impl From<Account> for GenesisAccount {
     fn from(val: Account) -> Self {
         GenesisAccount {
             code: val.code,
-            storage: val
-                .storage
-                .into_iter()
-                .map(|(k, v)| (H256(k.to_big_endian()), v))
-                .collect(),
+            storage: val.storage,
             balance: val.balance,
             nonce: val.nonce.as_u64(),
         }

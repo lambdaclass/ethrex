@@ -6,13 +6,14 @@ edition = "2021"
 [dependencies]
 serde = { version = "1.0.203", features = ["derive"] }
 serde_with = "3.11.0"
+serde_json.workspace = true
 thiserror = "2.0.9"
 
 ethrex-common = { path = "../../../../common/", default-features = false }
 ethrex-vm = { path = "../../../../vm", default-features = false }
 ethrex-rlp = { path = "../../../../common/rlp", default-features = false }
-ethrex-storage = { path = "../../../../storage/store", default-features = false }
-ethrex-trie = { path = "../../../../storage/trie", default-features = false }
+ethrex-storage = { path = "../../../../storage", default-features = false }
+ethrex-trie = { path = "../../../../common/trie", default-features = false }
 
 [build-dependencies]
 risc0-build = { version = "1.2.2", optional = true }
@@ -27,6 +28,7 @@ default = []
 risc0 = ["dep:risc0-build"]
 sp1 = ["dep:sp1-build"]
 pico = ["dep:pico-cli"]
+l2 = ["ethrex-vm/l2"]
 
 [lib]
 path = "./src/lib.rs"

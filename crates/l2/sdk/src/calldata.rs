@@ -1,9 +1,8 @@
 use ethrex_common::Bytes;
 use ethrex_common::{Address, H32, U256};
+use ethrex_rpc::clients::eth::errors::CalldataEncodeError;
 use keccak_hash::keccak;
 use serde::{Deserialize, Serialize};
-
-use crate::eth_client::errors::CalldataEncodeError;
 
 /// Struct representing the possible solidity types for function arguments
 /// - `Uint` -> `uint256`

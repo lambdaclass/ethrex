@@ -3,7 +3,7 @@ use std::time::Duration;
 use crate::utils::config::{errors::ConfigError, proposer::ProposerConfig, read_env_file};
 use errors::ProposerError;
 use ethereum_types::Address;
-use ethrex_dev::utils::engine_client::config::EngineApiConfig;
+use ethrex_rpc::clients::EngineApiConfig;
 use ethrex_storage::Store;
 use tokio::task::JoinSet;
 use tokio::time::sleep;
@@ -73,7 +73,7 @@ impl Proposer {
         proposer_config: &ProposerConfig,
         engine_config: EngineApiConfig,
     ) -> Result<Self, ProposerError> {
-        let jwt_secret = std::fs::read(&engine_config.jwt_path)?;
+        let jwt_secret = hex::decode(std::fs::read(&engine_config.jwt_path)?)?;
         Ok(Self {
             engine_config,
             block_production_interval: proposer_config.interval_ms,

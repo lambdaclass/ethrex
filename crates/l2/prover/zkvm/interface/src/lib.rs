@@ -24,9 +24,8 @@ pub mod io {
         types::{Block, BlockHeader},
         H256,
     };
-    use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
     use ethrex_vm::execution_db::ExecutionDB;
-    use serde::{Deserialize, Serialize};
+    use serde::{de::DeserializeOwned, Deserialize, Serialize};
     use serde_with::{serde_as, DeserializeAs, SerializeAs};
 
     /// Private input variables passed into the zkVM execution program.
@@ -34,9 +33,10 @@ pub mod io {
     #[derive(Serialize, Deserialize)]
     pub struct ProgramInput {
         /// block to execute
-        #[serde_as(as = "RLPBlock")]
+        #[serde_as(as = "SerdeJSON")]
         pub block: Block,
         /// header of the previous block
+        #[serde_as(as = "SerdeJSON")]
         pub parent_block_header: BlockHeader,
         /// database containing only the data necessary to execute
         pub db: ExecutionDB,
@@ -52,29 +52,28 @@ pub mod io {
         pub final_state_hash: H256,
     }
 
-    /// Used with [serde_with] to encode a Block into RLP before serializing its bytes. This is
-    /// necessary because the [ethrex_common::types::Transaction] type doesn't serializes into any
-    /// format other than JSON.
-    pub struct RLPBlock;
+    /// Used with [serde_with] to encode a fields into JSON before serializing its bytes. This is
+    /// necessary because a [BlockHeader] isn't compatible with other encoding formats like bincode or RLP.
+    pub struct SerdeJSON;
 
-    impl SerializeAs<Block> for RLPBlock {
-        fn serialize_as<S>(val: &Block, serializer: S) -> Result<S::Ok, S::Error>
+    impl<T: Serialize> SerializeAs<T> for SerdeJSON {
+        fn serialize_as<S>(val: &T, serializer: S) -> Result<S::Ok, S::Error>
         where
             S: serde::Serializer,
         {
             let mut encoded = Vec::new();
-            val.encode(&mut encoded);
+            serde_json::to_writer(&mut encoded, val).map_err(serde::ser::Error::custom)?;
             serde_with::Bytes::serialize_as(&encoded, serializer)
         }
     }
 
-    impl<'de> DeserializeAs<'de, Block> for RLPBlock {
-        fn deserialize_as<D>(deserializer: D) -> Result<Block, D::Error>
+    impl<'de, T: DeserializeOwned> DeserializeAs<'de, T> for SerdeJSON {
+        fn deserialize_as<D>(deserializer: D) -> Result<T, D::Error>
         where
             D: serde::Deserializer<'de>,
         {
             let encoded: Vec<u8> = serde_with::Bytes::deserialize_as(deserializer)?;
-            Block::decode(&encoded).map_err(serde::de::Error::custom)
+            serde_json::from_reader(&encoded[..]).map_err(serde::de::Error::custom)
         }
     }
 }

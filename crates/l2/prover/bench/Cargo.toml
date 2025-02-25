@@ -1,12 +1,12 @@
 [package]
-name = "bench"
+name = "ethrex-prover-bench"
 version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-ethrex-common = { path = "../../../common/", default-features = false }
-ethrex-vm = { path = "../../../vm/", default-features = false }
-ethrex-storage = { path = "../../../storage/store", default-features = false }
+ethrex-common.workspace = true
+ethrex-vm.workspace = true
+ethrex-storage.workspace = true
 ethrex-rlp.workspace = true
 ethrex-prover.workspace = true
 ethrex-l2.workspace = true
@@ -26,7 +26,7 @@ reqwest = { version = "0.12.9", features = [
 ], default-features = false }
 clap = { version = "4.5.21", features = ["derive"] }
 
-revm = { version = "18.0.0", features = [
+revm = { version = "19.0.0", features = [
   "serde",
   "std",
   "serde-json",
@@ -35,8 +35,8 @@ revm = { version = "18.0.0", features = [
 ], default-features = false }
 
 # These dependencies must be kept up to date with the corresponding revm version, otherwise errors may pop up because of trait implementation mismatches
-revm-inspectors = { version = "=0.13.0" }
-revm-primitives = { version = "14.0.0", features = [
+revm-inspectors = { version = "0.15.0" }
+revm-primitives = { version = "15.2.0", features = [
   "std",
 ], default-features = false }
 futures-util = "0.3.31"
@@ -46,8 +46,9 @@ lazy_static = "1.5.0"
 bincode = "1.3.3"
 
 [features]
+pico = ["zkvm_interface/pico", "ethrex-prover/pico", "ethrex-l2/pico"]
 risc0 = ["zkvm_interface/risc0", "ethrex-prover/risc0", "ethrex-l2/risc0"]
 sp1 = ["zkvm_interface/sp1", "ethrex-prover/sp1", "ethrex-l2/sp1"]
-pico = ["zkvm_interface/pico", "ethrex-prover/pico", "ethrex-l2/pico"]
 gpu = ["ethrex-prover/gpu"]
 l2 = ["ethrex-vm/l2"]
+default = ["sp1"]

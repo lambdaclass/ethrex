@@ -2,12 +2,9 @@
 #![allow(clippy::unwrap_used)]
 use ethrex_blockchain::add_block;
 use ethrex_common::types::Block;
-use ethrex_prover_lib::{execute};
+use ethrex_prover_lib::execute;
 use ethrex_storage::{EngineType, Store};
-use ethrex_vm::{
-    db::StoreWrapper,
-    execution_db::{ToExecDB},
-};
+use ethrex_vm::{db::StoreWrapper, execution_db::ToExecDB};
 use std::path::Path;
 use tracing::info;
 use zkvm_interface::io::ProgramInput;
@@ -29,7 +26,11 @@ async fn test_performance_zkvm() {
         "Number of transactions in the proven block: {}",
         block_to_prove.body.transactions.len()
     );
-    info!("Execution took {secs}s or {mins}m", secs = duration, mins = duration / 60);
+    info!(
+        "Execution took {secs}s or {mins}m",
+        secs = duration,
+        mins = duration / 60
+    );
 }
 
 async fn setup() -> (ProgramInput, Block) {
@@ -48,27 +49,28 @@ async fn setup() -> (ProgramInput, Block) {
     let blocks = ethrex_l2::utils::test_data_io::read_chain_file(chain_file_path.to_str().unwrap());
     info!("Number of blocks to insert: {}", blocks.len());
 
+    let blockchain = Blockchain::default_with_store(store.clone());
     for block in &blocks {
         info!(
             "txs {} in block{}",
             block.body.transactions.len(),
             block.header.number
         );
-        add_block(block, &store).unwrap();
+        blockchain.add_block(block).unwrap();
     }
-    let block_to_prove = blocks.get(2).unwrap();
-
-    let store = StoreWrapper {
-        store: store.clone(),
-        block_hash: block_to_prove.header.parent_hash,
-    };
-    let db = store.to_exec_db(block_to_prove).unwrap();
+    let block_to_prove = blocks.get(3).unwrap();
 
     let parent_block_header = store
         .store
         .get_block_header_by_hash(block_to_prove.header.parent_hash)
         .unwrap()
         .unwrap();
+
+    let store = StoreWrapper {
+        store: store.clone(),
+        block_hash: block_to_prove.header.parent_hash,
+    };
+    let db = store.to_exec_db(&block_to_prove).unwrap();
 
     let input = ProgramInput {
         block: block_to_prove.clone(),

@@ -15,7 +15,7 @@ on:
   workflow_dispatch:
 
 env:
-  RUST_VERSION: 1.84.0
+  RUST_VERSION: 1.82.0
   RUST_RETH_VERSION: 1.84.0
 
 jobs:
@@ -259,7 +259,7 @@ jobs:
         run: |
           rm -rf target/release/ethrex
           CARGO_PROFILE_RELEASE_DEBUG=true cargo flamegraph -c "record -o perf.data -F997 --call-graph dwarf,16384 -g" \
-          --bin ethrex --features dev -- --network /home/runner/work/ethrex/ethrex/test_data/genesis-l2.json --http.port 1729 >/dev/null &
+          --bin ethrex --features dev -- --dev --network /home/runner/work/ethrex/ethrex/test_data/genesis-l2.json --http.port 1729 >/dev/null &
           while [ ! -x "./target/release/ethrex" ]; do
             echo "Waiting for ethrex binary to be ready..."
             sleep 2

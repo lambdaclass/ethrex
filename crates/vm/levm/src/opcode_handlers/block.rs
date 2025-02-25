@@ -96,10 +96,15 @@ impl VM {
     ) -> Result<OpcodeResult, VMError> {
         current_call_frame.increase_consumed_gas(gas_cost::PREVRANDAO)?;
 
-        let randao = self.env.prev_randao.unwrap_or_default(); // Assuming block_env has been integrated
-        current_call_frame
-            .stack
-            .push(U256::from_big_endian(randao.0.as_slice()))?;
+        // https://eips.ethereum.org/EIPS/eip-4399
+        // After Paris the prev randao is the prev_randao (or current_random) field
+        let randao = if self.env.config.fork >= Fork::Paris {
+            let randao = self.env.prev_randao.unwrap_or_default(); // Assuming prev_randao has been integrated
+            U256::from_big_endian(randao.0.as_slice())
+        } else {
+            self.env.difficulty
+        };
+        current_call_frame.stack.push(randao)?;
 
         Ok(OpcodeResult::Continue { pc_increment: 1 })
     }
@@ -123,6 +128,10 @@ impl VM {
         &mut self,
         current_call_frame: &mut CallFrame,
     ) -> Result<OpcodeResult, VMError> {
+        // https://eips.ethereum.org/EIPS/eip-1344
+        if self.env.config.fork < Fork::Istanbul {
+            return Err(VMError::InvalidOpcode);
+        }
         current_call_frame.increase_consumed_gas(gas_cost::CHAINID)?;
 
         current_call_frame.stack.push(self.env.chain_id)?;
@@ -135,6 +144,10 @@ impl VM {
         &mut self,
         current_call_frame: &mut CallFrame,
     ) -> Result<OpcodeResult, VMError> {
+        // https://eips.ethereum.org/EIPS/eip-1884
+        if self.env.config.fork < Fork::London {
+            return Err(VMError::InvalidOpcode);
+        }
         current_call_frame.increase_consumed_gas(gas_cost::SELFBALANCE)?;
 
         let balance = get_account(&mut self.cache, self.db.clone(), current_call_frame.to)
@@ -150,6 +163,10 @@ impl VM {
         &mut self,
         current_call_frame: &mut CallFrame,
     ) -> Result<OpcodeResult, VMError> {
+        // https://eips.ethereum.org/EIPS/eip-3198
+        if self.env.config.fork < Fork::London {
+            return Err(VMError::InvalidOpcode);
+        }
         current_call_frame.increase_consumed_gas(gas_cost::BASEFEE)?;
 
         current_call_frame.stack.push(self.env.base_fee_per_gas)?;

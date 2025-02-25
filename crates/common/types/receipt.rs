@@ -78,6 +78,7 @@ impl Receipt {
                     0x1 => TxType::EIP2930,
                     0x2 => TxType::EIP1559,
                     0x3 => TxType::EIP4844,
+                    0x4 => TxType::EIP7702,
                     0x7e => TxType::Privileged,
                     ty => {
                         return Err(RLPDecodeError::Custom(format!(
@@ -148,6 +149,7 @@ impl RLPDecode for Receipt {
                 0x1 => TxType::EIP2930,
                 0x2 => TxType::EIP1559,
                 0x3 => TxType::EIP4844,
+                0x4 => TxType::EIP7702,
                 0x7e => TxType::Privileged,
                 ty => {
                     return Err(RLPDecodeError::Custom(format!(

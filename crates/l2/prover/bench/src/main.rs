@@ -1,17 +1,20 @@
 use std::{fs::File, io::Write};
 
-use bench::{
+use clap::Parser;
+use ethrex_l2::utils::prover::proving_systems::ProverType;
+use ethrex_prover_bench::{
     cache::{load_cache, write_cache, Cache},
     rpc::{db::RpcDB, get_block, get_latest_block_number},
 };
-use clap::Parser;
-use ethrex_l2::utils::prover::proving_systems::ProverType;
-use ethrex_prover_lib::prover::create_prover;
+use ethrex_prover_lib::{prove, execute};
 use ethrex_vm::execution_db::ToExecDB;
 use zkvm_interface::io::ProgramInput;
 
 #[cfg(not(any(feature = "sp1", feature = "risc0", feature = "pico")))]
-compile_error!("Choose prover backends (sp1, risc0, pico).");
+compile_error!(
+    "Choose prover backends (sp1, risc0, pico).
+- Pass a feature flag to cargo (--feature or -F) with the desired backed. e.g: cargo build --workspace --no-default-features -F sp1. NOTE: Don't forget to pass --no-default-features, if not, the default prover will be used instead."
+);
 
 #[derive(Parser, Debug)]
 struct Args {
@@ -80,18 +83,10 @@ async fn main() {
         }
     };
 
-    #[cfg(feature = "sp1")]
-    let mut prover = create_prover(ProverType::SP1);
-    #[cfg(feature = "risc0")]
-    let mut prover = create_prover(ProverType::RISC0);
-    #[cfg(feature = "pico")]
-    let mut prover = create_prover(ProverType::Pico);
-
     let now = std::time::Instant::now();
     if prove {
         println!("proving");
-        prover
-            .prove(ProgramInput {
+            prove(ProgramInput {
                 block,
                 parent_block_header,
                 db,
@@ -99,8 +94,7 @@ async fn main() {
             .expect("proving failed");
     } else {
         println!("executing");
-        prover
-            .execute(ProgramInput {
+            execute(ProgramInput {
                 block,
                 parent_block_header,
                 db,

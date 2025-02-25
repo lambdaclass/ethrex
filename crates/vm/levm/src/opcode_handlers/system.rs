@@ -72,6 +72,7 @@ impl VM {
             current_memory_size,
             address_was_cold,
             account_info.is_empty(),
+            self.db.account_exists(callee),
             value_to_transfer,
             gas,
             gas_left,
@@ -226,6 +227,10 @@ impl VM {
         &mut self,
         current_call_frame: &mut CallFrame,
     ) -> Result<OpcodeResult, VMError> {
+        // https://eips.ethereum.org/EIPS/eip-7
+        if self.env.config.fork < Fork::Homestead {
+            return Err(VMError::InvalidOpcode);
+        }
         // STACK
         let gas = current_call_frame.stack.pop()?;
         let code_address = word_to_address(current_call_frame.stack.pop()?);
@@ -311,6 +316,10 @@ impl VM {
         &mut self,
         current_call_frame: &mut CallFrame,
     ) -> Result<OpcodeResult, VMError> {
+        // https://eips.ethereum.org/EIPS/eip-214
+        if self.env.config.fork < Fork::Byzantium {
+            return Err(VMError::InvalidOpcode);
+        };
         // STACK
         let gas = current_call_frame.stack.pop()?;
         let code_address = word_to_address(current_call_frame.stack.pop()?);
@@ -426,6 +435,10 @@ impl VM {
         &mut self,
         current_call_frame: &mut CallFrame,
     ) -> Result<OpcodeResult, VMError> {
+        // https://eips.ethereum.org/EIPS/eip-1014
+        if self.env.config.fork < Fork::Constantinople {
+            return Err(VMError::InvalidOpcode);
+        }
         let value_in_wei_to_send = current_call_frame.stack.pop()?;
         let code_offset_in_memory = current_call_frame.stack.pop()?;
         let code_size_in_memory: usize = current_call_frame
@@ -462,6 +475,9 @@ impl VM {
         // Returns: VMError RevertOpcode if executed correctly.
         // Notes:
         //      The actual reversion of changes is made in the execute() function.
+        if self.env.config.fork < Fork::Byzantium {
+            return Err(VMError::InvalidOpcode);
+        }
 
         let offset = current_call_frame.stack.pop()?;
 
@@ -527,9 +543,14 @@ impl VM {
         );
         let balance_to_transfer = current_account_info.balance;
 
+        let account_is_empty = if self.env.config.fork >= Fork::SpuriousDragon {
+            target_account_info.is_empty()
+        } else {
+            !self.db.account_exists(target_address)
+        };
         current_call_frame.increase_consumed_gas(gas_cost::selfdestruct(
             target_account_is_cold,
-            target_account_info.is_empty(),
+            account_is_empty,
             balance_to_transfer,
             self.env.config.fork,
         )?)?;
@@ -575,18 +596,24 @@ impl VM {
                 .info
                 .balance = U256::zero();
 
+            // [EIP-3529](https://eips.ethereum.org/EIPS/eip-3529)
+            // https://github.com/ethereum/execution-specs/blob/master/src/ethereum/constantinople/vm/instructions/system.py#L471
+            if self.env.config.fork < Fork::London
+                && !self
+                    .accrued_substate
+                    .selfdestruct_set
+                    .contains(&current_call_frame.to)
+            {
+                self.env.refunded_gas = self
+                    .env
+                    .refunded_gas
+                    .checked_add(SELFDESTRUCT_REFUND)
+                    .ok_or(VMError::GasRefundsOverflow)?;
+            }
+
             self.accrued_substate
                 .selfdestruct_set
                 .insert(current_call_frame.to);
-        }
-
-        // [EIP-3529](https://eips.ethereum.org/EIPS/eip-3529)
-        if self.env.config.fork < Fork::London {
-            self.env.refunded_gas = self
-                .env
-                .refunded_gas
-                .checked_add(SELFDESTRUCT_REFUND)
-                .ok_or(VMError::GasRefundsOverflow)?;
         }
 
         Ok(OpcodeResult::Halt)
@@ -683,7 +710,12 @@ impl VM {
             .checked_add(new_account.info.balance)
             .ok_or(VMError::BalanceOverflow)?;
 
-        let new_account = Account::new(new_balance, Bytes::new(), 1, Default::default());
+        // https://github.com/ethereum/EIPs/blob/master/EIPS/eip-161.md
+        let new_account = if self.env.config.fork < Fork::SpuriousDragon {
+            Account::new(new_balance, Bytes::new(), 0, Default::default())
+        } else {
+            Account::new(new_balance, Bytes::new(), 1, Default::default())
+        };
         cache::insert_account(&mut self.cache, new_address, new_account);
 
         // 2. Increment sender's nonce.

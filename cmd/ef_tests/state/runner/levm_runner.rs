@@ -5,7 +5,7 @@ use crate::{
     utils::{self, effective_gas_price},
 };
 use ethrex_common::{
-    types::{code_hash, tx_fields::*, AccountInfo, Fork},
+    types::{tx_fields::*, Fork},
     H256, U256,
 };
 use ethrex_levm::{
@@ -15,7 +15,10 @@ use ethrex_levm::{
     Environment,
 };
 use ethrex_storage::AccountUpdate;
-use ethrex_vm::db::{EvmState, StoreWrapper};
+use ethrex_vm::{
+    backends::{self},
+    db::StoreWrapper,
+};
 use keccak_hash::keccak;
 use std::{collections::HashMap, sync::Arc};
 
@@ -138,6 +141,7 @@ pub fn prepare_vm_for_tx(
             coinbase: test.env.current_coinbase,
             timestamp: test.env.current_timestamp,
             prev_randao: test.env.current_random,
+            difficulty: test.env.current_difficulty,
             chain_id: U256::from(1),
             base_fee_per_gas: test.env.current_base_fee.unwrap_or_default(),
             gas_price: effective_gas_price(test, &tx)?,
@@ -312,8 +316,18 @@ pub fn ensure_post_state(
                 // Execution result was successful and no exception was expected.
                 None => {
                     let (initial_state, block_hash) = utils::load_initial_state(test);
-                    let levm_account_updates =
-                        get_state_transitions(&initial_state, block_hash, execution_report);
+                    let levm_account_updates = backends::levm::LEVM::get_state_transitions(
+                        Some(*fork),
+                        &initial_state,
+                        block_hash,
+                        &execution_report.new_state,
+                    )
+                    .map_err(|_| {
+                        InternalError::Custom(
+                            "Error at LEVM::get_state_transitions in ensure_post_state()"
+                                .to_owned(),
+                        )
+                    })?;
                     let pos_state_root = post_state_root(&levm_account_updates, test);
                     let expected_post_state_root_hash =
                         test.post.vector_post_value(vector, *fork).hash;
@@ -366,84 +380,6 @@ pub fn ensure_post_state(
         }
     };
     Ok(())
-}
-
-pub fn get_state_transitions(
-    initial_state: &EvmState,
-    block_hash: H256,
-    execution_report: &ExecutionReport,
-) -> Vec<AccountUpdate> {
-    let current_db = match initial_state {
-        EvmState::Store(state) => state.database.store.clone(),
-        EvmState::Execution(_cache_db) => unreachable!("Execution state should not be passed here"),
-    };
-    let mut account_updates: Vec<AccountUpdate> = vec![];
-    for (new_state_account_address, new_state_account) in &execution_report.new_state {
-        let initial_account_state = current_db
-            .get_account_info_by_hash(block_hash, *new_state_account_address)
-            .expect("Error getting account info by address")
-            .unwrap_or_default();
-        let mut updates = 0;
-        if initial_account_state.balance != new_state_account.info.balance {
-            updates += 1;
-        }
-        if initial_account_state.nonce != new_state_account.info.nonce {
-            updates += 1;
-        }
-        let code = if new_state_account.info.bytecode.is_empty() {
-            // The new state account has no code
-            None
-        } else {
-            // Get the code hash of the new state account bytecode
-            let potential_new_bytecode_hash = code_hash(&new_state_account.info.bytecode);
-            // Look into the current database to see if the bytecode hash is already present
-            let current_bytecode = current_db
-                .get_account_code(potential_new_bytecode_hash)
-                .expect("Error getting account code by hash");
-            let code = new_state_account.info.bytecode.clone();
-            // The code is present in the current database
-            if let Some(current_bytecode) = current_bytecode {
-                if current_bytecode != code {
-                    // The code has changed
-                    Some(code)
-                } else {
-                    // The code has not changed
-                    None
-                }
-            } else {
-                // The new state account code is not present in the current
-                // database, then it must be new
-                Some(code)
-            }
-        };
-        if code.is_some() {
-            updates += 1;
-        }
-        let mut added_storage = HashMap::new();
-        for (key, value) in &new_state_account.storage {
-            added_storage.insert(*key, value.current_value);
-            updates += 1;
-        }
-
-        if updates == 0 && !new_state_account.is_empty() {
-            continue;
-        }
-
-        let account_update = AccountUpdate {
-            address: *new_state_account_address,
-            removed: new_state_account.is_empty(),
-            info: Some(AccountInfo {
-                code_hash: code_hash(&new_state_account.info.bytecode),
-                balance: new_state_account.info.balance,
-                nonce: new_state_account.info.nonce,
-            }),
-            code,
-            added_storage,
-        };
-
-        account_updates.push(account_update);
-    }
-    account_updates
 }
 
 pub fn post_state_root(account_updates: &[AccountUpdate], test: &EFTest) -> H256 {

@@ -20,10 +20,19 @@ do
    name_main=$(echo "$i" | awk -F " " '{print $1}')
    result_main=$(echo "$i" | awk -F " " '{print $2}')
    result_main=${result_main%(*}
+   percentage_main=$(echo "$i" | awk -F " " '{print $3}')
 
    name_pr=$(echo "${pr_results[num]}" | awk -F " " '{print $1}')
    result_pr=$(echo "${pr_results[num]}" | awk -F " " '{print $2}')
    result_pr=${result_pr%(*}
+   percentage_pr=$(echo "${pr_results[num]}" | awk -F " " '{print $3}')
+
+   passing_pr=${result_pr%/*}
+   passing_main=${result_main%/*}
+   difference=$(echo "$passing_pr - $passing_main" | bc)
+   if [ $difference == "0" ]; then
+       difference=""
+   fi
 
    emoji=""
    if (( $(echo "$result_main > $result_pr" |bc -l) )); then
@@ -34,7 +43,8 @@ do
        emoji="➖️"
    fi
 
-   echo "|$name_main|$result_main|$result_pr| $emoji |"
+
+   echo "|$name_main|$result_main $percentage_main |$result_pr $percentage_pr| $emoji $difference |"
 
    num=$((num + 1))
 

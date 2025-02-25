@@ -1,6 +1,6 @@
 use bytes::Bytes;
 use directories::ProjectDirs;
-use ethrex_blockchain::{add_block, fork_choice::apply_fork_choice};
+use ethrex_blockchain::Blockchain;
 use ethrex_common::types::{Block, Genesis};
 use ethrex_p2p::{
     kademlia::KademliaTable,
@@ -10,7 +10,7 @@ use ethrex_p2p::{
 };
 use ethrex_rlp::decode::RLPDecode;
 use ethrex_storage::{EngineType, Store};
-use ethrex_vm::{backends::EVM, EVM_BACKEND};
+use ethrex_vm::backends::EVM;
 use k256::ecdsa::SigningKey;
 use local_ip_address::local_ip;
 use rand::rngs::OsRng;
@@ -19,7 +19,7 @@ use std::{
     future::IntoFuture,
     io,
     net::{Ipv4Addr, SocketAddr, ToSocketAddrs},
-    path::{Path, PathBuf},
+    path::{self, Path, PathBuf},
     str::FromStr as _,
     sync::Arc,
     time::Duration,
@@ -124,6 +124,13 @@ async fn main() {
         bootnodes.extend(networks::MEKONG_BOOTNODES.iter());
     }
 
+    if network == "ephemery" {
+        info!("Adding ephemery preset bootnodes");
+        // Set ephemery presets
+        network = String::from(networks::EPHEMERY_GENESIS_PATH);
+        bootnodes.extend(networks::EPHEMERY_BOOTNODES.iter());
+    }
+
     if bootnodes.is_empty() {
         warn!("No bootnodes specified. This node will not be able to connect to the network.");
     }
@@ -152,18 +159,25 @@ async fn main() {
     let sync_mode = sync_mode(&matches);
 
     let evm = matches.get_one::<EVM>("evm").unwrap_or(&EVM::REVM);
-    let evm = EVM_BACKEND.get_or_init(|| evm.clone());
-    info!("EVM_BACKEND set to: {:?}", evm);
 
-    cfg_if::cfg_if! {
-        if #[cfg(feature = "redb")] {
-            let store = Store::new(&data_dir, EngineType::RedB).expect("Failed to create Store");
-        } else if #[cfg(feature = "libmdbx")] {
-            let store = Store::new(&data_dir, EngineType::Libmdbx).expect("Failed to create Store");
-        } else {
-            let store = Store::new(&data_dir, EngineType::InMemory).expect("Failed to create Store");
+    let path = path::PathBuf::from(data_dir.clone());
+    let store: Store = if path.ends_with("memory") {
+        Store::new(&data_dir, EngineType::InMemory).expect("Failed to create Store")
+    } else {
+        cfg_if::cfg_if! {
+            if #[cfg(feature = "redb")] {
+                let engine_type = EngineType::RedB;
+            } else if #[cfg(feature = "libmdbx")] {
+                let engine_type = EngineType::Libmdbx;
+            } else {
+                let engine_type = EngineType::InMemory;
+                error!("No database specified. The feature flag `redb` or `libmdbx` should've been set while building.");
+                panic!("Specify the desired database engine.");
+            }
         }
-    }
+        Store::new(&data_dir, engine_type).expect("Failed to create Store")
+    };
+    let blockchain = Blockchain::new(evm.clone(), store.clone());
 
     let genesis = read_genesis_file(&network);
     store
@@ -173,7 +187,7 @@ async fn main() {
     if let Some(chain_rlp_path) = matches.get_one::<String>("import") {
         info!("Importing blocks from chain file: {}", chain_rlp_path);
         let blocks = read_chain_file(chain_rlp_path);
-        import_blocks(&store, &blocks);
+        blockchain.import_blocks(&blocks);
     }
 
     if let Some(blocks_path) = matches.get_one::<String>("import_dir") {
@@ -192,7 +206,7 @@ async fn main() {
             blocks.push(read_block_file(s));
         }
 
-        import_blocks(&store, &blocks);
+        blockchain.import_blocks(&blocks);
     }
 
     let jwt_secret = read_jwtsecret_file(authrpc_jwtsecret);
@@ -240,28 +254,80 @@ async fn main() {
         .expect("Node record could not be created from local node");
     // Create Kademlia Table here so we can access it from rpc server (for syncing)
     let peer_table = peer_table(signer.clone());
+    // Create a cancellation_token for long_living tasks
+    let cancel_token = tokio_util::sync::CancellationToken::new();
     // Create SyncManager
-    let syncer = SyncManager::new(peer_table.clone(), sync_mode);
+    let syncer = SyncManager::new(
+        peer_table.clone(),
+        sync_mode,
+        cancel_token.clone(),
+        blockchain,
+    );
 
     // TODO: Check every module starts properly.
     let tracker = TaskTracker::new();
-    let rpc_api = ethrex_rpc::start_api(
-        http_socket_addr,
-        authrpc_socket_addr,
-        store.clone(),
-        jwt_secret,
-        local_p2p_node,
-        local_node_record,
-        syncer,
-    )
-    .into_future();
+    let jwt_secret_clone = jwt_secret.clone();
+    cfg_if::cfg_if! {
+        if #[cfg(feature = "based")] {
+            use ethrex_rpc::{EngineClient, EthClient};
+
+            let gateway_addr = matches
+                .get_one::<String>("gateway.addr")
+                .expect("gateway.addr is required");
+            let gateway_eth_port = matches
+                .get_one::<String>("gateway.eth_port")
+                .expect("gateway.eth_port is required");
+            let gateway_auth_port = matches
+                .get_one::<String>("gateway.auth_port")
+                .expect("gateway.auth_port is required");
+            let gateway_authrpc_jwtsecret = matches
+                .get_one::<String>("gateway.jwtsecret")
+                .expect("gateway.jwtsecret is required");
+
+            let gateway_http_socket_addr =
+                parse_socket_addr(gateway_addr, gateway_eth_port).expect("Failed to parse gateway http address and port");
+            let gateway_authrpc_socket_addr = parse_socket_addr(gateway_addr, gateway_auth_port)
+                .expect("Failed to parse gateway authrpc address and port");
+
+            let gateway_eth_client = EthClient::new(&gateway_http_socket_addr.to_string());
+
+            let gateway_jwtsecret = read_jwtsecret_file(gateway_authrpc_jwtsecret);
+            let gateway_auth_client = EngineClient::new(&gateway_authrpc_socket_addr.to_string(), gateway_jwtsecret);
+
+            let rpc_api = ethrex_rpc::start_api(
+                http_socket_addr,
+                authrpc_socket_addr,
+                store.clone(),
+                jwt_secret_clone,
+                local_p2p_node,
+                local_node_record,
+                syncer,
+                gateway_eth_client,
+                gateway_auth_client,
+            )
+            .into_future();
+
+            tracker.spawn(rpc_api);
+        } else {
+            let rpc_api = ethrex_rpc::start_api(
+                http_socket_addr,
+                authrpc_socket_addr,
+                store.clone(),
+                jwt_secret_clone,
+                local_p2p_node,
+                local_node_record,
+                syncer,
+            )
+            .into_future();
+
+            tracker.spawn(rpc_api);
+        }
+    }
 
     // TODO Find a proper place to show node information
     // https://github.com/lambdaclass/ethrex/issues/836
     let enode = local_p2p_node.enode_url();
     info!("Node: {enode}");
-
-    tracker.spawn(rpc_api);
 
     // Check if the metrics.port is present, else set it to 0
     let metrics_port = matches
@@ -274,31 +340,45 @@ async fn main() {
         tracker.spawn(metrics_api);
     }
 
+    let dev_mode = *matches.get_one::<bool>("dev").unwrap_or(&false);
     // We do not want to start the networking module if the l2 feature is enabled.
     cfg_if::cfg_if! {
         if #[cfg(feature = "l2")] {
+            if dev_mode {
+                error!("Cannot run with DEV_MODE if the `l2` feature is enabled.");
+                panic!("Run without the --dev argument.");
+            }
             let l2_proposer = ethrex_l2::start_proposer(store).into_future();
             tracker.spawn(l2_proposer);
         } else if #[cfg(feature = "dev")] {
             use ethrex_dev;
-
-            let authrpc_jwtsecret = std::fs::read(authrpc_jwtsecret).expect("Failed to read JWT secret");
-            let head_block_hash = {
-                let current_block_number = store.get_latest_block_number().unwrap();
-                store.get_canonical_block_hash(current_block_number).unwrap().unwrap()
-            };
-            let max_tries = 3;
-            let url = format!("http://{authrpc_socket_addr}");
-            let block_producer_engine = ethrex_dev::block_producer::start_block_producer(
-                url,
-                authrpc_jwtsecret.into(),
-                head_block_hash,
-                max_tries,
-                1000,
-                ethrex_common::Address::default(),
-            );
-            tracker.spawn(block_producer_engine);
+            // Start the block_producer module if devmode was set
+            if dev_mode {
+                info!("Runnning in DEV_MODE");
+                let head_block_hash = {
+                    let current_block_number = store.get_latest_block_number().unwrap();
+                    store
+                        .get_canonical_block_hash(current_block_number)
+                        .unwrap()
+                        .unwrap()
+                };
+                let max_tries = 3;
+                let url = format!("http://{authrpc_socket_addr}");
+                let block_producer_engine = ethrex_dev::block_producer::start_block_producer(
+                    url,
+                    jwt_secret,
+                    head_block_hash,
+                    max_tries,
+                    1000,
+                    ethrex_common::Address::default(),
+                );
+                tracker.spawn(block_producer_engine);
+            }
         } else {
+            if dev_mode {
+                error!("Binary wasn't built with The feature flag `dev` enabled.");
+                panic!("Build the binary with the `dev` feature in order to use the `--dev` cli's argument.");
+            }
             ethrex_p2p::start_network(
                 local_p2p_node,
                 tracker.clone(),
@@ -316,6 +396,7 @@ async fn main() {
         _ = tokio::signal::ctrl_c() => {
             info!("Server shut down started...");
             info!("Storing known peers at {:?}...", peers_file);
+            cancel_token.cancel();
             store_known_peers(peer_table, peers_file).await;
             tokio::time::sleep(Duration::from_secs(1)).await;
             info!("Server shutting down!");
@@ -390,55 +471,6 @@ fn set_datadir(datadir: &str) -> String {
         .to_str()
         .expect("invalid data directory")
         .to_owned()
-}
-
-fn import_blocks(store: &Store, blocks: &Vec<Block>) {
-    let size = blocks.len();
-    for block in blocks {
-        let hash = block.hash();
-        info!(
-            "Adding block {} with hash {:#x}.",
-            block.header.number, hash
-        );
-        let result = add_block(block, store);
-        if let Some(error) = result.err() {
-            warn!(
-                "Failed to add block {} with hash {:#x}: {}.",
-                block.header.number, hash, error
-            );
-        }
-        if store
-            .update_latest_block_number(block.header.number)
-            .is_err()
-        {
-            error!("Fatal: added block {} but could not update the block number -- aborting block import", block.header.number);
-            break;
-        };
-        if store
-            .set_canonical_block(block.header.number, hash)
-            .is_err()
-        {
-            error!(
-                "Fatal: added block {} but could not set it as canonical -- aborting block import",
-                block.header.number
-            );
-            break;
-        };
-    }
-    if let Some(last_block) = blocks.last() {
-        let hash = last_block.hash();
-        match EVM_BACKEND.get() {
-            Some(EVM::LEVM) => {
-                // We are allowing this not to unwrap so that tests can run even if block execution results in the wrong root hash with LEVM.
-                let _ = apply_fork_choice(store, hash, hash, hash);
-            }
-            // This means we are using REVM as default
-            Some(EVM::REVM) | None => {
-                apply_fork_choice(store, hash, hash, hash).unwrap();
-            }
-        }
-    }
-    info!("Added {} blocks to blockchain", size);
 }
 
 async fn store_known_peers(table: Arc<Mutex<KademliaTable>>, file_path: PathBuf) {

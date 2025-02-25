@@ -8,7 +8,6 @@ use ethrex_common::{
 };
 use ethrex_storage::{AccountUpdate, Store};
 use ethrex_trie::{NodeRLP, Trie, TrieError};
-use lazy_static::lazy_static;
 use revm::{
     db::CacheDB,
     inspectors::TracerEip3155,
@@ -16,13 +15,16 @@ use revm::{
         result::EVMError as RevmError, AccountInfo as RevmAccountInfo, Address as RevmAddress,
         Bytecode as RevmBytecode, Bytes as RevmBytes, B256 as RevmB256, U256 as RevmU256,
     },
-    Database, DatabaseCommit, DatabaseRef, Evm,
+    Database, DatabaseRef, Evm,
 };
-use revm_primitives::{SpecId, TxEnv, TxKind as RevmTxKind};
+use revm_primitives::SpecId;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    block_env, db::evm_state, errors::ExecutionDBError, execute_block, get_state_transitions,
+    backends::{self},
+    block_env,
+    db::evm_state,
+    errors::ExecutionDBError,
     tx_env,
 };
 
@@ -63,10 +65,8 @@ impl ExecutionDB {
 
         let mut state = evm_state(store.clone(), block.header.parent_hash);
 
-        execute_block(block, &mut state).map_err(Box::new)?;
-
-        let account_updates = get_state_transitions(&mut state);
-        Ok(account_updates)
+        let result = backends::revm_b::REVM::execute_block(block, &mut state).map_err(Box::new)?;
+        Ok(result.account_updates)
     }
 
     pub fn get_chain_config(&self) -> ChainConfig {
@@ -107,6 +107,10 @@ impl ExecutionDB {
         // beacon root call
         #[cfg(not(feature = "l2"))]
         {
+            use lazy_static::lazy_static;
+            use revm::DatabaseCommit;
+            use revm_primitives::{TxEnv, TxKind as RevmTxKind};
+
             lazy_static! {
                 static ref SYSTEM_ADDRESS: RevmAddress = RevmAddress::from_slice(
                     &hex::decode("fffffffffffffffffffffffffffffffffffffffe").unwrap()
@@ -131,7 +135,7 @@ impl ExecutionDB {
                 data: revm::primitives::Bytes::copy_from_slice(beacon_root.as_bytes()),
                 ..Default::default()
             };
-            let mut block_env = block_env(&block.header);
+            let mut block_env = block_env(&block.header, spec_id);
             block_env.basefee = RevmU256::ZERO;
             block_env.gas_limit = RevmU256::from(30_000_000);
 
@@ -152,7 +156,7 @@ impl ExecutionDB {
         }
 
         // execute block
-        let block_env = block_env(&block.header);
+        let block_env = block_env(&block.header, spec_id);
 
         for transaction in &block.body.transactions {
             let tx_env = tx_env(transaction);

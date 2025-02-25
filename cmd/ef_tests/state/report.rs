@@ -222,20 +222,31 @@ pub fn summary_for_shell(reports: &[EFTestReport]) -> String {
         } else {
             format!("{}", total_passed).red()
         },
+
+        // NOTE: Keep in order, see the Fork Enum to check
+        // NOTE: Uncomment the summaries if EF tests for those specific forks exist.
+
+        // fork_summary_shell(reports, Fork::Osaka),
         fork_summary_shell(reports, Fork::Prague),
         fork_summary_shell(reports, Fork::Cancun),
         fork_summary_shell(reports, Fork::Shanghai),
         fork_summary_shell(reports, Fork::Paris),
+        // fork_summary_shell(reports, Fork::GrayGlacier),
+        // fork_summary_shell(reports, Fork::ArrowGlacier),
         fork_summary_shell(reports, Fork::London),
         fork_summary_shell(reports, Fork::Berlin),
+        // fork_summary_shell(reports, Fork::MuirGlacier),
         fork_summary_shell(reports, Fork::Istanbul),
-        fork_summary_shell(reports, Fork::Constantinople),
         fork_summary_shell(reports, Fork::Petersburg),
+        fork_summary_shell(reports, Fork::Constantinople),
         fork_summary_shell(reports, Fork::Byzantium),
-        fork_summary_shell(reports, Fork::Homestead),
-        fork_summary_shell(reports, Fork::Frontier),
         fork_summary_shell(reports, Fork::SpuriousDragon),
         fork_summary_shell(reports, Fork::Tangerine),
+        // fork_summary_shell(reports, Fork::DaoFork),
+        fork_summary_shell(reports, Fork::Homestead),
+        // fork_summary_shell(reports, Fork::FrontierThawing),
+        fork_summary_shell(reports, Fork::Frontier),
+
         test_dir_summary_for_shell(reports),
     )
 }
@@ -558,6 +569,7 @@ impl EFTestReportForkResult {
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
 pub struct ComparisonReport {
+    pub expected_post_state_root: H256,
     pub levm_post_state_root: H256,
     pub revm_post_state_root: H256,
     pub initial_accounts: HashMap<Address, Account>,
@@ -570,6 +582,12 @@ pub struct ComparisonReport {
 
 impl fmt::Display for ComparisonReport {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if self.revm_post_state_root != self.expected_post_state_root {
+            writeln!(
+                f,
+                "================ WARNING: REVM *fails* this tests ==================="
+            )?
+        }
         if self.levm_post_state_root != self.revm_post_state_root {
             writeln!(
                 f,

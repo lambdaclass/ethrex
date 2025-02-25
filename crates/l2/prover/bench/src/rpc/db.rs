@@ -6,19 +6,18 @@ use crate::constants::{CANCUN_CONFIG, RPC_RATE_LIMIT};
 use crate::rpc::{get_account, get_block, get_storage, retry};
 
 use bytes::Bytes;
-use ethrex_common::types::{AccountInfo, AccountState};
-use ethrex_common::U256;
 use ethrex_common::{
-    types::{Account as CoreAccount, Block, TxKind},
-    Address, H256,
+    types::{Account as CoreAccount, AccountInfo, AccountState, Block, TxKind},
+    Address, H256, U256,
 };
 use ethrex_storage::{hash_address, hash_key};
 use ethrex_trie::{Node, PathRLP, Trie};
-use ethrex_vm::execution_db::{ExecutionDB, ToExecDB};
-use ethrex_vm::spec_id;
+use ethrex_vm::{
+    execution_db::{ExecutionDB, ToExecDB},
+    spec_id, EvmError,
+};
 use futures_util::future::join_all;
-use revm::db::CacheDB;
-use revm::DatabaseRef;
+use revm::{db::CacheDB, DatabaseRef};
 use revm_primitives::{
     AccountInfo as RevmAccountInfo, Address as RevmAddress, Bytecode as RevmBytecode,
     Bytes as RevmBytes, B256 as RevmB256, U256 as RevmU256,
@@ -263,6 +262,9 @@ impl ToExecDB for RpcDB {
         &self,
         block: &Block,
     ) -> Result<ethrex_vm::execution_db::ExecutionDB, ethrex_vm::errors::ExecutionDBError> {
+        // TODO: Simplify this function and potentially merge with the implementation for
+        // StoreWrapper.
+
         let parent_hash = block.header.parent_hash;
         let chain_config = *CANCUN_CONFIG;
 
@@ -273,7 +275,7 @@ impl ToExecDB for RpcDB {
             spec_id(&chain_config, block.header.timestamp),
             self,
         )
-        .unwrap(); // TODO: remove unwrap
+        .map_err(|err| Box::new(EvmError::Custom(err.to_string())))?; // TODO: ugly error handling
 
         // index read and touched account addresses and storage keys
         let index: Vec<_> = cache_db
@@ -311,9 +313,7 @@ impl ToExecDB for RpcDB {
 
         // get potential child nodes of deleted nodes after execution
         let potential_account_child_nodes = final_account_proofs
-            .filter_map(|(address, proof)| {
-                get_potential_child_nodes(proof, &hash_address(&address))
-            })
+            .filter_map(|(address, proof)| get_potential_child_nodes(proof, &hash_address(address)))
             .flat_map(|nodes| nodes.into_iter().map(|node| node.encode_raw()));
 
         let potential_storage_child_nodes: HashMap<_, _> = final_storage_proofs
@@ -333,7 +333,7 @@ impl ToExecDB for RpcDB {
             pub storage: &'a HashMap<H256, U256>,
             pub code: &'a Option<Bytes>,
             pub storage_proofs: &'a HashMap<H256, Vec<NodeRLP>>,
-        };
+        }
 
         let existing_accs = initial_accounts.iter().filter_map(|(address, account)| {
             if let Account::Existing {
@@ -435,7 +435,15 @@ impl ToExecDB for RpcDB {
     }
 }
 
+/// Get all potential child nodes of a node whose value was deleted.
+///
+/// After deleting a value from a (partial) trie it's possible that the node containing the value gets
+/// replaced by its child, whose prefix is possibly modified by appending some nibbles to it.
+/// If we don't have this child node (because we're modifying a partial trie), then we can't
+/// perform the deletion. If we have the final proof of exclusion of the deleted value, we can
+/// calculate all posible child nodes.
 fn get_potential_child_nodes(proof: &[NodeRLP], key: &PathRLP) -> Option<Vec<Node>> {
+    // TODO: Perhaps it's possible to calculate the child nodes instead of storing all possible ones.
     let trie = Trie::from_nodes(
         proof.first(),
         &proof.iter().skip(1).cloned().collect::<Vec<_>>(),
