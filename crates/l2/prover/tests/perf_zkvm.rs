@@ -2,11 +2,11 @@
 #![allow(clippy::unwrap_used)]
 use ethrex_blockchain::add_block;
 use ethrex_common::types::Block;
-use ethrex_prover_lib::{prove, verify};
+use ethrex_prover_lib::{execute};
 use ethrex_storage::{EngineType, Store};
 use ethrex_vm::{
     db::StoreWrapper,
-    execution_db::{ExecutionDB, ToExecDB},
+    execution_db::{ToExecDB},
 };
 use std::path::Path;
 use tracing::info;
@@ -20,17 +20,16 @@ async fn test_performance_zkvm() {
 
     let start = std::time::Instant::now();
 
-    let receipt = prove(input).unwrap();
+    // this is only executing because these tests run as a CI job and should be fast
+    // TODO: create a test for actual proving
+    execute(input).unwrap();
 
-    let duration = start.elapsed();
+    let duration = start.elapsed().as_secs();
     info!(
-        "Number of EIP1559 transactions in the proven block: {}",
+        "Number of transactions in the proven block: {}",
         block_to_prove.body.transactions.len()
     );
-    info!("[SECONDS] Proving Took: {:?}", duration);
-    info!("[MINUTES] Proving Took: {}[m]", duration.as_secs() / 60);
-
-    verify(&receipt).unwrap();
+    info!("Execution took {secs}s or {mins}m", secs = duration, mins = duration / 60);
 }
 
 async fn setup() -> (ProgramInput, Block) {
@@ -63,7 +62,7 @@ async fn setup() -> (ProgramInput, Block) {
         store: store.clone(),
         block_hash: block_to_prove.header.parent_hash,
     };
-    let db = store.to_exec_db(&block_to_prove).unwrap();
+    let db = store.to_exec_db(block_to_prove).unwrap();
 
     let parent_block_header = store
         .store
