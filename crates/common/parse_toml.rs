@@ -1,6 +1,7 @@
 use crate::errors::*;
 use serde::Deserialize;
 use std::io::Write;
+use std::path::Path;
 
 const ENV_FILE_NAME: &str = ".env";
 
@@ -252,6 +253,9 @@ pub fn write_to_env(config: String) {
 }
 
 pub fn read_toml(toml_path: String) -> Result<(), ConfigError> {
+    if Path::new(ENV_FILE_NAME).exists() {
+        return Ok(());
+    }
     let file = std::fs::read_to_string(toml_path).map_err(|_| ConfigError::TomlFileNotFound)?;
     let config: L2Config = toml::from_str(&file).map_err(|_| ConfigError::TomlFormat)?;
     write_to_env(config.to_env());
