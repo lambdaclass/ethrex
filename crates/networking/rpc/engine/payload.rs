@@ -1,6 +1,4 @@
-use ethrex_blockchain::add_block;
 use ethrex_blockchain::error::ChainError;
-use ethrex_blockchain::payload::build_payload;
 use ethrex_common::types::requests::{compute_requests_hash, EncodedRequests};
 use ethrex_common::types::{BlobsBundle, Block, BlockBody, BlockHash, BlockNumber, Fork};
 use ethrex_common::{H256, U256};
@@ -514,7 +512,18 @@ fn execute_payload(block: &Block, context: &RpcApiContext) -> Result<PayloadStat
         };
     };
 
-    match add_block(block, storage) {
+    let add_block_result = {
+        let lock = context.syncer.try_lock();
+        if let Ok(syncer) = lock {
+            syncer.blockchain.add_block(block)
+        } else {
+            Err(ChainError::Custom(
+                "Error when trying to lock syncer".to_string(),
+            ))
+        }
+    };
+
+    match add_block_result {
         Err(ChainError::ParentNotFound) => Ok(PayloadStatus::syncing()),
         // Under the current implementation this is not possible: we always calculate the state
         // transition of any new payload as long as the parent is present. If we received the
@@ -621,8 +630,16 @@ fn build_execution_payload_response(
             should_override_builder,
         })
     } else {
-        let (blobs_bundle, block_value) = build_payload(&mut payload_block, &context.storage)
-            .map_err(|err| RpcErr::Internal(err.to_string()))?;
+        let (blobs_bundle, block_value) = {
+            let syncer = context
+                .syncer
+                .try_lock()
+                .map_err(|_| RpcErr::Internal("Error locking syncer".to_string()))?;
+            syncer
+                .blockchain
+                .build_payload(&mut payload_block)
+                .map_err(|err| RpcErr::Internal(err.to_string()))?
+        };
 
         context.storage.update_payload(
             payload_id,
