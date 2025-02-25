@@ -14,64 +14,144 @@ use ethrex_common::types::{
     BlockHeader, BlockNumber, ChainConfig, EIP4844Transaction, Receipt, Transaction,
 };
 use ethrex_common::H256;
+use std::{ops::Div, time::Instant};
 
 use ethrex_storage::error::StoreError;
 use ethrex_storage::Store;
+use ethrex_vm::backends::BlockExecutionResult;
+use ethrex_vm::backends::EVM;
 use ethrex_vm::db::evm_state;
-use ethrex_vm::{backends::BlockExecutionResult, get_evm_backend_or_default};
+use fork_choice::apply_fork_choice;
+use tracing::{error, info, warn};
 
 //TODO: Implement a struct Chain or BlockChain to encapsulate
 //functionality and canonical chain state and config
 
-/// Adds a new block to the store. It may or may not be canonical, as long as its ancestry links
-/// with the canonical chain and its parent's post-state is calculated. It doesn't modify the
-/// canonical chain/head. Fork choice needs to be updated for that in a separate step.
-///
-/// Performs pre and post execution validation, and updates the database with the post state.
-pub fn add_block(block: &Block, storage: &Store) -> Result<u64, ChainError> {
-    let block_hash = block.header.compute_block_hash();
+#[derive(Debug, Clone)]
+pub struct Blockchain {
+    pub vm: EVM,
+    pub storage: Store,
+}
 
-    // Validate if it can be the new head and find the parent
-    let Ok(parent_header) = find_parent_header(&block.header, storage) else {
-        // If the parent is not present, we store it as pending.
-        storage.add_pending_block(block.clone())?;
-        return Err(ChainError::ParentNotFound);
-    };
-    let mut state = evm_state(storage.clone(), block.header.parent_hash);
-    let chain_config = state.chain_config().map_err(ChainError::from)?;
+impl Blockchain {
+    pub fn new(evm: EVM, store: Store) -> Self {
+        Self {
+            vm: evm,
+            storage: store,
+        }
+    }
 
-    // Validate the block pre-execution
-    validate_block(block, &parent_header, &chain_config)?;
-    let BlockExecutionResult {
-        receipts,
-        requests,
-        account_updates,
-    } = get_evm_backend_or_default().execute_block(block, &mut state)?;
+    pub fn default_with_store(store: Store) -> Self {
+        Self {
+            vm: Default::default(),
+            storage: store,
+        }
+    }
 
-    validate_gas_used(&receipts, &block.header)?;
+    pub fn add_block(&self, block: &Block) -> Result<u64, ChainError> {
+        let since = Instant::now();
 
-    // Apply the account updates over the last block's state and compute the new state root
-    let account_updates_started_at = std::time::Instant::now();
-    let new_state_root = state
-        .database()
-        .ok_or(ChainError::StoreError(StoreError::MissingStore))?
-        .apply_account_updates(block.header.parent_hash, &account_updates)?
-        .ok_or(ChainError::ParentStateNotFound)?;
-    let account_updates_elapsed = account_updates_started_at.elapsed().as_secs();
+        let block_hash = block.header.compute_block_hash();
 
-    // Check state root matches the one in block header after execution
-    validate_state_root(&block.header, new_state_root)?;
+        // Validate if it can be the new head and find the parent
+        let Ok(parent_header) = find_parent_header(&block.header, &self.storage) else {
+            // If the parent is not present, we store it as pending.
+            self.storage.add_pending_block(block.clone())?;
+            return Err(ChainError::ParentNotFound);
+        };
+        let mut state = evm_state(self.storage.clone(), block.header.parent_hash);
+        let chain_config = state.chain_config().map_err(ChainError::from)?;
 
-    // Check receipts root matches the one in block header after execution
-    validate_receipts_root(&block.header, &receipts)?;
+        // Validate the block pre-execution
+        validate_block(block, &parent_header, &chain_config)?;
+        let BlockExecutionResult {
+            receipts,
+            requests,
+            account_updates,
+        } = self.vm.execute_block(block, &mut state)?;
 
-    // Processes requests from receipts, computes the requests_hash and compares it against the header
-    validate_requests_hash(&block.header, &chain_config, &requests)?;
+        validate_gas_used(&receipts, &block.header)?;
 
-    store_block(storage, block.clone())?;
-    store_receipts(storage, receipts, block_hash)?;
+        // Apply the account updates over the last block's state and compute the new state root
+        let account_updates_started_at = std::time::Instant::now();
+        let new_state_root = state
+            .database()
+            .ok_or(ChainError::StoreError(StoreError::MissingStore))?
+            .apply_account_updates(block.header.parent_hash, &account_updates)?
+            .ok_or(ChainError::ParentStateNotFound)?;
+        let account_updates_elapsed = account_updates_started_at.elapsed().as_secs();
 
-    Ok(account_updates_elapsed)
+        // Check state root matches the one in block header after execution
+        validate_state_root(&block.header, new_state_root)?;
+
+        // Check receipts root matches the one in block header after execution
+        validate_receipts_root(&block.header, &receipts)?;
+
+        // Processes requests from receipts, computes the requests_hash and compares it against the header
+        validate_requests_hash(&block.header, &chain_config, &requests)?;
+
+        store_block(&self.storage, block.clone())?;
+        store_receipts(&self.storage, receipts, block_hash)?;
+
+        let interval = Instant::now().duration_since(since).as_millis();
+        if interval != 0 {
+            let as_gigas = (block.header.gas_used as f64).div(10_f64.powf(9_f64));
+            let throughput = (as_gigas) / (interval as f64) * 1000_f64;
+            info!("[METRIC] BLOCK EXECUTION THROUGHPUT: {throughput} Gigagas/s TIME SPENT: {interval} msecs");
+        }
+
+        Ok(account_updates_elapsed)
+    }
+
+    //TODO: Forkchoice Update shouldn't be part of this function
+    pub fn import_blocks(&self, blocks: &Vec<Block>) {
+        let size = blocks.len();
+        for block in blocks {
+            let hash = block.hash();
+            info!(
+                "Adding block {} with hash {:#x}.",
+                block.header.number, hash
+            );
+            if let Err(error) = self.add_block(block) {
+                warn!(
+                    "Failed to add block {} with hash {:#x}: {}.",
+                    block.header.number, hash, error
+                );
+            }
+            if self
+                .storage
+                .update_latest_block_number(block.header.number)
+                .is_err()
+            {
+                error!("Fatal: added block {} but could not update the block number -- aborting block import", block.header.number);
+                break;
+            };
+            if self
+                .storage
+                .set_canonical_block(block.header.number, hash)
+                .is_err()
+            {
+                error!(
+                    "Fatal: added block {} but could not set it as canonical -- aborting block import",
+                    block.header.number
+                );
+                break;
+            };
+        }
+        if let Some(last_block) = blocks.last() {
+            let hash = last_block.hash();
+            match self.vm {
+                EVM::LEVM => {
+                    // We are allowing this not to unwrap so that tests can run even if block execution results in the wrong root hash with LEVM.
+                    let _ = apply_fork_choice(&self.storage, hash, hash, hash);
+                }
+                EVM::REVM => {
+                    apply_fork_choice(&self.storage, hash, hash, hash).unwrap();
+                }
+            }
+        }
+        info!("Added {size} blocks to blockchain");
+    }
 }
 
 pub fn validate_requests_hash(
