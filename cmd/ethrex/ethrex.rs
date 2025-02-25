@@ -41,7 +41,7 @@ async fn main() {
     println!("The current directory is {}", path.display());
 
     let toml_config =
-        std::env::var("CONFIG_FILE").unwrap_or("../../l2/crates/l2/config.toml".to_string());
+        std::env::var("CONFIG_FILE").unwrap_or("l2/crates/l2/config.toml".to_string());
     match ethrex_common::parse_toml::read_toml(toml_config) {
         Ok(_) => (),
         Err(err) => {
