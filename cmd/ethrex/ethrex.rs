@@ -1,6 +1,6 @@
 use bytes::Bytes;
 use directories::ProjectDirs;
-use ethrex_blockchain::{add_block, fork_choice::apply_fork_choice};
+use ethrex_blockchain::Blockchain;
 use ethrex_common::types::{Block, Genesis};
 use ethrex_p2p::{
     kademlia::KademliaTable,
@@ -10,7 +10,7 @@ use ethrex_p2p::{
 };
 use ethrex_rlp::decode::RLPDecode;
 use ethrex_storage::{EngineType, Store};
-use ethrex_vm::{backends::EVM, EVM_BACKEND};
+use ethrex_vm::backends::EVM;
 use k256::ecdsa::SigningKey;
 use local_ip_address::local_ip;
 use rand::rngs::OsRng;
@@ -131,6 +131,13 @@ async fn main() {
         bootnodes.extend(networks::MEKONG_BOOTNODES.iter());
     }
 
+    if network == "ephemery" {
+        info!("Adding ephemery preset bootnodes");
+        // Set ephemery presets
+        network = String::from(networks::EPHEMERY_GENESIS_PATH);
+        bootnodes.extend(networks::EPHEMERY_BOOTNODES.iter());
+    }
+
     if bootnodes.is_empty() {
         warn!("No bootnodes specified. This node will not be able to connect to the network.");
     }
@@ -159,8 +166,6 @@ async fn main() {
     let sync_mode = sync_mode(&matches);
 
     let evm = matches.get_one::<EVM>("evm").unwrap_or(&EVM::REVM);
-    let evm = EVM_BACKEND.get_or_init(|| evm.clone());
-    info!("EVM_BACKEND set to: {:?}", evm);
 
     let path = path::PathBuf::from(data_dir.clone());
     let store: Store = if path.ends_with("memory") {
@@ -179,6 +184,7 @@ async fn main() {
         }
         Store::new(&data_dir, engine_type).expect("Failed to create Store")
     };
+    let blockchain = Blockchain::new(evm.clone(), store.clone());
 
     let genesis = read_genesis_file(&network);
     store
@@ -188,7 +194,7 @@ async fn main() {
     if let Some(chain_rlp_path) = matches.get_one::<String>("import") {
         info!("Importing blocks from chain file: {}", chain_rlp_path);
         let blocks = read_chain_file(chain_rlp_path);
-        import_blocks(&store, &blocks);
+        blockchain.import_blocks(&blocks);
     }
 
     if let Some(blocks_path) = matches.get_one::<String>("import_dir") {
@@ -207,7 +213,7 @@ async fn main() {
             blocks.push(read_block_file(s));
         }
 
-        import_blocks(&store, &blocks);
+        blockchain.import_blocks(&blocks);
     }
 
     let jwt_secret = read_jwtsecret_file(authrpc_jwtsecret);
@@ -258,7 +264,12 @@ async fn main() {
     // Create a cancellation_token for long_living tasks
     let cancel_token = tokio_util::sync::CancellationToken::new();
     // Create SyncManager
-    let syncer = SyncManager::new(peer_table.clone(), sync_mode, cancel_token.clone());
+    let syncer = SyncManager::new(
+        peer_table.clone(),
+        sync_mode,
+        cancel_token.clone(),
+        blockchain,
+    );
 
     // TODO: Check every module starts properly.
     let tracker = TaskTracker::new();
@@ -424,55 +435,6 @@ fn set_datadir(datadir: &str) -> String {
         .to_str()
         .expect("invalid data directory")
         .to_owned()
-}
-
-fn import_blocks(store: &Store, blocks: &Vec<Block>) {
-    let size = blocks.len();
-    for block in blocks {
-        let hash = block.hash();
-        info!(
-            "Adding block {} with hash {:#x}.",
-            block.header.number, hash
-        );
-        let result = add_block(block, store);
-        if let Some(error) = result.err() {
-            warn!(
-                "Failed to add block {} with hash {:#x}: {}.",
-                block.header.number, hash, error
-            );
-        }
-        if store
-            .update_latest_block_number(block.header.number)
-            .is_err()
-        {
-            error!("Fatal: added block {} but could not update the block number -- aborting block import", block.header.number);
-            break;
-        };
-        if store
-            .set_canonical_block(block.header.number, hash)
-            .is_err()
-        {
-            error!(
-                "Fatal: added block {} but could not set it as canonical -- aborting block import",
-                block.header.number
-            );
-            break;
-        };
-    }
-    if let Some(last_block) = blocks.last() {
-        let hash = last_block.hash();
-        match EVM_BACKEND.get() {
-            Some(EVM::LEVM) => {
-                // We are allowing this not to unwrap so that tests can run even if block execution results in the wrong root hash with LEVM.
-                let _ = apply_fork_choice(store, hash, hash, hash);
-            }
-            // This means we are using REVM as default
-            Some(EVM::REVM) | None => {
-                apply_fork_choice(store, hash, hash, hash).unwrap();
-            }
-        }
-    }
-    info!("Added {} blocks to blockchain", size);
 }
 
 async fn store_known_peers(table: Arc<Mutex<KademliaTable>>, file_path: PathBuf) {
