@@ -2,7 +2,7 @@ use crate::{
     report::{ComparisonReport, EFTestReport, EFTestReportForkResult, TestReRunReport, TestVector},
     runner::{levm_runner::post_state_root, EFTestRunnerError, InternalError},
     types::EFTest,
-    utils::{effective_gas_price, load_initial_state},
+    utils::{effective_gas_price, load_initial_state, load_initial_state_levm},
 };
 use bytes::Bytes;
 use ethrex_common::{
@@ -327,11 +327,11 @@ pub fn ensure_post_state(
         Some(_expected_exception) => {}
         // We only want to compare account updates when no exception is expected.
         None => {
-            let (initial_state, block_hash) = load_initial_state(test);
+            let store_wrapper = load_initial_state_levm(test);
             let levm_account_updates = backends::levm::LEVM::get_state_transitions(
                 Some(*fork),
-                initial_state.database().unwrap(),
-                block_hash,
+                &store_wrapper.store,
+                store_wrapper.block_hash,
                 &levm_execution_report.new_state,
             )
             .map_err(|_| {
