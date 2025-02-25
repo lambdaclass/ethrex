@@ -2,7 +2,6 @@ use std::fmt::Debug;
 use std::marker::PhantomData;
 
 use bytes::Bytes;
-use ethereum_types::U256;
 use ethrex_common::{
     types::{AccountState, Block, BlockBody, BlockHash, BlockHeader, Receipt},
     H256,
@@ -26,8 +25,6 @@ pub type BlockHashRLP = Rlp<BlockHash>;
 pub type BlockHeaderRLP = Rlp<BlockHeader>;
 pub type BlockBodyRLP = Rlp<BlockBody>;
 pub type BlockRLP = Rlp<Block>;
-// TODO (#307): Remove TotalDifficulty.
-pub type BlockTotalDifficultyRLP = Rlp<U256>;
 
 // Receipt types
 pub type ReceiptRLP = Rlp<Receipt>;
