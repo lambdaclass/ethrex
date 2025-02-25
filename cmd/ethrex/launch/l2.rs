@@ -8,7 +8,6 @@ use std::{
 };
 
 use crate::launch::DEFAULT_DATADIR;
-use crate::networks;
 use crate::utils::{
     parse_socket_addr, read_block_file, read_chain_file, read_genesis_file, read_jwtsecret_file,
     read_known_peers, set_datadir, store_known_peers, sync_mode,
@@ -84,7 +83,7 @@ pub async fn launch(matches: clap::ArgMatches) {
         .get_one::<String>("discovery.port")
         .expect("discovery.port is required");
 
-    let mut network = matches
+    let network = matches
         .get_one::<String>("network")
         .expect("network is required")
         .clone();
@@ -94,34 +93,6 @@ pub async fn launch(matches: clap::ArgMatches) {
         .map(Iterator::copied)
         .map(Iterator::collect)
         .unwrap_or_default();
-
-    if network == "holesky" {
-        info!("Adding holesky preset bootnodes");
-        // Set holesky presets
-        network = String::from(networks::HOLESKY_GENESIS_PATH);
-        bootnodes.extend(networks::HOLESKY_BOOTNODES.iter());
-    }
-
-    if network == "sepolia" {
-        info!("Adding sepolia preset bootnodes");
-        // Set sepolia presets
-        network = String::from(networks::SEPOLIA_GENESIS_PATH);
-        bootnodes.extend(networks::SEPOLIA_BOOTNODES.iter());
-    }
-
-    if network == "mekong" {
-        info!("Adding mekong preset bootnodes");
-        // Set mekong presets
-        network = String::from(networks::MEKONG_GENESIS_PATH);
-        bootnodes.extend(networks::MEKONG_BOOTNODES.iter());
-    }
-
-    if network == "ephemery" {
-        info!("Adding ephemery preset bootnodes");
-        // Set ephemery presets
-        network = String::from(networks::EPHEMERY_GENESIS_PATH);
-        bootnodes.extend(networks::EPHEMERY_BOOTNODES.iter());
-    }
 
     if bootnodes.is_empty() {
         warn!("No bootnodes specified. This node will not be able to connect to the network.");
