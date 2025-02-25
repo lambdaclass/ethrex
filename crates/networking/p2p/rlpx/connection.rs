@@ -366,6 +366,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
                         NewPooledTransactionHashes::new(vec![(*tx).clone()], &self.storage)?,
                     ))
                     .await?;
+                    // Possible improvement: the mempool already knows the hash but the filter function does not return it
                     self.broadcasted_txs.insert((*tx).compute_hash());
                 }
                 log_peer_debug(
