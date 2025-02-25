@@ -3,8 +3,12 @@ use bytes::Bytes;
 use clap::Subcommand;
 use ethereum_types::{Address, H256, U256};
 use ethrex_blockchain::constants::TX_GAS_COST;
+use ethrex_common::H160;
 use ethrex_l2_sdk::calldata::{self, Value};
-use ethrex_rpc::clients::eth::{eth_sender::Overrides, EthClient};
+use ethrex_rpc::{
+    clients::eth::{eth_sender::Overrides, EthClient},
+    types::receipt::RpcReceipt,
+};
 use keccak_hash::keccak;
 use secp256k1::SecretKey;
 use std::time::Instant;
@@ -15,6 +19,13 @@ use std::{
     thread::sleep,
     time::Duration,
 };
+use tokio::task::JoinSet;
+
+// ERC20 compiled artifact generated from this tutorial:
+// https://medium.com/@kaishinaw/erc20-using-hardhat-a-comprehensive-guide-3211efba98d4
+// If you want to create a new one, follow the steps above and take
+// the resulting artifact from the hardhat project.
+const ERC20: &str = include_str!("./erc20.bin").trim_ascii();
 
 #[derive(Subcommand)]
 pub(crate) enum Command {
@@ -60,6 +71,15 @@ pub(crate) enum Command {
             help = "send value to address with contract"
         )]
         contract: bool,
+    },
+    ERC20 {
+        #[clap(
+            short = 't',
+            long = "transactions",
+            default_value = "10000",
+            help = "Number of ERC20 transactions to do"
+        )]
+        transactions: u64,
     },
 }
 
@@ -154,6 +174,86 @@ async fn test_connection(cfg: EthrexL2Config) -> bool {
     false
 }
 
+async fn erc20_load_test(config: &EthrexL2Config, count: u64) -> eyre::Result<()> {
+    let client = EthClient::new(&config.network.l2_rpc_url);
+    let erc20_bytecode = hex::decode(ERC20)?;
+    let (_, contract_address) = client
+        .deploy(
+            config.wallet.address,
+            config.wallet.private_key,
+            erc20_bytecode.into(),
+            Overrides::default(),
+        )
+        .await
+        .expect("Failed to deploy ERC20 with config: {config}");
+    println!("ERC20 deployed to address: {contract_address}");
+    println!("Checking ERC20 contract is reachable...");
+    let balance_calldata = calldata::encode_calldata(
+        "balanceOf(address)",
+        &[Value::Address(config.wallet.address)],
+    )?;
+    let balance_request_tx = client
+        .build_eip1559_transaction(
+            contract_address,
+            config.wallet.address,
+            balance_calldata.into(),
+            Default::default(),
+            100,
+        )
+        .await
+        .unwrap();
+    let balance_response = client
+        .send_eip1559_transaction(&balance_request_tx, &config.wallet.private_key)
+        .await
+        .expect("Failed to query balance for test load account");
+    println!("ERC20 contract is reachable. Starting load test with balance: {balance_response}");
+    let mut tasks = JoinSet::new();
+    let send_calldata = calldata::encode_calldata(
+        "transfer(address,uint256)",
+        &[
+            Value::Address(config.wallet.address),
+            Value::Uint(U256::one()),
+        ],
+    )
+    .unwrap();
+    let send_tx = client
+        .build_eip1559_transaction(
+            H160::random(),
+            config.wallet.address.clone(),
+            send_calldata.into(),
+            Default::default(),
+            1,
+        )
+        .await?;
+    for i in 0..count {
+        let tx = send_tx.clone();
+        let client = client.clone();
+        let pk = config.wallet.private_key.clone();
+        tasks.spawn(async move {
+            let sent = client.send_eip1559_transaction(&tx, &pk).await;
+            match sent {
+                Ok(hash) => {
+                    println!("ERC-20 transfer number {i} sent! Waiting for receipt...");
+                    let mut retries = 10_u64;
+                    for _ in 0..retries {
+                        match client.get_transaction_receipt(hash).await {
+                            Ok(Some(RpcReceipt { receipt, .. })) if receipt.status => {
+                                println!("ERC-20 transfer number {i} was sucessful");
+                            }
+                            _ => {
+                                let _ = tokio::time::sleep(Duration::from_secs(1)).await;
+                            }
+                        }
+                    }
+                }
+                Err(_) => println!("ERC-20 transfer number {i} FAILED"),
+            }
+        });
+    }
+    tasks.join_all().await;
+    Ok(())
+}
+
 impl Command {
     pub async fn run(self, cfg: EthrexL2Config) -> eyre::Result<()> {
         match self {
@@ -230,6 +330,10 @@ impl Command {
                 println!("Total retries: {retries}");
                 println!("Total time elapsed: {:.2?}", now.elapsed());
 
+                Ok(())
+            }
+            Command::ERC20 { transactions } => {
+                erc20_load_test(&cfg, transactions).await?;
                 Ok(())
             }
         }
