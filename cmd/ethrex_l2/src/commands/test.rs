@@ -233,10 +233,10 @@ async fn erc20_deploy(config: &EthrexL2Config) -> eyre::Result<Address> {
 }
 
 async fn claim_erc20_balances(
-    cfg: EthrexL2Config,
+    cfg: &EthrexL2Config,
     contract_address: Address,
-    private_keys: Vec<SecretKey>,
-) {
+    private_keys: &Vec<SecretKey>,
+) -> eyre::Result<()> {
     let accounts = private_keys
         .iter()
         .map(|pk| (pk.clone(), pk.public_key(secp256k1::SECP256K1)))
@@ -259,9 +259,23 @@ async fn claim_erc20_balances(
                 )
                 .await
                 .unwrap();
-            let tx_hash = client.send_eip1559_transaction(&claim_tx, &sk).await.unwrap();
-            wait_receipt(client, tx_hash, None)
+            let tx_hash = client
+                .send_eip1559_transaction(&claim_tx, &sk)
+                .await
+                .unwrap();
+            wait_receipt(client, tx_hash, None).await
         });
+    }
+    let responses = tasks.join_all().await;
+    let every_account_has_balance = responses.iter().all(|response| match response {
+        Ok(RpcReceipt { receipt, .. }) => receipt.status,
+        Err(_) => false,
+    });
+
+    if every_account_has_balance {
+        Ok(())
+    } else {
+        Err(eyre::eyre!("Failed to give balance to every account"))
     }
 }
 
@@ -269,62 +283,61 @@ async fn erc20_load_test(
     config: &EthrexL2Config,
     count: u64,
     contract_address: Address,
-    senders: Vec<SecretKey>,
+    senders: &Vec<SecretKey>,
 ) -> eyre::Result<()> {
     let client = EthClient::new(&config.network.l2_rpc_url);
     let mut tasks = JoinSet::new();
-    let send_calldata = calldata::encode_calldata(
-        "transfer(address,uint256)",
-        &[
-            Value::Address(config.wallet.address),
-            Value::Uint(U256::one()),
-        ],
-    )
-    .unwrap();
-    let send_tx = client
-        .build_eip1559_transaction(
-            H160::random(),
-            config.wallet.address.clone(),
-            send_calldata.into(),
-            Default::default(),
-            1,
-        )
-        .await?;
     let successful_txs = Arc::new(AtomicU64::new(0));
-    for i in 0..count {
-        let tx = send_tx.clone();
-        let client = client.clone();
-        let pk = config.wallet.private_key.clone();
-        let count = successful_txs.clone();
-        tasks.spawn(async move {
-            let sent = client.send_eip1559_transaction(&tx, &pk).await;
-            match sent {
-                Ok(hash) => {
-                    println!("ERC-20 transfer number {i} sent! Waiting for receipt...");
-                    let mut retries = 10_u64;
-                    for _ in 0..retries {
-                        match client.get_transaction_receipt(hash).await {
-                            Ok(Some(RpcReceipt { receipt, .. })) if receipt.status => {
-                                println!("ERC-20 transfer number {i} was sucessful");
-                                count.fetch_add(1_u64, Ordering::Relaxed);
-                            }
-                            _ => {
-                                let _ = tokio::time::sleep(Duration::from_secs(1)).await;
+    let accounts = senders
+        .iter()
+        .map(|pk| (pk.clone(), pk.public_key(secp256k1::SECP256K1)))
+        .collect_vec();
+    let transfer_number = Arc::new(AtomicU64::new(0));
+    for (sk, pk) in accounts {
+        for i in 0..count {
+            let send_calldata = calldata::encode_calldata(
+                "transfer(address,uint256)",
+                &[Value::Address(H160::random()), Value::Uint(U256::one())],
+            )
+            .unwrap();
+            let send_tx = client
+                .build_eip1559_transaction(
+                    contract_address,
+                    address_from_pub_key(pk),
+                    send_calldata.into(),
+                    Default::default(),
+                    1,
+                )
+                .await?;
+            let client = client.clone();
+            let count = successful_txs.clone();
+            tasks.spawn(async move {
+                let sent = client.send_eip1559_transaction(&send_tx, &sk).await;
+                let transfer_number = tx_number.fetch_add(1, Ordering::Relaxed);
+                match sent {
+                    Ok(hash) => {
+                        println!(
+                            "ERC-20 transfer number {transfer_number} sent! Waiting for receipt..."
+                        );
+                        let mut retries = 10_u64;
+                        'retry_loop: for _ in 0..retries {
+                            match client.get_transaction_receipt(hash).await {
+                                Ok(Some(RpcReceipt { receipt, .. })) if receipt.status => {
+                                    println!(
+                                        "ERC-20 transfer number {transfer_number} was sucessful"
+                                    );
+                                    break 'retry_loop;
+                                }
+                                _ => {
+                                    let _ = tokio::time::sleep(Duration::from_secs(1)).await;
+                                }
                             }
                         }
                     }
+                    Err(_) => println!("ERC-20 transfer number {transfer_number} FAILED"),
                 }
-                Err(_) => println!("ERC-20 transfer number {i} FAILED"),
-            }
-        });
-    }
-    if successful_txs.load(Ordering::Relaxed) == count {
-        println!("Every transaction was sucessful!");
-    } else {
-        eprintln!(
-            "Only {} out of {count} were successful",
-            successful_txs.load(Ordering::Relaxed)
-        );
+            });
+        }
     }
     tasks.join_all().await;
     Ok(())
@@ -419,7 +432,9 @@ impl Command {
                     })
                     .map(|pk| SecretKey::from_slice(pk.as_bytes()))
                     .collect();
-                erc20_load_test(&cfg, transaction_count, contract_address, private_keys?).await?;
+                let private_keys = private_keys?;
+                claim_erc20_balances(&cfg, contract_address, &private_keys).await?;
+                erc20_load_test(&cfg, transaction_count, contract_address, &private_keys).await?;
                 Ok(())
             }
         }
