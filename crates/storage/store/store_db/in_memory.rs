@@ -6,8 +6,8 @@ use crate::{
 use bytes::Bytes;
 use ethereum_types::{H256, U256};
 use ethrex_common::types::{
-    AccountState, BlobsBundle, Block, BlockBody, BlockHash, BlockHeader, BlockNumber, ChainConfig,
-    Index, Receipt,
+    payload::PayloadBundle, AccountState, Block, BlockBody, BlockHash, BlockHeader, BlockNumber,
+    ChainConfig, Index, Receipt,
 };
 use ethrex_trie::{InMemoryTrieDB, Nibbles, Trie};
 use std::{
@@ -37,7 +37,7 @@ struct StoreInner {
     // A storage trie for each hashed account address
     storage_trie_nodes: HashMap<H256, NodeMap>,
     // Stores local blocks by payload id
-    payloads: HashMap<u64, (Block, U256, BlobsBundle, bool)>,
+    payloads: HashMap<u64, PayloadBundle>,
     pending_blocks: HashMap<BlockHash, Block>,
     // Stores current Snap Sate
     snap_state: SnapState,
@@ -338,17 +338,13 @@ impl StoreEngine for Store {
     }
 
     fn add_payload(&self, payload_id: u64, block: Block) -> Result<(), StoreError> {
-        self.inner().payloads.insert(
-            payload_id,
-            (block, U256::zero(), BlobsBundle::empty(), false),
-        );
+        self.inner()
+            .payloads
+            .insert(payload_id, PayloadBundle::from_block(block));
         Ok(())
     }
 
-    fn get_payload(
-        &self,
-        payload_id: u64,
-    ) -> Result<Option<(Block, U256, BlobsBundle, bool)>, StoreError> {
+    fn get_payload(&self, payload_id: u64) -> Result<Option<PayloadBundle>, StoreError> {
         Ok(self.inner().payloads.get(&payload_id).cloned())
     }
 
@@ -396,17 +392,9 @@ impl StoreEngine for Store {
 
         Ok(())
     }
-    fn update_payload(
-        &self,
-        payload_id: u64,
-        block: Block,
-        block_value: U256,
-        blobs_bundle: BlobsBundle,
-        completed: bool,
-    ) -> Result<(), StoreError> {
-        self.inner()
-            .payloads
-            .insert(payload_id, (block, block_value, blobs_bundle, completed));
+
+    fn update_payload(&self, payload_id: u64, payload: PayloadBundle) -> Result<(), StoreError> {
+        self.inner().payloads.insert(payload_id, payload);
         Ok(())
     }
 
