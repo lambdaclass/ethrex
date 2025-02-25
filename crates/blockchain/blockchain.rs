@@ -49,12 +49,10 @@ impl Blockchain {
     }
 
     pub fn add_block(&self, block: &Block) -> Result<(), ChainError> {
-        dbg!("1");
         let since = Instant::now();
 
         let block_hash = block.header.compute_block_hash();
 
-        dbg!("7");
         // Validate if it can be the new head and find the parent
         let Ok(parent_header) = find_parent_header(&block.header, &self.storage) else {
             // If the parent is not present, we store it as pending.
@@ -64,7 +62,6 @@ impl Blockchain {
         let mut state = evm_state(self.storage.clone(), block.header.parent_hash);
         let chain_config = state.chain_config().map_err(ChainError::from)?;
 
-        dbg!("7");
         // Validate the block pre-execution
         validate_block(block, &parent_header, &chain_config)?;
         let BlockExecutionResult {
@@ -75,7 +72,6 @@ impl Blockchain {
 
         validate_gas_used(&receipts, &block.header)?;
 
-        dbg!("8");
         // Apply the account updates over the last block's state and compute the new state root
         let new_state_root = state
             .database()
@@ -91,7 +87,6 @@ impl Blockchain {
 
         // Processes requests from receipts, computes the requests_hash and compares it against the header
         validate_requests_hash(&block.header, &chain_config, &requests)?;
-        dbg!("9");
 
         store_block(&self.storage, block.clone())?;
         store_receipts(&self.storage, receipts, block_hash)?;
@@ -103,7 +98,6 @@ impl Blockchain {
             info!("[METRIC] BLOCK EXECUTION THROUGHPUT: {throughput} Gigagas/s TIME SPENT: {interval} msecs");
         }
 
-        dbg!("10");
         Ok(())
     }
 
