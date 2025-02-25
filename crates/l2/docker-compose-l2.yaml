@@ -13,7 +13,7 @@ services:
       dockerfile: ./crates/l2/contracts/Dockerfile
     volumes:
       - ./contracts:/contracts
-      - config.toml:/config.toml
+      - .config.toml:/.config.toml
     env_file:
       - .env
     environment:
