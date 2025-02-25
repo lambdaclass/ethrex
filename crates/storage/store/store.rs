@@ -293,7 +293,7 @@ impl Store {
         let mut mempool = self
             .mempool
             .write()
-            .map_err(|error| StoreError::Custom(error.to_string()))?;
+            .map_err(|error| StoreError::MempoolWriteLock(error.to_string()))?;
         mempool.insert(hash, transaction);
 
         Ok(())
@@ -330,7 +330,7 @@ impl Store {
         let mut mempool = self
             .mempool
             .write()
-            .map_err(|error| StoreError::Custom(error.to_string()))?;
+            .map_err(|error| StoreError::MempoolWriteLock(error.to_string()))?;
         if let Some(tx) = mempool.get(hash) {
             if matches!(tx.tx_type(), TxType::EIP4844) {
                 self.blobs_bundle_pool
@@ -349,7 +349,7 @@ impl Store {
         let mut mempool = self
             .mempool
             .write()
-            .map_err(|_| StoreError::MempoolWriteLock)?;
+            .map_err(|err| StoreError::MempoolWriteLock(err.to_string()))?;
         for tx in filter {
             mempool.remove(&tx.compute_hash());
         }
@@ -366,7 +366,7 @@ impl Store {
         let mempool = self
             .mempool
             .read()
-            .map_err(|error| StoreError::Custom(error.to_string()))?;
+            .map_err(|error| StoreError::MempoolReadLock(error.to_string()))?;
 
         for (_, tx) in mempool.iter() {
             if filter(tx) {
@@ -389,7 +389,7 @@ impl Store {
         let mempool = self
             .mempool
             .read()
-            .map_err(|error| StoreError::Custom(error.to_string()))?;
+            .map_err(|error| StoreError::MempoolReadLock(error.to_string()))?;
 
         let tx_set: HashSet<_> = mempool.iter().map(|(hash, _)| hash).collect();
         Ok(possible_hashes
@@ -626,7 +626,7 @@ impl Store {
         let tx = self
             .mempool
             .read()
-            .unwrap()
+            .map_err(|error| StoreError::MempoolReadLock(error.to_string()))?
             .get(&transaction_hash)
             .map(|e| e.clone().into());
 
