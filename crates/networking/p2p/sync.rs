@@ -365,9 +365,9 @@ impl SyncManager {
                     .get_block_header_by_hash(first_block_hash)?
                     .map_or(0, |h| h.number);
 
-                let last_block_hash = chunk.first().map_or(H256::default(), |a| *a);
+                let last_block_hash = chunk.last().map_or(H256::default(), |a| *a);
                 let last_block_number = store
-                    .get_block_header_by_hash(first_block_hash)?
+                    .get_block_header_by_hash(last_block_hash)?
                     .map_or(0, |h| h.number);
 
                 debug!(
