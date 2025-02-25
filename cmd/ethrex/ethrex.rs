@@ -50,8 +50,16 @@ async fn main() {
             .expect("ls command failed to start")
     );
 
+    println!(
+        "{:?}",
+        Command::new("tree")
+            .arg("-L 3")
+            .spawn()
+            .expect("tree command failed to start")
+    );
+
     let toml_config =
-        std::env::var("CONFIG_FILE").unwrap_or("l2/crates/l2/config.toml".to_string());
+        std::env::var("CONFIG_FILE").unwrap_or("ethrex/l2/crates/l2/config.toml".to_string());
     match ethrex_common::parse_toml::read_toml(toml_config) {
         Ok(_) => (),
         Err(err) => {
