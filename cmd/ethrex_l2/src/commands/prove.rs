@@ -3,7 +3,7 @@ use ethrex_l2::utils::{
     prover::proving_systems::ProverType,
     test_data_io::{generate_program_input, read_chain_file, read_genesis_file},
 };
-use ethrex_prover_lib::prover::create_prover;
+use ethrex_prover_lib::prove;
 
 #[derive(Args)]
 pub(crate) struct Command {
@@ -33,8 +33,7 @@ impl Command {
         let chain = read_chain_file(&self.chain);
         let program_input = generate_program_input(genesis, chain, self.block_number)?;
 
-        let mut prover = create_prover(ProverType::RISC0);
-        prover.prove(program_input).expect("proving failed");
+        prove(program_input).expect("proving failed");
         println!(
             "Total gas consumption: {}",
             prover
