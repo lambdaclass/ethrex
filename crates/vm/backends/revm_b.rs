@@ -5,10 +5,12 @@ use super::constants::{
 use super::BlockExecutionResult;
 use crate::backends::get_state_transitions;
 
+use crate::db::evm_state;
 use crate::spec_id;
 use crate::EvmError;
 use crate::EvmState;
 use crate::ExecutionResult;
+use ethrex_storage::Store;
 use ethrex_storage::{error::StoreError, AccountUpdate};
 
 use revm::{
@@ -46,21 +48,20 @@ use crate::mods;
 /// [REVM::get_state_transitions]
 /// [REVM::process_withdrawals]
 impl REVM {
-    pub fn execute_block(
-        block: &Block,
-        state: &mut EvmState,
-    ) -> Result<BlockExecutionResult, EvmError> {
+    pub fn execute_block(block: &Block, store: Store) -> Result<BlockExecutionResult, EvmError> {
+        let mut state = evm_state(store.clone(), block.header.parent_hash);
+
         let block_header = &block.header;
         let spec_id: SpecId = spec_id(&state.chain_config()?, block_header.timestamp);
         cfg_if::cfg_if! {
             if #[cfg(not(feature = "l2"))] {
                 if block_header.parent_beacon_block_root.is_some() && spec_id >= SpecId::CANCUN {
-                    Self::beacon_root_contract_call(block_header, state)?;
+                    Self::beacon_root_contract_call(block_header, &mut state)?;
                 }
 
                 //eip 2935: stores parent block hash in system contract
                 if spec_id >= SpecId::PRAGUE {
-                    Self::process_block_hash_history(block_header, state)?;
+                    Self::process_block_hash_history(block_header, &mut state)?;
                 }
             }
         }
@@ -80,18 +81,18 @@ impl REVM {
         }
 
         if let Some(withdrawals) = &block.body.withdrawals {
-            Self::process_withdrawals(state, withdrawals)?;
+            Self::process_withdrawals(&mut state, withdrawals)?;
         }
 
         cfg_if::cfg_if! {
             if #[cfg(not(feature = "l2"))] {
-                let requests = extract_all_requests(&receipts, state, block_header)?;
+                let requests = extract_all_requests(&receipts, &mut state, block_header)?;
             } else {
                 let requests = Default::default();
             }
         }
 
-        let account_updates = get_state_transitions(state);
+        let account_updates = get_state_transitions(&mut state);
 
         Ok(BlockExecutionResult {
             receipts,
