@@ -20,9 +20,15 @@ pub fn run_ef_test(test_key: &str, test: &TestUnit) {
     // Check world_state
     check_prestate_against_db(test_key, test, &store);
 
-    let blockchain = Blockchain::default_with_store(store.clone());
     // Execute all blocks in test
-    for block_fixture in test.blocks.iter() {
+    let blockchain = Blockchain::default_with_store(store.clone());
+    execute_blocks(&blockchain, &test.blocks, store.clone());
+
+    check_poststate_against_db(test_key, test, &store)
+}
+
+pub fn execute_blocks(blockchain: &Blockchain, blocks: &Vec<BlockWithRLP>, store: Store) {
+    for block_fixture in blocks.iter() {
         let expects_exception = block_fixture.expect_exception.is_some();
         if exception_in_rlp_decoding(block_fixture) {
             return;
@@ -38,23 +44,21 @@ pub fn run_ef_test(test_key: &str, test: &TestUnit) {
             Err(error) => {
                 assert!(
                     expects_exception,
-                    "Transaction execution unexpectedly failed on test: {}, with error {}",
-                    test_key, error
+                    "Transaction execution unexpectedly failed with error {}",
+                    error
                 );
                 return;
             }
             Ok(_) => {
                 assert!(
                     !expects_exception,
-                    "Expected transaction execution to fail in test: {} with error: {}",
-                    test_key,
+                    "Expected transaction execution to fail with error: {}",
                     block_fixture.expect_exception.clone().unwrap()
                 );
                 apply_fork_choice(&store, hash, hash, hash).unwrap();
             }
         }
     }
-    check_poststate_against_db(test_key, test, &store)
 }
 
 /// Tests the rlp decoding of a block
