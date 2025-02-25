@@ -20,7 +20,6 @@ use ethrex_storage::error::StoreError;
 use ethrex_storage::Store;
 use ethrex_vm::backends::BlockExecutionResult;
 use ethrex_vm::backends::EVM;
-use ethrex_vm::db::evm_state;
 use fork_choice::apply_fork_choice;
 use tracing::{error, info, warn};
 
@@ -49,6 +48,11 @@ impl Blockchain {
     }
 
     pub fn add_block(&self, block: &Block) -> Result<(), ChainError> {
+        info!(
+            "Add block: Adding block {} with hash {:#x}.",
+            block.header.number,
+            block.hash()
+        );
         let since = Instant::now();
 
         let block_hash = block.header.compute_block_hash();
@@ -59,8 +63,8 @@ impl Blockchain {
             self.storage.add_pending_block(block.clone())?;
             return Err(ChainError::ParentNotFound);
         };
-        let mut state = evm_state(self.storage.clone(), block.header.parent_hash);
-        let chain_config = state.chain_config().map_err(ChainError::from)?;
+        // let mut state = evm_state(self.storage.clone(), block.header.parent_hash);
+        let chain_config = self.storage.get_chain_config()?;
 
         // Validate the block pre-execution
         validate_block(block, &parent_header, &chain_config)?;
@@ -68,14 +72,13 @@ impl Blockchain {
             receipts,
             requests,
             account_updates,
-        } = self.vm.execute_block(block, &mut state)?;
+        } = self.vm.execute_block(block, self.storage.clone())?;
 
         validate_gas_used(&receipts, &block.header)?;
 
         // Apply the account updates over the last block's state and compute the new state root
-        let new_state_root = state
-            .database()
-            .ok_or(ChainError::StoreError(StoreError::MissingStore))?
+        let new_state_root = self
+            .storage
             .apply_account_updates(block.header.parent_hash, &account_updates)?
             .ok_or(ChainError::ParentStateNotFound)?;
 
