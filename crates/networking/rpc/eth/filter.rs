@@ -448,6 +448,8 @@ mod tests {
             gateway_eth_client: EthClient::new(""),
             #[cfg(feature = "based")]
             gateway_auth_client: EngineClient::new("", Bytes::default()),
+            #[cfg(feature = "based")]
+            gateway_pubkey: Default::default(),
         };
         let request: RpcRequest = serde_json::from_value(json_req).expect("Test json is incorrect");
         let genesis_config: Genesis =
@@ -510,6 +512,8 @@ mod tests {
             gateway_eth_client: EthClient::new(""),
             #[cfg(feature = "based")]
             gateway_auth_client: EngineClient::new("", Bytes::default()),
+            #[cfg(feature = "based")]
+            gateway_pubkey: Default::default(),
         };
 
         map_http_requests(&uninstall_filter_req, context)
@@ -537,6 +541,8 @@ mod tests {
             gateway_eth_client: EthClient::new(""),
             #[cfg(feature = "based")]
             gateway_auth_client: EngineClient::new("", Bytes::default()),
+            #[cfg(feature = "based")]
+            gateway_pubkey: Default::default(),
         };
         let uninstall_filter_req: RpcRequest = serde_json::from_value(json!(
         {

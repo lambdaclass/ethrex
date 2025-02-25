@@ -23,6 +23,7 @@ pub enum RpcErr {
     InvalidForkChoiceState(String),
     InvalidPayloadAttributes(String),
     UnknownPayload(String),
+    InvalidBasedMessage(String),
 }
 
 impl From<RpcErr> for RpcErrorMetadata {
@@ -122,6 +123,11 @@ impl From<RpcErr> for RpcErrorMetadata {
                 data: None,
                 message: format!("Unknown payload: {context}"),
             },
+            RpcErr::InvalidBasedMessage(context) => RpcErrorMetadata {
+                code: -38004,
+                data: None,
+                message: format!("Invalid based message: {context}"),
+            },
         }
     }
 }
@@ -150,6 +156,8 @@ pub enum RpcNamespace {
     Debug,
     Web3,
     Net,
+    #[cfg(feature = "based")]
+    Based,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -178,6 +186,8 @@ impl RpcRequest {
                 "debug" => Ok(RpcNamespace::Debug),
                 "web3" => Ok(RpcNamespace::Web3),
                 "net" => Ok(RpcNamespace::Net),
+                #[cfg(feature = "based")]
+                "based" => Ok(RpcNamespace::Based),
                 _ => Err(RpcErr::MethodNotFound(self.method.clone())),
             }
         } else {
@@ -330,6 +340,8 @@ pub mod test_utils {
             gateway_eth_client,
             #[cfg(feature = "based")]
             gateway_auth_client,
+            #[cfg(feature = "based")]
+            Default::default(),
         )
         .await;
     }
