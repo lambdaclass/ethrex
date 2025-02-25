@@ -31,6 +31,7 @@ use tracing_subscriber::{filter::Directive, EnvFilter, FmtSubscriber};
 mod cli;
 mod decode;
 mod networks;
+use std::process::Command;
 
 const DEFAULT_DATADIR: &str = "ethrex";
 #[tokio::main]
@@ -39,6 +40,15 @@ async fn main() {
 
     let path = std::env::current_dir().unwrap();
     println!("The current directory is {}", path.display());
+
+    println!(
+        "{:?}",
+        Command::new("ls")
+            .arg("-l")
+            .arg("-a")
+            .spawn()
+            .expect("ls command failed to start")
+    );
 
     let toml_config =
         std::env::var("CONFIG_FILE").unwrap_or("l2/crates/l2/config.toml".to_string());
