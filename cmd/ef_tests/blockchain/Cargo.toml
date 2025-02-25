@@ -18,6 +18,7 @@ lazy_static.workspace = true
 
 [dev-dependencies]
 datatest-stable = "0.2.9"
+criterion = "0.3"
 
 [lib]
 path = "./lib.rs"
@@ -37,4 +38,8 @@ harness = false
 
 [[test]]
 name = "prague"
+harness = false
+
+[[bench]]
+name = "import8k"
 harness = false
