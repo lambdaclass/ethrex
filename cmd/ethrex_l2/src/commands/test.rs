@@ -29,7 +29,8 @@ use tokio::task::JoinSet;
 // https://medium.com/@kaishinaw/erc20-using-hardhat-a-comprehensive-guide-3211efba98d4
 // If you want to modify the behaviour of the contract, edit the ERC20.sol file,
 // and compile it with solc.
-const ERC20: &str = include_str!("../ERC20-source/ERC20.bin/TestToken.bin").trim_ascii();
+const ERC20: &str =
+    include_str!("../../../../test_data/ERC20/ERC20.bin/TestToken.bin").trim_ascii();
 
 #[derive(Subcommand)]
 pub(crate) enum Command {
@@ -269,13 +270,24 @@ async fn claim_erc20_balances(
             wait_receipt(client, tx_hash, None).await
         });
     }
-    let responses = tasks.join_all().await;
-    let Some(Err(failed_reponse)) = responses.iter().find(|response| response.is_err()) else {
-        return Ok(());
-    };
-    return Err(eyre::eyre!(
-        "Failed to give balance to at least an account!: {failed_reponse}"
-    ));
+    for response in tasks.join_all().await {
+        match response {
+            Ok(RpcReceipt { receipt, .. }) if !receipt.status => {
+                return Err(eyre::eyre!(
+                    "Failed to assign balance to an account, tx failed with receipt: {receipt:?}"
+                ))
+            }
+            Err(err) => {
+                return Err(eyre::eyre!(
+                    "Failed to assign balance to an account, tx failed: {err}"
+                ))
+            }
+            Ok(_)  => {
+                continue;
+            }
+        }
+    }
+    return Ok(());
 }
 
 async fn erc20_load_test(
