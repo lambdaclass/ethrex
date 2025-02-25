@@ -24,6 +24,7 @@ use ethrex_levm::{
     Account, AccountInfo as LevmAccountInfo, Environment,
 };
 use ethrex_storage::{error::StoreError, AccountUpdate, Store};
+use revm_primitives::bitvec::store;
 use revm_primitives::Bytes;
 use std::{collections::HashMap, sync::Arc};
 
@@ -38,35 +39,33 @@ pub use ethrex_levm::db::CacheDB;
 pub struct LEVM;
 
 impl LEVM {
-    pub fn execute_block(
-        block: &Block,
-        state: &mut EvmState,
-    ) -> Result<BlockExecutionResult, EvmError> {
+    pub fn execute_block(block: &Block, store: Store) -> Result<BlockExecutionResult, EvmError> {
         let store_wrapper = Arc::new(StoreWrapper {
-            store: state.database().unwrap().clone(),
+            store: store.clone(),
             block_hash: block.header.parent_hash,
         });
 
         let mut block_cache: CacheDB = HashMap::new();
         let block_header = &block.header;
-        let config = state.chain_config()?;
+        let config = store.get_chain_config()?;
         cfg_if::cfg_if! {
             if #[cfg(not(feature = "l2"))] {
                 let fork = config.fork(block_header.timestamp);
                 if block_header.parent_beacon_block_root.is_some() && fork >= Fork::Cancun {
-                    Self::beacon_root_contract_call(block_header, state, &mut block_cache)?;
+                    Self::beacon_root_contract_call(block_header, &store, &mut block_cache)?;
                 }
 
                 if fork >= Fork::Prague {
                     //eip 2935: stores parent block hash in system contract
-                    Self::process_block_hash_history(block_header, state, &mut block_cache)?;
+                    Self::process_block_hash_history(block_header, &store, &mut block_cache)?;
                 }
             }
         }
 
         // Account updates are initialized like this because of the beacon_root_contract_call, it is going to be empty if it wasn't called.
         // Here we get the state_transitions from the db and then we get the state_transitions from the cache_db.
-        let mut account_updates = get_state_transitions(state);
+        let mut account_updates =
+            Self::get_state_transitions(None, &store, block.header.parent_hash, &block_cache)?;
         let mut receipts = Vec::new();
         let mut cumulative_gas_used = 0;
 
@@ -125,11 +124,11 @@ impl LEVM {
         }
 
         let requests =
-            extract_all_requests_levm(&receipts, state, &block.header, &mut block_cache)?;
+            extract_all_requests_levm(&receipts, &store, &block.header, &mut block_cache)?;
 
         account_updates.extend(Self::get_state_transitions(
             None,
-            state,
+            &store,
             block.header.parent_hash,
             &block_cache,
         )?);
@@ -201,16 +200,11 @@ impl LEVM {
         // Warning only pass the fork if running the ef-tests.
         // ISSUE #2021: https://github.com/lambdaclass/ethrex/issues/2021
         ef_tests: Option<Fork>,
-        initial_state: &EvmState,
+        store: &Store,
         block_hash: H256,
         new_state: &CacheDB,
     ) -> Result<Vec<AccountUpdate>, EvmError> {
-        let current_db = match initial_state {
-            EvmState::Store(state) => state.database.store.clone(),
-            EvmState::Execution(_cache_db) => {
-                unreachable!("Execution state should not be passed here")
-            }
-        };
+        let current_db = store.clone();
         let mut account_updates: Vec<AccountUpdate> = vec![];
         for (new_state_account_address, new_state_account) in new_state {
             let initial_account_state = current_db
@@ -278,7 +272,7 @@ impl LEVM {
             let block_header = current_db
                 .get_block_header_by_hash(block_hash)?
                 .ok_or(StoreError::MissingStore)?;
-            let fork_from_config = initial_state.chain_config()?.fork(block_header.timestamp);
+            let fork_from_config = store.get_chain_config()?.fork(block_header.timestamp);
             // Here we take the passed fork through the ef_tests variable, or we set it to the fork based on the timestamp.
             let fork = ef_tests.unwrap_or(fork_from_config);
             if let Some(old_info) =
@@ -346,7 +340,7 @@ impl LEVM {
     /// `new_state` is being modified inside [generic_system_contract_levm].
     pub fn beacon_root_contract_call(
         block_header: &BlockHeader,
-        state: &mut EvmState,
+        store: &Store,
         new_state: &mut CacheDB,
     ) -> Result<(), EvmError> {
         let beacon_root = match block_header.parent_beacon_block_root {
@@ -361,7 +355,7 @@ impl LEVM {
         generic_system_contract_levm(
             block_header,
             Bytes::copy_from_slice(beacon_root.as_bytes()),
-            state,
+            store,
             new_state,
             *BEACON_ROOTS_ADDRESS,
             *SYSTEM_ADDRESS,
@@ -371,13 +365,13 @@ impl LEVM {
     /// `new_state` is being modified inside [generic_system_contract_levm].
     pub fn process_block_hash_history(
         block_header: &BlockHeader,
-        state: &mut EvmState,
+        store: &Store,
         new_state: &mut CacheDB,
     ) -> Result<(), EvmError> {
         generic_system_contract_levm(
             block_header,
             Bytes::copy_from_slice(block_header.parent_hash.as_bytes()),
-            state,
+            store,
             new_state,
             *HISTORY_STORAGE_ADDRESS,
             *SYSTEM_ADDRESS,
@@ -386,13 +380,13 @@ impl LEVM {
     }
     pub(crate) fn read_withdrawal_requests(
         block_header: &BlockHeader,
-        state: &mut EvmState,
+        store: &Store,
         new_state: &mut CacheDB,
     ) -> Option<ExecutionReport> {
         let report = generic_system_contract_levm(
             block_header,
             Bytes::new(),
-            state,
+            store,
             new_state,
             *WITHDRAWAL_REQUEST_PREDEPLOY_ADDRESS,
             *SYSTEM_ADDRESS,
@@ -406,13 +400,13 @@ impl LEVM {
     }
     pub(crate) fn dequeue_consolidation_requests(
         block_header: &BlockHeader,
-        state: &mut EvmState,
+        store: &Store,
         new_state: &mut CacheDB,
     ) -> Option<ExecutionReport> {
         let report = generic_system_contract_levm(
             block_header,
             Bytes::new(),
-            state,
+            store,
             new_state,
             *CONSOLIDATION_REQUEST_PREDEPLOY_ADDRESS,
             *SYSTEM_ADDRESS,
@@ -430,17 +424,17 @@ impl LEVM {
 pub fn generic_system_contract_levm(
     block_header: &BlockHeader,
     calldata: Bytes,
-    state: &mut EvmState,
+    store: &Store,
     new_state: &mut CacheDB,
     contract_address: Address,
     system_address: Address,
 ) -> Result<ExecutionReport, EvmError> {
     let store_wrapper = Arc::new(StoreWrapper {
-        store: state.database().unwrap().clone(),
+        store: store.clone(),
         block_hash: block_header.parent_hash,
     });
 
-    let chain_config = state.chain_config()?;
+    let chain_config = store.get_chain_config()?;
     let config = EVMConfig::new_from_chain_config(&chain_config, block_header);
     let env = Environment {
         origin: system_address,
@@ -496,11 +490,11 @@ pub fn generic_system_contract_levm(
 #[allow(unused_variables)]
 pub fn extract_all_requests_levm(
     receipts: &[Receipt],
-    state: &mut EvmState,
+    store: &Store,
     header: &BlockHeader,
     cache: &mut CacheDB,
 ) -> Result<Vec<Requests>, EvmError> {
-    let config = state.chain_config()?;
+    let config = store.get_chain_config()?;
     let fork = config.fork(header.timestamp);
 
     if fork < Fork::Prague {
@@ -517,7 +511,7 @@ pub fn extract_all_requests_levm(
         "deposit_contract_address config is missing".to_string(),
     ))?;
 
-    let withdrawals_data: Vec<u8> = match LEVM::read_withdrawal_requests(header, state, cache) {
+    let withdrawals_data: Vec<u8> = match LEVM::read_withdrawal_requests(header, store, cache) {
         Some(report) => {
             // the cache is updated inside the generic_system_call
             report.output.into()
@@ -526,7 +520,7 @@ pub fn extract_all_requests_levm(
     };
 
     let consolidation_data: Vec<u8> =
-        match LEVM::dequeue_consolidation_requests(header, state, cache) {
+        match LEVM::dequeue_consolidation_requests(header, store, cache) {
             Some(report) => {
                 // the cache is updated inside the generic_system_call
                 report.output.into()

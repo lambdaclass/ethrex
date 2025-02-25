@@ -9,6 +9,7 @@ use ethrex_common::types::{
 };
 use ethrex_common::{types::AccountInfo, Address, BigEndianHash, H256, U256};
 use ethrex_levm::db::CacheDB;
+use ethrex_storage::Store;
 use ethrex_storage::{error::StoreError, AccountUpdate};
 use levm::LEVM;
 use revm_b::REVM;
@@ -49,11 +50,11 @@ impl EVM {
     pub fn execute_block(
         &self,
         block: &Block,
-        state: &mut EvmState,
+        storage: Store,
     ) -> Result<BlockExecutionResult, EvmError> {
         match self {
-            EVM::REVM => REVM::execute_block(block, state),
-            EVM::LEVM => LEVM::execute_block(block, state),
+            EVM::REVM => REVM::execute_block(block, storage),
+            EVM::LEVM => LEVM::execute_block(block, storage),
         }
     }
 
@@ -151,13 +152,14 @@ impl EVM {
             EVM::LEVM => {
                 let fork = chain_config.fork(block_header.timestamp);
                 let mut new_state = CacheDB::new();
+                let store = state.database().unwrap().clone(); //TODO: Change this in apply_system_calls maybe...
 
                 if block_header.parent_beacon_block_root.is_some() && fork >= Fork::Cancun {
-                    LEVM::beacon_root_contract_call(block_header, state, &mut new_state)?;
+                    LEVM::beacon_root_contract_call(block_header, &store, &mut new_state)?;
                 }
 
                 if fork >= Fork::Prague {
-                    LEVM::process_block_hash_history(block_header, state, &mut new_state)?;
+                    LEVM::process_block_hash_history(block_header, &store, &mut new_state)?;
                 }
 
                 // Now original_value is going to be the same as the current_value, for the next transaction.
@@ -190,7 +192,12 @@ impl EVM {
     ) -> Result<Vec<AccountUpdate>, EvmError> {
         match self {
             EVM::REVM => REVM::get_state_transitions(state),
-            EVM::LEVM => LEVM::get_state_transitions(None, state, parent_hash, block_cache),
+            EVM::LEVM => LEVM::get_state_transitions(
+                None,
+                state.database().unwrap(),
+                parent_hash,
+                block_cache,
+            ),
         }
     }
 
@@ -228,7 +235,9 @@ impl EVM {
         cache: &mut CacheDB,
     ) -> Result<Vec<Requests>, EvmError> {
         match self {
-            EVM::LEVM => levm::extract_all_requests_levm(receipts, state, header, cache),
+            EVM::LEVM => {
+                levm::extract_all_requests_levm(receipts, state.database().unwrap(), header, cache)
+            }
             EVM::REVM => revm_b::extract_all_requests(receipts, state, header),
         }
     }
