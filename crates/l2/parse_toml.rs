@@ -253,7 +253,10 @@ pub fn write_to_env(config: String) {
 }
 
 pub fn read_toml(toml_path: String) -> Result<(), ConfigError> {
+    // NOTE: If there already is a .env file, there's no need to read
+    // the toml. The toml only exists to generate the .env file
     if Path::new(ENV_FILE_NAME).exists() {
+        info!(".env file already present. Skipping toml parsing");
         return Ok(());
     }
     let file = std::fs::read_to_string(toml_path).map_err(|_| ConfigError::TomlFileNotFound)?;
