@@ -2,6 +2,7 @@ use crate::errors::*;
 use serde::Deserialize;
 use std::io::Write;
 use std::path::Path;
+use tracing::info;
 
 const ENV_FILE_NAME: &str = ".env";
 
