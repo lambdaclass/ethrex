@@ -33,8 +33,6 @@ jobs:
 
       - name: Run L2 integration test
         run: |
-          cd crates/common
-          cargo run jamon
-          mv .env ../l2/
-          cd ../l2/
+          cd crates/l2
+          cp config_example.toml config.toml
           make ci_test
