@@ -26,7 +26,6 @@ crc32fast.workspace = true
 bytes.workspace = true
 hex.workspace = true
 lazy_static.workspace = true
-toml = { version = "0.8.19", features = ["parse"] }
 
 [dev-dependencies]
 hex-literal.workspace = true
@@ -37,7 +36,3 @@ c-kzg = ["dep:c-kzg"]
 
 [lib]
 path = "./common.rs"
-
-[[bin]]
-name = "jamon"
-# path = "./parse_on_demand.rs"
