@@ -1,8 +1,4 @@
-use crate::{
-    api::StoreEngine,
-    error::StoreError,
-    store::{MAX_SNAPSHOT_READS, STATE_TRIE_SEGMENTS},
-};
+use crate::{error::StoreError, MAX_SNAPSHOT_READS, STATE_TRIE_SEGMENTS};
 use bytes::Bytes;
 use ethereum_types::{H256, U256};
 use ethrex_common::types::{
@@ -15,6 +11,8 @@ use std::{
     fmt::Debug,
     sync::{Arc, Mutex, MutexGuard},
 };
+
+use super::api::StoreEngine;
 
 pub type NodeMap = Arc<Mutex<HashMap<Vec<u8>, Vec<u8>>>>;
 

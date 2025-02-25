@@ -1582,7 +1582,6 @@ mod serde_impl {
     pub struct AuthorizationTupleEntry {
         pub chain_id: U256,
         pub address: Address,
-        #[serde(default, with = "crate::serde_utils::u64::hex_str")]
         pub nonce: u64,
         pub y_parity: U256,
         pub r: U256,

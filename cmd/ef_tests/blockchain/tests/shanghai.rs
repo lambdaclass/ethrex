@@ -9,7 +9,7 @@ fn parse_and_execute(path: &Path) -> datatest_stable::Result<()> {
     let tests = parse_test_file(path);
 
     for (test_key, test) in tests {
-        if test.network < Network::Merge {
+        if test.network < Network::Merge || test.network >= Network::Prague {
             // Discard this test
             continue;
         }

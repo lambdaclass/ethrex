@@ -180,7 +180,6 @@ impl LEVM {
             tx_nonce: tx.nonce(),
             block_gas_limit: block_header.gas_limit,
             transient_storage: HashMap::new(),
-            difficulty: block_header.difficulty,
         };
 
         let mut vm = VM::new(

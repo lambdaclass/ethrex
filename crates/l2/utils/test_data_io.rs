@@ -5,7 +5,7 @@ use ethrex_blockchain::add_block;
 use ethrex_common::types::{Block, Genesis};
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
 use ethrex_storage::{EngineType, Store};
-use ethrex_vm::{db::StoreWrapper, execution_db::ToExecDB};
+use ethrex_vm::execution_db::ExecutionDB;
 use tracing::info;
 use zkvm_interface::io::ProgramInput;
 
@@ -75,15 +75,12 @@ pub fn generate_program_input(
         add_block(&block, &store)?;
     }
 
-    let parent_hash = block.header.parent_hash;
     let parent_block_header = store
         .get_block_header_by_hash(block.header.parent_hash)?
-        .ok_or(ProverInputError::InvalidParentBlock(parent_hash))?;
-    let store = StoreWrapper {
-        store,
-        block_hash: parent_hash,
-    };
-    let db = store.to_exec_db(&block)?;
+        .ok_or(ProverInputError::InvalidParentBlock(
+            block.header.parent_hash,
+        ))?;
+    let db = ExecutionDB::from_store(&block, store)?;
 
     Ok(ProgramInput {
         db,

@@ -13,7 +13,7 @@ lint: ## 🧹 Linter check
 
 CRATE ?= *
 test: ## 🧪 Run each crate's tests
-	cargo test -p '$(CRATE)' --workspace --exclude ethrex-prover --exclude ethrex-prover-bench --exclude ethrex-levm --exclude ef_tests-blockchain --exclude ef_tests-state --exclude ethrex-l2 -- --skip test_contract_compilation
+	cargo test -p '$(CRATE)' --workspace --exclude ethrex-prover --exclude ethrex-levm --exclude ef_tests-blockchain --exclude ef_tests-state --exclude ethrex-l2 -- --skip test_contract_compilation
 	$(MAKE) -C cmd/ef_tests/blockchain test
 
 clean: clean-vectors ## 🧹 Remove build artifacts
@@ -76,7 +76,7 @@ stop-localnet-silent:
 	@kurtosis enclave stop $(ENCLAVE) >/dev/null 2>&1 || true
 	@kurtosis enclave rm $(ENCLAVE) --force >/dev/null 2>&1 || true
 
-HIVE_REVISION := b21c217ba5f48949b6b64ef28f7fb11e40584652
+HIVE_REVISION := feb4333db7fe9f6dc161326ebb11957d4306d2f9
 # Shallow clones can't specify a single revision, but at least we avoid working
 # the whole history by making it shallow since a given date (one day before our
 # target revision).

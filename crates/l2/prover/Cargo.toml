@@ -29,7 +29,7 @@ zkvm_interface = { path = "./zkvm/interface", default-features = false }
 risc0-zkvm = { version = "1.2.2" }
 
 # sp1
-sp1-sdk = "4.1.1"
+sp1-sdk = "4.0.1"
 sp1-recursion-gnark-ffi = "4.1.1"
 
 [dev-dependencies]
@@ -46,13 +46,12 @@ path = "src/main.rs"
 
 [features]
 default = []
+## risc0
 build_risc0 = ["zkvm_interface/build_risc0"]
-build_sp1 = ["zkvm_interface/build_sp1"]
-l2 = [
-  "ethrex-vm/l2",
-  "zkvm_interface/l2",
-] # the prover can work with both l1 or l2 blocks
 gpu = ["risc0-zkvm/cuda", "sp1-sdk/cuda"]
+## sp1
+build_sp1 = ["zkvm_interface/build_sp1"]
+
 
 [lints.clippy]
 unwrap_used = "deny"

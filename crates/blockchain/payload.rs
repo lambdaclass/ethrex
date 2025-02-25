@@ -1,18 +1,15 @@
 use std::{
     cmp::{max, Ordering},
     collections::HashMap,
-    ops::Div,
-    time::Instant,
 };
 
 use ethrex_common::{
     constants::GAS_PER_BLOB,
     types::{
         calculate_base_fee_per_blob_gas, calculate_base_fee_per_gas, compute_receipts_root,
-        compute_transactions_root, compute_withdrawals_root,
-        requests::{compute_requests_hash, EncodedRequests, Requests},
-        BlobsBundle, Block, BlockBody, BlockHash, BlockHeader, BlockNumber, ChainConfig,
-        MempoolTransaction, Receipt, Transaction, Withdrawal, DEFAULT_OMMERS_HASH,
+        compute_requests_hash, compute_transactions_root, compute_withdrawals_root,
+        requests::Requests, BlobsBundle, Block, BlockBody, BlockHash, BlockHeader, BlockNumber,
+        ChainConfig, MempoolTransaction, Receipt, Transaction, Withdrawal, DEFAULT_OMMERS_HASH,
         DEFAULT_REQUESTS_HASH,
     },
     Address, Bloom, Bytes, H256, U256,
@@ -181,7 +178,6 @@ pub struct PayloadBuildContext<'a> {
     pub remaining_gas: u64,
     pub receipts: Vec<Receipt>,
     pub requests: Vec<Requests>,
-    pub requests_hash: Option<H256>,
     pub block_value: U256,
     base_fee_per_blob_gas: U256,
     pub blobs_bundle: BlobsBundle,
@@ -202,7 +198,6 @@ impl<'a> PayloadBuildContext<'a> {
             remaining_gas: payload.header.gas_limit,
             receipts: vec![],
             requests: vec![],
-            requests_hash: None,
             block_value: U256::zero(),
             base_fee_per_blob_gas: U256::from(base_fee_per_blob_gas),
             payload,
@@ -240,31 +235,14 @@ pub fn build_payload(
     payload: &mut Block,
     store: &Store,
 ) -> Result<(BlobsBundle, U256), ChainError> {
-    let since = Instant::now();
-    let gas_limit = payload.header.gas_limit;
     debug!("Building payload");
     let mut evm_state = evm_state(store.clone(), payload.header.parent_hash);
     let mut context = PayloadBuildContext::new(payload, &mut evm_state)?;
-
     apply_system_operations(&mut context)?;
     apply_withdrawals(&mut context)?;
     fill_transactions(&mut context)?;
     extract_requests(&mut context)?;
     finalize_payload(&mut context)?;
-
-    let interval = Instant::now().duration_since(since).as_millis();
-    tracing::info!("[METRIC] BUILDING PAYLOAD TOOK: {interval} ms");
-    if let Some(gas_used) = gas_limit.checked_sub(context.remaining_gas) {
-        let as_gigas = (gas_used as f64).div(10_f64.powf(9_f64));
-
-        if interval != 0 {
-            let throughput = (as_gigas) / (interval as f64) * 1000_f64;
-            tracing::info!(
-                "[METRIC] BLOCK BUILDING THROUGHPUT: {throughput} Gigagas/s TIME SPENT: {interval} msecs"
-            );
-        }
-    }
-
     Ok((context.blobs_bundle, context.block_value))
 }
 
@@ -513,13 +491,6 @@ fn apply_plain_transaction(
 }
 
 pub fn extract_requests(context: &mut PayloadBuildContext) -> Result<(), EvmError> {
-    if !context
-        .chain_config()?
-        .is_prague_activated(context.payload.header.timestamp)
-    {
-        return Ok(());
-    };
-
     let requests = get_evm_backend_or_default().extract_requests(
         &context.receipts,
         context.evm_state,
@@ -527,9 +498,6 @@ pub fn extract_requests(context: &mut PayloadBuildContext) -> Result<(), EvmErro
         &mut context.block_cache,
     );
     context.requests = requests?;
-    let encoded_requests: Vec<EncodedRequests> =
-        context.requests.iter().map(|r| r.encode()).collect();
-    context.requests_hash = Some(compute_requests_hash(&encoded_requests));
 
     Ok(())
 }
@@ -549,7 +517,10 @@ fn finalize_payload(context: &mut PayloadBuildContext) -> Result<(), ChainError>
     context.payload.header.transactions_root =
         compute_transactions_root(&context.payload.body.transactions);
     context.payload.header.receipts_root = compute_receipts_root(&context.receipts);
-    context.payload.header.requests_hash = context.requests_hash;
+    context.payload.header.requests_hash = context
+        .chain_config()?
+        .is_prague_activated(context.payload.header.timestamp)
+        .then_some(compute_requests_hash(&context.requests));
     context.payload.header.gas_used = context.payload.header.gas_limit - context.remaining_gas;
     Ok(())
 }
