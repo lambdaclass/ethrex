@@ -28,7 +28,7 @@ use ethrex_vm::{backends::BlockExecutionResult, get_evm_backend_or_default};
 /// canonical chain/head. Fork choice needs to be updated for that in a separate step.
 ///
 /// Performs pre and post execution validation, and updates the database with the post state.
-pub fn add_block(block: &Block, storage: &Store) -> Result<(), ChainError> {
+pub fn add_block(block: &Block, storage: &Store) -> Result<u64, ChainError> {
     let block_hash = block.header.compute_block_hash();
 
     // Validate if it can be the new head and find the parent
@@ -51,11 +51,13 @@ pub fn add_block(block: &Block, storage: &Store) -> Result<(), ChainError> {
     validate_gas_used(&receipts, &block.header)?;
 
     // Apply the account updates over the last block's state and compute the new state root
+    let account_updates_started_at = std::time::Instant::now();
     let new_state_root = state
         .database()
         .ok_or(ChainError::StoreError(StoreError::MissingStore))?
         .apply_account_updates(block.header.parent_hash, &account_updates)?
         .ok_or(ChainError::ParentStateNotFound)?;
+    let account_updates_elapsed = account_updates_started_at.elapsed().as_secs();
 
     // Check state root matches the one in block header after execution
     validate_state_root(&block.header, new_state_root)?;
@@ -69,7 +71,7 @@ pub fn add_block(block: &Block, storage: &Store) -> Result<(), ChainError> {
     store_block(storage, block.clone())?;
     store_receipts(storage, receipts, block_hash)?;
 
-    Ok(())
+    Ok(account_updates_elapsed)
 }
 
 pub fn validate_requests_hash(

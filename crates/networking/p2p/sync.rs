@@ -369,6 +369,7 @@ impl SyncManager {
                     block_bodies_len, first_block_hash, first_block_header_number, last_block_hash, last_block_number
                 );
 
+                let mut time_spent_applying_account_updates = 0;
                 // Execute and store blocks
                 for (hash, body) in chunk
                     .drain(..block_bodies_len)
@@ -379,11 +380,16 @@ impl SyncManager {
                         .ok_or(SyncError::CorruptDB)?;
                     let number = header.number;
                     let block = Block::new(header, body);
-                    if let Err(error) = ethrex_blockchain::add_block(&block, &store) {
-                        warn!("Failed to add block during FullSync: {error}");
-                        self.invalid_ancestors.insert(hash, last_valid_hash);
-                        return Err(error.into());
+
+                    match ethrex_blockchain::add_block(&block, &store) {
+                        Ok(elapsed) => time_spent_applying_account_updates += elapsed,
+                        Err(error) => {
+                            warn!("Failed to add block during FullSync: {error}");
+                            self.invalid_ancestors.insert(hash, last_valid_hash);
+                            return Err(error.into());
+                        }
                     }
+
                     store.set_canonical_block(number, hash)?;
                     store.update_latest_block_number(number)?;
                     last_valid_hash = hash;
@@ -393,8 +399,12 @@ impl SyncManager {
                     );
                 }
                 debug!("Executed & stored {} blocks", block_bodies_len);
-                self.metrics
-                    .log_cycle(block_bodies_len as u32, last_block_number, last_block_hash);
+                self.metrics.log_cycle(
+                    block_bodies_len as u32,
+                    last_block_number,
+                    last_block_hash,
+                    time_spent_applying_account_updates,
+                );
 
                 if chunk.is_empty() {
                     current_chunk_idx += 1;
