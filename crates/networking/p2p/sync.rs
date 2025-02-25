@@ -268,7 +268,7 @@ impl SyncManager {
             store.add_block_headers(block_hashes.clone(), block_headers)?;
 
             if self.sync_mode == SyncMode::Full {
-                self.download_and_run_blocks(&mut block_hashes, store.clone())
+                self.download_and_run_blocks(&mut block_hashes, store.clone(), sync_head)
                     .await?;
             }
 
@@ -333,8 +333,10 @@ impl SyncManager {
         &mut self,
         block_hashes: &mut [BlockHash],
         store: Store,
+        sync_head: H256,
     ) -> Result<(), SyncError> {
         let mut last_valid_hash = H256::default();
+        let mut sync_head_reached = false;
 
         let mut current_chunk_idx = 0;
         let chunks: Vec<Vec<BlockHash>> = block_hashes
@@ -377,13 +379,18 @@ impl SyncManager {
                         self.invalid_ancestors.insert(hash, last_valid_hash);
                         return Err(error.into());
                     }
-                    store.set_canonical_block(number, hash)?;
-                    store.update_latest_block_number(number)?;
-                    last_valid_hash = hash;
                     debug!(
                         "Executed and stored block number {} with hash {}",
                         number, hash
                     );
+                    if !sync_head_reached {
+                        store.set_canonical_block(number, hash)?;
+                        store.update_latest_block_number(number)?;
+                        last_valid_hash = hash;
+                    }
+                    if hash == sync_head {
+                        sync_head_reached = true;
+                    }
                 }
                 debug!("Executed & stored {} blocks", block_bodies_len);
 
