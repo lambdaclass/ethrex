@@ -2630,7 +2630,7 @@ version = "0.7.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "70cbccfccf81d67bff0ab36e591fa536c8a935b078a7b0e58c1d00d418332fc9"
 dependencies = [
- "alloy-primitives 0.8.15",
+ "alloy-primitives 0.8.21",
  "hex",
  "serde",
  "serde_derive",
@@ -2643,7 +2643,7 @@ version = "0.8.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "86da3096d1304f5f28476ce383005385459afeaf0eea08592b65ddbc9b258d16"
 dependencies = [
- "alloy-primitives 0.8.15",
+ "alloy-primitives 0.8.21",
  "ethereum_serde_utils",
  "itertools 0.13.0",
  "serde",
@@ -8842,7 +8842,7 @@ version = "0.9.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6c58eb0f518840670270d90d97ffee702d8662d9c5494870c9e1e9e0fa00f668"
 dependencies = [
- "alloy-primitives 0.8.15",
+ "alloy-primitives 0.8.21",
  "ethereum_hashing",
  "ethereum_ssz",
  "smallvec",
@@ -8858,7 +8858,7 @@ dependencies = [
  "darling",
  "proc-macro2",
  "quote",
- "syn 2.0.89",
+ "syn 2.0.98",
 ]
 
 [[package]]
