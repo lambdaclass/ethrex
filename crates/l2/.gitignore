@@ -1,2 +1,3 @@
+.env
 config.toml
 solc_out
