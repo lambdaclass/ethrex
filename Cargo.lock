@@ -2613,7 +2613,6 @@ dependencies = [
  "ethrex-storage",
  "ethrex-vm",
  "hex",
- "hex-literal",
  "k256",
  "serde_json",
  "sha3",
