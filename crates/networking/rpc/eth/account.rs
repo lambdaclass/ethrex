@@ -173,7 +173,7 @@ impl RpcHandler for GetTransactionCountRequest {
 
         // If the tag is Pending, we need to get the nonce from the mempool
         let pending_nonce = if self.block == BlockTag::Pending {
-            context.blockchain.get_nonce_from_pool(&self.address)?
+            context.blockchain.mempool.get_nonce(&self.address)?
         } else {
             None
         };

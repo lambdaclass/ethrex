@@ -180,6 +180,24 @@ impl Mempool {
 
         Ok(tx)
     }
+
+    pub fn get_nonce(&self, address: &Address) -> Result<Option<u64>, MempoolError> {
+        let pending_filter = PendingTxFilter {
+            min_tip: None,
+            base_fee: None,
+            blob_fee: None,
+            only_plain_txs: false,
+            only_blob_txs: false,
+        };
+
+        let pending_txs = self.filter_transactions(&pending_filter)?;
+        let nonce = match pending_txs.get(address) {
+            Some(txs) => txs.last().map(|tx| tx.nonce() + 1),
+            None => None,
+        };
+
+        Ok(nonce)
+    }
 }
 
 #[derive(Debug, Default)]
