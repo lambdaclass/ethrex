@@ -16,6 +16,7 @@ additional_services:
   - dora
 
 assertoor_params:
+  image: ethpandaops/assertoor:v0.0.12
   run_stability_check: false
   run_block_proposal_check: false
   tests:
