@@ -273,6 +273,21 @@ fn download_contract_deps(contracts_path: &Path) -> Result<(), DeployError> {
         .map_err(|err| DeployError::DependencyError(format!("Failed to spawn git: {err}")))?
         .wait()
         .map_err(|err| DeployError::DependencyError(format!("Failed to wait for git: {err}")))?;
+
+    Command::new("git")
+        .arg("clone")
+        .arg("git@github.com:brevis-network/pico-zkapp-template.git")
+        .arg(
+            contracts_path
+                .join("lib/pico-zkapp-template")
+                .to_str()
+                .ok_or(DeployError::FailedToGetStringFromPath)?,
+        )
+        .spawn()
+        .map_err(|err| DeployError::DependencyError(format!("Failed to spawn git: {err}")))?
+        .wait()
+        .map_err(|err| DeployError::DependencyError(format!("Failed to wait for git: {err}")))?;
+
     Ok(())
 }
 
@@ -282,6 +297,11 @@ fn compile_contracts(contracts_path: &Path) -> Result<(), DeployError> {
     compile_contract(
         contracts_path,
         "lib/sp1-contracts/contracts/src/v3.0.0/SP1VerifierGroth16.sol",
+        false,
+    )?;
+    compile_contract(
+        contracts_path,
+        "lib/pico-zkapp-template/contracts/src/PicoVerifier.sol",
         false,
     )?;
     Ok(())
