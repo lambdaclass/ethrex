@@ -177,15 +177,23 @@ impl SyncManager {
             Err(e) => return Err(e.into()),
         };
 
+        let mut from_head = current_head;
         loop {
-            debug!("Requesting Block Headers from {current_head}");
+            debug!("Requesting Block Headers from {from_head}");
             // Request Block Headers from Peer
             match self
                 .peers
-                .request_block_headers(current_head, BlockRequestOrder::OldToNew)
+                .request_block_headers(from_head, BlockRequestOrder::OldToNew)
                 .await
             {
                 Some(mut block_headers) => {
+                    if block_headers[0].compute_block_hash() == from_head && block_headers.last().as_ref().unwrap().compute_block_hash() == current_head  && from_head != sync_head {
+                        warn!("Already at the sync head, but not yet synced, we are at a fork, going back one more ancestor");
+                        // Use our basic common ancestor finder to update from_head
+                        from_head = block_headers[0].parent_hash;
+                        continue;
+                    }
+
                     debug!(
                         "Received {} block headers| Last Number: {}",
                         block_headers.len(),
@@ -346,6 +354,14 @@ async fn download_and_run_blocks(
             if block_hashes.is_empty() {
                 break;
             }
+        } else {
+            if block_hashes.is_empty() {
+                warn!("No hashes to fetch, aborting sync");
+            } else {
+                warn!("Failed to fetch block bodies, aborting sync");
+            }
+
+            return Ok(());
         }
     }
     Ok(())
