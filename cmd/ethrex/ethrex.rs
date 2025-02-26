@@ -344,15 +344,6 @@ async fn main() {
     // We do not want to start the networking module if the l2 feature is enabled.
     cfg_if::cfg_if! {
         if #[cfg(feature = "l2")] {
-            let toml_config =
-                std::env::var("CONFIG_FILE").unwrap_or("/config.toml".to_string());
-
-            match ethrex_l2::parse_toml::read_toml(toml_config) {
-                Ok(_) => (),
-                Err(err) => {
-                    panic!("{}", err);
-                }
-            };
             if dev_mode {
                 error!("Cannot run with DEV_MODE if the `l2` feature is enabled.");
                 panic!("Run without the --dev argument.");

@@ -75,6 +75,7 @@ pub fn write_env(lines: Vec<String>) -> Result<(), errors::ConfigError> {
         Err(err) => return Err(err.into()),
     };
 
+    println!("Will write to fie: {:?}", env_file);
     let mut writer = std::io::BufWriter::new(env_file);
     for line in lines {
         writeln!(writer, "{line}")?;

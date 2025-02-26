@@ -21,4 +21,15 @@ diff crates/l2/config_example.toml crates/l2/config.toml
 "
     )]
     TomlFormat,
+    #[error(
+        "\x1b[91mCould not write to .env file.\x1b[0m
+"
+    )]
+    EnvWriteError,
+    #[error(
+        "\x1b[91m .env file already exits, please check if it has any valuable information. If not, delete it
+\x1b[0m
+"
+    )]
+    EnvFileAlreadyExists,
 }

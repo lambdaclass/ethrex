@@ -1,10 +1,9 @@
 use crate::errors::*;
 use serde::Deserialize;
+use std::fs::OpenOptions;
 use std::io::Write;
 use std::path::Path;
 use tracing::info;
-
-const ENV_FILE_NAME: &str = "/usr/loca/bin/.env";
 
 #[derive(Deserialize, Debug)]
 struct Deployer {
@@ -244,24 +243,40 @@ impl L2Config {
     }
 }
 
-pub fn write_to_env(config: String) {
-    // NOTE: If this returns an error, that means the file already
-    // exists. That SHOULD mean that the .toml has already been turned
-    // into an .env, so we simply do nothing
-    if let Ok(mut env_file) = std::fs::File::create_new(ENV_FILE_NAME) {
-        let _ = env_file.write(&config.into_bytes());
+pub fn write_to_env(config: String) -> Result<(), ConfigError> {
+    let env_file_name = std::env::var("ENV_FILE").unwrap_or("/usr/local/bin/.env".to_string());
+    let env_file = OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .open(env_file_name);
+    match env_file {
+        Ok(mut file) => {
+            dbg!("LO PUDE ABRIR");
+            file.write_all(&config.into_bytes()).unwrap();
+        }
+        Err(err) => {
+            dbg!(err);
+            return Err(ConfigError::EnvWriteError);
+        }
     };
+    // {
+    //         Ok(file) => file,
+    //         Err(err) => {
+    //             dbg!(err);
+    //             return Err(ConfigError::EnvWriteError)
+    //         },
+    //     };
+    //     env_file
+    //         .write_all(&config.into_bytes())
+    //         .map_err(|_| ConfigError::EnvWriteError)?;
+    // };
+    Ok(())
 }
 
 pub fn read_toml(toml_path: String) -> Result<(), ConfigError> {
-    // NOTE: If there already is a .env file, there's no need to read
-    // the toml. The toml only exists to generate the .env file
-    if Path::new(ENV_FILE_NAME).exists() {
-        info!(".env file already present. Skipping toml parsing");
-        return Ok(());
-    }
     let file = std::fs::read_to_string(toml_path).map_err(|_| ConfigError::TomlFileNotFound)?;
     let config: L2Config = toml::from_str(&file).map_err(|_| ConfigError::TomlFormat)?;
-    write_to_env(config.to_env());
+    write_to_env(config.to_env())?;
     Ok(())
 }

@@ -112,6 +112,7 @@ async fn main() -> Result<(), DeployError> {
     )
     .await?;
 
+    println!("DEPLOYER");
     let env_lines = read_env_as_lines().map_err(DeployError::EnvFileError)?;
 
     let mut wr_lines: Vec<String> = Vec::new();
@@ -134,6 +135,7 @@ async fn main() -> Result<(), DeployError> {
         }
         wr_lines.push(line);
     }
+    println!("DEPLOYER AL FINAL");
     write_env(wr_lines).map_err(DeployError::EnvFileError)?;
     Ok(())
 }
