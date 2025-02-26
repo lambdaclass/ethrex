@@ -26,6 +26,11 @@ jobs:
     steps:
       - name: Checkout sources
         uses: actions/checkout@v4
+      - name: Rust toolchain install
+        uses: dtolnay/rust-toolchain@nightly
+        with:
+          toolchain: nightly-2024-11-27
+          components: rust-src
       - name: Add Rust Cache
         uses: Swatinem/rust-cache@v2
       - name: ${{ matrix.action.command }} Command
@@ -41,8 +46,8 @@ jobs:
       - name: Rust toolchain install
         uses: dtolnay/rust-toolchain@nightly
         with:
-          toolchain: nightly-2024-11-27 
-          components: ["rust-src"]
+          toolchain: nightly-2024-11-27
+          components: rust-src
       # https://pico-docs.brevis.network/getting-started/installation
       - name: RISC-V pico-cli install
         run: |
