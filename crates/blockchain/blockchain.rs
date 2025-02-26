@@ -72,7 +72,7 @@ impl Blockchain {
             receipts,
             requests,
             account_updates,
-        } = self.vm.execute_block(block, self.storage.clone())?;
+        } = self.vm.execute_block(block)?;
 
         validate_gas_used(&receipts, &block.header)?;
 

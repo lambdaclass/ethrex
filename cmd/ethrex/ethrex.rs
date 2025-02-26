@@ -158,8 +158,6 @@ async fn main() {
 
     let sync_mode = sync_mode(&matches);
 
-    let evm = matches.get_one::<EVM>("evm").unwrap_or(&EVM::REVM);
-
     let path = path::PathBuf::from(data_dir.clone());
     let store: Store = if path.ends_with("memory") {
         Store::new(&data_dir, EngineType::InMemory).expect("Failed to create Store")
@@ -177,6 +175,12 @@ async fn main() {
         }
         Store::new(&data_dir, engine_type).expect("Failed to create Store")
     };
+
+    let evm_string = matches
+        .get_one::<String>("evm")
+        .unwrap_or(&String::from("revm"));
+    let evm = EVM::new(evm_string.clone(), store.clone());
+
     let blockchain = Blockchain::new(evm.clone(), store.clone());
 
     let genesis = read_genesis_file(&network);
