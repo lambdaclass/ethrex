@@ -159,7 +159,7 @@ impl ExecutionDB {
         let block_env = block_env(&block.header, spec_id);
 
         for transaction in &block.body.transactions {
-            let tx_env = tx_env(transaction);
+            let tx_env = tx_env(transaction, transaction.sender());
 
             // execute tx
             let evm_builder = Evm::builder()
