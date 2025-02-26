@@ -276,7 +276,9 @@ fn download_contract_deps(contracts_path: &Path) -> Result<(), DeployError> {
 
     Command::new("git")
         .arg("clone")
-        .arg("git@github.com:brevis-network/pico-zkapp-template.git")
+        .arg("https://github.com/brevis-network/pico-zkapp-template.git")
+        .arg("--branch")
+        .arg("evm")
         .arg(
             contracts_path
                 .join("lib/pico-zkapp-template")
