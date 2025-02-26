@@ -19,7 +19,7 @@ use crate::{
     },
     types::Node,
 };
-use ethrex_blockchain::{mempool, Blockchain};
+use ethrex_blockchain::Blockchain;
 use ethrex_common::{
     types::{MempoolTransaction, Transaction},
     H256, H512,
@@ -351,7 +351,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
             let txs: Vec<MempoolTransaction> = self
                 .blockchain
                 .mempool
-                .filter_pool_transactions(&filter)?
+                .filter_transactions(&filter)?
                 .into_values()
                 .flatten()
                 .collect();
@@ -416,7 +416,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
                 if is_synced {
                     let mut valid_txs = vec![];
                     for tx in &txs.transactions {
-                        if let Err(e) = mempool::add_transaction(tx.clone(), &self.blockchain) {
+                        if let Err(e) = self.blockchain.add_transaction_to_pool(tx.clone()) {
                             log_peer_warn(&self.node, &format!("Error adding transaction: {}", e));
                             continue;
                         }

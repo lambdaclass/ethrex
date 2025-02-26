@@ -1,7 +1,6 @@
 use bytes::BufMut;
 use bytes::Bytes;
 use ethrex_blockchain::error::MempoolError;
-use ethrex_blockchain::mempool;
 use ethrex_blockchain::mempool::Mempool;
 use ethrex_blockchain::Blockchain;
 use ethrex_common::types::BlobsBundle;
@@ -92,7 +91,7 @@ impl NewPooledTransactionHashes {
                 // https://eips.ethereum.org/EIPS/eip-4844#networking
                 Transaction::EIP4844Transaction(eip4844_tx) => {
                     let tx_blobs_bundle = mempool
-                        .get_blobs_bundle_from_pool(transaction_hash)?
+                        .get_blobs_bundle(transaction_hash)?
                         .unwrap_or(BlobsBundle::empty());
                     eip4844_tx.rlp_length_as_pooled_tx(&tx_blobs_bundle)
                 }
@@ -193,7 +192,7 @@ impl GetPooledTransactions {
         hash: &H256,
         mempool: &Mempool,
     ) -> Result<Option<P2PTransaction>, StoreError> {
-        let Some(tx) = mempool.get_transaction_by_hash_from_pool(*hash)? else {
+        let Some(tx) = mempool.get_transaction_by_hash(*hash)? else {
             return Ok(None);
         };
         let result = match tx {
@@ -201,7 +200,7 @@ impl GetPooledTransactions {
             Transaction::EIP2930Transaction(itx) => P2PTransaction::EIP2930Transaction(itx),
             Transaction::EIP1559Transaction(itx) => P2PTransaction::EIP1559Transaction(itx),
             Transaction::EIP4844Transaction(itx) => {
-                let Some(bundle) = mempool.get_blobs_bundle_from_pool(*hash)? else {
+                let Some(bundle) = mempool.get_blobs_bundle(*hash)? else {
                     return Err(StoreError::Custom(format!(
                         "Blob transaction present without its bundle: hash {}",
                         hash
@@ -268,8 +267,7 @@ impl PooledTransactions {
     pub fn handle(self, node: &Node, blockchain: &Blockchain) -> Result<(), MempoolError> {
         for tx in self.pooled_transactions {
             if let P2PTransaction::EIP4844TransactionWithBlobs(itx) = tx {
-                if let Err(e) = mempool::add_blob_transaction(itx.tx, itx.blobs_bundle, blockchain)
-                {
+                if let Err(e) = blockchain.add_blob_transaction_to_pool(itx.tx, itx.blobs_bundle) {
                     log_peer_warn(node, &format!("Error adding transaction: {}", e));
                     continue;
                 }
@@ -277,7 +275,7 @@ impl PooledTransactions {
                 let regular_tx = tx
                     .try_into()
                     .map_err(|error| MempoolError::StoreError(StoreError::Custom(error)))?;
-                if let Err(e) = mempool::add_transaction(regular_tx, blockchain) {
+                if let Err(e) = blockchain.add_transaction_to_pool(regular_tx) {
                     log_peer_warn(node, &format!("Error adding transaction: {}", e));
                     continue;
                 }

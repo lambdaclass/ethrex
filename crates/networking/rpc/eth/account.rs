@@ -1,4 +1,3 @@
-use ethrex_blockchain::mempool;
 use serde_json::Value;
 use tracing::info;
 
@@ -174,7 +173,7 @@ impl RpcHandler for GetTransactionCountRequest {
 
         // If the tag is Pending, we need to get the nonce from the mempool
         let pending_nonce = if self.block == BlockTag::Pending {
-            mempool::get_nonce(&self.address, &context.blockchain.mempool)?
+            context.blockchain.get_nonce_from_pool(&self.address)?
         } else {
             None
         };

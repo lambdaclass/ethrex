@@ -37,7 +37,7 @@ use ethrex_metrics::metrics_transactions::{MetricsTxStatus, MetricsTxType, METRI
 use crate::{
     constants::{GAS_LIMIT_BOUND_DIVISOR, MIN_GAS_LIMIT, TX_GAS_COST},
     error::{ChainError, InvalidBlockError},
-    mempool::{self, PendingTxFilter},
+    mempool::PendingTxFilter,
     Blockchain,
 };
 
@@ -324,12 +324,12 @@ impl Blockchain {
         Ok((
             // Plain txs
             TransactionQueue::new(
-                mempool::filter_transactions(&plain_tx_filter, &self.mempool)?,
+                self.filter_pool_transactions(&plain_tx_filter)?,
                 context.base_fee_per_gas(),
             )?,
             // Blob txs
             TransactionQueue::new(
-                mempool::filter_transactions(&blob_tx_filter, &self.mempool)?,
+                self.filter_pool_transactions(&blob_tx_filter)?,
                 context.base_fee_per_gas(),
             )?,
         ))
@@ -394,7 +394,7 @@ impl Blockchain {
                 // Pull transaction from the mempool
                 debug!("Ignoring replay-protected transaction: {}", tx_hash);
                 txs.pop();
-                mempool::remove_transaction(&head_tx.tx.compute_hash(), &self.mempool)?;
+                self.remove_transaction_from_pool(&head_tx.tx.compute_hash())?;
                 continue;
             }
 
@@ -408,7 +408,7 @@ impl Blockchain {
                 Ok(receipt) => {
                     txs.shift()?;
                     // Pull transaction from the mempool
-                    mempool::remove_transaction(&head_tx.tx.compute_hash(), &self.mempool)?;
+                    self.remove_transaction_from_pool(&head_tx.tx.compute_hash())?;
 
                     metrics!(METRICS_TX.inc_tx_with_status_and_type(
                         MetricsTxStatus::Succeeded,
@@ -462,7 +462,7 @@ impl Blockchain {
             .get_fork_blob_schedule(context.payload.header.timestamp)
             .map(|schedule| schedule.max)
             .unwrap_or_default() as usize;
-        let Some(blobs_bundle) = self.mempool.get_blobs_bundle_from_pool(tx_hash)? else {
+        let Some(blobs_bundle) = self.mempool.get_blobs_bundle(tx_hash)? else {
             // No blob tx should enter the mempool without its blobs bundle so this is an internal error
             return Err(
                 StoreError::Custom(format!("No blobs bundle found for blob tx {tx_hash}")).into(),

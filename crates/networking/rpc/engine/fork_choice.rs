@@ -246,11 +246,12 @@ fn handle_forkchoice(
                 .storage
                 .get_block_by_hash(head.compute_block_hash())
             {
-                context
-                    .blockchain
-                    .mempool
-                    .remove_transactions_from_pool(&block.body.transactions)
-                    .map_err(|err| RpcErr::Internal(err.to_string()))?;
+                for tx in &block.body.transactions {
+                    context
+                        .blockchain
+                        .remove_transaction_from_pool(&tx.compute_hash())
+                        .map_err(|err| RpcErr::Internal(err.to_string()))?;
+                }
             } else {
                 return Err(RpcErr::Internal(
                     "Failed to get block by hash to remove transactions from the mempool"

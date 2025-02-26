@@ -297,7 +297,7 @@ async fn main() {
             let rpc_api = ethrex_rpc::start_api(
                 http_socket_addr,
                 authrpc_socket_addr,
-                store.clone(),
+                blockchain.clone(),
                 jwt_secret_clone,
                 local_p2p_node,
                 local_node_record,
