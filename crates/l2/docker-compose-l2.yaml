@@ -18,6 +18,7 @@ services:
       - ETH_RPC_URL=http://ethrex_l1:8545
       - DEPLOYER_CONTRACTS_PATH=/contracts
       - ENV_FILE=/usr/local/bin/.env
+      - CONFIG_FILE=/config.toml
     depends_on:
       - ethrex
     restart: on-failure:3
