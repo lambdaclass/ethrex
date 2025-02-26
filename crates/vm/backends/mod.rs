@@ -6,13 +6,15 @@ use crate::db::evm_state;
 use crate::{db::StoreWrapper, errors::EvmError, spec_id, EvmState, SpecId};
 use ethrex_common::types::requests::Requests;
 use ethrex_common::types::{
-    Block, BlockHeader, ChainConfig, Fork, Receipt, Transaction, Withdrawal,
+    Block, BlockHash, BlockHeader, ChainConfig, Fork, Receipt, Transaction, Withdrawal,
 };
 use ethrex_common::{types::AccountInfo, Address, BigEndianHash, H256, U256};
 use ethrex_levm::db::CacheDB;
 use ethrex_storage::Store;
 use ethrex_storage::{error::StoreError, AccountUpdate};
 use levm::LEVM;
+use revm::db::components::block_hash;
+use revm::interpreter::SelfDestructResult;
 use revm_b::REVM;
 use std::str::FromStr;
 use std::sync::Arc;
@@ -21,22 +23,14 @@ use revm::db::states::bundle_state::BundleRetention;
 use revm::db::{AccountState, AccountStatus};
 use revm::primitives::B256;
 
-#[derive(Debug, Default, Clone)]
 pub enum EVM {
-    #[default]
-    REVM,
-    LEVM,
-}
-
-impl FromStr for EVM {
-    type Err = EvmError;
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s {
-            "levm" => Ok(EVM::LEVM),
-            "revm" => Ok(EVM::REVM),
-            _ => Err(EvmError::InvalidEVM(s.to_string())),
-        }
-    }
+    REVM {
+        state: EvmState,
+    },
+    LEVM {
+        block_cache: CacheDB,
+        store_wrapper: StoreWrapper,
+    },
 }
 
 pub struct BlockExecutionResult {
@@ -46,19 +40,53 @@ pub struct BlockExecutionResult {
 }
 
 impl EVM {
+    // new
+    pub fn new(implementation: String, store: Store) -> Result<Self, EvmError> {
+        match implementation.as_str() {
+            // block_hash is zero when creating VM but it will be updated when executing a block
+            "levm" => Ok(EVM::LEVM {
+                block_cache: CacheDB::new(),
+                store_wrapper: StoreWrapper {
+                    store: store.clone(),
+                    block_hash: H256::zero(),
+                },
+            }),
+            "revm" => Ok(EVM::REVM {
+                state: evm_state(store, H256::zero()),
+            }),
+            _ => Err(EvmError::InvalidEVM(implementation)),
+        }
+    }
+
+    /// Resets the EVM state and sets the block_hash of the parent block to execute.
+    pub fn reset(&mut self, parent_hash: H256) {
+        match self {
+            EVM::LEVM {
+                block_cache,
+                store_wrapper,
+            } => {
+                *block_cache = CacheDB::new();
+                store_wrapper.block_hash = parent_hash;
+            }
+            EVM::REVM { state } => {
+                *state = evm_state(state.database().unwrap().clone(), parent_hash);
+            }
+        }
+    }
+
     /// Wraps [REVM::execute_block] and [LEVM::execute_block].
     /// The output is [BlockExecutionResult].
-    pub fn execute_block(
-        &self,
-        block: &Block,
-        storage: Store,
-    ) -> Result<BlockExecutionResult, EvmError> {
+    pub fn execute_block(&self, block: &Block) -> Result<BlockExecutionResult, EvmError> {
         match self {
-            EVM::REVM => {
-                let mut state = evm_state(storage.clone(), block.header.parent_hash);
+            EVM::REVM { state } => {
+                let mut state =
+                    evm_state(state.database().unwrap().clone(), block.header.parent_hash);
                 REVM::execute_block(block, &mut state)
             }
-            EVM::LEVM => LEVM::execute_block(block, storage),
+            EVM::LEVM {
+                block_cache,
+                store_wrapper,
+            } => LEVM::execute_block(block, store_wrapper.store.clone()),
         }
     }
 
