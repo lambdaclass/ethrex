@@ -13,16 +13,11 @@ services:
       dockerfile: ./crates/l2/contracts/Dockerfile
     volumes:
       - ./contracts:/contracts
-      # NOTE: this will copy the `config.toml` present in *this
-      # directory* to the directory inside the docker container where
-      # the ethrex binary will reside (${PWD}).
-      # At the time of writing, ${PWD}=/usr/local/bin/ (check
-      # crates/l2/Dockerfile)
-      - ./config.toml:${PWD}/config.toml
+      - ./config.toml:/config.toml
     environment:
       - ETH_RPC_URL=http://ethrex_l1:8545
       - DEPLOYER_CONTRACTS_PATH=/contracts
-      - ENV_FILE=${PWD}/.env
+      - ENV_FILE=/usr/local/bin/.env
     depends_on:
       - ethrex
     restart: on-failure:3
@@ -41,10 +36,10 @@ services:
       - 3900:3900
     environment:
       - ETH_RPC_URL=http://ethrex_l1:8545
-      - ENV_FILE=${PWD}/.env
+      - ENV_FILE=/usr/local/bin/.env
     volumes:
       - ../../test_data/genesis-l2.json:/genesis-l2.json
-      - ./config.toml:${PWD}/config.toml
+      - ./config.toml:/config.toml
     command: --network /genesis-l2.json --http.addr 0.0.0.0 --http.port 1729 --authrpc.port 8552
     depends_on:
       contract_deployer:

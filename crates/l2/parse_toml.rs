@@ -4,7 +4,7 @@ use std::io::Write;
 use std::path::Path;
 use tracing::info;
 
-const ENV_FILE_NAME: &str = ".env";
+const ENV_FILE_NAME: &str = "/usr/loca/bin/.env";
 
 #[derive(Deserialize, Debug)]
 struct Deployer {
