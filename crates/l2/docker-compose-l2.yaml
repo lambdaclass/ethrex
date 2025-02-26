@@ -17,7 +17,7 @@ services:
     environment:
       - ETH_RPC_URL=http://ethrex_l1:8545
       - DEPLOYER_CONTRACTS_PATH=/contracts
-      - ENV_FILE=/.env
+      - ENV_FILE=${PWD}/.env
     depends_on:
       - ethrex
     restart: on-failure:3
@@ -36,7 +36,7 @@ services:
       - 3900:3900
     environment:
       - ETH_RPC_URL=http://ethrex_l1:8545
-      - ENV_FILE=/.env
+      - ENV_FILE=${PWD}/.env
     volumes:
       - ../../test_data/genesis-l2.json:/genesis-l2.json
       - ./config.toml:${PWD}/config.toml
