@@ -31,6 +31,8 @@ struct SetupResult {
     contracts_path: PathBuf,
     sp1_contract_verifier_address: Address,
     sp1_deploy_verifier_on_l1: bool,
+    pico_contract_verifier_address: Address,
+    pico_deploy_verifier_on_l1: bool,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -68,7 +70,7 @@ lazy_static::lazy_static! {
 }
 
 const INITIALIZE_ON_CHAIN_PROPOSER_SIGNATURE: &str =
-    "initialize(address,address,address,address[])";
+    "initialize(address,address,address,address,address[])";
 
 const BRIDGE_INITIALIZER_SIGNATURE: &str = "initialize(address)";
 
@@ -78,17 +80,22 @@ async fn main() -> Result<(), DeployError> {
     download_contract_deps(&setup_result.contracts_path)?;
     compile_contracts(&setup_result.contracts_path)?;
 
-    let (on_chain_proposer, bridge_address, sp1_verifier_address) = deploy_contracts(
-        setup_result.deployer_address,
-        setup_result.deployer_private_key,
-        &setup_result.eth_client,
-        &setup_result.contracts_path,
-        setup_result.sp1_deploy_verifier_on_l1,
-    )
-    .await?;
+    let (on_chain_proposer, bridge_address, sp1_verifier_address, pico_verifier_address) =
+        deploy_contracts(
+            setup_result.deployer_address,
+            setup_result.deployer_private_key,
+            &setup_result.eth_client,
+            &setup_result.contracts_path,
+            setup_result.sp1_deploy_verifier_on_l1,
+            setup_result.pico_deploy_verifier_on_l1,
+        )
+        .await?;
 
     let sp1_contract_verifier_address =
         sp1_verifier_address.unwrap_or(setup_result.sp1_contract_verifier_address);
+
+    let pico_contract_verifier_address =
+        pico_verifier_address.unwrap_or(setup_result.pico_contract_verifier_address);
 
     initialize_contracts(
         setup_result.deployer_address,
@@ -99,6 +106,7 @@ async fn main() -> Result<(), DeployError> {
         bridge_address,
         setup_result.risc0_contract_verifier_address,
         sp1_contract_verifier_address,
+        pico_contract_verifier_address,
         &setup_result.eth_client,
     )
     .await?;
@@ -197,6 +205,18 @@ fn setup() -> Result<SetupResult, DeployError> {
     };
     let sp1_contract_verifier_address = parse_env_var("DEPLOYER_SP1_CONTRACT_VERIFIER")?;
 
+    let input = std::env::var("DEPLOYER_PICO_DEPLOY_VERIFIER").unwrap_or("false".to_owned());
+    let pico_deploy_verifier_on_l1 = match input.trim().to_lowercase().as_str() {
+        "true" | "1" => true,
+        "false" | "0" => false,
+        _ => {
+            return Err(DeployError::ParseError(format!(
+                "Invalid boolean string: {input}"
+            )));
+        }
+    };
+    let pico_contract_verifier_address = parse_env_var("DEPLOYER_PICO_CONTRACT_VERIFIER")?;
+
     Ok(SetupResult {
         deployer_address,
         deployer_private_key,
@@ -207,6 +227,8 @@ fn setup() -> Result<SetupResult, DeployError> {
         contracts_path,
         sp1_deploy_verifier_on_l1,
         sp1_contract_verifier_address,
+        pico_deploy_verifier_on_l1,
+        pico_contract_verifier_address,
     })
 }
 
@@ -270,8 +292,9 @@ async fn deploy_contracts(
     deployer_private_key: SecretKey,
     eth_client: &EthClient,
     contracts_path: &Path,
-    deploy_verifier: bool,
-) -> Result<(Address, Address, Option<Address>), DeployError> {
+    deploy_sp1_verifier: bool,
+    deploy_pico_verifier: bool,
+) -> Result<(Address, Address, Option<Address>, Option<Address>), DeployError> {
     let deploy_frames = spinner!(["📭❱❱", "❱📬❱", "❱❱📫"], 220);
 
     let mut spinner = Spinner::new(
@@ -311,8 +334,8 @@ async fn deploy_contracts(
     );
     spinner.success(&msg);
 
-    let sp1_verifier_address = if deploy_verifier {
-        let mut spinner = Spinner::new(deploy_frames, "Deploying SP1Verifier", Color::Cyan);
+    let sp1_verifier_address = if deploy_sp1_verifier {
+        let mut spinner = Spinner::new(deploy_frames.clone(), "Deploying SP1Verifier", Color::Cyan);
         let (verifier_deployment_tx_hash, sp1_verifier_address) = deploy_contract(
             deployer,
             deployer_private_key,
@@ -332,10 +355,32 @@ async fn deploy_contracts(
         None
     };
 
+    let pico_verifier_address = if deploy_pico_verifier {
+        let mut spinner = Spinner::new(deploy_frames, "Deploying PicoVerifier", Color::Cyan);
+        let (verifier_deployment_tx_hash, pico_verifier_address) = deploy_contract(
+            deployer,
+            deployer_private_key,
+            eth_client,
+            &contracts_path.join("solc_out/PicoVerifier.bin"),
+        )
+        .await?;
+
+        let msg = format!(
+            "PicoGroth16Verifier:\n\tDeployed at address {}\n\tWith tx hash {}",
+            format!("{pico_verifier_address:#x}").bright_green(),
+            format!("{verifier_deployment_tx_hash:#x}").bright_cyan(),
+        );
+        spinner.success(&msg);
+        Some(pico_verifier_address)
+    } else {
+        None
+    };
+
     Ok((
         on_chain_proposer_address,
         bridge_address,
         sp1_verifier_address,
+        pico_verifier_address,
     ))
 }
 
@@ -465,6 +510,7 @@ async fn initialize_contracts(
     bridge: Address,
     risc0_verifier_address: Address,
     sp1_verifier_address: Address,
+    pico_verifier_address: Address,
     eth_client: &EthClient,
 ) -> Result<(), DeployError> {
     let initialize_frames = spinner!(["🪄❱❱", "❱🪄❱", "❱❱🪄"], 200);
@@ -480,6 +526,7 @@ async fn initialize_contracts(
         bridge,
         risc0_verifier_address,
         sp1_verifier_address,
+        pico_verifier_address,
         deployer,
         deployer_private_key,
         committer,
@@ -522,6 +569,7 @@ async fn initialize_on_chain_proposer(
     bridge: Address,
     risc0_verifier_address: Address,
     sp1_verifier_address: Address,
+    pico_verifier_address: Address,
     deployer: Address,
     deployer_private_key: SecretKey,
     committer: Address,
@@ -532,6 +580,7 @@ async fn initialize_on_chain_proposer(
         Value::Address(bridge),
         Value::Address(risc0_verifier_address),
         Value::Address(sp1_verifier_address),
+        Value::Address(pico_verifier_address),
         Value::Array(vec![Value::Address(committer), Value::Address(verifier)]),
     ];
 
