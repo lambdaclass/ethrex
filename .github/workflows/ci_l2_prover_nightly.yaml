@@ -20,9 +20,9 @@ jobs:
       matrix:
         action:
           - command: check
-            args: -p ethrex-prover
+            args: -p ethrex-prover -F pico
           - command: clippy
-            args: -p ethrex-prover --all-targets --no-default-features
+            args: -p ethrex-prover -F pico --all-targets
     steps:
       - name: Checkout sources
         uses: actions/checkout@v4
@@ -55,7 +55,7 @@ jobs:
       - name: Build prover and SP1's zkVM
         run: |
           cd crates/l2/prover
-          cargo +nightly-2024-11-27 build --release --features pico
+          cargo +nightly-2024-11-27 build --release -F pico
       - name: Test Prover Execution
         run: |
           cd crates/l2/prover
