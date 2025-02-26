@@ -5,7 +5,7 @@ private_key = "0x385c546456b6a603a1cfcaa9ec9494ba4832da08dd6bcf4de9a71e4a01b7492
 # Only use in dev mode.
 risc0_contract_verifier = "0x00000000000000000000000000000000000000AA"
 # Risc0Groth16Verifier Address
-# DEPLOYER_RISC0_CONTRACT_VERIFIER=0xAC292cF957Dd5BA174cdA13b05C16aFC71700327
+# risc0_contract_verifier = "0xAC292cF957Dd5BA174cdA13b05C16aFC71700327"
 # If set to 0xAA skip proof verification.
 # Only use in dev mode.
 sp1_contract_verifier = "0x00000000000000000000000000000000000000AA"
