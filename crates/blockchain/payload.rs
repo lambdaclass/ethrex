@@ -324,12 +324,12 @@ impl Blockchain {
         Ok((
             // Plain txs
             TransactionQueue::new(
-                self.filter_pool_transactions(&plain_tx_filter)?,
+                self.mempool.filter_transactions(&plain_tx_filter)?,
                 context.base_fee_per_gas(),
             )?,
             // Blob txs
             TransactionQueue::new(
-                self.filter_pool_transactions(&blob_tx_filter)?,
+                self.mempool.filter_transactions(&blob_tx_filter)?,
                 context.base_fee_per_gas(),
             )?,
         ))

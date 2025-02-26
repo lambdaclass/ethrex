@@ -89,6 +89,45 @@ impl Mempool {
     /// These transactions will be grouped by sender and sorted by nonce
     pub fn filter_transactions(
         &self,
+        filter: &PendingTxFilter,
+    ) -> Result<HashMap<Address, Vec<MempoolTransaction>>, StoreError> {
+        let filter_tx = |tx: &Transaction| -> bool {
+            // Filter by tx type
+            let is_blob_tx = matches!(tx, Transaction::EIP4844Transaction(_));
+            if filter.only_plain_txs && is_blob_tx || filter.only_blob_txs && !is_blob_tx {
+                return false;
+            }
+
+            // Filter by tip & base_fee
+            if let Some(min_tip) = filter.min_tip {
+                if !tx
+                    .effective_gas_tip(filter.base_fee)
+                    .is_some_and(|tip| tip >= min_tip)
+                {
+                    return false;
+                }
+            // This is a temporary fix to avoid invalid transactions to be included.
+            // This should be removed once https://github.com/lambdaclass/ethrex/issues/680
+            // is addressed.
+            } else if tx.effective_gas_tip(filter.base_fee).is_none() {
+                return false;
+            }
+
+            // Filter by blob gas fee
+            if let (true, Some(blob_fee)) = (is_blob_tx, filter.blob_fee) {
+                if !tx.max_fee_per_blob_gas().is_some_and(|fee| fee >= blob_fee) {
+                    return false;
+                }
+            }
+            true
+        };
+        self.filter_transactions_with_filter_fn(&filter_tx)
+    }
+
+    /// Applies the filter and returns a set of suitable transactions from the mempool.
+    /// These transactions will be grouped by sender and sorted by nonce
+    pub fn filter_transactions_with_filter_fn(
+        &self,
         filter: &dyn Fn(&Transaction) -> bool,
     ) -> Result<HashMap<Address, Vec<MempoolTransaction>>, StoreError> {
         let mut txs_by_sender: HashMap<Address, Vec<MempoolTransaction>> = HashMap::new();
@@ -595,7 +634,7 @@ mod tests {
             .add_transaction(blob_tx_hash, blob_tx.clone())
             .unwrap();
         mempool.add_transaction(plain_tx_hash, plain_tx).unwrap();
-        let txs = mempool.filter_transactions(&filter).unwrap();
+        let txs = mempool.filter_transactions_with_filter_fn(&filter).unwrap();
         assert_eq!(txs, HashMap::from([(blob_tx.sender(), vec![blob_tx])]));
     }
 
