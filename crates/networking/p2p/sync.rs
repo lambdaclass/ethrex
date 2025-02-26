@@ -264,14 +264,15 @@ impl SyncManager {
             all_block_hashes.extend_from_slice(&block_hashes[..]);
             store.add_block_headers(block_hashes.clone(), block_headers)?;
 
-            // Filter out everything after the sync_head
-            let mut block_hashes: Vec<H256> = block_hashes
-                .iter()
-                .take_while(|&hash| *hash != sync_head)
-                .cloned()
-                .collect();
-
             if self.sync_mode == SyncMode::Full {
+                if sync_head_found {
+                    // Filter out everything after the sync_head
+                    block_hashes = block_hashes
+                        .iter()
+                        .take_while(|&hash| *hash != sync_head)
+                        .cloned()
+                        .collect();
+                }
                 self.download_and_run_blocks(&mut block_hashes, store.clone())
                     .await?;
             }
