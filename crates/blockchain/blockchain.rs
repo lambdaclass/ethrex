@@ -160,7 +160,7 @@ impl Blockchain {
         info!("Added {size} blocks to blockchain");
     }
 
-    /// Add a blob transaction and its blobs bundle to the mempool
+    /// Add a blob transaction and its blobs bundle to the mempool checking that the transaction is valid
     #[cfg(feature = "c-kzg")]
     pub fn add_blob_transaction_to_pool(
         &self,
@@ -185,7 +185,7 @@ impl Blockchain {
         Ok(hash)
     }
 
-    /// Add a transaction to the mempool
+    /// Add a transaction to the mempool checking that the transaction is valid
     pub fn add_transaction_to_pool(&self, transaction: Transaction) -> Result<H256, MempoolError> {
         // Blob transactions should be submitted via add_blob_transaction along with the corresponding blobs bundle
         if matches!(transaction, Transaction::EIP4844Transaction(_)) {

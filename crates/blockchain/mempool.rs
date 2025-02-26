@@ -27,7 +27,7 @@ impl Mempool {
         Self::default()
     }
 
-    /// Add transaction to the pool
+    /// Add transaction to the pool without doing validity checks
     pub fn add_transaction(
         &self,
         hash: H256,
