@@ -37,6 +37,7 @@ interface IOnChainProposer {
         address bridge,
         address r0verifier,
         address sp1verifier,
+        address picoverifier,
         address[] calldata sequencerAddress
     ) external;
 
@@ -68,11 +69,19 @@ interface IOnChainProposer {
     /// @param proofBytes Groth16 proof
     function verify(
         uint256 blockNumber,
-        bytes calldata blockProof,
-        bytes32 imageId,
-        bytes32 journalDigest,
-        bytes32 programVKey,
-        bytes calldata publicValues,
-        bytes calldata proofBytes
+        //risc0
+        bytes calldata risc0BlockProof,
+        bytes32 risc0ImageId,
+        bytes32 risc0JournalDigest,
+        //sp1
+        bytes32 sp1ProgramVKey,
+        bytes calldata sp1PublicValues,
+        bytes calldata sp1ProofBytes,
+        //pico
+        bytes32 picoRiscvVkey,
+        bytes calldata picoPublicValues,
+        uint256[8] calldata picoProof
     ) external;
+    // TODO: imageid, programvkey and riscvvkey should be constants
+    // TODO: organize each zkvm proof arguments in their own structs
 }
