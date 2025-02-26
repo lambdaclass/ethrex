@@ -631,13 +631,15 @@ async fn make_deposits(bridge: Address, eth_client: &EthClient) {
             return;
         };
         let Some(acc) = genesis.alloc.get(&address) else {
+            dbg!("No hay address en genesis ⏭️", address);
             continue;
         };
-        let a = acc
+        let value_to_deposit = acc
             .balance
-            .saturating_sub(U256::from_str("100000000000000000").unwrap_or(U256::zero()));
+            .checked_div(U256::from_str("2").unwrap_or(U256::zero()))
+            .unwrap_or(U256::zero());
         let overrides = Overrides {
-            value: Some(a),
+            value: Some(value_to_deposit),
             from: Some(address),
             ..Overrides::default()
         };
@@ -648,12 +650,35 @@ async fn make_deposits(bridge: Address, eth_client: &EthClient) {
         else {
             continue;
         };
-        let Ok(_) = eth_client
+
+        // let gas_estimate = eth_client.estimate_gas(build.clone().into()).await;
+        // dbg!("===========================");
+        // dbg!(gas_estimate);
+        // dbg!("===========================");
+
+        match eth_client
             .send_eip1559_transaction(&build, &secret_key)
             .await
-        else {
-            continue;
-        };
+        {
+            Ok(_) => {
+                dbg!("Se completó deposit", address, value_to_deposit);
+            }
+            Err(e) => {
+                dbg!("Falló el deposit 🚩", address, value_to_deposit);
+                dbg!(e);
+                continue;
+            }
+        }
+        // let Ok(_) = dbg!(
+        //     eth_client
+        //         .send_eip1559_transaction(&build, &secret_key)
+        //         .await
+        // ) else {
+        //     dbg!("===========================");
+        //     dbg!("Failed to send transaction");
+        //     dbg!("===========================");
+        //     continue;
+        // };
     }
 }
 
