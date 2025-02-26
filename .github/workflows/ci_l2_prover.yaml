@@ -40,7 +40,7 @@ jobs:
       - name: Rust toolchain install
         uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: 1.82.0
+          toolchain: 1.85.0
       # TODO(#1974): Restore these steps once we fix risc0
       # Use cargo-risczero v1.2.0
       # The risc0-zkvm crate should match this version
