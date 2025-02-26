@@ -350,7 +350,7 @@ async fn main() {
                 error!("Cannot run with DEV_MODE if the `l2` feature is enabled.");
                 panic!("Run without the --dev argument.");
             }
-            let l2_proposer = ethrex_l2::start_proposer(store).into_future();
+            let l2_proposer = ethrex_l2::start_proposer(store, mempool.clone()).into_future();
             tracker.spawn(l2_proposer);
         } else if #[cfg(feature = "dev")] {
             use ethrex_dev;
