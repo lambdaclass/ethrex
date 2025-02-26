@@ -34,7 +34,7 @@ jobs:
       - name: Add Rust Cache
         uses: Swatinem/rust-cache@v2
       - name: ${{ matrix.action.command }} Command
-        run: cargo +nightly ${{ matrix.action.command }} ${{ matrix.action.args }}
+        run: cargo +nightly-2024-11-27 ${{ matrix.action.command }} ${{ matrix.action.args }}
 
   test:
     # "Test" is a required check, don't change the name
@@ -51,11 +51,11 @@ jobs:
       # https://pico-docs.brevis.network/getting-started/installation
       - name: RISC-V pico-cli install
         run: |
-          cargo +nightly install --git https://github.com/brevis-network/pico pico-cli
+          cargo +nightly-2024-11-27 install --git https://github.com/brevis-network/pico pico-cli
       - name: Build prover and SP1's zkVM
         run: |
           cd crates/l2/prover
-          cargo build --release --features pico
+          cargo +nightly-2024-11-27 build --release --features pico
       - name: Test Prover Execution
         run: |
           cd crates/l2/prover
