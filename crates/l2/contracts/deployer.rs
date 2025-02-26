@@ -90,8 +90,6 @@ async fn main() -> Result<(), DeployError> {
         setup_result.sp1_deploy_verifier_on_l1,
     )
     .await?;
-    dbg!("============================");
-    make_deposits(bridge_address, &setup_result.eth_client).await;
 
     let sp1_contract_verifier_address =
         sp1_verifier_address.unwrap_or(setup_result.sp1_contract_verifier_address);
@@ -108,6 +106,7 @@ async fn main() -> Result<(), DeployError> {
         &setup_result.eth_client,
     )
     .await?;
+    make_deposits(bridge_address, &setup_result.eth_client).await;
 
     let env_lines = read_env_as_lines().map_err(DeployError::EnvFileError)?;
 
@@ -606,7 +605,6 @@ async fn wait_for_transaction_receipt(
 
 async fn make_deposits(bridge: Address, eth_client: &EthClient) {
     let genesis = read_genesis_file("../../test_data/genesis-l1.json");
-    // dbg!(&genesis.alloc);
     let Ok(pks) = fs::read_to_string("../../test_data/private_keys_l1.txt") else {
         return;
     };
@@ -644,19 +642,16 @@ async fn make_deposits(bridge: Address, eth_client: &EthClient) {
             ..Overrides::default()
         };
 
-        let Ok(build) = dbg!(
-            eth_client
-                // .call(bridge, Bytes::from(calldata), overrides)
-                .build_eip1559_transaction(bridge, address, Bytes::from(calldata), overrides, 1)
-                .await
-        ) else {
+        let Ok(build) = eth_client
+            .build_eip1559_transaction(bridge, address, Bytes::from(calldata), overrides, 1)
+            .await
+        else {
             continue;
         };
-        let Ok(_) = dbg!(
-            eth_client
-                .send_eip1559_transaction(&build, &secret_key)
-                .await
-        ) else {
+        let Ok(_) = eth_client
+            .send_eip1559_transaction(&build, &secret_key)
+            .await
+        else {
             continue;
         };
     }
