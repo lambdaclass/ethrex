@@ -412,7 +412,7 @@ impl Blockchain {
             metrics!(METRICS_TX.inc_tx());
 
             // Execute tx
-            let receipt = match self.apply_transaction(&head_tx, context) {
+            let receipt = match self.apply_transaction(&head_tx, context, head_tx.tx.sender()) {
                 Ok(receipt) => {
                     txs.shift()?;
                     // Pull transaction from the mempool
@@ -455,10 +455,11 @@ impl Blockchain {
         &self,
         head: &HeadTransaction,
         context: &mut PayloadBuildContext,
+        sender: Address
     ) -> Result<Receipt, ChainError> {
         match **head {
             Transaction::EIP4844Transaction(_) => self.apply_blob_transaction(head, context),
-            _ => self.apply_plain_transaction(head, context),
+            _ => self.apply_plain_transaction(head, context, sender),
         }
     }
 
@@ -491,7 +492,7 @@ impl Blockchain {
             return Err(EvmError::Custom("max data blobs reached".to_string()).into());
         };
         // Apply transaction
-        let receipt = self.apply_plain_transaction(head, context)?;
+        let receipt = self.apply_plain_transaction(head, context, head.tx.sender())?;
         // Update context with blob data
         let prev_blob_gas = context.payload.header.blob_gas_used.unwrap_or_default();
         context.payload.header.blob_gas_used =
@@ -505,6 +506,7 @@ impl Blockchain {
         &self,
         head: &HeadTransaction,
         context: &mut PayloadBuildContext,
+        sender: Address,
     ) -> Result<Receipt, ChainError> {
         let chain_config = context.chain_config()?;
         let (report, gas_used) = self.vm.execute_tx(
@@ -514,6 +516,7 @@ impl Blockchain {
             &mut context.block_cache,
             &chain_config,
             &mut context.remaining_gas,
+            sender
         )?;
         context.block_value += U256::from(gas_used) * head.tip;
         Ok(report)
