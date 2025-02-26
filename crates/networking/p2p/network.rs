@@ -48,7 +48,7 @@ pub struct P2PContext {
     pub signer: SigningKey,
     pub table: Arc<Mutex<KademliaTable>>,
     pub storage: Store,
-    pub mempool: Arc<Mempool>,
+    pub mempool: Mempool,
     pub(crate) broadcast: RLPxConnBroadcastSender,
     pub local_node: Node,
     pub enr_seq: u64,
@@ -61,7 +61,7 @@ pub async fn start_network(
     signer: SigningKey,
     peer_table: Arc<Mutex<KademliaTable>>,
     storage: Store,
-    mempool: Arc<Mempool>,
+    mempool: Mempool,
 ) -> Result<(), NetworkError> {
     let (channel_broadcast_send_end, _) = tokio::sync::broadcast::channel::<(
         tokio::task::Id,

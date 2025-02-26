@@ -74,7 +74,7 @@ pub(crate) struct RLPxConnection<S> {
     node: Node,
     framed: Framed<S, RLPxCodec>,
     storage: Store,
-    mempool: Arc<Mempool>,
+    mempool: Mempool,
     capabilities: Vec<(Capability, u8)>,
     negotiated_eth_version: u8,
     negotiated_snap_version: u8,
@@ -99,7 +99,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
         stream: S,
         codec: RLPxCodec,
         storage: Store,
-        mempool: Arc<Mempool>,
+        mempool: Mempool,
         connection_broadcast: RLPxConnBroadcastSender,
     ) -> Self {
         Self {

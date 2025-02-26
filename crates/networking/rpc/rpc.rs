@@ -80,7 +80,7 @@ enum RpcRequestWrapper {
 #[derive(Debug, Clone)]
 pub struct RpcApiContext {
     storage: Store,
-    mempool: Arc<Mempool>,
+    mempool: Mempool,
     jwt_secret: Bytes,
     local_p2p_node: Node,
     local_node_record: NodeRecord,
@@ -155,7 +155,7 @@ pub async fn start_api(
     http_addr: SocketAddr,
     authrpc_addr: SocketAddr,
     storage: Store,
-    mempool: Arc<Mempool>,
+    mempool: Mempool,
     jwt_secret: Bytes,
     local_p2p_node: Node,
     local_node_record: NodeRecord,

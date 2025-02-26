@@ -14,11 +14,11 @@ use ethrex_rpc::types::receipt::RpcLog;
 use ethrex_storage::Store;
 use keccak_hash::keccak;
 use secp256k1::SecretKey;
-use std::{cmp::min, ops::Mul, sync::Arc, time::Duration};
+use std::{cmp::min, ops::Mul, time::Duration};
 use tokio::time::sleep;
 use tracing::{debug, error, info, warn};
 
-pub async fn start_l1_watcher(store: Store, mempool: Arc<Mempool>) -> Result<(), ConfigError> {
+pub async fn start_l1_watcher(store: Store, mempool: Mempool) -> Result<(), ConfigError> {
     let eth_config = EthConfig::from_env()?;
     let watcher_config = L1WatcherConfig::from_env()?;
     let mut l1_watcher = L1Watcher::new_from_config(watcher_config, eth_config).await?;

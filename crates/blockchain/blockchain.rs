@@ -15,7 +15,6 @@ use ethrex_common::types::{
 };
 use ethrex_common::H256;
 use mempool::Mempool;
-use std::sync::Arc;
 use std::{ops::Div, time::Instant};
 
 use ethrex_storage::error::StoreError;
@@ -33,7 +32,7 @@ use tracing::{error, info, warn};
 pub struct Blockchain {
     pub vm: EVM,
     pub storage: Store,
-    pub mempool: Arc<Mempool>,
+    pub mempool: Mempool,
 }
 
 impl Blockchain {
@@ -41,7 +40,7 @@ impl Blockchain {
         Self {
             vm: evm,
             storage: store,
-            mempool: Arc::new(Mempool::new()),
+            mempool: Mempool::new(),
         }
     }
 
@@ -49,7 +48,7 @@ impl Blockchain {
         Self {
             vm: Default::default(),
             storage: store,
-            mempool: Arc::new(Mempool::new()),
+            mempool: Mempool::new(),
         }
     }
 

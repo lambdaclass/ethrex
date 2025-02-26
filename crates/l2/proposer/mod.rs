@@ -1,4 +1,4 @@
-use std::{sync::Arc, time::Duration};
+use std::time::Duration;
 
 use crate::utils::config::{errors::ConfigError, proposer::ProposerConfig, read_env_file};
 use errors::ProposerError;
@@ -26,7 +26,7 @@ pub struct Proposer {
     jwt_secret: Vec<u8>,
 }
 
-pub async fn start_proposer(store: Store, mempool: Arc<Mempool>) {
+pub async fn start_proposer(store: Store, mempool: Mempool) {
     info!("Starting Proposer");
 
     if let Err(e) = read_env_file() {
