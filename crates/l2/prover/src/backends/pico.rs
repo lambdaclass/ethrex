@@ -97,6 +97,7 @@ pub fn to_calldata(output: ProveOutput) -> Result<ProofCalldata, Box<dyn std::er
     })
 }
 
+#[allow(unused)]
 fn get_gas() -> Result<u64, Box<dyn std::error::Error>> {
     todo!()
 }

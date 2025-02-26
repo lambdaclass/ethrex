@@ -72,6 +72,7 @@ pub fn to_calldata(receipt: Receipt) -> Result<ProofCalldata, Box<dyn std::error
     })
 }
 
+#[allow(unused)]
 fn get_gas(stdout: &[u8]) -> Result<u64, Box<dyn std::error::Error>> {
     unimplemented!()
     // TODO: return stdout as proving output

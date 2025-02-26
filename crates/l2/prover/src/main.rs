@@ -1,7 +1,4 @@
-use ethrex_l2::utils::{
-    config::{prover_client::ProverClientConfig, read_env_file},
-    prover::proving_systems::ProverType,
-};
+use ethrex_l2::utils::config::{prover_client::ProverClientConfig, read_env_file};
 use ethrex_prover_lib::init_client;
 use std::env;
 use tracing::{self, debug, error, warn, Level};

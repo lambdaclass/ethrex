@@ -40,7 +40,7 @@ pub fn execute(input: ProgramInput) -> Result<(), Box<dyn std::error::Error>> {
 
     let client = ProverClient::from_env();
 
-    let output = client.execute(PROGRAM_ELF, &stdin).run()?;
+    client.execute(PROGRAM_ELF, &stdin).run()?;
 
     info!("Successfully executed SP1 program.");
     Ok(())
@@ -82,6 +82,7 @@ pub fn to_calldata(proof: ProveOutput) -> Result<ProofCalldata, Box<dyn std::err
     })
 }
 
+#[allow(unused)]
 fn get_gas() -> Result<u64, Box<dyn std::error::Error>> {
     unimplemented!()
 }

@@ -1,6 +1,6 @@
 #![allow(clippy::expect_used)]
 #![allow(clippy::unwrap_used)]
-use ethrex_blockchain::add_block;
+use ethrex_blockchain::Blockchain;
 use ethrex_common::types::Block;
 use ethrex_prover_lib::execute;
 use ethrex_storage::{EngineType, Store};
@@ -61,7 +61,6 @@ async fn setup() -> (ProgramInput, Block) {
     let block_to_prove = blocks.get(3).unwrap();
 
     let parent_block_header = store
-        .store
         .get_block_header_by_hash(block_to_prove.header.parent_hash)
         .unwrap()
         .unwrap();
