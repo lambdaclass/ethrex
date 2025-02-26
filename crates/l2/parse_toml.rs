@@ -242,7 +242,7 @@ impl L2Config {
 }
 
 pub fn write_to_env(config: String) -> Result<(), ConfigError> {
-    let env_file_name = std::env::var("ENV_FILE").unwrap_or("/usr/local/bin/.env".to_string());
+    let env_file_name = std::env::var("ENV_FILE").unwrap_or(".env".to_string());
     let env_file = OpenOptions::new()
         .write(true)
         .create(true)
@@ -252,6 +252,7 @@ pub fn write_to_env(config: String) -> Result<(), ConfigError> {
         Ok(mut file) => {
             dbg!("LO PUDE ABRIR");
             file.write_all(&config.into_bytes()).unwrap();
+            dbg!("LO PUDE ESCRIBIR");
         }
         Err(err) => {
             dbg!(err);
