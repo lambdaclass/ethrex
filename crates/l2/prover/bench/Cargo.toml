@@ -46,9 +46,9 @@ lazy_static = "1.5.0"
 bincode = "1.3.3"
 
 [features]
-pico = ["zkvm_interface/pico", "ethrex-prover/pico", "ethrex-l2/pico"]
-risc0 = ["zkvm_interface/risc0", "ethrex-prover/risc0", "ethrex-l2/risc0"]
-sp1 = ["zkvm_interface/sp1", "ethrex-prover/sp1", "ethrex-l2/sp1"]
+pico = ["zkvm_interface/pico", "ethrex-prover/pico"]
+risc0 = ["zkvm_interface/risc0", "ethrex-prover/risc0"]
+sp1 = ["zkvm_interface/sp1", "ethrex-prover/sp1"]
 gpu = ["ethrex-prover/gpu"]
 l2 = ["ethrex-vm/l2", "zkvm_interface/l2"]
 default = ["sp1"]

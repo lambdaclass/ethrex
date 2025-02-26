@@ -46,14 +46,13 @@ name = "ethrex_prover"
 path = "src/main.rs"
 
 [features]
-pico = ["zkvm_interface/pico", "ethrex-l2/pico", "dep:pico-sdk"]
+pico = ["zkvm_interface/pico", "dep:pico-sdk"]
 risc0 = [
   "zkvm_interface/risc0",
-  "ethrex-l2/risc0",
   "dep:risc0-zkvm",
   "dep:risc0-ethereum-contracts",
 ]
-sp1 = ["zkvm_interface/sp1", "ethrex-l2/sp1", "dep:sp1-sdk"]
+sp1 = ["zkvm_interface/sp1", "dep:sp1-sdk"]
 gpu = ["risc0-zkvm/cuda", "sp1-sdk/cuda"]
 l2 = [
   "ethrex-vm/l2",

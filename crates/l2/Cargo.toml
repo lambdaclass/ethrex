@@ -50,6 +50,3 @@ panic = "deny"
 [features]
 default = []
 metrics = ["ethrex-metrics/l2"]
-pico = ["zkvm_interface/pico"]
-risc0 = ["zkvm_interface/risc0"]
-sp1 = ["zkvm_interface/sp1"]
