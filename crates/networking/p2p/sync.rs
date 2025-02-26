@@ -168,8 +168,8 @@ impl SyncManager {
         // This step is not parallelized
         let mut all_block_hashes = vec![];
         // Check if we have some blocks downloaded from a previous sync attempt
-        // We only check for snap syncing as full sync will start fetching headers starting from the canonical block
-        // which is update every time a new block is added which is done as we fetch block headers
+        // This applies only to snap sync—full sync always starts fetching headers
+        // from the canonical block, which updates as new block headers are fetched.
         if matches!(self.sync_mode, SyncMode::Snap) {
             if let Some(last_header) = store.get_header_download_checkpoint()? {
                 // Set latest downloaded header as current head for header fetching
@@ -318,7 +318,7 @@ impl SyncManager {
                 // Next sync will be full-sync
                 self.sync_mode = SyncMode::Full;
             }
-            // Full sync stores and executes blocks as it ask for the headers
+            // Full sync stores and executes blocks as it asks for the headers
             SyncMode::Full => {}
         }
         Ok(())
