@@ -2,8 +2,6 @@ use crate::errors::*;
 use serde::Deserialize;
 use std::fs::OpenOptions;
 use std::io::Write;
-use std::path::Path;
-use tracing::info;
 
 #[derive(Deserialize, Debug)]
 struct Deployer {
@@ -260,17 +258,6 @@ pub fn write_to_env(config: String) -> Result<(), ConfigError> {
             return Err(ConfigError::EnvWriteError);
         }
     };
-    // {
-    //         Ok(file) => file,
-    //         Err(err) => {
-    //             dbg!(err);
-    //             return Err(ConfigError::EnvWriteError)
-    //         },
-    //     };
-    //     env_file
-    //         .write_all(&config.into_bytes())
-    //         .map_err(|_| ConfigError::EnvWriteError)?;
-    // };
     Ok(())
 }
 
