@@ -1,9 +1,12 @@
 use bytes::Bytes;
 use colored::Colorize;
 use ethereum_types::{Address, H160, H256};
+use ethrex_common::U256;
 use ethrex_l2::utils::config::errors;
 use ethrex_l2::utils::config::{read_env_as_lines, read_env_file, write_env};
+use ethrex_l2::utils::test_data_io::read_genesis_file;
 use ethrex_l2_sdk::calldata::{encode_calldata, Value};
+use ethrex_l2_sdk::get_address_from_secret_key;
 use ethrex_rpc::clients::eth::{
     errors::{CalldataEncodeError, EthClientError},
     eth_sender::Overrides,
@@ -12,6 +15,7 @@ use ethrex_rpc::clients::eth::{
 use keccak_hash::keccak;
 use secp256k1::SecretKey;
 use spinoff::{spinner, spinners, Color, Spinner};
+use std::fs;
 use std::{
     path::{Path, PathBuf},
     process::Command,
@@ -102,6 +106,7 @@ async fn main() -> Result<(), DeployError> {
         &setup_result.eth_client,
     )
     .await?;
+    make_deposits(bridge_address, &setup_result.eth_client).await;
 
     let env_lines = read_env_as_lines().map_err(DeployError::EnvFileError)?;
 
@@ -596,6 +601,85 @@ async fn wait_for_transaction_receipt(
         tokio::time::sleep(std::time::Duration::from_secs(1)).await;
     }
     Ok(())
+}
+
+async fn make_deposits(bridge: Address, eth_client: &EthClient) {
+    let genesis = read_genesis_file("../../test_data/genesis-l1.json");
+    let Ok(pks) = fs::read_to_string("../../test_data/private_keys_l1.txt") else {
+        return;
+    };
+    let private_keys: Vec<String> = pks
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .map(|line| line.trim().to_string())
+        .collect();
+
+    for pk in private_keys.iter() {
+        let pk_str = pk.strip_prefix("0x").unwrap_or(pk);
+        let Ok(pk_h256) = pk_str.parse::<H256>() else {
+            return;
+        };
+        let pk_bytes = pk_h256.as_bytes();
+        let Ok(secret_key) = SecretKey::from_slice(pk_bytes) else {
+            return;
+        };
+        let Ok(address) = get_address_from_secret_key(&secret_key) else {
+            return;
+        };
+        let values = vec![Value::Address(address)];
+        let Ok(calldata) = encode_calldata("deposit(address)", &values) else {
+            return;
+        };
+        let Some(acc) = genesis.alloc.get(&address) else {
+            dbg!("No hay address en genesis ⏭️", address);
+            continue;
+        };
+        let value_to_deposit = acc
+            .balance
+            .checked_div(U256::from_str("2").unwrap_or(U256::zero()))
+            .unwrap_or(U256::zero());
+        let overrides = Overrides {
+            value: Some(value_to_deposit),
+            from: Some(address),
+            ..Overrides::default()
+        };
+
+        let Ok(build) = eth_client
+            .build_eip1559_transaction(bridge, address, Bytes::from(calldata), overrides, 1)
+            .await
+        else {
+            continue;
+        };
+
+        // let gas_estimate = eth_client.estimate_gas(build.clone().into()).await;
+        // dbg!("===========================");
+        // dbg!(gas_estimate);
+        // dbg!("===========================");
+
+        match eth_client
+            .send_eip1559_transaction(&build, &secret_key)
+            .await
+        {
+            Ok(_) => {
+                dbg!("Se completó deposit", address, value_to_deposit);
+            }
+            Err(e) => {
+                dbg!("Falló el deposit 🚩", address, value_to_deposit);
+                dbg!(e);
+                continue;
+            }
+        }
+        // let Ok(_) = dbg!(
+        //     eth_client
+        //         .send_eip1559_transaction(&build, &secret_key)
+        //         .await
+        // ) else {
+        //     dbg!("===========================");
+        //     dbg!("Failed to send transaction");
+        //     dbg!("===========================");
+        //     continue;
+        // };
+    }
 }
 
 #[allow(clippy::unwrap_used)]
