@@ -1,9 +1,9 @@
 use super::{
-    ForkBlobSchedule, BASE_FEE_MAX_CHANGE_DENOMINATOR, ELASTICITY_MULTIPLIER,
-    GAS_LIMIT_ADJUSTMENT_FACTOR, GAS_LIMIT_MINIMUM, INITIAL_BASE_FEE,
+    BASE_FEE_MAX_CHANGE_DENOMINATOR, ELASTICITY_MULTIPLIER, GAS_LIMIT_ADJUSTMENT_FACTOR,
+    GAS_LIMIT_MINIMUM, INITIAL_BASE_FEE,
 };
 use crate::{
-    constants::{GAS_PER_BLOB, MIN_BASE_FEE_PER_BLOB_GAS},
+    constants::MIN_BASE_FEE_PER_BLOB_GAS,
     types::{Receipt, Transaction},
     Address, H256, U256,
 };
@@ -559,7 +559,6 @@ pub fn validate_block_header(
 pub fn validate_prague_header_fields(
     header: &BlockHeader,
     parent_header: &BlockHeader,
-    blob_schedule: Option<ForkBlobSchedule>,
 ) -> Result<(), InvalidBlockHeaderError> {
     if header.excess_blob_gas.is_none() {
         return Err(InvalidBlockHeaderError::ExcessBlobGasNotPresent);
@@ -567,7 +566,7 @@ pub fn validate_prague_header_fields(
     if header.blob_gas_used.is_none() {
         return Err(InvalidBlockHeaderError::BlobGasUsedNotPresent);
     }
-    if header.excess_blob_gas.unwrap() != calc_excess_blob_gas(parent_header, blob_schedule) {
+    if header.excess_blob_gas.unwrap() != calc_excess_blob_gas(parent_header) {
         return Err(InvalidBlockHeaderError::ExcessBlobGasIncorrect);
     }
     if header.parent_beacon_block_root.is_none() {
@@ -584,7 +583,6 @@ pub fn validate_prague_header_fields(
 pub fn validate_cancun_header_fields(
     header: &BlockHeader,
     parent_header: &BlockHeader,
-    blob_schedule: Option<ForkBlobSchedule>,
 ) -> Result<(), InvalidBlockHeaderError> {
     if header.excess_blob_gas.is_none() {
         return Err(InvalidBlockHeaderError::ExcessBlobGasNotPresent);
@@ -592,7 +590,7 @@ pub fn validate_cancun_header_fields(
     if header.blob_gas_used.is_none() {
         return Err(InvalidBlockHeaderError::BlobGasUsedNotPresent);
     }
-    if header.excess_blob_gas.unwrap() != calc_excess_blob_gas(parent_header, blob_schedule) {
+    if header.excess_blob_gas.unwrap() != calc_excess_blob_gas(parent_header) {
         return Err(InvalidBlockHeaderError::ExcessBlobGasIncorrect);
     }
     if header.parent_beacon_block_root.is_none() {
@@ -624,20 +622,15 @@ pub fn validate_pre_cancun_header_fields(
     Ok(())
 }
 
-fn calc_excess_blob_gas(
-    parent_header: &BlockHeader,
-    blob_schedule: Option<ForkBlobSchedule>,
-) -> u64 {
-    let blob_schedule = blob_schedule.unwrap();
-    let target_gas = blob_schedule.target * GAS_PER_BLOB;
+fn calc_excess_blob_gas(parent_header: &BlockHeader) -> u64 {
     let parent_excess_blob_gas = parent_header.excess_blob_gas.unwrap_or_default();
     let parent_blob_gas_used = parent_header.blob_gas_used.unwrap_or_default();
     let parent_blob_gas = parent_excess_blob_gas + parent_blob_gas_used;
 
-    if parent_blob_gas < target_gas {
+    if parent_blob_gas < 393216_u64 {
         0u64
     } else {
-        parent_blob_gas - target_gas
+        parent_blob_gas - 393216_u64
     }
 }
 
