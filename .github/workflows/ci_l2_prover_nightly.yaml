@@ -49,9 +49,11 @@ jobs:
           toolchain: nightly-2024-11-27
           components: rust-src
       # https://pico-docs.brevis.network/getting-started/installation
-      - name: RISC-V pico-cli install
-        run: |
-          cargo +nightly-2024-11-27 install --git https://github.com/brevis-network/pico pico-cli
+      - name: Install pico-cli
+        uses: baptiste0928/cargo-install@v3
+        with:
+          crate: pico-cli
+          git: https://github.com/brevis-network/pico
       - name: Build prover and SP1's zkVM
         run: |
           cd crates/l2/prover
