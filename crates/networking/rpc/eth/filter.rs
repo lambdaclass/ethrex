@@ -246,6 +246,7 @@ impl FilterChangesRequest {
 
 #[cfg(test)]
 mod tests {
+    use ethrex_blockchain::Blockchain;
     use std::{
         collections::HashMap,
         sync::{Arc, Mutex},
@@ -436,9 +437,11 @@ mod tests {
         json_req: serde_json::Value,
         filters_pointer: ActiveFilters,
     ) -> u64 {
+        let storage = Store::new("in-mem", EngineType::InMemory)
+            .expect("Fatal: could not create in memory test db");
+        let blockchain = Blockchain::default_with_store(storage);
         let context = RpcApiContext {
-            storage: Store::new("in-mem", EngineType::InMemory)
-                .expect("Fatal: could not create in memory test db"),
+            blockchain,
             jwt_secret: Default::default(),
             local_p2p_node: example_p2p_node(),
             local_node_record: example_local_node_record(),
@@ -454,6 +457,7 @@ mod tests {
             serde_json::from_str(TEST_GENESIS).expect("Fatal: non-valid genesis test config");
 
         context
+            .blockchain
             .storage
             .add_initial_state(genesis_config)
             .expect("Fatal: could not add test genesis in test");
@@ -499,8 +503,11 @@ mod tests {
         );
         let active_filters = Arc::new(Mutex::new(HashMap::from([filter])));
 
+        let storage = Store::new("in-mem", EngineType::InMemory)
+            .expect("Fatal: could not create in memory test db");
+        let blockchain = Blockchain::default_with_store(storage);
         let context = RpcApiContext {
-            storage: Store::new("in-mem", EngineType::InMemory).unwrap(),
+            blockchain,
             local_p2p_node: example_p2p_node(),
             local_node_record: example_local_node_record(),
             jwt_secret: Default::default(),
@@ -526,8 +533,11 @@ mod tests {
     async fn removing_non_existing_filter_returns_false() {
         let active_filters = Arc::new(Mutex::new(HashMap::new()));
 
+        let storage = Store::new("in-mem", EngineType::InMemory)
+            .expect("Fatal: could not create in memory test db");
+        let blockchain = Blockchain::default_with_store(storage);
         let context = RpcApiContext {
-            storage: Store::new("in-mem", EngineType::InMemory).unwrap(),
+            blockchain,
             local_p2p_node: example_p2p_node(),
             local_node_record: example_local_node_record(),
             active_filters: active_filters.clone(),

@@ -65,7 +65,7 @@ impl RpcHandler for GetBlockByNumberRequest {
         })
     }
     fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
-        let storage = &context.storage;
+        let storage = &context.blockchain.storage;
         info!("Requested block with number: {}", self.block);
         let block_number = match self.block.resolve_block_number(storage)? {
             Some(block_number) => block_number,
@@ -99,7 +99,7 @@ impl RpcHandler for GetBlockByHashRequest {
         })
     }
     fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
-        let storage = &context.storage;
+        let storage = &context.blockchain.storage;
         info!("Requested block with hash: {:#x}", self.block);
         let block_number = match storage.get_block_number(self.block)? {
             Some(number) => number,
@@ -136,11 +136,14 @@ impl RpcHandler for GetBlockTransactionCountRequest {
             "Requested transaction count for block with number: {}",
             self.block
         );
-        let block_number = match self.block.resolve_block_number(&context.storage)? {
+        let block_number = match self
+            .block
+            .resolve_block_number(&context.blockchain.storage)?
+        {
             Some(block_number) => block_number,
             _ => return Ok(Value::Null),
         };
-        let block_body = match context.storage.get_block_body(block_number)? {
+        let block_body = match context.blockchain.storage.get_block_body(block_number)? {
             Some(block_body) => block_body,
             _ => return Ok(Value::Null),
         };
@@ -165,7 +168,7 @@ impl RpcHandler for GetBlockReceiptsRequest {
     }
 
     fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
-        let storage = &context.storage;
+        let storage = &context.blockchain.storage;
         info!("Requested receipts for block with number: {}", self.block);
         let block_number = match self.block.resolve_block_number(storage)? {
             Some(block_number) => block_number,
@@ -202,11 +205,15 @@ impl RpcHandler for GetRawHeaderRequest {
             "Requested raw header for block with identifier: {}",
             self.block
         );
-        let block_number = match self.block.resolve_block_number(&context.storage)? {
+        let block_number = match self
+            .block
+            .resolve_block_number(&context.blockchain.storage)?
+        {
             Some(block_number) => block_number,
             _ => return Ok(Value::Null),
         };
         let header = context
+            .blockchain
             .storage
             .get_block_header(block_number)?
             .ok_or(RpcErr::BadParams("Header not found".to_owned()))?;
@@ -232,12 +239,15 @@ impl RpcHandler for GetRawBlockRequest {
 
     fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
         info!("Requested raw block: {}", self.block);
-        let block_number = match self.block.resolve_block_number(&context.storage)? {
+        let block_number = match self
+            .block
+            .resolve_block_number(&context.blockchain.storage)?
+        {
             Some(block_number) => block_number,
             _ => return Ok(Value::Null),
         };
-        let header = context.storage.get_block_header(block_number)?;
-        let body = context.storage.get_block_body(block_number)?;
+        let header = context.blockchain.storage.get_block_header(block_number)?;
+        let body = context.blockchain.storage.get_block_body(block_number)?;
         let (header, body) = match (header, body) {
             (Some(header), Some(body)) => (header, body),
             _ => return Ok(Value::Null),
@@ -264,7 +274,7 @@ impl RpcHandler for GetRawReceipts {
     }
 
     fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
-        let storage = &context.storage;
+        let storage = &context.blockchain.storage;
         let block_number = match self.block.resolve_block_number(storage)? {
             Some(block_number) => block_number,
             _ => return Ok(Value::Null),
@@ -290,8 +300,11 @@ impl RpcHandler for BlockNumberRequest {
 
     fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
         info!("Requested latest block number");
-        serde_json::to_value(format!("{:#x}", context.storage.get_latest_block_number()?))
-            .map_err(|error| RpcErr::Internal(error.to_string()))
+        serde_json::to_value(format!(
+            "{:#x}",
+            context.blockchain.storage.get_latest_block_number()?
+        ))
+        .map_err(|error| RpcErr::Internal(error.to_string()))
     }
 }
 
@@ -302,17 +315,17 @@ impl RpcHandler for GetBlobBaseFee {
 
     fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
         info!("Requested blob gas price");
-        let block_number = context.storage.get_latest_block_number()?;
-        let header = match context.storage.get_block_header(block_number)? {
+        let block_number = context.blockchain.storage.get_latest_block_number()?;
+        let header = match context.blockchain.storage.get_block_header(block_number)? {
             Some(header) => header,
             _ => return Err(RpcErr::Internal("Could not get block header".to_owned())),
         };
-        let parent_header = match find_parent_header(&header, &context.storage) {
+        let parent_header = match find_parent_header(&header, &context.blockchain.storage) {
             Ok(header) => header,
             Err(error) => return Err(RpcErr::Internal(error.to_string())),
         };
 
-        let config = context.storage.get_chain_config()?;
+        let config = context.blockchain.storage.get_chain_config()?;
         let blob_base_fee = calculate_base_fee_per_blob_gas(
             parent_header.excess_blob_gas.unwrap_or_default(),
             config

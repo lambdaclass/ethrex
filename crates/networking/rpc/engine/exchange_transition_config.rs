@@ -48,7 +48,7 @@ impl RpcHandler for ExchangeTransitionConfigV1Req {
         info!("Received new engine request: {self}");
         let payload = &self.payload;
 
-        let chain_config = context.storage.get_chain_config()?;
+        let chain_config = context.blockchain.storage.get_chain_config()?;
         let terminal_total_difficulty = chain_config.terminal_total_difficulty;
 
         if terminal_total_difficulty.unwrap_or_default() != payload.terminal_total_difficulty {
@@ -59,6 +59,7 @@ impl RpcHandler for ExchangeTransitionConfigV1Req {
         };
 
         let block = context
+            .blockchain
             .storage
             .get_block_header(payload.terminal_block_number)?;
         let terminal_block_hash = block.map_or(H256::zero(), |block| block.compute_block_hash());

@@ -57,7 +57,7 @@ where
         node,
         stream,
         codec,
-        context.storage,
+        context.blockchain,
         context.broadcast,
     ))
 }
@@ -83,7 +83,7 @@ where
         node,
         stream,
         codec,
-        context.storage,
+        context.blockchain,
         context.broadcast,
     ))
 }

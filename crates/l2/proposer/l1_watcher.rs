@@ -4,22 +4,21 @@ use crate::{
 };
 use bytes::Bytes;
 use ethereum_types::{Address, BigEndianHash, H256, U256};
-use ethrex_blockchain::{constants::TX_GAS_COST, mempool};
+use ethrex_blockchain::{constants::TX_GAS_COST, Blockchain};
 use ethrex_common::types::{Signable, Transaction};
 use ethrex_rpc::clients::eth::{errors::EthClientError, eth_sender::Overrides, EthClient};
 use ethrex_rpc::types::receipt::RpcLog;
-use ethrex_storage::Store;
 use keccak_hash::keccak;
 use secp256k1::SecretKey;
 use std::{cmp::min, ops::Mul, time::Duration};
 use tokio::time::sleep;
 use tracing::{debug, error, info, warn};
 
-pub async fn start_l1_watcher(store: Store) -> Result<(), ConfigError> {
+pub async fn start_l1_watcher(blockchain: Blockchain) -> Result<(), ConfigError> {
     let eth_config = EthConfig::from_env()?;
     let watcher_config = L1WatcherConfig::from_env()?;
     let mut l1_watcher = L1Watcher::new_from_config(watcher_config, eth_config).await?;
-    l1_watcher.run(&store).await;
+    l1_watcher.run(&blockchain).await;
     Ok(())
 }
 
@@ -55,9 +54,9 @@ impl L1Watcher {
         })
     }
 
-    pub async fn run(&mut self, store: &Store) {
+    pub async fn run(&mut self, blockchain: &Blockchain) {
         loop {
-            if let Err(err) = self.main_logic(store).await {
+            if let Err(err) = self.main_logic(blockchain).await {
                 error!("L1 Watcher Error: {}", err);
             }
 
@@ -65,7 +64,7 @@ impl L1Watcher {
         }
     }
 
-    async fn main_logic(&mut self, store: &Store) -> Result<(), L1WatcherError> {
+    async fn main_logic(&mut self, blockchain: &Blockchain) -> Result<(), L1WatcherError> {
         loop {
             sleep(self.check_interval).await;
 
@@ -78,7 +77,7 @@ impl L1Watcher {
 
             let pending_deposit_logs = self.get_pending_deposit_logs().await?;
             let _deposit_txs = self
-                .process_logs(logs, &pending_deposit_logs, store)
+                .process_logs(logs, &pending_deposit_logs, blockchain)
                 .await?;
         }
     }
@@ -161,7 +160,7 @@ impl L1Watcher {
         &self,
         logs: Vec<RpcLog>,
         pending_deposit_logs: &[H256],
-        store: &Store,
+        blockchain: &Blockchain,
     ) -> Result<Vec<H256>, L1WatcherError> {
         let mut deposit_txs = Vec::new();
 
@@ -238,7 +237,8 @@ impl L1Watcher {
                     Bytes::new(),
                     Overrides {
                         chain_id: Some(
-                            store
+                            blockchain
+                                .storage
                                 .get_chain_config()
                                 .map_err(|e| {
                                     L1WatcherError::FailedToRetrieveChainConfig(e.to_string())
@@ -267,10 +267,9 @@ impl L1Watcher {
                 .await?;
             mint_transaction.sign_inplace(&self.l2_proposer_pk);
 
-            match mempool::add_transaction(
-                Transaction::PrivilegedL2Transaction(mint_transaction),
-                store,
-            ) {
+            match blockchain
+                .add_transaction_to_pool(Transaction::PrivilegedL2Transaction(mint_transaction))
+            {
                 Ok(hash) => {
                     info!("Mint transaction added to mempool {hash:#x}",);
                     deposit_txs.push(hash);
